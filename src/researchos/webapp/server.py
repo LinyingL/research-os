@@ -258,6 +258,18 @@ Endpoints (all GET unless noted):
                             `src/researchos/webapp/desk.js` exactly as
                             /canvas.js is: read fresh, same origin check,
                             packaged as `package-data`.
+    GET  /node.js      -- the node page, 成果 and 数据与代码 (DESIGN.md
+                            12.6, 12.7, 12.9; task V8 phase U3), served the
+                            same way.
+    GET  /api/node     -- `?node=<id or path>`: one object's page -- its
+                            trace as columns with the lines between them,
+                            its breaks with their repairs, the links that
+                            touch it (`researchos.nodepage.node`).
+    GET  /api/results  -- 成果: the drafts' figures and tables by section
+                            with their trace state; `?draft=<file>`: that
+                            draft's claims.
+    GET  /api/data-code -- 数据与代码: every script and data file with its
+                            reads, writes and lineage-report blocks.
     GET  /api/desk     -- `?since=<ISO time>` (default: the last seven
                             days): the desk's changes since then, the
                             results whose trace lost its evidence, the
@@ -2632,6 +2644,7 @@ def _app_html() -> str:
 
 _CANVAS_JS_PATH = Path(__file__).parent / "canvas.js"
 _DESK_JS_PATH = Path(__file__).parent / "desk.js"
+_NODE_JS_PATH = Path(__file__).parent / "node.js"
 
 
 def _canvas_js() -> str:
@@ -2647,6 +2660,12 @@ def _desk_js() -> str:
     """`src/researchos/webapp/desk.js` verbatim (the sidebar and the desk,
     DESIGN.md 12.9), read fresh per request like `_canvas_js`."""
     return _DESK_JS_PATH.read_text(encoding="utf-8")
+
+
+def _node_js() -> str:
+    """`src/researchos/webapp/node.js` verbatim (the node page, 成果 and
+    数据与代码, DESIGN.md 12.6, 12.7, 12.9), read fresh per request."""
+    return _NODE_JS_PATH.read_text(encoding="utf-8")
 
 
 # -- HTTP plumbing -------------------------------------------------------------
@@ -2983,6 +3002,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _canvas_js(), "text/javascript; charset=utf-8")
             elif path == "/desk.js":
                 self._send_text(200, _desk_js(), "text/javascript; charset=utf-8")
+            elif path == "/node.js":
+                self._send_text(200, _node_js(), "text/javascript; charset=utf-8")
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
@@ -3018,7 +3039,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 9.12 (acceptance, 2026-10-05): the page saves no viewport
                 # or layout for a project frozen until it is migrated (nor
                 # for one opened read-only) -- it would only be refused.
-                frozen = served.needs_migration or served.read_only
+                # A node's neighbourhood (U3, 「关系图」 on a node page) keeps
+                # no arrangement of its own: laid out fresh, never saved.
+                frozen = served.needs_migration or served.read_only or str(scope or "").startswith(canvas.NEAR_PREFIX)
                 self._json_from_conn(lambda conn: self._official(
                     {**canvas_payload(conn, self._project_root(), scope), "frozen": frozen}))
             elif path == "/api/review":
@@ -3059,6 +3082,18 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(
                     self._node_api(lambda: node_api.trace_payload(conn, served.root, query))))
+            elif path == "/api/node":
+                # 12.6, 12.7, 12.9: one object's page -- reads only.
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._official(
+                    self._node_api(lambda: node_api.node_payload(conn, served.root, query))))
+            elif path == "/api/results":
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._official(
+                    self._node_api(lambda: node_api.results_payload(conn, served.root, query))))
+            elif path == "/api/data-code":
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._official(node_api.data_code_payload(conn, served.root)))
             elif path == "/api/proposals" or path.startswith("/api/proposals/"):
                 # 12.3: the PI's inbox or a member's own proposals; one
                 # proposal with what approving would do. Never in any
@@ -3430,7 +3465,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
+_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/node.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",

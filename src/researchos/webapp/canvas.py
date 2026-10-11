@@ -119,6 +119,12 @@ logger = logging.getLogger(__name__)
 CANVAS_NODE_TYPES = ("dataset", "script", "figure")
 CANVAS_EDGE_TYPES = ("reads", "writes", "generates")
 SCOPE_ALL = "all"
+# DESIGN.md 12.9 (task V8 U3): 「关系图」 on a node page is the canvas scoped
+# to that node's neighbourhood, `near:<node id>` -- the node, every card one
+# link away, and what the scripts that made it read. Laid out fresh each
+# time: no arrangement is kept for it (a layout write naming it is refused),
+# so canvas.json does not grow by one view per node ever opened.
+NEAR_PREFIX = "near:"
 # Section 8.7: "the ✅ row when there is exactly one". The literal marker,
 # not the attempts config's `active_verdicts` (which also counts 🕒 rows as
 # alive for the dead-variable check -- a different question).
@@ -339,6 +345,18 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     default = default_attempt(attempts)
     if scope is None:
         scope = default["id"] if default is not None else SCOPE_ALL
+    if scope.startswith(NEAR_PREFIX):
+        center = scope[len(NEAR_PREFIX):]
+        if center not in nodes:
+            raise UnknownScopeError(f"no card {center!r} in the graph to show the neighbourhood of")
+        hop = {e["dst"] for e in edges if e["src"] == center} | {e["src"] for e in edges if e["dst"] == center}
+        makers = {e["src"] for e in edges if e["dst"] == center and e["type"] in ("writes", "generates")}
+        inputs = {e["dst"] for e in edges if e["src"] in makers and e["type"] == "reads"}
+        return {
+            "scope": scope, "nodes": nodes, "edges": edges, "attempts": attempts, "by_id": by_id,
+            "default": default, "step_ids": {a["id"]: [] for a in attempts}, "ghosts": {},
+            "visible": {center} | hop | inputs, "grouped": [], "near": center,
+        }
     if scope != SCOPE_ALL and scope not in by_id:
         raise UnknownScopeError(f"no attempt {scope!r} in the graph (scope must be 'all' or an attempt id)")
 
@@ -444,7 +462,9 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
         "step_groups": [{"attempt_id": g["attempt_id"], "node_ids": g["node_ids"]} for g in groups],
         "positions": {k: v for k, v in saved["positions"].items() if k in visible},
         "viewport": saved["viewport"],
-        "scope": {"id": SCOPE_ALL} if scope == SCOPE_ALL else _scope_summary(by_id[scope], labels),
+        "scope": {"id": SCOPE_ALL} if scope == SCOPE_ALL else (
+            {"id": scope, "near": view["near"], "title": _node_path(nodes[view["near"]])} if view.get("near")
+            else _scope_summary(by_id[scope], labels)),
         "scopes": [dict(_scope_summary(a, labels), current=a["id"] == default_id) for a in view["attempts"]],
     }
 
@@ -658,6 +678,8 @@ def save_layout(conn: Connection, project_root: Path, body: dict[str, Any]) -> d
     debounced drag and a later one) never wipe each other's unrelated
     positions."""
     scope, positions, viewport, reset = parse_layout_body(body)
+    if scope.startswith(NEAR_PREFIX):
+        raise UnknownScopeError("a node's neighbourhood keeps no arrangement; nothing is saved for it")
     visible = view_card_ids(conn, project_root, scope)
     stray = sorted(k for k, v in positions.items() if v is not None and k not in visible)
     if stray:

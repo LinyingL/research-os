@@ -787,7 +787,11 @@ def test_served_ui_copy_uses_the_8_8_glossary_not_its_english(live_server):
 
     page_literals = _js_string_literals(inline)
     canvas_literals = _js_string_literals(js)
-    pieces = page_literals + canvas_literals + _html_markup_copy(html)
+    # V8 U2/U3: the desk and the node page (数据与代码's list among it) are
+    # served scripts of the same page; their copy is held to the glossary too.
+    served = [_js_string_literals(_get_with_type(live_server[0], f"/{name}")[2].decode("utf-8"))
+              for name in ("desk.js", "node.js")]
+    pieces = page_literals + canvas_literals + [s for part in served for s in part] + _html_markup_copy(html)
 
     assert _english_glossary_hits(pieces) == []
     # The scanner really saw the copy (a broken tokenizer must not pass by

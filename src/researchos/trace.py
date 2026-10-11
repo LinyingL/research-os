@@ -198,7 +198,7 @@ def chain(conn: Connection, project_root: str | Path, node: str) -> dict[str, An
                               "title": section_node.get("title") if section_node else None,
                               "extractor": edge["extractor"]})
 
-    chain_nodes = [node_id, *scripts, *data]
+    chain_nodes = list(dict.fromkeys([node_id, *scripts, *data]))  # a script's own page has it in both
     out["attempts"] = _attempts(conn, root, chain_nodes, flags, links)
     if not out["attempts"]:
         out["breaks"].append(_break("no_attempt", node_id, rel, repair="belongs_to"))

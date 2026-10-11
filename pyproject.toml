@@ -54,4 +54,4 @@ markers = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-researchos = ["migrations/*.sql", "webapp/app.html", "webapp/canvas.js", "webapp/desk.js", "webapp/shell/*.swift"]
+researchos = ["migrations/*.sql", "webapp/app.html", "webapp/canvas.js", "webapp/desk.js", "webapp/node.js", "webapp/shell/*.swift"]

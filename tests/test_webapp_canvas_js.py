@@ -1246,16 +1246,19 @@ def _function_body(src: str, signature: str) -> str:
 def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     """Source pins: the form is built in exactly one place, which only
     openAttemptForm calls, after awaiting ensureAttemptData; every entry
-    point (header button, native menu, a panel's 编辑) goes through
-    openAttemptForm; the defaults read nothing but the records handed in."""
+    point (header button, native menu, the node page's 编辑这一行 in
+    node.js since V8 U3) goes through openAttemptForm; the defaults read
+    nothing but the records handed in."""
     opener = _function_body(_APP_SRC, "async function openAttemptForm(")
     assert opener.index("载入中…") < opener.index("await ensureAttemptData()") < opener.index("renderAttemptForm(mode, attemptId)")
     assert "panelErrorBoxCn(" in opener and "state.panelSubject !== subject" in opener
     assert _APP_SRC.count("renderAttemptForm(") == 2  # its definition and that one call
     assert 'addEventListener("click", () => openAttemptForm("append"))' in _APP_SRC
     assert '"new-attempt": () => openAttemptForm("append"),' in _APP_SRC
-    assert 'editBtn.addEventListener("click", () => openAttemptForm("update", id));' in _APP_SRC
-    assert _APP_SRC.count("openAttemptForm(") == 4  # definition + the three entry points
+    node_js = (CANVAS_JS.parent / "node.js").read_text(encoding="utf-8")
+    assert 'mkButton("编辑这一行", "btn btn-small", () => openAttemptForm("update", page.id))' in node_js
+    assert node_js.count("openAttemptForm(") == 1
+    assert _APP_SRC.count("openAttemptForm(") == 3  # definition + the two entry points in the page
     form = _function_body(_APP_SRC, "function renderAttemptForm(")
     for call in ("defaultNewNumber(attempts)", "defaultDateValue(attempts, new Date())", "distinctVerdicts(attempts)"):
         assert call in form
@@ -1271,7 +1274,9 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
         assert line in reset
     # The form's freshness never rests on the generation counter again.
     assert "attemptsGen" not in _APP_SRC and "configGen" not in _APP_SRC
-    # An attempt panel left open under another view is revalidated there too.
+    # A panel that follows the record is revalidated under any view; an
+    # attempt opens its node page since V8 U3, which reloads itself.
     refresh = _function_body(_APP_SRC, "async function refreshCurrentView(")
     assert "await revalidatePanel();" in refresh
-    assert "await ensureAttemptData()" in _function_body(_APP_SRC, "async function revalidatePanel(")
+    assert "await RONode.loadNode(views.node, true);" in refresh
+    assert "openAttemptPanel" not in _APP_SRC

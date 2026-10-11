@@ -5,7 +5,7 @@
 //
 // It defines one global, window.RODesk, and calls app.html's helpers (mk,
 // mkButton, apiGet, apiPost, renderBlockingError, renderErrorBox, setStatus,
-// openFilePanel, openAttemptPanel, ensureAttemptData, openReviewPanel,
+// RONode.openNode (every object opens its node page, U3), openReviewPanel,
 // showAbandonedRoutes, openPanel, closePanel, state, ...) only at run time,
 // never while loading.
 //
@@ -273,13 +273,9 @@
     return b;
   }
 
-  async function openAttempt(id) {
-    try {
-      await ensureAttemptData();
-    } catch (err) {
-      /* openAttemptPanel says that the record is not loaded */
-    }
-    openAttemptPanel(id);
+  // 12.9: every object the desk names opens its node page.
+  function openAttempt(id) {
+    RONode.openNode(id);
   }
 
   function attemptName(item) {
@@ -298,7 +294,7 @@
     const head = mk("div", "desk-head");
     const who = (item.who || []).join("、");
     if (item.kind === "file") {
-      head.appendChild(rowLink(item.path, "mono", () => openFilePanel(item.path), "打开这个文件"));
+      head.appendChild(rowLink(item.path, "mono", () => RONode.openNode(item.node || item.path), "打开这个文件"));
       head.appendChild(mk("span", "desk-what", item.what + (item.uncommitted ? "（还没有提交）" : "")));
       if (item.exists === false) head.appendChild(mk("span", "desk-flag", "文件不存在"));
     } else if (item.kind === "attempt") {
@@ -322,7 +318,7 @@
     } else if (item.kind === "note") {
       const target = item.path || item.node || "";
       head.appendChild(mk("span", "desk-what", "笔记，写在"));
-      head.appendChild(rowLink(target, item.path ? "mono" : "", () => (item.path ? openFilePanel(item.path) : null)));
+      head.appendChild(rowLink(target, item.path ? "mono" : "", () => RONode.openNode(item.node || item.path)));
     }
     main.appendChild(head);
     const meta = [];
@@ -376,7 +372,7 @@
         const row = mk("li", "desk-row");
         const main = mk("div", "desk-main");
         const head = mk("div", "desk-head");
-        head.appendChild(rowLink(r.path || r.node, "mono", () => openFilePanel(r.path), "打开这个成果"));
+        head.appendChild(rowLink(r.path || r.node, "mono", () => RONode.openNode(r.node || r.path), "打开这个成果"));
         if (r.exists === false) head.appendChild(mk("span", "desk-flag", "文件不存在"));
         main.appendChild(head);
         (r.breaks || []).forEach((b) => {

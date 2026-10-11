@@ -12,6 +12,10 @@ who I am, notes, what changed, and the trace -- the payloads only.
   `GET /api/history/diff?node=…&a=…&b=…` -- what changed (both versions,
   or neither: the newest and the one before it).
 - `GET /api/trace?node=…` -- the whole chain of 12.7 with its breaks.
+- `GET /api/node?node=…` -- one object's page (U3): its trace as columns,
+  its breaks with their repairs, the links touching it;
+  `GET /api/results[?draft=…]` -- 成果; `GET /api/data-code` -- 数据与代码
+  (`researchos.nodepage`).
 - `GET /api/proposals` -- the PI's inbox or a member's own proposals;
   `GET /api/proposals/<id>`; `POST /api/proposals` (from the working copy:
   a dry run, or written with `write`); `POST /api/proposals/<id>/approve |
@@ -148,10 +152,17 @@ def history_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
 
 
 def diff_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+    """`summary` stays the engine's sentence (the command line's); the page
+    shows `summary_words`, the same sentence with its relation in words
+    (12.11: 「行数 96 改为 97」, never an arrow)."""
+    from researchos import desk  # noqa: PLC0415
+
     try:
-        return history.diff(root, _arg(query, "node", required=True) or "", _arg(query, "a"), _arg(query, "b"))
+        out = history.diff(root, _arg(query, "node", required=True) or "", _arg(query, "a"), _arg(query, "b"))
     except history.HistoryError as exc:
         raise _history_refused(exc) from exc
+    out["summary_words"] = desk._words(out.get("summary")) if out.get("kind") == "file" else None
+    return out
 
 
 # -- trace ----------------------------------------------------------------------------
@@ -165,6 +176,39 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
     if not result["found"]:
         raise NodeApiRefused(404, "not_found", f"no such node or file: {result['node']['id']}", "找不到这个节点")
     return result
+
+
+# -- the node page, 成果, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
+
+
+def node_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+    """GET /api/node?node=…: one object's page (`researchos.nodepage.node`)."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    given = _arg(query, "node", required=True) or ""
+    try:
+        return nodepage.node(conn, root, given)
+    except ValueError as exc:
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个节点") from exc
+    except nodepage.NotFound as exc:
+        raise NodeApiRefused(404, "not_found", str(exc), "找不到这个节点") from exc
+
+
+def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+    """GET /api/results[?draft=…]: 成果, or one draft's claims."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    try:
+        return nodepage.results(conn, root, _arg(query, "draft"))
+    except ValueError as exc:
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
+
+
+def data_code_payload(conn: Connection, root: Path) -> dict[str, Any]:
+    """GET /api/data-code: 数据与代码."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    return nodepage.data_code(conn, root)
 
 
 # -- proposals (12.3, 12.4; V8 phase 3) -----------------------------------------------

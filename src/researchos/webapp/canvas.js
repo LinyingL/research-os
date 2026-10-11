@@ -186,6 +186,11 @@ window.RCECanvas = (function () {
     // V5: the selected link's ledger history ({id, entries, readable,
     // error}), and the 备注 typed into its card (kept across re-renders).
     history: null, cardNote: { id: null, value: "" },
+    // V8 U3: 「关系图」 on a node page is this canvas scoped to the node's
+    // neighbourhood (`near:<id>`, never saved). mainScope is the scope the
+    // 数据与代码 view last showed, restored when the canvas goes back there;
+    // nearHost the node page's container it was drawn in.
+    mainScope: null, nearHost: null,
   };
 
   // -- Small helpers ----------------------------------------------------------
@@ -1183,10 +1188,20 @@ window.RCECanvas = (function () {
     return label + "#" + String(s.number).replace(/^#/, "") + " · " + (s.title || "");
   }
 
+  function isNear(scope) {
+    return typeof scope === "string" && scope.indexOf("near:") === 0;
+  }
+
   function renderScopeSelect() {
     if (!cv.dom) return; // the node tests run applyPayload without a DOM
     const sel = cv.dom.scope;
     sel.innerHTML = "";
+    if (isNear(cv.scope)) {
+      const near = document.createElement("option");
+      near.value = cv.scope;
+      near.textContent = "这个节点附近";
+      sel.appendChild(near);
+    }
     const all = document.createElement("option");
     all.value = SCOPE_ALL;
     all.textContent = "全部";
@@ -1414,7 +1429,7 @@ window.RCECanvas = (function () {
     cv.saveTimer = null;
     const slot = cv.save;
     cv.save = emptySave();
-    if (!slot.scope) return;
+    if (!slot.scope || isNear(slot.scope)) return; // a node's neighbourhood keeps no arrangement
     if (layoutBlocked()) return; // nothing is written over a record Research OS cannot read (9.2)
     // A project frozen until it is migrated (9.12), or opened read-only:
     // the arrangement lives in this page only -- no POST, so no chip.
@@ -2263,7 +2278,11 @@ window.RCECanvas = (function () {
     cv.clickTimer = setTimeout(() => {
       cv.lastClick = null;
       const n = cv.nodes.get(id);
-      if (n && typeof openFilePanel === "function") openFilePanel(n.path, n.type === "script" ? "script" : undefined);
+      if (!n) return;
+      // 12.9: every object opens the same node page (the file panel where
+      // the page has none, as before V8).
+      if (window.RONode && !n.ghost) window.RONode.openNode(id);
+      else if (typeof openFilePanel === "function") openFilePanel(n.path, n.type === "script" ? "script" : undefined);
     }, CLICK_DELAY_MS);
   }
 
@@ -2352,8 +2371,10 @@ window.RCECanvas = (function () {
     svg.addEventListener("gestureend", onGestureEnd);
   }
 
+  // Hidden itself or inside anything hidden (a node page's 关系图 lives in
+  // the node view, which is hidden whenever another section shows).
   function canvasVisible() {
-    return !!(cv.container && !cv.container.classList.contains("hidden") && cv.dom);
+    return !!(cv.container && !cv.container.closest(".hidden") && cv.dom);
   }
 
   function typingTarget(e) {
@@ -2610,7 +2631,15 @@ window.RCECanvas = (function () {
   // Load (or, on a generation bump, re-load) the canvas into `container`.
   // A re-load keeps selection, camera, search and positions; only entering
   // a view (first load, scope change) moves the camera.
-  async function load(container) {
+  // `scope` (optional): the view to show -- a node page passes its node's
+  // neighbourhood; without it a container that is not the node page's
+  // shows the scope it showed last.
+  async function load(container, scope) {
+    let wanted = scope;
+    if (wanted === undefined && isNear(cv.scope) && container !== cv.nearHost) wanted = cv.mainScope;
+    if (wanted !== undefined && wanted !== cv.scope) changeScope(wanted, true);
+    if (isNear(cv.scope)) cv.nearHost = container;
+    else cv.mainScope = cv.scope;
     const seq = ++cv.loadSeq;
     ensureDom(container);
     let payload;
@@ -2684,7 +2713,8 @@ window.RCECanvas = (function () {
   // present in both scopes kept its card floating over the new view).
   // So does anything half-done on a link: a drag, its confirm popover,
   // the right-click menu.
-  function changeScope(scope) {
+  // `quiet`: only leave the view (load() is about to fetch the new one).
+  function changeScope(scope, quiet) {
     if (cv.drag && cv.drag.kind === "link") endLinkDrag(false);
     closePopover();
     closeCtxMenu();
@@ -2694,7 +2724,8 @@ window.RCECanvas = (function () {
     selectLink(null);
     flushSave(); // what was moved or panned in the view being left is that view's
     cv.scope = scope;
-    if (cv.container) load(cv.container);
+    if (!isNear(scope)) cv.mainScope = scope;
+    if (!quiet && cv.container) load(cv.container);
   }
 
   // Called by app.html when the tab is shown: a fit requested while the
@@ -2725,7 +2756,7 @@ window.RCECanvas = (function () {
       autoFit: true, resizeTimer: null,
       drag: null, lastClick: null, nodeEls: new Map(), linkEls: new Map(),
       selectedLink: null, optimistic: new Map(), focus: null,
-      history: null, cardNote: { id: null, value: "" },
+      history: null, cardNote: { id: null, value: "" }, mainScope: null, nearHost: null,
     });
     if (cv.dom) cv.dom.notice.classList.add("hidden");
     if (cv.dom) cv.dom.linkCard.classList.add("hidden");
