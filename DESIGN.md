@@ -3067,3 +3067,63 @@ record: every view marks it 「我的改动，尚未提交」 or 「提议中」
 never appears as official. A member not yet in the team is told so —
 「你还不是这个项目的成员：请 PI 把你加入团队，然后同步」 — rather than being
 treated as a single-person project.
+
+### 12.13 Rulings from building and accepting the V8 interface
+
+*Words, not arrows.* Where 12.6 writes 「行数 96 → 97」 or 「🕒 → ✅」, the
+screen says 「行数从 96 增至 97」 and 「判决从「待定」改为「现行」」 (12.11).
+The command line, a developer surface, may keep its arrows.
+
+*The shell's menus* replace 8.9's list: 文件 — 添加项目… ⌘O, 提交提议…
+(member) or 发布 (PI) when the project is collaborative, 关闭 ⌘W; 视图 — the
+eight sections on ⌘1–⌘8, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
+title, mode and choose-folder / choose-file messages, nothing else.
+
+*Who.* A version installed by 同步 is attributed to the publish it came
+from — the PI and the snapshot — not to 「本机」. In a member's working copy a
+version with no other attribution is 「本机」; elsewhere a pre-V8 entry
+without `by` is 「最初的研究者」. Everywhere a person is named, their name
+from the team (or me.toml) is shown, never their raw id.
+
+*A member's own work* has a third state besides 「我的改动，尚未提交」 and
+「提议中」: 「已批准，待同步」, between the PI's approval and the member's next
+sync.
+
+*What a proposal carries.* By kind: a verdict change carries its row only; a
+new attempt carries its row and the files linked to that attempt; a files
+proposal carries the files the member chose. The member can add or untick
+files before sending, and a file that was part of a returned proposal is
+flagged. Nothing else travels unasked.
+
+*Tables* (CSV, TSV) always show the rows-and-columns summary first; a small
+one shows its line diff below it.
+
+*Notes on links.* The note written with 「关联文件」 or 「补上来源」 appears in
+the node's change timeline with the link.
+
+*成果 lists claims only from the paper.* A claim is any number in a
+sentence, and the researcher's 90 drafts hold 3,688, mostly in revision logs
+and review notes. 成果 shows figures and tables, and claims only from drafts
+the researcher marks 「设为论文正文」 — a list kept in
+`.researchos/papers.toml`, snapshotted like the other record files. With
+none marked, 成果 says how to mark one. Disclosure of a draft's claims uses a
+quiet line chevron, not the browser's triangle.
+
+*Two folders for a member* (personal OneDrive). Sharing a subfolder with
+other rights than its parent makes it a separate shortcut on the member's
+Mac. A member therefore sets the published folder and their own proposals
+folder separately — `researchos share set --published <folder> --mine
+<folder>` and the same in 成员 — and Research OS checks that the published
+folder holds this project's signed snapshots and that the member can write
+into their own folder before using it.
+
+*Installing for a collaborator.* `docs/安装与加入团队.md`, in Chinese, for a
+member who does not program: install OneDrive and sign in; install
+Research OS with uv in one command (uv brings its own Python — macOS's own
+is too old); `researchos app` to put the app in Applications; first launch and
+the Documents prompt; set name and e-mail; send the PI their public key;
+accept the PI's sharing invitations and add both folders to their OneDrive;
+choose them in 成员; compare the PI's key fingerprint; 同步. And for the PI:
+which folder to share with which rights, where to click in OneDrive's
+personal web interface. It is tested step by step on a clean account-like
+setup before it is handed over.
