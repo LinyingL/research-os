@@ -2988,3 +2988,82 @@ as a concept on 2026-10-11.
 5. **Nothing is written to the shared drive in place**: after every test
    above, every file there was created once and never modified (mtimes and
    inodes checked).
+
+### 12.11 Visual vocabulary: nothing that looks generated
+
+The researcher, on the 2026-10-11 concept: "the -> kind of symbols, emoji
+and other marks of vibe coding must go". Binding for every surface of the
+app, the shell and the documentation's screenshots:
+
+- **No emoji** in anything Research OS itself writes on screen. The
+  researcher's own attempt table uses emoji as verdict markers (✅ ☠️ 🕒 ⚠️
+  ⛔ 📋); the interface shows a verdict as a text status — 现行, 已放弃,
+  待定, 不利证据, 被否, 归档 — in a quiet tinted label, followed by the
+  researcher's own words. The mapping from marker to status is read from
+  `attempts.toml` (`[verdict_labels]`), with these defaults; an unknown
+  marker shows as 「其它」 plus the researcher's words. The raw marker
+  appears only where the source file itself is shown (history, diff).
+- **No arrow characters as connectors or decoration** — →, ←, ↔, ->, =>,
+  ▸, ▾, ＋ and the like. A relation is said in words (读取, 写出, 生成,
+  属于, 引用) or drawn: a trace is a set of columns joined by real lines,
+  not a sentence of arrows. Disclosure and menus use the platform's own
+  controls. Arrows inside the researcher's own text (an attempt titled
+  "TopicShift→波动") are their words and stay.
+- **Icons sparingly**: monochrome line icons only where they help
+  recognition (sidebar sections, file types), never as decoration, never
+  colored, never in running text.
+- **Typography carries hierarchy**: the serif for the brand and page
+  titles, the sans for everything else, the mono only for paths, code and
+  identifiers; weight and space instead of boxes, badges and dividers
+  where possible.
+
+### 12.12 Rulings made while building the V8 engine
+
+*Names.* Sections before 12 still write `.rce/`, `~/.rce`, `RCE_HOME` and
+`rce`: read them as `.researchos/`, `~/.researchos`, `RESEARCHOS_HOME` and
+`researchos`. A folder with both names stops every command on it, because
+records an old engine wrote into `.rce/` must not be passed over; a home
+named by the environment is never renamed; the machine lock for the home is
+on the folder that holds it; identifiers the researcher never sees (the
+page bridge, the window's saved frame, the remembered tab) keep their old
+names so nothing saved is lost.
+
+*History.* The version store of a non-git project is kept material, not a
+record: rebuilding the index keeps it, deleting the index's whole folder
+loses it, and `researchos records` lists it with its size so that is never
+a surprise. A collaborative project's history is also in its snapshots. A
+missing `by` is shown as 「最初的研究者」.
+
+*Approvals.* Every approval — not only an abandonment — is an entry in
+`decisions.toml`, because an attempt-table row has nowhere to carry `by`
+and `approved_by`. An abandonment's reason is written into the row's result
+as 「（放弃理由：…）」 as well. `attempts.toml` may list `abandoned_verdicts`;
+☠️ always counts. **The attempt table conflicts by row, not by file**: a
+proposal that adds or changes a row conflicts only when that row (or the
+number it takes) changed in the official version since the proposal's base;
+the PI editing other rows does not block it. Other files conflict as wholes,
+as 12.3 says.
+
+*Signatures.* A proposal must be signed whenever the PI's Research OS knows
+the author's key and has `ssh-keygen`; otherwise it is approvable but shown
+as unverified, with the reason. `team.toml` travels inside each snapshot. A
+snapshot number skipped by an interrupted publish is never reused. There is
+no recovery of a lost PI key in V8: the README says to keep a copy of
+`~/.researchos/keys`; a new key starts a new chain, and members are shown
+the new fingerprint to compare, as on first joining.
+
+*The shared drive.* Adding a member, the PI's Research OS creates that
+member's empty area `提议/<member id>/` once — a write-once act like any
+other — and tells the PI to give that member edit rights to it in OneDrive.
+Members' notes, link judgments **and hand-drawn mappings** (including
+「关联文件」 and 「补上来源」) travel as signed, write-once packets and are
+appended to the official ledgers at the next publish, without approval.
+Canvas arrangements do not travel: each person keeps their own. A blob found
+damaged may be removed by the PI and is rewritten by the next publish.
+
+*A member's own work.* In a member's working copy, what differs from the
+official snapshot is that member's own work, not part of the official
+record: every view marks it 「我的改动，尚未提交」 or 「提议中」, and it
+never appears as official. A member not yet in the team is told so —
+「你还不是这个项目的成员：请 PI 把你加入团队，然后同步」 — rather than being
+treated as a single-person project.
