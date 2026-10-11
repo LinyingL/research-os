@@ -95,6 +95,12 @@ Key = tuple[str, ...]
 
 ENGINE_FIELDS = ("id", "seq", "at", "settles", "undoes")
 
+#: Who wrote an entry (DESIGN.md 12.1): the member id from
+#: `~/.researchos/me.toml`, added by `append_many` to every entry Research OS
+#: appends when that file exists. An entry without it belongs to the
+#: project's first researcher (`researchos.people.attribution`).
+BY_FIELD = "by"
+
 
 class LedgerError(Exception):
     """Base: a ledger could not be read or written as asked."""
@@ -200,7 +206,8 @@ def emit_entry(schema: "LedgerSchema", entry: Mapping[str, Any]) -> bytes:
     judgment's `basis`) last. Starts with a blank line so entries read as
     paragraphs."""
     lines = ["", f"[[{toml_key(schema.table)}]]"]
-    order = list(ENGINE_FIELDS[:3]) + [f for f in schema.field_order if f not in ENGINE_FIELDS[:3]]
+    head = [*ENGINE_FIELDS[:3], BY_FIELD]
+    order = head + [f for f in schema.field_order if f not in head]
     for extra in ("undoes", "settles"):
         if extra not in order:
             order.append(extra)
@@ -218,22 +225,25 @@ def emit_entry(schema: "LedgerSchema", entry: Mapping[str, Any]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def _reject_line_breaks(value: Any, where: str) -> None:
+def _reject_line_breaks(value: Any, where: str, multiline: frozenset[str] = frozenset()) -> None:
     """Every string Research OS writes into a ledger is single-line: the
     invisible line separators are refused by the map editor's own check
     (`researchos.webapp.mapedit._reject_line_boundaries`), so the two writers
-    can never disagree about what a line break is."""
+    can never disagree about what a line break is. The one exception is a
+    field a schema names in `multiline` (a note's text, 12.6): there a
+    plain line feed -- and only that -- is allowed; the emitter writes it as
+    the TOML escape, so the file's own lines are never split."""
     from researchos.webapp import mapedit  # noqa: PLC0415 -- leaf use; avoids an import cycle later
 
     if isinstance(value, str):
         try:
-            mapedit._reject_line_boundaries(value, where)
+            mapedit._reject_line_boundaries(value.replace("\n", "") if where in multiline else value, where)
         except mapedit.MapEditError as exc:
             raise LedgerWriteRefused(str(exc)) from exc
     elif isinstance(value, Mapping):
         for k, v in value.items():
             _reject_line_breaks(k, f"{where} key")
-            _reject_line_breaks(v, f"{where}.{k}")
+            _reject_line_breaks(v, f"{where}.{k}", multiline)
     elif isinstance(value, (list, tuple)):
         for i, v in enumerate(value):
             _reject_line_breaks(v, f"{where}[{i}]")
@@ -261,6 +271,9 @@ class LedgerSchema:
     header: str
     validate: Callable[[Mapping[str, Any]], None]
     validate_new: Callable[[Mapping[str, Any]], None] = lambda entry: None
+    #: Fields whose text may hold a line feed (as `<table>.<field>`, the
+    #: name `_reject_line_breaks` sees).
+    multiline: frozenset[str] = frozenset()
 
     def key_of(self, entry: Mapping[str, Any]) -> Key:
         return tuple(entry[f] for f in self.key_fields)
@@ -474,6 +487,9 @@ def _validate_engine_fields(schema: LedgerSchema, entry: Mapping[str, Any]) -> N
     settles = entry.get("settles")
     if settles is not None and (not isinstance(settles, list) or not all(isinstance(s, str) for s in settles)):
         raise ValueError(f"'settles' must be a list of entry ids, got {settles!r}")
+    by = entry.get(BY_FIELD)
+    if by is not None and (not isinstance(by, str) or not by):
+        raise ValueError(f"'by' must name a member (a non-empty string), got {by!r}")
     act = entry.get(schema.act_field)
     if act not in schema.acts:
         raise ValueError(f"{schema.act_field!r} must be one of {', '.join(sorted(schema.acts))}, got {act!r}")
@@ -656,6 +672,10 @@ def append_many(
         names = ", ".join(p.name for p in loaded.conflict_copies)
         raise LedgerWriteRefused(f"sync conflict copies sit beside {path.name}: {names}")
 
+    author = _author()
+    if author is not None:
+        batch = [_with_author(fields, author) for fields in batch]
+
     moment = (now or _local_now)()
     if moment.tzinfo is None:
         moment = moment.astimezone()
@@ -690,6 +710,36 @@ def append_many(
     return list(current.entries[len(ledger.entries):])
 
 
+def _author() -> str | None:
+    """`by` for the entries of this write (12.1), or None without
+    `me.toml`. A `me.toml` that cannot be read refuses the write: nothing
+    is written without saying who made it (`researchos.people`)."""
+    from researchos import people  # noqa: PLC0415 -- people imports records.files, not this module
+
+    try:
+        return people.current_member_id()
+    except people.PeopleError as exc:
+        raise LedgerWriteRefused(str(exc)) from exc
+
+
+def _with_author(fields: Mapping[str, Any], author: str) -> dict[str, Any]:
+    """`fields` with `by = author` -- unless the caller named who made the
+    act (`by` given), or the entry carries an earlier act forward: a
+    restored entry (`recovered_from`) or a migrated one (`via =
+    "migrated"`) keeps the attribution it had, and one that had none stays
+    the first researcher's; who restored it is `recovered_by`."""
+    out = dict(fields)
+    if out.get(BY_FIELD) is not None:
+        return out
+    if out.get("recovered_from") is not None:
+        out.setdefault("recovered_by", author)
+        return out
+    if out.get("via") == "migrated":
+        return out
+    out[BY_FIELD] = author
+    return out
+
+
 def _prepare_entry(schema: LedgerSchema, ledger: Ledger, fields: Mapping[str, Any], moment: datetime) -> dict[str, Any]:
     """One entry as `append` writes it after `ledger`: validated, its undo
     target resolved, `id` / `seq` / `at` / `settles` assigned."""
@@ -703,7 +753,7 @@ def _prepare_entry(schema: LedgerSchema, ledger: Ledger, fields: Mapping[str, An
         schema.validate_new(entry)
     except ValueError as exc:
         raise LedgerWriteRefused(str(exc)) from exc
-    _reject_line_breaks(entry, schema.table)
+    _reject_line_breaks(entry, schema.table, schema.multiline)
     key = schema.key_of(entry)
     state = ledger.state(key)
 

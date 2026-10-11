@@ -404,6 +404,41 @@ def _variables_row(conn: Connection | None, root: Path) -> Row:
                facts={"exists": True, "cards": len(found), "drafts": drafts, "issues": list(dict.fromkeys(issues))})
 
 
+def _notes_row(conn: Connection | None, root: Path) -> Row:
+    """12.6's notes: how many, on how many nodes, how many withdrawn, and
+    what stands between Research OS and trusting the file (9.3's rules)."""
+    from researchos.records import notes as notes_mod  # noqa: PLC0415 -- leaf use
+
+    path = notes_mod.notes_path(root)
+    got = read_identity(root)
+    identity = got.identity if got.state is IdentityState.PRESENT else None
+    loaded, decision = notes_mod.assess(conn, root, identity, for_migration=True)
+    found = notes_mod.summary(root)
+    issues: list[str] = []
+    problems: list[str] = []
+    facts: dict[str, Any] = {"file_state": loaded.state.value, "exists": path.exists()}
+    if found["state"] == "present":
+        count = f"{found['notes']} note(s) on {found['nodes']} node(s), {found['withdrawn']} withdrawn"
+        facts.update(notes=found["notes"], nodes=found["nodes"], withdrawn=found["withdrawn"])
+    elif loaded.state is RecordState.ABSENT:
+        count = "none yet"
+    else:
+        count = loaded.state.value
+    if decision.reason is not None:
+        issues.append(decision.reason)
+        facts.update(trust_message=notes_mod.message_of(decision), missing=len(decision.missing), line=decision.line)
+        if decision.reason == "shrunk":
+            problems.append(
+                f"shrunk: the file lacks {len(decision.missing)} entr(y/ies) the index applied "
+                f"-- answer with 'researchos records --answer file|restore --file notes'"
+            )
+        else:
+            problems.append(f"{decision.reason}: {decision.detail or ''}".rstrip(": "))
+    facts["issues"] = list(dict.fromkeys(issues))
+    return Row("Notes on nodes", _shown(path, root), count, _snapshot(root, path), tuple(dict.fromkeys(problems)),
+               code="notes", facts=facts)
+
+
 def card_file_paths(root: Path) -> list[tuple[Path, str]]:
     """The files of every card that get a daily snapshot, each with its
     snapshot subdirectory (`.researchos/backups/variables/<id>/`, 9.11): the log
@@ -426,14 +461,17 @@ def card_file_paths(root: Path) -> list[tuple[Path, str]]:
 def record_file_paths(root: Path) -> list[Path]:
     """The single-file records of 9.2 that get a daily snapshot: the
     judgment ledger, `mappings.toml`, `attempts.toml`, the arrangement,
-    and the attempt table `attempts.toml` names."""
+    the notes (12.6), and the attempt table `attempts.toml` names."""
     root = Path(root)
     record_dir = paths.project_dir(root)
+    from researchos.records import notes as notes_mod  # noqa: PLC0415 -- leaf use
+
     found = [
         ledger_mod.judgements_path(root),
         mappings_ingest.mappings_path(root),
         attempts_ingest.config_path(root),
         record_dir / "canvas.json",
+        notes_mod.notes_path(root),
     ]
     try:
         config = attempts_ingest.load_config(root)
@@ -479,7 +517,10 @@ def inventory(conn: Connection | None, root: Path) -> list[Row]:
     """The 9.2 inventory of `root` (module docstring). `conn` is the index,
     when there is one, for the shrink check; reads only."""
     root = Path(root)
-    rows = [_judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root), _variables_row(conn, root)]
+    rows = [
+        _judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root),
+        _variables_row(conn, root), _notes_row(conn, root),
+    ]
     waiting = paths.legacy_sources(root)
     if waiting:
         rows.append(Row(

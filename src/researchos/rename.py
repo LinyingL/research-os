@@ -215,6 +215,15 @@ def project_records(project_root: Path) -> dict[str, Any]:
     for directory in variables_mod.card_dirs(project_root) or []:
         log = ledger_mod.load_ledger(directory / variables_mod.LOG_FILENAME, variables_mod.CARD_LOG_SCHEMA)
         read[f"card:{directory.name}"] = _ledger_summary(log)
+    # V8 (12.1, 12.6): the notes ledger and the team file, when present.
+    from researchos import people  # noqa: PLC0415
+    from researchos.records import notes as notes_mod  # noqa: PLC0415
+
+    if notes_mod.notes_path(project_root).exists():
+        read["notes"] = _ledger_summary(notes_mod.load_notes(project_root))
+    team = people.read_team(project_root)
+    if team.state != "absent":
+        read["team"] = (team.state, tuple(m.payload()["id"] for m in team.members))
     return read
 
 
@@ -232,6 +241,12 @@ def home_records(home: Path) -> dict[str, Any]:
             return f"unreadable: {type(exc).__name__}"
 
     read: dict[str, Any] = {"registry": _json(home / "projects.json")}
+    me = home / "me.toml"
+    if me.exists():
+        try:
+            read["me"] = me.read_bytes()
+        except OSError as exc:
+            read["me"] = f"unreadable: {type(exc).__name__}"
     graphs = home / paths.GRAPHS_DIRNAME
     if graphs.is_dir():
         for index in sorted(graphs.iterdir()):

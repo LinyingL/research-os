@@ -137,12 +137,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Collection, ContextManager
 
-from researchos import db, paths
+from researchos import db, history, paths
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import dataflow as dataflow_ingest
 from researchos.ingest import files as files_ingest
 from researchos.ingest import git as git_ingest
 from researchos.ingest import mappings as mappings_ingest
+from researchos.ingest import pipeline
 from researchos.ingest import scan as scan_mod
 from researchos.records import judgements
 from researchos.records import ledger as ledger_mod
@@ -196,7 +197,7 @@ def take_snapshot(project_root: Path) -> WatchSnapshot:
     files: dict[str, tuple[int, int]] = {}
     steps: set[str] = set()
 
-    for record in record_paths(project_root):
+    for record in (*record_paths(project_root), notes_record_path(project_root)):
         record_entry = _stat_entry(record)
         if record_entry is not None:
             files[str(record)] = record_entry
@@ -253,6 +254,14 @@ def record_paths(project_root: Path) -> tuple[Path, Path, Path]:
         ledger_mod.judgements_path(project_root),
         canvas_record_path(project_root),
     )
+
+
+def notes_record_path(project_root: Path) -> Path:
+    """The notes ledger (12.6): a change re-applies the record -- the
+    index's copy of the notes -- and runs no ingest."""
+    from researchos.records import notes  # noqa: PLC0415 -- leaf use
+
+    return notes.notes_path(project_root)
 
 
 def card_record_paths(project_root: Path) -> list[Path]:
@@ -646,11 +655,12 @@ class ProjectWatcher:
         changed = _changed_paths(baseline, snapshot)
         self._snapshot_records(root, changed)
         mappings_file, ledger_file, canvas_file = (str(p) for p in record_paths(root))
+        notes_file = str(notes_record_path(root))
         mappings_changed = mappings_file in changed
-        ledger_changed = ledger_file in changed
+        ledger_changed = ledger_file in changed or notes_file in changed
         impl_paths = (baseline.impl_paths | snapshot.impl_paths) - (baseline.steps_paths | snapshot.steps_paths)
         cards_changed = {path for path in changed if _is_card_file(path, root) or path in impl_paths}
-        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file} - cards_changed)
+        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file} - cards_changed)
         error: str | None = None
         try:
             if attempts_changed or mappings_changed or ledger_changed or cards_changed:
@@ -836,8 +846,13 @@ class ProjectWatcher:
                     config = attempts_ingest.load_config(root)
                     counts = attempts_ingest.ingest_attempts_repo(conn, root, config)
                     logger.info("watcher re-ingested attempts for %s: %s", root, counts)
+                    if not mappings:
+                        # 12.7: `belongs_to` links wait for the attempts they name.
+                        pipeline.reingest_attempt_links(conn, root)
                     if steps_changed:
                         self._reingest_dataflow(conn, root)
+                    # 12.6: what this re-ingest saw joins the node history.
+                    history.record_after_scan(conn, root)
                 except Exception as exc:  # noqa: BLE001 -- re-raised below, after the other half
                     errors.append(exc)
             if mappings:

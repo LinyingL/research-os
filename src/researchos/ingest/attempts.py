@@ -557,6 +557,11 @@ def _cleanup_orphans(conn: Connection, file: str, seen_ids: set[str]) -> dict[st
         if node_id in seen_ids or not node_id.startswith(prefix):
             continue
         edges_removed += db.delete_edges_for_node(conn, node_id)
+        # A hand-drawn `belongs_to` (12.7) pointing at this row leaves the
+        # index with it -- only the index: its entry stays in
+        # mappings.toml, reported as waiting for the attempt, and is
+        # asserted again if the row comes back.
+        edges_removed += db.delete_edges_for_node(conn, node_id, extractor="mapping")
         db.delete_node(conn, node_id)
         removed += 1
         logger.info("%s no longer present in %s -- deleted (source file is sole authority on whether it exists)", node_id, file)

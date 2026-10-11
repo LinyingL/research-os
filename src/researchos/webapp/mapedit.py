@@ -585,6 +585,9 @@ def _reingest_attempts(project_root: Path) -> None:
         config = attempts_ingest.load_config(project_root)
         counts = attempts_ingest.ingest_attempts_repo(conn, project_root, config)
         logger.info("mapedit re-ingested attempts for %s: %s", project_root, counts)
+        from researchos.ingest import pipeline  # noqa: PLC0415 -- leaf use
+
+        pipeline.reingest_attempt_links(conn, project_root)  # 12.7: `belongs_to` links waiting on attempts
         # DESIGN.md 9.1: the end of a scan applies the judgment ledger
         # (an attempt row removed may take a judged link with it).
         from researchos.records import judgements  # noqa: PLC0415 -- records.ledger imports this module

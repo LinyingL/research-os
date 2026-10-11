@@ -554,6 +554,8 @@ README_RECORDS = (
     ("mappings.toml", "你手画的连线"),
     ("attempts.toml", "尝试表的配置"),
     ("variables/", "变量定义卡"),
+    ("notes.toml", "节点上的笔记"),
+    ("team.toml", "项目成员"),
     ("backups/", "以上记录的快照"),
 )
 

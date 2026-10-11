@@ -254,3 +254,18 @@ def _ingest_record_files(conn: Connection, project_root: Path, echo: Echo) -> No
         echo(f"  attempts: {_format_counts(counts)}")
     except attempts_ingest.AttemptsConfigError as exc:
         echo(f"  attempts: not read ({exc})")
+        return
+    reingest_attempt_links(conn, project_root)
+
+
+def reingest_attempt_links(conn: Connection, project_root: Path) -> None:
+    """After the attempt table was read: the hand-drawn `belongs_to` links
+    (DESIGN.md 12.7) wait for the attempts they name, so the mappings are
+    read once more when the file has any. Contained: the mappings' own
+    ingest already reported a file it could not read."""
+    if not mappings_ingest.has_attempt_links(project_root):
+        return
+    try:
+        mappings_ingest.ingest_mappings(conn, project_root)
+    except mappings_ingest.MappingsFileError:
+        pass

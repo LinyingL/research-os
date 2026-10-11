@@ -1019,6 +1019,9 @@ def _scan_attempts(conn, root: Path, report: ScanReport, echo: Echo) -> None:
         echo(f"  attempts: not read ({exc})")
         return
     echo(f"  attempts: {' '.join(f'{k}={v}' for k, v in counts.items())}")
+    from researchos.ingest import pipeline  # noqa: PLC0415 -- leaf use
+
+    pipeline.reingest_attempt_links(conn, root)  # 12.7: `belongs_to` links waiting on attempts
     results = consistency.run_checks(conn, root, config)
     report.findings = sum(len(r.findings) for r in results)
     echo(f"  attempts --check: {report.findings} finding(s)")

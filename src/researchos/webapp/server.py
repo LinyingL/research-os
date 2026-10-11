@@ -500,12 +500,13 @@ from researchos import project as project_identity
 from researchos.records import judgements
 from researchos.records import ledger as ledger_mod
 from researchos.records import lock as records_lock
+from researchos.records import notes as notes_mod
 from researchos.records import situation as records_situation
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import dataflow as dataflow_ingest
 from researchos.ingest import git as git_ingest
 from researchos.ingest import mappings as mappings_ingest
-from researchos.webapp import canvas, literature_api, mapedit, variables_api
+from researchos.webapp import canvas, literature_api, mapedit, node_api, variables_api
 from researchos.records import implementation as card_implementation
 from researchos.webapp import registry as project_registry
 from researchos.webapp import watcher as project_watcher
@@ -836,6 +837,18 @@ class LayoutUnreadableError(ApiError):
 
     status = 409
     state = "layout_unreadable"
+
+
+class NodeRefusedApiError(ApiError):
+    """A node-page request refused (`researchos.webapp.node_api.NodeApiRefused`,
+    DESIGN.md 12.1/12.6/12.7): its status, its code as `state`, and the
+    Chinese sentence under `message`. Nothing was written."""
+
+    def __init__(self, exc: node_api.NodeApiRefused) -> None:
+        super().__init__(str(exc))
+        self.status = exc.status
+        self.state = exc.code
+        self.extra = {"message": exc.message_zh, **exc.extra}
 
 
 class NoQuestionError(ApiError):
@@ -2103,11 +2116,16 @@ def _mapping_link(project_root: Path, entry: dict[str, Any]) -> dict[str, Any] |
     so the response is what the canvas will draw, not an echo of the
     request. None if the re-ingest did not land it."""
     from_type = dataflow_ingest.node_type_for_path(entry["from"])
-    to_type = dataflow_ingest.node_type_for_path(entry["to"])
+    to_path = entry["to"]
+    if entry["type"] == mappings_ingest.ATTEMPT_LINK:
+        # 12.7: `to` is the attempt's node id.
+        to_type, to_path = "attempt", to_path.removeprefix("attempt:")
+    else:
+        to_type = dataflow_ingest.node_type_for_path(entry["to"])
     if from_type is None or to_type is None:
         return None
     mapping = mappings_ingest.Mapping(
-        from_path=entry["from"], to_path=entry["to"], type=entry["type"],
+        from_path=entry["from"], to_path=to_path, type=entry["type"],
         from_type=from_type, to_type=to_type,
     )
     db_path = paths.graph_db_path(project_root)
@@ -2511,6 +2529,17 @@ def records_answer_payload(served: ServedProject, body: dict[str, Any]) -> dict[
             "ok": True, "file": "judgements", "answer": answer,
             "missing": len(answered.missing), "appended": len(answered.appended),
         }
+    if record == "notes":
+        shown = body.get("missing")
+        if not isinstance(shown, list) or not all(isinstance(i, str) and i for i in shown):
+            raise MissingParamError(
+                "request body must carry 'missing': the ids of the missing entries the question showed"
+            )
+        try:
+            return node_api.notes_answer_payload(served.root, served.project_id, answer, shown,
+                                                 timeout=WRITE_LOCK_TIMEOUT_S)
+        except node_api.NodeApiRefused as exc:
+            raise NodeRefusedApiError(exc) from exc
     if record == "canvas" and answer == "set_aside":
         moved = canvas.set_aside_layout(served.root)
         if moved is None:
@@ -2854,6 +2883,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             conn.close()
         self._send_json(200, payload)
 
+    @staticmethod
+    def _node_api(fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except node_api.NodeApiRefused as exc:
+            raise NodeRefusedApiError(exc) from exc
+
     def _check_local_origin(self) -> None:
         """Reject a request whose `Host` does not name this exact loopback
         server, and one whose `Origin` (when a browser sends one at all)
@@ -2965,7 +3001,24 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/migration":
                 self._send_json(200, migration_payload(self._served()))
             elif path == "/api/history":
-                self._send_json(200, history_payload(self._require_unblocked(), query))
+                served = self._require_unblocked()
+                if "node" in query:
+                    # 12.6: a node's versions; without `node`, a link's
+                    # judgment history (9.3) as before.
+                    self._send_json(200, self._node_api(lambda: node_api.history_payload(served.root, query)))
+                else:
+                    self._send_json(200, history_payload(served, query))
+            elif path == "/api/history/diff":
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.diff_payload(served.root, query)))
+            elif path == "/api/notes":
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._node_api(lambda: node_api.notes_payload(conn, served.root, query)))
+            elif path == "/api/trace":
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._node_api(lambda: node_api.trace_payload(conn, served.root, query)))
+            elif path == "/api/me":
+                self._send_json(200, node_api.me_payload())
             elif path == "/api/records":
                 # The 「记录」 panel (9.2): read even for a blocked project --
                 # it lists the folder's own files and writes nothing.
@@ -3161,9 +3214,25 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 with self.server.write_guard(human=True):
                     payload = records_answer_payload(served, body)
                 payload["generation"] = self.server.watcher.record_write(
-                    {str(ledger_mod.judgements_path(served.root)), str(canvas.canvas_record_path(served.root))},
+                    {str(ledger_mod.judgements_path(served.root)), str(canvas.canvas_record_path(served.root)),
+                     str(notes_mod.notes_path(served.root))},
                 )
                 self._send_json(200, payload)
+            elif parsed.path == "/api/notes":
+                # 12.6: a note added or withdrawn -- the notes ledger first
+                # (`researchos.records.notes`, which takes the project lock and
+                # re-checks identity), then the index's copy.
+                body = self._read_json_object()
+                served = self._served()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.notes_post_payload(
+                        served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S,
+                    ))
+                payload["generation"] = self.server.watcher.record_write({str(notes_mod.notes_path(served.root))})
+                self._send_json(200, payload)
+            elif parsed.path == "/api/me":
+                # 12.1: who I am on this machine (~/.researchos/me.toml).
+                self._send_json(200, self._node_api(lambda: node_api.me_set_payload(self._read_json_object())))
             elif parsed.path.startswith("/api/variables/"):
                 # What Research OS authors on a variable card (9.11 "In the app"):
                 # the card's log first, through `researchos.records.cards`, then
@@ -3228,10 +3297,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/api/projects", "/api/engine", "/api/generation"})
+_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
-    "/api/projects/add", "/api/projects/rename", "/api/shutdown",
+    "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",
 })
 
 

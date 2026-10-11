@@ -210,7 +210,7 @@ def _summary(data: Mapping[str, Any]) -> dict[str, Any]:
     """What a person needs to recognise an entry: no basis, everything else
     -- plus `migrated` (9.12: its `at` is the migration's, not the
     judgment's)."""
-    keep = ("id", "seq", "at", "verdict", "src", "dst", "type", "extractor", "via", "note", "undoes")
+    keep = ("id", "seq", "at", "by", "verdict", "src", "dst", "type", "extractor", "via", "note", "undoes")
     out = {k: _jsonable(data[k]) for k in keep if k in data}
     out["migrated"] = data.get("via") == MIGRATED_VIA
     return out
@@ -508,6 +508,7 @@ def apply_ledger(
         if identity is None:
             return ApplyResult(applied=False)
     _apply_cards(conn, root, identity)
+    _apply_notes(conn, root, identity, for_migration)
     loaded, decision = assess(conn, root, identity, for_migration=for_migration)
     db.set_record_status(conn, RECORD_STATUS_NAME, status_payload(decision, loaded))
     if not decision.may_apply:
@@ -537,9 +538,26 @@ def _apply_cards(conn: Connection, root: Path, identity: ProjectIdentity) -> Non
         logger.exception("applying the variable cards of %s failed", root)
 
 
+def _apply_notes(conn: Connection, root: Path, identity: ProjectIdentity, for_migration: bool) -> None:
+    """The notes ledger (12.6) is the third record the index keeps a copy
+    of; whatever applies the record refreshes it, contained like the cards."""
+    from researchos.records import notes  # noqa: PLC0415 -- notes imports this module lazily
+
+    try:
+        notes.apply_notes(conn, root, identity=identity, for_migration=for_migration)
+    except Exception:  # noqa: BLE001 -- a notes failure never stops the judgments being applied
+        logger.exception("applying the notes of %s failed", root)
+
+
 def apply_after_scan(conn: Connection, project_root: str | Path, echo: Callable[[str], None] = lambda _l: None) -> ApplyResult | None:
     """`apply_ledger` as the last step of a scan: a failure is reported and
-    contained (the scan itself landed), never raised into the scan's caller."""
+    contained (the scan itself landed), never raised into the scan's caller.
+    First, what the scan saw joins the node history (12.6,
+    `researchos.history.record_after_scan`, contained too)."""
+    # 12.6: every scan adds what it saw to the node history (contained there).
+    from researchos import history  # noqa: PLC0415 -- history imports the records
+
+    history.record_after_scan(conn, project_root)
     try:
         result = apply_ledger(conn, project_root)
     except Exception as exc:  # noqa: BLE001 -- the scan's own result must stand

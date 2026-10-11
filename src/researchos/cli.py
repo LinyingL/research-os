@@ -80,6 +80,9 @@ from sqlite3 import Connection
 from typing import Any
 
 from researchos import addproject, consistency, db, github, githubpush, inventory, lineage, literature, migration, names, paths, query, rename
+from researchos import history as history_mod
+from researchos import people
+from researchos import trace as trace_mod
 from researchos import project as project_identity
 from researchos import rebuild as rebuild_mod
 from researchos.ingest import attempts as attempts_ingest
@@ -96,6 +99,7 @@ from researchos.records import files as record_files
 from researchos.records import judgements
 from researchos.records import ledger as ledger_mod
 from researchos.records import lock as records_lock
+from researchos.records import notes as notes_mod
 from researchos.records import situation as records_situation
 from researchos.records import variables as variables_mod
 # S2: `researchos judge`, the optional semantic layer. Unlike researchos.mcp_server
@@ -616,6 +620,7 @@ def cmd_attempts(args: argparse.Namespace) -> int:
             except attempts_ingest.AttemptsConfigError as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 return 1
+            ingest_pipeline.reingest_attempt_links(conn, project_root)  # 12.7: links waiting on attempts
             print(f"Attempts ({config.file}): {_format_counts(counts)}")
 
             if args.check:
@@ -864,7 +869,19 @@ def cmd_records(args: argparse.Namespace) -> int:
     root = opened.root
     if args.missing is not None and not args.answer:
         raise CliError("--missing goes with --answer")
-    if args.answer:
+    if args.answer and args.file == "notes":
+        shown = None if args.missing is None else [i.strip() for i in args.missing.split(",") if i.strip()]
+        try:
+            missing, appended = notes_mod.answer_shrunk(root, args.answer, expected_missing=shown, expected_id=opened.project_id)
+        except notes_mod.NoteRefused as exc:
+            raise CliError(f"not answered: {exc}") from exc
+        except records_situation.WriteRefused as exc:
+            raise CliError(str(exc)) from exc
+        if args.answer == notes_mod.ANSWER_FILE:
+            print(f"Took the notes file as it is: {missing} entr(y/ies) dropped from the index's copy")
+        else:
+            print(f"Appended {appended} missing entr(y/ies) to .researchos/notes.toml (via = recovered)")
+    elif args.answer:
         shown = None if args.missing is None else [i.strip() for i in args.missing.split(",") if i.strip()]
         try:
             answered = judgements.answer_shrunk(root, args.answer, expected_missing=shown, expected_id=opened.project_id)
@@ -945,14 +962,29 @@ def _shrunk_question_lines(conn: Connection, root: Path) -> list[str]:
     answers bound to them (`--missing`)."""
     got = _identity_or_none(root)
     loaded, decision = judgements.assess(conn, root, got, for_migration=True)
+    out = _notes_question_lines(conn, root, got)
     if decision.reason != "shrunk" or not decision.missing:
-        return []
+        return out
     ids = ",".join(str(m["id"]) for m in decision.missing)
-    out = [f"  The judgment ledger has {len(decision.missing)} fewer judgment(s) than the index applied:"]
+    out += [f"  The judgment ledger has {len(decision.missing)} fewer judgment(s) than the index applied:"]
     for m in decision.missing:
         out.append(f"    {m.get('id')}: {m.get('verdict')} {m.get('src')} --{m.get('type')}--> {m.get('dst')}")
     out.append(f"  answer: researchos records --answer file --missing {ids} {root}     (take the file as it is)")
     out.append(f"      or: researchos records --answer restore --missing {ids} {root}  (append the missing ones back)")
+    return out
+
+
+def _notes_question_lines(conn: Connection, root: Path, identity: Any) -> list[str]:
+    """The same question for the notes ledger (12.6)."""
+    _loaded, decision = notes_mod.assess(conn, root, identity, for_migration=True)
+    if decision.reason != "shrunk" or not decision.missing:
+        return []
+    ids = ",".join(str(m["id"]) for m in decision.missing)
+    out = [f"  The notes file has {len(decision.missing)} fewer entr(y/ies) than the index applied:"]
+    for m in decision.missing:
+        out.append(f"    {m.get('id')}: {m.get('act')} on {m.get('node')}")
+    out.append(f"  answer: researchos records --file notes --answer file --missing {ids} {root}     (take the file as it is)")
+    out.append(f"      or: researchos records --file notes --answer restore --missing {ids} {root}  (append the missing ones back)")
     return out
 
 
@@ -1263,6 +1295,8 @@ def _format_trace_human(node_id: str, max_hops: int, result: dict[str, Any]) -> 
 
 def cmd_trace(args: argparse.Namespace) -> int:
     project_root = _resolve_project_root(args.path)
+    if args.chain:
+        return _trace_chain(project_root, args.node_id, as_json=args.json)
     conn = db.connect(_require_db(project_root))
     try:
         result = query.trace(conn, args.node_id, max_hops=args.hops)
@@ -1279,6 +1313,211 @@ def cmd_trace(args: argparse.Namespace) -> int:
         print(json.dumps({**result, "max_hops": args.hops}, sort_keys=True))
     else:
         print(_format_trace_human(args.node_id, args.hops, result))
+    return 0
+
+
+def _trace_chain(project_root: Path, node: str, *, as_json: bool) -> int:
+    """`researchos trace --chain` (DESIGN.md 12.7): data -> scripts -> the
+    node -> the drafts, with its attempts, the variable versions and every
+    break with its repair."""
+    conn = db.connect(_require_db(project_root))
+    try:
+        try:
+            result = trace_mod.chain(conn, project_root, node)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
+    finally:
+        conn.close()
+    if not result["found"]:
+        print(f"No such node or file: {result['node']['id']}", file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    for line in trace_mod.summary_lines(result):
+        print(line)
+    for item in result["breaks"]:
+        repair = item.get("repair")
+        if repair and repair["type"] in ("generates", "writes"):
+            print(f"  repair: researchos link <script> {item['path']} --type {repair['type']} {project_root}")
+        elif repair:
+            print(f"  repair: researchos link {item['path'] or item['node']} attempt:<table>#<n> --type belongs_to {project_root}")
+    return 0
+
+
+def cmd_link(args: argparse.Namespace) -> int:
+    """`researchos link FROM TO --type T` (DESIGN.md 8.5, 12.7): a hand-drawn
+    mapping appended to .researchos/mappings.toml -- 「补上来源」 (`generates`,
+    `writes`) and 「关联文件」 (`belongs_to`, TO = attempt:<table>#<n>) --
+    then the mappings read again. `--remove` deletes the entry instead."""
+    opened = _open(args.path)
+    _refuse_frozen(opened, "researchos link")
+    root = opened.root
+    db_path = _require_db(root)
+    try:
+        if args.remove:
+            result = mappings_ingest.delete_mapping(root, args.from_path, args.to_path, args.type)
+        else:
+            result = mappings_ingest.add_mapping(root, args.from_path, args.to_path, args.type, note=args.note)
+    except mappings_ingest.MappingsWriteError as exc:
+        raise CliError(f"not written ({exc.code}): {exc}") from exc
+    except records_situation.WriteRefused as exc:
+        raise CliError(str(exc)) from exc
+    with _write_guard(opened, human=False):
+        conn = db.connect(db_path)
+        try:
+            report = mappings_ingest.ingest_mappings(conn, root)
+            judgements.apply_after_scan(conn, root)
+        finally:
+            conn.close()
+    verb = "Removed" if args.remove else "Added"
+    print(f"{verb} {args.from_path} -> {args.to_path} ({args.type}) in {result['file']}")
+    for problem in report.problems:
+        print(f"  refused {problem.location()}: {problem.message}")
+    return 0
+
+
+def cmd_me(args: argparse.Namespace) -> int:
+    """`researchos me set|show` (DESIGN.md 12.1): who I am on this machine,
+    in ~/.researchos/me.toml. From then on every entry Research OS appends
+    to a ledger carries `by` = this id."""
+    if args.me_command == "set":
+        try:
+            me = people.write_me(args.name, args.email)
+        except people.PeopleError as exc:
+            raise CliError(str(exc)) from exc
+        print(f"Me: {me.name} <{me.email}> (id {me.id}) -- written to {people.me_path()}")
+        print("  every entry Research OS appends from now on carries by = " + me.id)
+        return 0
+    got = people.read_me()
+    if args.json:
+        print(json.dumps({"state": got.state, "path": str(got.path), "me": got.me.payload() if got.me else None,
+                          "error": got.error}, ensure_ascii=False, indent=2))
+        return 0 if got.state in ("present", "absent") else 1
+    if got.state == "absent":
+        print(f"Me: not set ({got.path} does not exist) -- entries carry no 'by'; set it with "
+              "researchos me set --name NAME --email EMAIL")
+        return 0
+    if got.me is None:
+        print(f"Me: {got.path} cannot be read ({got.state}: {got.error}); every ledger write is refused until "
+              f"it is fixed (researchos me set ...)")
+        return 1
+    print(f"Me: {got.me.name} <{got.me.email}> (id {got.me.id})")
+    return 0
+
+
+def _note_error(exc: Exception) -> CliError:
+    return CliError(f"not written: {exc}")
+
+
+def cmd_note(args: argparse.Namespace) -> int:
+    """`researchos note add|list|withdraw` (DESIGN.md 12.6): notes on any
+    node, in .researchos/notes.toml -- append-only; a note is withdrawn,
+    never edited."""
+    opened = _open(args.path)
+    root = opened.root
+    if args.note_command in ("add", "withdraw"):
+        try:
+            if args.note_command == "add":
+                entry = notes_mod.add_note(root, args.node, args.text, via="cli", expected_id=opened.project_id)
+                print(f"Note {entry.id} on {entry.get('node')} appended to .researchos/notes.toml"
+                      + (f" (by {entry.get('by')})" if entry.get("by") else ""))
+            else:
+                entry = notes_mod.withdraw_note(root, args.note_id, via="cli", expected_id=opened.project_id)
+                print(f"Note {args.note_id} withdrawn (entry {entry.id})")
+        except notes_mod.NoteRefused as exc:
+            raise _note_error(exc) from exc
+        except (records_situation.WriteRefused, records_lock.ProjectLockError) as exc:
+            raise _note_error(exc) from exc
+        return 0
+    db_path = paths.graph_db_path(root)
+    conn = db.connect(db_path) if db_path.exists() else None
+    try:
+        try:
+            listed = notes_mod.notes_for(root, args.node, conn)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
+    finally:
+        if conn is not None:
+            conn.close()
+    if args.json:
+        print(json.dumps(listed, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if not listed["trusted"]:
+        print(f"Notes file: {listed['state']} -- {listed['reason']} ({listed['detail'] or ''}); showing what the "
+              f"index last applied; nothing can be written until it is resolved")
+    shown = [n for n in listed["notes"] if args.all or not n["withdrawn"]]
+    print(f"Notes{' on ' + listed['node'] if listed['node'] else ''}: {len(shown)}")
+    for item in shown:
+        who = item["by"] or "the project's first researcher"
+        mark = f" [withdrawn {item.get('withdrawn_at')}]" if item["withdrawn"] else ""
+        where = "" if listed["node"] else f" {item['node']}"
+        print(f"  {item['id']} {item['at']} {who}{where}{mark}")
+        for line in str(item["text"]).splitlines():
+            print(f"    {line}")
+    return 0
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    """`researchos history NODE` (DESIGN.md 12.6): every version of a node,
+    newest first -- git's commits for a file git tracks, the version store
+    otherwise; an attempt's verdict as it moved; a variable's log."""
+    root = _resolve_project_root(args.path)
+    try:
+        listed = history_mod.versions(root, args.node)
+    except history_mod.HistoryError as exc:
+        raise CliError(str(exc)) from exc
+    if args.json:
+        print(json.dumps(listed, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print(f"History of {listed['node']} ({listed.get('origin') or 'none'}): {len(listed['versions'])} version(s)")
+    if listed.get("reason"):
+        print(f"  {listed['reason']}")
+    for v in listed["versions"]:
+        who = v.get("who") or "this machine"
+        extra = ""
+        if listed["kind"] == "attempt":
+            extra = f"  verdict={v.get('verdict') or '-'} result={v.get('result') or '-'}"
+        elif v.get("summary") and v["summary"].get("format"):
+            s = v["summary"]
+            extra = (f"  rows={s.get('rows', s.get('sheet_rows'))} columns="
+                     f"{','.join(s['columns']) if s.get('columns') else s.get('sheet_columns')}")
+        size = f" {v['size']}B" if v.get("size") is not None else ""
+        note = f"  {v['note']}" if v.get("note") else ""
+        print(f"  {v['version'][:12]:<12} {v.get('at')} {v.get('source')} {who}{size}{extra}{note}")
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """`researchos diff NODE [A B] [PATH]` (DESIGN.md 12.6): what changed
+    between two versions (default: the newest and the one before it) -- a
+    unified diff for text, a sentence for tables, the verdict for an
+    attempt. The project is the trailing positional or --path."""
+    rest = list(args.rest)
+    if len(rest) in (1, 3):
+        if args.diff_path is not None:
+            raise CliError("give the project root either positionally or via --path, not both")
+        path = rest.pop()
+    else:
+        path = args.diff_path or "."
+    if len(rest) not in (0, 2):
+        raise CliError("name both versions to compare, or neither")
+    a, b = (rest + [None, None])[:2]
+    root = _resolve_project_root(path)
+    try:
+        result = history_mod.diff(root, args.node, a, b)
+    except history_mod.HistoryError as exc:
+        raise CliError(str(exc)) from exc
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print(f"{result['node']}: {result['a']['version']} -> {result['b']['version']}")
+    if result["summary"]:
+        print(f"  {result['summary']}")
+    if result["diff"]:
+        sys.stdout.write(result["diff"])
+    if result["truncated"]:
+        print("  (diff truncated)")
     return 0
 
 
@@ -2456,7 +2695,70 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--json", action="store_true", help="output structured JSON instead of human-readable text"
     )
+    p.add_argument(
+        "--chain", action="store_true",
+        help="the result's whole chain (DESIGN.md 12.7): data -> scripts -> node -> drafts, its attempts, the "
+             "variable versions it used, and every break with its repair; NODE may be a project-relative path",
+    )
     p.set_defaults(func=cmd_trace)
+
+    p = sub.add_parser(
+        "link",
+        help="Append a hand-drawn mapping to .researchos/mappings.toml (repair a broken trace): "
+             "'generates'/'writes' (补上来源) or 'belongs_to' with TO = attempt:<table>#<n> (关联文件)",
+    )
+    p.add_argument("from_path", metavar="FROM", help="project-relative path (script, data file or figure)")
+    p.add_argument("to_path", metavar="TO", help="project-relative path, or attempt:<table file>#<number> for belongs_to")
+    p.add_argument("--type", required=True, choices=list(mappings_ingest.MAPPING_TYPES))
+    p.add_argument("--note", default=None, help="optional note, in your words")
+    p.add_argument("--remove", action="store_true", help="remove this mapping instead")
+    add_project_path(p)
+    p.set_defaults(func=cmd_link)
+
+    p = sub.add_parser("me", help="Who I am on this machine (~/.researchos/me.toml): 'researchos me set|show'")
+    me_sub = p.add_subparsers(dest="me_command", required=True)
+    q = me_sub.add_parser("set", help="set your name and the e-mail of your shared-drive account (the id is the e-mail, lower-cased)")
+    q.add_argument("--name", required=True)
+    q.add_argument("--email", required=True)
+    q.set_defaults(func=cmd_me)
+    q = me_sub.add_parser("show", help="show who this machine's entries are written by")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_me)
+
+    p = sub.add_parser("note", help="Notes on any node, in .researchos/notes.toml: 'researchos note add|list|withdraw'")
+    note_sub = p.add_subparsers(dest="note_command", required=True)
+    q = note_sub.add_parser("add", help="append a note on a node (a node id, or a project-relative path)")
+    q.add_argument("node")
+    q.add_argument("text")
+    add_project_path(q)
+    q.set_defaults(func=cmd_note)
+    q = note_sub.add_parser("list", help="the notes on a node (every node's when NODE is omitted)")
+    q.add_argument("node", nargs="?", default=None, help="a node id or a project-relative path (then the project as PATH or --path)")
+    q.add_argument("--all", action="store_true", help="include withdrawn notes")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
+    q.set_defaults(func=cmd_note)
+    q = note_sub.add_parser("withdraw", help="withdraw a note (appends a 'withdrawn' entry; the note itself is kept)")
+    q.add_argument("note_id")
+    add_project_path(q)
+    q.set_defaults(func=cmd_note)
+
+    p = sub.add_parser("history", help="Every version of a node, newest first (git commits, or the version store)")
+    p.add_argument("node", help="a node id or a project-relative path; attempt:<table>#<n>; variable:<id>")
+    p.add_argument("--json", action="store_true")
+    add_project_path(p)
+    p.set_defaults(func=cmd_history)
+
+    p = sub.add_parser(
+        "diff",
+        help="What changed between two versions of a node: 'researchos diff NODE [A B] [PATH]' "
+             "(default: the newest and the one before it)",
+    )
+    p.add_argument("node")
+    p.add_argument("rest", nargs="*", metavar="A B PATH", help="two versions from 'researchos history', and/or the project root")
+    p.add_argument("--path", dest="diff_path", default=None, metavar="PATH", help=FLAG_PATH_HELP)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_diff)
 
     p = sub.add_parser(
         "lineage",
@@ -2687,6 +2989,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--answer", choices=list(judgements.ANSWERS), default=None,
         help="when the judgment ledger has fewer entries than the index applied: 'file' takes the file as "
              "truth (以文件为准), 'restore' appends the missing entries back (把缺少的补回文件)",
+    )
+    p.add_argument(
+        "--file", choices=["judgements", "notes"], default="judgements",
+        help="with --answer: which ledger the answer is for (default: judgements)",
     )
     p.add_argument("--clean", action="store_true", help="list kept copies nothing refers to (dry run)")
     p.add_argument("--yes", action="store_true", help="with --clean: remove them")

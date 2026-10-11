@@ -173,7 +173,17 @@ GRAMMAR: dict[str, tuple[str, str]] = {
     "writes": ("script", "dataset"),
     "generates": ("script", "figure"),
 }
-MAPPING_TYPES = tuple(GRAMMAR)
+# DESIGN.md 12.7 「关联文件」: a script, data file or figure belongs to an
+# attempt. Not a canvas socket (attempts are frames there, 8.1), so it is
+# kept apart from `GRAMMAR`, which the canvas mirrors. `to` names the
+# attempt as its node id does -- `attempt:<table file>#<number>` -- and the
+# attempt must be in the index for the link to be asserted (an attempt is
+# never conjured from a mapping, unlike a file's ghost node). The basis
+# of such a link (9.6) is its identity.
+ATTEMPT_LINK = "belongs_to"
+ATTEMPT_FROM_TYPES = ("script", "dataset", "figure")
+MAPPING_TYPES = (*GRAMMAR, ATTEMPT_LINK)
+_ATTEMPT_PREFIX = "attempt:"
 
 # The header a freshly created file starts with -- verbatim from 8.5.
 FILE_HEADER = (
@@ -394,10 +404,16 @@ def _validate_identity(project_root: Path, entry: dict[str, Any]) -> tuple[str, 
     edge_type = entry["type"]
     if not isinstance(edge_type, str):
         raise _EntryRefused("not_string", "'type' must be a string")
-    if edge_type not in GRAMMAR:
+    if edge_type not in MAPPING_TYPES:
         raise _EntryRefused(
             "bad_type", f"type {edge_type!r} is not one of {' | '.join(MAPPING_TYPES)}"
         )
+    if edge_type == ATTEMPT_LINK:
+        from_path = _confine(project_root, entry["from"], "from")
+        from_type = _classify(from_path, "from")
+        if from_type not in ATTEMPT_FROM_TYPES:
+            raise _EntryRefused("grammar", f"'{ATTEMPT_LINK}' goes from a script, data file or figure, not a {from_type}")
+        return from_path, _attempt_ref(project_root, entry["to"]), edge_type, from_type, "attempt"
     from_path = _confine(project_root, entry["from"], "from")
     to_path = _confine(project_root, entry["to"], "to")
     from_type = _classify(from_path, "from")
@@ -413,6 +429,37 @@ def _validate_identity(project_root: Path, entry: dict[str, Any]) -> tuple[str, 
             f"this entry goes from a {from_type} to a {to_type}{hint}",
         )
     return from_path, to_path, edge_type, from_type, to_type
+
+
+def _attempt_ref(project_root: Path, raw: object) -> str:
+    """`to` of a `belongs_to` entry as `<table file>#<number>`: the attempt
+    table's path confined like any path, and the row's number."""
+    if not isinstance(raw, str):
+        raise _EntryRefused("not_string", f"'to' must be a string, got {type(raw).__name__}")
+    value = raw.strip()
+    if value.startswith(_ATTEMPT_PREFIX):
+        value = value[len(_ATTEMPT_PREFIX):]
+    table, sep, number = value.rpartition("#")
+    if not sep or not table or not number.strip():
+        raise _EntryRefused(
+            "bad_attempt", f"'to' {raw!r} must name an attempt as attempt:<table file>#<number>"
+        )
+    return f"{_confine(project_root, table, 'to')}#{number.strip()}"
+
+
+def _written_to(m_type: str, to_path: str) -> str:
+    """How `to` is written in the file: an attempt by its node id."""
+    return f"{_ATTEMPT_PREFIX}{to_path}" if m_type == ATTEMPT_LINK else to_path
+
+
+def has_attempt_links(project_root: str | Path) -> bool:
+    """Whether the file holds any `belongs_to` entry (so that an attempts
+    ingest, which may have just created the attempt it names, re-runs the
+    mappings ingest). False when the file cannot be read."""
+    try:
+        return any(m.type == ATTEMPT_LINK for m in load_mappings(project_root).mappings)
+    except MappingsFileError:
+        return False
 
 
 def _header_lines(text: str, entry_count: int) -> list[int | None]:
@@ -569,8 +616,23 @@ def _ingest_mappings(conn: Connection, project_root: Path, sc: scan_mod.Scan) ->
         logger.info("%s %s: %s", MAPPINGS_RELATIVE_PATH, problem.location(), problem.message)
 
     asserted: set[tuple[str, str, str]] = set()
+    if any(m.type == ATTEMPT_LINK for m in result.mappings):
+        db.ensure_v8_tables(conn)  # the edge type of migration 0007
     for m in result.mappings:
-        for node_id, node_type, rel in ((m.from_id, m.from_type, m.from_path), (m.to_id, m.to_type, m.to_path)):
+        if m.type == ATTEMPT_LINK and db.get_node(conn, m.to_id) is None:
+            problem = MappingProblem(
+                m.index, m.line, "attempt_not_found",
+                f"{m.to_id} is not in the index (is the attempt table read? see 'researchos attempts'); "
+                "the entry is kept and asserted once the attempt is there",
+            )
+            result.problems.append(problem)
+            counts["refused"] += 1
+            logger.info("%s %s: %s", MAPPINGS_RELATIVE_PATH, problem.location(), problem.message)
+            continue
+        ends = [(m.from_id, m.from_type, m.from_path)]
+        if m.type != ATTEMPT_LINK:
+            ends.append((m.to_id, m.to_type, m.to_path))
+        for node_id, node_type, rel in ends:
             if db.get_node(conn, node_id) is None:
                 db.upsert_node(conn, node_id, node_type, title=rel, attrs={"ghost_origin": EXTRACTOR})
                 counts["nodes_created"] += 1
@@ -768,7 +830,7 @@ def _add_mapping(
         raise MappingsWriteError(
             "duplicate", f"mapping {norm_from} -> {norm_to} ({edge_type}) already exists"
         )
-    entry = {"from": norm_from, "to": norm_to, "type": edge_type}
+    entry = {"from": norm_from, "to": _written_to(edge_type, norm_to), "type": edge_type}
     if note is not None:
         entry["note"] = note
     entry["date"] = date

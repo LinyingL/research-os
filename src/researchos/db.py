@@ -112,6 +112,10 @@ EDGE_TYPES = frozenset(
         # by researchos.ingest.dataflow.
         "reads",
         "writes",
+        # Added in migration 0007 (DESIGN.md 12.7): `<script|dataset|figure>
+        # --belongs_to--> attempt`, a hand-drawn mapping only (extractor
+        # "mapping", from `.researchos/mappings.toml`) -- 「关联文件」.
+        "belongs_to",
     }
 )
 
@@ -1286,6 +1290,51 @@ def forget_variable_card(conn: sqlite3.Connection, card: str, ids: list[str] | N
         conn.execute("DELETE FROM variable_cards WHERE card = ?", (card,))
     else:
         conn.executemany("DELETE FROM applied_variable_entries WHERE card = ? AND id = ?", [(card, i) for i in ids])
+    conn.commit()
+
+
+# -- the notes ledger's applied copy (DESIGN.md 12.6, migration 0007) ----------------
+
+
+def has_v8_tables(conn: sqlite3.Connection) -> bool:
+    """Whether this index has migration 0007 (`applied_notes`, and the
+    `belongs_to` edge type)."""
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'applied_notes'").fetchone()
+    return row is not None
+
+
+def ensure_v8_tables(conn: sqlite3.Connection) -> None:
+    """Migrate an index made before 0007 -- by the first caller that needs
+    it, which holds the project lock (as `researchos.records.cards` does for
+    0006)."""
+    if not has_v8_tables(conn):
+        migrate(conn)
+
+
+def applied_note_rows(conn: sqlite3.Connection) -> dict[str, str]:
+    """{entry id: the entry's JSON as the index applied it}."""
+    if not has_v8_tables(conn):
+        return {}
+    return {r["id"]: r["data"] for r in conn.execute("SELECT id, data FROM applied_notes").fetchall()}
+
+
+def write_applied_notes(conn: sqlite3.Connection, applied: dict[str, tuple[int | None, str]]) -> None:
+    """Replace the whole applied copy ({id: (seq, json)}) in one transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM applied_notes")
+        conn.executemany(
+            "INSERT INTO applied_notes (id, seq, data) VALUES (?, ?, ?)",
+            [(entry_id, seq, data) for entry_id, (seq, data) in applied.items()],
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
+def forget_applied_notes(conn: sqlite3.Connection, ids: list[str]) -> None:
+    conn.executemany("DELETE FROM applied_notes WHERE id = ?", [(i,) for i in ids])
     conn.commit()
 
 
