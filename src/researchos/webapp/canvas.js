@@ -8,7 +8,7 @@
   function that touches app.html's own helpers (apiGet, apiPost,
   openFilePanel, renderViewFailure, renderBlockingError, clearProjectState,
   projectStateOf,
-  verdictMarker, VERDICT_BADGE_CLASS, state) does so only when called, by
+  verdictTone, state) does so only when called, by
   which time the inline script has defined them. Wrapped in one IIFE so no
   name here can collide with the page's own top-level declarations.
 
@@ -128,10 +128,6 @@ window.RCECanvas = (function () {
       outputs: [{ label: "写出", carries: "data" }, { label: "生成", carries: "figure" }],
     },
     figure: { inputs: [{ label: "生成自", carries: "figure" }], outputs: [] },
-  };
-  const TONE_BY_BADGE = {
-    "badge-olive": "olive", "badge-ochre": "ochre", "badge-clay": "clay",
-    "badge-gray": "gray", "badge-plain": "plain",
   };
 
   // 8.1's socket grammar -- the whole of what a human may draw -- as ONE
@@ -370,15 +366,16 @@ window.RCECanvas = (function () {
   }
 
   // The confirm popover's one assertion line (8.3's own example:
-  // 「17-….Rmd 生成 → 17-….pdf」). A script is the actor of both its verbs,
-  // so a 读取 names the script first; the arrow still points the way the
-  // data flows, matching the link on screen.
+  // 「17-….Rmd 生成 17-….pdf」). A script is the actor of both its verbs,
+  // so a 读取 names the script first. 12.11: the relation is said in words,
+  // never with an arrow character -- the drawn link shows the direction.
   function assertionText(fromNode, toNode, type) {
     const a = nodeLabel(fromNode), b = nodeLabel(toNode);
-    if (type === "reads") return b + " 读取 ← " + a;
-    if (type === "writes") return a + " 写出 → " + b;
-    if (type === "generates") return a + " 生成 → " + b;
-    return a + " → " + b;
+    if (type === "reads") return b + " 读取 " + a;
+    if (type === "writes") return a + " 写出 " + b;
+    if (type === "generates") return a + " 生成 " + b;
+    if (type === "belongs_to") return a + " 属于 " + b;
+    return a + " 关联 " + b;
   }
 
   // The nearest socket on `side` ("in" | "out") of any card within
@@ -537,7 +534,7 @@ window.RCECanvas = (function () {
         group.slice().sort(compareByStep).forEach((n) => {
           if (n.id === anchor.id || linkedIds.has(n.id) || anchored.has(n.id)) return;
           anchored.add(n.id);
-          out.push({ id: "step:" + anchor.id + "->" + n.id, from: anchor.id, to: n.id, virtual: true });
+          out.push({ id: "step:" + anchor.id + "|" + n.id, from: anchor.id, to: n.id, virtual: true });
         });
       });
     });
@@ -901,8 +898,8 @@ window.RCECanvas = (function () {
       scope, search,
       button("适应全部", "适应全部（F）", () => fitAll()),
       button("100%", "实际大小", () => zoomAboutCenter(1)),
-      button("＋", "放大", () => zoomAboutCenter(cv.camera.zoom * 1.2)),
-      button("－", "缩小", () => zoomAboutCenter(cv.camera.zoom / 1.2)),
+      button("放大", "放大", () => zoomAboutCenter(cv.camera.zoom * 1.2)),
+      button("缩小", "缩小", () => zoomAboutCenter(cv.camera.zoom / 1.2)),
       more,
     );
     return { bar, scope, search, menu };
@@ -1075,10 +1072,10 @@ window.RCECanvas = (function () {
     });
   }
 
-  function frameTone(verdict) {
-    const marker = typeof verdictMarker === "function" ? verdictMarker(verdict) : null;
-    const badge = marker && typeof VERDICT_BADGE_CLASS !== "undefined" ? VERDICT_BADGE_CLASS[marker] : "badge-plain";
-    return TONE_BY_BADGE[badge] || "plain";
+  // A frame's tone is its attempt's verdict status (12.11; the tree's own
+  // label colors, from app.html's verdictTone).
+  function frameTone(status) {
+    return typeof verdictTone === "function" ? verdictTone(status) : "plain";
   }
 
   // Which of a frame's visible members its rectangle is drawn around. A
@@ -1115,7 +1112,7 @@ window.RCECanvas = (function () {
     (cv.data.frames || []).forEach((f) => {
       const r = frameRect(f);
       if (!r) return;
-      const g = svgEl("g", null, "cv-frame tone-" + frameTone(f.verdict));
+      const g = svgEl("g", null, "cv-frame tone-" + frameTone(f.verdict_status));
       g.appendChild(svgEl("rect", { x: r.x, y: r.y, width: r.w, height: r.h, rx: 8 }, "cv-frame-rect"));
       const title = svgEl("text", { x: r.x + 12, y: r.y + 18 }, "cv-frame-title");
       const label = "#" + String(f.number).replace(/^#/, "") + " · " + (f.title || "");
@@ -1180,9 +1177,10 @@ window.RCECanvas = (function () {
     }
   }
 
+  // 「现行 · #17 · TopicShift→波动」: the status word, never the marker (12.11).
   function scopeOptionLabel(s) {
-    const marker = typeof verdictMarker === "function" ? verdictMarker(s.verdict) : null;
-    return (marker ? marker + " " : "") + "#" + String(s.number).replace(/^#/, "") + " · " + (s.title || "");
+    const label = s.verdict_status && s.verdict_status.label ? s.verdict_status.label + " · " : "";
+    return label + "#" + String(s.number).replace(/^#/, "") + " · " + (s.title || "");
   }
 
   function renderScopeSelect() {
@@ -1197,7 +1195,7 @@ window.RCECanvas = (function () {
       const opt = document.createElement("option");
       opt.value = s.id;
       opt.textContent = scopeOptionLabel(s) + (s.current ? "（当前）" : "");
-      opt.title = s.verdict || "";
+      opt.title = s.verdict_status && s.verdict_status.words ? s.verdict_status.words : "";
       sel.appendChild(opt);
     });
     sel.value = cv.scope;
@@ -1728,7 +1726,7 @@ window.RCECanvas = (function () {
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-label", "确认标注");
     const line = htmlEl("div", "cv-pop-line", assertionText(from, to, check.type));
-    line.title = check.from + "\n→ " + check.to;
+    line.title = check.from + "\n" + check.to;
     const field = htmlEl("label", "cv-pop-field");
     const input = htmlEl("input", "form-input cv-pop-note");
     input.type = "text";

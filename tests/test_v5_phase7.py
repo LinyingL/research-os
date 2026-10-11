@@ -291,7 +291,7 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
     for mount in ('id="notices"', 'id="records-btn"'):
         assert mount in html
     for copy in (
-        "待复核：", "仍然成立", "改为确认", "改为否决", "撤回", "把这条旧判断用到它上面",
+        " 条判断待复核", "仍然成立", "改为确认", "改为否决", "撤回", "把这条旧判断用到它上面",
         "来源文件暂不可读", "图谱里还没有这条关联", "记录冲突", "不计入待复核",
         "记录文件比图谱少了 ", "以文件为准", "把缺少的补回文件",
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",

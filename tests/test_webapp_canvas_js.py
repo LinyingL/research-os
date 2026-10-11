@@ -481,15 +481,17 @@ def test_duplicate_human_mapping_is_refused_but_a_machine_twin_is_not():
 def test_assertion_line_matches_the_design_example():
     rmd = {**_node(RMD17), "label": "17-叙事更替与汇率波动.Rmd"}
     pdf = {**_node(PDF17), "label": "17-叙事更替与汇率波动.pdf"}
+    # 12.11 (V8 U2): the relation in words, no arrow character -- the drawn
+    # link shows the direction.
     assert _call("assertionText", args=[rmd, pdf, "generates"]) == (
-        "17-叙事更替与汇率波动.Rmd 生成 → 17-叙事更替与汇率波动.pdf"
+        "17-叙事更替与汇率波动.Rmd 生成 17-叙事更替与汇率波动.pdf"
     )
-    # A script is the actor of both its verbs; the arrow follows the data.
+    # A script is the actor of both its verbs.
     assert _call("assertionText", args=[_node(MONTHLY), _node(RMD17), "reads"]) == (
-        "17-叙事更替与汇率波动.Rmd 读取 ← topicshift_monthly.csv"
+        "17-叙事更替与汇率波动.Rmd 读取 topicshift_monthly.csv"
     )
     assert _call("assertionText", args=[_node(PY16), _node(MONTHLY), "writes"]) == (
-        "16-构建指标.py 写出 → topicshift_monthly.csv"
+        "16-构建指标.py 写出 topicshift_monthly.csv"
     )
 
 

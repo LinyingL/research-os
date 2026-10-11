@@ -402,6 +402,8 @@ def test_locating_a_moved_project_keeps_its_chosen_name_over_http(tmp_path):
 
 def test_the_no_project_page_hides_the_view_tabs():
     """10.8 scenario 1 (first launch) with 10.1's "the page shows only
-    this": no view tabs while there is no project."""
+    this": no view tabs while there is no project -- since 12.9 (V8 U2) no
+    sidebar sections, no 数据与代码 switch and no page title."""
     css = _src()[_src().index("<style>"):_src().index("</style>")]
-    assert "body.no-project .tabs { display: none !important; }" in css
+    assert "body.no-project .side-nav, body.no-project .share-line { display: none !important; }" in css
+    assert "body.no-project .subnav, body.no-project .page-title { display: none !important; }" in css

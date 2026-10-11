@@ -253,6 +253,17 @@ Endpoints (all GET unless noted):
                             external resources, zero build step -- it reads
                             this same JSON API entirely client-side (see that
                             file's own top comment for the two-view contract).
+    GET  /desk.js      -- the sidebar and the desk (DESIGN.md 12.0, 12.9;
+                            task V8 phase U2), served verbatim from
+                            `src/researchos/webapp/desk.js` exactly as
+                            /canvas.js is: read fresh, same origin check,
+                            packaged as `package-data`.
+    GET  /api/desk     -- `?since=<ISO time>` (default: the last seven
+                            days): the desk's changes since then, the
+                            results whose trace lost its evidence, the
+                            abandoned routes (`researchos.desk.desk`). Reads
+                            only; proposals and the shared drive's state
+                            come from /api/proposals and /api/share.
     GET  /canvas.js    -- the node canvas's script (DESIGN.md section 8, task
                             V4 phase 2a), served verbatim from
                             `src/researchos/webapp/canvas.js` with the same
@@ -497,6 +508,7 @@ from typing import Any, Callable, Iterator
 from researchos import addproject, cloud, db, github, githubpush, inventory, lineage, migration, names, officialness, paths
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
+from researchos import desk as desk_mod
 from researchos.records import judgements
 from researchos.records import ledger as ledger_mod
 from researchos.records import lock as records_lock
@@ -2619,6 +2631,7 @@ def _app_html() -> str:
 
 
 _CANVAS_JS_PATH = Path(__file__).parent / "canvas.js"
+_DESK_JS_PATH = Path(__file__).parent / "desk.js"
 
 
 def _canvas_js() -> str:
@@ -2628,6 +2641,12 @@ def _canvas_js() -> str:
     the app stays zero-build and zero-external-resource: two files served
     as written instead of one."""
     return _CANVAS_JS_PATH.read_text(encoding="utf-8")
+
+
+def _desk_js() -> str:
+    """`src/researchos/webapp/desk.js` verbatim (the sidebar and the desk,
+    DESIGN.md 12.9), read fresh per request like `_canvas_js`."""
+    return _DESK_JS_PATH.read_text(encoding="utf-8")
 
 
 # -- HTTP plumbing -------------------------------------------------------------
@@ -2962,6 +2981,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_html(200, _app_html())
             elif path == "/canvas.js":
                 self._send_text(200, _canvas_js(), "text/javascript; charset=utf-8")
+            elif path == "/desk.js":
+                self._send_text(200, _desk_js(), "text/javascript; charset=utf-8")
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
@@ -3050,6 +3071,11 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest)))
                 else:
                     raise NotFoundError(f"no such endpoint: {path}")
+            elif path == "/api/desk":
+                # 12.0 / 12.9: the desk -- reads only.
+                served = self._require_unblocked()
+                since = (query.get("since") or [None])[0]
+                self._json_from_conn(lambda conn: desk_mod.desk(conn, served.root, since))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.
@@ -3404,7 +3430,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
+_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",

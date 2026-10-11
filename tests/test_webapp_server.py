@@ -590,9 +590,10 @@ def test_http_root_returns_spa_shell_with_key_mount_points(live_server):
         # scan's progress chip and the no-project welcome.
         'id="project-state"', 'id="project-menu-btn"', 'id="project-menu"', 'id="scan-chip"',
         'id="welcome"', 'id="welcome-add-btn"',
-        'data-view="tree"', 'data-view="lineage"',
-        # Task V4 phase 2a: the canvas tab and its view.
-        'data-view="canvas"', 'id="view-canvas"',
+        # DESIGN.md 12.9 (V8 U2): the sidebar's sections route to the views;
+        # the canvas is 关系图 inside 数据与代码.
+        'data-view="tree"', 'data-view="lineage"', 'data-subview="canvas"', 'id="view-canvas"',
+        'id="view-desk"', 'id="sidebar"',
     ):
         assert mount_point in html, f"missing mount point in served app.html: {mount_point}"
 
@@ -686,13 +687,14 @@ def test_served_app_loads_canvas_js_same_origin_before_its_inline_script(live_se
 
 
 def test_served_app_tabs_read_in_product_language(live_server):
-    """DESIGN.md section 8.8: the tabs read 「决策树」「血缘」「画布」, the brand
-    mark stays Research OS, and the old English tab labels are gone."""
+    """DESIGN.md section 8.8, as 12.9 reshaped it (V8 U2): the tabs became
+    the sidebar's sections, in product language; the brand mark stays
+    Research OS, and the old English tab labels are gone."""
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
-    tabs = re.findall(r'<button class="tab[^"]*" data-view="(\w+)"[^>]*>([^<]+)</button>', html)
-    # V5 phase 9 (9.11 "In the app"): a fourth tab, 「变量」; V7 (11.4) a fifth, 「文献」.
-    assert tabs == [
-        ("tree", "决策树"), ("lineage", "血缘"), ("canvas", "画布"), ("variables", "变量"), ("literature", "文献"),
+    sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label">([^<]+)</span>', html)
+    assert [(v, label) for _s, v, label in sections] == [
+        ("desk", "工作台"), ("tree", "研究路线"), ("results", "成果"), ("variables", "变量"), ("literature", "文献"),
+        ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
     ]
     assert '<span class="brand-mark">Research OS</span>' in html
     assert ">Decision Tree<" not in html and ">Lineage<" not in html
@@ -851,7 +853,7 @@ def test_canvas_js_carries_the_design_copy_in_product_language():
     for copy in (
         "数据集", "脚本", "图表",                          # 8.1 node types
         "来源", "数据", "读取", "写出", "生成", "生成自",   # 8.1 sockets
-        "查找节点…", "适应全部", "100%", "＋", "－",        # 8.2 toolbar
+        "查找节点…", "适应全部", "100%", "放大", "缩小",    # 8.2 toolbar, in words (12.11)
         "重新排列", "将丢弃你在这个视图里摆放的位置",      # 8.4 relayout (as amended)
         "尚未入图", "文件不存在", "检测到循环", "全部",     # 8.1/8.2/8.4/8.7
     ):

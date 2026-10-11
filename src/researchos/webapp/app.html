@@ -13,6 +13,21 @@
   researchos/webapp/server.py's module docstring for the contract each endpoint
   promises).
 
+  The page's structure (DESIGN.md 12.9, task V8 phase U2): a sidebar --
+  the project switcher at the top (the 10.1 menu below), the open
+  project's sections 工作台 / 研究路线 / 成果 / 变量 / 文献 / 数据与代码 /
+  提议 / 成员, and at the bottom the shared drive's line, who I am, 记录 and
+  停止服务 -- beside a workspace whose serif title names the section. The
+  desk (工作台, 12.0) and the sidebar's live lines are the third served
+  file, /desk.js (window.RODesk; GET /api/desk, /api/proposals, /api/share,
+  /api/me). Until the later phases rebuild them, 研究路线 is the decision
+  tree, 数据与代码 the lineage report with 关系图 (the canvas) beside it,
+  and 成果 / 提议 / 成员 say plainly that they are still being made. 12.11
+  applies to everything on screen: no emoji (a verdict is its status word
+  from `verdict_status`, then the researcher's words), no arrow characters
+  (relations in words), disclosure by the platform's own <details>, icons
+  only as monochrome line drawings written here.
+
   Auto-refresh (task V3 phase 2): the server's own watcher re-ingests the
   attempts map / step scripts when they change on disk and bumps a
   generation counter; this page polls GET /api/generation every 2s and,
@@ -79,11 +94,11 @@
   so continuing to poll would only spray connection errors). A failure
   leaves the page fully usable and says so in the header line.
 
-  Three views, switched by the top tab bar (labels per DESIGN.md section
-  8.8: 「决策树」「血缘」「画布」; the last one used is remembered in
-  localStorage -- a per-viewer convenience, unlike the canvas scope, which
-  8.7 says defaults to the current attempt -- wrapped so blocked storage
-  just starts on 决策树):
+  The views, shown through the sidebar's sections (12.9; before V8 the
+  top tab bar 「决策树」「血缘」「画布」). The last one used is remembered in
+  localStorage under its old key -- a per-viewer convenience, unlike the
+  canvas scope, which 8.7 says defaults to the current attempt -- wrapped
+  so blocked storage just starts on the desk:
     - 决策树 (default): GET /api/tree. attempt -> step script ->
       read/write data files, all three layers already computed
       server-side from graph edges; this page only renders them.
@@ -156,33 +171,67 @@ body {
 }
 .hidden { display: none !important; }
 
-#app { min-height: 100vh; display: flex; flex-direction: column; }
+/* DESIGN.md 12.9 / 12.11: a sidebar and a workspace. The sidebar is the
+   paper's own alt tone, separated by one rule; typography carries the
+   hierarchy (the serif for the brand and the page title, the sans for the
+   rest), icons are monochrome line drawings, never colored. */
+#app { min-height: 100vh; display: flex; }
+.sidebar {
+  flex: none; width: 236px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  display: flex; flex-direction: column; background: var(--paper-alt); border-right: 1px solid var(--line-strong);
+  padding: 1.25rem 0 0.9rem;
+}
+.side-brand { display: flex; flex-direction: column; gap: 0.1rem; padding: 0 1.25rem 1rem; }
+.brand-mark { font-family: var(--font-serif); font-size: 1.3rem; letter-spacing: 0.04em; }
+.brand-sub { font-size: 0.74rem; color: var(--ink-soft); }
+.side-project { padding: 0.6rem 1.25rem 0.9rem; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.side-eyebrow { font-size: 0.72rem; color: var(--ink-soft); margin-bottom: 0.15rem; }
+.side-nav { display: flex; flex-direction: column; padding: 0.7rem 0.6rem; gap: 0.05rem; }
+.side-item {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; font: inherit; font-size: 0.9rem;
+  color: var(--ink-soft); background: none; border: none; border-left: 2px solid transparent; padding: 0.38rem 0.65rem;
+  cursor: pointer;
+}
+.side-item:hover { color: var(--ink); background: var(--paper); }
+.side-item:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
+.side-item[aria-current="page"] { color: var(--ink); font-weight: 600; border-left-color: var(--clay); background: var(--paper); }
+.side-icon { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.side-label { flex: 1; }
+.side-count { font-size: 0.74rem; color: var(--ink-soft); font-weight: normal; }
+.side-foot { margin-top: auto; padding: 0.8rem 1.25rem 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.78rem; }
+.share-line { color: var(--ink-soft); }
+.me-line { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: baseline; }
+.me-name { color: var(--ink); }
+.me-role, .me-unset { color: var(--ink-soft); }
+.side-tools { display: flex; gap: 1rem; margin-top: 0.2rem; }
+body.no-project .side-nav, body.no-project .share-line { display: none !important; }
 
+.workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .topbar {
   display: flex;
   align-items: baseline;
-  gap: 2rem;
-  padding: 1.25rem 2rem 1rem;
-  border-bottom: 1px solid var(--line-strong);
+  gap: 1rem;
+  padding: 1.3rem 2rem 0.9rem;
+  border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
-.brand { display: flex; align-items: baseline; gap: 0.6rem; }
-.brand-mark { font-family: var(--font-serif); font-size: 1.4rem; letter-spacing: 0.04em; }
-.brand-sub { font-size: 0.78rem; color: var(--ink-soft); }
+.page-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.45rem; margin: 0; letter-spacing: 0.02em; }
+.topbar .new-attempt-btn { margin-left: auto; }
 
 /* 「项目：<名称> ▾」 (DESIGN.md 10.1): the project line's one button and its
    small menu -- the registered projects, then 添加 / 重新扫描 / 重命名 /
    移除. Quiet like the line it sits in; the menu is paper on a strong rule. */
 .project-menu-wrap { position: relative; display: inline-block; font-family: var(--font-sans); }
+.project-menu-wrap { display: block; }
 .project-menu-btn {
-  font: inherit; font-size: 0.8rem; color: var(--ink); background: none;
-  border: 1px solid transparent; padding: 0.05rem 0.35rem; margin-left: -0.35rem; cursor: pointer;
-  max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: baseline;
+  font: inherit; font-size: 0.95rem; font-weight: 600; color: var(--ink); background: none; text-align: left;
+  border: 1px solid transparent; padding: 0.15rem 0.4rem; margin-left: -0.4rem; cursor: pointer;
+  width: calc(100% + 0.8rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: baseline;
 }
 .project-menu-btn:hover, .project-menu-btn[aria-expanded="true"] { border-color: var(--line-strong); background: var(--paper-alt); }
 .project-menu-btn:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
 .project-menu {
-  position: absolute; top: calc(100% + 0.25rem); left: -0.35rem; z-index: 45; min-width: 17rem; max-width: min(26rem, 92vw);
+  position: absolute; top: calc(100% + 0.25rem); left: -0.4rem; z-index: 45; min-width: 17rem; max-width: min(26rem, 92vw);
   background: var(--paper); border: 1px solid var(--line-strong); box-shadow: 0 6px 18px rgba(38, 34, 27, 0.12);
   padding: 0.3rem 0; font-size: 0.84rem; color: var(--ink);
 }
@@ -192,7 +241,8 @@ body {
 }
 .pm-item:hover:not(:disabled), .pm-item:focus-visible { background: var(--paper-alt); outline: none; }
 .pm-item:disabled { color: var(--ink-soft); cursor: default; }
-.pm-mark { flex: none; width: 1em; color: var(--clay); }
+.pm-mark { flex: none; width: 1em; color: var(--clay); align-self: center; display: inline-flex; }
+.pm-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .pm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-flag { flex: none; font-size: 0.74rem; color: var(--ink-soft); }
 .pm-row { display: flex; align-items: baseline; }
@@ -266,38 +316,25 @@ body {
 .state-note .state-note-title { font-weight: 600; color: var(--clay); margin-bottom: 0.25rem; }
 .state-note p { margin: 0.3rem 0 0; color: var(--ink-soft); }
 
-.tabs { display: flex; gap: 1.5rem; margin-left: auto; }
-.tab {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.92rem;
-  color: var(--ink-soft);
-  padding: 0.3rem 0 0.5rem;
-  border-bottom: 2px solid transparent;
+/* 数据与代码's two ways of looking: the list and 关系图 (12.9). */
+.subnav { display: flex; gap: 1.4rem; margin: -0.4rem 0 1.2rem; border-bottom: 1px solid var(--line); }
+.subnav-item {
+  background: none; border: none; cursor: pointer; font: inherit; font-size: 0.86rem; color: var(--ink-soft);
+  padding: 0.2rem 0 0.45rem; border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
-.tab.active { color: var(--ink); border-bottom-color: var(--clay); font-weight: 600; }
-.tab:hover:not(.active) { color: var(--ink); }
+.subnav-item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--clay); }
+.subnav-item:hover { color: var(--ink); }
+.subnav-item:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+body.canvas-mode .subnav { margin: 0; padding: 0.5rem 1rem 0; }
 
-.project-line {
-  flex-basis: 100%;
-  font-family: var(--font-mono);
-  font-size: 0.74rem;
-  color: var(--ink-soft);
-  margin-top: 0.25rem;
-}
-
-.project-line-msg { margin-left: 0.6rem; }
+.project-line-msg { font-size: 0.78rem; color: var(--ink-soft); }
 .project-line-msg:empty { display: none; }
 
-/* No project yet (DESIGN.md 10.1): every tab shows only the welcome. */
+/* No project yet (DESIGN.md 10.1): every section shows only the welcome. */
 .welcome { display: none; max-width: 560px; margin: 3.5rem auto 0; }
 body.no-project .welcome { display: block; }
 body.no-project .view, body.no-project .notices, body.no-project #new-attempt-btn,
-body.no-project #records-btn { display: none !important; }
-/* 10.1: with no project the page shows only the welcome -- no view tabs. */
-body.no-project .tabs { display: none !important; }
+body.no-project #records-btn, body.no-project .subnav, body.no-project .page-title { display: none !important; }
 .welcome p { margin: 0 0 0.6rem; font-size: 0.95rem; }
 .welcome .welcome-what { color: var(--ink-soft); font-size: 0.84rem; margin-top: 1.1rem; }
 .welcome .btn { margin-top: 0.6rem; font-size: 0.88rem; padding: 0.45rem 1rem; }
@@ -333,7 +370,7 @@ body.no-project .tabs { display: none !important; }
 .push-name { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; font-size: 0.84rem; }
 .push-name .form-input { flex: 1; min-width: 10rem; font-family: var(--font-mono); font-size: 0.8rem; }
 
-main#main { flex: 1; padding: 1.75rem 2rem 4rem; max-width: 1080px; width: 100%; margin: 0 auto; }
+main#main { flex: 1; padding: 1.6rem 2rem 4rem; max-width: 1040px; width: 100%; }
 
 .guide-card { border: 1px solid var(--line-strong); background: var(--paper-alt); padding: 1.5rem 1.75rem; max-width: 640px; }
 .guide-card h2 { font-family: var(--font-serif); font-size: 1.15rem; margin: 0 0 0.6rem; }
@@ -367,49 +404,72 @@ main#main { flex: 1; padding: 1.75rem 2rem 4rem; max-width: 1080px; width: 100%;
 .attempt-list { margin: 0; }
 .attempt-children { margin-left: 1.4rem; }
 details.attempt-node { border-bottom: 1px solid var(--line); }
-details.attempt-node > summary { list-style: none; cursor: default; padding: 0.55rem 0; display: flex; align-items: flex-start; gap: 0.6rem; }
-details.attempt-node > summary::-webkit-details-marker { display: none; }
+/* 12.11: disclosure is the platform's own control -- the summary keeps its
+   native marker; the row inside it opens the record. */
+details.attempt-node > summary { display: list-item; cursor: pointer; padding: 0.55rem 0; color: var(--ink-soft); }
+details.attempt-node > summary:focus-visible, details.script-node > summary:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
 
-.caret {
-  cursor: pointer;
-  color: var(--ink-soft);
-  font-size: 0.75rem;
-  width: 1em;
-  flex: none;
-  padding-top: 0.3em;
-  user-select: none;
-  transition: transform 0.12s;
-}
-details[open] > summary .caret { transform: rotate(90deg); }
-
-.row-content { cursor: pointer; display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.1rem 0.35rem; margin: -0.1rem -0.35rem; }
+.row-content { cursor: pointer; display: inline-flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.1rem 0.35rem; margin: -0.1rem 0 -0.1rem 0.1rem; color: var(--ink); vertical-align: top; max-width: calc(100% - 1.5rem); }
 .row-content:hover { background: var(--paper-alt); }
 .attempt-number { font-family: var(--font-mono); font-size: 0.82rem; color: var(--ink-soft); }
 .attempt-date { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-soft); }
 .attempt-desc { font-weight: 500; }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.6em;
-  height: 1.6em;
-  padding: 0 0.25em;
-  border: 1px solid;
-  font-size: 0.9rem;
-  line-height: 1;
-  flex: none;
+/* 12.11: a verdict is a quiet tinted text label (现行 / 已放弃 / 待定 /
+   不利证据 / 被否 / 归档 / 其它), followed by the researcher's own words. */
+.status-label {
+  display: inline-block; flex: none; font-size: 0.74rem; line-height: 1.5; padding: 0 0.4rem; white-space: nowrap;
+  color: var(--ink); background: var(--paper-alt);
 }
-.badge-olive { background: var(--olive-soft); border-color: var(--olive); }
-.badge-ochre { background: var(--ochre-soft); border-color: var(--ochre); }
-.badge-clay { background: var(--clay-soft); border-color: var(--clay); }
-.badge-gray { background: var(--gray-soft); border-color: var(--gray); }
-.badge-plain { background: var(--paper-alt); border-color: var(--line-strong); }
+.status-label.tone-olive { background: var(--olive-soft); color: var(--olive); }
+.status-label.tone-ochre { background: var(--ochre-soft); color: var(--ochre); }
+.status-label.tone-clay { background: var(--clay-soft); color: var(--clay); }
+.status-label.tone-gray { background: var(--gray-soft); color: var(--gray); }
+.status-label.tone-plain { background: var(--paper-alt); color: var(--ink-soft); }
+.verdict-inline { display: inline-flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
+.verdict-words { color: var(--ink-soft); font-size: 0.86rem; }
+.own-mark { font-size: 0.74rem; color: var(--clay); }
+.tree-filter { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: baseline; font-size: 0.86rem; margin: 0 0 0.8rem; color: var(--ink-soft); }
+.attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
+
+/* -- The desk (工作台, DESIGN.md 12.0): lists, not dashboards. -- */
+.desk { display: flex; flex-direction: column; gap: 2rem; max-width: 820px; }
+.desk-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.08rem; margin: 0 0 0.35rem; }
+.desk-sub { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
+.desk-sub.quiet { margin-top: 1rem; }
+.desk-empty { font-size: 0.86rem; color: var(--ink-soft); margin: 0.2rem 0 0; }
+.desk-alone { font-size: 0.9rem; border-left: 2px solid var(--ochre); padding-left: 0.7rem; margin: 0; }
+.desk-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.desk-row { display: flex; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
+.desk-when { flex: none; width: 6.2rem; font-size: 0.76rem; color: var(--ink-soft); padding-top: 0.15rem; white-space: nowrap; }
+.desk-main { flex: 1; min-width: 0; }
+.desk-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.desk-what { font-size: 0.86rem; display: inline-flex; flex-wrap: wrap; gap: 0.35rem; align-items: baseline; }
+.desk-what.strong { font-weight: 600; }
+.desk-flag { font-size: 0.74rem; color: var(--clay); }
+.desk-meta { font-size: 0.76rem; color: var(--ink-soft); margin-top: 0.1rem; }
+.desk-meta:empty { display: none; }
+.desk-note { font-size: 0.84rem; margin: 0.25rem 0 0; padding-left: 0.6rem; border-left: 2px solid var(--line-strong); color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.desk-note.plain { border-left: none; padding-left: 0; color: var(--ink-soft); }
+.desk-break { font-size: 0.84rem; margin: 0.2rem 0 0; color: var(--clay); display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
+.desk-repair { color: var(--ink-soft); font-size: 0.78rem; }
+.desk-actions { display: flex; gap: 0.5rem; margin-top: 0.35rem; }
+.desk-link {
+  font: inherit; font-size: 0.88rem; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer;
+  text-align: left; border-bottom: 1px solid var(--line-strong); word-break: break-all;
+}
+.desk-link:hover { border-bottom-color: var(--clay); }
+.desk-link:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.desk-link.mono, .desk-files .mono { font-family: var(--font-mono); font-size: 0.8rem; }
+.desk-files { list-style: none; margin: 0 0 0.8rem; padding: 0; }
+.desk-files li { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
+.panel-h3 { font-size: 0.8rem; color: var(--ink-soft); font-weight: normal; margin: 1rem 0 0.3rem; }
+.proposal-sentence { font-family: var(--font-serif); font-size: 1rem; margin: 0 0 0.6rem; }
+.placeholder { font-size: 0.9rem; color: var(--ink-soft); max-width: 560px; }
 
 .script-list { margin: 0.15rem 0 0.6rem 1.9rem; }
 details.script-node { border-left: 1px dashed var(--line-strong); margin: 0.15rem 0; }
-details.script-node > summary { list-style: none; cursor: default; padding: 0.35rem 0 0.35rem 0.7rem; display: flex; align-items: baseline; gap: 0.5rem; }
-details.script-node > summary::-webkit-details-marker { display: none; }
+details.script-node > summary { display: list-item; cursor: pointer; padding: 0.35rem 0 0.35rem 0.7rem; color: var(--ink-soft); }
 .script-path { font-family: var(--font-mono); font-size: 0.85rem; }
 
 .rw-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); margin: 0.3rem 0 0.1rem 1.9rem; }
@@ -417,7 +477,7 @@ details.script-node > summary::-webkit-details-marker { display: none; }
 .file-list { list-style: none; margin: 0 0 0.5rem 1.9rem; padding: 0; }
 .file-row { display: flex; align-items: baseline; gap: 0.45rem; padding: 0.22rem 0.35rem; margin: 0 -0.35rem; cursor: pointer; font-family: var(--font-mono); font-size: 0.83rem; }
 .file-row:hover { background: var(--paper-alt); }
-.flow-icon { flex: none; color: var(--ink-soft); width: 1em; text-align: center; }
+
 .flow-icon.read { color: var(--olive); }
 .flow-icon.write { color: var(--ochre); }
 .orphan-dot { flex: none; width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--clay); }
@@ -464,6 +524,7 @@ details.script-node > summary::-webkit-details-marker { display: none; }
 }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.3rem; border-bottom: 1px solid var(--line-strong); }
 .panel-title { font-family: var(--font-mono); font-size: 0.95rem; word-break: break-all; }
+.panel-title.plain-title { font-family: var(--font-serif); font-size: 1.05rem; word-break: normal; }
 .panel-subtitle { font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.25rem; }
 .panel-close { background: none; border: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--ink-soft); padding: 0 0.2rem; }
 .panel-close:hover { color: var(--ink); }
@@ -518,17 +579,8 @@ details.script-node > summary::-webkit-details-marker { display: none; }
 .diff-row.new { background: var(--olive-soft); border-color: var(--olive); }
 .confirm-note { font-size: 0.84rem; margin: 0.7rem 0 0.4rem; }
 
-/* -- Page footer: the 停止服务 affordance (task V3 phase 4) -- deliberately
-   quiet: a small ink-soft text button, clay only on hover, tucked after the
-   main content where a launcher-style app's "quit" belongs. */
-.pagefoot {
-  max-width: 1080px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 2rem 1.5rem;
-  display: flex;
-  justify-content: flex-end;
-}
+/* -- 记录 and 停止服务 (task V3 phase 4), at the sidebar's foot -- deliberately
+   quiet: small ink-soft text buttons, clay only on hover. */
 .shutdown-btn {
   background: none;
   border: none;
@@ -550,8 +602,8 @@ details.script-node > summary::-webkit-details-marker { display: none; }
    olive / ink as the three type colors (数据集 / 脚本 / 图表), clay kept for
    "a human did this" or "something is wrong" -- never a type color. */
 body.canvas-mode #app { height: 100vh; min-height: 0; }
+body.canvas-mode .workspace { height: 100vh; min-height: 0; }
 body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-direction: column; min-height: 0; }
-body.canvas-mode .pagefoot { max-width: none; padding: 0.2rem 1rem; border-top: 1px solid var(--line); }
 #view-canvas { flex: 1; min-height: 0; position: relative; overflow-y: auto; }
 .cv-root { position: absolute; inset: 0; overflow: hidden; background: var(--paper); user-select: none; -webkit-user-select: none; }
 .cv-svg { display: block; width: 100%; height: 100%; touch-action: none; }
@@ -792,7 +844,6 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .records-path { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; margin-top: 0.2rem; }
 .records-count { font-size: 0.84rem; margin-top: 0.15rem; }
 .records-problem { font-size: 0.8rem; color: var(--clay); margin-top: 0.2rem; }
-.pagefoot { gap: 1.2rem; }
 
 /* -- 变量 (DESIGN.md 9.11, task V5 phase 9): the cards, set as a readable
    document. Ochre = waits for you (a question, a review), clay = wrong,
@@ -858,10 +909,11 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-summary { font-family: var(--font-serif); font-size: 1.08rem; margin: 0.4rem 0 0.8rem; }
 .lit-note { font-size: 0.82rem; color: var(--clay); margin: -0.4rem 0 0.8rem; }
 .lit-draft { border-bottom: 1px solid var(--line); }
-.lit-draft-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: none; padding: 0.6rem 0.35rem; cursor: pointer; }
+.lit-draft-head { display: list-item; padding: 0.6rem 0.35rem; cursor: pointer; color: var(--ink-soft); }
+.lit-draft-head > span { margin-right: 0.6rem; }
+.lit-draft-head .lit-file { color: var(--ink); }
 .lit-draft-head:hover { background: var(--paper-alt); }
 .lit-draft-head:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
-.lit-caret { flex: none; width: 1em; color: var(--ink-soft); }
 .lit-file { font-family: var(--font-mono); font-size: 0.82rem; word-break: break-all; }
 .lit-counts { font-size: 0.78rem; color: var(--ink-soft); }
 .lit-cites { padding: 0 0 0.6rem 1.6rem; }
@@ -885,57 +937,82 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 @media (max-width: 720px) {
   main#main { padding: 1.25rem 1rem 3rem; }
   .topbar { padding: 1rem 1rem 0.75rem; }
-  .pagefoot { padding: 0 1rem 1.25rem; }
+  .sidebar { width: 196px; }
 }
 </style>
 </head>
 <body>
 <div id="app">
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">Research OS</span>
-      <span class="brand-sub">研究脉络</span>
-    </div>
-    <span id="project-state" class="project-state hidden" role="status"></span>
-    <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
-    <span id="scan-chip" class="scan-chip hidden" role="status" aria-live="polite"></span>
-    <button id="new-attempt-btn" class="btn new-attempt-btn" type="button">＋ 新增尝试</button>
-    <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="tree" role="tab" aria-selected="true">决策树</button>
-      <button class="tab" data-view="lineage" role="tab" aria-selected="false">血缘</button>
-      <button class="tab" data-view="canvas" role="tab" aria-selected="false">画布</button>
-      <button class="tab" data-view="variables" role="tab" aria-selected="false">变量</button>
-      <button class="tab" data-view="literature" role="tab" aria-selected="false">文献</button>
-    </nav>
-    <div class="project-line" id="project-line">
+  <!-- DESIGN.md 12.9: the sidebar replaces the tabs -- the project switcher
+       (10.1's menu, re-skinned: a real menu button, no glyph), the open
+       project's sections, and at the bottom the shared drive's line and who
+       I am. Icons are monochrome line drawings (12.11), written here. -->
+  <aside class="sidebar" id="sidebar" aria-label="项目与栏目">
+    <div class="side-brand"><span class="brand-mark">Research OS</span><span class="brand-sub">研究脉络</span></div>
+    <div class="side-project" id="project-line">
+      <div class="side-eyebrow" id="project-eyebrow">项目</div>
       <span class="project-menu-wrap" id="project-menu-wrap">
-        <button id="project-menu-btn" class="project-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="project-menu">项目：… ▾</button>
+        <button id="project-menu-btn" class="project-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="project-menu" aria-describedby="project-eyebrow">…</button>
         <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目"></div>
-      </span><span id="project-line-msg" class="project-line-msg"></span>
+      </span>
     </div>
-  </header>
-  <main id="main">
-    <!-- V5: what the record needs from the researcher right now (a
-         migration waiting, a ledger Research OS cannot trust, the shrink question,
-         a read-only open, a project moved under the page). -->
-    <div id="notices" class="notices" aria-live="polite"></div>
-    <!-- DESIGN.md 10.1: no project yet -- every tab shows only this. -->
-    <section id="welcome" class="welcome" aria-label="还没有项目">
-      <p>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
-      <p>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
-      <button id="welcome-add-btn" class="btn" type="button">添加项目…</button>
-      <p class="welcome-what">项目就是存放一项研究的那个文件夹。</p>
-    </section>
-    <section id="view-tree" class="view"></section>
-    <section id="view-lineage" class="view hidden"></section>
-    <section id="view-canvas" class="view hidden"></section>
-    <section id="view-variables" class="view hidden"></section>
-    <section id="view-literature" class="view hidden"></section>
-  </main>
-  <footer class="pagefoot">
-    <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里">记录</button>
-    <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程">停止服务</button>
-  </footer>
+    <nav class="side-nav" id="side-nav" aria-label="栏目">
+      <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label">工作台</span></button>
+      <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label">研究路线</span></button>
+      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label">成果</span></button>
+      <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label">变量</span></button>
+      <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label">文献</span></button>
+      <button type="button" class="side-item" data-section="data" data-view="lineage"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 4c0-.9 2.2-1.5 5-1.5s5 .6 5 1.5-2.2 1.5-5 1.5S3 4.9 3 4zM3 4v8c0 .9 2.2 1.5 5 1.5s5-.6 5-1.5V4M3 8c0 .9 2.2 1.5 5 1.5S13 8.9 13 8"/></svg><span class="side-label">数据与代码</span></button>
+      <button type="button" class="side-item" data-section="proposals" data-view="proposals"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3M2.5 9.5 4 3.5h8l1.5 6v3h-11z"/></svg><span class="side-label">提议</span><span class="side-count" id="side-count-proposals"></span></button>
+      <button type="button" class="side-item" data-section="members" data-view="members"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5zM2 13.5c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5M11 7.2a1.8 1.8 0 1 0 0-3.6M11.6 10c1.5.3 2.4 1.5 2.4 3.5"/></svg><span class="side-label">成员</span></button>
+    </nav>
+    <div class="side-foot">
+      <div id="share-line" class="share-line hidden" role="status"></div>
+      <div id="me-line" class="me-line"></div>
+      <div class="side-tools">
+        <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里">记录</button>
+        <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程">停止服务</button>
+      </div>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <h1 class="page-title" id="page-title">工作台</h1>
+      <span id="project-line-msg" class="project-line-msg"></span>
+      <span id="project-state" class="project-state hidden" role="status"></span>
+      <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
+      <span id="scan-chip" class="scan-chip hidden" role="status" aria-live="polite"></span>
+      <button id="new-attempt-btn" class="btn new-attempt-btn hidden" type="button">新增尝试</button>
+    </header>
+    <main id="main">
+      <!-- V5: what the record needs from the researcher right now (a
+           migration waiting, a ledger Research OS cannot trust, the shrink question,
+           a read-only open, a project moved under the page). -->
+      <div id="notices" class="notices" aria-live="polite"></div>
+      <!-- DESIGN.md 10.1: no project yet -- every section shows only this. -->
+      <section id="welcome" class="welcome" aria-label="还没有项目">
+        <p>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
+        <p>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
+        <button id="welcome-add-btn" class="btn" type="button">添加项目…</button>
+        <p class="welcome-what">项目就是存放一项研究的那个文件夹。</p>
+      </section>
+      <!-- 数据与代码 (12.9): the lineage report as a list, and 关系图 (the
+           canvas, no longer a destination of its own). -->
+      <div id="data-switch" class="subnav hidden" role="tablist" aria-label="数据与代码">
+        <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true">清单</button>
+        <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false">关系图</button>
+      </div>
+      <section id="view-desk" class="view"></section>
+      <section id="view-tree" class="view hidden"></section>
+      <section id="view-results" class="view hidden"></section>
+      <section id="view-lineage" class="view hidden"></section>
+      <section id="view-canvas" class="view hidden"></section>
+      <section id="view-variables" class="view hidden"></section>
+      <section id="view-literature" class="view hidden"></section>
+      <section id="view-proposals" class="view hidden"></section>
+      <section id="view-members" class="view hidden"></section>
+    </main>
+  </div>
 </div>
 
 <div id="panel-backdrop" class="panel-backdrop hidden"></div>
@@ -953,6 +1030,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <!-- The 画布 view (DESIGN.md section 8): defines window.RCECanvas only; it
      calls this page's helpers below at run time, never at load time. -->
 <script src="/canvas.js"></script>
+<!-- The sidebar's live lines and the desk (DESIGN.md 12.0, 12.9): window.RODesk. -->
+<script src="/desk.js"></script>
 <script>
 "use strict";
 
@@ -1457,14 +1536,33 @@ function renderViewFailure(container, err) {
 
 // -- Tabs ---------------------------------------------------------------------
 
+// DESIGN.md 12.9: the views are shown through the sidebar's sections. Until
+// the later phases rebuild them, 研究路线 is the decision tree, 数据与代码
+// the lineage report with 关系图 (the canvas) beside it, and 成果 / 提议 /
+// 成员 say plainly that they are still being made.
 const views = {
+  desk: document.getElementById("view-desk"),
   tree: document.getElementById("view-tree"),
+  results: document.getElementById("view-results"),
   lineage: document.getElementById("view-lineage"),
   canvas: document.getElementById("view-canvas"),
   variables: document.getElementById("view-variables"),
   literature: document.getElementById("view-literature"),
+  proposals: document.getElementById("view-proposals"),
+  members: document.getElementById("view-members"),
 };
 let currentView = null;
+
+const SECTION_OF_VIEW = {
+  desk: "desk", tree: "routes", results: "results", lineage: "data", canvas: "data",
+  variables: "variables", literature: "literature", proposals: "proposals", members: "members",
+};
+const SECTION_TITLES = {
+  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
+  data: "数据与代码", proposals: "提议", members: "成员",
+};
+const PLACEHOLDER_VIEWS = new Set(["results", "proposals", "members"]);
+let lastDataView = "lineage"; // 数据与代码 reopens on the list or 关系图, as last left
 
 // The last view (tab) is remembered per browser: a per-viewer convenience
 // Section 8 does not decide either way, so every storage access is wrapped
@@ -1485,19 +1583,31 @@ function storedView() {
 // Returns the canvas's load when this call started one, so a command that
 // acts on the canvas (适应全部 from the menu) can wait for it.
 function activateView(name) {
+  if (!Object.prototype.hasOwnProperty.call(views, name)) name = "desk";
   if (currentView === name) return null;
   currentView = name;
   try { window.localStorage.setItem(VIEW_STORAGE_KEY, name); } catch (err) { /* convenience only */ }
-  document.querySelectorAll(".tab").forEach((btn) => {
-    const active = btn.dataset.view === name;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-selected", String(active));
+  const section = SECTION_OF_VIEW[name];
+  if (section === "data") lastDataView = name;
+  document.querySelectorAll(".side-item").forEach((btn) => {
+    if (btn.dataset.section === section) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
   });
+  document.querySelectorAll(".subnav-item").forEach((btn) => {
+    btn.setAttribute("aria-selected", String(btn.dataset.subview === name));
+  });
+  document.getElementById("data-switch").classList.toggle("hidden", section !== "data");
+  document.getElementById("page-title").textContent = SECTION_TITLES[section] || "";
+  // 新增尝试 belongs to the attempts (研究路线); the native menu still
+  // reaches the form from anywhere.
+  document.getElementById("new-attempt-btn").classList.toggle("hidden", section !== "routes");
   Object.entries(views).forEach(([key, node]) => node.classList.toggle("hidden", key !== name));
   // The canvas wants the whole window below the header, not the reading
   // column the two text views use.
   document.body.classList.toggle("canvas-mode", name === "canvas" && !state.noProject);
-  if (state.noProject) return null; // 10.1: every tab shows only the welcome
+  if (state.noProject) return null; // 10.1: every section shows only the welcome
+  if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
+  if (PLACEHOLDER_VIEWS.has(name) && !views[name].dataset.loaded) RODesk.renderPlaceholder(views[name], name);
   if (name === "tree" && !views.tree.dataset.loaded) loadTreeView();
   if (name === "lineage" && !views.lineage.dataset.loaded) loadLineageView();
   if (name === "variables" && !views.variables.dataset.loaded) loadVariablesView();
@@ -1509,9 +1619,23 @@ function activateView(name) {
   return null;
 }
 
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => activateView(btn.dataset.view));
+document.querySelectorAll(".side-item").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activateView(btn.dataset.section === "data" ? lastDataView : btn.dataset.view);
+  });
 });
+document.querySelectorAll(".subnav-item").forEach((btn) => {
+  btn.addEventListener("click", () => activateView(btn.dataset.subview));
+});
+
+// The desk's 「在研究路线中查看」 for the abandoned routes: 研究路线 with
+// only those shown, until the researcher shows them all again.
+function showAbandonedRoutes() {
+  treeFilter = "abandoned";
+  delete views.tree.dataset.loaded;
+  if (currentView === "tree") loadTreeView();
+  else activateView("tree");
+}
 
 // -- Project summary line (decorative; a failure here is not shown as an
 // error box since neither view depends on it -- /api/tree and /api/lineage
@@ -1574,18 +1698,20 @@ async function loadProjectSummary(force) {
       span.textContent = text;
       return span;
     };
-    line.append("·   ", part("待确认：" + data.pending));
-    if (typeof data.review === "number") {
+    // 12.0: no counters for their own sake -- only what the researcher can
+    // act on from here (the old judgments whose basis changed).
+    void part;
+    if (typeof data.review === "number" && data.review > 0) {
       // 9.6: an old judgment waiting for review (or a record conflict) is
       // counted here, never in 待确认; the count opens the list.
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "review-count-btn line-part" + (data.review > 0 ? " has" : "");
+      btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
-      btn.textContent = "待复核：" + data.review;
+      btn.textContent = data.review + " 条判断待复核";
       btn.title = "查看证据变了的旧判断";
       btn.addEventListener("click", (e) => { e.stopPropagation(); openReviewPanel(null); });
-      line.append("   ·   ", btn);
+      line.append(btn);
     }
     // The edit form's column names (attemptsConfig, above) ride along on
     // this same fetch (task V3 phase 3) -- kept fresh so a config edit
@@ -1618,10 +1744,17 @@ const projectMenuWrap = document.getElementById("project-menu-wrap");
 const NO_PROJECT_NAME = "还没有项目";
 let projectMenuMode = "list"; // "list" | "rename" | "remove"
 
+// 12.11: the button is the project's display name and nothing else; that
+// it opens a menu is said by the control itself (aria-haspopup) and by the
+// 「项目」 line above it, never by a glyph.
 function setProjectMenuLabel(label, path) {
-  projectMenuBtn.textContent = "项目：" + (label || NO_PROJECT_NAME) + " ▾";
-  projectMenuBtn.title = path || "";
+  projectMenuBtn.textContent = label || NO_PROJECT_NAME;
+  projectMenuBtn.title = path ? path + "\n切换项目或管理列表" : "添加项目";
 }
+
+// The menu's mark for the open project: a drawn check (12.11), not a glyph
+// (inline SVG through the HTML parser, which needs no namespace URL).
+const CHECK_MARK_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 6.5l2.5 2.5L10 3"/></svg>';
 
 // 10.1: no project yet. Every tab shows only the welcome; nothing asks
 // the engine for a project's data (it would only be refused).
@@ -1718,7 +1851,11 @@ function pmItem(text, onClick, opts) {
   b.type = "button";
   b.tabIndex = -1;
   b.setAttribute("role", o.role || "menuitem");
-  if (!o.noMark) b.appendChild(mk("span", "pm-mark", o.mark || ""));
+  if (!o.noMark) {
+    const mark = mk("span", "pm-mark");
+    if (o.mark) mark.innerHTML = CHECK_MARK_SVG;
+    b.appendChild(mark);
+  }
   b.appendChild(mk("span", "pm-label", text));
   if (o.flag) b.appendChild(mk("span", "pm-flag", o.flag));
   if (o.title) b.title = o.title;
@@ -1743,7 +1880,7 @@ function renderProjectMenu() {
     // Served, but not in the list (a folder opened read-only from the add
     // dialog, say): said, so the menu never claims another one is open.
     const it = pmItem(state.projectLabel || basename(state.currentPath), () => closeProjectMenu(true), {
-      role: "menuitemradio", mark: "✓", flag: "不在列表里", title: state.currentPath,
+      role: "menuitemradio", mark: true, flag: "不在列表里", title: state.currentPath,
     });
     it.setAttribute("aria-checked", "true");
     projectMenu.appendChild(it);
@@ -1756,7 +1893,7 @@ function renderProjectMenu() {
     const uninitialized = !gone && !p.initialized && !p.id;
     const row = mk("div", "pm-row" + (gone ? " pm-missing" : ""));
     const main = pmItem(p.label, () => chooseProject(p), {
-      role: "menuitemradio", mark: current ? "✓" : "", title: p.path,
+      role: "menuitemradio", mark: current, title: p.path,
       flag: gone ? "找不到文件夹" : (uninitialized ? "未初始化" : ""),
       disabled: !current && (gone || uninitialized),
     });
@@ -1904,7 +2041,7 @@ function pushPlanLines(plan) {
   if (plan.needs_repo) {
     lines.push({ text: "分支 " + (plan.branch || "（无）") + "；这个项目还没有 GitHub 仓库。", tone: "" });
   } else if (plan.target) {
-    lines.push({ text: "分支 " + plan.branch + " → " + plan.target + (plan.set_upstream ? "（推送后设为它的上游分支）" : ""), tone: "" });
+    lines.push({ text: "把分支 " + plan.branch + " 推送到 " + plan.target + (plan.set_upstream ? "（推送后设为它的上游分支）" : ""), tone: "" });
   } else if (plan.branch) {
     lines.push({ text: "分支 " + plan.branch, tone: "" });
   }
@@ -2351,11 +2488,8 @@ async function reloadAllViews(opts) {
   state.reviewOffer = null;
   state.github = null;
   renderNotices();
-  delete views.tree.dataset.loaded;
-  delete views.lineage.dataset.loaded;
-  delete views.canvas.dataset.loaded;
-  delete views.variables.dataset.loaded;
-  delete views.literature.dataset.loaded;
+  markViewsStale();
+  treeFilter = null;
   litState.data = null;
   litState.open.clear();
   litState.quiet = false;
@@ -2372,12 +2506,21 @@ async function reloadAllViews(opts) {
   await loadProjects();
   await syncGeneration();
   loadProjectSummary(true); // the switch succeeded: the line is the new project's
+  RODesk.refreshSidebar();
   if (state.noProject) return; // 10.1: the welcome is all there is to show
-  if (currentView === "tree") loadTreeView();
+  if (currentView === "desk") RODesk.loadDesk(views.desk);
+  else if (currentView === "tree") loadTreeView();
   else if (currentView === "lineage") loadLineageView();
   else if (currentView === "canvas") RCECanvas.load(views.canvas);
   else if (currentView === "variables") loadVariablesView();
   else if (currentView === "literature") loadLiteratureView();
+  else if (PLACEHOLDER_VIEWS.has(currentView)) RODesk.renderPlaceholder(views[currentView], currentView);
+}
+
+// Every view's data belongs to what was on disk when it loaded: marked
+// stale, each reloads on its next showing.
+function markViewsStale() {
+  Object.values(views).forEach((node) => { delete node.dataset.loaded; });
 }
 
 // -- Auto-refresh (task V3 phase 2) -----------------------------------------
@@ -2467,14 +2610,14 @@ async function revalidatePanel() {
 
 async function refreshCurrentView() {
   if (state.noProject) return; // 10.1: nothing to refresh
-  // Both views' data may have moved on disk; only the visible one
-  // re-fetches now, the other is marked stale for its next activation.
-  delete views.tree.dataset.loaded;
-  delete views.lineage.dataset.loaded;
-  delete views.canvas.dataset.loaded;
-  delete views.variables.dataset.loaded;
-  delete views.literature.dataset.loaded;
-  if (currentView === "tree") {
+  // Every view's data may have moved on disk; only the visible one
+  // re-fetches now, the others are marked stale for their next showing.
+  markViewsStale();
+  if (currentView === "desk") {
+    await RODesk.loadDesk(views.desk, true);
+  } else if (PLACEHOLDER_VIEWS.has(currentView)) {
+    RODesk.renderPlaceholder(views[currentView], currentView);
+  } else if (currentView === "tree") {
     await loadTreeView(true);
   } else if (currentView === "lineage") {
     await loadLineageView();
@@ -2488,7 +2631,8 @@ async function refreshCurrentView() {
     await loadLiteratureView();
   }
   await revalidatePanel();
-  loadProjectSummary(); // the pending count may have moved with the graph
+  loadProjectSummary(); // the review count may have moved with the graph
+  if (currentView !== "desk") RODesk.refreshSidebar(); // the desk's load refreshed it already
 }
 
 async function syncGeneration() {
@@ -2662,25 +2806,47 @@ function renderGuideCard() {
   return card;
 }
 
-const VERDICT_MARKERS = ["☠️", "✅", "🕒", "⚠️", "📋", "⛔"];
-const VERDICT_BADGE_CLASS = {
-  "☠️": "badge-gray", "✅": "badge-olive", "🕒": "badge-ochre",
-  "⚠️": "badge-clay", "📋": "badge-plain", "⛔": "badge-plain",
+// 12.11: a verdict is shown as a text status (现行 / 已放弃 / 待定 / 不利
+//证据 / 被否 / 归档 / 其它) in a quiet tinted label, followed by the
+// researcher's own words -- never the marker of their table. The engine
+// maps marker to status (`verdict_status`, from attempts.toml's
+// [verdict_labels] with the defaults); canvas.js colors frames by the same.
+const VERDICT_TONES = {
+  current: "olive", abandoned: "gray", pending: "ochre", adverse: "clay",
+  rejected: "plain", archived: "plain", labelled: "plain", other: "plain",
 };
 
-function verdictMarker(text) {
-  if (!text) return null;
-  for (const marker of VERDICT_MARKERS) if (text.startsWith(marker)) return marker;
-  return null;
+function verdictTone(status) {
+  const s = status && status.status;
+  return Object.prototype.hasOwnProperty.call(VERDICT_TONES, s) ? VERDICT_TONES[s] : "plain";
 }
 
-function verdictBadge(verdictText) {
-  const marker = verdictMarker(verdictText);
+// `status`: a payload's `verdict_status` ({status, label, words}).
+function verdictLabel(status) {
   const span = document.createElement("span");
-  span.className = "badge " + (marker ? VERDICT_BADGE_CLASS[marker] : "badge-plain");
-  span.textContent = marker || "·";
-  span.title = verdictText || "（无结论）";
+  span.className = "status-label tone-" + verdictTone(status);
+  span.textContent = status && status.label ? status.label : "其它";
   return span;
+}
+
+// 12.12 "A member's own work": what differs from the official snapshot is
+// marked 「我的改动，尚未提交」 or 「提议中」 wherever it shows.
+function ownMark(item) {
+  const o = item && item.officialness;
+  if (!o || !o.label || o.state === "official") return null;
+  const span = document.createElement("span");
+  span.className = "own-mark";
+  span.textContent = o.label;
+  return span;
+}
+
+// 研究路线 shows every attempt, or (from the desk) only the abandoned ones.
+let treeFilter = null;
+
+function attemptMatches(attempt) {
+  if (treeFilter !== "abandoned") return true;
+  const own = attempt.verdict_status && attempt.verdict_status.status === "abandoned";
+  return own || (attempt.children || []).some(attemptMatches);
 }
 
 function renderAttemptNode(attempt) {
@@ -2692,13 +2858,10 @@ function renderAttemptNode(attempt) {
   details.dataset.attemptId = attempt.id;
 
   const summary = document.createElement("summary");
-  const caret = document.createElement("span");
-  caret.className = "caret";
-  caret.textContent = "▸";
 
   const content = document.createElement("span");
   content.className = "row-content";
-  content.appendChild(verdictBadge(attempt.verdict));
+  content.appendChild(verdictLabel(attempt.verdict_status));
   const num = document.createElement("span");
   num.className = "attempt-number";
   num.textContent = "#" + attempt.number;
@@ -2709,16 +2872,26 @@ function renderAttemptNode(attempt) {
   desc.className = "attempt-desc";
   desc.textContent = attempt.description || "（无描述）";
   content.append(num, date, desc);
+  if (attempt.verdict_status && attempt.verdict_status.words) {
+    content.appendChild(mk("span", "verdict-words", attempt.verdict_status.words));
+  }
+  const own = ownMark(attempt);
+  if (own) content.appendChild(own);
   content.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     openAttemptPanel(attempt.id);
   });
 
-  summary.append(caret, content);
+  summary.append(content);
   details.appendChild(summary);
 
   const body = document.createElement("div");
+  // An abandoned route keeps its basis (12.4): its result, in its own words.
+  const record = state.attemptsById.get(attempt.id);
+  if (treeFilter === "abandoned" && record && record.result) {
+    body.appendChild(mk("p", "attempt-reason", "结果：" + record.result));
+  }
   if (attempt.scripts && attempt.scripts.length) {
     const scriptList = document.createElement("div");
     scriptList.className = "script-list";
@@ -2728,7 +2901,7 @@ function renderAttemptNode(attempt) {
   if (attempt.children && attempt.children.length) {
     const childList = document.createElement("div");
     childList.className = "attempt-list attempt-children";
-    attempt.children.forEach((c) => childList.appendChild(renderAttemptNode(c)));
+    attempt.children.filter(attemptMatches).forEach((c) => childList.appendChild(renderAttemptNode(c)));
     body.appendChild(childList);
   }
   details.appendChild(body);
@@ -2745,21 +2918,20 @@ function renderScriptNode(script, attemptId) {
   details.dataset.scriptKey = attemptId + "::" + script.path;
 
   const summary = document.createElement("summary");
-  const caret = document.createElement("span");
-  caret.className = "caret";
-  caret.textContent = "▸";
   const content = document.createElement("span");
   content.className = "row-content";
   const path = document.createElement("span");
   path.className = "script-path";
   path.textContent = script.path;
   content.appendChild(path);
+  const own = ownMark(script);
+  if (own) content.appendChild(own);
   content.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     openFilePanel(script.path, "script");
   });
-  summary.append(caret, content);
+  summary.append(content);
   details.appendChild(summary);
 
   const body = document.createElement("div");
@@ -2799,11 +2971,9 @@ function fileList(entries, direction) {
   entries.forEach((entry) => {
     const li = document.createElement("li");
     li.className = "file-row";
-    const icon = document.createElement("span");
-    icon.className = "flow-icon " + direction;
-    icon.textContent = direction === "read" ? "←" : "→";
-    icon.title = direction === "read" ? "读取（数据流入）" : "写出（数据流出）";
-    li.appendChild(icon);
+    // The direction is the 读取 / 写出 heading above the list (12.11: a
+    // relation is said in words, not drawn with an arrow character).
+    li.title = direction === "read" ? "读取" : "写出";
     if (entry.role === "orphan_input") {
       const dot = document.createElement("span");
       dot.className = "orphan-dot";
@@ -2813,6 +2983,8 @@ function fileList(entries, direction) {
     const pathSpan = document.createElement("span");
     pathSpan.textContent = entry.path;
     li.appendChild(pathSpan);
+    const own = ownMark(entry);
+    if (own) li.appendChild(own);
     if (entry.missing) {
       const flag = document.createElement("span");
       flag.className = "missing-flag";
@@ -2905,9 +3077,16 @@ async function loadTreeView(preserveState) {
     views.tree.dataset.loaded = "1";
     return;
   }
+  if (treeFilter === "abandoned") {
+    const bar = mk("div", "tree-filter");
+    bar.appendChild(mk("span", null, "只显示已放弃的路线，每条附当时的结果。"));
+    bar.appendChild(mkButton("显示全部尝试", "btn btn-small", () => { treeFilter = null; loadTreeView(); }));
+    container.appendChild(bar);
+  }
   const list = document.createElement("div");
   list.className = "attempt-list";
-  treeData.attempts.forEach((a) => list.appendChild(renderAttemptNode(a)));
+  treeData.attempts.filter(attemptMatches).forEach((a) => list.appendChild(renderAttemptNode(a)));
+  if (!list.childNodes.length) list.appendChild(mk("p", "empty-note", "没有已放弃的路线。"));
   container.appendChild(list);
   if (saved) restoreTreeState(saved);
   views.tree.dataset.loaded = "1";
@@ -3005,9 +3184,10 @@ function renderBrokenItem(item) {
   div.className = "lineage-item";
   const row = document.createElement("div");
   row.appendChild(scriptRefSpan(item.script, item.line, item.callee));
-  const arrow = document.createElement("span");
-  arrow.textContent = " " + (item.kind === "writes" ? "→" : "←") + " ";
-  row.appendChild(arrow);
+  // 12.11: the relation in words -- 「17.Rmd 读取 panel.csv」.
+  const verb = document.createElement("span");
+  verb.textContent = " " + (item.kind === "writes" ? "写出" : "读取") + " ";
+  row.appendChild(verb);
   row.appendChild(clickablePath(item.target));
   const flag = document.createElement("span");
   flag.className = "missing-flag";
@@ -3087,6 +3267,7 @@ function closePanel() {
   panel.classList.add("hidden");
   panelBackdrop.classList.add("hidden");
   panel.setAttribute("aria-hidden", "true");
+  panelTitle.classList.remove("plain-title"); // a proposal's title is words, not a path
   state.panelSubject = null;
 }
 
@@ -3255,7 +3436,15 @@ function openAttemptPanel(id) {
   kvRow(table, "日期", attrs.date || "");
   kvRow(table, "路径 / 描述", attrs.description || "");
   kvRow(table, "变量", attrs.variables || "");
-  kvRow(table, "结论", attempt.verdict || "（无）");
+  // 12.11: the status word and the researcher's own words, not the marker.
+  if (attempt.verdict) {
+    const verdict = mk("span", "verdict-inline");
+    verdict.appendChild(verdictLabel(attempt.verdict_status));
+    if (attempt.verdict_status && attempt.verdict_status.words) verdict.appendChild(mk("span", null, attempt.verdict_status.words));
+    kvRow(table, "结论", verdict);
+  } else {
+    kvRow(table, "结论", "（无）");
+  }
   kvRow(table, "结果", attempt.result || "（无）");
 
   const sourceSpan = document.createElement("span");
@@ -3545,11 +3734,15 @@ function renderAttemptForm(mode, attemptId) {
       if (verdicts.length) {
         const chips = document.createElement("div");
         chips.className = "verdict-chips";
+        const statusOf = new Map(attempts.map((a) => [(a.verdict || "").trim(), a.verdict_status]));
         verdicts.forEach((v) => {
           const chip = document.createElement("button");
           chip.type = "button";
           chip.className = "chip";
-          chip.textContent = v;
+          // 12.11: the chip reads as the status and the words; clicking it
+          // puts the cell's own text (marker included) into the field.
+          const vs = statusOf.get(v);
+          chip.textContent = vs ? (vs.label + (vs.words ? " " + vs.words : "")) : v;
           chip.addEventListener("click", () => { input.value = v; });
           chips.appendChild(chip);
         });
@@ -3838,7 +4031,7 @@ function renderReviewItem(item, subject) {
   const box = mk("div", "review-item" + (subject.focus === id ? " focus" : ""));
   box.dataset.key = id;
   const link = mk("div", "review-link", linkText(item));
-  link.title = item.src + " → " + item.dst + "（" + item.type + " · " + item.extractor + "）";
+  link.title = item.src + "\n" + item.dst + "\n（" + item.type + " · " + item.extractor + "）";
   box.append(link, mk("span", "review-reason", item.label || "待复核"));
   if (item.outcome === "conflict") {
     const d = item.detail || {};
@@ -3876,7 +4069,7 @@ function renderReviewItem(item, subject) {
     candidates.forEach((c) => {
       const row = mk("div", "review-cand");
       const t = mk("span", "review-link", linkText(c));
-      t.title = c.src + " → " + c.dst;
+      t.title = c.src + "\n" + c.dst;
       row.appendChild(t);
       if (candidateApplied(c, item.verdict)) {
         // Applied already (9.6: one click, one entry): said, not offered again.
@@ -4861,7 +5054,7 @@ function renderCardReviewGroups(host, cardItems) {
 }
 
 function renderVariableCard(host, card) {
-  const back = mkButton("← 全部变量", "var-back", () => { varState.card = null; varState.version = null; loadVariablesView(); });
+  const back = mkButton("返回全部变量", "var-back", () => { varState.card = null; varState.version = null; loadVariablesView(); });
   host.appendChild(back);
   const head = mk("div", "var-head");
   head.append(mk("h2", "var-title", card.name), mk("span", "var-id", card.id));
@@ -5041,7 +5234,7 @@ async function loadLiteratureView() {
 }
 
 function renderLiterature(host, data) {
-  host.appendChild(mk("h2", "section-title", "文献"));
+  // The page title above says 文献 (12.9); the view starts with its content.
   host.appendChild(renderLookupSetting(data.lookup || {}));
   const zline = mk("p", "lit-zotero", litZoteroText(data.zotero));
   if (data.zotero && data.zotero.data_dir) zline.title = data.zotero.data_dir;
@@ -5133,13 +5326,13 @@ function renderLookupSetting(lookup) {
   return box;
 }
 
+// 12.11: a draft opens with the platform's own disclosure (<details>), its
+// citations built the first time it is opened.
 function renderLitDraft(d) {
-  const box = mk("div", "lit-draft");
-  const head = mk("button", "lit-draft-head");
-  head.type = "button";
+  const box = mk("details", "lit-draft");
+  const head = mk("summary", "lit-draft-head");
   const opened = litState.open.has(d.file);
-  head.setAttribute("aria-expanded", opened ? "true" : "false");
-  head.appendChild(mk("span", "lit-caret", opened ? "▾" : "▸"));
+  box.open = opened;
   head.appendChild(mk("span", "lit-file", d.file));
   if (!d.readable) head.appendChild(mk("span", "var-chip bad", "这次没能读取"));
   else head.appendChild(mk("span", "lit-counts", litDraftCountText(d.counts)));
@@ -5159,13 +5352,9 @@ function renderLitDraft(d) {
     (d.citations || []).forEach((c) => body.appendChild(renderLitCitation(c)));
   };
   if (opened) fill();
-  else body.classList.add("hidden");
-  head.addEventListener("click", () => {
-    const nowOpen = !litState.open.has(d.file);
-    if (nowOpen) { litState.open.add(d.file); fill(); } else { litState.open.delete(d.file); body.innerHTML = ""; }
-    body.classList.toggle("hidden", !nowOpen);
-    head.setAttribute("aria-expanded", nowOpen ? "true" : "false");
-    head.firstChild.textContent = nowOpen ? "▾" : "▸";
+  box.addEventListener("toggle", () => {
+    if (box.open === litState.open.has(d.file)) return; // the state it was built in
+    if (box.open) { litState.open.add(d.file); fill(); } else { litState.open.delete(d.file); body.innerHTML = ""; }
   });
   return box;
 }
@@ -6369,9 +6558,9 @@ function shellZoom(step) {
   textZoomIndex = step === 0 ? TEXT_ZOOM_STEPS.indexOf(1)
     : Math.max(0, Math.min(TEXT_ZOOM_STEPS.length - 1, textZoomIndex + step));
   const z = TEXT_ZOOM_STEPS[textZoomIndex];
-  views.tree.style.zoom = z === 1 ? "" : String(z);
-  views.lineage.style.zoom = z === 1 ? "" : String(z);
-  views.literature.style.zoom = z === 1 ? "" : String(z);
+  Object.entries(views).forEach(([key, node]) => {
+    if (key !== "canvas") node.style.zoom = z === 1 ? "" : String(z);
+  });
 }
 
 // A failed Finder command reports in the header line, the same spot a
@@ -6404,6 +6593,8 @@ async function shellOpenMap() {
 }
 
 const SHELL_COMMANDS = {
+  // 视图 ⌘1-4 (the shell's menu, unchanged): 研究路线, 数据与代码 and its
+  // 关系图, 变量 -- the sections that now hold those views (12.9).
   "tree": () => activateView("tree"),
   "lineage": () => activateView("lineage"),
   "canvas": () => activateView("canvas"),
@@ -6467,7 +6658,8 @@ function postShellTitle() {
 (async () => {
   await loadProjects();
   loadProjectSummary();
-  activateView(storedView() || "tree");
+  RODesk.refreshSidebar();
+  activateView(storedView() || "desk"); // 12.0: the desk is the home page
   syncGeneration();
   pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
 })();

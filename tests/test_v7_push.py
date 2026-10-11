@@ -720,7 +720,7 @@ def test_page_shows_the_plan_in_plain_chinese_and_only_a_clean_plan_can_be_pushe
         ("pushPlanLines", [not_git]), ("pushCanSend", [not_git, True]),
     )
     lines = out[0]
-    assert lines[0] == {"text": "分支 main → origin/main", "tone": ""}
+    assert lines[0] == {"text": "把分支 main 推送到 origin/main", "tone": ""}  # 12.11: in words
     assert lines[1]["text"] == "GitHub 还没有的提交：1 个" and lines[1]["commits"][0]["subject"] == "Add b"
     assert {"text": "另有 1 个文件的改动还没有提交，推送不包括它们。", "tone": "warn"} in lines
     assert {"text": "人工记录（.researchos/）有 1 个文件还没有提交。", "tone": "warn"} in lines

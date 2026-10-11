@@ -138,7 +138,11 @@ def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothin
     css = html[html.index("<style>"):html.index("</style>")]
     assert "body.no-project .welcome { display: block; }" in css
     assert ("body.no-project .view, body.no-project .notices, body.no-project #new-attempt-btn,\n"
-            "body.no-project #records-btn { display: none !important; }") in css
+            "body.no-project #records-btn, body.no-project .subnav, body.no-project .page-title "
+            "{ display: none !important; }") in css
+    # 12.9 (V8 U2): no sections in the sidebar either, and the sidebar's
+    # live lines ask the engine nothing without a project.
+    assert "body.no-project .side-nav, body.no-project .share-line { display: none !important; }" in css
     # the engine's half: no project, and every project endpoint refused
     _, projects = engine.get("/api/projects")
     assert projects["no_project"] is True and projects["current"] is None
@@ -395,12 +399,15 @@ def test_the_project_menu_replaces_the_select_and_offers_what_10_1_lists():
     src = _src()
     assert 'id="project-switcher"' not in src and 'id="remove-missing-btn"' not in src and "<select id=" not in src
     assert ('<button id="project-menu-btn" class="project-menu-btn" type="button" aria-haspopup="menu" '
-            'aria-expanded="false" aria-controls="project-menu">') in src
+            'aria-expanded="false" aria-controls="project-menu" aria-describedby="project-eyebrow">') in src
     assert '<div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目"></div>' in src
-    assert 'projectMenuBtn.textContent = "项目：" + (label || NO_PROJECT_NAME) + " ▾";' in src
+    # 12.11 (V8 U2): the button names the project and nothing else -- 「项目」
+    # is the line above it, no ▾; the open project's mark is a drawn check.
+    assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in src
+    assert '<div class="side-eyebrow" id="project-eyebrow">项目</div>' in src
     menu = _function("renderProjectMenu")
     order = [menu.index(s) for s in (
-        'role: "menuitemradio", mark: current ? "✓" : ""', '"找不到文件夹"', 'pmItem("选择新位置…"',
+        'role: "menuitemradio", mark: current, title: p.path', '"找不到文件夹"', 'pmItem("选择新位置…"',
         'mk("hr", "pm-rule")', 'pmItem("添加项目…"', 'pmItem("重新扫描这个项目"', 'pmItem("重命名显示名称…"',
         'pmItem("从列表中移除…"',
     )]
