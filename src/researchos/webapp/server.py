@@ -270,6 +270,22 @@ Endpoints (all GET unless noted):
                             draft's claims.
     GET  /api/data-code -- 数据与代码: every script and data file with its
                             reads, writes and lineage-report blocks.
+    GET  /team.js      -- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4,
+                            12.9; task V8 phase U4), served the same way.
+    GET  /api/routes   -- 研究路线: the attempts grouped by status, an
+                            abandoned route's result and reason
+                            (`researchos.nodepage.routes`).
+    GET  /api/evidence -- `?node=attempt:…`: the decisions about one attempt
+                            with the files an approved abandonment froze;
+                            `GET /api/history/version?node=&version=` one
+                            kept version as it was.
+    GET  /api/me/key   -- this machine's public key, if it has one (a GET
+                            never makes one); POST makes it. POST
+                            /api/team/init, /api/share/set {shared}, POST
+                            /api/share/join-preview {shared, folder} (writes
+                            nothing) and GET /api/share/sync-preview: U4's
+                            collaborative acts, each said before it writes;
+                            a join opens the new working copy.
     GET  /api/desk     -- `?since=<ISO time>` (default: the last seven
                             days): the desk's changes since then, the
                             results whose trace lost its evidence, the
@@ -2012,9 +2028,20 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     `{file, diff, old_row, new_row}`, verbatim -- nothing on disk moves."""
     op, number, fields = _parse_attempt_edit_body(body)
     try:
-        return mapedit.preview_edit(project_root, op, number, fields)
+        out = mapedit.preview_edit(project_root, op, number, fields)
     except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
+    if isinstance(fields.get("verdict"), str):
+        # U4: whether the verdict abandons the route (☠, or a marker of
+        # attempts.toml's abandoned_verdicts) -- a member's 提议改判 then
+        # asks for the result and the reason before anything is written.
+        from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+        out = {**out, "abandons": proposals_mod.is_abandonment(fields["verdict"],
+                                                                proposals_mod.abandon_markers(project_root)),
+               "verdict_status": attempts_ingest.verdict_status(fields["verdict"],
+                                                                attempts_ingest.verdict_labels(project_root))}
+    return out
 
 
 def attempts_write_payload(
@@ -2645,6 +2672,7 @@ def _app_html() -> str:
 _CANVAS_JS_PATH = Path(__file__).parent / "canvas.js"
 _DESK_JS_PATH = Path(__file__).parent / "desk.js"
 _NODE_JS_PATH = Path(__file__).parent / "node.js"
+_TEAM_JS_PATH = Path(__file__).parent / "team.js"
 
 
 def _canvas_js() -> str:
@@ -2666,6 +2694,12 @@ def _node_js() -> str:
     """`src/researchos/webapp/node.js` verbatim (the node page, 成果 and
     数据与代码, DESIGN.md 12.6, 12.7, 12.9), read fresh per request."""
     return _NODE_JS_PATH.read_text(encoding="utf-8")
+
+
+def _team_js() -> str:
+    """`src/researchos/webapp/team.js` verbatim (研究路线, 提议 and 成员,
+    DESIGN.md 12.3, 12.4, 12.9; V8 U4), read fresh per request."""
+    return _TEAM_JS_PATH.read_text(encoding="utf-8")
 
 
 # -- HTTP plumbing -------------------------------------------------------------
@@ -3004,6 +3038,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _desk_js(), "text/javascript; charset=utf-8")
             elif path == "/node.js":
                 self._send_text(200, _node_js(), "text/javascript; charset=utf-8")
+            elif path == "/team.js":
+                self._send_text(200, _team_js(), "text/javascript; charset=utf-8")
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
@@ -3072,6 +3108,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     self._send_json(200, self._official(self._node_api(lambda: node_api.history_payload(served.root, query))))
                 else:
                     self._send_json(200, history_payload(served, query))
+            elif path == "/api/history/version":
+                # U4: one kept version as it was (「当时的依据」).
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.version_payload(served.root, query)))
             elif path == "/api/history/diff":
                 served = self._require_unblocked()
                 self._send_json(200, self._node_api(lambda: node_api.diff_payload(served.root, query)))
@@ -3091,6 +3131,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(
                     self._node_api(lambda: node_api.results_payload(conn, served.root, query))))
+            elif path == "/api/routes":
+                # U4: 研究路线 -- the attempts grouped by status, reads only.
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._official(node_api.routes_payload(conn, served.root)))
+            elif path == "/api/evidence":
+                # U4: an abandoned route's frozen basis (12.4), reads only.
+                served = self._require_unblocked()
+                self._json_from_conn(lambda conn: self._official(
+                    self._node_api(lambda: node_api.evidence_payload(conn, served.root, query))))
             elif path == "/api/data-code":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(node_api.data_code_payload(conn, served.root)))
@@ -3118,6 +3167,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._node_api(lambda: node_api.share_status_payload(served.root)))
             elif path == "/api/me":
                 self._send_json(200, node_api.me_payload())
+            elif path == "/api/me/key":
+                # U4: this machine's public key, if it has one; never made here.
+                self._send_json(200, node_api.me_key_payload())
+            elif path == "/api/share/sync-preview":
+                # U4: what 「同步」 would write -- reads only.
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.sync_preview_payload(served.root)))
             elif path == "/api/records":
                 # The 「记录」 panel (9.2): read even for a blocked project --
                 # it lists the folder's own files and writes nothing.
@@ -3391,13 +3447,54 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S))
                 payload["generation"] = self.server.watcher.record_external_change(None)
                 self._send_json(200, payload)
+            elif parsed.path == "/api/share/join-preview":
+                # U4: what joining would write and whose key it would trust
+                # -- nothing written; answered with no project open too.
+                body = self._read_json_object()
+                self._send_json(200, self._node_api(lambda: node_api.join_preview_payload(body)))
             elif parsed.path == "/api/share/join":
                 # 12.3: a working copy in a NEW folder the page names --
                 # origin-checked above like every endpoint; the folder is
                 # refused at a top-level folder, in the home, inside a
                 # project, or when not empty (`researchos.share.join`).
+                # U4: then opened, as an added project is, and scanned.
                 body = self._read_json_object()
-                self._send_json(200, self._node_api(lambda: node_api.share_join_payload(body)))
+                payload = self._node_api(lambda: node_api.share_join_payload(body))
+                try:
+                    joined = served_for(Path(payload["working_copy"]))
+                    self._switch_to(joined)
+                    payload["opened"] = True
+                    try:
+                        self.server.start_scan(joined)
+                        payload["scanning"] = True
+                    except ApiError as exc:
+                        payload["scanning"] = False
+                        payload["scan_error"] = {"state": exc.state, "error": str(exc)}
+                except Exception as exc:  # noqa: BLE001 -- the copy stands; the page says it was not opened
+                    logger.exception("the joined copy %s was not opened", payload.get("working_copy"))
+                    payload["opened"] = False
+                    payload["open_error"] = str(exc)
+                self._send_json(200, payload)
+            elif parsed.path == "/api/share/set":
+                # U4: the shared folder of this project, on this machine
+                # (projects.json); nothing in the project or the folder.
+                body = self._read_json_object()
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.share_set_payload(
+                    served.root, served.project_id, body)))
+            elif parsed.path == "/api/team/init":
+                # U4: the PI's team file (team.toml, created once).
+                self._read_json_object()
+                served = self._require_unblocked()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.team_init_payload(
+                        served.root, served.project_id, timeout=WRITE_LOCK_TIMEOUT_S))
+                payload["generation"] = self.server.watcher.record_external_change(None)
+                self._send_json(200, payload)
+            elif parsed.path == "/api/me/key":
+                # U4: this machine's public key, made on first need.
+                self._read_json_object()
+                self._send_json(200, self._node_api(node_api.me_key_create_payload))
             elif parsed.path == "/api/me":
                 # 12.1: who I am on this machine (~/.researchos/me.toml).
                 self._send_json(200, self._node_api(lambda: node_api.me_set_payload(self._read_json_object())))
@@ -3465,10 +3562,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/node.js", "/api/projects", "/api/engine", "/api/generation", "/api/me"})
+_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/api/projects", "/api/engine",
+                             "/api/generation", "/api/me", "/api/me/key"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",
+    "/api/me/key", "/api/share/join-preview", "/api/share/join",
 })
 
 

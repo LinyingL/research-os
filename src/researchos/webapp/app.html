@@ -25,8 +25,12 @@
   /api/data-code): every object -- a script, data file, figure, draft
   section or claim, attempt, variable, reference -- opens the same node
   page (its trace, its changes and notes, its judgments, 关系图 behind a
-  control). 研究路线 is the decision tree; 提议 / 成员 say plainly that
-  they are still being made. 12.11
+  control). 研究路线, 提议 and 成员 are the fifth, /team.js (window.ROTeam,
+  U4; GET /api/routes, /api/evidence, /api/proposals, /api/share, /api/me/key):
+  the routes grouped by status with proposals shown apart, the PI's inbox
+  and a proposal's page (批准并加入 / 退回并说明 / 讨论), a member's 我的提议
+  and 提交提议, and 成员 -- the team, who I am, the shared folder, adding a
+  member, joining and syncing, each saying what it will write first. 12.11
   applies to everything on screen: no emoji (a verdict is its status word
   from `verdict_status`, then the researcher's words), no arrow characters
   (relations in words), disclosure by the platform's own <details>, icons
@@ -1072,6 +1076,71 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-quiet { font-size: 0.8rem; color: var(--ink-soft); margin: 0.3rem 0 1rem; }
 .lit-quiet-file { font-family: var(--font-mono); font-size: 0.78rem; padding: 0.1rem 0; word-break: break-all; }
 
+/* 研究路线, 提议, 成员 (DESIGN.md 12.3, 12.4, 12.9; V8 U4, team.js): weight
+   and space carry the hierarchy (12.11); labels are quiet tints. */
+.routes, .team { display: flex; flex-direction: column; gap: 1.9rem; max-width: 860px; }
+.route-group-title { margin: 0 0 0.45rem; font-weight: normal; font-size: 1rem; }
+.route-group-title.serif, .team-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.08rem; margin: 0 0 0.45rem; }
+.route-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.route-row { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+.route-head { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; align-items: baseline; }
+.route-num { flex: none; min-width: 2.6rem; color: var(--ink-soft); }
+.route-date { flex: none; min-width: 4.6rem; font-family: var(--font-mono); font-size: 0.76rem; color: var(--ink-soft); }
+.route-title { font: inherit; font-size: 0.92rem; font-weight: 500; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer; text-align: left; border-bottom: 1px solid transparent; }
+.route-title:hover { border-bottom-color: var(--clay); }
+.route-title:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.route-basis { margin: 0.3rem 0 0 3.3rem; }
+.route-fact { font-size: 0.84rem; margin: 0.1rem 0; white-space: pre-wrap; word-break: break-word; }
+.route-src { font-size: 0.74rem; color: var(--ink-soft); margin-left: 0.6rem; }
+.route-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; margin-top: 0.3rem; }
+.route-proposals { border-left: 2px solid var(--ochre); padding-left: 0.9rem; }
+.team-line { font-size: 0.86rem; margin: 0.25rem 0; word-break: break-word; }
+.team-line .mono { margin: 0 0.25rem; }
+.team-flash { display: flex; flex-direction: column; gap: 0.3rem; border-left: 2px solid var(--olive); padding-left: 0.8rem; }
+.team-line.quiet { color: var(--ink-soft); }
+.team-line.warn { color: var(--clay); }
+.team-line.strong, .strong { font-weight: 600; }
+.team-line.writes { color: var(--ink-soft); font-size: 0.8rem; border-left: 2px solid var(--line-strong); padding-left: 0.6rem; margin: 0.5rem 0; }
+.team-help { font-size: 0.76rem; color: var(--ink-soft); }
+.team-done { font-size: 0.88rem; color: var(--olive); margin: 0; }
+.team-path-row { display: flex; gap: 0.5rem; align-items: center; }
+.team-path-row .form-input { flex: 1; min-width: 0; }
+.team-block .form-field, .compose .form-field, .decide .form-field, .panel-body .form-field { margin: 0.45rem 0; max-width: 560px; }
+.team-block > .btn, .decide > .btn, .draft > .btn { margin-top: 0.3rem; }
+.team-table { border-collapse: collapse; font-size: 0.84rem; width: 100%; max-width: 820px; }
+.team-table th { text-align: left; font-weight: normal; color: var(--ink-soft); font-size: 0.76rem; padding: 0.3rem 0.8rem 0.3rem 0; border-bottom: 1px solid var(--line-strong); }
+.team-table td { padding: 0.4rem 0.8rem 0.4rem 0; border-bottom: 1px solid var(--line); vertical-align: baseline; word-break: break-all; }
+.team-you { font-size: 0.72rem; color: var(--ink-soft); margin-left: 0.4rem; }
+.team-me { display: flex; gap: 0.8rem; align-items: baseline; margin: 0.2rem 0; }
+.team-me-name { font-weight: 600; }
+.team-key { white-space: pre-wrap; word-break: break-all; background: var(--paper-alt); border: 1px solid var(--line); padding: 0.5rem 0.6rem; margin: 0.4rem 0; max-width: 640px; user-select: all; }
+.team-pending summary, .proposal-diff summary { cursor: pointer; font-size: 0.82rem; color: var(--ink-soft); margin: 0.3rem 0; }
+.evidence { padding: 0.6rem 0 0.9rem; border-bottom: 1px solid var(--line); }
+.evidence-files, .proposal-files { list-style: none; margin: 0; padding: 0; }
+.evidence-file, .proposal-file { padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
+.evidence-role { font-size: 0.74rem; color: var(--ink-soft); flex: none; }
+.evidence-sha { color: var(--ink-soft); font-size: 0.72rem; word-break: break-all; }
+.evidence-text { font-family: var(--font-mono); font-size: 0.74rem; line-height: 1.5; background: var(--paper); border: 1px solid var(--line); padding: 0.5rem 0.6rem; max-height: 360px; overflow: auto; white-space: pre; }
+.evidence-file > .btn { margin-top: 0.3rem; }
+.proposal-page .node-sec { max-width: 860px; }
+.proposal-part { margin: 0 0 0.9rem; }
+.proposal-h4 { font-size: 0.82rem; font-weight: 600; margin: 0.9rem 0 0.3rem; }
+.decide { padding: 0.5rem 0 0.8rem; border-bottom: 1px solid var(--line); }
+.compose { display: flex; flex-direction: column; gap: 0.2rem; max-width: 640px; }
+.compose > .btn { align-self: flex-start; margin-top: 0.4rem; }
+.compose-kinds { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.3rem 0 0.4rem; }
+.compose-kind { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.86rem; cursor: pointer; }
+.compose-kind-name { min-width: 5.5rem; }
+.compose-result:not(:empty), .join-result:not(:empty) { margin-top: 0.9rem; }
+.draft { border: 1px solid var(--line-strong); background: var(--paper-alt); padding: 0.8rem 1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.draft > .btn { align-self: flex-start; }
+.draft .node-sec-title { font-size: 1rem; }
+.draft-file { padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
+.draft-file label { cursor: pointer; }
+.join-fp { margin: 0.5rem 0; padding: 0.5rem 0.7rem; border-left: 2px solid var(--clay); background: var(--paper); }
+.join-fp .mono { font-size: 0.86rem; word-break: break-all; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+
 @media (max-width: 720px) {
   main#main { padding: 1.25rem 1rem 3rem; }
   .topbar { padding: 1rem 1rem 0.75rem; }
@@ -1131,7 +1200,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <section id="welcome" class="welcome" aria-label="还没有项目">
         <p>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
         <p>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
-        <button id="welcome-add-btn" class="btn" type="button">添加项目…</button>
+        <div class="welcome-actions">
+          <button id="welcome-add-btn" class="btn" type="button">添加项目…</button>
+          <button id="welcome-join-btn" class="btn" type="button">从公盘加入项目…</button>
+        </div>
         <p class="welcome-what">项目就是存放一项研究的那个文件夹。</p>
       </section>
       <!-- 数据与代码 (12.9): the lineage report as a list, and 关系图 (the
@@ -1174,6 +1246,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <script src="/desk.js"></script>
 <!-- The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
 <script src="/node.js"></script>
+<!-- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4, 12.9): window.ROTeam. -->
+<script src="/team.js"></script>
 <script>
 "use strict";
 
@@ -1705,7 +1779,6 @@ const SECTION_TITLES = {
   desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
-const PLACEHOLDER_VIEWS = new Set(["proposals", "members"]);
 let lastDataView = "lineage"; // 数据与代码 reopens on the list or 关系图, as last left
 
 // The last view (tab) is remembered per browser: a per-viewer convenience
@@ -1754,7 +1827,8 @@ function activateView(name) {
   if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);
-  if (PLACEHOLDER_VIEWS.has(name) && !views[name].dataset.loaded) RODesk.renderPlaceholder(views[name], name);
+  if (name === "proposals" && !views.proposals.dataset.loaded) ROTeam.loadProposals(views.proposals);
+  if (name === "members" && !views.members.dataset.loaded) ROTeam.loadMembers(views.members);
   if (name === "tree" && !views.tree.dataset.loaded) loadTreeView();
   if (name === "lineage" && !views.lineage.dataset.loaded) loadLineageView();
   if (name === "variables" && !views.variables.dataset.loaded) loadVariablesView();
@@ -1778,10 +1852,7 @@ document.querySelectorAll(".subnav-item").forEach((btn) => {
 // The desk's 「在研究路线中查看」 for the abandoned routes: 研究路线 with
 // only those shown, until the researcher shows them all again.
 function showAbandonedRoutes() {
-  treeFilter = "abandoned";
-  delete views.tree.dataset.loaded;
-  if (currentView === "tree") loadTreeView();
-  else activateView("tree");
+  ROTeam.showAbandoned();
 }
 
 // -- Project summary line (decorative; a failure here is not shown as an
@@ -2061,6 +2132,7 @@ function renderProjectMenu() {
   // repository is offered), or not a git repository (the panel explains).
   projectMenu.appendChild(pmItem("推送到 GitHub…", () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
   projectMenu.appendChild(pmItem("添加项目…", () => { closeProjectMenu(false); openAddDialog(); }));
+  projectMenu.appendChild(pmItem("从公盘加入项目…", () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));
   const status = mk("div", "pm-status");
   const rescan = pmItem("重新扫描这个项目", () => rescanFromMenu(status, rescan), { disabled: state.noProject });
   projectMenu.appendChild(rescan);
@@ -2617,6 +2689,7 @@ document.addEventListener("mousedown", (e) => {
 });
 
 document.getElementById("welcome-add-btn").addEventListener("click", () => openAddDialog());
+document.getElementById("welcome-join-btn").addEventListener("click", () => ROTeam.openJoinDialog());
 
 // `opts.scanStarted`: a scan of the project being opened has just begun, so
 // its end is news even if it lands before the first status poll.
@@ -2636,7 +2709,6 @@ async function reloadAllViews(opts) {
   state.github = null;
   renderNotices();
   markViewsStale();
-  treeFilter = null;
   litState.data = null;
   litState.open.clear();
   litState.quiet = false;
@@ -2663,7 +2735,8 @@ async function reloadAllViews(opts) {
   else if (currentView === "canvas") RCECanvas.load(views.canvas);
   else if (currentView === "variables") loadVariablesView();
   else if (currentView === "literature") loadLiteratureView();
-  else if (PLACEHOLDER_VIEWS.has(currentView)) RODesk.renderPlaceholder(views[currentView], currentView);
+  else if (currentView === "proposals") ROTeam.loadProposals(views.proposals);
+  else if (currentView === "members") ROTeam.loadMembers(views.members);
 }
 
 // Every view's data belongs to what was on disk when it loaded: marked
@@ -2676,7 +2749,7 @@ function markViewsStale() {
 // GET /api/generation every 2s (matching the server watcher's own poll
 // cadence). When the generation moved, the current view's data is
 // re-fetched and re-rendered with UI state preserved: expanded rows stay
-// expanded (captureTreeState/restoreTreeState), the active view stays
+// expanded (the page keeps its scroll; a half-typed form is left alone), the active view stays
 // active (only it re-fetches now; the hidden one is marked stale and
 // reloads lazily on its next activation), and an open attempt panel is
 // re-validated against the fresh data -- re-rendered if its record still
@@ -2754,8 +2827,10 @@ async function refreshCurrentView() {
     await RONode.loadNode(views.node, true);
   } else if (currentView === "results") {
     await RONode.loadResults(views.results, true);
-  } else if (PLACEHOLDER_VIEWS.has(currentView)) {
-    RODesk.renderPlaceholder(views[currentView], currentView);
+  } else if (currentView === "proposals") {
+    await ROTeam.loadProposals(views.proposals, true);
+  } else if (currentView === "members") {
+    await ROTeam.loadMembers(views.members, true);
   } else if (currentView === "tree") {
     await loadTreeView(true);
   } else if (currentView === "lineage") {
@@ -2979,277 +3054,14 @@ function ownMark(item) {
   return span;
 }
 
-// 研究路线 shows every attempt, or (from the desk) only the abandoned ones.
-let treeFilter = null;
-
-function attemptMatches(attempt) {
-  if (treeFilter !== "abandoned") return true;
-  const own = attempt.verdict_status && attempt.verdict_status.status === "abandoned";
-  return own || (attempt.children || []).some(attemptMatches);
-}
-
-function renderAttemptNode(attempt) {
-  const details = document.createElement("details");
-  details.className = "attempt-node";
-  // Stable key for auto-refresh (task V3 phase 2): captureTreeState()
-  // records which attempt ids were expanded so restoreTreeState() can
-  // re-open the same rows on the freshly built DOM.
-  details.dataset.attemptId = attempt.id;
-
-  const summary = document.createElement("summary");
-
-  const content = document.createElement("span");
-  content.className = "row-content";
-  content.appendChild(verdictLabel(attempt.verdict_status));
-  const num = document.createElement("span");
-  num.className = "attempt-number";
-  num.textContent = "#" + attempt.number;
-  const date = document.createElement("span");
-  date.className = "attempt-date";
-  date.textContent = attempt.date || "";
-  const desc = document.createElement("span");
-  desc.className = "attempt-desc";
-  desc.textContent = attempt.description || "（无描述）";
-  content.append(num, date, desc);
-  if (attempt.verdict_status && attempt.verdict_status.words) {
-    content.appendChild(mk("span", "verdict-words", attempt.verdict_status.words));
-  }
-  const own = ownMark(attempt);
-  if (own) content.appendChild(own);
-  content.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    RONode.openNode(attempt.id); // 12.9: every object opens its node page
-  });
-
-  summary.append(content);
-  details.appendChild(summary);
-
-  const body = document.createElement("div");
-  // An abandoned route keeps its basis (12.4): its result, in its own words.
-  const record = state.attemptsById.get(attempt.id);
-  if (treeFilter === "abandoned" && record && record.result) {
-    body.appendChild(mk("p", "attempt-reason", "结果：" + record.result));
-  }
-  if (attempt.scripts && attempt.scripts.length) {
-    const scriptList = document.createElement("div");
-    scriptList.className = "script-list";
-    attempt.scripts.forEach((s) => scriptList.appendChild(renderScriptNode(s, attempt.id)));
-    body.appendChild(scriptList);
-  }
-  if (attempt.children && attempt.children.length) {
-    const childList = document.createElement("div");
-    childList.className = "attempt-list attempt-children";
-    attempt.children.filter(attemptMatches).forEach((c) => childList.appendChild(renderAttemptNode(c)));
-    body.appendChild(childList);
-  }
-  details.appendChild(body);
-  return details;
-}
-
-function renderScriptNode(script, attemptId) {
-  const details = document.createElement("details");
-  details.className = "script-node";
-  details.dataset.rendered = "0";
-  // Keyed per owning attempt, not by path alone: two attempts can link the
-  // same step script, and auto-refresh must re-expand only the copy the
-  // user actually had open.
-  details.dataset.scriptKey = attemptId + "::" + script.path;
-
-  const summary = document.createElement("summary");
-  const content = document.createElement("span");
-  content.className = "row-content";
-  const path = document.createElement("span");
-  path.className = "script-path";
-  path.textContent = script.path;
-  content.appendChild(path);
-  const own = ownMark(script);
-  if (own) content.appendChild(own);
-  content.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    RONode.openNode(script.path);
-  });
-  summary.append(content);
-  details.appendChild(summary);
-
-  const body = document.createElement("div");
-  details.appendChild(body);
-
-  // Lazy layer: a project with many attempts x many step scripts can carry
-  // thousands of read/write rows in one /api/tree response. The JSON is
-  // already all in memory, but the DOM for a script's file list is only
-  // built the first time its <details> is actually opened. The renderer is
-  // also kept reachable on the element itself (an expando -- fine for this
-  // inline, build-free app) so restoreTreeState() can re-open a node and
-  // fill its body synchronously, without waiting on the browser's
-  // asynchronous toggle-event dispatch.
-  const ensureRendered = () => {
-    if (details.dataset.rendered === "0") {
-      renderScriptBody(body, script);
-      details.dataset.rendered = "1";
-    }
-  };
-  details._ensureRendered = ensureRendered;
-  details.addEventListener("toggle", () => {
-    if (details.open) ensureRendered();
-  });
-  return details;
-}
-
-function rwLabel(text) {
-  const d = document.createElement("div");
-  d.className = "rw-label";
-  d.textContent = text;
-  return d;
-}
-
-function fileList(entries, direction) {
-  const ul = document.createElement("ul");
-  ul.className = "file-list";
-  entries.forEach((entry) => {
-    const li = document.createElement("li");
-    li.className = "file-row";
-    // The direction is the 读取 / 写出 heading above the list (12.11: a
-    // relation is said in words, not drawn with an arrow character).
-    li.title = direction === "read" ? "读取" : "写出";
-    if (entry.role === "orphan_input") {
-      const dot = document.createElement("span");
-      dot.className = "orphan-dot";
-      dot.title = "无来源输入：没有任何脚本写出这个文件";
-      li.appendChild(dot);
-    }
-    const pathSpan = document.createElement("span");
-    pathSpan.textContent = entry.path;
-    li.appendChild(pathSpan);
-    const own = ownMark(entry);
-    if (own) li.appendChild(own);
-    if (entry.missing) {
-      const flag = document.createElement("span");
-      flag.className = "missing-flag";
-      flag.textContent = "（文件不存在）";
-      li.appendChild(flag);
-    }
-    // 9.6 "Where it shows" (决策树): a link whose old judgment waits.
-    if ((entry.review || entry.conflict) && entry.link) li.appendChild(reviewTag(entry));
-    li.addEventListener("click", () => RONode.openNode(entry.path));
-    ul.appendChild(li);
-  });
-  return ul;
-}
-
-function renderScriptBody(body, script) {
-  body.innerHTML = "";
-  const hasReads = script.reads && script.reads.length;
-  const hasWrites = script.writes && script.writes.length;
-  if (!hasReads && !hasWrites) {
-    const note = document.createElement("div");
-    note.className = "empty-note";
-    note.textContent = "没有读到读写记录。";
-    body.appendChild(note);
-    return;
-  }
-  if (hasReads) {
-    body.appendChild(rwLabel("读取"));
-    body.appendChild(fileList(script.reads, "read"));
-  }
-  if (hasWrites) {
-    body.appendChild(rwLabel("写出"));
-    body.appendChild(fileList(script.writes, "write"));
-  }
-}
-
-// -- Expansion-state capture/restore (auto-refresh, task V3 phase 2) --------
-// Both walk the live DOM by the data-keys the renderers stamp on every
-// <details>, so an auto-refresh rebuilds the tree from fresh data yet the
-// user's open rows stay open. A key that no longer exists after re-ingest
-// (row deleted, script unlinked) is simply not matched -- nothing to
-// restore is the correct outcome for it.
-
-function captureTreeState() {
-  const openAttempts = new Set();
-  const openScripts = new Set();
-  views.tree.querySelectorAll("details.attempt-node[open]").forEach((d) => {
-    if (d.dataset.attemptId) openAttempts.add(d.dataset.attemptId);
-  });
-  views.tree.querySelectorAll("details.script-node[open]").forEach((d) => {
-    if (d.dataset.scriptKey) openScripts.add(d.dataset.scriptKey);
-  });
-  return { openAttempts, openScripts };
-}
-
-function restoreTreeState(saved) {
-  views.tree.querySelectorAll("details.attempt-node").forEach((d) => {
-    if (saved.openAttempts.has(d.dataset.attemptId)) d.open = true;
-  });
-  views.tree.querySelectorAll("details.script-node").forEach((d) => {
-    if (saved.openScripts.has(d.dataset.scriptKey)) {
-      d.open = true;
-      // Fill the lazy body now -- the toggle event a property write queues
-      // is asynchronous, and the restored row should not flash empty.
-      if (d._ensureRendered) d._ensureRendered();
-    }
-  });
-}
-
-async function loadTreeView(preserveState) {
-  const container = views.tree;
-  const saved = preserveState ? captureTreeState() : null;
-  // An auto-refresh keeps the old DOM in place until the new data has
-  // actually arrived -- no 「载入中…」 flash wiping the user's view every
-  // time they save a file in their editor.
-  if (!saved) container.innerHTML = '<p class="empty-note">载入中…</p>';
-  let treeData, current;
-  try {
-    // The attempt records come through the same loader the edit form uses
-    // (fetchAttemptRecords).
-    [treeData, current] = await Promise.all([apiGet("/api/tree"), fetchAttemptRecords()]);
-  } catch (err) {
-    renderViewFailure(container, err);
-    return;
-  }
-  if (!current) return; // the project was switched meanwhile; reloadAllViews loads the new one
-  clearProjectState(); // the graph answered: whatever was wrong is over
-  container.innerHTML = "";
-  if (!treeData.attempts || treeData.attempts.length === 0) {
-    container.appendChild(renderGuideCard());
-    views.tree.dataset.loaded = "1";
-    return;
-  }
-  if (treeFilter === "abandoned") {
-    const bar = mk("div", "tree-filter");
-    bar.appendChild(mk("span", null, "只显示已放弃的路线，每条附当时的结果。"));
-    bar.appendChild(mkButton("显示全部尝试", "btn btn-small", () => { treeFilter = null; loadTreeView(); }));
-    container.appendChild(bar);
-  }
-  const list = document.createElement("div");
-  list.className = "attempt-list";
-  treeData.attempts.filter(attemptMatches).forEach((a) => list.appendChild(renderAttemptNode(a)));
-  if (!list.childNodes.length) list.appendChild(mk("p", "empty-note", "没有已放弃的路线。"));
-  container.appendChild(list);
-  if (saved) restoreTreeState(saved);
-  views.tree.dataset.loaded = "1";
+// 研究路线 (12.9, U4): the attempts grouped by status, the proposals shown
+// apart, an abandoned route with its result, its reason and 「当时的依据」
+// (team.js). `refresh` (an auto-refresh) keeps the page in place.
+function loadTreeView(refresh) {
+  return ROTeam.loadRoutes(views.tree, refresh);
 }
 
 // -- Lineage view ---------------------------------------------------------------
-
-// 9.6 "Where it shows" (决策树, 血缘): a compact 「待复核」 tag on a line
-// whose link's old judgment waits -- a formerly rejected link back at the
-// machine's status must never pass for an ordinary one. It opens the
-// 待复核 list at that item. `entry` carries `link` and `judgement`.
-function reviewTag(entry) {
-  const tag = document.createElement("button");
-  tag.type = "button";
-  tag.className = "review-tag";
-  tag.textContent = "待复核";
-  tag.title = entry.conflict ? "记录冲突，待处理" : reviewHoverText(entry.judgement);
-  tag.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openReviewPanel(entry.link);
-  });
-  return tag;
-}
 
 // 数据与代码 (12.9): scripts and data as one list with the lineage report's
 // blocks as filters, each opening its node page (node.js).
@@ -3568,6 +3380,9 @@ async function openAttemptForm(mode, attemptId) {
   let ready = false;
   let failure = null;
   try {
+    // U4: who I am in this project decides whether the form writes the
+    // table (one person, the PI) or proposes (a member); never throws.
+    await RODesk.ensureContext();
     ready = await ensureAttemptData();
   } catch (err) {
     failure = err;
@@ -3608,13 +3423,32 @@ function renderAttemptForm(mode, attemptId) {
   }
   const attrs = record ? (record.attrs || {}) : {};
   const number = mode === "append" ? defaultNewNumber(attempts) : (attrs.number || "");
-  panelTitle.textContent = mode === "append" ? "新增尝试" : "编辑尝试 #" + number;
-  panelSubtitle.textContent = "将写入 " + config.file;
+  // 12.3, 12.4 (U4): in a project with members a member's new attempt or
+  // verdict is a proposal: the row is first written into their own working
+  // copy (their own change, not official), then the proposal is shown as
+  // the engine's dry run and sent only on 发送提议. Someone not in the
+  // team yet cannot propose.
+  const role = ROTeam.mode();
+  const proposing = role === "member";
+  if (role === "none") {
+    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议改判";
+    panelSubtitle.textContent = "";
+    panelBody.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
+    openPanel();
+    return;
+  }
+  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议改判 #" + number)
+    : (mode === "append" ? "新增尝试" : "编辑尝试 #" + number);
+  panelSubtitle.textContent = proposing
+    ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
+    : "将写入 " + config.file;
 
   const form = document.createElement("form");
   form.className = "attempt-form";
   const inputs = {};
   const initial = {};
+  let sentenceInput = null;
+  let reasonInput = null;
 
   const numberInput = document.createElement("input");
   numberInput.className = "form-input form-mono";
@@ -3626,6 +3460,13 @@ function renderAttemptForm(mode, attemptId) {
     numberInput.title = "编号是这一行的身份，界面里不改；如需重编号请直接改源文件";
   }
   form.appendChild(formFieldEl("编号", numberInput));
+  if (proposing) {
+    sentenceInput = document.createElement("textarea");
+    sentenceInput.className = "form-textarea";
+    sentenceInput.rows = 2;
+    sentenceInput.placeholder = "用你自己的话说明这份提议：PI 会先看到这句话";
+    form.appendChild(formFieldEl("一句话说明（必填）", sentenceInput));
+  }
 
   // Field labels come from the project's OWN [columns] header text -- the
   // researcher's words, not this tool's.
@@ -3655,6 +3496,12 @@ function renderAttemptForm(mode, attemptId) {
     }
     inputs[def.key] = input;
     initial[def.key] = input.value;
+    // 提议改判 carries the verdict and the result only (12.4).
+    if (proposing && mode === "update" && def.key !== "verdict" && def.key !== "result") {
+      input.disabled = true;
+      input.dataset.fixed = "1";
+      input.title = "改判只包括判决和结果；其它格子的改动不会随提议发送";
+    }
     const fieldEl = formFieldEl(def.label, input);
     if (def.key === "verdict") {
       const verdicts = distinctVerdicts(attempts);
@@ -3678,6 +3525,15 @@ function renderAttemptForm(mode, attemptId) {
     }
     form.appendChild(fieldEl);
   });
+  if (proposing && mode === "update") {
+    reasonInput = document.createElement("textarea");
+    reasonInput.className = "form-textarea";
+    reasonInput.rows = 2;
+    reasonInput.placeholder = "放弃这条路线时必须写明为什么";
+    const reasonField = formFieldEl("理由（放弃一条路线时必填）", reasonInput);
+    reasonField.appendChild(mk("div", "team-help", "判决标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
+    form.appendChild(reasonField);
+  }
 
   const statusEl = document.createElement("div");
   statusEl.className = "panel-status";
@@ -3687,7 +3543,7 @@ function renderAttemptForm(mode, attemptId) {
   const submitBtn = document.createElement("button");
   submitBtn.type = "submit";
   submitBtn.className = "btn btn-primary";
-  submitBtn.textContent = "预览改动";
+  submitBtn.textContent = proposing ? "预览这一行" : "预览改动";
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "btn";
@@ -3723,7 +3579,9 @@ function renderAttemptForm(mode, attemptId) {
 
   function setFormDisabled(disabled) {
     numberInput.disabled = disabled || mode === "update";
-    EDITABLE_KEYS.forEach((key) => { inputs[key].disabled = disabled; });
+    EDITABLE_KEYS.forEach((key) => { inputs[key].disabled = disabled || inputs[key].dataset.fixed === "1"; });
+    if (sentenceInput) sentenceInput.disabled = disabled;
+    if (reasonInput) reasonInput.disabled = disabled;
     submitBtn.disabled = disabled;
   }
 
@@ -3749,13 +3607,15 @@ function renderAttemptForm(mode, attemptId) {
 
     const note = document.createElement("div");
     note.className = "confirm-note";
-    note.textContent = "将写入 " + preview.file + "（已自动备份）";
+    note.textContent = proposing
+      ? "将写入你的工作副本里的 " + preview.file + "（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。"
+      : "将写入 " + preview.file + "（已自动备份）";
     const confirmActions = document.createElement("div");
     confirmActions.className = "form-actions";
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.className = "btn btn-primary";
-    confirmBtn.textContent = "确认写入";
+    confirmBtn.textContent = proposing ? "写入工作副本，查看提议" : "确认写入";
     const backBtn = document.createElement("button");
     backBtn.type = "button";
     backBtn.className = "btn";
@@ -3782,6 +3642,22 @@ function renderAttemptForm(mode, attemptId) {
         backBtn.disabled = false; // 返回修改, fix, and re-preview
         return;
       }
+      if (proposing) {
+        // The row is the member's own change now; the proposal is the
+        // engine's dry run of it, sent only on 发送提议 (team.js).
+        pollGeneration();
+        previewHost.innerHTML = "";
+        setFormStatus(statusEl, "", "这一行已写进你的工作副本。");
+        const propose = { kind: mode === "append" ? "attempt_new" : "verdict_change", sentence: sentenceInput.value.trim(),
+          number: body.number };
+        if (reasonInput && reasonInput.value.trim()) propose.reason = reasonInput.value.trim();
+        const composeStatus = mk("div", "notice-status");
+        const composeHost = mk("div", "compose-result");
+        previewHost.append(composeStatus, composeHost);
+        const draft = await ROTeam.composeInto(composeHost, propose, composeStatus);
+        if (!draft) composeStatus.appendChild(mk("div", "team-help", "这一行已经在你的工作副本里，可以稍后在「提议」一栏里提交。"));
+        return;
+      }
       if (result.ingest_error) {
         // The file edit itself landed (and is backed up) -- only the
         // rescan failed; the refresh chip carries the same error.
@@ -3797,6 +3673,11 @@ function renderAttemptForm(mode, attemptId) {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (proposing && !sentenceInput.value.trim()) {
+      setFormStatus(statusEl, "err", "请用一句话说明这份提议");
+      sentenceInput.focus();
+      return;
+    }
     const body = collectBody();
     if (!body) return;
     setFormStatus(statusEl, "", "正在生成预览…");
@@ -3805,6 +3686,14 @@ function renderAttemptForm(mode, attemptId) {
       preview = await apiPost("/api/attempts/preview", body);
     } catch (err) {
       setFormStatus(statusEl, "err", "无法生成预览", err);
+      return;
+    }
+    // 12.4: abandoning a route through a proposal needs its result and its
+    // reason -- refused here, before anything is written.
+    if (proposing && mode === "update" && preview.abandons &&
+        (!inputs.result.value.trim() || !(reasonInput && reasonInput.value.trim()))) {
+      setFormStatus(statusEl, "err", "放弃一条路线时，结果和理由都必须填写");
+      (inputs.result.value.trim() ? reasonInput : inputs.result).focus();
       return;
     }
     statusEl.textContent = "";
@@ -5907,6 +5796,9 @@ function shellCan(feature) {
 }
 
 const FOLDER_PURPOSES = ["add", "locate"];
+// V8 U4: the shared folder and a member's new working copy -- sent only to
+// a shell that says it takes them ("choose-folder-share").
+const SHARE_FOLDER_PURPOSES = ["shared", "working"];
 
 function chooseFolder(purpose) {
   return new Promise((resolve) => {
@@ -5914,8 +5806,24 @@ function chooseFolder(purpose) {
     folderRequests.set(request, resolve);
     const message = { type: "choose-folder", request: request };
     if (FOLDER_PURPOSES.indexOf(purpose) >= 0 && shellCan("choose-folder-purpose")) message.purpose = purpose;
+    else if (SHARE_FOLDER_PURPOSES.indexOf(purpose) >= 0 && shellCan("choose-folder-share")) message.purpose = purpose;
     try {
       window.webkit.messageHandlers.rce.postMessage(message);
+    } catch (err) {
+      folderRequests.delete(request);
+      resolve(null);
+    }
+  });
+}
+
+// A member's public key file, for the PI (V8 U4): the shell's file panel
+// ("choose-file-key"), answered through the same callback as a folder.
+function chooseKeyFile() {
+  return new Promise((resolve) => {
+    const request = "folder-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    folderRequests.set(request, resolve);
+    try {
+      window.webkit.messageHandlers.rce.postMessage({ type: "choose-file", request: request, purpose: "key" });
     } catch (err) {
       folderRequests.delete(request);
       resolve(null);

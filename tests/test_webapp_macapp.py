@@ -375,7 +375,8 @@ def test_shell_choose_folder_answers_through_a_fixed_callback_with_arguments():
     assert 'callAsyncJavaScript("window.RCE && RCE.folderChosen(request, path)", arguments: arguments' in answer
     assert '["request": request, "path": path ?? NSNull()]' in answer
     assert "\\(" not in answer  # no string interpolation anywhere in the callback
-    assert 'let shellFeaturesScript = "window.RCEShellFeatures = [\\"choose-folder\\", \\"choose-folder-purpose\\"];"' in _SHELL
+    assert ('let shellFeaturesScript = "window.RCEShellFeatures = [\\"choose-folder\\", \\"choose-folder-purpose\\", '
+            '\\"choose-folder-share\\", \\"choose-file-key\\"];"') in _SHELL
     assert "injectionTime: .atDocumentStart, forMainFrameOnly: true" in _SHELL
     validator = _SHELL[_SHELL.index("func isFolderRequest"):]
     validator = validator[: validator.index("\n}\n")]
@@ -418,11 +419,40 @@ def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
     choose = _SHELL[_SHELL.index("func chooseFolder"):]
     choose = choose[: choose.index("\n    }\n")]
     assert "let panelMessage = folderPanelMessage(purpose)" in choose
-    assert "panel.message = panelMessage" in choose and "panel.canCreateDirectories = false" in choose
+    assert "panel.message = panelMessage" in choose
+    # V8 U4: only the panel for a member's new working copy may make a folder
+    assert 'panel.canCreateDirectories = purpose == "working"' in choose
     # the page sends the purpose only to a shell that says it takes it
     page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
     assert 'shellCan("choose-folder-purpose")) message.purpose = purpose;' in page
     assert 'const FOLDER_PURPOSES = ["add", "locate"];' in page
+
+
+def test_u4_shell_takes_the_shared_and_working_folders_and_a_key_file():
+    """V8 U4 (12.3, 12.5): two more folder purposes -- "shared" (the shared
+    folder) and "working" (a member's new working copy) -- and one file
+    panel, `{type: "choose-file", request, purpose: "key"}` for the public
+    key file a member sent the PI, answered through the same fixed callback;
+    the page sends them only to a shell that names the features."""
+    helper = _SHELL[_SHELL.index("func folderPanelMessage"):]
+    helper = helper[: helper.index("\n}\n")]
+    assert 'case "shared": return' in helper and 'case "working": return' in helper
+    files = _SHELL[_SHELL.index("func filePanelMessage"):]
+    files = files[: files.index("\n}\n")]
+    assert 'case "key": return' in files and "default: return nil" in files
+    handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
+    handler = handler[: handler.index("\n    }\n")]
+    assert 'body.count == 3, body["type"] as? String == "choose-file"' in handler
+    assert 'let purpose = body["purpose"] as? String, filePanelMessage(purpose) != nil' in handler
+    choose = _SHELL[_SHELL.index("func chooseFile"):]
+    choose = choose[: choose.index("\n    }\n")]
+    assert "panel.canChooseFiles = true" in choose and "panel.canChooseDirectories = false" in choose
+    assert "self.answerFolder(request, path)" in choose
+    page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
+    assert 'shellCan("choose-folder-share")) message.purpose = purpose;' in page
+    assert '{ type: "choose-file", request: request, purpose: "key" }' in page
+    team = (Path(macapp.__file__).parent / "team.js").read_text(encoding="utf-8")
+    assert 'purpose === "key" ? shellCan("choose-file-key") : shellCan("choose-folder-share")' in team
 
 
 def test_the_v6_shell_changes_the_build_id(tmp_path):

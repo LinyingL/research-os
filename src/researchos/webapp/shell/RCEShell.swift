@@ -59,6 +59,12 @@
 //   learns it may ask (and may name a purpose) from
 //   `window.RCEShellFeatures`, injected at document start. Every other
 //   message shape -- any other purpose included -- is ignored.
+//   Since V8 U4 (DESIGN.md 12.3, 12.5): two more folder purposes, "shared"
+//   (the shared folder) and "working" (where a member's working copy goes;
+//   this panel may make a new folder), and one file panel, `{type:
+//   "choose-file", request, purpose: "key"}` (a member's public key file,
+//   for the PI), answered through the same callback. The page learns of
+//   them from "choose-folder-share" and "choose-file-key".
 // - Navigation: only http://127.0.0.1:<port> (and the placeholder's
 //   about:blank) load in the window. Any other http(s)/mailto link opens
 //   in the default browser; every other scheme is refused. Developer
@@ -88,7 +94,7 @@ let startupBudget: TimeInterval = 4.0
 let documentsHint = "正在启动引擎… 如果系统询问是否允许 Research OS 访问\"文稿\"文件夹，请点\"允许\"。"
 let titleLimit = 60
 // What the page may ask the shell for (app.html, shellCan).
-let shellFeaturesScript = "window.RCEShellFeatures = [\"choose-folder\", \"choose-folder-purpose\"];"
+let shellFeaturesScript = "window.RCEShellFeatures = [\"choose-folder\", \"choose-folder-purpose\", \"choose-folder-share\", \"choose-file-key\"];"
 // The page's own request ids ("folder-<time>-<random>"): anything else is ignored.
 let folderRequestLimit = 80
 
@@ -98,6 +104,16 @@ func folderPanelMessage(_ purpose: String) -> String? {
     switch purpose {
     case "add": return "选择要加入 Research OS 的项目文件夹"
     case "locate": return "选择项目文件夹的新位置"
+    case "shared": return "选择公盘文件夹（和团队共享的 OneDrive 文件夹）"
+    case "working": return "选择一个空文件夹，用来放你的工作副本"
+    default: return nil
+    }
+}
+
+// The file panel's message per purpose (V8 U4); nil for anything else.
+func filePanelMessage(_ purpose: String) -> String? {
+    switch purpose {
+    case "key": return "选择成员发来的公钥文件（.pub）"
     default: return nil
     }
 }
@@ -650,6 +666,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
                   let request = body["request"] as? String, isFolderRequest(request),
                   let purpose = body["purpose"] as? String, folderPanelMessage(purpose) != nil {
             chooseFolder(request, purpose: purpose)
+        } else if body.count == 3, body["type"] as? String == "choose-file",
+                  let request = body["request"] as? String, isFolderRequest(request),
+                  let purpose = body["purpose"] as? String, filePanelMessage(purpose) != nil {
+            chooseFile(request, purpose: purpose)
+        }
+    }
+
+    // A member's public key file (V8 U4): one file, chosen in a sheet; the
+    // path goes back through the same fixed callback as a folder's.
+    func chooseFile(_ request: String, purpose: String) {
+        guard !choosingFolder, appLoaded, let panelMessage = filePanelMessage(purpose) else {
+            answerFolder(request, nil)
+            return
+        }
+        choosingFolder = true
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "选择"
+        panel.message = panelMessage
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self else { return }
+            self.choosingFolder = false
+            let path = response == .OK ? panel.url?.path : nil
+            self.answerFolder(request, path)
         }
     }
 
@@ -666,7 +709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
+        panel.canCreateDirectories = purpose == "working"
         panel.prompt = "选择"
         panel.message = panelMessage
         panel.beginSheetModal(for: window) { [weak self] response in

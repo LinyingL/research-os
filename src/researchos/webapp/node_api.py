@@ -16,6 +16,9 @@ who I am, notes, what changed, and the trace -- the payloads only.
   its breaks with their repairs, the links touching it;
   `GET /api/results[?draft=…]` -- 成果; `GET /api/data-code` -- 数据与代码
   (`researchos.nodepage`).
+- `GET /api/routes` -- 研究路线; `GET /api/evidence?node=attempt:…` -- an
+  abandoned route's frozen basis; `GET /api/history/version?node=&version=`
+  -- one kept version's content (U4, `researchos.nodepage`).
 - `GET /api/proposals` -- the PI's inbox or a member's own proposals;
   `GET /api/proposals/<id>`; `POST /api/proposals` (from the working copy:
   a dry run, or written with `write`); `POST /api/proposals/<id>/approve |
@@ -26,6 +29,12 @@ who I am, notes, what changed, and the trace -- the payloads only.
   working copy), `POST /api/share/join {shared, folder}` (12.2, 12.3, 12.5;
   `researchos.share`); `POST /api/team/add {id, name, key}` (the PI, 12.12:
   the member's area is made once and the PI told to share it).
+- U4: `GET /api/me/key` (this machine's public key, never made by a GET),
+  `POST /api/me/key` (made on first need); `POST /api/team/init` (the PI's
+  team file); `POST /api/share/set {shared}` (the shared folder, on this
+  machine); `POST /api/share/join-preview {shared, folder}` and `GET
+  /api/share/sync-preview` -- what joining and syncing would write, before
+  they write it.
 
 Copy for the page is Chinese (8.8); `error` stays the engine's English for
 「详情」.
@@ -204,6 +213,40 @@ def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 
 
+def routes_payload(conn: Connection, root: Path) -> dict[str, Any]:
+    """GET /api/routes: 研究路线 (`researchos.nodepage.routes`)."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    return nodepage.routes(conn, root)
+
+
+def evidence_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+    """GET /api/evidence?node=attempt:…: 「当时的依据」."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    given = _arg(query, "node", required=True) or ""
+    try:
+        return nodepage.evidence(conn, root, given)
+    except ValueError as exc:
+        raise NodeApiRefused(400, "not_a_node", str(exc), "这不是一条尝试") from exc
+    except nodepage.NotFound as exc:
+        raise NodeApiRefused(404, "not_found", str(exc), "找不到这条尝试") from exc
+
+
+def version_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+    """GET /api/history/version?node=&version=: one kept version as it was."""
+    from researchos import nodepage  # noqa: PLC0415
+
+    given = _arg(query, "node", required=True) or ""
+    version = _arg(query, "version", required=True) or ""
+    try:
+        return nodepage.version_content(root, given, version)
+    except ValueError as exc:
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个版本") from exc
+    except nodepage.NotFound as exc:
+        raise NodeApiRefused(404, "no_such_version", str(exc), "找不到这个版本") from exc
+
+
 def data_code_payload(conn: Connection, root: Path) -> dict[str, Any]:
     """GET /api/data-code: 数据与代码."""
     from researchos import nodepage  # noqa: PLC0415
@@ -247,6 +290,55 @@ def _proposal_call(fn):  # noqa: ANN001, ANN202
         raise _proposal_refused(exc) from exc
 
 
+_NOT_CARRIED = (
+    (r"^row (\S+) \((new|removed|changed)\) is not part of this proposal$",
+     lambda m: f"尝试表第 {m.group(1)} 行（{ {'new': '新增', 'removed': '删除', 'changed': '改动'}[m.group(2)] }）不在这份提议里"),
+    (r"^row (\S+): changes to (.+) are not part of a verdict change$",
+     lambda m: f"第 {m.group(1)} 行其它格子的改动不属于改判，不会发送"),
+    (r"^changes outside the table's rows are not proposed$", lambda m: "尝试表的行以外的改动不会提议"),
+    (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送"),
+    (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的官方版本，不会发送"),
+    (r"^notes, link judgments and hand-drawn links travel", lambda m: "笔记、关联判断和手工连线随同步发送，不需要批准"),
+    (r"^canvas arrangements do not travel", lambda m: "画布上的摆放不随提议发送：每个人保留自己的"),
+    (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议"),
+)
+
+
+def not_carried_words(items: Any) -> list[dict[str, Any]]:
+    """A proposal's `not_carried` with each reason also in words (8.8):
+    `reason_zh`; the engine's English stays as `reason` for 「详情」."""
+    import re  # noqa: PLC0415
+
+    out = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        reason = str(item.get("reason") or "")
+        words = next((fn(m) for pattern, fn in _NOT_CARRIED for m in [re.match(pattern, reason)] if m), None)
+        out.append({**item, "reason_zh": words or "这一处改动没有包含在提议里"})
+    return out
+
+
+def _worded(out: dict[str, Any], root: Path) -> dict[str, Any]:
+    """A proposal payload as the page shows it (12.11, 8.8): verdicts as
+    words, data summaries without arrows, `not_carried` in words."""
+    from researchos import desk  # noqa: PLC0415
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    labels = proposals_mod._labels(root)
+    for key in ("attempt", "verdict"):
+        if isinstance(out.get(key), dict) and not any(k.endswith("_status") for k in out[key]):
+            out[key] = proposals_mod.verdict_words(out[key], labels)
+    out["not_carried"] = not_carried_words(out.get("not_carried"))
+    changes = out.get("changes")
+    if isinstance(changes, dict):
+        changes["not_carried"] = not_carried_words(changes.get("not_carried"))
+        for f in changes.get("files") or []:
+            if isinstance(f, dict):
+                f["summary_words"] = desk._words(f.get("summary"))
+    return out
+
+
 def proposals_payload(root: Path) -> dict[str, Any]:
     """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
@@ -255,10 +347,18 @@ def proposals_payload(root: Path) -> dict[str, Any]:
 
 
 def proposal_payload(root: Path, proposal_id: str) -> dict[str, Any]:
-    """GET /api/proposals/<id>: for the PI with exactly what approving would do."""
+    """GET /api/proposals/<id>: for the PI with exactly what approving would
+    do; with `uses`, the variable versions its files use (12.3, U4)."""
+    from researchos import nodepage  # noqa: PLC0415
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    return _proposal_call(lambda: proposals_mod.open_for(root, proposal_id))
+    out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id)), root)
+    files = (out.get("changes") or {}).get("files") or out.get("files") or []
+    try:
+        out["uses"] = nodepage.variables_used(root, files)
+    except Exception:  # noqa: BLE001 -- nothing said rather than something wrong
+        out["uses"] = []
+    return out
 
 
 def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
@@ -284,7 +384,7 @@ def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
     def run() -> dict[str, Any]:
         draft = proposals_mod.make_proposal(root, kind, sentence, only=only, **options)
         if not body.get("write"):
-            return {"ok": True, "written": False, "proposal": draft.data, "preview": draft.preview,
+            return {"ok": True, "written": False, "proposal": _worded(dict(draft.data), root), "preview": draft.preview,
                     "fingerprint": draft.fingerprint}
         expected = body.get("expected")
         stored = proposals_mod.write_proposal(root, draft, expected=expected if isinstance(expected, str) else None)
@@ -330,7 +430,7 @@ _SHARE_STATUS = {
     "not_configured": 409, "unreachable": 503, "no_team": 409, "team_unreadable": 409, "not_pi": 403, "no_me": 409,
     "team_exists": 409, "member_exists": 409, "invalid": 400, "invalid_key": 400, "dataless": 409, "waiting": 409,
     "nothing_published": 404, "untrusted": 409, "not_empty": 409, "not_joined": 409, "cannot_sign": 409, "content": 409,
-    "damaged": 409, "not_in_team": 403, "other_project": 409, "ambiguous_project": 409,
+    "damaged": 409, "not_in_team": 403, "other_project": 409, "ambiguous_project": 409, "changed_since_shown": 409,
 }
 
 
@@ -381,11 +481,115 @@ def team_add_payload(root: Path, project_id: str | None, body: dict[str, Any], *
     from researchos import share  # noqa: PLC0415
 
     member, name, key = body.get("id"), body.get("name"), body.get("key")
+    key_file = body.get("key_file")
+    if (key is None or key == "") and isinstance(key_file, str) and key_file.strip():
+        key = _read_key_file(key_file)
     if not all(isinstance(v, str) and v.strip() for v in (member, name, key)):
         raise NodeApiRefused(400, "missing", "request body must carry string 'id', 'name' and 'key'",
                              "请填写成员的邮箱、名字和公钥")
     return {"ok": True, **_share_call(lambda: share.team_add(root, member, name, key, expected_id=project_id,
                                                              timeout=timeout))}
+
+
+KEY_FILE_LIMIT = 16 * 1024
+
+
+def _read_key_file(given: str) -> str:
+    """The text of the public key file the PI chose (the shell's file
+    panel, or a path field where there is none): an absolute path to a
+    small file, read once; its text is then parsed as a key like a pasted
+    one. Nothing else is done with the path."""
+    path = Path(given.strip()).expanduser()
+    if not path.is_absolute():
+        raise NodeApiRefused(400, "not_absolute", "'key_file' must be an absolute path", "请给出公钥文件的完整路径")
+    try:
+        if not path.is_file():
+            raise NodeApiRefused(400, "no_key_file", f"{path} is not a file", "找不到这个公钥文件")
+        if path.stat().st_size > KEY_FILE_LIMIT:
+            raise NodeApiRefused(400, "invalid_key", f"{path} is too large for a public key", "这个文件不是公钥（太大了）")
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise NodeApiRefused(400, "no_key_file", f"{path} cannot be read: {exc}", "公钥文件无法读取") from exc
+
+
+def _paths(body: dict[str, Any]) -> tuple[Path, Path, str | None]:
+    shared, folder, project = body.get("shared"), body.get("folder"), body.get("project")
+    if project is not None and not isinstance(project, str):
+        raise NodeApiRefused(400, "missing", "'project' must be text", "项目编号不对")
+    if not isinstance(shared, str) or not shared.strip() or not isinstance(folder, str) or not folder.strip():
+        raise NodeApiRefused(400, "missing", "request body must carry string 'shared' and 'folder'", "请选择公盘文件夹和工作副本的位置")
+    shared_path, folder_path = Path(shared.strip()).expanduser(), Path(folder.strip()).expanduser()
+    if not shared_path.is_absolute() or not folder_path.is_absolute():
+        # Never resolved against the engine's own working directory.
+        raise NodeApiRefused(400, "not_absolute", "'shared' and 'folder' must be absolute paths", "请给出完整的文件夹路径")
+    return shared_path, folder_path, project
+
+
+def join_preview_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """POST /api/share/join-preview {shared, folder, project?}: what 「加入」
+    would write and whose key it would trust -- nothing is written."""
+    from researchos import share  # noqa: PLC0415
+
+    shared_path, folder_path, project = _paths(body)
+    return {"ok": True, **_share_call(lambda: share.join_preview(shared_path, folder_path, project=project))}
+
+
+def sync_preview_payload(root: Path) -> dict[str, Any]:
+    """GET /api/share/sync-preview: what 「同步」 would write -- read only."""
+    from researchos import share  # noqa: PLC0415
+
+    return _share_call(lambda: share.sync_preview(root))
+
+
+def me_key_payload() -> dict[str, Any]:
+    """GET /api/me/key: this machine's public key when it has one -- a GET
+    never makes one (`POST /api/me/key` does)."""
+    from researchos import signing  # noqa: PLC0415
+
+    tool = signing.tool() is not None
+    key = signing.local_public_key() if tool else None
+    return {"ssh_keygen": tool, "key": key, "fingerprint": signing.fingerprint(key) if key else None,
+            "path": str(signing.key_path()) + ".pub"}
+
+
+def me_key_create_payload() -> dict[str, Any]:
+    """POST /api/me/key: `researchos me key` -- made on first need."""
+    from researchos import share  # noqa: PLC0415
+
+    return {"ok": True, "ssh_keygen": True, **_share_call(share.my_key)}
+
+
+def team_init_payload(root: Path, project_id: str | None, *, timeout: float) -> dict[str, Any]:
+    """POST /api/team/init: `researchos team init` -- the team file with me
+    as the PI and my public key; never over an existing one."""
+    from researchos import share  # noqa: PLC0415
+
+    return {"ok": True, **_share_call(lambda: share.team_init(root, expected_id=project_id, timeout=timeout))}
+
+
+def share_set_payload(root: Path, project_id: str | None, body: dict[str, Any]) -> dict[str, Any]:
+    """POST /api/share/set {shared}: `researchos share set` -- this project's
+    shared folder, remembered on this machine (`projects.json`); nothing is
+    written in the project or the folder. The PI's (or one person's) act:
+    a member's copy has its folder from joining."""
+    from researchos import exchange as exchange_mod  # noqa: PLC0415
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    shared = body.get("shared")
+    if not isinstance(shared, str) or not shared.strip():
+        raise NodeApiRefused(400, "missing", "request body must carry a string 'shared'", "请选择公盘文件夹")
+    path = Path(shared.strip()).expanduser()
+    if not path.is_absolute():
+        raise NodeApiRefused(400, "not_absolute", "'shared' must be an absolute path", "请给出完整的文件夹路径")
+    if not path.is_dir():
+        raise NodeApiRefused(400, "no_folder", f"{path} is not a folder", "找不到这个文件夹")
+    role, _me, _team = _proposal_call(lambda: proposals_mod.role_of(root))
+    if role in ("member", "none"):
+        raise NodeApiRefused(403, "not_pi", "a member's copy has its shared folder from joining", "只有 PI 设置公盘文件夹")
+    if not project_id:
+        raise NodeApiRefused(409, "no_identity", "the project has no identity", "项目身份文件无法读取")
+    done = _proposal_call(lambda: exchange_mod.configure(project_id, path, root))
+    return {"ok": True, "shared": str(done)}
 
 
 def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:
@@ -394,13 +598,8 @@ def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:
     inside a project, or anywhere not empty."""
     from researchos import share  # noqa: PLC0415
 
-    shared, folder, project = body.get("shared"), body.get("folder"), body.get("project")
-    if project is not None and not isinstance(project, str):
-        raise NodeApiRefused(400, "missing", "'project' must be text", "项目编号不对")
-    if not isinstance(shared, str) or not shared.strip() or not isinstance(folder, str) or not folder.strip():
-        raise NodeApiRefused(400, "missing", "request body must carry string 'shared' and 'folder'", "请选择公盘文件夹和工作副本的位置")
-    shared_path, folder_path = Path(shared).expanduser(), Path(folder).expanduser()
-    if not shared_path.is_absolute() or not folder_path.is_absolute():
-        # Never resolved against the engine's own working directory.
-        raise NodeApiRefused(400, "not_absolute", "'shared' and 'folder' must be absolute paths", "请给出完整的文件夹路径")
-    return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path, project=project))}
+    shared_path, folder_path, project = _paths(body)
+    expect = body.get("expect_pi")
+    if expect is not None and not isinstance(expect, str):
+        raise NodeApiRefused(400, "missing", "'expect_pi' must be text", "内容不对")
+    return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path, project=project, expect_pi=expect))}

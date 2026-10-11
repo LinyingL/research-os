@@ -7,8 +7,9 @@
 // mkButton, apiGet, apiPost, setStatus, renderBlockingError,
 // renderViewFailure, clearProjectState, ownMark, openFilePanel,
 // openAttemptForm, openVariableCard, activateView, humanRecordsBlocked,
-// ACT_WORDS, state, views, currentView, RODesk, RCECanvas) only at run
-// time, never while loading.
+// ACT_WORDS, state, views, currentView, RODesk, RCECanvas, ROTeam -- whether
+// this person edits or proposes, 「当时的依据」, U4) only at run time, never
+// while loading.
 //
 // Every object opens the same page: what it is, its trace (来龙去脉: the
 // columns 数据 | 脚本 | 中间数据 | 脚本 | 本节点 | 被引用 joined by drawn
@@ -270,6 +271,7 @@
         apiGet("/api/history?node=" + encodeURIComponent(page.id)).catch((err) => ({ failed: err })),
         apiGet("/api/notes?node=" + encodeURIComponent(page.id)).catch((err) => ({ failed: err })),
         meId(),
+        RODesk.ensureContext(), // U4: whether this person edits or proposes
       ]);
     } catch (err) {
       if (epoch !== state.dataEpoch || nav.id !== id) return;
@@ -333,7 +335,14 @@
       actions.appendChild(mkButton("打开", "btn btn-small", () => openFile(page.path, false, status)));
       actions.appendChild(mkButton("在 Finder 中显示", "btn btn-small", () => openFile(page.path, true, status)));
     }
-    if (page.type === "attempt") actions.appendChild(mkButton("编辑这一行", "btn btn-small", () => openAttemptForm("update", page.id)));
+    if (page.type === "attempt") {
+      // U4: a member proposes a verdict instead of editing the official
+      // table; someone not in the team yet cannot change it at all.
+      const role = ROTeam.mode();
+      const edit = role === "member" ? "提议改判" : "编辑这一行";
+      if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => openAttemptForm("update", page.id)));
+      if (d.basis) actions.appendChild(mkButton("当时的依据", "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
+    }
     if (page.type === "variable") actions.appendChild(mkButton("打开定义卡", "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
     if (actions.childElementCount) head.append(actions, status);
     host.appendChild(head);
@@ -1204,7 +1213,7 @@
   }
 
   window.RONode = Object.freeze({
-    openNode, back, section, loadNode, loadResults, loadDataCode, current: () => nav.id,
+    openNode, back, section, loadNode, loadResults, loadDataCode, current: () => nav.id, diffBlock,
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,

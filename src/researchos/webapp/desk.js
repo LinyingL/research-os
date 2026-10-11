@@ -5,9 +5,9 @@
 //
 // It defines one global, window.RODesk, and calls app.html's helpers (mk,
 // mkButton, apiGet, apiPost, renderBlockingError, renderErrorBox, setStatus,
-// RONode.openNode (every object opens its node page, U3), openReviewPanel,
-// showAbandonedRoutes, openPanel, closePanel, state, ...) only at run time,
-// never while loading.
+// RONode.openNode (every object opens its node page, U3), ROTeam.openProposal
+// (a proposal opens its page in 提议, U4), openReviewPanel,
+// showAbandonedRoutes, state, ...) only at run time, never while loading.
 //
 // What it reads (all GET, all origin-checked by the server):
 //   /api/me         -- who I am on this machine (the sidebar's last line);
@@ -15,7 +15,6 @@
 //                      (the status line; a member's 官方版本有更新);
 //   /api/proposals  -- the PI's inbox or a member's own proposals (the quiet
 //                      count beside 提议; 等你批准 / 我的提议 on the desk);
-//   /api/proposals/<id> -- one proposal, for 查看 (read only here);
 //   /api/desk?since -- what changed since I last looked, results that lost
 //                      their evidence, abandoned routes (researchos.desk).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
@@ -215,7 +214,12 @@
   // The sidebar's live parts: the quiet count beside 提议 when something
   // waits for me, the shared drive's line, who I am.
   async function refreshSidebar() {
-    if (state.noProject) { renderSidebar(); return; }
+    if (state.noProject) {
+      // Who I am is known without a project (U4: set while joining).
+      ctx.me = await apiGet("/api/me").catch(() => ctx.me);
+      renderSidebar();
+      return;
+    }
     try {
       await fetchContext();
     } catch (err) {
@@ -243,6 +247,13 @@
     shareLine.classList.toggle("hidden", !line);
     shareLine.title = ctx.share && ctx.share.shared ? "公盘：" + ctx.share.shared : "";
     meLine.textContent = "";
+    // U4: a member proposes a new attempt; someone not in the team yet
+    // cannot propose at all.
+    const add = document.getElementById("new-attempt-btn");
+    if (add) {
+      add.textContent = ctx.mode === "member" ? "提议新的尝试" : "新增尝试";
+      add.dataset.role = ctx.mode || "";
+    }
     const me = ctx.me && ctx.me.me;
     if (me) {
       meLine.append(mk("span", "me-name", me.name || me.id));
@@ -251,7 +262,7 @@
       meLine.title = me.id || "";
     } else {
       meLine.append(mk("span", "me-unset", "还没有设置你是谁"));
-      meLine.title = "在终端运行 researchos me set --name 名字 --email 邮箱";
+      meLine.title = "在「成员」一栏里设置";
     }
   }
 
@@ -425,7 +436,7 @@
     const meta = forPi ? [nameOf(p.by, team)] : [proposalStateText(p)];
     main.appendChild(metaLine(meta));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton("查看", "btn btn-small", () => openProposal(p, team)));
+    actions.appendChild(mkButton("查看", "btn btn-small", () => ROTeam.openProposal(p.id, p.by)));
     main.appendChild(actions);
     row.append(mk("span", "desk-when", whenWords(p.at, now())), main);
     return row;
@@ -542,83 +553,19 @@
     host.dataset.loaded = "1";
   }
 
-  // -- 查看 a proposal (read only in this phase) ----------------------------------------
-
-  async function openProposal(p, team) {
-    state.panelSubject = { kind: "proposal", id: p.id };
-    panelTitle.textContent = (KIND_WORDS[p.kind] || "") + "提议";
-    panelTitle.classList.add("plain-title");
-    panelTitle.title = p.id;
-    panelSubtitle.textContent = nameOf(p.by, team) + " · " + whenWords(p.at, now());
-    panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
-    openPanel();
-    let full;
-    try {
-      full = await apiGet("/api/proposals/" + encodeURIComponent(p.id));
-    } catch (err) {
-      if (!state.panelSubject || state.panelSubject.id !== p.id) return;
-      panelBody.innerHTML = "";
-      const box = mk("div", "panel-status err");
-      renderBlockingError(box, "没能打开这条提议", err);
-      panelBody.appendChild(box);
-      return;
+  // The context's freshness: fetched again once the project (epoch) moved.
+  async function ensureContext() {
+    if (ctx.epoch !== state.dataEpoch || ctx.project !== projectKey() || ctx.mode === null) {
+      try { await fetchContext(); } catch (err) { /* the callers say what they cannot read */ }
     }
-    if (!state.panelSubject || state.panelSubject.id !== p.id) return;
-    panelBody.innerHTML = "";
-    if (full.sentence) panelBody.appendChild(mk("p", "proposal-sentence", full.sentence));
-    const what = proposalWhat(full);
-    if (what) panelBody.appendChild(mk("p", "desk-sub", what));
-    if (full.kind === "verdict_change" && full.verdict) {
-      const v = full.verdict;
-      const line = mk("p", "desk-sub");
-      line.append("判决 ", verdictInline(v.old_status), " 改为 ", verdictInline(v.new_status));
-      panelBody.appendChild(line);
-      if (v.result) panelBody.appendChild(mk("p", "desk-note", "结果：" + v.result));
-      if (v.reason) panelBody.appendChild(mk("p", "desk-note", "理由：" + v.reason));
-    }
-    const files = full.files || [];
-    if (files.length) {
-      panelBody.appendChild(mk("h3", "panel-h3", "文件"));
-      const ul = mk("ul", "desk-files");
-      files.forEach((f) => {
-        const li = mk("li");
-        li.append(mk("span", "desk-what", FILE_ACTION_WORDS[f.action] || ""), mk("span", "mono", f.path || ""));
-        ul.appendChild(li);
-      });
-      panelBody.appendChild(ul);
-    }
-    const changes = full.changes;
-    if (changes && Array.isArray(changes.conflicts) && changes.conflicts.length) {
-      panelBody.appendChild(mk("h3", "panel-h3", "两边都改过"));
-      changes.conflicts.forEach((c) => {
-        const box = mk("p", "desk-break");
-        renderBlockingError(box, (c.path || "") + "：提议之后官方版本也改了它，需要成员在新版本上重新提议", c.reason ? new Error(c.reason) : null);
-        panelBody.appendChild(box);
-      });
-    }
-    if (full.verification && full.verification.message) {
-      panelBody.appendChild(mk("p", "desk-sub", "签名：" + full.verification.message));
-    }
-    if (full.state && full.state !== "pending") panelBody.appendChild(mk("p", "desk-sub", proposalStateText(full)));
-    panelBody.appendChild(mk("p", "desk-sub quiet", "批准、退回和讨论会在「提议」一栏里进行。"));
+    return ctx;
   }
 
-  // -- sections not built in this phase ----------------------------------------------------
-
-  const PLACEHOLDERS = {
-    results: "成果一栏还在制作中：这里会列出文稿里的图、表和论断，每一项都能打开它的来龙去脉。",
-    proposals: "提议一栏还在制作中：现在可以在工作台上查看每条提议的内容。",
-    members: "成员一栏还在制作中：这里会列出项目的成员和各自的角色。",
-  };
-
-  function renderPlaceholder(host, section) {
-    host.innerHTML = "";
-    host.appendChild(mk("p", "placeholder", PLACEHOLDERS[section] || "这一栏还在制作中。"));
-    host.dataset.loaded = "1";
-  }
+  function context() { return ctx; }
 
   window.RODesk = Object.freeze({
-    loadDesk, refreshSidebar, renderSidebar, renderPlaceholder, verdictInline, statusLabel,
+    loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context,
+    KIND_WORDS, STATE_WORDS, FILE_ACTION_WORDS, proposalWhat, proposalStateText, nameOf, whenWords,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,

@@ -168,6 +168,7 @@ MESSAGES = {
     "ambiguous_project": "这个公盘文件夹里有不止一个项目的快照，请指明要加入哪一个",
     "damaged": "公盘上有一个已发布的文件损坏了（内容与它的名字不符）：PI 先修复（researchos share repair），下次发布会重写它",
     "not_in_team": "你还不是这个项目的成员：请 PI 把你加入团队，然后同步",
+    "changed_since_shown": "公盘上的内容在你查看之后变了：请重新查看，再加入",
 }
 
 #: The ledgers whose entries a member's sync carries, without approval
@@ -884,15 +885,11 @@ def _base_files(snap: Snapshot) -> dict[str, dict[str, Any]]:
 # -- joining (a member) -------------------------------------------------------------------------------
 
 
-def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] | None = None,
-         project: str | None = None) -> dict[str, Any]:
-    """「加入」: a working copy in `folder` (new, or empty) from the latest
-    good snapshot; the PI's key from the first snapshot is trusted from now
-    on (module docstring) -- its fingerprint is in the answer, to compare
-    with the PI. A folder with snapshots of more than one project is
-    joined only with `project` named."""
-    from researchos import proposals  # noqa: PLC0415
-
+def _join_target(shared: str | Path, folder: str | Path, project: str | None) -> dict[str, Any]:
+    """What joining `shared` into `folder` would start from, read only:
+    every refusal of `join` before anything is written (who I am, the
+    folder, the snapshots, which project, the chain), and the latest good
+    snapshot with the PI found in the first one."""
     me = _me()
     shared_dir = Path(shared).expanduser()
     if not shared_dir.is_absolute():
@@ -931,6 +928,48 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
     target = chain.last_good
     if target is None:
         raise ShareError("untrusted", "no snapshot in the shared folder verifies", details={"refused": chain.refused})
+    return {"me": me, "shared": shared_dir, "dest": dest, "pid": pid, "lead": lead, "chain": chain, "target": target,
+            "problems": problems}
+
+
+def join_preview(shared: str | Path, folder: str | Path, *, project: str | None = None) -> dict[str, Any]:
+    """What 「加入」 would write, before it writes anything (12.3, 12.5): the
+    new folder, the snapshot it starts from (number, files, total size),
+    the project, and the PI with the fingerprint of the key that will be
+    trusted from then on -- to compare with the PI before joining."""
+    found = _join_target(shared, folder, project)
+    target, lead, shared_dir = found["target"], found["lead"], found["shared"]
+    files = target.files
+    team = snapshot_team(shared_dir, target) or ()
+    me = found["me"]
+    return {
+        "shared": str(shared_dir), "folder": str(found["dest"]), "exists": found["dest"].exists(),
+        "project": found["pid"], "seq": target.seq, "at": target.data.get("at"), "note": target.data.get("note"),
+        "files": len(files), "size": sum(int(e.get("size") or 0) for e in files.values()),
+        "pi": lead.id, "pi_name": lead.name, "pi_fingerprint": signing.fingerprint(lead.key) if lead.key else None,
+        "role": next((m.role for m in team if m.id == me), "none"), "me": me,
+        "team": [{"id": m.id, "name": m.name, "role": m.role} for m in team],
+        "waiting": _waiting(shared_dir, files.values()), "refused": found["chain"].refused,
+        "problems": [p.payload() for p in found["problems"]], "warnings": warnings(lead.key),
+    }
+
+
+def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] | None = None,
+         project: str | None = None, expect_pi: str | None = None) -> dict[str, Any]:
+    """「加入」: a working copy in `folder` (new, or empty) from the latest
+    good snapshot; the PI's key from the first snapshot is trusted from now
+    on (module docstring) -- its fingerprint is in the answer, to compare
+    with the PI. A folder with snapshots of more than one project is
+    joined only with `project` named. `join_preview` says the same before;
+    with `expect_pi` (the PI key fingerprint it showed), a folder whose PI
+    key is no longer that one is refused, nothing written."""
+    from researchos import proposals  # noqa: PLC0415
+
+    found = _join_target(shared, folder, project)
+    me, shared_dir, dest, pid = found["me"], found["shared"], found["dest"], found["pid"]
+    lead, chain, target, problems = found["lead"], found["chain"], found["target"], found["problems"]
+    if expect_pi is not None and (signing.fingerprint(lead.key) if lead.key else "") != expect_pi:
+        raise ShareError("changed_since_shown", "the PI key in the shared folder is not the one shown; nothing written")
     files = target.files
     waiting = _waiting(shared_dir, files.values())
     if waiting:
@@ -1005,6 +1044,59 @@ def available(root: str | Path) -> dict[str, Any]:
     chain = verify_chain(shared, snaps, pid, state["pi"], state.get("pi_key"))
     have = next((s for s in chain.good if s.seq == state["seq"]), None)
     return {"state": state, "chain": chain, "problems": problems, "have": have, "snaps": snaps}
+
+
+def sync_preview(working_copy: str | Path) -> dict[str, Any]:
+    """What 「同步」 would do, before it does anything (read only): the
+    snapshot it brings the copy to, the files it would update or remove,
+    and the files both sides changed -- left as the member's, the official
+    one put beside as `.official` (never a merge). Record files that travel
+    (notes, judgments, links) are said apart: their entries are kept."""
+    from researchos import proposals  # noqa: PLC0415
+
+    root = Path(working_copy)
+    seen = available(root)
+    state, chain = seen["state"], seen["chain"]
+    pid = state["project"]
+    target = chain.last_good
+    out: dict[str, Any] = {"from": state["seq"], "to": state["seq"], "update": [], "remove": [], "beside": [],
+                           "kept": [], "records": [], "refused": chain.refused,
+                           "problems": [p.payload() for p in seen["problems"]]}
+    if seen["have"] is None or seen["have"].sha256 != state.get("manifest_sha256"):
+        out["untrusted"] = True
+        return out
+    if target is None or target.seq <= state["seq"]:
+        out["up_to_date"] = True
+        return out
+    base = proposals.read_base(pid)
+    if base is None:
+        raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
+    out.update(to=target.seq, at=target.data.get("at"), note=target.data.get("note"), by=target.data.get("by"))
+    tfiles = target.files
+    for rel in sorted(set(base.files) | set(tfiles)):
+        b = (base.files.get(rel) or {}).get("sha256")
+        entry = tfiles.get(rel)
+        t = entry["sha256"] if entry is not None else None
+        if t == b:
+            continue
+        local = proposals.fingerprint(root / rel)
+        lsha = local.get("sha256") if local else None
+        if local is not None and local.get("dataless"):
+            out["problems"].append({"kind": "dataless", "path": rel, "detail": "这个文件只在云端，不会比较也不会更新"})
+            continue
+        if lsha == t:
+            continue
+        if lsha == b:
+            out["update" if entry is not None else "remove"].append(rel)
+        elif rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}":
+            out["kept"].append({"path": rel, "reason": "画布上的摆放是每个人自己的"})
+        elif entry is None:
+            out["kept"].append({"path": rel, "reason": "正式版本删除了这个文件；你改过它，所以留着你的"})
+        elif _travelling(rel) or rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
+            out["records"].append(rel)
+        else:
+            out["beside"].append({"path": rel, "official_copy": _official_name(rel)})
+    return out
 
 
 def sync(working_copy: str | Path, *, expected_id: Any = READ_NOW, timeout: float | None = None,

@@ -1256,7 +1256,10 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert 'addEventListener("click", () => openAttemptForm("append"))' in _APP_SRC
     assert '"new-attempt": () => openAttemptForm("append"),' in _APP_SRC
     node_js = (CANVAS_JS.parent / "node.js").read_text(encoding="utf-8")
-    assert 'mkButton("编辑这一行", "btn btn-small", () => openAttemptForm("update", page.id))' in node_js
+    # V8 U4: the node page's button reads 「提议改判」 for a member (the form
+    # then proposes); it opens the same form either way.
+    assert 'const edit = role === "member" ? "提议改判" : "编辑这一行";' in node_js
+    assert 'mkButton(edit, "btn btn-small", () => openAttemptForm("update", page.id))' in node_js
     assert node_js.count("openAttemptForm(") == 1
     assert _APP_SRC.count("openAttemptForm(") == 3  # definition + the two entry points in the page
     form = _function_body(_APP_SRC, "function renderAttemptForm(")
@@ -1265,9 +1268,10 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     for name in ("defaultNewNumber", "defaultDateValue", "distinctVerdicts"):
         assert _APP_SRC.count(name + "(") == 2, name  # defined once, called only by the form
         assert "state." not in _function_body(_APP_SRC, f"function {name}(")
-    # One fetch path for the records, used by the tree view as well.
+    # One fetch path for the records. Since V8 U4 研究路线 reads /api/routes
+    # (team.js), so the form is the records' only reader.
     assert _APP_SRC.count('apiGet("/api/attempts")') == 1
-    assert "fetchAttemptRecords()" in _function_body(_APP_SRC, "async function loadTreeView(")
+    assert "ROTeam.loadRoutes(views.tree, refresh)" in _function_body(_APP_SRC, "function loadTreeView(")
     assert _APP_SRC.count("state.attemptsById = ") == 2  # the loader, and the project-switch reset
     reset = _function_body(_APP_SRC, "async function reloadAllViews(")
     for line in ("state.dataEpoch += 1;", "state.attemptsConfig = null;"):

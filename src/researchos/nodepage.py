@@ -29,6 +29,7 @@ The page's copy is Chinese (8.8) and says relations in words (12.11): 读取,
 from __future__ import annotations
 
 import posixpath
+import re
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -507,6 +508,9 @@ def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, An
             "source_file": attrs.get("source_file"), "source_line": attrs.get("source_line"),
             "step_files_broken": attrs.get("step_files_broken") or [],
         }
+        # U4: an abandoned route whose approval froze its basis (12.4) offers 「当时的依据」.
+        decided, _problem = _decisions(root)
+        out["details"]["basis"] = sum(1 for e in decided if e.get("attempt") == node_id and e.get("evidence"))
         out["trace"] = _attempt_trace(conn, root, record, flags)
         out["choices"] = {"files": _file_choices(conn, root, ("script", "dataset", "figure"))}
     elif prefix in FILE_NODE_TYPES:
@@ -704,3 +708,330 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
         },
         "scanned": report["scanned"],
     }
+
+
+# -- 研究路线 and an abandoned route's basis (12.4, 12.9; V8 U4) -------------------------------------
+
+#: The order of 研究路线's groups (U4): the live routes first -- 现行 and
+#: 待定 -- then 不利证据, 已放弃, 被否, 归档; a word of the researcher's own
+#: after those, and 其它 last.
+ROUTE_ORDER = ("current", "pending", "adverse", "abandoned", "rejected", "archived", "labelled", "other")
+EVIDENCE_ROLE_WORDS = {"script": "步骤脚本", "output": "脚本写出的文件", "file": "关联的文件"}
+EVIDENCE_STATE_WORDS = {
+    "kept": "内容已保存", "fingerprint": "只记下了指纹", "missing": "当时文件已不存在",
+    "dataless": "当时文件只在云端", "unreadable": "当时文件无法读取",
+}
+#: The reason an approval wrote into the table's result cell (12.12:
+#: 「（放弃理由：…）」), or one the researcher wrote the same way by hand.
+_REASON_RE = re.compile(r"[（(]\s*放弃理由\s*[:：]\s*(.+?)\s*[）)]\s*$|^\s*放弃理由\s*[:：]\s*(.+?)\s*$", re.S)
+
+
+def _reason_in(result: str) -> tuple[str, str | None]:
+    """(the result without its 「放弃理由」 part, that reason) -- or the
+    result as it is and None when it names no reason."""
+    text = result or ""
+    m = _REASON_RE.search(text)
+    if not m:
+        return text, None
+    reason = (m.group(1) or m.group(2) or "").strip()
+    return text[:m.start()].rstrip(), reason or None
+
+
+def _decisions(root: Path) -> tuple[list[dict[str, Any]], str | None]:
+    from researchos.records import decisions as decisions_mod  # noqa: PLC0415
+
+    try:
+        return decisions_mod.entries(root), None
+    except Exception as exc:  # noqa: BLE001 -- the routes are still shown; the page says the basis cannot be read
+        return [], str(exc)
+
+
+def _who(entry: dict[str, Any], key: str, team: Any) -> dict[str, Any] | None:
+    from researchos import people  # noqa: PLC0415
+
+    value = entry.get(key)
+    if key != "by" and not value:
+        return None
+    got = people.attribution({"by": value}, team)
+    return {"id": got["by"], "label": got["label"]}
+
+
+def _decision_payload(entry: dict[str, Any], team: Any, labels: dict[str, str]) -> dict[str, Any]:
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
+    out = {k: entry.get(k) for k in ("id", "at", "act", "kind", "proposal", "note", "result", "reason", "via")}
+    out["by"] = _who(entry, "by", team)
+    out["approved_by"] = _who(entry, "approved_by", team)
+    if isinstance(entry.get("verdict"), str):
+        out["verdict_status"] = attempts_ingest.verdict_status(entry["verdict"], labels)
+    out["evidence_count"] = len(entry.get("evidence") or [])
+    if entry.get("missing_from_file"):
+        out["missing_from_file"] = True
+    return out
+
+
+def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
+    """研究路线 (12.9, U4): every attempt of the table, grouped by its
+    verdict's status in `ROUTE_ORDER`, each in the table's own order: its
+    number, date, the researcher's title, the status and the researcher's
+    words; for an abandoned route its result and its reason -- from
+    `decisions.toml` when an approval recorded it (with who proposed and
+    who approved, and how many files of its basis were frozen), else from
+    the table's own 「放弃理由：…」. Reads only."""
+    from researchos import people  # noqa: PLC0415
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
+    root = Path(project_root)
+    labels = attempts_ingest.verdict_labels(root)
+    decided, problem = _decisions(root)
+    team = people.read_team(root)
+    team = team if team.state == "present" else None
+    last: dict[str, dict[str, Any]] = {}
+    for entry in decided:
+        node = entry.get("attempt")
+        if isinstance(node, str) and node:
+            if entry.get("act") == "abandoned" or node not in last or last[node].get("act") != "abandoned":
+                last[node] = entry
+    nodes = sorted(db.get_nodes_by_type(conn, "attempt"),
+                   key=lambda n: (n["attrs"].get("source_file", ""),
+                                  attempts_ingest.attempt_sort_key(str(n["attrs"].get("number") or ""))))
+    groups: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        attrs, human = n["attrs"], n.get("human_fields") or {}
+        status = attempts_ingest.verdict_status(human.get("verdict", ""), labels)
+        result, reason = _reason_in(str(human.get("result") or ""))
+        item: dict[str, Any] = {
+            "id": n["id"], "number": attrs.get("number"), "date": attrs.get("date"),
+            "title": attrs.get("description") or n.get("title") or "", "verdict_status": status,
+            "result": result, "reason": reason, "reason_from": "table" if reason else None,
+            "parent": attrs.get("parent"),
+        }
+        entry = last.get(n["id"])
+        if entry is not None:
+            item["decision"] = _decision_payload(entry, team, labels)
+            if entry.get("act") == "abandoned" and str(entry.get("reason") or "").strip():
+                item["reason"], item["reason_from"] = str(entry["reason"]).strip(), "decision"
+        key = status["status"] if status["status"] != "labelled" else "labelled:" + status["label"]
+        group = groups.setdefault(key, {"status": status["status"], "label": status["label"], "items": []})
+        group["items"].append(item)
+
+    def order(key: str) -> tuple[int, str]:
+        base = key.split(":", 1)[0]
+        return (ROUTE_ORDER.index(base) if base in ROUTE_ORDER else len(ROUTE_ORDER), key)
+
+    out = {"groups": [groups[k] for k in sorted(groups, key=order)], "count": len(nodes)}
+    if problem:
+        out["decisions_problem"] = problem
+    return out
+
+
+def evidence(conn: Connection, project_root: str | Path, given: str) -> dict[str, Any]:
+    """「当时的依据」 (12.4): the decisions about one attempt, newest first,
+    each with the files its approval froze -- by fingerprint, and whether
+    the file is still as it was then (the version store's latest look at
+    it), and whether its content can be shown (`version`). Reads only.
+    `ValueError` for something that is not an attempt; `NotFound` for an
+    attempt nothing knows."""
+    from researchos import history, people  # noqa: PLC0415
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+    from researchos.records.identity import IdentityState, read_identity  # noqa: PLC0415
+
+    root = Path(project_root)
+    node_id = notes_mod.normalize_node(given)
+    if _type_of(node_id) != "attempt":
+        raise ValueError(f"not an attempt: {given!r}")
+    record = db.get_node(conn, node_id)
+    decided, problem = _decisions(root)
+    mine = [e for e in decided if e.get("attempt") == node_id]
+    if record is None and not mine:
+        raise NotFound(f"no such attempt: {node_id}")
+    labels = attempts_ingest.verdict_labels(root)
+    team = people.read_team(root)
+    team = team if team.state == "present" else None
+    got = read_identity(root)
+    pid = got.identity.id if got.state is IdentityState.PRESENT and got.identity is not None else None
+    store = history.Store.existing(pid) if pid else None
+    try:
+        decisions_out = []
+        for entry in reversed(mine):
+            item = _decision_payload(entry, team, labels)
+            files = []
+            for ev in entry.get("evidence") or []:
+                rel = ev.get("path")
+                if not isinstance(rel, str) or not rel:
+                    continue
+                try:
+                    file_node = notes_mod.normalize_node(rel)
+                except ValueError:
+                    continue
+                f = {k: ev.get(k) for k in ("path", "role", "state", "sha256", "size", "version")}
+                f["node"] = file_node
+                f["role_label"] = EVIDENCE_ROLE_WORDS.get(ev.get("role"), "文件")
+                f["state_label"] = EVIDENCE_STATE_WORDS.get(ev.get("state"), "")
+                exists = _exists(root, rel)
+                latest = store.latest(file_node) if store is not None else None
+                if not exists:
+                    f["now"], f["now_label"] = "missing", "现在已不在项目里"
+                elif not ev.get("sha256"):
+                    f["now"], f["now_label"] = "unknown", ""
+                elif latest is not None and latest.sha256 == ev.get("sha256"):
+                    f["now"], f["now_label"] = "same", "现在仍是这一版"
+                elif latest is not None:
+                    f["now"], f["now_label"] = "changed", "之后改过"
+                else:
+                    f["now"], f["now_label"] = "unknown", ""
+                f["viewable"] = bool(ev.get("state") == "kept" and ev.get("version"))
+                files.append(f)
+            item["files"] = files
+            decisions_out.append(item)
+    finally:
+        if store is not None:
+            store.close()
+    title = _label(conn, node_id, record) if record is not None else node_id
+    out: dict[str, Any] = {"id": node_id, "name": title, "decisions": decisions_out}
+    if problem:
+        out["decisions_problem"] = problem
+    return out
+
+
+VERSION_TEXT_LIMIT = 2 * 1024 * 1024  # what the page shows of one kept version
+
+
+def version_content(project_root: str | Path, given: str, version: str) -> dict[str, Any]:
+    """One kept version of a file as it was (「当时的依据」 opens the frozen
+    evidence): its text when the version store holds its content and it
+    is text, else what is known of it -- size and fingerprint. Reads only.
+    `ValueError` for a bad node or version; `NotFound` for a version the
+    store does not have."""
+    from researchos import history  # noqa: PLC0415
+    from researchos.records.identity import IdentityState, read_identity  # noqa: PLC0415
+
+    root = Path(project_root)
+    node_id = notes_mod.normalize_node(given)
+    rel = notes_mod.node_path(node_id)
+    if rel is None:
+        raise ValueError(f"not a file: {given!r}")
+    if not isinstance(version, str) or not version.isdigit():
+        raise ValueError(f"not a version: {version!r}")
+    got = read_identity(root)
+    if got.state is not IdentityState.PRESENT or got.identity is None:
+        raise NotFound("the project's identity cannot be read")
+    store = history.Store.existing(got.identity.id)
+    if store is None:
+        raise NotFound(f"no version {version} of {rel}")
+    try:
+        found = next((v for v in store.versions(node_id) if v.seq == int(version)), None)
+        if found is None:
+            raise NotFound(f"no version {version} of {rel}")
+        data = store.read_blob(found.sha256) if found.stored else None
+    finally:
+        store.close()
+    out: dict[str, Any] = {"node": node_id, "path": rel, "version": version, "at": found.at, "size": found.size,
+                           "sha256": found.sha256, "who": found.who, "text": None, "truncated": False}
+    if data is not None:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        if text is not None:
+            out["truncated"] = len(text) > VERSION_TEXT_LIMIT
+            out["text"] = text[:VERSION_TEXT_LIMIT]
+    if out["text"] is None:
+        out["reason"] = "这一版只记下了指纹和大小，没有保存内容" if data is None else "这一版不是文本，不在这里显示"
+    return out
+
+
+# -- what a proposal's files use (12.3: the variable versions it uses; V8 U4) -------------------------
+
+_ROLE_WORDS_CARD = {"script": "实现脚本", "output": "输出", "input": "输入数据"}
+
+
+def _card_paths(root: Path) -> dict[str, list[dict[str, Any]]]:
+    """Every project path a card's version in use names -- its input data,
+    its implementation script and output -- with the card and version."""
+    from researchos.records import variables as V  # noqa: PLC0415
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    try:
+        cards = V.read_cards(root)
+    except Exception:  # noqa: BLE001 -- nothing is said rather than something wrong
+        return out
+    for card in cards:
+        if card.in_use is None or card.in_use not in card.versions:
+            continue
+        content = card.versions[card.in_use].content
+        if not isinstance(content, dict):
+            continue
+        base = {"card": card.id, "name": _card_name(card), "version": card.in_use}
+        impl = content.get("implementation") if isinstance(content.get("implementation"), dict) else {}
+        for role, value in (("script", impl.get("script")), ("output", impl.get("output"))):
+            if isinstance(value, str) and value.strip():
+                out.setdefault(posixpath.normpath(value.strip()), []).append({**base, "role": role})
+        for item in content.get("input") or []:
+            if isinstance(item, dict) and isinstance(item.get("dataset"), str) and item["dataset"].strip():
+                out.setdefault(posixpath.normpath(item["dataset"].strip()), []).append({**base, "role": "input"})
+    return out
+
+
+def _script_reads(rel: str, content: str | None) -> list[str]:
+    """The paths a proposed script reads, from its own text (the scanner's
+    reading, on the proposal's copy of the file) -- empty when it is not a
+    script or its text is not at hand."""
+    from researchos.ingest import dataflow  # noqa: PLC0415
+
+    if not content:
+        return []
+    path = Path(content)
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".py":
+            outcome = dataflow.scan_py_file(path.parent, path.name)
+        elif suffix == ".r":
+            outcome = dataflow.scan_r_file(path.parent, path.name)
+        elif suffix == ".rmd":
+            outcome = dataflow.scan_rmd_file(path.parent, path.name)
+        else:
+            return []
+    except Exception:  # noqa: BLE001
+        return []
+    found = []
+    folder = posixpath.dirname(rel)
+    for call in outcome.calls:
+        if call.kind != "read" or not call.literal:
+            continue
+        literal = call.literal.strip()
+        if literal.startswith("/"):
+            continue
+        found.append(posixpath.normpath(literal))
+        if folder:
+            found.append(posixpath.normpath(posixpath.join(folder, literal)))
+    return found
+
+
+def variables_used(project_root: str | Path, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The variable versions a proposal's files use (12.3): a file that is
+    a card's input, implementation script or output in the version in use,
+    and a proposed script that reads such a file -- each once, with how."""
+    root = Path(project_root)
+    named = _card_paths(root)
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for f in files or []:
+        rel = f.get("path")
+        if not isinstance(rel, str) or f.get("action") == "removed":
+            continue
+        for use in named.get(posixpath.normpath(rel), []):
+            key = (use["card"], rel, use["role"])
+            if key not in seen:
+                seen.add(key)
+                out.append({**use, "path": rel, "how": f"{rel} 是这个变量的{_ROLE_WORDS_CARD[use['role']]}"})
+        for read in _script_reads(rel, f.get("content")):
+            for use in named.get(read, []):
+                if use["role"] == "script":
+                    continue
+                key = (use["card"], rel, "reads:" + read)
+                if key not in seen:
+                    seen.add(key)
+                    out.append({**use, "path": rel, "reads": read,
+                                "how": f"{rel} 读取 {read}，这是这个变量的{_ROLE_WORDS_CARD[use['role']]}"})
+    return out
