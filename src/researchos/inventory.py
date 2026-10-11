@@ -439,6 +439,28 @@ def _notes_row(conn: Connection | None, root: Path) -> Row:
                code="notes", facts=facts)
 
 
+def _decisions_row(root: Path) -> Row:
+    """12.3/12.4's approved decisions: how many, how many abandoned routes,
+    and what stands between Research OS and writing the file."""
+    from researchos.records import decisions as decisions_mod  # noqa: PLC0415 -- leaf use
+
+    path = decisions_mod.decisions_path(root)
+    loaded, decision = decisions_mod.assess(root)
+    found = decisions_mod.summary(root)
+    facts: dict[str, Any] = {"file_state": loaded.state.value, "exists": path.exists()}
+    if found["state"] == "present":
+        count = f"{found['entries']} decision(s), {found['abandoned']} abandoned route(s)"
+        facts.update(entries=found["entries"], abandoned=found["abandoned"])
+    elif loaded.state is RecordState.ABSENT:
+        count = "none yet"
+    else:
+        count = loaded.state.value
+    problems = () if decision.reason is None else (f"{decision.reason}: {decision.detail or loaded.error or ''}".rstrip(": "),)
+    facts["issues"] = [decision.reason] if decision.reason else []
+    return Row("Approved decisions", _shown(path, root), count, _snapshot(root, path), problems,
+               code="decisions", facts=facts)
+
+
 def card_file_paths(root: Path) -> list[tuple[Path, str]]:
     """The files of every card that get a daily snapshot, each with its
     snapshot subdirectory (`.researchos/backups/variables/<id>/`, 9.11): the log
@@ -472,6 +494,7 @@ def record_file_paths(root: Path) -> list[Path]:
         attempts_ingest.config_path(root),
         record_dir / "canvas.json",
         notes_mod.notes_path(root),
+        record_dir / "decisions.toml",  # 12.3/12.4: approved decisions (researchos.records.decisions)
     ]
     try:
         config = attempts_ingest.load_config(root)
@@ -519,7 +542,7 @@ def inventory(conn: Connection | None, root: Path) -> list[Row]:
     root = Path(root)
     rows = [
         _judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root),
-        _variables_row(conn, root), _notes_row(conn, root),
+        _variables_row(conn, root), _notes_row(conn, root), _decisions_row(root),
     ]
     waiting = paths.legacy_sources(root)
     if waiting:

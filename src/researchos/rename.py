@@ -221,6 +221,10 @@ def project_records(project_root: Path) -> dict[str, Any]:
 
     if notes_mod.notes_path(project_root).exists():
         read["notes"] = _ledger_summary(notes_mod.load_notes(project_root))
+    from researchos.records import decisions as decisions_mod  # noqa: PLC0415
+
+    if decisions_mod.decisions_path(project_root).exists():
+        read["decisions"] = _ledger_summary(decisions_mod.load_decisions(project_root))
     team = people.read_team(project_root)
     if team.state != "absent":
         read["team"] = (team.state, tuple(m.payload()["id"] for m in team.members))

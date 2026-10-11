@@ -137,6 +137,7 @@ steps_dir = "复现包_分步"              # optional: numbered step scripts di
 # list means "declared, nothing dead" when you just never wrote the key.
 dead_variables = ["信息熵", "lnRate 配置比例", "8 立场框架", "维基叙事度量"]
 active_verdicts = ["✅", "🕒"]           # verdict markers that count as "alive"
+abandoned_verdicts = ["☠️"]             # optional: markers that mean "abandoned" (☠️ always counts)
 
 # Optional (task A3, researchos.consistency's stale-verdict check): the year your
 # whole timeline's date column belongs to. You declare it -- Research OS never
@@ -202,6 +203,12 @@ class AttemptsConfig:
     # YYYY-MM-DD date parses. A declared value is the year the researcher
     # states the whole date column belongs to (never inferred by Research OS).
     date_year: int | None = None
+    # V8 phase 3 (DESIGN.md 12.4), not read by ingest: the verdict markers
+    # that mean "this route is abandoned" -- a verdict change to one of them
+    # needs a result and a reason before it can be proposed. `None` means
+    # not declared; the default marker ☠️ always counts
+    # (`researchos.proposals.abandon_markers`).
+    abandoned_verdicts: list[str] | None = None
 
 
 def config_path(project_root: str | Path) -> Path:
@@ -241,7 +248,7 @@ def load_config(project_root: Path) -> AttemptsConfig:
         # silently become "[] -- declared, nothing dead" (see module
         # docstring and researchos.consistency).
         dead_variables=data.get("dead_variables"), active_verdicts=data.get("active_verdicts"),
-        date_year=date_year,
+        date_year=date_year, abandoned_verdicts=data.get("abandoned_verdicts"),
     )
 
 

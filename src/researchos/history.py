@@ -94,7 +94,8 @@ _SCHEMA = (
         kind TEXT NOT NULL,
         stored INTEGER NOT NULL DEFAULT 0,
         summary TEXT NOT NULL DEFAULT '{}',
-        stat TEXT
+        stat TEXT,
+        approved_by TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_versions_node ON versions(node, seq)",
@@ -131,6 +132,7 @@ class Version:
     stored: bool
     summary: dict[str, Any]
     stat: str | None
+    approved_by: str | None = None
 
 
 class Store:
@@ -145,6 +147,11 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         for statement in _SCHEMA:
             self.conn.execute(statement)
+        # V8 phase 3 (12.3): who approved a version that came through a
+        # proposal. A store written before that column existed gains it.
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(versions)")}
+        if "approved_by" not in columns:
+            self.conn.execute("ALTER TABLE versions ADD COLUMN approved_by TEXT")
         self.conn.commit()
 
     @classmethod
@@ -170,7 +177,7 @@ class Store:
         return Version(
             seq=row["seq"], node=row["node"], at=row["at"], sha256=row["sha256"], size=row["size"], who=row["who"],
             source=row["source"], note=row["note"], kind=row["kind"], stored=bool(row["stored"]),
-            summary=json.loads(row["summary"] or "{}"), stat=row["stat"],
+            summary=json.loads(row["summary"] or "{}"), stat=row["stat"], approved_by=row["approved_by"],
         )
 
     def latest(self, node: str) -> Version | None:
@@ -183,18 +190,30 @@ class Store:
 
     def add(self, node: str, *, sha256: str, size: int | None, kind: str, source: str = "scan", who: str | None = None,
             note: str | None = None, stored: bool = False, summary: dict[str, Any] | None = None,
-            stat: str | None = None, at: str | None = None) -> Version:
+            stat: str | None = None, at: str | None = None, approved_by: str | None = None) -> Version:
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}, got {source!r}")
         cur = self.conn.execute(
-            "INSERT INTO versions (node, at, sha256, size, who, source, note, kind, stored, summary, stat) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO versions (node, at, sha256, size, who, source, note, kind, stored, summary, stat, approved_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (node, at or _now(), sha256, size, who, source, note, kind, int(stored),
-             json.dumps(summary or {}, ensure_ascii=False, sort_keys=True), stat),
+             json.dumps(summary or {}, ensure_ascii=False, sort_keys=True), stat, approved_by),
         )
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM versions WHERE seq = ?", (cur.lastrowid,)).fetchone()
         return self._row(row)
+
+    def attribute(self, seq: int, *, source: str, who: str | None, note: str | None,
+                  approved_by: str | None) -> None:
+        """Say who a version came from, after the fact: the attempt row an
+        approval wrote is first seen by the re-ingest that write runs (as a
+        scan, on this machine); the approval then names the member and the
+        PI on that same version instead of adding a second one."""
+        if source not in SOURCES:
+            raise ValueError(f"source must be one of {', '.join(SOURCES)}, got {source!r}")
+        self.conn.execute("UPDATE versions SET source = ?, who = ?, note = ?, approved_by = ? WHERE seq = ?",
+                          (source, who, note, approved_by, seq))
+        self.conn.commit()
 
     def note_stat(self, seq: int, stat: str) -> None:
         """The same content seen under a new stat (touched, copied back):
@@ -359,11 +378,14 @@ def _hash_file(path: Path) -> tuple[str, bytes | None, int]:
 
 
 def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who: str | None = None,
-                note: str | None = None) -> str:
+                note: str | None = None, approved_by: str | None = None) -> str:
     """Record `rel`'s current content as a version if it differs from the
     newest one. Returns "recorded", "unchanged", "missing", "dataless" or
     "unreadable". A file whose size, modification time and inode are what
-    the newest version saw is not read again."""
+    the newest version saw is not read again. A version that came through
+    an approved proposal (12.3) carries the member as `who` and the PI as
+    `approved_by`; it is recorded even when the content is unchanged, so
+    the approval itself is part of the file's history."""
     full = root / rel
     try:
         st = full.lstat()
@@ -394,7 +416,7 @@ def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who
     if text:
         store.put_blob(data)  # type: ignore[arg-type]
     store.add(node, sha256=sha, size=size, kind=kind, source=source, who=who, note=note, stored=text,
-              summary=summary or {}, stat=stat)
+              summary=summary or {}, stat=stat, approved_by=approved_by)
     return "recorded"
 
 
@@ -403,11 +425,17 @@ def _attempt_digest(fields: dict[str, str]) -> str:
 
 
 def record_attempts(store: Store, conn: Connection, *, source: str = "scan", who: str | None = None,
-                    note: str | None = None) -> int:
+                    note: str | None = None, approved_by: str | None = None,
+                    only: Iterable[str] | None = None) -> int:
     """Each attempt's verdict and result, recorded when it differs from the
-    newest version (an attempt no longer in the table keeps its history)."""
+    newest version (an attempt no longer in the table keeps its history).
+    `only` limits it to those attempt node ids (an approval records the
+    one attempt it changed, with who proposed and who approved)."""
     recorded = 0
+    wanted = set(only) if only is not None else None
     for node in db.get_nodes_by_type(conn, "attempt"):
+        if wanted is not None and node["id"] not in wanted:
+            continue
         hf = node.get("human_fields") or {}
         fields = {"verdict": str(hf.get("verdict") or ""), "result": str(hf.get("result") or "")}
         digest = _attempt_digest(fields)
@@ -415,7 +443,7 @@ def record_attempts(store: Store, conn: Connection, *, source: str = "scan", who
         if latest is not None and latest.sha256 == digest:
             continue
         store.add(node["id"], sha256=digest, size=None, kind="attempt", source=source, who=who, note=note,
-                  summary=fields)
+                  summary=fields, approved_by=approved_by)
         recorded += 1
     return recorded
 
@@ -694,7 +722,7 @@ def _store_payload(v: Version) -> dict[str, Any]:
     return {
         "version": str(v.seq), "at": v.at, "sha256": v.sha256, "size": v.size, "who": v.who,
         "who_label": _who_label(v.who), "source": v.source, "note": v.note, "kind": v.kind,
-        "summary": v.summary, "stored": v.stored,
+        "summary": v.summary, "stored": v.stored, "approved_by": v.approved_by,
     }
 
 

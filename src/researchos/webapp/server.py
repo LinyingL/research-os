@@ -3017,6 +3017,18 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/trace":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._node_api(lambda: node_api.trace_payload(conn, served.root, query)))
+            elif path == "/api/proposals" or path.startswith("/api/proposals/"):
+                # 12.3: the PI's inbox or a member's own proposals; one
+                # proposal with what approving would do. Never in any
+                # reader of the index (12.4, "not a node until approved").
+                served = self._require_unblocked()
+                rest = path[len("/api/proposals"):].strip("/")
+                if not rest:
+                    self._send_json(200, self._node_api(lambda: node_api.proposals_payload(served.root)))
+                elif "/" not in rest:
+                    self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest)))
+                else:
+                    raise NotFoundError(f"no such endpoint: {path}")
             elif path == "/api/me":
                 self._send_json(200, node_api.me_payload())
             elif path == "/api/records":
@@ -3229,6 +3241,36 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S,
                     ))
                 payload["generation"] = self.server.watcher.record_write({str(notes_mod.notes_path(served.root))})
+                self._send_json(200, payload)
+            elif parsed.path == "/api/proposals":
+                # 12.3: a proposal from this working copy -- the dry run, or
+                # (with `write`) written once to the exchange. Writes nothing
+                # in the project.
+                body = self._read_json_object()
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.proposal_create_payload(served.root, body)))
+            elif parsed.path.startswith("/api/proposals/"):
+                # 12.3: 「批准」「退回并说明」「讨论」 -- the PI only. Approving
+                # writes the official version (files, the attempt table, a
+                # card, decisions.toml) under the project lock.
+                body = self._read_json_object()
+                served = self._served()
+                parts = parsed.path[len("/api/proposals/"):].split("/")
+                if len(parts) != 2 or parts[1] not in ("approve", "return", "discuss"):
+                    raise NotFoundError(f"no such endpoint: {parsed.path}")
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.proposal_act_payload(
+                        served.root, served.project_id, parts[0], parts[1], body, timeout=WRITE_LOCK_TIMEOUT_S,
+                        ingest_lock=self.server.watcher.ingest_lock,
+                    ))
+                if parts[1] == "approve":
+                    payload["generation"] = self.server.watcher.record_external_change(None)
+                    try:
+                        # The new files become nodes; the approval is done
+                        # whatever this says (a scan already running, ...).
+                        self.server.start_scan(served)
+                    except ApiError as exc:
+                        logger.info("no scan after approving into %s: %s", served.root, exc)
                 self._send_json(200, payload)
             elif parsed.path == "/api/me":
                 # 12.1: who I am on this machine (~/.researchos/me.toml).

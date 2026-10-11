@@ -12,6 +12,10 @@ who I am, notes, what changed, and the trace -- the payloads only.
   `GET /api/history/diff?node=…&a=…&b=…` -- what changed (both versions,
   or neither: the newest and the one before it).
 - `GET /api/trace?node=…` -- the whole chain of 12.7 with its breaks.
+- `GET /api/proposals` -- the PI's inbox or a member's own proposals;
+  `GET /api/proposals/<id>`; `POST /api/proposals` (from the working copy:
+  a dry run, or written with `write`); `POST /api/proposals/<id>/approve |
+  return | discuss` -- the PI only (12.3; `researchos.proposals`).
 
 Copy for the page is Chinese (8.8); `error` stays the engine's English for
 「详情」.
@@ -155,3 +159,112 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
     if not result["found"]:
         raise NodeApiRefused(404, "not_found", f"no such node or file: {result['node']['id']}", "找不到这个节点")
     return result
+
+
+# -- proposals (12.3, 12.4; V8 phase 3) -----------------------------------------------
+
+
+_PROPOSAL_STATUS = {
+    "single_person": 409, "team_unreadable": 409, "no_me": 409, "not_pi": 403, "pi_changes_directly": 409,
+    "not_member": 403, "not_yours": 403, "no_base": 409, "bad_kind": 400, "nothing": 409, "ambiguous": 409,
+    "reason_required": 400, "no_attempt_table": 409, "attested_required": 400, "changed_since_shown": 409,
+    "decided": 409, "not_approvable": 409, "invalid": 400, "wrong_project": 409, "empty_reason": 400,
+    "empty_text": 400,
+}
+_EXCHANGE_STATUS = {"not_configured": 409, "inside_project": 409, "unreachable": 503, "exists": 409,
+                    "no_such_proposal": 404, "invalid": 400, "half_written": 409, "content": 409}
+
+
+def _proposal_refused(exc: Exception) -> NodeApiRefused:
+    from researchos import exchange as exchange_mod  # noqa: PLC0415
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    if isinstance(exc, proposals_mod.ProposalRefused):
+        return NodeApiRefused(_PROPOSAL_STATUS.get(exc.code, 400), exc.code, str(exc), exc.message_zh, dict(exc.details))
+    if isinstance(exc, exchange_mod.ExchangeError):
+        return NodeApiRefused(_EXCHANGE_STATUS.get(exc.code, 409), f"exchange_{exc.code}", str(exc), exc.message_zh)
+    raise exc
+
+
+def _proposal_call(fn):  # noqa: ANN001, ANN202
+    from researchos import exchange as exchange_mod  # noqa: PLC0415
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    try:
+        return fn()
+    except (proposals_mod.ProposalRefused, exchange_mod.ExchangeError) as exc:
+        raise _proposal_refused(exc) from exc
+
+
+def proposals_payload(root: Path) -> dict[str, Any]:
+    """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    return _proposal_call(lambda: proposals_mod.listing(root))
+
+
+def proposal_payload(root: Path, proposal_id: str) -> dict[str, Any]:
+    """GET /api/proposals/<id>: for the PI with exactly what approving would do."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    return _proposal_call(lambda: proposals_mod.open_for(root, proposal_id))
+
+
+def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
+    """POST /api/proposals {kind, sentence, number?, result?, reason?, card?,
+    attested?, only?, write?, expected?}: without `write`, the dry run (with
+    the `fingerprint` to send back); with it, the proposal is written --
+    refused if it is no longer the one shown."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    kind, sentence = body.get("kind"), body.get("sentence")
+    if not isinstance(kind, str) or not isinstance(sentence, str):
+        raise NodeApiRefused(400, "missing", "request body must carry string 'kind' and 'sentence'", "请选择提议类型并写一句说明")
+    options = {}
+    for name in ("number", "result", "reason", "card", "attested", "supersedes"):
+        value = body.get(name)
+        if value is not None and not isinstance(value, str):
+            raise NodeApiRefused(400, "missing", f"{name!r} must be text", "提议的内容不对")
+        options[name] = value
+    only = body.get("only")
+    if only is not None and (not isinstance(only, list) or not all(isinstance(x, str) for x in only)):
+        raise NodeApiRefused(400, "missing", "'only' must be a list of paths", "提议的内容不对")
+
+    def run() -> dict[str, Any]:
+        draft = proposals_mod.make_proposal(root, kind, sentence, only=only, **options)
+        if not body.get("write"):
+            return {"ok": True, "written": False, "proposal": draft.data, "preview": draft.preview,
+                    "fingerprint": draft.fingerprint}
+        expected = body.get("expected")
+        stored = proposals_mod.write_proposal(root, draft, expected=expected if isinstance(expected, str) else None)
+        return {"ok": True, "written": True, "id": stored.id}
+
+    return _proposal_call(run)
+
+
+def proposal_act_payload(root: Path, project_id: str | None, proposal_id: str, action: str, body: dict[str, Any], *,
+                         timeout: float, ingest_lock: Any = None) -> dict[str, Any]:
+    """POST /api/proposals/<id>/approve {note?} | return {reason} | discuss
+    {text}: the PI only (refused otherwise, nothing written)."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    def text(name: str) -> str | None:
+        value = body.get(name)
+        if value is not None and not isinstance(value, str):
+            raise NodeApiRefused(400, "missing", f"{name!r} must be text", "内容不对")
+        return value
+
+    def run() -> dict[str, Any]:
+        if action == "approve":
+            done = proposals_mod.approve(root, proposal_id, note=text("note"), via="app", expected_id=project_id,
+                                         timeout=timeout, ingest_lock=ingest_lock, rescan=False)
+            return {"ok": True, **done}
+        if action == "return":
+            return {"ok": True, "outcome": proposals_mod.return_(root, proposal_id, text("reason") or "",
+                                                                 expected_id=project_id, timeout=timeout)}
+        if action == "discuss":
+            return {"ok": True, "outcome": proposals_mod.discuss(root, proposal_id, text("text") or "",
+                                                                 expected_id=project_id, timeout=timeout)}
+        raise NodeApiRefused(404, "bad_action", f"no such action on a proposal: {action!r}", "不支持的操作")
+
+    return _proposal_call(run)

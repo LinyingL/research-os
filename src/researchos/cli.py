@@ -81,7 +81,9 @@ from typing import Any
 
 from researchos import addproject, consistency, db, github, githubpush, inventory, lineage, literature, migration, names, paths, query, rename
 from researchos import history as history_mod
+from researchos import exchange as exchange_mod
 from researchos import people
+from researchos import proposals as proposals_mod
 from researchos import trace as trace_mod
 from researchos import project as project_identity
 from researchos import rebuild as rebuild_mod
@@ -1521,6 +1523,219 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- proposals and approval (DESIGN.md 12.3, 12.4) --------------------------------------------
+
+
+def _proposal_error(exc: Exception) -> CliError:
+    if isinstance(exc, proposals_mod.ProposalRefused) and exc.details.get("conflicts"):
+        lines = [f"  both sides changed: {c['path']} ({c['reason']})" for c in exc.details["conflicts"]]
+        return CliError(f"{exc}\n" + "\n".join(lines))
+    return CliError(f"nothing written: {exc}")
+
+
+_PROPOSAL_ERRORS = (proposals_mod.ProposalRefused, exchange_mod.ExchangeError, records_situation.WriteRefused,
+                    records_lock.ProjectLockError)
+
+
+def _exchange_arg(args: argparse.Namespace, root: Path, project_id: str | None):
+    if getattr(args, "exchange", None) is None:
+        return None
+    return exchange_mod.for_project(project_id or "", root, override=args.exchange)
+
+
+def _print_files(files: list[dict[str, Any]], *, diffs: bool = True) -> None:
+    for item in files:
+        state = f" [{item['state']}]" if item.get("state") else ""
+        size = f" {item['size']}B" if item.get("size") is not None else ""
+        print(f"  {item['action']:<8} {item['path']}{size}{state}"
+              + (f" ({item['store']})" if item.get("store") else ""))
+        if item.get("reason"):
+            print(f"    {item['reason']}")
+        if item.get("sentence"):
+            print(f"    {item['sentence']}")
+        if diffs and item.get("diff"):
+            for line in item["diff"].splitlines()[:200]:
+                print(f"    {line}")
+
+
+def cmd_propose(args: argparse.Namespace) -> int:
+    """`researchos propose KIND --sentence S` (DESIGN.md 12.3): what the working
+    copy would propose -- a dry run unless --yes, which writes it to the
+    exchange (once; ready.toml last)."""
+    opened = _open(args.path)
+    root = opened.root
+    try:
+        draft = proposals_mod.make_proposal(
+            root, args.kind, args.sentence, number=args.number, result=args.result, reason=args.reason,
+            card=args.card, attested=args.attested, only=args.only, supersedes=args.supersedes,
+        )
+        if args.json and not args.yes:
+            print(json.dumps({"proposal": draft.data, "preview": draft.preview, "fingerprint": draft.fingerprint},
+                             ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        data = draft.data
+        print(f"Proposal ({data['kind']}) by {data['by']} against {data['base'][:19]}: {data['sentence']}")
+        if data.get("attempt"):
+            row = data["attempt"]
+            print(f"  new attempt row #{row['number']}: {row['description']} | {row['verdict']} | {row['result']}")
+        if data.get("verdict"):
+            v = data["verdict"]
+            print(f"  attempt #{v['number']}: verdict {v['old']} -> {v['new']}; result {v['old_result']!r} -> {v['result']!r}"
+                  + (f"; reason: {v['reason']}" if v.get("reason") else ""))
+        if data.get("variable"):
+            v = data["variable"]
+            print(f"  variable {v['card']}: {v['file']} (attested={v['attested']})")
+        print(f"Files: {len(data.get('file', []))}")
+        _print_files(draft.preview.get("files", []))
+        for item in data.get("not_carried", []):
+            print(f"  not carried: {item['path']} -- {item['reason']}")
+        if not args.yes:
+            print("Dry run: nothing written. Add --yes to write this proposal to the exchange.")
+            return 0
+        stored = proposals_mod.write_proposal(root, draft, exchange=_exchange_arg(args, root, data["project"]))
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    print(f"Proposal {stored.id} written to {stored.directory}")
+    return 0
+
+
+def cmd_proposals(args: argparse.Namespace) -> int:
+    """`researchos proposals` (12.3): the PI's inbox, or a member's own
+    proposals; `--show ID` for one, with -- for the PI -- exactly what
+    approving would do."""
+    opened = _open(args.path)
+    root = opened.root
+    try:
+        ex = _exchange_arg(args, root, opened.project_id)
+        if args.show:
+            shown = proposals_mod.open_for(root, args.show, exchange=ex)
+            if args.json:
+                print(json.dumps(shown, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+                return 0
+            print(f"Proposal {shown['id']} ({shown['kind']}) by {shown['by']}: {shown['state']}")
+            print(f"  {shown['sentence']}")
+            for o in shown["outcomes"]:
+                print(f"  {o.get('at')} {o.get('act')} by {o.get('by')}" + (f": {o['text']}" if o.get("text") else ""))
+            changes = shown.get("changes")
+            if changes is not None:
+                attempt = changes.get("attempt")
+                if attempt:
+                    print(f"  attempt table ({attempt['file'] if 'file' in attempt else ''}) [{attempt['state']}]"
+                          + (f": {attempt['reason']}" if attempt.get("reason") else ""))
+                    for line in (attempt.get("diff") or "").splitlines():
+                        print(f"    {line}")
+                variable = changes.get("variable")
+                if variable:
+                    print(f"  variable {variable['card']} -> v{variable.get('number')} [{variable['state']}]"
+                          + (f": {variable['reason']}" if variable.get("reason") else ""))
+                _print_files(changes["files"])
+                for c in changes["conflicts"]:
+                    print(f"  CONFLICT {c['path']}: {c['reason']}")
+                for p in changes["problems"]:
+                    print(f"  problem: {p}")
+                print("  approvable" if changes["approvable"] else "  NOT approvable")
+            return 0
+        listed = proposals_mod.listing(root, exchange=ex)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    if args.json:
+        print(json.dumps(listed, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+        return 0
+    title = {"pi": "Inbox", "member": "My proposals"}.get(listed["role"])
+    if title is None:
+        print(f"No proposals to show ({listed['role']}: only the PI and a proposal's author see proposals)")
+        return 0
+    print(f"{title}: {len(listed['proposals'])}")
+    for item in listed["proposals"]:
+        print(f"  {item['id']} {item['state']:<10} {item['kind']:<16} {item['by']} {item.get('at')}  {item['sentence']}")
+        last = item["outcomes"][-1] if item["outcomes"] else None
+        if last is not None and last.get("text"):
+            print(f"    {last.get('act')}: {last['text']}")
+    for problem in listed["problems"]:
+        print(f"  not read: {problem['path']} ({problem['kind']}: {problem['detail']})")
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """`researchos approve ID [--note N]` (12.3): only the PI's Research OS."""
+    opened = _open(args.path)
+    try:
+        done = proposals_mod.approve(opened.root, args.proposal_id, note=args.note, via="cli",
+                                     exchange=_exchange_arg(args, opened.root, opened.project_id),
+                                     expected_id=opened.project_id)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    applied = done["applied"]
+    print(f"Approved {done['proposal']}: decision {done['decision']['id']} in .researchos/decisions.toml "
+          f"(by {done['decision'].get('by')}, approved_by {done['decision'].get('approved_by')})")
+    for item in applied["files"]:
+        print(f"  {item['action']:<8} {item['path']}")
+    if applied["attempt"]:
+        print(f"  attempt {applied['attempt']['node']} ({applied['attempt']['op']})")
+    if applied["variable"]:
+        print(f"  variable {applied['variable']['reference']} confirmed")
+    if applied["evidence"] is not None:
+        print(f"  evidence frozen: {len(applied['evidence'])} file(s)")
+    return 0
+
+
+def cmd_return(args: argparse.Namespace) -> int:
+    """`researchos return ID --reason R` (12.3): nothing is applied, ever."""
+    opened = _open(args.path)
+    try:
+        outcome = proposals_mod.return_(opened.root, args.proposal_id, args.reason,
+                                        exchange=_exchange_arg(args, opened.root, opened.project_id),
+                                        expected_id=opened.project_id)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    print(f"Returned {args.proposal_id} ({outcome['id']}): {outcome['text']}")
+    return 0
+
+
+def cmd_discuss(args: argparse.Namespace) -> int:
+    """`researchos discuss ID --text T` (12.3): a note to the member; the
+    proposal stays open."""
+    opened = _open(args.path)
+    try:
+        outcome = proposals_mod.discuss(opened.root, args.proposal_id, args.text,
+                                        exchange=_exchange_arg(args, opened.root, opened.project_id),
+                                        expected_id=opened.project_id)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    print(f"Discussion on {args.proposal_id} ({outcome['id']}) written; the proposal stays open")
+    return 0
+
+
+def cmd_exchange(args: argparse.Namespace) -> int:
+    """`researchos exchange set DIR | show` (12.2): where this machine's
+    proposals and outcomes travel for this project."""
+    opened = _open(args.path)
+    if opened.project_id is None:
+        raise CliError(f"{opened.root} has no project identity")
+    try:
+        if args.exchange_command == "set":
+            where = exchange_mod.configure(opened.project_id, args.directory, opened.root)
+            print(f"Exchange for {opened.project_id}: {where}")
+            return 0
+        where = exchange_mod.configured(opened.project_id)
+    except exchange_mod.ExchangeError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"Exchange for {opened.project_id}: {where if where is not None else 'not set'}")
+    return 0
+
+
+def cmd_working_copy(args: argparse.Namespace) -> int:
+    """`researchos working-copy OFFICIAL DEST` -- a member's working copy made
+    from the official folder on this machine, with its base recorded (the
+    single-machine stand-in for joining from a published snapshot)."""
+    try:
+        base = proposals_mod.start_working_copy(Path(args.official).resolve(), Path(args.dest), exchange=args.exchange)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    print(f"Working copy {base.working_copy} made from {base.snapshot[:19]} ({len(base.files)} file(s))")
+    return 0
+
+
 def _format_lineage_entry(entry: dict[str, Any]) -> str:
     if entry.get("human"):
         # A human mapping (researchos.lineage): no call site to cite, and the
@@ -2759,6 +2974,74 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", dest="diff_path", default=None, metavar="PATH", help=FLAG_PATH_HELP)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser(
+        "propose",
+        help="Propose what this working copy changed (DESIGN.md 12.3): a dry run unless --yes",
+    )
+    p.add_argument("kind", choices=list(proposals_mod.KINDS))
+    p.add_argument("--sentence", required=True, help="what this proposal is, in a sentence of your own")
+    p.add_argument("--number", default=None, help="the attempt row, when more than one differs")
+    p.add_argument("--result", default=None, help="verdict_change: the result (default: the row's result cell)")
+    p.add_argument("--reason", default=None, help="verdict_change: why -- required when abandoning a route")
+    p.add_argument("--card", default=None, help="variable_version: the card id")
+    p.add_argument("--attested", default=None, choices=["yes", "no", "unknown"],
+                   help="variable_version: was the output as it stands built with this definition")
+    p.add_argument("--only", action="append", default=None, metavar="FILE", help="carry only these files (repeatable)")
+    p.add_argument("--supersedes", default=None, metavar="ID", help="a proposal of yours this one replaces")
+    p.add_argument("--exchange", default=None, metavar="DIR", help="the exchange directory (default: the one set)")
+    p.add_argument("--yes", action="store_true", help="write the proposal (otherwise a dry run)")
+    p.add_argument("--json", action="store_true")
+    add_project_path(p)
+    p.set_defaults(func=cmd_propose)
+
+    p = sub.add_parser("proposals", help="The PI's inbox, or a member's own proposals (12.3); --show ID for one")
+    p.add_argument("--show", default=None, metavar="ID", help="one proposal; for the PI, exactly what approving would do")
+    p.add_argument("--exchange", default=None, metavar="DIR")
+    p.add_argument("--json", action="store_true")
+    add_project_path(p)
+    p.set_defaults(func=cmd_proposals)
+
+    p = sub.add_parser("approve", help="Approve a proposal into the official version (the PI only, 12.3)")
+    p.add_argument("proposal_id", metavar="ID")
+    p.add_argument("--note", default=None, help="your note, recorded with the decision")
+    p.add_argument("--exchange", default=None, metavar="DIR")
+    add_project_path(p)
+    p.set_defaults(func=cmd_approve)
+
+    p = sub.add_parser("return", help="Return a proposal with the reason (the PI only); nothing is applied")
+    p.add_argument("proposal_id", metavar="ID")
+    p.add_argument("--reason", required=True)
+    p.add_argument("--exchange", default=None, metavar="DIR")
+    add_project_path(p)
+    p.set_defaults(func=cmd_return)
+
+    p = sub.add_parser("discuss", help="A note to the member on a proposal (the PI only); it stays open")
+    p.add_argument("proposal_id", metavar="ID")
+    p.add_argument("--text", required=True)
+    p.add_argument("--exchange", default=None, metavar="DIR")
+    add_project_path(p)
+    p.set_defaults(func=cmd_discuss)
+
+    p = sub.add_parser("exchange", help="Where this project's proposals travel on this machine: 'researchos exchange set DIR|show'")
+    ex_sub = p.add_subparsers(dest="exchange_command", required=True)
+    q = ex_sub.add_parser("set", help="set the exchange directory (never inside the project)")
+    q.add_argument("directory", metavar="DIR")
+    add_project_path(q)
+    q.set_defaults(func=cmd_exchange)
+    q = ex_sub.add_parser("show", help="show the exchange directory")
+    add_project_path(q)
+    q.set_defaults(func=cmd_exchange)
+
+    p = sub.add_parser(
+        "working-copy",
+        help="Make a member's working copy from the official folder on this machine and record its base "
+             "(single-machine stand-in for joining from a published snapshot)",
+    )
+    p.add_argument("official", metavar="OFFICIAL")
+    p.add_argument("dest", metavar="DEST")
+    p.add_argument("--exchange", default=None, metavar="DIR")
+    p.set_defaults(func=cmd_working_copy)
 
     p = sub.add_parser(
         "lineage",

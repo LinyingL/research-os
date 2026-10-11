@@ -858,6 +858,10 @@ def _write_copies(w: _Writing, view_bytes: bytes, content_h: str, ins: _Inspecti
 # -- confirm -----------------------------------------------------------------------------------
 
 
+#: What an approval writes on a confirmation entry (12.3).
+_APPROVAL_FIELDS = ("by", "approved_by", "proposal", "note")
+
+
 @dataclass(frozen=True)
 class Confirmed:
     card: V.Card
@@ -876,6 +880,7 @@ def confirm(
     timeout: float | None = None,
     now: Clock | None = None,
     fault: Fault | None = None,
+    approval: Mapping[str, str] | None = None,
 ) -> Confirmed:
     """Confirm the card's draft (module docstring, "snapshot first, entry
     last"). `attested` is the researcher's answer to "was the output as it
@@ -884,9 +889,21 @@ def confirm(
     the confirmation (and that answer) to the draft the researcher was
     shown (9.12, "an answer belongs to the question that was shown"): its
     content hash, or None for a draft that could not be read; if the draft
-    differs now, `question_changed` and nothing is written."""
+    differs now, `question_changed` and nothing is written.
+
+    `approval` (DESIGN.md 12.3, V8 phase 3) is given only when the version
+    arrived through an approved proposal: `by` (the member who proposed
+    it -- `attested` is then theirs, carried by the proposal), `approved_by`
+    (the PI), `proposal` (its id) and the PI's `note`, all written on the
+    entry."""
     if attested not in V.ATTESTED:
         raise CardRefused("invalid", f"attested must be one of {', '.join(V.ATTESTED)}, got {attested!r}")
+    extra: dict[str, str] = {}
+    for key, value in (approval or {}).items():
+        if key not in _APPROVAL_FIELDS:
+            raise CardRefused("invalid", f"an approval names {', '.join(_APPROVAL_FIELDS)}, not {key!r}")
+        if value is not None:
+            extra[key] = value
     with _writing(project_root, card_id, expected_id, timeout) as w:
         card = w.card
         if card.draft is None:
@@ -906,6 +923,7 @@ def confirm(
         entry = _append(w, [{
             "act": "confirmed", "version": view.number, "via": via, "attested": attested, "content": h,
             "frozen": frozen, "upstream": upstream, "checked": ins.checked, "observed": ins.observed or None,
+            **extra,
         }], now=now)[0]
         if fault is not None:
             fault("after_entry")
