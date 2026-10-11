@@ -2724,3 +2724,267 @@ claim's side — belongs to the result-review phase.
 - **Drafts are not watched.** Citations are read by the full scan
   (「重新扫描这个项目」, `rce ingest`), as the other draft extractors are
   (10.0).
+
+## Section 12 — Research OS: one person, many projects; a team, one record (task V8)
+
+*Status: APPROVED FOR IMPLEMENTATION, 2026-10-11. The researcher renamed the
+product and widened it: "Research OS — single-person multi-project management
+and multi-person collaboration; every node shows what changed and its notes;
+a proposal or an attempt does not become a node until the PI approves it; a
+figure in the paper traces to the script that made it, its input data and
+the attempt it belongs to; an abandoned route keeps the basis it was
+abandoned on; as a node moves forward, you can see where things changed."
+Their decisions: the shared drive (e.g. OneDrive) stores the material and
+the PI's computer is the main server; changes start at either end; new
+attempts, verdict changes and new variable definitions need the PI's
+approval; rename everything, the command included, and the hidden folders
+with a safe migration; build collaboration now, tested with a real second
+person. Sections 0, 4, 8.8, 9, 10 and 11 apply throughout.*
+
+### 12.0 What Research OS is — and is not
+
+The researcher asked whether this is "an ERP with a dashboard plus shared-
+drive management". Half of that is right and kept: roles, an approval
+workflow, an audit trail of who changed what and when, a home page that
+shows the state of the work, the shared drive as storage. Half is rejected,
+deliberately:
+
+- **No data entry.** An ERP runs on people filling forms for a process that
+  is already known. Research is the process being discovered. The moment
+  researchers must type records by hand, the records go stale and every
+  trace leads to a stale answer. Research OS keeps Section 0's first
+  principle: it reads what researchers already produce — scripts, data,
+  drafts, the attempt table — and people do only three things by hand:
+  write notes, make proposals, approve.
+- **No statistics dashboard.** "24 attempts, 38 % of citations resolved"
+  helps nobody decide anything. The home page is a desk: what waits for
+  *my* decision, what changed since *I* last looked and exactly where,
+  which results lost their evidence, which routes were abandoned and why.
+- **Not a file manager.** OneDrive already manages files. Research OS
+  manages what the files mean, how they relate, and which changes the
+  team has accepted.
+
+In one line: **a lab notebook that writes itself, with GitHub-style review
+for decisions, stored on the shared drive.**
+
+### 12.1 People, roles and the single-person case
+
+- **Who I am.** Set once per machine (name and the e-mail of the shared-
+  drive account) in `~/.researchos/me.toml`. Every entry RCE writes from now
+  on carries `by = "<member id>"`. Entries without `by`, written before V8,
+  belong to the project's first researcher.
+- **Who is in a project.** `.researchos/team.toml` in the official version:
+  members `{id, name, role = "pi" | "member", key}` (`key`: 12.5). Written
+  only by the PI's Research OS.
+- **One person.** A project without a team file — or whose only member is
+  its PI — has no approval step at all: you are your own PI, your changes
+  are official when you make them. Everything in 12.3 applies only to
+  projects with members.
+
+### 12.2 Three places, one writer
+
+1. **The official version** (正式版本) is the project folder on the PI's
+   computer. Only the PI's Research OS writes it. The PI's computer is
+   never contacted over the network by anyone; it is the place where
+   approvals are applied, nothing more. ("Main server" means exactly this.)
+2. **The shared drive** (公盘) is a folder on OneDrive — or any synced
+   folder — shared with the team. It has two areas:
+   - `已发布/` — written only by the PI's Research OS. Members get **view
+     only** permission in OneDrive's own sharing settings; that permission
+     is what makes "only the PI can approve" a rule rather than a request.
+     It holds the published snapshots of the official version and the
+     outcomes of proposals.
+   - `提议/<member id>/` — each member's own area, writable by that member
+     and readable by the PI.
+3. **A member's working copy** is a project folder on the member's
+   computer, made from the latest published snapshot when they join.
+
+**Everything on the shared drive is written once, under a name used once,
+and never edited in place.** A snapshot, a proposal, an outcome: each is a
+new directory, written under a temporary name and completed by a final
+`ready.toml` written last; a reader ignores anything without it. No live
+database, no git repository and no record ledger is ever kept on the shared
+drive — sync services and files edited from two places do not mix (8.10,
+11.3). Two people never edit the same file there, so the shared drive never
+produces a conflict copy of anything Research OS needs.
+
+**Snapshots.** `已发布/snapshots/<seq>/` holds a manifest (every file of the
+official version: path, size, sha256; seq increasing by one; the previous
+snapshot's manifest hash, so snapshots form a chain), the text files that
+changed since the previous snapshot, and the record files. Large files are
+stored once by content under `已发布/blobs/<sha256>` and named in the
+manifest — a 170 MB data file uploaded once is never copied again.
+Snapshots are kept; the PI may prune old blobs no snapshot after a chosen
+date references.
+
+### 12.3 Changes from either end
+
+**A member proposes.** In their working copy a member works as usual —
+edits scripts, adds data, writes a new row in the attempt table, drafts a
+variable card. 「提交提议」 gathers what differs from the official version
+they last synced, shows it to them first, and writes one proposal to their
+area: what it is (12.4), a sentence of their own, the files added or
+changed (text files with their diff against the official version; large
+files once as blobs), and the official snapshot it was made against.
+
+**The PI decides.** The PI's Research OS watches the members' areas. A new
+proposal appears in the PI's inbox with exactly what approving would do to
+the official version: the attempt-table rows added or changed (as a diff),
+each file added or changed (line diffs for text; size, fingerprint and, for
+tables, rows and columns for data), the variable versions it would confirm.
+If the official version has moved since the proposal's snapshot and the
+same files changed on both sides, the PI is told which, and the proposal
+cannot be approved until the member re-proposes against the newer snapshot
+— Research OS never merges two people's edits of one file by itself.
+Answers: 「批准」 (applied to the official version, every entry recorded
+with `by` = the member and `approved_by` = the PI and the PI's note),
+「退回并说明」, 「讨论」 (a note to the member, the proposal stays open).
+Approving publishes a new snapshot; returning publishes an outcome with the
+reason. Both are visible to the member.
+
+**The PI changes things directly** in the official version — the PI's own
+acts are approved by definition — and 「发布」 publishes a snapshot.
+
+**A member syncs.** 「同步」 brings the working copy to the latest snapshot:
+files the member has not touched are updated; a file the member changed
+locally that the official version also changed is left as the member's and
+the official one is put beside it (`<name>.official.<ext>`) with the
+difference shown — again, never a merge. A member's pending proposals stay
+pending until their outcome arrives.
+
+### 12.4 What needs approval
+
+From the researcher's decisions:
+
+| Change | In a project with members |
+|---|---|
+| A new attempt (a route proposed) | proposal; becomes a node only when approved |
+| An attempt's verdict (adopted ✅, abandoned ☠️, …) | proposal; the result and reason are required when abandoning |
+| A variable's new definition version | proposal; confirmation happens when approved |
+| A file of the official version added or changed | proposal (it is how the member's work reaches the official version) |
+| A note on a node | no approval; travels with the next sync of the member's area, appended with `by` |
+| Confirming / rejecting a machine link | no approval; same path as notes |
+
+**"Does not become a node until approved"** is literal: a pending proposal
+is not in the official index, not in the decision tree, not in any trace.
+Each person sees it as a proposal — the member in 「我的提议」, the PI in the
+inbox, everyone else not at all. A returned proposal never becomes a node;
+its reason stays in the proposal's history.
+
+**An abandoned route keeps its basis.** Abandoning (☠️) through a proposal
+requires the result and the reason; approving records them in the attempt
+table (as the researcher's table already does by hand) and freezes the
+attempt's evidence at that moment: the files of its step scripts and the
+outputs they wrote, by fingerprint (and, for text, by content in the
+history store, 12.6). A year later the route can be opened and shows what
+was tried, what came out, and why it was dropped — even if the scripts have
+since changed or gone.
+
+### 12.5 Is a snapshot really the PI's?
+
+OneDrive's sharing permissions are the first guard. The second is a
+signature: the PI's Research OS creates an SSH signing key on first use
+(`ssh-keygen -t ed25519`, part of macOS and every Linux — no new
+dependency) and signs each snapshot manifest and outcome (`ssh-keygen -Y
+sign`); the public key is in `team.toml`, which members receive when they
+join. A member's Research OS verifies every snapshot (`ssh-keygen -Y
+verify`) and refuses one that is not signed by the PI's key, says so, and
+keeps the last good one. A member's proposals are signed with the member's
+key the same way, so the PI knows who sent what. Where `ssh-keygen` is
+missing, Research OS says that snapshots cannot be verified and relies on
+the sharing permissions alone.
+
+### 12.6 Every node: what changed, and the notes
+
+- **History.** Each node that is a file (script, data, draft, figure) has
+  versions: every content Research OS has seen, with when, who (when known:
+  the member a proposal came from, the PI who approved it, or "本机"), and
+  the note that came with it. In a git project the versions are git's own
+  commits. Otherwise Research OS keeps them: text files up to 5 MB by
+  content in a version store beside the index (`history/`, content-
+  addressed, never pruned automatically); larger and binary files by
+  fingerprint, size and — for CSV/TSV/Excel tables — row count and column
+  names. A collaborative project's history is also recoverable from the
+  published snapshots.
+- **What changed** is shown as a line diff for text, and for data as
+  「行数 96 → 97，列不变」 / 「新增列 log_ret」; for an attempt, its verdict
+  and result as they moved (🕒 → ✅, with who approved and when); for a
+  variable, its versions (9.11).
+- **Notes** on any node: `.researchos/notes.toml`, an append-only ledger
+  (9.3) of `{node, by, at, text}`; a note can be withdrawn, not edited. On a
+  node page notes and changes are one timeline.
+
+### 12.7 Tracing a result
+
+The question "where does this figure come from" is answered on the figure's
+page as one chain: the data it was built from → the scripts that read and
+wrote it → the figure → the paper section that cites it, with the attempt
+it belongs to and the variable versions it used. Where the chain is broken,
+the break is shown and offers its repair. Two repairs are new:
+
+- **An attempt's files.** Today an attempt knows its scripts only from step
+  numbers in its description (2 of the researcher's 24 attempts). On an
+  attempt's page, 「关联文件」 attaches scripts, data and figures to it — a
+  hand-drawn mapping (8.5) of type `belongs_to`, stored in
+  `mappings.toml`.
+- **A figure without a source** gets 「补上来源」: choose the script that
+  made it (a `generates` mapping) — the researcher's own figure 1 needs
+  exactly this.
+
+### 12.8 The name
+
+Research OS everywhere: the app (`Research OS.app`), the command
+(`researchos`; `rce` stays as an alias that prints the new name, for one
+release), the Python package (`researchos`), the environment variable
+(`RESEARCHOS_HOME`; `RCE_HOME` still honoured), the MCP server, the
+documentation, and the GitHub repository (`research-os`; GitHub redirects
+the old address). The hidden folders become `.researchos/` in each project
+and `~/.researchos/` on each machine. **Migration** is automatic on first
+touch and safe in the 8.10 way: under the project lock, `.rce/` is renamed
+to `.researchos/` in one step (same volume, atomic), the result is read back
+and verified (identity, ledgers, cards parse; every file present with the
+same bytes); `~/.rce` is renamed the same way under the machine lock. Any
+failure leaves the old folders exactly as they were and says why. A folder
+that has both is not touched and is reported.
+
+### 12.9 The interface
+
+The tabs 决策树 / 血缘 / 画布 / 变量 / 文献 are replaced by a sidebar:
+projects (switch, add); and, for the open project, **工作台** (the desk of
+12.0), **研究路线** (the attempts as a timeline/tree with status, proposals
+shown distinctly, abandoned routes with their reasons), **成果** (figures,
+tables and claims of the drafts, each opening its trace), **变量**, **文献**,
+**数据与代码** (scripts and data, with the lineage report's orphans, chains
+and broken links as filters), **提议** (inbox for the PI; 我的提议 for a
+member), **成员**. Every object opens the same **node page**: its trace,
+its changes and notes as one timeline, its judgments, and its actions. The
+canvas becomes 「关系图」, a view inside a node page and inside 数据与代码 —
+not a destination of its own. The visual language stays the paper palette
+of 8.2. Desk, node page and proposal review were shown to the researcher
+as a concept on 2026-10-11.
+
+### 12.10 Acceptance
+
+1. **Rename and migration** on a copy of the researcher's project and of
+   `~/.rce`: everything readable afterwards, ledgers and cards byte-
+   identical, `researchos` and `rce` both work; a failure injected at each
+   step leaves the old folders untouched.
+2. **One person**: no approval step anywhere; history and notes on a
+   script, a data file and an attempt; a figure traced to data, scripts and
+   attempt; 「关联文件」 and 「补上来源」 repair a broken trace.
+3. **Two people, simulated** (two `RESEARCHOS_HOME`s, a local folder as the
+   shared drive): join; a member proposes a new attempt with a script and a
+   200 MB data file; it is not a node anywhere until approved; approved —
+   applied, published, synced, recorded with `by` and `approved_by`; a
+   returned proposal shows its reason to the member and never becomes a
+   node; a verdict change to ☠️ without a reason is refused; both sides
+   changing one file — the PI is told, no merge happens; a snapshot
+   written by someone other than the PI (forged manifest) is refused by the
+   member's Research OS; a half-written proposal (no `ready.toml`) is
+   ignored; a OneDrive conflict copy in the shared drive is reported and
+   never read.
+4. **Two people, real**: the researcher and their collaborator on two Macs
+   and a real shared OneDrive folder go through 3's first five steps.
+5. **Nothing is written to the shared drive in place**: after every test
+   above, every file there was created once and never modified (mtimes and
+   inodes checked).
