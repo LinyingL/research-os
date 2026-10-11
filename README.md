@@ -186,9 +186,10 @@ researchos share publish ~/Projects/my-paper                # their copy now car
 ```
 
 **Sharing permissions in OneDrive -- these are what make "only the PI can
-approve" a rule rather than a request.** In the shared folder, create
-`提议/<member e-mail>` for each member (the e-mail exactly as they gave it to
-`researchos me set`, lower case). Then share:
+approve" a rule rather than a request.** `team add` (or, for a member added
+before the shared folder was set, the next `share publish`) creates the
+member's empty folder `提议/<member e-mail>` in the shared folder, once, and
+says so. Then share:
 
 | Folder | With | Permission |
 |---|---|---|
@@ -247,7 +248,9 @@ it, and an abandoned route keeps the result and the reason it was dropped.
 
 If the PI changed a file after the member's last sync and the member changed
 it too, the PI is told which file, and the proposal cannot be approved; the
-member syncs and proposes again. When the member syncs, their own version
+member syncs and proposes again. The attempt table is compared row by row:
+a proposal is blocked only when its own row (or the number a new row takes)
+changed in the official version, never because the PI edited other rows. When the member syncs, their own version
 is kept and the official one is put beside it as `<name>.official.<ext>`,
 with the difference shown. Compare the two, keep what is right in the
 original file, and delete the `.official` one.
@@ -259,7 +262,12 @@ original file, and delete the `.official` one.
 - **It never edits anything in the shared folder.** Every snapshot,
   proposal and answer is written once under a new name and never changed;
   an unfinished one (no `ready.toml`) and a sync service's conflict copy are
-  reported and never read.
+  reported and never read. Notes, link judgments and hand-drawn links (「关联文件」,
+  「补上来源」, removals included) travel the same way, in signed packets the
+  PI's next publish takes in; canvas arrangements stay each person's own.
+  If a published file is ever damaged by the sync service, the PI removes it
+  with `researchos share repair` (a dry run; `--yes` removes only damaged
+  files) and the next `share publish` writes it again.
 - **It never contacts the PI's computer**, and working with a team opens
   no network connection of its own: the only link between the team is the
   shared folder, which OneDrive keeps in step.

@@ -388,7 +388,7 @@ def put_blob_once(store: Path, sha: str, source: Path) -> Path:
             return target  # still downloading: not read; a reader verifies it before use
         if sha256_of(target)[0] != sha:
             raise ExchangeError("damaged", f"{target} exists but does not hold the content it is named after; it is "
-                                           f"never rewritten -- remove it from the shared folder by hand, then retry")
+                                           f"never rewritten -- the PI removes it with 'researchos share repair', and the next publish writes it again")
         return target
     tmp = store / f".{sha}.tmp-{secrets.token_hex(6)}"
     try:

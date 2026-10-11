@@ -918,6 +918,8 @@ def test_http_summary_endpoint(live_server):
 def test_http_attempts_endpoint_empty_hint(live_server):
     status, payload = _get(live_server[0], "/api/attempts")
     assert status == 200
+    # 12.12: every view's payload says whose version it shows.
+    assert payload.pop("officialness_mode")["mode"] == "official"
     assert payload == {"attempts": [], "hint": server._NO_ATTEMPTS_HINT}
 
 

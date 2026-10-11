@@ -354,7 +354,8 @@ def test_12_10_3_and_5_two_people_through_the_cli(tmp_path):
     _sparse(work / "data" / "big.bin")
     (work / "map.md").write_text(HEADER + ROW_16.format(verdict="🕒") + ROW_18)
     dry = term.run("member", "propose", "attempt_new", "--sentence", "加一条大面板的尝试", work)
-    assert "Dry run: nothing written" in dry.out and not (shared / "提议").exists()
+    # 12.12: the PI made the member's area, empty; a dry run puts nothing in it.
+    assert "Dry run: nothing written" in dry.out and not [p for p in (shared / "提议").rglob("*") if p.is_file()]
     sent = term.run("member", "propose", "attempt_new", "--sentence", "加一条大面板的尝试", "--yes", work)
     assert "data/big.bin 209715200B (blob)" in sent.out
     [first] = _ids(term, "member", work, "pending")

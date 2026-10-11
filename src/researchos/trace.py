@@ -220,8 +220,11 @@ def _break(kind: str, node: str, path: str | None, *, repair: str | None = None,
 
 def _attempts(conn: Connection, root: Path, chain_nodes: list[str], flags: judgements.LinkFlags,
               links: dict[tuple[str, str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
     config = _attempts_config(root)
     steps_dir = config.steps_dir if config is not None else None
+    labels = attempts_ingest.verdict_labels(root)
     paths_in_chain = {notes_mod.node_path(n): n for n in chain_nodes if notes_mod.node_path(n)}
     found: dict[str, dict[str, Any]] = {}
 
@@ -229,6 +232,8 @@ def _attempts(conn: Connection, root: Path, chain_nodes: list[str], flags: judge
         item = found.setdefault(attempt["id"], {
             "id": attempt["id"], "number": attempt["attrs"].get("number"), "title": attempt.get("title"),
             "verdict": (attempt.get("human_fields") or {}).get("verdict", ""),
+            "verdict_status": attempts_ingest.verdict_status((attempt.get("human_fields") or {}).get("verdict", ""),
+                                                             labels),
             "result": (attempt.get("human_fields") or {}).get("result", ""), "via": [],
         })
         item["via"].append({"via": via, "through": through})

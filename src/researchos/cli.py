@@ -1862,6 +1862,8 @@ def cmd_team(args: argparse.Namespace) -> int:
                 raise CliError(f"cannot read the key file {args.key}: {exc}") from exc
             done = share_mod.team_add(root, args.member_id, args.name, key_text, expected_id=opened.project_id)
             print(f"Added {done['member']} ({done['name']}) as a member; key {done['fingerprint']}")
+            print(f"  {done['sentence_en']}")
+            print(f"  {done['sentence']}")
             print("  publish so the member's copy carries the new team: researchos share publish")
             return 0
     except _SHARE_ERRORS as exc:
@@ -1914,6 +1916,12 @@ def cmd_share(args: argparse.Namespace) -> int:
             if args.json:
                 print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
                 return 0
+            for area in done.get("areas") or []:
+                if area.get("sentence_en"):
+                    print(area["sentence_en"])
+                    print(area["sentence"])
+            if done.get("restored"):
+                print(f"Wrote again {len(done['restored'])} damaged blob(s) removed by 'researchos share repair'")
             if not done["published"]:
                 print(f"Nothing to publish: snapshot {done['seq']} is the official version as it is")
             else:
@@ -1931,6 +1939,24 @@ def cmd_share(args: argparse.Namespace) -> int:
                   f"{done['before']} on references ({done['kept']} kept)")
             if not args.yes and done["prunable"]:
                 print("Dry run: nothing removed. Add --yes to remove them.")
+            return 0
+        if command == "repair":
+            done = share_mod.repair_blobs(root, apply=args.yes)
+            if args.json:
+                print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+            verb = "Removed" if args.yes else "Would remove"
+            print(f"{verb} {len(done['damaged'])} damaged blob(s) from the shared folder's published blobs "
+                  f"(nothing else is touched)")
+            for item in done["damaged"]:
+                seqs = ", ".join(str(n) for n in item["snapshots"]) or "none"
+                again = ("the next publish writes it again" if item["restorable"]
+                         else "the official version no longer holds this content: it cannot be written again")
+                print(f"  {item['sha256']} (named by snapshot(s) {seqs}) -- {again}")
+            for name in done["unchecked"]:
+                print(f"  not checked (still in the cloud): {name}")
+            if not args.yes and done["damaged"]:
+                print("Dry run: nothing removed. Add --yes to remove them, then: researchos share publish")
             return 0
         if command == "sync":
             done = share_mod.sync(root)
@@ -3452,7 +3478,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_path(q)
     q.set_defaults(func=cmd_team)
 
-    p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join|prune'")
+    p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join|prune|repair'")
     share_sub = p.add_subparsers(dest="share_command", required=True)
     q = share_sub.add_parser("set", help="set this project's shared folder on this machine (never inside a project)")
     q.add_argument("directory", metavar="DIR")
@@ -3477,6 +3503,12 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--project", default=None, metavar="ID",
                    help="which project, when the shared folder holds snapshots of more than one")
     q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("repair", help="list (and with --yes remove) published blobs whose content is damaged; "
+                                            "the next publish writes them again (the PI, 12.12)")
+    q.add_argument("--yes", action="store_true", help="remove them (without it: a dry run)")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
     q.set_defaults(func=cmd_share)
     q = share_sub.add_parser("prune", help="list (and with --yes remove) published blobs no snapshot from DATE on "
                                            "references (the PI, 12.2)")

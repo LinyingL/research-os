@@ -153,6 +153,14 @@ description = "途径"
 variables = "变量→因变量(频率)"
 result = "结果"
 verdict = "判决"
+
+# Optional (DESIGN.md 12.11): the word each verdict marker is shown as. These
+# six are the defaults and need not be written; a marker of your own is added
+# here, and one listed here replaces its default. A marker not known at all is
+# shown as 其它, followed by your own words.
+# [verdict_labels]
+# "✅" = "现行"
+# "❌" = "被否"
 """
 
 
@@ -209,6 +217,10 @@ class AttemptsConfig:
     # not declared; the default marker ☠️ always counts
     # (`researchos.proposals.abandon_markers`).
     abandoned_verdicts: list[str] | None = None
+    # V8 (DESIGN.md 12.11), not read by ingest: `[verdict_labels]`, marker ->
+    # the word the interface shows (`verdict_status`). Only text -> text
+    # entries are kept; `None` means not declared (the defaults apply).
+    verdict_labels: dict[str, str] | None = None
 
 
 def config_path(project_root: str | Path) -> Path:
@@ -249,7 +261,104 @@ def load_config(project_root: Path) -> AttemptsConfig:
         # docstring and researchos.consistency).
         dead_variables=data.get("dead_variables"), active_verdicts=data.get("active_verdicts"),
         date_year=date_year, abandoned_verdicts=data.get("abandoned_verdicts"),
+        verdict_labels=_declared_labels(data.get("verdict_labels")),
     )
+
+
+# -- verdicts as words (DESIGN.md 12.11) --------------------------------------
+
+#: The researcher's own markers and the status each is shown as (12.11);
+#: `attempts.toml`'s `[verdict_labels]` adds to them or replaces one.
+DEFAULT_VERDICT_LABELS = {"✅": "现行", "☠️": "已放弃", "🕒": "待定", "⚠️": "不利证据", "⛔": "被否", "📋": "归档"}
+#: A machine-readable status for each default word; a word of the
+#: researcher's own is `labelled`, a marker nobody named `other`.
+VERDICT_STATUSES = {"现行": "current", "已放弃": "abandoned", "待定": "pending", "不利证据": "adverse",
+                    "被否": "rejected", "归档": "archived"}
+OTHER_VERDICT_LABEL = "其它"
+_SELECTORS = ("\ufe0f", "\ufe0e")
+
+
+def _declared_labels(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        if value is not None:
+            logger.info("%s: [verdict_labels] is not a table; the default words are used", CONFIG_RELATIVE_PATH)
+        return None
+    kept = {k.strip(): v.strip() for k, v in value.items() if isinstance(k, str) and isinstance(v, str)
+            and k.strip() and v.strip()}
+    if len(kept) != len(value):
+        logger.info("%s: [verdict_labels] entries that are not text = text are ignored", CONFIG_RELATIVE_PATH)
+    return kept
+
+
+def verdict_labels(project_root: str | Path | None) -> dict[str, str]:
+    """The marker -> word mapping of a project: the defaults, with
+    `[verdict_labels]` from its `attempts.toml` over them. The defaults
+    alone when there is no readable configuration."""
+    labels = dict(DEFAULT_VERDICT_LABELS)
+    if project_root is None:
+        return labels
+    try:
+        config = load_config(Path(project_root))
+    except (AttemptsConfigError, OSError, UnicodeDecodeError):
+        return labels
+    labels.update(config.verdict_labels or {})
+    return labels
+
+
+def _bare(text: str) -> tuple[str, list[int]]:
+    """`text` without emoji variation selectors, and for each kept
+    character its index in `text` (so ☠ and ☠️ are the same marker)."""
+    kept, where = [], []
+    for i, ch in enumerate(text):
+        if ch not in _SELECTORS:
+            kept.append(ch)
+            where.append(i)
+    return "".join(kept), where
+
+
+def _is_marker_char(ch: str) -> bool:
+    import unicodedata  # noqa: PLC0415 -- leaf use
+
+    return unicodedata.category(ch) == "So" or 0x1F000 <= ord(ch) <= 0x1FAFF
+
+
+def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) -> dict[str, str]:
+    """A verdict cell as the interface shows it (12.11): `{status, label,
+    words}` -- the word for its marker (`labels`, default
+    `DEFAULT_VERDICT_LABELS`), and `words`, the researcher's own text with
+    that marker removed. The first known marker counts, leading or not;
+    a leading symbol nobody named is 其它 (`other`) and is removed too;
+    text with no marker at all is 其它 with all of it as the words."""
+    text = verdict if isinstance(verdict, str) else ""
+    bare, where = _bare(text)
+    best: tuple[int, int, str] | None = None
+    for marker, label in (labels if labels is not None else DEFAULT_VERDICT_LABELS).items():
+        key = _bare(marker)[0].strip()
+        at = bare.find(key) if key else -1
+        if at >= 0 and (best is None or at < best[0] or (at == best[0] and len(key) > best[1])):
+            best = (at, len(key), label)
+    if best is not None:
+        at, length, label = best
+        status = VERDICT_STATUSES.get(label, "labelled")
+    else:
+        lead = len(bare) - len(bare.lstrip())
+        if lead < len(bare) and _is_marker_char(bare[lead]):
+            at, length = lead, 1
+            while at + length < len(bare) and (bare[at + length] == "\u200d" or (
+                    bare[at + length - 1] == "\u200d" and _is_marker_char(bare[at + length]))):
+                length += 1
+        else:
+            at, length = 0, 0
+        label, status = OTHER_VERDICT_LABEL, "other"
+    if length:
+        start = where[at]
+        end = where[at + length - 1] + 1
+        while end < len(text) and text[end] in _SELECTORS:
+            end += 1
+        words = (text[:start].rstrip() + " " + text[end:].lstrip()).strip()
+    else:
+        words = text.strip()
+    return {"status": status, "label": label, "words": words}
 
 
 # -- Markdown table location + cell cleanup ---------------------------------

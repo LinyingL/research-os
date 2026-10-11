@@ -96,9 +96,13 @@ returned (`approval_started`): it is approved again, never half-returned.
 proposal stays open) write an outcome and nothing else.
 
 Both sides changed: a file changed in the official version since the
-proposal's base is a conflict; so is the attempt table itself, for a new
-attempt or a verdict change -- Research OS never merges two people's edits
-of one file (12.3), the table included. An abandonment's reason is
+proposal's base is a conflict -- Research OS never merges two people's
+edits of one file (12.3). The attempt table conflicts by ROW (12.12): a
+new attempt only when the number it takes is taken in the official table
+now; a verdict change only when its row changed there since the base (the
+base table found by `table_base_sha256` in the history store or a
+published snapshot, read with the attempts parser). The PI editing other
+rows blocks neither. An abandonment's reason is
 written into the attempt table's result cell (「放弃理由：…」) unless the
 row already says it, and into the decision with the evidence.
 
@@ -171,6 +175,7 @@ MESSAGES = {
     "not_pi": "只有 PI 可以批准或退回提议",
     "pi_changes_directly": "PI 直接修改正式版本，不需要提议",
     "not_member": "你不在这个项目的成员名单里",
+    "not_in_team": "你还不是这个项目的成员：请 PI 把你加入团队，然后同步",
     "no_base": "这个工作副本还没有记录它来自哪个正式版本",
     "bad_kind": "不支持的提议类型",
     "nothing": "和正式版本相比没有可以提议的改动",
@@ -223,11 +228,42 @@ def _me_id() -> str:
     return member
 
 
+def _not_in_team(me: str | None) -> ProposalRefused:
+    return ProposalRefused("not_in_team", f"{me or 'you'} is not in this project's team yet: the PI adds you "
+                                          f"(researchos team add), then you sync")
+
+
+def joined_not_pi(root: str | Path, me: str | None) -> bool:
+    """`root` is a working copy this machine joined from a shared folder,
+    and `me` is not the PI it trusted: its official version is the PI's,
+    whatever its team file says -- a copy whose team does not list me yet
+    is not a project of one (12.12)."""
+    from researchos import share  # noqa: PLC0415 -- share imports this module
+
+    root = Path(root)
+    try:
+        state = share.read_state(_project_id(root))
+    except (ProposalRefused, share.ShareError):
+        return False
+    if not state or Path(str(state.get("working_copy", ""))) != root.resolve():
+        return False
+    return me is None or state.get("pi") != me
+
+
+def _current_me() -> str | None:
+    try:
+        return people.current_member_id()
+    except people.PeopleError:
+        return None
+
+
 def team_of(root: str | Path) -> people.TeamRead:
     """The team, refused unless it is a team project that can be read."""
     team = people.read_team(root)
     mode = people.team_mode(team)
     if mode == "single":
+        if joined_not_pi(root, _current_me()):
+            raise _not_in_team(_current_me())
         raise ProposalRefused("single_person", "a single-person project has no proposals: changes are official when made")
     if mode == "unknown":
         raise ProposalRefused("team_unreadable", f"{team.path} cannot be read ({team.state}: {team.error})")
@@ -242,6 +278,8 @@ def role_of(root: str | Path) -> tuple[str, str | None, people.TeamRead]:
         me = people.current_member_id()
     except people.PeopleError:
         me = None
+    if mode == "single" and joined_not_pi(root, me):
+        return "none", me, team  # 12.12: not yet in the team, not a project of one
     if mode != "team":
         return mode, me, team
     if me is None:
@@ -263,7 +301,7 @@ def _require_member(root: Path) -> str:
     me = _me_id()
     member = next((m for m in team.members if m.id == me), None)
     if member is None:
-        raise ProposalRefused("not_member", f"{me} is not in {team.path}")
+        raise _not_in_team(me)
     if member.role == "pi":
         raise ProposalRefused("pi_changes_directly", "the PI changes the official version directly; proposals are for members")
     return me
@@ -699,8 +737,10 @@ def make_proposal(
         mine = fingerprint(root / rel)
         if (mine or {}).get("sha256") == (base.files.get(rel) or {}).get("sha256"):
             continue
-        reason = ("notes and link judgments travel with every sync (researchos share sync), without approval"
-                  if name in share.TRAVELLING else "Research OS's own record files are not part of a proposal")
+        reason = ("notes, link judgments and hand-drawn links travel with every sync (researchos share sync), "
+                  "without approval" if name in share.TRAVELLING_FILES
+                  else "canvas arrangements do not travel: each person keeps their own" if name == share.CANVAS_NAME
+                  else "Research OS's own record files are not part of a proposal")
         not_carried.append({"path": rel, "reason": reason})
     files = _file_changes(root, base, work, skip=skip, only=set(only) if only is not None else None)
     if kind == "files" and not files:
@@ -963,13 +1003,28 @@ def state_of(ex: LocalExchange, stored: StoredProposal, siblings: Iterable[Store
     }
 
 
-def _summary(stored: StoredProposal, state: Mapping[str, Any]) -> dict[str, Any]:
+def verdict_words(carried: Mapping[str, Any] | None, labels: Mapping[str, str] | None) -> dict[str, Any] | None:
+    """A proposal's [attempt] or [verdict] with every verdict in it also as
+    a word (12.11): `verdict_status` for a row's verdict, `old_status` /
+    `new_status` for a verdict change."""
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
+    if not isinstance(carried, Mapping):
+        return None
+    out = dict(carried)
+    for key, target in (("verdict", "verdict_status"), ("old", "old_status"), ("new", "new_status")):
+        if isinstance(out.get(key), str):
+            out[target] = attempts_ingest.verdict_status(out[key], dict(labels) if labels is not None else None)
+    return out
+
+
+def _summary(stored: StoredProposal, state: Mapping[str, Any], labels: Mapping[str, str] | None = None) -> dict[str, Any]:
     data = stored.data
     files = data.get("file") or []
     return {
         "id": stored.id, "by": stored.member, "at": data.get("at"), "kind": data.get("kind"),
-        "sentence": data.get("sentence"), "base": data.get("base"), "attempt": data.get("attempt"),
-        "verdict": data.get("verdict"), "variable": data.get("variable"),
+        "sentence": data.get("sentence"), "base": data.get("base"), "attempt": verdict_words(data.get("attempt"), labels),
+        "verdict": verdict_words(data.get("verdict"), labels), "variable": data.get("variable"),
         "files": [{k: f.get(k) for k in ("path", "action", "size", "store")} for f in files],
         "not_carried": data.get("not_carried") or [], "supersedes": data.get("supersedes"),
         "base_seq": data.get("base_seq"),
@@ -989,13 +1044,14 @@ def listing(root: str | Path, *, exchange: LocalExchange | None = None) -> dict[
     ex = exchange or exchange_mod.for_project(pid, root)
     found = ex.list_proposals(None if role == "pi" else me)
     out["problems"] = [p.payload() for p in found.problems]
+    labels = _labels(root)
     for stored in found.proposals:
         if stored.data.get("project") != pid:
             out["problems"].append({"kind": "wrong_project", "path": str(stored.directory),
                                     "detail": f"belongs to project {stored.data.get('project')}"})
             continue
         siblings = [s for s in found.proposals if s.member == stored.member]
-        out["proposals"].append(_summary(stored, state_of(ex, stored, siblings)))
+        out["proposals"].append(_summary(stored, state_of(ex, stored, siblings), labels))
     owners: dict[str, set[str]] = {}
     for item in out["proposals"]:
         owners.setdefault(item["id"], set()).add(item["by"])
@@ -1021,7 +1077,7 @@ def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | No
     root = Path(root)
     role, me, _team = role_of(root)
     if role not in ("pi", "member"):
-        raise ProposalRefused("not_member" if role == "none" else ("single_person" if role == "single" else "team_unreadable"),
+        raise ProposalRefused("not_in_team" if role == "none" else ("single_person" if role == "single" else "team_unreadable"),
                               "only the PI and the proposal's author see a proposal")
     pid = _project_id(root)
     ex = exchange or exchange_mod.for_project(pid, root)
@@ -1036,10 +1092,16 @@ def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | No
     else:
         stored = ex.open_proposal(proposal_id, member=member)
     siblings = ex.list_proposals(stored.member).proposals
-    out = _summary(stored, state_of(ex, stored, siblings))
+    out = _summary(stored, state_of(ex, stored, siblings), _labels(root))
     if role == "pi":
         out["changes"] = what_changes(stored, root)
     return out
+
+
+def _labels(root: Path) -> dict[str, str]:
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
+    return attempts_ingest.verdict_labels(root)
 
 
 # -- what approving would do (the PI) ---------------------------------------------------------
@@ -1138,6 +1200,46 @@ def abandon_result(result: str, reason: str | None, verdict: str) -> str:
     return f"{result}（放弃理由：{said}）" if result.strip() else f"放弃理由：{said}"
 
 
+def _table_at(root: Path, config, sha: Any) -> str | None:
+    """The attempt table's text as it was when its SHA-256 was `sha` -- from
+    this machine's history store (12.6), else from a published snapshot
+    that carried it (verified by that hash). None when neither has it."""
+    if not isinstance(sha, str) or not _SHA_RE.match(sha):
+        return None
+    try:
+        pid = _project_id(root)
+    except ProposalRefused:
+        return None
+    data = None
+    try:
+        store = history.Store.existing(pid)
+        if store is not None:
+            try:
+                data = store.read_blob(sha)
+            finally:
+                store.close()
+    except Exception:  # noqa: BLE001 -- a store that cannot be read is no answer, not a failure
+        data = None
+    if data is None or hashlib.sha256(data).hexdigest() != sha:
+        data = None
+        from researchos import share  # noqa: PLC0415
+
+        shared = exchange_mod.configured(pid)
+        try:
+            snaps, _problems = share.read_snapshots(shared) if shared is not None else ([], [])
+            for snap in reversed(snaps):
+                entry = snap.files.get(config.file)
+                if entry is not None and entry.get("sha256") == sha:
+                    data = share._read_content(shared, entry)
+                    break
+        except (share.ShareError, OSError):
+            data = None
+    try:
+        return data.decode("utf-8") if data is not None else None
+    except UnicodeDecodeError:
+        return None
+
+
 def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     from researchos.webapp import mapedit  # noqa: PLC0415
 
@@ -1157,11 +1259,10 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
     node = f"attempt:{config.file}#"
     carried = data["attempt"] if kind == "attempt_new" else data["verdict"]
     table_base = carried.get("table_base_sha256")
-    # 12.3: the table changed on both sides is a conflict like any file --
-    # unless what changed it is this approval's own edit, interrupted.
-    moved = (isinstance(table_base, str) and hashlib.sha256(raw).hexdigest() != table_base
-             and not done.get("attempt_started"))
-    moved_reason = f"尝试表（{config.file}）在你提议之后，正式版本里也改了"
+    # 12.12: the attempt table conflicts by ROW, not as a file. Whether the
+    # official table moved at all is said (`table_moved`), but only the
+    # proposal's own row -- or the number it takes -- can block it.
+    table_moved = isinstance(table_base, str) and hashlib.sha256(raw).hexdigest() != table_base
     if kind == "attempt_new":
         row = data["attempt"]
         number = row["number"]
@@ -1170,14 +1271,14 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         if done.get("attempt_applied"):
             out["state"] = "done"
             return out
+        out["table_moved"] = table_moved
         if number in rows:
+            # The number it takes is taken: by the PI, or by another
+            # member's proposal approved first.
             if rows[number] == out["fields"]:
                 out["state"] = "same"
             else:
                 out.update(state="conflict", reason=f"正式版本的尝试表里已经有第 {number} 行")
-            return out
-        if moved:
-            out.update(state="conflict", reason=moved_reason)
             return out
     else:
         v = data["verdict"]
@@ -1196,6 +1297,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         if done.get("attempt_applied"):
             out["state"] = "done"
             return out
+        out["table_moved"] = table_moved
         current = rows.get(number)
         if current is None:
             out.update(state="conflict", reason=f"正式版本的尝试表里没有第 {number} 行")
@@ -1206,9 +1308,17 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         if current["verdict"] != v["old"] or current["result"] != v["old_result"]:
             out.update(state="conflict", reason=f"第 {number} 行的结论或结果在正式版本里也改了")
             return out
-        if moved:
-            out.update(state="conflict", reason=moved_reason)
-            return out
+        # The row's other cells, against the row as the proposal's base had
+        # it (the base table found by its fingerprint): a row the PI edited
+        # since is a conflict; the PI editing other rows is not.
+        base_row = (_rows(_table_at(root, config, table_base), config) or {}).get(number) if table_moved else None
+        if base_row is not None:
+            moved_cells = [k for k in ROW_FIELDS if k not in ("verdict", "result") and current[k] != base_row[k]]
+            if moved_cells:
+                out.update(state="conflict", reason=f"第 {number} 行在你提议之后，正式版本里也改了")
+                return out
+        elif table_moved:
+            out["base_row_unknown"] = True  # only the verdict and result could be compared
     try:
         shown = mapedit.preview_edit(root, out["op"], number, out["fields"])
     except mapedit.MapEditError as exc:
@@ -1315,6 +1425,12 @@ def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str,
         problems.append(f"这个编号的另一份提议（{done['member']}）已经在批准中")
     out["resuming"] = done["started"]
     out["attempt"] = _attempt_change(root, data, done)
+    if out["attempt"] is not None:
+        labels = _labels(root)
+        out["attempt"] = verdict_words(out["attempt"], labels)
+        if isinstance((out["attempt"].get("fields") or {}).get("verdict"), str):
+            # Beside `fields`, never in it: `fields` is what approving writes.
+            out["attempt"]["verdict_status"] = verdict_words(out["attempt"]["fields"], labels)["verdict_status"]
     out["variable"] = _variable_change(root, stored, data, done)
     out["files"] = [_file_change(root, stored, item, done) for item in data.get("file") or []]
     out["not_carried"] = data.get("not_carried") or []

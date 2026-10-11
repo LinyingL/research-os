@@ -308,12 +308,15 @@ def default_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(numbered or attempts, key=_attempt_order_key)
 
 
-def _scope_summary(attempt: dict[str, Any]) -> dict[str, Any]:
+def _scope_summary(attempt: dict[str, Any], labels: dict[str, str] | None = None) -> dict[str, Any]:
+    verdict = attempt["human_fields"].get("verdict", "")
     return {
         "id": attempt["id"],
         "number": attempt["attrs"].get("number", ""),
         "title": attempt.get("title") or attempt["attrs"].get("description", ""),
-        "verdict": attempt["human_fields"].get("verdict", ""),
+        "verdict": verdict,
+        # 12.11: the verdict as a word and the researcher's own text.
+        "verdict_status": attempts_ingest.verdict_status(verdict, labels),
     }
 
 
@@ -414,13 +417,15 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
     # spread through a larger pipeline and a bounding frame would swallow
     # cards that are not its own.
     groups = []
+    labels = attempts_ingest.verdict_labels(project_root)
     for attempt in view["grouped"]:
         members = [i for i in step_ids[attempt["id"]] if i in visible]
         if members or scope != SCOPE_ALL:
-            summary = _scope_summary(attempt)
+            summary = _scope_summary(attempt, labels)
             groups.append({
                 "attempt_id": summary["id"], "number": summary["number"],
-                "title": summary["title"], "verdict": summary["verdict"], "node_ids": members,
+                "title": summary["title"], "verdict": summary["verdict"],
+                "verdict_status": summary["verdict_status"], "node_ids": members,
             })
 
     record = layout_record(project_root)
@@ -439,8 +444,8 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
         "step_groups": [{"attempt_id": g["attempt_id"], "node_ids": g["node_ids"]} for g in groups],
         "positions": {k: v for k, v in saved["positions"].items() if k in visible},
         "viewport": saved["viewport"],
-        "scope": {"id": SCOPE_ALL} if scope == SCOPE_ALL else _scope_summary(by_id[scope]),
-        "scopes": [dict(_scope_summary(a), current=a["id"] == default_id) for a in view["attempts"]],
+        "scope": {"id": SCOPE_ALL} if scope == SCOPE_ALL else _scope_summary(by_id[scope], labels),
+        "scopes": [dict(_scope_summary(a, labels), current=a["id"] == default_id) for a in view["attempts"]],
     }
 
 

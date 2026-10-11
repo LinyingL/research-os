@@ -821,7 +821,10 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
         return _variable_versions(root, node_id)
     if prefix == "attempt":
         store = Store.existing(pid)
-        found = [] if store is None else [_attempt_payload(v) for v in store.versions(node_id)]
+        from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
+        labels = attempts_ingest.verdict_labels(root)
+        found = [] if store is None else [_attempt_payload(v, labels) for v in store.versions(node_id)]
         if store is not None:
             store.close()
         return {"node": node_id, "kind": "attempt", "origin": "store", "path": None, "versions": found}
@@ -899,9 +902,12 @@ def _attribute_git(root: Path, project_id: str, file_node: str, found: list[dict
                        approval_at=match.at)
 
 
-def _attempt_payload(v: Version) -> dict[str, Any]:
+def _attempt_payload(v: Version, labels: dict[str, str] | None = None) -> dict[str, Any]:
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
     out = _store_payload(v)
     out["verdict"] = v.summary.get("verdict", "")
+    out["verdict_status"] = attempts_ingest.verdict_status(out["verdict"], labels)
     out["result"] = v.summary.get("result", "")
     return out
 

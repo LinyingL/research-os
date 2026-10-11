@@ -20,7 +20,8 @@ who I am, notes, what changed, and the trace -- the payloads only.
   folder, last snapshot, verification, what is pending); `POST
   /api/share/publish {note?}` (the PI), `POST /api/share/sync` (a joined
   working copy), `POST /api/share/join {shared, folder}` (12.2, 12.3, 12.5;
-  `researchos.share`).
+  `researchos.share`); `POST /api/team/add {id, name, key}` (the PI, 12.12:
+  the member's area is made once and the PI told to share it).
 
 Copy for the page is Chinese (8.8); `error` stays the engine's English for
 「详情」.
@@ -171,7 +172,7 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
 
 _PROPOSAL_STATUS = {
     "single_person": 409, "team_unreadable": 409, "no_me": 409, "not_pi": 403, "pi_changes_directly": 409,
-    "not_member": 403, "not_yours": 403, "no_base": 409, "bad_kind": 400, "nothing": 409, "ambiguous": 409,
+    "not_member": 403, "not_in_team": 403, "not_yours": 403, "no_base": 409, "bad_kind": 400, "nothing": 409, "ambiguous": 409,
     "reason_required": 400, "no_attempt_table": 409, "attested_required": 400, "changed_since_shown": 409,
     "decided": 409, "not_approvable": 409, "invalid": 400, "wrong_project": 409, "empty_reason": 400,
     "empty_text": 400, "cannot_sign": 409,
@@ -285,6 +286,7 @@ _SHARE_STATUS = {
     "not_configured": 409, "unreachable": 503, "no_team": 409, "team_unreadable": 409, "not_pi": 403, "no_me": 409,
     "team_exists": 409, "member_exists": 409, "invalid": 400, "invalid_key": 400, "dataless": 409, "waiting": 409,
     "nothing_published": 404, "untrusted": 409, "not_empty": 409, "not_joined": 409, "cannot_sign": 409, "content": 409,
+    "damaged": 409, "not_in_team": 403, "other_project": 409, "ambiguous_project": 409,
 }
 
 
@@ -324,6 +326,22 @@ def share_sync_payload(root: Path, project_id: str | None, *, timeout: float) ->
     from researchos import share  # noqa: PLC0415
 
     return {"ok": True, **_share_call(lambda: share.sync(root, expected_id=project_id, timeout=timeout))}
+
+
+def team_add_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    """POST /api/team/add {id, name, key}: `researchos team add` -- the PI
+    appends a member with the public key they sent (its text, never a
+    path), and the member's empty area `提议/<id>/` is made once on the
+    shared folder; `sentence` tells the PI to give that member edit rights
+    to it in OneDrive (12.12)."""
+    from researchos import share  # noqa: PLC0415
+
+    member, name, key = body.get("id"), body.get("name"), body.get("key")
+    if not all(isinstance(v, str) and v.strip() for v in (member, name, key)):
+        raise NodeApiRefused(400, "missing", "request body must carry string 'id', 'name' and 'key'",
+                             "请填写成员的邮箱、名字和公钥")
+    return {"ok": True, **_share_call(lambda: share.team_add(root, member, name, key, expected_id=project_id,
+                                                             timeout=timeout))}
 
 
 def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:

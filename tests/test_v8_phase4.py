@@ -306,7 +306,8 @@ def test_12_10_3_abandoning_without_a_reason_is_refused(drive):
         with pytest.raises(proposals.ProposalRefused) as refused:
             proposals.make_proposal(drive.work, "verdict_change", "放弃", result="t=0.3")
         assert refused.value.code == "reason_required"
-    assert not (drive.shared / "提议").exists()
+    # 12.12: the member's area exists (the PI made it, empty) and stays empty.
+    assert (drive.shared / "提议" / MEMBER[1]).is_dir() and not any((drive.shared / "提议" / MEMBER[1]).iterdir())
 
 
 def test_12_10_3_both_sides_changing_one_file_is_listed_never_merged(drive):

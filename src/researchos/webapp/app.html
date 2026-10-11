@@ -3999,6 +3999,9 @@ const RECORD_KIND_WORDS = {
   canvas: "画布位置",
   variables: "变量定义卡",
   legacy: "旧版本索引里的判断",
+  notes: "节点上的笔记",
+  decisions: "经 PI 批准的决定",
+  history: "版本历史（保存的材料，不是记录）",
 };
 
 const RECORD_ISSUE_WORDS = {
@@ -4032,9 +4035,26 @@ function recordCountText(row) {
       return f.exists ? f.cards + " 张卡片" : "还没有";
     case "legacy":
       return f.waiting + " 个旧索引等待迁移";
+    case "notes":
+      if (typeof f.notes === "number") return f.notes + " 条笔记，在 " + f.nodes + " 个节点上" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
+      return f.file_state === "absent" ? "还没有" : "无法读取";
+    case "decisions":
+      if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
+      return f.file_state === "absent" ? "还没有" : "无法读取";
+    case "history":
+      if (!f.exists) return "还没有";
+      return f.versions + " 个版本，共 " + recordBytesText(f.bytes) + "；存放在索引旁，不在项目里：删掉索引所在的文件夹会一并删掉";
     default:
       return row.count || "";
   }
+}
+
+function recordBytesText(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " 字节";
 }
 
 function recordIssueText(row) {
@@ -4082,7 +4102,8 @@ async function renderRecordsPanel(subject) {
       where.appendChild(mkButton("在 Finder 中显示", "err-detail-toggle", () => runOpenAction(target, true, status)));
     }
     div.append(where, mk("div", "records-count", recordCountText(row)));
-    div.appendChild(mk("div", "fact-line", row.snapshot ? "最新快照：" + row.snapshot : "还没有快照"));
+    // The version store is kept material beside the index, never snapshotted (12.12).
+    if (row.code !== "history") div.appendChild(mk("div", "fact-line", row.snapshot ? "最新快照：" + row.snapshot : "还没有快照"));
     if (row.problems && row.problems.length) {
       const problem = mk("div", "records-problem");
       renderBlockingError(problem, recordIssueText(row) || "需要处理", row.problems.join("\n"));

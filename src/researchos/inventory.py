@@ -467,6 +467,47 @@ def _decisions_row(root: Path) -> Row:
                code="decisions", facts=facts)
 
 
+def history_size(project_id: str) -> dict[str, Any]:
+    """The version store's folder, whether it exists, how many versions of
+    how many nodes it keeps and how many bytes it takes (12.12 History).
+    Reads only: a store that is not there is not created."""
+    from researchos import history  # noqa: PLC0415 -- leaf use
+
+    directory = history.history_dir(project_id)
+    out: dict[str, Any] = {"path": str(directory), "exists": (directory / history.VERSIONS_FILENAME).is_file(),
+                           "versions": 0, "nodes": 0, "bytes": 0}
+    if not out["exists"]:
+        return out
+    for dirpath, _dirnames, filenames in os.walk(directory, followlinks=False):
+        for name in filenames:
+            try:
+                out["bytes"] += (Path(dirpath) / name).lstat().st_size
+            except OSError:
+                continue
+    store = history.Store.existing(project_id)
+    if store is not None:
+        try:
+            out["versions"], out["nodes"] = store.counts()
+        finally:
+            store.close()
+    return out
+
+
+def _history_row(root: Path) -> Row | None:
+    """12.12 History: the version store of a project is kept material, not
+    a record -- beside the index, not in the project: rebuilding the index
+    keeps it, deleting the index's whole folder loses it. Listed with its
+    size so that is never a surprise. None without a readable identity."""
+    got = read_identity(root)
+    if got.state is not IdentityState.PRESENT or got.identity is None:
+        return None
+    size = history_size(got.identity.id)
+    count = (f"{size['versions']} version(s) of {size['nodes']} node(s), {size['bytes']} bytes -- kept beside the "
+             f"index, not in the project: deleting the index's folder deletes it" if size["exists"] else "none yet")
+    return Row("Version history (kept material, not a record)", size["path"], count, None, (), code="history",
+               facts=dict(size))
+
+
 def card_file_paths(root: Path) -> list[tuple[Path, str]]:
     """The files of every card that get a daily snapshot, each with its
     snapshot subdirectory (`.researchos/backups/variables/<id>/`, 9.11): the log
@@ -550,6 +591,9 @@ def inventory(conn: Connection | None, root: Path) -> list[Row]:
         _judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root),
         _variables_row(conn, root), _notes_row(conn, root), _decisions_row(root),
     ]
+    history_row = _history_row(root)
+    if history_row is not None:
+        rows.append(history_row)
     waiting = paths.legacy_sources(root)
     if waiting:
         rows.append(Row(

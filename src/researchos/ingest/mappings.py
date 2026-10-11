@@ -708,6 +708,17 @@ def _emit_entry(entry: dict[str, str], newline: str) -> str:
         lines.append(f"date = {_toml_string(entry['date'])}")
     if entry.get("by") is not None:
         lines.append(f"by   = {_toml_string(entry['by'])}")
+    if entry.get("recovered_from") is not None:
+        lines.append(f"recovered_from = {_toml_string(entry['recovered_from'])}")
+    return newline.join(lines) + newline
+
+
+def _emit_table(name: str, fields: dict[str, Any], newline: str) -> str:
+    lines = [f"[[{name}]]"]
+    for key, value in fields.items():
+        if value is None:
+            continue
+        lines.append(f"{key} = {value}" if isinstance(value, int) else f"{key} = {_toml_string(str(value))}")
     return newline.join(lines) + newline
 
 
@@ -932,3 +943,166 @@ def _delete_mapping(project_root: str | Path, from_path: str, to_path: str, type
     _check_round_trip(new_text, remaining)
     backup = _commit(project_root, old_text, new_text)
     return {"file": MAPPINGS_RELATIVE_PATH, "backup": backup, "removed": len(raw) - len(remaining)}
+
+
+# -- a member's links travel (DESIGN.md 12.12) ----------------------------------
+#
+# In a team project a member's hand-drawn links -- 「关联文件」 (belongs_to),
+# 「补上来源」 (generates) and every other mapping -- travel without approval,
+# like notes: the member's sync writes the entries they added, and the ones
+# they removed as explicit removal entries, into a signed write-once packet
+# (`researchos.share`); the PI's next publish applies them to the official
+# file in one write (`apply_received`): an added entry carries `by` (the
+# member) and `recovered_from` (`<packet>#<n>`), a removal leaves a
+# `[[removal]]` entry saying who removed what, and every packet applied
+# leaves one `[[received]]` entry, so a packet is never applied twice --
+# not even after the PI deletes a link it brought. The ingest reads only
+# `[[mapping]]`; the other two tables are the file's own account.
+
+REMOVAL_TABLE = "removal"
+RECEIVED_TABLE = "received"
+
+
+def _key_of(project_root: Path, entry: Any) -> tuple[str, str, str] | None:
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return _validate_identity(project_root, entry)[:3]
+    except _EntryRefused:
+        return None
+
+
+def _entries_by_key(project_root: Path, text: str | None) -> dict[tuple[str, str, str], dict[str, Any]]:
+    if text is None:
+        return {}
+    try:
+        raw = _parse_text(text)
+    except MappingsFileError:
+        return {}
+    found: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for entry in raw:
+        key = _key_of(project_root, entry)
+        if key is not None:
+            found.setdefault(key, entry)
+    return found
+
+
+def received_packets(text: str | None) -> set[str]:
+    """The packets a mappings file says it has applied (`[[received]]`)."""
+    try:
+        data = tomllib.loads(text) if text else {}
+    except tomllib.TOMLDecodeError:
+        return set()
+    items = data.get(RECEIVED_TABLE, [])
+    return {str(i.get("packet")) for i in items if isinstance(i, dict) and isinstance(i.get("packet"), str)} \
+        if isinstance(items, list) else set()
+
+
+def member_changes(project_root: str | Path, base_text: str | None, text: str | None,
+                   me: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """(added, removed): the links in `text` (a member's file) that are not
+    in `base_text` (the official file their copy was synced to) and are the
+    member's -- written by them, or by hand without a `by` -- and the links
+    of `base_text` no longer in `text`. Entries that do not validate are
+    not carried."""
+    root = Path(project_root)
+    base, mine = _entries_by_key(root, base_text), _entries_by_key(root, text)
+    added = []
+    for key, entry in mine.items():
+        if key in base or entry.get("by") not in (None, me):
+            continue
+        item = {"from": key[0], "to": _written_to(key[2], key[1]), "type": key[2]}
+        for name in ("note", "date"):
+            value = entry.get(name)
+            if isinstance(value, _dt.date):
+                value = value.isoformat()
+            if isinstance(value, str):
+                item[name] = value
+        added.append(item)
+    removed = [{"from": k[0], "to": _written_to(k[2], k[1]), "type": k[2]} for k in base if k not in mine]
+    return added, removed
+
+
+def change_key(op: str, entry: dict[str, Any]) -> str:
+    return "\x1f".join(("mapping", op, str(entry.get("from")), str(entry.get("to")), str(entry.get("type"))))
+
+
+def apply_received(project_root: str | Path, packet_id: str, member: str, added: list[Any], removed: list[Any],
+                   *, at: str) -> dict[str, Any]:
+    """Apply one member packet's links to the official file in one write
+    (see above). The caller holds the project lock. Returns `{applied,
+    added, removed, skipped, problems}`; `applied` is False when the file
+    already says it received this packet (nothing written)."""
+    root = Path(project_root)
+    old_text, raw, loaded = _load_for_write(root)
+    out: dict[str, Any] = {"applied": False, "added": 0, "removed": 0, "skipped": 0, "problems": []}
+    if packet_id in received_packets(old_text):
+        return out
+    present = {m.key for m in loaded.mappings}
+    newline = _newline_of(old_text)
+    today = at[:10]
+    removing: set[tuple[str, str, str]] = set()
+    removal_blocks = []
+    for n, entry in enumerate(removed if isinstance(removed, list) else [], 1):
+        try:
+            if not isinstance(entry, dict) or entry.get("by") != member:
+                raise _EntryRefused("not_theirs", "a removal carried from a member's area is that member's own")
+            key = _validate_identity(root, entry)[:3]
+        except _EntryRefused as exc:
+            out["problems"].append(f"removal #{n}: {exc}")
+            continue
+        if key not in present or key in removing:
+            out["skipped"] += 1
+            continue
+        removing.add(key)
+        removal_blocks.append(_emit_table(REMOVAL_TABLE, {
+            "from": key[0], "to": _written_to(key[2], key[1]), "type": key[2], "by": member, "date": today,
+            "recovered_from": f"{packet_id}#r{n}"}, newline))
+    new_entries = []
+    for n, entry in enumerate(added if isinstance(added, list) else [], 1):
+        try:
+            if not isinstance(entry, dict) or entry.get("by") != member:
+                raise _EntryRefused("not_theirs", "a link carried from a member's area is that member's own")
+            norm_from, norm_to, edge_type = _validate_for_write(root, entry)
+        except (MappingsWriteError, _EntryRefused) as exc:
+            out["problems"].append(f"link #{n}: {exc}")
+            continue
+        key = (norm_from, norm_to, edge_type)
+        if key in present and key not in removing:
+            out["skipped"] += 1
+            continue
+        item = {"from": norm_from, "to": _written_to(edge_type, norm_to), "type": edge_type}
+        if isinstance(entry.get("note"), str):
+            item["note"] = entry["note"]
+        item["date"] = entry["date"] if isinstance(entry.get("date"), str) else today
+        item.update(by=member, recovered_from=f"{packet_id}#a{n}")
+        new_entries.append(item)
+        present.add(key)
+
+    def drops(entry: Any) -> bool:
+        return _key_of(root, entry) in removing
+
+    lines = (old_text or "").splitlines(keepends=True)
+    drop: set[int] = set()
+    for start, end in _blocks(lines):
+        try:
+            block = tomllib.loads("".join(lines[start:end])).get("mapping", [])
+        except tomllib.TOMLDecodeError:
+            continue
+        if len(block) == 1 and drops(block[0]):
+            first = start
+            while first > 0 and not lines[first - 1].strip():
+                first -= 1
+            drop.update(range(first, end))
+    text = "".join(line for i, line in enumerate(lines) if i not in drop) if old_text is not None else FILE_HEADER
+    if text and not text.endswith(("\n", "\r")):
+        text += newline
+    tail = [_emit_entry(e, newline) for e in new_entries] + removal_blocks + [_emit_table(RECEIVED_TABLE, {
+        "packet": packet_id, "by": member, "at": at, "added": len(new_entries), "removed": len(removal_blocks)}, newline)]
+    new_text = text + "".join((newline if (text.strip() or i) else "") + block for i, block in enumerate(tail))
+    _check_round_trip(new_text, [e for e in raw if not drops(e)] + new_entries)
+    if packet_id not in received_packets(new_text):  # pragma: no cover -- emitter guard
+        raise MappingsWriteError("unsafe_edit", "the received marker would not read back; nothing written")
+    _commit(root, old_text, new_text)
+    out.update(applied=True, added=len(new_entries), removed=len(removal_blocks))
+    return out

@@ -199,6 +199,7 @@ def test_scope_shows_steps_touched_files_and_one_hop_upstream(project):
     }
     assert payload["frames"] == [{
         "attempt_id": A17, "number": "17", "title": "TopicShift→波动 (17)", "verdict": "✅",
+        "verdict_status": {"status": "current", "label": "现行", "words": ""},
         "node_ids": [RMD17, PDF17],
     }]
 

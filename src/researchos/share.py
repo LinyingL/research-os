@@ -27,16 +27,23 @@ written under a temporary name in the same parent, its files written and
 fsynced, renamed into place, `ready.toml` created last; a reader ignores
 anything without it and reports -- never reads -- a name of a shape Research
 OS does not write (a sync service's conflict copy). Nothing published is
-ever modified; the one deletion is the PI's own 「清理旧文件」 (`prune_blobs`,
-12.2): blobs no snapshot from a chosen date on references -- shown first,
-removed only when confirmed.
+ever modified; the deletions are the PI's own: 「清理旧文件」 (`prune_blobs`,
+12.2), blobs no snapshot from a chosen date on references, and the repair
+of a blob found damaged (`repair_blobs`, 12.12), which the next publish
+writes again -- each shown first, removed only when confirmed. A member's
+area `提议/<member id>/` is made once by the PI's `team add` (or the first
+publish after the shared folder is set), never touched again.
 
 **One shared folder, one project.** A folder whose snapshots name another
 project is refused for publishing, and a join that finds snapshots of more
 than one project asks which (`project`); a manifest's project id must have
 the shape of one (it names a folder on the member's machine).
 
-**Notes and link judgments travel without approval** (12.4). A member's
+**Notes, link judgments and hand-drawn links travel without approval**
+(12.4, 12.12). The links -- added, and removed as explicit removal
+entries -- go in the same packet and are applied to the official
+`mappings.toml` by `researchos.ingest.mappings.apply_received`; canvas
+arrangements never travel (a member's own is kept at sync). A member's
 `notes.toml` and `judgements.toml` are append-only ledgers, never merged
 as files: 「同步」 writes the member's own new entries -- signed, once -- to
 their area as a packet (`提议/<member>/n-…/entries.toml`), and the PI's
@@ -159,12 +166,23 @@ MESSAGES = {
     "content": "公盘上的文件内容与快照记录的指纹不符",
     "other_project": "这个公盘文件夹里已经有另一个项目的快照：每个项目用自己的公盘文件夹",
     "ambiguous_project": "这个公盘文件夹里有不止一个项目的快照，请指明要加入哪一个",
+    "damaged": "公盘上有一个已发布的文件损坏了（内容与它的名字不符）：PI 先修复（researchos share repair），下次发布会重写它",
+    "not_in_team": "你还不是这个项目的成员：请 PI 把你加入团队，然后同步",
 }
 
 #: The ledgers whose entries a member's sync carries, without approval
 #: (12.4): file name -> TOML table.
 TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement"}
-_PACKET_HEADER = ("# 成员的笔记和连接判断：不需要批准，PI 的 Research OS 收进正式版本时保留 by。"
+#: 12.12: hand-drawn links travel the same way (`researchos.ingest.mappings`,
+#: "a member's links travel"): the packet's `[[mapping]]` (added) and
+#: `[[mapping_removed]]` (removed) tables.
+MAPPINGS_NAME = "mappings.toml"
+PACKET_ADDED, PACKET_REMOVED = "mapping", "mapping_removed"
+#: Record files a member's own changes travel in packets, never in a proposal.
+TRAVELLING_FILES = frozenset({*TRAVELLING, MAPPINGS_NAME})
+#: 12.12: canvas arrangements do not travel: each person keeps their own.
+CANVAS_NAME = "canvas.json"
+_PACKET_HEADER = ("# 成员的笔记、连接判断和手工连线：不需要批准，PI 的 Research OS 收进正式版本时保留 by。"
                   "由 Research OS 写入，写成后不再改动。\n")
 
 
@@ -591,6 +609,9 @@ def publish(
     with write_guard(root, expected_id, timeout=timeout):
         done = _publish_locked(root, pid, me, listed_key, shared_dir, note=note, now=now)
     done["collected"] = collected
+    # 12.12: a member added before the shared folder was set gets their
+    # area now -- once; an area already there is never touched.
+    done["areas"] = [a for a in _member_areas(people.read_team(root).members, shared_dir) if a["state"] != "exists"]
     return done
 
 
@@ -620,9 +641,10 @@ def _publish_locked(root: Path, pid: str, me: str, listed_key: str | None, share
     snaps, _problems = read_snapshots(shared)
     chain = verify_chain(shared, snaps, pid, me, listed_key)
     last = chain.last_good
+    restored = _restore_blobs(root, shared, last, files)
     if last is not None and _same_files(last.files, files):
         return {"published": False, "seq": last.seq, "sha256": last.sha256, "reason": "unchanged",
-                "warnings": warnings()}
+                "restored": restored, "warnings": warnings()}
     seq = _next_seq(shared)
     entries: list[dict[str, Any]] = []
     carry: dict[str, Path] = {}
@@ -667,14 +689,42 @@ def _publish_locked(root: Path, pid: str, me: str, listed_key: str | None, share
         ex_mod._write_dir_once(snapshots_dir(shared) / str(seq), contents,
                                ex_mod._ready_bytes("snapshot", str(seq), raw), expect=expect)
     except ExchangeError as exc:
-        raise ShareError("content" if exc.code in ("content", "damaged") else "unreachable", str(exc),
+        if exc.code == "damaged":
+            raise ShareError("damaged", str(exc)) from exc
+        raise ShareError("content" if exc.code == "content" else "unreachable", str(exc),
                          message_zh=exc.message_zh) from exc
     except OSError as exc:
         raise ShareError("unreachable", f"could not publish: {exc}") from exc
     _record_published(root, pid, files, new_content, me, seq)
     return {"published": True, "seq": seq, "sha256": hashlib.sha256(raw).hexdigest(), "files": len(entries),
             "carried": sorted(carry), "blobs": sorted(blobs), "changed": new_content, "signed": signature is not None,
-            "refused": chain.refused, "warnings": warnings(listed_key)}
+            "restored": restored, "refused": chain.refused, "warnings": warnings(listed_key)}
+
+
+def _restore_blobs(root: Path, shared: Path, last: "Snapshot | None", files: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """12.12: a blob the PI removed as damaged (`repair_blobs`) is written
+    again -- once, by content, like any blob -- from the official file that
+    still holds that content, so the last good snapshot is whole again.
+    A blob that is there is never touched."""
+    if last is None:
+        return []
+    restored = []
+    area = blobs_dir(shared)
+    for rel, entry in sorted(last.files.items()):
+        sha = entry.get("sha256")
+        if entry.get("store") != STORE_BLOB or (files.get(rel) or {}).get("sha256") != sha:
+            continue
+        target = area / str(sha)
+        if target.exists() or target.is_symlink() or sha in restored:
+            continue
+        try:
+            ex_mod.put_blob_once(area, str(sha), root / rel)
+        except ExchangeError as exc:
+            raise ShareError("damaged" if exc.code == "damaged" else "content", str(exc)) from exc
+        except OSError as exc:
+            raise ShareError("unreachable", f"could not write {target}: {exc}") from exc
+        restored.append(str(sha))
+    return restored
 
 
 def _record_published(root: Path, pid: str, files: Mapping[str, Mapping[str, Any]], rels: list[str], me: str,
@@ -1018,8 +1068,17 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         lsha = local.get("sha256") if local else None
         if lsha == t:
             continue
+        if rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}" and lsha != b and local is not None:
+            # 12.12: the member's own arrangement stays theirs; nothing beside it.
+            out["kept_yours"].append({"path": rel, "reason": "画布上的摆放是每个人自己的，不随同步改变"})
+            continue
         ledger = _travelling(rel)
-        carried = _ledger_carried(root, rel, shared, entry) if ledger and entry is not None and lsha != b else None
+        carried = None
+        if entry is not None and lsha != b:
+            if ledger:
+                carried = _ledger_carried(root, rel, shared, entry)
+            elif rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
+                carried = _mappings_carried(root, rel, shared, entry, base, state)
         if lsha == b:
             plan.append(("update" if entry is not None else "remove", rel, entry))
         elif entry is None:
@@ -1050,6 +1109,8 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         elif action == "update":
             _install(shared, entry, root, rel)
             out["updated"].append(rel)
+            if rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
+                state["sent_mappings"] = {}  # what was sent is in the official file now, or was received
         else:
             placed = _place_official_copy(shared, entry, root, rel, target.seq)
             if placed is None:
@@ -1154,10 +1215,43 @@ def _ledger_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any]
     return "carried" if {e.id for e in mine.entries} <= _represented(official) else "waiting"
 
 
+def _mappings_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any], base,
+                      state: Mapping[str, Any]) -> str | None:
+    """`_ledger_carried` for the hand-drawn links (12.12): "carried" when
+    each of the member's own changes since their base is in the official
+    file -- or went in a packet the official file says it received (the PI
+    may have undone it since: that is the PI's to do) -- "waiting" when
+    some has not reached it yet; None when either file cannot be read."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    try:
+        me = people.current_member_id()
+        mine = (root / rel).read_text(encoding="utf-8")
+        official = _read_content(shared, entry).decode("utf-8")
+    except (OSError, UnicodeDecodeError, ShareError, people.PeopleError):
+        return None
+    if me is None:
+        return None
+    added, removed = mappings_ingest.member_changes(root, base.text(rel), mine, me)
+    now_there = {(k[0], mappings_ingest._written_to(k[2], k[1]), k[2])
+                 for k in mappings_ingest._entries_by_key(root, official)}
+    received = mappings_ingest.received_packets(official)
+    sent = state.get("sent_mappings") or {}
+    for op, items in (("add", added), ("remove", removed)):
+        for item in items:
+            key = (item["from"], item["to"], item["type"])
+            reflected = (key in now_there) if op == "add" else (key not in now_there)
+            if not reflected and sent.get(mappings_ingest.change_key(op, item)) not in received:
+                return "waiting"
+    return "carried"
+
+
 def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Path, problems: list[dict[str, Any]],
                   now: Callable[[], datetime] | None) -> int:
-    """The member's own new ledger entries, written once to their area
-    (module docstring); `state["sent_entries"]` remembers what was sent."""
+    """The member's own new ledger entries and link changes, written once
+    to their area (module docstring); `state["sent_entries"]` and
+    `state["sent_mappings"]` remember what was sent."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
     from researchos.records import ledger as ledger_mod  # noqa: PLC0415
 
     try:
@@ -1167,8 +1261,28 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
     if me is None:
         return 0
     sent = set(state.get("sent_entries") or [])
+    sent_mappings = dict(state.get("sent_mappings") or {})
     blocks: list[bytes] = []
     ids: list[str] = []
+    links: dict[str, list[dict[str, str]]] = {PACKET_ADDED: [], PACKET_REMOVED: []}
+    link_keys: list[str] = []
+    rel = f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}"
+    try:
+        mine_text = (root / rel).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        mine_text = None
+    except (OSError, UnicodeDecodeError) as exc:
+        mine_text = None
+        problems.append({"kind": "entries_not_sent", "path": rel, "detail": f"无法读取：{exc}"})
+    if mine_text is not None or base.text(rel) is not None:
+        added, removed = mappings_ingest.member_changes(root, base.text(rel), mine_text, me)
+        for op, items, table in (("add", added, PACKET_ADDED), ("remove", removed, PACKET_REMOVED)):
+            for item in items:
+                key = mappings_ingest.change_key(op, item)
+                if key in sent_mappings:
+                    continue
+                links[table].append({**item, "by": me})
+                link_keys.append(key)
     for name in TRAVELLING:
         rel = f"{paths.PROJECT_DIRNAME}/{name}"
         try:
@@ -1189,12 +1303,13 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
             data = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in e.data.items()}
             blocks.append(ledger_mod.emit_entry(_schema(name), data))
             ids.append(e.id)
-    if not blocks:
+    if not blocks and not link_keys:
         return 0
     from researchos import proposals  # noqa: PLC0415
 
     packet_id = "n-" + secrets.token_hex(16)
-    head = proposals.emit({"format": FORMAT, "id": packet_id, "project": pid, "by": me, "at": _now_iso(now)},
+    head = proposals.emit({"format": FORMAT, "id": packet_id, "project": pid, "by": me, "at": _now_iso(now),
+                           PACKET_ADDED: links[PACKET_ADDED], PACKET_REMOVED: links[PACKET_REMOVED]},
                           _PACKET_HEADER)
     raw = head + b"".join(blocks)
     try:
@@ -1208,7 +1323,8 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
                          "detail": f"笔记和连接判断没有发送：{getattr(exc, 'message_zh', None) or exc}"})
         return 0
     state["sent_entries"] = sorted(sent | set(ids))
-    return len(ids)
+    state["sent_mappings"] = {**sent_mappings, **{key: packet_id for key in link_keys}}
+    return len(ids) + len(link_keys)
 
 
 def collect_entries(official_root: str | Path, *, shared: Path | None = None, expected_id: Any = READ_NOW,
@@ -1231,6 +1347,8 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
         ex = ex_mod.LocalExchange(shared_dir, verifier=ex_mod.verifier_for(root, pid))
         members = [m.id for m in team.members if m.role == "member"]
         incoming: list[tuple[str, str, dict[str, Any]]] = []
+        links: list[tuple[str, str, Mapping[str, Any]]] = []
+        out["links"] = {"added": 0, "removed": 0, "packets": 0}
         for member in members:
             packets, problems = ex.packets(member)
             out["problems"] += [p.payload() for p in problems]
@@ -1244,7 +1362,9 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
                 for name, table in TRAVELLING.items():
                     for entry in data.get(table) or []:
                         incoming.append((name, member, entry))
-        if not incoming:
+                if data.get(PACKET_ADDED) or data.get(PACKET_REMOVED):
+                    links.append((packet_id, member, data))
+        if not incoming and not links:
             return out
         with write_guard(root, expected_id, human=True, timeout=timeout) as held:
             identity = read_identity(root).identity
@@ -1292,12 +1412,44 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
                             record_files.snapshot_if_first_change_today(root, path, now=now)
                         out["appended"] += 1
                 notes_mod.apply_notes(conn, root, identity=identity)
+                if links:
+                    _collect_links(conn, root, links, out, now)
             finally:
                 conn.close()
     except Exception as exc:  # noqa: BLE001 -- see the docstring
         logger.exception("collecting members' notes into %s failed", root)
         out["problems"].append({"kind": "failed", "path": str(root), "detail": str(exc)})
     return out
+
+
+def _collect_links(conn, root: Path, links: list[tuple[str, str, Mapping[str, Any]]], out: dict[str, Any],
+                   now: Callable[[], datetime] | None) -> None:
+    """The members' link packets into the official mappings.toml, oldest
+    first, each once (`researchos.ingest.mappings.apply_received`); then
+    the index follows the file. The caller holds the project lock."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    changed = False
+    for packet_id, member, data in sorted(links, key=lambda item: (str(item[2].get("at") or ""), item[0])):
+        try:
+            done = mappings_ingest.apply_received(root, packet_id, member, list(data.get(PACKET_ADDED) or []),
+                                                  list(data.get(PACKET_REMOVED) or []), at=_now_iso(now))
+        except (mappings_ingest.MappingsWriteError, mappings_ingest.MappingsFileError) as exc:
+            out["problems"].append({"kind": "links_not_taken", "path": MAPPINGS_NAME,
+                                    "detail": f"{packet_id}: {exc}"})
+            break  # the file cannot be written now: every later packet waits for the next publish
+        out["problems"] += [{"kind": "invalid", "path": MAPPINGS_NAME, "detail": f"{packet_id}: {p}"}
+                            for p in done["problems"]]
+        if done["applied"]:
+            changed = True
+            out["links"]["packets"] += 1
+            out["links"]["added"] += done["added"]
+            out["links"]["removed"] += done["removed"]
+    if changed:
+        try:
+            mappings_ingest.ingest_mappings(conn, root)
+        except mappings_ingest.MappingsFileError as exc:  # the watcher's next look tries again
+            logger.info("mappings not re-read after collecting: %s", exc)
 
 
 # -- pruning old blobs (the PI, 12.2) -----------------------------------------------------------------------
@@ -1347,6 +1499,65 @@ def prune_blobs(official_root: str | Path, before: str, *, shared: str | Path | 
                 logger.warning("blob %s not removed: %s", item["sha256"], exc)
     return {"before": cutoff, "kept": len(keep), "prunable": found, "bytes": sum(i["size"] for i in found),
             "removed": removed, "applied": apply}
+
+
+# -- repairing a damaged blob (the PI, 12.12) ----------------------------------------------------------------
+
+
+def repair_blobs(official_root: str | Path, *, shared: str | Path | None = None, apply: bool = False) -> dict[str, Any]:
+    """`researchos share repair`: every published blob (`已发布/blobs/`) whose
+    content is not the SHA-256 it is named after -- a sync service's damage
+    -- listed with the snapshots that name it and whether the official
+    version still holds that content (then the next publish writes it
+    again, `_restore_blobs`). A dry run unless `apply`, which removes those
+    blobs and nothing else: no snapshot, no outcome, no member's area is
+    touched. A blob still in the cloud is not read and not removed. The PI
+    only."""
+    root = Path(official_root)
+    pid = _project_id(root)
+    _require_pi_team(root)
+    shared_dir = shared_for(pid, root, shared)
+    if not shared_dir.is_dir():
+        raise ShareError("unreachable", f"the shared folder {shared_dir} cannot be reached now")
+    snaps, _problems = read_snapshots(shared_dir)
+    named: dict[str, list[int]] = {}
+    for snap in snaps:
+        for entry in snap.data.get("file", []):
+            if entry.get("store") == STORE_BLOB:
+                named.setdefault(str(entry["sha256"]), []).append(snap.seq)
+    files, _dataless = official_files(root, pid)
+    held = {e["sha256"] for e in files.values()}
+    area = blobs_dir(shared_dir)
+    damaged, unchecked = [], []
+    if area.is_dir():
+        for name in sorted(os.listdir(area)):
+            path = area / name
+            if not ex_mod.SHA_RE.match(name) or path.is_symlink() or not path.is_file():
+                continue
+            if paths.is_dataless(path):
+                unchecked.append(name)
+                continue
+            try:
+                got, size = ex_mod.sha256_of(path)
+            except OSError as exc:
+                damaged.append({"sha256": name, "size": None, "unreadable": str(exc)})
+                continue
+            if got != name:
+                damaged.append({"sha256": name, "size": size})
+    for item in damaged:
+        item["snapshots"] = sorted(set(named.get(item["sha256"], [])))
+        item["restorable"] = item["sha256"] in held
+    removed = []
+    if apply:
+        for item in damaged:
+            try:
+                (area / item["sha256"]).unlink()
+                removed.append(item["sha256"])
+            except OSError as exc:
+                item["not_removed"] = str(exc)
+        if removed:
+            ex_mod._fsync_dir(area)
+    return {"damaged": damaged, "unchecked": unchecked, "removed": removed, "applied": apply}
 
 
 # -- the team (the PI) ------------------------------------------------------------------------------------
@@ -1401,10 +1612,78 @@ def team_init(root: str | Path, *, expected_id: Any = READ_NOW, timeout: float |
             "members": [m.payload() for m in members], "warnings": warning}
 
 
+def edit_rights_sentence(member: str, name: str) -> dict[str, str]:
+    """What the PI is told when a member's area is made (12.12): give that
+    member edit rights to it in OneDrive -- the sharing permission is what
+    keeps each area the member's own (12.2)."""
+    area = f"{ex_mod.PROPOSALS_AREA}/{member}/"
+    return {
+        "sentence": f"已在公盘建好{name}（{member}）的提议区 {area}。请在 OneDrive 里把这个文件夹的编辑权限给{name}；"
+                    f"{ex_mod.PUBLISHED_AREA}/ 只给查看权限。",
+        "sentence_en": f"The shared folder now has {name}'s ({member}) proposal area {area}. In OneDrive, give "
+                       f"{name} edit rights to that folder, and view-only rights to {ex_mod.PUBLISHED_AREA}/.",
+    }
+
+
+def ensure_member_area(shared: Path, member: str) -> str:
+    """`提议/<member id>/`, made once (12.12): an empty folder created under
+    a temporary name and renamed into place. "created", or "exists" -- an
+    area already there is never touched, whatever it holds."""
+    area = ex_mod.LocalExchange(shared).member_area(member)
+    if area.exists() or area.is_symlink():
+        return "exists"
+    parent = area.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp = parent / f".{member}.tmp-{secrets.token_hex(6)}"
+    tmp.mkdir()
+    try:
+        if area.exists() or area.is_symlink():
+            return "exists"
+        try:
+            os.rename(tmp, area)
+        except OSError:
+            if area.exists():
+                return "exists"  # appeared meanwhile, and holds something: not ours to replace
+            raise
+    finally:
+        if tmp.exists():
+            tmp.rmdir()
+    ex_mod._fsync_dir(parent)
+    return "created"
+
+
+def _member_areas(members: Iterable[people.Member], shared: Path | None) -> list[dict[str, Any]]:
+    """Every member's area on the shared folder, made where missing; the
+    ones made now carry the sentence for the PI. Nothing when the shared
+    folder is not set or cannot be reached (said so)."""
+    out = []
+    for m in members:
+        if m.role != "member":
+            continue
+        if shared is None or not shared.is_dir():
+            out.append({"member": m.id, "state": "not_configured" if shared is None else "unreachable"})
+            continue
+        try:
+            state = ensure_member_area(shared, m.id)
+        except (OSError, ExchangeError) as exc:
+            out.append({"member": m.id, "state": "failed", "detail": str(exc)})
+            continue
+        item: dict[str, Any] = {"member": m.id, "state": state,
+                                "area": str(shared / ex_mod.PROPOSALS_AREA / m.id)}
+        if state == "created":
+            item.update(edit_rights_sentence(m.id, m.name))
+        out.append(item)
+    return out
+
+
 def team_add(root: str | Path, member: str, name: str, key_text: str, *, role: str = "member",
              expected_id: Any = READ_NOW, timeout: float | None = None) -> dict[str, Any]:
     """`researchos team add`: one `[[member]]` appended to team.toml (the
-    file is only ever appended to), by the PI."""
+    file is only ever appended to), by the PI -- and the member's empty
+    area `提议/<member id>/` made once on the shared folder, with the
+    sentence telling the PI to give that member edit rights to it (12.12).
+    When the shared folder is not set yet, the area is made by the first
+    publish after it is (`publish`)."""
     root = Path(root)
     me, team = _require_pi_team(root)
     try:
@@ -1434,8 +1713,23 @@ def team_add(root: str | Path, member: str, name: str, key_text: str, *, role: s
             record_files.append_bytes(path, ("\n" + block).encode("utf-8"), expected_old=got.data)
         except record_files.RecordFileError as exc:
             raise ShareError("team_unreadable", str(exc)) from exc
-    return {"path": str(path), "member": member_id, "name": name, "role": role, "fingerprint": signing.fingerprint(key),
-            "added_by": me}
+    shared = ex_mod.configured(_project_id(root))
+    areas = _member_areas([m for m in people.read_team(root).members if m.id == member_id], shared)
+    area = areas[0] if areas else {"member": member_id, "state": "failed"}
+    out = {"path": str(path), "member": member_id, "name": name, "role": role, "fingerprint": signing.fingerprint(key),
+           "added_by": me, "area": area}
+    if area["state"] == "created":
+        out.update(sentence=area["sentence"], sentence_en=area["sentence_en"])
+    elif area["state"] == "exists":
+        told = edit_rights_sentence(member_id, name)
+        out.update(sentence=told["sentence"].replace("已在公盘建好", "公盘上已经有"),
+                   sentence_en=told["sentence_en"].replace("now has", "already has"))
+    else:
+        out.update(sentence=f"公盘文件夹还没有设置或现在无法访问：设置好以后，下次发布时会为{name}建好提议区 "
+                            f"{ex_mod.PROPOSALS_AREA}/{member_id}/，那时再在 OneDrive 里把它的编辑权限给{name}。",
+                   sentence_en=f"The shared folder is not set or cannot be reached now: the next publish makes "
+                               f"{ex_mod.PROPOSALS_AREA}/{member_id}/ for {name}; give {name} edit rights to it then.")
+    return out
 
 
 def my_key() -> dict[str, Any]:

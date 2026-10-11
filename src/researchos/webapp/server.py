@@ -494,7 +494,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, github, githubpush, inventory, lineage, migration, names, paths
+from researchos import addproject, cloud, db, github, githubpush, inventory, lineage, migration, names, officialness, paths
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
 from researchos.records import judgements
@@ -1225,15 +1225,18 @@ def _sorted_attempt_nodes(conn: Connection) -> list[dict[str, Any]]:
     )
 
 
-def attempts_payload(conn: Connection) -> dict[str, Any]:
+def attempts_payload(conn: Connection, project_root: Path | None = None) -> dict[str, Any]:
     nodes = _sorted_attempt_nodes(conn)
     if not nodes:
         return {"attempts": [], "hint": _NO_ATTEMPTS_HINT}
+    labels = attempts_ingest.verdict_labels(project_root)
     attempts = [
         {
             "id": node["id"],
             "attrs": node["attrs"],
             "verdict": node["human_fields"].get("verdict", ""),
+            # 12.11: the verdict as a word and the researcher's own text.
+            "verdict_status": attempts_ingest.verdict_status(node["human_fields"].get("verdict", ""), labels),
             "result": node["human_fields"].get("result", ""),
         }
         for node in nodes
@@ -1316,7 +1319,8 @@ def _load_steps_dir(project_root: Path) -> str | None:
         return None
 
 
-def _attempt_entry(conn: Connection, node: dict[str, Any], steps_dir: str | None) -> dict[str, Any]:
+def _attempt_entry(conn: Connection, node: dict[str, Any], steps_dir: str | None,
+                   labels: dict[str, str] | None = None) -> dict[str, Any]:
     attrs = node["attrs"]
     scripts: list[dict[str, Any]] = []
     if steps_dir:
@@ -1328,6 +1332,7 @@ def _attempt_entry(conn: Connection, node: dict[str, Any], steps_dir: str | None
         "date": attrs.get("date", ""),
         "description": attrs.get("description", ""),
         "verdict": node["human_fields"].get("verdict", ""),
+        "verdict_status": attempts_ingest.verdict_status(node["human_fields"].get("verdict", ""), labels),
         "scripts": scripts,
         "children": [],
     }
@@ -1350,11 +1355,12 @@ def tree_payload(conn: Connection, project_root: Path) -> dict[str, Any]:
     if not nodes:
         return {"attempts": [], "hint": _NO_ATTEMPTS_HINT}
     steps_dir = _load_steps_dir(project_root)
+    labels = attempts_ingest.verdict_labels(project_root)
 
     entries: dict[tuple[str, str], dict[str, Any]] = {}
     for node in nodes:
         key = (node["attrs"].get("source_file", ""), node["attrs"].get("number", ""))
-        entries[key] = _attempt_entry(conn, node, steps_dir)
+        entries[key] = _attempt_entry(conn, node, steps_dir, labels)
 
     top_level: list[dict[str, Any]] = []
     for node in nodes:
@@ -2883,6 +2889,19 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             conn.close()
         self._send_json(200, payload)
 
+    def _official(self, payload: Any, *, cards: bool = False) -> Any:
+        """12.12 "A member's own work": every object of a view's payload
+        that names a node, a file or a hand-drawn link carries
+        `officialness` (`researchos.officialness`) -- official, the
+        member's own unsubmitted change, or in a pending proposal; nothing
+        is dropped. Contained: a view is never refused over this."""
+        try:
+            seen = officialness.view(self._project_root())
+            return officialness.annotate_cards(seen, payload) if cards else officialness.annotate(seen, payload)
+        except Exception:  # noqa: BLE001
+            logger.exception("officialness not added to a payload")
+            return payload
+
     @staticmethod
     def _node_api(fn: Callable[[], Any]) -> Any:
         try:
@@ -2947,11 +2966,11 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
             elif path == "/api/attempts":
-                self._json_from_conn(attempts_payload)
+                self._json_from_conn(lambda conn: self._official(attempts_payload(conn, self._project_root())))
             elif path == "/api/tree":
-                self._json_from_conn(lambda conn: tree_payload(conn, self._project_root()))
+                self._json_from_conn(lambda conn: self._official(tree_payload(conn, self._project_root())))
             elif path == "/api/lineage":
-                self._json_from_conn(lambda conn: lineage_payload(conn, self._project_root()))
+                self._json_from_conn(lambda conn: self._official(lineage_payload(conn, self._project_root())))
             elif path == "/api/projects":
                 # Registry + current root only -- deliberately not routed
                 # through _open_conn/_json_from_conn, since listing which
@@ -2979,7 +2998,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # or layout for a project frozen until it is migrated (nor
                 # for one opened read-only) -- it would only be refused.
                 frozen = served.needs_migration or served.read_only
-                self._json_from_conn(lambda conn: {**canvas_payload(conn, self._project_root(), scope), "frozen": frozen})
+                self._json_from_conn(lambda conn: self._official(
+                    {**canvas_payload(conn, self._project_root(), scope), "frozen": frozen}))
             elif path == "/api/review":
                 root = self._project_root()
                 self._json_from_conn(lambda conn: review_payload(conn, root))
@@ -2992,12 +3012,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/citations":
                 # 11.4: the 「文献」 view -- reads only, no network.
                 root = self._project_root()
-                self._json_from_conn(lambda conn: literature_api.citations_payload(conn, root))
+                self._json_from_conn(lambda conn: self._official(literature_api.citations_payload(conn, root)))
             elif path == "/api/variables" or path.startswith("/api/variables/"):
                 # The 「变量」 view (9.11): the cards are read from their files
                 # (the index adds the trust decision); a blocked or moved
                 # project answers 409 with what to do (`_variables_served`).
-                self._send_json(200, variables_get(self._served(), path, query))
+                self._send_json(200, self._official(variables_get(self._served(), path, query), cards=True))
             elif path == "/api/migration":
                 self._send_json(200, migration_payload(self._served()))
             elif path == "/api/history":
@@ -3005,7 +3025,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if "node" in query:
                     # 12.6: a node's versions; without `node`, a link's
                     # judgment history (9.3) as before.
-                    self._send_json(200, self._node_api(lambda: node_api.history_payload(served.root, query)))
+                    self._send_json(200, self._official(self._node_api(lambda: node_api.history_payload(served.root, query))))
                 else:
                     self._send_json(200, history_payload(served, query))
             elif path == "/api/history/diff":
@@ -3016,7 +3036,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._json_from_conn(lambda conn: self._node_api(lambda: node_api.notes_payload(conn, served.root, query)))
             elif path == "/api/trace":
                 served = self._require_unblocked()
-                self._json_from_conn(lambda conn: self._node_api(lambda: node_api.trace_payload(conn, served.root, query)))
+                self._json_from_conn(lambda conn: self._official(
+                    self._node_api(lambda: node_api.trace_payload(conn, served.root, query))))
             elif path == "/api/proposals" or path.startswith("/api/proposals/"):
                 # 12.3: the PI's inbox or a member's own proposals; one
                 # proposal with what approving would do. Never in any
@@ -3044,7 +3065,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 values = query.get("path")
                 if not values:
                     raise MissingParamError("missing required query parameter 'path'")
-                self._send_json(200, file_payload(self._project_root(), values[0]))
+                self._send_json(200, self._official(file_payload(self._project_root(), values[0])))
             elif path.startswith("/api/"):
                 raise NotFoundError(f"no such endpoint: {path}")
             else:
@@ -3298,6 +3319,16 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         self.server.start_scan(served)
                     except ApiError as exc:
                         logger.info("no scan after syncing %s: %s", served.root, exc)
+                self._send_json(200, payload)
+            elif parsed.path == "/api/team/add":
+                # 12.12: the PI adds a member (team.toml is appended to under
+                # the project lock) and their area is made on the shared folder.
+                body = self._read_json_object()
+                served = self._require_unblocked()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.team_add_payload(
+                        served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S))
+                payload["generation"] = self.server.watcher.record_external_change(None)
                 self._send_json(200, payload)
             elif parsed.path == "/api/share/join":
                 # 12.3: a working copy in a NEW folder the page names --

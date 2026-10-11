@@ -275,9 +275,11 @@ def test_12_10_3_a_symlinked_files_folder_is_never_read(team, tmp_path):
 # -- the table changed on both sides; the abandonment's reason in the table ------------------------------
 
 
-def test_12_10_3_the_attempt_table_changed_on_both_sides_is_a_conflict_never_merged(team):
-    """12.3: the member adds row 18; the PI adds row 17 to the same table.
-    The PI is told the table changed on both sides; nothing is merged."""
+def test_12_12_the_attempt_table_changed_elsewhere_does_not_block_a_new_row(team):
+    """12.12 (overrules the file-level rule this test held before): the
+    member adds row 18; the PI adds row 17 to the same table. The table
+    conflicts by ROW: row 18 is untouched on the official side, so the
+    proposal is approvable, and approving keeps the PI's row 17."""
     with team.member():
         (team.work / "map.md").write_text(_map() + ROW_18)
         stored = proposals.write_proposal(team.work, proposals.make_proposal(team.work, "attempt_new", "18"))
@@ -285,10 +287,10 @@ def test_12_10_3_the_attempt_table_changed_on_both_sides_is_a_conflict_never_mer
         pi_table = _map() + "| 17 | 08-01 | PI row (17) | X->Y | t=1.0 | 🕒 |\n"
         (team.official / "map.md").write_text(pi_table)
         changes = proposals.what_changes(stored, team.official)
-        assert not changes["approvable"] and changes["conflicts"][0]["path"] == "map.md"
-        with pytest.raises(proposals.ProposalRefused):
-            proposals.approve(team.official, stored.id)
-        assert (team.official / "map.md").read_text() == pi_table
+        assert changes["approvable"] and not changes["conflicts"] and changes["attempt"]["table_moved"]
+        proposals.approve(team.official, stored.id)
+        text = (team.official / "map.md").read_text()
+        assert "| 17 | 08-01 | PI row (17) |" in text and "| 18 |" in text
 
 
 def test_12_10_3_an_approved_abandonment_writes_its_reason_into_the_table(team):
