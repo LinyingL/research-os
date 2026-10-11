@@ -35,16 +35,22 @@ it (12.3: every entry recorded with `by` = the member and `approved_by` =
 the PI) -- also for an approval whose substance lands in a file no ledger
 covers, such as a row of the researcher's attempt table.
 
-The trust rules are the notes ledger's, minus the index's copy: a file
-missing though a snapshot of it exists, in the cloud, unreadable, invalid,
-or with a sync conflict copy beside it refuses every write -- and so every
-approval, before anything is applied. The index keeps no copy of these
-entries (nothing derived reads them back yet), so a file that lost entries
-at its end is not detected here; said in the phase report.
+The trust rules are the notes ledger's: a file missing though a snapshot
+of it exists, in the cloud, unreadable, invalid, or with a sync conflict
+copy beside it refuses every write -- and so every approval, before
+anything is applied. **A file that lost entries** (an older OneDrive
+version, a merge) is not obeyed silently (9.3): this machine keeps a copy
+of every entry it wrote or read, `<home>/graphs/<id>/decisions-applied.json`
+(a safety net, never a second authority, as the index's copy is for the
+other ledgers). Against it a shrunk file is SHRUNK: writes are refused,
+`researchos records` says so, the readers show the missing entries marked
+`missing_from_file`, and the ledger's two answers apply (`answer_shrunk`:
+`restore` appends them again, `via = "recovered"`; `file` forgets them).
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -56,13 +62,17 @@ from researchos.records.files import RecordState
 from researchos.records.identity import IdentityState, read_identity
 from researchos.records.ledger import LedgerEntry, LedgerLoad, LedgerSchema, LedgerWriteRefused
 from researchos.records.lock import HeldLock
-from researchos.records.trust import TrustDecision, assess_ledger
+from researchos.records.trust import Trust, TrustDecision, assess_ledger
 
 DECISIONS_FILENAME = "decisions.toml"
 APPROVED_ACT = "approved"
 ABANDONED_ACT = "abandoned"
 ACTS = frozenset({APPROVED_ACT, ABANDONED_ACT})
-VIAS = frozenset({"cli", "app", "mcp"})
+VIAS = frozenset({"cli", "app", "mcp", "recovered"})
+APPLIED_FILENAME = "decisions-applied.json"
+ANSWER_FILE = "file"
+ANSWER_RESTORE = "restore"
+ANSWERS = (ANSWER_FILE, ANSWER_RESTORE)
 EVIDENCE_ROLES = frozenset({"script", "output", "file"})
 EVIDENCE_STATES = frozenset({"kept", "fingerprint", "missing", "dataless", "unreadable"})
 MAX_TEXT = 20_000
@@ -78,7 +88,7 @@ MESSAGES = {
     "invalid": "决定记录文件（decisions.toml）当前无法读取，请先恢复它",
     "empty_but_expected": "决定记录文件（decisions.toml）当前无法读取，请先恢复它",
     "conflict_copy": "决定记录文件旁有同步冲突副本，请先处理",
-    "shrunk": "决定记录文件比图谱少了 {n} 条",
+    "shrunk": "决定记录文件比这台电脑记得的少了 {n} 条：先处理（补回或以文件为准），才能再批准",
 }
 
 
@@ -151,7 +161,7 @@ DECISIONS_SCHEMA = LedgerSchema(
     key_fields=(),
     field_order=(
         "id", "seq", "at", "by", "act", "approved_by", "proposal", "kind", "attempt", "number", "verdict", "result",
-        "reason", "card", "version", "files", "note", "via", "evidence",
+        "reason", "card", "version", "files", "note", "via", "recovered_from", "recovered_at", "evidence",
     ),
     header=_HEADER,
     validate=_validate,
@@ -174,12 +184,46 @@ def decisions_expected(project_root: str | Path) -> bool:
     return bool(record_files.snapshots(project_root, decisions_path(project_root)))
 
 
+def _applied_path(project_id: str) -> Path:
+    return paths.index_dir(project_id) / APPLIED_FILENAME
+
+
+def applied_copy(project_id: str | None) -> dict[str, Mapping[str, Any]]:
+    """This machine's copy of the entries it has seen (module docstring)."""
+    if not project_id:
+        return {}
+    try:
+        data = json.loads(_applied_path(project_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+
+
+def _remember(project_id: str, loaded: LedgerLoad, *, forget: set[str] = frozenset()) -> None:
+    """The copy, brought up to the file as read (and trusted)."""
+    from researchos.records.judgements import _jsonable  # noqa: PLC0415
+
+    copy = {k: v for k, v in applied_copy(project_id).items() if k not in forget}
+    if loaded.ledger is not None:
+        copy.update({e.id: _jsonable(dict(e.data)) for e in loaded.ledger.entries})
+    path = _applied_path(project_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record_files.durable_write(path, (json.dumps(copy, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+    except OSError:
+        pass  # a safety net: never a reason for a write to fail
+
+
 def assess(project_root: str | Path) -> tuple[LedgerLoad, TrustDecision]:
     root = Path(project_root)
     got = read_identity(root)
     identity = got.identity if got.state is IdentityState.PRESENT else None
     loaded = load_decisions(root)
-    return loaded, assess_ledger(identity, loaded, {}, expected=decisions_expected(root))
+    applied = applied_copy(identity.id if identity is not None else None)
+    decision = assess_ledger(identity, loaded, applied, expected=decisions_expected(root))
+    if identity is not None and decision.verdict is Trust.OK and decision.unseen:
+        _remember(identity.id, loaded)  # a file read and trusted: its entries are part of the copy from now on
+    return loaded, decision
 
 
 def require_writable(project_root: str | Path) -> TrustDecision:
@@ -220,16 +264,58 @@ def append_decision(
         raise DecisionRefused("invalid", str(exc)) from exc
     if founding:
         record_files.snapshot_if_first_change_today(root, decisions_path(root), now=now)
+    identity = read_identity(root).identity
+    if identity is not None:
+        _remember(identity.id, load_decisions(root))
     return entry
+
+
+def answer_shrunk(project_root: str | Path, answer: str, *, lock: HeldLock,
+                  expected_missing: list[str] | None = None,
+                  now: Callable[[], datetime] | None = None) -> tuple[int, int]:
+    """Answer 「决定记录文件比这台电脑记得的少了 N 条」 (module docstring):
+    `restore` appends the missing entries again, their content and
+    attribution kept (`recovered_from`); `file` takes the file as it is.
+    The caller holds the project lock. Returns (missing, appended)."""
+    root = Path(project_root)
+    if answer not in ANSWERS:
+        raise DecisionRefused("invalid", f"answer must be one of {', '.join(ANSWERS)}, got {answer!r}")
+    loaded, decision = assess(root)
+    if decision.verdict is not Trust.SHRUNK:
+        raise DecisionRefused("invalid", "decisions.toml has not shrunk; there is nothing to answer")
+    ids = [str(m["id"]) for m in decision.missing]
+    if expected_missing is not None and sorted(set(expected_missing)) != sorted(ids):
+        raise DecisionRefused("invalid", "decisions.toml changed since the question was shown -- nothing written")
+    identity = read_identity(root).identity
+    appended: list[LedgerEntry] = []
+    if answer == ANSWER_RESTORE:
+        batch = []
+        for old in decision.missing:
+            fields = {k: v for k, v in old.items() if k not in ("id", "seq", "at", "settles", "via")}
+            fields.update(via="recovered", recovered_from=str(old["id"]))
+            if old.get("at") is not None:
+                fields["recovered_at"] = str(old["at"])
+            batch.append(fields)
+        try:
+            appended = ledger_mod.append_many(decisions_path(root), DECISIONS_SCHEMA, batch, lock=lock,
+                                              project_root=root, create=loaded.state is RecordState.ABSENT, now=now)
+        except LedgerWriteRefused as exc:
+            raise DecisionRefused("invalid", f"could not restore the missing entries (nothing written): {exc}") from exc
+    if identity is not None:
+        _remember(identity.id, load_decisions(root), forget=set(ids) if answer == ANSWER_FILE else set())
+    return len(ids), len(appended)
 
 
 def entries(project_root: str | Path) -> list[dict[str, Any]]:
     """Every decision as the file holds it (empty when there is none or it
-    cannot be read -- `assess` says which)."""
-    loaded = load_decisions(project_root)
-    if loaded.ledger is None:
-        return []
-    return [dict(e.data) for e in loaded.ledger.entries]
+    cannot be read -- `assess` says which) -- and, when the file has lost
+    entries this machine had seen, those too, marked `missing_from_file`:
+    a shrunk ledger is never read as if nothing were missing (9.3)."""
+    loaded, decision = assess(project_root)
+    found = [dict(e.data) for e in loaded.ledger.entries] if loaded.ledger is not None else []
+    if decision.verdict is Trust.SHRUNK:
+        found += [{**dict(m), "missing_from_file": True} for m in decision.missing]
+    return found
 
 
 def for_proposal(project_root: str | Path, proposal_id: str) -> dict[str, Any] | None:
@@ -245,7 +331,11 @@ def for_attempt(project_root: str | Path, attempt_node: str) -> list[dict[str, A
 
 
 def summary(project_root: str | Path) -> dict[str, Any]:
-    loaded = load_decisions(project_root)
+    loaded, decision = assess(project_root)
+    if decision.verdict is Trust.SHRUNK and loaded.ledger is not None:
+        acts = [e.get("act") for e in loaded.ledger.entries]
+        return {"state": "shrunk", "entries": len(acts), "approved": acts.count(APPROVED_ACT),
+                "abandoned": acts.count(ABANDONED_ACT), "missing": len(decision.missing)}
     if loaded.ledger is None:
         return {"state": loaded.state.value, "error": loaded.error, "line": loaded.line}
     acts = [e.get("act") for e in loaded.ledger.entries]

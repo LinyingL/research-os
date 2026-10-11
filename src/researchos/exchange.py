@@ -14,6 +14,9 @@ phase 4 can point the same code at the OneDrive folder:
             files/<project-relative path>    text content of added/changed files
             ready.toml                       written LAST: the proposal is complete
         提议/<member id>/blobs/<sha256>      large or binary content, once by content
+        提议/<member id>/<packet id>/        the member's notes and link judgments (12.4)
+            entries.toml                     carried to the official ledgers, no approval
+            ready.toml
         已发布/outcomes/<proposal id>/<outcome id>/   the PI's answers
             outcome.toml
             ready.toml
@@ -41,6 +44,13 @@ read) -- and is never inside the project folder it serves, nor inside any
 other project: a proposal's files would otherwise be scanned into the
 official index before anyone approved them (12.4, "not a node until
 approved"). Nor is it Research OS's home or a top-level folder (10.2).
+
+**A proposal is the member's** (12.5). Its id is the member's own: an id
+found in two members' areas is a copy, and is never opened by id alone
+(`open_proposal` refuses it as `ambiguous` unless the member is named). An
+outcome names the member and the SHA-256 of the proposal.toml it answers;
+an outcome naming another member or other bytes is not counted for this
+proposal (`outcomes`).
 
 **Signatures** (phase 4, 12.5; `researchos.signing`). A proposal or an
 outcome may carry `<main file>.sig` beside its main file, inside the same
@@ -79,6 +89,9 @@ OUTCOME_SIG = OUTCOME_FILE + signing.SIG_SUFFIX
 CONFIG_FILENAME = "exchanges.json"
 
 PROPOSAL_ID_RE = re.compile(r"^pr-[0-9a-f]{32}$")
+PACKET_ID_RE = re.compile(r"^n-[0-9a-f]{32}$")
+PACKET_FILE = "entries.toml"
+PACKET_SIG = PACKET_FILE + signing.SIG_SUFFIX
 OUTCOME_ID_RE = re.compile(r"^o-[0-9a-f]{32}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _CHUNK = 1024 * 1024
@@ -109,6 +122,8 @@ class ExchangeError(Exception):
             "half_written": "这份提议还没有写完",
             "content": "提议里的文件内容与记录的指纹不符",
             "bad_location": "公盘文件夹不能选在这里",
+            "ambiguous": "同一个提议编号出现在不止一位成员的区域里：其中一份是复制的，请指明是哪位成员的提议",
+            "damaged": "公盘上已有的这个文件内容已损坏（指纹不符）；Research OS 不会改写它",
         }.get(self.code, "交换目录出错")
 
 
@@ -137,6 +152,13 @@ def _inside(child: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return str(a) == str(b)
 
 
 def _enclosing_project(directory: Path) -> Path | None:
@@ -186,6 +208,13 @@ def configure(project_id: str, directory: str | Path, project_root: str | Path |
     from researchos.webapp import registry  # noqa: PLC0415 -- the webapp imports this module
 
     directory = check_location(directory, project_root)
+    for entry in registry.load():
+        other = entry.get("shared")
+        if other and entry.get("id") != project_id and _same_folder(Path(other), directory):
+            # One shared folder, one project: snapshots of two projects in
+            # one folder would share one numbering and one join.
+            raise ExchangeError("bad_location", f"{directory} is already the shared folder of project {entry.get('id')}",
+                                message_zh="这个公盘文件夹已经是另一个项目的公盘了：每个项目用自己的文件夹")
     if not registry.set_shared(project_id, str(directory)):
         if project_root is None:
             raise ExchangeError("not_configured", f"project {project_id} is not registered on this machine; "
@@ -344,14 +373,22 @@ def _write_dir_once(final: Path, contents: Iterable[tuple[str, bytes | Path]], r
 def put_blob_once(store: Path, sha: str, source: Path) -> Path:
     """`source` into `store` under its SHA-256, once: written to a
     temporary name, verified, then hard-linked to `<store>/<sha>`; an
-    existing blob of the right size is kept as it is and never rewritten."""
+    existing blob is kept as it is and never rewritten -- after checking
+    that it still holds that content: one a sync service damaged (same
+    name, same size, other bytes) is refused as `damaged`, never silently
+    pointed at again."""
     if not SHA_RE.match(sha):
         raise ExchangeError("invalid", f"not a content hash: {sha!r}")
     store.mkdir(parents=True, exist_ok=True)
     target = store / sha
-    if target.exists():
-        if target.stat().st_size != source.stat().st_size:
-            raise ExchangeError("content", f"{target} exists with another size; it is never rewritten")
+    if target.exists() or target.is_symlink():
+        if target.is_symlink() or not target.is_file() or target.stat().st_size != source.stat().st_size:
+            raise ExchangeError("damaged", f"{target} exists with another size; it is never rewritten")
+        if paths.is_dataless(target):
+            return target  # still downloading: not read; a reader verifies it before use
+        if sha256_of(target)[0] != sha:
+            raise ExchangeError("damaged", f"{target} exists but does not hold the content it is named after; it is "
+                                           f"never rewritten -- remove it from the shared folder by hand, then retry")
         return target
     tmp = store / f".{sha}.tmp-{secrets.token_hex(6)}"
     try:
@@ -413,11 +450,18 @@ class StoredProposal:
             path, inside = self.blobs / sha, self.blobs
         else:
             path, inside = self.directory / FILES_DIRNAME / str(entry.get("path") or ""), self.directory / FILES_DIRNAME
-        # Read only what the member wrote there: never through a link.
+        # Read only what the member wrote there: never through a link --
+        # neither below files/ or blobs/ nor those folders themselves (nor
+        # the proposal's own folder).
         if not _inside(path, inside):
             raise ExchangeError("invalid", f"{path} points outside the proposal; not read")
-        step = inside
-        for part in path.relative_to(inside).parts:
+        start = self.blobs.parent
+        try:
+            parts = path.relative_to(start).parts
+        except ValueError as exc:
+            raise ExchangeError("invalid", f"{path} is not in the member's area; not read") from exc
+        step = start
+        for part in parts:
             step = step / part
             if step.is_symlink():
                 raise ExchangeError("invalid", f"{step} is a link; not read")
@@ -574,7 +618,7 @@ class LocalExchange:
                 continue
             for entry in sorted(os.listdir(path)):
                 sub = path / entry
-                if entry == BLOBS_DIRNAME or (entry.startswith(".") and ".tmp-" in entry):
+                if entry == BLOBS_DIRNAME or (entry.startswith(".") and ".tmp-" in entry) or PACKET_ID_RE.match(entry):
                     continue
                 if not PROPOSAL_ID_RE.match(entry) or not sub.is_dir():
                     listing.problems.append(Problem("unexpected", str(sub), "not a proposal Research OS wrote; not read"))
@@ -592,16 +636,82 @@ class LocalExchange:
         members = [member] if member is not None else (
             sorted(n for n in os.listdir(area) if people.is_member_id(n)) if area.is_dir() else []
         )
+        found: list[StoredProposal] = []
+        failed: list[Problem] = []
         for name in members:
             directory = area / name / proposal_id
             if directory.is_dir():
                 stored, problems = self._read_proposal_dir(name, directory)
                 if stored is None:
-                    problem = problems[-1]
-                    raise ExchangeError("half_written" if problem.kind == "half_written" else "invalid",
-                                        f"proposal {proposal_id}: {problem.detail}")
-                return stored
+                    failed.append(problems[-1])
+                else:
+                    found.append(stored)
+        if len(found) > 1:
+            # 12.5: the PI knows who sent what -- an id in two areas is a copy,
+            # and which one is the original is not guessed.
+            raise ExchangeError("ambiguous", f"proposal {proposal_id} is in more than one member's area "
+                                             f"({', '.join(s.member for s in found)}); name the member")
+        if found:
+            return found[0]  # a half-written folder of that name elsewhere does not hide it
+        if failed:
+            problem = failed[0]
+            raise ExchangeError("half_written" if problem.kind == "half_written" else "invalid",
+                                f"proposal {proposal_id}: {problem.detail}")
         raise ExchangeError("no_such_proposal", f"no proposal {proposal_id} in {self.root}")
+
+    # the member's notes and judgments (12.4: no approval)
+    def write_packet(self, member: str, packet_id: str, raw: bytes, signature: bytes | None = None) -> Path:
+        """One packet of the member's ledger entries into their area, once,
+        `ready.toml` last."""
+        self._require_root()
+        if not PACKET_ID_RE.match(packet_id):
+            raise ExchangeError("invalid", f"not a packet id: {packet_id!r}")
+        contents: list[tuple[str, bytes | Path]] = [(PACKET_FILE, raw)]
+        if signature is not None:
+            contents.append((PACKET_SIG, signature))
+        final = self.member_area(member) / packet_id
+        _write_dir_once(final, contents, _ready_bytes("packet", packet_id, raw))
+        return final
+
+    def packets(self, member: str) -> tuple[list[tuple[str, bytes, Mapping[str, Any], "signing.Check | None"]],
+                                             list[Problem]]:
+        """The member's complete packets, by id: (id, bytes, data, check)."""
+        area = self.member_area(member)
+        found: list[tuple[str, bytes, Mapping[str, Any], signing.Check | None]] = []
+        problems: list[Problem] = []
+        if not area.is_dir() or area.is_symlink():
+            return found, problems
+        for name in sorted(os.listdir(area)):
+            path = area / name
+            if not PACKET_ID_RE.match(name):
+                continue
+            if not path.is_dir() or path.is_symlink():
+                problems.append(Problem("unexpected", str(path), "not a packet Research OS wrote; not read"))
+                continue
+            problems += _unexpected(path, {PACKET_FILE, PACKET_SIG, READY_FILE})
+            main = path / PACKET_FILE
+            try:
+                if main.is_symlink():
+                    raise OSError("a link")
+                raw = main.read_bytes()
+            except OSError:
+                problems.append(Problem("half_written", str(path), "no entries.toml"))
+                continue
+            problem = _read_ready(path, "packet", name, raw)
+            if problem is not None:
+                problems.append(problem)
+                continue
+            try:
+                data = tomllib.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                problems.append(Problem("invalid", str(main), str(exc)))
+                continue
+            if data.get("id") != name or data.get("by") != member:
+                problems.append(Problem("invalid", str(main), "its id or its author does not match where it is stored"))
+                continue
+            check = self.verifier.check(member, raw, _read_signature(path / PACKET_SIG)) if self.verifier is not None else None
+            found.append((name, raw, data, check))
+        return found, problems
 
     # outcomes
     def write_outcome(self, proposal_id: str, outcome_id: str, outcome_bytes: bytes,
@@ -616,10 +726,14 @@ class LocalExchange:
         _write_dir_once(area / outcome_id, contents, _ready_bytes("outcome", outcome_id, outcome_bytes))
         return Outcome(outcome_id, proposal_id, tomllib.loads(outcome_bytes.decode("utf-8")))
 
-    def outcomes(self, proposal_id: str) -> tuple[list[Outcome], list[Problem]]:
+    def outcomes(self, proposal_id: str, *, member: str | None = None,
+                 proposal_raw: bytes | None = None) -> tuple[list[Outcome], list[Problem]]:
         """The complete outcomes of a proposal, in the order of their `at`
         (for reading only: whether a proposal is decided never depends on
-        the order)."""
+        the order). Given the proposal's `member` and bytes, an outcome that
+        names another member or other bytes answers another proposal of the
+        same id (module docstring) and is not counted."""
+        proposal_sha = hashlib.sha256(proposal_raw).hexdigest() if proposal_raw is not None else None
         area = self.outcomes_area(proposal_id)
         found: list[Outcome] = []
         problems: list[Problem] = []
@@ -649,6 +763,12 @@ class LocalExchange:
                 continue
             if data.get("id") != name or data.get("proposal") != proposal_id:
                 problems.append(Problem("invalid", str(path / OUTCOME_FILE), "does not name this outcome and proposal"))
+                continue
+            if (member is not None and data.get("member") is not None and data.get("member") != member) or (
+                    proposal_sha is not None and data.get("proposal_sha256") is not None
+                    and data.get("proposal_sha256") != proposal_sha):
+                problems.append(Problem("other_proposal", str(path / OUTCOME_FILE),
+                                        f"answers {data.get('member')}'s proposal of this id, not this one; not counted"))
                 continue
             check = None
             if self.verifier is not None:

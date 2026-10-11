@@ -345,12 +345,88 @@ def xlsx_summary(path: Path) -> dict[str, Any] | None:
         return None
     first_col, first_row, last_col, last_row = match.groups()
     last_col, last_row = last_col or first_col, last_row or first_row
-    return {
+    out: dict[str, Any] = {
         "format": "xlsx",
         "sheet": sheets[0].rsplit("/", 1)[1],
         "sheet_rows": int(last_row) - int(first_row) + 1,
         "sheet_columns": _column_number(last_col) - _column_number(first_col) + 1,
     }
+    columns = _xlsx_header(path, head)
+    if columns is not None:
+        # 12.6: like a CSV -- the first row names the columns, the rows
+        # under it are counted.
+        out.update(columns=columns, rows=max(out["sheet_rows"] - 1, 0), rows_complete=True)
+    return out
+
+
+_ROW_RE = re.compile(rb"<(?:\w+:)?row\b[^>]*?(?:/>|>(.*?)</(?:\w+:)?row>)", re.S)
+_CELL_RE = re.compile(rb"<(?:\w+:)?c\b([^>]*?)(?:/>|>(.*?)</(?:\w+:)?c>)", re.S)
+_ATTR_RE = re.compile(rb'\b(r|t)="([^"]*)"')
+_VALUE_RE = re.compile(rb"<(?:\w+:)?v>(.*?)</(?:\w+:)?v>", re.S)
+_TEXT_RE = re.compile(rb"<(?:\w+:)?t\b[^>]*>(.*?)</(?:\w+:)?t>", re.S)
+XLSX_MAX_SHARED = 100_000
+
+
+def _xml_text(raw: bytes) -> str:
+    import html  # noqa: PLC0415
+
+    return html.unescape(raw.decode("utf-8", errors="replace"))
+
+
+def _xlsx_header(path: Path, head: bytes) -> list[str] | None:
+    """The first sheet's first row as column names (shared strings and
+    inline strings resolved), or None when it cannot be told from the
+    sheet's first 64 KB -- then rows and columns are compared by count only."""
+    m = _ROW_RE.search(head)
+    if m is None or m.group(1) is None:
+        return None
+    cells: list[tuple[int, str, bytes]] = []
+    for cell in _CELL_RE.finditer(m.group(1)):
+        attrs = dict(_ATTR_RE.findall(cell.group(1)))
+        ref = re.match(rb"([A-Z]+)", attrs.get(b"r", b""))
+        column = _column_number(ref.group(1)) if ref else len(cells) + 1
+        cells.append((column, attrs.get(b"t", b"").decode("ascii", "replace"), cell.group(2) or b""))
+    shared_needed = set()
+    for _col, kind, body in cells:
+        if kind == "s":
+            v = _VALUE_RE.search(body)
+            if v is None or not v.group(1).strip().isdigit():
+                return None
+            shared_needed.add(int(v.group(1)))
+    shared: dict[int, str] = {}
+    if shared_needed:
+        if max(shared_needed) >= XLSX_MAX_SHARED:
+            return None
+        try:
+            from xml.etree import ElementTree  # noqa: PLC0415
+
+            with zipfile.ZipFile(path) as archive, archive.open("xl/sharedStrings.xml") as member:
+                index = 0
+                for _event, element in ElementTree.iterparse(member, events=("end",)):
+                    if element.tag.rsplit("}", 1)[-1] != "si":
+                        continue
+                    if index in shared_needed:
+                        shared[index] = "".join(t.text or "" for t in element.iter() if t.tag.rsplit("}", 1)[-1] == "t")
+                    element.clear()
+                    index += 1
+                    if index > max(shared_needed):
+                        break
+        except (KeyError, zipfile.BadZipFile, OSError, ElementTree.ParseError, RuntimeError, NotImplementedError):
+            return None
+    width = max((c for c, _k, _b in cells), default=0)
+    names = [""] * width
+    for column, kind, body in cells:
+        if kind == "s":
+            text = shared.get(int(_VALUE_RE.search(body).group(1)))
+            if text is None:
+                return None
+        elif kind == "inlineStr":
+            text = "".join(_xml_text(t) for t in _TEXT_RE.findall(body))
+        else:
+            v = _VALUE_RE.search(body)
+            text = _xml_text(v.group(1)) if v else ""
+        names[column - 1] = text
+    return names
 
 
 def data_summary(path: Path, rel: str) -> dict[str, Any] | None:
@@ -758,6 +834,7 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
         found = git_versions(root, rel)
         worktree = _worktree_version(root, rel, found[0] if found else None)
         out = ([worktree] if worktree else []) + found
+        _attribute_git(root, pid, file_node, out)
         for v in out:
             v["who_label"] = _who_label(v.get("who"), v.get("who_name"))
         return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "git", "path": rel, "versions": out}
@@ -766,6 +843,60 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
     if store is not None:
         store.close()
     return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "store", "path": rel, "versions": found}
+
+
+def _git_sha256(root: Path, version: dict[str, Any]) -> str | None:
+    """The SHA-256 of one git version's content, streamed."""
+    digest = hashlib.sha256()
+    if version["version"] == WORKTREE:
+        full = root / version["path"]
+        if _is_dataless(full):
+            return None
+        try:
+            with open(full, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            return None
+        return digest.hexdigest()
+    proc = _git_stream(root, ["cat-file", "blob", f"{version['commit']}:{version['path']}"])
+    if proc is None or proc.stdout is None:
+        return None
+    try:
+        for chunk in iter(lambda: proc.stdout.read(1024 * 1024), b""):
+            digest.update(chunk)
+    finally:
+        proc.stdout.close()
+        proc.wait(timeout=GIT_TIMEOUT_S)
+    return digest.hexdigest() if proc.returncode == 0 else None
+
+
+def _attribute_git(root: Path, project_id: str, file_node: str, found: list[dict[str, Any]]) -> None:
+    """12.6 in a git project: a version that came through an approved
+    proposal carries the member, the PI who approved it and the PI's note
+    -- the history store's record of the approval, matched by content
+    (size first, then SHA-256, so only a candidate is read). The commit's
+    own author and subject stay as `committed_by` / `commit_note`."""
+    store = Store.existing(project_id)
+    if store is None:
+        return
+    try:
+        approvals = [v for v in store.versions(file_node) if v.source == "approval" and v.sha256]
+    finally:
+        store.close()
+    if not approvals:
+        return
+    sizes = {v.size for v in approvals}
+    for version in found:
+        if version.get("size") not in sizes:
+            continue
+        sha = _git_sha256(root, version)
+        match = next((v for v in approvals if v.sha256 == sha), None)  # newest approval of that content
+        if match is None:
+            continue
+        version.update(committed_by=version.get("who"), commit_note=version.get("note"), who=match.who, who_name=None,
+                       approved_by=match.approved_by, note=match.note or version.get("note"), sha256=sha,
+                       approval_at=match.at)
 
 
 def _attempt_payload(v: Version) -> dict[str, Any]:
@@ -839,7 +970,8 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | 
     if not a and not b:
         return None
     a, b = a or {}, b or {}
-    if a.get("format") == "xlsx" or b.get("format") == "xlsx":
+    if (a.get("format") == "xlsx" or b.get("format") == "xlsx") and not (a.get("columns") is not None
+                                                                         and b.get("columns") is not None):
         ra, rb = a.get("sheet_rows"), b.get("sheet_rows")
         ca, cb = a.get("sheet_columns"), b.get("sheet_columns")
         if ra is None or rb is None:

@@ -78,11 +78,29 @@ the write-time identity re-check (9.4, 9.7):
    `abandoned` with the result, reason and evidence, else `approved`;
 6. the outcome, written to the exchange last.
 
-An approval interrupted between steps leaves the proposal pending; the
-next approval finds what was already applied ("same") and does not apply
-it twice. `return_` (with a reason) and `discuss` (a note to the member;
-the proposal stays open) write an outcome and nothing else: a returned
-proposal never applies anything.
+Nothing is applied until everything can be: every file's content is
+first copied beside its target and verified by hash, and every target's
+folder made, before the first file is placed -- a proposal whose content
+does not match, or whose path cannot be placed, is refused with nothing
+applied. From the first change on, the approval keeps a journal
+(`.researchos/backups/approved/<proposal>.journal`, one line per step,
+written BEFORE the step and again after it) so that an approval
+interrupted between steps -- a killed process, a full disk, a shared drive
+gone offline before the outcome -- is finished by approving again: what
+the journal says was applied is not applied twice and is not mistaken for
+a change on the official side (a variable version file it wrote, a table
+row it added), and once the decision is recorded approving again only
+writes the outcome. A proposal whose approval has begun can no longer be
+returned (`approval_started`): it is approved again, never half-returned.
+`return_` (with a reason) and `discuss` (a note to the member; the
+proposal stays open) write an outcome and nothing else.
+
+Both sides changed: a file changed in the official version since the
+proposal's base is a conflict; so is the attempt table itself, for a new
+attempt or a verdict change -- Research OS never merges two people's edits
+of one file (12.3), the table included. An abandonment's reason is
+written into the attempt table's result cell (「放弃理由：…」) unless the
+row already says it, and into the decision with the evidence.
 
 Not a node until approved
 -------------------------
@@ -169,6 +187,7 @@ MESSAGES = {
     "empty_reason": "请写明退回的理由",
     "empty_text": "请写下要讨论的内容",
     "cannot_sign": "无法签名",
+    "approval_started": "这份提议的批准已经开始应用，不能再退回：请再次批准以完成",
 }
 
 
@@ -336,6 +355,11 @@ def _text_of(path: Path, size: int | None) -> str | None:
 
 
 def base_dir(project_id: str) -> Path:
+    from researchos.records.lock import PROJECT_ID_RE  # noqa: PLC0415
+
+    if not isinstance(project_id, str) or not PROJECT_ID_RE.match(project_id):
+        # A folder name on this machine: never taken from anything else.
+        raise ProposalRefused("invalid", f"not a project id: {project_id!r}", message_zh="项目编号不对")
     return paths.researchos_home() / WORKING_DIRNAME / project_id
 
 
@@ -601,16 +625,18 @@ def make_proposal(
             changed = [n for n in work_rows if n in base_rows and work_rows[n] != base_rows[n]]
             removed = [n for n in base_rows if n not in work_rows]
             carried: set[str] = set()
+            table_base = (base.files.get(table) or {}).get("sha256")
             if kind == "attempt_new":
                 chosen = _pick(new_rows, number, "new attempt row")
-                data["attempt"] = {"number": chosen, **work_rows[chosen]}
+                data["attempt"] = {"number": chosen, **work_rows[chosen], "table_base_sha256": table_base}
                 carried.add(chosen)
             elif kind == "verdict_change":
                 verdicts = [n for n in changed if work_rows[n]["verdict"] != base_rows[n]["verdict"]]
                 chosen = _pick(verdicts, number, "attempt verdict")
                 old, new = base_rows[chosen], work_rows[chosen]
                 verdict: dict[str, Any] = {"number": chosen, "old": old["verdict"], "new": new["verdict"],
-                                           "old_result": old["result"], "result": new["result"] if result is None else result}
+                                           "old_result": old["result"], "result": new["result"] if result is None else result,
+                                           "table_base_sha256": table_base}
                 if reason is not None and reason.strip():
                     verdict["reason"] = reason.strip()
                 if is_abandonment(new["verdict"], abandon_markers(root)):
@@ -668,6 +694,14 @@ def make_proposal(
     pinned = share.read_state(pid) if share.pinned_pi(pid) is not None else None
     if pinned and Path(str(pinned.get("working_copy", ""))) == root.resolve():
         data["base_seq"] = pinned.get("seq")
+    for name in _RECORD_FILES:
+        rel = f"{paths.PROJECT_DIRNAME}/{name}"
+        mine = fingerprint(root / rel)
+        if (mine or {}).get("sha256") == (base.files.get(rel) or {}).get("sha256"):
+            continue
+        reason = ("notes and link judgments travel with every sync (researchos share sync), without approval"
+                  if name in share.TRAVELLING else "Research OS's own record files are not part of a proposal")
+        not_carried.append({"path": rel, "reason": reason})
     files = _file_changes(root, base, work, skip=skip, only=set(only) if only is not None else None)
     if kind == "files" and not files:
         raise ProposalRefused("nothing", "no file differs from the official version")
@@ -910,7 +944,7 @@ def _parsed(stored: StoredProposal) -> dict[str, Any]:
 def state_of(ex: LocalExchange, stored: StoredProposal, siblings: Iterable[StoredProposal] = ()) -> dict[str, Any]:
     """`state`: pending | approved | returned | superseded | conflict (two
     final answers that disagree), with every outcome in order."""
-    outcomes, problems = ex.outcomes(stored.id)
+    outcomes, problems = ex.outcomes(stored.id, member=stored.member, proposal_raw=stored.raw or None)
     finals = {o.act for o in outcomes if o.act in FINAL_ACTS}
     superseded_by = [s.id for s in siblings if s.member == stored.member and s.data.get("supersedes") == stored.id]
     if len(finals) > 1:
@@ -962,15 +996,28 @@ def listing(root: str | Path, *, exchange: LocalExchange | None = None) -> dict[
             continue
         siblings = [s for s in found.proposals if s.member == stored.member]
         out["proposals"].append(_summary(stored, state_of(ex, stored, siblings)))
+    owners: dict[str, set[str]] = {}
+    for item in out["proposals"]:
+        owners.setdefault(item["id"], set()).add(item["by"])
+    for item in out["proposals"]:
+        if len(owners[item["id"]]) > 1:
+            item["duplicate_id"] = sorted(owners[item["id"]])
+    for pid_, members in sorted(owners.items()):
+        if len(members) > 1:
+            out["problems"].append({"kind": "duplicate_id", "path": pid_,
+                                    "detail": f"the same proposal id is in the areas of {', '.join(sorted(members))}: one "
+                                              f"is a copy; name the member to open it (--from)"})
     order = {"pending": 0, "conflict": 1, "approved": 2, "returned": 3, "superseded": 4}
     out["proposals"].sort(key=lambda p: (order.get(p["state"], 9), str(p.get("at") or "")))
     return out
 
 
-def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | None = None) -> dict[str, Any]:
+def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | None = None,
+             member: str | None = None) -> dict[str, Any]:
     """One proposal as its reader may see it: the PI gets `changes`
     (`what_changes`), its author the proposal and its outcomes; anyone else
-    is refused."""
+    is refused. A member opens only their own area; the PI names `member`
+    when the id is in more than one area."""
     root = Path(root)
     role, me, _team = role_of(root)
     if role not in ("pi", "member"):
@@ -978,9 +1025,16 @@ def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | No
                               "only the PI and the proposal's author see a proposal")
     pid = _project_id(root)
     ex = exchange or exchange_mod.for_project(pid, root)
-    stored = ex.open_proposal(proposal_id)
-    if role == "member" and stored.member != me:
-        raise ProposalRefused("not_yours", f"proposal {proposal_id} is not yours")
+    if role == "member":
+        try:
+            stored = ex.open_proposal(proposal_id, member=me)
+        except ExchangeError as exc:
+            if exc.code != "no_such_proposal":
+                raise
+            ex.open_proposal(proposal_id)  # raises when it is nobody's
+            raise ProposalRefused("not_yours", f"proposal {proposal_id} is not yours") from exc
+    else:
+        stored = ex.open_proposal(proposal_id, member=member)
     siblings = ex.list_proposals(stored.member).proposals
     out = _summary(stored, state_of(ex, stored, siblings))
     if role == "pi":
@@ -1004,10 +1058,16 @@ def _confined(root: Path, rel: str) -> Path:
     return target
 
 
-def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any]) -> dict[str, Any]:
+def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
+                 done: Mapping[str, Any] | None = None) -> dict[str, Any]:
     rel = item["path"]
     out: dict[str, Any] = {k: item.get(k) for k in ("path", "action", "size", "sha256", "base_sha256", "base_size", "store")}
     _confined(root, rel)
+    if rel in (done or {}).get("placed", ()):
+        # This approval placed it before it was interrupted; whatever the
+        # file is now, it is not the proposal's to place again.
+        out.update(state="done", reason="这次批准已经放入了这个文件")
+        return out
     official = _official_fp(root, rel)
     out["official_sha256"] = official.get("sha256") if official else None
     out["official_size"] = official.get("size") if official else None
@@ -1068,54 +1128,86 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
     out["sentence"] = (out["summary"] + "；" if out.get("summary") else "") + f"大小 {sizes}"
 
 
-def _attempt_change(root: Path, data: Mapping[str, Any]) -> dict[str, Any] | None:
+def abandon_result(result: str, reason: str | None, verdict: str) -> str:
+    """The result cell an approved abandonment writes (12.4: approving
+    records the result and the reason in the attempt table): the result,
+    and 「（放弃理由：…）」 unless the row already says the reason."""
+    said = " ".join(str(reason or "").split())
+    if not said or said in result or said in verdict:
+        return result
+    return f"{result}（放弃理由：{said}）" if result.strip() else f"放弃理由：{said}"
+
+
+def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     from researchos.webapp import mapedit  # noqa: PLC0415
 
     config = _attempts_config(root)
     kind = data["kind"]
     if kind not in ("attempt_new", "verdict_change"):
         return None
+    done = done or {}
     if config is None:
         return {"state": "problem", "reason": "正式版本没有配置尝试表"}
     try:
-        text = (root / config.file).read_text(encoding="utf-8")
+        raw = (root / config.file).read_bytes()
+        text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         return {"state": "problem", "reason": f"尝试表无法读取：{exc}"}
     rows = _rows(text, config) or {}
     node = f"attempt:{config.file}#"
+    carried = data["attempt"] if kind == "attempt_new" else data["verdict"]
+    table_base = carried.get("table_base_sha256")
+    # 12.3: the table changed on both sides is a conflict like any file --
+    # unless what changed it is this approval's own edit, interrupted.
+    moved = (isinstance(table_base, str) and hashlib.sha256(raw).hexdigest() != table_base
+             and not done.get("attempt_started"))
+    moved_reason = f"尝试表（{config.file}）在你提议之后，正式版本里也改了"
     if kind == "attempt_new":
         row = data["attempt"]
         number = row["number"]
         out: dict[str, Any] = {"op": "append", "number": number, "node": node + number, "file": config.file,
                                "fields": {k: row[k] for k in ROW_FIELDS}}
+        if done.get("attempt_applied"):
+            out["state"] = "done"
+            return out
         if number in rows:
             if rows[number] == out["fields"]:
                 out["state"] = "same"
             else:
                 out.update(state="conflict", reason=f"正式版本的尝试表里已经有第 {number} 行")
             return out
+        if moved:
+            out.update(state="conflict", reason=moved_reason)
+            return out
     else:
         v = data["verdict"]
         number = v["number"]
-        fields = {"verdict": v["new"]}
-        if v["result"] != v["old_result"]:
-            fields["result"] = v["result"]
         abandons = v.get("abandons") == "yes" or is_abandonment(v["new"], abandon_markers(root))
+        written = abandon_result(v["result"], v.get("reason"), v["new"]) if abandons else v["result"]
+        fields = {"verdict": v["new"]}
+        if written != v["old_result"]:
+            fields["result"] = written
         out = {"op": "update", "number": number, "node": node + number, "file": config.file, "fields": fields,
                "old": v["old"], "new": v["new"], "abandons": abandons,
                "result": v["result"], "reason": v.get("reason")}
         if abandons and (not str(v.get("reason") or "").strip() or not v["result"].strip()):
             out.update(state="problem", reason=MESSAGES["reason_required"])
             return out
+        if done.get("attempt_applied"):
+            out["state"] = "done"
+            return out
         current = rows.get(number)
         if current is None:
             out.update(state="conflict", reason=f"正式版本的尝试表里没有第 {number} 行")
             return out
-        if current["verdict"] == v["new"] and current["result"] == v["result"]:
+        if current["verdict"] == v["new"] and current["result"] == written:
             out["state"] = "same"
             return out
         if current["verdict"] != v["old"] or current["result"] != v["old_result"]:
             out.update(state="conflict", reason=f"第 {number} 行的结论或结果在正式版本里也改了")
+            return out
+        if moved:
+            out.update(state="conflict", reason=moved_reason)
             return out
     try:
         shown = mapedit.preview_edit(root, out["op"], number, out["fields"])
@@ -1129,7 +1221,8 @@ def _attempt_change(root: Path, data: Mapping[str, Any]) -> dict[str, Any] | Non
     return out
 
 
-def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]) -> dict[str, Any] | None:
+def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any],
+                     done: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     from researchos.records import variables as V  # noqa: PLC0415
 
     variable = data.get("variable")
@@ -1174,7 +1267,13 @@ def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]
         return {**out, "state": "problem", "reason": card.message or "变量卡当前无法读取"}
     highest = max(card.versions, default=0)
     out["number"] = card.next_number
-    if card.draft is not None:
+    ours = (done or {}).get("version")
+    if (card.draft is not None and ours and ours.get("card") == card_id and ours.get("number") == card.draft
+            and _draft_is(found[0], card.draft, variable["sha256"])):
+        # This approval wrote that draft before it was interrupted: it is
+        # confirmed now, not written again and not taken for a conflict.
+        out.update(state="apply", number=card.draft, written=True)
+    elif card.draft is not None:
         out.update(state="conflict", reason=f"正式版本里这个变量卡有未确认的草稿 v{card.draft}")
     elif highest != variable["base_version"]:
         out.update(state="conflict", reason=f"这个变量卡在正式版本里已经有 v{highest}（提议基于 v{variable['base_version']}）")
@@ -1185,6 +1284,13 @@ def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]
             old = view.data.decode("utf-8", errors="replace") if view is not None and view.data is not None else ""
             out["diff"], out["truncated"] = history.unified(old, out["text"], f"v{card.in_use}", f"v{card.next_number}")
     return out
+
+
+def _draft_is(directory: Path, number: int, sha: str) -> bool:
+    try:
+        return hashlib.sha256((directory / f"v{number}.toml").read_bytes()).hexdigest() == sha
+    except OSError:
+        return False
 
 
 def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str, Any]:
@@ -1204,9 +1310,13 @@ def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str,
         "id": stored.id, "kind": data["kind"], "by": stored.member, "sentence": data["sentence"], "base": data["base"],
         "official_now": current, "moved": current != data["base"],
     }
-    out["attempt"] = _attempt_change(root, data)
-    out["variable"] = _variable_change(root, stored, data)
-    out["files"] = [_file_change(root, stored, item) for item in data.get("file") or []]
+    done = read_journal(root, stored.id)
+    if done["member"] is not None and done["member"] != stored.member:
+        problems.append(f"这个编号的另一份提议（{done['member']}）已经在批准中")
+    out["resuming"] = done["started"]
+    out["attempt"] = _attempt_change(root, data, done)
+    out["variable"] = _variable_change(root, stored, data, done)
+    out["files"] = [_file_change(root, stored, item, done) for item in data.get("file") or []]
     out["not_carried"] = data.get("not_carried") or []
     conflicts = []
     for part in ([out["attempt"]] if out["attempt"] else []) + ([out["variable"]] if out["variable"] else []) + out["files"]:
@@ -1246,37 +1356,153 @@ def _keep_old(root: Path, target: Path, backup: Path, *, move: bool) -> None:
         shutil.copy2(target, backup)
 
 
-def _place_file(root: Path, stored: StoredProposal, change: Mapping[str, Any]) -> None:
+JOURNAL_SUFFIX = ".journal"
+
+
+def journal_path(root: Path, proposal_id: str) -> Path:
+    return paths.project_dir(root) / record_files.BACKUPS_DIRNAME / APPROVED_BACKUPS / f"{proposal_id}{JOURNAL_SUFFIX}"
+
+
+def read_journal(root: Path, proposal_id: str) -> dict[str, Any]:
+    """What an earlier, interrupted approval of `proposal_id` did (module
+    docstring). A torn last line is ignored."""
+    done: dict[str, Any] = {"started": False, "member": None, "placed": set(), "attempt_started": False,
+                            "attempt_applied": False, "version": None, "deciding": False}
+    try:
+        lines = journal_path(root, proposal_id).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return done
+    except (OSError, UnicodeDecodeError):
+        lines = ['{"step": "unreadable"}']
+    for line in lines:
+        try:
+            step = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(step, dict):
+            continue
+        done["started"] = True
+        done["member"] = done["member"] or step.get("member")
+        kind = step.get("step")
+        if kind == "placed" and isinstance(step.get("path"), str):
+            done["placed"].add(step["path"])
+        elif kind == "attempt":
+            done["attempt_started"] = True
+        elif kind == "attempt_applied":
+            done["attempt_started"] = done["attempt_applied"] = True
+        elif kind == "version":
+            done["version"] = {"card": step.get("card"), "number": step.get("number")}
+        elif kind == "deciding":
+            done["deciding"] = True
+    return done
+
+
+def _mark(root: Path, stored: StoredProposal, step: str, **fields: Any) -> None:
+    """One journal line, appended and fsynced before the step it names
+    (and, for a file or the table, again after it)."""
+    path = journal_path(root, stored.id)
+    record_files.ensure_dir_within(root, path.parent)
+    line = json.dumps({"step": step, "member": stored.member, "at": _now_iso(), **fields}, ensure_ascii=False) + "\n"
+    created = not path.exists()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if created:
+        record_files._fsync_dir(path.parent)
+
+
+def _stage(root: Path, changes: Mapping[str, Any]) -> list[tuple[dict[str, Any], Path | None]]:
+    """Every file to place, copied beside its target and verified by hash
+    -- before anything is applied (module docstring). Refused, with every
+    copy removed, when one does not match or cannot be placed."""
+    staged: list[tuple[dict[str, Any], Path | None]] = []
+    try:
+        for change in changes["files"]:
+            if change["state"] != "apply":
+                continue
+            rel = change["path"]
+            target = _confined(root, rel)
+            if change["action"] == "removed":
+                staged.append((change, None))
+                continue
+            try:
+                record_files.ensure_dir_within(root, target.parent)
+                if target.is_dir() or target.is_symlink():
+                    raise record_files.RecordFileError(f"{target} is a folder or a link")
+            except (OSError, record_files.RecordFileError) as exc:
+                raise ProposalRefused("not_approvable", f"{rel} cannot be placed in the official version ({exc}); "
+                                      f"nothing applied", message_zh="提议里有文件无法放进正式版本，没有应用任何改动") from exc
+            tmp = record_files.temp_path_for(target)
+            staged.append((change, tmp))
+            got = exchange_mod.copy_file(Path(change["content"]), tmp)
+            if got != change["sha256"]:
+                raise ProposalRefused("not_approvable", f"{rel}: the proposal's content does not match its fingerprint; "
+                                      f"nothing applied", message_zh="提议里的文件内容与记录的指纹不符，没有应用任何改动")
+    except BaseException:
+        _unstage(staged)
+        raise
+    return staged
+
+
+def _unstage(staged: Iterable[tuple[Mapping[str, Any], Path | None]]) -> None:
+    for _change, tmp in staged:
+        if tmp is not None and tmp.exists():
+            tmp.unlink()
+
+
+def _place_file(root: Path, stored: StoredProposal, change: Mapping[str, Any], tmp: Path | None) -> None:
+    """One staged file into place (journalled before and after)."""
     rel = change["path"]
     target = _confined(root, rel)
     backup = _backup_path(root, stored.id, rel)
     now = fingerprint(target)
     if change["action"] == "removed":
-        if now is None:
-            return
-        if now.get("sha256") != change["base_sha256"]:
-            raise ProposalRefused("not_approvable", f"{rel} changed in the official version while approving; nothing more applied")
-        _keep_old(root, target, backup, move=True)
-        return
-    record_files.ensure_dir_within(root, target.parent)
-    tmp = record_files.temp_path_for(target)
-    try:
-        got = exchange_mod.copy_file(Path(change["content"]), tmp)
-        if got != change["sha256"]:
-            raise ProposalRefused("not_approvable", f"{rel}: the proposal's content does not match its fingerprint",
-                                  message_zh="提议里的文件内容与记录的指纹不符")
         if now is not None:
-            if now.get("sha256") == change["sha256"]:
-                return
-            expected = change.get("base_sha256") if change["action"] == "changed" else None
-            if now.get("sha256") != expected:
-                raise ProposalRefused("not_approvable", f"{rel} changed in the official version while approving")
-            _keep_old(root, target, backup, move=False)
-        os.replace(tmp, target)
-        record_files._fsync_dir(target.parent)
-    finally:
-        if tmp.exists():
+            if now.get("sha256") != change["base_sha256"]:
+                raise ProposalRefused("not_approvable", f"{rel} changed in the official version while approving; approve "
+                                      f"again once it is settled")
+            _mark(root, stored, "placing", path=rel)
+            _keep_old(root, target, backup, move=True)
+        _mark(root, stored, "placed", path=rel)
+        return
+    assert tmp is not None
+    if now is not None:
+        if now.get("sha256") == change["sha256"]:
             tmp.unlink()
+            _mark(root, stored, "placed", path=rel)
+            return
+        expected = change.get("base_sha256") if change["action"] == "changed" else None
+        if now.get("sha256") != expected:
+            raise ProposalRefused("not_approvable", f"{rel} changed in the official version while approving; approve again "
+                                  f"once it is settled")
+    _mark(root, stored, "placing", path=rel, sha256=change["sha256"])
+    if now is not None:
+        _keep_old(root, target, backup, move=False)
+    os.replace(tmp, target)
+    record_files._fsync_dir(target.parent)
+    _mark(root, stored, "placed", path=rel)
+
+
+def _attribute_file(store: history.Store, root: Path, rel: str, before: int, *, who: str, approved_by: str,
+                    note: str | None) -> None:
+    """The version of `rel` an approval wrote through another write path
+    (the attempt table, through the map editor and its re-scan) carries the
+    member and the PI like every other approved file (12.3)."""
+    from researchos.records import notes as notes_mod  # noqa: PLC0415
+
+    node = notes_mod.normalize_node(rel)
+    latest = store.latest(node)
+    try:
+        sha = exchange_mod.sha256_of(root / rel)[0]
+    except OSError:
+        return
+    if latest is not None and latest.seq > before and latest.sha256 == sha and latest.source == "scan":
+        store.attribute(latest.seq, source="approval", who=who, note=note, approved_by=approved_by)
+    else:
+        history.record_file(store, root, rel, source="approval", who=who, note=note, approved_by=approved_by)
 
 
 def _attribute_attempt(store: history.Store, conn, node: str, before: int, *, who: str, approved_by: str,
@@ -1312,6 +1538,9 @@ def _write_version_file(root: Path, change: Mapping[str, Any], stored: StoredPro
         directory = V.find_card_dirs(root, card_id)[0]
     target = directory / f"v{change['number']}.toml"
     raw = stored.content_path({"path": stored.data["variable"]["file"], "store": "text"}).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != stored.data["variable"]["sha256"]:
+        raise ProposalRefused("not_approvable", f"{target.name}: the proposal's content does not match its fingerprint")
+    _mark(root, stored, "version", card=card_id, number=change["number"])
     record_files.write_new_file(target, raw)  # exclusive: never over an existing file
     if target.read_bytes() != raw:  # pragma: no cover -- disk guard
         raise ProposalRefused("not_approvable", f"{target} does not read back as written")
@@ -1366,7 +1595,10 @@ def _evidence(conn, root: Path, attempt_node: str, store: history.Store, *, who:
                 item["state"] = "unreadable"
             else:
                 item.update(sha256=sha, size=size)
-                history.record_file(store, root, rel, source="approval", who=who, note=note, approved_by=approved_by)
+                # Frozen as it is: a version the store has not seen yet is
+                # recorded as seen here (本机), never credited to the member
+                # who proposed the abandonment -- they did not write it.
+                history.record_file(store, root, rel)
                 latest = store.latest(notes_mod.normalize_node(rel))
                 kept = latest is not None and latest.sha256 == sha and latest.stored
                 item["state"] = "kept" if kept else "fingerprint"
@@ -1381,7 +1613,9 @@ def _outcome(ex: LocalExchange, stored: StoredProposal, act: str, by: str, text:
              root: Path | None = None) -> dict[str, Any]:
     outcome_id = "o-" + secrets.token_hex(16)
     data: dict[str, Any] = {"format": FORMAT, "id": outcome_id, "proposal": stored.id, "act": act, "by": by,
-                            "at": _now_iso(now)}
+                            "at": _now_iso(now), "member": stored.member}
+    if stored.raw:
+        data["proposal_sha256"] = hashlib.sha256(stored.raw).hexdigest()
     if text:
         data["text"] = text
     data.update(extra or {})
@@ -1415,10 +1649,13 @@ def approve(
     now: Callable[[], datetime] | None = None,
     ingest_lock: Any = None,
     rescan: bool = True,
+    member: str | None = None,
 ) -> dict[str, Any]:
     """Approve a proposal (module docstring, steps 1-6). Returns what was
     applied, the decision entry and the outcome. Raises `ProposalRefused`
-    (nothing applied) or the write guard's errors."""
+    (nothing applied -- or, once the journal has begun, what was applied is
+    finished by approving again) or the write guard's errors. `member`
+    names whose proposal it is when the id is in more than one area."""
     root = Path(official_root)
     note = note.strip() if isinstance(note, str) and note.strip() else None
     _require_pi(root)  # asked first: a member's own copy is refused as such, whatever its index says
@@ -1426,67 +1663,87 @@ def approve(
         pi = _require_pi(root)
         _preflight(root, pi)  # the outcome will be signed: refused now, before anything is applied
         ex = _exchange_for(root, exchange)
-        stored = ex.open_proposal(proposal_id)
+        stored = ex.open_proposal(proposal_id, member=member)
         _pending(ex, stored)
-        changes = what_changes(stored, root)
-        if not changes["approvable"]:
-            raise ProposalRefused("not_approvable", f"proposal {proposal_id} cannot be approved: "
-                                  + "; ".join([f"{c['path']}: both sides changed" for c in changes["conflicts"]] + changes["problems"]),
-                                  details={"conflicts": changes["conflicts"], "problems": changes["problems"]})
-        try:
-            decisions_mod.require_writable(root)
-        except decisions_mod.DecisionRefused as exc:
-            raise ProposalRefused("not_approvable", str(exc), message_zh=exc.message_zh) from exc
-        member, data = stored.member, stored.data
+        member_id, data = stored.member, stored.data
         identity_id = _project_id(root)
         applied: dict[str, Any] = {"files": [], "attempt": None, "variable": None, "evidence": None}
-        with history.Store.open(identity_id) as store:
-            for change in changes["files"]:
-                if change["state"] != "apply":
-                    continue
-                if change["action"] != "added":
-                    history.record_file(store, root, change["path"])  # the version being replaced, kept
-                _place_file(root, stored, change)
-                if change["action"] != "removed":
-                    history.record_file(store, root, change["path"], source="approval", who=member, note=note,
-                                        approved_by=pi)
-                applied["files"].append({"path": change["path"], "action": change["action"]})
-
-            attempt = changes["attempt"]
-            if attempt is not None:
-                before = _max_seq(store)
-                if attempt["state"] == "apply":
-                    from researchos.webapp import mapedit  # noqa: PLC0415
-
-                    result = mapedit.apply_edit(root, attempt["op"], attempt["number"], attempt["fields"], ingest_lock)
-                    applied["attempt"] = {"node": attempt["node"], "op": attempt["op"], "backup": result["backup"],
-                                          "ingest_error": result["ingest_error"]}
-                conn = db.connect(index_db_path(identity_id))
-                try:
-                    if attempt["state"] == "apply":
-                        _attribute_attempt(store, conn, attempt["node"], before, who=member, approved_by=pi, note=note)
-                    if data["kind"] == "verdict_change" and attempt.get("abandons"):
-                        applied["evidence"] = _evidence(conn, root, attempt["node"], store, who=member,
-                                                        approved_by=pi, note=note)
-                finally:
-                    conn.close()
-
-            variable = changes["variable"]
-            if variable is not None and variable["state"] == "apply":
-                from researchos.records import cards  # noqa: PLC0415
-
-                _write_version_file(root, variable, stored)
-                confirmed = cards.confirm(
-                    root, variable["card"], attested=variable["attested"], expected_content=variable["content"], via=via,
-                    approval={"by": member, "approved_by": pi, "proposal": stored.id, "note": note},
-                )
-                applied["variable"] = {"card": variable["card"], "version": confirmed.entry.get("version"),
-                                       "entry": confirmed.entry.id, "reference": confirmed.reference.label}
-
         decision = decisions_mod.for_proposal(root, stored.id)
-        if decision is None:
+        if decision is not None and decision.get("by") != member_id:
+            raise ProposalRefused("not_approvable", f"a proposal {stored.id} of {decision.get('by')} was already approved; "
+                                  f"this one ({member_id}) is a copy of its id")
+        attempt = variable = None
+        if decision is not None:
+            # Interrupted after the decision was recorded (the outcome could
+            # not be written): everything was applied; only the outcome is left.
+            _parsed(stored)
+            applied["files"] = [{"path": f, "action": "applied"} for f in decision.get("files") or []]
+            resumed = True
+        else:
+            resumed = False
+            changes = what_changes(stored, root)
+            if not changes["approvable"]:
+                raise ProposalRefused("not_approvable", f"proposal {proposal_id} cannot be approved: "
+                                      + "; ".join([f"{c['path']}: both sides changed" for c in changes["conflicts"]] + changes["problems"]),
+                                      details={"conflicts": changes["conflicts"], "problems": changes["problems"],
+                                               "resuming": changes["resuming"]})
+            try:
+                decisions_mod.require_writable(root)
+            except decisions_mod.DecisionRefused as exc:
+                raise ProposalRefused("not_approvable", str(exc), message_zh=exc.message_zh) from exc
+            staged = _stage(root, changes)  # nothing applied yet: refused whole, or every file ready beside its target
+            try:
+                with history.Store.open(identity_id) as store:
+                    for change, tmp in staged:
+                        if change["action"] != "added":
+                            history.record_file(store, root, change["path"])  # the version being replaced, kept
+                        _place_file(root, stored, change, tmp)
+                        if change["action"] != "removed":
+                            history.record_file(store, root, change["path"], source="approval", who=member_id, note=note,
+                                                approved_by=pi)
+                    applied["files"] = [{"path": f["path"], "action": f["action"]} for f in changes["files"]
+                                        if f["state"] in ("apply", "done")]
+
+                    attempt = changes["attempt"]
+                    if attempt is not None:
+                        before = _max_seq(store)
+                        if attempt["state"] == "apply":
+                            from researchos.webapp import mapedit  # noqa: PLC0415
+
+                            _mark(root, stored, "attempt", node=attempt["node"])
+                            result = mapedit.apply_edit(root, attempt["op"], attempt["number"], attempt["fields"], ingest_lock)
+                            _mark(root, stored, "attempt_applied", node=attempt["node"])
+                            applied["attempt"] = {"node": attempt["node"], "op": attempt["op"], "backup": result["backup"],
+                                                  "ingest_error": result["ingest_error"]}
+                            _attribute_file(store, root, attempt["file"], before, who=member_id, approved_by=pi, note=note)
+                        conn = db.connect(index_db_path(identity_id))
+                        try:
+                            if attempt["state"] == "apply":
+                                _attribute_attempt(store, conn, attempt["node"], before, who=member_id, approved_by=pi,
+                                                   note=note)
+                            if data["kind"] == "verdict_change" and attempt.get("abandons"):
+                                applied["evidence"] = _evidence(conn, root, attempt["node"], store, who=member_id,
+                                                                approved_by=pi, note=note)
+                        finally:
+                            conn.close()
+
+                    variable = changes["variable"]
+                    if variable is not None and variable["state"] == "apply":
+                        from researchos.records import cards  # noqa: PLC0415
+
+                        if not variable.get("written"):
+                            _write_version_file(root, variable, stored)
+                        confirmed = cards.confirm(
+                            root, variable["card"], attested=variable["attested"], expected_content=variable["content"],
+                            via=via, approval={"by": member_id, "approved_by": pi, "proposal": stored.id, "note": note},
+                        )
+                        applied["variable"] = {"card": variable["card"], "version": confirmed.entry.get("version"),
+                                               "entry": confirmed.entry.id, "reference": confirmed.reference.label}
+            finally:
+                _unstage(staged)
+
             fields: dict[str, Any] = {
-                "by": member, "act": "approved", "approved_by": pi, "proposal": stored.id, "kind": data["kind"],
+                "by": member_id, "act": "approved", "approved_by": pi, "proposal": stored.id, "kind": data["kind"],
                 "note": note, "via": via, "files": [f["path"] for f in applied["files"]] or None,
             }
             if attempt is not None:
@@ -1498,6 +1755,7 @@ def approve(
                     fields["evidence"] = applied["evidence"] or []
             if variable is not None:
                 fields.update(card=variable["card"], version=variable.get("number"))
+            _mark(root, stored, "deciding")
             try:
                 entry = decisions_mod.append_decision(root, fields, lock=held, now=now)
             except decisions_mod.DecisionRefused as exc:
@@ -1507,14 +1765,15 @@ def approve(
             decision = dict(entry.data)
         outcome = _outcome(ex, stored, "approved", pi, note, {
             "decision": decision["id"], "files": [f["path"] for f in applied["files"]] or None,
-            "attempt": attempt["node"] if attempt is not None else None,
-            "variable": (applied["variable"] or {}).get("reference"),
+            "attempt": decision.get("attempt"),
+            "variable": (applied["variable"] or {}).get("reference")
+            or (f"{decision['card']} v{decision['version']}" if decision.get("card") and decision.get("version") else None),
         }, now, root=root)
         published = _publish_after(root, ex, expected_id, timeout, f"批准提议 {stored.id}")
         if rescan:
             _rescan(root)
     return {"proposal": stored.id, "applied": applied, "decision": _jsonable(decision), "outcome": outcome,
-            "published": published}
+            "published": published, "resumed": resumed}
 
 
 def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: float | None, note: str) -> dict[str, Any]:
@@ -1563,8 +1822,11 @@ def return_(
     expected_id: Any = READ_NOW,
     timeout: float | None = None,
     now: Callable[[], datetime] | None = None,
+    member: str | None = None,
 ) -> dict[str, Any]:
-    """「退回并说明」: an outcome with the reason; nothing is applied, ever."""
+    """「退回并说明」: an outcome with the reason; nothing is applied, ever.
+    Refused once an approval of it has begun applying (module docstring):
+    a returned proposal never leaves anything in the official version."""
     if not isinstance(reason, str) or not reason.strip():
         raise ProposalRefused("empty_reason", "returning a proposal says why (--reason)")
     root = Path(official_root)
@@ -1573,9 +1835,15 @@ def return_(
         pi = _require_pi(root)
         _preflight(root, pi)
         ex = _exchange_for(root, exchange)
-        stored = ex.open_proposal(proposal_id)
+        stored = ex.open_proposal(proposal_id, member=member)
         _parsed(stored)
         _pending(ex, stored)
+        started = read_journal(root, stored.id)
+        decision = decisions_mod.for_proposal(root, stored.id)
+        if (started["started"] and started["member"] in (None, stored.member)) or (
+                decision is not None and decision.get("by") == stored.member):
+            raise ProposalRefused("approval_started", f"an approval of {stored.id} has begun applying it "
+                                  f"({journal_path(root, stored.id)}); approve it again to finish -- it is not returned")
         return _outcome(ex, stored, "returned", pi, reason.strip(), None, now, root=root)
 
 
@@ -1588,6 +1856,7 @@ def discuss(
     expected_id: Any = READ_NOW,
     timeout: float | None = None,
     now: Callable[[], datetime] | None = None,
+    member: str | None = None,
 ) -> dict[str, Any]:
     """「讨论」: a note to the member; the proposal stays open."""
     if not isinstance(text, str) or not text.strip():
@@ -1598,7 +1867,7 @@ def discuss(
         pi = _require_pi(root)
         _preflight(root, pi)
         ex = _exchange_for(root, exchange)
-        stored = ex.open_proposal(proposal_id)
+        stored = ex.open_proposal(proposal_id, member=member)
         _parsed(stored)
         _pending(ex, stored)
         return _outcome(ex, stored, "discussed", pi, text.strip(), None, now, root=root)

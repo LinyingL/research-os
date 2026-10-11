@@ -448,14 +448,20 @@ def _decisions_row(root: Path) -> Row:
     loaded, decision = decisions_mod.assess(root)
     found = decisions_mod.summary(root)
     facts: dict[str, Any] = {"file_state": loaded.state.value, "exists": path.exists()}
-    if found["state"] == "present":
+    if found["state"] in ("present", "shrunk"):
         count = f"{found['entries']} decision(s), {found['abandoned']} abandoned route(s)"
         facts.update(entries=found["entries"], abandoned=found["abandoned"])
     elif loaded.state is RecordState.ABSENT:
         count = "none yet"
     else:
         count = loaded.state.value
-    problems = () if decision.reason is None else (f"{decision.reason}: {decision.detail or loaded.error or ''}".rstrip(": "),)
+    if decision.reason == "shrunk":
+        facts["missing"] = len(decision.missing)
+        problems: tuple[str, ...] = (
+            f"shrunk: the file lacks {len(decision.missing)} decision(s) this machine had seen -- answer with "
+            f"'researchos records --answer file|restore --file decisions'",)
+    else:
+        problems = () if decision.reason is None else (f"{decision.reason}: {decision.detail or loaded.error or ''}".rstrip(": "),)
     facts["issues"] = [decision.reason] if decision.reason else []
     return Row("Approved decisions", _shown(path, root), count, _snapshot(root, path), problems,
                code="decisions", facts=facts)

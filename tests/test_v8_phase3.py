@@ -471,7 +471,9 @@ def test_12_10_3_an_interrupted_approval_is_resumed_without_applying_twice(team,
         monkeypatch.setattr(proposals, "_outcome", real)
         assert proposals.listing(team.official)["proposals"][0]["state"] == "pending"
         changes = proposals.what_changes(stored, team.official)
-        assert changes["attempt"]["state"] == "same" and {f["state"] for f in changes["files"]} == {"same"}
+        # The journal says this approval placed them: "done", never applied twice.
+        assert changes["attempt"]["state"] in ("same", "done") and {f["state"] for f in changes["files"]} <= {"same", "done"}
+        assert changes["approvable"] and changes["resuming"]
         proposals.approve(team.official, stored.id)
         assert (team.official / "map.md").read_text().count("| 18 |") == 1
         assert len(decisions_mod.entries(team.official)) == 1

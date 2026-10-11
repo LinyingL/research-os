@@ -100,6 +100,7 @@ from researchos.ingest import git as git_ingest  # noqa: F401
 from researchos.ingest import mappings as mappings_ingest
 from researchos.ingest import pipeline as ingest_pipeline
 from researchos.records import cards as variable_cards
+from researchos.records import decisions as decisions_mod
 from researchos.records import implementation as card_implementation
 from researchos.records import files as record_files
 from researchos.records import judgements
@@ -889,7 +890,20 @@ def cmd_records(args: argparse.Namespace) -> int:
     root = opened.root
     if args.missing is not None and not args.answer:
         raise CliError("--missing goes with --answer")
-    if args.answer and args.file == "notes":
+    if args.answer and args.file == "decisions":
+        shown = None if args.missing is None else [i.strip() for i in args.missing.split(",") if i.strip()]
+        try:
+            with records_situation.write_guard(root, opened.project_id, human=True) as held:
+                missing, appended = decisions_mod.answer_shrunk(root, args.answer, lock=held, expected_missing=shown)
+        except decisions_mod.DecisionRefused as exc:
+            raise CliError(f"not answered: {exc}") from exc
+        except records_situation.WriteRefused as exc:
+            raise CliError(str(exc)) from exc
+        if args.answer == decisions_mod.ANSWER_FILE:
+            print(f"Took decisions.toml as it is: {missing} entr(y/ies) dropped from this machine's copy")
+        else:
+            print(f"Appended {appended} missing decision(s) to .researchos/decisions.toml (via = recovered)")
+    elif args.answer and args.file == "notes":
         shown = None if args.missing is None else [i.strip() for i in args.missing.split(",") if i.strip()]
         try:
             missing, appended = notes_mod.answer_shrunk(root, args.answer, expected_missing=shown, expected_id=opened.project_id)
@@ -1654,7 +1668,7 @@ def cmd_proposals(args: argparse.Namespace) -> int:
     try:
         ex = _exchange_arg(args, root, opened.project_id)
         if args.show:
-            shown = proposals_mod.open_for(root, args.show, exchange=ex)
+            shown = proposals_mod.open_for(root, args.show, exchange=ex, member=args.from_member)
             if args.json:
                 print(json.dumps(shown, ensure_ascii=False, indent=2, sort_keys=True, default=str))
                 return 0
@@ -1708,7 +1722,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
     try:
         done = proposals_mod.approve(opened.root, args.proposal_id, note=args.note, via="cli",
                                      exchange=_exchange_arg(args, opened.root, opened.project_id),
-                                     expected_id=opened.project_id)
+                                     expected_id=opened.project_id, member=args.from_member)
     except _PROPOSAL_ERRORS as exc:
         raise _proposal_error(exc) from exc
     applied = done["applied"]
@@ -1747,7 +1761,7 @@ def cmd_return(args: argparse.Namespace) -> int:
     try:
         outcome = proposals_mod.return_(opened.root, args.proposal_id, args.reason,
                                         exchange=_exchange_arg(args, opened.root, opened.project_id),
-                                        expected_id=opened.project_id)
+                                        expected_id=opened.project_id, member=args.from_member)
     except _PROPOSAL_ERRORS as exc:
         raise _proposal_error(exc) from exc
     print(f"Returned {args.proposal_id} ({outcome['id']}): {outcome['text']}")
@@ -1761,7 +1775,7 @@ def cmd_discuss(args: argparse.Namespace) -> int:
     try:
         outcome = proposals_mod.discuss(opened.root, args.proposal_id, args.text,
                                         exchange=_exchange_arg(args, opened.root, opened.project_id),
-                                        expected_id=opened.project_id)
+                                        expected_id=opened.project_id, member=args.from_member)
     except _PROPOSAL_ERRORS as exc:
         raise _proposal_error(exc) from exc
     print(f"Discussion on {args.proposal_id} ({outcome['id']}) written; the proposal stays open")
@@ -1873,7 +1887,7 @@ def cmd_share(args: argparse.Namespace) -> int:
     command = args.share_command
     try:
         if command == "join":
-            done = share_mod.join(args.shared, args.folder)
+            done = share_mod.join(args.shared, args.folder, project=args.project)
             if args.json:
                 print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
                 return 0
@@ -1907,6 +1921,17 @@ def cmd_share(args: argparse.Namespace) -> int:
                       f"{len(done['blobs'])} as blobs; " + ("signed" if done["signed"] else "NOT signed"))
             _print_refused(done)
             return 0
+        if command == "prune":
+            done = share_mod.prune_blobs(root, args.before, apply=args.yes)
+            if args.json:
+                print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+            verb = "Removed" if args.yes else "Would remove"
+            print(f"{verb} {len(done['prunable'])} blob(s), {done['bytes']} byte(s), that no snapshot from "
+                  f"{done['before']} on references ({done['kept']} kept)")
+            if not args.yes and done["prunable"]:
+                print("Dry run: nothing removed. Add --yes to remove them.")
+            return 0
         if command == "sync":
             done = share_mod.sync(root)
             if args.json:
@@ -1923,6 +1948,11 @@ def cmd_share(args: argparse.Namespace) -> int:
                     print(f"    {line}")
             for item in done["kept_yours"]:
                 print(f"  kept yours: {item['path']} ({item['reason']})")
+            if done.get("entries_sent"):
+                print(f"  sent {done['entries_sent']} note(s)/link judgment(s) to your area for the PI (no approval needed)")
+            for rel in done.get("notes_waiting") or []:
+                print(f"  kept yours: {rel} (your entries have not reached the official version yet; it is updated "
+                      f"once they have)")
             _print_refused(done)
             if not done.get("up_to_date"):
                 _scan_after_sync(opened)
@@ -3352,6 +3382,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("proposals", help="The PI's inbox, or a member's own proposals (12.3); --show ID for one")
     p.add_argument("--show", default=None, metavar="ID", help="one proposal; for the PI, exactly what approving would do")
+    p.add_argument("--from", dest="from_member", default=None, metavar="MEMBER",
+                   help="whose proposal, when the same id is in more than one member's area")
     p.add_argument("--exchange", default=None, metavar="DIR")
     p.add_argument("--json", action="store_true")
     add_project_path(p)
@@ -3360,6 +3392,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("approve", help="Approve a proposal into the official version (the PI only, 12.3)")
     p.add_argument("proposal_id", metavar="ID")
     p.add_argument("--note", default=None, help="your note, recorded with the decision")
+    p.add_argument("--from", dest="from_member", default=None, metavar="MEMBER",
+                   help="whose proposal, when the same id is in more than one member's area")
     p.add_argument("--exchange", default=None, metavar="DIR")
     add_project_path(p)
     p.set_defaults(func=cmd_approve)
@@ -3367,6 +3401,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("return", help="Return a proposal with the reason (the PI only); nothing is applied")
     p.add_argument("proposal_id", metavar="ID")
     p.add_argument("--reason", required=True)
+    p.add_argument("--from", dest="from_member", default=None, metavar="MEMBER",
+                   help="whose proposal, when the same id is in more than one member's area")
     p.add_argument("--exchange", default=None, metavar="DIR")
     add_project_path(p)
     p.set_defaults(func=cmd_return)
@@ -3374,6 +3410,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("discuss", help="A note to the member on a proposal (the PI only); it stays open")
     p.add_argument("proposal_id", metavar="ID")
     p.add_argument("--text", required=True)
+    p.add_argument("--from", dest="from_member", default=None, metavar="MEMBER",
+                   help="whose proposal, when the same id is in more than one member's area")
     p.add_argument("--exchange", default=None, metavar="DIR")
     add_project_path(p)
     p.set_defaults(func=cmd_discuss)
@@ -3414,7 +3452,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_path(q)
     q.set_defaults(func=cmd_team)
 
-    p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join'")
+    p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join|prune'")
     share_sub = p.add_subparsers(dest="share_command", required=True)
     q = share_sub.add_parser("set", help="set this project's shared folder on this machine (never inside a project)")
     q.add_argument("directory", metavar="DIR")
@@ -3436,7 +3474,16 @@ def build_parser() -> argparse.ArgumentParser:
     q = share_sub.add_parser("join", help="make a working copy in a new folder from the shared folder's latest verified snapshot")
     q.add_argument("shared", metavar="SHARED")
     q.add_argument("folder", metavar="FOLDER")
+    q.add_argument("--project", default=None, metavar="ID",
+                   help="which project, when the shared folder holds snapshots of more than one")
     q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("prune", help="list (and with --yes remove) published blobs no snapshot from DATE on "
+                                           "references (the PI, 12.2)")
+    q.add_argument("--before", required=True, metavar="YYYY-MM-DD")
+    q.add_argument("--yes", action="store_true", help="remove them (without it: a dry run)")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
     q.set_defaults(func=cmd_share)
 
     p = sub.add_parser(
@@ -3697,7 +3744,7 @@ def build_parser() -> argparse.ArgumentParser:
              "truth (以文件为准), 'restore' appends the missing entries back (把缺少的补回文件)",
     )
     p.add_argument(
-        "--file", choices=["judgements", "notes"], default="judgements",
+        "--file", choices=["judgements", "notes", "decisions"], default="judgements",
         help="with --answer: which ledger the answer is for (default: judgements)",
     )
     p.add_argument("--clean", action="store_true", help="list kept copies nothing refers to (dry run)")

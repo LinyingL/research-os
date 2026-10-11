@@ -27,8 +27,24 @@ written under a temporary name in the same parent, its files written and
 fsynced, renamed into place, `ready.toml` created last; a reader ignores
 anything without it and reports -- never reads -- a name of a shape Research
 OS does not write (a sync service's conflict copy). Nothing published is
-ever modified or deleted. (Pruning old blobs, which 12.2 allows the PI, is
-not offered yet.)
+ever modified; the one deletion is the PI's own 「清理旧文件」 (`prune_blobs`,
+12.2): blobs no snapshot from a chosen date on references -- shown first,
+removed only when confirmed.
+
+**One shared folder, one project.** A folder whose snapshots name another
+project is refused for publishing, and a join that finds snapshots of more
+than one project asks which (`project`); a manifest's project id must have
+the shape of one (it names a folder on the member's machine).
+
+**Notes and link judgments travel without approval** (12.4). A member's
+`notes.toml` and `judgements.toml` are append-only ledgers, never merged
+as files: 「同步」 writes the member's own new entries -- signed, once -- to
+their area as a packet (`提议/<member>/n-…/entries.toml`), and the PI's
+Research OS appends them to the official ledgers when it publishes
+(`collect_entries`), each with the member's `by` and `recovered_from`
+naming the member's entry, so it is carried once. On the member's side the
+official ledger replaces theirs only once it holds every entry theirs
+does; until then theirs is kept, and nothing is put beside it.
 
 **A snapshot's manifest** (TOML)::
 
@@ -141,7 +157,15 @@ MESSAGES = {
     "not_joined": "这个文件夹不是从公盘加入的工作副本",
     "cannot_sign": "无法签名",
     "content": "公盘上的文件内容与快照记录的指纹不符",
+    "other_project": "这个公盘文件夹里已经有另一个项目的快照：每个项目用自己的公盘文件夹",
+    "ambiguous_project": "这个公盘文件夹里有不止一个项目的快照，请指明要加入哪一个",
 }
+
+#: The ledgers whose entries a member's sync carries, without approval
+#: (12.4): file name -> TOML table.
+TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement"}
+_PACKET_HEADER = ("# 成员的笔记和连接判断：不需要批准，PI 的 Research OS 收进正式版本时保留 by。"
+                  "由 Research OS 写入，写成后不再改动。\n")
 
 
 class ShareError(Exception):
@@ -342,6 +366,11 @@ def validate_manifest(data: Mapping[str, Any], seq: int) -> None:
     for name in ("project", "at"):
         if not isinstance(data.get(name), str) or not data[name]:
             raise ValueError(f"{name!r} must be text")
+    from researchos.records.lock import PROJECT_ID_RE  # noqa: PLC0415
+
+    if not PROJECT_ID_RE.match(data["project"]):
+        # It names a folder on every member's machine (working/<id>/).
+        raise ValueError(f"'project' is not a project id: {data['project']!r}")
     if not people.is_member_id(data.get("by")):
         raise ValueError("'by' must name the PI")
     prev_seq, prev_sha = data.get("prev_seq"), data.get("prev_manifest_sha256")
@@ -554,8 +583,24 @@ def publish(
         signing.preflight(me, listed_key)
     except signing.SigningError as exc:
         raise _signing_refused(exc) from exc
+    others = sorted(projects_in(shared_dir) - {pid})
+    if others:
+        raise ShareError("other_project", f"{shared_dir} holds snapshots of another project ({', '.join(others)}); "
+                                          f"each project publishes to its own shared folder", details={"projects": others})
+    collected = collect_entries(root, shared=shared_dir, expected_id=expected_id, timeout=timeout, now=now)
     with write_guard(root, expected_id, timeout=timeout):
-        return _publish_locked(root, pid, me, listed_key, shared_dir, note=note, now=now)
+        done = _publish_locked(root, pid, me, listed_key, shared_dir, note=note, now=now)
+    done["collected"] = collected
+    return done
+
+
+def projects_in(shared: Path) -> set[str]:
+    """The projects the complete snapshots in a shared folder name."""
+    try:
+        snaps, _problems = read_snapshots(shared)
+    except ShareError:
+        return set()
+    return {str(s.data.get("project")) for s in snaps}
 
 
 def _same_files(published: Mapping[str, Mapping[str, Any]], files: Mapping[str, Mapping[str, Any]]) -> bool:
@@ -622,7 +667,8 @@ def _publish_locked(root: Path, pid: str, me: str, listed_key: str | None, share
         ex_mod._write_dir_once(snapshots_dir(shared) / str(seq), contents,
                                ex_mod._ready_bytes("snapshot", str(seq), raw), expect=expect)
     except ExchangeError as exc:
-        raise ShareError("content" if exc.code == "content" else "unreachable", str(exc), message_zh=exc.message_zh) from exc
+        raise ShareError("content" if exc.code in ("content", "damaged") else "unreachable", str(exc),
+                         message_zh=exc.message_zh) from exc
     except OSError as exc:
         raise ShareError("unreachable", f"could not publish: {exc}") from exc
     _record_published(root, pid, files, new_content, me, seq)
@@ -788,11 +834,13 @@ def _base_files(snap: Snapshot) -> dict[str, dict[str, Any]]:
 # -- joining (a member) -------------------------------------------------------------------------------
 
 
-def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] | None = None) -> dict[str, Any]:
+def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] | None = None,
+         project: str | None = None) -> dict[str, Any]:
     """「加入」: a working copy in `folder` (new, or empty) from the latest
     good snapshot; the PI's key from the first snapshot is trusted from now
     on (module docstring) -- its fingerprint is in the answer, to compare
-    with the PI."""
+    with the PI. A folder with snapshots of more than one project is
+    joined only with `project` named."""
     from researchos import proposals  # noqa: PLC0415
 
     me = _me()
@@ -813,6 +861,16 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
     if not snaps:
         raise ShareError("nothing_published", f"no complete snapshot in {snapshots_dir(shared_dir)}",
                          details={"problems": [p.payload() for p in problems]})
+    named = sorted({str(s.data["project"]) for s in snaps})
+    if project is not None:
+        if project not in named:
+            raise ShareError("nothing_published", f"no snapshot of project {project} in {snapshots_dir(shared_dir)} "
+                                                  f"(found: {', '.join(named)})", details={"projects": named})
+        snaps = [s for s in snaps if s.data["project"] == project]
+    elif len(named) > 1:
+        raise ShareError("ambiguous_project", f"{shared_dir} holds snapshots of {len(named)} projects "
+                                              f"({', '.join(named)}); name the one to join (--project)",
+                         details={"projects": named})
     first = snaps[0]
     pid = str(first.data["project"])
     founders = snapshot_team(shared_dir, first)
@@ -932,13 +990,18 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         raise ShareError("untrusted", f"snapshot {state['seq']}, which this copy was made from, no longer verifies in "
                                       f"{shared}; nothing synced", message_zh="这个工作副本所依据的快照在公盘上已经无法验证，没有同步",
                          details={"refused": chain.refused})
+    base = proposals.read_base(pid)
+    if base is None:
+        raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
+    # 12.4: the member's own notes and link judgments go with every sync.
+    out["entries_sent"] = _send_entries(root, pid, state, base, shared, out["problems"], now)
+    if out["entries_sent"]:
+        _write_state(pid, state)  # what was sent is never sent again
     target = chain.last_good
     if target is None or target.seq <= state["seq"]:
         out["up_to_date"] = True
         return out
-    base = proposals.read_base(pid)
-    if base is None:
-        raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
+    out["notes_waiting"] = []
     tfiles = target.files
     needed = []
     plan: list[tuple[str, str, Mapping[str, Any] | None]] = []
@@ -955,10 +1018,19 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         lsha = local.get("sha256") if local else None
         if lsha == t:
             continue
+        ledger = _travelling(rel)
+        carried = _ledger_carried(root, rel, shared, entry) if ledger and entry is not None and lsha != b else None
         if lsha == b:
             plan.append(("update" if entry is not None else "remove", rel, entry))
         elif entry is None:
             out["kept_yours"].append({"path": rel, "reason": "正式版本删除了这个文件；你改过它，所以留着你的"})
+        elif carried == "carried":
+            # Every entry of yours is in the official ledger now: it replaces
+            # yours, nothing lost (module docstring).
+            plan.append(("update", rel, entry))
+        elif carried == "waiting":
+            out["notes_waiting"].append(rel)
+            continue
         else:
             plan.append(("conflict", rel, entry))
         if entry is not None:
@@ -1032,6 +1104,249 @@ def _difference(mine: Path, official: Path, entry: Mapping[str, Any]) -> dict[st
     except OSError:
         sa = sb = None
     return {"summary": history.table_sentence(sa, sb) if (sa or sb) else None}
+
+
+# -- notes and link judgments (12.4: no approval) ------------------------------------------------------------
+
+
+def _travelling(rel: str) -> str | None:
+    prefix = paths.PROJECT_DIRNAME + "/"
+    name = rel[len(prefix):] if rel.startswith(prefix) else None
+    return name if name in TRAVELLING else None
+
+
+def _schema(name: str):
+    from researchos.records import ledger as ledger_mod  # noqa: PLC0415
+    from researchos.records import notes as notes_mod  # noqa: PLC0415
+
+    return notes_mod.NOTES_SCHEMA if name == "notes.toml" else ledger_mod.JUDGEMENT_SCHEMA
+
+
+def _parse(text: str | None, name: str):
+    from researchos.records import ledger as ledger_mod  # noqa: PLC0415
+
+    if text is None:
+        return None
+    try:
+        return ledger_mod.parse_ledger(text.removeprefix("\ufeff"), _schema(name))
+    except ledger_mod.LedgerInvalidError:
+        return None
+
+
+def _represented(ledger) -> set[str]:
+    """The entry ids a ledger holds, itself or as the copy of one."""
+    return {e.id for e in ledger.entries} | {str(e.get("recovered_from")) for e in ledger.entries
+                                               if isinstance(e.get("recovered_from"), str)}
+
+
+def _ledger_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any]) -> str | None:
+    """"carried" when the official ledger holds every entry of the
+    member's, "waiting" when some of theirs has not reached it yet, None
+    when either cannot be read (then the file is treated like any other)."""
+    name = _travelling(rel)
+    try:
+        mine = _parse((root / rel).read_text(encoding="utf-8"), name)
+        official = _parse(_read_content(shared, entry).decode("utf-8"), name)
+    except (OSError, UnicodeDecodeError, ShareError):
+        return None
+    if mine is None or official is None:
+        return None
+    return "carried" if {e.id for e in mine.entries} <= _represented(official) else "waiting"
+
+
+def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Path, problems: list[dict[str, Any]],
+                  now: Callable[[], datetime] | None) -> int:
+    """The member's own new ledger entries, written once to their area
+    (module docstring); `state["sent_entries"]` remembers what was sent."""
+    from researchos.records import ledger as ledger_mod  # noqa: PLC0415
+
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        me = None
+    if me is None:
+        return 0
+    sent = set(state.get("sent_entries") or [])
+    blocks: list[bytes] = []
+    ids: list[str] = []
+    for name in TRAVELLING:
+        rel = f"{paths.PROJECT_DIRNAME}/{name}"
+        try:
+            mine = _parse((root / rel).read_text(encoding="utf-8"), name)
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append({"kind": "entries_not_sent", "path": rel, "detail": f"无法读取：{exc}"})
+            continue
+        if mine is None:
+            problems.append({"kind": "entries_not_sent", "path": rel, "detail": "记录文件无法读取，没有发送"})
+            continue
+        known = _parse(base.text(rel), name)
+        known_ids = _represented(known) if known is not None else set()
+        for e in mine.entries:
+            if e.id in known_ids or e.id in sent or e.get("by") != me:
+                continue
+            data = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in e.data.items()}
+            blocks.append(ledger_mod.emit_entry(_schema(name), data))
+            ids.append(e.id)
+    if not blocks:
+        return 0
+    from researchos import proposals  # noqa: PLC0415
+
+    packet_id = "n-" + secrets.token_hex(16)
+    head = proposals.emit({"format": FORMAT, "id": packet_id, "project": pid, "by": me, "at": _now_iso(now)},
+                          _PACKET_HEADER)
+    raw = head + b"".join(blocks)
+    try:
+        tomllib.loads(raw.decode("utf-8"))
+        team = people.read_team(root)
+        key = next((m.key for m in team.members if m.id == me), None)
+        signature = signing.sign_as(me, key, raw)
+        ex_mod.LocalExchange(shared).write_packet(me, packet_id, raw, signature)
+    except (tomllib.TOMLDecodeError, signing.SigningError, ExchangeError, OSError) as exc:
+        problems.append({"kind": "entries_not_sent", "path": str(shared),
+                         "detail": f"笔记和连接判断没有发送：{getattr(exc, 'message_zh', None) or exc}"})
+        return 0
+    state["sent_entries"] = sorted(sent | set(ids))
+    return len(ids)
+
+
+def collect_entries(official_root: str | Path, *, shared: Path | None = None, expected_id: Any = READ_NOW,
+                    timeout: float | None = None, now: Callable[[], datetime] | None = None) -> dict[str, Any]:
+    """The PI's side: every member's packets appended to the official
+    ledgers (module docstring) -- each entry once (`recovered_from`), with
+    the member's `by`; a packet not signed by its member, of another
+    project, or an entry not the member's own, is reported and not taken.
+    Contained: publishing goes on whatever this says."""
+    from researchos.records import judgements as judgements_mod  # noqa: PLC0415
+    from researchos.records import ledger as ledger_mod  # noqa: PLC0415
+    from researchos.records import notes as notes_mod  # noqa: PLC0415
+
+    root = Path(official_root)
+    out: dict[str, Any] = {"appended": 0, "problems": []}
+    try:
+        pid = _project_id(root)
+        team = people.read_team(root)
+        shared_dir = Path(shared) if shared is not None else shared_for(pid, root)
+        ex = ex_mod.LocalExchange(shared_dir, verifier=ex_mod.verifier_for(root, pid))
+        members = [m.id for m in team.members if m.role == "member"]
+        incoming: list[tuple[str, str, dict[str, Any]]] = []
+        for member in members:
+            packets, problems = ex.packets(member)
+            out["problems"] += [p.payload() for p in problems]
+            for packet_id, _raw, data, check in sorted(packets, key=lambda p: (str(p[2].get("at") or ""), p[0])):
+                if check is not None and not check.trusted:
+                    out["problems"].append({"kind": "unverified", "path": packet_id, "detail": check.message_zh})
+                    continue
+                if data.get("project") != pid:
+                    out["problems"].append({"kind": "wrong_project", "path": packet_id, "detail": "属于另一个项目"})
+                    continue
+                for name, table in TRAVELLING.items():
+                    for entry in data.get(table) or []:
+                        incoming.append((name, member, entry))
+        if not incoming:
+            return out
+        with write_guard(root, expected_id, human=True, timeout=timeout) as held:
+            identity = read_identity(root).identity
+            conn = notes_mod._open_index(identity)
+            try:
+                for name in TRAVELLING:
+                    batch = [(m, e) for n, m, e in incoming if n == name]
+                    if not batch:
+                        continue
+                    schema = _schema(name)
+                    path = paths.project_dir(root) / name
+                    for member, entry in batch:
+                        loaded, decision = (notes_mod.assess(conn, root, identity) if name == "notes.toml"
+                                            else judgements_mod.assess(conn, root, identity))
+                        if not decision.may_write:
+                            out["problems"].append({"kind": "ledger_untrusted", "path": name,
+                                                    "detail": f"{decision.reason}: 成员的记录没有收进来"})
+                            break
+                        ledger = loaded.ledger
+                        renamed = {str(e.get("recovered_from")): e.id for e in (ledger.entries if ledger else ())
+                                   if isinstance(e.get("recovered_from"), str)}
+                        if ledger is not None and str(entry.get("id")) in _represented(ledger):
+                            continue
+                        try:
+                            if not isinstance(entry, dict) or entry.get("by") != member:
+                                raise ValueError("an entry carried from a member's area is that member's own")
+                            ledger_mod._validate_engine_fields(schema, entry)
+                            schema.validate(entry)
+                        except ValueError as exc:
+                            out["problems"].append({"kind": "invalid", "path": name, "detail": str(exc)})
+                            continue
+                        fields = {k: v for k, v in entry.items() if k not in ("id", "seq", "at", "settles")}
+                        fields["recovered_from"] = str(entry["id"])
+                        if entry.get("at") is not None:
+                            fields["recovered_at"] = str(entry["at"])
+                        if entry.get("undoes"):
+                            fields["undoes"] = renamed.get(str(entry["undoes"]), str(entry["undoes"]))
+                        try:
+                            ledger_mod.append(path, schema, fields, lock=held, project_root=root,
+                                              create=decision.may_create, now=now)
+                        except ledger_mod.LedgerWriteRefused as exc:
+                            out["problems"].append({"kind": "not_taken", "path": name, "detail": str(exc)})
+                            continue
+                        if loaded.state is record_files.RecordState.ABSENT:
+                            record_files.snapshot_if_first_change_today(root, path, now=now)
+                        out["appended"] += 1
+                notes_mod.apply_notes(conn, root, identity=identity)
+            finally:
+                conn.close()
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        logger.exception("collecting members' notes into %s failed", root)
+        out["problems"].append({"kind": "failed", "path": str(root), "detail": str(exc)})
+    return out
+
+
+# -- pruning old blobs (the PI, 12.2) -----------------------------------------------------------------------
+
+
+def prune_blobs(official_root: str | Path, before: str, *, shared: str | Path | None = None,
+                apply: bool = False) -> dict[str, Any]:
+    """「清理旧文件」: the blobs in 已发布/blobs that no snapshot dated
+    `before` (YYYY-MM-DD) or later references -- the latest good snapshot is
+    always kept whole. Lists them; removes them only with `apply`. The PI
+    only."""
+    root = Path(official_root)
+    pid = _project_id(root)
+    me, team = _require_pi_team(root)
+    try:
+        cutoff = datetime.strptime(before, "%Y-%m-%d").date().isoformat()
+    except (TypeError, ValueError) as exc:
+        raise ShareError("invalid", f"--before takes a date, YYYY-MM-DD, got {before!r}") from exc
+    shared_dir = shared_for(pid, root, shared)
+    snaps, problems = read_snapshots(shared_dir)
+    chain = verify_chain(shared_dir, snaps, pid, me, team.pi.key if team.pi else None)
+    if chain.last_good is None:
+        raise ShareError("nothing_published", f"no verified snapshot in {shared_dir}; nothing is pruned")
+    keep: set[str] = set()
+    # Every complete snapshot from the cutoff on counts (verified or not):
+    # a blob is removed only when nothing recent could name it.
+    for snap in snaps:
+        if str(snap.data.get("at") or "")[:10] >= cutoff or snap.seq == chain.last_good.seq:
+            keep |= {e["sha256"] for e in snap.data.get("file", []) if e.get("store") == STORE_BLOB}
+    if problems:
+        raise ShareError("invalid", "the shared folder holds snapshots Research OS could not read; nothing is pruned",
+                         details={"problems": [p.payload() for p in problems]})
+    area = blobs_dir(shared_dir)
+    found = []
+    if area.is_dir():
+        for name in sorted(os.listdir(area)):
+            path = area / name
+            if ex_mod.SHA_RE.match(name) and name not in keep and path.is_file() and not path.is_symlink():
+                found.append({"sha256": name, "size": path.stat().st_size})
+    removed = []
+    if apply:
+        for item in found:
+            try:
+                (area / item["sha256"]).unlink()
+                removed.append(item["sha256"])
+            except OSError as exc:
+                logger.warning("blob %s not removed: %s", item["sha256"], exc)
+    return {"before": cutoff, "kept": len(keep), "prunable": found, "bytes": sum(i["size"] for i in found),
+            "removed": removed, "applied": apply}
 
 
 # -- the team (the PI) ------------------------------------------------------------------------------------

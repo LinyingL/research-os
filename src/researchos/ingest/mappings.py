@@ -706,6 +706,8 @@ def _emit_entry(entry: dict[str, str], newline: str) -> str:
         lines.append(f"note = {_toml_string(entry['note'])}")
     if entry.get("date") is not None:
         lines.append(f"date = {_toml_string(entry['date'])}")
+    if entry.get("by") is not None:
+        lines.append(f"by   = {_toml_string(entry['by'])}")
     return newline.join(lines) + newline
 
 
@@ -834,6 +836,16 @@ def _add_mapping(
     if note is not None:
         entry["note"] = note
     entry["date"] = date
+    # 12.1: every entry Research OS writes carries who wrote it (none
+    # without me.toml: the project's first researcher).
+    from researchos import people  # noqa: PLC0415
+
+    try:
+        author = people.current_member_id()
+    except people.PeopleError as exc:
+        raise MappingsWriteError("no_me", f"who you are cannot be read: {exc}") from exc
+    if author is not None:
+        entry["by"] = author
     newline = _newline_of(old_text)
     if old_text is None:
         new_text = FILE_HEADER + _emit_entry(entry, newline)

@@ -251,7 +251,8 @@ def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
 def proposal_act_payload(root: Path, project_id: str | None, proposal_id: str, action: str, body: dict[str, Any], *,
                          timeout: float, ingest_lock: Any = None) -> dict[str, Any]:
     """POST /api/proposals/<id>/approve {note?} | return {reason} | discuss
-    {text}: the PI only (refused otherwise, nothing written)."""
+    {text}: the PI only (refused otherwise, nothing written). `from` names
+    whose proposal it is when the id is in more than one member's area."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     def text(name: str) -> str | None:
@@ -261,16 +262,17 @@ def proposal_act_payload(root: Path, project_id: str | None, proposal_id: str, a
         return value
 
     def run() -> dict[str, Any]:
+        member = text("from")
         if action == "approve":
             done = proposals_mod.approve(root, proposal_id, note=text("note"), via="app", expected_id=project_id,
-                                         timeout=timeout, ingest_lock=ingest_lock, rescan=False)
+                                         timeout=timeout, ingest_lock=ingest_lock, rescan=False, member=member)
             return {"ok": True, **done}
         if action == "return":
             return {"ok": True, "outcome": proposals_mod.return_(root, proposal_id, text("reason") or "",
-                                                                 expected_id=project_id, timeout=timeout)}
+                                                                 expected_id=project_id, timeout=timeout, member=member)}
         if action == "discuss":
             return {"ok": True, "outcome": proposals_mod.discuss(root, proposal_id, text("text") or "",
-                                                                 expected_id=project_id, timeout=timeout)}
+                                                                 expected_id=project_id, timeout=timeout, member=member)}
         raise NodeApiRefused(404, "bad_action", f"no such action on a proposal: {action!r}", "不支持的操作")
 
     return _proposal_call(run)
@@ -330,11 +332,13 @@ def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:
     inside a project, or anywhere not empty."""
     from researchos import share  # noqa: PLC0415
 
-    shared, folder = body.get("shared"), body.get("folder")
+    shared, folder, project = body.get("shared"), body.get("folder"), body.get("project")
+    if project is not None and not isinstance(project, str):
+        raise NodeApiRefused(400, "missing", "'project' must be text", "项目编号不对")
     if not isinstance(shared, str) or not shared.strip() or not isinstance(folder, str) or not folder.strip():
         raise NodeApiRefused(400, "missing", "request body must carry string 'shared' and 'folder'", "请选择公盘文件夹和工作副本的位置")
     shared_path, folder_path = Path(shared).expanduser(), Path(folder).expanduser()
     if not shared_path.is_absolute() or not folder_path.is_absolute():
         # Never resolved against the engine's own working directory.
         raise NodeApiRefused(400, "not_absolute", "'shared' and 'folder' must be absolute paths", "请给出完整的文件夹路径")
-    return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path))}
+    return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path, project=project))}
