@@ -15,7 +15,7 @@
 // What it reads (all GET, all origin-checked by the server):
 //   /api/routes             -- 研究路线: the attempts grouped by status;
 //   /api/evidence?node=     -- an abandoned route's frozen basis;
-//   /api/history/version?node=&version= -- one kept version's content;
+//   /api/history/version?node=&sha256= (or &version=) -- one kept version's content;
 //   /api/proposals, /api/proposals/<id> -- the inbox / 我的提议, one proposal;
 //   /api/share, /api/share/sync-preview -- the shared folder, what 同步 would do;
 //   /api/me, /api/me/key    -- who I am, my public key.
@@ -113,28 +113,59 @@
     return s + "；写成以后不再改动。你的工作副本不会改变。";
   }
 
-  // What 发布 writes, before it is pressed.
+  // What the members' packets carry, in words: 「1 条笔记、增加 2 条连线、删除 1 条连线」.
+  function packetWords(c) {
+    if (!c) return "";
+    const parts = [];
+    if (c.notes) parts.push(c.notes + " 条笔记");
+    if (c.judgements) parts.push(c.judgements + " 条关联判断");
+    if (c.links_added) parts.push("增加 " + c.links_added + " 条连线");
+    if (c.links_removed) parts.push("删除 " + c.links_removed + " 条连线");
+    return parts.join("、");
+  }
+
+  // What 发布 writes, before it is pressed (12.12: the members' packets
+  // are appended to the official ledgers in the project first).
   function publishWrites(share) {
     const last = share && share.last_snapshot;
     const next = last ? Number(last.seq) + 1 : 1;
     const pending = (share && share.pending_publish) || {};
-    let s = "发布会在公盘的「已发布/snapshots/」里写入第 " + next + " 版快照，并用你的密钥签名";
+    const coming = (share && share.incoming) || {};
+    const carried = packetWords(coming);
+    let s = "";
+    if (carried) {
+      s += "发布前，先把成员同步来的 " + carried + "（" + ((coming.members || []).join("、") || "成员") +
+        "）加进项目里的正式记录" + ((coming.files || []).length ? "（" + coming.files.join("、") + "）" : "") +
+        "，署成员的名字，不需要批准" + (coming.links_removed ? "；删除的连线会从正式版本里去掉" : "") + "。然后";
+    } else {
+      s += "发布";
+    }
+    if (last && !pending.count && !carried) {
+      return "和第 " + last.seq + " 版相比没有文件不同：发布不会写入新的版本。项目文件夹里不写入任何东西。";
+    }
+    s += (carried ? "在" : "会在") + "公盘的「已发布/snapshots/」里写入第 " + next + " 版快照，并用你的密钥签名";
     if (last && pending.count) s += "：和第 " + last.seq + " 版相比有 " + pending.count + " 个文件不同";
-    else if (last) s += "：和第 " + last.seq + " 版相比没有文件不同，只会再记一版";
+    else if (last) s += "：带上这些记录的改动";
     else s += "：这是第一版，正式版本的每个文件都会写进去（大文件按内容只存一份）";
-    return s + "。项目文件夹里不写入任何东西。";
+    return s + "。" + (carried ? "" : "项目文件夹里不写入任何东西。");
   }
 
-  // What 同步 writes, from the engine's look at it (sync-preview).
+  // What 同步 writes, from the engine's look at it (sync-preview): first
+  // what it sends (12.12: notes, judgments and links, without approval),
+  // then what it brings.
   function syncWrites(p) {
     if (!p) return "";
-    if (p.up_to_date) return "你的工作副本已经是最新的官方版本，同步只会发送你的笔记和判断。";
     if (p.untrusted) return "你的工作副本所依据的版本在公盘上已经无法验证，不能同步。";
+    const sending = packetWords(p.sending);
+    const send = sending ? "同步会先把你还没发送的 " + sending + "写进公盘的「" + (p.area || "提议/你的邮箱/") +
+      "」：不需要批准，PI 下次发布时加入正式记录。" : "";
+    if (p.up_to_date) return send + "你的工作副本已经是最新的官方版本" + (send ? "。" : "，没有要发送的笔记、判断或连线。");
     const parts = [];
     if (p.update && p.update.length) parts.push("更新 " + p.update.length + " 个你没改过的文件");
     if (p.remove && p.remove.length) parts.push("删除 " + p.remove.length + " 个正式版本已删除的文件");
     if (p.beside && p.beside.length) parts.push(p.beside.length + " 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）");
-    let s = "同步会把工作副本带到第 " + p.to + " 版";
+    if (p.records && p.records.length) parts.push("笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的");
+    let s = send + (send ? "然后" : "同步会") + "把工作副本带到第 " + p.to + " 版";
     s += parts.length ? "：" + parts.join("；") : "";
     return s + "。从不合并，你改过的内容不会被覆盖。";
   }
@@ -175,17 +206,45 @@
     const items = flash[key] || [];
     if (!items.length) return;
     const box = mk("div", "team-flash");
-    items.forEach((f) => box.appendChild(mk("p", "team-done" + (f.strong ? " strong" : ""), f.text)));
+    items.forEach((f) => {
+      box.appendChild(mk("p", "team-done" + (f.strong ? " strong" : ""), f.text));
+      if (f.diff || f.summary) box.appendChild(differenceBlock(f, true));
+    });
     page.insertBefore(box, before || page.firstChild);
   }
 
   // After an act: the view rebuilt at once (even over a field still
   // holding text), its sentence kept.
-  function after(key, items) {
+  // The sentence is brought into view: the researcher acted far down the
+  // page (添加成员, 讨论) and must see what the act did -- and, after 加入团队,
+  // what they must do in OneDrive.
+  async function after(key, items) {
     flash[key] = items || [];
-    if (key === "members") return loadMembers(views.members, true, true);
-    if (key === "proposals") return loadProposals(views.proposals, true, true);
-    return loadRoutes(views.tree, true, true);
+    const host = key === "members" ? views.members : key === "proposals" ? views.proposals : views.tree;
+    if (key === "members") await loadMembers(host, true, true);
+    else if (key === "proposals") await loadProposals(host, true, true);
+    else await loadRoutes(host, true, true);
+    if (flash[key].length) revealFlash(host);
+  }
+
+  function revealFlash(host) {
+    const box = host && host.querySelector(".team-flash");
+    if (!box) return;
+    box.setAttribute("tabindex", "-1");
+    box.setAttribute("role", "status");
+    if (typeof box.scrollIntoView === "function") box.scrollIntoView({ block: "center" });
+    try { box.focus({ preventScroll: true }); } catch (err) { /* focus is a convenience */ }
+  }
+
+  // 12.3: the difference between the member's file and the official one
+  // put beside it -- yours first, then the official one.
+  function differenceBlock(f, open) {
+    const d = mk("details", "proposal-diff");
+    d.appendChild(mk("summary", null, "你的和官方的有什么不同"));
+    if (f.diff) d.appendChild(RONode.diffBlock(RONode._diffRows(f.diff), f.truncated));
+    else d.appendChild(mk("p", "desk-note plain", f.summary || "两个文件不同（不是文本，没有逐行比较）"));
+    if (open) d.open = true;
+    return d;
   }
 
   function now() { return new Date(); }
@@ -331,9 +390,9 @@
     data.groups.forEach((g) => {
       if (view.filter === "abandoned" && g.status !== "abandoned") return;
       const sec = mk("section", "route-group");
-      const head = mk("h2", "route-group-title");
-      head.appendChild(label(g.label, RODesk._toneOf({ status: g.status })));
-      sec.appendChild(head);
+      // 12.11: the heading is a word set in weight; the tinted label is
+      // the verdict's, on each row, followed by the researcher's words.
+      sec.appendChild(mk("h2", "route-group-title", g.label));
       const ul = mk("ul", "route-list");
       g.items.forEach((item) => ul.appendChild(routeRow(item)));
       sec.appendChild(ul);
@@ -485,11 +544,13 @@
         if (slot.childElementCount) { slot.innerHTML = ""; btn.textContent = "查看当时的内容"; btn.setAttribute("aria-expanded", "false"); return; }
         btn.disabled = true;
         try {
-          const v = await apiGet("/api/history/version?node=" + encodeURIComponent(f.node) + "&version=" + encodeURIComponent(f.version));
+          // By fingerprint: the version number is the approving machine's own.
+          const v = await apiGet("/api/history/version?node=" + encodeURIComponent(f.node) +
+            (f.sha256 ? "&sha256=" + encodeURIComponent(f.sha256) : "&version=" + encodeURIComponent(f.version)));
           slot.innerHTML = "";
           if (v.text == null) slot.appendChild(line(v.reason || "这一版没有保存内容。", "quiet"));
           else {
-            slot.appendChild(mk("div", "desk-meta", "当时的内容，记下于 " + when(v.at)));
+            slot.appendChild(mk("div", "desk-meta", v.at ? "当时的内容，记下于 " + when(v.at) : "当时的内容"));
             slot.appendChild(mk("pre", "evidence-text", v.text));
             if (v.truncated) slot.appendChild(line("内容太长，只显示了开头。", "quiet"));
           }
@@ -525,6 +586,17 @@
     view.proposal = null;
     view.member = null;
     loadProposals(views.proposals);
+  }
+
+  // The sidebar's 提议: the list (inbox or 我的提议), read afresh, even
+  // from one proposal's page.
+  function showList() {
+    view.proposal = null;
+    view.member = null;
+    delete views.proposals.dataset.loaded;
+    if (currentView === "proposals") loadProposals(views.proposals);
+    else activateView("proposals");
+    window.scrollTo(0, 0);
   }
 
   async function loadProposals(host, refresh, acted) {
@@ -734,7 +806,7 @@
 
   // The member's own view: what the proposal carries.
   function renderCarried(page, full) {
-    const s = sec(full.state === "approved" ? "已写入正式版本的" : "提议里带着的");
+    const s = sec(full.state === "approved" ? "已写入正式版本的改动" : "提议带来的改动");
     if (full.attempt) {
       const a = full.attempt;
       const p = mk("p", "desk-head");
@@ -771,6 +843,14 @@
         if (f.content) li.appendChild(mk("div", "evidence-sha mono", f.content));
       }
       if (changes && f.reason) li.appendChild(mk("p", "desk-break", f.reason));
+      // 12.3: for data, the fingerprint and -- for tables -- rows and columns.
+      if (f.action !== "removed" && f.sha256 && (f.store === "blob" || f.table_words || f.summary_words)) {
+        const fp = mk("div", "desk-meta", "指纹 ");
+        fp.appendChild(mk("span", "mono", String(f.sha256).slice(0, 16)));
+        fp.title = String(f.sha256);
+        li.appendChild(fp);
+      }
+      if (f.table_words && f.table_words !== f.summary_words) li.appendChild(mk("p", "desk-note plain", "表格：" + f.table_words));
       if (f.summary_words) li.appendChild(mk("p", "desk-note plain", f.summary_words));
       if (f.diff) {
         const d = mk("details", "proposal-diff");
@@ -834,7 +914,13 @@
       s.appendChild(fileList(files, c));
     }
     if (!a && !v && !files.length) s.appendChild(line("这份提议没有带来任何改动。", "quiet"));
-    s.appendChild(line("批准还会在 decisions.toml 里记下一条：提议人 " + full.by + "，批准人是你；然后把正式版本发布到公盘。", "quiet"));
+    const ctxNow = RODesk.context();
+    const coming = ctxNow && ctxNow.share && ctxNow.share.incoming;
+    const carried = packetWords(coming);
+    s.appendChild(line("批准还会在 decisions.toml 里记下一条：提议人 " + RODesk.nameOf(full.by, (ctxNow && ctxNow.share && ctxNow.share.team) || []) +
+      "，批准人是你；然后把正式版本发布到公盘" +
+      (carried ? "。发布前会先把成员同步来的 " + carried + "加进正式记录（不需要批准）" : "") + "。", carried ? "writes" : "quiet"));
+    if (carried) s.appendChild(removalList(coming));
     page.appendChild(s);
     if ((c.not_carried || []).length) {
       const n = sec("没有随提议发送的改动");
@@ -937,6 +1023,7 @@
       const done = act === "approve" ? approveSentence(res)
         : act === "return" ? "已退回：" + name + " 会看到你的理由。" : "已写下：提议保持打开。";
       await RODesk.refreshSidebar();
+      markViewsStale(); // 研究路线 and the desk list this proposal too
       await after("proposals", [{ text: done }]);
       if (act === "approve" && typeof pollGeneration === "function") pollGeneration();
     }
@@ -1121,8 +1208,12 @@
       send.textContent = "已发送";
       view.compose = null;
       await RODesk.refreshSidebar();
+      // Every view now marks what this proposal carries 「提议中」: the
+      // hidden ones reload on their next showing, the open one now.
+      markViewsStale();
       if (currentView === "proposals" && !view.proposal) await after("proposals", [{ text: sent }]);
-      else if (currentView === "tree") await loadRoutes(views.tree, true, true); // the row now reads 提议中
+      else if (currentView === "tree") await loadRoutes(views.tree, true, true);
+      else if (typeof refreshCurrentView === "function" && currentView !== "proposals") await refreshCurrentView();
       if (typeof pollGeneration === "function") pollGeneration();
       return res;
     });
@@ -1356,6 +1447,7 @@
     const note = textInput("这一版的说明（可以不写）");
     s.appendChild(field("发布说明", note));
     s.appendChild(line(publishWrites(share), "writes"));
+    s.appendChild(removalList(share.incoming));
     const status = mk("div", "notice-status");
     const btn = mkButton("发布", "btn btn-primary", async () => {
       btn.disabled = true;
@@ -1370,7 +1462,9 @@
       }
       note.value = "";
       await RODesk.refreshSidebar();
-      await after("members", [{ text: "已发布第 " + (res.seq != null ? res.seq : "") + " 版：成员同步以后就会看到。" }]);
+      markViewsStale(); // the records the packets brought are in every view now
+      await after("members", [{ text: res.published === false ? "和上一版相比没有改动，没有写入新的版本。"
+        : "已发布第 " + (res.seq != null ? res.seq : "") + " 版：成员同步以后就会看到。" }]);
     });
     s.append(btn, status);
     page.appendChild(s);
@@ -1424,6 +1518,28 @@
     page.appendChild(s);
   }
 
+  // The link removals a publish would apply, each named (12.12: a member's
+  // removal takes a link out of the official version).
+  const RELATION_WORDS = { reads: "读取", writes: "写出", generates: "生成", belongs_to: "属于", includes: "引用",
+    cites: "引用", backed_by: "依据" };
+  function removalList(coming) {
+    const wrap = mk("div", "team-removals");
+    const list = (coming && coming.removals) || [];
+    if (!list.length) return wrap;
+    const det = mk("details", "team-pending");
+    det.appendChild(mk("summary", null, "会删除的连线（" + list.length + " 条）"));
+    const ul = mk("ul", "desk-files");
+    list.forEach((r) => {
+      const li = mk("li");
+      li.append(mk("span", "mono", r.from), " " + (RELATION_WORDS[r.type] || "关联") + " ", mk("span", "mono", r.to),
+        mk("span", "team-help", "删除人 " + (r.by || "")));
+      ul.appendChild(li);
+    });
+    det.appendChild(ul);
+    wrap.appendChild(det);
+    return wrap;
+  }
+
   // A member's copy: the PI's key as trusted on joining, the shared
   // folder, 同步 with what it will write first (12.3, 12.5).
   function renderMemberShare(page, share) {
@@ -1446,8 +1562,21 @@
     if ((share.refused || []).length) s.appendChild(line("公盘上有 " + share.refused.length + " 个版本没有通过签名验证，没有采用；采用的是最后一个通过验证的版本。", "warn"));
     if ((j.official_copies || []).length) {
       s.appendChild(mk("h3", "panel-h3", "放在旁边的官方版本"));
+      s.appendChild(line("你的文件没有动；官方的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
       const ul = mk("ul", "desk-files");
-      j.official_copies.forEach((c) => ul.appendChild(mk("li", "mono", c)));
+      const beside = j.beside || j.official_copies.map((c) => ({ copy: c }));
+      beside.forEach((b) => {
+        const li = mk("li", "beside-item");
+        const head = mk("div", "desk-head");
+        if (b.path) {
+          head.append(mkButton(b.path, "desk-link mono", () => RONode.openNode(b.path)), " 旁边：");
+        }
+        head.appendChild(mkButton(b.copy, "desk-link mono", () => RONode.openNode(b.copy)));
+        li.appendChild(head);
+        if (b.diff || b.summary) li.appendChild(differenceBlock(b, false));
+        else if (b.gone) li.appendChild(mk("p", "desk-note plain", "你自己的那一份已经不在了。"));
+        ul.appendChild(li);
+      });
       s.appendChild(ul);
     }
     const writes = line("正在查看同步会写入什么…", "writes");
@@ -1464,10 +1593,9 @@
         return;
       }
       btn.disabled = false;
-      const lists = [];
-      (res.conflicts || []).forEach((c) => lists.push({ text: "官方的 " + c.path + " 放在了旁边：" + (c.official_copy || "") + "；你的没有动。" }));
+      markViewsStale(); // every view now shows the newer official version
       await RODesk.refreshSidebar();
-      await after("members", [{ text: syncDone(res) }].concat(lists));
+      await after("members", syncFlash(res));
       if (typeof pollGeneration === "function") pollGeneration();
     });
     btn.disabled = true;
@@ -1491,12 +1619,32 @@
     });
   }
 
+  // What 同步 did, counted from what it reports: `conflicts` are the
+  // files with an .official copy beside them; `kept_yours` were left as
+  // yours with nothing beside (the canvas, a file the official version
+  // deleted); `notes_waiting` are record files whose entries have not
+  // reached the official version yet.
   function syncDone(res) {
-    if (res.up_to_date) return "已经是最新的官方版本" + (res.entries_sent ? "；你的笔记和判断已发送。" : "。");
+    const sent = res.entries_sent ? "已把你的 " + res.entries_sent + " 条笔记、判断或连线改动发送到公盘" : "";
+    if (res.up_to_date) return "已经是最新的官方版本" + (sent ? "；" + sent : "") + "。";
     const parts = ["已同步到第 " + res.seq + " 版"];
+    if (sent) parts.push(sent);
     if ((res.updated || []).length) parts.push("更新了 " + res.updated.length + " 个文件");
+    if ((res.removed || []).length) parts.push("删除了 " + res.removed.length + " 个正式版本已删除的文件");
     if ((res.conflicts || []).length) parts.push(res.conflicts.length + " 个两边都改过的文件留着你的，官方的一份放在旁边");
+    if ((res.kept_yours || []).length) parts.push(res.kept_yours.length + " 个文件留着你的（" +
+      res.kept_yours.map((k) => k.reason).filter(Boolean)[0] + "）");
+    if ((res.notes_waiting || []).length) parts.push("你的笔记和连线还在等 PI 发布，记录文件暂时留着你的");
     return parts.join("；") + "。";
+  }
+
+  // The flash lines of one sync: the sentence, then each .official copy
+  // with its difference.
+  function syncFlash(res) {
+    const lists = [{ text: syncDone(res) }];
+    (res.conflicts || []).forEach((c) => lists.push({ text: "官方的 " + c.path + " 放在了旁边：" + (c.official_copy || "") + "；你的没有动。",
+      diff: c.diff, truncated: c.truncated, summary: c.summary }));
+    return lists;
   }
 
   // 我的公钥: what a member sends the PI (12.5).
@@ -1662,11 +1810,12 @@
   }
 
   window.ROTeam = Object.freeze({
-    loadRoutes, loadProposals, loadMembers, openProposal, openEvidence, openJoinDialog, showAbandoned,
-    composeInto, mode,
+    loadRoutes, loadProposals, loadMembers, openProposal, openEvidence, openJoinDialog, showAbandoned, showList,
+    composeInto, mode, syncWrites, syncDone, syncFlash, differenceBlock,
     // pure, for tests/test_v8_u4.py
     _sizeWords: sizeWords, _stateLabel: stateLabel, _signatureWords: signatureWords, _approveSentence: approveSentence,
     _sendWrites: sendWrites, _publishWrites: publishWrites, _syncWrites: syncWrites, _joinWrites: joinWrites,
+    _packetWords: packetWords, _syncDone: syncDone,
     _reasonSource: reasonSource, _routeProposals: routeProposals,
   });
 })();

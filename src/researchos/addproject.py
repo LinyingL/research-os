@@ -985,9 +985,15 @@ def _run_scan(root: Path, project_id: str, progress: Progress, echo: Echo) -> Sc
                 zotero_pair = scan_mod.SOURCE_SEPARATOR + scan_mod.ZOTERO_STORE
                 # 11.4: a citations source `<draft>\x1fzotero` that could not be
                 # read is the Zotero library, not the draft -- said once, apart.
+                # Only files: the git history (`commits`) and the stale-verdict
+                # check (`check`, unreadable whenever the project has no git
+                # history) are sources of the scan, not files anyone can make
+                # readable again -- never named on the page as a file.
                 report.unreadable_sources = sorted(
                     f"{row['extractor']}: {scan_mod.file_of(row['source'])}"
                     for row in unreadable if not row["source"].endswith(zotero_pair)
+                    and (row["extractor"], row["source"]) not in (("git", scan_mod.GIT_SOURCE),
+                                                                  ("attempts_consistency", scan_mod.CHECK_SOURCE))
                 )
                 if any(row["source"].endswith(zotero_pair) for row in unreadable):
                     report.notes.append("Zotero library not read; citation candidates from it keep their previous state")

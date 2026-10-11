@@ -45,7 +45,7 @@
   const DIFFS_AUTO = 5;
   const LINKS_SHOWN = 40;
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
-  const SOURCE_WORDS = { scan: "本机扫描时记下", approval: "批准后写入", publish: "发布时记下", git: "git 提交", card: "定义卡记录" };
+  const SOURCE_WORDS = { scan: "扫描时记下", approval: "批准后写入", publish: "发布时记下", git: "git 提交", card: "定义卡记录" };
   const VIA_WORDS = { step_files: "步骤脚本", belongs_to: "人工关联" };
   const STATUS_WORDS = { pending: "待确认", confirmed: "已确认", rejected: "已否决", auto: "机器提取" };
   const JUDGE_WORDS = { confirmed: "确认了", rejected: "否决了", withdrawn: "撤回了对它的判断", undone: "撤销了上一次判断" };
@@ -91,7 +91,7 @@
 
   // A link said in words: 「17-定价检验.py 写出 fig_vol.png」.
   function linkSentence(link) {
-    return (link.src_label || link.src) + " " + (link.relation || link.type) + " " + (link.dst_label || link.dst);
+    return (link.src_label || link.src) + " " + (link.relation || "关联") + " " + (link.dst_label || link.dst);
   }
 
   // Where a link stands, in words: who drew it and what has been decided.
@@ -278,7 +278,7 @@
       host.innerHTML = "";
       host.appendChild(backBar());
       const box = mk("div", "node-failed");
-      renderBlockingError(box, "没能打开这个节点", err);
+      renderBlockingError(box, "没能打开这一页", err);
       host.appendChild(box);
       host.dataset.loaded = "1";
       return;
@@ -307,7 +307,7 @@
 
   function backBar() {
     const bar = mk("div", "node-back");
-    const prev = nav.trail.length ? "返回上一个节点" : "返回" + (SECTION_TITLES[SECTION_OF_VIEW[nav.fromView]] || "");
+    const prev = nav.trail.length ? "返回上一页" : "返回" + (SECTION_TITLES[SECTION_OF_VIEW[nav.fromView]] || "");
     bar.appendChild(link(prev, "", back));
     return bar;
   }
@@ -380,8 +380,11 @@
       detailRow(dl, "结果", d.result || "（无）");
       detailRow(dl, "判决", RODesk.verdictInline(d.verdict_status));
       if (d.source_file) {
-        detailRow(dl, "出处", link(d.source_file + (d.source_line ? " 第 " + d.source_line + " 行" : ""), "mono",
-          () => openFilePanel(d.source_file)));
+        // 12.11: the mono for the path only; 「第 N 行」 is words.
+        const where = mk("span", "node-where");
+        where.appendChild(link(d.source_file, "mono", () => openFilePanel(d.source_file)));
+        if (d.source_line) where.append(" 第 " + d.source_line + " 行");
+        detailRow(dl, "出处", where);
       }
       if (d.step_files_broken && d.step_files_broken.length) detailRow(dl, "找不到的步骤脚本", d.step_files_broken.join("、"));
     } else if (page.type === "claim") {
@@ -549,6 +552,8 @@
     const row = mk("div", "repair-actions");
     row.append(go, cancel);
     form.append(select, sentence, note, row, status);
+    const travels = travelsWords("link");
+    if (travels) form.appendChild(mk("p", "node-sub writes", travels));
     if (!options.length) {
       form.innerHTML = "";
       form.appendChild(mk("p", "node-sub", type === "generates" || type === "writes" ? "项目里还没有脚本可选。" : "没有可以选择的项目。"));
@@ -710,7 +715,7 @@
     const noteList = notes && !notes.failed ? (notes.notes || []) : [];
     if (history && history.failed) {
       const box = mk("p", "trace-break");
-      renderBlockingError(box, "这个节点的历史现在读不到", history.failed);
+      renderBlockingError(box, "这里的历史现在读不到", history.failed);
       s.appendChild(box);
     } else if (hist && hist.reason && !(hist.versions || []).length) {
       s.appendChild(mk("p", "node-sub", hist.reason));
@@ -720,7 +725,7 @@
     }
     if (notes && notes.failed) {
       const box = mk("p", "trace-break");
-      renderBlockingError(box, "这个节点的笔记现在读不到", notes.failed);
+      renderBlockingError(box, "这里的笔记现在读不到", notes.failed);
       s.appendChild(box);
     } else if (notes && notes.stale) {
       s.appendChild(mk("p", "trace-break", (notes.message || "笔记记录文件现在无法读取") + "；下面是图谱上次读到的笔记。"));
@@ -740,7 +745,7 @@
         } else if (e.kind === "verdict") {
           main.appendChild(mk("div", "tl-what", e.words));
           main.appendChild(mk("div", "tl-meta", [e.v.who_label, SOURCE_WORDS[e.v.source] || ""].filter(Boolean).join(" · ")));
-          if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", "经 " + e.v.approved_by + " 批准"));
+          if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", "经 " + (e.v.approved_by_label || e.v.approved_by) + " 批准"));
           if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
         } else if (e.kind === "card") {
           const act = (typeof ACT_WORDS !== "undefined" && ACT_WORDS[e.v.act]) || e.v.act || "记录";
@@ -770,7 +775,7 @@
     else head.textContent = v.version === "worktree" ? "工作区里还没有提交的改动" : (v.kind === "data" ? "数据有改动" : "内容有改动");
     host.appendChild(head);
     const meta = [v.who_label, SOURCE_WORDS[v.source] || ""];
-    if (v.approved_by) meta.push("经 " + v.approved_by + " 批准");
+    if (v.approved_by) meta.push("经 " + (v.approved_by_label || v.approved_by) + " 批准");
     host.appendChild(mk("div", "tl-meta", meta.filter(Boolean).join(" · ")));
     if (v.note && v.version !== "worktree") host.appendChild(mk("p", "tl-note", v.note));
     if (!e.prev) {
@@ -868,6 +873,18 @@
     }
   }
 
+  // 12.12: in a member's working copy a note, a link judgment or a drawn
+  // link travels without approval -- said where it is made.
+  function travelsWords(kind, ctx) {
+    const c = ctx || (typeof RODesk !== "undefined" ? RODesk.context() : null);
+    if (!c || c.mode !== "member") return "";
+    const me = c.me && c.me.me ? c.me.me.id : "你的邮箱";
+    const what = { note: "这条笔记", link: "这条连线", judgment: "你的确认和否决", unlink: "这次删除" }[kind] || "这条记录";
+    const then = kind === "unlink" ? "PI 下次发布时从正式的 mappings.toml 里删去这条连线"
+      : "PI 下次发布时加入" + (kind === "link" ? "正式的 mappings.toml" : "正式记录");
+    return what + "先记在你的工作副本里；下次同步时写入公盘的「提议/" + me + "/」，" + then + "，署你的名字，不需要批准。";
+  }
+
   function noteForm(page, notes) {
     const form = mk("div", "node-note");
     const input = mk("textarea", "form-input node-note-input");
@@ -897,6 +914,8 @@
     const row = mk("div", "tl-actions");
     row.appendChild(add);
     form.append(input, row, status);
+    const travels = travelsWords("note");
+    if (travels) form.appendChild(mk("p", "node-sub writes", travels));
     return form;
   }
 
@@ -906,11 +925,13 @@
     const s = sec("判断");
     const links = page.links || [];
     if (!links.length) {
-      s.appendChild(mk("p", "node-empty", "没有关联到这个节点的连线。"));
+      s.appendChild(mk("p", "node-empty", "还没有和它关联的连线。"));
       host.appendChild(s);
       return;
     }
     s.appendChild(mk("p", "node-sub", "机器提取的关联由你确认或否决；人工标注的关联来自 mappings.toml。"));
+    const travels = travelsWords("judgment");
+    if (travels) s.appendChild(mk("p", "node-sub writes", travels));
     const ul = mk("ul", "node-links");
     const render = (all) => {
       ul.innerHTML = "";
@@ -938,9 +959,15 @@
     const own = ownMark(l);
     if (own) head.appendChild(own);
     li.appendChild(head);
-    const where = (l.evidence || []).map((e) => (e.file && e.file !== l.other.path && e.file !== (page.path || "") ? e.file + " " : "") +
-      "第 " + e.line + " 行" + (e.callee ? "（" + e.callee + "）" : ""));
-    if (where.length) li.appendChild(mk("div", "tl-meta mono", where.join("；")));
+    // 12.11: a path in the mono, 「第 N 行」 in the sans.
+    const where = mk("div", "tl-meta");
+    (l.evidence || []).forEach((e, i) => {
+      if (i) where.append("；");
+      if (e.file && e.file !== l.other.path && e.file !== (page.path || "")) where.append(mk("span", "mono", e.file), " ");
+      where.append("第 " + e.line + " 行");
+      if (e.callee) where.append("（", mk("span", "mono", e.callee), "）");
+    });
+    if ((l.evidence || []).length) li.appendChild(where);
     if (l.judgement && (l.review || l.conflict) && l.judgement.label) li.appendChild(mk("div", "tl-meta", l.judgement.label));
     if (l.judgement && l.judgement.note) li.appendChild(mk("p", "tl-note", l.judgement.note));
     if (other.path && other.type !== page.type) li.title = other.path;
@@ -960,7 +987,9 @@
   }
 
   async function judge(l, verdict, status, buttons) {
-    if (verdict === "delete" && !window.confirm("删除这条人工标注？\n\n" + linkSentence(l) + "\n\n它会从 .researchos/mappings.toml 里移除。")) return;
+    const travels = travelsWords("unlink");
+    if (verdict === "delete" && !window.confirm("删除这条人工标注？\n\n" + linkSentence(l) + "\n\n它会从 .researchos/mappings.toml 里移除。" +
+      (travels ? "\n\n" + travels : ""))) return;
     buttons.forEach((b) => { b.disabled = true; });
     setStatus(status, "", "正在记下…");
     try {
@@ -987,7 +1016,7 @@
     const s = sec("关系图");
     const canvasable = ["script", "dataset", "figure"].indexOf(page.type) >= 0 && page.in_index;
     if (!canvasable) {
-      s.appendChild(mk("p", "node-empty", "关系图只画脚本、数据和图表；这个节点的关联见上面的来龙去脉。"));
+      s.appendChild(mk("p", "node-empty", "关系图只画脚本、数据和图表；它的关联见上面的来龙去脉。"));
       host.appendChild(s);
       return;
     }
@@ -1217,7 +1246,7 @@
   window.RONode = Object.freeze({
     openNode, back, section, loadNode, loadResults, loadDataCode, current: () => nav.id, diffBlock,
     // pure, for tests/test_v8_u3.py
-    _diffRows: diffRows, _traceTone: traceTone, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
+    _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
     _tableWords: tableWords, _timeline: timeline, _inFilter: inFilter, _fileRelations: fileRelations,
   });

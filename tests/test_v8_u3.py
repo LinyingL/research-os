@@ -73,7 +73,7 @@ def test_12_7_a_figure_page_draws_data_scripts_intermediate_data_and_the_draft_a
     _card(root)
     page = _page(root, "figs/fig2.png")
     assert page["id"] == "figure:figs/fig2.png" and page["type_label"] == "图表" and page["exists"]
-    assert _titles(page) == ["数据", "脚本", "中间数据", "脚本", "本节点", "被引用"]
+    assert _titles(page) == ["数据", "脚本", "中间数据", "脚本", "本页", "被引用"]
     assert _labels(page) == [["raw.csv"], ["16-build.py"], ["panel.csv"], ["17-plot.py"], ["fig2.png"], ["Main figure"]]
     lines = {(l["from"], l["relation"], l["to"]) for l in page["trace"]["lines"]}
     assert ("dataset:data/raw.csv", "读取", "script:steps/16-build.py") in lines
@@ -95,7 +95,7 @@ def test_12_7_a_figure_without_a_source_shows_the_gap_with_its_repair_and_the_ch
     words, never markers)."""
     root = _project(tmp_path / "proj")
     page = _page(root, "figs/fig1.png")
-    assert _titles(page) == ["脚本", "本节点", "被引用"]
+    assert _titles(page) == ["脚本", "本页", "被引用"]
     gap = page["trace"]["columns"][0]["gap"]
     assert gap["kind"] == "no_generating_script" and gap["repair"] == {"type": "generates", "label": "补上来源", "file": "figs/fig1.png"}
     assert {b["kind"] for b in page["trace"]["breaks"]} == {"no_generating_script", "no_attempt"}
@@ -107,10 +107,10 @@ def test_12_7_a_figure_without_a_source_shows_the_gap_with_its_repair_and_the_ch
 def test_12_7_a_script_page_shows_what_it_read_upstream_and_what_it_writes(tmp_path):
     root = _project(tmp_path / "proj")
     page = _page(root, "steps/17-plot.py")
-    assert _titles(page) == ["数据", "脚本", "中间数据", "本节点", "写出"]
+    assert _titles(page) == ["数据", "脚本", "中间数据", "本页", "写出"]
     assert _labels(page)[-1] == ["fig2.png"]
     data = _page(root, "data/panel.csv")
-    assert _titles(data) == ["数据", "脚本", "本节点", "被读取"]
+    assert _titles(data) == ["数据", "脚本", "本页", "被读取"]
     assert _labels(data)[-1] == ["17-plot.py"]
     via = data["trace"]["attempts"][0]["via"]
     assert len({json.dumps(v, sort_keys=True) for v in via}) == len(via)  # each claim once
@@ -130,7 +130,7 @@ def test_12_7_an_attempt_page_lists_its_files_and_a_variable_page_its_definition
     assert {i["member"] for i in page["trace"]["columns"][1]["items"]} == {"step_files"}
     assert "figs/fig2.png" in [f["path"] for f in page["choices"]["files"]]
     variable = _page(root, "variable:panelx")
-    assert variable["name"] == "Panel X" and _titles(variable) == ["输入", "脚本", "输出", "本节点"]
+    assert variable["name"] == "Panel X" and _titles(variable) == ["输入", "脚本", "输出", "本页"]
     assert variable["trace"]["columns"][2]["items"][0]["note"] == "列 x"
     with pytest.raises(nodepage.NotFound):
         _page(root, "variable:nope")
@@ -152,7 +152,7 @@ def test_12_7_a_claim_without_backing_and_a_section_with_its_figures(tmp_path):
     page = _page(root, claim)
     assert page["type_label"] == "论断" and page["trace"]["columns"][0]["gap"]["kind"] == "no_backing"
     section = _page(root, "section:paper.md#main-figure")
-    assert _titles(section)[:2] == ["引用的图表与文献", "本节点"]
+    assert _titles(section)[:2] == ["引用的图表与文献", "本页"]
     assert set(_labels(section)[0]) == {"fig1.png", "fig2.png"}
 
 
@@ -275,7 +275,7 @@ def test_12_9_the_endpoints_are_origin_checked_and_node_js_is_served_and_package
     html = (WEBAPP / "app.html").read_text(encoding="utf-8")
     assert '<script src="/node.js"></script>' in html and 'id="view-node"' in html
     status, body = _call(f"{base}/api/node?node={_q('figs/none.png')}")
-    assert status == 404 and body["message"] == "找不到这个节点"
+    assert status == 404 and body["message"] == "找不到要打开的内容"
     status, body = _call(f"{base}/api/node")
     assert status == 400
 

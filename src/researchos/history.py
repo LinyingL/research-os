@@ -800,6 +800,51 @@ def _who_label(who: str | None, name: str | None = None) -> str:
     return name or who or LOCAL_LABEL
 
 
+def unknown_who_label(root: Path) -> str:
+    """What a version without `who` is said to be (12.12: a missing `by` is
+    「最初的研究者」) -- except in a member's working copy, where a version
+    this machine's scan saw is the member's own or the snapshot's, and
+    「本机」 is the only thing known."""
+    from researchos import people, proposals  # noqa: PLC0415
+
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        me = None
+    try:
+        member_copy = proposals.joined_not_pi(root, me)
+    except Exception:  # noqa: BLE001 -- not a working copy as far as anything here knows
+        member_copy = False
+    return LOCAL_LABEL if member_copy else people.FIRST_RESEARCHER_LABEL
+
+
+def name_people(root: Path, versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every version's `who_label` and `approved_by_label` as the rest of
+    the page says people (8.8, one term per concept): the member's name
+    from the team file, not their id; a version without `who` as
+    `unknown_who_label`."""
+    from researchos import people  # noqa: PLC0415
+
+    team = people.read_team(root)
+    team = team if team.state == "present" else None
+    unknown = None
+    for v in versions:
+        who, name = v.get("who"), v.get("who_name")
+        if name:
+            v["who_label"] = name
+        elif isinstance(who, str) and who and "@" in who:
+            v["who_label"] = people.attribution({"by": who}, team)["label"]
+        elif isinstance(who, str) and who:
+            v["who_label"] = who
+        else:
+            unknown = unknown or unknown_who_label(root)
+            v["who_label"] = unknown
+        approved = v.get("approved_by")
+        if isinstance(approved, str) and approved:
+            v["approved_by_label"] = people.attribution({"by": approved}, team)["label"]
+    return versions
+
+
 def _store_payload(v: Version) -> dict[str, Any]:
     return {
         "version": str(v.seq), "at": v.at, "sha256": v.sha256, "size": v.size, "who": v.who,
@@ -827,25 +872,25 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
         found = [] if store is None else [_attempt_payload(v, labels) for v in store.versions(node_id)]
         if store is not None:
             store.close()
-        return {"node": node_id, "kind": "attempt", "origin": "store", "path": None, "versions": found}
+        return {"node": node_id, "kind": "attempt", "origin": "store", "path": None, "versions": name_people(root, found)}
     rel = _file_of(node_id)
     if rel is None:
         return {"node": node_id, "kind": "other", "origin": None, "path": None, "versions": [],
-                "reason": "这个节点不是文件，没有版本"}
+                "reason": "它不是文件，没有版本"}
     file_node = notes_mod.normalize_node(rel)
     if is_tracked(root, rel):
         found = git_versions(root, rel)
         worktree = _worktree_version(root, rel, found[0] if found else None)
         out = ([worktree] if worktree else []) + found
         _attribute_git(root, pid, file_node, out)
-        for v in out:
-            v["who_label"] = _who_label(v.get("who"), v.get("who_name"))
-        return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "git", "path": rel, "versions": out}
+        return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "git", "path": rel,
+                "versions": name_people(root, out)}
     store = Store.existing(pid)
     found = [] if store is None else [_store_payload(v) for v in store.versions(file_node)]
     if store is not None:
         store.close()
-    return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "store", "path": rel, "versions": found}
+    return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "store", "path": rel,
+            "versions": name_people(root, found)}
 
 
 def _git_sha256(root: Path, version: dict[str, Any]) -> str | None:
@@ -931,6 +976,12 @@ def _variable_versions(root: Path, node_id: str) -> dict[str, Any]:
     numbers = [
         {"number": n, "status": view.status, "file": view.path.name} for n, view in sorted(card.versions.items(), reverse=True)
     ]
+    from researchos import people  # noqa: PLC0415
+
+    name_people(root, [e for e in entries if e.get("who")])
+    for item in entries:  # a card entry without `by` is the first researcher's (12.1), wherever it is read
+        if not item.get("who"):
+            item["who_label"] = people.FIRST_RESEARCHER_LABEL
     return {"node": node_id, "kind": "variable", "origin": "card", "path": None, "versions": entries,
             "card_versions": numbers, "in_use": card.in_use, "state": card.state}
 
@@ -1007,6 +1058,23 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | 
     if parts == ["列不变"]:
         return "行数与列都没变（内容有改动）"
     return "，".join(parts)
+
+
+def table_shape(summary: dict[str, Any] | None) -> str | None:
+    """「2 行，列 a、b」 -- one table's rows and columns, in the app's
+    words; None when it is not a table that was read."""
+    if not summary:
+        return None
+    if summary.get("columns") is None:
+        rows, cols = summary.get("sheet_rows"), summary.get("sheet_columns")
+        if rows is None:
+            return None
+        return f"{rows} 行，{cols} 列"
+    rows = summary.get("rows")
+    more = "" if summary.get("rows_complete", True) else " 以上"
+    cols = [str(c) for c in summary.get("columns") or []]
+    shown = "、".join(cols[:12]) + ("等 " + str(len(cols)) + " 列" if len(cols) > 12 else "")
+    return (f"{rows}{more} 行，" if rows is not None else "") + (f"列 {shown}" if cols else "没有列")
 
 
 def _decode(data: bytes | None) -> str | None:

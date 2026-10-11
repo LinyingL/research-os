@@ -2961,7 +2961,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             conn.close()
         self._send_json(200, payload)
 
-    def _official(self, payload: Any, *, cards: bool = False) -> Any:
+    def _official(self, payload: Any, *, cards: bool = False, desk: bool = False) -> Any:
         """12.12 "A member's own work": every object of a view's payload
         that names a node, a file or a hand-drawn link carries
         `officialness` (`researchos.officialness`) -- official, the
@@ -2969,6 +2969,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         is dropped. Contained: a view is never refused over this."""
         try:
             seen = officialness.view(self._project_root())
+            if desk:
+                return officialness.annotate_desk(seen, payload)
             return officialness.annotate_cards(seen, payload) if cards else officialness.annotate(seen, payload)
         except Exception:  # noqa: BLE001
             logger.exception("officialness not added to a payload")
@@ -3159,7 +3161,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 12.0 / 12.9: the desk -- reads only.
                 served = self._require_unblocked()
                 since = (query.get("since") or [None])[0]
-                self._json_from_conn(lambda conn: desk_mod.desk(conn, served.root, since))
+                # 12.12: a member's own work is marked on the desk too.
+                self._json_from_conn(lambda conn: self._official(desk_mod.desk(conn, served.root, since), desk=True))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.

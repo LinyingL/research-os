@@ -326,7 +326,7 @@ def test_12_10_2_history_and_diff_of_a_script_without_git(tmp_path, capsys):
     _scan(root)  # unchanged: no new version
     listed = history.versions(root, "steps/16-build.py")
     assert listed["origin"] == "store" and len(listed["versions"]) == 2
-    assert listed["versions"][0]["who_label"] == history.LOCAL_LABEL
+    assert listed["versions"][0]["who_label"] == people.FIRST_RESEARCHER_LABEL  # 12.12: a missing by
     change = history.diff(root, "script:steps/16-build.py")
     assert '+df["log_ret"] = 1' in change["diff"] and change["truncated"] is False
     capsys.readouterr()

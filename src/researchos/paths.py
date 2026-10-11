@@ -550,11 +550,11 @@ def ensure_graph_dir(project_root: str | Path) -> Path:
 README_RECORDS = (
     ("project.toml", "项目身份"),
     ("judgements.toml", "你对机器提取结果的判断"),
-    ("canvas.json", "画布上卡片的位置"),
+    ("canvas.json", "关系图上卡片的位置"),
     ("mappings.toml", "你手画的连线"),
     ("attempts.toml", "尝试表的配置"),
     ("variables/", "变量定义卡"),
-    ("notes.toml", "节点上的笔记"),
+    ("notes.toml", "笔记"),
     ("team.toml", "项目成员"),
     ("backups/", "以上记录的快照"),
 )

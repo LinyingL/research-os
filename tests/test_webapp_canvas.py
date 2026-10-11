@@ -511,7 +511,7 @@ def test_a_corrupt_record_is_never_overwritten_and_refuses_writes_until_set_asid
     path.write_bytes(raw)
     record = canvas.layout_record(project)
     assert record.state in ("invalid", "unreadable") and not record.writable
-    assert record.message == "画布位置记录文件无法读取，请先修复它"
+    assert record.message == "关系图位置记录文件无法读取，请先修复它"
     assert canvas.load_views(project) == {}
     with pytest.raises(canvas.LayoutRecordError):
         _save(project, {"scope": "all", "positions": {RAW: [1, 2]}})

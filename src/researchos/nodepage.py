@@ -5,7 +5,7 @@ the files -- nothing here writes:
 
 - `node(conn, root, node)` -- one object's page: what it is (type in words,
   name, path, whether it is on disk), its trace drawn as columns (12.7: 数据
-  | 脚本 | 中间数据 | 脚本 | 本节点 | 被引用) with the lines that join them,
+  | 脚本 | 中间数据 | 脚本 | 本页 | 被引用) with the lines that join them,
   every break as a gap with its repair, the attempts it belongs to and the
   variable versions it uses, and the links touching it (for 判断). The
   same shape for every kind of node -- a script, a data file, a figure, a
@@ -46,8 +46,11 @@ TYPE_WORDS = {
 }
 RELATION_WORDS = {
     "reads": "读取", "writes": "写出", "generates": "生成", "includes": "引用", "cites": "引用",
-    "belongs_to": "属于", "backed_by": "依据",
+    "belongs_to": "属于", "backed_by": "依据", "produces": "产出", "implements": "实现", "uses": "使用",
+    "supports": "支持", "authored_by": "作者是",
 }
+#: A relation no word above names (a newer engine's) -- never its English type on screen (8.8).
+RELATION_FALLBACK = "关联"
 TRACE_STATES = {"complete": "完整", "no_source": "缺来源", "no_attempt": "缺尝试"}
 SOURCE_BREAKS = ("no_generating_script", "script_missing", "data_missing", "script_unreadable")
 MAX_COLUMNS = 6           # upstream levels drawn; deeper ones are said, not drawn
@@ -108,7 +111,7 @@ def _item(conn: Connection, root: Path, node_id: str, **extra: Any) -> dict[str,
     record = db.get_node(conn, node_id)
     path = notes_mod.node_path(node_id)
     out = {
-        "id": node_id, "type": _type_of(node_id), "type_label": TYPE_WORDS.get(_type_of(node_id), "节点"),
+        "id": node_id, "type": _type_of(node_id), "type_label": TYPE_WORDS.get(_type_of(node_id), "条目"),
         "label": _label(conn, node_id, record), "path": path,
         "exists": _exists(root, path) if path is not None else record is not None,
     }
@@ -122,7 +125,7 @@ def _item(conn: Connection, root: Path, node_id: str, **extra: Any) -> dict[str,
 def _line(edge: dict[str, Any], flags: judgements.LinkFlags, *, frm: str, to: str) -> dict[str, Any]:
     marks = flags.for_key(judgements.key_of(edge))
     return {
-        "from": frm, "to": to, "type": edge["type"], "relation": RELATION_WORDS.get(edge["type"], edge["type"]),
+        "from": frm, "to": to, "type": edge["type"], "relation": RELATION_WORDS.get(edge["type"], RELATION_FALLBACK),
         "human": edge["extractor"] == "mapping", "status": edge["status"],
         "review": bool(marks.get("review") or marks.get("conflict")),
     }
@@ -135,8 +138,10 @@ def _live(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _verdict(root: Path, record: dict[str, Any]) -> dict[str, Any]:
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
+    from researchos import proposals  # noqa: PLC0415
+
     verdict = (record.get("human_fields") or {}).get("verdict", "")
-    return attempts_ingest.verdict_status(verdict, attempts_ingest.verdict_labels(root))
+    return attempts_ingest.route_status(verdict, attempts_ingest.verdict_labels(root), proposals.abandon_markers(root))
 
 
 def _attempt_choices(conn: Connection, root: Path) -> list[dict[str, Any]]:
@@ -176,7 +181,7 @@ def _links(conn: Connection, node_id: str, flags: judgements.LinkFlags) -> list[
         item = {k: edge[k] for k in ("src", "dst", "type", "extractor", "status")}
         item.update(flags.for_key(key))
         item["human"] = edge["extractor"] == "mapping"
-        item["relation"] = RELATION_WORDS.get(edge["type"], edge["type"])
+        item["relation"] = RELATION_WORDS.get(edge["type"], RELATION_FALLBACK)
         item["direction"] = "out" if edge["src"] == node_id else "in"
         item["src_label"] = _label(conn, edge["src"])
         item["dst_label"] = _label(conn, edge["dst"])
@@ -245,7 +250,7 @@ def _columns_from_chain(conn: Connection, root: Path, node_id: str, chain: dict[
         columns.append(column)
 
     self_item = _item(conn, root, node_id, self=True)
-    columns.append({"key": "self", "title": "本节点", "items": [self_item]})
+    columns.append({"key": "self", "title": "本页", "items": [self_item]})
 
     for link in chain["links"]:
         if link["type"] == "reads" and link["src"] in on_screen and link["dst"] in on_screen:
@@ -369,7 +374,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
 def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str) -> dict[str, Any]:
     """A variable's page: the inputs its definition names, the script that
     builds it and the file it is written to (9.11's [implementation]), as
-    数据 | 脚本 | 输出 | 本节点 -- from the version in use, else the newest."""
+    数据 | 脚本 | 输出 | 本页 -- from the version in use, else the newest."""
     number = card.in_use if card.in_use is not None else (max(card.versions) if card.versions else None)
     content = (card.versions[number].content or {}) if number is not None else {}
     impl = content.get("implementation") or {}
@@ -409,7 +414,7 @@ def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str) -> di
                           "status": "card", "review": False})
     self_item = {"id": node_id, "type": "variable", "type_label": "变量", "label": _card_name(card), "path": None,
                  "exists": True, "self": True}
-    columns.append({"key": "self", "title": "本节点", "items": [self_item]})
+    columns.append({"key": "self", "title": "本页", "items": [self_item]})
     if output is not None:
         lines.append({"from": output["id"], "to": node_id, "type": "defines", "relation": "定义", "human": False,
                       "status": "card", "review": False})
@@ -450,7 +455,7 @@ def _text_trace(conn: Connection, root: Path, node_id: str, record: dict[str, An
     if before or prefix == "claim":
         columns.append({"key": "before", "title": first, "items": _dedupe(before)})
     self_item = _item(conn, root, node_id, self=True)
-    columns.append({"key": "self", "title": "本节点", "items": [self_item]})
+    columns.append({"key": "self", "title": "本页", "items": [self_item]})
     if prefix == "claim" and record is not None and record["attrs"].get("section"):
         section = record["attrs"]["section"]
         after.append(_item(conn, root, section))
@@ -480,7 +485,7 @@ def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, An
     path = notes_mod.node_path(node_id)
     flags = judgements.link_flags(conn)
     out: dict[str, Any] = {
-        "id": node_id, "type": prefix, "type_label": TYPE_WORDS.get(prefix, "节点"),
+        "id": node_id, "type": prefix, "type_label": TYPE_WORDS.get(prefix, "条目"),
         "name": _label(conn, node_id, record), "path": path, "file": _file_of(node_id),
         "exists": _exists(root, path) if path is not None else record is not None,
         "in_index": record is not None, "details": {},
@@ -781,8 +786,11 @@ def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     from researchos import people  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
+    from researchos import proposals  # noqa: PLC0415
+
     root = Path(project_root)
     labels = attempts_ingest.verdict_labels(root)
+    markers = proposals.abandon_markers(root)
     decided, problem = _decisions(root)
     team = people.read_team(root)
     team = team if team.state == "present" else None
@@ -798,7 +806,7 @@ def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
     for n in nodes:
         attrs, human = n["attrs"], n.get("human_fields") or {}
-        status = attempts_ingest.verdict_status(human.get("verdict", ""), labels)
+        status = attempts_ingest.route_status(human.get("verdict", ""), labels, markers)
         result, reason = _reason_in(str(human.get("result") or ""))
         item: dict[str, Any] = {
             "id": n["id"], "number": attrs.get("number"), "date": attrs.get("date"),
@@ -880,7 +888,7 @@ def evidence(conn: Connection, project_root: str | Path, given: str) -> dict[str
                     f["now"], f["now_label"] = "changed", "之后改过"
                 else:
                     f["now"], f["now_label"] = "unknown", ""
-                f["viewable"] = bool(ev.get("state") == "kept" and ev.get("version"))
+                f["viewable"] = bool(ev.get("state") == "kept" and (ev.get("sha256") or ev.get("version")))
                 files.append(f)
             item["files"] = files
             decisions_out.append(item)
@@ -897,12 +905,43 @@ def evidence(conn: Connection, project_root: str | Path, given: str) -> dict[str
 VERSION_TEXT_LIMIT = 2 * 1024 * 1024  # what the page shows of one kept version
 
 
-def version_content(project_root: str | Path, given: str, version: str) -> dict[str, Any]:
+def _published_content(project_id: str, rel: str, sha256: str) -> bytes | None:
+    """`rel`'s content with fingerprint `sha256` from a published snapshot
+    that carried it (verified by that hash), when this machine knows the
+    shared folder; None otherwise."""
+    import hashlib  # noqa: PLC0415
+
+    from researchos import exchange as exchange_mod  # noqa: PLC0415
+    from researchos import share  # noqa: PLC0415
+
+    try:
+        shared = exchange_mod.configured(project_id)
+        if shared is None:
+            return None
+        snaps, _problems = share.read_snapshots(shared)
+        for snap in reversed(snaps):
+            entry = snap.files.get(rel)
+            if entry is not None and entry.get("sha256") == sha256 and int(entry.get("size") or 0) <= VERSION_TEXT_LIMIT * 4:
+                data = share._read_content(shared, entry)
+                return data if hashlib.sha256(data).hexdigest() == sha256 else None
+    except Exception:  # noqa: BLE001 -- no shared folder now: nothing more is known
+        return None
+    return None
+
+
+def version_content(project_root: str | Path, given: str, version: str | None, sha256: str | None = None) -> dict[str, Any]:
     """One kept version of a file as it was (「当时的依据」 opens the frozen
     evidence): its text when the version store holds its content and it
     is text, else what is known of it -- size and fingerprint. Reads only.
-    `ValueError` for a bad node or version; `NotFound` for a version the
-    store does not have."""
+
+    A decision freezes a file by its fingerprint; the version number beside
+    it is the approving machine's own (each machine numbers its store), so
+    with `sha256` the content is found by fingerprint -- in this machine's
+    store, else in a published snapshot that carried it -- and the number
+    is never trusted alone. `ValueError` for a bad node, version or
+    fingerprint; `NotFound` for content nothing here holds."""
+    import hashlib  # noqa: PLC0415
+
     from researchos import history  # noqa: PLC0415
     from researchos.records.identity import IdentityState, read_identity  # noqa: PLC0415
 
@@ -911,23 +950,43 @@ def version_content(project_root: str | Path, given: str, version: str) -> dict[
     rel = notes_mod.node_path(node_id)
     if rel is None:
         raise ValueError(f"not a file: {given!r}")
-    if not isinstance(version, str) or not version.isdigit():
+    if sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", sha256 or ""):
+        raise ValueError(f"not a fingerprint: {sha256!r}")
+    if sha256 is None and (not isinstance(version, str) or not version.isdigit()):
         raise ValueError(f"not a version: {version!r}")
     got = read_identity(root)
     if got.state is not IdentityState.PRESENT or got.identity is None:
         raise NotFound("the project's identity cannot be read")
     store = history.Store.existing(got.identity.id)
-    if store is None:
-        raise NotFound(f"no version {version} of {rel}")
+    data = None
+    found = None
     try:
-        found = next((v for v in store.versions(node_id) if v.seq == int(version)), None)
-        if found is None:
-            raise NotFound(f"no version {version} of {rel}")
-        data = store.read_blob(found.sha256) if found.stored else None
+        if store is not None:
+            kept = store.versions(node_id)
+            if sha256 is not None:
+                same = [v for v in kept if v.sha256 == sha256]
+                found = next((v for v in same if v.stored), same[0] if same else None)
+                data = store.read_blob(sha256)
+            else:
+                found = next((v for v in kept if v.seq == int(version)), None)
+                data = store.read_blob(found.sha256) if found is not None and found.stored else None
     finally:
-        store.close()
-    out: dict[str, Any] = {"node": node_id, "path": rel, "version": version, "at": found.at, "size": found.size,
-                           "sha256": found.sha256, "who": found.who, "text": None, "truncated": False}
+        if store is not None:
+            store.close()
+    if sha256 is not None:
+        if data is not None and hashlib.sha256(data).hexdigest() != sha256:
+            data = None
+        if data is None:
+            data = _published_content(got.identity.id, rel, sha256)
+        if data is None and found is None:
+            raise NotFound(f"no content {sha256[:12]} of {rel}")
+    elif found is None:
+        raise NotFound(f"no version {version} of {rel}")
+    out: dict[str, Any] = {"node": node_id, "path": rel, "version": str(found.seq) if found is not None else None,
+                           "at": found.at if found is not None else None,
+                           "size": found.size if found is not None else (len(data) if data is not None else None),
+                           "sha256": sha256 or found.sha256, "who": found.who if found is not None else None,
+                           "text": None, "truncated": False}
     if data is not None:
         try:
             text = data.decode("utf-8")

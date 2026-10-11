@@ -1027,6 +1027,45 @@ def change_key(op: str, entry: dict[str, Any]) -> str:
     return "\x1f".join(("mapping", op, str(entry.get("from")), str(entry.get("to")), str(entry.get("type"))))
 
 
+def opposite_key(key: str) -> str | None:
+    """The key of the change that undoes `key` (an add for a removal and
+    the other way round); None for a key that is not a link change."""
+    parts = key.split("\x1f")
+    if len(parts) != 5 or parts[0] != "mapping" or parts[1] not in ("add", "remove"):
+        return None
+    return "\x1f".join((parts[0], "remove" if parts[1] == "add" else "add", *parts[2:]))
+
+
+def member_link_changes(project_root: str | Path, base_text: str | None, text: str | None, me: str,
+                        sent: dict[str, Any] | None) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """`member_changes`, and the changes that undo one already sent: a link
+    the member sent as added and has deleted since (not in the base, so
+    `member_changes` cannot see it) goes as a removal; a link they sent as
+    removed and drew again goes as an addition. Without these the undo
+    would never travel, and the first packet would win."""
+    root = Path(project_root)
+    added, removed = member_changes(root, base_text, text, me)
+    base = {(k[0], _written_to(k[2], k[1]), k[2]) for k in _entries_by_key(root, base_text)}
+    mine = {(k[0], _written_to(k[2], k[1]), k[2]): e for k, e in _entries_by_key(root, text).items()}
+    for key in sent or {}:
+        parts = key.split("\x1f")
+        if len(parts) != 5 or parts[0] != "mapping":
+            continue
+        link = (parts[2], parts[3], parts[4])
+        item = {"from": link[0], "to": link[1], "type": link[2]}
+        if parts[1] == "add" and link not in mine and link not in base:
+            removed.append(item)
+        elif parts[1] == "remove" and link in mine and link in base:
+            for name in ("note", "date"):
+                value = mine[link].get(name)
+                if isinstance(value, _dt.date):
+                    value = value.isoformat()
+                if isinstance(value, str):
+                    item[name] = value
+            added.append(item)
+    return added, removed
+
+
 def apply_received(project_root: str | Path, packet_id: str, member: str, added: list[Any], removed: list[Any],
                    *, at: str) -> dict[str, Any]:
     """Apply one member packet's links to the official file in one write

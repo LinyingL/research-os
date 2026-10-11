@@ -876,8 +876,8 @@ window.RCECanvas = (function () {
     scope.addEventListener("change", () => changeScope(scope.value));
     const search = htmlEl("input", "cv-search");
     search.type = "search";
-    search.placeholder = "查找节点…";
-    search.setAttribute("aria-label", "查找节点");
+    search.placeholder = "查找文件…";
+    search.setAttribute("aria-label", "查找文件");
     search.addEventListener("input", () => { cv.query = search.value.trim(); applySearch(); });
     search.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); fitToMatches(); }
@@ -912,7 +912,7 @@ window.RCECanvas = (function () {
   }
 
   function buildSvg() {
-    const svg = svgEl("svg", { "aria-label": "画布" }, "cv-svg");
+    const svg = svgEl("svg", { "aria-label": "关系图" }, "cv-svg");
     const defs = svgEl("defs");
     const pattern = svgEl("pattern", { id: "cv-dots", width: GRID, height: GRID, patternUnits: "userSpaceOnUse" });
     pattern.appendChild(svgEl("circle", { cx: GRID / 2, cy: GRID / 2, r: 1 }, "cv-dot"));
@@ -981,14 +981,14 @@ window.RCECanvas = (function () {
 
   function renderSockets(g, n) {
     const s = SOCKETS[n.type] || SOCKETS.dataset;
-    const mono = "11px " + fontStack("--font-mono");
+    const sans = "11px " + fontStack("--font-sans"); // words, not paths (12.11)
     s.inputs.forEach((sock, i) => {
       const y = socketY(i);
       const orphan = i === 0 && n.orphan_input;
       g.appendChild(svgEl("circle", { cx: 0, cy: y, r: SOCKET_R },
         "cv-socket in sock-" + sock.carries + (orphan ? " orphan" : "")));
       const label = svgEl("text", { x: 12, y: y + 4 }, "cv-socket-label in");
-      label.textContent = fitRight(sock.label, mono, NODE_W / 2 - 16);
+      label.textContent = fitRight(sock.label, sans, NODE_W / 2 - 16);
       g.appendChild(label);
     });
     s.outputs.forEach((sock, i) => {
@@ -1200,7 +1200,7 @@ window.RCECanvas = (function () {
     if (isNear(cv.scope)) {
       const near = document.createElement("option");
       near.value = cv.scope;
-      near.textContent = "这个节点附近";
+      near.textContent = "这个文件附近";
       sel.appendChild(near);
     }
     const all = document.createElement("option");
@@ -2093,7 +2093,7 @@ window.RCECanvas = (function () {
   async function rejectMachineLink(link, note) {
     if (link.human || link.optimistic) return;
     if (!window.confirm("把这条连线标记为错误提取？\n\n" + linkAssertion(link) + "\n" + link.evidence_hint +
-      "\n\n它会从画布上消失，之后可以撤销。")) return;
+      "\n\n它会从关系图上消失，之后可以撤销。")) return;
     const body = { src: link.src, dst: link.dst, type: link.type, extractor: link.extractor };
     try {
       await apiPost("/api/edges/reject", note ? Object.assign({ note: note }, body) : body);
@@ -2683,10 +2683,10 @@ window.RCECanvas = (function () {
     el.innerHTML = "";
     if (!layoutBlocked()) { el.classList.add("hidden"); return; }
     if (layout.state === "dataless") {
-      el.appendChild(htmlEl("div", "cv-notice-title", "画布位置记录文件正在从云端下载…"));
+      el.appendChild(htmlEl("div", "cv-notice-title", "关系图位置记录文件正在从云端下载…"));
       el.appendChild(htmlEl("div", null, "下载完成前先按自动排列显示；这期间不保存位置。"));
     } else {
-      el.appendChild(htmlEl("div", "cv-notice-title", "画布位置记录文件无法读取"));
+      el.appendChild(htmlEl("div", "cv-notice-title", "关系图位置记录文件无法读取"));
       el.appendChild(htmlEl("div", null,
         "这次不显示你摆放的位置，" + (layout.file || ".researchos/canvas.json") + " 保持原样；修好之前，移动卡片不会被保存。"));
       const row = htmlEl("div", "cv-linkcard-actions");
@@ -2703,11 +2703,11 @@ window.RCECanvas = (function () {
   }
 
   async function setAsideLayout() {
-    if (!window.confirm("把无法读取的画布位置记录移到 .researchos/backups/？\n\n文件不会被删除；之后移动卡片会开始一份新的记录。")) return;
+    if (!window.confirm("把无法读取的关系图位置记录移到 .researchos/backups/？\n\n文件不会被删除；之后移动卡片会开始一份新的记录。")) return;
     try {
       await apiPost("/api/records/answer", { file: "canvas", answer: "set_aside" });
     } catch (err) {
-      showStatus("没能移开画布位置记录", err, { kind: "write" });
+      showStatus("没能移开关系图位置记录", err, { kind: "write" });
       return;
     }
     await refresh();

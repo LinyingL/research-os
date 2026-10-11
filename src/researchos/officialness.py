@@ -44,6 +44,8 @@ MODE_FIELD = "officialness_mode"
 FILE_PREFIXES = frozenset({"script", "dataset", "figure", "file"})
 _NODE_KEYS = ("id", "attempt_id", "target", "node", "section")
 _PATH_KEYS = ("path", "file")
+#: The cells of an attempt-table row (`researchos.proposals.ROW_FIELDS`).
+ROW_CELLS = ("date", "description", "variables", "result", "verdict")
 
 
 @dataclass
@@ -92,9 +94,23 @@ class View:
         if now == then:
             return OFFICIAL, None
         carried = self.proposed_rows.get(number)
-        if carried is not None and now is not None and all(now.get(k) == v for k, v in carried[0].items()):
+        if carried is not None and now is not None and self._row_carried(now, then or {}, carried[0]):
             return PROPOSED, carried[1]
         return MINE, None
+
+    @staticmethod
+    def _row_carried(now: Mapping[str, str], then: Mapping[str, str], carried: Mapping[str, Any]) -> bool:
+        """The row as it is now is exactly what the proposal carries: every
+        cell it carries as carried (a verdict change's result may also be
+        left as it was), every other cell as in the base -- a later edit of
+        a cell no proposal carries is the member's own, unsubmitted."""
+        for k in ROW_CELLS:
+            if k in carried:
+                if now.get(k) != carried[k] and not (k == "result" and now.get(k) == then.get(k)):
+                    return False
+            elif now.get(k) != then.get(k):
+                return False
+        return True
 
     def card_state(self, card: str) -> tuple[str, str | None]:
         if self.mode == OFFICIAL:
@@ -254,7 +270,8 @@ def _pending(root: Path, pid: str, out: View) -> None:
         if isinstance(attempt, dict) and isinstance(attempt.get("number"), str):
             out.proposed_rows[attempt["number"]] = ({k: attempt.get(k) for k in proposals.ROW_FIELDS}, stored.id)
         if isinstance(verdict, dict) and isinstance(verdict.get("number"), str):
-            out.proposed_rows[verdict["number"]] = ({"verdict": verdict.get("new")}, stored.id)
+            out.proposed_rows[verdict["number"]] = ({"verdict": verdict.get("new"), "result": verdict.get("result")},
+                                                    stored.id)
         if isinstance(variable, dict) and isinstance(variable.get("card"), str):
             out.proposed_cards[variable["card"]] = (str(variable.get("file")), str(variable.get("sha256")), stored.id)
 
@@ -317,6 +334,28 @@ def annotate(v: View, payload: Any) -> Any:
 
     walk(payload)
     if isinstance(payload, dict):
+        payload[MODE_FIELD] = v.mode_payload()
+    return payload
+
+
+def annotate_desk(v: View, payload: Any) -> Any:
+    """The desk's payload (`researchos.desk`): a file's or an attempt's
+    change, a result and an abandoned route carry the state of what they
+    name; a decision (official by definition: the PI's approval) and a
+    note (it travels without approval, 12.4) do not take the state of the
+    node they are about."""
+    if isinstance(payload, dict):
+        for item in payload.get("changes") or []:
+            if isinstance(item, dict) and item.get("kind") in ("file", "attempt"):
+                got = _subject(v, item)
+                if got is not None:
+                    item[FIELD] = mark(got)
+        for key in ("results", "abandoned"):
+            for item in payload.get(key) or []:
+                if isinstance(item, dict):
+                    got = _subject(v, item)
+                    if got is not None:
+                        item[FIELD] = mark(got)
         payload[MODE_FIELD] = v.mode_payload()
     return payload
 

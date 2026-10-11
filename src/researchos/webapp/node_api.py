@@ -97,7 +97,7 @@ def notes_payload(conn: Connection | None, root: Path, query: dict[str, list[str
     try:
         return notes_mod.notes_for(root, _arg(query, "node"), conn)
     except ValueError as exc:
-        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个节点") from exc
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
 
 
 def _note_refused(exc: notes_mod.NoteRefused) -> NodeApiRefused:
@@ -149,7 +149,7 @@ def notes_answer_payload(root: Path, project_id: str | None, answer: str, shown:
 def _history_refused(exc: history.HistoryError) -> NodeApiRefused:
     status = {"no_identity": 409, "no_such_version": 404, "not_a_node": 400, "git": 500}.get(exc.code, 400)
     zh = {"no_identity": "项目身份文件无法读取", "no_such_version": "找不到这个版本",
-          "not_a_node": "无法识别这个节点", "git": "git 无法读取这个文件的历史"}.get(exc.code)
+          "not_a_node": "无法识别要打开的内容", "git": "git 无法读取这个文件的历史"}.get(exc.code)
     return NodeApiRefused(status, exc.code, str(exc), zh)
 
 
@@ -181,9 +181,9 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
     try:
         result = trace_mod.chain(conn, root, _arg(query, "node", required=True) or "")
     except ValueError as exc:
-        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个节点") from exc
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
     if not result["found"]:
-        raise NodeApiRefused(404, "not_found", f"no such node or file: {result['node']['id']}", "找不到这个节点")
+        raise NodeApiRefused(404, "not_found", f"no such node or file: {result['node']['id']}", "找不到要打开的内容")
     return result
 
 
@@ -198,9 +198,9 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> d
     try:
         return nodepage.node(conn, root, given)
     except ValueError as exc:
-        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个节点") from exc
+        raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
     except nodepage.NotFound as exc:
-        raise NodeApiRefused(404, "not_found", str(exc), "找不到这个节点") from exc
+        raise NodeApiRefused(404, "not_found", str(exc), "找不到要打开的内容") from exc
 
 
 def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
@@ -238,9 +238,10 @@ def version_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
     from researchos import nodepage  # noqa: PLC0415
 
     given = _arg(query, "node", required=True) or ""
-    version = _arg(query, "version", required=True) or ""
+    sha = _arg(query, "sha256") or None
+    version = _arg(query, "version", required=sha is None) or None
     try:
-        return nodepage.version_content(root, given, version)
+        return nodepage.version_content(root, given, version, sha)
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这个版本") from exc
     except nodepage.NotFound as exc:
@@ -299,7 +300,7 @@ _NOT_CARRIED = (
     (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送"),
     (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的官方版本，不会发送"),
     (r"^notes, link judgments and hand-drawn links travel", lambda m: "笔记、关联判断和手工连线随同步发送，不需要批准"),
-    (r"^canvas arrangements do not travel", lambda m: "画布上的摆放不随提议发送：每个人保留自己的"),
+    (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的"),
     (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议"),
 )
 
@@ -336,6 +337,7 @@ def _worded(out: dict[str, Any], root: Path) -> dict[str, Any]:
         for f in changes.get("files") or []:
             if isinstance(f, dict):
                 f["summary_words"] = desk._words(f.get("summary"))
+                f["table_words"] = desk._words(f.get("table"))
     return out
 
 

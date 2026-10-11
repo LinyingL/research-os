@@ -81,7 +81,7 @@ def test_12_12_the_pi_editing_the_same_row_blocks_it_and_nothing_is_applied(team
         (team.official / "map.md").write_text(edited)
         changes = proposals.what_changes(stored, team.official)
         assert not changes["approvable"]
-        assert changes["conflicts"] == [{"path": "map.md", "reason": "第 16 行在你提议之后，正式版本里也改了"}]
+        assert changes["conflicts"] == [{"path": "map.md", "reason": "第 16 行在提议之后，正式版本里也改了"}]
         with pytest.raises(proposals.ProposalRefused):
             proposals.approve(team.official, stored.id)
         assert (team.official / "map.md").read_text() == edited
@@ -141,7 +141,7 @@ def test_12_12_the_base_row_is_found_in_a_snapshot_when_the_history_store_is_gon
         shutil.rmtree(history.history_dir(drive.pid), ignore_errors=True)
         (drive.official / "map.md").write_text(_map().replace("TopicShift volatility", "TopicShift 波动"))
         changes = proposals.what_changes(stored, drive.official)
-        assert not changes["approvable"] and changes["conflicts"][0]["reason"] == "第 16 行在你提议之后，正式版本里也改了"
+        assert not changes["approvable"] and changes["conflicts"][0]["reason"] == "第 16 行在提议之后，正式版本里也改了"
 
 
 # -- 2. team add makes the member's area (12.12 The shared drive) ---------------------------------------------

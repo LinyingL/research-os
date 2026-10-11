@@ -1058,6 +1058,7 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
     seen = available(root)
     state, chain = seen["state"], seen["chain"]
     pid = state["project"]
+    seen_shared = Path(state["shared"])
     target = chain.last_good
     out: dict[str, Any] = {"from": state["seq"], "to": state["seq"], "update": [], "remove": [], "beside": [],
                            "kept": [], "records": [], "refused": chain.refused,
@@ -1065,12 +1066,22 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
     if seen["have"] is None or seen["have"].sha256 != state.get("manifest_sha256"):
         out["untrusted"] = True
         return out
-    if target is None or target.seq <= state["seq"]:
-        out["up_to_date"] = True
-        return out
     base = proposals.read_base(pid)
     if base is None:
         raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
+    # 12.12: what this sync sends to the member's area before anything else
+    # -- notes, judgments and hand-drawn links, applied at the PI's next
+    # publish without approval.
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        me = None
+    out["sending"] = (outgoing_summary(_outgoing(root, state, base, me, out["problems"])) if me is not None
+                      else outgoing_summary({}))
+    out["area"] = f"{ex_mod.PROPOSALS_AREA}/{me}/" if me else None
+    if target is None or target.seq <= state["seq"]:
+        out["up_to_date"] = True
+        return out
     out.update(to=target.seq, at=target.data.get("at"), note=target.data.get("note"), by=target.data.get("by"))
     tfiles = target.files
     for rel in sorted(set(base.files) | set(tfiles)):
@@ -1089,14 +1100,43 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
         if lsha == b:
             out["update" if entry is not None else "remove"].append(rel)
         elif rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}":
-            out["kept"].append({"path": rel, "reason": "画布上的摆放是每个人自己的"})
+            out["kept"].append({"path": rel, "reason": "关系图上的摆放是每个人自己的"})
         elif entry is None:
             out["kept"].append({"path": rel, "reason": "正式版本删除了这个文件；你改过它，所以留着你的"})
         elif _travelling(rel) or rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
             out["records"].append(rel)
+        elif _table_carried(root, rel, seen_shared, entry, base):
+            out["update"].append(rel)
         else:
             out["beside"].append({"path": rel, "official_copy": _official_name(rel)})
     return out
+
+
+def _table_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any], base) -> bool:
+    """12.12 (the attempt table conflicts by row, not by file): True when
+    every row the member changed since their base is in the official table
+    as they wrote it -- or as approving their abandonment wrote it, their
+    result followed by 「（放弃理由：…）」 -- and nothing of theirs outside
+    the rows differs from the base. The official table then holds all of
+    their table work and replaces their copy; nothing of theirs is lost."""
+    from researchos import proposals  # noqa: PLC0415
+
+    config = proposals._attempts_config(root)
+    if config is None or rel != config.file:
+        return False
+    try:
+        mine_text = (root / rel).read_text(encoding="utf-8")
+        official_text = _read_content(shared, entry).decode("utf-8")
+    except (OSError, UnicodeDecodeError, ShareError):
+        return False
+    base_text = base.text(rel)
+    mine, then, now = (proposals._rows(t, config) for t in (mine_text, base_text, official_text))
+    if mine is None or then is None or now is None:
+        return False
+    if proposals._outside_rows(mine_text) != proposals._outside_rows(base_text) or set(then) - set(mine):
+        return False
+    return all(then.get(number) == row or proposals.row_as_approved(row, now.get(number))
+               for number, row in mine.items())
 
 
 def sync(working_copy: str | Path, *, expected_id: Any = READ_NOW, timeout: float | None = None,
@@ -1147,6 +1187,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
     tfiles = target.files
     needed = []
     plan: list[tuple[str, str, Mapping[str, Any] | None]] = []
+    keep_base: dict[str, Mapping[str, Any] | None] = {}
     for rel in sorted(set(base.files) | set(tfiles)):
         b = (base.files.get(rel) or {}).get("sha256")
         entry = tfiles.get(rel)
@@ -1162,7 +1203,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
             continue
         if rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}" and lsha != b and local is not None:
             # 12.12: the member's own arrangement stays theirs; nothing beside it.
-            out["kept_yours"].append({"path": rel, "reason": "画布上的摆放是每个人自己的，不随同步改变"})
+            out["kept_yours"].append({"path": rel, "reason": "关系图上的摆放是每个人自己的，不随同步改变"})
             continue
         ledger = _travelling(rel)
         carried = None
@@ -1171,6 +1212,8 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
                 carried = _ledger_carried(root, rel, shared, entry)
             elif rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
                 carried = _mappings_carried(root, rel, shared, entry, base, state)
+            elif _table_carried(root, rel, shared, entry, base):
+                carried = "carried"
         if lsha == b:
             plan.append(("update" if entry is not None else "remove", rel, entry))
         elif entry is None:
@@ -1181,6 +1224,12 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
             plan.append(("update", rel, entry))
         elif carried == "waiting":
             out["notes_waiting"].append(rel)
+            if rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
+                # The member's own link changes are measured against the
+                # base their file was synced to: that base stays, or every
+                # link the newer snapshot added would read as one they
+                # removed (and travel as their removal).
+                keep_base[rel] = base.files.get(rel)
             continue
         else:
             plan.append(("conflict", rel, entry))
@@ -1214,8 +1263,15 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
             item: dict[str, Any] = {"path": rel, "official_copy": placed, "reason": "你和正式版本都改了这个文件：留着你的，正式版本的放在旁边"}
             item.update(_difference(root / rel, root / placed, entry))
             out["conflicts"].append(item)
-    proposals.write_base(pid, root.resolve(), _base_files(target), texts=_texts_for_base(shared, root, tfiles, extra),
-                         official=None)
+    new_files = _base_files(target)
+    texts = _texts_for_base(shared, root, tfiles, extra)
+    for rel, kept in keep_base.items():
+        texts.pop(rel, None)
+        if kept is None:
+            new_files.pop(rel, None)
+        else:
+            new_files[rel] = dict(kept)
+    proposals.write_base(pid, root.resolve(), new_files, texts=texts, official=None)
     state.update(seq=target.seq, manifest_sha256=target.sha256, synced=_now_iso(now),
                  official_copies=sorted(c for c in copies if (root / c).exists()))
     _write_state(pid, state)
@@ -1324,38 +1380,38 @@ def _mappings_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, An
         return None
     if me is None:
         return None
-    added, removed = mappings_ingest.member_changes(root, base.text(rel), mine, me)
+    sent = state.get("sent_mappings") or {}
+    added, removed = mappings_ingest.member_link_changes(root, base.text(rel), mine, me, sent)
     now_there = {(k[0], mappings_ingest._written_to(k[2], k[1]), k[2])
                  for k in mappings_ingest._entries_by_key(root, official)}
     received = mappings_ingest.received_packets(official)
-    sent = state.get("sent_mappings") or {}
-    for op, items in (("add", added), ("remove", removed)):
-        for item in items:
-            key = (item["from"], item["to"], item["type"])
-            reflected = (key in now_there) if op == "add" else (key not in now_there)
-            if not reflected and sent.get(mappings_ingest.change_key(op, item)) not in received:
-                return "waiting"
+    changes = [(op, item) for op, items in (("add", added), ("remove", removed)) for item in items]
+    # Every change last sent for a link, too: an undo the official file has
+    # not received yet is still on its way, whatever the file says now.
+    for key in sent:
+        parts = key.split("\x1f")
+        if len(parts) == 5 and parts[0] == "mapping" and parts[1] in ("add", "remove"):
+            changes.append((parts[1], {"from": parts[2], "to": parts[3], "type": parts[4]}))
+    for op, item in changes:
+        key = (item["from"], item["to"], item["type"])
+        reflected = (key in now_there) if op == "add" else (key not in now_there)
+        if not reflected and sent.get(mappings_ingest.change_key(op, item)) not in received:
+            return "waiting"
     return "carried"
 
 
-def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Path, problems: list[dict[str, Any]],
-                  now: Callable[[], datetime] | None) -> int:
-    """The member's own new ledger entries and link changes, written once
-    to their area (module docstring); `state["sent_entries"]` and
-    `state["sent_mappings"]` remember what was sent."""
+def _outgoing(root: Path, state: Mapping[str, Any], base, me: str, problems: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the member's next sync sends (reads only): their own ledger
+    entries not sent yet (`blocks`, `ids`, `kinds` -- the ledger of each)
+    and their link changes (`links`, `link_keys`)."""
     from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
     from researchos.records import ledger as ledger_mod  # noqa: PLC0415
 
-    try:
-        me = people.current_member_id()
-    except people.PeopleError:
-        me = None
-    if me is None:
-        return 0
     sent = set(state.get("sent_entries") or [])
     sent_mappings = dict(state.get("sent_mappings") or {})
     blocks: list[bytes] = []
     ids: list[str] = []
+    kinds: list[str] = []
     links: dict[str, list[dict[str, str]]] = {PACKET_ADDED: [], PACKET_REMOVED: []}
     link_keys: list[str] = []
     rel = f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}"
@@ -1366,8 +1422,8 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
     except (OSError, UnicodeDecodeError) as exc:
         mine_text = None
         problems.append({"kind": "entries_not_sent", "path": rel, "detail": f"无法读取：{exc}"})
-    if mine_text is not None or base.text(rel) is not None:
-        added, removed = mappings_ingest.member_changes(root, base.text(rel), mine_text, me)
+    if mine_text is not None or base.text(rel) is not None or sent_mappings:
+        added, removed = mappings_ingest.member_link_changes(root, base.text(rel), mine_text, me, sent_mappings)
         for op, items, table in (("add", added, PACKET_ADDED), ("remove", removed, PACKET_REMOVED)):
             for item in items:
                 key = mappings_ingest.change_key(op, item)
@@ -1395,12 +1451,46 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
             data = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in e.data.items()}
             blocks.append(ledger_mod.emit_entry(_schema(name), data))
             ids.append(e.id)
+            kinds.append(name)
+    return {"blocks": blocks, "ids": ids, "kinds": kinds, "links": links, "link_keys": link_keys}
+
+
+def outgoing_summary(going: Mapping[str, Any]) -> dict[str, int]:
+    """`_outgoing` as the page says it: how many notes, judgments, links
+    added and links removed."""
+    kinds = list(going.get("kinds") or [])
+    links = going.get("links") or {}
+    return {"notes": kinds.count("notes.toml"), "judgements": kinds.count("judgements.toml"),
+            "links_added": len(links.get(PACKET_ADDED) or []), "links_removed": len(links.get(PACKET_REMOVED) or [])}
+
+
+def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Path, problems: list[dict[str, Any]],
+                  now: Callable[[], datetime] | None) -> int:
+    """The member's own new ledger entries and link changes, written once
+    to their area (module docstring); `state["sent_entries"]` and
+    `state["sent_mappings"]` remember what was sent."""
+    from researchos import proposals  # noqa: PLC0415
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        me = None
+    if me is None:
+        return 0
+    going = _outgoing(root, state, base, me, problems)
+    blocks, ids, links, link_keys = going["blocks"], going["ids"], going["links"], going["link_keys"]
+    sent = set(state.get("sent_entries") or [])
+    sent_mappings = dict(state.get("sent_mappings") or {})
     if not blocks and not link_keys:
         return 0
-    from researchos import proposals  # noqa: PLC0415
 
     packet_id = "n-" + secrets.token_hex(16)
+    # `order`: this member's packets in the order they were written -- an
+    # undo sent within the same second as what it undoes is applied after it.
+    order = int(state.get("packets_sent") or 0) + 1
     head = proposals.emit({"format": FORMAT, "id": packet_id, "project": pid, "by": me, "at": _now_iso(now),
+                           "order": order,
                            PACKET_ADDED: links[PACKET_ADDED], PACKET_REMOVED: links[PACKET_REMOVED]},
                           _PACKET_HEADER)
     raw = head + b"".join(blocks)
@@ -1415,8 +1505,17 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
                          "detail": f"笔记和连接判断没有发送：{getattr(exc, 'message_zh', None) or exc}"})
         return 0
     state["sent_entries"] = sorted(sent | set(ids))
-    state["sent_mappings"] = {**sent_mappings, **{key: packet_id for key in link_keys}}
+    for key in link_keys:  # what a change undoes is no longer what was last sent for that link
+        sent_mappings.pop(mappings_ingest.opposite_key(key) or "", None)
+        sent_mappings[key] = packet_id
+    state["sent_mappings"] = sent_mappings
+    state["packets_sent"] = order
     return len(ids) + len(link_keys)
+
+
+def _packet_order(data: Mapping[str, Any], packet_id: str) -> tuple[str, int, str]:
+    order = data.get("order")
+    return (str(data.get("at") or ""), order if isinstance(order, int) and not isinstance(order, bool) else 0, packet_id)
 
 
 def collect_entries(official_root: str | Path, *, shared: Path | None = None, expected_id: Any = READ_NOW,
@@ -1444,7 +1543,7 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
         for member in members:
             packets, problems = ex.packets(member)
             out["problems"] += [p.payload() for p in problems]
-            for packet_id, _raw, data, check in sorted(packets, key=lambda p: (str(p[2].get("at") or ""), p[0])):
+            for packet_id, _raw, data, check in sorted(packets, key=lambda p: _packet_order(p[2], p[0])):
                 if check is not None and not check.trusted:
                     out["problems"].append({"kind": "unverified", "path": packet_id, "detail": check.message_zh})
                     continue
@@ -1522,7 +1621,7 @@ def _collect_links(conn, root: Path, links: list[tuple[str, str, Mapping[str, An
     from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
 
     changed = False
-    for packet_id, member, data in sorted(links, key=lambda item: (str(item[2].get("at") or ""), item[0])):
+    for packet_id, member, data in sorted(links, key=lambda item: _packet_order(item[2], item[0])):
         try:
             done = mappings_ingest.apply_received(root, packet_id, member, list(data.get(PACKET_ADDED) or []),
                                                   list(data.get(PACKET_REMOVED) or []), at=_now_iso(now))
@@ -1872,6 +1971,9 @@ def status(root: str | Path) -> dict[str, Any]:
             changed = sorted(r for r in set(files) | set(published)
                              if (files.get(r) or {}).get("sha256") != (published.get(r) or {}).get("sha256"))
             out["pending_publish"] = {"count": len(changed), "files": changed[:200], "dataless": dataless}
+            # 12.12: what 发布 (and 批准, which publishes) appends to the
+            # official ledgers first, from the members' packets.
+            out["incoming"] = incoming(root, shared, team)
             if role == "pi":
                 try:
                     listed = proposals.listing(root)
@@ -1886,6 +1988,9 @@ def status(root: str | Path) -> dict[str, Any]:
     if state and Path(state.get("working_copy", "")) == root.resolve():
         out["joined"] = {k: state.get(k) for k in ("seq", "pi", "pi_fingerprint", "trusted_on_first_join", "synced",
                                                     "official_copies")}
+        # 12.3: each official copy put beside the member's file, with the
+        # difference shown.
+        out["joined"]["beside"] = _beside(root, state.get("official_copies") or [])
         out["warnings"] = warnings(state.get("pi_key"))
         if out["reachable"]:
             seen = available(root)
@@ -1901,9 +2006,11 @@ def status(root: str | Path) -> dict[str, Any]:
 
 def inbox_marker(root: Path) -> tuple[str, ...] | None:
     """What the server's watcher compares to notice a new proposal or
-    outcome: the names of complete proposal directories in members' areas
-    (a listing, nothing opened). None when this is not the PI's project
-    with a reachable shared folder."""
+    outcome: for the PI, the names of complete proposal directories in
+    members' areas; for a member's working copy, the complete outcomes and
+    snapshots under 已发布/ (the PI's 退回, 批准 and 发布 reach the open
+    page without a reload). A listing, nothing opened. None when neither
+    has a reachable shared folder."""
     try:
         pid = _project_id(root)
         team = people.read_team(root)
@@ -1911,7 +2018,7 @@ def inbox_marker(root: Path) -> tuple[str, ...] | None:
     except Exception:  # noqa: BLE001
         return None
     if team.state != "present" or team.pi is None or team.pi.id != me:
-        return None
+        return _published_marker(root, pid)
     shared = ex_mod.configured(pid)
     area = shared / ex_mod.PROPOSALS_AREA if shared else None
     if area is None or not area.is_dir():
@@ -1925,3 +2032,113 @@ def inbox_marker(root: Path) -> tuple[str, ...] | None:
             if ex_mod.PROPOSAL_ID_RE.match(name) and (folder / name / ex_mod.READY_FILE).exists():
                 names.append(f"{member}/{name}")
     return tuple(names)
+
+
+def _published_marker(root: Path, pid: str) -> tuple[str, ...] | None:
+    """`inbox_marker` for a member's working copy (see there)."""
+    try:
+        state = read_state(pid)
+    except Exception:  # noqa: BLE001
+        return None
+    if not state or Path(str(state.get("working_copy", ""))) != Path(root).resolve():
+        return None
+    published = published_dir(Path(str(state.get("shared", ""))))
+    if not published.is_dir():
+        return None
+    names: list[str] = []
+    outcomes = published / ex_mod.OUTCOMES_DIRNAME
+    if outcomes.is_dir():
+        for proposal in sorted(os.listdir(outcomes)):
+            folder = outcomes / proposal
+            if ex_mod.PROPOSAL_ID_RE.match(proposal) and folder.is_dir():
+                names += [f"o:{proposal}/{n}" for n in sorted(os.listdir(folder))
+                          if (folder / n / ex_mod.READY_FILE).exists()]
+    snapshots = published / SNAPSHOTS_DIRNAME
+    if snapshots.is_dir():
+        names += [f"s:{n}" for n in sorted(os.listdir(snapshots)) if (snapshots / n / ex_mod.READY_FILE).exists()]
+    return tuple(names)
+
+
+def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
+    """What the next publish takes from the members' packets (reads only;
+    `collect_entries` is the act): notes and judgments not yet in the
+    official ledgers, link packets the official mappings.toml has not
+    received -- with each link removal named, since it takes a link out of
+    the official version. Untrusted packets are not counted (they are not
+    taken)."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    out: dict[str, Any] = {"notes": 0, "judgements": 0, "links_added": 0, "links_removed": 0, "members": [],
+                           "removals": [], "files": []}
+    try:
+        pid = _project_id(root)
+        ex = ex_mod.LocalExchange(shared, verifier=ex_mod.verifier_for(root, pid))
+        official: dict[str, set[str]] = {}
+        for name in TRAVELLING:
+            try:
+                parsed = _parse((paths.project_dir(root) / name).read_text(encoding="utf-8"), name)
+            except FileNotFoundError:
+                parsed = None
+            official[name] = _represented(parsed) if parsed is not None else set()
+        try:
+            received = mappings_ingest.received_packets(
+                (paths.project_dir(root) / MAPPINGS_NAME).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            received = set()
+        names = {m.id: m.name for m in team.members}
+        touched: set[str] = set()
+        for member in [m.id for m in team.members if m.role == "member"]:
+            packets, _problems = ex.packets(member)
+            took = False
+            for packet_id, _raw, data, check in packets:
+                if (check is not None and not check.trusted) or data.get("project") != pid:
+                    continue
+                for name, table in TRAVELLING.items():
+                    fresh = [e for e in data.get(table) or [] if isinstance(e, dict)
+                             and str(e.get("id")) not in official[name] and e.get("by") == member]
+                    if fresh:
+                        out["notes" if name == "notes.toml" else "judgements"] += len(fresh)
+                        touched.add(name)
+                        took = True
+                if packet_id not in received and (data.get(PACKET_ADDED) or data.get(PACKET_REMOVED)):
+                    out["links_added"] += len(data.get(PACKET_ADDED) or [])
+                    removed = [r for r in data.get(PACKET_REMOVED) or [] if isinstance(r, dict)]
+                    out["links_removed"] += len(removed)
+                    out["removals"] += [{"from": str(r.get("from")), "to": str(r.get("to")), "type": str(r.get("type")),
+                                         "by": names.get(member) or member} for r in removed][:50]
+                    touched.add(MAPPINGS_NAME)
+                    took = True
+            if took:
+                out["members"].append(names.get(member) or member)
+        out["files"] = [f"{paths.PROJECT_DIRNAME}/{n}" for n in sorted(touched)]
+    except Exception as exc:  # noqa: BLE001 -- a status never fails on this; the page says it could not look
+        out["error"] = str(exc)
+    return out
+
+
+_COPY_RE = re.compile(r"^(?P<stem>.+?)" + re.escape(OFFICIAL_INFIX) + r"(?:-\d+)?(?P<ext>\.[^./]*)?$")
+
+
+def _beside(root: Path, copies: Iterable[str]) -> list[dict[str, Any]]:
+    """For each `.official` copy still in the working copy: the member's
+    own file it was put beside, and the difference (yours, then the
+    official one) -- a line diff for text, the table sentence for data."""
+    out: list[dict[str, Any]] = []
+    for copy in list(copies)[:20]:
+        directory, name = posixpath.split(str(copy))
+        m = _COPY_RE.match(name)
+        if not m:
+            continue
+        yours = posixpath.join(directory, m.group("stem") + (m.group("ext") or ""))
+        item: dict[str, Any] = {"copy": copy, "path": yours}
+        try:
+            official = _confined(root, copy)
+            mine = _confined(root, yours)
+            if official.is_file() and mine.is_file():
+                item.update(_difference(mine, official, {"size": official.stat().st_size}))
+            elif official.is_file():
+                item["gone"] = True
+        except Exception:  # noqa: BLE001 -- a copy outside the folder or unreadable is not shown
+            continue
+        out.append(item)
+    return out

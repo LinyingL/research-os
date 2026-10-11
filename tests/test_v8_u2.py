@@ -299,7 +299,7 @@ def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
     assert attempt["what"] == "判决改了" and attempt["number"] == "16"
     assert attempt["old_status"]["label"] == "待定" and attempt["new_status"] == {
         "status": "abandoned", "label": "已放弃", "words": "伪协整"}
-    assert all(c["who"] == ["本机"] for c in out["changes"] if c["kind"] in ("file", "attempt"))
+    assert all(c["who"] == ["最初的研究者"] for c in out["changes"] if c["kind"] in ("file", "attempt"))  # 12.12
     # Newest first; nothing from before `since`.
     later = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
     assert _desk(root, later)["changes"] == []

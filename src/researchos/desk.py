@@ -83,11 +83,14 @@ def _iso(when: datetime) -> str:
     return when.isoformat(timespec="seconds")
 
 
-def _who(by: str | None, team: people.TeamRead | None, *, name: str | None = None) -> str:
+def _who(by: str | None, team: people.TeamRead | None, *, name: str | None = None,
+         unknown: str = people.FIRST_RESEARCHER_LABEL) -> str:
+    """A person as every view says them (8.8): the member's name; nobody
+    recorded is 「最初的研究者」 (12.12), or `unknown` where that is wrong."""
     if name:
         return name
     if not by:
-        return history.LOCAL_LABEL
+        return unknown
     return people.attribution({"by": by}, team)["label"]
 
 
@@ -164,6 +167,7 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             if when is not None and (group not in baseline or when < baseline[group]):
                 baseline[group] = when
         out = []
+        unknown = history.unknown_who_label(root)
         for node, versions in by_node.items():
             latest = versions[-1]
             group = "attempt" if latest["kind"] == "attempt" else "file"
@@ -179,7 +183,7 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             first_i = recent[0][0]
             before = versions[first_i - 1] if first_i > 0 else None
             window = [v for _, v in recent]
-            whos = list(dict.fromkeys(_who(v["who"], team) for v in window))
+            whos = list(dict.fromkeys(_who(v["who"], team, unknown=unknown) for v in window))
             notes = [v["note"] for v in window if v["note"]]
             approved = [v["approved_by"] for v in window if v["approved_by"]]
             item: dict[str, Any] = {
@@ -321,9 +325,19 @@ def _note_changes(root: Path, conn: Connection | None, since: datetime, me: str 
         if by is None or (me is not None and by == me):
             continue  # my own notes, or the first researcher's before names existed
         node = note.get("node")
-        out.append({"kind": "note", "node": node, "path": notes_mod.node_path(node) if isinstance(node, str) else None,
-                    "at": note.get("at"), "who": [note.get("label") or by], "text": note.get("text"),
-                    "id": note.get("id")})
+        item = {"kind": "note", "node": node, "path": notes_mod.node_path(node) if isinstance(node, str) else None,
+                "at": note.get("at"), "who": [note.get("label") or by], "text": note.get("text"),
+                "id": note.get("id")}
+        # 8.8: what the note is on, as a reader names it -- an attempt's
+        # number and title, a section's heading -- never the node id.
+        if item["path"] is None and isinstance(node, str) and conn is not None:
+            from researchos import nodepage  # noqa: PLC0415
+
+            try:
+                item["label"] = nodepage._label(conn, node)
+            except Exception:  # noqa: BLE001 -- the page falls back to a plain word
+                item["label"] = None
+        out.append(item)
     return out
 
 
@@ -369,19 +383,37 @@ def _review_count(conn: Connection | None) -> int:
         return 0
 
 
-def _abandoned(conn: Connection | None, labels: dict[str, str]) -> list[dict[str, Any]]:
+def _abandoned(conn: Connection | None, labels: dict[str, str], root: Path | None = None) -> list[dict[str, Any]]:
+    """Every abandoned route with its words (12.0: "which routes were
+    abandoned and why"): the result and the reason -- from the approval
+    that recorded it, else from the table's own 「放弃理由：…」 -- in the
+    table's order."""
+    from researchos import nodepage, proposals  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     if conn is None:
         return []
+    markers = proposals.abandon_markers(root) if root is not None else [proposals.DEFAULT_ABANDON_MARKER]
+    reasons: dict[str, str] = {}
+    if root is not None:
+        for entry in nodepage._decisions(root)[0]:
+            if entry.get("act") == "abandoned" and isinstance(entry.get("attempt"), str) \
+                    and str(entry.get("reason") or "").strip():
+                reasons[entry["attempt"]] = str(entry["reason"]).strip()
     out = []
-    for node in db.get_nodes_by_type(conn, "attempt"):
-        verdict = (node.get("human_fields") or {}).get("verdict", "")
-        status = attempts_ingest.verdict_status(verdict, labels)
+    nodes = sorted(db.get_nodes_by_type(conn, "attempt"),
+                   key=lambda n: ((n.get("attrs") or {}).get("source_file", ""),
+                                  attempts_ingest.attempt_sort_key(str((n.get("attrs") or {}).get("number") or ""))))
+    for node in nodes:
+        human = node.get("human_fields") or {}
+        verdict = human.get("verdict", "")
+        status = attempts_ingest.route_status(verdict, labels, markers)
         if status["status"] == "abandoned":
             attrs = node.get("attrs") or {}
+            result, reason = nodepage._reason_in(str(human.get("result") or ""))
             out.append({"id": node["id"], "number": attrs.get("number"), "title": attrs.get("description"),
-                        "verdict_status": status})
+                        "verdict_status": status, "result": result,
+                        "reason": reasons.get(node["id"]) or reason})
     return out
 
 
@@ -414,5 +446,5 @@ def desk(conn: Connection | None, project_root: str | Path, since: str | None = 
         "since": _iso(when), "since_default": default, "default_days": DEFAULT_DAYS,
         "changes": changes[:CHANGE_LIMIT], "more_changes": max(0, len(changes) - CHANGE_LIMIT),
         "results": results, "results_not_checked": unlooked, "review": _review_count(conn),
-        "abandoned": _abandoned(conn, labels),
+        "abandoned": _abandoned(conn, labels, root),
     }

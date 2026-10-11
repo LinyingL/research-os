@@ -255,7 +255,7 @@ body.no-project .side-nav, body.no-project .share-line { display: none !importan
 }
 .pm-item:hover:not(:disabled), .pm-item:focus-visible { background: var(--paper-alt); outline: none; }
 .pm-item:disabled { color: var(--ink-soft); cursor: default; }
-.pm-mark { flex: none; width: 1em; color: var(--clay); align-self: center; display: inline-flex; }
+.pm-mark { flex: none; width: 1em; color: var(--ink); align-self: center; display: inline-flex; } /* 12.11: never colored */
 .pm-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .pm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-flag { flex: none; font-size: 0.74rem; color: var(--ink-soft); }
@@ -426,7 +426,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .row-content { cursor: pointer; display: inline-flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.1rem 0.35rem; margin: -0.1rem 0 -0.1rem 0.1rem; color: var(--ink); vertical-align: top; max-width: calc(100% - 1.5rem); }
 .row-content:hover { background: var(--paper-alt); }
 .attempt-number { font-family: var(--font-mono); font-size: 0.82rem; color: var(--ink-soft); }
-.attempt-date { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-soft); }
+.attempt-date { font-size: 0.8rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .attempt-desc { font-weight: 500; }
 
 /* 12.11: a verdict is a quiet tinted text label (现行 / 已放弃 / 待定 /
@@ -448,7 +448,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 
 /* -- The desk (工作台, DESIGN.md 12.0): lists, not dashboards. -- */
 .desk { display: flex; flex-direction: column; gap: 2rem; max-width: 820px; }
-.desk-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.08rem; margin: 0 0 0.35rem; }
+.desk-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.35rem; }
 .desk-sub { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
 .desk-sub.quiet { margin-top: 1rem; }
 .desk-empty { font-size: 0.86rem; color: var(--ink-soft); margin: 0.2rem 0 0; }
@@ -478,7 +478,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .desk-files { list-style: none; margin: 0 0 0.8rem; padding: 0; }
 .desk-files li { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
 .panel-h3 { font-size: 0.8rem; color: var(--ink-soft); font-weight: normal; margin: 1rem 0 0.3rem; }
-.proposal-sentence { font-family: var(--font-serif); font-size: 1rem; margin: 0 0 0.6rem; }
+.proposal-sentence { font-family: var(--font-sans); font-weight: 600; font-size: 0.98rem; margin: 0 0 0.6rem; }
 .placeholder { font-size: 0.9rem; color: var(--ink-soft); max-width: 560px; }
 
 .script-list { margin: 0.15rem 0 0.6rem 1.9rem; }
@@ -524,7 +524,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .node-details { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1.2rem; margin: 0; font-size: 0.88rem; max-width: 820px; }
 .node-details dt { color: var(--ink-soft); }
 .node-details dd { margin: 0; word-break: break-word; }
-.node-sec-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.1rem; margin: 0 0 0.6rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--line-strong); }
+.node-sec-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.6rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--line-strong); }
 .node-sub { font-size: 0.82rem; color: var(--ink-soft); margin: 0 0 0.5rem; }
 .node-sub-inline { font-size: 0.78rem; color: var(--ink-soft); }
 .node-empty { font-size: 0.86rem; color: var(--ink-soft); margin: 0.2rem 0; list-style: none; }
@@ -671,7 +671,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.3rem; border-bottom: 1px solid var(--line-strong); }
 .panel-title { font-family: var(--font-mono); font-size: 0.95rem; word-break: break-all; }
-.panel-title.plain-title { font-family: var(--font-serif); font-size: 1.05rem; word-break: normal; }
+.panel-title.plain-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; word-break: normal; }
 .panel-subtitle { font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.25rem; }
 /* 12.11: closed with the word, not a glyph. */
 .panel-close { flex: none; background: none; border: none; font: inherit; font-size: 0.82rem; line-height: 1.4; cursor: pointer; color: var(--ink-soft); padding: 0.1rem 0.2rem; white-space: nowrap; }
@@ -770,7 +770,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-node.t-dataset .cv-rule { fill: var(--ochre); }
 .cv-node.t-script .cv-rule { fill: var(--olive); }
 .cv-node.t-figure .cv-rule { fill: var(--ink); }
-.cv-type { font-family: var(--font-mono); font-size: 11px; }
+.cv-type { font-family: var(--font-sans); font-size: 11px; }
 .cv-node.t-dataset .cv-type { fill: var(--ochre); }
 .cv-node.t-script .cv-type { fill: var(--olive); }
 .cv-node.t-figure .cv-type { fill: var(--ink); }
@@ -784,7 +784,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-socket.sock-data { fill: var(--ochre-soft); stroke: var(--ochre); }
 .cv-socket.sock-figure { fill: var(--paper); stroke: var(--ink); }
 .cv-socket.orphan { fill: var(--clay); stroke: var(--clay); }
-.cv-socket-label { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-soft); }
+.cv-socket-label { font-family: var(--font-sans); font-size: 11px; fill: var(--ink-soft); }
 
 .cv-link { fill: none; }
 .cv-link.machine { stroke: var(--ink); stroke-width: 1.5; stroke-opacity: 0.45; }
@@ -806,7 +806,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-frames { pointer-events: none; }
 .cv-frame-rect { stroke-width: 1.25; stroke-dasharray: 6 4; fill-opacity: 0.4; }
 .cv-frame-title { font-family: var(--font-sans); font-size: 12px; font-weight: 600; }
-.cv-loose-title { font-family: var(--font-mono); font-size: 12px; fill: var(--ink-soft); }
+.cv-loose-title { font-family: var(--font-sans); font-size: 12px; fill: var(--ink-soft); }
 .cv-frame.tone-olive .cv-frame-rect { stroke: var(--olive); fill: var(--olive-soft); }
 .cv-frame.tone-olive .cv-frame-title { fill: var(--olive); }
 .cv-frame.tone-ochre .cv-frame-rect { stroke: var(--ochre); fill: var(--ochre-soft); }
@@ -1020,7 +1020,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .var-doc-label { font-size: 0.78rem; color: var(--ochre); margin-bottom: 0.5rem; }
 .var-block { margin: 0 0 1.1rem; }
 .var-block:last-child { margin-bottom: 0; }
-.var-block-title { font-family: var(--font-serif); font-size: 1rem; margin: 0 0 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--line); }
+.var-block-title { font-family: var(--font-sans); font-weight: 600; font-size: 0.95rem; margin: 0 0 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--line); }
 .var-field { display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.8rem; padding: 0.2rem 0; font-size: 0.88rem; }
 .var-field-label { color: var(--ink-soft); }
 .var-field-value { white-space: pre-wrap; word-break: break-word; }
@@ -1086,13 +1086,13 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 /* 研究路线, 提议, 成员 (DESIGN.md 12.3, 12.4, 12.9; V8 U4, team.js): weight
    and space carry the hierarchy (12.11); labels are quiet tints. */
 .routes, .team { display: flex; flex-direction: column; gap: 1.9rem; max-width: 860px; }
-.route-group-title { margin: 0 0 0.45rem; font-weight: normal; font-size: 1rem; }
-.route-group-title.serif, .team-title { font-family: var(--font-serif); font-weight: normal; font-size: 1.08rem; margin: 0 0 0.45rem; }
+.route-group-title { margin: 0 0 0.45rem; font-weight: 600; font-size: 1rem; }
+.route-group-title.serif, .team-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.45rem; }
 .route-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .route-row { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
 .route-head { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; align-items: baseline; }
 .route-num { flex: none; min-width: 2.6rem; color: var(--ink-soft); }
-.route-date { flex: none; min-width: 4.6rem; font-family: var(--font-mono); font-size: 0.76rem; color: var(--ink-soft); }
+.route-date { flex: none; min-width: 4.6rem; font-size: 0.8rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .route-title { font: inherit; font-size: 0.92rem; font-weight: 500; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer; text-align: left; border-bottom: 1px solid transparent; }
 .route-title:hover { border-bottom-color: var(--clay); }
 .route-title:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
@@ -1229,7 +1229,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <section id="view-proposals" class="view hidden"></section>
       <section id="view-members" class="view hidden"></section>
       <!-- 12.9: every object opens the same node page (node.js). -->
-      <section id="view-node" class="view hidden" aria-label="节点"></section>
+      <section id="view-node" class="view hidden" aria-label="详情"></section>
     </main>
   </div>
 </div>
@@ -1438,11 +1438,11 @@ function escapeHtml(value) {
 // the researcher judged (9.12): it reads MIGRATED_AT_LABEL instead.
 const MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）";
 const VERDICT_WORDS = { confirmed: "确认", rejected: "否决", withdrawn: "撤回", undone: "撤销" };
-const VIA_WORDS = { canvas: "在画布上", cli: "在命令行里", mcp: "通过 MCP" };
+const VIA_WORDS = { canvas: "在关系图上", cli: "在命令行里", mcp: "通过 MCP" };
 const LINK_VERBS = {
   reads: "读取", writes: "写出", generates: "生成", backed_by: "依据", includes: "引用",
   cites: "引用文献", produces: "产出", implements: "实现", uses: "使用", supports: "支持",
-  authored_by: "提交者",
+  authored_by: "作者是", belongs_to: "属于",
 };
 const NODE_KIND_WORDS = { claim: "论断", experiment: "实验", commit: "提交", paper: "论文", reference: "文献", attempt: "尝试" };
 const BASIS_RECORDED_WORDS = {
@@ -1550,7 +1550,7 @@ function refEndName(id, title) {
 
 // A link {src, dst, type} in product language: 「17.Rmd 读取 panel.csv」.
 function linkText(key) {
-  const verb = Object.prototype.hasOwnProperty.call(LINK_VERBS, key.type) ? LINK_VERBS[key.type] : key.type;
+  const verb = Object.prototype.hasOwnProperty.call(LINK_VERBS, key.type) ? LINK_VERBS[key.type] : "关联";
   return endName(key.src, key.src_title) + " " + verb + " " + endName(key.dst, key.dst_title);
 }
 
@@ -1613,7 +1613,7 @@ const BLOCKING_ERROR_TEXT = {
   // DESIGN.md 9.3 / 9.2: a record Research OS cannot trust right now, nothing written
   record_untrusted: "判断记录文件当前无法读取，请先恢复它",
   record_shrunk: "判断记录文件比图谱少了几条判断，需要你先确认以哪一份为准",
-  layout_unreadable: "画布位置记录文件无法读取，请先修复它",
+  layout_unreadable: "关系图位置记录文件无法读取，请先修复它",
   // DESIGN.md 9.3's question and 9.4 / 9.5's answers, refused: nothing written
   record_question_changed: "记录文件在提问之后又变了，请重新查看问题再回答",
   record_would_lose: "记录文件当前为空或无法使用，以文件为准会丢掉仅存的判断副本；请先恢复文件，或选择「把缺少的补回文件」",
@@ -1847,9 +1847,17 @@ function activateView(name) {
   return null;
 }
 
+// The views that show the shared drive's state (what the PI answered, what
+// a member sent, the official version) are read afresh each time the
+// researcher goes to them: those acts do not move the project's generation
+// on this machine. 提议 always opens on the list (inbox or 我的提议).
+const SHARED_STATE_VIEWS = ["desk", "proposals", "tree", "members"];
 document.querySelectorAll(".side-item").forEach((btn) => {
   btn.addEventListener("click", () => {
-    activateView(btn.dataset.section === "data" ? lastDataView : btn.dataset.view);
+    const target = btn.dataset.section === "data" ? lastDataView : btn.dataset.view;
+    if (target === "proposals") { ROTeam.showList(); return; }
+    if (SHARED_STATE_VIEWS.includes(target) && currentView !== target && views[target]) delete views[target].dataset.loaded;
+    activateView(target);
   });
 });
 document.querySelectorAll(".subnav-item").forEach((btn) => {
@@ -4012,10 +4020,10 @@ const RECORD_KIND_WORDS = {
   mappings: "手工连线与备注",
   attempts: "尝试结论",
   attempts_config: "尝试年表配置",
-  canvas: "画布位置",
+  canvas: "关系图位置",
   variables: "变量定义卡",
   legacy: "旧版本索引里的判断",
-  notes: "节点上的笔记",
+  notes: "笔记",
   decisions: "经 PI 批准的决定",
   history: "版本历史（保存的材料，不是记录）",
 };
@@ -4052,7 +4060,7 @@ function recordCountText(row) {
     case "legacy":
       return f.waiting + " 个旧索引等待迁移";
     case "notes":
-      if (typeof f.notes === "number") return f.notes + " 条笔记，在 " + f.nodes + " 个节点上" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
+      if (typeof f.notes === "number") return f.notes + " 条笔记，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "decisions":
       if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
@@ -5217,7 +5225,7 @@ function renderLitRef(c, t, status, candidate) {
   // 12.9: a reference opens its node page (who cites it, the judgments).
   if (t.node) {
     const name = mkButton(litRefText(t), "lit-ref-text lit-ref-open", () => RONode.openNode(t.node));
-    name.title = "打开这篇文献的节点页";
+    name.title = "打开这篇文献的页面";
     box.appendChild(name);
   } else box.appendChild(mk("div", "lit-ref-text", litRefText(t)));
   const line = mk("div", "lit-ref-line");
@@ -5410,7 +5418,7 @@ function previewLines(p) {
   } else {
     lines.push("旧索引没有记下它来自哪里（" + p.db_path + "）");
   }
-  lines.push("里面有 " + p.confirmed + " 条确认、" + p.rejected + " 条否决，" + p.arranged_views + " 个摆放过的画布视图" +
+  lines.push("里面有 " + p.confirmed + " 条确认、" + p.rejected + " 条否决，" + p.arranged_views + " 个摆放过的关系图视图" +
     (p.mapping_links ? "；另有 " + p.mapping_links + " 条手工连线，它们本来就在 mappings.toml 里" : ""));
   if (p.judged) {
     lines.push(p.judged + " 条里有 " + p.produced + " 条的两端能在这个文件夹里扫到");
@@ -5429,7 +5437,7 @@ function migrationNotice(s) {
   const resuming = s.migration && s.migration.migrating_from;
   noticeHead(box, resuming ? "上次迁移没有完成" : waiting.length ? "旧版本的判断在等待迁移" : "这个项目来自旧版本");
   box.appendChild(mk("p", null, "迁移后才能记录判断。" + (resuming || waiting.length
-    ? "迁移会把旧索引里的确认、否决和画布位置写进项目自己的 .researchos/，核对数目对上之后才把旧索引移到一旁（不删除）。"
+    ? "迁移会把旧索引里的确认、否决和关系图位置写进项目自己的 .researchos/，核对数目对上之后才把旧索引移到一旁（不删除）。"
     : "没有找到等待迁移的旧索引；在终端运行 researchos migrate --list 可以查看本机所有旧索引。")));
   const status = mk("div", "notice-status");
   const actions = mk("div", "notice-actions");
@@ -5637,15 +5645,15 @@ const SITUATION_TITLES = {
 const ANSWER_HELP = {
   fork: "这个文件夹得到新的项目身份，带着现有的全部记录从这里起与原项目分开；原来的文件夹不受影响。",
   claim: "这里才是原项目：项目的索引改为跟随这个文件夹，并按它重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的判断、画布位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
+  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的判断、关系图位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
   readonly: "先只浏览，不认领、不写入任何东西；原位置能访问后再来回答。",
   restore: "用 .researchos/backups/ 里的快照把项目身份文件放回去，项目恢复原来的身份。",
-  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的判断、画布位置和变量卡全部保留，并据此重新建立索引。",
+  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的判断、关系图位置和变量卡全部保留，并据此重新建立索引。",
 };
 
 const ANSWER_CONFIRM = {
   claim: "这里才是原项目？\n\n项目的索引会按这个文件夹重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这是另一个项目？\n\n复制来的判断、画布位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
+  other: "这是另一个项目？\n\n复制来的判断、关系图位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
 };
 
 function resolveNote(answer, res) {

@@ -424,7 +424,7 @@ def add_note(
     try:
         node_id = normalize_node(node)
     except ValueError as exc:
-        raise NoteRefused("invalid", str(exc), message_zh="无法识别这个节点") from exc
+        raise NoteRefused("invalid", str(exc), message_zh="无法识别这条笔记要写在哪里") from exc
     if not isinstance(text, str) or not text.strip():
         raise NoteRefused("invalid", "a note needs text", message_zh="笔记不能为空")
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")

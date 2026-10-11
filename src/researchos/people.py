@@ -59,7 +59,7 @@ from researchos.records.files import RecordState
 ME_FILENAME = "me.toml"
 TEAM_FILENAME = "team.toml"
 ROLES = ("pi", "member")
-FIRST_RESEARCHER_LABEL = "项目的第一位研究者"
+FIRST_RESEARCHER_LABEL = "最初的研究者"  # 12.12: a missing `by`
 
 _ME_HEADER = "# 这台电脑上的使用者。由 Research OS 写入（researchos me set），请用这个命令修改。\n"
 _ME_KEYS = ("id", "name", "email")

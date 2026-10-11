@@ -329,10 +329,13 @@
       head.appendChild(mk("span", "desk-what", what));
       if (item.verdict_status) head.appendChild(verdictInline(item.verdict_status));
     } else if (item.kind === "note") {
-      const target = item.path || item.node || "";
+      // 8.8: the file's path, or what the note is on as a reader names it.
+      const target = item.path || item.label || "一处记录";
       head.appendChild(mk("span", "desk-what", "笔记，写在"));
       head.appendChild(rowLink(target, item.path ? "mono" : "", () => RONode.openNode(item.node || item.path)));
     }
+    const own = item.kind === "file" || item.kind === "attempt" ? ownMark(item) : null;
+    if (own) head.appendChild(own); // 12.12: a member's own work is never shown as official
     main.appendChild(head);
     const meta = [];
     if (item.kind === "decision") {
@@ -387,6 +390,8 @@
         const head = mk("div", "desk-head");
         head.appendChild(rowLink(r.path || r.node, "mono", () => RONode.openNode(r.node || r.path), "打开这个成果"));
         if (r.exists === false) head.appendChild(mk("span", "desk-flag", "文件不存在"));
+        const own = ownMark(r);
+        if (own) head.appendChild(own);
         main.appendChild(head);
         (r.breaks || []).forEach((b) => {
           const line = mk("p", "desk-break", b.label + (b.path && b.path !== r.path ? "：" + b.path : ""));
@@ -413,14 +418,34 @@
     host.appendChild(sec);
   }
 
+  // 12.0: which routes were abandoned and why -- each route by its number
+  // and title, its result and its reason, opening its page.
   function renderAbandoned(host, data) {
     const sec = block("已放弃的路线");
     const list = data.abandoned || [];
     if (!list.length) {
       sec.appendChild(emptyLine("还没有放弃过的路线。"));
     } else {
-      const line = mk("p", "desk-sub", list.length + " 条路线已经放弃，每条都留着当时的结果和理由。");
-      line.appendChild(rowLink("在研究路线中查看", "", () => showAbandonedRoutes()));
+      const ul = mk("ul", "desk-list");
+      list.forEach((a) => {
+        const row = mk("li", "desk-row");
+        const main = mk("div", "desk-main");
+        const head = mk("div", "desk-head");
+        head.appendChild(rowLink(attemptName(a) || "一条尝试", "", () => openAttempt(a.id), "打开这条路线"));
+        if (a.verdict_status) head.appendChild(verdictInline(a.verdict_status));
+        const own = ownMark(a);
+        if (own) head.appendChild(own);
+        main.appendChild(head);
+        if (a.result) main.appendChild(mk("p", "desk-note plain", "结果：" + a.result));
+        // The verdict's own words beside the label often are the reason;
+        // a reason recorded apart (an approval, 「放弃理由：…」) is said too.
+        if (a.reason) main.appendChild(mk("p", "desk-note", "理由：" + a.reason));
+        row.appendChild(main);
+        ul.appendChild(row);
+      });
+      sec.appendChild(ul);
+      const line = mk("p", "desk-sub");
+      line.appendChild(rowLink("在研究路线中查看它们当时的依据", "", () => showAbandonedRoutes()));
       sec.appendChild(line);
     }
     host.appendChild(sec);
@@ -470,6 +495,21 @@
     host.appendChild(sec);
   }
 
+  // What the last 同步 from the desk did: kept on the desk until it is
+  // opened afresh, because the sync itself moves the generation and the
+  // desk is rebuilt at once.
+  let syncShown = null;
+
+  function renderSyncShown(sec) {
+    if (!syncShown) return;
+    const done = mk("div", "desk-sync-done team-flash");
+    syncShown.forEach((f) => {
+      done.appendChild(mk("p", "team-done", f.text));
+      if (f.diff || f.summary) done.appendChild(ROTeam.differenceBlock(f, true));
+    });
+    sec.appendChild(done);
+  }
+
   function renderOfficial(host) {
     const sec = block("官方版本有更新");
     const share = ctx.share || {};
@@ -483,16 +523,27 @@
       const line = mk("p", "desk-sub", "PI 于 " + whenWords(last.at, now()) + " 发布了第 " + last.seq + " 版" +
         (last.note ? "：" + last.note : "。"));
       sec.appendChild(line);
+      // What 同步 will write is said first (the engine's sync-preview),
+      // exactly as on 成员; the button waits for it.
+      const writes = mk("p", "team-line writes", "正在查看同步会写入什么…");
       const status = mk("div", "notice-status");
       const btn = mkButton("同步", "btn", () => syncNow(btn, status));
+      btn.disabled = true;
       const actions = mk("div", "desk-actions");
       actions.append(btn);
-      sec.append(actions, status);
-      sec.appendChild(mk("p", "desk-sub", "你改过的文件不会被覆盖：官方的那一份会放在它旁边。"));
+      sec.append(writes, actions, status);
+      apiGet("/api/share/sync-preview").then((p) => {
+        writes.textContent = ROTeam.syncWrites(p);
+        btn.disabled = !!p.untrusted;
+      }).catch((err) => {
+        setStatus(writes, "err", "没能查看同步会写入什么", err);
+        btn.disabled = false;
+      });
     } else {
       sec.querySelector(".desk-title").textContent = "官方版本";
       sec.appendChild(emptyLine(last ? "你的工作副本已经是最新的官方版本（第 " + last.seq + " 版）。" : "PI 还没有发布过官方版本。"));
     }
+    renderSyncShown(sec);
     host.appendChild(sec);
   }
 
@@ -504,18 +555,25 @@
       res = await apiPost("/api/share/sync", {});
     } catch (err) {
       btn.disabled = false;
-      setStatus(status, "err", "没能同步", err);
+      setStatus(status, "err", "没能同步，工作副本没有改动", err);
       return;
     }
-    const kept = Array.isArray(res.kept_yours) ? res.kept_yours.length : 0;
-    setStatus(status, "ok", "已同步到第 " + (res.seq != null ? res.seq : "") + " 版" +
-      (kept ? "；你改过的 " + kept + " 个文件保留了你的版本，官方的那一份放在旁边" : "") + "。");
-    refreshSidebar();
+    setStatus(status, "", "");
+    // The sentence counts what the engine reports (team.js syncDone), each
+    // .official copy with its difference; the desk is drawn again with it.
+    syncShown = ROTeam.syncFlash(res);
+    if (typeof markViewsStale === "function") markViewsStale();
+    await loadDesk(views.desk, true);
+    const shown = views.desk.querySelector(".desk-sync-done");
+    if (shown && typeof shown.scrollIntoView === "function") shown.scrollIntoView({ block: "center" });
   }
 
   async function loadDesk(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) {
+      host.innerHTML = '<p class="empty-note">载入中…</p>';
+      syncShown = null;
+    }
     let data;
     try {
       // Who I am first (it keys "last seen"), then the rest side by side.
@@ -543,9 +601,13 @@
       renderResults(desk, data);
       renderAbandoned(desk, data);
     } else if (ctx.mode === "member") {
+      // 12.0 names no role exception: a member's desk also says which
+      // results lost their evidence and which routes were abandoned.
       renderMine(desk);
       renderOfficial(desk);
       renderChanges(desk, data);
+      renderResults(desk, data);
+      renderAbandoned(desk, data);
     } else {
       renderChanges(desk, data);
       renderResults(desk, data);

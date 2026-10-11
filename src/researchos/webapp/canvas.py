@@ -512,8 +512,8 @@ CANVAS_RECORD_FILENAME = "canvas.json"
 
 #: Product language (8.8) for a canvas record Research OS cannot use.
 LAYOUT_MESSAGES = {
-    "invalid": "画布位置记录文件无法读取，请先修复它",
-    "unreadable": "画布位置记录文件无法读取，请先修复它",
+    "invalid": "关系图位置记录文件无法读取，请先修复它",
+    "unreadable": "关系图位置记录文件无法读取，请先修复它",
     "dataless": "记录文件正在从云端下载…",
 }
 

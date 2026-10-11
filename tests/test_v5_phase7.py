@@ -297,11 +297,11 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",
         "迁移这些记录", "这不是这个项目的", "迁移后才能记录判断", " 条里有 ", " 条的两端能在这个文件夹里扫到",
         "原位置暂时无法确认", "项目身份文件无法读取", "人工记录", "在 Finder 中显示", "最新快照：",
-        "画布位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
+        "关系图位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
     ):
         assert copy in html, copy
     for copy in ("确认这条连线", "标记为错误提取", "撤回", "撤销", "在待复核列表中查看", "备注（可选）",
-                 "画布位置记录文件无法读取", "把它移到备份，重新开始摆放", "记录（新的在上）"):
+                 "关系图位置记录文件无法读取", "把它移到备份，重新开始摆放", "记录（新的在上）"):
         assert copy in js, copy
 
 
@@ -420,7 +420,7 @@ def test_history_lines_say_who_did_what_when_and_from_where():
         ("historyBasisText", [dict(canvas_reject, basis_recorded="not-produced")]),
         ("historyBasisText", [dict(canvas_reject, verdict="withdrawn")]),
     )
-    assert out[0] == "2026-10-04 21:15 · 你在画布上否决"
+    assert out[0] == "2026-10-04 21:15 · 你在关系图上否决"
     assert out[1] == "2026-10-04 21:15 · 你在命令行里撤销了上一步"
     assert out[2] == "2026-10-04 21:15 · 你通过 MCP撤回了判断"
     assert out[3] == "迁移自旧索引（原判断时间未知） · 确认" and "2026-10-05" not in out[3]
@@ -438,7 +438,8 @@ def test_a_link_reads_in_product_language():
         ("linkText", [{"src": "claim:paper.tex#abc", "dst": "experiment:run1", "type": "backed_by"}]),
         ("linkText", [{"src": "script:a.py", "dst": "figure:f.png", "type": "odd_type"}]),
     )
-    assert out == ["17-叙事.Rmd 读取 panel.csv", "论断（paper.tex） 依据 实验（run1）", "a.py odd_type f.png"]
+    # 8.8: a type no word names reads 「关联」, never its English name (review round 2).
+    assert out == ["17-叙事.Rmd 读取 panel.csv", "论断（paper.tex） 依据 实验（run1）", "a.py 关联 f.png"]
 
 
 # -- the link card's actions, under node ----------------------------------------------------------

@@ -857,7 +857,7 @@ def test_canvas_js_carries_the_design_copy_in_product_language():
     for copy in (
         "数据集", "脚本", "图表",                          # 8.1 node types
         "来源", "数据", "读取", "写出", "生成", "生成自",   # 8.1 sockets
-        "查找节点…", "适应全部", "100%", "放大", "缩小",    # 8.2 toolbar, in words (12.11)
+        "查找文件…", "适应全部", "100%", "放大", "缩小",    # 8.2 toolbar, in words (12.11)
         "重新排列", "将丢弃你在这个视图里摆放的位置",      # 8.4 relayout (as amended)
         "尚未入图", "文件不存在", "检测到循环", "全部",     # 8.1/8.2/8.4/8.7
     ):

@@ -361,6 +361,22 @@ def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) ->
     return {"status": status, "label": label, "words": words}
 
 
+def route_status(verdict: str | None, labels: dict[str, str] | None, abandon_markers: list[str] | tuple[str, ...]) -> dict[str, str]:
+    """`verdict_status`, with a verdict the project counts as abandoned
+    (12.12: `abandoned_verdicts` in attempts.toml, ☠ always --
+    `researchos.proposals.abandon_markers`) said as abandoned wherever its
+    own word did not already: under the researcher's word when they named
+    its marker in `[verdict_labels]`, else 已放弃."""
+    status = verdict_status(verdict, labels)
+    if status["status"] not in ("labelled", "other"):
+        return status
+    bare = _bare(verdict if isinstance(verdict, str) else "")[0]
+    if any(_bare(m)[0].strip() and _bare(m)[0].strip() in bare for m in abandon_markers):
+        label = status["label"] if status["status"] == "labelled" else DEFAULT_VERDICT_LABELS["☠️"]
+        return {**status, "status": "abandoned", "label": label}
+    return status
+
+
 # -- Markdown table location + cell cleanup ---------------------------------
 
 _HEADING_RE = re.compile(r"^#{1,6}\s*(.+?)\s*$")

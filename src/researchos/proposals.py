@@ -1146,7 +1146,7 @@ def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
         state = "apply" if current == item.get("base_sha256") else ("same" if official is None else "conflict")
     out["state"] = state
     if state == "conflict":
-        out["reason"] = "这个文件在你提议之后，正式版本里也改了" if official is not None else "这个文件在正式版本里已经不在了"
+        out["reason"] = "这个文件在提议之后，正式版本里也改了" if official is not None else "这个文件在正式版本里已经不在了"
     if item["action"] != "removed":
         try:
             content = stored.content_path(item)
@@ -1179,6 +1179,15 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
         new_text = None
     if old_text is not None and new_text is not None:
         out["diff"], out["truncated"] = history.unified(old_text, new_text, f"a/{rel}", f"b/{rel}")
+        # 12.3: a table is data too -- its rows and columns, beside the diff.
+        try:
+            before = history.data_summary(old_path, rel) if out.get("official_sha256") else None
+            after = history.data_summary(Path(out["content"]), rel) if item["action"] != "removed" else None
+        except OSError:
+            before = after = None
+        if before or after:
+            out["table"] = (history.table_sentence(before, after) if before and after
+                            else history.table_shape(after or before))
         return
     try:
         a = history.data_summary(old_path, rel) if out.get("official_sha256") else None
@@ -1186,6 +1195,8 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
     except OSError:
         a = b = None
     out["summary"] = history.table_sentence(a, b) if (a or b) else None
+    if b and not a:
+        out["table"] = history.table_shape(b)
     sizes = f"{out.get('official_size') if out.get('official_size') is not None else '—'} → {item.get('size') if item.get('size') is not None else '—'} 字节"
     out["sentence"] = (out["summary"] + "；" if out.get("summary") else "") + f"大小 {sizes}"
 
@@ -1198,6 +1209,23 @@ def abandon_result(result: str, reason: str | None, verdict: str) -> str:
     if not said or said in result or said in verdict:
         return result
     return f"{result}（放弃理由：{said}）" if result.strip() else f"放弃理由：{said}"
+
+
+_REASON_SUFFIX = re.compile(r"^（放弃理由：.*）$", re.S)
+
+
+def row_as_approved(mine: Mapping[str, str], official: Mapping[str, str] | None) -> bool:
+    """`official` is the member's row `mine` as an approval wrote it: the
+    same cells, the result perhaps followed by the reason `abandon_result`
+    adds."""
+    if official is None or any(mine.get(k) != official.get(k) for k in ROW_FIELDS if k != "result"):
+        return False
+    a, b = mine.get("result") or "", official.get("result") or ""
+    if a == b:
+        return True
+    if not a.strip():
+        return b.startswith("放弃理由：")
+    return b.startswith(a) and bool(_REASON_SUFFIX.match(b[len(a):]))
 
 
 def _table_at(root: Path, config, sha: Any) -> str | None:
@@ -1315,7 +1343,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         if base_row is not None:
             moved_cells = [k for k in ROW_FIELDS if k not in ("verdict", "result") and current[k] != base_row[k]]
             if moved_cells:
-                out.update(state="conflict", reason=f"第 {number} 行在你提议之后，正式版本里也改了")
+                out.update(state="conflict", reason=f"第 {number} 行在提议之后，正式版本里也改了")
                 return out
         elif table_moved:
             out["base_row_unknown"] = True  # only the verdict and result could be compared
