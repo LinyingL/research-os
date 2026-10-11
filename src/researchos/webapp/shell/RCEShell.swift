@@ -65,6 +65,11 @@
 //   "choose-file", request, purpose: "key"}` (a member's public key file,
 //   for the PI), answered through the same callback. The page learns of
 //   them from "choose-folder-share" and "choose-file-key".
+//   Since V8 U5 (DESIGN.md 12.9): `{type: "mode", mode: String}`, mode
+//   exactly one of teamModes, sent by the page whenever it learns the open
+//   project's role. It only shows or hides 文件 > 提交提议… (a member) and
+//   发布 (the PI); both commands only take the page to the place that says
+//   what they would write -- nothing is written from a menu.
 // - Navigation: only http://127.0.0.1:<port> (and the placeholder's
 //   about:blank) load in the window. Any other http(s)/mailto link opens
 //   in the default browser; every other scheme is refused. Developer
@@ -78,11 +83,16 @@ import AppKit
 
 // The page-side dispatcher (app.html, "Native shell bridge") accepts the
 // same names. Only [a-z-] characters: safe inside a single-quoted JS string.
+// V8 U5 (DESIGN.md 12.9): one command per sidebar section, plus 提交提议
+// (a member) and 发布 (the PI).
 let shellCommands: Set<String> = [
-    "tree", "lineage", "canvas", "variables", "new-attempt", "reload",
-    "zoom-in", "zoom-out", "zoom-reset", "fit", "reveal-project", "open-map",
-    "add-project",
+    "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+    "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
 ]
+
+// What the page says the open project is (V8 U5): exactly one of these, or
+// the message is ignored. 提交提议… shows for "member", 发布 for "pi".
+let teamModes: Set<String> = ["single", "pi", "member", "none"]
 
 let defaultPort = 7357
 let probeTimeout: TimeInterval = 1.0
@@ -262,6 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     var quitting = false
     var signalSources: [DispatchSourceSignal] = []
     var choosingFolder = false
+    var teamMode = "single"
+    var proposeItem: NSMenuItem!
+    var publishItem: NSMenuItem!
+    var teamSeparator: NSMenuItem!
 
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -509,14 +523,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
             .separator(),
             item("退出", #selector(NSApplication.terminate(_:)), "q"),
         ]))
+        // 提交提议… / 发布 appear only in a collaborative project, by role
+        // (applyTeamMode); a project of one person has neither.
+        proposeItem = cmd("提交提议…", "propose")
+        publishItem = cmd("发布", "publish")
+        teamSeparator = .separator()
         main.addItem(submenu("文件", [
             cmd("添加项目…", "add-project", "o"),
-            .separator(),
-            cmd("新增尝试", "new-attempt", "n"),
-            cmd("在 Finder 中显示项目", "reveal-project", "r", [.command, .shift]),
+            teamSeparator,
+            proposeItem,
+            publishItem,
             .separator(),
             item("关闭", #selector(NSWindow.performClose(_:)), "w"),
         ]))
+        applyTeamMode()
         main.addItem(submenu("编辑", [
             item("撤销", Selector(("undo:")), "z"),
             item("重做", Selector(("redo:")), "z", [.command, .shift]),
@@ -532,10 +552,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         zoomInAlt.isHidden = true
         zoomInAlt.allowsKeyEquivalentWhenHidden = true
         let viewMenu = submenu("视图", [
-            cmd("决策树", "tree", "1"),
-            cmd("血缘", "lineage", "2"),
-            cmd("画布", "canvas", "3"),
+            cmd("工作台", "desk", "1"),
+            cmd("研究路线", "routes", "2"),
+            cmd("成果", "results", "3"),
             cmd("变量", "variables", "4"),
+            cmd("文献", "literature", "5"),
+            cmd("数据与代码", "data", "6"),
+            cmd("提议", "proposals", "7"),
+            cmd("成员", "members", "8"),
             .separator(),
             item("重新载入", #selector(reloadPage(_:)), "r"),
             .separator(),
@@ -543,7 +567,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
             zoomInAlt,
             cmd("缩小", "zoom-out", "-"),
             cmd("实际大小", "zoom-reset", "0"),
-            cmd("适应全部", "fit", "f", []),
         ])
         viewMenu.submenu?.items.first { $0.action == #selector(reloadPage(_:)) }?.target = self
         main.addItem(viewMenu)
@@ -560,8 +583,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem === proposeItem { return appLoaded && teamMode == "member" }
+        if menuItem === publishItem { return appLoaded && teamMode == "pi" }
         if menuItem.action == #selector(sendCommand(_:)) { return appLoaded }
         return true
+    }
+
+    // 文件 > 提交提议… for a member, 发布 for the PI; neither otherwise.
+    func applyTeamMode() {
+        proposeItem.isHidden = teamMode != "member"
+        publishItem.isHidden = teamMode != "pi"
+        teamSeparator.isHidden = teamMode != "member" && teamMode != "pi"
     }
 
     @objc func sendCommand(_ sender: NSMenuItem) {
@@ -659,6 +691,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         if body.count == 2, body["type"] as? String == "title", let text = body["text"] as? String {
             let label = sanitizedLabel(text)
             window.title = label.isEmpty ? "Research OS" : "Research OS — " + label
+        } else if body.count == 2, body["type"] as? String == "mode",
+                  let mode = body["mode"] as? String, teamModes.contains(mode) {
+            teamMode = mode
+            applyTeamMode()
         } else if body.count == 2, body["type"] as? String == "choose-folder",
                   let request = body["request"] as? String, isFolderRequest(request) {
             chooseFolder(request, purpose: "locate")

@@ -239,6 +239,8 @@
     const shareLine = document.getElementById("share-line");
     const meLine = document.getElementById("me-line");
     if (!count || !shareLine || !meLine) return;
+    // The shell's 文件 menu shows 提交提议… or 发布 by role (V8 U5).
+    if (typeof postShellMode === "function") postShellMode(state.noProject ? "single" : ctx.mode);
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
     count.title = n > 0 ? n + " 条提议等你批准" : "";

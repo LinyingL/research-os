@@ -185,7 +185,7 @@ body {
    rest), icons are monochrome line drawings, never colored. */
 #app { min-height: 100vh; display: flex; }
 .sidebar {
-  flex: none; width: 236px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  flex: none; width: 236px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; background: var(--paper-alt); border-right: 1px solid var(--line-strong);
   padding: 1.25rem 0 0.9rem;
 }
@@ -243,6 +243,12 @@ body.no-project .side-nav, body.no-project .share-line { display: none !importan
   background: var(--paper); border: 1px solid var(--line-strong); box-shadow: 0 6px 18px rgba(38, 34, 27, 0.12);
   padding: 0.3rem 0; font-size: 0.84rem; color: var(--ink);
 }
+/* In the sidebar the menu keeps to the sidebar's width (it scrolls
+   vertically, so anything wider is clipped): a long project name is cut
+   short with an ellipsis, its full path on hover (12.11 sweep, 900x600). */
+/* Where 文件 > 提交提议… / 发布 lands (revealShellAnchor): a little air above. */
+[data-anchor] { scroll-margin-top: 1.2rem; }
+.side-project .project-menu { left: -0.65rem; right: -0.65rem; min-width: 0; max-width: none; }
 .pm-item {
   display: flex; align-items: baseline; gap: 0.5rem; width: 100%; text-align: left; font: inherit; color: inherit;
   background: none; border: none; padding: 0.32rem 0.9rem 0.32rem 0.7rem; cursor: pointer;
@@ -315,7 +321,7 @@ body.no-project .side-nav, body.no-project .share-line { display: none !importan
   font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer;
   text-decoration: underline; text-underline-offset: 2px;
 }
-.scan-chip-close { font: inherit; color: var(--ink-soft); background: none; border: none; padding: 0 0 0 0.5rem; cursor: pointer; }
+.scan-chip-close { font: inherit; color: var(--ink-soft); background: none; border: none; padding: 0 0 0 0.5rem; cursor: pointer; white-space: nowrap; }
 .scan-chip-close:hover { color: var(--ink); }
 
 /* The in-view companion to the header state: product language where the
@@ -667,7 +673,8 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .panel-title { font-family: var(--font-mono); font-size: 0.95rem; word-break: break-all; }
 .panel-title.plain-title { font-family: var(--font-serif); font-size: 1.05rem; word-break: normal; }
 .panel-subtitle { font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.25rem; }
-.panel-close { background: none; border: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--ink-soft); padding: 0 0.2rem; }
+/* 12.11: closed with the word, not a glyph. */
+.panel-close { flex: none; background: none; border: none; font: inherit; font-size: 0.82rem; line-height: 1.4; cursor: pointer; color: var(--ink-soft); padding: 0.1rem 0.2rem; white-space: nowrap; }
 .panel-close:hover { color: var(--ink); }
 .panel-body { flex: 1; overflow-y: auto; padding: 1.1rem 1.3rem; }
 
@@ -936,7 +943,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .notice-title { font-weight: 600; margin-bottom: 0.15rem; }
 .notice.bad .notice-title, .state-note .notice-title { color: var(--clay); }
 .notice p { margin: 0.3rem 0 0; color: var(--ink-soft); }
-.notice-close { float: right; margin-left: 0.6rem; background: none; border: none; cursor: pointer; color: var(--ink-soft); font-size: 1.1rem; line-height: 1; padding: 0; }
+.notice-close { float: right; margin-left: 0.6rem; background: none; border: none; cursor: pointer; color: var(--ink-soft); font: inherit; font-size: 0.78rem; line-height: 1.4; padding: 0; white-space: nowrap; }
 .notice-close:hover { color: var(--ink); }
 .notice-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.7rem; align-items: center; }
 .notice-status { font-size: 0.8rem; margin-top: 0.45rem; min-height: 1em; }
@@ -1234,7 +1241,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <div class="panel-title" id="panel-title"></div>
       <div class="panel-subtitle" id="panel-subtitle"></div>
     </div>
-    <button class="panel-close" id="panel-close" type="button" aria-label="关闭" title="关闭">&times;</button>
+    <button class="panel-close" id="panel-close" type="button">关闭</button>
   </div>
   <div class="panel-body" id="panel-body"></div>
 </aside>
@@ -2966,7 +2973,7 @@ function showScanDone(last) {
       const open = detail.classList.toggle("hidden") === false;
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
     });
-    const close = mkButton("×", "scan-chip-close", hideScanChip);
+    const close = mkButton("关闭", "scan-chip-close", hideScanChip);
     close.setAttribute("aria-label", "关闭");
     close.title = "关闭";
     scanChip.append(text, toggle, detail, close);
@@ -2976,7 +2983,7 @@ function showScanDone(last) {
   const text = mk("span");
   const err = new Error(String(last.error || ""));
   renderBlockingError(text, scanDoneText(last), last.error ? err : null);
-  const close = mkButton("×", "scan-chip-close", hideScanChip);
+  const close = mkButton("关闭", "scan-chip-close", hideScanChip);
   close.setAttribute("aria-label", "关闭");
   close.title = "关闭";
   scanChip.append(text, close);
@@ -5303,7 +5310,7 @@ function notice(tone) {
 
 function noticeHead(box, title, onClose) {
   if (onClose) {
-    const close = mkButton("×", "notice-close", onClose);
+    const close = mkButton("关闭", "notice-close", onClose);
     close.setAttribute("aria-label", "关闭");
     close.title = "关闭";
     box.appendChild(close);
@@ -6436,20 +6443,61 @@ async function shellOpenMap() {
   await shellOpen(config.file, false, "无法打开项目地图");
 }
 
+// 文件 > 提交提议… / 发布 (V8 U5): the menu only takes the researcher to
+// the place that says what would be written -- the 提交提议 form in 提议,
+// the 公盘 block in 成员 -- scrolls it into view and puts the cursor in its
+// first field. Nothing is written from a menu. The view loads on its own
+// schedule, so the anchor is looked for a few times before giving up (the
+// view then simply stays open at its top).
+function revealShellAnchor(view, anchor) {
+  activateView(view);
+  let tries = 0;
+  const look = () => {
+    const host = views[view];
+    const el = host && !host.classList.contains("hidden") ? host.querySelector('[data-anchor="' + anchor + '"]') : null;
+    if (!el) {
+      if (++tries < 40 && currentView === view) setTimeout(look, 75);
+      return;
+    }
+    el.scrollIntoView({ block: "start" });
+    const field = el.querySelector("textarea, input:not([type=radio]), button.btn-primary");
+    if (field) field.focus({ preventScroll: true });
+  };
+  look();
+}
+
 const SHELL_COMMANDS = {
-  // 视图 ⌘1-4 (the shell's menu, unchanged): 研究路线, 数据与代码 and its
-  // 关系图, 变量 -- the sections that now hold those views (12.9).
-  "tree": () => activateView("tree"),
-  "lineage": () => activateView("lineage"),
-  "canvas": () => activateView("canvas"),
+  // 视图 ⌘1-8 (12.9): one command per sidebar section.
+  "desk": () => activateView("desk"),
+  "routes": () => activateView("tree"),
+  "results": () => activateView("results"),
   "variables": () => activateView("variables"),
-  "new-attempt": () => openAttemptForm("append"),
-  // 文件 → 「添加项目… ⌘O」 (DESIGN.md 10.1, 10.7).
+  "literature": () => activateView("literature"),
+  // 数据与代码 reopens on the list or 关系图, as the sidebar does.
+  "data": () => activateView(lastDataView),
+  "proposals": () => activateView("proposals"),
+  "members": () => activateView("members"),
+  // 文件 > 「添加项目… ⌘O」 (DESIGN.md 10.1, 10.7).
   "add-project": () => openAddDialog(),
+  "propose": () => revealShellAnchor("proposals", "compose"),
+  "publish": () => revealShellAnchor("members", "publish"),
   "reload": () => window.location.reload(),
   "zoom-in": () => shellZoom(1),
   "zoom-out": () => shellZoom(-1),
   "zoom-reset": () => shellZoom(0),
+  "open-map": () => shellOpenMap(),
+};
+
+// What a Research OS.app built before V8 U5 still sends (its 视图 决策树 /
+// 血缘 / 画布 / 适应全部 and 文件 新增尝试 / 在 Finder 中显示项目), until
+// `researchos app` rebuilds it (the build-id changed with the shell
+// source). Understood, never offered: no menu of the current shell names
+// these.
+const SHELL_COMMANDS_BEFORE_U5 = {
+  "tree": () => activateView("tree"),
+  "lineage": () => activateView("lineage"),
+  "canvas": () => activateView("canvas"),
+  "new-attempt": () => openAttemptForm("append"),
   // 适应全部 is a canvas notion; from another view it brings the canvas up
   // first rather than silently doing nothing -- and when that starts the
   // canvas's first load, fits once the cards are there (fitting the empty
@@ -6460,7 +6508,6 @@ const SHELL_COMMANDS = {
     else RCECanvas.fitAll();
   },
   "reveal-project": () => shellOpen(".", true, "无法在 Finder 中显示项目"),
-  "open-map": () => shellOpenMap(),
 };
 
 window.RCE = Object.freeze({
@@ -6469,17 +6516,34 @@ window.RCE = Object.freeze({
     return folderChosen(request, path);
   },
   command(name) {
-    if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(SHELL_COMMANDS, name)) return false;
+    if (typeof name !== "string") return false;
+    const table = Object.prototype.hasOwnProperty.call(SHELL_COMMANDS, name) ? SHELL_COMMANDS
+      : Object.prototype.hasOwnProperty.call(SHELL_COMMANDS_BEFORE_U5, name) ? SHELL_COMMANDS_BEFORE_U5 : null;
+    if (!table) return false;
     // After 停止服务 the page is a static note; a menu click must not throw.
     if (!document.getElementById("view-tree")) return false;
     try {
-      SHELL_COMMANDS[name]();
+      table[name]();
     } catch (err) {
       return false;
     }
     return true;
   },
 });
+
+// The open project's role for the shell's 文件 menu (V8 U5): exactly one
+// of single / pi / member / none -- the only values the shell takes.
+let lastShellMode = null;
+function postShellMode(mode) {
+  const m = ["single", "pi", "member", "none"].indexOf(mode) >= 0 ? mode : "single";
+  if (m === lastShellMode) return;
+  try {
+    const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rce;
+    if (bridge) { bridge.postMessage({ type: "mode", mode: m }); lastShellMode = m; }
+  } catch (err) {
+    /* no shell: the page works the same */
+  }
+}
 
 function postShellTitle() {
   try {

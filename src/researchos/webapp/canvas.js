@@ -896,7 +896,8 @@ window.RCECanvas = (function () {
     relayoutBtn.type = "button";
     relayoutBtn.addEventListener("click", () => { menu.classList.add("hidden"); relayout(); });
     menu.appendChild(relayoutBtn);
-    const moreBtn = button("⋯", "更多", (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); });
+    // 12.11: the menu is named in words, not a glyph.
+    const moreBtn = button("更多", "", (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); });
     moreBtn.setAttribute("aria-label", "更多");
     more.append(moreBtn, menu);
     bar.append(
@@ -1214,6 +1215,10 @@ window.RCECanvas = (function () {
       sel.appendChild(opt);
     });
     sel.value = cv.scope;
+    // A long attempt title is cut short by the select in a narrow window:
+    // the chosen scope in full on hover (12.11 sweep, 900x600).
+    const chosen = sel.options[sel.selectedIndex];
+    sel.title = chosen ? "范围：" + chosen.textContent : "范围";
   }
 
   // -- Highlight: hover, selection, search ---------------------------------------

@@ -328,31 +328,92 @@ def test_swift_sources_ship_as_package_data():
 
 
 def test_shell_menus_match_the_design():
+    """V8 U5 (12.9): 文件 holds 添加项目… ⌘O, 提交提议… / 发布 by role, 关闭 ⌘W;
+    视图 names the eight sidebar sections on ⌘1-⌘8, then 重新载入 and the
+    zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) are gone."""
     for snippet in (
         'submenu("Research OS"', 'item("关于 Research OS"', 'item("退出", #selector(NSApplication.terminate(_:)), "q")',
-        'submenu("文件"', 'cmd("新增尝试", "new-attempt", "n")',
-        'cmd("在 Finder 中显示项目", "reveal-project", "r", [.command, .shift])',
+        'submenu("文件"', 'cmd("添加项目…", "add-project", "o")', 'proposeItem = cmd("提交提议…", "propose")',
+        'publishItem = cmd("发布", "publish")',
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
         'submenu("编辑"', '"undo:"', '"redo:"', "NSText.cut", "NSText.copy", "NSText.paste", "NSText.selectAll",
-        'submenu("视图"', 'cmd("决策树", "tree", "1")', 'cmd("血缘", "lineage", "2")', 'cmd("画布", "canvas", "3")',
+        'submenu("视图"', 'cmd("工作台", "desk", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("成果", "results", "3")',
+        'cmd("变量", "variables", "4")', 'cmd("文献", "literature", "5")', 'cmd("数据与代码", "data", "6")',
+        'cmd("提议", "proposals", "7")', 'cmd("成员", "members", "8")',
         'item("重新载入", #selector(reloadPage(_:)), "r")', 'cmd("放大", "zoom-in", "+")',
-        'cmd("缩小", "zoom-out", "-")', 'cmd("实际大小", "zoom-reset", "0")', 'cmd("适应全部", "fit", "f", [])',
+        'cmd("缩小", "zoom-out", "-")', 'cmd("实际大小", "zoom-reset", "0")',
         'submenu("窗口"', 'item("最小化", #selector(NSWindow.performMiniaturize(_:)), "m")',
         'item("缩放", #selector(NSWindow.performZoom(_:))',
         'submenu("帮助", [cmd("打开项目地图", "open-map")])',
     ):
         assert snippet in _SHELL, f"menu item missing from RCEShell.swift: {snippet}"
+    for gone in ('"决策树"', '"血缘"', '"画布"', '"适应全部"', '"fit"', '"new-attempt"', '"reveal-project"'):
+        assert gone not in _SHELL, f"pre-12.9 menu item still in RCEShell.swift: {gone}"
+    files = _SHELL[_SHELL.index('submenu("文件"'):]
+    files = files[: files.index("]))")]
+    order = [files.index(x) for x in ('"add-project"', "proposeItem,", "publishItem,", '"关闭"')]
+    assert order == sorted(order)
+    view = _SHELL[_SHELL.index('submenu("视图"'):]
+    view = view[: view.index("])")]
+    keys = [view.index(f'"{k}")') for k in "12345678"]
+    assert keys == sorted(keys)
 
 
-def test_shell_view_menu_has_the_variables_view_on_cmd_4():
-    """V5 phase 9 (9.11 "In the app"): 视图 gains 变量 ⌘4, a whitelisted
-    command name the page's dispatcher also accepts."""
-    assert 'cmd("变量", "variables", "4")' in _SHELL
+def test_shell_whitelist_and_page_dispatcher_agree():
+    """Every command the shell can send is one the page's dispatcher
+    accepts, and every section command lands on its 12.9 section."""
+    import re
+
     whitelist = _SHELL[_SHELL.index("let shellCommands"):]
-    whitelist = whitelist[: whitelist.index("]")]
-    assert '"variables"' in whitelist
+    whitelist = set(re.findall(r'"([a-z-]+)"', whitelist[: whitelist.index("]")]))
+    assert whitelist == {
+        "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+        "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
+    }
+    sent = set(re.findall(r'cmd\("[^"]+", "([a-z-]+)"', _SHELL))
+    assert sent <= whitelist and "reload" in _SHELL
     page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
-    assert '"variables": () => activateView("variables")' in page
+    table = page[page.index("const SHELL_COMMANDS = {"):]
+    table = table[: table.index("\n};\n")]
+    accepted = set(re.findall(r'^  "([a-z-]+)":', table, re.M))
+    assert whitelist <= accepted
+    for name, target in (("desk", 'activateView("desk")'), ("routes", 'activateView("tree")'),
+                         ("results", 'activateView("results")'), ("variables", 'activateView("variables")'),
+                         ("literature", 'activateView("literature")'), ("data", "activateView(lastDataView)"),
+                         ("proposals", 'activateView("proposals")'), ("members", 'activateView("members")'),
+                         ("propose", 'revealShellAnchor("proposals", "compose")'),
+                         ("publish", 'revealShellAnchor("members", "publish")')):
+        assert f'"{name}": () => {target}' in table, name
+    team = (Path(macapp.__file__).parent / "team.js").read_text(encoding="utf-8")
+    assert 's.dataset.anchor = "compose";' in team and 's.dataset.anchor = "publish";' in team
+
+
+def test_shell_file_menu_shows_propose_or_publish_by_the_pages_mode():
+    """V8 U5: the page says the project's role as `{type: "mode", mode}`
+    (exactly two keys, mode one of four fixed words; anything else is
+    ignored); 提交提议… shows only for a member, 发布 only for the PI,
+    neither in a project of one person."""
+    assert 'let teamModes: Set<String> = ["single", "pi", "member", "none"]' in _SHELL
+    handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
+    handler = handler[: handler.index("\n    }\n")]
+    assert 'body.count == 2, body["type"] as? String == "mode"' in handler
+    assert 'let mode = body["mode"] as? String, teamModes.contains(mode)' in handler
+    apply = _SHELL[_SHELL.index("func applyTeamMode"):]
+    apply = apply[: apply.index("\n    }\n")]
+    assert 'proposeItem.isHidden = teamMode != "member"' in apply
+    assert 'publishItem.isHidden = teamMode != "pi"' in apply
+    assert 'var teamMode = "single"' in _SHELL
+    validate = _SHELL[_SHELL.index("func validateMenuItem"):]
+    validate = validate[: validate.index("\n    }\n")]
+    assert 'menuItem === proposeItem { return appLoaded && teamMode == "member" }' in validate
+    assert 'menuItem === publishItem { return appLoaded && teamMode == "pi" }' in validate
+    page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
+    post = page[page.index("function postShellMode"):]
+    post = post[: post.index("\n}\n")]
+    assert '["single", "pi", "member", "none"].indexOf(mode) >= 0 ? mode : "single"' in post
+    assert 'postMessage({ type: "mode", mode: m })' in post
+    desk = (Path(macapp.__file__).parent / "desk.js").read_text(encoding="utf-8")
+    assert 'postShellMode(state.noProject ? "single" : ctx.mode)' in desk
 
 
 def test_shell_choose_folder_answers_through_a_fixed_callback_with_arguments():
@@ -390,7 +451,7 @@ def test_shell_file_menu_adds_a_project_on_cmd_o():
     assert 'cmd("添加项目…", "add-project", "o")' in _SHELL
     files = _SHELL[_SHELL.index('submenu("文件"'):]
     files = files[: files.index("]))")]
-    assert files.index('"add-project"') < files.index('"new-attempt"')
+    assert files.index('"add-project"') < files.index("proposeItem,")
     whitelist = _SHELL[_SHELL.index("let shellCommands"):]
     whitelist = whitelist[: whitelist.index("]")]
     assert '"add-project"' in whitelist

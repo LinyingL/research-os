@@ -946,6 +946,7 @@
 
   function renderComposer(page) {
     const s = block("提交提议");
+    s.dataset.anchor = "compose"; // the shell's 文件 > 提交提议…
     s.appendChild(line("先看清楚要发送什么，再发送。Research OS 会把你的工作副本和你上次同步的官方版本比较，找出这份提议要带的改动。", "quiet"));
     const form = mk("div", "compose");
     const kinds = mk("div", "compose-kinds");
@@ -1292,6 +1293,7 @@
   // The PI's shared folder: choose it, its state, 发布 (12.2, 12.3).
   function renderShared(page, share) {
     const s = block("公盘");
+    s.dataset.anchor = "publish"; // the shell's 文件 > 发布
     if (!share.shared || !share.reachable) {
       if (share.shared && !share.reachable) {
         const warn = mk("p", "team-line warn");

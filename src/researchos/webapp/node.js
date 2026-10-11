@@ -438,8 +438,10 @@
     if (!self) {
       el.type = "button";
       el.addEventListener("click", () => openNode(item.id));
-      el.title = item.path || item.file || item.label;
     }
+    // The full name on hover for every card, this node's own included: a
+    // long name is cut short with an ellipsis in a narrow window (12.11 sweep).
+    el.title = item.path || item.file || item.label;
     el.dataset.node = item.id;
     el.dataset.col = String(col);
     const top = mk("span", "trace-item-head");

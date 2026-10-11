@@ -2134,11 +2134,18 @@ def test_page_dispatcher_and_shell_whitelist_name_the_same_commands():
     whitelist_src = whitelist_src[: whitelist_src.index("]")]
     swift_names = set(re.findall(r'"([a-z-]+)"', whitelist_src))
     expected = {
-        "tree", "lineage", "canvas", "variables", "new-attempt", "reload", "zoom-in", "zoom-out",
-        "zoom-reset", "fit", "reveal-project", "open-map", "add-project",
+        "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+        "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
     }
     assert _page_shell_commands(html) == expected
     assert swift_names == expected
+    # V8 U5: what a shell built before U5 sends is still understood, in its
+    # own table -- names no current menu offers.
+    block = html[html.index("const SHELL_COMMANDS_BEFORE_U5 = {"):]
+    block = block[: block.index("\n};")]
+    before = set(re.findall(r'^\s*"([a-z-]+)":', block, re.M))
+    assert before == {"tree", "lineage", "canvas", "new-attempt", "fit", "reveal-project"}
+    assert not before & swift_names
 
 
 def test_page_finder_commands_use_only_the_existing_open_endpoint():
