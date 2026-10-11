@@ -16,6 +16,11 @@ who I am, notes, what changed, and the trace -- the payloads only.
   `GET /api/proposals/<id>`; `POST /api/proposals` (from the working copy:
   a dry run, or written with `write`); `POST /api/proposals/<id>/approve |
   return | discuss` -- the PI only (12.3; `researchos.proposals`).
+- `GET /api/share` -- the shared folder's state for this project (role,
+  folder, last snapshot, verification, what is pending); `POST
+  /api/share/publish {note?}` (the PI), `POST /api/share/sync` (a joined
+  working copy), `POST /api/share/join {shared, folder}` (12.2, 12.3, 12.5;
+  `researchos.share`).
 
 Copy for the page is Chinese (8.8); `error` stays the engine's English for
 「详情」.
@@ -169,10 +174,11 @@ _PROPOSAL_STATUS = {
     "not_member": 403, "not_yours": 403, "no_base": 409, "bad_kind": 400, "nothing": 409, "ambiguous": 409,
     "reason_required": 400, "no_attempt_table": 409, "attested_required": 400, "changed_since_shown": 409,
     "decided": 409, "not_approvable": 409, "invalid": 400, "wrong_project": 409, "empty_reason": 400,
-    "empty_text": 400,
+    "empty_text": 400, "cannot_sign": 409,
 }
 _EXCHANGE_STATUS = {"not_configured": 409, "inside_project": 409, "unreachable": 503, "exists": 409,
-                    "no_such_proposal": 404, "invalid": 400, "half_written": 409, "content": 409}
+                    "no_such_proposal": 404, "invalid": 400, "half_written": 409, "content": 409,
+                    "bad_location": 409}
 
 
 def _proposal_refused(exc: Exception) -> NodeApiRefused:
@@ -268,3 +274,67 @@ def proposal_act_payload(root: Path, project_id: str | None, proposal_id: str, a
         raise NodeApiRefused(404, "bad_action", f"no such action on a proposal: {action!r}", "不支持的操作")
 
     return _proposal_call(run)
+
+
+# -- the shared drive (12.2, 12.3, 12.5; V8 phase 4) ---------------------------------------
+
+
+_SHARE_STATUS = {
+    "not_configured": 409, "unreachable": 503, "no_team": 409, "team_unreadable": 409, "not_pi": 403, "no_me": 409,
+    "team_exists": 409, "member_exists": 409, "invalid": 400, "invalid_key": 400, "dataless": 409, "waiting": 409,
+    "nothing_published": 404, "untrusted": 409, "not_empty": 409, "not_joined": 409, "cannot_sign": 409, "content": 409,
+}
+
+
+def _share_call(fn):  # noqa: ANN001, ANN202
+    from researchos import exchange as exchange_mod  # noqa: PLC0415
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+    from researchos import share  # noqa: PLC0415
+
+    try:
+        return fn()
+    except share.ShareError as exc:
+        raise NodeApiRefused(_SHARE_STATUS.get(exc.code, 400), exc.code, str(exc), exc.message_zh, dict(exc.details)) from exc
+    except (proposals_mod.ProposalRefused, exchange_mod.ExchangeError) as exc:
+        raise _proposal_refused(exc) from exc
+
+
+def share_status_payload(root: Path) -> dict[str, Any]:
+    """GET /api/share."""
+    from researchos import share  # noqa: PLC0415
+
+    return _share_call(lambda: share.status(root))
+
+
+def share_publish_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    """POST /api/share/publish {note?}: 「发布」 -- the PI only."""
+    from researchos import share  # noqa: PLC0415
+
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise NodeApiRefused(400, "missing", "'note' must be text", "内容不对")
+    return {"ok": True, **_share_call(lambda: share.publish(root, note=note, expected_id=project_id, timeout=timeout))}
+
+
+def share_sync_payload(root: Path, project_id: str | None, *, timeout: float) -> dict[str, Any]:
+    """POST /api/share/sync: 「同步」 -- this working copy to the latest
+    verified snapshot; the member's own changes are never overwritten."""
+    from researchos import share  # noqa: PLC0415
+
+    return {"ok": True, **_share_call(lambda: share.sync(root, expected_id=project_id, timeout=timeout))}
+
+
+def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """POST /api/share/join {shared, folder}: a working copy in a new (or
+    empty) folder; refused at a top-level folder, in Research OS's home,
+    inside a project, or anywhere not empty."""
+    from researchos import share  # noqa: PLC0415
+
+    shared, folder = body.get("shared"), body.get("folder")
+    if not isinstance(shared, str) or not shared.strip() or not isinstance(folder, str) or not folder.strip():
+        raise NodeApiRefused(400, "missing", "request body must carry string 'shared' and 'folder'", "请选择公盘文件夹和工作副本的位置")
+    shared_path, folder_path = Path(shared).expanduser(), Path(folder).expanduser()
+    if not shared_path.is_absolute() or not folder_path.is_absolute():
+        # Never resolved against the engine's own working directory.
+        raise NodeApiRefused(400, "not_absolute", "'shared' and 'folder' must be absolute paths", "请给出完整的文件夹路径")
+    return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path))}

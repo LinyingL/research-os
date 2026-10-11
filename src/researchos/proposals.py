@@ -110,7 +110,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from researchos import db, history, paths, people
+from researchos import db, history, paths, people, signing
 from researchos import exchange as exchange_mod
 from researchos.exchange import ExchangeError, LocalExchange, StoredProposal
 from researchos.records import decisions as decisions_mod
@@ -168,6 +168,7 @@ MESSAGES = {
     "wrong_project": "这份提议属于另一个项目",
     "empty_reason": "请写明退回的理由",
     "empty_text": "请写下要讨论的内容",
+    "cannot_sign": "无法签名",
 }
 
 
@@ -388,8 +389,12 @@ def write_base(project_id: str, working_copy: Path, files: Mapping[str, Mapping[
                 os.replace(tmp, target)
             item["text"] = True
         stored[rel] = item
+    # The snapshot id is over the files `manifest` lists (the record files
+    # a published snapshot also carries left out), so a base made by
+    # joining compares equal to the official folder it came from.
+    listed = {rel: e for rel, e in files.items() if not rel.startswith(paths.PROJECT_DIRNAME + "/") or _VERSION_FILE_RE.match(rel)}
     base = {
-        "format": FORMAT, "project": project_id, "snapshot": snapshot_id(files), "working_copy": str(working_copy),
+        "format": FORMAT, "project": project_id, "snapshot": snapshot_id(listed), "working_copy": str(working_copy),
         "official": official, "made": _now_iso(), "files": stored,
     }
     record_files.durable_write(directory / BASE_FILENAME,
@@ -655,6 +660,14 @@ def make_proposal(
     not_carried += [{"path": r, "reason": "variable versions travel in a variable_version proposal"} for r in version_changes]
 
     skip = {table} if table is not None else set()
+    from researchos import share  # noqa: PLC0415 -- share imports this module
+
+    copies = {rel for rel in share.official_copies(pid) if rel in work and rel not in base.files}
+    skip |= copies
+    not_carried += [{"path": rel, "reason": "the official version's copy that sync put beside yours"} for rel in sorted(copies)]
+    pinned = share.read_state(pid) if share.pinned_pi(pid) is not None else None
+    if pinned and Path(str(pinned.get("working_copy", ""))) == root.resolve():
+        data["base_seq"] = pinned.get("seq")
     files = _file_changes(root, base, work, skip=skip, only=set(only) if only is not None else None)
     if kind == "files" and not files:
         raise ProposalRefused("nothing", "no file differs from the official version")
@@ -851,13 +864,35 @@ def write_proposal(
     data = {"format": FORMAT, "id": proposal_id, "at": _now_iso(now), **{k: v for k, v in draft.data.items() if k != "format"}}
     raw = emit(data)
     validate(tomllib.loads(raw.decode("utf-8")))
+    signature = _signature(root, draft.data["by"], raw)
     texts = {rel: source for rel, source in draft.texts.items()}
     try:
-        return ex.write_proposal(draft.data["by"], proposal_id, raw, texts, draft.blobs)
+        return ex.write_proposal(draft.data["by"], proposal_id, raw, texts, draft.blobs, signature=signature)
     except ExchangeError:
         raise
     except OSError as exc:
         raise ExchangeError("unreachable", f"could not write the proposal: {exc}") from exc
+
+
+def _listed_key(root: Path, member: str) -> str | None:
+    team = people.read_team(root)
+    return next((m.key for m in team.members if m.id == member), None)
+
+
+def _signature(root: Path, member: str, raw: bytes) -> bytes | None:
+    """`member`'s signature over `raw` when the team lists their key (12.5,
+    `researchos.signing`); refused, nothing written, when it cannot be made."""
+    try:
+        return signing.sign_as(member, _listed_key(root, member), raw)
+    except signing.SigningError as exc:
+        raise ProposalRefused("cannot_sign", str(exc), message_zh=exc.message_zh) from exc
+
+
+def _preflight(root: Path, member: str) -> None:
+    try:
+        signing.preflight(member, _listed_key(root, member))
+    except signing.SigningError as exc:
+        raise ProposalRefused("cannot_sign", str(exc), message_zh=exc.message_zh) from exc
 
 
 # -- reading proposals and their state --------------------------------------------------------
@@ -902,7 +937,9 @@ def _summary(stored: StoredProposal, state: Mapping[str, Any]) -> dict[str, Any]
         "sentence": data.get("sentence"), "base": data.get("base"), "attempt": data.get("attempt"),
         "verdict": data.get("verdict"), "variable": data.get("variable"),
         "files": [{k: f.get(k) for k in ("path", "action", "size", "store")} for f in files],
-        "not_carried": data.get("not_carried") or [], "supersedes": data.get("supersedes"), **state,
+        "not_carried": data.get("not_carried") or [], "supersedes": data.get("supersedes"),
+        "base_seq": data.get("base_seq"),
+        "verification": stored.check.payload() if getattr(stored, "check", None) is not None else None, **state,
     }
 
 
@@ -1177,6 +1214,12 @@ def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str,
             conflicts.append({"path": part.get("path") or part.get("file") or part.get("card"), "reason": part.get("reason")})
         elif part.get("state") == "problem":
             problems.append(f"{part.get('path') or part.get('file') or part.get('card')}: {part.get('reason')}")
+    check = getattr(stored, "check", None)
+    out["verification"] = check.payload() if check is not None else None
+    if check is not None and not check.trusted:
+        # 12.5: unsigned or wrongly signed by a member whose key is listed --
+        # shown as unverifiable, never approved.
+        problems.append(f"签名：{check.message_zh}")
     out["conflicts"] = conflicts
     out["problems"] = problems
     out["approvable"] = not conflicts and not problems
@@ -1334,14 +1377,17 @@ def _evidence(conn, root: Path, attempt_node: str, store: history.Store, *, who:
 
 
 def _outcome(ex: LocalExchange, stored: StoredProposal, act: str, by: str, text: str | None,
-             extra: Mapping[str, Any] | None, now: Callable[[], datetime] | None) -> dict[str, Any]:
+             extra: Mapping[str, Any] | None, now: Callable[[], datetime] | None, *,
+             root: Path | None = None) -> dict[str, Any]:
     outcome_id = "o-" + secrets.token_hex(16)
     data: dict[str, Any] = {"format": FORMAT, "id": outcome_id, "proposal": stored.id, "act": act, "by": by,
                             "at": _now_iso(now)}
     if text:
         data["text"] = text
     data.update(extra or {})
-    written = ex.write_outcome(stored.id, outcome_id, emit(data, _OUTCOME_HEADER))
+    raw = emit(data, _OUTCOME_HEADER)
+    signature = _signature(root, by, raw) if root is not None else None
+    written = ex.write_outcome(stored.id, outcome_id, raw, signature=signature)
     return dict(written.data)
 
 
@@ -1378,6 +1424,7 @@ def approve(
     _require_pi(root)  # asked first: a member's own copy is refused as such, whatever its index says
     with write_guard(root, expected_id, human=True, timeout=timeout) as held:
         pi = _require_pi(root)
+        _preflight(root, pi)  # the outcome will be signed: refused now, before anything is applied
         ex = _exchange_for(root, exchange)
         stored = ex.open_proposal(proposal_id)
         _pending(ex, stored)
@@ -1462,10 +1509,27 @@ def approve(
             "decision": decision["id"], "files": [f["path"] for f in applied["files"]] or None,
             "attempt": attempt["node"] if attempt is not None else None,
             "variable": (applied["variable"] or {}).get("reference"),
-        }, now)
+        }, now, root=root)
+        published = _publish_after(root, ex, expected_id, timeout, f"批准提议 {stored.id}")
         if rescan:
             _rescan(root)
-    return {"proposal": stored.id, "applied": applied, "decision": _jsonable(decision), "outcome": outcome}
+    return {"proposal": stored.id, "applied": applied, "decision": _jsonable(decision), "outcome": outcome,
+            "published": published}
+
+
+def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: float | None, note: str) -> dict[str, Any]:
+    """12.3: approving publishes a new snapshot. Contained: the approval is
+    done and recorded whatever publishing says; a failure is returned (and
+    「发布」 can be pressed again)."""
+    from researchos import share  # noqa: PLC0415
+
+    try:
+        return share.publish(root, shared=ex.root, note=note, expected_id=expected_id, timeout=timeout)
+    except share.ShareError as exc:
+        return {"published": False, "error": exc.code, "message": exc.message_zh, "detail": str(exc)}
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        logger.exception("publishing after approving into %s failed", root)
+        return {"published": False, "error": "failed", "message": "发布没有完成", "detail": str(exc)}
 
 
 def _rescan(root: Path) -> None:
@@ -1507,11 +1571,12 @@ def return_(
     _require_pi(root)
     with write_guard(root, expected_id, human=True, timeout=timeout):
         pi = _require_pi(root)
+        _preflight(root, pi)
         ex = _exchange_for(root, exchange)
         stored = ex.open_proposal(proposal_id)
         _parsed(stored)
         _pending(ex, stored)
-        return _outcome(ex, stored, "returned", pi, reason.strip(), None, now)
+        return _outcome(ex, stored, "returned", pi, reason.strip(), None, now, root=root)
 
 
 def discuss(
@@ -1531,9 +1596,10 @@ def discuss(
     _require_pi(root)
     with write_guard(root, expected_id, human=True, timeout=timeout):
         pi = _require_pi(root)
+        _preflight(root, pi)
         ex = _exchange_for(root, exchange)
         stored = ex.open_proposal(proposal_id)
         _parsed(stored)
         _pending(ex, stored)
-        return _outcome(ex, stored, "discussed", pi, text.strip(), None, now)
+        return _outcome(ex, stored, "discussed", pi, text.strip(), None, now, root=root)
 

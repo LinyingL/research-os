@@ -73,6 +73,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -84,6 +85,8 @@ from researchos import history as history_mod
 from researchos import exchange as exchange_mod
 from researchos import people
 from researchos import proposals as proposals_mod
+from researchos import share as share_mod
+from researchos import signing
 from researchos import trace as trace_mod
 from researchos import project as project_identity
 from researchos import rebuild as rebuild_mod
@@ -1383,6 +1386,25 @@ def cmd_me(args: argparse.Namespace) -> int:
     """`researchos me set|show` (DESIGN.md 12.1): who I am on this machine,
     in ~/.researchos/me.toml. From then on every entry Research OS appends
     to a ledger carries `by` = this id."""
+    if args.me_command == "key":
+        try:
+            got = share_mod.my_key()
+        except share_mod.ShareError as exc:
+            raise CliError(str(exc)) from exc
+        if args.out:
+            target = Path(args.out).expanduser()
+            try:
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError as exc:
+                raise CliError(f"{target} already exists; not overwritten") from exc
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(got["key"] + "\n")
+            print(f"Public key written to {target} ({got['fingerprint']}); send it to the PI for "
+                  f"'researchos team add <your id> --name <name> --key {target.name}'", file=sys.stderr)
+            return 0
+        print(got["key"])
+        print(f"fingerprint {got['fingerprint']} ({got['path']})", file=sys.stderr)
+        return 0
     if args.me_command == "set":
         try:
             me = people.write_me(args.name, args.email)
@@ -1733,6 +1755,184 @@ def cmd_working_copy(args: argparse.Namespace) -> int:
     except _PROPOSAL_ERRORS as exc:
         raise _proposal_error(exc) from exc
     print(f"Working copy {base.working_copy} made from {base.snapshot[:19]} ({len(base.files)} file(s))")
+    return 0
+
+
+# -- the shared drive and the team (DESIGN.md 12.2, 12.3, 12.5) ------------------------------------
+
+
+_SHARE_ERRORS = (share_mod.ShareError, exchange_mod.ExchangeError, records_situation.WriteRefused,
+                 records_lock.ProjectLockError, signing.SigningError)
+
+
+def _share_error(exc: Exception) -> CliError:
+    details = getattr(exc, "details", None) or {}
+    lines = [f"nothing written: {exc}"]
+    for item in details.get("refused", []):
+        lines.append(f"  refused snapshot {item['seq']}: {item['state']} -- {item['reason']}")
+    for item in details.get("files", []):
+        lines.append(f"  {item}")
+    return CliError("\n".join(lines))
+
+
+def _print_refused(result: dict[str, Any]) -> None:
+    for item in result.get("refused") or []:
+        print(f"  REFUSED snapshot {item['seq']} ({item['state']}): {item['reason']}")
+    for problem in result.get("problems") or []:
+        print(f"  not read: {problem['path']} ({problem['kind']}: {problem['detail']})")
+    for warning in result.get("warnings") or []:
+        print(f"  warning: {warning}")
+
+
+def cmd_team(args: argparse.Namespace) -> int:
+    """`researchos team init | add | show` (12.1, 12.5): the project's members,
+    in .researchos/team.toml -- written only by the PI's Research OS, and only
+    ever appended to."""
+    opened = _open(args.path)
+    root = opened.root
+    try:
+        if args.team_command == "init":
+            done = share_mod.team_init(root, expected_id=opened.project_id)
+            print(f"Team file {done['path']} written with you ({done['pi']}) as the PI")
+            if done["fingerprint"]:
+                print(f"  your key: {done['fingerprint']} -- members compare this with what 'researchos share join' shows")
+            for warning in done["warnings"]:
+                print(f"  warning: {warning}")
+            return 0
+        if args.team_command == "add":
+            try:
+                key_text = Path(args.key).expanduser().read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise CliError(f"cannot read the key file {args.key}: {exc}") from exc
+            done = share_mod.team_add(root, args.member_id, args.name, key_text, expected_id=opened.project_id)
+            print(f"Added {done['member']} ({done['name']}) as a member; key {done['fingerprint']}")
+            print("  publish so the member's copy carries the new team: researchos share publish")
+            return 0
+    except _SHARE_ERRORS as exc:
+        raise _share_error(exc) from exc
+    team = people.read_team(root)
+    if args.json:
+        print(json.dumps({"state": team.state, "members": [
+            {**m.payload(), "fingerprint": signing.fingerprint(m.key) if m.key else None} for m in team.members]},
+            ensure_ascii=False, indent=2))
+        return 0
+    if team.state != "present":
+        print(f"Team: {team.state}" + (f" ({team.error})" if team.error else ""))
+        return 0 if team.state == "absent" else 1
+    for m in team.members:
+        print(f"  {m.role:<6} {m.id:<30} {m.name}  " + (signing.fingerprint(m.key) if m.key else "(no key)"))
+    return 0
+
+
+def cmd_share(args: argparse.Namespace) -> int:
+    """`researchos share set | show | publish | sync | join` (12.2, 12.3):
+    the shared folder (公盘) -- the PI publishes signed snapshots, a member
+    joins and syncs from them."""
+    command = args.share_command
+    try:
+        if command == "join":
+            done = share_mod.join(args.shared, args.folder)
+            if args.json:
+                print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+            print(f"Joined: working copy {done['working_copy']} at snapshot {done['seq']} ({done['files']} file(s))")
+            if done["pi_fingerprint"]:
+                print(f"  trusting the PI {done['pi']} with key {done['pi_fingerprint']} -- trusted on first use: "
+                      f"compare this fingerprint with the PI's own (researchos me key) before relying on it")
+            else:
+                print(f"  the PI {done['pi']} has no key in team.toml: snapshots cannot be verified")
+            if done["role"] != "member":
+                print(f"  you are not a member in team.toml yet ({done['role']}); the PI adds you with 'researchos team add'")
+            _print_refused(done)
+            return 0
+        opened = _open(args.path)
+        root = opened.root
+        if command == "set":
+            if opened.project_id is None:
+                raise CliError(f"{root} has no project identity")
+            where = exchange_mod.configure(opened.project_id, args.directory, root)
+            print(f"Shared folder for {opened.project_id} on this machine: {where}")
+            return 0
+        if command == "publish":
+            done = share_mod.publish(root, note=args.note, expected_id=opened.project_id)
+            if args.json:
+                print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+            if not done["published"]:
+                print(f"Nothing to publish: snapshot {done['seq']} is the official version as it is")
+            else:
+                print(f"Published snapshot {done['seq']}: {done['files']} file(s), {len(done['carried'])} carried as text, "
+                      f"{len(done['blobs'])} as blobs; " + ("signed" if done["signed"] else "NOT signed"))
+            _print_refused(done)
+            return 0
+        if command == "sync":
+            done = share_mod.sync(root)
+            if args.json:
+                print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+            if done.get("up_to_date"):
+                print(f"Up to date at snapshot {done['seq']}")
+            else:
+                print(f"Synced snapshot {done['from']} -> {done['seq']}: {len(done['updated'])} updated, "
+                      f"{len(done['removed'])} removed")
+            for item in done["conflicts"]:
+                print(f"  BOTH CHANGED {item['path']}: yours kept, the official one is {item['official_copy']}")
+                for line in (item.get("diff") or "").splitlines()[:200]:
+                    print(f"    {line}")
+            for item in done["kept_yours"]:
+                print(f"  kept yours: {item['path']} ({item['reason']})")
+            _print_refused(done)
+            return 0
+        got = share_mod.status(root)
+    except _SHARE_ERRORS as exc:
+        raise _share_error(exc) from exc
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    if args.json:
+        print(json.dumps(got, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+        return 0
+    print(f"Shared folder: {got['shared'] or 'not set'}" + ("" if got["reachable"] or not got["shared"] else " (cannot be reached now)"))
+    print(f"  role: {got['role']}; ssh-keygen: {'yes' if got['ssh_keygen'] else 'MISSING'}")
+    last = got.get("last_snapshot")
+    if last:
+        print(f"  last good snapshot: {last['seq']} ({last['at']}, {'signed' if last['signed'] else 'unsigned'}; "
+              f"verification: {got.get('verification') or '-'})")
+    if "pending_publish" in got:
+        print(f"  not yet published: {got['pending_publish']['count']} file(s)")
+    if "inbox" in got:
+        print(f"  inbox: {got['inbox']} pending proposal(s)")
+    if "joined" in got:
+        joined = got["joined"]
+        print(f"  joined at snapshot {joined['seq']}; PI {joined['pi']} {joined.get('pi_fingerprint') or '(no key)'}"
+              + ("; a newer snapshot is available: researchos share sync" if got.get("behind") else ""))
+    _print_refused(got)
+    return 0
+
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    """`researchos inbox` (12.3): the PI's inbox from the members' areas of
+    the shared folder, each proposal with its signature check -- an
+    unverifiable one is shown, and cannot be approved."""
+    opened = _open(args.path)
+    try:
+        listed = proposals_mod.listing(opened.root)
+    except _PROPOSAL_ERRORS as exc:
+        raise _proposal_error(exc) from exc
+    if args.json:
+        print(json.dumps(listed, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+        return 0
+    if listed["role"] != "pi":
+        print(f"No inbox: only the PI has one (you are {listed['role']}); 'researchos proposals' lists your own")
+        return 0
+    pending = [p for p in listed["proposals"] if p["state"] == "pending"]
+    print(f"Inbox: {len(pending)} pending, {len(listed['proposals'])} in all")
+    for item in listed["proposals"]:
+        check = item.get("verification") or {}
+        mark = {"verified": "signed", "no_key": "unsigned (no key listed)", "no_tool": "unverified (no ssh-keygen)",
+                "unsigned": "UNSIGNED -- cannot be approved", "bad": "BAD SIGNATURE -- cannot be approved"}.get(check.get("state"), "-")
+        print(f"  {item['id']} {item['state']:<10} {item['kind']:<16} {item['by']} [{mark}]  {item['sentence']}")
+    for problem in listed["problems"]:
+        print(f"  not read: {problem['path']} ({problem['kind']}: {problem['detail']})")
     return 0
 
 
@@ -2939,6 +3139,9 @@ def build_parser() -> argparse.ArgumentParser:
     q = me_sub.add_parser("show", help="show who this machine's entries are written by")
     q.add_argument("--json", action="store_true")
     q.set_defaults(func=cmd_me)
+    q = me_sub.add_parser("key", help="print this machine's public signing key (made on first use) for the PI's 'team add'")
+    q.add_argument("--out", default=None, metavar="FILE", help="write it to a new file instead")
+    q.set_defaults(func=cmd_me)
 
     p = sub.add_parser("note", help="Notes on any node, in .researchos/notes.toml: 'researchos note add|list|withdraw'")
     note_sub = p.add_subparsers(dest="note_command", required=True)
@@ -3042,6 +3245,52 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("dest", metavar="DEST")
     p.add_argument("--exchange", default=None, metavar="DIR")
     p.set_defaults(func=cmd_working_copy)
+
+    p = sub.add_parser("team", help="The project's members (.researchos/team.toml), kept by the PI: 'researchos team init|add|show'")
+    team_sub = p.add_subparsers(dest="team_command", required=True)
+    q = team_sub.add_parser("init", help="write team.toml with you as the PI and your public key (made on first use)")
+    add_project_path(q)
+    q.set_defaults(func=cmd_team)
+    q = team_sub.add_parser("add", help="append a member with the public key they exported ('researchos me key')")
+    q.add_argument("member_id", metavar="ID", help="the member's e-mail (their id)")
+    q.add_argument("--name", required=True)
+    q.add_argument("--key", required=True, metavar="FILE", help="the member's public key file")
+    add_project_path(q)
+    q.set_defaults(func=cmd_team)
+    q = team_sub.add_parser("show", help="the members, with their key fingerprints")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
+    q.set_defaults(func=cmd_team)
+
+    p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join'")
+    share_sub = p.add_subparsers(dest="share_command", required=True)
+    q = share_sub.add_parser("set", help="set this project's shared folder on this machine (never inside a project)")
+    q.add_argument("directory", metavar="DIR")
+    add_project_path(q)
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("show", help="role, shared folder, last snapshot, verification, what is pending")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("publish", help="publish the official version as a new signed snapshot (the PI)")
+    q.add_argument("--note", default=None)
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("sync", help="bring this working copy to the latest verified snapshot (never a merge)")
+    q.add_argument("--json", action="store_true")
+    add_project_path(q)
+    q.set_defaults(func=cmd_share)
+    q = share_sub.add_parser("join", help="make a working copy in a new folder from the shared folder's latest verified snapshot")
+    q.add_argument("shared", metavar="SHARED")
+    q.add_argument("folder", metavar="FOLDER")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_share)
+
+    p = sub.add_parser("inbox", help="The PI's inbox from the shared folder, with each proposal's signature check")
+    p.add_argument("--json", action="store_true")
+    add_project_path(p)
+    p.set_defaults(func=cmd_inbox)
 
     p = sub.add_parser(
         "lineage",

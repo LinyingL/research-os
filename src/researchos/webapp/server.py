@@ -3029,6 +3029,11 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest)))
                 else:
                     raise NotFoundError(f"no such endpoint: {path}")
+            elif path == "/api/share":
+                # 12.2: the shared folder's state (role, folder, last
+                # snapshot, verification, what is pending) -- reads only.
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.share_status_payload(served.root)))
             elif path == "/api/me":
                 self._send_json(200, node_api.me_payload())
             elif path == "/api/records":
@@ -3272,6 +3277,35 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     except ApiError as exc:
                         logger.info("no scan after approving into %s: %s", served.root, exc)
                 self._send_json(200, payload)
+            elif parsed.path == "/api/share/publish":
+                # 12.3 「发布」: the PI writes a new signed snapshot to the
+                # shared folder; nothing in the project is written.
+                body = self._read_json_object()
+                served = self._require_unblocked()
+                self._send_json(200, self._node_api(lambda: node_api.share_publish_payload(
+                    served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S)))
+            elif parsed.path == "/api/share/sync":
+                # 12.3 「同步」: this working copy to the latest verified
+                # snapshot, under the project lock; then rescanned.
+                self._read_json_object()
+                served = self._require_unblocked()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.share_sync_payload(
+                        served.root, served.project_id, timeout=WRITE_LOCK_TIMEOUT_S))
+                payload["generation"] = self.server.watcher.record_external_change(None)
+                if payload.get("updated") or payload.get("removed"):
+                    try:
+                        self.server.start_scan(served)
+                    except ApiError as exc:
+                        logger.info("no scan after syncing %s: %s", served.root, exc)
+                self._send_json(200, payload)
+            elif parsed.path == "/api/share/join":
+                # 12.3: a working copy in a NEW folder the page names --
+                # origin-checked above like every endpoint; the folder is
+                # refused at a top-level folder, in the home, inside a
+                # project, or when not empty (`researchos.share.join`).
+                body = self._read_json_object()
+                self._send_json(200, self._node_api(lambda: node_api.share_join_payload(body)))
             elif parsed.path == "/api/me":
                 # 12.1: who I am on this machine (~/.researchos/me.toml).
                 self._send_json(200, self._node_api(lambda: node_api.me_set_payload(self._read_json_object())))

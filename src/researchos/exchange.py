@@ -34,11 +34,21 @@ id); anything else -- a sync service's conflict copy (`pr-… 2`,
 Inside a proposal, only `proposal.toml`, `ready.toml` and the files the
 proposal lists are read.
 
-The exchange directory is configured per project on each machine
-(`<home>/exchanges.json`, `configure` / `configured`), and is never inside
-the project folder it serves: a proposal's files would otherwise be
-scanned into the official index before anyone approved them (12.4, "not a
-node until approved").
+The exchange directory is configured per project on each machine -- the
+`shared` key of the project's entry in `<home>/projects.json` (phase 4;
+`configure` / `configured`; phase 3's `<home>/exchanges.json` is still
+read) -- and is never inside the project folder it serves, nor inside any
+other project: a proposal's files would otherwise be scanned into the
+official index before anyone approved them (12.4, "not a node until
+approved"). Nor is it Research OS's home or a top-level folder (10.2).
+
+**Signatures** (phase 4, 12.5; `researchos.signing`). A proposal or an
+outcome may carry `<main file>.sig` beside its main file, inside the same
+write-once directory. An exchange opened for a project (`for_project`)
+carries a `Verifier` built from that project's `team.toml` (and, on a
+member's machine, the PI key pinned at joining): every proposal read is
+given its `check`, and an outcome whose signature does not verify, or that
+is not the PI's, is reported and never counted.
 """
 
 from __future__ import annotations
@@ -53,7 +63,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from researchos import paths, people
+from researchos import paths, people, signing
 from researchos.records import files as record_files
 
 PROPOSALS_AREA = "提议"
@@ -64,6 +74,8 @@ FILES_DIRNAME = "files"
 PROPOSAL_FILE = "proposal.toml"
 OUTCOME_FILE = "outcome.toml"
 READY_FILE = "ready.toml"
+PROPOSAL_SIG = PROPOSAL_FILE + signing.SIG_SUFFIX
+OUTCOME_SIG = OUTCOME_FILE + signing.SIG_SUFFIX
 CONFIG_FILENAME = "exchanges.json"
 
 PROPOSAL_ID_RE = re.compile(r"^pr-[0-9a-f]{32}$")
@@ -76,14 +88,17 @@ _ZERO = bytes(_CHUNK)
 class ExchangeError(Exception):
     """The exchange could not be read or written as asked. `code`:
     `not_configured`, `inside_project`, `unreachable`, `exists`,
-    `no_such_proposal`, `invalid`, `half_written`, `content`."""
+    `no_such_proposal`, `invalid`, `half_written`, `content`, `bad_location`."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, message_zh: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self._zh = message_zh
 
     @property
     def message_zh(self) -> str:
+        if self._zh:
+            return self._zh
         return {
             "not_configured": "这个项目还没有设置交换目录（公盘）",
             "inside_project": "交换目录不能放在项目文件夹里",
@@ -93,6 +108,7 @@ class ExchangeError(Exception):
             "invalid": "这份提议的文件格式不对",
             "half_written": "这份提议还没有写完",
             "content": "提议里的文件内容与记录的指纹不符",
+            "bad_location": "公盘文件夹不能选在这里",
         }.get(self.code, "交换目录出错")
 
 
@@ -123,9 +139,24 @@ def _inside(child: Path, parent: Path) -> bool:
     return True
 
 
+def _enclosing_project(directory: Path) -> Path | None:
+    """The project folder `directory` lies in (it or an ancestor holds a
+    project identity), or None."""
+    current = directory.resolve()
+    for folder in (current, *current.parents):
+        for name in (paths.PROJECT_DIRNAME, paths.LEGACY_PROJECT_DIRNAME):
+            try:
+                if (folder / name / "project.toml").is_file():
+                    return folder
+            except OSError:
+                continue
+    return None
+
+
 def check_location(directory: str | Path, project_root: str | Path | None) -> Path:
     """The exchange directory as an absolute path; refused inside the
-    project (module docstring) and the project inside it."""
+    project (module docstring) and the project inside it, inside any other
+    project, in Research OS's home, and at a top-level folder (10.2)."""
     directory = Path(directory).expanduser()
     if not directory.is_absolute():
         directory = directory.resolve()
@@ -135,22 +166,41 @@ def check_location(directory: str | Path, project_root: str | Path | None) -> Pa
             f"the exchange {directory} and the project {project_root} must not contain one another: a proposal's "
             f"files would be scanned into the project before they were approved",
         )
+    enclosing = _enclosing_project(directory)
+    if enclosing is not None:
+        raise ExchangeError("inside_project", f"the exchange {directory} lies inside the project {enclosing}")
+    from researchos import addproject  # noqa: PLC0415 -- addproject imports the webapp, which imports this
+
+    canonical = addproject._canonical_if_exists(directory) or str(directory.resolve())
+    refused = addproject._location_refusal(str(directory), canonical)
+    if refused is not None and refused.refusal is not None:
+        raise ExchangeError("bad_location", f"{directory}: {refused.refusal.detail or refused.refusal.code}",
+                            message_zh="公盘文件夹不能选在这里：" + refused.refusal.message)
     return directory
 
 
 def configure(project_id: str, directory: str | Path, project_root: str | Path | None = None) -> Path:
-    """Remember the exchange of `project_id` on this machine."""
+    """Remember the exchange (the shared folder) of `project_id` on this
+    machine, in the project's entry of `projects.json` -- registering
+    `project_root` there first when it is not listed yet."""
+    from researchos.webapp import registry  # noqa: PLC0415 -- the webapp imports this module
+
     directory = check_location(directory, project_root)
-    config = _load_config()
-    config[project_id] = str(directory)
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record_files.durable_write(path, (json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+    if not registry.set_shared(project_id, str(directory)):
+        if project_root is None:
+            raise ExchangeError("not_configured", f"project {project_id} is not registered on this machine; "
+                                                  f"name its folder to set its shared folder")
+        registry.register(Path(project_root), project_id)
+        if not registry.set_shared(project_id, str(directory)):
+            raise ExchangeError("unreachable", f"{registry.registry_path()} cannot be written now")
     return directory
 
 
 def configured(project_id: str) -> Path | None:
-    value = _load_config().get(project_id)
+    from researchos.webapp import registry  # noqa: PLC0415
+
+    entry = registry.find(project_id)
+    value = (entry or {}).get("shared") or _load_config().get(project_id)
     return Path(value) if value else None
 
 
@@ -164,7 +214,26 @@ def for_project(project_id: str, project_root: str | Path | None = None, *, over
             f"no exchange is set for project {project_id} on this machine: "
             f"researchos exchange set DIR [PATH] (or --exchange DIR)",
         )
-    return LocalExchange(check_location(directory, project_root))
+    return LocalExchange(check_location(directory, project_root), verifier=verifier_for(project_root, project_id))
+
+
+def verifier_for(project_root: str | Path | None, project_id: str | None = None) -> "signing.Verifier | None":
+    """The keys a reader of this project's exchange trusts (module
+    docstring): the team's, the PI's replaced by the one this machine pinned
+    when it joined (`researchos.share`)."""
+    if project_root is None:
+        return None
+    team = people.read_team(project_root)
+    keys = {m.id: m.key for m in team.members}
+    pi = team.pi.id if team.pi is not None else None
+    if project_id:
+        from researchos import share  # noqa: PLC0415 -- share imports this module
+
+        pinned = share.pinned_pi(project_id)
+        if pinned is not None:
+            pi = pinned["pi"]
+            keys[pi] = pinned.get("pi_key")
+    return signing.Verifier(keys, pi)
 
 
 # -- writing once ------------------------------------------------------------------------
@@ -231,8 +300,12 @@ def _ready_bytes(kind: str, object_id: str, main: bytes) -> bytes:
     ).encode("utf-8")
 
 
-def _write_dir_once(final: Path, contents: Iterable[tuple[str, bytes | Path]], ready: bytes) -> None:
-    """The write-once discipline of the module docstring."""
+def _write_dir_once(final: Path, contents: Iterable[tuple[str, bytes | Path]], ready: bytes,
+                    expect: Mapping[str, str] | None = None) -> None:
+    """The write-once discipline of the module docstring. `expect` maps a
+    content path to the SHA-256 its copy must have: a source that changed
+    while it was copied stops the write, and the unfinished temporary
+    directory -- never published, never read -- is removed."""
     if final.exists() or final.is_symlink():
         raise ExchangeError("exists", f"{final} already exists; nothing on the exchange is written twice")
     try:
@@ -241,21 +314,62 @@ def _write_dir_once(final: Path, contents: Iterable[tuple[str, bytes | Path]], r
         raise ExchangeError("unreachable", f"cannot create {final.parent}: {exc}") from exc
     tmp = final.parent / f".{final.name}.tmp-{secrets.token_hex(6)}"
     tmp.mkdir()
-    for rel, source in contents:
-        target = tmp / rel
-        if not _inside(target, tmp):
-            raise ExchangeError("invalid", f"{rel!r} would be written outside {final}")
-        if isinstance(source, Path):
-            copy_file(source, target)
-        else:
-            _create(target, source)
-    _fsync_dir(tmp)
-    if final.exists():
-        raise ExchangeError("exists", f"{final} appeared while it was being written; the temporary {tmp.name} is left")
-    os.rename(tmp, final)
+    try:
+        for rel, source in contents:
+            target = tmp / rel
+            if not _inside(target, tmp):
+                raise ExchangeError("invalid", f"{rel!r} would be written outside {final}")
+            if isinstance(source, Path):
+                got = copy_file(source, target)
+                if expect is not None and rel in expect and got != expect[rel]:
+                    raise ExchangeError("content", f"{source} changed while it was copied (sha256 {got}, expected "
+                                                   f"{expect[rel]}); nothing published")
+            else:
+                _create(target, source)
+        _fsync_dir(tmp)
+        if final.exists():
+            raise ExchangeError("exists", f"{final} appeared while it was being written")
+        os.rename(tmp, final)
+    except BaseException:
+        if tmp.exists():
+            import shutil  # noqa: PLC0415
+
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
     _fsync_dir(final.parent)
     _create(final / READY_FILE, ready)
     _fsync_dir(final)
+
+
+def put_blob_once(store: Path, sha: str, source: Path) -> Path:
+    """`source` into `store` under its SHA-256, once: written to a
+    temporary name, verified, then hard-linked to `<store>/<sha>`; an
+    existing blob of the right size is kept as it is and never rewritten."""
+    if not SHA_RE.match(sha):
+        raise ExchangeError("invalid", f"not a content hash: {sha!r}")
+    store.mkdir(parents=True, exist_ok=True)
+    target = store / sha
+    if target.exists():
+        if target.stat().st_size != source.stat().st_size:
+            raise ExchangeError("content", f"{target} exists with another size; it is never rewritten")
+        return target
+    tmp = store / f".{sha}.tmp-{secrets.token_hex(6)}"
+    try:
+        got = copy_file(source, tmp)
+        if got != sha:
+            raise ExchangeError("content", f"{source} changed while it was copied (sha256 {got}, expected {sha})")
+        try:
+            os.link(tmp, target)
+        except FileExistsError:
+            pass
+        except OSError:
+            if not target.exists():
+                os.rename(tmp, target)
+        _fsync_dir(store)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return target
 
 
 # -- reading --------------------------------------------------------------------------------
@@ -266,7 +380,8 @@ class Problem:
     """Something in the exchange Research OS did not read, and why:
     `half_written` (no ready.toml), `unexpected` (a name of a shape it never
     writes -- a sync conflict copy, a stray file), `invalid`, `mismatch`
-    (ready.toml does not match)."""
+    (ready.toml does not match), `unverified` (a signature that does not
+    verify, or an outcome not by the PI)."""
 
     kind: str
     path: str
@@ -284,6 +399,9 @@ class StoredProposal:
     data: Mapping[str, Any]
     text: str
     blobs: Path
+    raw: bytes = b""
+    signature: bytes | None = None
+    check: "signing.Check | None" = None
 
     def content_path(self, entry: Mapping[str, Any]) -> Path:
         """Where the content of one listed file is: under `files/` (text)
@@ -311,6 +429,7 @@ class Outcome:
     id: str
     proposal: str
     data: Mapping[str, Any]
+    check: "signing.Check | None" = None
 
     @property
     def act(self) -> str:
@@ -336,6 +455,18 @@ def _read_ready(directory: Path, kind: str, object_id: str, main: bytes) -> Prob
     return None
 
 
+def _read_signature(path: Path) -> bytes | None:
+    """A signature file's bytes, or None when there is none (a link is
+    never followed)."""
+    try:
+        if path.is_symlink():
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if len(data) < 64 * 1024 else None
+
+
 def _unexpected(directory: Path, allowed: set[str]) -> list[Problem]:
     found = []
     try:
@@ -353,8 +484,9 @@ class LocalExchange:
     """The exchange as a local (or synced) directory -- the module docstring's
     layout. Every method reads or writes only under `root`."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, verifier: "signing.Verifier | None" = None) -> None:
         self.root = Path(root)
+        self.verifier = verifier
 
     # areas
     def member_area(self, member: str) -> Path:
@@ -373,10 +505,12 @@ class LocalExchange:
 
     # proposals
     def write_proposal(self, member: str, proposal_id: str, proposal_bytes: bytes,
-                       texts: Mapping[str, Path | bytes], blobs: Mapping[str, Path]) -> StoredProposal:
+                       texts: Mapping[str, Path | bytes], blobs: Mapping[str, Path],
+                       signature: bytes | None = None) -> StoredProposal:
         """Write one proposal: `texts` (project-relative path -> source) go
         under `files/`, `blobs` (sha256 -> source) to the member's blob
-        store first; `ready.toml` last."""
+        store first; the member's signature beside proposal.toml;
+        `ready.toml` last."""
         self._require_root()
         if not PROPOSAL_ID_RE.match(proposal_id):
             raise ExchangeError("invalid", f"not a proposal id: {proposal_id!r}")
@@ -385,6 +519,8 @@ class LocalExchange:
         for sha, source in blobs.items():
             self.put_blob(member, sha, source)
         contents: list[tuple[str, bytes | Path]] = [(PROPOSAL_FILE, proposal_bytes)]
+        if signature is not None:
+            contents.append((PROPOSAL_SIG, signature))
         contents += [(f"{FILES_DIRNAME}/{rel}", source) for rel, source in texts.items()]
         _write_dir_once(area / proposal_id, contents, _ready_bytes("proposal", proposal_id, proposal_bytes))
         return self.open_proposal(proposal_id, member=member)
@@ -392,35 +528,10 @@ class LocalExchange:
     def put_blob(self, member: str, sha: str, source: Path) -> Path:
         """`source` into the member's blob store under its SHA-256, once:
         an existing blob of the right size is kept as it is."""
-        if not SHA_RE.match(sha):
-            raise ExchangeError("invalid", f"not a content hash: {sha!r}")
-        store = self.member_area(member) / BLOBS_DIRNAME
-        store.mkdir(parents=True, exist_ok=True)
-        target = store / sha
-        if target.exists():
-            if target.stat().st_size != source.stat().st_size:
-                raise ExchangeError("content", f"{target} exists with another size; it is never rewritten")
-            return target
-        tmp = store / f".{sha}.tmp-{secrets.token_hex(6)}"
-        try:
-            got = copy_file(source, tmp)
-            if got != sha:
-                raise ExchangeError("content", f"{source} changed while it was copied (sha256 {got}, expected {sha})")
-            try:
-                os.link(tmp, target)
-            except FileExistsError:
-                pass
-            except OSError:
-                if not target.exists():
-                    os.rename(tmp, target)
-            _fsync_dir(store)
-        finally:
-            if tmp.exists():
-                tmp.unlink()
-        return target
+        return put_blob_once(self.member_area(member) / BLOBS_DIRNAME, sha, source)
 
     def _read_proposal_dir(self, member: str, directory: Path) -> tuple[StoredProposal | None, list[Problem]]:
-        problems = _unexpected(directory, {PROPOSAL_FILE, READY_FILE, FILES_DIRNAME})
+        problems = _unexpected(directory, {PROPOSAL_FILE, PROPOSAL_SIG, READY_FILE, FILES_DIRNAME})
         try:
             raw = (directory / PROPOSAL_FILE).read_bytes()
         except FileNotFoundError:
@@ -438,7 +549,10 @@ class LocalExchange:
         if data.get("id") != directory.name or data.get("by") != member:
             return None, problems + [Problem("invalid", str(directory / PROPOSAL_FILE),
                                              "its id or its author does not match where it is stored")]
-        stored = StoredProposal(directory.name, member, directory, data, text, self.member_area(member) / BLOBS_DIRNAME)
+        signature = _read_signature(directory / PROPOSAL_SIG)
+        check = self.verifier.check(member, raw, signature) if self.verifier is not None else None
+        stored = StoredProposal(directory.name, member, directory, data, text, self.member_area(member) / BLOBS_DIRNAME,
+                                raw=raw, signature=signature, check=check)
         return stored, problems
 
     def list_proposals(self, member: str | None = None) -> Listing:
@@ -490,12 +604,16 @@ class LocalExchange:
         raise ExchangeError("no_such_proposal", f"no proposal {proposal_id} in {self.root}")
 
     # outcomes
-    def write_outcome(self, proposal_id: str, outcome_id: str, outcome_bytes: bytes) -> Outcome:
+    def write_outcome(self, proposal_id: str, outcome_id: str, outcome_bytes: bytes,
+                      signature: bytes | None = None) -> Outcome:
         self._require_root()
         if not OUTCOME_ID_RE.match(outcome_id):
             raise ExchangeError("invalid", f"not an outcome id: {outcome_id!r}")
         area = self.outcomes_area(proposal_id)
-        _write_dir_once(area / outcome_id, [(OUTCOME_FILE, outcome_bytes)], _ready_bytes("outcome", outcome_id, outcome_bytes))
+        contents: list[tuple[str, bytes | Path]] = [(OUTCOME_FILE, outcome_bytes)]
+        if signature is not None:
+            contents.append((OUTCOME_SIG, signature))
+        _write_dir_once(area / outcome_id, contents, _ready_bytes("outcome", outcome_id, outcome_bytes))
         return Outcome(outcome_id, proposal_id, tomllib.loads(outcome_bytes.decode("utf-8")))
 
     def outcomes(self, proposal_id: str) -> tuple[list[Outcome], list[Problem]]:
@@ -514,7 +632,7 @@ class LocalExchange:
             if not OUTCOME_ID_RE.match(name) or not path.is_dir():
                 problems.append(Problem("unexpected", str(path), "not an outcome Research OS wrote; not read"))
                 continue
-            problems += _unexpected(path, {OUTCOME_FILE, READY_FILE})
+            problems += _unexpected(path, {OUTCOME_FILE, OUTCOME_SIG, READY_FILE})
             try:
                 raw = (path / OUTCOME_FILE).read_bytes()
             except OSError:
@@ -532,6 +650,17 @@ class LocalExchange:
             if data.get("id") != name or data.get("proposal") != proposal_id:
                 problems.append(Problem("invalid", str(path / OUTCOME_FILE), "does not name this outcome and proposal"))
                 continue
-            found.append(Outcome(name, proposal_id, data))
+            check = None
+            if self.verifier is not None:
+                if self.verifier.pi is not None and data.get("by") != self.verifier.pi:
+                    problems.append(Problem("unverified", str(path / OUTCOME_FILE),
+                                            f"not written by the PI ({self.verifier.pi}); not counted"))
+                    continue
+                check = self.verifier.check(str(data.get("by")), raw, _read_signature(path / OUTCOME_SIG))
+                if not check.trusted:
+                    problems.append(Problem("unverified", str(path / OUTCOME_FILE),
+                                            f"{check.state}: {check.message_zh}; not counted"))
+                    continue
+            found.append(Outcome(name, proposal_id, data, check))
         found.sort(key=lambda o: str(o.data.get("at") or ""))
         return found, problems

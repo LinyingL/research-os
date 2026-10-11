@@ -157,6 +157,9 @@ PROJECT_DIRNAME = paths.PROJECT_DIRNAME
 DB_FILENAME = paths.DB_FILENAME
 
 DEFAULT_INTERVAL_SECONDS = 2.0
+#: How often the PI's watcher lists the members' areas of the shared folder
+#: (12.3): a listing over a synced folder is cheap but not free.
+SHARE_INTERVAL_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -460,6 +463,13 @@ class ProjectWatcher:
         # The judgment ledger's trust state as the last application found
         # it (9.3), reported by `status_payload` under `records`.
         self._records: dict[str, object] | None = None
+        # V8 phase 4 (DESIGN.md 12.3): the PI's Research OS watches the
+        # members' areas of the shared folder -- a listing of complete
+        # proposal directories, at most every SHARE_INTERVAL seconds; a
+        # change bumps the generation so the inbox re-reads.
+        self._share_marker: tuple[str, ...] | None = None
+        self._share_root: Path | None = None
+        self._share_checked = 0.0
         self._epoch = 0  # bumped by retarget(); lets a mid-ingest poll notice a switch
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -549,6 +559,8 @@ class ProjectWatcher:
             # only then, so a healthy project's payload keeps its V3 shape.
             if self._records is not None and self._records.get("state") != "ok":
                 payload["records"] = self._records
+            if self._share_marker is not None:
+                payload["share"] = {"proposals": len(self._share_marker)}
             return payload
 
     def record_write(self, absorb: Collection[str], *, bump: bool = True) -> int:
@@ -627,6 +639,7 @@ class ProjectWatcher:
         if not self._active():
             return False
         root = self._get_project_root()
+        self._poll_share(root)
         if not _graph_present(root):
             self._note_graph_missing(root)
             return False
@@ -688,6 +701,30 @@ class ProjectWatcher:
             self._last_error = error
             self._generation += 1
         return True
+
+    def _poll_share(self, root: Path, *, force: bool = False) -> bool:
+        """The members' areas of the shared folder (12.3): a new complete
+        proposal bumps the generation. Throttled, contained, never an
+        ingest. Returns whether something changed."""
+        import time  # noqa: PLC0415
+
+        now = time.monotonic()
+        if not force and self._share_root == root and now - self._share_checked < SHARE_INTERVAL_SECONDS:
+            return False
+        self._share_checked = now
+        try:
+            from researchos import share  # noqa: PLC0415 -- leaf use
+
+            marker = share.inbox_marker(root)
+        except Exception:  # noqa: BLE001 -- a shared folder that cannot be listed is not the watcher's failure
+            logger.info("the shared folder of %s could not be listed", root, exc_info=True)
+            return False
+        with self._state_lock:
+            changed = self._share_root == root and marker != self._share_marker
+            self._share_marker, self._share_root = marker, root
+            if changed:
+                self._generation += 1
+        return changed
 
     def _snapshot_records(self, root: Path, changed: set[str] | None) -> None:
         """9.2: a snapshot the first time Research OS sees a record file changed

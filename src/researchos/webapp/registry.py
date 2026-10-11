@@ -65,6 +65,8 @@ Contract:
     Returns whether anything was removed; the atomicity and
     unreadable-registry rules are `register()`'s, unchanged.
 
+  - An entry with an id may carry `"shared"`: the project's shared folder
+    on this machine (DESIGN.md 12.2, `set_shared`), kept across moves.
   - `register(path, id, label=...)` and `rename(id_or_path, label)` set a
     display name chosen in the app (DESIGN.md 10.2, 10.4) -- the label
     only, never the folder; `clean_label` says what a label may be.
@@ -191,7 +193,12 @@ def _read_entries() -> list[dict[str, str]]:
         if not _valid_entry(entry):
             logger.warning("%s: dropping malformed registry entry %r", path, entry)
             continue
-        entries.append({"id": entry.get("id"), "path": entry["path"], "label": entry["label"]})
+        item = {"id": entry.get("id"), "path": entry["path"], "label": entry["label"]}
+        if isinstance(entry.get("shared"), str) and entry["shared"] and item["id"] is not None:
+            # 12.2 (V8 phase 4): the project's shared folder on THIS machine
+            # -- per machine, never in the project.
+            item["shared"] = entry["shared"]
+        entries.append(item)
     return entries
 
 
@@ -272,6 +279,8 @@ def register(path: Path, project_id: str | None = None, *, label: str | None = N
             entry = existing
         elif existing is not None:
             entry = {"id": project_id, "path": resolved, "label": _label_after_move(existing, resolved)}
+            if existing.get("shared"):
+                entry["shared"] = existing["shared"]
         else:
             entry = {"id": project_id, "path": resolved, "label": Path(resolved).name}
         if label is not None:
@@ -370,6 +379,27 @@ def _label_after_move(entry: dict, new_path: str) -> str:
     if not label or label == Path(entry["path"]).name:
         return Path(new_path).name
     return label
+
+
+def set_shared(project_id: str, shared: str | None) -> bool:
+    """Set (or, with None, clear) the shared folder of the entry for
+    `project_id` (DESIGN.md 12.2: a path per machine, never in the
+    project). Returns whether an entry was there to carry it."""
+    found: list[bool] = []
+
+    def change(entries: list[dict]) -> bool:
+        existing = next((e for e in entries if e.get("id") == project_id), None)
+        if existing is None:
+            return False
+        found.append(True)
+        if shared:
+            existing["shared"] = shared
+        else:
+            existing.pop("shared", None)
+        return True
+
+    _update(change)
+    return bool(found)
 
 
 def find(project_id: str) -> dict[str, str | None] | None:
