@@ -184,6 +184,12 @@ class Store:
         row = self.conn.execute("SELECT * FROM versions WHERE node = ? ORDER BY seq DESC LIMIT 1", (node,)).fetchone()
         return None if row is None else self._row(row)
 
+    def counts(self) -> tuple[int, int]:
+        """(versions kept, nodes they belong to) -- what `researchos status`
+        says of the store."""
+        row = self.conn.execute("SELECT COUNT(*), COUNT(DISTINCT node) FROM versions").fetchone()
+        return int(row[0]), int(row[1])
+
     def versions(self, node: str) -> list[Version]:
         rows = self.conn.execute("SELECT * FROM versions WHERE node = ? ORDER BY seq DESC", (node,)).fetchall()
         return [self._row(r) for r in rows]

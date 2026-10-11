@@ -81,6 +81,7 @@ from sqlite3 import Connection
 from typing import Any
 
 from researchos import addproject, consistency, db, github, githubpush, inventory, lineage, literature, migration, names, paths, query, rename
+from researchos import collaborate as collaborate_mod
 from researchos import history as history_mod
 from researchos import exchange as exchange_mod
 from researchos import people
@@ -480,7 +481,21 @@ def cmd_status(args: argparse.Namespace) -> int:
             _print_pending_queue(conn, args.limit)
     finally:
         conn.close()
+    _print_overview(project_root)
     return 0
+
+
+def _print_overview(project_root: Path) -> None:
+    """V8 phase 5 (DESIGN.md 12.1-12.6): who I am, my role, the shared
+    folder and how far this copy is behind, the proposals, the notes and
+    the history -- after the counts, read only, and never a reason for
+    `status` to fail."""
+    try:
+        lines = collaborate_mod.overview_lines(collaborate_mod.overview(project_root))
+    except Exception as exc:  # noqa: BLE001 -- status reads; one unreadable part is said, not raised
+        lines = [f"People and the shared folder: cannot be read now ({exc})"]
+    for line in lines:
+        print(line)
 
 
 def _print_migration_waiting(project_root: Path) -> None:
@@ -1438,6 +1453,13 @@ def cmd_note(args: argparse.Namespace) -> int:
     """`researchos note add|list|withdraw` (DESIGN.md 12.6): notes on any
     node, in .researchos/notes.toml -- append-only; a note is withdrawn,
     never edited."""
+    if args.note_command == "list" and args.path is None:
+        # `note list PATH`: one positional that names a folder is the
+        # project, not a node (a node is a file or an id, never a folder).
+        if args.node is not None and Path(args.node).expanduser().is_dir():
+            args.path, args.node = args.node, None
+        else:
+            args.path = "."
     opened = _open(args.path)
     root = opened.root
     if args.note_command in ("add", "withdraw"):
@@ -1499,6 +1521,8 @@ def cmd_history(args: argparse.Namespace) -> int:
         print(f"  {listed['reason']}")
     for v in listed["versions"]:
         who = v.get("who") or "this machine"
+        if v.get("approved_by"):
+            who += f" (approved by {v['approved_by']})"
         extra = ""
         if listed["kind"] == "attempt":
             extra = f"  verdict={v.get('verdict') or '-'} result={v.get('result') or '-'}"
@@ -1698,7 +1722,23 @@ def cmd_approve(args: argparse.Namespace) -> int:
         print(f"  variable {applied['variable']['reference']} confirmed")
     if applied["evidence"] is not None:
         print(f"  evidence frozen: {len(applied['evidence'])} file(s)")
+    _print_published_after(done.get("published"), opened.root)
     return 0
+
+
+def _print_published_after(published: dict[str, Any] | None, root: Path) -> None:
+    """12.3: approving publishes a snapshot; the approval stands whatever
+    publishing said, so a failure is printed with the command to publish
+    again -- the member sees nothing until a snapshot carries it."""
+    if not published:
+        return
+    if published.get("published"):
+        print(f"Published snapshot {published['seq']} for the members: " + ("signed" if published.get("signed") else "NOT signed"))
+    elif published.get("reason") == "unchanged":
+        print(f"Snapshot {published.get('seq')} already carries the official version")
+    else:
+        print(f"NOT published ({published.get('error')}: {published.get('detail')}); the approval is recorded -- "
+              f"publish it with: researchos share publish {root}")
 
 
 def cmd_return(args: argparse.Namespace) -> int:
@@ -1769,7 +1809,8 @@ def _share_error(exc: Exception) -> CliError:
     details = getattr(exc, "details", None) or {}
     lines = [f"nothing written: {exc}"]
     for item in details.get("refused", []):
-        lines.append(f"  refused snapshot {item['seq']}: {item['state']} -- {item['reason']}")
+        lines.append(f"  refused snapshot {item['seq']}: {item['state']} -- "
+                     f"{collaborate_mod.REFUSED_WORDS.get(item['state'], item['reason'])}")
     for item in details.get("files", []):
         lines.append(f"  {item}")
     return CliError("\n".join(lines))
@@ -1777,7 +1818,8 @@ def _share_error(exc: Exception) -> CliError:
 
 def _print_refused(result: dict[str, Any]) -> None:
     for item in result.get("refused") or []:
-        print(f"  REFUSED snapshot {item['seq']} ({item['state']}): {item['reason']}")
+        why = collaborate_mod.REFUSED_WORDS.get(item["state"], item["reason"])
+        print(f"  REFUSED snapshot {item['seq']} ({item['state']}): {why} -- not used; the last good one is kept")
     for problem in result.get("problems") or []:
         print(f"  not read: {problem['path']} ({problem['kind']}: {problem['detail']})")
     for warning in result.get("warnings") or []:
@@ -1882,6 +1924,8 @@ def cmd_share(args: argparse.Namespace) -> int:
             for item in done["kept_yours"]:
                 print(f"  kept yours: {item['path']} ({item['reason']})")
             _print_refused(done)
+            if not done.get("up_to_date"):
+                _scan_after_sync(opened)
             return 0
         got = share_mod.status(root)
     except _SHARE_ERRORS as exc:
@@ -1907,6 +1951,114 @@ def cmd_share(args: argparse.Namespace) -> int:
               + ("; a newer snapshot is available: researchos share sync" if got.get("behind") else ""))
     _print_refused(got)
     return 0
+
+
+def cmd_collaborate(args: argparse.Namespace) -> int:
+    """`researchos collaborate [STEP] [--as pi|member] [--yes] [PATH]` (V8
+    phase 5): the steps of working with a team, in order -- the PI: me,
+    init, team, share, publish, member; a member: me, key, join, added --
+    each with whether it is done and the exact command that does it. With
+    STEP, that one step: refused (with the reason) while an earlier one is
+    not done; a dry run unless --yes, which runs exactly the command shown
+    (`researchos.collaborate`)."""
+    step, path = args.step, args.path
+    known = set(collaborate_mod.PI_STEPS) | set(collaborate_mod.MEMBER_STEPS)
+    if step is not None and step not in known:
+        if path is not None:
+            raise CliError(f"there is no step '{step}'; the PI's steps are {', '.join(collaborate_mod.PI_STEPS)} and "
+                           f"a member's {', '.join(collaborate_mod.MEMBER_STEPS)}")
+        path, step = step, None
+    root = Path(path).expanduser().resolve() if path is not None else Path.cwd()
+    inferred = collaborate_mod.infer_role(root)
+    if args.role and inferred and args.role != inferred:
+        raise CliError(f"{root}'s team file makes you {'the PI' if inferred == 'pi' else 'a member'} here, not "
+                       f"{'the PI' if args.role == 'pi' else 'a member'}; nothing run")
+    role = args.role or inferred
+    if role is None:
+        raise CliError("say which you are: --as pi (you lead the project and keep the official version) or --as member "
+                       "(you join it from the shared folder)")
+    values = collaborate_mod.Values(name=args.name, email=args.email, shared=args.shared, folder=args.folder,
+                                    member=args.member, member_name=args.member_name, key=args.key, out=args.out,
+                                    note=args.note)
+    who = "the PI" if role == "pi" else "a member"
+    flag = ["--as", role] if args.role else []
+    try:
+        steps = collaborate_mod.plan(role, root, values)
+        if step is None:
+            return _print_plan(steps, role, root, who, flag, as_json=args.json)
+        chosen = collaborate_mod.check_order(steps, step)
+    except collaborate_mod.StepRefused as exc:
+        raise CliError(f"refused: {exc}") from exc
+    number = [s.name for s in steps].index(step) + 1
+    if chosen.done and step not in collaborate_mod.REPEATABLE:
+        print(f"Step {number} ({step}) is done already: {chosen.detail}")
+        return 0
+    if chosen.argv is None:
+        raise CliError(f"step '{step}' cannot be run here: {chosen.detail}")
+    shown = collaborate_mod.command_line(chosen.argv)
+    if args.yes and chosen.missing:
+        raise CliError(f"step '{step}' needs {', '.join(chosen.missing)} to run: {shown}")
+    print(f"Step {number} ({step}), as {who}: {chosen.title}")
+    if not args.yes:
+        print(f"Would run: {shown}")
+        print("Dry run: nothing written. Add --yes to run it"
+              + (f" (and give {', '.join(chosen.missing)})" if chosen.missing else "") + ".")
+        return 0
+    print(f"Running: {shown}", flush=True)
+    code = main(chosen.argv)
+    if code == 0:
+        if chosen.after:
+            print(f"Then: {chosen.after}")
+        here = Path(values.folder).expanduser().resolve() if step == "join" and values.folder else root
+        print("Where you are now: " + collaborate_mod.command_line(["collaborate", *flag, str(here)]))
+    return code
+
+
+def _print_plan(steps: list[collaborate_mod.Step], role: str, root: Path, who: str, flag: list[str], *,
+                as_json: bool) -> int:
+    upcoming = collaborate_mod.next_step(steps)
+    daily = collaborate_mod.daily_loop(role, root)
+    if as_json:
+        print(json.dumps({"role": role, "root": str(root), "steps": [s.payload() for s in steps],
+                          "next": upcoming.name if upcoming else None, "daily": daily},
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(f"Working with a team, as {who}, in {root}")
+    for number, item in enumerate(steps, start=1):
+        print(f"  [{'done' if item.done else '    '}] {number} {item.name:<8} {item.title}: {item.detail}")
+        if not item.done and item.argv:
+            print(f"             {collaborate_mod.command_line(item.argv)}")
+    if upcoming is None:
+        print("Set up. The daily loop:")
+        for line in daily:
+            print(f"  {line}")
+        return 0
+    if upcoming.argv is None:
+        print(f"Next: {upcoming.title} -- {upcoming.detail}")
+        return 0
+    print(f"Next: {collaborate_mod.command_line(upcoming.argv)}")
+    if upcoming.missing:
+        print(f"  (fill in {', '.join(upcoming.missing)}; or give them to collaborate)")
+    print("  or let collaborate run it: " + collaborate_mod.command_line(
+        ["collaborate", upcoming.name, *flag, "--yes", str(root)]))
+    return 0
+
+
+def _scan_after_sync(opened: project_identity.Opened) -> None:
+    """After a sync brought new files, the working copy's own index is
+    scanned, so `status`, `query` and `trace` see them at once (the app's
+    watcher does this by itself). A scan that cannot run is said, with the
+    command; the sync stands."""
+    try:
+        with _write_guard(opened, human=False):
+            conn = db.connect(_require_db(opened.root))
+            try:
+                ingest_pipeline.ingest_sources(conn, opened.root)
+                ingest_pipeline.ingest_records(conn, opened.root)
+            finally:
+                conn.close()
+    except Exception as exc:  # noqa: BLE001 -- contained: the files are synced either way
+        print(f"  synced, but not scanned ({exc}): researchos ingest {opened.root}")
 
 
 def cmd_inbox(args: argparse.Namespace) -> int:
@@ -3154,7 +3306,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("node", nargs="?", default=None, help="a node id or a project-relative path (then the project as PATH or --path)")
     q.add_argument("--all", action="store_true", help="include withdrawn notes")
     q.add_argument("--json", action="store_true")
-    add_project_path(q)
+    add_project_path(q, default=None, help="project root (default: '.'); a lone folder given here is the project")
     q.set_defaults(func=cmd_note)
     q = note_sub.add_parser("withdraw", help="withdraw a note (appends a 'withdrawn' entry; the note itself is kept)")
     q.add_argument("note_id")
@@ -3286,6 +3438,28 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("folder", metavar="FOLDER")
     q.add_argument("--json", action="store_true")
     q.set_defaults(func=cmd_share)
+
+    p = sub.add_parser(
+        "collaborate",
+        help="Set up working with a team, step by step: each step, whether it is done and the exact next command "
+             "(the PI: me, init, team, share, publish, member; a member: me, key, join, added); STEP --yes runs one",
+    )
+    p.add_argument("step", nargs="?", default=None, metavar="STEP", help="one step to take (a dry run unless --yes)")
+    p.add_argument("--as", dest="role", default=None, choices=list(collaborate_mod.ROLES),
+                   help="pi or member (default: what this project's team file says you are)")
+    p.add_argument("--name", default=None, help="me: your name")
+    p.add_argument("--email", default=None, help="me: the e-mail of your shared-drive account")
+    p.add_argument("--shared", default=None, metavar="DIR", help="share / join: the shared folder")
+    p.add_argument("--folder", default=None, metavar="DIR", help="join: the new, empty folder for your working copy")
+    p.add_argument("--member", default=None, metavar="EMAIL", help="member: the member's e-mail")
+    p.add_argument("--member-name", dest="member_name", default=None, metavar="NAME", help="member: the member's name")
+    p.add_argument("--key", default=None, metavar="FILE", help="member: the public key file the member sent")
+    p.add_argument("--out", default=None, metavar="FILE", help="key: where to write your public key")
+    p.add_argument("--note", default=None, help="publish: a note on the snapshot")
+    p.add_argument("--yes", action="store_true", help="run the step (otherwise a dry run)")
+    p.add_argument("--json", action="store_true")
+    add_project_path(p, default=None, help="the project (the PI) or the working copy (a member); default: '.'")
+    p.set_defaults(func=cmd_collaborate)
 
     p = sub.add_parser("inbox", help="The PI's inbox from the shared folder, with each proposal's signature check")
     p.add_argument("--json", action="store_true")

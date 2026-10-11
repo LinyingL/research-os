@@ -46,6 +46,9 @@ rce = "researchos.cli:legacy_main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: drives the installed command in subprocesses, end to end (deselect with -m 'not slow'; CI runs it)",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

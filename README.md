@@ -65,7 +65,10 @@ its own from the command line.
   on disk. Both exist so the registry never has to be hand-edited.
 - `researchos status [--path P] [--pending] [--limit N]` — whole-graph node/edge
   counts, the graph file's actual location, and the pending confirmation
-  queue's size; `--pending` also lists
+  queue's size; then who you are, your role in the project, the shared
+  folder (last snapshot, whether it verified, how far your copy is behind),
+  the proposals waiting, and the notes and history kept (see "Working with a
+  team" below); `--pending` also lists
   each pending edge (src/dst/type/extractor/confidence/evidence), so it can
   be reviewed and acted on without the optional `mcp` extra.
 - `researchos confirm <src> <dst> <type> <extractor> --status confirmed|rejected`
@@ -130,6 +133,141 @@ verdict = "Verdict"
 
 Running `researchos attempts` with no config prints this exact template (see
 `researchos.ingest.attempts.SAMPLE_CONFIG`) and exits 1.
+
+## Working with a team
+
+This section is for a PI who runs a project with one or more collaborators
+and does not use git. Nothing here needs git, a server or an account: the
+team shares one folder on OneDrive (or any folder a sync service keeps in
+step), and Research OS on each person's computer reads and writes plain
+files in it.
+
+**Three places.**
+
+- **The official version** is the project folder on the PI's computer.
+  Only the PI's Research OS changes it. Nobody ever connects to the PI's
+  computer: it is where approvals are applied, nothing more.
+- **The shared folder** on OneDrive has two parts. `已发布` ("published")
+  holds signed snapshots of the official version and the PI's answers to
+  proposals; only the PI writes there. `提议/<member e-mail>` ("proposals")
+  is each member's own corner, where their proposals go.
+- **A working copy** is a member's own copy of the project, made from the
+  latest snapshot. Members work there as they always have.
+
+A member's change -- a new attempt in the attempt table, a changed verdict,
+a new variable definition, a new or changed script or data file -- reaches
+the official version only as a **proposal** the PI approves. Until then it
+is nowhere in the official record. A project with no team (or only its PI)
+has no approval step at all.
+
+`researchos collaborate` walks either person through the setup below in
+order: it shows each step, whether it is done, and the exact next command;
+`researchos collaborate STEP --yes` runs that one step, and a step taken out
+of order is refused with the reason. `researchos status` says at any time
+who you are, your role, the state of the shared folder and what is waiting.
+
+### What the PI does once
+
+```bash
+researchos me set --name "Li Lin" --email li@example.com   # the e-mail of your OneDrive account
+researchos init ~/Projects/my-paper                         # if the project is not a Research OS project yet
+researchos team init ~/Projects/my-paper                    # you, as the PI, with your signing key
+researchos share set ~/OneDrive/my-paper-shared ~/Projects/my-paper
+researchos share publish ~/Projects/my-paper                # the first signed snapshot
+```
+
+`team init` prints your key's fingerprint (`SHA256:...`). Tell it to each
+member by phone or in person: they compare it with what they see when they
+join. Then, for each member, once they have sent you their key file:
+
+```bash
+researchos team add wang@example.com --name "Wang" --key wang.pub ~/Projects/my-paper
+researchos share publish ~/Projects/my-paper                # their copy now carries the team
+```
+
+**Sharing permissions in OneDrive -- these are what make "only the PI can
+approve" a rule rather than a request.** In the shared folder, create
+`提议/<member e-mail>` for each member (the e-mail exactly as they gave it to
+`researchos me set`, lower case). Then share:
+
+| Folder | With | Permission |
+|---|---|---|
+| the shared folder itself (and so `已发布`) | every member | **Can view** |
+| `提议/<member e-mail>` | that member only | **Can edit** |
+
+Members add the shared folder to their own OneDrive ("Add shortcut to My
+files") so it syncs to their computer. On every computer, mark the shared
+folder "Always keep on this device": Research OS never reads a file that is
+still only in the cloud, and says so instead.
+
+### What a member does once
+
+```bash
+researchos me set --name "Wang" --email wang@example.com
+researchos me key --out wang.pub          # send this file and your e-mail to the PI
+researchos share join ~/OneDrive/my-paper-shared ~/Projects/my-paper-copy
+```
+
+`share join` makes the working copy in a new, empty folder and prints the
+PI's key fingerprint. Compare it with the one the PI told you; if they
+differ, stop and ask. Once the PI has added you and published, run
+`researchos share sync ~/Projects/my-paper-copy`.
+
+### The daily loop
+
+A member:
+
+```bash
+researchos share sync ~/Projects/my-paper-copy        # start from the latest official version
+# ... work as usual: scripts, data, the attempt table, variable cards ...
+researchos propose attempt_new --sentence "Big panel with 2025 data" ~/Projects/my-paper-copy
+#   shows exactly what would be sent; add --yes to send it
+researchos proposals ~/Projects/my-paper-copy         # pending, approved, or returned with the reason
+```
+
+The kinds are `attempt_new` (a new row in the attempt table), `verdict_change`
+(abandoning a route needs `--result` and `--reason`), `variable_version` (a
+new definition of a variable) and `files` (scripts and data alone).
+
+The PI:
+
+```bash
+researchos inbox ~/Projects/my-paper                    # what waits for you
+researchos proposals --show <ID> ~/Projects/my-paper    # exactly what approving would change
+researchos approve <ID> --note "OK" ~/Projects/my-paper # applied, recorded, published
+researchos return <ID> --reason "..." ~/Projects/my-paper
+researchos discuss <ID> --text "..." ~/Projects/my-paper  # a note; the proposal stays open
+researchos share publish ~/Projects/my-paper            # after changing the official version yourself
+```
+
+Every approved change is recorded with who proposed it and who approved
+it, and an abandoned route keeps the result and the reason it was dropped.
+
+### When both sides changed the same file
+
+If the PI changed a file after the member's last sync and the member changed
+it too, the PI is told which file, and the proposal cannot be approved; the
+member syncs and proposes again. When the member syncs, their own version
+is kept and the official one is put beside it as `<name>.official.<ext>`,
+with the difference shown. Compare the two, keep what is right in the
+original file, and delete the `.official` one.
+
+### What Research OS never does
+
+- **It never merges two people's edits of a file.** It shows both and lets
+  a person decide.
+- **It never edits anything in the shared folder.** Every snapshot,
+  proposal and answer is written once under a new name and never changed;
+  an unfinished one (no `ready.toml`) and a sync service's conflict copy are
+  reported and never read.
+- **It never contacts the PI's computer**, and working with a team opens
+  no network connection of its own: the only link between the team is the
+  shared folder, which OneDrive keeps in step.
+- **It never accepts a snapshot it cannot verify.** Snapshots are signed with
+  the PI's key (with `ssh-keygen`, part of macOS); a snapshot written by
+  anyone else is refused, and the last good one is kept. Where `ssh-keygen`
+  is missing, Research OS says so, and the sharing permissions above are the
+  only protection.
 
 ## Optional: MCP
 
