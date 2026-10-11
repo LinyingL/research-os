@@ -1,5 +1,5 @@
-"""Tests for rce.consistency (task A3): the three deterministic checks over
-an ingested attempt timeline, plus `rce attempts`'/`--check`'s CLI wiring.
+"""Tests for researchos.consistency (task A3): the three deterministic checks over
+an ingested attempt timeline, plus `researchos attempts`'/`--check`'s CLI wiring.
 """
 
 import os
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, consistency, db
-from rce.ingest import attempts as attempts_ingest
+from researchos import cli, consistency, db
+from researchos.ingest import attempts as attempts_ingest
 
 HEADING = "Attempt timeline"
 COLUMNS = {
@@ -476,7 +476,7 @@ def test_revived_dead_variable_skipped_without_active_verdicts_config(conn, tmp_
     assert "active_verdicts" in result.skip_reason
 
 
-# -- CLI: `rce attempts` / `--check` ------------------------------------------
+# -- CLI: `researchos attempts` / `--check` ------------------------------------------
 
 
 def _init_and_write_config(
@@ -484,7 +484,7 @@ def _init_and_write_config(
 ) -> None:
     project.mkdir(parents=True, exist_ok=True)
     assert cli.main(["init", str(project)]) == 0
-    rce_dir = project / ".rce"
+    record_dir = project / ".researchos"
     lines = ['file = "map.md"', f'heading = "{HEADING}"']
     if steps_dir:
         lines.append(f'steps_dir = "{steps_dir}"')
@@ -499,7 +499,7 @@ def _init_and_write_config(
     lines.append("[columns]")
     for key, header in COLUMNS.items():
         lines.append(f'{key} = "{header}"')
-    (rce_dir / "attempts.toml").write_text("\n".join(lines) + "\n")
+    (record_dir / "attempts.toml").write_text("\n".join(lines) + "\n")
 
 
 def test_cli_attempts_check_exits_nonzero_when_issues_found(tmp_path, capsys):
@@ -545,8 +545,8 @@ def test_cli_attempts_default_lists_registered_attempts(tmp_path, capsys):
 
 
 def test_cli_attempts_accepts_positional_path_like_init_and_ingest(tmp_path, capsys):
-    """Item 10: `rce attempts <path>` (no --path) must work the same as
-    `rce init <path>`/`rce ingest <path>` -- previously only --path was
+    """Item 10: `researchos attempts <path>` (no --path) must work the same as
+    `researchos init <path>`/`researchos ingest <path>` -- previously only --path was
     accepted, inconsistent with every other subcommand that takes a path."""
     project = tmp_path / "proj"
     _init_and_write_config(project)
@@ -578,7 +578,7 @@ def test_full_toml_path_wires_all_three_checks_configs(tmp_path):
     """B2 regression: every other test in this suite constructs
     `AttemptsConfig` directly in Python, so a config-shape bug (like B1's
     SAMPLE_CONFIG key placement) never showed up in any test. This one goes
-    through a real `.rce/attempts.toml` file end to end -- `load_config`
+    through a real `.researchos/attempts.toml` file end to end -- `load_config`
     reads it, and all three checks' gating config items (steps_dir,
     dead_variables, active_verdicts, date_year) are exercised via that
     loaded config, not a hand-built dataclass."""
@@ -586,9 +586,9 @@ def test_full_toml_path_wires_all_three_checks_configs(tmp_path):
     project.mkdir()
     (project / "steps").mkdir()
     (project / "steps" / "16-a.py").write_text("")
-    rce_dir = project / ".rce"
-    rce_dir.mkdir()
-    (rce_dir / "attempts.toml").write_text(
+    record_dir = project / ".researchos"
+    record_dir.mkdir()
+    (record_dir / "attempts.toml").write_text(
         'file = "map.md"\n'
         f'heading = "{HEADING}"\n'
         'steps_dir = "steps"\n'
@@ -653,13 +653,13 @@ def test_verbose_flag_makes_info_diagnostics_visible(tmp_path):
 """)
 
     quiet = subprocess.run(
-        [sys.executable, "-m", "rce.cli", "attempts", "--path", str(project), "--check"],
+        [sys.executable, "-m", "researchos.cli", "attempts", "--path", str(project), "--check"],
         capture_output=True, text=True,
     )
     assert "not parseable" not in quiet.stderr
 
     verbose = subprocess.run(
-        [sys.executable, "-m", "rce.cli", "-v", "attempts", "--path", str(project), "--check"],
+        [sys.executable, "-m", "researchos.cli", "-v", "attempts", "--path", str(project), "--check"],
         capture_output=True, text=True,
     )
     assert "not parseable" in verbose.stderr

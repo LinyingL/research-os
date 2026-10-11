@@ -1,4 +1,4 @@
-"""Tests for rce.mcp_server (T5): plain functions (trace_result/find_nodes/
+"""Tests for researchos.mcp_server (T5): plain functions (trace_result/find_nodes/
 status_summary/confirm_edge + their format_* renderers) called directly
 against tests/conftest.py's `conn` fixture -- no stdio/client/network.
 build_server()/main() get a thin smoke test only (tool registration/schema,
@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from rce import db, mcp_server, paths
+from researchos import db, mcp_server, paths
 
 
 def _mk(conn, src, dst, edge_type, extractor="test", evidence=None, confidence=0.9, status="auto"):
@@ -43,12 +43,12 @@ def test_trace_result_node_with_no_edges_says_so(conn):
 
 
 def test_trace_result_and_text_show_current_claim_line_for_backed_by(conn):
-    """Regression (2026-07-27): rce_trace must recover a backed_by hop's
-    claim line via `hop["source_location"]` (rce.query.trace, see
-    rce.query.claim_source_location) even though rce.ingest.claims no
+    """Regression (2026-07-27): researchos_trace must recover a backed_by hop's
+    claim line via `hop["source_location"]` (researchos.query.trace, see
+    researchos.query.claim_source_location) even though researchos.ingest.claims no
     longer writes "line" into the edge's persisted evidence at all -- a
-    prior commit fixed this only for `rce status --pending`'s own display,
-    silently leaving the MCP `rce_trace` tool (and `rce trace`/`--json`)
+    prior commit fixed this only for `researchos status --pending`'s own display,
+    silently leaving the MCP `researchos_trace` tool (and `researchos trace`/`--json`)
     without the line."""
     db.upsert_node(
         conn, "claim:paper.tex#abc", "claim",
@@ -110,7 +110,7 @@ def test_status_summary_counts_and_pending_queue(conn):
 def _v5_project(tmp_path):
     """A V5 project with one pending claim link (no scan: the link was
     never stamped, so its judgment is compared with no basis)."""
-    from rce import project as project_identity
+    from researchos import project as project_identity
 
     root = tmp_path / "proj"
     root.mkdir()
@@ -136,7 +136,7 @@ def _status(root):
 def test_confirm_edge_records_the_judgment_then_applies_it(tmp_path):
     """9.1/9.8: the MCP channel writes the ledger (via = "mcp") through the
     one write path; the index follows."""
-    from rce.records import ledger as ledger_mod
+    from researchos.records import ledger as ledger_mod
 
     root, pid = _v5_project(tmp_path)
     message = mcp_server.confirm_edge(
@@ -158,14 +158,14 @@ def test_confirm_edge_no_such_edge_says_so(tmp_path):
         root, pid, "claim:missing", "experiment:missing", "backed_by", "7b-judge", "confirmed",
     )
     assert "No such edge" in message
-    assert not (root / ".rce" / "judgements.toml").exists()
+    assert not (root / ".researchos" / "judgements.toml").exists()
 
 
 def test_confirm_edge_refuses_a_hand_drawn_link(tmp_path):
     root, pid = _v5_project(tmp_path)
     message = mcp_server.confirm_edge(root, pid, "script:a.py", "dataset:b.csv", "reads", "mapping", "rejected")
     assert message.startswith("Not written") and "mappings.toml" in message
-    assert not (root / ".rce" / "judgements.toml").exists()
+    assert not (root / ".researchos" / "judgements.toml").exists()
 
 
 def test_confirm_edge_rejects_unknown_type_and_status(tmp_path):
@@ -187,13 +187,13 @@ def test_build_server_registers_tools_with_legal_schemas(tmp_path):
         conn.close()
 
     tools = asyncio.run(mcp_server.build_server(project).list_tools())
-    assert {t.name for t in tools} == {"rce_trace", "rce_find", "rce_status", "rce_confirm_edge"}
+    assert {t.name for t in tools} == {"researchos_trace", "researchos_find", "researchos_status", "researchos_confirm_edge"}
     for tool in tools:
         assert tool.description and tool.inputSchema["type"] == "object" and "properties" in tool.inputSchema
 
-    trace_tool = next(t for t in tools if t.name == "rce_trace")
+    trace_tool = next(t for t in tools if t.name == "researchos_trace")
     assert "node_id" in trace_tool.inputSchema["required"]
-    confirm_tool = next(t for t in tools if t.name == "rce_confirm_edge")
+    confirm_tool = next(t for t in tools if t.name == "researchos_confirm_edge")
     assert set(confirm_tool.inputSchema["required"]) == {"src", "dst", "type", "extractor", "new_status"}
 
 
@@ -202,4 +202,4 @@ def test_main_reports_clear_error_for_missing_project(tmp_path, capsys):
     project.mkdir()
     assert mcp_server.main(["--path", str(project)]) == 1
     err = capsys.readouterr().err
-    assert "Error" in err and "rce init" in err
+    assert "Error" in err and "researchos init" in err

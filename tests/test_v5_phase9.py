@@ -3,7 +3,7 @@
 changed always says how far it looked"; task V5 phase 9): the stage-(b)
 comparison and its coverage, 「口径未变」 / 「全部口径未变」 / 「口径已变」,
 「完整比对」, the 「变量」 endpoints (origin-checked, path-confined, writing
-only what RCE authors), the watcher noticing a moved script, and the 「变量」
+only what Research OS authors), the watcher noticing a moved script, and the 「变量」
 view's copy. Acceptance 17 of 9.11 is named in each test that covers it."""
 
 from __future__ import annotations
@@ -20,11 +20,11 @@ from typing import Any
 
 import pytest
 
-from rce import cli, db
-from rce.records import cards, implementation
-from rce.records import variables as V
-from rce.records.situation import index_db_path
-from rce.webapp import server
+from researchos import cli, db
+from researchos.records import cards, implementation
+from researchos.records import variables as V
+from researchos.records.situation import index_db_path
+from researchos.webapp import server
 
 from test_variable_cards import _project, _text, _write
 
@@ -136,7 +136,7 @@ def test_scenario_17_a_code_change_is_one_item_naming_every_card_on_the_script(t
     for member in group["cards"]:
         assert [r["label"] for r in member["reasons"]] == ["实现脚本在确认后有改动"]
         assert member["cannot_tell"] == implementation.CANNOT_TELL
-    assert groups["cannot_tell"].startswith("RCE 只看得出")
+    assert groups["cannot_tell"].startswith("Research OS 只看得出")
 
 
 def test_scenario_17_all_unchanged_appends_one_reaffirmed_per_card(tmp_path):
@@ -327,7 +327,7 @@ def test_a_card_whose_version_was_edited_compares_the_definition_in_force(tmp_pa
 
 
 def test_rce_review_prints_the_cards_too(tmp_path, capsys):
-    """9.6: `rce review` prints the same list the app shows."""
+    """9.6: `researchos review` prints the same list the app shows."""
     root = _two_on_one_script(tmp_path)
     (root / "build.py").write_text((root / "build.py").read_text() + "df = df.dropna()\n")
     capsys.readouterr()
@@ -396,7 +396,7 @@ def test_the_list_and_the_card_read_everything_the_view_shows(live):
     rows = {r["id"]: r for r in data["cards"]}
     assert rows["topicshift"]["name"] == "TopicShift（叙事更替）" and rows["topicshift"]["in_use"] == 1
     assert rows["rv"]["draft"] == 1 and rows["rv"]["in_use"] is None
-    assert data["empty_help"]["command"] == "rce variable new <id>"
+    assert data["empty_help"]["command"] == "researchos variable new <id>"
     status, card = _call(base, "GET", "/api/variables/card?id=TOPICSHIFT")
     assert status == 200 and card["id"] == "topicshift"
     (v1,) = card["versions"]
@@ -425,7 +425,7 @@ def test_the_kept_code_and_the_frozen_copy_are_served_as_text(live):
 
 def test_a_copy_that_leads_outside_its_folder_is_refused(live, tmp_path):
     """Resolve, then relative_to: a code copy replaced by a symlink to a file
-    outside `.rce/variables/_code/` is not read."""
+    outside `.researchos/variables/_code/` is not read."""
     base, root = live
     entry = _entries(root, "topicshift")[0]
     copy = V.variables_dir(root) / entry["checked"]["script"]["copy"]
@@ -469,7 +469,7 @@ def test_the_app_writes_only_what_rce_authors(live):
     base, root = live
     v1 = (V.variables_dir(root) / "topicshift" / "v1.toml").read_bytes()
     status, data = _call(base, "POST", "/api/variables/revise", {"id": "topicshift"})
-    assert status == 200 and data["version"] == 2 and data["file"] == ".rce/variables/topicshift/v2.toml"
+    assert status == 200 and data["version"] == 2 and data["file"] == ".researchos/variables/topicshift/v2.toml"
     status, data = _call(base, "POST", "/api/variables/revise", {"id": "topicshift"})
     assert status == 409 and data["state"] == "card_draft_open" and data["message_zh"] == "已有草稿 v2，请先确认它"
     _write(root, "topicshift", 2, _text(formula="TS_t = JS(p_t, p_{t−1})"))

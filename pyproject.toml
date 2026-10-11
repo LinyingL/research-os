@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rce"
+name = "researchos"
 version = "0.1.0"
-description = "Research Context Engine -- local provenance graph over git/LaTeX/W&B for research projects."
+description = "Research OS -- a local record of how a research project came to be: provenance over git/LaTeX/W&B, human judgments, and the files they rest on."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
@@ -18,18 +18,18 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 # Zero required runtime third-party dependencies (positioning ruling
-# 2026-07-22: RCE is a local-first standalone tool, not an MCP product --
+# 2026-07-22: Research OS (then RCE) is a local-first standalone tool, not an MCP product --
 # MCP is one optional exit among several, not a requirement to install the
 # engine). See [project.optional-dependencies] below.
 dependencies = []
 
 [project.optional-dependencies]
-# "mcp" (official Model Context Protocol SDK) backs only rce.mcp_server /
-# `rce mcp` (constitution section 0, Occam rule 1 -- official SDK over a
+# "mcp" (official Model Context Protocol SDK) backs only researchos.mcp_server /
+# `researchos mcp` (constitution section 0, Occam rule 1 -- official SDK over a
 # hand-rolled stdio/JSON-RPC protocol); every other subcommand works without
-# it. Install with: pip install "rce[mcp]"
+# it. Install with: pip install "researchos[mcp]"
 # Upper bound is deliberate, not laziness: mcp 2.0.0 (released 2026-08)
-# removed `mcp.server.fastmcp`, which rce.mcp_server is built on -- an
+# removed `mcp.server.fastmcp`, which researchos.mcp_server is built on -- an
 # unbounded `mcp>=1.0` silently broke CI the day 2.0 shipped. Supporting the
 # 2.0 server API is a separate, testable piece of work; until then this pins
 # the range the code is actually verified against.
@@ -39,7 +39,10 @@ mcp = ["mcp>=1.0,<2"]
 dev = ["pytest>=8", "mcp>=1.0,<2"]
 
 [project.scripts]
-rce = "rce.cli:main"
+researchos = "researchos.cli:main"
+# The old command, kept for one release (DESIGN.md 12.8): prints
+# "rce is now researchos" on stderr, then runs the same main.
+rce = "researchos.cli:legacy_main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -48,4 +51,4 @@ testpaths = ["tests"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-rce = ["migrations/*.sql", "webapp/app.html", "webapp/canvas.js", "webapp/shell/*.swift"]
+researchos = ["migrations/*.sql", "webapp/app.html", "webapp/canvas.js", "webapp/shell/*.swift"]

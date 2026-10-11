@@ -1,9 +1,9 @@
-"""Tests for rce.query.trace (T5): multi-hop provenance traversal directly
+"""Tests for researchos.query.trace (T5): multi-hop provenance traversal directly
 against a migrated SQLite fixture (tests/conftest.py's `conn`) -- no MCP
 server, no client involved.
 """
 
-from rce import db, query
+from researchos import db, query
 
 
 def _mk_nodes(conn, *pairs):
@@ -96,10 +96,10 @@ def test_trace_collects_multiple_extractors_on_same_edge_pair(conn):
 # -- claim_source_location / trace's "source_location" hop field -----------
 #
 # Regression (2026-07-27): a `backed_by` edge's evidence never carries the
-# claim's line (rce.ingest.claims -- it shifts with unrelated edits and
+# claim's line (researchos.ingest.claims -- it shifts with unrelated edits and
 # evidence is deduped by whole-dict equality). A prior commit backfilled
-# the line for `rce status --pending`'s own display only, silently
-# regressing `rce trace`/`--json` and the MCP `rce_trace` tool (both read
+# the line for `researchos status --pending`'s own display only, silently
+# regressing `researchos trace`/`--json` and the MCP `researchos_trace` tool (both read
 # query.trace() directly) versus the commit before that one, which had the
 # line baked into evidence. None of the 272 tests at the time caught it --
 # these do, at the lowest level the bug actually lived in.

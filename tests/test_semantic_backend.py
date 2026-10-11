@@ -1,4 +1,4 @@
-"""Tests for rce.semantic.backend (S1). Every case monkeypatches
+"""Tests for researchos.semantic.backend (S1). Every case monkeypatches
 urllib.request.urlopen with a fixture/queue -- no real network call is ever
 made, so the suite stays closed and reproducible in CI with no LM Studio
 (or any other server) running."""
@@ -9,7 +9,7 @@ import urllib.error
 
 import pytest
 
-from rce.semantic import backend
+from researchos.semantic import backend
 
 _SCHEMA = {
     "type": "object",

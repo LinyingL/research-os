@@ -1,14 +1,14 @@
-"""Tests for rce.paths (DESIGN.md section 8.10 resilience rule 1): the one
+"""Tests for researchos.paths (DESIGN.md section 8.10 resilience rule 1): the one
 module that says where a project's derived state lives.
 
 Three groups, matching the three things that module is responsible for:
-the location algebra (`RCE_HOME`, the stable id, the graph/canvas paths),
+the location algebra (`RESEARCHOS_HOME`, the stable id, the graph/canvas paths),
 the one-time legacy migration (copy -> verify -> delete, and what happens
 when the verify fails), and the macOS dataless probe.
 
-The `isolated_rce_home` autouse fixture in conftest.py already points
-`RCE_HOME` at a throwaway directory for every test here, so nothing below
-can reach the developer's real `~/.rce`; tests that need to observe the
+The `isolated_researchos_home` autouse fixture in conftest.py already points
+`RESEARCHOS_HOME` at a throwaway directory for every test here, so nothing below
+can reach the developer's real `~/.researchos`; tests that need to observe the
 *unset* behaviour delenv it explicitly.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from rce import db, paths
+from researchos import db, paths
 
 
 def _mk_legacy_graph(project_root: Path, *, rows: int = 3) -> Path:
@@ -46,35 +46,49 @@ def _node_ids(db_path: Path) -> list[str]:
         conn.close()
 
 
-# -- rce_home / the stable id / the derived locations -------------------------
+# -- researchos_home / the stable id / the derived locations -------------------------
 
 
 def test_rce_home_honours_the_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv(paths.HOME_ENV_VAR, str(tmp_path / "elsewhere"))
-    assert paths.rce_home() == tmp_path / "elsewhere"
+    assert paths.researchos_home() == tmp_path / "elsewhere"
 
 
-def test_rce_home_falls_back_to_dot_rce_under_the_user_home(monkeypatch):
+def test_home_falls_back_to_dot_researchos_under_the_user_home(tmp_path, monkeypatch):
+    """12.8: with neither variable set, the home is `~/.researchos` (a
+    throwaway user home here -- never the developer's own)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv(paths.HOME_ENV_VAR, raising=False)
-    assert paths.rce_home() == Path.home() / ".rce"
+    monkeypatch.delenv(paths.LEGACY_HOME_ENV_VAR, raising=False)
+    assert paths.researchos_home() == tmp_path / ".researchos"
+
+
+def test_the_old_home_variable_is_honoured_while_the_new_one_is_unset(tmp_path, monkeypatch):
+    """12.8: `RCE_HOME` still names the home when `RESEARCHOS_HOME` is unset;
+    the new one wins when both are set."""
+    monkeypatch.delenv(paths.HOME_ENV_VAR, raising=False)
+    monkeypatch.setenv(paths.LEGACY_HOME_ENV_VAR, str(tmp_path / "old"))
+    assert paths.researchos_home() == tmp_path / "old"
+    monkeypatch.setenv(paths.HOME_ENV_VAR, str(tmp_path / "new"))
+    assert paths.researchos_home() == tmp_path / "new"
 
 
 def test_rce_home_is_read_per_call_not_cached_at_import(tmp_path, monkeypatch):
     """The whole reason the test suite can isolate itself: a setenv after
     this module was imported must still be honoured."""
     monkeypatch.setenv(paths.HOME_ENV_VAR, str(tmp_path / "a"))
-    first = paths.rce_home()
+    first = paths.researchos_home()
     monkeypatch.setenv(paths.HOME_ENV_VAR, str(tmp_path / "b"))
-    assert first != paths.rce_home() == tmp_path / "b"
+    assert first != paths.researchos_home() == tmp_path / "b"
 
 
-def test_graph_db_path_is_under_the_rce_home_never_the_project(tmp_path, isolated_rce_home):
+def test_graph_db_path_is_under_the_rce_home_never_the_project(tmp_path, isolated_researchos_home):
     project = tmp_path / "proj"
     project.mkdir()
     graph = paths.graph_db_path(project)
     assert graph.name == "graph.db"
-    assert graph.parent.parent == isolated_rce_home / "graphs"
-    assert isolated_rce_home not in project.parents  # the two really are disjoint
+    assert graph.parent.parent == isolated_researchos_home / "graphs"
+    assert isolated_researchos_home not in project.parents  # the two really are disjoint
     assert str(project) not in str(graph)
 
 
@@ -104,7 +118,7 @@ def test_graph_id_is_ascii_and_short_even_for_a_non_ascii_project_name(tmp_path)
 
 def test_graph_id_resolves_the_path_so_spellings_share_one_graph(tmp_path, monkeypatch):
     """A relative path, a trailing slash and the absolute path are ONE
-    project -- otherwise `rce ingest .` and `rce ingest /full/path` would
+    project -- otherwise `researchos ingest .` and `researchos ingest /full/path` would
     quietly build two different graphs."""
     project = tmp_path / "proj"
     project.mkdir()
@@ -180,7 +194,7 @@ def test_migration_moves_the_graph_and_keeps_every_row(tmp_path):
 
 
 def test_migration_removes_the_wal_and_shm_sidecars(tmp_path):
-    """`rce.db.connect` puts every graph in WAL mode, so a live legacy
+    """`researchos.db.connect` puts every graph in WAL mode, so a live legacy
     graph normally has companions; leaving them behind would let a later
     connection inherit a stranger's WAL."""
     project = tmp_path / "proj"
@@ -191,7 +205,7 @@ def test_migration_removes_the_wal_and_shm_sidecars(tmp_path):
 
     paths.migrate_legacy_graph(project)
 
-    leftovers = sorted(p.name for p in (project / ".rce").iterdir())
+    leftovers = sorted(p.name for p in (project / ".researchos").iterdir())
     assert leftovers == ["README"]  # the signpost (8.10 rule 1), nothing of the graph
 
 
@@ -321,7 +335,7 @@ def test_graph_db_path_itself_never_migrates(tmp_path):
     assert not paths.graph_db_path(project).exists()
 
 
-# -- .rce/README: the project's own signpost ----------------------------------
+# -- .researchos/README: the project's own signpost ----------------------------------
 
 
 def test_write_project_readme_names_the_graph_directory(tmp_path):
@@ -330,7 +344,7 @@ def test_write_project_readme_names_the_graph_directory(tmp_path):
 
     readme = paths.write_project_readme(project)
 
-    assert readme == project / ".rce" / "README"
+    assert readme == project / ".researchos" / "README"
     text = readme.read_text(encoding="utf-8")
     assert str(paths.graph_dir(project)) in text
     assert "（还没有）" in text  # no record files yet, and none invented
@@ -340,9 +354,9 @@ def test_readme_lists_exactly_the_record_files_the_folder_holds(tmp_path):
     """9.12 (acceptance, 2026-10-05): the index's current location and the
     record files this folder holds NOW -- and nothing it does not."""
     project = tmp_path / "proj"
-    (project / ".rce" / "variables").mkdir(parents=True)
-    (project / ".rce" / "judgements.toml").write_text("")
-    (project / ".rce" / "mappings.toml").write_text("")
+    (project / ".researchos" / "variables").mkdir(parents=True)
+    (project / ".researchos" / "judgements.toml").write_text("")
+    (project / ".researchos" / "mappings.toml").write_text("")
     text = paths.write_project_readme(project).read_text(encoding="utf-8")
     listed = [line.split()[0] for line in text.splitlines() if line.startswith("  ") and not line.startswith("  /")]
     assert listed == ["judgements.toml", "mappings.toml", "variables/"]
@@ -350,7 +364,7 @@ def test_readme_lists_exactly_the_record_files_the_folder_holds(tmp_path):
 
 
 def test_migration_leaves_the_same_readme_rce_init_writes(tmp_path):
-    """8.10 rule 1 (amended): the researcher who opens `.rce/` after the
+    """8.10 rule 1 (amended): the researcher who opens `.researchos/` after the
     move and finds no `graph.db` finds the answer in the same folder."""
     project = tmp_path / "proj"
     project.mkdir()
@@ -358,7 +372,7 @@ def test_migration_leaves_the_same_readme_rce_init_writes(tmp_path):
 
     paths.migrate_legacy_graph(project)
 
-    readme = project / ".rce" / "README"
+    readme = project / ".researchos" / "README"
     migrated_text = readme.read_text(encoding="utf-8")
     readme.unlink()
     assert paths.write_project_readme(project).read_text(encoding="utf-8") == migrated_text
@@ -374,15 +388,15 @@ def test_a_failed_migration_writes_no_readme(tmp_path, monkeypatch):
     with pytest.raises(paths.GraphMigrationError):
         paths.migrate_legacy_graph(project)
 
-    assert not (project / ".rce" / "README").exists()
+    assert not (project / ".researchos" / "README").exists()
 
 
 def test_a_no_op_migration_writes_no_readme(tmp_path):
     project = tmp_path / "proj"
     project.mkdir()
-    (project / ".rce").mkdir()
+    (project / ".researchos").mkdir()
     assert paths.migrate_legacy_graph(project) is None
-    assert not (project / ".rce" / "README").exists()
+    assert not (project / ".researchos" / "README").exists()
 
 
 def test_a_readme_that_cannot_be_written_does_not_fail_a_completed_move(tmp_path, monkeypatch):
@@ -402,9 +416,9 @@ def test_write_project_readme_is_rewritten_not_appended(tmp_path):
     project = tmp_path / "proj"
     project.mkdir()
     paths.write_project_readme(project)
-    first = (project / ".rce" / "README").read_text(encoding="utf-8")
+    first = (project / ".researchos" / "README").read_text(encoding="utf-8")
     paths.write_project_readme(project)
-    assert (project / ".rce" / "README").read_text(encoding="utf-8") == first
+    assert (project / ".researchos" / "README").read_text(encoding="utf-8") == first
 
 
 # -- is_dataless: the pre-open probe ------------------------------------------
@@ -500,17 +514,17 @@ def test_project_rce_dir_stays_inside_the_project(tmp_path):
     and backups/ are still theirs, still in the project, still committable."""
     project = tmp_path / "proj"
     project.mkdir()
-    assert paths.project_rce_dir(project) == project / ".rce"
-    assert os.path.commonpath([project, paths.project_rce_dir(project)]) == str(project)
+    assert paths.project_dir(project) == project / ".researchos"
+    assert os.path.commonpath([project, paths.project_dir(project)]) == str(project)
 
 
 # -- Adversarial review of the V4 work: concurrency, dataless, spelling, log ---
 
 
-def _migrate_in_subprocess(project: str, rce_home: str, out: str) -> None:
+def _migrate_in_subprocess(project: str, researchos_home: str, out: str) -> None:
     """Child-process body for the cross-process race below (module-level so
     `multiprocessing`'s spawn start method can import it)."""
-    os.environ[paths.HOME_ENV_VAR] = rce_home
+    os.environ[paths.HOME_ENV_VAR] = researchos_home
     try:
         result = paths.migrate_legacy_graph(project)
         Path(out).write_text("migrated" if result else "none", encoding="utf-8")
@@ -552,9 +566,9 @@ def test_concurrent_migrations_in_threads_install_one_verified_copy(tmp_path):
     assert list(paths.graph_dir(project).glob("*.migrating*")) == []
 
 
-def test_concurrent_migrations_in_processes_install_one_verified_copy(tmp_path, isolated_rce_home):
-    """The cross-process case the review reproduced (RCE.app's `rce serve`
-    and an MCP client's `rce mcp`, or two CLI commands): the `flock` makes
+def test_concurrent_migrations_in_processes_install_one_verified_copy(tmp_path, isolated_researchos_home):
+    """The cross-process case the review reproduced (Research OS.app's `researchos serve`
+    and an MCP client's `researchos mcp`, or two CLI commands): the `flock` makes
     them take turns, so one migrates and the others find the work done."""
     import multiprocessing
 
@@ -565,7 +579,7 @@ def test_concurrent_migrations_in_processes_install_one_verified_copy(tmp_path, 
     ctx = multiprocessing.get_context("spawn")
     outs = [tmp_path / f"out{i}.txt" for i in range(3)]
     procs = [
-        ctx.Process(target=_migrate_in_subprocess, args=(str(project), str(isolated_rce_home), str(o)))
+        ctx.Process(target=_migrate_in_subprocess, args=(str(project), str(isolated_researchos_home), str(o)))
         for o in outs
     ]
     for p in procs:
@@ -652,13 +666,13 @@ def test_request_download_materializes_in_the_background_once(tmp_path):
 
 def test_migration_log_line_is_visible_without_verbose(tmp_path, caplog):
     """Section 8.10's "one log line": at WARNING, the lowest level an
-    unconfigured `rce` (no `-v`) prints, so the move is never silent."""
+    unconfigured `researchos` (no `-v`) prints, so the move is never silent."""
     import logging
 
     project = tmp_path / "proj"
     project.mkdir()
     _mk_legacy_graph(project)
-    with caplog.at_level(logging.WARNING, logger="rce.paths"):
+    with caplog.at_level(logging.WARNING, logger="researchos.paths"):
         paths.migrate_legacy_graph(project)
     moved = [r for r in caplog.records if "moved this project's graph" in r.getMessage()]
     assert len(moved) == 1 and moved[0].levelno == logging.WARNING
@@ -669,7 +683,7 @@ def test_graph_id_is_shared_by_case_and_normalization_spellings_on_macos(tmp_pat
     """Two spellings of one directory on the case- and normalization-
     insensitive APFS volume are one project and must share one graph --
     otherwise a migration under one spelling strands the graph for the
-    other, which is then told to `rce init` a second, empty one."""
+    other, which is then told to `researchos init` a second, empty one."""
     import unicodedata
 
     project = tmp_path / "CaseProj"
@@ -696,13 +710,13 @@ def test_graph_id_of_a_not_yet_existing_path_is_still_stable(tmp_path):
 # -- V5 (DESIGN.md 9.4): the index of a project with an id ---------------------
 
 
-def test_a_project_with_an_id_is_indexed_under_its_id(tmp_path, isolated_rce_home):
-    from rce.records import identity
+def test_a_project_with_an_id_is_indexed_under_its_id(tmp_path, isolated_researchos_home):
+    from researchos.records import identity
 
     project = tmp_path / "proj"
     project.mkdir()
     ident = identity.create_identity(project)
-    assert paths.graph_dir(project) == isolated_rce_home / "graphs" / ident.id
+    assert paths.graph_dir(project) == isolated_researchos_home / "graphs" / ident.id
     assert paths.graph_db_path(project) == paths.index_dir(ident.id) / "graph.db"
     assert paths.canvas_state_path(project).parent == paths.index_dir(ident.id)
     moved = tmp_path / "moved"
@@ -719,8 +733,8 @@ def test_a_folder_without_an_id_keeps_the_legacy_location(tmp_path):
 
 def test_an_unreadable_identity_never_falls_back_to_the_legacy_index(tmp_path):
     project = tmp_path / "proj"
-    (project / ".rce").mkdir(parents=True)
-    (project / ".rce" / "project.toml").write_text("id = [\n")
+    (project / ".researchos").mkdir(parents=True)
+    (project / ".researchos" / "project.toml").write_text("id = [\n")
     with pytest.raises(paths.IdentityUnavailableError):
         paths.graph_dir(project)
     assert paths.graph_exists(project) is False
@@ -728,8 +742,8 @@ def test_an_unreadable_identity_never_falls_back_to_the_legacy_index(tmp_path):
 
 def test_an_in_project_graph_inside_a_v5_project_is_not_moved(tmp_path):
     """Only a pre-V5 folder gets the 8.10 move; inside a folder with an id
-    such a file is a pre-V5 database for `rce migrate` to list (9.5)."""
-    from rce.records import identity
+    such a file is a pre-V5 database for `researchos migrate` to list (9.5)."""
+    from researchos.records import identity
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -748,7 +762,7 @@ def test_index_dir_refuses_anything_but_a_project_id():
 def test_ensure_project_rce_dir_never_recreates_a_missing_project(tmp_path):
     gone = tmp_path / "gone"
     with pytest.raises(FileNotFoundError):
-        paths.ensure_project_rce_dir(gone)
+        paths.ensure_project_dir(gone)
     assert not gone.exists()
     with pytest.raises(FileNotFoundError):
         paths.write_project_readme(gone)

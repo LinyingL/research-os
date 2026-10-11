@@ -1,5 +1,5 @@
-"""Tests for rce.ingest.dataflow (task W2, data lineage). Needs no git repo
-at all -- unlike rce.ingest.pyfig (whose generates edge's src is resolved via
+"""Tests for researchos.ingest.dataflow (task W2, data lineage). Needs no git repo
+at all -- unlike researchos.ingest.pyfig (whose generates edge's src is resolved via
 git blame), a reads/writes edge's src is the script file itself, so these
 tests build a plain fake repo tree under tmp_path, mirroring
 tests/test_ingest_latex.py's style.
@@ -7,8 +7,8 @@ tests/test_ingest_latex.py's style.
 
 import logging
 
-from rce import db
-from rce.ingest import dataflow
+from researchos import db
+from researchos.ingest import dataflow
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def test_parse_py_file_folds_module_constant_and_skips_fstring(tmp_path, caplog)
         "df = pd.read_csv(RAW)\n"  # T9 constant fold
         "df2 = pd.read_csv(f'data/{i}.csv')\n"  # f-string over non-foldable -- skip
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "gen.py")
     assert len(calls) == 1
     assert calls[0].literal == "data/raw.csv"
@@ -55,7 +55,7 @@ def test_parse_py_file_open_default_and_w_mode_classified_other_modes_skipped(tm
         "f4 = open('data/app.csv', 'a')\n"  # unsupported mode -- skip
         "f5 = open('data/bin.csv', mode='rb')\n"  # unsupported mode (keyword) -- skip
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "io.py")
     assert [(c.kind, c.literal) for c in calls] == [
         ("read", "data/in.csv"),
@@ -72,7 +72,7 @@ def test_parse_py_file_variable_argument_skipped_and_logged(tmp_path, caplog):
         "path = compute_path()\n"
         "df = pd.read_csv(path)\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not a string literal" in r.message for r in caplog.records)
@@ -93,7 +93,7 @@ def test_parse_py_file_resolves_path_via_keyword_when_no_positional_arg(tmp_path
 
 def test_parse_py_file_unparseable_source_skipped_not_fatal(tmp_path, caplog):
     (tmp_path / "broken.py").write_text("def(:\n")
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "broken.py")
     assert calls == []
     assert any("cannot parse as Python" in r.message for r in caplog.records)
@@ -209,7 +209,7 @@ def test_parse_py_file_default_param_reassigned_in_body_skips(tmp_path, caplog):
         "\n"
         "build_foreign_flows()\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("reassigned inside the function body" in r.message for r in caplog.records)
@@ -227,7 +227,7 @@ def test_parse_py_file_default_param_provided_by_call_site_skips(tmp_path, caplo
         "\n"
         "build_foreign_flows(out='custom.csv')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("do not consistently omit" in r.message for r in caplog.records)
@@ -246,7 +246,7 @@ def test_parse_py_file_default_param_calls_disagree_skips(tmp_path, caplog):
         "build_foreign_flows()\n"
         "build_foreign_flows(out='custom.csv')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("do not consistently omit" in r.message for r in caplog.records)
@@ -295,7 +295,7 @@ def test_parse_r_file_file_path_of_literals_folds_but_variable_still_skipped(tmp
         "p <- get_path()\n"
         "read.csv(p)\n"  # p's own RHS isn't a literal -- still skip
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_r_file(tmp_path, "analysis.R")
     assert [(c.kind, c.literal, c.folded_from) for c in calls] == [
         ("write", "data/out.csv", "file.path('data', 'out.csv')"),
@@ -331,7 +331,7 @@ def test_parse_r_file_second_binding_disqualifies_fold(tmp_path, caplog):
         'base <- "other/"\n'
         'df <- read.csv(paste0(base, "x.csv"))\n'
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_r_file(tmp_path, "analysis.R")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -421,7 +421,7 @@ def test_parse_rmd_file_rebinding_in_later_chunk_disqualifies_fold(tmp_path, cap
         'df <- read.csv(paste0(base, "in.csv"))\n'
         "```\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         calls = dataflow.parse_rmd_file(tmp_path, "report.Rmd")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -501,7 +501,7 @@ def test_ingest_skips_absolute_and_escaping_paths_and_unrecognized_extensions(tm
         "pd.read_csv('../../outside.csv')\n"  # escapes repo root from either anchor -- skip
         "open('notes.txt', 'w')\n"  # neither data nor image extension -- skip
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         counts = dataflow.ingest_dataflow_repo(conn, tmp_path, ["scripts/gen.py"], [], [])
     assert counts == {"reads": 0, "writes": 0}
     assert conn.execute("SELECT COUNT(*) FROM nodes WHERE type='dataset'").fetchone()[0] == 0
@@ -510,7 +510,7 @@ def test_ingest_skips_absolute_and_escaping_paths_and_unrecognized_extensions(tm
 
 
 def test_ingest_needs_no_git_repository(tmp_path, conn):
-    """W2's whole point: unlike rce.ingest.pyfig, this extractor's edges
+    """W2's whole point: unlike researchos.ingest.pyfig, this extractor's edges
     never reference a Commit node, so it must work in a plain, never-`git
     init`ed directory -- no NotAGitRepositoryError, no skip."""
     (tmp_path / "data").mkdir()
@@ -564,7 +564,7 @@ def test_ingest_python_absolute_literal_outside_project_root_stays_skipped(tmp_p
         'DATA = BASE + "复现包_分步/Data/"\n'
         'df = pd.read_csv(DATA + "panel_pricing.csv")\n'
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         counts = dataflow.ingest_dataflow_repo(conn, tmp_path, ["gen.py"], [], [])
     assert counts == {"reads": 0, "writes": 0}
     assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
@@ -604,7 +604,7 @@ def test_ingest_r_absolute_literal_outside_project_root_stays_skipped_real_sampl
         'df <- read.csv(paste0(base, "复现包_分步/Data/panel_pricing.csv"))\n'
         "```\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.dataflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
         counts = dataflow.ingest_dataflow_repo(conn, tmp_path, [], [], ["13-real.Rmd"])
     assert counts == {"reads": 0, "writes": 0}
     assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0

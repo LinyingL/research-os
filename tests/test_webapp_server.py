@@ -1,8 +1,8 @@
-"""Tests for rce.webapp.server (task V1): the local read-only web view over
+"""Tests for researchos.webapp.server (task V1): the local read-only web view over
 the graph.
 
 Two layers, per the module's own separation of concerns (mirroring
-rce.mcp_server's test style): the plain payload functions
+researchos.mcp_server's test style): the plain payload functions
 (summary_payload/attempts_payload/tree_payload/lineage_payload/file_payload/
 open_payload) are tested directly against the `conn` fixture and tmp_path,
 no HTTP involved; a smaller set of tests spins up a real `RceHTTPServer` on
@@ -28,9 +28,9 @@ from typing import Any
 
 import pytest
 
-from rce import cli, db, lineage, paths
-from rce import project as project_identity
-from rce.webapp import registry, server
+from researchos import cli, db, lineage, paths
+from researchos import project as project_identity
+from researchos.webapp import registry, server
 
 
 # -- fixtures / helpers -------------------------------------------------------
@@ -61,7 +61,7 @@ def _mk_attempt(
 
 
 def _mk_edge(conn, script: str, path: str, node_type: str, edge_type: str, missing: bool = False) -> None:
-    """Mirrors exactly what rce.ingest.dataflow.ingest_dataflow_repo itself
+    """Mirrors exactly what researchos.ingest.dataflow.ingest_dataflow_repo itself
     writes for one recognized read/write call site (see tests/test_lineage.py's
     own `_add` helper, which this copies rather than imports -- test modules
     don't share fixtures across files in this codebase)."""
@@ -75,11 +75,11 @@ def _mk_edge(conn, script: str, path: str, node_type: str, edge_type: str, missi
 
 
 def _write_attempts_config(project_root: Path, *, steps_dir: str | None = None) -> None:
-    """Just enough of `.rce/attempts.toml` for `attempts_ingest.load_config`
+    """Just enough of `.researchos/attempts.toml` for `attempts_ingest.load_config`
     to succeed -- `server._load_steps_dir` (hence `tree_payload`) reads only
     the config, never the source Markdown table itself."""
-    rce_dir = project_root / ".rce"
-    rce_dir.mkdir(parents=True, exist_ok=True)
+    record_dir = project_root / ".researchos"
+    record_dir.mkdir(parents=True, exist_ok=True)
     lines = ['file = "map.md"', 'heading = "H"']
     if steps_dir:
         lines.append(f'steps_dir = "{steps_dir}"')
@@ -87,15 +87,15 @@ def _write_attempts_config(project_root: Path, *, steps_dir: str | None = None) 
         "", "[columns]", 'id = "#"', 'date = "date"', 'description = "desc"',
         'variables = "vars"', 'result = "result"', 'verdict = "verdict"',
     ]
-    (rce_dir / "attempts.toml").write_text("\n".join(lines))
+    (record_dir / "attempts.toml").write_text("\n".join(lines))
 
 
 def _init_project(project_root: Path) -> None:
-    """What `rce init` leaves behind since DESIGN.md section 8.10 rule 1:
-    a `.rce/` in the project for the researcher's own files, and the graph
-    OUTSIDE it under `rce.paths.graph_db_path` (the conftest-wide
-    `RCE_HOME` keeps that inside tmp_path)."""
-    (project_root / ".rce").mkdir(parents=True, exist_ok=True)
+    """What `researchos init` leaves behind since DESIGN.md section 8.10 rule 1:
+    a `.researchos/` in the project for the researcher's own files, and the graph
+    OUTSIDE it under `researchos.paths.graph_db_path` (the conftest-wide
+    `RESEARCHOS_HOME` keeps that inside tmp_path)."""
+    (project_root / ".researchos").mkdir(parents=True, exist_ok=True)
     # V5 (DESIGN.md 9.4): an identity file, and the index under its id.
     project_identity.init_project(project_root)
 
@@ -104,9 +104,9 @@ def _init_project(project_root: Path) -> None:
 def fake_home(tmp_path: Path, monkeypatch) -> Path:
     """A throwaway HOME for registry-touching tests (the /api/projects
     endpoints, cmd_serve's registration). The registry itself now lives
-    under `rce.paths.rce_home()`, which conftest's autouse
-    `isolated_rce_home` already points at a throwaway directory -- so isolation from
-    the user's real `~/.rce/projects.json` holds either way; this fixture
+    under `researchos.paths.researchos_home()`, which conftest's autouse
+    `isolated_researchos_home` already points at a throwaway directory -- so isolation from
+    the user's real `~/.researchos/projects.json` holds either way; this fixture
     additionally pins HOME for anything still reading it."""
     home = tmp_path / "home"
     home.mkdir()
@@ -198,7 +198,7 @@ def test_summary_payload_counts_nodes_edges_and_pending(conn, tmp_path):
     # Section 8.10 rule 1: the graph is no longer inside the project, so
     # the summary has to say where it actually is.
     assert payload["graph_path"] == str(paths.graph_db_path(tmp_path))
-    assert payload["graph_path"] != str(tmp_path / ".rce" / "graph.db")
+    assert payload["graph_path"] != str(tmp_path / ".researchos" / "graph.db")
     assert payload["nodes"]["project"] == 1 and payload["nodes"]["figure"] == 1
     assert payload["edges"]["includes"] == 1
     assert payload["pending"] == 1
@@ -300,7 +300,7 @@ def test_tree_payload_scripts_empty_when_steps_dir_not_configured(conn, tmp_path
 
 
 def test_tree_payload_scripts_empty_when_config_file_missing(conn, tmp_path):
-    # No .rce/attempts.toml at all -- degrade rather than guess a prefix.
+    # No .researchos/attempts.toml at all -- degrade rather than guess a prefix.
     _mk_attempt(conn, "map.md", "1", step_files=["1-run.py"])
     assert server.tree_payload(conn, tmp_path)["attempts"][0]["scripts"] == []
 
@@ -485,9 +485,9 @@ def test_serve_prints_url_and_opens_browser(tmp_path, monkeypatch, capsys):
     server.serve(tmp_path, port=0, open_browser=True)
 
     out = capsys.readouterr().out
-    assert out.startswith("RCE app: http://127.0.0.1:")
+    assert out.startswith("Research OS app: http://127.0.0.1:")
     assert out.rstrip("\n").endswith("(Ctrl+C to stop)")
-    url = out.split("RCE app: ")[1].split("  (Ctrl+C")[0]
+    url = out.split("Research OS app: ")[1].split("  (Ctrl+C")[0]
     assert opened == [url]
 
 
@@ -522,7 +522,7 @@ def test_cli_serve_reports_clean_error_for_uninitialized_project(fake_home, tmp_
     project.mkdir()
     assert cli.main(["serve", str(project)]) == 1
     err = capsys.readouterr().err
-    assert "Error" in err and "rce init" in err
+    assert "Error" in err and "researchos init" in err
     # ...and the failed serve never polluted the registry with an
     # uninitialized path (cmd_serve registers only real projects).
     assert registry.load() == []
@@ -555,7 +555,7 @@ def test_cli_serve_without_path_serves_most_recent_registry_entry(fake_home, tmp
 
 
 def test_cli_serve_without_path_and_empty_registry_starts_with_no_project(fake_home, monkeypatch, capsys):
-    """DESIGN.md 10.5 (10.8 scenario 1, first launch): a bare `rce serve`
+    """DESIGN.md 10.5 (10.8 scenario 1, first launch): a bare `researchos serve`
     with an empty registry starts in the no-project state instead of
     exiting -- and still says, on stderr, how a project gets added."""
     calls: list = []
@@ -565,7 +565,7 @@ def test_cli_serve_without_path_and_empty_registry_starts_with_no_project(fake_h
     )
     assert cli.main(["serve", "--no-browser"]) == 0
     err = capsys.readouterr().err
-    assert "rce projects add" in err
+    assert "researchos projects add" in err
     assert len(calls) == 1 and calls[0][0] is None and calls[0][1].no_project
     assert registry.load() == []
 
@@ -574,7 +574,7 @@ def test_cli_serve_without_path_and_empty_registry_starts_with_no_project(fake_h
 
 
 def test_http_root_returns_spa_shell_with_key_mount_points(live_server):
-    """task V2: `/` serves the real single-page app (src/rce/webapp/app.html),
+    """task V2: `/` serves the real single-page app (src/researchos/webapp/app.html),
     not the V1 placeholder -- assert the DOM hooks the app's own JS looks up
     by id/data-attribute are actually present in the served markup."""
     base_url, _ = live_server
@@ -639,7 +639,7 @@ def _get_with_type(base_url: str, path: str) -> tuple[int, str, bytes]:
 
 
 def test_http_canvas_js_is_served_verbatim_as_javascript(live_server):
-    """GET /canvas.js serves `src/rce/webapp/canvas.js` byte-for-byte with a
+    """GET /canvas.js serves `src/researchos/webapp/canvas.js` byte-for-byte with a
     JavaScript content type (a browser refuses to execute a script served
     as anything else under nosniff-style checks, and WebKit warns), and the
     file defines the one global the page calls -- `window.RCECanvas`."""
@@ -687,14 +687,14 @@ def test_served_app_loads_canvas_js_same_origin_before_its_inline_script(live_se
 
 def test_served_app_tabs_read_in_product_language(live_server):
     """DESIGN.md section 8.8: the tabs read 「决策树」「血缘」「画布」, the brand
-    mark stays RCE, and the old English tab labels are gone."""
+    mark stays Research OS, and the old English tab labels are gone."""
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
     tabs = re.findall(r'<button class="tab[^"]*" data-view="(\w+)"[^>]*>([^<]+)</button>', html)
     # V5 phase 9 (9.11 "In the app"): a fourth tab, 「变量」; V7 (11.4) a fifth, 「文献」.
     assert tabs == [
         ("tree", "决策树"), ("lineage", "血缘"), ("canvas", "画布"), ("variables", "变量"), ("literature", "文献"),
     ]
-    assert '<span class="brand-mark">RCE</span>' in html
+    assert '<span class="brand-mark">Research OS</span>' in html
     assert ">Decision Tree<" not in html and ">Lineage<" not in html
 
 
@@ -836,7 +836,7 @@ def test_served_ui_has_no_hover_only_errors_and_one_detail_helper(live_server):
 
 
 def test_served_brand_subtitle_is_yanjiu_mailuo(live_server):
-    """8.8 (amended): the brand mark stays RCE; its subtitle becomes
+    """8.8 (amended): the brand mark stays Research OS; its subtitle becomes
     「研究脉络」 (the old English one named two of three views)."""
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
     assert '<span class="brand-sub">研究脉络</span>' in html
@@ -901,11 +901,11 @@ def test_canvas_js_loads_nothing_external():
 
 def test_canvas_js_ships_as_package_data():
     """Like app.html, canvas.js must be in the wheel, not only in this
-    editable checkout -- otherwise an installed `rce serve` 500s on it."""
+    editable checkout -- otherwise an installed `researchos serve` 500s on it."""
     import tomllib
     pyproject = Path(server.__file__).resolve().parents[3] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    assert "webapp/canvas.js" in data["tool"]["setuptools"]["package-data"]["rce"]
+    assert "webapp/canvas.js" in data["tool"]["setuptools"]["package-data"]["researchos"]
 
 
 def test_http_summary_endpoint(live_server):
@@ -1069,7 +1069,7 @@ def test_http_allows_portless_loopback_origin(live_server, monkeypatch):
     WITHOUT the port -- literally `http://127.0.0.1` -- which the exact-match
     check used to reject, breaking every POST-backed button in the app for
     anyone whose default browser is Safari (observed live 2026-08-30 via the
-    RCE.app launch flow). The portless loopback form proves the same thing
+    Research OS.app launch flow). The portless loopback form proves the same thing
     the exact form does (a foreign/rebound page's Origin always names its own
     host), so it must be accepted."""
     base_url, project = live_server
@@ -1266,7 +1266,7 @@ def test_http_projects_rejects_mismatched_host_header(live_server, fake_home):
 def _write_attempts_map(project: Path, rows: list[str]) -> None:
     """A real map.md matching `_write_attempts_config`'s file/heading, with
     `rows` as pre-formatted `| # | date | desc | vars | result | verdict |`
-    lines -- just enough table for `rce.ingest.attempts` to parse."""
+    lines -- just enough table for `researchos.ingest.attempts` to parse."""
     header = (
         "## H\n\n"
         "| # | date | desc | vars | result | verdict |\n"
@@ -1386,7 +1386,7 @@ def test_http_attempts_preview_returns_diff_without_writing(live_server):
     assert payload["file"] == "map.md" and payload["old_row"] is None
     assert "| 2 |" in payload["new_row"] and "+| 2 |" in payload["diff"]
     assert (project / "map.md").read_text() == before  # a preview writes nothing
-    assert not [b for b in (project / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
+    assert not [b for b in (project / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
 
 
 def test_http_attempts_write_appends_row_tree_reflects_it_and_backup_exists(live_server):
@@ -1441,7 +1441,7 @@ def test_http_attempts_write_duplicate_number_returns_400_and_writes_nothing(liv
 
     assert status == 400 and "already exists" in payload["error"]
     assert (project / "map.md").read_text() == before
-    assert not [b for b in (project / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # refused before backing up
+    assert not [b for b in (project / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # refused before backing up
 
 
 def test_http_attempts_write_unknown_number_update_returns_400(live_server):
@@ -1478,7 +1478,7 @@ def test_http_attempt_refusals_carry_their_code_as_state(live_server, endpoint):
     (project / "map.md").write_text("# nothing here\n", encoding="utf-8")
     status, payload = _post(base_url, endpoint, _APPEND_2)
     assert status == 400 and payload["state"] == "attempt_table_missing"
-    (project / ".rce" / "attempts.toml").unlink()
+    (project / ".researchos" / "attempts.toml").unlink()
     status, payload = _post(base_url, endpoint, _APPEND_2)
     assert status == 400 and payload["state"] == "attempt_table_missing"
 
@@ -1518,7 +1518,7 @@ def test_http_attempts_write_rejects_foreign_origin_before_touching_the_file(liv
 
     assert status == 403 and "Origin" in payload["error"]
     assert (project / "map.md").read_text() == before
-    assert not [b for b in (project / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
+    assert not [b for b in (project / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
     _, generation = _get(base_url, "/api/generation")
     assert generation["generation"] == 1
 
@@ -1618,7 +1618,7 @@ def test_http_shutdown_actually_stops_serve_forever(tmp_path):
 
 
 def test_http_shutdown_with_another_pid_keeps_serving(live_server):
-    """RCE.app's quit names its own child's pid (adversarial review of the
+    """Research OS.app's quit names its own child's pid (adversarial review of the
     V4 work): an engine the researcher started from a terminal, which is
     what may actually hold the port, must answer 409 and keep serving
     (DESIGN.md 8.9: "left alone")."""
@@ -1756,7 +1756,7 @@ def test_require_db_migrates_a_legacy_in_project_graph_on_first_touch(tmp_path):
 
 def test_require_db_reports_a_failed_migration_as_a_500_not_a_missing_project(tmp_path, monkeypatch):
     """A graph that could not be verified is a different fact from no graph
-    at all, and must not be reported as "run rce init" -- that advice would
+    at all, and must not be reported as "run researchos init" -- that advice would
     invite the user to build an empty graph beside their real one."""
     project = tmp_path / "proj"
     project.mkdir()
@@ -1874,7 +1874,7 @@ def test_switch_to_a_project_with_a_dataless_legacy_graph_does_not_block(live_se
 
 
 def test_serve_starts_even_while_the_graph_is_downloading(tmp_path, monkeypatch):
-    """A transient iCloud state must not become RCE.app's 「引擎没有在 10 秒内
+    """A transient iCloud state must not become Research OS.app's 「引擎没有在 10 秒内
     启动」: `serve` reports it on stderr and serves anyway."""
     project = tmp_path / "proj"
     _init_project(project)
@@ -1963,7 +1963,7 @@ def test_http_projects_marks_an_entry_whose_directory_is_gone(live_server, fake_
 
 
 def test_http_projects_available_and_initialized_are_separate_facts(live_server, fake_home, tmp_path):
-    """A directory that exists but was never `rce init`ed is available and
+    """A directory that exists but was never `researchos init`ed is available and
     uninitialized -- greyed out in the switcher, but NOT offered for
     removal: nothing about it is dead."""
     base_url, project = live_server
@@ -2041,7 +2041,7 @@ def test_http_projects_remove_rejects_a_foreign_origin_before_touching_the_regis
     live_server, fake_home
 ):
     """The drive-by shape aimed at the newest mutating endpoint: this one
-    writes ~/.rce/projects.json, which IS the allow-list /switch validates
+    writes ~/.researchos/projects.json, which IS the allow-list /switch validates
     against, so a hostile page must not be able to edit it."""
     base_url, project = live_server
     registry.register(project)

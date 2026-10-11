@@ -5,7 +5,7 @@ author-year -> Zotero candidates), the graph it writes, and `rce
 citations`. Every test names the 11.5 scenario it belongs to.
 
 The Zotero library here is a Zotero-shaped SQLite file built per test (the
-tables and columns RCE reads, as Zotero 6/7 has them); no test reads a real
+tables and columns Research OS reads, as Zotero 6/7 has them); no test reads a real
 library (`tests/conftest.py` points `RCE_ZOTERO_DATA_DIR` at an empty folder)
 and no test touches the network (`literature.FETCH` is a recording stand-in).
 """
@@ -20,15 +20,15 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, literature
-from rce import project as project_identity
-from rce.ingest import citations as C
-from rce.ingest import pipeline
-from rce.ingest import scan as scan_mod
-from rce.records import judgements
-from rce.records import ledger as ledger_mod
-from rce.records.identity import read_identity
-from rce.records.situation import index_db_path, write_guard
+from researchos import cli, db, literature
+from researchos import project as project_identity
+from researchos.ingest import citations as C
+from researchos.ingest import pipeline
+from researchos.ingest import scan as scan_mod
+from researchos.records import judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records.identity import read_identity
+from researchos.records.situation import index_db_path, write_guard
 
 
 def _cites(line: str) -> list[tuple[str, str, int | None, str]]:
@@ -865,7 +865,7 @@ def test_11_5_5_online_off_by_default_in_a_scan_and_only_dois_sent_when_on(tmp_p
     assert not any("Simon" in u or "%" in u for u in rec.urls)
 
 
-# -- rce citations ------------------------------------------------------------------------------------------
+# -- researchos citations ------------------------------------------------------------------------------------------
 
 
 def test_11_5_5_cli_report_and_setting(tmp_path, zotero, capsys):
@@ -897,7 +897,7 @@ def test_11_5_5_cli_report_writes_nothing_and_asks_no_network(tmp_path, zotero, 
 
 
 def test_11_5_5_a_rescan_names_the_unreadable_library_not_the_draft(tmp_path, zotero):
-    from rce import addproject
+    from researchos import addproject
 
     root = _project(tmp_path)
     zotero.path.write_bytes(b"corrupt" * 200)

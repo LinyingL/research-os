@@ -1,4 +1,4 @@
-"""`rce rebuild`, `rce records` / `--verify` / `--clean` (DESIGN.md 9.2, 9.8;
+"""`researchos rebuild`, `researchos records` / `--verify` / `--clean` (DESIGN.md 9.2, 9.8;
 task V5 phase 5), and the 9.9 acceptance scenarios they make possible:
 #5 (rebuild on a healthy project, and blocked by an unreadable source) and
 #7 (backup and restore)."""
@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, inventory, paths
-from rce import rebuild as rebuild_mod
-from rce.records import identity, judgements
-from rce.records import ledger as ledger_mod
-from rce.records.situation import index_db_path
+from researchos import cli, db, inventory, paths
+from researchos import rebuild as rebuild_mod
+from researchos.records import identity, judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records.situation import index_db_path
 
 from test_project_identity import EXPECTED, READ, UNDONE, WRITE, _make, _pid, _records
 
@@ -32,8 +32,8 @@ def _human(root: Path) -> dict:
 
 
 def test_scenario_5_rebuild_on_a_healthy_project_is_clean(tmp_path, capsys):
-    """9.9 #5: `rce rebuild` on a healthy project -- all records present,
-    `rce records --verify` passes, and the per-link comparison is clean;
+    """9.9 #5: `researchos rebuild` on a healthy project -- all records present,
+    `researchos records --verify` passes, and the per-link comparison is clean;
     the previous index is kept one generation."""
     root = tmp_path / "p"
     pid = _make(root)
@@ -52,8 +52,8 @@ def test_scenario_5_rebuild_on_a_healthy_project_is_clean(tmp_path, capsys):
 
 
 def test_scenario_5_delete_the_index_and_open_all_records_present(tmp_path):
-    """9.9 #5, first half: delete `~/.rce/graphs/<id>/` and open the
-    project -- all records present, `rce records --verify` passes."""
+    """9.9 #5, first half: delete `~/.researchos/graphs/<id>/` and open the
+    project -- all records present, `researchos records --verify` passes."""
     root = tmp_path / "p"
     pid = _make(root)
     shutil.rmtree(paths.index_dir(pid))
@@ -144,11 +144,11 @@ def test_rebuild_refuses_a_pre_v5_or_migrating_project(tmp_path):
     root.mkdir()
     paths.legacy_graph_dir(root).mkdir(parents=True)
     db.connect(paths.legacy_index_db_path(root)).close()
-    with pytest.raises(rebuild_mod.RebuildRefused, match="rce migrate"):
+    with pytest.raises(rebuild_mod.RebuildRefused, match="researchos migrate"):
         rebuild_mod.rebuild(root)
     other = tmp_path / "plain"
     other.mkdir()
-    with pytest.raises(rebuild_mod.RebuildRefused, match="rce init"):
+    with pytest.raises(rebuild_mod.RebuildRefused, match="researchos init"):
         rebuild_mod.rebuild(other)
 
 
@@ -156,19 +156,19 @@ def test_rebuild_refuses_a_pre_v5_or_migrating_project(tmp_path):
 
 
 def test_scenario_7_restore_dot_rce_over_newer_judgments_asks_and_file_wins(tmp_path, capsys):
-    """9.9 #7: copy `.rce/` aside, make further judgments, restore the copy
-    over `.rce/`: RCE reports that the file has N fewer judgments than the
+    """9.9 #7: copy `.researchos/` aside, make further judgments, restore the copy
+    over `.researchos/`: Research OS reports that the file has N fewer judgments than the
     index and asks; 「以文件为准」 gives exactly the copy's records."""
     root = tmp_path / "p"
     _make(root)
     aside = tmp_path / "aside"
-    shutil.copytree(root / ".rce", aside)
+    shutil.copytree(root / ".researchos", aside)
     copy_records = _records(root)
     judgements.judge(root, READ, "rejected", via="cli")
     judgements.judge(root, UNDONE, "withdrawn", via="cli")
     assert _records(root)["confirmed"] == "rejected"
-    shutil.rmtree(root / ".rce")
-    shutil.copytree(aside, root / ".rce")
+    shutil.rmtree(root / ".researchos")
+    shutil.copytree(aside, root / ".researchos")
 
     capsys.readouterr()
     assert cli.main(["records", str(root)]) == 0
@@ -179,7 +179,7 @@ def test_scenario_7_restore_dot_rce_over_newer_judgments_asks_and_file_wins(tmp_
         judgements.judge(root, WRITE, "confirmed", via="cli")
     assert cli.main(["records", "--answer", "file", str(root)]) == 0
     assert _records(root) == copy_records
-    assert (root / ".rce" / "judgements.toml").read_bytes() == (aside / "judgements.toml").read_bytes()
+    assert (root / ".researchos" / "judgements.toml").read_bytes() == (aside / "judgements.toml").read_bytes()
     assert cli.main(["records", "--verify", str(root)]) == 0
 
 
@@ -206,13 +206,13 @@ def test_scenario_7_whole_folder_restore_on_a_machine_with_no_index(tmp_path):
     assert cli.main(["records", "--verify", str(root)]) == 0
 
 
-# -- rce records ------------------------------------------------------------------------------
+# -- researchos records ------------------------------------------------------------------------------
 
 
 def test_records_inventory_lists_every_kind_with_counts_and_problems(tmp_path, capsys):
     root = tmp_path / "p"
     _make(root)
-    (root / ".rce" / "judgements 2.toml").write_text("")
+    (root / ".researchos" / "judgements 2.toml").write_text("")
     capsys.readouterr()
     assert cli.main(["records", str(root)]) == 0
     out = capsys.readouterr().out
@@ -241,14 +241,14 @@ def test_records_verify_finds_a_mirror_that_differs_from_its_file(tmp_path, caps
 
 
 def _card(root: Path, name: str, log: str) -> Path:
-    card = root / ".rce" / "variables" / name
+    card = root / ".researchos" / "variables" / name
     (card / "frozen").mkdir(parents=True)
     (card / "log.toml").write_text(log)
     return card
 
 
 def test_records_clean_removes_only_copies_nothing_refers_to(tmp_path, capsys):
-    """9.8 / 9.11: `rce records --clean` -- dry run by default, `--yes`
+    """9.8 / 9.11: `researchos records --clean` -- dry run by default, `--yes`
     deletes; a referenced copy is never removed, and a card whose log
     cannot be read keeps everything (and so does the shared code store)."""
     root = tmp_path / "p"
@@ -257,7 +257,7 @@ def test_records_clean_removes_only_copies_nothing_refers_to(tmp_path, capsys):
                  '[entry.checked]\nscript = { result = "已核对", copy = "_code/bbb.py" }\n')
     (card / "frozen" / "aaa.toml").write_text("kept")
     (card / "frozen" / "zzz.toml").write_text("left over by a crash")
-    code = root / ".rce" / "variables" / "_code"
+    code = root / ".researchos" / "variables" / "_code"
     code.mkdir()
     (code / "bbb.py").write_text("kept")
     (code / "ccc.py").write_text("left over")
@@ -277,7 +277,7 @@ def test_records_clean_removes_only_copies_nothing_refers_to(tmp_path, capsys):
     (code / "ddd.py").write_text("?")
     report = inventory.clean(root, apply=True)
     assert report.removed == []
-    assert ".rce/variables/rv/frozen" in report.undecidable and ".rce/variables/_code" in report.undecidable
+    assert ".researchos/variables/rv/frozen" in report.undecidable and ".researchos/variables/_code" in report.undecidable
     assert (broken / "frozen" / "x.toml").exists() and (code / "ddd.py").exists()
 
 

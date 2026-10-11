@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.claims (Phase B, task B1): claim extraction +
+"""Tests for researchos.ingest.claims (Phase B, task B1): claim extraction +
 deterministic backed_by candidate generation. No real git needed -- only a
 tmp_path .tex file plus an in-memory graph with pre-seeded experiment nodes.
 """
@@ -7,8 +7,8 @@ import logging
 import re
 from pathlib import Path
 
-from rce import db
-from rce.ingest import claims
+from researchos import db
+from researchos.ingest import claims
 
 TEX_87_3_PCT = "\\section{Results}\nWe reach 87.3\\% accuracy.\n"
 
@@ -529,8 +529,8 @@ def test_repeated_line_shifting_edits_do_not_grow_edge_occurrences(tmp_path):
 
     # The claim's *current* line is not lost -- it is tracked on the claim
     # node's own attrs, and resolved at query time by
-    # rce.query.claim_source_location (used by rce.cli's status --pending
-    # and rce.query.trace's hops alike) now that the occurrence no longer
+    # researchos.query.claim_source_location (used by researchos.cli's status --pending
+    # and researchos.query.trace's hops alike) now that the occurrence no longer
     # has it.
     assert db.get_nodes_by_type(conn, "claim")[0]["attrs"]["line"] == max(lines_seen)
 
@@ -549,7 +549,7 @@ def test_repeated_new_matching_experiments_do_not_grow_edge_occurrences(tmp_path
     actual matched metric never changed. Real-world repro: 25 incrementally
     added matching runs grew one edge's occurrence count from 1 towards
     db._MAX_EDGE_EVIDENCE_OCCURRENCES (20), tripping the drop-oldest cap and
-    rendering the same match 20 times in `rce status --pending`.
+    rendering the same match 20 times in `researchos status --pending`.
     candidate_count is now passed as `edge_attrs` to db.upsert_edge, stored
     as a sibling of "occurrences" and overwritten to the latest value each
     time -- so every edge's own occurrence count must stay at exactly 1

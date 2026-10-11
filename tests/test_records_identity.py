@@ -1,4 +1,4 @@
-"""Tests for rce.records.identity (DESIGN.md section 9.4, the identity file
+"""Tests for researchos.records.identity (DESIGN.md section 9.4, the identity file
 only): created exclusively, read with four distinguishable outcomes,
 rewritten only by compare-and-swap."""
 
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.records import identity as ident
-from rce.records.identity import IdentityState
+from researchos import paths
+from researchos.records import identity as ident
+from researchos.records.identity import IdentityState
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def test_create_never_recreates_a_vanished_folder(tmp_path):
 
 _RACE_CHILD = """
 import sys
-from rce.records import identity
+from researchos.records import identity
 try:
     print(identity.create_identity(sys.argv[1]).id)
 except identity.IdentityExistsError:
@@ -137,7 +137,7 @@ def test_set_flag_rewrites_durably_and_only_raises_ledger(project):
     with pytest.raises(ident.IdentityError):
         ident.set_flag(project, done, "forked_from", "not-an-id")
     # a snapshot was taken before the rewrites
-    assert any((project / ".rce" / "backups").iterdir())
+    assert any((project / ".researchos" / "backups").iterdir())
 
 
 def test_rewrite_is_compare_and_swap(project):
@@ -150,7 +150,7 @@ def test_rewrite_is_compare_and_swap(project):
 
 def test_rewrite_refused_while_a_conflict_copy_exists(project):
     first = ident.create_identity(project)
-    (project / ".rce" / "project (1).toml").write_text("x")
+    (project / ".researchos" / "project (1).toml").write_text("x")
     with pytest.raises(ident.IdentityError):
         ident.set_flag(project, first, "ledger", True)
 
@@ -160,5 +160,5 @@ def test_replace_identity_for_a_fork(project):
     forked = ident.ProjectIdentity(id=ident.new_project_id(), created="2026-10-05", ledger=first.ledger, forked_from=first.id)
     ident.replace_identity(project, first, forked)
     assert ident.read_identity(project).identity == forked
-    backups = list((project / ".rce" / "backups").iterdir())
+    backups = list((project / ".researchos" / "backups").iterdir())
     assert any(first.id in b.read_text() for b in backups)

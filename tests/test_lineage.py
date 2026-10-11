@@ -1,20 +1,20 @@
-"""Tests for rce.lineage (task W4): the read-only, four-block report over
-`rce.ingest.dataflow`'s `script --reads/writes--> dataset|figure` edges.
+"""Tests for researchos.lineage (task W4): the read-only, four-block report over
+`researchos.ingest.dataflow`'s `script --reads/writes--> dataset|figure` edges.
 
 Edges are built directly via db.upsert_node/upsert_edge rather than through
-`rce.ingest.dataflow` itself -- this module's own contract (scoping,
+`researchos.ingest.dataflow` itself -- this module's own contract (scoping,
 sorting, empty-block behavior) is independent of how the edges got there,
 and `tests/test_ingest_dataflow.py` already covers the extractor. Only the
 duplicate-copy tests (block 4) need real files on `tmp_path`, since that
 block walks the actual filesystem.
 """
 
-from rce import db, lineage
+from researchos import db, lineage
 
 
 def _add(conn, script, path, node_type, edge_type, line, callee, missing=False):
     """Write one script->target reads/writes edge, upserting both endpoint
-    nodes first -- mirrors exactly what `rce.ingest.dataflow.
+    nodes first -- mirrors exactly what `researchos.ingest.dataflow.
     ingest_dataflow_repo` itself writes for one recognized call site."""
     target_id = f"{node_type}:{path}"
     script_id = f"script:{script}"
@@ -156,8 +156,8 @@ def test_duplicate_scan_is_scoped_to_dataset_not_figure(conn, tmp_path):
 def test_duplicate_scan_skips_noise_and_hidden_directories(conn, tmp_path):
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "x.csv").write_text("a\n")
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "x.csv").write_text("b\n")
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "x.csv").write_text("b\n")
     (tmp_path / "__pycache__").mkdir()
     (tmp_path / "__pycache__" / "x.csv").write_text("c\n")
     _add(conn, "scripts/read.py", "data/x.csv", "dataset", "reads", 1, "read_csv")
@@ -214,13 +214,13 @@ def test_a_rejected_edge_is_not_a_broken_link(conn, tmp_path):
 
 
 def test_a_human_mapping_names_its_script_not_the_mappings_file(conn, tmp_path):
-    """A mapping edge's evidence points at `.rce/mappings.toml`; the report
+    """A mapping edge's evidence points at `.researchos/mappings.toml`; the report
     must name the script the researcher linked, flagged as human."""
     _add(conn, "s16.py", "data/raw.csv", "dataset", "reads", 2, "read_csv")
     db.upsert_node(conn, "script:s17.Rmd", "script", title="s17.Rmd")
     db.upsert_edge(
         conn, "script:s17.Rmd", "dataset:data/raw.csv", "writes", "mapping",
-        evidence={"file": ".rce/mappings.toml", "source": "human"}, confidence=1.0,
+        evidence={"file": ".researchos/mappings.toml", "source": "human"}, confidence=1.0,
         status="auto", human_source=True,
     )
     report = lineage.build_lineage_report(conn, tmp_path)
@@ -230,7 +230,7 @@ def test_a_human_mapping_names_its_script_not_the_mappings_file(conn, tmp_path):
 
 
 def test_cli_prints_a_human_writer_without_a_fake_line_number():
-    from rce import cli
+    from researchos import cli
 
     text = cli._format_lineage_entry({"script": "s17.Rmd", "line": None, "callee": None, "human": True})
-    assert text == "s17.Rmd (human mapping, .rce/mappings.toml)"
+    assert text == "s17.Rmd (human mapping, .researchos/mappings.toml)"

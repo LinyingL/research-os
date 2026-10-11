@@ -1,12 +1,12 @@
-"""Tests for rce.ingest.latex. Builds a small fake repo tree under tmp_path
+"""Tests for researchos.ingest.latex. Builds a small fake repo tree under tmp_path
 (no real git needed -- this module only needs a root dir + relative paths).
 """
 
 from pathlib import Path
 
-from rce import db
-from rce.ingest import claims as claims_ingest
-from rce.ingest import latex
+from researchos import db
+from researchos.ingest import claims as claims_ingest
+from researchos.ingest import latex
 
 TEX_CONTENT = r"""% top-level comment line -- must be fully ignored
 \documentclass{article}
@@ -537,7 +537,7 @@ def test_bib_key_collision_after_normalization_is_logged(tmp_path, caplog):
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("WARNING", logger="rce.ingest.latex"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.latex"):
             latex.ingest_latex_repo(conn, tmp_path, [], ["refs.bib"])
 
         assert any(
@@ -566,7 +566,7 @@ def test_includegraphics_path_not_in_image_inventory_is_skipped(tmp_path, caplog
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("WARNING", logger="rce.ingest.latex"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.latex"):
             counts = latex.ingest_latex_repo(
                 conn, tmp_path, ["paper.tex"], [], image_paths=["figs/overview.png"]
             )
@@ -634,7 +634,7 @@ def test_includegraphics_without_extension_prefers_pdf_when_both_tracked(tmp_pat
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("INFO", logger="rce.ingest.latex"):
+        with caplog.at_level("INFO", logger="researchos.ingest.latex"):
             counts = latex.ingest_latex_repo(
                 conn, tmp_path, ["paper.tex"], [], image_paths=["overview.png", "overview.pdf"]
             )
@@ -656,7 +656,7 @@ def test_includegraphics_without_extension_and_no_tracked_candidate_is_still_gho
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("WARNING", logger="rce.ingest.latex"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.latex"):
             counts = latex.ingest_latex_repo(
                 conn, tmp_path, ["paper.tex"], [], image_paths=["something-else.png"]
             )

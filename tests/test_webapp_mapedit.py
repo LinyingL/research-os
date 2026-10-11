@@ -1,11 +1,11 @@
-"""Tests for rce.webapp.mapedit (task V3 phase 3): editing the researcher's
+"""Tests for researchos.webapp.mapedit (task V3 phase 3): editing the researcher's
 own attempt-timeline Markdown through the config, with backup + atomic
 write + re-ingest.
 
 Everything runs against a realistic CJK fixture project in tmp_path --
 never a real research project. The round-trip tests deliberately assert
 through the REAL ingest parser and a real graph.db (write with mapedit,
-re-ingest with rce.ingest.attempts, read the node back), since the whole
+re-ingest with researchos.ingest.attempts, read the node back), since the whole
 point of this module is that what it writes is exactly what ingest reads.
 """
 
@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from rce import db, paths
-from rce import project as project_identity
-from rce.ingest import attempts as attempts_ingest
-from rce.webapp import mapedit
+from researchos import db, paths
+from researchos import project as project_identity
+from researchos.ingest import attempts as attempts_ingest
+from researchos.webapp import mapedit
 
 
 # -- fixture project -----------------------------------------------------------
@@ -58,12 +58,12 @@ _MAP_MD = """\
 
 
 def _make_project(root: Path, map_md: str = _MAP_MD) -> Path:
-    rce_dir = root / ".rce"
-    rce_dir.mkdir(parents=True, exist_ok=True)
-    (rce_dir / "attempts.toml").write_text(_CONFIG_TOML, encoding="utf-8")
+    record_dir = root / ".researchos"
+    record_dir.mkdir(parents=True, exist_ok=True)
+    (record_dir / "attempts.toml").write_text(_CONFIG_TOML, encoding="utf-8")
     (root / "00-项目地图.md").write_text(map_md, encoding="utf-8")
     # The graph lives outside the project (DESIGN.md section 8.10 rule 1);
-    # `.rce/` here holds only the researcher's own attempts.toml + backups.
+    # `.researchos/` here holds only the researcher's own attempts.toml + backups.
     # V5 (DESIGN.md 9.4): an identity file, and the index under its id.
     project_identity.init_project(root)
     return root
@@ -108,7 +108,7 @@ def test_preview_append_returns_diff_and_writes_nothing(tmp_path):
     assert preview["old_row"] is None
     assert "| 17 |" in preview["new_row"] and "价格边际路径" in preview["new_row"]
     assert "+| 17 |" in preview["diff"] and "---" in preview["diff"]  # unified diff shape
-    assert not [b for b in (tmp_path / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # preview never backs up either
+    assert not [b for b in (tmp_path / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # preview never backs up either
 
 
 def test_preview_update_returns_old_and_new_row(tmp_path):
@@ -332,7 +332,7 @@ def test_update_with_no_fields_rejected(tmp_path):
 
 
 def test_missing_config_propagates_attempts_config_error(tmp_path):
-    (tmp_path / ".rce").mkdir()
+    (tmp_path / ".researchos").mkdir()
     with pytest.raises(attempts_ingest.AttemptsConfigError):
         mapedit.preview_edit(tmp_path, "append", "1", {})
 
@@ -353,14 +353,14 @@ def test_apply_backs_up_original_before_writing(tmp_path):
     result = mapedit.apply_edit(tmp_path, "append", "17", _FIELDS_17)
 
     backup_path = tmp_path / result["backup"]
-    assert backup_path.parent == tmp_path / ".rce" / "backups"
+    assert backup_path.parent == tmp_path / ".researchos" / "backups"
     assert backup_path.name.startswith("00-项目地图.md.") and backup_path.name.endswith(".md")
     assert backup_path.read_text(encoding="utf-8") == original  # the ORIGINAL, verbatim
 
 
 def test_backups_pruned_to_newest_20(tmp_path):
     _make_project(tmp_path)
-    backups_dir = tmp_path / ".rce" / "backups"
+    backups_dir = tmp_path / ".researchos" / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)  # init keeps a snapshot of project.toml there (9.12)
     # 25 pre-existing backups with sortable (zero-padded) stamps, oldest first.
     for i in range(25):
@@ -385,7 +385,7 @@ def test_out_of_root_config_file_refused(tmp_path, escape_shape):
     """Regression: the write path used to build `project_root / config.file`
     with no `relative_to(root)` guard, so a config whose `file` key carried
     an absolute or `../` path (an untrusted shared/cloned project's
-    `.rce/attempts.toml`) let one UI edit overwrite a file OUTSIDE the
+    `.researchos/attempts.toml`) let one UI edit overwrite a file OUTSIDE the
     project root -- while the read endpoints refused the very same path.
     The write path now applies the same resolve-then-relative_to check."""
     victim_dir = tmp_path / "OUT"
@@ -401,7 +401,7 @@ def test_out_of_root_config_file_refused(tmp_path, escape_shape):
     root = tmp_path / "proj"
     _make_project(root)
     escaped = str(victim) if escape_shape == "absolute" else "../OUT/victim.md"
-    (root / ".rce" / "attempts.toml").write_text(
+    (root / ".researchos" / "attempts.toml").write_text(
         _CONFIG_TOML.replace('file = "00-项目地图.md"', f'file = "{escaped}"'),
         encoding="utf-8",
     )
@@ -412,7 +412,7 @@ def test_out_of_root_config_file_refused(tmp_path, escape_shape):
         mapedit.apply_edit(root, "append", "17", _FIELDS_17)
 
     assert victim.read_text(encoding="utf-8") == victim_original  # untouched
-    assert not [b for b in (root / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # refused before any backup
+    assert not [b for b in (root / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)  # refused before any backup
 
 
 def test_in_root_symlink_pointing_outside_refused(tmp_path):
@@ -425,7 +425,7 @@ def test_in_root_symlink_pointing_outside_refused(tmp_path):
     root = tmp_path / "proj"
     _make_project(root)
     (root / "link.md").symlink_to(victim)
-    (root / ".rce" / "attempts.toml").write_text(
+    (root / ".researchos" / "attempts.toml").write_text(
         _CONFIG_TOML.replace('file = "00-项目地图.md"', 'file = "link.md"'),
         encoding="utf-8",
     )
@@ -579,7 +579,7 @@ def test_a_table_that_can_no_longer_be_found_is_table_missing(tmp_path):
     assert isinstance(exc, mapedit.MapEditError) and "cannot read" in str(exc)
     assert mapedit.error_code(exc, tmp_path) == "table_missing"
     # the config is gone
-    (tmp_path / ".rce" / "attempts.toml").unlink()
+    (tmp_path / ".researchos" / "attempts.toml").unlink()
     exc = _refusal(mapedit.preview_edit, tmp_path, "append", "17", {})
     assert isinstance(exc, attempts_ingest.AttemptsConfigError)
     assert mapedit.error_code(exc, tmp_path) == "table_missing"
@@ -587,7 +587,7 @@ def test_a_table_that_can_no_longer_be_found_is_table_missing(tmp_path):
 
 def test_a_broken_config_is_not_table_missing(tmp_path):
     _make_project(tmp_path)
-    (tmp_path / ".rce" / "attempts.toml").write_text("file = [", encoding="utf-8")
+    (tmp_path / ".researchos" / "attempts.toml").write_text("file = [", encoding="utf-8")
     exc = _refusal(mapedit.preview_edit, tmp_path, "append", "17", {})
     assert isinstance(exc, attempts_ingest.AttemptsConfigError)
     assert mapedit.error_code(exc, tmp_path) is None

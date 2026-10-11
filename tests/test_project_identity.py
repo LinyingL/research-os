@@ -27,14 +27,14 @@ from typing import Any, Iterator
 
 import pytest
 
-from rce import cli, db, paths
-from rce import project as project_identity
-from rce.ingest import mappings as mappings_ingest
-from rce.records import identity, situation
-from rce.records.situation import Probes, Situation
-from rce.webapp import canvas
-from rce.webapp import registry
-from rce.webapp import server
+from researchos import cli, db, paths
+from researchos import project as project_identity
+from researchos.ingest import mappings as mappings_ingest
+from researchos.records import identity, situation
+from researchos.records.situation import Probes, Situation
+from researchos.webapp import canvas
+from researchos.webapp import registry
+from researchos.webapp import server
 
 READ = ("script:a.py", "dataset:data.csv", "reads", "dataflow")
 WRITE = ("script:a.py", "dataset:out.csv", "writes", "dataflow")
@@ -67,7 +67,7 @@ def _make(root: Path) -> str:
     (root / "b.py").write_text('import pandas as pd\npd.read_csv("data.csv")\n')
     (root / "map.md").write_text(_MAP, encoding="utf-8")
     assert cli.main(["init", str(root)]) == 0
-    (root / ".rce" / "attempts.toml").write_text(_CONFIG)
+    (root / ".researchos" / "attempts.toml").write_text(_CONFIG)
     assert cli.main(["ingest", str(root)]) == 0
     assert cli.main(["attempts", str(root)]) == 0
     for edge, status in ((READ, "confirmed"), (WRITE, "rejected"), (UNDONE, "confirmed")):
@@ -103,7 +103,7 @@ def _records(root: Path) -> dict[str, Any]:
             "rejected": status(WRITE),
             "undone": status(UNDONE),
             "mapping": [(e["src"], e["dst"], e["status"]) for e in mapping],
-            "mapping_note": "手画的" in (root / ".rce" / "mappings.toml").read_text(encoding="utf-8"),
+            "mapping_note": "手画的" in (root / ".researchos" / "mappings.toml").read_text(encoding="utf-8"),
             "verdict": (attempt or {}).get("human_fields", {}).get("verdict"),
             "arranged": canvas.load_views(root).get("all", {}).get("positions"),
         }
@@ -180,7 +180,7 @@ def fake_home(tmp_path: Path, monkeypatch) -> Path:
     return home
 
 
-# -- rce init ---------------------------------------------------------------------
+# -- researchos init ---------------------------------------------------------------------
 
 
 def test_init_creates_the_identity_and_the_index_under_it(tmp_path: Path, capsys) -> None:
@@ -203,10 +203,10 @@ def test_init_creates_the_identity_and_the_index_under_it(tmp_path: Path, capsys
 def test_init_on_a_copy_is_refused_and_writes_nothing(tmp_path: Path, capsys) -> None:
     _make(tmp_path / "p")
     shutil.copytree(tmp_path / "p", tmp_path / "q")
-    before = _snapshot_tree(tmp_path / "q", paths.rce_home())
+    before = _snapshot_tree(tmp_path / "q", paths.researchos_home())
     assert cli.main(["init", str(tmp_path / "q")]) == 1
-    assert "rce project fork" in capsys.readouterr().err
-    assert _snapshot_tree(tmp_path / "q", paths.rce_home()) == before
+    assert "researchos project fork" in capsys.readouterr().err
+    assert _snapshot_tree(tmp_path / "q", paths.researchos_home()) == before
 
 
 # -- 9.9 scenario 1: move ------------------------------------------------------------
@@ -237,22 +237,22 @@ def test_scenario_1_move_opened_from_the_cli(tmp_path: Path, fake_home: Path) ->
 
 
 def test_readme_is_rewritten_when_the_identity_check_adopts_builds_or_migrates(tmp_path: Path, fake_home: Path) -> None:
-    """9.12 (acceptance, 2026-10-05): `.rce/README` says where things are
+    """9.12 (acceptance, 2026-10-05): `.researchos/README` says where things are
     now -- rewritten on adoption of a move, on building a missing index, and
     on a migration -- naming the index's location and the record files the
-    folder holds. Nothing else in .rce/ is touched by it."""
+    folder holds. Nothing else in .researchos/ is touched by it."""
     old, new = tmp_path / "a" / "p", tmp_path / "b" / "p"
     pid = _make(old)
-    readme = new / ".rce" / "README"
+    readme = new / ".researchos" / "README"
     _move(old, new)
     readme.write_text("stale: the index is somewhere else\n", encoding="utf-8")
-    others = {p.name: p.read_bytes() for p in (new / ".rce").iterdir() if p.is_file() and p.name != "README"}
+    others = {p.name: p.read_bytes() for p in (new / ".researchos").iterdir() if p.is_file() and p.name != "README"}
     assert cli.main(["status", "--path", str(new)]) == 0  # adopts the move
     text = readme.read_text(encoding="utf-8")
     assert str(paths.index_dir(pid)) in text and "stale" not in text
     for name in ("project.toml", "judgements.toml", "canvas.json", "mappings.toml", "attempts.toml", "backups/"):
         assert name in text, name
-    assert {p.name: p.read_bytes() for p in (new / ".rce").iterdir() if p.is_file() and p.name != "README"} == others
+    assert {p.name: p.read_bytes() for p in (new / ".researchos").iterdir() if p.is_file() and p.name != "README"} == others
     readme.unlink()
     shutil.rmtree(paths.index_dir(pid))
     assert cli.main(["status", "--path", str(new)]) == 0  # builds the missing index
@@ -262,9 +262,9 @@ def test_readme_is_rewritten_when_the_identity_check_adopts_builds_or_migrates(t
 
     legacy = _folder(tmp_path / "m")
     build_pre_v5_index(legacy)
-    (legacy / ".rce" / "README").unlink(missing_ok=True)
+    (legacy / ".researchos" / "README").unlink(missing_ok=True)
     assert cli.main(["migrate", "--yes", str(legacy)]) == 0
-    text = (legacy / ".rce" / "README").read_text(encoding="utf-8")
+    text = (legacy / ".researchos" / "README").read_text(encoding="utf-8")
     mid = identity.read_identity(legacy).identity.id
     assert str(paths.index_dir(mid)) in text and "project.toml" in text and "judgements.toml" in text
 
@@ -281,7 +281,7 @@ def test_scenario_1_move_reattached_from_the_app(tmp_path: Path, fake_home: Path
     _make(other)
 
     calls = []
-    import rce.webapp.server as server_module
+    import researchos.webapp.server as server_module
 
     original = server_module.serve
     server_module.serve = lambda root, port, open_browser=True, served=None: calls.append(served)
@@ -379,16 +379,16 @@ def test_scenario_2_case_only_rename(tmp_path: Path, fake_home: Path) -> None:
 def test_scenario_3_copy_is_blocked_and_nothing_is_written(tmp_path: Path, fake_home: Path, capsys) -> None:
     """9.9 scenario 3: opening a copy is blocked, with the answers, and
     nothing is written -- the registry included -- from the CLI, from
-    `rce serve`, from the HTTP server, from the MCP server."""
+    `researchos serve`, from the HTTP server, from the MCP server."""
     p, q = tmp_path / "p", tmp_path / "q"
     pid = _make(p)
     registry.register(p, pid)
     shutil.copytree(p, q)
-    before = _snapshot_tree(q, paths.rce_home())
+    before = _snapshot_tree(q, paths.researchos_home())
 
     assert cli.main(["status", "--path", str(q)]) == 1
     err = capsys.readouterr().err
-    for answer in ("rce project fork", "rce project claim", "rce project other"):
+    for answer in ("researchos project fork", "researchos project claim", "researchos project other"):
         assert answer in err
     assert cli.main(["ingest", str(q)]) == 1
     assert cli.main(["confirm", *READ, "--status", "rejected", "--path", str(q)]) == 1
@@ -406,10 +406,10 @@ def test_scenario_3_copy_is_blocked_and_nothing_is_written(tmp_path: Path, fake_
         assert (status, body["state"]) == (409, "answer_refused")  # not offered for a copy
 
     pytest.importorskip("mcp")
-    from rce import mcp_server
+    from researchos import mcp_server
 
     assert mcp_server.main(["--path", str(q)]) == 1
-    assert _snapshot_tree(q, paths.rce_home()) == before
+    assert _snapshot_tree(q, paths.researchos_home()) == before
 
 
 def test_scenario_3_fork(tmp_path: Path, fake_home: Path, capsys) -> None:
@@ -440,7 +440,7 @@ def test_fork_warns_when_the_identity_file_is_tracked_by_git(tmp_path: Path, cap
     _make(p)
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@t"}
-    for args in (["init", "-q"], ["add", ".rce/project.toml"], ["commit", "-qm", "x"]):
+    for args in (["init", "-q"], ["add", ".researchos/project.toml"], ["commit", "-qm", "x"]):
         subprocess.run(["git", *args], cwd=p, check=True, env=env)
     shutil.copytree(p, q)
     capsys.readouterr()
@@ -450,8 +450,8 @@ def test_fork_warns_when_the_identity_file_is_tracked_by_git(tmp_path: Path, cap
 
 def test_scenario_3_claim(tmp_path: Path, fake_home: Path) -> None:
     """9.9 scenario 3, claim: the index is rebuilt from the claiming
-    folder through `rce rebuild` (the previous one kept one generation),
-    its home is now here, `rce records --verify` passes there, and the
+    folder through `researchos rebuild` (the previous one kept one generation),
+    its home is now here, `researchos records --verify` passes there, and the
     original is asked on its next open."""
     p, q = tmp_path / "p", tmp_path / "q"
     pid = _make(p)
@@ -516,12 +516,12 @@ def test_resolve_fork_over_http(tmp_path: Path, fake_home: Path) -> None:
 
 def test_other_moves_copied_records_aside(tmp_path: Path) -> None:
     """「这是另一个项目」: new id, no forked_from; the copied ledger,
-    arrangement and variable cards go to .rce/backups/."""
+    arrangement and variable cards go to .researchos/backups/."""
     p, q = tmp_path / "p", tmp_path / "q"
     pid = _make(p)
-    (p / ".rce" / "judgements.toml").write_text("# ledger\n")
-    (p / ".rce" / "canvas.json").write_text("{}")
-    (p / ".rce" / "variables").mkdir()
+    (p / ".researchos" / "judgements.toml").write_text("# ledger\n")
+    (p / ".researchos" / "canvas.json").write_text("{}")
+    (p / ".researchos" / "variables").mkdir()
     shutil.copytree(p, q)
     with _serving(q) as (base, _httpd):
         status, body = _post(base, "/api/project/resolve", {"answer": "other"})
@@ -529,37 +529,37 @@ def test_other_moves_copied_records_aside(tmp_path: Path) -> None:
     ident = identity.read_identity(q).identity
     assert ident.id != pid and ident.forked_from is None and ident.ledger is False
     assert sorted(body["moved_aside"]) == ["canvas.json", "judgements.toml", "variables"]
-    aside = list((q / ".rce" / "backups").glob("from-another-project-*"))
+    aside = list((q / ".researchos" / "backups").glob("from-another-project-*"))
     assert len(aside) == 1 and (aside[0] / "judgements.toml").read_text() == "# ledger\n"
-    assert not (q / ".rce" / "judgements.toml").exists()
-    assert (p / ".rce" / "judgements.toml").exists()  # the original untouched
+    assert not (q / ".researchos" / "judgements.toml").exists()
+    assert (p / ".researchos" / "judgements.toml").exists()  # the original untouched
 
 
 def test_lost_identity_is_blocked_and_other_answers_it(tmp_path: Path, capsys) -> None:
     root = tmp_path / "p"
     _make(root)
-    (root / ".rce" / "judgements.toml").write_text("")
-    (root / ".rce" / "project.toml").unlink()
+    (root / ".researchos" / "judgements.toml").write_text("")
+    (root / ".researchos" / "project.toml").unlink()
     assert cli.main(["status", "--path", str(root)]) == 1
     err = capsys.readouterr().err  # 9.12: the three answers (init kept a snapshot of the identity)
-    assert "rce project restore" in err and "rce project adopt" in err and "rce project other" in err
+    assert "researchos project restore" in err and "researchos project adopt" in err and "researchos project other" in err
     assert cli.main(["init", str(root)]) == 1  # never minted silently over records
-    assert not (root / ".rce" / "project.toml").exists()
+    assert not (root / ".researchos" / "project.toml").exists()
     assert cli.main(["project", "other", str(root)]) == 0
     assert situation.classify(root).situation is Situation.NORMAL
-    assert list((root / ".rce" / "backups").glob("from-another-project-*/judgements.toml"))
+    assert list((root / ".researchos" / "backups").glob("from-another-project-*/judgements.toml"))
 
 
 def test_unreadable_identity_stops_everything(tmp_path: Path, fake_home: Path, capsys) -> None:
     root = tmp_path / "p"
     pid = _make(root)
-    (root / ".rce" / "project.toml").write_text("id = [\n")
-    before = _snapshot_tree(root, paths.rce_home())
+    (root / ".researchos" / "project.toml").write_text("id = [\n")
+    before = _snapshot_tree(root, paths.researchos_home())
     assert cli.main(["status", "--path", str(root)]) == 1
     assert "cannot be read" in capsys.readouterr().err
     served = server.served_for(root, register=True)
     assert served.blocked["situation"] == "unreadable_id" and served.blocked["answers"] == []
-    assert _snapshot_tree(root, paths.rce_home()) == before
+    assert _snapshot_tree(root, paths.researchos_home()) == before
     assert pid
 
 
@@ -633,7 +633,7 @@ def test_pre_v5_project_is_readable_and_refuses_human_records(tmp_path: Path, ca
     assert situation.classify(root).situation is Situation.LEGACY
     # 9.12: frozen until migrated, scans included.
     assert cli.main(["ingest", str(root)]) == 1
-    assert "migrate first: rce migrate" in capsys.readouterr().err
+    assert "migrate first: researchos migrate" in capsys.readouterr().err
     assert cli.main(["confirm", *READ, "--status", "confirmed", "--path", str(root)]) == 1
     assert "before V5" in capsys.readouterr().err
     with pytest.raises(situation.NeedsMigrationError):
@@ -647,8 +647,8 @@ def test_pre_v5_project_is_readable_and_refuses_human_records(tmp_path: Path, ca
         assert (status, body["state"]) == (409, "needs_migration")
         status, body = _post(base, "/api/edges/reject", dict(zip(("src", "dst", "type", "extractor"), READ)))
         assert (status, body["state"]) == (409, "needs_migration")
-    assert not (root / ".rce" / "mappings.toml").exists()
-    assert not (root / ".rce" / "project.toml").exists()
+    assert not (root / ".researchos" / "mappings.toml").exists()
+    assert not (root / ".researchos" / "project.toml").exists()
 
 
 # -- 9.9 scenario 10: two writers --------------------------------------------------------------
@@ -656,8 +656,8 @@ def test_pre_v5_project_is_readable_and_refuses_human_records(tmp_path: Path, ca
 _CANVAS_WRITER = r"""
 import sys
 from pathlib import Path
-from rce import db, paths
-from rce.webapp import canvas
+from researchos import db, paths
+from researchos.webapp import canvas
 root, tag, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 # Every key is a card of the view (the 9.0 experiment's critical section).
 canvas.view_card_ids = lambda conn, project_root, scope: {f"{t}-{i}" for t in "ab" for i in range(n)}
@@ -670,7 +670,7 @@ conn.close()
 _MAPPING_WRITER = r"""
 import sys
 from pathlib import Path
-from rce.ingest import mappings
+from researchos.ingest import mappings
 root, tag, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 for i in range(n):
     mappings.add_mapping(root, f"{tag}{i}.py", f"{tag}{i}.png", "generates")
@@ -679,7 +679,7 @@ for i in range(n):
 _ATTEMPT_WRITER = r"""
 import sys
 from pathlib import Path
-from rce.webapp import mapedit
+from researchos.webapp import mapedit
 root, tag, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 for i in range(n):
     mapedit.apply_edit(root, "append", f"{tag}{i}", {"date": "2026-01-02", "description": tag})
@@ -714,7 +714,7 @@ def test_scenario_10_two_writers_mappings_and_attempt_rows(tmp_path: Path) -> No
     root.mkdir()
     (root / "map.md").write_text(_MAP, encoding="utf-8")
     project_identity.init_project(root)
-    (root / ".rce" / "attempts.toml").write_text(_CONFIG)
+    (root / ".researchos" / "attempts.toml").write_text(_CONFIG)
     _two_processes(_MAPPING_WRITER, root, 40)
     _two_processes(_ATTEMPT_WRITER, root, 25)
     loaded = mappings_ingest.load_mappings(root)

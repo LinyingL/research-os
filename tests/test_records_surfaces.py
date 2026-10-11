@@ -12,11 +12,11 @@ import urllib.parse
 
 import pytest
 
-from rce import cli, db
-from rce.records import judgements
-from rce.records import ledger as ledger_mod
-from rce.webapp import canvas, server
-from rce.webapp import watcher as project_watcher
+from researchos import cli, db
+from researchos.records import judgements
+from researchos.records import ledger as ledger_mod
+from researchos.webapp import canvas, server
+from researchos.webapp import watcher as project_watcher
 
 from test_records_judgements import READ, WRITE, _conn, _entries, _ledger_bytes, _project, _state, _status
 
@@ -61,7 +61,7 @@ def test_watcher_applies_the_ledger_on_first_sight(tmp_path):
 
 
 def test_watcher_reports_an_untrusted_ledger_and_keeps_polling(tmp_path):
-    """9.3: a ledger RCE cannot trust is reported in the status payload; the
+    """9.3: a ledger Research OS cannot trust is reported in the status payload; the
     index keeps what it had and the watcher goes on."""
     root, _ = _project(tmp_path)
     judgements.judge(root, READ, "confirmed", via="cli")
@@ -234,7 +234,7 @@ def test_http_corrupt_arrangement_refuses_layout_writes_until_set_aside(live):
     assert (status, payload["state"]) == (409, "layout_unreadable")
     assert path.read_text(encoding="utf-8") == "{broken"
     status, payload = _call(base, "POST", "/api/records/answer", {"file": "canvas", "answer": "set_aside"})
-    assert status == 200 and payload["moved_to"].startswith(".rce/backups/")
+    assert status == 200 and payload["moved_to"].startswith(".researchos/backups/")
     status, _ = _call(base, "POST", "/api/canvas/layout", body)
     assert status == 200
 
@@ -308,7 +308,7 @@ def test_cli_records_answer_file(tmp_path, capsys):
 def test_readers_mark_a_link_under_review(tmp_path):
     """9.6 "Where it shows": 血缘 (the lineage report), MCP's status, the
     canvas -- a link under review is marked and never shown as applied."""
-    from rce import lineage, mcp_server
+    from researchos import lineage, mcp_server
 
     from test_records_judgements import _scan
 
@@ -326,6 +326,6 @@ def test_readers_mark_a_link_under_review(tmp_path):
     readers = [r for block in report["chains"] + report["orphans"] for r in block["readers"]]
     assert readers and all(r.get("review") is True for r in readers if r["script"] == "s.py")
     assert summary["review"] == 1
-    assert "under review (see `rce review`): 1" in mcp_server.format_status_text(summary).lower()
+    assert "under review (see `researchos review`): 1" in mcp_server.format_status_text(summary).lower()
     (link,) = [l for l in view["links"] if (l["src"], l["dst"], l["type"]) == READ[:3]]
     assert link["review"] and link["status"] == "auto"

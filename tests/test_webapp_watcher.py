@@ -1,4 +1,4 @@
-"""Tests for rce.webapp.watcher (task V3 phase 2): the auto-refresh polling
+"""Tests for researchos.webapp.watcher (task V3 phase 2): the auto-refresh polling
 watcher owned by the web server.
 
 Almost everything here drives `ProjectWatcher.poll_once()` directly -- the
@@ -16,9 +16,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from rce import db, paths
-from rce import project as project_identity
-from rce.webapp import watcher
+from researchos import db, paths
+from researchos import project as project_identity
+from researchos.webapp import watcher
 
 
 # -- fixture project builders --------------------------------------------------
@@ -27,8 +27,8 @@ from rce.webapp import watcher
 def _init_project(project_root: Path) -> None:
     """Same shape as tests/test_webapp_server.py's own copy -- test modules
     don't share fixtures across files in this codebase."""
-    rce_dir = project_root / ".rce"
-    rce_dir.mkdir(parents=True, exist_ok=True)
+    record_dir = project_root / ".researchos"
+    record_dir.mkdir(parents=True, exist_ok=True)
     # The graph lives outside the project (DESIGN.md section 8.10 rule 1).
     # V5 (DESIGN.md 9.4): an identity file, and the index under its id.
     project_identity.init_project(project_root)
@@ -71,7 +71,7 @@ def _make_project(project_root: Path, rows: list[str] | None = None) -> None:
     (unless told otherwise), and an empty steps dir -- the smallest project
     the watcher has anything to watch in."""
     _init_project(project_root)
-    (project_root / ".rce" / "attempts.toml").write_text(_CONFIG)
+    (project_root / ".researchos" / "attempts.toml").write_text(_CONFIG)
     (project_root / "steps").mkdir()
     _write_map(project_root, rows if rows is not None else [_row("1")])
 
@@ -146,14 +146,14 @@ def test_map_edit_bumps_generation_and_reingests_attempts(tmp_path):
 
 
 def test_config_edit_triggers_reingest(tmp_path):
-    """.rce/attempts.toml is itself a watched file: editing it (here, just
+    """.researchos/attempts.toml is itself a watched file: editing it (here, just
     rewriting it with a trailing comment -- same parse result, different
     bytes) is a change like any other."""
     _make_project(tmp_path)
     w = _mk_watcher(tmp_path)
     w.poll_once()
 
-    (tmp_path / ".rce" / "attempts.toml").write_text(_CONFIG + "\n# edited\n")
+    (tmp_path / ".researchos" / "attempts.toml").write_text(_CONFIG + "\n# edited\n")
 
     assert w.poll_once() is True
     assert w.status_payload()["generation"] == 2
@@ -164,7 +164,7 @@ def test_deleting_the_map_file_is_detected_as_a_change(tmp_path):
     """A watched file vanishing is a set-of-names change, not a silent
     no-op -- the generation bumps and the failure to re-ingest (the config
     now points at a missing file) surfaces as last_error, never a crash.
-    (rce.ingest.attempts treats an unreadable source as all-zero counts,
+    (researchos.ingest.attempts treats an unreadable source as all-zero counts,
     so this particular shape re-ingests to nothing rather than erroring --
     the point here is only that deletion is *seen*.)"""
     _make_project(tmp_path)
@@ -182,7 +182,7 @@ def test_deleting_the_map_file_is_detected_as_a_change(tmp_path):
 
 def test_steps_dir_change_triggers_dataflow_ingest(tmp_path):
     """A new step script appearing is a dataflow-relevant change: the next
-    poll re-runs the same dataflow ingest `rce ingest` would, so the
+    poll re-runs the same dataflow ingest `researchos ingest` would, so the
     script's reads edge lands in the graph the tree/lineage views read."""
     _make_project(tmp_path)
     w = _mk_watcher(tmp_path)
@@ -306,7 +306,7 @@ def test_vanished_graph_is_logged_once_not_once_per_poll(tmp_path, caplog):
     w.poll_once()
     paths.graph_db_path(tmp_path).unlink()
 
-    with caplog.at_level("WARNING", logger="rce.webapp.watcher"):
+    with caplog.at_level("WARNING", logger="researchos.webapp.watcher"):
         for _ in range(5):
             assert w.poll_once() is False
 
@@ -394,7 +394,7 @@ def test_a_switch_lets_the_new_root_report_its_own_missing_graph(tmp_path):
 
 
 def test_project_without_config_polls_quietly(tmp_path):
-    """No .rce/attempts.toml at all: the watch set degrades to the (absent)
+    """No .researchos/attempts.toml at all: the watch set degrades to the (absent)
     config path -- nothing to compare, nothing to ingest, no error spam."""
     _init_project(tmp_path)
     w = _mk_watcher(tmp_path)
@@ -412,7 +412,7 @@ def test_config_created_later_is_picked_up(tmp_path):
     w = _mk_watcher(tmp_path)
     w.poll_once()  # baseline: empty watch set
 
-    (tmp_path / ".rce" / "attempts.toml").write_text(_CONFIG)
+    (tmp_path / ".researchos" / "attempts.toml").write_text(_CONFIG)
     (tmp_path / "steps").mkdir()
     _write_map(tmp_path, [_row("1")])
 
@@ -565,7 +565,7 @@ def test_take_snapshot_watches_config_source_and_steps_files(tmp_path):
     snap = watcher.take_snapshot(tmp_path)
 
     assert set(snap.files) == {
-        str(tmp_path / ".rce" / "attempts.toml"),
+        str(tmp_path / ".researchos" / "attempts.toml"),
         str(tmp_path / "map.md"),
         str(tmp_path / "steps" / "1-run.py"),
     }
@@ -616,7 +616,7 @@ def test_start_is_idempotent_and_stop_without_start_is_safe(tmp_path):
     assert w._thread is None
 
 
-# -- DESIGN.md section 8.5: .rce/mappings.toml joins the watch set ---------------
+# -- DESIGN.md section 8.5: .researchos/mappings.toml joins the watch set ---------------
 
 
 _MAPPING = '[[mapping]]\nfrom = "a.py"\nto = "f.png"\ntype = "generates"\n'
@@ -632,9 +632,9 @@ def _mapping_edges(project_root: Path) -> list[dict]:
 
 def test_take_snapshot_watches_the_mappings_file_even_without_attempts_config(tmp_path):
     _init_project(tmp_path)
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     snap = watcher.take_snapshot(tmp_path)
-    assert set(snap.files) == {str(tmp_path / ".rce" / "mappings.toml")}
+    assert set(snap.files) == {str(tmp_path / ".researchos" / "mappings.toml")}
 
 
 def test_mappings_edit_reingests_mappings_without_an_attempts_config(tmp_path):
@@ -645,13 +645,13 @@ def test_mappings_edit_reingests_mappings_without_an_attempts_config(tmp_path):
     w = _mk_watcher(tmp_path)
     w.poll_once()
 
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     assert w.poll_once() is True
     assert w.status_payload() == {"generation": 2, "refreshing": False, "last_error": None}
     (edge,) = _mapping_edges(tmp_path)
     assert edge["status"] == "confirmed"
 
-    (tmp_path / ".rce" / "mappings.toml").write_text("# emptied\n")
+    (tmp_path / ".researchos" / "mappings.toml").write_text("# emptied\n")
     assert w.poll_once() is True
     assert _mapping_edges(tmp_path) == []
 
@@ -664,7 +664,7 @@ def test_mappings_only_edit_does_not_rerun_attempts(tmp_path, monkeypatch):
     monkeypatch.setattr(
         watcher.attempts_ingest, "ingest_attempts_repo", lambda *a, **k: calls.append(a) or {},
     )
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     assert w.poll_once() is True
     assert calls == [] and len(_mapping_edges(tmp_path)) == 1
 
@@ -678,16 +678,16 @@ def test_broken_mappings_save_is_contained_and_deletes_nothing(tmp_path):
     _init_project(tmp_path)
     w = _mk_watcher(tmp_path)
     w.poll_once()
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     w.poll_once()
 
-    (tmp_path / ".rce" / "mappings.toml").write_text("[[mapping]\nfrom = ")
+    (tmp_path / ".researchos" / "mappings.toml").write_text("[[mapping]\nfrom = ")
     assert w.poll_once() is True
     status = w.status_payload()
     assert status["generation"] == 3 and "not valid TOML" in (status["last_error"] or "")
     assert len(_mapping_edges(tmp_path)) == 1
 
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING + "\n")
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING + "\n")
     assert w.poll_once() is True
     assert w.status_payload()["last_error"] is None
 
@@ -701,7 +701,7 @@ def test_attempts_failure_does_not_keep_a_mapping_out_of_the_graph(tmp_path):
     w.poll_once()
     broken = (tmp_path / "map.md").read_text().replace("## H", "## renamed")
     (tmp_path / "map.md").write_text(broken)
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
 
     assert w.poll_once() is True
     assert "heading" in (w.status_payload()["last_error"] or "")
@@ -712,7 +712,7 @@ def test_refused_mapping_entries_are_not_a_watcher_error(tmp_path):
     _init_project(tmp_path)
     w = _mk_watcher(tmp_path)
     w.poll_once()
-    (tmp_path / ".rce" / "mappings.toml").write_text(
+    (tmp_path / ".researchos" / "mappings.toml").write_text(
         _MAPPING + '\n[[mapping]]\nfrom = "a.py"\nto = "x.docx"\ntype = "generates"\n'
     )
     assert w.poll_once() is True
@@ -733,9 +733,9 @@ def test_record_external_change_absorb_keeps_a_pending_map_save_visible(tmp_path
     w = _mk_watcher(tmp_path)
     w.poll_once()
     _write_map(tmp_path, [_row("1"), _row("2")])  # not ingested by anyone yet
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)  # the "write"
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)  # the "write"
 
-    w.record_external_change(absorb={str(tmp_path / ".rce" / "mappings.toml")})
+    w.record_external_change(absorb={str(tmp_path / ".researchos" / "mappings.toml")})
 
     assert _attempt_numbers(tmp_path) == []
     assert w.poll_once() is True
@@ -748,9 +748,9 @@ def test_record_external_change_absorb_does_absorb_the_named_file(tmp_path):
     _make_project(tmp_path)
     w = _mk_watcher(tmp_path)
     w.poll_once()
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
 
-    w.record_external_change(absorb={str(tmp_path / ".rce" / "mappings.toml")})
+    w.record_external_change(absorb={str(tmp_path / ".researchos" / "mappings.toml")})
 
     assert w.poll_once() is False
 
@@ -783,7 +783,7 @@ def test_bump_generation_touches_neither_baseline_nor_error(tmp_path):
 def _ingest_mappings_now(project_root: Path) -> None:
     conn = db.connect(paths.graph_db_path(project_root))
     try:
-        from rce.ingest import mappings as mappings_ingest
+        from researchos.ingest import mappings as mappings_ingest
 
         mappings_ingest.ingest_mappings(conn, project_root)
     finally:
@@ -796,10 +796,10 @@ def test_first_poll_syncs_mappings_edited_while_the_app_was_closed(tmp_path):
     running must reach the graph on the first poll, not wait for the file
     to be touched again."""
     _init_project(tmp_path)
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     _ingest_mappings_now(tmp_path)  # the graph as the last session left it
     # ... then, app closed, the researcher swaps the entry by hand / git pull
-    (tmp_path / ".rce" / "mappings.toml").write_text(
+    (tmp_path / ".researchos" / "mappings.toml").write_text(
         '[[mapping]]\nfrom = "b.py"\nto = "g.png"\ntype = "generates"\n'
     )
     w = _mk_watcher(tmp_path)
@@ -812,7 +812,7 @@ def test_first_poll_syncs_mappings_edited_while_the_app_was_closed(tmp_path):
 
 def test_first_poll_sync_of_an_up_to_date_graph_costs_no_generation(tmp_path):
     _init_project(tmp_path)
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     _ingest_mappings_now(tmp_path)
     w = _mk_watcher(tmp_path)
     assert w.poll_once() is False
@@ -821,7 +821,7 @@ def test_first_poll_sync_of_an_up_to_date_graph_costs_no_generation(tmp_path):
 
 def test_first_poll_sync_failure_is_contained_and_retried(tmp_path):
     _init_project(tmp_path)
-    (tmp_path / ".rce" / "mappings.toml").write_text("[[mapping]\nfrom = ")
+    (tmp_path / ".researchos" / "mappings.toml").write_text("[[mapping]\nfrom = ")
     w = _mk_watcher(tmp_path)
     assert w.poll_once() is False
     status = w.status_payload()
@@ -829,7 +829,7 @@ def test_first_poll_sync_failure_is_contained_and_retried(tmp_path):
     w.poll_once()
     assert w.status_payload()["generation"] == 2  # a still-failing retry bumps nothing more
 
-    (tmp_path / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (tmp_path / ".researchos" / "mappings.toml").write_text(_MAPPING)
     assert w.poll_once() is True
     assert w.status_payload()["last_error"] is None
     assert len(_mapping_edges(tmp_path)) == 1
@@ -844,6 +844,6 @@ def test_switching_back_resyncs_the_mappings_of_the_new_root(tmp_path):
     w.poll_once()
     root["now"] = b
     w.retarget()
-    (b / ".rce" / "mappings.toml").write_text(_MAPPING)
+    (b / ".researchos" / "mappings.toml").write_text(_MAPPING)
     w.poll_once()
     assert len(_mapping_edges(b)) == 1

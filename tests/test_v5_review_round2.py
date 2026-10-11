@@ -18,11 +18,12 @@ from typing import Any
 
 import pytest
 
-from rce import cli, inventory
-from rce.records import cards, implementation
-from rce.records import variables as V
-from rce.records.trust import Trust
-from rce.webapp import registry, server, watcher
+from researchos import cli, inventory
+from researchos.records import cards, implementation
+from researchos.records import files as record_files
+from researchos.records import variables as V
+from researchos.records.trust import Trust
+from researchos.webapp import registry, server, watcher
 
 from test_v5_phase9 import _apply, _stored
 from test_variable_cards import _card, _decision, _new_confirmed, _no_entry_without_copy, _project, _text, _write
@@ -48,7 +49,7 @@ def _blocks(text: str) -> list[str]:
 def test_scenario_15_a_lost_confirmation_whose_number_is_reused_keeps_its_wording(tmp_path, capsys):
     """9.11 #15 / 9.3: two Macs each confirmed a v2; the sync kept the other
     Mac's log. 「以文件为准」 leaves a `removed` entry naming the lost
-    confirmation (and its frozen copy), so `rce records --clean` keeps that
+    confirmation (and its frozen copy), so `researchos records --clean` keeps that
     wording; the file's own v2 stays the version in use."""
     root = tmp_path / "p"
     _project(root)
@@ -289,7 +290,7 @@ def test_scenario_14_a_confirmed_version_resaved_in_another_encoding_is_asked_ab
 
 
 def test_scenario_13_the_confirmation_asks_the_attestation_question(tmp_path, capsys, monkeypatch):
-    """9.11 #13: `rce variable confirm` asks, at a terminal, whether the
+    """9.11 #13: `researchos variable confirm` asks, at a terminal, whether the
     output was built with this definition, and records the answer given;
     off a terminal it refuses rather than record an answer nobody gave; the
     core write path has no default answer."""
@@ -336,7 +337,7 @@ def test_scenario_14_an_interrupted_save_as_new_is_finished_by_answering_again(t
     """9.11 #14: stopped after the edit is safe in v2.toml but before v1 is
     put back -- answering again finishes the same answer (it is not refused
     because "a draft is open", and makes no v3); leftover temp files of a
-    killed write are removed by `rce records --clean`."""
+    killed write are removed by `researchos records --clean`."""
     root = tmp_path / "p"
     _project(root)
     _new_confirmed(root)
@@ -356,7 +357,7 @@ def test_scenario_14_an_interrupted_save_as_new_is_finished_by_answering_again(t
     assert done.new_version == 2 and not (card_dir / "v3.toml").exists()
     assert (card_dir / "v1.toml").read_bytes() == original and _card(root).draft == 2
 
-    leftover = card_dir / ".v1.toml.4242.0123456789ab.rce-tmp"
+    leftover = card_dir / (".v1.toml.4242.0123456789ab" + record_files._TMP_MARK)
     leftover.write_bytes(b"half")
     capsys.readouterr()
     assert cli.main(["records", "--clean", "--yes", str(root)]) == 0
@@ -579,7 +580,7 @@ def test_a_refused_retirement_keeps_the_engines_english_behind_details():
 const block = require("fs").readFileSync(0, "utf8");
 eval(block + "; global.f = migrationResultNote;");
 process.stdout.write(JSON.stringify(f({ ok: false, results: [{ holders: [
-  { pid: 52331, what: "a program listening on the RCE engine port 7357 that does not say which project it serves" }],
+  { pid: 52331, what: "a program listening on the Research OS engine port 7357 that does not say which project it serves" }],
   stopped: "the old index is held" }] })));
 """
     note = json.loads(subprocess.run([NODE, "-e", runner], input=block, capture_output=True, text=True,
@@ -629,11 +630,11 @@ process.stdout.write(JSON.stringify({ label: close.textContent, shownBefore, hid
     assert out == {"label": "关闭", "shownBefore": True, "hiddenAfter": True}
 
 
-# -- 「rce review」 says what it counts (9.11 stage (b)) ---------------------------------------------
+# -- 「researchos review」 says what it counts (9.11 stage (b)) ---------------------------------------------
 
 
 def test_rce_review_says_a_card_waiting_on_its_draft_is_listed_but_not_counted(tmp_path, capsys):
-    """9.11 #17: after 「口径已变」 the card waits on its draft -- `rce review`
+    """9.11 #17: after 「口径已变」 the card waits on its draft -- `researchos review`
     no longer says "0" and then lists it without explanation."""
     root = tmp_path / "p"
     _project(root)
@@ -651,7 +652,7 @@ def test_scenario_8d_a_candidate_reports_the_verdict_applied_to_it(tmp_path):
     """9.9 #8(d) / 9.6: after the old verdict is applied to the candidate,
     the list says the candidate carries it (the page then offers no second
     click) -- the item itself stays under review, untouched."""
-    from rce.records import judgements
+    from researchos.records import judgements
     from test_records_judgements import READ, _conn, _project as _judged_project
     from test_v5_phase7 import _rename_script
 

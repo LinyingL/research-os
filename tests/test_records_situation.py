@@ -1,4 +1,4 @@
-"""DESIGN.md 9.4: the situation table (`rce.records.situation.classify`)
+"""DESIGN.md 9.4: the situation table (`researchos.records.situation.classify`)
 and the write-time re-check (`write_guard`). Every branch, with the old
 home's volume and readability probes injected -- "gone is never inferred
 from failing to look" is tested by making each look fail."""
@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from rce import db, paths
-from rce.records import identity, situation
-from rce.records.identity import IdentityRead, IdentityState
-from rce.records.situation import Probes, Situation
+from researchos import db, paths
+from researchos.records import identity, situation
+from researchos.records.identity import IdentityRead, IdentityState
+from researchos.records.situation import Probes, Situation
 
 
 def _project(root: Path) -> identity.ProjectIdentity:
@@ -166,7 +166,7 @@ def test_old_home_identity_unreadable_cannot_be_checked(tmp_path: Path, state, r
 
     def read(path):
         if str(path) == old:
-            return IdentityRead(state, Path(path) / ".rce" / "project.toml", error="x")
+            return IdentityRead(state, Path(path) / ".researchos" / "project.toml", error="x")
         return identity.read_identity(path)
 
     got = situation.classify(tmp_path / "q", probes=Probes(read_identity=read))
@@ -180,7 +180,7 @@ def test_absent_identity_in_unlistable_old_home_cannot_be_checked(tmp_path: Path
 
     def read(path):
         if str(path) == old:
-            return IdentityRead(IdentityState.ABSENT, Path(path) / ".rce" / "project.toml")
+            return IdentityRead(IdentityState.ABSENT, Path(path) / ".researchos" / "project.toml")
         return identity.read_identity(path)
 
     def listdir(path):
@@ -193,8 +193,8 @@ def test_absent_identity_in_unlistable_old_home_cannot_be_checked(tmp_path: Path
 
 
 def test_lost_id_when_v5_records_but_no_identity(tmp_path: Path) -> None:
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "judgements.toml").write_text("")
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "judgements.toml").write_text("")
     got = situation.classify(tmp_path)
     # 9.12: adopt and other; restore only when a snapshot of project.toml exists.
     assert got.situation is Situation.LOST_ID and got.blocked and got.answers == ("adopt", "other")
@@ -202,16 +202,16 @@ def test_lost_id_when_v5_records_but_no_identity(tmp_path: Path) -> None:
 
 
 def test_attempts_and_mappings_alone_are_not_a_lost_id(tmp_path: Path) -> None:
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text("")
-    (tmp_path / ".rce" / "mappings.toml").write_text("")
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text("")
+    (tmp_path / ".researchos" / "mappings.toml").write_text("")
     assert situation.classify(tmp_path).situation is Situation.NOT_A_PROJECT
 
 
 @pytest.mark.parametrize("how", ["unparseable", "conflict_copy"])
 def test_unreadable_identity(tmp_path: Path, how: str) -> None:
     ident = _project(tmp_path / "p")
-    rce = tmp_path / "p" / ".rce"
+    rce = tmp_path / "p" / ".researchos"
     if how == "unparseable":
         (rce / "project.toml").write_text("id = \n")
     else:
@@ -231,8 +231,8 @@ def test_legacy_by_path_hash_index(tmp_path: Path) -> None:
 
 
 def test_legacy_by_in_project_graph(tmp_path: Path) -> None:
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "graph.db").write_bytes(b"")
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "graph.db").write_bytes(b"")
     assert situation.classify(tmp_path).situation is Situation.LEGACY
 
 

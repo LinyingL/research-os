@@ -1,4 +1,4 @@
-"""Tests for rce.cli (T4): init -> ingest -> status -> query -> trace via
+"""Tests for researchos.cli (T4): init -> ingest -> status -> query -> trace via
 cli.main() against a real git+LaTeX+.bib+MLflow fixture (subprocess `git`,
 no mocking).
 """
@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, paths
-from rce.records import identity
-from rce.webapp import registry as project_registry
+from researchos import cli, db, paths
+from researchos.records import identity
+from researchos.webapp import registry as project_registry
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -91,7 +91,7 @@ def test_init_creates_db_and_project_node_idempotently(tmp_path, capsys):
         assert count == 1
     finally:
         conn.close()
-    assert "Initialized RCE project" in capsys.readouterr().out
+    assert "Initialized Research OS project" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -105,18 +105,18 @@ def test_commands_without_init_report_clear_error(tmp_path, monkeypatch, capsys,
 
     assert cli.main(argv) == 1
     err = capsys.readouterr().err
-    assert "Error" in err and "rce init" in err
+    assert "Error" in err and "researchos init" in err
 
 
 def test_ingest_on_non_git_repo_degrades_gracefully(tmp_path, capsys):
     """W1: a project root that is not a git repository at all must not abort
     ingest. Real background: a researcher's project root is routinely never
-    `git init`ed. `rce ingest` prints one clear explanatory line, skips
+    `git init`ed. `researchos ingest` prints one clear explanatory line, skips
     commit/contributor nodes (no history to read), and every other
     extractor still runs -- here against a filesystem-scanned inventory
-    (rce.ingest.files) instead of `git ls-files`. pyfig additionally has no
+    (researchos.ingest.files) instead of `git ls-files`. pyfig additionally has no
     commit source node to attach a `generates` edge to, so it degrades
-    separately (see rce.ingest.pyfig.ingest_pyfig_repo) and reports
+    separately (see researchos.ingest.pyfig.ingest_pyfig_repo) and reports
     generates=0 rather than crashing or fabricating a commit."""
     project = tmp_path / "proj"
     project.mkdir()  # deliberately never `git init`ed
@@ -171,11 +171,11 @@ def test_ingest_on_non_git_repo_skips_noise_directories(tmp_path, capsys):
     assert "pyfig: 1 .py scanned" in out
 
 
-# -- task W2: rce.ingest.dataflow wired into `rce ingest`, after latex --
+# -- task W2: researchos.ingest.dataflow wired into `researchos ingest`, after latex --
 
 
 def test_ingest_reports_dataflow_summary_and_creates_lineage_nodes(tmp_path, capsys):
-    """W2: cli.py orchestrates rce.ingest.dataflow -- runs even with no git
+    """W2: cli.py orchestrates researchos.ingest.dataflow -- runs even with no git
     repository at all (its edges never reference a Commit node, unlike
     pyfig's), and both a read of an existing file and a write of a
     not-yet-created one show up in the graph."""
@@ -207,14 +207,14 @@ def test_ingest_reports_dataflow_summary_and_creates_lineage_nodes(tmp_path, cap
         conn.close()
 
 
-# -- task W3: rce.ingest.mdpaper wired into `rce ingest`, after wandb/before claims --
+# -- task W3: researchos.ingest.mdpaper wired into `researchos ingest`, after wandb/before claims --
 
 
 def test_ingest_reports_mdpaper_summary_and_creates_claim_backed_by_edge(tmp_path, capsys):
-    """W3: cli.py orchestrates rce.ingest.mdpaper -- a .md paper's heading
+    """W3: cli.py orchestrates researchos.ingest.mdpaper -- a .md paper's heading
     becomes a section, and its quantitative claim gets a pending backed_by
     edge once a matching MLflow metric exists, exactly like a .tex claim
-    would (same shared write path, see rce.ingest.claims.ingest_parsed_claims).
+    would (same shared write path, see researchos.ingest.claims.ingest_parsed_claims).
     A README.md alongside it must be counted as skipped, not ingested."""
     project = tmp_path / "proj"
     project.mkdir()  # deliberately never `git init`ed, like W1/W2's own tests above
@@ -243,12 +243,12 @@ def test_ingest_reports_mdpaper_summary_and_creates_claim_backed_by_edge(tmp_pat
         conn.close()
 
 
-# -- T5.5 review item 5: `rce init` gitignore tip --
+# -- T5.5 review item 5: `researchos init` gitignore tip --
 
 
 def test_init_explains_what_dot_rce_now_holds(tmp_path, capsys):
-    """Was "add .rce/ to your .gitignore". Since DESIGN.md section 8.10
-    rule 1 the derived graph is NOT in there -- `.rce/` holds only files
+    """Was "add .researchos/ to your .gitignore". Since DESIGN.md section 8.10
+    rule 1 the derived graph is NOT in there -- `.researchos/` holds only files
     the researcher wrote and may well want in git -- so the advice is now
     that the choice is theirs, and still a printed nudge, never an edit to
     their .gitignore (DESIGN.md section 2, "零习惯改变")."""
@@ -258,12 +258,12 @@ def test_init_explains_what_dot_rce_now_holds(tmp_path, capsys):
     assert cli.main(["init", str(project)]) == 0
 
     out = capsys.readouterr().out
-    assert ".rce/" in out and ".gitignore" in out
+    assert ".researchos/" in out and ".gitignore" in out
     assert "attempts.toml" in out
     assert not (project / ".gitignore").exists()  # printed, never applied
 
 
-# -- section 8.10 rule 1: `rce init` puts the graph outside the project --
+# -- section 8.10 rule 1: `researchos init` puts the graph outside the project --
 
 
 def test_init_creates_the_graph_outside_the_project(tmp_path, capsys):
@@ -273,24 +273,24 @@ def test_init_creates_the_graph_outside_the_project(tmp_path, capsys):
     assert cli.main(["init", str(project)]) == 0
 
     assert paths.graph_db_path(project).exists()
-    assert not (project / ".rce" / "graph.db").exists()
+    assert not (project / ".researchos" / "graph.db").exists()
     assert str(paths.graph_db_path(project)) in capsys.readouterr().out
 
 
 def test_init_leaves_a_readme_saying_where_the_graph_went(tmp_path):
     """"so nothing is hidden": the one place a researcher WILL look is the
-    `.rce/` directory in their own project."""
+    `.researchos/` directory in their own project."""
     project = tmp_path / "proj"
     project.mkdir()
 
     cli.main(["init", str(project)])
 
-    readme = (project / ".rce" / "README").read_text(encoding="utf-8")
+    readme = (project / ".researchos" / "README").read_text(encoding="utf-8")
     assert str(paths.graph_dir(project)) in readme
 
 
 def _pre_v5_in_project_graph(project: Path) -> Path:
-    legacy = project / ".rce" / "graph.db"
+    legacy = project / ".researchos" / "graph.db"
     legacy.parent.mkdir(parents=True)
     conn = db.connect(legacy)
     try:
@@ -302,9 +302,9 @@ def _pre_v5_in_project_graph(project: Path) -> Path:
 
 
 def test_init_refuses_a_pre_v5_project_and_starts_no_second_index(tmp_path, capsys):
-    """Was: `rce init` adopted a pre-8.10 in-project graph. Since V5 a
-    project from before V5 is not given an identity by `rce init` (its
-    judgments sit in the old store; `rce migrate` moves them into the
+    """Was: `researchos init` adopted a pre-8.10 in-project graph. Since V5 a
+    project from before V5 is not given an identity by `researchos init` (its
+    judgments sit in the old store; `researchos migrate` moves them into the
     record and creates the identity, DESIGN.md 9.5): init refuses, writes
     no project.toml, and builds no second, empty index beside the old
     one -- which stays readable."""
@@ -313,8 +313,8 @@ def test_init_refuses_a_pre_v5_project_and_starts_no_second_index(tmp_path, caps
 
     assert cli.main(["init", str(project)]) == 1
     assert "before V5" in capsys.readouterr().err
-    assert not (project / ".rce" / "project.toml").exists()
-    assert not list(paths.rce_home().glob("graphs/p-*"))
+    assert not (project / ".researchos" / "project.toml").exists()
+    assert not list(paths.researchos_home().glob("graphs/p-*"))
 
     assert cli.main(["status", "--path", str(project)]) == 0  # still readable
     assert "figure=1" in capsys.readouterr().out
@@ -323,7 +323,7 @@ def test_init_refuses_a_pre_v5_project_and_starts_no_second_index(tmp_path, caps
 def test_any_subcommand_migrates_a_legacy_graph_on_first_touch(tmp_path, capsys):
     """"Migrated on first touch by ANY subcommand" (8.10): a pre-V5
     project's in-project graph still moves out to its (legacy) external
-    location on the first `rce status` -- a pre-V5 folder is served from
+    location on the first `researchos status` -- a pre-V5 folder is served from
     there, read-only for human records, until it is migrated."""
     project = tmp_path / "proj"
     legacy = _pre_v5_in_project_graph(project)
@@ -337,15 +337,15 @@ def test_any_subcommand_migrates_a_legacy_graph_on_first_touch(tmp_path, capsys)
 
 def test_a_legacy_graph_that_fails_verification_is_a_clean_error_not_a_traceback(tmp_path, capsys):
     project = tmp_path / "proj"
-    (project / ".rce").mkdir(parents=True)
-    (project / ".rce" / "graph.db").write_bytes(b"not a database" * 100)
+    (project / ".researchos").mkdir(parents=True)
+    (project / ".researchos" / "graph.db").write_bytes(b"not a database" * 100)
 
     assert cli.main(["status", "--path", str(project)]) == 1
 
     err = capsys.readouterr().err
     assert err.startswith("Error: ")
     assert "Nothing was deleted" in err
-    assert (project / ".rce" / "graph.db").exists()
+    assert (project / ".researchos" / "graph.db").exists()
 
 
 def test_status_reports_the_graphs_actual_location(tmp_path, capsys):
@@ -368,16 +368,16 @@ def test_uninitialized_error_names_the_graph_it_looked_for(tmp_path, capsys):
 
     err = capsys.readouterr().err
     assert str(paths.graph_db_path(project)) in err
-    assert "rce init" in err
+    assert "researchos init" in err
 
 
-# -- section 8.10 rule 3: `rce projects list` / `rce projects remove` --
+# -- section 8.10 rule 3: `researchos projects list` / `researchos projects remove` --
 
 
 def test_projects_list_reports_an_empty_registry_without_guessing(tmp_path, capsys):
     assert cli.main(["projects", "list"]) == 0
     out = capsys.readouterr().out
-    assert "No registered projects" in out and "rce serve" in out
+    assert "No registered projects" in out and "researchos serve" in out
 
 
 def test_projects_list_shows_entries_most_recently_served_first(tmp_path, capsys):
@@ -405,8 +405,8 @@ def test_projects_list_flags_a_dead_entry_and_an_uninitialized_one(tmp_path, cap
     assert cli.main(["projects", "list"]) == 0
 
     out = capsys.readouterr().out
-    assert "directory missing" in out and "rce projects remove" in out
-    assert "not initialized" in out and "rce init" in out
+    assert "directory missing" in out and "researchos projects remove" in out
+    assert "not initialized" in out and "researchos init" in out
 
 
 def test_projects_remove_drops_the_entry_and_deletes_nothing(tmp_path, capsys):
@@ -441,7 +441,7 @@ def test_projects_remove_accepts_the_spelling_a_human_would_type(tmp_path, capsy
 def test_projects_remove_unknown_path_is_a_clean_error(tmp_path, capsys):
     assert cli.main(["projects", "remove", "/definitely/not/registered"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("Error: ") and "rce projects list" in err
+    assert err.startswith("Error: ") and "researchos projects list" in err
 
 
 # -- T5.5 review item 4: list_source_files' GitIngestError must be caught too --
@@ -526,7 +526,7 @@ def test_full_pipeline_init_ingest_status_query(paper_repo, monkeypatch, capsys)
 # -- README blocker fix (2026-07-26): status/query/trace must be runnable
 # from a cwd other than the project root, via --path, exactly like the
 # README's Quick start block -- without this, the third Quick start line
-# (`rce trace ...`) fails with "no RCE project at <cwd>" when run verbatim.
+# (`researchos trace ...`) fails with "no Research OS project at <cwd>" when run verbatim.
 
 
 def test_status_query_trace_work_via_path_flag_from_other_cwd(paper_repo, tmp_path, monkeypatch, capsys):
@@ -549,8 +549,8 @@ def test_status_query_trace_work_via_path_flag_from_other_cwd(paper_repo, tmp_pa
     assert "Provenance trace for figure:overview.png" in capsys.readouterr().out
 
 
-# -- Owner ruling 2026-07-22: `rce trace` gives non-MCP users full multi-hop
-# provenance (reuses rce.query.trace(), no logic duplicated here) --
+# -- Owner ruling 2026-07-22: `researchos trace` gives non-MCP users full multi-hop
+# provenance (reuses researchos.query.trace(), no logic duplicated here) --
 
 
 def test_trace_human_readable_shows_indented_evidence_chain(paper_repo, monkeypatch, capsys):
@@ -586,11 +586,11 @@ def test_trace_json_outputs_structured_result(paper_repo, monkeypatch, capsys):
 
 def test_trace_shows_current_claim_line_for_backed_by_edge(claim_repo, monkeypatch, capsys):
     """Regression (2026-07-27): a prior commit backfilled the claim's
-    current line into `rce status --pending`'s own display only, silently
-    regressing `rce trace` (both human text and --json) versus the commit
+    current line into `researchos status --pending`'s own display only, silently
+    regressing `researchos trace` (both human text and --json) versus the commit
     before that one -- which had the line baked directly into the
     `backed_by` edge's evidence. Both now read `hop["source_location"]`,
-    injected uniformly by rce.query.trace (see rce.query.claim_source_location)."""
+    injected uniformly by researchos.query.trace (see researchos.query.claim_source_location)."""
     cli.main(["init", str(claim_repo)])
     cli.main(["ingest", str(claim_repo)])
     capsys.readouterr()
@@ -689,7 +689,7 @@ def test_mcp_command_reports_clear_error_when_mcp_extra_not_installed(monkeypatc
 
     assert cli.main(["mcp", "--path", "."]) == 1
     err = capsys.readouterr().err
-    assert "Error" in err and 'pip install "rce[mcp]"' in err
+    assert "Error" in err and 'pip install "researchos[mcp]"' in err
 
 
 # -- F3: status --pending / confirm -- human confirmation path, no mcp extra required --
@@ -812,12 +812,12 @@ def test_confirm_then_reingest_never_overwrites_human_judgement(claim_repo, caps
         conn.close()
 
 
-# -- task W4: `rce lineage` -- read-only four-block report over W2's dataflow graph --
+# -- task W4: `researchos lineage` -- read-only four-block report over W2's dataflow graph --
 
 
 @pytest.fixture
 def lineage_project(tmp_path: Path) -> Path:
-    """A project exercising all four `rce lineage` blocks at once:
+    """A project exercising all four `researchos lineage` blocks at once:
 
     - `data/orphan_input.csv`: read by gen.py, written by nothing -- orphan.
     - `data/topicshift_monthly.csv`: written by gen.py, read by analysis.Rmd,
@@ -998,7 +998,7 @@ def test_lineage_clean_chain_with_no_orphans_or_broken_links_exits_0(tmp_path, c
     assert "Broken links" not in out
 
 
-# -- rce mappings (DESIGN.md section 8.5) ------------------------------------------
+# -- researchos mappings (DESIGN.md section 8.5) ------------------------------------------
 
 
 def _mappings_project(tmp_path: Path, text: str | None) -> Path:
@@ -1006,7 +1006,7 @@ def _mappings_project(tmp_path: Path, text: str | None) -> Path:
     project.mkdir()
     assert cli.main(["init", str(project)]) == 0
     if text is not None:
-        (project / ".rce" / "mappings.toml").write_text(text, encoding="utf-8")
+        (project / ".researchos" / "mappings.toml").write_text(text, encoding="utf-8")
     return project
 
 
@@ -1019,7 +1019,7 @@ def test_mappings_ingests_and_reports_counts_and_refused_entries(tmp_path, capsy
     capsys.readouterr()
     assert cli.main(["mappings", str(project)]) == 0
     out = capsys.readouterr().out
-    assert "Mappings (.rce/mappings.toml): mappings=1 refused=1 nodes_created=2" in out
+    assert "Mappings (.researchos/mappings.toml): mappings=1 refused=1 nodes_created=2" in out
     assert "refused line 6:" in out and "swap" in out
     conn = db.connect(paths.graph_db_path(project))
     try:
@@ -1048,4 +1048,4 @@ def test_mappings_without_init_reports_clear_error(tmp_path, capsys):
     project = tmp_path / "proj"
     project.mkdir()
     assert cli.main(["mappings", str(project)]) == 1
-    assert "rce init" in capsys.readouterr().err
+    assert "researchos init" in capsys.readouterr().err

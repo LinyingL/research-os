@@ -1,9 +1,9 @@
 """Integration regression tests for the non-ASCII git path bug (real repro:
-a Chinese-filename research repo -- see rce.ingest.git's module docstring).
+a Chinese-filename research repo -- see researchos.ingest.git's module docstring).
 
 git's default core.quotepath=true octal-escapes and double-quotes any path
 containing non-ASCII bytes in `git ls-files` / `git log --name-only`
-output; before the fix, rce.ingest.git used that escaped string verbatim
+output; before the fix, researchos.ingest.git used that escaped string verbatim
 for extension matching and path joins, so every non-ASCII-named file was
 invisible to every downstream extractor with zero warning. These tests
 build one real throwaway git repo (subprocess `git`, no mocking, mirroring
@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from rce import db
-from rce.ingest import git as git_ingest
-from rce.ingest import latex as latex_ingest
-from rce.ingest import pyfig as pyfig_ingest
+from researchos import db
+from researchos.ingest import git as git_ingest
+from researchos.ingest import latex as latex_ingest
+from researchos.ingest import pyfig as pyfig_ingest
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -124,7 +124,7 @@ def test_full_ingest_pipeline_resolves_non_ascii_paths_end_to_end(unicode_repo, 
     assert includes_edges[0]["src"] == "section:论文.tex#intro"
 
     # pyfig: the generates edge's src commit is resolved via `git blame` on
-    # the real file path (rce.ingest.git.blame_line) -- if blame had been
+    # the real file path (researchos.ingest.git.blame_line) -- if blame had been
     # given an escaped/quoted path instead it would fail to resolve and
     # log+skip, and this edge would never exist. Its presence is the
     # end-to-end proof that blame works correctly on a non-ASCII path too.

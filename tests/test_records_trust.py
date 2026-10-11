@@ -1,4 +1,4 @@
-"""Tests for rce.records.trust (DESIGN.md section 9.3): when a ledger may
+"""Tests for researchos.records.trust (DESIGN.md section 9.3): when a ledger may
 be written and obeyed. Scenario numbers are 9.9's; these cover the record
 half of each (the index and app halves come with later phases)."""
 
@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.records import identity as ident
-from rce.records import ledger as L
-from rce.records import lock
-from rce.records.trust import Trust, assess_ledger
+from researchos import paths
+from researchos.records import identity as ident
+from researchos.records import ledger as L
+from researchos.records import lock
+from researchos.records.trust import Trust, assess_ledger
 
 READS = dict(src="script:a.Rmd", dst="dataset:p.csv", type="reads", extractor="dataflow")
 WRITES = dict(src="script:b.py", dst="dataset:q.csv", type="writes", extractor="dataflow")
@@ -171,7 +171,7 @@ def test_a_hand_edited_entry_is_reported_as_changed(project):
 def test_a_conflict_copy_blocks(project):
     identity = _identity(project)
     entry = _judge(project, identity, "confirmed")
-    (project / ".rce" / "judgements 2.toml").write_text("")
+    (project / ".researchos" / "judgements 2.toml").write_text("")
     decision = _assess(project, identity, {entry.id: entry.data})
     assert decision.verdict is Trust.CONFLICT_COPY and not decision.may_write
     assert "judgements 2.toml" in decision.detail

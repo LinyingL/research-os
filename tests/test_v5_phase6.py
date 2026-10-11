@@ -4,12 +4,12 @@ defects found in acceptance on real data.
 - (a) the retire guard: only a process that actually holds the old index
   blocks its retirement -- an engine serving THIS project (asked through
   `GET /api/engine`, compared canonically), or any process with the
-  database open; another engine on another project and another RCE home
+  database open; another engine on another project and another Research OS home
   does not (9.12 "Migration"; 9.9 #9's "not while another process holds
   it");
 - (b) one path convention: every subcommand takes the project as a
   positional path or as `--path` (9.12 "The command line");
-- (c) `rce records` lists each kind of record exactly once;
+- (c) `researchos records` lists each kind of record exactly once;
 - the three answers to a lost identity file, with HTTP parity (9.12
   "Identity");
 - candidates for claims without the basis clause (9.12 "Evidence"; 9.9 #8(d)
@@ -33,13 +33,13 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, migration, paths
-from rce import project as project_identity
-from rce.records import identity, judgements
-from rce.records import ledger as ledger_mod
-from rce.records import situation
-from rce.records.situation import Situation, index_db_path
-from rce.webapp import server
+from researchos import cli, db, migration, paths
+from researchos import project as project_identity
+from researchos.records import identity, judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records import situation
+from researchos.records.situation import Situation, index_db_path
+from researchos.webapp import server
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_migration import READ as M_READ  # noqa: E402
@@ -59,12 +59,12 @@ def _free_port() -> int:
     return port
 
 
-def _start_engine(root: Path, rce_home: Path) -> tuple[subprocess.Popen, int]:
-    """A real `rce serve` in its own process, with its own RCE_HOME."""
+def _start_engine(root: Path, researchos_home: Path) -> tuple[subprocess.Popen, int]:
+    """A real `researchos serve` in its own process, with its own RESEARCHOS_HOME."""
     port = _free_port()
-    env = {**os.environ, "RCE_HOME": str(rce_home), "RCE_ENGINE_PORT": "0"}
+    env = {**os.environ, "RESEARCHOS_HOME": str(researchos_home), "RCE_ENGINE_PORT": "0"}
     proc = subprocess.Popen(
-        [sys.executable, "-m", "rce.cli", "serve", str(root), "--port", str(port), "--no-browser"],
+        [sys.executable, "-m", "researchos.cli", "serve", str(root), "--port", str(port), "--no-browser"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     deadline = time.monotonic() + 60
@@ -113,22 +113,22 @@ def test_engine_answers_which_project_it_serves(tmp_path):
     finally:
         _shutdown(httpd, thread)
     assert status == 200
-    assert answer["engine"] == "rce" and answer["version"] == 5 and answer["pid"] == os.getpid()
+    assert answer["engine"] == "researchos" and answer["version"] == 5 and answer["pid"] == os.getpid()
     assert answer["project_id"] == pid and Path(answer["project_root"]) == root
-    assert answer["graph_path"] == str(index_db_path(pid)) and answer["rce_home"] == str(paths.rce_home())
+    assert answer["graph_path"] == str(index_db_path(pid)) and answer["researchos_home"] == str(paths.researchos_home())
 
 
 def test_scenario_9_an_engine_on_another_project_and_another_home_does_not_block(tmp_path, monkeypatch, capsys):
     """Defect (a), 9.12: the researcher's app open on a DIFFERENT project
-    with a DIFFERENT RCE home -- a real second engine -- does not stop the
+    with a DIFFERENT Research OS home -- a real second engine -- does not stop the
     migration from retiring the old index."""
     other_home = tmp_path / "other-home"
     other_home.mkdir()
     other = tmp_path / "elsewhere"
     other.mkdir()
     (other / "a.py").write_text("print(1)\n")
-    env = {**os.environ, "RCE_HOME": str(other_home), "RCE_ENGINE_PORT": "0"}
-    subprocess.run([sys.executable, "-m", "rce.cli", "init", str(other)], env=env, check=True, capture_output=True)
+    env = {**os.environ, "RESEARCHOS_HOME": str(other_home), "RCE_ENGINE_PORT": "0"}
+    subprocess.run([sys.executable, "-m", "researchos.cli", "init", str(other)], env=env, check=True, capture_output=True)
     root = _folder(tmp_path)
     old = build_pre_v5_index(root)
     proc, port = _start_engine(other, other_home)
@@ -144,17 +144,17 @@ def test_scenario_9_an_engine_on_another_project_and_another_home_does_not_block
 
 def test_scenario_9_an_engine_serving_this_project_blocks_and_is_named(tmp_path, monkeypatch, capsys):
     """9.12: an engine serving THIS project holds its old index -- the stop
-    message names it (pid, what it is); once it has quit, `rce migrate`
+    message names it (pid, what it is); once it has quit, `researchos migrate`
     resumes and retires."""
     root = _folder(tmp_path)
     old = build_pre_v5_index(root)
-    proc, port = _start_engine(root, paths.rce_home())
+    proc, port = _start_engine(root, paths.researchos_home())
     try:
         monkeypatch.setenv(migration.ENGINE_PORT_ENV, str(port))
         assert cli.main(["migrate", "--yes", str(root)]) == 1
         out = capsys.readouterr().out
         assert migration.PLEASE_QUIT in out
-        assert f"process {proc.pid} (the RCE engine on port {port}, serving {root}" in out
+        assert f"process {proc.pid} (the Research OS engine on port {port}, serving {root}" in out
         assert old.exists() and situation.classify(root).needs_migration
     finally:
         _stop(proc)
@@ -189,7 +189,7 @@ def test_the_engine_comparison_is_canonical_by_root_id_or_old_index(tmp_path, mo
     monkeypatch.setattr(migration, "engine_running", lambda: True)
 
     def answering(**fields):
-        monkeypatch.setattr(migration, "ask_engine", lambda _p, **_k: {"engine": "rce", "version": 5, "pid": 99999, **fields})
+        monkeypatch.setattr(migration, "ask_engine", lambda _p, **_k: {"engine": "researchos", "version": 5, "pid": 99999, **fields})
 
     answering(project_root=str(tmp_path / "Proj" / ".." / "Proj"), project_id=None, graph_path=None)
     assert migration.engine_holding(root, None, db_path).pid == 99999
@@ -200,7 +200,7 @@ def test_the_engine_comparison_is_canonical_by_root_id_or_old_index(tmp_path, mo
     answering(project_root=str(tmp_path / "x"), project_id="p-" + "1" * 32, graph_path=str(tmp_path / "y.db"))
     assert migration.engine_holding(root, "p-" + "0" * 32, db_path) is None
     monkeypatch.setattr(migration, "ask_engine", lambda _p, **_k: {
-        "engine": "rce", "version": 5, "pid": os.getpid(), "project_root": str(root)})
+        "engine": "researchos", "version": 5, "pid": os.getpid(), "project_root": str(root)})
     assert migration.engine_holding(root, None, db_path) is None  # the migrating engine itself
 
 
@@ -356,7 +356,7 @@ TRAILING_PATH_SHAPES = [
 
 @pytest.mark.parametrize("argv,expected", TRAILING_PATH_SHAPES, ids=lambda a: " ".join(a) if isinstance(a, list) else "")
 def test_the_trailing_path_is_read_the_same_on_every_python(argv, expected):
-    """9.12: "RCE runs on Python 3.11 ... as it says it does" -- the path
+    """9.12: "Research OS runs on Python 3.11 ... as it says it does" -- the path
     convention does not depend on a later argparse (`cli.PathParser`)."""
     args = cli.build_parser().parse_args(argv)
     cli._settle_path(args)
@@ -438,7 +438,7 @@ def test_existing_forms_still_work_and_the_new_ones_too(tmp_path, capsys):
 
 
 def test_mcp_takes_the_project_both_ways_and_refuses_both(capsys):
-    from rce import mcp_server
+    from researchos import mcp_server
 
     assert mcp_server.main(["/a", "--path", "/b"]) == 1
     assert "not both" in capsys.readouterr().err
@@ -455,7 +455,7 @@ def test_records_lists_each_kind_exactly_once(tmp_path, capsys):
     """Defect (c): every kind of human labor is one line, whatever the
     state -- a fresh project, cards present, a shrunk ledger, --verify."""
     root, _pid = _project(tmp_path)
-    (root / ".rce" / "variables" / "topicshift").mkdir(parents=True)
+    (root / ".researchos" / "variables" / "topicshift").mkdir(parents=True)
     _three_judgments(root)
     for argv in (["records", str(root)], ["records", "--verify", str(root)]):
         cli.main(argv)
@@ -469,7 +469,7 @@ def test_records_lists_each_kind_exactly_once(tmp_path, capsys):
 
 
 def test_records_lines_never_repeat_a_kind_even_if_the_inventory_did(tmp_path, monkeypatch):
-    from rce import inventory
+    from researchos import inventory
 
     root, _pid = _project(tmp_path)
     real = inventory.inventory
@@ -482,7 +482,7 @@ def test_records_lines_never_repeat_a_kind_even_if_the_inventory_did(tmp_path, m
 
 
 def _lose_identity(root: Path) -> None:
-    (root / ".rce" / "project.toml").unlink()
+    (root / ".researchos" / "project.toml").unlink()
     assert situation.classify(root).situation is Situation.LOST_ID
 
 
@@ -526,17 +526,17 @@ def test_lost_identity_adopt_keeps_every_record_under_a_new_id(tmp_path, capsys)
     where it is, a fresh index built from them."""
     root, pid = _project(tmp_path)
     _three_judgments(root)
-    (root / ".rce" / "canvas.json").write_text('{"views": {"all": {"positions": {"script:s.py": [1, 2]}}}}')
-    # README is RCE's own signpost, rewritten on adoption (9.12); the records are compared.
-    before = {p.name: p.read_bytes() for p in (root / ".rce").iterdir() if p.is_file() and p.name not in ("project.toml", "README")}
+    (root / ".researchos" / "canvas.json").write_text('{"views": {"all": {"positions": {"script:s.py": [1, 2]}}}}')
+    # README is Research OS's own signpost, rewritten on adoption (9.12); the records are compared.
+    before = {p.name: p.read_bytes() for p in (root / ".researchos").iterdir() if p.is_file() and p.name not in ("project.toml", "README")}
     _lose_identity(root)
     shutil.rmtree(paths.index_dir(pid))
     assert cli.main(["project", "adopt", str(root)]) == 0
     capsys.readouterr()
     new = identity.read_identity(root).identity
     assert new.id != pid and new.ledger is True and new.forked_from is None
-    after = {p.name: p.read_bytes() for p in (root / ".rce").iterdir() if p.is_file() and p.name not in ("project.toml", "README")}
-    assert str(paths.index_dir(new.id)) in (root / ".rce" / "README").read_text(encoding="utf-8")
+    after = {p.name: p.read_bytes() for p in (root / ".researchos").iterdir() if p.is_file() and p.name not in ("project.toml", "README")}
+    assert str(paths.index_dir(new.id)) in (root / ".researchos" / "README").read_text(encoding="utf-8")
     assert after == before  # every record kept, byte for byte
     assert index_db_path(new.id).exists()
     assert _status(root, READ) == "confirmed" and _status(root, WRITE) == "auto"
@@ -545,39 +545,39 @@ def test_lost_identity_adopt_keeps_every_record_under_a_new_id(tmp_path, capsys)
 
 def test_restore_is_not_offered_without_a_snapshot(tmp_path):
     root, _pid = _project(tmp_path)
-    shutil.rmtree(root / ".rce" / "backups")
+    shutil.rmtree(root / ".researchos" / "backups")
     _three_judgments(root)
-    for snap in (root / ".rce" / "backups").glob("project.toml.*"):
+    for snap in (root / ".researchos" / "backups").glob("project.toml.*"):
         snap.unlink()
     _lose_identity(root)
     assert situation.classify(root).answers == ("adopt", "other")
     with pytest.raises(project_identity.AnswerRefused):
         project_identity.restore(root)
-    assert not (root / ".rce" / "project.toml").exists()
+    assert not (root / ".researchos" / "project.toml").exists()
 
 
 @pytest.mark.parametrize("answer", ["restore", "adopt"])
 def test_lost_identity_is_recognised_by_its_snapshot_alone(tmp_path, capsys, answer):
     """9.12 (acceptance, 2026-10-05): no project.toml and no record files,
-    but a snapshot of project.toml under .rce/backups/ -- the folder is
-    asked (restore / new identity); `rce init` refuses with the same
+    but a snapshot of project.toml under .researchos/backups/ -- the folder is
+    asked (restore / new identity); `researchos init` refuses with the same
     question instead of minting a fresh id; and each answer works."""
     root, pid = _project(tmp_path)
-    assert list((root / ".rce" / "backups").glob("project.toml.*"))  # init kept one
-    assert not any(os.path.lexists(root / ".rce" / n) for n in situation.V5_RECORD_NAMES)
-    (root / ".rce" / "project.toml").unlink()
+    assert list((root / ".researchos" / "backups").glob("project.toml.*"))  # init kept one
+    assert not any(os.path.lexists(root / ".researchos" / n) for n in situation.V5_RECORD_NAMES)
+    (root / ".researchos" / "project.toml").unlink()
     c = situation.classify(root)
     assert (c.situation, c.reason) == (Situation.LOST_ID, "identity_snapshot_only")
     assert c.answers == ("restore", "adopt") and c.extra["records"] == []
     payload = c.payload()
     assert payload["snapshot"]["project_id"] == pid
     assert payload["answer_labels"] == {"restore": "从备份恢复项目身份文件", "adopt": "建立新身份"}
-    assert ".rce/backups/" in payload["message"]
+    assert ".researchos/backups/" in payload["message"]
     assert cli.main(["init", str(root)]) == 1
     err = capsys.readouterr().err
-    assert "snapshot" in err and "rce project restore" in err and "rce project adopt" in err
-    assert "rce project other" not in err
-    assert not (root / ".rce" / "project.toml").exists()  # nothing minted
+    assert "snapshot" in err and "researchos project restore" in err and "researchos project adopt" in err
+    assert "researchos project other" not in err
+    assert not (root / ".researchos" / "project.toml").exists()  # nothing minted
     served = server.served_for(root)
     assert served.blocked["situation"] == "lost_id" and served.blocked["answers"] == ["restore", "adopt"]
     assert cli.main(["project", answer, str(root)]) == 0
@@ -589,24 +589,24 @@ def test_lost_identity_is_recognised_by_its_snapshot_alone(tmp_path, capsys, ans
 
 def test_an_answer_the_snapshot_only_question_does_not_offer_is_refused(tmp_path, capsys):
     """Only the answers offered are acted on: a snapshot-only lost identity
-    offers restore and adopt, so `rce project other` (and fork, claim) is
+    offers restore and adopt, so `researchos project other` (and fork, claim) is
     refused, nothing minted."""
     root, _pid = _project(tmp_path)
-    (root / ".rce" / "project.toml").unlink()
+    (root / ".researchos" / "project.toml").unlink()
     assert situation.classify(root).answers == ("restore", "adopt")
     for answer in ("other", "fork", "claim"):
         assert cli.main(["project", answer, str(root)]) == 1, answer
         assert "nothing written" in capsys.readouterr().err
     with pytest.raises(project_identity.AnswerRefused, match="restore / adopt"):
         project_identity.other(root)
-    assert not (root / ".rce" / "project.toml").exists()
+    assert not (root / ".researchos" / "project.toml").exists()
 
 
 def test_a_never_initialised_folder_is_still_not_a_project(tmp_path):
     """The snapshot rule does not reach folders that never had an identity:
-    an empty .rce/backups/ (or none) is NOT_A_PROJECT, and `rce init` works."""
+    an empty .researchos/backups/ (or none) is NOT_A_PROJECT, and `researchos init` works."""
     root = tmp_path / "fresh"
-    (root / ".rce" / "backups").mkdir(parents=True)
+    (root / ".researchos" / "backups").mkdir(parents=True)
     assert situation.classify(root).situation is Situation.NOT_A_PROJECT
     assert cli.main(["init", str(root)]) == 0
 
@@ -630,7 +630,7 @@ def test_http_resolve_answers_a_lost_identity(tmp_path, answer):
     finally:
         _shutdown(httpd, thread)
     if answer == "restore":
-        assert reply["project_id"] == pid and reply["restored_from"].startswith(".rce/backups/project.toml.")
+        assert reply["project_id"] == pid and reply["restored_from"].startswith(".researchos/backups/project.toml.")
     else:
         assert reply["project_id"] != pid
     assert _status(root, READ) == "confirmed"
@@ -685,7 +685,7 @@ def test_scenario_9_a_link_produced_through_two_calls_is_not_sent_to_review(tmp_
 
 
 def test_a_migrated_judgment_is_never_shown_with_the_migration_time_as_its_time(tmp_path, capsys):
-    """9.12: 「迁移自旧索引（原判断时间未知）」 -- `rce review` and every
+    """9.12: 「迁移自旧索引（原判断时间未知）」 -- `researchos review` and every
     reader get the flag, not the migration time as the judgment's."""
     root = _folder(tmp_path)
     build_pre_v5_index(root)
@@ -713,7 +713,7 @@ def test_a_migrated_judgment_is_never_shown_with_the_migration_time_as_its_time(
 
 
 def test_cli_shrink_answer_is_bound_to_the_entries_shown(tmp_path, capsys):
-    """9.9 #11 / 9.12: `rce records` shows the question with the missing
+    """9.9 #11 / 9.12: `researchos records` shows the question with the missing
     entries' ids and the commands that answer exactly it; an answer naming
     other entries does nothing."""
     root, _pid = _project(tmp_path)

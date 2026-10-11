@@ -1,6 +1,6 @@
 # Design
 
-RCE builds a provenance graph over a research project by reading the tools
+Research OS builds a provenance graph over a research project by reading the tools
 researchers already use. It never asks you to change how you work, and it
 never guesses.
 
@@ -48,7 +48,7 @@ the same day, the same name — says nothing about how they are related. A
 relation between them is recorded only when it has a basis of its own:
 something the machine read, or something the researcher stated. "This
 file existed when the definition was confirmed" and "this file was built
-by that definition" are different sentences, and RCE never writes the
+by that definition" are different sentences, and Research OS never writes the
 second because the first is true. (Adopted 2026-10-05 from the external
 review of Section 9; it is the rule the result-provenance phase starts
 from.)
@@ -68,7 +68,7 @@ Three layers, only the first of which is mandatory:
 The engine is fully usable with the first layer alone. That is the default
 install and the intended baseline, not a degraded mode.
 
-The semantic layer is implemented as `rce judge` (S2): it reviews pending
+The semantic layer is implemented as `researchos judge` (S2): it reviews pending
 `backed_by` candidates and writes a model's opinion into each edge's
 `evidence.semantic_review`, but it never writes `status` — see "Machine
 annotation vs. human judgement" below for why that split is load-bearing,
@@ -136,7 +136,7 @@ another claim's former id, silently inheriting that claim's human verdict.
 hand-maintained Markdown table logging every research path tried -- an
 attempt timeline, one row per attempt, with a stable `#` column, a
 date, a path/variable description, and a human-written result and verdict
-(e.g. "confirmed", "dead end", "direction rejected"). RCE never asks the
+(e.g. "confirmed", "dead end", "direction rejected"). Research OS never asks the
 researcher to change this habit; an `attempt` node is a machine-parsed
 mirror of one such row, kept queryable and linkable to the rest of the
 graph rather than left as inert prose.
@@ -165,7 +165,7 @@ to change on re-parse like any other node's `attrs`.
 
 **`rce.ingest.attempts` (task A2)** is this extractor: config-driven only,
 via `.rce/attempts.toml` (file/heading/`[columns]` name mapping, optional
-`steps_dir`) -- with no config present, `rce attempts` prints a
+`steps_dir`) -- with no config present, `researchos attempts` prints a
 copy-pasteable template and exits 1 rather than guessing which table in the
 project is the attempt timeline. The same clean-message-and-exit-1 handling
 also covers a configured `[columns]` name no longer present in the table's
@@ -204,7 +204,7 @@ directly on `edges.status`, where re-ingestion must never touch a
 confirmed or rejected edge. Testing against a real 23-row attempt timeline
 exposed this as a mistake, not a stricter safeguard: a row's verdict was
 changed from `☠️ 伪协整` to `🕒 决定复活重做` in the source file, the
-project was re-ingested, and the graph did not move -- `rce attempts
+project was re-ingested, and the graph did not move -- `researchos attempts
 --check` kept printing `[revived_dead_variables] OK: no issues found
 (23/23 attempts checked)`, while the same map ingested fresh into an empty
 database correctly reported the revival. `rce.consistency.
@@ -215,7 +215,7 @@ The mistake was applying "humans own judgement" to the wrong authority.
 That rule protects the one place a human decision is actually recorded
 from being silently overwritten by a machine re-ingest. For
 `edges.status`, that place is the graph itself: a `backed_by` candidate is
-machine-generated, and `rce confirm` writing `status` in the graph is the
+machine-generated, and `researchos confirm` writing `status` in the graph is the
 *only* place a human ever records confirm/reject -- so re-ingestion
 touching `status` would erase the one record of that decision that exists
 anywhere. For an attempt's `verdict`/`result`, the decision is instead
@@ -250,10 +250,10 @@ file currently says.
 attempt's verdict is ever recorded: the source Markdown file --
 `db.set_human_fields` has exactly one caller in the whole `src` tree, this
 extractor. If a future feature lets someone edit an attempt's verdict
-directly in the graph (mirroring how `rce confirm` edits `edges.status`
+directly in the graph (mirroring how `researchos confirm` edits `edges.status`
 directly, rather than editing a source file), that edit and the source
 file become two authorities that can disagree, and this resync would
-silently discard the in-graph edit on the very next `rce attempts` run.
+silently discard the in-graph edit on the very next `researchos attempts` run.
 That case must be resolved explicitly when such a path is added -- e.g.
 detect divergence and refuse to overwrite, or have the in-graph edit
 itself rewrite the source file -- rather than left for whoever adds it to
@@ -277,20 +277,20 @@ string) is still outside what a syntactic `ast` scan can see. It closes the
 concrete gap a reviewer found, not every gap that could theoretically be
 constructed.
 
-**Staleness window: only `rce attempts` refreshes these nodes.** `attempt`
+**Staleness window: only `researchos attempts` refreshes these nodes.** `attempt`
 nodes are written and resynced exclusively by `rce.ingest.attempts`
-(above), which runs when the `rce attempts` subcommand runs -- `rce
+(above), which runs when the `researchos attempts` subcommand runs -- `researchos
 ingest` (the deterministic pass over commits/figures/claims/etc., section
-2) never touches them. So between one `rce attempts` run and the next, an
-attempt's `human_fields`/`attrs` read via `rce query` or the MCP server can
+2) never touches them. So between one `researchos attempts` run and the next, an
+attempt's `human_fields`/`attrs` read via `researchos query` or the MCP server can
 be stale relative to whatever the researcher has since edited into the
 source file -- the mirror is refreshed on demand, not continuously, and
-nothing currently re-runs `rce attempts` as a side effect of `rce ingest`
+nothing currently re-runs `researchos attempts` as a side effect of `researchos ingest`
 or a query. This is a reasonable division of labor (a hand-maintained
-Markdown table is not a thing to re-parse on every unrelated `rce ingest`
+Markdown table is not a thing to re-parse on every unrelated `researchos ingest`
 of commits and figures), not an oversight, but it means "the graph
-reflects the file" is only true as of the last `rce attempts` invocation,
-and a project relying on fresh attempt data before a query should run `rce
+reflects the file" is only true as of the last `researchos attempts` invocation,
+and a project relying on fresh attempt data before a query should run `researchos
 attempts` first, the same way `cmd_attempts` itself always re-ingests
 before listing or `--check`ing (above).
 
@@ -314,9 +314,9 @@ built against): inserting one ordinary prose sub-heading (`### 说明:...`)
 between `## 二、尝试途径总年表` and its table made `parse_attempts_table`
 return `[]`; `ingest_attempts_repo`'s `seen_ids` therefore came back empty,
 and `_cleanup_orphans` read that exactly the way it reads a genuinely
-emptied table -- "none of these 23 attempts exist anymore." `rce attempts`
+emptied table -- "none of these 23 attempts exist anymore." `researchos attempts`
 printed `attempts=0 created=0 updated=0 orphans_removed=23` and deleted
-every node; `rce attempts --check` then printed `OK: no attempts to check`
+every node; `researchos attempts --check` then printed `OK: no attempts to check`
 and exited 0 -- an ordinary heading edit silently erased the graph's entire
 attempt history and reported success on the way out. This is Section 0's
 "never guess" principle again, pointed at a failure mode the OSError
@@ -356,8 +356,8 @@ confirmed/rejected `edges.status`.
 
 That model does not transfer as a `human_fields` check. Testing against a
 real 23-row map confirmed it concretely: deleting row 15 from the source
-file and re-ingesting left `rce attempts`' listing still printing 23 rows
-including `#15`, `rce attempts --check` still reporting a finding about a
+file and re-ingesting left `researchos attempts`' listing still printing 23 rows
+including `#15`, `researchos attempts --check` still reporting a finding about a
 row that no longer existed anywhere in the project, and exit code 1 -- with
 no way to clear either short of dropping the whole database. Worse, the
 guard behind this was never actually reachable in practice: this same
@@ -385,9 +385,9 @@ reasoning that an attempt node's only edge type, `uses`
 `extractor="attempts_consistency"`), is "a deterministic, always-`auto`
 fact that no human ever confirms or rejects." That assumption was never
 actually *enforced* anywhere in the codebase, and a real end-to-end run
-against the project map disproved it directly (Blocker 2): `rce confirm`
+against the project map disproved it directly (Blocker 2): `researchos confirm`
 carries no allowlist restricting which edge types a human may judge --
-`rce confirm --status confirmed <attempt-node> <commit> uses
+`researchos confirm --status confirmed <attempt-node> <commit> uses
 attempts_consistency` succeeds today exactly like confirming a `backed_by`
 edge would. Once that `uses` edge was confirmed, deleting the row it
 belonged to and re-ingesting silently destroyed both the edge and the node
@@ -402,7 +402,7 @@ every edge touching it, `src` or `dst`, from any extractor; if any carries
 that status, the node and all of its edges are left exactly as they are,
 logged (which node, which file, how many edges carry a decision), and
 counted under a new `orphans_preserved_with_human_decision` key, visible in
-`rce attempts`'s own summary line rather than only in the log. Only when
+`researchos attempts`'s own summary line rather than only in the log. Only when
 none of a node's edges are confirmed or rejected does the delete proceed as
 before: every edge touching the node is removed first (counted under a new
 `orphan_edges_removed` key, mirroring claims's `backed_by_edges_removed`),
@@ -411,7 +411,7 @@ then the node itself.
 `edges.status` (claims) and `attempt` orphans (this section) now agree on
 *when* to preserve a node: both refuse to delete once a confirmed/rejected
 edge is present, because in both cases the graph's own `edges.status` is
-somewhere a human decision can genuinely be recorded, and `rce confirm`
+somewhere a human decision can genuinely be recorded, and `researchos confirm`
 does not care which node type or extractor an edge belongs to. What still
 differs, deliberately, is *scope*: claims's own check and delete are both
 scoped to edges its own extractor produced (`extractor="claims"`), so a
@@ -481,7 +481,7 @@ occurrence list without bound.
 
 `supports` still has no extractor and exists in the schema only; it belongs
 to a future extension of the semantic layer described in section 7.
-`backed_by` candidates, meanwhile, are reviewable today: `rce judge` (S2)
+`backed_by` candidates, meanwhile, are reviewable today: `researchos judge` (S2)
 attaches a model's opinion to each pending candidate as
 `evidence.semantic_review` — see "Machine annotation vs. human judgement"
 below. This is annotation on top of the existing `backed_by` edge, not a
@@ -489,7 +489,7 @@ new edge type, so it needed no change to the table above.
 
 ### Machine annotation vs. human judgement
 
-`rce judge` (`rce.semantic.judge`) is a second machine that looks at the
+`researchos judge` (`rce.semantic.judge`) is a second machine that looks at the
 graph, not a shortcut around "humans own judgement." Section 0's rule does
 not carve out an exception for a model just because its guess is often
 better than the deterministic rounding-coincidence match it is reviewing —
@@ -505,7 +505,7 @@ guess" exists to prevent. Concretely, this is enforced two ways:
    `set_edge_status` itself, so there is no code path by which a judge run
    could move an edge to `confirmed` or `rejected`, however confident the
    model's own `related: true` sounds. A `pending` candidate reviewed by
-   the judge is still `pending` afterward; a human decides via `rce
+   the judge is still `pending` afterward; a human decides via `researchos
    confirm`, same as any other candidate.
 2. **A verifier the model cannot talk its way past.** `better_match` names a
    param or metric the model claims exists on the *same* experiment run —
@@ -534,7 +534,7 @@ of note that must never quietly become the decision itself.
 **Known limitation.** A `backed_by` edge carries one occurrence per distinct
 metric of *that* experiment matching the claim, so an edge has more than one
 occurrence only when a single experiment logs several metrics that all round
-to the claim's printed value. `rce judge` reviews exactly one occurrence per
+to the claim's printed value. `researchos judge` reviews exactly one occurrence per
 edge (the most recently written one) and records which one it saw in
 `semantic_review.metric`/`.metric_value`; any other occurrence on that edge
 is logged as skipped, never itself sent to the model.
@@ -548,18 +548,18 @@ full. Only the several-metrics-on-one-experiment case is partially reviewed.
 
 ### Attempt consistency checks (task A3)
 
-The attempt timeline (above) is not a place RCE hands a judgement back to
+The attempt timeline (above) is not a place Research OS hands a judgement back to
 the researcher. The researcher already wrote the judgement — `verdict` and
 `result`, in their own words, next to the row. What the researcher cannot
 easily do by hand is notice that a row's step reference no longer resolves
 to a file, that a script a row depends on was edited after the verdict was
 recorded, or that a dead variable's name has quietly resurfaced in a row
-that is still marked alive. `rce.consistency` (`rce attempts --check`) is
+that is still marked alive. `rce.consistency` (`researchos attempts --check`) is
 three narrow, fully deterministic checks for exactly that — no model
 anywhere in this module, same "code beats models wherever code suffices"
 rule as every other extractor. Each reads `attempt` nodes already written by
 `rce.ingest.attempts` rather than re-parsing the source Markdown itself, so
-`rce attempts --check` always re-ingests first.
+`researchos attempts --check` always re-ingests first.
 
 1. **Broken reference.** An attempt's step reference (`attrs.step_refs`,
    resolved into `attrs.step_files`/`attrs.step_files_broken` at ingest
@@ -654,12 +654,12 @@ check where `checked` is far below `total` — in the extreme, `checked ==
 0` — must never render as "OK, no issues found": a real 23-row timeline
 with no `date_year` configured has every single date fail to parse, and
 printing that as a clean bill of health hides that the check ran and
-verified nothing at all. `rce attempts --check`'s report always states the
+verified nothing at all. `researchos attempts --check`'s report always states the
 coverage figure (`rce.cli._print_consistency_report`), and explicitly flags
 zero coverage as not a clean result, rather than only ever printing
 `findings`.
 
-`rce attempts` with no `--check` lists what is registered — `#`, date,
+`researchos attempts` with no `--check` lists what is registered — `#`, date,
 verdict, and how many step files a row resolved to — the same non-judging
 posture as the rest of this section. `--check` runs all three and exits
 non-zero if any of them reports a finding; a skipped check never affects
@@ -717,8 +717,8 @@ set is structurally empty, not merely small: the claim node is still
 created, but no candidate edge of any kind follows. This is not a bug. The
 deterministic layer only connects evidence that already exists in the
 project; a repository with no recorded runs has no run evidence to connect,
-and RCE does not invent a placeholder experiment to compare against. A user
-comparing RCE's output across repositories should expect an all-claims,
+and Research OS does not invent a placeholder experiment to compare against. A user
+comparing Research OS's output across repositories should expect an all-claims,
 no-`backed_by` result from this class of repo rather than mistake it for a
 broken extractor.
 
@@ -729,7 +729,7 @@ analysis, MLflow's local store, and W&B's public API; deterministic
 `claim --backed_by--> experiment` candidate generation from numbers in prose
 (pending status, no model); a command line that ingests and traces
 provenance; an optional MCP server. The semantic layer's first slice
-(`rce judge`, S2): a local, vendor-neutral OpenAI-compatible client
+(`researchos judge`, S2): a local, vendor-neutral OpenAI-compatible client
 (`rce.semantic.backend`, off by default, no third-party dependency to
 install) reviews pending `backed_by` candidates and writes its opinion into
 `evidence.semantic_review` — related or not, a one-sentence reason, and an
@@ -746,9 +746,9 @@ data-lineage extractor (`rce.ingest.dataflow`) statically scans `.py`/`.R`/
 `open()`, `read.csv`/`write.csv`, `ggsave`, ...) into
 `script --reads/writes--> dataset|figure` edges — no model, no git required
 (unlike `rce.ingest.pyfig`'s `generates` edge, whose src is resolved via
-`git blame`). `rce lineage` (W4) is the read-only report surface over that
+`git blame`). `researchos lineage` (W4) is the read-only report surface over that
 graph, and the one new user-facing exit this round: it writes nothing and
-re-parses no source file, only querying edges `rce ingest` already wrote.
+re-parses no source file, only querying edges `researchos ingest` already wrote.
 Four blocks, each scoped precisely rather than uniformly: **orphan inputs**
 (a `dataset` read by a script but written by none — "where did this input
 data actually come from", scoped to `dataset` only, since a `figure` is
@@ -773,7 +773,7 @@ none of it matched any of the four patterns — never a bare success line
 with no content behind it, the same "a missing finding is a normal outcome,
 but it must be stated, not indistinguishable from nothing having run"
 posture Section 0 already asks of every other check in this document (see
-e.g. `rce attempts --check`'s own coverage reporting above).
+e.g. `researchos attempts --check`'s own coverage reporting above).
 
 **Next.** Proposing `supports` edges (a figure substantiates an argument)
 with confidence scores, every proposal verified against the graph before it
@@ -782,13 +782,13 @@ and **local by default, not local by construction**: `rce.semantic.backend`
 talks to whatever OpenAI-compatible server `RCE_LLM_BASE_URL` (or the
 `base_url` constructor argument) names, and that is a plain configuration
 value, not something the code structurally confines to this machine. The
-default points at a local server, and every `rce judge` run whose base URL's
+default points at a local server, and every `researchos judge` run whose base URL's
 hostname is not `localhost`/`127.0.0.1`/`::1`/`*.local` prints a prominent
 warning before sending that run's experiment params and metric names
 anywhere, so pointing the semantic layer at a remote endpoint is possible
 but never silent. This is a hostname-*shape* check (string comparison
 against a short allow-list), not DNS resolution or a network reachability
-probe — RCE never resolves or contacts the address to decide whether to
+probe — Research OS never resolves or contacts the address to decide whether to
 warn. **Known limitation:** the `*.local` exemption trusts the suffix by
 name only; a hostname that merely ends in `.local` (whether or not it is
 actually mDNS/LAN-only) is treated as local and, like `localhost`, produces no warning at all, since a hostname-shape check has no way to verify what a name
@@ -800,7 +800,7 @@ digests of what changed, what went stale, and what is waiting for review.
 ## Interfaces
 
 The command line is complete on its own: ingest, inspect, and trace
-provenance with no assistant involved. `rce judge` is the one subcommand
+provenance with no assistant involved. `researchos judge` is the one subcommand
 that talks to a model, and only when invoked — every other subcommand
 (`init`/`ingest`/`status`/`query`/`trace`/`confirm`) works identically
 whether or not a local model server exists.
@@ -840,9 +840,9 @@ to pan; wheel to zoom; only *compatible* sockets accept a link. We adopt
 those conventions wholesale and change only what the domain demands.
 
 What we deliberately do **not** copy: ComfyUI's dark theme (this is a paper
-tool), node creation from a blank search box (RCE never invents research
+tool), node creation from a blank search box (Research OS never invents research
 objects — every node is a file that exists in the project), and executing
-the graph (RCE observes a pipeline; it does not run one).
+the graph (Research OS observes a pipeline; it does not run one).
 
 ### 8.1 Nodes: the object model on the canvas
 
@@ -906,7 +906,7 @@ Ghost: see 8.1.
 *Links.* Cubic Béziers with horizontal tangents (ComfyUI's curve), drawn
 under nodes. **Machine-extracted edges** (any extractor other than
 `mapping`): 1.5px `--ink` at 45% opacity, solid; `pending` status → dashed
-(a candidate awaiting `rce confirm`); `rejected` → not drawn. **Human
+(a candidate awaiting `researchos confirm`); `rejected` → not drawn. **Human
 mappings** (extractor `mapping`, 8.5): 2.25px `--clay`, solid, with a 6px
 clay dot at the curve's midpoint. The two must never be confusable at a
 glance — that is Section 4's "machine annotation vs. human judgement" rule
@@ -1026,7 +1026,7 @@ attempt verdicts. A link the user draws is therefore **appended to
 edge is derived from it by an ingest, never written directly by the UI.
 
 ```toml
-# 手工标注的映射。RCE 只记录它能读到的；它读不到的，由你在这里补上。
+# 手工标注的映射。Research OS 只记录它能读到的；它读不到的，由你在这里补上。
 # 此文件是唯一真相：图谱里的人工连线从它派生，删掉 graph.db 也不会丢。
 [[mapping]]
 from = "复现包_分步/17-叙事更替与汇率波动.Rmd"
@@ -1045,11 +1045,11 @@ Rules:
   (`from` type, `to` type, `type`) triple must satisfy the socket grammar
   in 8.1 or the ingest refuses that entry with a line number and keeps the
   others.
-- The ingest (`rce mappings`, also run by the watcher — the file joins the
+- The ingest (`researchos mappings`, also run by the watcher — the file joins the
   watch set) upserts missing endpoint nodes (the ghost → real transition,
   typed by extension) and upserts each edge with `extractor = "mapping"`
   and status `confirmed` — the human wrote the file; the ingest is their
-  hand, the same way `rce attempts` writes `human_fields.verdict` from the
+  hand, the same way `researchos attempts` writes `human_fields.verdict` from the
   human's own table. No machine extractor may write `extractor =
   "mapping"`, and no machine re-ingest may remove or downgrade a `mapping`
   edge; the only thing that removes one is its entry disappearing from the
@@ -1099,7 +1099,7 @@ changing scope; Enter fits the camera to the matches.
 
 All UI copy is Chinese product language — not only what V4 adds. The
 three tabs read 「决策树」「血缘」「画布」, and the English left over from
-V1–V3 is translated in the same pass. The brand mark stays `RCE`; its
+V1–V3 is translated in the same pass. The brand mark stays `Research OS`; its
 subtitle becomes 「研究脉络」 (the old "decision tree & lineage" named two
 of three views, in the wrong language). What stays as it is: file names
 and paths, the researcher's own text (attempt titles, verdicts, column
@@ -1145,7 +1145,7 @@ both cases a 「详情」 toggle that reveals the engine's raw text inline, in
 small mono `--ink-soft`. One click, never a hover. The command line stays English (it is a developer surface, and
 its messages are quoted in docs and tests).
 
-### 8.9 The native shell: `RCE.app`
+### 8.9 The native shell: `Research OS.app`
 
 "Not a browser tab" means: a real macOS application window — Dock icon,
 menu bar, ⌘-shortcuts, no address bar, no browser chrome. The engine stays
@@ -1155,14 +1155,14 @@ the one that keeps every feature written once. The researcher chose this
 over a SwiftUI rewrite knowingly.
 
 - **Build.** A single Swift source file (AppKit + WebKit) shipped inside
-  the package (`src/rce/webapp/shell/RCEShell.swift`) and compiled by `rce
+  the package (`src/rce/webapp/shell/RCEShell.swift`) and compiled by `researchos
   app` with the system `swiftc` — verified present on the researcher's
-  machine with Xcode 16 — into `~/Applications/RCE.app/Contents/MacOS/RCE`.
+  machine with Xcode 16 — into `~/Applications/Research OS.app/Contents/MacOS/RCE`.
   Zero third-party dependencies, no Xcode project, no signing beyond
-  ad-hoc. If `swiftc` is absent, `rce app` falls back to the existing
+  ad-hoc. If `swiftc` is absent, `researchos app` falls back to the existing
   launcher-script bundle and says so in one line.
 - **Lifecycle.** On launch the shell probes `http://127.0.0.1:7357/api/
-  projects`; if nothing answers it spawns `rce serve --port 7357
+  projects`; if nothing answers it spawns `researchos serve --port 7357
   --no-browser` (the absolute venv path baked in at build time, exactly
   as the launcher script does) as a child `Process` and shows a placeholder
   page — paper background, the serif brand mark, 「正在启动引擎…」 — until the
@@ -1171,10 +1171,10 @@ over a SwiftUI rewrite knowingly.
   child *only if it spawned it*; an engine the user started from a terminal
   is left alone.
 - **Window.** 1280×840 default, 900×600 minimum, frame autosaved under the
-  name `RCEMain`, title `RCE` (`RCE — <project label>` once the bridge
+  name `RCEMain`, title `Research OS` (`Research OS — <project label>` once the bridge
   reports one). Standard traffic lights, full-size content view off (the
   page has its own header). Closing the window quits the app.
-- **Menus.** RCE (关于 RCE · 退出 ⌘Q) · 文件 (新增尝试 ⌘N · 在 Finder 中显示项目
+- **Menus.** Research OS (关于 Research OS · 退出 ⌘Q) · 文件 (新增尝试 ⌘N · 在 Finder 中显示项目
   ⌘⇧R · 关闭 ⌘W) · 编辑 (the standard undo/cut/copy/paste/select-all set —
   without it no form field pastes) · 视图 (决策树 ⌘1 · 血缘 ⌘2 · 画布 ⌘3 ·
   重新载入 ⌘R · 放大 ⌘+ · 缩小 ⌘- · 实际大小 ⌘0 · 适应全部 F) · 窗口 (最小化 ⌘M ·
@@ -1219,10 +1219,10 @@ Three failures seen in the first week of real use become rules:
    `backups/`. `canvas.json` (8.6) lives beside the graph, not in the
    project — it is derived too. A legacy in-project `graph.db` is migrated
    on first touch by any subcommand: copied, checked with `PRAGMA
-   integrity_check`, then removed, one log line; the migration and `rce
+   integrity_check`, then removed, one log line; the migration and `researchos
    init` both leave a one-line `.rce/README` saying where the graph went
    — the researcher who opens `.rce/` and finds no `graph.db` must find
-   the answer in the same folder. `rce status` and
+   the answer in the same folder. `researchos status` and
    `/api/summary` report the graph's actual location so nothing is hidden.
    Before opening, the server checks macOS's dataless flag on the file
    (`st_flags & SF_DATALESS`) and, if set, answers with a header state
@@ -1265,7 +1265,7 @@ and adopted as design:
   to find the source is not evidence that the researcher retracted
   anything (the attempt-orphans doctrine of Section 4). To retract every
   mapping, empty the file.
-- **The file outranks `rce confirm`.** A mapping edge is re-confirmed on
+- **The file outranks `researchos confirm`.** A mapping edge is re-confirmed on
   every ingest; the way to retract one is to delete its entry.
 - **Undo restores what was there.** 「撤销」 after 「标记为错误提取」 returns the
   link to the status it had before (a link the researcher had confirmed
@@ -1363,32 +1363,32 @@ shown).
 
 | Human labor | Today | Source of truth after V5 | Backup |
 |---|---|---|---|
-| Attempt verdict and result (尝试结论) | the researcher's Markdown table | unchanged | before each app write (as today), **and** a snapshot the first time RCE sees the file changed each day — which is what covers hand edits |
+| Attempt verdict and result (尝试结论) | the researcher's Markdown table | unchanged | before each app write (as today), **and** a snapshot the first time Research OS sees the file changed each day — which is what covers hand edits |
 | Hand-drawn link and its note (手工连线、备注) | `.rce/mappings.toml` | unchanged | same |
 | Confirm / reject of a machine link (确认、拒绝) | `edges.status` in the index only | **`.rce/judgements.toml`** (9.3) | daily snapshot; and the file is append-only, so it is its own history |
 | Undo, withdraw (撤销、撤回) | an evidence key, erased on use | entries in `judgements.toml` | same |
 | Note on a judgment (备注) | does not exist | optional `note` on the entry | same |
 | Canvas arrangement, per view (画布位置) | `canvas.json` beside the index | **`.rce/canvas.json`** | daily snapshot, and before 「重新排列」 discards an arrangement |
 | Variable definition, construction and the reason for it (变量定义卡) | nowhere — a shorthand name in the attempt table | **`.rce/variables/<id>/`** (9.11) | daily snapshot; each confirmed version is also kept as a frozen byte copy that is never rotated |
-| Attempt-table configuration | `.rce/attempts.toml`, hand-written | unchanged | daily snapshot when changed; RCE never writes it |
+| Attempt-table configuration | `.rce/attempts.toml`, hand-written | unchanged | daily snapshot when changed; Research OS never writes it |
 
 Snapshots go to `.rce/backups/`, newest 20 per file. A snapshot per day
 rather than per write, because a review session of thirty clicks must not
 rotate the last good copy away.
 
 Not human labor, and said so: the last-used tab; the project registry
-(`~/.rce/projects.json`); a model's second opinion from `rce judge`
+(`~/.rce/projects.json`); a model's second opinion from `researchos judge`
 (`semantic_review` — a machine annotation; it can be recomputed, at a
 cost, and its persistence is out of scope here).
 
 ### 9.3 The judgment ledger: `.rce/judgements.toml`
 
-Append-only. An RCE write is the file's existing bytes plus the new
+Append-only. An Research OS write is the file's existing bytes plus the new
 entry's bytes; existing text, comments and unknown keys are never
 re-emitted. History is therefore not a feature to build — it is the file.
 
 ```toml
-# 你对机器提取结果的判断。RCE 只追加、不改写；图谱里的确认/否决从这里派生。
+# 你对机器提取结果的判断。Research OS 只追加、不改写；图谱里的确认/否决从这里派生。
 [[judgement]]
 id       = "j-0b6f3c1e9a4d4f7ea2c5d8e1f0a3b6c9"   # random, unique
 seq      = 41                            # assigned under the lock: the order of appending
@@ -1417,7 +1417,7 @@ calls = ["read.csv"]
   `withdrawn` entry, after which the link is whatever the machine says.
 - **The state of a link** is its last entry *in the order of appending*,
   among entries not cancelled by an `undone`. That order is the file's
-  order, and each entry RCE writes carries `seq`, one more than the
+  order, and each entry Research OS writes carries `seq`, one more than the
   highest in the file, assigned while the project lock is held. **A
   clock never decides.** `at` is there to be read by a person: a clock
   that is corrected, or another machine's clock running behind, must not
@@ -1425,7 +1425,7 @@ calls = ["read.csv"]
   earlier draft ordered by `at`; the external review caught it.)
 - **Two histories are a conflict, not a race.** If `seq` repeats or runs
   backwards, two machines appended to different copies of the file and
-  something merged them. RCE does not pick a winner — not by time, not by
+  something merged them. Research OS does not pick a winner — not by time, not by
   position. Every link that has an entry at or after the first anomaly is
   shown as 「记录冲突，待处理」 at the machine's status, with both
   histories, until the researcher writes a new entry for it; that entry,
@@ -1435,9 +1435,9 @@ calls = ["read.csv"]
   when the researcher judged it. It is stored readable, so that in a year
   the researcher can see *what* they confirmed, not merely *that* they did.
 - Hand edits are legal; it is the researcher's file. An entry that fails
-  validation makes the whole ledger unreadable, and RCE names the line.
+  validation makes the whole ledger unreadable, and Research OS names the line.
 
-**A ledger RCE cannot trust is never built upon.** While the ledger is
+**A ledger Research OS cannot trust is never built upon.** While the ledger is
 missing though the project has one (`.rce/project.toml` records that it
 does, from the first entry on), still in the cloud, or unreadable:
 
@@ -1445,7 +1445,7 @@ does, from the first entry on), still in the cloud, or unreadable:
   source is not evidence of deletion); a brand-new index shows none and
   says why;
 - **every write to the ledger is refused** (「判断记录文件当前无法读取，请先
-  恢复它」). RCE never replaces a file it could not parse and never
+  恢复它」). Research OS never replaces a file it could not parse and never
   recreates one that should exist — otherwise one click on a morning when
   the sync service is mid-transfer would found a new one-entry ledger and
   the next read would retract everything else.
@@ -1454,7 +1454,7 @@ does, from the first entry on), still in the cloud, or unreadable:
 copy of every entry it has applied. That copy is a safety net, never a
 second authority: if a readable ledger lacks entries the index applied (a
 sync service kept the other machine's file; a truncation that still
-parses; a zero-byte download; a restore from backup), RCE changes nothing
+parses; a zero-byte download; a restore from backup), Research OS changes nothing
 and asks — 「记录文件比图谱少了 N 条判断」 with two answers, 「以文件为准」
 (this is what a deliberate restore wants) and 「把缺少的补回文件」 (appended
 with `via = "recovered"`). The same question, mirrored, when the file has
@@ -1482,7 +1482,7 @@ letter case, a Unicode-normalization variant or a symlink is not a move,
 and only rewrites the spelling.
 
 **The identity check is the first thing every entry point does** — every
-CLI subcommand, `rce serve` with or without a path, a project switch in
+CLI subcommand, `researchos serve` with or without a path, a project switch in
 the app, the MCP server — before anything is written: no registry entry or
 recency bump, no README, no scan, no project node.
 
@@ -1495,7 +1495,7 @@ recency bump, no README, no scan, no project node.
 | id present, no index for it on this machine | restored, cloned, synced from another Mac, or the index was deleted | build the index from sources and the record |
 | no `project.toml`, but `.rce/` holds record files | the identity file was lost, or `.rce/` was copied in from elsewhere | stop and ask; never mint an id silently over existing records |
 | `project.toml` exists but cannot be read (in the cloud, unparseable, or a sync conflict copy sits beside it) | cannot tell who this is | stop: 「项目身份文件无法读取」; nothing is written |
-| no `project.toml`, no record files | not an RCE project, or one from before V5 | `rce init`; and see 9.5 for what is checked first |
+| no `project.toml`, no record files | not an Research OS project, or one from before V5 | `researchos init`; and see 9.5 for what is checked first |
 
 "Gone" is never inferred from failing to look. That is the Section 4
 error in another coat: an unmounted disk is not a deleted folder.
@@ -1503,12 +1503,12 @@ error in another coat: an unmounted disk is not a deleted folder.
 **A copy is never guessed at.** Until the researcher answers, nothing is
 written — not the index, not the record, not the registry. The answers:
 
-- 「作为独立分支继续」 (`rce project fork`): this folder gets a new id and
+- 「作为独立分支继续」 (`researchos project fork`): this folder gets a new id and
   `forked_from`. Its record files came with the copy, so its judgments
   start equal to the original's and diverge from here; it gets its own
-  index. (If `project.toml` is tracked by git, RCE says that committing it
+  index. (If `project.toml` is tracked by git, Research OS says that committing it
   will carry the new identity into whatever branch it is merged to.)
-- 「这里才是原项目」 (`rce project claim`): the index's home becomes this
+- 「这里才是原项目」 (`researchos project claim`): the index's home becomes this
   folder **and the index is rebuilt from this folder** (9.8), so nothing
   from the other folder's scans or record survives in it. The other folder
   is asked the same question when it is next opened.
@@ -1535,7 +1535,7 @@ project updates its entry instead of adding one, and an entry whose folder
 is gone is shown as 「找不到项目文件夹（可能已移动）」 with 「选择新位置…」 —
 the folder chosen goes through the same identity check, so a moved project
 can be re-attached from the app, which is how the app (started with no
-path) finds it again; RCE never searches for a folder by itself. The
+path) finds it again; Research OS never searches for a folder by itself. The
 `project` node in the index is `project:<id>`. The same project synced to
 two Macs is one identity with one local index per machine.
 
@@ -1547,9 +1547,9 @@ never a side effect of opening a folder**, and it accounts for every old
 index on the machine, not just the obvious one.
 
 **What is looked for.** On every open, whether or not the folder already
-has an id, RCE checks for un-retired pre-V5 databases that may hold this
+has an id, Research OS checks for un-retired pre-V5 databases that may hold this
 project's judgments: the index at this path's hash; a legacy
-`.rce/graph.db` inside the folder (pre-8.10); and — listed by `rce migrate
+`.rce/graph.db` inside the folder (pre-8.10); and — listed by `researchos migrate
 --list` for the researcher to recognise — every other un-retired index
 under `~/.rce/graphs/`, each with the project path it recorded, whether
 that path still exists, and how many judgments it holds. Indexes stranded
@@ -1601,7 +1601,7 @@ store.
    stale mirror, not a failure. The tally is printed.
 5. **Only then retire the old index**, and only if no other process holds
    it open (an engine or MCP server still running old code would go on
-   writing into a retired file: 「请先退出 RCE 与 MCP 服务」). It is renamed
+   writing into a retired file: 「请先退出 Research OS 与 MCP 服务」). It is renamed
    into `~/.rce/graphs/.retired/<hash>-<date>/`, not deleted, and the
    command says where it went.
 
@@ -1663,7 +1663,7 @@ sources it read; everything else keeps its previous state.
   comes back with the same basis, the judgment applies again by itself,
   because the facts it was made on are back.
 
-**No transfer, but a prompt.** RCE never moves a judgment onto another
+**No transfer, but a prompt.** Research OS never moves a judgment onto another
 link by itself. But when a judged link stops being produced, the review
 item lists the links that *appeared in the same scan from the same source
 with the same type and the same basis* — the renamed script's read of the
@@ -1673,12 +1673,12 @@ and a new ledger entry. This is how "the new state has a prompt" is met
 when an edit changes an id.
 
 **Where it shows.** A link under review is marked as such in every place
-that shows links — canvas, 血缘, 决策树, `rce lineage`/`trace`, MCP —
+that shows links — canvas, 血缘, 决策树, `researchos lineage`/`trace`, MCP —
 because a link the researcher had rejected reappears at the machine's
 status, and must not pass for an ordinary one. The header counts
 「待复核：N」; a link under review is counted there and not in 「待确认」.
 Clicking the count lists the items in the existing side panel with the
-three actions; `rce review` prints the same list. The canvas gets nothing
+three actions; `researchos review` prints the same list. The canvas gets nothing
 else in V5.
 
 What V5 does **not** change: machine links nobody judged, which a scan no
@@ -1696,29 +1696,29 @@ per write. Two engines, or an engine and a CLI command, may run against
 one project; they take turns.
 
 Record files sit in a folder that may be cloud-synced. Before reading
-one, RCE checks whether the sync service has evicted it (8.10's dataless
+one, Research OS checks whether the sync service has evicted it (8.10's dataless
 flag), asks for the download, and says 「记录文件正在从云端下载…」 rather
 than blocking. If the sync service leaves a conflict copy of a record file
-(`judgements 2.toml`), RCE says so and merges nothing by itself; entry ids
+(`judgements 2.toml`), Research OS says so and merges nothing by itself; entry ids
 make a merge tool possible, and that tool is not V5.
 
 ### 9.8 Commands
 
-- `rce records` — the inventory of 9.2 for this project: where each kind
-  lives, how many, the newest snapshot. `rce records --verify` checks, per
+- `researchos records` — the inventory of 9.2 for this project: where each kind
+  lives, how many, the newest snapshot. `researchos records --verify` checks, per
   link, that the index's human state is what the record implies, and exits
   non-zero if not.
-- `rce rebuild` — build a fresh index beside the current one, apply the
+- `researchos rebuild` — build a fresh index beside the current one, apply the
   record, and compare human state per link before and after: on unchanged
   sources, a judgment applied before and not applied after is a failure,
   and any unreadable source blocks the swap. Then swap; the previous index
   is kept one generation.
-- `rce review` — the list of 9.6. `rce confirm` gains `--note` and the
+- `researchos review` — the list of 9.6. `researchos confirm` gains `--note` and the
   `withdrawn` and `undone` verdicts and writes the ledger like every other
   surface; MCP's `confirm_edge` is narrowed to the same verdicts and, like
   the canvas, refuses hand-drawn links.
-- `rce migrate`, `rce migrate --list`, `rce migrate --from <dir>` — 9.5.
-- `rce project fork` / `rce project claim` — 9.4.
+- `researchos migrate`, `researchos migrate --list`, `researchos migrate --from <dir>` — 9.5.
+- `researchos project fork` / `researchos project claim` — 9.4.
 
 ### 9.9 Acceptance
 
@@ -1726,7 +1726,7 @@ Each scenario runs on a fixture that holds, at the start: one confirmed
 machine link, one rejected, one confirmed-then-rejected-then-undone (so:
 confirmed), one hand-drawn link with a note, an attempt table with
 verdicts, and a canvas view arranged by hand. "All records present" means
-all six, each readable through the app and through `rce records`.
+all six, each readable through the app and through `researchos records`.
 
 1. **Move.** Move the folder elsewhere and open it there — from the CLI,
    and from the app through 「选择新位置…」: all records present; one
@@ -1740,7 +1740,7 @@ all six, each readable through the app and through `rce records`.
    (registry included) until one is taken. *Fork*: new id, `forked_from`,
    all records present in both; a later judgment in the copy does not
    appear in the original. *Claim*: the index is rebuilt from the
-   claiming folder, `rce records --verify` passes there, and the original
+   claiming folder, `researchos records --verify` passes there, and the original
    is asked on its next open. With the original on a volume that is not
    mounted: the third answer, read-only, and no adoption.
 4. **Path reuse.** After V5: move the project away, create an unrelated
@@ -1748,13 +1748,13 @@ all six, each readable through the app and through `rce records`.
    id. Before V5: the same, then upgrade — the new folder is shown the
    old index with its low match, declines, and inherits nothing.
 5. **Rebuild.** Delete `~/.rce/graphs/<id>/` and open the project: all
-   records present; `rce records --verify` passes. `rce rebuild` on a
+   records present; `researchos records --verify` passes. `researchos rebuild` on a
    healthy project: the same, and the per-link comparison is clean.
 6. **Repeated scans.** Run every scan three times: the ledger is
    byte-identical, the index's human state is identical, nothing comes
    under review.
 7. **Backup and restore.** Copy `.rce/` aside; make further judgments;
-   restore the copy over `.rce/`: RCE reports that the file has N fewer
+   restore the copy over `.rce/`: Research OS reports that the file has N fewer
    judgments than the index and asks; 「以文件为准」 gives exactly the
    copy's records. Restore the whole project folder from an earlier copy
    on a machine with no index for it: the same records, no question.
@@ -1787,7 +1787,7 @@ all six, each readable through the app and through `rce records`.
 10. **Two writers.** Two processes each make 300 judgments and 300
     position changes on one project at once: every one is in the record
     afterwards, and nothing raises.
-11. **A record RCE cannot trust.** Make the ledger unparseable; remove
+11. **A record Research OS cannot trust.** Make the ledger unparseable; remove
     it; make it zero bytes; truncate it at an entry boundary: in each
     case the index keeps what it had, the app says what is wrong, **a
     click on confirm or reject writes nothing**, and repairing the file
@@ -1808,7 +1808,7 @@ The result-review flow (entering from a figure, a PDF or a claim) — the
 next phase; it will read the review list this phase creates. Folding the
 attempt table's stale-verdict check into that list. Removing from the
 views machine links nobody judged that a scan no longer produces. Merging
-two diverged copies of a record file. Keeping `rce judge` annotations
+two diverged copies of a record file. Keeping `researchos judge` annotations
 across a rebuild. Any new canvas feature.
 
 One limit the researcher should approve with open eyes: **a judgment on a
@@ -1830,7 +1830,7 @@ raise them — is met by fixing the cause first.
 **Decided 2026-10-05, under the researcher's delegation.**
 
 - A project from before V5 is read-only for human records until it is
-  migrated; RCE writes a human record only after the migration's tally
+  migrated; Research OS writes a human record only after the migration's tally
   has balanced.
 - V5 is built in stages, each with its own acceptance run, and delivered
   to the researcher as one working app: the record and the lock; project
@@ -1841,10 +1841,10 @@ raise them — is met by fixing the cause first.
   rule are fixed from the first stage — a format written to the
   researcher's disk is the one thing that cannot be changed cheaply later.
 - Cards are written in their files; the app shows them and offers the
-  actions RCE records. The cost of filling a card is measured on a real
+  actions Research OS records. The cost of filling a card is measured on a real
   one before a form is considered.
 - The first card is one variable taken end to end — `TopicShift` — before
-  `RV` and `NetBuyRate`. RCE's maintainers may draft a card from the
+  `RV` and `NetBuyRate`. Research OS's maintainers may draft a card from the
   source with the evidence attached; it stays a draft until the researcher
   has read the meaning and written the reason.
 
@@ -1863,26 +1863,26 @@ aggregated, what happens to missing trading days, or why that definition
 was chosen over another. A script path does not answer "what is this
 indicator and why is it built this way"; a name does not answer "how was
 it computed". The card keeps both, and keeps them apart: **the research
-definition is the researcher's statement; the implementation is where RCE
+definition is the researcher's statement; the implementation is where Research OS
 can check that statement against the files.**
 
-**Layout: what the researcher writes and what RCE records never share a
+**Layout: what the researcher writes and what Research OS records never share a
 file.** One directory per variable; its name is the variable's id.
 
 ```
 .rce/variables/topicshift/
-    v1.toml         the researcher's text for version 1 — RCE never writes into it
+    v1.toml         the researcher's text for version 1 — Research OS never writes into it
     v2.toml
-    log.toml        appended by RCE when the researcher acts: confirmed, reaffirmed,
+    log.toml        appended by Research OS when the researcher acts: confirmed, reaffirmed,
                     corrected, abandoned, revived — an append-only ledger, exactly 9.3
     frozen/<hash>.toml    a byte copy of each version as confirmed (and as corrected)
 .rce/variables/_code/<hash>.<ext>   a copy of each implementing script as confirmed
 ```
 
-(The first draft put status and RCE's checks inside the researcher's
+(The first draft put status and Research OS's checks inside the researcher's
 blocks of one file. That cannot be done by appending — a table appended at
 the end of a TOML file attaches to the *last* version, not the one being
-confirmed, verified with the parser — so it would have had RCE rewriting
+confirmed, verified with the parser — so it would have had Research OS rewriting
 the researcher's text. It is recorded here so it is not tried again.)
 
 A version file, written by the researcher:
@@ -1933,19 +1933,19 @@ which is what catches a line that slid under the wrong heading. A draft
 may be incomplete; to be confirmed a version needs a name, meaning, unit,
 granularity, at least one input, a formula and a reason.
 
-**Who writes what.** The version file is the researcher's, all of it. RCE
+**Who writes what.** The version file is the researcher's, all of it. Research OS
 never fills in a formula, a filter or a reason — reading code and guessing
-what it computes is what Section 0 forbids. Everything RCE knows goes into
+what it computes is what Section 0 forbids. Everything Research OS knows goes into
 `log.toml`.
 
 **Confirming** is the act that turns a draft into a definition results
-may rely on. RCE appends one entry:
+may rely on. Research OS appends one entry:
 
 ```toml
 [[entry]]
 id      = "v-5e0c…"                         # this entry is the version's immutable identity
 seq     = 7                                 # order of appending (9.3) — the clock decides nothing
-at      = "2026-10-05T10:12:00+02:00"      # RCE's clock, for display — never typed
+at      = "2026-10-05T10:12:00+02:00"      # Research OS's clock, for display — never typed
 act     = "confirmed"
 version = 1
 attested = "unknown"   # the researcher's own statement, asked at confirmation:
@@ -1977,12 +1977,12 @@ inputs  = [{ dataset = "…theme_counts_2017_2024.csv", sha256 = "44ab…", size
   they did. Neither says the file was built by the definition: the script
   may already compute the new definition while the output on disk is last
   month's — and the design lets a version be confirmed when the checks
-  say `不符`. So RCE never infers "this output belongs to this version"
+  say `不符`. So Research OS never infers "this output belongs to this version"
   from a matching hash. What can carry that weight is a statement or
   evidence of its own: at confirmation the researcher is asked, once,
   whether the output as it stands was built with this definition — 是 /
   否 / 不确定 — and the answer is recorded as theirs (`attested`). They
-  know it at that moment and will not in two months. RCE does not run
+  know it at that moment and will not in two months. Research OS does not run
   scripts, so it has no run evidence to offer; if it ever records runs,
   that will be a second kind of basis. A `yes` standing beside a `不符` is
   shown as exactly that, not resolved. `adopted_on` is the researcher's
@@ -2001,13 +2001,13 @@ inputs  = [{ dataset = "…theme_counts_2017_2024.csv", sha256 = "44ab…", size
 - **Confirming freezes the whole version.** After that, any change to the
   content of `v<n>.toml` is detected by comparing it with the hash in its
   own log entry — **without needing the index**, so the check still works
-  after a rebuild, on another Mac, after a restore. RCE applies nothing
+  after a rebuild, on another Mac, after a restore. Research OS applies nothing
   and asks: 「v2 的定义在确认后被改动了」 — 「另存为新版本」 (the edited text
   becomes the draft `v3`; `v2` is restored from its frozen copy, byte for
   byte), or 「这是更正」 (a typo, a clearer wording, a script that moved: a
   `corrected` entry with both hashes and a new frozen copy, so the wording
   before and after can both be read).
-- To change how a variable is built is to write the next version: `rce
+- To change how a variable is built is to write the next version: `researchos
   variable revise` copies the current version file, byte for byte, to the
   next number as a draft, and refuses while a draft is open. When the new
   one is confirmed, the old one is *shown* as superseded from that
@@ -2023,7 +2023,7 @@ inputs  = [{ dataset = "…theme_counts_2017_2024.csv", sha256 = "44ab…", size
   「引用暂不可解析」 and stays that way: it is **never** re-pointed at
   whatever is called `v2` now. This is why a correction does not rewrite
   history (the result keeps the hash it was made against, and both
-  wordings can be read), and why "numbers are not reused" — which RCE
+  wordings can be read), and why "numbers are not reused" — which Research OS
   still does its best to keep, leaving a `removed` entry behind a version
   that a restore took away — no longer has to be true for a reference to
   be safe. Only a confirmed version can be referred to.
@@ -2048,13 +2048,13 @@ either direction (「卡片已弃用，attempts.toml 未列入」 and the revers
 something deterministic to map the attempt table's shorthand onto.
 
 **When the implementation moves under a confirmed version** (stage (b)).
-RCE compares the script — its code with comments and blank lines removed;
+Research OS compares the script — its code with comments and blank lines removed;
 for an Rmd, its code chunks — and the input files with what the
 `confirmed` entry recorded. The researcher may narrow the comparison by
 naming `chunk` (an Rmd chunk label) or `function` in `[implementation]`;
 the region is found exactly or the version is under review for that
 reason. A difference puts the version under review — 「实现脚本在确认后有
-改动」 or 「输入数据在确认后有变化」 — and RCE says plainly that it cannot
+改动」 or 「输入数据在确认后有变化」 — and Research OS says plainly that it cannot
 tell whether the definition changed. Reviews raised by one changed script
 are one item, 「此脚本的改动涉及 N 个变量」, answerable together (「全部口径
 未变」) or one by one: 「口径未变」 appends `reaffirmed` with the new
@@ -2077,7 +2077,7 @@ correcting) touches several files; the log entry is the commit point. In
 order: the code copy and the frozen copy are written and synced to disk;
 both are read back and their hashes checked; only then is the entry that
 names them appended. A crash at any point leaves at worst copies no entry
-refers to — harmless, and `rce records --clean` removes them — and never
+refers to — harmless, and `researchos records --clean` removes them — and never
 an entry that refers to a copy which is not there. On reading, an entry
 whose copy is missing anyway (a sync that has not delivered it) is shown
 as 「确认记录引用的副本缺失」: the hash in the entry still detects an edit,
@@ -2089,7 +2089,7 @@ frozen and writes to *that card* are refused; a log that has lost entries
 the index applied — an `abandoned` as much as a `confirmed` — is asked
 about, never obeyed. Two directories with the same id up to letter case,
 or a sync conflict copy beside any file of a card, make that card
-unreadable until one is removed. `rce variable new` creates the directory
+unreadable until one is removed. `researchos variable new` creates the directory
 exclusively and refuses an id already present in the directory, the
 index, or the snapshots. Snapshots go to `.rce/backups/variables/<id>/`.
 What V5 cannot detect, and says so: a whole card directory that never
@@ -2097,15 +2097,15 @@ arrived on a machine with no index for the project.
 
 **In the app.** One plain view, 「变量」: the cards, the version in use,
 the history from the log, each check with its result, what is under
-review, 「查看当时的代码」. The app may write what RCE authors — confirm,
+review, 「查看当时的代码」. The app may write what Research OS authors — confirm,
 reaffirm, open the next draft, abandon or revive with a note — and never
 the researcher's text: a card is written in its file, from a commented
-template that `rce variable new` creates. In the index, V5 keeps a copy
+template that `researchos variable new` creates. In the index, V5 keeps a copy
 of each card for this view and for the shrink check, and promises no node
 type to later phases.
 
 **What V5 covers and does not.** Cards are written by the researcher for
-the variables that actually enter a model, a figure or a claim; RCE does
+the variables that actually enter a model, a figure or a claim; Research OS does
 not go looking for variables and does not create cards. Not in V5: links
 from attempts, figures and claims to variable versions; variables on the
 canvas; a form for writing a card in the app; discovering variables from
@@ -2113,7 +2113,7 @@ data columns; replacing the dead-variable list; renaming a variable's id.
 
 **Acceptance (continues 9.9).**
 
-13. **Life of a card.** `rce variable new` → a draft from the template;
+13. **Life of a card.** `researchos variable new` → a draft from the template;
     edit it freely; confirm with one input deliberately absent and the
     output not a CSV: confirmed, with those checks recorded as 「未核对」
     and their reasons, the script copied to `_code/`, the output
@@ -2121,7 +2121,7 @@ data columns; replacing the dead-variable list; renaming a variable's id.
     from the entry's time, `v1.toml` byte-identical. `revise` with a draft
     open is refused. **Kill the process between each pair of writes of a
     confirmation and start again**: there is never an entry whose frozen
-    or code copy is missing; leftover copies are removed by `rce records
+    or code copy is missing; leftover copies are removed by `researchos records
     --clean`. The confirmation asks the attestation question, and a
     matching output hash alone never makes the view say the output was
     built with the version.
@@ -2140,7 +2140,7 @@ data columns; replacing the dead-variable list; renaming a variable's id.
     the fixture (one with two versions, a correction and an `abandoned`
     entry): after a move, a rename, a copy with each answer, a rebuild, a
     restore and two concurrent writers, every version, entry, frozen copy
-    and code copy is present and `rce records --verify` passes. A log made
+    and code copy is present and `researchos records --verify` passes. A log made
     unparseable, removed or truncated — including one that lost only its
     `abandoned` entry — freezes that card, refuses writes to it and asks;
     the other cards keep working. A sync conflict copy beside `v2.toml`
@@ -2168,7 +2168,7 @@ and binding like the rest.
 
 *The ledger.*
 - **`settles`.** A new entry cannot be told from the other copy's later
-  entries by position alone. An entry RCE appends to a file that already
+  entries by position alone. An entry Research OS appends to a file that already
   holds an anomaly names the anomalous entries it settles (`settles =
   [ids]`); that, not its position, is what settles its link. The conflict
   region begins where the two copies diverged, not at the first entry that
@@ -2182,18 +2182,18 @@ and binding like the rest.
 - **An answer belongs to the question that was shown.** The shrink answer
   names the entries the researcher saw; if the file has changed since, the
   question is asked again.
-- **A judgment RCE cannot place** — its link is not in the index and no
+- **A judgment Research OS cannot place** — its link is not in the index and no
   scan speaks for it — is 「图谱里还没有这条关联」: kept, listed, not
   counted as under review. One made while its source cannot be read is
   held at the machine's status until a scan reads the source.
 
 *Identity.*
 - **A lost identity file has three answers**: restore `project.toml` from
-  its snapshot when one exists; 「沿用这些记录，建立新身份」 (`rce project
+  its snapshot when one exists; 「沿用这些记录，建立新身份」 (`researchos project
   adopt`: a new id, every record kept, a fresh index built from them); or
   「这是另一个项目」.
 - **A limit, stated.** When a copy is put at the home's recorded path and
-  the original is renamed aside, RCE can ask only the original (it
+  the original is renamed aside, Research OS can ask only the original (it
   recognises it by inode); it has no way to go looking for the other
   folder. Each folder's records are its own files either way.
 - 8.10's "a stable hash of the project's resolved path" and 8.11's "a
@@ -2221,7 +2221,7 @@ and binding like the rest.
   `migrating_from` before anything is exported, so a crash can never leave
   records in a folder with no identity. Then the scan, the export on that
   scan's bases, the verification, the retirement, and the flag cleared. A
-  migration that stopped resumes on the next `rce migrate`, not on every
+  migration that stopped resumes on the next `researchos migrate`, not on every
   open.
 - **"Exactly one basis"** means: the *set* of call names over the old
   index's stored occurrences equals the fresh scan's basis. A link one
@@ -2234,7 +2234,7 @@ and binding like the rest.
   cannot retire names the process holding the old index and waits.
 - **Only a process that actually holds the old index blocks its
   retirement** — an engine serving *this* project, or any process with the
-  database file open. Another RCE window on another project does not.
+  database file open. Another Research OS window on another project does not.
 - A migrated entry's time is the migration's, and is shown as 「迁移自旧
   索引（原判断时间未知）」, never as the time the judgment was made.
 
@@ -2245,18 +2245,18 @@ positional path or as `--path`.
 - **A pre-V5 project is frozen until it is migrated, scans included.** The
   old index is at an older schema and nothing new may land in it before
   the migration reads its own count: the watcher does not run for such a
-  project, `rce ingest` / `attempts` / `mappings` refuse with "migrate
+  project, `researchos ingest` / `attempts` / `mappings` refuse with "migrate
   first", and the page does not try to save a viewport. Reading works.
 - **A lost identity file is recognised by its snapshot too.** A folder
   with no `project.toml` and no record files, but with a snapshot of
   `project.toml` under `.rce/backups/`, is asked (restore / new identity)
-  rather than silently given a fresh id by `rce init`.
+  rather than silently given a fresh id by `researchos init`.
 - **A confirmed version file that has vanished or cannot be read** has no
   edited text to keep, so its question has other answers: a vanished file
   offers 「按冻结副本放回」; an unreadable one offers only "keep these bytes
   as the next draft and put the frozen text back".
 - **Two histories in a card's log are settled by naming what stands.**
-  `rce variable settle <id> --keep <entry id>…` (and the same from the
+  `researchos variable settle <id> --keep <entry id>…` (and the same from the
   card's page, 「以这一条为准」 beside each disputed entry) appends a
   `settled` entry that names the anomalous entries it settles and, for
   each version number in dispute, the one confirmation that stands. The
@@ -2266,16 +2266,16 @@ positional path or as `--path`.
   the identity check adopts, migrates or builds an index: the index's
   current location and the record files this folder holds.
 - **The first launch after an install asks for the Documents folder.**
-  macOS treats a rebuilt, ad-hoc-signed `RCE.app` as a new application
+  macOS treats a rebuilt, ad-hoc-signed `Research OS.app` as a new application
   and suspends the engine's first read under `~/Documents` until the
   researcher answers its prompt — observed as an engine that starts and
   never listens while the screen is locked. The shell's waiting page says
-  so (「如果系统询问是否允许 RCE 访问"文稿"文件夹，请点"允许"」) instead of
+  so (「如果系统询问是否允许 Research OS 访问"文稿"文件夹，请点"允许"」) instead of
   showing a log tail that has nothing in it, and the engine's output is
-  unbuffered so that its startup line reaches `serve.log` at once. `rce
+  unbuffered so that its startup line reaches `serve.log` at once. `researchos
   app` does not rebuild a bundle whose sources have not changed, so the
   question is asked once per real change of the shell, not per install.
-- **RCE runs on Python 3.11 and on Linux as it says it does.** The path
+- **Research OS runs on Python 3.11 and on Linux as it says it does.** The path
   convention must not depend on a later argparse; naming the process that
   holds an index must work from `/proc` where there is no `lsof`.
 
@@ -2289,13 +2289,13 @@ apply throughout.*
 
 ### 10.0 What is missing
 
-A folder becomes an RCE project only through the command line (`rce init`,
-then `rce ingest`, then `rce serve <path>`). The app can switch only among
+A folder becomes an Research OS project only through the command line (`researchos init`,
+then `researchos ingest`, then `researchos serve <path>`). The app can switch only among
 folders already registered, the switcher appears only once there are two,
 and the app never scans a project in full by itself — the watcher re-reads
 the attempt table, the record files and the step scripts when they change,
 nothing more. With an empty registry the engine refuses to start at all,
-so on a new machine `RCE.app` opens onto an error.
+so on a new machine `Research OS.app` opens onto an error.
 
 ### 10.1 Where it lives
 
@@ -2309,7 +2309,7 @@ so on a new machine `RCE.app` opens onto an error.
 - **The native menu.** 文件 → 「添加项目… ⌘O」 (a whitelisted command,
   `add-project`).
 - **No project yet.** With an empty registry the engine starts anyway, in a
-  no-project state, and the page shows only this: two sentences on what RCE
+  no-project state, and the page shows only this: two sentences on what Research OS
   does (it reads a research folder's scripts, data and drafts, and keeps
   the researcher's judgments about them), 「添加项目…」, and one line saying
   that a project is simply the folder that holds a piece of research.
@@ -2317,7 +2317,7 @@ so on a new machine `RCE.app` opens onto an error.
 ### 10.2 Adding: choose, look, then write
 
 **1. Choose.** In the native shell, a folder panel (directories only,
-message 「选择要加入 RCE 的项目文件夹」) through the existing bridge, which
+message 「选择要加入 Research OS 的项目文件夹」) through the existing bridge, which
 gains a purpose (`add` | `locate`) that changes only the panel's message.
 In a plain browser, a path field (`~` is expanded).
 
@@ -2330,15 +2330,15 @@ stats what it lists. The answer is exactly one of:
 | What the folder is | What the researcher is shown |
 |---|---|
 | already in the list | 「这个项目已经在列表里」 — 「切换过去」 |
-| an RCE project (`.rce/project.toml`) | its name and, from the identity check (9.4), what opening it means. Normal, moved, or no index on this machine: 「加入列表并打开」. A copy, a lost or unreadable identity, an original that cannot be checked: the 9.4 question and its answers, here; nothing — the registry included — is written until one is chosen |
-| an RCE project from before V5 | 「这是旧版 RCE 项目：加入后需要先迁移，才能记录判断」 — 「加入列表并打开」; the migration banner (9.5) follows |
-| a folder RCE has not seen | the preview below — 「加入并扫描」 / 「取消」 |
+| an Research OS project (`.rce/project.toml`) | its name and, from the identity check (9.4), what opening it means. Normal, moved, or no index on this machine: 「加入列表并打开」. A copy, a lost or unreadable identity, an original that cannot be checked: the 9.4 question and its answers, here; nothing — the registry included — is written until one is chosen |
+| an Research OS project from before V5 | 「这是旧版 Research OS 项目：加入后需要先迁移，才能记录判断」 — 「加入列表并打开」; the migration banner (9.5) follows |
+| a folder Research OS has not seen | the preview below — 「加入并扫描」 / 「取消」 |
 | something that cannot be a project | why, in one sentence (below), and nothing to press but 「重新选择」 |
 
-**The preview** says, in numbers, what RCE would read — and these are the
+**The preview** says, in numbers, what Research OS would read — and these are the
 numbers the first scan will in fact read, computed by the same inventory
 the scan uses: scripts (`.py`, `.R`, `.Rmd`), data files, drafts (`.md`,
-`.tex`), images. For a git repository it says that RCE reads the files git
+`.tex`), images. For a git repository it says that Research OS reads the files git
 tracks, how many those are, and how many more files sit in the folder
 untracked and will not be read (「另有 N 个未被 git 跟踪的文件不会被扫描」) —
 a project whose new scripts are not yet committed must not look emptier
@@ -2358,7 +2358,7 @@ name and can be edited here.
   `/Library`, `/Applications`, `/usr`, `/bin`, `/sbin`, `/etc` — 「请选择
   具体的项目文件夹，而不是「文稿」这样的总文件夹」 (matched exactly for the
   top-level folders, by containment for the system ones);
-- the RCE home (`~/.rce`) or anything inside it;
+- the Research OS home (`~/.rce`) or anything inside it;
 - inside a registered project, or containing one: 「这个文件夹在项目「X」
   里面」 / 「这个文件夹里已经有项目「X」」 — the same files may belong to only
   one project, otherwise two ledgers would judge the same links.
@@ -2389,7 +2389,7 @@ attempt table and its check, the hand-drawn links, then the record
 applied — under the project lock, in the background, with the same
 progress line; one scan at a time per project (a second request says one is
 running). A project from before V5 is not rescanned until it is migrated
-(9.12). The command line already has this as `rce ingest`.
+(9.12). The command line already has this as `researchos ingest`.
 
 ### 10.4 The list
 
@@ -2401,9 +2401,9 @@ running). A project from before V5 is not rescanned until it is migrated
 
 ### 10.5 Command line
 
-`rce projects add <path> [--label L] [--yes]` (without `--yes`, prints the
-preview and writes nothing), `rce projects rename <path|id> <label>`, and
-the existing `rce projects list | remove`. `rce serve` with an empty
+`researchos projects add <path> [--label L] [--yes]` (without `--yes`, prints the
+preview and writes nothing), `researchos projects rename <path|id> <label>`, and
+the existing `researchos projects list | remove`. `researchos serve` with an empty
 registry starts in the no-project state instead of exiting.
 
 ### 10.6 Safety
@@ -2413,14 +2413,14 @@ to write into. Every one of them (`inspect`, `add`, `rename`, `rescan`)
 runs `_check_local_origin` first. The chosen path is resolved, symlinks
 followed, and the resolved folder is the one checked against the refusals
 and the one written into. Adding writes only `.rce/` inside a folder that
-exists, and the index and registry under the RCE home. Inspecting reads
+exists, and the index and registry under the Research OS home. Inspecting reads
 directory listings and file metadata only, stops counting at 100,000
 entries and says so, and never follows a symlink out of the folder.
 
 ### 10.7 The native shell
 
 The bridge's `choose-folder` message gains `purpose`; the panel's message
-is 「选择要加入 RCE 的项目文件夹」 for `add` and 「选择项目文件夹的新位置」 for
+is 「选择要加入 Research OS 的项目文件夹」 for `add` and 「选择项目文件夹的新位置」 for
 `locate`; any other value is ignored. The 文件 menu gains 「添加项目… ⌘O」.
 This rebuilds the shell, and macOS will ask once more for access to the
 Documents folder (9.12).
@@ -2465,7 +2465,7 @@ Documents folder (9.12).
   adding writes the identity's snapshot under `.rce/backups/` (9.12 needs
   it to recognise a lost identity). Acceptance 2 reads accordingly, and the
   add dialog lists all three.
-- **What inspecting reads.** No file's contents except RCE's own identity
+- **What inspecting reads.** No file's contents except Research OS's own identity
   files — the folder's `.rce/project.toml`, its snapshots, and for a moved
   project the old home's `project.toml` — and none of those while they are
   in the cloud: a cloud identity file is reported as such and its download
@@ -2474,7 +2474,7 @@ Documents folder (9.12).
   `.rce/graph.db` moves that database out of it (8.10, rule 1: copied,
   checked, then removed). Adding from the app does the same; the dialog
   says so before anything is written.
-- **Git in a folder that is not yet trusted.** Every git command RCE runs
+- **Git in a folder that is not yet trusted.** Every git command Research OS runs
   disables the repository's own `core.fsmonitor` and takes no optional
   locks, so looking at a folder cannot run a program the folder names.
   Still to do: `git blame` without textconv and `git log` without signature
@@ -2516,12 +2516,12 @@ any other (Section 10). What changes:
 
 - The provider's root (`OneDrive-个人` itself) and `~/Library/CloudStorage`
   itself are top-level folders and are refused with 10.2's sentence.
-- RCE knows which provider holds a folder (from the directory name under
+- Research OS knows which provider holds a folder (from the directory name under
   `CloudStorage`) and whether its client is running. When files are only in
-  the cloud and the client is not running, RCE does not try to read them —
+  the cloud and the client is not running, Research OS does not try to read them —
   a read would wait forever — and says so wherever those files are counted:
   in the add preview and in 「来源文件暂不可读」 (「这些文件只在 OneDrive 云端；
-  OneDrive 客户端没有运行，打开它并登录后 RCE 才能读到」). With the client
+  OneDrive 客户端没有运行，打开它并登录后 Research OS 才能读到」). With the client
   running, a cloud file is read the same way an iCloud one is (8.10).
 - Nothing else: the index is already outside the project (9.1), the lock is
   in `~/.rce/locks` (9.7), records are plain files the provider syncs.
@@ -2536,7 +2536,7 @@ forms; the owner and name checked against GitHub's character set) is
   and under it the state as of the last fetch: 「本地领先 N 个提交，落后 M
   个（<日期> 获取）」, or 「与 GitHub 一致」, or 「还没有从 GitHub 获取过」.
   「从 GitHub 获取最新状态」 runs `git fetch` for that remote — the only
-  network RCE does here, only on that click, never `pull`, never a merge.
+  network Research OS does here, only on that click, never `pull`, never a merge.
 - **Links.** A script, data file or draft that git tracks gets 「在 GitHub
   上查看」, pinned to a commit so the link never changes under the reader:
   the newest commit that GitHub already has (the upstream branch's tip, or
@@ -2544,13 +2544,13 @@ forms; the owner and name checked against GitHub's character set) is
   there is no link and the reason is said: 「这个文件还没有推送到 GitHub」. If
   the local file differs from that version: 「本地有未推送或未提交的改动」.
   A commit gets a link only when GitHub has it.
-- **Every git command RCE runs** has the repository's `core.fsmonitor`
+- **Every git command Research OS runs** has the repository's `core.fsmonitor`
   disabled and takes no optional locks (10.9), so linking a folder never
   runs a program the folder names.
 
 ### 11.3 GitHub: pushing a project as a backup
 
-「推送到 GitHub…」 in the project menu. Pushing is the first thing RCE does
+「推送到 GitHub…」 in the project menu. Pushing is the first thing Research OS does
 that writes somewhere other than this machine; every push is shown before
 it happens and needs its own confirmation — nothing is remembered as "always
 push".
@@ -2560,19 +2560,19 @@ and their first lines); uncommitted changes, which a push does not carry
 (「另有 N 个文件的改动还没有提交，推送不包括它们」); and whether the
 project's human records (`.rce/`) are committed. One tick, 「先把人工记录提交
 一次」, commits exactly the record files under `.rce/` — never any other file,
-never the researcher's own staged changes — with the message 「RCE：人工记录」.
+never the researcher's own staged changes — with the message 「Research OS：人工记录」.
 
 **Without a GitHub remote**, the dialog first creates a **private**
 repository under the account `gh` is logged in to (name defaults to the
-folder name, ASCII-only, editable), adds it as `origin`, then pushes. RCE
+folder name, ASCII-only, editable), adds it as `origin`, then pushes. Research OS
 never creates a public repository.
 
 **Refused, with the reason and no push:**
 - `gh` is missing or not logged in (for creating a repository) — the exact
-  command to run is shown; RCE never asks for a password or token;
+  command to run is shown; Research OS never asks for a password or token;
 - detached HEAD, a merge or rebase in progress, no branch;
 - the push is not a fast-forward (「GitHub 上有你本地没有的提交，请先在终端里
-  处理」) — RCE never force-pushes;
+  处理」) — Research OS never force-pushes;
 - a file over 100 MB in the commits to be pushed (GitHub rejects it): the
   files are named;
 - the remote is not on GitHub.
@@ -2618,11 +2618,11 @@ A new extractor, `citations`, reads every draft (`.md`, `.tex`).
 3. **By DOI, online — only when the researcher turns it on.** A setting,
    off by default, 「用 DOI 联网查文献信息」, with the sentence 「只发送 DOI，
    不发送文稿内容」; lookups go to doi.org / Crossref, are cached under the
-   RCE home with their date, and a failure is retried later, never recorded
+   Research OS home with their date, and a failure is retried later, never recorded
    as "not found".
 4. **Author–year without a DOI path** — Zotero items whose first creator's
    surname and year match are *candidates* (`pending`, as claims' are):
-   RCE does not decide that "Simon 1955" is a particular item; the
+   Research OS does not decide that "Simon 1955" is a particular item; the
    researcher confirms one, through the ledger (9.3).
 
 **In the graph.** References become nodes — `ref:doi:<doi>` when a DOI is
@@ -2642,7 +2642,7 @@ written, what it was resolved to (authors, year, title, journal) and how —
 引用：已对上 X，待确认 Y，未找到 Z」, with the drafts that have the most
 unresolved first. Actions: open the DOI; 「在 Zotero 中打开」 only when the
 Zotero program is installed; 「打开 PDF」 for a Zotero attachment — the one
-place RCE opens a file outside the project, so it opens only a file that
+place Research OS opens a file outside the project, so it opens only a file that
 the Zotero database names for that item, inside Zotero's storage
 directory, never a path the page supplies. The setting for online lookups
 lives at the top of this view. Showing which claims cite what — from the
@@ -2677,7 +2677,7 @@ claim's side — belongs to the result-review phase.
    candidate (a ledger entry each); 「打开 PDF」 refuses any path that is not
    the item's attachment inside Zotero's storage directory.
 7. **Origin and secrets.** Every new endpoint answers 403 cross-origin; no
-   token, password or credential is written anywhere RCE writes.
+   token, password or credential is written anywhere Research OS writes.
 
 ### 11.6 Rulings made while building V7
 
@@ -2709,7 +2709,7 @@ claim's side — belongs to the result-review phase.
   inserting an entry above it puts a judgment on it under review instead of
   carrying the judgment to another paper.
 - **GitHub.** The repository's own git configuration — `.git/config`, its
-  includes and `config.worktree` — may not name a program RCE would run
+  includes and `config.worktree` — may not name a program Research OS would run
   (ssh command, upload-pack, credential helper, filter drivers): fetch and
   push are refused with a sentence telling the researcher to run them in a
   terminal, and status reads switch the repository's own filters off.
@@ -2722,7 +2722,7 @@ claim's side — belongs to the result-review phase.
   the shell sends only web links out; it is shown only when the Zotero
   program is installed. Group libraries are not addressed in V7.
 - **Drafts are not watched.** Citations are read by the full scan
-  (「重新扫描这个项目」, `rce ingest`), as the other draft extractors are
+  (「重新扫描这个项目」, `researchos ingest`), as the other draft extractors are
   (10.0).
 
 ## Section 12 — Research OS: one person, many projects; a team, one record (task V8)

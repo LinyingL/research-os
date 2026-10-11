@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.scan -- what a scan must report (DESIGN.md 9.6,
+"""Tests for researchos.ingest.scan -- what a scan must report (DESIGN.md 9.6,
 task V5 phase 3): per-source status, per-scan basis, and the queries the
 judgment ledger will ask. Numbers in docstrings name the 9.9 acceptance
 scenario a test covers the scan half of (the judgment half is phase 4).
@@ -13,9 +13,9 @@ import sys
 
 import pytest
 
-from rce import db
-from rce.ingest import dataflow
-from rce.ingest import scan as scan_mod
+from researchos import db
+from researchos.ingest import dataflow
+from researchos.ingest import scan as scan_mod
 
 
 def _edge(src, dst, type_="reads", extractor="dataflow"):
@@ -29,7 +29,7 @@ def _row(conn, edge):
 def _dataflow_scan(conn, root):
     """A dataflow scan over every .py/.R/.Rmd file under `root`, with the
     filesystem inventory recorded -- what the watcher's dataflow slice runs."""
-    from rce.ingest import files as files_ingest
+    from researchos.ingest import files as files_ingest
 
     inventory = files_ingest.list_source_files(root)
     with scan_mod.scan(conn, "test") as sc:
@@ -309,7 +309,7 @@ def test_scan_stamps_never_touch_evidence_or_status(conn, tmp_path):
 
 # -- the full pipeline: claims, mlflow, latex, mdpaper ---------------------------
 
-from rce.ingest import pipeline  # noqa: E402
+from researchos.ingest import pipeline  # noqa: E402
 
 
 def _metric_run(root, run_id="run1", value="0.873", meta=True):
@@ -374,7 +374,7 @@ def test_claims_against_experiments_not_read_this_run_keep_their_state(conn, tmp
     pipeline.ingest_sources(conn, tmp_path)
     edge = _claim_edge(conn)
     before = _row(conn, edge)
-    from rce.ingest import mdpaper
+    from researchos.ingest import mdpaper
 
     mdpaper.ingest_md_repo(conn, tmp_path, ["paper.md"])  # its own scan: no store read
     assert _row(conn, edge) == before
@@ -448,14 +448,14 @@ def test_unreadable_tex_and_md_report_unreadable(conn, tmp_path):
 
 
 def test_missing_mlruns_directory_is_an_unreadable_store(conn, tmp_path):
-    from rce.ingest import mlflow
+    from researchos.ingest import mlflow
 
     mlflow.ingest_mlflow_dir(conn, tmp_path / "nowhere", source_key="mlflow:nowhere")
     assert db.scan_source_row(conn, "mlflow", "mlflow:nowhere")["status"] == scan_mod.UNREADABLE
 
 
 def test_wandb_store_reports_and_stamps_artifact_basis(conn):
-    from rce.ingest import wandb
+    from researchos.ingest import wandb
 
     db.upsert_node(conn, "figure:plots/f.png", "figure")
     runs = [{"name": "r1", "files": {"edges": [{"node": {"name": "media/f.png"}}]}}]
@@ -531,7 +531,7 @@ ATTEMPTS_MD = """## Timeline
 
 
 def _attempts_config(root):
-    from rce.ingest import attempts
+    from researchos.ingest import attempts
 
     (root / "map.md").write_text(ATTEMPTS_MD)
     return attempts.AttemptsConfig(
@@ -542,7 +542,7 @@ def _attempts_config(root):
 
 
 def test_attempts_partial_scan_reports_its_table_and_nothing_else(conn, tmp_path):
-    from rce.ingest import attempts
+    from researchos.ingest import attempts
 
     root = _project(tmp_path)
     _dataflow_scan(conn, root)
@@ -563,28 +563,28 @@ def test_attempts_partial_scan_reports_its_table_and_nothing_else(conn, tmp_path
 
 
 def test_mappings_partial_scan_reports_the_file(conn, tmp_path):
-    from rce.ingest import mappings
+    from researchos.ingest import mappings
 
     root = _project(tmp_path)
-    (root / ".rce").mkdir()
+    (root / ".researchos").mkdir()
     mappings.ingest_mappings(conn, root)  # no file: nothing reported
-    assert db.scan_source_row(conn, "mapping", ".rce/mappings.toml") is None
-    (root / ".rce" / "mappings.toml").write_text(
+    assert db.scan_source_row(conn, "mapping", ".researchos/mappings.toml") is None
+    (root / ".researchos" / "mappings.toml").write_text(
         '[[mapping]]\nfrom = "data/in.csv"\nto = "a.py"\ntype = "reads"\n'
     )
     mappings.ingest_mappings(conn, root)
     edge = _edge("script:a.py", "dataset:data/in.csv", "reads", "mapping")
     assert scan_mod.source_status(conn, edge) == scan_mod.READ_AND_PARSED
     assert scan_mod.current_basis(conn, edge) == {}
-    (root / ".rce" / "mappings.toml").write_text("not = [toml\n")
+    (root / ".researchos" / "mappings.toml").write_text("not = [toml\n")
     with pytest.raises(mappings.MappingsParseError):
         mappings.ingest_mappings(conn, root)
     assert scan_mod.source_status(conn, edge) == scan_mod.UNPARSEABLE
 
 
 def test_stale_verdict_check_reports_the_check_source(conn, tmp_path):
-    from rce import consistency
-    from rce.ingest import attempts
+    from researchos import consistency
+    from researchos.ingest import attempts
 
     _git(tmp_path, "init", "-q")
     (tmp_path / "steps").mkdir()

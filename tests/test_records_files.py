@@ -1,4 +1,4 @@
-"""Tests for rce.records.files (DESIGN.md sections 9.2, 9.3, 9.7): the
+"""Tests for researchos.records.files (DESIGN.md sections 9.2, 9.3, 9.7): the
 durable write, the append-only write, daily snapshots, the four-way read
 and conflict-copy detection."""
 
@@ -12,15 +12,15 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.records import files
-from rce.records.files import RecordState
+from researchos import paths
+from researchos.records import files
+from researchos.records.files import RecordState
 
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
-    (root / ".rce").mkdir(parents=True)
+    (root / ".researchos").mkdir(parents=True)
     return root
 
 
@@ -28,7 +28,7 @@ def project(tmp_path: Path) -> Path:
 
 
 def test_durable_write_replaces_and_leaves_no_temp(project):
-    target = project / ".rce" / "x.toml"
+    target = project / ".researchos" / "x.toml"
     files.durable_write(target, b"one")
     files.durable_write(target, b"two")
     assert target.read_bytes() == b"two"
@@ -36,7 +36,7 @@ def test_durable_write_replaces_and_leaves_no_temp(project):
 
 
 def test_temp_names_are_unique_per_write(project):
-    target = project / ".rce" / "x.toml"
+    target = project / ".researchos" / "x.toml"
     names = {files.temp_path_for(target).name for _ in range(50)}
     assert len(names) == 50
     assert all(str(os.getpid()) in n for n in names)
@@ -44,12 +44,12 @@ def test_temp_names_are_unique_per_write(project):
 
 def test_durable_write_never_recreates_a_vanished_folder(tmp_path):
     with pytest.raises(files.RecordFileError):
-        files.durable_write(tmp_path / "gone" / ".rce" / "x.toml", b"x")
+        files.durable_write(tmp_path / "gone" / ".researchos" / "x.toml", b"x")
     assert not (tmp_path / "gone").exists()
 
 
 def test_failure_before_replace_keeps_the_old_file(project, monkeypatch):
-    target = project / ".rce" / "x.toml"
+    target = project / ".researchos" / "x.toml"
     target.write_bytes(b"old")
 
     def boom(src, dst):
@@ -65,7 +65,7 @@ def test_failure_before_replace_keeps_the_old_file(project, monkeypatch):
 _KILL_CHILD = """
 import os, sys
 from pathlib import Path
-from rce.records import files
+from researchos.records import files
 def die(*args):
     os._exit(137)          # the process is killed between tmp write and replace
 files.os.replace = die
@@ -76,14 +76,14 @@ files.append_bytes(Path(sys.argv[1]), b"[[judgement]]\\nid = 'new'\\n")
 def test_kill_between_tmp_write_and_replace_keeps_the_old_file(project):
     """Fault injection: a real process dies after its temp file is fully
     written and synced but before the rename. The record is intact."""
-    target = project / ".rce" / "judgements.toml"
+    target = project / ".researchos" / "judgements.toml"
     original = b"# header\n[[judgement]]\nid = 'a'\n"
     target.write_bytes(original)
     proc = subprocess.run([sys.executable, "-c", _KILL_CHILD, str(target)], env=os.environ.copy())
     assert proc.returncode == 137
     assert target.read_bytes() == original
     leftovers = [p.name for p in target.parent.iterdir() if p.name != "judgements.toml"]
-    assert len(leftovers) == 1 and leftovers[0].endswith(".rce-tmp")
+    assert len(leftovers) == 1 and leftovers[0].endswith(files._TMP_MARK)
     assert files.conflict_copies(target) == []  # a leftover temp is not a conflict copy
 
 
@@ -91,7 +91,7 @@ def test_kill_between_tmp_write_and_replace_keeps_the_old_file(project):
 
 
 def test_append_keeps_existing_bytes_exactly(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     old = "# 注释 kept\nunknown = 1\r\n[[judgement]]\nid = 'a'  # trailing\n".encode()
     target.write_bytes(old)
     result = files.append_bytes(target, b"[[judgement]]\nid = 'b'\n")
@@ -100,14 +100,14 @@ def test_append_keeps_existing_bytes_exactly(project):
 
 
 def test_append_supplies_a_missing_trailing_newline(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     target.write_bytes(b"x = 1")
     files.append_bytes(target, b"y = 2\n")
     assert target.read_bytes() == b"x = 1\ny = 2\n"
 
 
 def test_append_refuses_a_missing_file_unless_create(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     with pytest.raises(files.RecordFileError):
         files.append_bytes(target, b"x = 1\n")
     assert not target.exists()
@@ -116,7 +116,7 @@ def test_append_refuses_a_missing_file_unless_create(project):
 
 
 def test_append_refuses_when_the_file_changed_since_it_was_read(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     target.write_bytes(b"a = 1\n")
     with pytest.raises(files.RecordFileError):
         files.append_bytes(target, b"b = 2\n", expected_old=b"something else\n")
@@ -124,7 +124,7 @@ def test_append_refuses_when_the_file_changed_since_it_was_read(project):
 
 
 def test_append_refuses_a_dataless_file(project, monkeypatch):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     target.write_bytes(b"a = 1\n")
     monkeypatch.setattr(paths, "is_dataless", lambda p: True)
     monkeypatch.setattr(paths, "_request_download", lambda p: None)
@@ -137,7 +137,7 @@ def test_append_refuses_a_dataless_file(project, monkeypatch):
 
 
 def test_read_record_four_answers(project, monkeypatch):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     assert files.read_record(target).state is RecordState.ABSENT
 
     target.write_bytes("é = 1\n".encode())
@@ -155,7 +155,7 @@ def test_read_record_four_answers(project, monkeypatch):
 
 
 def test_read_record_zero_bytes_is_present_and_empty(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     target.write_bytes(b"")
     got = files.read_record(target)
     assert got.state is RecordState.PRESENT and got.data == b"" and got.text == ""
@@ -163,12 +163,12 @@ def test_read_record_zero_bytes_is_present_and_empty(project):
 
 def test_icloud_placeholder_counts_as_dataless(project, monkeypatch):
     monkeypatch.setattr(paths, "_request_download", lambda p: None)
-    (project / ".rce" / ".j.toml.icloud").write_bytes(b"")
-    assert files.read_record(project / ".rce" / "j.toml").state is RecordState.DATALESS
+    (project / ".researchos" / ".j.toml.icloud").write_bytes(b"")
+    assert files.read_record(project / ".researchos" / "j.toml").state is RecordState.DATALESS
 
 
 def test_bom_is_dropped_from_text_only(project):
-    target = project / ".rce" / "j.toml"
+    target = project / ".researchos" / "j.toml"
     target.write_bytes(b"\xef\xbb\xbfa = 1\n")
     got = files.read_record(target)
     assert got.text == "a = 1\n" and got.data.startswith(b"\xef\xbb\xbf")
@@ -178,7 +178,7 @@ def test_bom_is_dropped_from_text_only(project):
 
 
 def test_conflict_copies_are_reported_never_touched(project):
-    rce = project / ".rce"
+    rce = project / ".researchos"
     target = rce / "judgements.toml"
     target.write_bytes(b"")
     names = [
@@ -208,12 +208,12 @@ def _clock(*moments):
 
 
 def test_one_snapshot_per_day_not_per_write(project):
-    target = project / ".rce" / "judgements.toml"
+    target = project / ".researchos" / "judgements.toml"
     day1 = datetime(2026, 10, 4, 9, 0, tzinfo=TZ)
     for i in range(30):
         target.write_bytes(f"v{i}\n".encode())
         files.snapshot_if_first_change_today(project, target, now=lambda: day1 + timedelta(minutes=i))
-    snaps = sorted((project / ".rce" / "backups").iterdir())
+    snaps = sorted((project / ".researchos" / "backups").iterdir())
     assert len(snaps) == 1 and snaps[0].read_bytes() == b"v0\n"
     assert snaps[0].name.startswith("judgements.toml.") and snaps[0].name.endswith("Z.toml")
 
@@ -223,19 +223,19 @@ def test_one_snapshot_per_day_not_per_write(project):
     target.write_bytes(b"v29\n")
     day3 = day1 + timedelta(days=2)
     assert files.snapshot_if_first_change_today(project, target, now=lambda: day3) is None
-    assert len(list((project / ".rce" / "backups").iterdir())) == 2
+    assert len(list((project / ".researchos" / "backups").iterdir())) == 2
 
 
 def test_snapshots_keep_newest_twenty_per_file(project):
-    target = project / ".rce" / "judgements.toml"
-    other = project / ".rce" / "mappings.toml"
+    target = project / ".researchos" / "judgements.toml"
+    other = project / ".researchos" / "mappings.toml"
     other.write_bytes(b"m\n")
     files.snapshot_now(project, other, now=lambda: datetime(2026, 1, 1, tzinfo=TZ))
     start = datetime(2026, 1, 1, 12, tzinfo=TZ)
     for i in range(25):
         target.write_bytes(f"v{i}\n".encode())
         files.snapshot_if_first_change_today(project, target, now=lambda: start + timedelta(days=i))
-    names = sorted(p.name for p in (project / ".rce" / "backups").iterdir())
+    names = sorted(p.name for p in (project / ".researchos" / "backups").iterdir())
     mine = [n for n in names if n.startswith("judgements.toml.")]
     assert len(mine) == 20
     assert any(n.startswith("mappings.toml.") for n in names)  # other files' budget untouched
@@ -244,14 +244,14 @@ def test_snapshots_keep_newest_twenty_per_file(project):
 
 
 def test_snapshot_now_ignores_the_day_rule_and_subdir_is_confined(project):
-    target = project / ".rce" / "canvas.json"
+    target = project / ".researchos" / "canvas.json"
     target.write_bytes(b"{}")
     moment = datetime(2026, 10, 4, 9, tzinfo=TZ)
     a = files.snapshot_now(project, target, now=lambda: moment)
     b = files.snapshot_now(project, target, now=lambda: moment)
     assert a != b and a.exists() and b.exists()
     v = files.snapshot_now(project, target, subdir="variables/topicshift", now=lambda: moment)
-    assert v.parent == project / ".rce" / "backups" / "variables" / "topicshift"
+    assert v.parent == project / ".researchos" / "backups" / "variables" / "topicshift"
     for bad in ("..", "../x", "/etc"):
         with pytest.raises(files.RecordFileError):
             files.snapshot_now(project, target, subdir=bad, now=lambda: moment)
@@ -265,7 +265,7 @@ def test_snapshot_refuses_a_file_outside_the_project(project, tmp_path):
 
 
 def test_no_snapshot_of_a_file_in_the_cloud(project, monkeypatch):
-    target = project / ".rce" / "judgements.toml"
+    target = project / ".researchos" / "judgements.toml"
     target.write_bytes(b"x")
     monkeypatch.setattr(paths, "is_dataless", lambda p: True)
     monkeypatch.setattr(paths, "_request_download", lambda p: None)
@@ -274,15 +274,15 @@ def test_no_snapshot_of_a_file_in_the_cloud(project, monkeypatch):
 
 
 def test_ensure_dir_within_creates_below_the_root_only(tmp_path):
-    """DESIGN.md 9.4: record writers create `.rce/` only inside a folder
+    """DESIGN.md 9.4: record writers create `.researchos/` only inside a folder
     that exists; they never re-create a folder that has gone."""
     root = tmp_path / "p"
     root.mkdir()
-    target = root / ".rce" / "backups" / "variables" / "x"
+    target = root / ".researchos" / "backups" / "variables" / "x"
     assert files.ensure_dir_within(root, target) == target and target.is_dir()
     gone = tmp_path / "gone"
     with pytest.raises(files.RecordFileError):
-        files.ensure_dir_within(gone, gone / ".rce" / "backups")
+        files.ensure_dir_within(gone, gone / ".researchos" / "backups")
     assert not gone.exists()
     with pytest.raises(files.RecordFileError):
         files.ensure_dir_within(root, tmp_path / "elsewhere")
@@ -290,8 +290,8 @@ def test_ensure_dir_within_creates_below_the_root_only(tmp_path):
 
 def test_a_snapshot_of_a_moved_project_recreates_nothing(tmp_path):
     root = tmp_path / "p"
-    (root / ".rce").mkdir(parents=True)
-    record = root / ".rce" / "j.toml"
+    (root / ".researchos").mkdir(parents=True)
+    record = root / ".researchos" / "j.toml"
     record.write_text("x")
     (tmp_path / "moved").mkdir()
     os.rename(root, tmp_path / "moved" / "p")

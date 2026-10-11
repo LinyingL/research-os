@@ -1,6 +1,6 @@
 """Tests for the node canvas's data API (DESIGN.md section 8.1, 8.5, 8.6,
-8.7; task V4 phase 1b): `rce.webapp.canvas` directly, and the six new
-endpoints of `rce.webapp.server` over a real loopback server.
+8.7; task V4 phase 1b): `researchos.webapp.canvas` directly, and the six new
+endpoints of `researchos.webapp.server` over a real loopback server.
 
 The fixture is a realistic pipeline built by the REAL ingests, not by
 hand-written rows, so the canvas is tested against exactly the graph shape
@@ -9,7 +9,7 @@ writes `topicshift_monthly.csv`, two `.Rmd` steps that read that csv, a
 knitted `.pdf` sitting next to the 17 step with no extractor that could
 link it (the ghost case of 8.1), all under a CJK directory name, and an
 attempts table with ☠️ / ✅ / 🕒 rows. Everything lives in tmp_path; the
-conftest-wide RCE_HOME keeps the graph and canvas.json there too.
+conftest-wide RESEARCHOS_HOME keeps the graph and canvas.json there too.
 """
 
 from __future__ import annotations
@@ -23,15 +23,15 @@ from typing import Any
 
 import pytest
 
-from rce import db
-from rce import paths
-from rce.records import ledger as ledger_mod
-from rce import project as project_identity
-from rce.ingest import attempts as attempts_ingest
-from rce.ingest import dataflow as dataflow_ingest
-from rce.ingest import files as files_ingest
-from rce.ingest import mappings as mappings_ingest
-from rce.webapp import canvas, server
+from researchos import db
+from researchos import paths
+from researchos.records import ledger as ledger_mod
+from researchos import project as project_identity
+from researchos.ingest import attempts as attempts_ingest
+from researchos.ingest import dataflow as dataflow_ingest
+from researchos.ingest import files as files_ingest
+from researchos.ingest import mappings as mappings_ingest
+from researchos.webapp import canvas, server
 
 
 STEPS = "复现包_分步"
@@ -84,8 +84,8 @@ def _ingest(root: Path) -> None:
 def _make_pipeline(root: Path, verdicts: tuple[str, str, str] = ("☠️", "✅", "🕒")) -> None:
     steps = root / STEPS
     (steps / "数据").mkdir(parents=True)
-    (root / ".rce").mkdir()
-    (root / ".rce" / "attempts.toml").write_text(_CONFIG, encoding="utf-8")
+    (root / ".researchos").mkdir()
+    (root / ".researchos" / "attempts.toml").write_text(_CONFIG, encoding="utf-8")
     (root / "map.md").write_text(_map(verdicts), encoding="utf-8")
     (steps / "16-构建指标.py").write_text(
         "import pandas as pd\n"
@@ -501,9 +501,9 @@ def test_a_corrupt_pre_v5_file_is_nothing_saved_and_the_write_lands_in_the_recor
 
 @pytest.mark.parametrize("content", ["garbage", "[1, 2]", '{"views": [1]}', b"\xff\xfe"])
 def test_a_corrupt_record_is_never_overwritten_and_refuses_writes_until_set_aside(project, content):
-    """9.2 + 9.3's rule for a record RCE cannot read: nothing is shown as
+    """9.2 + 9.3's rule for a record Research OS cannot read: nothing is shown as
     saved, the file is left untouched and reported, the next drag writes
-    nothing; set aside (renamed into .rce/backups/), writing works again."""
+    nothing; set aside (renamed into .researchos/backups/), writing works again."""
     path = canvas.canvas_record_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = content if isinstance(content, bytes) else content.encode("utf-8")
@@ -532,12 +532,12 @@ def test_a_write_keeps_unknown_keys_and_malformed_entries_of_other_views(project
 
 
 def test_layout_lives_in_the_project_with_a_daily_snapshot_and_one_before_reset(project):
-    """9.2: the arrangement is a record -- `.rce/canvas.json` -- snapshotted
+    """9.2: the arrangement is a record -- `.researchos/canvas.json` -- snapshotted
     the first time it changes each day and before 「重新排列」."""
     _save(project, {"scope": "all", "positions": {PY16: [1, 2]}})
     assert canvas.canvas_record_path(project).exists()
     assert not paths.canvas_state_path(project).exists()
-    backups = project / ".rce" / "backups"
+    backups = project / ".researchos" / "backups"
 
     def canvas_snapshots():
         # The identity keeps its own snapshots there too (9.12); these are the arrangement's.
@@ -658,7 +658,7 @@ def test_http_mapping_add_writes_ingests_and_returns_the_link(live):
     assert link["human"] is True and link["status"] == "confirmed"
     assert (link["from"], link["to"], link["type"]) == (RMD17, PDF17, "generates")
     assert "knitr 渲染产出" in link["evidence_hint"]
-    text = (root / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    text = (root / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
     assert "手工标注的映射" in text and 'type = "generates"' in text
     _, view = _call(base, "GET", "/api/canvas")
     assert _nodes(view)[PDF17]["ghost"] is False
@@ -668,7 +668,7 @@ def test_http_mapping_add_blank_note_is_no_note(live):
     base, root, _ = live
     status, _ = _call(base, "POST", "/api/mappings/add", dict(_PDF_MAPPING, note="  "))
     assert status == 200
-    assert "note" not in (root / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    assert "note" not in (root / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
 
 
 def test_http_mapping_add_duplicate_is_409_with_state(live):
@@ -692,7 +692,7 @@ def test_http_mapping_add_refusals_write_nothing(live, body, fragment):
     status, payload = _call(base, "POST", "/api/mappings/add", body)
     assert status == 400 and fragment in payload["error"], payload
     assert "state" not in payload
-    assert not (root / ".rce" / "mappings.toml").exists()
+    assert not (root / ".researchos" / "mappings.toml").exists()
 
 
 def test_http_mapping_add_refuses_when_the_graph_is_missing(live):
@@ -700,7 +700,7 @@ def test_http_mapping_add_refuses_when_the_graph_is_missing(live):
     paths.graph_db_path(root).unlink()
     status, payload = _call(base, "POST", "/api/mappings/add", _PDF_MAPPING)
     assert status == 400 and payload["state"] == "graph_missing"
-    assert not (root / ".rce" / "mappings.toml").exists()
+    assert not (root / ".researchos" / "mappings.toml").exists()
 
 
 def test_http_mapping_delete_removes_entry_and_edge(live):
@@ -708,7 +708,7 @@ def test_http_mapping_delete_removes_entry_and_edge(live):
     _call(base, "POST", "/api/mappings/add", _PDF_MAPPING)
     status, payload = _call(base, "POST", "/api/mappings/delete", _PDF_MAPPING)
     assert status == 200 and payload["ok"] is True and payload["removed"] == 1
-    assert payload["backup"].startswith(".rce/backups/mappings.toml.")
+    assert payload["backup"].startswith(".researchos/backups/mappings.toml.")
     _, view = _call(base, "GET", "/api/canvas")
     assert not any(l["human"] for l in view["links"])
     assert _nodes(view)[PDF17]["ghost"] is True  # back to a ghost: its node was the mapping's own
@@ -929,7 +929,7 @@ _ENDPOINTS = [
 
 def _untouched(root: Path) -> None:
     """Nothing any of the endpoints could write has moved."""
-    assert not (root / ".rce" / "mappings.toml").exists()
+    assert not (root / ".researchos" / "mappings.toml").exists()
     assert not paths.canvas_state_path(root).exists()
     conn = db.connect(paths.graph_db_path(root))
     try:

@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.mappings (DESIGN.md sections 8.1 and 8.5, task V4
+"""Tests for researchos.ingest.mappings (DESIGN.md sections 8.1 and 8.5, task V4
 phase 1a): the human mappings file, its ingest, and its writer."""
 
 import tomllib
@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from rce import db
-from rce.ingest import mappings
+from researchos import db
+from researchos.ingest import mappings
 
 RMD = "复现包_分步/17-叙事更替与汇率波动.Rmd"
 PDF = "复现包_分步/17-叙事更替与汇率波动.pdf"
 
 
 def _write(root: Path, text: str) -> Path:
-    path = root / ".rce" / "mappings.toml"
+    path = root / ".researchos" / "mappings.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
@@ -293,12 +293,12 @@ def test_cjk_paths_round_trip_into_node_ids(conn, tmp_path):
 
 
 def _parsed(root: Path) -> list[dict]:
-    return tomllib.loads((root / ".rce" / "mappings.toml").read_text(encoding="utf-8"))["mapping"]
+    return tomllib.loads((root / ".researchos" / "mappings.toml").read_text(encoding="utf-8"))["mapping"]
 
 
 def test_add_creates_the_file_with_the_chinese_header(tmp_path):
     result = mappings.add_mapping(tmp_path, RMD, PDF, "generates", note="knitr 渲染产出", date="2026-09-06")
-    text = (tmp_path / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    text = (tmp_path / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
     assert text.startswith(mappings.FILE_HEADER)
     assert result["backup"] is None
     assert _parsed(tmp_path) == [
@@ -333,7 +333,7 @@ def test_add_rejects_invisible_line_separators(tmp_path, bad):
     with pytest.raises(mappings.MappingsWriteError) as exc:
         mappings.add_mapping(tmp_path, "a.py", "f.png", "generates", note=bad)
     assert exc.value.code == "line_break"
-    assert not (tmp_path / ".rce" / "mappings.toml").exists()
+    assert not (tmp_path / ".researchos" / "mappings.toml").exists()
 
 
 def test_add_preserves_header_comments_and_order_and_appends_at_end(tmp_path):
@@ -345,18 +345,18 @@ def test_add_preserves_header_comments_and_order_and_appends_at_end(tmp_path):
     )
     _write(tmp_path, original)
     mappings.add_mapping(tmp_path, "a.py", "f.png", "generates", date="2026-10-04")
-    text = (tmp_path / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    text = (tmp_path / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
     assert text.startswith(original)
     assert [e["from"] for e in _parsed(tmp_path)] == ["b.py", "d.csv", "a.py"]
 
 
 def test_add_refuses_a_duplicate_even_spelled_differently(tmp_path):
     mappings.add_mapping(tmp_path, "a.py", "f.png", "generates")
-    before = (tmp_path / ".rce" / "mappings.toml").read_bytes()
+    before = (tmp_path / ".researchos" / "mappings.toml").read_bytes()
     with pytest.raises(mappings.MappingsWriteError) as exc:
         mappings.add_mapping(tmp_path, "./a.py", "f.png", "generates")
     assert exc.value.code == "duplicate"
-    assert (tmp_path / ".rce" / "mappings.toml").read_bytes() == before
+    assert (tmp_path / ".researchos" / "mappings.toml").read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -385,10 +385,10 @@ def test_add_symlink_escape_refused(tmp_path):
 
 def test_add_creates_a_backup_of_the_previous_file(tmp_path):
     mappings.add_mapping(tmp_path, "a.py", "f.png", "generates")
-    before = (tmp_path / ".rce" / "mappings.toml").read_bytes()
+    before = (tmp_path / ".researchos" / "mappings.toml").read_bytes()
     result = mappings.add_mapping(tmp_path, "b.py", "g.png", "generates")
     backup = tmp_path / result["backup"]
-    assert backup.parent == tmp_path / ".rce" / "backups"
+    assert backup.parent == tmp_path / ".researchos" / "backups"
     assert backup.name.startswith("mappings.toml.") and backup.suffix == ".toml"
     assert backup.read_bytes() == before
 
@@ -401,7 +401,7 @@ def test_add_refuses_to_edit_an_unparseable_file(tmp_path):
 
 
 def test_add_keeps_crlf_files_crlf(tmp_path):
-    path = tmp_path / ".rce" / "mappings.toml"
+    path = tmp_path / ".researchos" / "mappings.toml"
     path.parent.mkdir()
     path.write_bytes(b"# h\r\n[[mapping]]\r\nfrom = \"b.py\"\r\nto = \"g.png\"\r\ntype = \"generates\"\r\n")
     mappings.add_mapping(tmp_path, "a.py", "f.png", "generates", date="d")
@@ -422,7 +422,7 @@ def test_delete_removes_only_that_entry_and_keeps_everything_else(tmp_path):
     _write(tmp_path, original)
     result = mappings.delete_mapping(tmp_path, "b.py", "g.png", "generates")
     assert result["removed"] == 1 and (tmp_path / result["backup"]).read_text(encoding="utf-8") == original
-    text = (tmp_path / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    text = (tmp_path / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
     assert text.startswith(mappings.FILE_HEADER) and "# about a" in text and "# remark before c" in text
     assert [e["from"] for e in _parsed(tmp_path)] == ["a.py", "c.py"]
 
@@ -431,7 +431,7 @@ def test_delete_last_entry_leaves_the_header_and_ingest_resyncs_to_zero(conn, tm
     mappings.add_mapping(tmp_path, "a.py", "f.png", "generates")
     mappings.ingest_mappings(conn, tmp_path)
     mappings.delete_mapping(tmp_path, "a.py", "f.png", "generates")
-    text = (tmp_path / ".rce" / "mappings.toml").read_text(encoding="utf-8")
+    text = (tmp_path / ".researchos" / "mappings.toml").read_text(encoding="utf-8")
     assert text == mappings.FILE_HEADER
     report = mappings.ingest_mappings(conn, tmp_path)
     assert report.counts["edges_removed"] == 1 and _mapping_edges(conn) == []
@@ -445,7 +445,7 @@ def test_delete_unknown_entry_is_not_found(tmp_path):
     # A folder that does not exist is refused before its file is even
     # looked for (DESIGN.md 9.4: a writer never touches -- or re-creates --
     # a project folder that is not there).
-    from rce.records import situation
+    from researchos.records import situation
 
     with pytest.raises(situation.ProjectMovedError):
         mappings.delete_mapping(tmp_path / "nowhere-else", "a.py", "f.png", "generates")
@@ -477,7 +477,7 @@ def test_add_refuses_when_the_planned_text_would_not_round_trip(tmp_path):
         mappings.add_mapping(tmp_path, "a.py", "f.png", "generates")
     assert exc.value.code == "unsafe_edit"
     assert path.read_bytes() == before
-    assert not [b for b in (tmp_path / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
+    assert not [b for b in (tmp_path / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
 
 
 # -- the file itself is confined too (adversarial review of the V4 work) ----------
@@ -490,13 +490,13 @@ def _symlinked_rce_project(tmp_path: Path) -> tuple[Path, Path]:
     (root / "s.py").write_text("print(1)\n", encoding="utf-8")
     outside = tmp_path / "outside" / "victim"
     outside.mkdir(parents=True)
-    (root / ".rce").symlink_to(outside, target_is_directory=True)
+    (root / ".researchos").symlink_to(outside, target_is_directory=True)
     return root, outside
 
 
 def test_add_refuses_a_symlinked_rce_dir_that_leaves_the_project(tmp_path):
     """Section 8.5: the write path is never less confined than the read
-    path. A `.rce` that is a symlink out of the project must not let 确认标注
+    path. A `.researchos` that is a symlink out of the project must not let 确认标注
     create (or replace) a mappings.toml somewhere else."""
     root, outside = _symlinked_rce_project(tmp_path)
     with pytest.raises(mappings.MappingsWriteError) as excinfo:
@@ -518,13 +518,13 @@ def test_add_and_delete_refuse_a_symlinked_mappings_file(tmp_path):
     """Replacing the link would silently turn it into a regular file, and
     the backup would carry the link target's bytes under this name."""
     root = tmp_path / "proj"
-    (root / ".rce").mkdir(parents=True)
+    (root / ".researchos").mkdir(parents=True)
     (root / "data").mkdir()
     (root / "data" / "a.csv").write_text("x\n", encoding="utf-8")
     (root / "s.py").write_text("print(1)\n", encoding="utf-8")
     secret = tmp_path / "secret.toml"
     secret.write_text(mappings.FILE_HEADER + _entry("data/a.csv", "s.py", "reads"), encoding="utf-8")
-    (root / ".rce" / "mappings.toml").symlink_to(secret)
+    (root / ".researchos" / "mappings.toml").symlink_to(secret)
     for call in (
         lambda: mappings.add_mapping(root, "data/a.csv", "s.py", "reads", note="n"),
         lambda: mappings.delete_mapping(root, "data/a.csv", "s.py", "reads"),
@@ -532,8 +532,8 @@ def test_add_and_delete_refuse_a_symlinked_mappings_file(tmp_path):
         with pytest.raises(mappings.MappingsWriteError) as excinfo:
             call()
         assert excinfo.value.code == "escapes_root"
-    assert (root / ".rce" / "mappings.toml").is_symlink()
-    assert not [b for b in (root / ".rce" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
+    assert (root / ".researchos" / "mappings.toml").is_symlink()
+    assert not [b for b in (root / ".researchos" / "backups").glob("*") if not b.name.startswith("project.toml.")]  # the identity keeps its own snapshots (9.12)
 
 
 def test_ingest_refuses_a_mappings_file_that_resolves_outside_the_project(conn, tmp_path):

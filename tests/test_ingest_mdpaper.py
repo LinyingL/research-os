@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.mdpaper (task W3): Markdown paper support.
+"""Tests for researchos.ingest.mdpaper (task W3): Markdown paper support.
 
 Builds small fake repo trees under tmp_path (no real git needed -- this
 module only needs a root dir + relative paths, same convention as
@@ -8,8 +8,8 @@ test_ingest_latex.py / test_ingest_claims.py).
 import logging
 from pathlib import Path
 
-from rce import db
-from rce.ingest import latex, mdpaper
+from researchos import db
+from researchos.ingest import latex, mdpaper
 
 _NO_CLEANUP = {
     "claims_removed": 0,
@@ -49,7 +49,7 @@ def test_parse_md_file_sections_use_same_slug_convention_as_latex(tmp_path):
 
 
 def test_chinese_heading_slug_matches_latex_convention(tmp_path):
-    # rce.ingest.latex._slugify collapses an all-non-ASCII title to a
+    # researchos.ingest.latex._slugify collapses an all-non-ASCII title to a
     # content-derived `section-<hash>` fallback (see that module) -- reused
     # unchanged here (task W3: "slug 化中文标题用与 latex.py 相同的规则"), so a
     # Chinese-only heading gets identical, not merely similar, behavior
@@ -90,7 +90,7 @@ def test_unrelated_earlier_heading_insertion_does_not_change_a_later_chinese_sec
     assert after_id.split("#", 1)[1] == before_id.split("#", 1)[1]  # same slug despite the earlier insertion
 
 
-# -- Blocker (two review rounds), shared with rce.ingest.latex: mirrors
+# -- Blocker (two review rounds), shared with researchos.ingest.latex: mirrors
 # test_ingest_latex.py's own property tests, confirming the shared
 # `_compute_ordered_slugs` fix behaves identically for Markdown headings. --
 
@@ -176,7 +176,7 @@ def test_image_reference_missing_file_is_skipped_as_ghost_figure(tmp_path, caplo
 
     conn = db.connect(":memory:")
     db.migrate(conn)
-    with caplog.at_level(logging.WARNING, logger="rce.ingest.mdpaper"):
+    with caplog.at_level(logging.WARNING, logger="researchos.ingest.mdpaper"):
         counts = mdpaper.ingest_md_repo(conn, repo, ["paper.md"], image_paths=[])
     assert counts["figures"] == 0
     assert db.get_node(conn, "figure:figs/missing.png") is None
@@ -189,7 +189,7 @@ def test_image_reference_before_any_heading_is_skipped_and_logged(tmp_path, capl
     (tmp_path / "figs" / "overview.png").write_bytes(b"")
     repo = _repo(tmp_path, "![overview](figs/overview.png)\n\n# Overview\n")
 
-    with caplog.at_level(logging.WARNING, logger="rce.ingest.mdpaper"):
+    with caplog.at_level(logging.WARNING, logger="researchos.ingest.mdpaper"):
         result = mdpaper.parse_md_file(repo, "paper.md")
     assert result.figure_links == []
     assert any("before any heading" in r.message for r in caplog.records)
@@ -199,7 +199,7 @@ def test_image_inventory_none_disables_ghost_figure_validation(tmp_path):
     # Default (image_paths=None) keeps this function usable standalone --
     # e.g. in a test that doesn't build a full repo file inventory --
     # unresolved image paths are accepted exactly as-is, matching
-    # rce.ingest.latex.ingest_latex_repo's own documented default.
+    # researchos.ingest.latex.ingest_latex_repo's own documented default.
     repo = _repo(tmp_path, "# Overview\n\n![overview](anything.png)\n")
     conn = db.connect(":memory:")
     db.migrate(conn)
@@ -274,7 +274,7 @@ def test_bare_horizontal_rule_is_not_mistaken_for_a_table(tmp_path):
 
 def test_recognizes_percent_and_fraction_forms_without_latex_escaping(tmp_path):
     # Markdown never backslash-escapes '%' the way LaTeX must -- this is the
-    # gap the shared _CLAIM_RE fix (task W3) closes; see rce.ingest.claims.
+    # gap the shared _CLAIM_RE fix (task W3) closes; see researchos.ingest.claims.
     repo = _repo(
         tmp_path,
         "# Results\n\nWe reach 87.3% accuracy, matching a raw ratio of 0.873, "
@@ -289,7 +289,7 @@ def test_recognizes_percent_and_fraction_forms_without_latex_escaping(tmp_path):
 
 
 def test_skips_hyphenated_compound_modifier_numbers(tmp_path):
-    # Same deterministic syntax rule as rce.ingest.claims (inherited, not
+    # Same deterministic syntax rule as researchos.ingest.claims (inherited, not
     # reimplemented) -- "1.58-bit precision" is a compound modifier, not a
     # quantitative claim.
     repo = _repo(
@@ -356,7 +356,7 @@ def test_claim_matches_experiment_metric_and_creates_pending_backed_by_edge(tmp_
     assert edge["evidence"]["occurrences"][0]["metric"] == "accuracy"
 
     claim_node = db.get_nodes_by_type(conn, "claim")[0]
-    assert claim_node["attrs"]["tex_path"] == "paper.md"  # shared key, see rce.ingest.claims docstring
+    assert claim_node["attrs"]["tex_path"] == "paper.md"  # shared key, see researchos.ingest.claims docstring
 
 
 def test_claim_with_no_matching_experiment_creates_node_but_no_edge(tmp_path):

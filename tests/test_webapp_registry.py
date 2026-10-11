@@ -1,10 +1,10 @@
-"""Tests for rce.webapp.registry (task V3 phase 1): the machine-managed
-project registry at ~/.rce/projects.json.
+"""Tests for researchos.webapp.registry (task V3 phase 1): the machine-managed
+project registry at ~/.researchos/projects.json.
 
-Every test runs against a throwaway RCE home (the `fake_home` fixture
-points both `HOME` and `RCE_HOME` at a tmp directory), so no test here ever
-reads or writes the user's real `~/.rce/projects.json` --
-`registry.registry_path()` resolves `rce.paths.rce_home()` per call, not at
+Every test runs against a throwaway Research OS home (the `fake_home` fixture
+points both `HOME` and `RESEARCHOS_HOME` at a tmp directory), so no test here ever
+reads or writes the user's real `~/.researchos/projects.json` --
+`registry.registry_path()` resolves `researchos.paths.researchos_home()` per call, not at
 import time, precisely to make this isolation possible.
 """
 
@@ -15,25 +15,25 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.webapp import registry
+from researchos import paths
+from researchos.webapp import registry
 
 
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch) -> Path:
-    """A throwaway home. RCE_HOME is set alongside HOME because the graph
-    (and now the registry) live under `rce.paths.rce_home()`, which prefers
-    that variable; conftest's autouse `isolated_rce_home` already sets it
+    """A throwaway home. RESEARCHOS_HOME is set alongside HOME because the graph
+    (and now the registry) live under `researchos.paths.researchos_home()`, which prefers
+    that variable; conftest's autouse `isolated_researchos_home` already sets it
     elsewhere, and this fixture's own setenv runs after it and wins."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("RCE_HOME", str(home / ".rce"))
+    monkeypatch.setenv("RESEARCHOS_HOME", str(home / ".researchos"))
     return home
 
 
 def _registry_file(home: Path) -> Path:
-    return home / ".rce" / "projects.json"
+    return home / ".researchos" / "projects.json"
 
 
 def _mk_project(tmp_path: Path, name: str, *, initialized: bool = True) -> Path:
@@ -51,7 +51,7 @@ def _mk_project(tmp_path: Path, name: str, *, initialized: bool = True) -> Path:
 
 
 def test_registry_path_is_under_home_dot_rce(fake_home):
-    assert registry.registry_path() == fake_home / ".rce" / "projects.json"
+    assert registry.registry_path() == fake_home / ".researchos" / "projects.json"
 
 
 def test_load_missing_file_returns_empty(fake_home):
@@ -136,11 +136,11 @@ def test_register_stores_resolved_absolute_path(fake_home, tmp_path, monkeypatch
 
 def test_register_leaves_no_tmp_file_behind(fake_home, tmp_path):
     """The atomic-write dance (tmp + os.replace) must clean up after itself
-    -- only projects.json remains in ~/.rce afterward. Files only: the
+    -- only projects.json remains in ~/.researchos afterward. Files only: the
     graphs/ directory beside it is where project graphs now live (DESIGN.md
     section 8.10 rule 1), not a leftover."""
     registry.register(_mk_project(tmp_path, "myproj"))
-    leftovers = sorted(p.name for p in (fake_home / ".rce").iterdir() if p.is_file())
+    leftovers = sorted(p.name for p in (fake_home / ".researchos").iterdir() if p.is_file())
     assert leftovers == ["projects.json"]
 
 
@@ -157,7 +157,7 @@ def test_register_survives_a_corrupt_existing_file(fake_home, tmp_path):
 def test_register_refuses_to_clobber_an_unreadable_registry(fake_home, tmp_path):
     """Regression: a registry file that exists but cannot be READ (chmod
     slip, sync tool lock) used to degrade to `[]` inside register()'s
-    read-modify-write, so the next `rce serve` atomically replaced the
+    read-modify-write, so the next `researchos serve` atomically replaced the
     whole registry with a single entry -- silently discarding every other
     registered project. Now: registration is a logged no-op (the file's
     entries outrank recording one serve), `load()` still degrades to `[]`
@@ -198,11 +198,11 @@ def test_is_initialized_false_for_missing_directory(tmp_path):
 
 def test_is_initialized_true_for_an_unmigrated_legacy_graph(tmp_path):
     """Section 8.10 rule 1: a project whose graph is still in the old
-    in-project location counts as initialized, so `rce serve` will open it
+    in-project location counts as initialized, so `researchos serve` will open it
     -- and opening it is what triggers the migration."""
     project = _mk_project(tmp_path, "proj", initialized=False)
-    (project / ".rce").mkdir()
-    (project / ".rce" / "graph.db").write_bytes(b"")
+    (project / ".researchos").mkdir()
+    (project / ".researchos" / "graph.db").write_bytes(b"")
     assert registry.is_initialized(project)
 
 
@@ -226,7 +226,7 @@ def test_is_available_false_for_a_file_masquerading_as_a_project(tmp_path):
 
 
 def test_is_available_and_is_initialized_are_different_questions(tmp_path):
-    """A directory that exists but was never `rce init`ed is available and
+    """A directory that exists but was never `researchos init`ed is available and
     uninitialized -- the switcher greys it out but must NOT offer to
     remove it, because nothing about it is dead."""
     project = _mk_project(tmp_path, "proj", initialized=False)
@@ -317,7 +317,7 @@ def test_remove_refuses_to_clobber_an_unreadable_registry(fake_home, tmp_path):
 def test_remove_leaves_no_tmp_file_behind(fake_home, tmp_path):
     registry.register(_mk_project(tmp_path, "aaa"))
     registry.remove(str((tmp_path / "aaa").resolve()))
-    leftovers = sorted(p.name for p in (fake_home / ".rce").iterdir() if p.is_file())
+    leftovers = sorted(p.name for p in (fake_home / ".researchos").iterdir() if p.is_file())
     assert leftovers == ["projects.json"]
 
 
@@ -390,7 +390,7 @@ def test_malformed_id_drops_the_entry(fake_home):
 _REGISTER_SCRIPT = """
 import sys
 from pathlib import Path
-from rce.webapp import registry
+from researchos.webapp import registry
 base, tag, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 for i in range(n):
     p = base / f"{tag}-{i}"

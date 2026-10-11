@@ -1,5 +1,5 @@
 """The judgment ledger drives the index (DESIGN.md 9.1, 9.3, 9.6; task V5
-phase 4): `rce.records.judgements` -- the one write path, the applier, the
+phase 4): `researchos.records.judgements` -- the one write path, the applier, the
 SHRUNK question, the review list -- and the 9.9 acceptance scenarios this
 phase makes possible (#5, #6, #8 a-e, #11, #12; #10 lives in
 tests/test_records_two_writers.py's style below, as a subprocess test)."""
@@ -14,14 +14,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from rce import db
-from rce import project as project_identity
-from rce.ingest import pipeline
-from rce.records import files as record_files
-from rce.records import judgements
-from rce.records import ledger as ledger_mod
-from rce.records.identity import read_identity
-from rce.records.situation import index_db_path, write_guard
+from researchos import db
+from researchos import project as project_identity
+from researchos.ingest import pipeline
+from researchos.records import files as record_files
+from researchos.records import judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records.identity import read_identity
+from researchos.records.situation import index_db_path, write_guard
 
 READ = ("script:s.py", "dataset:data/in.csv", "reads", "dataflow")
 WRITE = ("script:s.py", "dataset:data/out.csv", "writes", "dataflow")
@@ -468,7 +468,7 @@ def test_scenario_6_every_scan_three_times_changes_nothing(tmp_path):
 
 
 def test_scenario_5_delete_the_index_and_reopen_all_judgments_are_back(tmp_path):
-    """9.9 #5: delete ~/.rce/graphs/<id>/ and open the project: the index is
+    """9.9 #5: delete ~/.researchos/graphs/<id>/ and open the project: the index is
     built from the sources and the record, every judgment applied, and
     `verify` finds nothing to report."""
     root, project_id = _project(tmp_path)
@@ -486,7 +486,7 @@ def test_scenario_5_delete_the_index_and_reopen_all_judgments_are_back(tmp_path)
         conn.close()
 
 
-# -- 9.9 #11: a record RCE cannot trust ----------------------------------------------------
+# -- 9.9 #11: a record Research OS cannot trust ----------------------------------------------------
 
 
 def _three_judgments(root):
@@ -591,17 +591,17 @@ def test_shrunk_answer_restore_appends_the_missing_entries_as_recovered(tmp_path
 
 
 def test_scenario_7_restore_a_copy_of_rce_and_take_the_file_as_truth(tmp_path):
-    """9.9 #7: copy .rce/ aside, judge further, restore the copy: RCE says
+    """9.9 #7: copy .researchos/ aside, judge further, restore the copy: Research OS says
     the file has N fewer judgments and asks; 「以文件为准」 gives exactly the
     copy's records."""
     root, _ = _project(tmp_path)
     judgements.judge(root, READ, "confirmed", via="canvas")
     aside = tmp_path / "aside"
-    shutil.copytree(root / ".rce", aside)
+    shutil.copytree(root / ".researchos", aside)
     judgements.judge(root, WRITE, "rejected", via="canvas")
     judgements.judge(root, READ, "rejected", via="canvas")
-    shutil.rmtree(root / ".rce")
-    shutil.copytree(aside, root / ".rce")
+    shutil.rmtree(root / ".researchos")
+    shutil.copytree(aside, root / ".researchos")
     _scan(root)
     assert _status(root, READ) == "rejected"  # nothing changed before the answer
     conn = _conn(root)
@@ -649,9 +649,9 @@ def test_entries_the_index_never_saw_are_simply_applied(tmp_path):
 _TWO_WRITERS = r"""
 import sys
 from pathlib import Path
-from rce import db, paths
-from rce.records import judgements
-from rce.webapp import canvas
+from researchos import db, paths
+from researchos.records import judgements
+from researchos.webapp import canvas
 root, tag, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 key = ("script:s.py", "dataset:data/in.csv" if tag == "a" else "dataset:data/out.csv",
        "reads" if tag == "a" else "writes", "dataflow")
@@ -683,7 +683,7 @@ def test_scenario_10_two_processes_judgments_and_positions_all_land(tmp_path):
     assert len(entries) == 2 * n
     assert [e.seq for e in entries] == list(range(1, 2 * n + 1))
     assert sorted(e.get("note") for e in entries) == sorted(f"{t}{i}" for t in "ab" for i in range(n))
-    from rce.webapp import canvas
+    from researchos.webapp import canvas
 
     assert len(canvas.load_views(root)["all"]["positions"]) == 2 * n
     # The last act of each process stands (i = n-1 is odd: confirmed).

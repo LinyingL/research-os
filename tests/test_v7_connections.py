@@ -27,10 +27,10 @@ from pathlib import Path
 
 import pytest
 
-from rce import addproject, cloud, github, paths
-from rce.ingest import scan as scan_mod
-from rce.records import situation as records_situation
-from rce.webapp import registry, server
+from researchos import addproject, cloud, github, paths
+from researchos.ingest import scan as scan_mod
+from researchos.records import situation as records_situation
+from researchos.webapp import registry, server
 
 from test_v6_add_project import Live, _live  # noqa: F401 -- the V6 test server helpers
 
@@ -372,7 +372,7 @@ def test_fetch_refuses_a_program_named_in_the_worktree_config(tmp_path, stand_in
 
 @pytest.fixture
 def linked_server(tmp_path, stand_in, linked):
-    from rce import project as project_identity
+    from researchos import project as project_identity
 
     project_identity.init_project(linked)
     registry.register(Path(paths._canonical_path(linked)), records_situation.classify(linked).project_id)
@@ -489,7 +489,7 @@ def test_provider_and_client_are_recognised(onedrive, monkeypatch):
     unknown = cloud.provider(other)
     assert (unknown.kind, unknown.name) == ("unknown", "Nextcloud-me")
     assert cloud.client_running("unknown") is None
-    assert cloud.message(unknown) == "这些文件只在 Nextcloud-me 云端；Nextcloud-me 客户端没有运行，打开它并登录后 RCE 才能读到"
+    assert cloud.message(unknown) == "这些文件只在 Nextcloud-me 云端；Nextcloud-me 客户端没有运行，打开它并登录后 Research OS 才能读到"
 
 
 def test_the_add_preview_says_why_cloud_only_files_are_not_read(onedrive, monkeypatch):
@@ -502,7 +502,7 @@ def test_the_add_preview_says_why_cloud_only_files_are_not_read(onedrive, monkey
     assert pv["dataless"] == 2
     assert pv["cloud"] == {
         "kind": "OneDrive", "name": "OneDrive", "folder": "OneDrive-测试", "client_running": False, "blocked": 2,
-        "message": "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 RCE 才能读到",
+        "message": "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 Research OS 才能读到",
     }
     monkeypatch.setattr(cloud, "PROCESS_CHECK", lambda names: True)
     cloud.reset_cache()
@@ -535,7 +535,7 @@ def test_added_and_scanned_cloud_only_files_are_never_opened_and_the_scan_says_w
     monkeypatch.setattr(pathlib.Path, "read_text", read_text)
     monkeypatch.setattr(pathlib.Path, "read_bytes", read_bytes)
     started = []
-    # `rce.paths` asks for a download by starting a thread: recorded, not run.
+    # `researchos.paths` asks for a download by starting a thread: recorded, not run.
     monkeypatch.setattr(paths, "threading", types.SimpleNamespace(
         Thread=lambda *a, **k: started.append(k) or types.SimpleNamespace(start=lambda: None),
     ))
@@ -552,7 +552,7 @@ def test_added_and_scanned_cloud_only_files_are_never_opened_and_the_scan_says_w
     assert "dataflow: code/local.py" not in report.unreadable_sources
     [note] = report.cloud
     assert note["name"] == "OneDrive" and note["files"] == ["code/clean.py", "paper.md"]
-    assert note["message"] == "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 RCE 才能读到"
+    assert note["message"] == "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 Research OS 才能读到"
     paths._request_download(onedrive / "paper.md")
     assert started == []  # no download is asked for either
 
@@ -610,7 +610,7 @@ def test_page_preview_and_scan_say_why_cloud_only_files_are_not_read():
     """11.5 scenario 1 (the page): the preview says 11.1's sentence for
     files nobody can download, names the provider for files that will be;
     the scan's 「详情」 says the sentence after the files."""
-    sentence = "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 RCE 才能读到"
+    sentence = "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 Research OS 才能读到"
     blocked = {"kind": "OneDrive", "name": "OneDrive", "folder": "OneDrive-测试", "client_running": False, "blocked": 2, "message": sentence}
     running = dict(blocked, client_running=True, blocked=0, message=None)
     out = _page(

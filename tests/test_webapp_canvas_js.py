@@ -1,5 +1,5 @@
 """Tests for the canvas's client-side layout (DESIGN.md section 8.4; task
-V4 phase 2a), run against the REAL `src/rce/webapp/canvas.js` under node.
+V4 phase 2a), run against the REAL `src/researchos/webapp/canvas.js` under node.
 
 8.4's rules are binding and live only in the browser (the layout is
 computed client-side, no library), so they are pinned here by loading the
@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from rce.webapp import server
+from researchos.webapp import server
 
 CANVAS_JS = Path(server.__file__).parent / "canvas.js"
 NODE = shutil.which("node")
@@ -130,7 +130,7 @@ def test_a_human_link_that_closes_a_loop_is_the_one_marked():
 
 def test_human_links_close_loops_in_the_order_they_were_asserted():
     """Two human links that only form a loop together: the later entry in
-    .rce/mappings.toml is the closing one, and an optimistic link (no entry
+    .researchos/mappings.toml is the closing one, and an optimistic link (no entry
     yet) is newer than every written one."""
     a = dict(_link("a", PY16, MONTHLY), human=True, entry=2)
     b = dict(_link("b", MONTHLY, PY16), human=True, entry=1)
@@ -425,7 +425,7 @@ def _check(frm: str, out_index: int, to: str | None, in_index: int = 0, links: l
 def test_js_link_rules_mirror_the_mappings_grammar_exactly():
     """One table in the JS, one in the ingest: every rule the canvas offers
     is an entry the server accepts, and every entry type is drawable."""
-    from rce.ingest import mappings
+    from researchos.ingest import mappings
 
     rules = _call("rules")
     derived = {rule["type"]: (key.split(":")[0], rule["toType"]) for key, rule in rules.items()}
@@ -1192,7 +1192,7 @@ def test_ensure_loads_never_loaded_data():
 
 
 def test_ensure_rereads_even_when_the_server_generation_did_not_move():
-    """Verifier finding on a038210: a CLI `rce attempts` run while the
+    """Verifier finding on a038210: a CLI `researchos attempts` run while the
     server is up (or a server restart, whose counter starts again at 1)
     changes the records without moving /api/generation. The form must
     still see row 26 and its new verdict: next number 27, not 26."""

@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.attempts (task A2): config-driven parsing of a
+"""Tests for researchos.ingest.attempts (task A2): config-driven parsing of a
 hand-maintained attempt timeline into `attempt` nodes."""
 
 import ast
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db
-from rce.ingest import attempts
+from researchos import cli, db
+from researchos.ingest import attempts
 
 COLUMNS = {
     "id": "#", "date": "Date", "description": "Path",
@@ -75,8 +75,8 @@ def test_missing_config_raises_with_template(tmp_path):
 
 
 def test_config_missing_required_column_raises(tmp_path):
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text(
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(
         'file = "map.md"\nheading = "X"\n[columns]\nid = "#"\n'
     )
     with pytest.raises(attempts.AttemptsConfigError, match="verdict"):
@@ -84,8 +84,8 @@ def test_config_missing_required_column_raises(tmp_path):
 
 
 def test_config_loads_real_shaped_toml(tmp_path):
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text(attempts.SAMPLE_CONFIG)
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(attempts.SAMPLE_CONFIG)
     config = attempts.load_config(tmp_path)
     assert config.file == "00-项目地图_唯一真相.md"
     assert config.columns["verdict"] == "判决"
@@ -99,8 +99,8 @@ def test_sample_config_dead_variables_and_active_verdicts_actually_load(tmp_path
     into that table), every user who copy-pastes it gets a silently-None
     config and the revived-dead-variables check always reports "skipped"
     with no indication anything is wrong."""
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text(attempts.SAMPLE_CONFIG)
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(attempts.SAMPLE_CONFIG)
     config = attempts.load_config(tmp_path)
     assert config.dead_variables is not None
     assert config.active_verdicts is not None
@@ -112,8 +112,8 @@ def test_sample_config_dead_variables_and_active_verdicts_actually_load(tmp_path
 
 
 def test_config_reads_date_year(tmp_path):
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text(
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(
         'file = "map.md"\nheading = "X"\ndate_year = 2026\n'
         '[columns]\nid = "#"\ndate = "d"\ndescription = "p"\n'
         'variables = "v"\nresult = "r"\nverdict = "j"\n'
@@ -123,8 +123,8 @@ def test_config_reads_date_year(tmp_path):
 
 
 def test_config_date_year_must_be_int(tmp_path):
-    (tmp_path / ".rce").mkdir()
-    (tmp_path / ".rce" / "attempts.toml").write_text(
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(
         'file = "map.md"\nheading = "X"\ndate_year = "2026"\n'
         '[columns]\nid = "#"\ndate = "d"\ndescription = "p"\n'
         'variables = "v"\nresult = "r"\nverdict = "j"\n'
@@ -176,7 +176,7 @@ def test_heading_not_found_raises_table_not_found_error():
     found and genuinely has zero rows," and a caller (ingest_attempts_repo)
     reading it that way fed an empty seen_ids into orphan cleanup and wiped
     every previously-ingested node for the file. AttemptsTableNotFoundError
-    is a subclass of AttemptsConfigError so rce.cli.cmd_attempts's existing
+    is a subclass of AttemptsConfigError so researchos.cli.cmd_attempts's existing
     config-error handling covers it with no separate except clause."""
     with pytest.raises(attempts.AttemptsTableNotFoundError) as excinfo:
         attempts.parse_attempts_table("# nothing here\n", HEADING, COLUMNS)
@@ -289,7 +289,7 @@ def test_reingest_resyncs_human_fields_when_source_verdict_changes(conn, tmp_pat
     judgement, but they live in the source Markdown file, not in this
     graph -- so a re-ingest must resync them, mirroring a real audit where
     a row's verdict changed from a dead marker to a revived one in the
-    source and the graph needed to pick that up on the next `rce attempts`
+    source and the graph needed to pick that up on the next `researchos attempts`
     run, not stay frozen on the first parse."""
     config = _config(tmp_path, TABLE_MD)
     attempts.ingest_attempts_repo(conn, tmp_path, config)
@@ -362,7 +362,7 @@ def test_row_removed_from_table_is_deleted_with_its_node(conn, tmp_path):
     """Architecture fix (this task, deletion direction): the source file is
     the sole authority for whether an attempt row exists at all, exactly as
     it already is for verdict/result (see module docstring). A row deleted
-    from the table must not leave a stale node behind for `rce attempts`'
+    from the table must not leave a stale node behind for `researchos attempts`'
     listing or `--check` to keep reporting on -- the previous "preserve any
     node with human_fields" guard was always true in practice (every node
     gets human_fields on first parse, even an empty one) and so never
@@ -407,9 +407,9 @@ def test_row_with_empty_verdict_and_result_is_still_deleted_when_removed(conn, t
 
 
 def test_deleted_row_orphan_cleanup_also_removes_edges_from_other_extractors(conn, tmp_path):
-    """rce.consistency writes `attempt --uses--> commit` edges tagged
+    """researchos.consistency writes `attempt --uses--> commit` edges tagged
     extractor="attempts_consistency", not "attempts". Unlike
-    rce.ingest.claims's orphan cleanup (extractor-scoped, on purpose --
+    researchos.ingest.claims's orphan cleanup (extractor-scoped, on purpose --
     see _cleanup_orphans docstring), this one must not scope the edge
     delete to its own extractor: a leftover `uses` edge from an earlier
     `--check` run still references the node, and nodes.id is a foreign key
@@ -511,7 +511,7 @@ def test_cli_renamed_column_gives_clean_error_not_raw_traceback(tmp_path, capsys
     """Warning 3: `parse_attempts_table` raising `AttemptsConfigError` for a
     configured column name that no longer matches the table's actual header
     (e.g. a renamed column) used to propagate straight out of
-    `rce.cli.cmd_attempts` uncaught -- only `load_config`'s own errors were
+    `researchos.cli.cmd_attempts` uncaught -- only `load_config`'s own errors were
     caught -- even though the command's own docstring promises a clean
     config-error message. `cli.main` must catch it the same way and return
     1, not raise."""
@@ -519,7 +519,7 @@ def test_cli_renamed_column_gives_clean_error_not_raw_traceback(tmp_path, capsys
     project.mkdir()
     assert cli.main(["init", str(project)]) == 0
     (project / "map.md").write_text(TABLE_MD)
-    (project / ".rce" / "attempts.toml").write_text(
+    (project / ".researchos" / "attempts.toml").write_text(
         f'file = "map.md"\nheading = "{HEADING}"\n'
         '[columns]\nid = "#"\ndate = "Date"\ndescription = "Path"\n'
         'variables = "Variables"\nresult = "Result"\nverdict = "Renamed Column"\n'
@@ -541,7 +541,7 @@ def test_cli_table_location_failure_gives_clean_error_and_exit_1(tmp_path, capsy
     project.mkdir()
     assert cli.main(["init", str(project)]) == 0
     (project / "map.md").write_text(f"# {HEADING}\n\nno table here at all\n")
-    (project / ".rce" / "attempts.toml").write_text(
+    (project / ".researchos" / "attempts.toml").write_text(
         f'file = "map.md"\nheading = "{HEADING}"\n'
         '[columns]\nid = "#"\ndate = "Date"\ndescription = "Path"\n'
         'variables = "Variables"\nresult = "Result"\nverdict = "Verdict"\n'
@@ -566,7 +566,7 @@ def _set_human_fields_call_sites(src_root: Path) -> list[tuple[Path, int]]:
     `db.py`'s own `def set_human_fields` is never mistaken for one either.
 
     Also flags an aliased import of the name on its own --
-    `from rce.db import set_human_fields as _write_hf` -- as a site,
+    `from researchos.db import set_human_fields as _write_hf` -- as a site,
     whether or not the alias is ever actually called in the same file: a
     reviewer probe showed a call written through such an alias
     (`_write_hf(...)`) was invisible to a plain ast.Call name/attribute
@@ -597,7 +597,7 @@ def _set_human_fields_call_sites(src_root: Path) -> list[tuple[Path, int]]:
 def test_call_site_detector_catches_aliased_import(tmp_path):
     """Warning 4 regression, exercised against a synthetic src tree (not the
     real one, so this test doesn't itself trip the guardrail it verifies):
-    `from rce.db import set_human_fields as _write_hf` plus a real call
+    `from researchos.db import set_human_fields as _write_hf` plus a real call
     through that alias used to pass the guardrail test undetected -- the
     call's own `func.id` is `"_write_hf"`, never the literal string
     `"set_human_fields"`. The import binding itself must now be counted."""
@@ -605,7 +605,7 @@ def test_call_site_detector_catches_aliased_import(tmp_path):
     fake_src.mkdir(parents=True)
     (fake_src / "__init__.py").write_text("")
     (fake_src / "sneaky.py").write_text(
-        "from rce.db import set_human_fields as _write_hf\n"
+        "from researchos.db import set_human_fields as _write_hf\n"
         "\n"
         "def do_it(conn, node_id, fields):\n"
         "    _write_hf(conn, node_id, fields)\n"
@@ -622,7 +622,7 @@ def test_set_human_fields_has_exactly_one_caller_in_src():
     today `db.set_human_fields` has exactly one caller anywhere in `src/`,
     this extractor's own resync call. Was previously only a claim in a
     comment; now goes red for a second caller written as an ordinary call
-    (`db.set_human_fields(...)`, or a bare name after `from rce.db import
+    (`db.set_human_fields(...)`, or a bare name after `from researchos.db import
     set_human_fields`) or an aliased import of the name (`... import
     set_human_fields as _write_hf`, counted the moment it is imported,
     whether or not the alias is ever called -- see
@@ -638,7 +638,7 @@ def test_set_human_fields_has_exactly_one_caller_in_src():
     sites = _set_human_fields_call_sites(src_root)
     assert len(sites) == 1, (
         f"expected exactly one src/ call site for db.set_human_fields, found {len(sites)}: "
-        f"{sites} -- if you just added a second caller, read rce.ingest.attempts's module "
+        f"{sites} -- if you just added a second caller, read researchos.ingest.attempts's module "
         f"docstring (the 'two authorities that can disagree' paragraph) before proceeding, "
         f"this precondition no longer holds and must be resolved explicitly"
     )

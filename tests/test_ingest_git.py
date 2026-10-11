@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.git. Builds real throwaway repos under tmp_path via
+"""Tests for researchos.ingest.git. Builds real throwaway repos under tmp_path via
 subprocess `git` calls (no mocking) so tests exercise the actual `git log`
 output format this module parses.
 """
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from rce import db
-from rce.ingest import git as git_ingest
+from researchos import db
+from researchos.ingest import git as git_ingest
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -125,7 +125,7 @@ def test_list_source_files_groups_tracked_files_and_writes_no_nodes(repo, conn):
     assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 0
 
 
-# -- W1: md/r/rmd/data categories (added alongside rce.ingest.files) ----------
+# -- W1: md/r/rmd/data categories (added alongside researchos.ingest.files) ----------
 def test_list_source_files_categorizes_md_r_rmd_and_data(repo, conn):
     (repo / "notes.md").write_text("# Notes\n")
     (repo / "analysis.R").write_text("x <- 1\n")
@@ -197,7 +197,7 @@ def test_list_source_files_skips_and_logs_undecodable_path(monkeypatch, tmp_path
     monkeypatch.setattr(
         git_ingest, "_run_git", lambda repo_path, args: f"{good}\x00{bad}\x00"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.git"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.git"):
         inventory = git_ingest.list_source_files(tmp_path)
     assert inventory["image"] == ["ascii.png"]
     assert inventory["py"] == []
@@ -214,7 +214,7 @@ def test_read_commits_skips_and_logs_undecodable_changed_file(monkeypatch, tmp_p
         + f"\x00{good}\x00{bad}\x00"
     )
     monkeypatch.setattr(git_ingest, "_run_git", lambda repo_path, args: fake_record)
-    with caplog.at_level("WARNING", logger="rce.ingest.git"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.git"):
         [commit] = git_ingest.read_commits(tmp_path)
     assert commit.files == (good,)
     assert any("not valid UTF-8" in r.message for r in caplog.records)

@@ -1,5 +1,5 @@
-"""Tests for rce.webapp.macapp: `rce app`'s two products -- the native shell
-RCE.app (task V4 phase 3, DESIGN.md 8.9) and the V3 launcher-script bundle
+"""Tests for researchos.webapp.macapp: `researchos app`'s two products -- the native shell
+Research OS.app (task V4 phase 3, DESIGN.md 8.9) and the V3 launcher-script bundle
 it falls back to -- plus the CLI wiring.
 
 The launcher tests run on any platform (pure file writing; its bash source
@@ -26,8 +26,8 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli
-from rce.webapp import macapp
+from researchos import cli
+from researchos.webapp import macapp
 
 
 def _fake_rce(tmp_path: Path, dirname: str = "bin") -> Path:
@@ -35,7 +35,7 @@ def _fake_rce(tmp_path: Path, dirname: str = "bin") -> Path:
     instead of whatever interpreter runs the test suite."""
     bin_dir = tmp_path / dirname
     bin_dir.mkdir(parents=True, exist_ok=True)
-    rce = bin_dir / "rce"
+    rce = bin_dir / "researchos"
     rce.write_text("#!/bin/sh\n")
     return rce
 
@@ -48,19 +48,19 @@ def _launcher(bundle: Path) -> Path:
 
 
 def test_generate_bundle_writes_parseable_plist_with_required_keys(tmp_path):
-    bundle = macapp.generate_bundle(tmp_path, rce_executable=_fake_rce(tmp_path))
-    assert bundle == tmp_path / "RCE.app"
+    bundle = macapp.generate_bundle(tmp_path, executable=_fake_rce(tmp_path))
+    assert bundle == tmp_path / "Research OS.app"
     with (bundle / "Contents" / "Info.plist").open("rb") as fh:
         plist = plistlib.load(fh)
-    assert plist["CFBundleName"] == "RCE"
-    assert plist["CFBundleIdentifier"] == "dev.researchos.rce"
+    assert plist["CFBundleName"] == "Research OS"
+    assert plist["CFBundleIdentifier"] == "dev.researchos.app"
     assert plist["CFBundleExecutable"] == macapp.EXECUTABLE_NAME
     # The launcher must never bounce in the Dock -- it runs and exits.
     assert plist["LSUIElement"] is True
 
 
 def test_generate_bundle_launcher_is_executable(tmp_path):
-    bundle = macapp.generate_bundle(tmp_path, rce_executable=_fake_rce(tmp_path))
+    bundle = macapp.generate_bundle(tmp_path, executable=_fake_rce(tmp_path))
     launcher = _launcher(bundle)
     assert launcher.stat().st_mode & 0o777 == 0o755
     assert os.access(launcher, os.X_OK)
@@ -71,9 +71,9 @@ def test_generate_bundle_is_idempotent_overwrite(tmp_path):
     bundle succeeds and leaves the same content, not a duplicate or an
     error."""
     rce = _fake_rce(tmp_path)
-    first = macapp.generate_bundle(tmp_path, rce_executable=rce)
+    first = macapp.generate_bundle(tmp_path, executable=rce)
     script_before = _launcher(first).read_text()
-    second = macapp.generate_bundle(tmp_path, rce_executable=rce)
+    second = macapp.generate_bundle(tmp_path, executable=rce)
     assert second == first
     assert _launcher(second).read_text() == script_before
 
@@ -83,7 +83,7 @@ def test_generate_bundle_is_idempotent_overwrite(tmp_path):
 
 def test_launcher_contains_resolved_rce_path_and_port(tmp_path):
     rce = _fake_rce(tmp_path)
-    bundle = macapp.generate_bundle(tmp_path, rce_executable=rce)
+    bundle = macapp.generate_bundle(tmp_path, executable=rce)
     script = _launcher(bundle).read_text()
     assert script.startswith("#!/bin/bash\n")
     assert shlex.quote(str(rce)) in script
@@ -100,7 +100,7 @@ def test_launcher_quotes_shell_metacharacter_paths(tmp_path):
     string (whose single quotes would terminate a naive '...'-wrapping)
     must not appear anywhere in the script."""
     rce = _fake_rce(tmp_path, dirname="evil'; touch pwned; 'dir")
-    bundle = macapp.generate_bundle(tmp_path, rce_executable=rce)
+    bundle = macapp.generate_bundle(tmp_path, executable=rce)
     script = _launcher(bundle).read_text()
     assert shlex.quote(str(rce)) in script
     assert str(rce) not in script  # only the quoted form, never the raw one
@@ -111,30 +111,30 @@ def test_launcher_quotes_shell_metacharacter_paths(tmp_path):
 
 
 def test_launcher_expands_baked_path_only_double_quoted(tmp_path):
-    """The baked path is assigned once (RCE=<quoted>) and every later use
-    is the double-quoted expansion -- a bare $RCE would re-split a path
+    """The baked path is assigned once (ENGINE=<quoted>) and every later use
+    is the double-quoted expansion -- a bare $ENGINE would re-split a path
     with spaces at execution time even though generation quoted it."""
     rce = _fake_rce(tmp_path, dirname="dir with spaces")
-    script = _launcher(macapp.generate_bundle(tmp_path, rce_executable=rce)).read_text()
-    assert '"$RCE" serve' in script
-    assert script.count("$RCE") == script.count('"$RCE"')  # every expansion is the quoted one
+    script = _launcher(macapp.generate_bundle(tmp_path, executable=rce)).read_text()
+    assert '"$ENGINE" serve' in script
+    assert script.count("$ENGINE") == script.count('"$ENGINE"')  # every expansion is the quoted one
 
 
-# -- resolve_rce_executable ----------------------------------------------------
+# -- resolve_executable ----------------------------------------------------
 
 
 def test_resolve_rce_executable_uses_interpreters_own_bin_dir(tmp_path, monkeypatch):
     rce = _fake_rce(tmp_path)
     monkeypatch.setattr(macapp.sys, "executable", str(rce.parent / "python"))
-    assert macapp.resolve_rce_executable() == rce
+    assert macapp.resolve_executable() == rce
 
 
 def test_resolve_rce_executable_refuses_when_entry_point_missing(tmp_path, monkeypatch):
-    """No `rce` next to the interpreter is a refusal naming the missing
+    """No `researchos` next to the interpreter is a refusal naming the missing
     path -- never a $PATH-lookup fallback (module docstring)."""
     monkeypatch.setattr(macapp.sys, "executable", str(tmp_path / "python"))
-    with pytest.raises(macapp.MacAppError, match="rce"):
-        macapp.resolve_rce_executable()
+    with pytest.raises(macapp.MacAppError, match="researchos"):
+        macapp.resolve_executable()
 
 
 def test_generate_bundle_defaults_to_current_interpreters_rce(tmp_path, monkeypatch):
@@ -168,9 +168,9 @@ def native_build(tmp_path_factory):
     root = tmp_path_factory.mktemp("native")
     rce = _fake_rce(root, dirname=_HOSTILE_DIR)
     target = root / "apps"
-    old = macapp.generate_bundle(target, rce_executable=rce)
+    old = macapp.generate_bundle(target, executable=rce)
     (old / "Contents" / "stale.txt").write_text("left over from the launcher")
-    result = macapp.build_app(target, rce_executable=rce, port=_TRIAL_PORT)
+    result = macapp.build_app(target, executable=rce, port=_TRIAL_PORT)
     return result, rce, target
 
 
@@ -194,10 +194,10 @@ def test_native_build_produces_an_executable_mach_o_binary(native_build):
 def test_native_build_info_plist_keys(native_build):
     result, _, _ = native_build
     plist = _plist(result.bundle)
-    assert plist["CFBundleExecutable"] == "RCE"
-    assert plist["CFBundleIdentifier"] == "dev.researchos.rce"
-    assert plist["CFBundleName"] == "RCE"
-    assert plist["CFBundleIconFile"] == "RCE"
+    assert plist["CFBundleExecutable"] == "ResearchOS"
+    assert plist["CFBundleIdentifier"] == "dev.researchos.app"
+    assert plist["CFBundleName"] == "Research OS"
+    assert plist["CFBundleIconFile"] == "ResearchOS"
     assert plist["LSUIElement"] is False  # a windowed app now
     assert plist["NSHighResolutionCapable"] is True
     assert plist["LSMinimumSystemVersion"] == macapp.MIN_MACOS
@@ -208,7 +208,7 @@ def test_native_build_info_plist_keys(native_build):
 def test_native_build_has_an_icns_icon(native_build):
     result, _, _ = native_build
     assert macapp.NOTICE_NO_ICON not in result.notices
-    icns = result.bundle / "Contents" / "Resources" / "RCE.icns"
+    icns = result.bundle / "Contents" / "Resources" / "ResearchOS.icns"
     assert icns.is_file() and icns.read_bytes()[:4] == b"icns"
 
 
@@ -218,17 +218,17 @@ def test_native_build_sidecars_carry_a_hostile_path_byte_exact(native_build):
     no newline) and read whole by the shell at runtime."""
     result, rce, _ = native_build
     resources = result.bundle / "Contents" / "Resources"
-    assert (resources / "rce-path").read_bytes() == str(rce).encode("utf-8")
-    assert (resources / "rce-port").read_text(encoding="utf-8") == str(_TRIAL_PORT)
+    assert (resources / "engine-path").read_bytes() == str(rce).encode("utf-8")
+    assert (resources / "engine-port").read_text(encoding="utf-8") == str(_TRIAL_PORT)
 
 
 @native_only
 def test_native_build_replaced_the_launcher_bundle_in_place(native_build):
     result, _, target = native_build
-    assert result.bundle == target / "RCE.app"
+    assert result.bundle == target / "Research OS.app"
     assert not (result.bundle / "Contents" / "stale.txt").exists()
     assert not _launcher(result.bundle).read_bytes().startswith(b"#!")
-    assert [p.name for p in target.iterdir()] == ["RCE.app"]  # no staging directory left behind
+    assert [p.name for p in target.iterdir()] == ["Research OS.app"]  # no staging directory left behind
 
 
 @native_only
@@ -250,13 +250,13 @@ def test_build_app_without_swiftc_falls_back_to_the_launcher(tmp_path, monkeypat
     survive into a bundle whose executable is now a script."""
     monkeypatch.setattr(macapp, "find_swiftc", lambda: None)
     rce = _fake_rce(tmp_path)
-    old = tmp_path / "apps" / "RCE.app" / "Contents"
+    old = tmp_path / "apps" / "Research OS.app" / "Contents"
     (old / "_CodeSignature").mkdir(parents=True)
     (old / "_CodeSignature" / "CodeResources").write_text("sig")
     (old / "Resources").mkdir()
-    (old / "Resources" / "rce-path").write_text("/old/rce")
+    (old / "Resources" / "engine-path").write_text("/old/researchos")
 
-    result = macapp.build_app(tmp_path / "apps", rce_executable=rce, port=_TRIAL_PORT)
+    result = macapp.build_app(tmp_path / "apps", executable=rce, port=_TRIAL_PORT)
 
     assert result.native is False
     assert result.notices == [macapp.NOTICE_NO_SWIFTC]
@@ -275,7 +275,7 @@ def test_build_app_falls_back_when_swiftc_cannot_compile(tmp_path, monkeypatch):
     fake.chmod(0o755)
     monkeypatch.setattr(macapp, "find_swiftc", lambda: str(fake))
 
-    result = macapp.build_app(tmp_path / "apps", rce_executable=_fake_rce(tmp_path))
+    result = macapp.build_app(tmp_path / "apps", executable=_fake_rce(tmp_path))
 
     assert result.native is False
     assert len(result.notices) == 1
@@ -291,9 +291,9 @@ def test_build_app_replaces_a_symlinked_bundle_without_following_it(tmp_path, mo
     (elsewhere / "keep.txt").write_text("not ours")
     apps = tmp_path / "apps"
     apps.mkdir()
-    (apps / "RCE.app").symlink_to(elsewhere, target_is_directory=True)
+    (apps / "Research OS.app").symlink_to(elsewhere, target_is_directory=True)
 
-    result = macapp.build_app(apps, rce_executable=_fake_rce(tmp_path))
+    result = macapp.build_app(apps, executable=_fake_rce(tmp_path))
 
     assert (elsewhere / "keep.txt").read_text() == "not ours"
     assert not result.bundle.is_symlink() and _launcher(result.bundle).is_file()
@@ -304,12 +304,12 @@ def test_build_app_refuses_a_missing_entry_point_before_compiling(tmp_path, monk
     monkeypatch.setattr(macapp, "find_swiftc", lambda: pytest.fail("must not look for swiftc"))
     with pytest.raises(macapp.MacAppError):
         macapp.build_app(tmp_path / "apps")
-    assert not (tmp_path / "apps" / "RCE.app").exists()
+    assert not (tmp_path / "apps" / "Research OS.app").exists()
 
 
 def test_native_info_plist_names_the_icon_only_when_it_was_built():
     assert "CFBundleIconFile" not in macapp._native_info_plist(7357, with_icon=False)
-    assert macapp._native_info_plist(7357, with_icon=True)["CFBundleIconFile"] == "RCE"
+    assert macapp._native_info_plist(7357, with_icon=True)["CFBundleIconFile"] == "ResearchOS"
 
 
 # -- The Swift sources: what the shell promises, checked in the text ----------
@@ -323,13 +323,13 @@ def test_swift_sources_ship_as_package_data():
     import tomllib
 
     pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
-    assert "webapp/shell/*.swift" in pyproject["tool"]["setuptools"]["package-data"]["rce"]
+    assert "webapp/shell/*.swift" in pyproject["tool"]["setuptools"]["package-data"]["researchos"]
     assert macapp.SHELL_SOURCE.is_file() and macapp.ICON_SOURCE.is_file()
 
 
 def test_shell_menus_match_the_design():
     for snippet in (
-        'submenu("RCE"', 'item("关于 RCE"', 'item("退出", #selector(NSApplication.terminate(_:)), "q")',
+        'submenu("Research OS"', 'item("关于 Research OS"', 'item("退出", #selector(NSApplication.terminate(_:)), "q")',
         'submenu("文件"', 'cmd("新增尝试", "new-attempt", "n")',
         'cmd("在 Finder 中显示项目", "reveal-project", "r", [.command, .shift])',
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
@@ -400,12 +400,12 @@ def test_shell_file_menu_adds_a_project_on_cmd_o():
 def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
     """DESIGN.md 10.7 (and 10.8 #1): the bridge takes `{type, request,
     purpose}` with purpose exactly "add" or "locate" -- the panel's message
-    is 「选择要加入 RCE 的项目文件夹」 or 「选择项目文件夹的新位置」 and nothing
+    is 「选择要加入 Research OS 的项目文件夹」 or 「选择项目文件夹的新位置」 and nothing
     else changes; the two-key shape stays the locate panel (a page from
     before V6); a third key that is anything else is ignored."""
     helper = _SHELL[_SHELL.index("func folderPanelMessage"):]
     helper = helper[: helper.index("\n}\n")]
-    assert 'case "add": return "选择要加入 RCE 的项目文件夹"' in helper
+    assert 'case "add": return "选择要加入 Research OS 的项目文件夹"' in helper
     assert 'case "locate": return "选择项目文件夹的新位置"' in helper
     assert "default: return nil" in helper
     handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
@@ -427,7 +427,7 @@ def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
 
 def test_the_v6_shell_changes_the_build_id(tmp_path):
     """10.7: this rebuilds the shell -- the build-id hashes the Swift source,
-    so the bundle built before V6 is not "up to date" and `rce app` rebuilds
+    so the bundle built before V6 is not "up to date" and `researchos app` rebuilds
     it once."""
     rce = tmp_path / "rce"
     current = macapp.build_id(rce, 7357)
@@ -453,7 +453,7 @@ def test_shell_window_geometry_and_quit_on_close():
     assert "width: 1280, height: 840" in _SHELL
     assert "NSSize(width: 900, height: 600)" in _SHELL
     assert 'setFrameAutosaveName("RCEMain")' in _SHELL
-    assert 'window.title = "RCE"' in _SHELL
+    assert 'window.title = "Research OS"' in _SHELL
     assert "applicationShouldTerminateAfterLastWindowClosed" in _SHELL
 
 
@@ -471,11 +471,11 @@ def test_shell_bridge_uses_only_fixed_shapes():
     handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
     assert 'body["type"] as? String == "title"' in handler
     assert "message.frameInfo.isMainFrame" in handler and "origin.port == port" in handler
-    assert "sanitizedLabel(text)" in handler and '"RCE — " + label' in handler
+    assert "sanitizedLabel(text)" in handler and '"Research OS — " + label' in handler
 
 
 def test_shell_reads_its_configuration_at_runtime_and_never_enables_devtools():
-    assert 'resourceText("rce-path")' in _SHELL and 'resourceText("rce-port")' in _SHELL
+    assert 'resourceText("engine-path")' in _SHELL and 'resourceText("engine-port")' in _SHELL
     assert '["serve", "--port", String(port), "--no-browser"]' in _SHELL
     assert '"api/projects"' in _SHELL and '"api/shutdown"' in _SHELL
     assert "developerExtrasEnabled" not in _SHELL and "isInspectable" not in _SHELL
@@ -512,7 +512,7 @@ def test_shell_stops_only_an_engine_it_spawned():
     assert "guard let process = child, process.isRunning else { return .terminateNow }" in quit_
 
 
-# -- cli wiring: `rce app` -----------------------------------------------------
+# -- cli wiring: `researchos app` -----------------------------------------------------
 
 
 def test_cli_app_with_dir_builds_anywhere_and_prints_the_fallback_notice(tmp_path, monkeypatch, capsys):
@@ -525,10 +525,10 @@ def test_cli_app_with_dir_builds_anywhere_and_prints_the_fallback_notice(tmp_pat
 
     assert cli.main(["app", "--dir", str(target)]) == 0
 
-    assert (target / "RCE.app" / "Contents" / "Info.plist").is_file()
+    assert (target / "Research OS.app" / "Contents" / "Info.plist").is_file()
     out = capsys.readouterr().out
     assert macapp.NOTICE_NO_SWIFTC in out
-    assert str(target / "RCE.app") in out
+    assert str(target / "Research OS.app") in out
     assert "双击" in out
 
 
@@ -542,9 +542,9 @@ def test_cli_app_without_dir_on_non_macos_errors_cleanly(monkeypatch, capsys):
 def _stub_build_app(monkeypatch) -> list[tuple[Path, int]]:
     calls: list[tuple[Path, int]] = []
 
-    def fake(target_dir, rce_executable=None, port=macapp.DEFAULT_PORT, force=False):
+    def fake(target_dir, executable=None, port=macapp.DEFAULT_PORT, force=False):
         calls.append((target_dir, port))
-        return macapp.AppBuild(bundle=target_dir / "RCE.app", native=True)
+        return macapp.AppBuild(bundle=target_dir / "Research OS.app", native=True)
 
     monkeypatch.setattr(cli.macapp, "build_app", fake)
     return calls
@@ -593,7 +593,7 @@ def test_cli_app_reports_missing_entry_point_as_clean_error(tmp_path, monkeypatc
     monkeypatch.setattr(macapp.sys, "executable", str(tmp_path / "python"))
     assert cli.main(["app", "--dir", str(tmp_path / "apps")]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("Error:") and "rce" in err
+    assert err.startswith("Error:") and "researchos" in err
 
 
 # -- 9.12: an unchanged shell is not rebuilt (macOS would ask for Documents again) ----
@@ -634,7 +634,7 @@ def test_build_id_hashes_every_input_of_a_native_build(tmp_path, monkeypatch):
     monkeypatch.setattr(macapp, "ICON_SOURCE", icon)
     assert macapp.build_id(rce, 7357) != base
     monkeypatch.undo()
-    monkeypatch.setattr(macapp, "_rce_version", lambda: "99.0")  # a plist field
+    monkeypatch.setattr(macapp, "_package_version", lambda: "99.0")  # a plist field
     assert macapp.build_id(rce, 7357) != base
 
 
@@ -643,27 +643,27 @@ def test_an_unchanged_bundle_is_left_untouched_and_force_rebuilds_it(tmp_path, m
     monkeypatch.setattr(macapp.sys, "executable", str(rce.parent / "python"))
     ran = _fake_native_build(monkeypatch)
     target = tmp_path / "apps"
-    first = macapp.build_app(target, rce_executable=rce, port=_TRIAL_PORT)
+    first = macapp.build_app(target, executable=rce, port=_TRIAL_PORT)
     assert first.native and not first.up_to_date and "swiftc" in ran and "codesign" in ran
-    bundle = target / "RCE.app"
-    binary = bundle / "Contents" / "MacOS" / "RCE"
+    bundle = target / "Research OS.app"
+    binary = bundle / "Contents" / "MacOS" / "ResearchOS"
     recorded = (bundle / "Contents" / "Resources" / macapp.BUILD_ID_SIDECAR).read_text(encoding="utf-8")
     assert recorded == macapp.build_id(rce, _TRIAL_PORT)
     stamp = (binary.stat().st_ino, binary.stat().st_mtime_ns)
     ran.clear()
-    again = macapp.build_app(target, rce_executable=rce, port=_TRIAL_PORT)
+    again = macapp.build_app(target, executable=rce, port=_TRIAL_PORT)
     assert again.up_to_date and again.native and ran == []  # nothing compiled, nothing re-signed
     assert (binary.stat().st_ino, binary.stat().st_mtime_ns) == stamp
     assert cli.main(["app", "--dir", str(target), "--port", str(_TRIAL_PORT)]) == 0
-    assert "RCE.app is up to date" in capsys.readouterr().out and ran == []
+    assert "Research OS.app is up to date" in capsys.readouterr().out and ran == []
     assert cli.main(["app", "--dir", str(target), "--port", str(_TRIAL_PORT), "--force"]) == 0
     assert "up to date" not in capsys.readouterr().out and "swiftc" in ran and "codesign" in ran
     ran.clear()
     # A changed input (here the port) rebuilds; so does a bundle without a build-id (the V3 launcher).
-    assert not macapp.build_app(target, rce_executable=rce, port=_TRIAL_PORT + 1).up_to_date and "swiftc" in ran
+    assert not macapp.build_app(target, executable=rce, port=_TRIAL_PORT + 1).up_to_date and "swiftc" in ran
     launcher = tmp_path / "launcher"
-    macapp.generate_bundle(launcher, rce_executable=rce)
-    assert not macapp.is_up_to_date(launcher / "RCE.app", macapp.build_id(rce, macapp.DEFAULT_PORT))
+    macapp.generate_bundle(launcher, executable=rce)
+    assert not macapp.is_up_to_date(launcher / "Research OS.app", macapp.build_id(rce, macapp.DEFAULT_PORT))
 
 
 def test_shell_waiting_page_names_the_documents_prompt_and_shows_the_log_only_after_an_exit():
@@ -671,7 +671,7 @@ def test_shell_waiting_page_names_the_documents_prompt_and_shows_the_log_only_af
     the system may ask for the Documents folder; the log tail is shown only
     once the engine process has EXITED; the child's output is unbuffered."""
     # As Swift source: the quotes inside the string literal are escaped.
-    assert r'"正在启动引擎… 如果系统询问是否允许 RCE 访问\"文稿\"文件夹，请点\"允许\"。"' in _SHELL
+    assert r'"正在启动引擎… 如果系统询问是否允许 Research OS 访问\"文稿\"文件夹，请点\"允许\"。"' in _SHELL
     assert 'environment["PYTHONUNBUFFERED"] = "1"' in _SHELL
     poll = _SHELL[_SHELL.index("func pollTick"):_SHELL.index("func showLog")]
     assert "showLog" not in poll and "documentsHint" in poll

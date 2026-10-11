@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.wandb (T8). Transform layer uses fixture JSON only;
+"""Tests for researchos.ingest.wandb (T8). Transform layer uses fixture JSON only;
 fetch-layer error paths are tested by monkeypatching urllib.request.urlopen
 -- no real network call is ever made, per Owner's design.
 """
@@ -8,8 +8,8 @@ import urllib.error
 
 import pytest
 
-from rce import db
-from rce.ingest import wandb as wandb_ingest
+from researchos import db
+from researchos.ingest import wandb as wandb_ingest
 
 def _run_fixture(
     run_id: str = "run_a", sha: str = "c" * 40, file_name: str = "overview.png", **overrides
@@ -85,7 +85,7 @@ def test_transform_skips_run_with_no_name(conn, caplog):
     run = _run_fixture()
     del run["name"]
 
-    with caplog.at_level("WARNING", logger="rce.ingest.wandb"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.wandb"):
         counts = wandb_ingest.transform_runs(conn, [run])
 
     assert counts == {"experiments": 0, "implements": 0, "produces": 0}
@@ -94,7 +94,7 @@ def test_transform_skips_run_with_no_name(conn, caplog):
 def test_transform_unparseable_config_json_skips_field_not_whole_run(conn, caplog):
     run = _run_fixture(config="{not valid json")
 
-    with caplog.at_level("WARNING", logger="rce.ingest.wandb"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.wandb"):
         counts = wandb_ingest.transform_runs(conn, [run])
 
     assert counts["experiments"] == 1  # run itself still ingested

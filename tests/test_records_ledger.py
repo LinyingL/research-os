@@ -1,4 +1,4 @@
-"""Tests for rce.records.ledger (DESIGN.md section 9.3): the append-only
+"""Tests for researchos.records.ledger (DESIGN.md section 9.3): the append-only
 ledger engine and the judgment ledger. Scenario numbers are 9.9's."""
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.records import files, lock
-from rce.records import ledger as L
+from researchos import paths
+from researchos.records import files, lock
+from researchos.records import ledger as L
 
 PID = "p-" + "cd" * 16
 TZ = timezone(timedelta(hours=2))
@@ -27,7 +27,7 @@ CLAIM = dict(src="claim:paper.md#0123456789abcdef", dst="experiment:run1", type=
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
-    (root / ".rce").mkdir(parents=True)
+    (root / ".researchos").mkdir(parents=True)
     return root
 
 
@@ -399,7 +399,7 @@ def test_append_refuses_unreadable_unparseable_dataless(project, monkeypatch):
 
 def test_append_refuses_beside_a_conflict_copy(project):
     judge(project, "confirmed")
-    (project / ".rce" / "judgements 2.toml").write_text("")
+    (project / ".researchos" / "judgements 2.toml").write_text("")
     with pytest.raises(L.LedgerWriteRefused):
         judge(project, "rejected", create=False)
     assert len(load(project).entries) == 1
@@ -417,7 +417,7 @@ def test_an_append_that_would_not_read_back_writes_nothing(project):
 def test_snapshot_before_entry_once_a_day(project):
     day = datetime(2026, 10, 4, 9, tzinfo=TZ)
     judge(project, "confirmed", now=lambda: day)  # founding: nothing to snapshot
-    backups = project / ".rce" / "backups"
+    backups = project / ".researchos" / "backups"
     assert not backups.exists()
     first_bytes = L.judgements_path(project).read_bytes()
     for i in range(10):
@@ -430,7 +430,7 @@ def test_snapshot_before_entry_once_a_day(project):
 
 _WRITER = """
 import sys
-from rce.records import lock, ledger
+from researchos.records import lock, ledger
 project, tag, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 for i in range(n):
     with lock.project_lock(project, {pid!r}) as held:

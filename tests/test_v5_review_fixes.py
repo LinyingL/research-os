@@ -8,11 +8,11 @@ import shutil
 
 import pytest
 
-from rce import db
-from rce.records import judgements
-from rce.records import ledger as ledger_mod
-from rce.records.identity import read_identity
-from rce.records.trust import Trust
+from researchos import db
+from researchos.records import judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records.identity import read_identity
+from researchos.records.trust import Trust
 
 from test_records_judgements import READ, WRITE, _conn, _entries, _project, _scan, _state, _status
 
@@ -108,7 +108,7 @@ def test_a_half_restored_file_from_an_older_rce_is_completed_not_duplicated(tmp_
     is appended, and the restored undo cancels the restored reject."""
     root, path = _confirm_reject_undo_then_restore_first(tmp_path)
     missing = _decision(root).missing
-    from rce.records.situation import write_guard
+    from researchos.records.situation import write_guard
 
     with write_guard(root) as held:
         first = {k: v for k, v in missing[0].items() if k not in ("id", "seq", "at", "via")}
@@ -177,15 +177,15 @@ def test_answer_refused_when_the_missing_set_changed_since_the_question(tmp_path
     assert _status(root, READ) == "confirmed" and _status(root, WRITE) == "auto"
 
 
-# -- finding: `rce rebuild` silently answered the 9.3 question ---------------------------
+# -- finding: `researchos rebuild` silently answered the 9.3 question ---------------------------
 
 
 def test_rebuild_is_blocked_while_the_shrink_question_is_open(tmp_path):
     """9.8 / 9.3 (review finding 2): confirm, withdraw, restore the copy
-    holding only the confirmation. The question is open; `rce rebuild`
+    holding only the confirmation. The question is open; `researchos rebuild`
     refuses to swap (a fresh index would obey the shrunk file) and the
     withdrawal survives in the index's copy. Answered, it rebuilds."""
-    from rce import rebuild as rebuild_mod
+    from researchos import rebuild as rebuild_mod
 
     root, _ = _project(tmp_path)
     path = ledger_mod.judgements_path(root)
@@ -208,15 +208,15 @@ def test_rebuild_is_blocked_while_the_shrink_question_is_open(tmp_path):
 
 
 def test_claim_killed_before_the_rebuild_is_finished_on_the_next_open(tmp_path, monkeypatch):
-    """9.4 / 9.9 #3 (review finding 3): `rce project claim` killed between
+    """9.4 / 9.9 #3 (review finding 3): `researchos project claim` killed between
     moving the home here and rebuilding the index must not leave this
     folder served by the OTHER folder's index. The next open finishes the
     claim: the index is this folder's, and no shrink question offers to
     append the other folder's judgment into this ledger."""
-    from rce import paths
-    from rce import project as project_mod
-    from rce import rebuild as rebuild_mod
-    from rce.records import situation
+    from researchos import paths
+    from researchos import project as project_mod
+    from researchos import rebuild as rebuild_mod
+    from researchos.records import situation
 
     a, _pid = _project(tmp_path)
     judgements.judge(a, READ, "confirmed", via="cli")
@@ -260,8 +260,8 @@ def test_original_renamed_aside_and_copy_put_back_is_a_copy_question(tmp_path):
     directory by inode: two live folders, one identity. The original is
     not adopted as a respelling with the copy's scans and judgments in its
     index -- it is asked the copy question, and a write for it is refused."""
-    from rce import cli
-    from rce.records import situation
+    from researchos import cli
+    from researchos.records import situation
 
     root, pid = _project(tmp_path)
     judgements.judge(root, READ, "confirmed", via="cli")
@@ -298,13 +298,13 @@ def test_a_contradicting_two_entry_verdict_resumes_after_a_kill(tmp_path):
     from test_migration import READ as M_READ
     from test_migration import build_pre_v5_index
 
-    from rce import migration, paths
-    from rce.records import situation
+    from researchos import migration, paths
+    from researchos.records import situation
 
     root, _old = _migration_fixture(tmp_path)
     [first] = migration.migrate(root, yes=True)
     assert first.ok
-    other = paths.rce_home() / "graphs" / "0123456789abcdef"
+    other = paths.researchos_home() / "graphs" / "0123456789abcdef"
     db_path = build_pre_v5_index(root, key_dir=other)
     conn = db.connect(db_path)
     try:
@@ -333,8 +333,8 @@ def test_old_index_changed_while_retire_waited_is_recorded_and_the_migration_fin
     retired, and human records are writable again."""
     from test_migration import READ_B
 
-    from rce import migration
-    from rce.records import situation
+    from researchos import migration
+    from researchos.records import situation
 
     root, old = _migration_fixture(tmp_path)
     [stopped] = migration.migrate(root, yes=True, holder_probe=lambda _files: {4242})
@@ -358,7 +358,7 @@ def test_old_index_changed_while_retire_waited_is_recorded_and_the_migration_fin
 def test_tally_message_after_install_names_the_index_that_serves(tmp_path, monkeypatch):
     """Review finding 10: once a new index was installed, a resume that does
     not balance does not claim "the old index keeps serving"."""
-    from rce import migration
+    from researchos import migration
 
     root, _old = _migration_fixture(tmp_path)
     [stopped] = migration.migrate(root, yes=True, holder_probe=lambda _files: {4242})
@@ -369,42 +369,42 @@ def test_tally_message_after_install_names_the_index_that_serves(tmp_path, monke
 
 
 def test_migrating_from_a_projects_own_dot_rce_moves_only_the_database(tmp_path):
-    """9.5 step 5 (review finding 8): `rce migrate --from <proj>/.rce`
+    """9.5 step 5 (review finding 8): `researchos migrate --from <proj>/.researchos`
     retires the old index -- graph.db and its sidecars -- and never the
     folder it sits in, which holds the researcher's records."""
     from test_migration import ATTEMPTS_TOML, MAPPINGS, _folder, build_pre_v5_index
 
-    from rce import cli, paths
+    from researchos import cli, paths
 
     root = _folder(tmp_path)
-    build_pre_v5_index(root, key_dir=root / ".rce")
-    (root / ".rce" / "canvas.json").unlink()  # pre-8.10 kept no arrangement in the project
-    assert cli.main(["migrate", "--yes", "--from", str(root / ".rce"), str(root)]) == 0
-    rce_dir = root / ".rce"
-    assert (rce_dir / "project.toml").is_file() and (rce_dir / "judgements.toml").is_file()
-    assert (rce_dir / "attempts.toml").read_text() == ATTEMPTS_TOML
-    assert (rce_dir / "mappings.toml").read_text() == MAPPINGS
-    assert not (rce_dir / "graph.db").exists()
-    retired = list((paths.rce_home() / "graphs" / ".retired").iterdir())
+    build_pre_v5_index(root, key_dir=root / ".researchos")
+    (root / ".researchos" / "canvas.json").unlink()  # pre-8.10 kept no arrangement in the project
+    assert cli.main(["migrate", "--yes", "--from", str(root / ".researchos"), str(root)]) == 0
+    record_dir = root / ".researchos"
+    assert (record_dir / "project.toml").is_file() and (record_dir / "judgements.toml").is_file()
+    assert (record_dir / "attempts.toml").read_text() == ATTEMPTS_TOML
+    assert (record_dir / "mappings.toml").read_text() == MAPPINGS
+    assert not (record_dir / "graph.db").exists()
+    retired = list((paths.researchos_home() / "graphs" / ".retired").iterdir())
     assert len(retired) == 1 and {p.name for p in retired[0].iterdir()} <= {"graph.db", "graph.db-wal", "graph.db-shm"}
     assert cli.main(["records", "--verify", str(root)]) == 0
 
 
 def test_migrating_from_another_folders_dot_rce_leaves_its_records(tmp_path):
     """Review finding 8: a stranded pre-8.10 copy in ANOTHER folder's
-    `.rce/` -- its hand-written attempts.toml and mappings.toml stay where
+    `.researchos/` -- its hand-written attempts.toml and mappings.toml stay where
     they are; only its graph.db is retired."""
     from test_migration import ATTEMPTS_TOML, MAPPINGS, _folder, build_pre_v5_index
 
-    from rce import cli
+    from researchos import cli
 
     root = _folder(tmp_path)
     elsewhere = _folder(tmp_path, "elsewhere")
-    build_pre_v5_index(root, key_dir=elsewhere / ".rce")
-    assert cli.main(["migrate", "--yes", "--from", str(elsewhere / ".rce"), str(root)]) == 0
-    assert (elsewhere / ".rce" / "attempts.toml").read_text() == ATTEMPTS_TOML
-    assert (elsewhere / ".rce" / "mappings.toml").read_text() == MAPPINGS
-    assert not (elsewhere / ".rce" / "graph.db").exists()
+    build_pre_v5_index(root, key_dir=elsewhere / ".researchos")
+    assert cli.main(["migrate", "--yes", "--from", str(elsewhere / ".researchos"), str(root)]) == 0
+    assert (elsewhere / ".researchos" / "attempts.toml").read_text() == ATTEMPTS_TOML
+    assert (elsewhere / ".researchos" / "mappings.toml").read_text() == MAPPINGS
+    assert not (elsewhere / ".researchos" / "graph.db").exists()
 
 
 # -- 9.12 (acceptance, 2026-10-05): a pre-V5 project is frozen until migrated, scans included
@@ -419,14 +419,14 @@ def _db_bytes(path):
 def test_pre_v5_project_is_frozen_scans_included_until_migrated(tmp_path, capsys):
     """9.12 (supersedes review finding 11's workaround): a pre-V5 project
     opens for reading, but nothing new lands in its old index before the
-    migration reads its own count. `rce ingest`, `rce mappings`, `rce
-    attempts` (with and without --check) and `rce judge` refuse with
+    migration reads its own count. `researchos ingest`, `researchos mappings`, `researchos
+    attempts` (with and without --check) and `researchos judge` refuse with
     "migrate first" and exit non-zero; the old index is byte-identical
     afterwards; reads still work; and the engine's watcher does not poll
     such a project (no re-ingest into the old index, no error chip)."""
-    from rce import cli
-    from rce.ingest import scan as scan_mod
-    from rce.webapp import server as server_mod
+    from researchos import cli
+    from researchos.ingest import scan as scan_mod
+    from researchos.webapp import server as server_mod
 
     root, old = _migration_fixture(tmp_path)
     before = _db_bytes(old)
@@ -434,7 +434,7 @@ def test_pre_v5_project_is_frozen_scans_included_until_migrated(tmp_path, capsys
                     ["attempts", "--check", str(root)], ["judge", str(root)]):
         assert cli.main(command) == 1, command
         err = capsys.readouterr().err
-        assert "migrate first: rce migrate" in err and "Nothing written" in err, err
+        assert "migrate first: researchos migrate" in err and "Nothing written" in err, err
     assert _db_bytes(old) == before
     # Reading works, from the old index, and writes nothing into it.
     for command in (["status", str(root)], ["review", str(root)], ["records", str(root)], ["query", "s.py", str(root)]):
@@ -473,7 +473,7 @@ def test_pre_v5_project_review_is_read_by_the_app_without_an_error(tmp_path):
     import json
     import threading
 
-    from rce.webapp import server as server_mod
+    from researchos.webapp import server as server_mod
 
     root, old = _migration_fixture(tmp_path)
     before = _db_bytes(old)
@@ -499,9 +499,9 @@ def test_pre_v5_project_review_is_read_by_the_app_without_an_error(tmp_path):
 
 
 def test_pre_v5_index_is_writable_again_once_migrated(tmp_path, capsys):
-    """The freeze lasts exactly until the migration: afterwards `rce ingest`
+    """The freeze lasts exactly until the migration: afterwards `researchos ingest`
     runs against the new index."""
-    from rce import cli
+    from researchos import cli
 
     root, _old = _migration_fixture(tmp_path)
     assert cli.main(["ingest", str(root)]) == 1
@@ -520,8 +520,8 @@ def test_fresh_index_unparseable_source_holds_the_judgment_not_reviews_it(tmp_pa
     while s.py does not parse. The rebuilt index never held the links; its
     scan could not read s.py, so both judgments are 「来源文件暂不可读」 --
     kept, not 待复核 -- and apply again once s.py parses."""
-    from rce import paths
-    from rce import project as project_mod
+    from researchos import paths
+    from researchos import project as project_mod
 
     root, pid = _project(tmp_path)
     judgements.judge(root, READ, "confirmed", via="cli")
@@ -550,10 +550,10 @@ def test_fresh_index_that_never_read_the_tracking_store_does_not_review_the_clai
     judgment is not put under review; reading the store again applies it."""
     from test_records_judgements import _metric
 
-    from rce import paths
-    from rce import project as project_mod
-    from rce.ingest import pipeline
-    from rce.records.situation import write_guard
+    from researchos import paths
+    from researchos import project as project_mod
+    from researchos.ingest import pipeline
+    from researchos.records.situation import write_guard
 
     root = tmp_path / "proj"
     root.mkdir()
@@ -590,7 +590,7 @@ def test_migration_with_an_unparseable_script_stops_on_source_not_readable(tmp_p
     at migration time. Its judged links are 「来源文件暂不可读」, which is not
     zero, so the migration stops and nothing is retired -- an unread file
     must not be mistaken for a vanished link."""
-    from rce import migration
+    from researchos import migration
 
     root, old = _migration_fixture(tmp_path)
     (root / "s.py").write_text("import pandas as pd\ndf = pd.read_csv('data/in.csv'\n")
@@ -716,11 +716,11 @@ def test_git_tracked_script_renamed_in_the_working_tree_is_absent_not_unreadable
     """9.6 / 9.9 #8(d) (review finding 18): in a git project, `mv s.py
     t.py` without committing. `git ls-files` still lists s.py; it is not in
     the working tree, so it is ABSENT -- the judgment comes under review
-    (not stuck in 「来源文件暂不可读」), and `rce rebuild` is not blocked."""
+    (not stuck in 「来源文件暂不可读」), and `researchos rebuild` is not blocked."""
     import os
     import subprocess
 
-    from rce import rebuild as rebuild_mod
+    from researchos import rebuild as rebuild_mod
 
     root, _ = _project(tmp_path)
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -740,24 +740,24 @@ def test_git_tracked_script_renamed_in_the_working_tree_is_absent_not_unreadable
 
 
 def test_watcher_snapshots_hand_edited_record_files_once_a_day(tmp_path):
-    """9.2 (review finding 6): "a snapshot the first time RCE sees the file
+    """9.2 (review finding 6): "a snapshot the first time Research OS sees the file
     changed each day -- which is what covers hand edits". The watcher sees
     the record files on first sight and on every change: each changed
     record file -- the ledger, mappings.toml, attempts.toml, the attempt
-    table -- gets one snapshot that day, with the bytes RCE saw."""
-    from rce.ingest import mappings as mappings_ingest
-    from rce.webapp import watcher as watcher_mod
+    table -- gets one snapshot that day, with the bytes Research OS saw."""
+    from researchos.ingest import mappings as mappings_ingest
+    from researchos.webapp import watcher as watcher_mod
 
     root, _ = _project(tmp_path)
     judgements.judge(root, READ, "confirmed", via="cli")
     mappings_ingest.add_mapping(root, "data/in.csv", "s.py", "reads", note="手画的")
     (root / "map.md").write_text("## H\n\n| # | date | desc | vars | result | verdict |\n|---|---|---|---|---|---|\n"
                                  "| 1 | 2026-01-01 | first | v | r | ✅ |\n", encoding="utf-8")
-    (root / ".rce" / "attempts.toml").write_text(
+    (root / ".researchos" / "attempts.toml").write_text(
         'file = "map.md"\nheading = "H"\n\n[columns]\nid = "#"\ndate = "date"\ndescription = "desc"\n'
         'variables = "vars"\nresult = "result"\nverdict = "verdict"\n'
     )
-    backups = root / ".rce" / "backups"
+    backups = root / ".researchos" / "backups"
     shutil.rmtree(backups, ignore_errors=True)
     w = watcher_mod.ProjectWatcher(lambda: root, interval=0.01)
     w.poll_once()  # first sight: every record file is seen
@@ -766,7 +766,7 @@ def test_watcher_snapshots_hand_edited_record_files_once_a_day(tmp_path):
         assert any(n.startswith(stem) for n in names), (stem, names)
     ledger = ledger_mod.judgements_path(root)
     ledger.write_bytes(ledger.read_bytes() + "# 我的批注\n".encode())
-    mapping = root / ".rce" / "mappings.toml"
+    mapping = root / ".researchos" / "mappings.toml"
     mapping.write_text(mapping.read_text(encoding="utf-8") + "# 手改\n", encoding="utf-8")
     w.poll_once()
     after = sorted(p.name for p in backups.iterdir())
@@ -788,14 +788,14 @@ def _printed_twice(text: str) -> list[str]:
 
 @pytest.mark.parametrize("state", ["legacy", "migrating", "migrated", "fresh"])
 def test_variable_list_and_records_print_each_card_and_kind_once(tmp_path, capsys, state):
-    """`rce variable list` and `rce records` -- legacy, a migration stopped
+    """`researchos variable list` and `researchos records` -- legacy, a migration stopped
     before retiring, migrated (with cards made after it, two of them equal
     but for a suffix), and a fresh project: each card and each kind of
     record is one line."""
     from test_migration import _folder, build_pre_v5_index
 
-    from rce import cli, migration
-    from rce.records import cards
+    from researchos import cli, migration
+    from researchos.records import cards
 
     if state == "fresh":
         root = tmp_path / "fresh"
@@ -819,7 +819,7 @@ def test_variable_list_and_records_print_each_card_and_kind_once(tmp_path, capsy
         assert _printed_twice(out) == [], out
     # At the source, not only after the listing's own guard: one row per
     # kind, one card per id, each problem once.
-    from rce import inventory, paths
+    from researchos import inventory, paths
 
     db_path = paths.graph_db_path(root)
     conn = db.connect(db_path) if db_path.exists() else None
@@ -840,14 +840,14 @@ def test_variable_list_and_records_print_each_card_and_kind_once(tmp_path, capsy
 
 
 def test_migrate_preview_says_how_many_scripts_reach_outside_the_folder(tmp_path, capsys):
-    """`rce migrate` on a folder whose scripts hard-code absolute paths
+    """`researchos migrate` on a folder whose scripts hard-code absolute paths
     OUTSIDE it (the project was copied away from where its scripts point):
     the judged links' endpoints are not produced, and one line says how many
     scripts read or write paths outside this folder -- so the low match is
     recognisable as that. A folder whose scripts stay inside says nothing."""
     from test_migration import _folder, build_pre_v5_index
 
-    from rce import cli
+    from researchos import cli
 
     root = _folder(tmp_path)
     build_pre_v5_index(root)
@@ -871,23 +871,23 @@ def test_migrate_preview_says_how_many_scripts_reach_outside_the_folder(tmp_path
     assert "match: a scan of" in out and "outside it" not in out
 
 
-# -- follow-up: `rce rebuild` builds an index, so it rewrites .rce/README (9.12)
+# -- follow-up: `researchos rebuild` builds an index, so it rewrites .researchos/README (9.12)
 
 
 def test_readme_is_rewritten_by_a_rebuild(tmp_path):
-    """`rce rebuild` builds an index too: afterwards `.rce/README` lists the
+    """`researchos rebuild` builds an index too: afterwards `.researchos/README` lists the
     record files the folder holds now -- a card directory created since,
     not a record file deleted since."""
-    from rce import cli, paths
+    from researchos import cli, paths
 
     root, _pid = _project(tmp_path)
-    readme = root / ".rce" / "README"
-    (root / ".rce" / "mappings.toml").write_text("", encoding="utf-8")
+    readme = root / ".researchos" / "README"
+    (root / ".researchos" / "mappings.toml").write_text("", encoding="utf-8")
     paths.write_project_readme(root)
     assert "mappings.toml" in readme.read_text(encoding="utf-8")
     assert cli.main(["variable", "new", "topicshift", str(root)]) == 0
     assert "variables/" not in readme.read_text(encoding="utf-8")
-    (root / ".rce" / "mappings.toml").unlink()
+    (root / ".researchos" / "mappings.toml").unlink()
     assert cli.main(["rebuild", str(root)]) == 0
     text = readme.read_text(encoding="utf-8")
     assert "mappings.toml" not in text and "variables/" in text

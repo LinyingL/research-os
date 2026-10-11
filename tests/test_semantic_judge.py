@@ -1,7 +1,7 @@
-"""Tests for rce.semantic.judge (S2) and the `rce judge` CLI command.
+"""Tests for researchos.semantic.judge (S2) and the `researchos judge` CLI command.
 
 Every backend interaction goes through _FakeBackend below -- no real network
-call, no rce.semantic.backend.LlmBackend instantiation touching urllib. This
+call, no researchos.semantic.backend.LlmBackend instantiation touching urllib. This
 mirrors tests/test_semantic_backend.py's own policy: the suite stays closed
 and reproducible in CI with no local model server running.
 
@@ -19,16 +19,16 @@ import logging
 
 import pytest
 
-from rce import cli, db, paths
-from rce.semantic import judge as semantic_judge
-from rce.semantic.backend import LlmError
+from researchos import cli, db, paths
+from researchos.semantic import judge as semantic_judge
+from researchos.semantic.backend import LlmError
 
 # in-memory migrated db (tests/conftest.py's `conn` fixture) is reused as-is.
 
 
 class _FakeBackend:
-    """Duck-types the surface rce.semantic.judge actually calls on
-    rce.semantic.backend.LlmBackend: `.model`, `.probe()`, `.complete_json()`.
+    """Duck-types the surface researchos.semantic.judge actually calls on
+    researchos.semantic.backend.LlmBackend: `.model`, `.probe()`, `.complete_json()`.
     `responses` is popped in call order; an Exception instance is raised
     instead of returned, simulating a real LlmError from the backend."""
 
@@ -65,7 +65,7 @@ def _seed_pending_edge(
     candidate_count=1,
 ):
     """One pending claim --backed_by--> experiment edge, shaped exactly like
-    rce.ingest.claims writes it."""
+    researchos.ingest.claims writes it."""
     db.upsert_node(
         conn, claim_id, "claim", title=sentence,
         attrs={"sentence": sentence, "raw": claim_raw, "printed_number": claim_raw, "value": 1.58},
@@ -95,7 +95,7 @@ def _sole_edge(conn, claim_id, experiment_id):
     return db.query_edges(conn, src=claim_id, dst=experiment_id, type="backed_by")[0]
 
 
-# -- rce.semantic.judge.review_pending_backed_by ----------------------------
+# -- researchos.semantic.judge.review_pending_backed_by ----------------------------
 
 
 def test_normal_review_writes_semantic_review_and_leaves_status_pending(conn):
@@ -284,7 +284,7 @@ def test_rerun_overwrites_semantic_review_without_disturbing_occurrences(conn):
 
 def test_multi_occurrence_edge_attributes_review_and_logs_skipped_metrics(conn, caplog):
     """Opus-review blocker: when one experiment contributes two or more
-    matching metrics to the same claim, rce.ingest.claims calls upsert_edge
+    matching metrics to the same claim, researchos.ingest.claims calls upsert_edge
     repeatedly on the SAME (src, dst, type, extractor) key, so they merge
     into ONE edge with several occurrences (DESIGN.md section 4 -- this is
     exactly why candidate_count counts (experiment, metric) pairs). The
@@ -308,7 +308,7 @@ def test_multi_occurrence_edge_attributes_review_and_logs_skipped_metrics(conn, 
         },
     )
     # Two matches for the SAME (claim, experiment) pair collapse onto one
-    # edge with two occurrences, exactly as rce.ingest.claims produces them.
+    # edge with two occurrences, exactly as researchos.ingest.claims produces them.
     for metric_name, metric_value in (("grad_norm_epoch", 1.58), ("val_ratio", 1.58)):
         db.upsert_edge(
             conn, claim_id, experiment_id, "backed_by", extractor="claims",
@@ -356,9 +356,9 @@ def test_same_metric_occurrences_at_different_lines_log_no_self_contradictory_sk
     """Regression (blocker fix): before this fix, `_log_skipped_occurrences`
     compared occurrences by Python object identity, not by metric name. Two
     occurrence dicts for the exact same (metric, value) match but recorded
-    at different source lines -- exactly what rce.ingest.claims used to
+    at different source lines -- exactly what researchos.ingest.claims used to
     write when an unrelated edit shifted the claim's line (see the sibling
-    bug in rce.ingest.claims / tests/test_ingest_claims.py) -- are different
+    bug in researchos.ingest.claims / tests/test_ingest_claims.py) -- are different
     objects even though they name the same metric. The old identity check
     therefore warned "reviewing only metric='accuracy' ... skipping
     unreviewed metric(s) ['accuracy']": the exact same metric name reported
@@ -376,7 +376,7 @@ def test_same_metric_occurrences_at_different_lines_log_no_self_contradictory_sk
         attrs={"run_id": "run_dupe", "params": {}, "metrics": {"accuracy": 87.3}},
     )
     # Same (metric, value) match recorded twice at different lines -- the
-    # shape rce.ingest.claims produced before its own line-shift fix.
+    # shape researchos.ingest.claims produced before its own line-shift fix.
     for line in (2, 4):
         db.upsert_edge(
             conn, claim_id, experiment_id, "backed_by", extractor="claims",
@@ -401,12 +401,12 @@ def test_same_metric_occurrences_at_different_lines_log_no_self_contradictory_sk
 def test_judge_never_calls_set_edge_status(conn, monkeypatch):
     """Constitutional gate: the machine write path structurally cannot move
     an edge to confirmed/rejected. This spies on db.set_edge_status itself
-    -- if rce.semantic.judge ever called it (on the normal, hallucination,
+    -- if researchos.semantic.judge ever called it (on the normal, hallucination,
     or backend-error path), this test fails regardless of what value would
     have been passed."""
 
     def _must_not_be_called(*args, **kwargs):
-        raise AssertionError("rce.semantic.judge must never call db.set_edge_status")
+        raise AssertionError("researchos.semantic.judge must never call db.set_edge_status")
 
     monkeypatch.setattr(db, "set_edge_status", _must_not_be_called)
 
@@ -426,7 +426,7 @@ def test_judge_never_calls_set_edge_status(conn, monkeypatch):
         assert edge["status"] == "pending"
 
 
-# -- `rce judge` CLI wiring --------------------------------------------------
+# -- `researchos judge` CLI wiring --------------------------------------------------
 
 
 def test_cli_judge_writes_annotations_and_status_pending_surfaces_them(tmp_path, monkeypatch, capsys):

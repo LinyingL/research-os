@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from rce import db
+from researchos import db
 
 
 def test_migrate_builds_schema_from_scratch(conn):
@@ -90,7 +90,7 @@ def _without_scan_stamps(edges):
 
 
 def test_0002_migration_preserves_data_from_0001_only_db(tmp_path):
-    """The real-world upgrade path: a project whose .rce/graph.db already
+    """The real-world upgrade path: a project whose .researchos/graph.db already
     ran 0001 (and has real nodes/edges in it) picks up 0002 later, once this
     package ships it. Simulated by applying only a copy of 0001 first, then
     re-migrating with the real migrations directory (0001 already recorded,
@@ -164,7 +164,7 @@ def test_0002_migration_applies_cleanly_on_a_fresh_empty_db(tmp_path):
 
 def test_0003_migration_preserves_data_from_0001_0002_db(tmp_path):
     """Same upgrade-path guarantee as 0002's own test, one version later: a
-    project whose .rce/graph.db already ran 0001+0002 (with real rows,
+    project whose .researchos/graph.db already ran 0001+0002 (with real rows,
     including an attempt/uses row exercising 0002's own widened types)
     picks up 0003 later -- must not lose a single row, and the newly widened
     CHECK constraints (script/dataset nodes, reads/writes edges) must be
@@ -573,7 +573,7 @@ def test_upsert_edge_migrates_legacy_bare_evidence_row_on_next_write(conn):
 def test_upsert_edge_caps_occurrences_and_drops_oldest_with_warning(conn, caplog):
     db.upsert_node(conn, "commit:abc", "commit")
     db.upsert_node(conn, "figure:fig1.png", "figure")
-    with caplog.at_level("WARNING", logger="rce.db"):
+    with caplog.at_level("WARNING", logger="researchos.db"):
         for line in range(1, 23):  # 22 distinct occurrences, cap is 20
             db.upsert_edge(
                 conn, "commit:abc", "figure:fig1.png", "generates", "ast-scanner",
@@ -591,7 +591,7 @@ def test_upsert_edge_caps_occurrences_and_drops_oldest_with_warning(conn, caplog
 
 # -- set_edge_semantic_review (S2): sibling key beside occurrences --------
 #
-# rce.semantic.judge's only write path. Lives beside `occurrences` inside
+# researchos.semantic.judge's only write path. Lives beside `occurrences` inside
 # the same evidence JSON, and must survive a subsequent machine re-ingest
 # (upsert_edge/_merge_edge_evidence) without either side clobbering the
 # other -- see _merge_edge_evidence's own docstring for why it now passes
@@ -639,7 +639,7 @@ def test_set_edge_semantic_review_survives_concurrent_upsert_edge(tmp_path):
     set_edge_semantic_review's UPDATE then overwrote `evidence` with its own
     stale in-memory copy, destroying the newly-committed occurrence -- a
     realistic window since a judge run stalls on model latency per edge
-    while `rce ingest` runs in another process. The fix wraps the SELECT and
+    while `researchos ingest` runs in another process. The fix wraps the SELECT and
     UPDATE in one BEGIN IMMEDIATE transaction (mirroring upsert_edge's own
     T-blocker fix and its concurrency test below), so a concurrent
     upsert_edge can never land inside that window: it is either fully

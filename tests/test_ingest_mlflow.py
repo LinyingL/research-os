@@ -1,6 +1,6 @@
-"""Tests for rce.ingest.mlflow. Hand-builds an MLflow FileStore tree under
+"""Tests for researchos.ingest.mlflow. Hand-builds an MLflow FileStore tree under
 tmp_path (no mlflow package dependency) alongside a real git+LaTeX fixture
-(via rce.ingest.git/rce.ingest.latex) so the `implements`/`produces` edges
+(via researchos.ingest.git/rce.ingest.latex) so the `implements`/`produces` edges
 have a real Commit/Figure node to match against.
 """
 
@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from rce import db
-from rce.ingest import git as git_ingest
-from rce.ingest import latex as latex_ingest
-from rce.ingest import mlflow as mlflow_ingest
+from researchos import db
+from researchos.ingest import git as git_ingest
+from researchos.ingest import latex as latex_ingest
+from researchos.ingest import mlflow as mlflow_ingest
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
@@ -153,12 +153,12 @@ def test_produces_count_is_not_inflated_by_duplicate_basename_artifacts(tmp_path
 
 def test_sha_not_in_graph_skip_is_logged_at_warning_not_info(tmp_path, conn, caplog):
     # Was logger.info -- must now be logger.warning so the CLI's shared
-    # warning-based skip counter (rce.ingest logger hierarchy) picks it up.
+    # warning-based skip counter (researchos.ingest logger hierarchy) picks it up.
     fake_sha = "e" * 40
     mlruns = tmp_path / "mlruns"
     _build_run(mlruns, "run_b", fake_sha)
 
-    with caplog.at_level("INFO", logger="rce.ingest.mlflow"):
+    with caplog.at_level("INFO", logger="researchos.ingest.mlflow"):
         counts = mlflow_ingest.ingest_mlflow_dir(conn, mlruns)
 
     assert counts["implements"] == 0
@@ -175,7 +175,7 @@ def test_experiment_level_tags_dir_is_silently_skipped_not_reported_corrupted(tm
     _build_run(mlruns, "run_a", repo_sha)
     _write(mlruns / "0" / "tags", {"mlflow.note.content": "some experiment-level note"})
 
-    with caplog.at_level("WARNING", logger="rce.ingest.mlflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.mlflow"):
         counts = mlflow_ingest.ingest_mlflow_dir(conn, mlruns)
 
     assert counts == {"experiments": 1, "implements": 1, "produces": 1}  # tags/ contributes nothing
@@ -208,7 +208,7 @@ def test_runs_with_no_git_tag_are_summarized_once_not_per_run(tmp_path, conn, re
     _build_run_without_git_tag(mlruns, "run_no_tag_1")
     _build_run_without_git_tag(mlruns, "run_no_tag_2")
 
-    with caplog.at_level("WARNING", logger="rce.ingest.mlflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.mlflow"):
         counts = mlflow_ingest.ingest_mlflow_dir(conn, mlruns)
 
     assert counts["experiments"] == 3
@@ -224,7 +224,7 @@ def test_no_summary_warning_when_all_runs_have_git_tag(tmp_path, conn, repo_sha,
     mlruns = tmp_path / "mlruns"
     _build_run(mlruns, "run_a", repo_sha)
 
-    with caplog.at_level("WARNING", logger="rce.ingest.mlflow"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.mlflow"):
         mlflow_ingest.ingest_mlflow_dir(conn, mlruns)
 
     assert not any("no git commit tag" in r.message for r in caplog.records)
@@ -252,7 +252,7 @@ def test_dot_prefixed_leftover_metric_files_are_skipped_not_duplicated(tmp_path,
         },
     )
 
-    with caplog.at_level("INFO", logger="rce.ingest.mlflow"):
+    with caplog.at_level("INFO", logger="researchos.ingest.mlflow"):
         counts = mlflow_ingest.ingest_mlflow_dir(conn, mlruns)
 
     assert counts == {"experiments": 1, "implements": 1, "produces": 1}

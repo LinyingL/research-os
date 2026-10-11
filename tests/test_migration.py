@@ -22,12 +22,12 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, migration, paths
-from rce.records import identity, judgements
-from rce.records import ledger as ledger_mod
-from rce.records import situation
-from rce.records.situation import Situation, index_db_path
-from rce.webapp import canvas, registry
+from researchos import cli, db, migration, paths
+from researchos.records import identity, judgements
+from researchos.records import ledger as ledger_mod
+from researchos.records import situation
+from researchos.records.situation import Situation, index_db_path
+from researchos.webapp import canvas, registry
 
 READ = ("script:s.py", "dataset:data/in.csv", "reads", "dataflow")
 WRITE = ("script:s.py", "dataset:data/out.csv", "writes", "dataflow")
@@ -68,9 +68,9 @@ def _folder(base: Path, name: str = "proj") -> Path:
     (root / "s2.py").write_text(SCRIPT2)
     (root / "fig.png").write_bytes(b"png")
     (root / "map.md").write_text(MAP)
-    (root / ".rce").mkdir()
-    (root / ".rce" / "attempts.toml").write_text(ATTEMPTS_TOML)
-    (root / ".rce" / "mappings.toml").write_text(MAPPINGS)
+    (root / ".researchos").mkdir()
+    (root / ".researchos" / "attempts.toml").write_text(ATTEMPTS_TOML)
+    (root / ".researchos" / "mappings.toml").write_text(MAPPINGS)
     return root
 
 
@@ -122,7 +122,7 @@ def build_pre_v5_index(root: Path, *, key_dir: Path | None = None, contradict: b
         for node in MAPPING[:2]:
             db.upsert_node(conn, node, node.split(":", 1)[0], title=node.split(":", 1)[1])
         db.upsert_edge(conn, *MAPPING[:3], extractor="mapping", human_source=True,
-                       evidence={"file": ".rce/mappings.toml", "source": "human"}, confidence=1.0, status="auto")
+                       evidence={"file": ".researchos/mappings.toml", "source": "human"}, confidence=1.0, status="auto")
         # The judgments, as pre-V5 code recorded them.
         db.set_edge_status(conn, *READ, "rejected" if contradict else "confirmed")
         db.set_edge_status(conn, *WRITE, "confirmed")
@@ -187,14 +187,14 @@ def test_discovery_on_open_and_the_list(tmp_path, capsys):
 
 def test_without_yes_nothing_is_written_and_the_match_is_shown(tmp_path, capsys):
     root, old = _pre_v5(tmp_path)
-    before = sorted(p.name for p in (root / ".rce").iterdir())
+    before = sorted(p.name for p in (root / ".researchos").iterdir())
     old_bytes = old.read_bytes()
     assert cli.main(["migrate", str(root)]) == 1
     out = capsys.readouterr().out
     assert "4 of 7" in out and "--yes" in out
-    assert sorted(p.name for p in (root / ".rce").iterdir()) == before
+    assert sorted(p.name for p in (root / ".researchos").iterdir()) == before
     assert old.read_bytes() == old_bytes
-    assert not list((paths.rce_home() / "graphs").glob(".scratch-*"))
+    assert not list((paths.researchos_home() / "graphs").glob(".scratch-*"))
 
 
 def test_scenario_4_pre_v5_path_reuse_low_match_declines_and_inherits_nothing(tmp_path, capsys):
@@ -243,7 +243,7 @@ def test_scenario_9_migrate_balances_from_the_old_count_and_retires_afterwards(t
     ident = identity.read_identity(root).identity
     assert ident.migrating_from is None and ident.ledger is True
     assert not old.parent.exists()
-    retired = list((paths.rce_home() / "graphs" / ".retired").iterdir())
+    retired = list((paths.researchos_home() / "graphs" / ".retired").iterdir())
     assert len(retired) == 1 and (retired[0] / "graph.db").exists()
     assert registry.load()[0]["id"] == ident.id
 
@@ -369,7 +369,7 @@ def test_scenario_9_a_real_sigkill_between_steps(tmp_path):
     code = textwrap.dedent(f"""
         import os, signal
         from pathlib import Path
-        from rce import migration
+        from researchos import migration
         def kill(point):
             if point == "after_export":
                 os.kill(os.getpid(), signal.SIGKILL)
@@ -423,7 +423,7 @@ def test_scenario_9_a_second_old_index_merges_and_its_contradiction_is_a_record_
     root, _old = _pre_v5(tmp_path)
     [first] = migration.migrate(root, yes=True)
     assert first.ok
-    other = paths.rce_home() / "graphs" / "0123456789abcdef"
+    other = paths.researchos_home() / "graphs" / "0123456789abcdef"
     build_pre_v5_index(root, key_dir=other, contradict=True)
     assert cli.main(["migrate", "--yes", "--from", str(other), str(root)]) == 0
     entries = _entries(root)
@@ -441,7 +441,7 @@ def test_scenario_9_a_second_old_index_merges_and_its_contradiction_is_a_record_
 
 
 def test_a_pre_v5_project_refuses_every_human_record_and_reads_from_the_old_index(tmp_path):
-    from rce.webapp import server
+    from researchos.webapp import server
     from test_records_surfaces import _call
 
     root, old = _pre_v5(tmp_path)
@@ -470,13 +470,13 @@ def test_a_pre_v5_project_refuses_every_human_record_and_reads_from_the_old_inde
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=5)
-    assert not (root / ".rce" / "judgements.toml").exists()
-    assert (root / ".rce" / "mappings.toml").read_text() == MAPPINGS
+    assert not (root / ".researchos" / "judgements.toml").exists()
+    assert (root / ".researchos" / "mappings.toml").read_text() == MAPPINGS
     assert (root / "map.md").read_text() == MAP
 
 
 def test_http_migration_run_migrates_and_switches(tmp_path):
-    from rce.webapp import server
+    from researchos.webapp import server
     from test_records_surfaces import _call
     import threading
 
@@ -503,7 +503,7 @@ def test_http_migration_run_migrates_and_switches(tmp_path):
 
 
 def test_http_migration_not_mine(tmp_path):
-    from rce.webapp import server
+    from researchos.webapp import server
     from test_records_surfaces import _call
     import threading
 
@@ -546,6 +546,6 @@ def test_cli_human_writes_refuse_a_pre_v5_project(tmp_path, capsys):
     root, _old = _pre_v5(tmp_path)
     assert cli.main(["confirm", *READ, "--status", "confirmed", "--path", str(root)]) == 1
     assert "migrat" in capsys.readouterr().err
-    assert not (root / ".rce" / "judgements.toml").exists()
-    assert cli.main(["init", str(root)]) == 1  # giving it an id is what `rce migrate` does
+    assert not (root / ".researchos" / "judgements.toml").exists()
+    assert cli.main(["init", str(root)]) == 1  # giving it an id is what `researchos migrate` does
     assert identity.read_identity(root).state.value == "absent"

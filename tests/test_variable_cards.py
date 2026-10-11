@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, db, inventory, paths
-from rce import project as project_identity
-from rce.records import cards
-from rce.records import variables as V
-from rce.records.situation import index_db_path
-from rce.records.trust import Trust
+from researchos import cli, db, inventory, paths
+from researchos import project as project_identity
+from researchos.records import cards
+from researchos.records import variables as V
+from researchos.records.situation import index_db_path
+from researchos.records.trust import Trust
 
 from test_project_identity import _make, _pid
 
@@ -154,7 +154,7 @@ def test_new_refuses_an_id_present_anywhere_up_to_case(tmp_path):
     with pytest.raises(cards.CardRefused) as err:
         cards.new_card(root, "topicshift")
     assert err.value.code == "exists"
-    (root / ".rce" / "backups" / "variables" / "RV").mkdir(parents=True)
+    (root / ".researchos" / "backups" / "variables" / "RV").mkdir(parents=True)
     with pytest.raises(cards.CardRefused, match="snapshots"):
         cards.new_card(root, "rv")
     for bad in ("_code", "a/b", "x@v1", "", "a..b"):
@@ -280,7 +280,7 @@ def test_checks_name_why_they_could_not_be_made(tmp_path):
     assert checked["script"]["result"] == "已核对"  # copied all the same
 
     (root / "quiet.py").write_text("print('no io')\n")
-    from rce.ingest import mappings as mappings_ingest
+    from researchos.ingest import mappings as mappings_ingest
 
     mappings_ingest.add_mapping(root, "quiet.py", "Data/ts.csv", "writes")
     _new_confirmed(root, "b", _text(script="quiet.py"))
@@ -292,7 +292,7 @@ def test_checks_name_why_they_could_not_be_made(tmp_path):
 _KILLER = r"""
 import os, sys
 from pathlib import Path
-from rce.records import cards
+from researchos.records import cards
 root, card, point = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 def fault(name):
     if name == point:
@@ -309,7 +309,7 @@ def _killed(root: Path, card: str, point: str) -> None:
 def test_scenario_13_a_kill_between_each_pair_of_writes(tmp_path, capsys):
     """9.11 #13: kill the process between each pair of writes of a
     confirmation and start again -- never an entry whose frozen or code copy
-    is missing; the leftover copies are removed by `rce records --clean`."""
+    is missing; the leftover copies are removed by `researchos records --clean`."""
     root = tmp_path / "p"
     _project(root)
     cards.new_card(root, "topicshift")
@@ -413,7 +413,7 @@ def test_scenario_14_correction_keeps_both_wordings_and_old_references(tmp_path)
 
 
 def test_scenario_14_the_question_is_asked_without_an_index(tmp_path, capsys):
-    """9.11 #14: with ~/.rce/graphs/<id>/ deleted before the edit is seen,
+    """9.11 #14: with ~/.researchos/graphs/<id>/ deleted before the edit is seen,
     the question is still asked -- the check needs no index."""
     root = tmp_path / "p"
     pid = _project(root)
@@ -546,7 +546,7 @@ def _cards_ok(root: Path) -> None:
 def test_scenario_15_move_rename_and_rebuild(tmp_path):
     """9.11 #15 with 9.9 #1, #2 and #5: after a move, a rename (letter case
     only too) and a rebuild -- every version, entry, frozen copy and code
-    copy is present and `rce records --verify` passes."""
+    copy is present and `researchos records --verify` passes."""
     old = tmp_path / "a" / "p"
     pid = _with_cards(old)
     files_before = _card_files(old)
@@ -582,7 +582,7 @@ def test_scenario_15_copy_with_each_answer(tmp_path):
         assert cli.main(["project", answer, str(q)]) == 0
         if answer == "other":
             assert not V.variables_dir(q).exists()
-            aside = list((q / ".rce" / "backups").glob("from-another-project-*"))
+            aside = list((q / ".researchos" / "backups").glob("from-another-project-*"))
             assert _tree(aside[0] / "variables") == files_before
             assert cli.main(["variable", "list", str(q)]) == 0
             continue
@@ -597,7 +597,7 @@ def test_scenario_15_copy_with_each_answer(tmp_path):
 
 
 def test_scenario_15_restore_asks_and_the_file_wins(tmp_path, capsys):
-    """9.11 #15 with 9.9 #7: copy .rce/ aside, act further on a card,
+    """9.11 #15 with 9.9 #7: copy .researchos/ aside, act further on a card,
     restore the copy: the card's log has fewer entries than the index
     applied -- it is frozen and asked about, the other card keeps working;
     「以文件为准」 gives exactly the copy's records, and the version a
@@ -605,12 +605,12 @@ def test_scenario_15_restore_asks_and_the_file_wins(tmp_path, capsys):
     root = tmp_path / "p"
     _with_cards(root)
     aside = tmp_path / "aside"
-    shutil.copytree(root / ".rce", aside)
+    shutil.copytree(root / ".researchos", aside)
     cards.revise(root, "rv")
     _write(root, "rv", 2, _text(formula="rv v2", datasets=("data.csv",), output="out.csv", script="a.py"))
     cards.confirm(root, "rv", attested="unknown")
-    shutil.rmtree(root / ".rce")
-    shutil.copytree(aside, root / ".rce")
+    shutil.rmtree(root / ".researchos")
+    shutil.copytree(aside, root / ".researchos")
 
     decision = _decision(root, "rv")
     assert decision.verdict is Trust.SHRUNK and len(decision.missing) == 1
@@ -710,7 +710,7 @@ def test_scenario_15_conflict_copy_or_case_twin_makes_only_that_card_unreadable(
     twin = V.variables_dir(root) / "RV"
     try:
         twin.mkdir()
-    except FileExistsError:  # a case-insensitive volume cannot hold both: show RCE two anyway
+    except FileExistsError:  # a case-insensitive volume cannot hold both: show Research OS two anyway
         real = V.card_dirs
         monkeypatch.setattr(V, "card_dirs", lambda r: [*real(r), twin])
     card = V.read_card(root, rv)
@@ -721,7 +721,7 @@ def test_scenario_15_conflict_copy_or_case_twin_makes_only_that_card_unreadable(
 _CARD_WRITER = r"""
 import sys
 from pathlib import Path
-from rce.records import cards
+from researchos.records import cards
 root, card, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 for i in range(n):
     cards.abandon(root, card, note=f"{card} {i}", timeout=120)
@@ -780,7 +780,7 @@ def test_scenario_16_dead_and_back(tmp_path, capsys):
     root = tmp_path / "p"
     _project(root)
     (root / "map.md").write_text("## H\n\n| # | date | desc | vars | result | verdict |\n|---|---|---|---|---|---|\n")
-    config = root / ".rce" / "attempts.toml"
+    config = root / ".researchos" / "attempts.toml"
     config.write_text(_ATTEMPTS.format(dead='["信息熵"]'), encoding="utf-8")
     _new_confirmed(root, text=_text(aliases=("TopicShift", "私有 Shannon 信息熵")))
     assert cards.dead_variable_flags(root)[0]["message"] == cards.DEAD_ATTEMPTS_ONLY
@@ -820,24 +820,24 @@ def test_records_inventory_counts_cards_and_drafts(tmp_path, capsys):
     cards.new_card(root, "rv")
     capsys.readouterr()
     assert cli.main(["records", str(root)]) == 0
-    assert "Variable definition cards: .rce/variables -- 2 card(s), 1 draft(s)" in capsys.readouterr().out
+    assert "Variable definition cards: .researchos/variables -- 2 card(s), 1 draft(s)" in capsys.readouterr().out
 
 
 def test_card_files_are_snapshotted_into_their_own_backup_folder(tmp_path):
-    """9.11: snapshots go to .rce/backups/variables/<id>/ (the log before an
+    """9.11: snapshots go to .researchos/backups/variables/<id>/ (the log before an
     append the first time each day; hand edits of a version when seen)."""
     root = tmp_path / "p"
     _project(root)
     _new_confirmed(root)
     cards.abandon(root, "topicshift", note="x")  # the second append snapshots the one-entry log
-    backups = root / ".rce" / "backups" / "variables" / "topicshift"
+    backups = root / ".researchos" / "backups" / "variables" / "topicshift"
     assert any(p.name.startswith("log.toml.") for p in backups.iterdir())
     inventory.snapshot_records(root)
     assert any(p.name.startswith("v1.toml.") for p in backups.iterdir())
 
 
 def test_the_watcher_reapplies_the_cards_when_their_files_change(tmp_path):
-    from rce.webapp import watcher as watcher_mod
+    from researchos.webapp import watcher as watcher_mod
 
     root = tmp_path / "p"
     _project(root)
@@ -856,14 +856,14 @@ def test_the_watcher_reapplies_the_cards_when_their_files_change(tmp_path):
 
 
 def test_a_lost_identity_with_cards_is_a_question_and_adopt_keeps_them(tmp_path):
-    """9.4 / 9.12: `.rce/variables/` counts as records -- a folder that lost
+    """9.4 / 9.12: `.researchos/variables/` counts as records -- a folder that lost
     its identity file but holds cards is asked about, and 「沿用这些记录」
     keeps every card where it is."""
     root = tmp_path / "p"
     _project(root)
     _new_confirmed(root)
     files_before = _card_files(root)
-    (root / ".rce" / "project.toml").unlink()
+    (root / ".researchos" / "project.toml").unlink()
     assert cli.main(["status", "--path", str(root)]) == 1
     project_identity.adopt(root)
     assert _card_files(root) == files_before and _card(root).in_use == 1
@@ -941,7 +941,7 @@ def test_two_merged_v2_confirmations_freeze_the_card_and_ask_which_stands(tmp_pa
     # The CLI shows both histories with their ids and the command.
     assert cli.main(["variable", "show", "topicshift", str(root)]) == 0
     out = capsys.readouterr().out
-    assert a in out and b in out and "rce variable settle topicshift --keep" in out
+    assert a in out and b in out and "researchos variable settle topicshift --keep" in out
 
 
 def test_settle_refuses_any_answer_that_does_not_name_exactly_one_per_disputed_version(tmp_path):

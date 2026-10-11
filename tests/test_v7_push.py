@@ -9,7 +9,7 @@ to the bare repository's path and forbids the https, ssh and git
 transports outright. `gh` is a test double on PATH that records its argv
 and, for `repo create`, makes another bare repository and wires it the
 same way. `git` itself is wrapped on PATH so that EVERY git command line
--- RCE's and the fixtures' -- is recorded, and the autouse check asserts
+-- Research OS's and the fixtures' -- is recorded, and the autouse check asserts
 that none of them ever force-pushes.
 """
 
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from rce import cli, githubpush, paths
-from rce.webapp import registry
+from researchos import cli, githubpush, paths
+from researchos.webapp import registry
 
 from test_v6_add_project import _live  # noqa: F401
 from test_v7_connections import GITHUB_URL, OWNER, REPO, _colleague_pushes, _git, linked, stand_in  # noqa: F401
@@ -81,7 +81,7 @@ def _gh_argvs(log: Path) -> list[list[str]]:
 
 
 def _pushes(recorded) -> list[list[str]]:
-    return [a for a in _git_argvs(recorded["log"]) if "push" in a and "--porcelain" in a]  # RCE's own pushes
+    return [a for a in _git_argvs(recorded["log"]) if "push" in a and "--porcelain" in a]  # Research OS's own pushes
 
 
 GH_DOUBLE = r'''
@@ -166,8 +166,8 @@ def test_plan_lists_exactly_the_unpushed_commits_and_the_uncommitted_files(stand
     _commit(linked, "数据/c.csv", "x\n1\n", "数据：加 c")
     (linked / "a.py").write_text("print('changed')\n")
     (linked / "untracked.txt").write_text("u\n")
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "judgements.toml").write_text("# records\n")
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "judgements.toml").write_text("# records\n")
     before = _tree_snapshot(linked / ".git")
     plan = githubpush.plan(linked)
     assert _tree_snapshot(linked / ".git") == before  # nothing written, not even the index
@@ -176,8 +176,8 @@ def test_plan_lists_exactly_the_unpushed_commits_and_the_uncommitted_files(stand
     assert plan["commit_count"] == 2 and not plan["commits_truncated"]
     assert plan["uncommitted"] == 2
     assert plan["uncommitted_message"] == "另有 2 个文件的改动还没有提交，推送不包括它们"
-    assert plan["records"]["changed"] == [".rce/judgements.toml"] and not plan["records"]["committed"]
-    assert plan["records"]["message"] == "人工记录（.rce/）有 1 个文件还没有提交"
+    assert plan["records"]["changed"] == [".researchos/judgements.toml"] and not plan["records"]["committed"]
+    assert plan["records"]["message"] == "人工记录（.researchos/）有 1 个文件还没有提交"
     assert plan["blockers"] == [] and plan["can_push"] and not plan["set_upstream"] and not plan["needs_repo"]
     assert _pushes(recorded) == []  # planning never runs a push
 
@@ -205,13 +205,13 @@ def test_push_pushes_the_planned_commits_and_the_github_line_is_in_step(stand_in
 
 
 def test_commit_records_commits_only_rce_files_with_other_changes_staged(stand_in, linked):
-    """11.5 scenario 3: 「先把人工记录提交一次」 commits only `.rce/` files,
-    with the message 「RCE：人工记录」, even with the researcher's own
+    """11.5 scenario 3: 「先把人工记录提交一次」 commits only `.researchos/` files,
+    with the message 「Research OS：人工记录」, even with the researcher's own
     changes staged and unstaged -- those are left exactly as they were."""
-    rce = linked / ".rce"
+    rce = linked / ".researchos"
     rce.mkdir()
     (rce / "canvas.json").write_text("{}\n")
-    _commit(linked, ".rce/old.toml", "old\n", "records once")
+    _commit(linked, ".researchos/old.toml", "old\n", "records once")
     (rce / "old.toml").unlink()  # a deleted record file
     (rce / "judgements.toml").write_text("# new\n")
     (rce / "backups").mkdir()
@@ -223,19 +223,19 @@ def test_commit_records_commits_only_rce_files_with_other_changes_staged(stand_i
     (linked / "new.py").write_text("n = 1\n")
     _git(linked, "add", "new.py")
     staged_before = _git(linked, "diff", "--cached", "--", "a.py", "new.py")
-    unstaged_before = _git(linked, "diff", "--", ".", ":!.rce")
+    unstaged_before = _git(linked, "diff", "--", ".", ":!.researchos")
     old_head = _git(linked, "rev-parse", "HEAD").strip()
 
     result = githubpush.commit_records(linked)
     assert result["committed"] and sorted(result["files"]) == sorted([
-        ".rce/backups/b1.toml", ".rce/canvas.json", ".rce/judgements.toml", ".rce/old.toml",
+        ".researchos/backups/b1.toml", ".researchos/canvas.json", ".researchos/judgements.toml", ".researchos/old.toml",
     ])
-    assert _git(linked, "log", "-1", "--format=%s").strip() == "RCE：人工记录"
+    assert _git(linked, "log", "-1", "--format=%s").strip() == "Research OS：人工记录"
     assert _git(linked, "rev-parse", "HEAD~1").strip() == old_head
     touched = _git(linked, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
-    assert sorted(touched) == [".rce/backups/b1.toml", ".rce/canvas.json", ".rce/judgements.toml", ".rce/old.toml"]
+    assert sorted(touched) == [".researchos/backups/b1.toml", ".researchos/canvas.json", ".researchos/judgements.toml", ".researchos/old.toml"]
     assert _git(linked, "diff", "--cached", "--", "a.py", "new.py") == staged_before
-    assert _git(linked, "diff", "--", ".", ":!.rce") == unstaged_before and "未暂存的改动" in unstaged_before
+    assert _git(linked, "diff", "--", ".", ":!.researchos") == unstaged_before and "未暂存的改动" in unstaged_before
     assert _git(linked, "diff", "--cached", "--name-only").split() == ["a.py", "new.py"]
     assert result["plan"]["records"]["committed"] and result["plan"]["records"]["changed"] == []
     again = githubpush.commit_records(linked)
@@ -244,26 +244,26 @@ def test_commit_records_commits_only_rce_files_with_other_changes_staged(stand_i
 
 def test_commit_records_in_a_project_below_the_repository_top(stand_in, tmp_path):
     """11.5 scenario 3: a project in a subfolder of its repository commits
-    its own `.rce/` only, not a sibling's."""
+    its own `.researchos/` only, not a sibling's."""
     repo = tmp_path / "mono"
     project = repo / "paper"
-    (project / ".rce").mkdir(parents=True)
-    (repo / "other" / ".rce").mkdir(parents=True)
+    (project / ".researchos").mkdir(parents=True)
+    (repo / "other" / ".researchos").mkdir(parents=True)
     _git(repo, "init", "-q", "-b", "main")
     _commit(repo, "README", "r\n", "first")
-    (project / ".rce" / "judgements.toml").write_text("j\n")
-    (repo / "other" / ".rce" / "judgements.toml").write_text("o\n")
+    (project / ".researchos" / "judgements.toml").write_text("j\n")
+    (repo / "other" / ".researchos" / "judgements.toml").write_text("o\n")
     result = githubpush.commit_records(project)
-    assert result["files"] == [".rce/judgements.toml"]
-    assert _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split() == ["paper/.rce/judgements.toml"]
-    assert "other/.rce/" in _git(repo, "status", "--porcelain", "--untracked-files=all")
+    assert result["files"] == [".researchos/judgements.toml"]
+    assert _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split() == ["paper/.researchos/judgements.toml"]
+    assert "other/.researchos/" in _git(repo, "status", "--porcelain", "--untracked-files=all")
 
 
 def test_push_with_the_records_tick_commits_them_first_then_pushes(stand_in, linked):
     """11.5 scenario 3: the tick and 「推送」 together: the records commit
-    is made (only `.rce/`) and pushed with the planned commits."""
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "judgements.toml").write_text("j\n")
+    is made (only `.researchos/`) and pushed with the planned commits."""
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "judgements.toml").write_text("j\n")
     (linked / "a.py").write_text("print('staged')\n")
     _git(linked, "add", "a.py")
     plan = githubpush.plan(linked)
@@ -418,7 +418,7 @@ def test_refused_no_branch_yet(tmp_path, stand_in, recorded):
 def test_refused_not_a_fast_forward_and_a_rejected_push_is_never_forced(tmp_path, stand_in, linked, recorded):
     """11.5 scenario 3: GitHub has commits the project lacks -> after a
     fetch the plan refuses (「GitHub 上有你本地没有的提交，请先在终端里处理」);
-    before the fetch, git itself rejects the push and RCE says the same --
+    before the fetch, git itself rejects the push and Research OS says the same --
     never a force push."""
     _colleague_pushes(tmp_path, stand_in)
     _commit(linked, "mine.py", "m\n", "mine")
@@ -529,11 +529,11 @@ def test_not_a_git_repository_in_a_synced_folder_is_explained_and_nothing_writte
     large = _thesis(folder)
     before = _tree_snapshot(home)
     plan = githubpush.plan(folder)
-    assert plan["git"] is False and plan["blockers"] == [{"code": "not_git", "message": "这个文件夹还不是 git 仓库，RCE 不会把它变成仓库"}]
+    assert plan["git"] is False and plan["blockers"] == [{"code": "not_git", "message": "这个文件夹还不是 git 仓库，Research OS 不会把它变成仓库"}]
     ng = plan["not_git"]
     assert ng["synced"] == service
     assert ng["sync_message"] == f"这个文件夹在 {service} 同步的文件夹里。同步服务和 git 的内部文件合不来，放在这里的仓库可能被同步弄坏"
-    assert ng["way_forward"] == "把项目移到一个不同步的文件夹（RCE 会认出移动后的项目），然后在那里运行 git init"
+    assert ng["way_forward"] == "把项目移到一个不同步的文件夹（Research OS 会认出移动后的项目），然后在那里运行 git init"
     assert [f["path"] for f in ng["large_files"]] == large
     assert ng["large_message"] == "GitHub 不接受超过 100 MB 的文件，这个文件夹里有 2 个：data/panel_0.dta（146 MB）、data/panel_1.dta（172 MB）"
     with pytest.raises(githubpush.PushError) as refused:
@@ -570,7 +570,7 @@ def test_push_endpoints_plan_commit_records_and_push(stand_in, linked_server, re
     (work / "a.py").write_text("print('edited')\n")
     status, plan = live.get("/api/github/push-plan")
     assert status == 200 and [c["subject"] for c in plan["commits"]] == ["Add b"]
-    assert plan["uncommitted"] == 1 and plan["records"]["changed"]  # init wrote .rce/
+    assert plan["uncommitted"] == 1 and plan["records"]["changed"]  # init wrote .researchos/
     assert _pushes(recorded) == []
     status, body = live.post("/api/github/push", {})
     assert status == 400 and _pushes(recorded) == []
@@ -578,8 +578,8 @@ def test_push_endpoints_plan_commit_records_and_push(stand_in, linked_server, re
     assert status == 409 and body["state"] == "github_changed"
     assert body["message_zh"] == "项目在你确认之后有了变化，请重新检查后再推送" and _pushes(recorded) == []
     status, done = live.post("/api/github/commit-records", {})
-    assert status == 200 and done["committed"] and all(f.startswith(".rce/") for f in done["files"])
-    assert _git(work, "log", "-1", "--format=%s").strip() == "RCE：人工记录"
+    assert status == 200 and done["committed"] and all(f.startswith(".researchos/") for f in done["files"])
+    assert _git(work, "log", "-1", "--format=%s").strip() == "Research OS：人工记录"
     status, plan = live.get("/api/github/push-plan")
     assert plan["commit_count"] == 2 and plan["records"]["committed"]
     status, pushed = live.post("/api/github/push", {"token": plan["token"], "commit_records": True})
@@ -628,18 +628,18 @@ def test_push_endpoints_refuse_cross_origin_and_write_nothing(stand_in, linked_s
 
 
 def test_cli_push_without_yes_prints_the_plan_and_writes_nothing(stand_in, linked, recorded, capsys):
-    """11.5 scenario 3 (CLI): `rce github push` shows the plan and writes
+    """11.5 scenario 3 (CLI): `researchos github push` shows the plan and writes
     nothing; `--yes --commit-records` commits the records and pushes."""
     _commit(linked, "b.py", "b\n", "Add b")
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "judgements.toml").write_text("j\n")
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "judgements.toml").write_text("j\n")
     (linked / "a.py").write_text("edited\n")
     head = _git(linked, "rev-parse", "HEAD").strip()
     assert cli.main(["github", "push", str(linked), "--commit-records"]) == 0
     out = capsys.readouterr().out
     assert "Commits GitHub does not have yet: 1" in out and "Add b" in out
     assert "1 other file(s) have changes that are not committed" in out
-    assert "Human records (.rce/): 1 file(s) not committed" in out and "Nothing written." in out
+    assert "Human records (.researchos/): 1 file(s) not committed" in out and "Nothing written." in out
     assert _git(linked, "rev-parse", "HEAD").strip() == head and _pushes(recorded) == []
     assert cli.main(["github", "push", str(linked), "--commit-records", "--yes"]) == 0
     out = capsys.readouterr().out
@@ -704,8 +704,8 @@ def test_page_shows_the_plan_in_plain_chinese_and_only_a_clean_plan_can_be_pushe
     its command -- and 「推送」 enabled only for a plan without refusals."""
     _commit(linked, "b.py", "b\n", "Add b")
     (linked / "a.py").write_text("edited\n")
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "judgements.toml").write_text("j\n")
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "judgements.toml").write_text("j\n")
     ok = githubpush.plan(linked)
     clean = dict(ok, records=dict(ok["records"], changed=[]), commit_count=0, commits=[], can_push=False, nothing_to_push=True)
     blocked = dict(ok, blockers=[{"code": "gh_missing", "message": "gh 还没有登录 GitHub，请在终端里运行：gh auth login", "command": "gh auth login"}], can_push=False)
@@ -723,14 +723,14 @@ def test_page_shows_the_plan_in_plain_chinese_and_only_a_clean_plan_can_be_pushe
     assert lines[0] == {"text": "分支 main → origin/main", "tone": ""}
     assert lines[1]["text"] == "GitHub 还没有的提交：1 个" and lines[1]["commits"][0]["subject"] == "Add b"
     assert {"text": "另有 1 个文件的改动还没有提交，推送不包括它们。", "tone": "warn"} in lines
-    assert {"text": "人工记录（.rce/）有 1 个文件还没有提交。", "tone": "warn"} in lines
+    assert {"text": "人工记录（.researchos/）有 1 个文件还没有提交。", "tone": "warn"} in lines
     assert out[1] is True and out[2] is False and out[3] is True
     assert {"text": "gh 还没有登录 GitHub，请在终端里运行：gh auth login。", "tone": "bad", "command": "gh auth login"} in out[4]
     assert out[5] is False
     texts = [line["text"] for line in out[6]]
-    assert texts[0] == "这个文件夹还不是 git 仓库，RCE 不会把它变成仓库。"
+    assert texts[0] == "这个文件夹还不是 git 仓库，Research OS 不会把它变成仓库。"
     assert texts[1].startswith("这个文件夹在 OneDrive 同步的文件夹里。同步服务和 git 的内部文件合不来")
-    assert texts[2] == "可以这样做：把项目移到一个不同步的文件夹（RCE 会认出移动后的项目），然后在那里运行 git init。"
+    assert texts[2] == "可以这样做：把项目移到一个不同步的文件夹（Research OS 会认出移动后的项目），然后在那里运行 git init。"
     assert "data/panel_0.dta（146 MB）、data/panel_1.dta（172 MB）" in texts[3]
     assert out[7] is False
 
@@ -746,7 +746,7 @@ def test_page_menu_opens_the_push_panel_and_only_its_push_button_pushes():
     render = _function("renderPushPlan")
     assert "先把人工记录提交一次" in render and 'mkButton(pushDialog.busy ? "正在推送…" : "推送", "btn", () => sendPush(subject, go))' in render
     step = _function("renderCreateRepoStep")
-    assert "私有仓库" in step and "RCE 不会创建公开仓库" in step and 'input.id = "push-name";' in step
+    assert "私有仓库" in step and "Research OS 不会创建公开仓库" in step and 'input.id = "push-name";' in step
     assert 'apiPost("/api/github/create-repo", { name: name, token: pushDialog.plan.token })' in _function("createRepo")
     send = _function("sendPush")
     assert 'apiPost("/api/github/push", { token: pushDialog.plan.token, commit_records: !!pushDialog.tick })' in send
@@ -759,9 +759,9 @@ def test_page_menu_opens_the_push_panel_and_only_its_push_button_pushes():
 def test_create_repo_over_http_then_push_and_no_secret_is_written(tmp_path, unlinked, gh_double, recorded):
     """11.5 scenarios 3 and 7 over HTTP: no remote -> 「创建私有仓库」 (gh,
     --private), then 「推送」; gh's (masked) token line and any credential
-    never reach the page, the project or the RCE home."""
-    from rce import project as project_identity
-    from rce.records import situation as records_situation
+    never reach the page, the project or the Research OS home."""
+    from researchos import project as project_identity
+    from researchos.records import situation as records_situation
 
     project_identity.init_project(unlinked)
     registry.register(Path(paths._canonical_path(unlinked)), records_situation.classify(unlinked).project_id)
@@ -781,7 +781,7 @@ def test_create_repo_over_http_then_push_and_no_secret_is_written(tmp_path, unli
         live.httpd.server_close()
         thread.join(timeout=5)
     assert "gho_" not in seen and "Token" not in seen
-    for where in (unlinked / ".rce", Path(os.environ["RCE_HOME"])):
+    for where in (unlinked / ".researchos", Path(os.environ["RESEARCHOS_HOME"])):
         for path in where.rglob("*"):
             if path.is_file():
                 text = path.read_bytes()
@@ -793,8 +793,8 @@ def test_commit_records_refuses_a_repository_naming_a_filter_program(stand_in, l
     """10.9 / 11.3: committing the records never runs a program the folder's
     own git config names (a clean filter here); nothing is committed."""
     _git(linked, "config", "filter.evil.clean", "touch /tmp/pwned-by-rce-test; cat")
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "judgements.toml").write_text("j\n")
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "judgements.toml").write_text("j\n")
     head = _git(linked, "rev-parse", "HEAD").strip()
     with pytest.raises(githubpush.PushError) as refused:
         githubpush.commit_records(linked)
@@ -828,8 +828,8 @@ def test_worktree_config_programs_refuse_the_push_and_the_records_commit(tmp_pat
     _git(linked, "config", "--worktree", "filter.x.clean", f"{script} %f")
     (linked / ".git" / "info").mkdir(exist_ok=True)
     (linked / ".git" / "info" / "attributes").write_text("* filter=x\n")
-    (linked / ".rce").mkdir()
-    (linked / ".rce" / "rec.json").write_text("{}\n")
+    (linked / ".researchos").mkdir()
+    (linked / ".researchos" / "rec.json").write_text("{}\n")
     head = _git(linked, "rev-parse", "HEAD").strip()
     with pytest.raises(githubpush.PushError) as refused:
         githubpush.commit_records(linked)
@@ -842,7 +842,7 @@ def test_planning_runs_no_filter_the_repository_names(tmp_path, stand_in, linked
     """11.5 scenario 3 / 11.2 (review fix): opening the push dialog runs
     `git status`, which would run a clean filter named by the repository's
     own config (`.git/config` or `.git/config.worktree`) and by
-    `.gitattributes` on a file whose stat changed -- RCE switches those
+    `.gitattributes` on a file whose stat changed -- Research OS switches those
     filters off; the plan still counts the changed file."""
     script, log = _logging_script(tmp_path, "clean")
     _git(linked, "config", "filter.x.clean", f"{script} %f")

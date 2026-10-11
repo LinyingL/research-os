@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from rce import addproject, db, paths
-from rce import project as project_identity
-from rce.records import identity as identity_mod
-from rce.records import situation as records_situation
-from rce.webapp import registry, server
+from researchos import addproject, db, paths
+from researchos import project as project_identity
+from researchos.records import identity as identity_mod
+from researchos.records import situation as records_situation
+from researchos.webapp import registry, server
 
 # Fixtures and helpers of the phase tests, reused as they are.
 from test_v6_add_project import _git, _home_state, _tree, fake_home, no_project_server  # noqa: F401
@@ -32,7 +32,7 @@ def test_inspecting_a_git_repository_never_runs_its_fsmonitor_hook(tmp_path):
     """10.8 scenario 3 (a git repository) with 10.2's "Inspecting writes
     nothing anywhere": a `core.fsmonitor` command in the folder's own
     `.git/config` is not executed -- not by the preview, not by
-    `rce projects add` without --yes, and not by the scan after adding."""
+    `researchos projects add` without --yes, and not by the scan after adding."""
     marker = tmp_path / "PWNED"
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -43,7 +43,7 @@ def test_inspecting_a_git_repository_never_runs_its_fsmonitor_hook(tmp_path):
     insp = addproject.inspect(repo)
     assert insp.kind == addproject.NEW_FOLDER and insp.preview.tracked == 1
     assert not marker.exists()
-    from rce import cli
+    from researchos import cli
     assert cli.main(["projects", "add", str(repo)]) == 0
     assert not marker.exists()
     added = addproject.add(repo, label=None, inspected=addproject.inspect(repo).token)
@@ -51,28 +51,28 @@ def test_inspecting_a_git_repository_never_runs_its_fsmonitor_hook(tmp_path):
     assert report.ok and not marker.exists()
 
 
-# -- a `.rce` that is a symlink (10.6) ------------------------------------------------------
+# -- a `.researchos` that is a symlink (10.6) ------------------------------------------------------
 
 
 def test_a_rce_symlink_is_refused_and_nothing_is_written_through_it(fake_home, tmp_path):
     """10.8 scenario 7 (refusals) under 10.6, "never follows a symlink out
-    of the folder": a folder whose `.rce` points elsewhere (here at
+    of the folder": a folder whose `.researchos` points elsewhere (here at
     ~/Documents) is refused with its sentence; adding it writes nothing
-    there; and `rce init`'s own identity creation refuses to write through
+    there; and `researchos init`'s own identity creation refuses to write through
     such a link."""
     documents = fake_home / "Documents"
     (documents / "thesis.md").write_text("mine\n")
     folder = tmp_path / "w" / "n"
     folder.mkdir(parents=True)
     (folder / "a.py").write_text("")
-    os.symlink(documents, folder / ".rce")
+    os.symlink(documents, folder / ".researchos")
     before = _tree(documents, skip_rce=False)
     insp = addproject.inspect(folder)
-    assert insp.kind == addproject.REFUSED and insp.refusal.code == "rce_link"
-    assert insp.message == addproject.REFUSAL_MESSAGES["rce_link"]
+    assert insp.kind == addproject.REFUSED and insp.refusal.code == "researchos_link"
+    assert insp.message == addproject.REFUSAL_MESSAGES["researchos_link"]
     with pytest.raises(addproject.AddRefused) as refused:
         addproject.add(folder, label=None, inspected=insp.token)
-    assert refused.value.code == "rce_link"
+    assert refused.value.code == "researchos_link"
     with pytest.raises(identity_mod.IdentityError):
         identity_mod.create_identity(folder)
     assert _tree(documents, skip_rce=False) == before
@@ -99,7 +99,7 @@ class _Spawned:
 
     @property
     def downloads(self) -> list[str]:
-        return [n for n in self.names if n.startswith("rce-download")]
+        return [n for n in self.names if n.startswith("researchos-download")]
 
 
 def test_inspecting_never_opens_or_downloads_an_identity_snapshot_in_the_cloud(tmp_path, monkeypatch):
@@ -111,8 +111,8 @@ def test_inspecting_never_opens_or_downloads_an_identity_snapshot_in_the_cloud(t
     folder = tmp_path / "lost"
     folder.mkdir()
     project_identity.init_project(folder)
-    (folder / ".rce" / "project.toml").unlink()
-    [snapshot] = list((folder / ".rce" / "backups").iterdir())
+    (folder / ".researchos" / "project.toml").unlink()
+    [snapshot] = list((folder / ".researchos" / "backups").iterdir())
     assert records_situation.classify(folder).reason == "identity_snapshot_only"
     real = paths.is_dataless
     monkeypatch.setattr(paths, "is_dataless", lambda p: Path(p).name == snapshot.name or real(p))
@@ -132,7 +132,7 @@ def test_inspecting_never_opens_or_downloads_an_identity_snapshot_in_the_cloud(t
     finally:
         monkeypatch.setattr("builtins.open", real_open)
         monkeypatch.setattr("io.open", real_open)
-    assert insp.kind == addproject.RCE_PROJECT and not insp.can_add
+    assert insp.kind == addproject.RESEARCHOS_PROJECT and not insp.can_add
     assert insp.classification.situation is records_situation.Situation.UNREADABLE_ID
     assert insp.classification.reason == "identity_snapshot_in_cloud"
     assert opened == [] and spawned.downloads == []
@@ -148,7 +148,7 @@ def test_inspecting_a_moved_copy_never_asks_for_the_old_homes_identity_from_the_
     project_identity.init_project(original)
     copy = tmp_path / "work2" / "copy"
     shutil.copytree(original, copy)
-    old_toml = original / ".rce" / "project.toml"
+    old_toml = original / ".researchos" / "project.toml"
     real = paths.is_dataless
     monkeypatch.setattr(paths, "is_dataless", lambda p: Path(p) == old_toml or real(p))
     spawned = _Spawned(monkeypatch)
@@ -158,7 +158,7 @@ def test_inspecting_a_moved_copy_never_asks_for_the_old_homes_identity_from_the_
     assert spawned.downloads == []
     assert paths.downloads_allowed()  # suppressed only while inspecting
     records_situation.classify(copy)
-    assert spawned.downloads == [f"rce-download:{old_toml.name}"]
+    assert spawned.downloads == [f"researchos-download:{old_toml.name}"]
 
 
 # -- what adding writes is what it says (10.2) -------------------------------------------------
@@ -171,44 +171,44 @@ def _files(root: Path) -> set[str]:
 def test_what_adding_a_new_folder_writes_is_listed_in_full(tmp_path):
     """10.8 scenario 2 with 10.2's "It says what adding writes": the list
     names every file adding creates in the folder -- the identity file, its
-    9.12 snapshot in .rce/backups/ and the README -- and nothing else
+    9.12 snapshot in .researchos/backups/ and the README -- and nothing else
     appears there."""
     folder = tmp_path / "b"
     folder.mkdir()
     (folder / "a.py").write_text("")
     insp = addproject.inspect(folder)
     writes = insp.payload()["writes"]
-    assert writes[:3] == [".rce/project.toml", addproject.IDENTITY_SNAPSHOT, ".rce/README"]
+    assert writes[:3] == [".researchos/project.toml", addproject.IDENTITY_SNAPSHOT, ".researchos/README"]
     addproject.add(folder, label=None, inspected=insp.token)
     created = _files(folder) - {"a.py"}
-    [snap] = [f for f in created if f.startswith(".rce/backups/")]
-    assert snap.startswith(".rce/backups/project.toml.") and snap.endswith(".toml")
-    assert created == {".rce/project.toml", ".rce/README", snap}
+    [snap] = [f for f in created if f.startswith(".researchos/backups/")]
+    assert snap.startswith(".researchos/backups/project.toml.") and snap.endswith(".toml")
+    assert created == {".researchos/project.toml", ".researchos/README", snap}
 
 
 def test_a_pre_v5_folder_whose_graph_opening_moves_says_so(no_project_server, tmp_path, capsys):
     """10.8 scenario 6 with 10.2's "It says what adding writes": a pre-V5
-    folder with a pre-8.10 in-project `.rce/graph.db` is said to lose it to
-    ~/.rce and to gain the README when it is opened -- which is what then
+    folder with a pre-8.10 in-project `.researchos/graph.db` is said to lose it to
+    ~/.researchos and to gain the README when it is opened -- which is what then
     happens; one without it is said to be written into the list only."""
     live = no_project_server
     legacy = tmp_path / "legacy"
-    (legacy / ".rce").mkdir(parents=True)
+    (legacy / ".researchos").mkdir(parents=True)
     (legacy / "a.py").write_text("")
-    conn = db.connect(legacy / ".rce" / "graph.db")
+    conn = db.connect(legacy / ".researchos" / "graph.db")
     try:
         db.migrate(conn)
     finally:
         conn.close()
-    from rce import cli
+    from researchos import cli
     assert cli.main(["projects", "add", str(legacy)]) == 0
-    assert "moves its in-project .rce/graph.db" in capsys.readouterr().out
+    assert "moves its in-project .researchos/graph.db" in capsys.readouterr().out
     _, insp = live.post("/api/projects/inspect", {"path": str(legacy)})
     assert insp["kind"] == "pre_v5" and insp["moves_graph"] is True
-    assert ".rce/README" in insp["writes"] and any(w.startswith(".rce/graph.db -> ") for w in insp["writes"])
+    assert ".researchos/README" in insp["writes"] and any(w.startswith(".researchos/graph.db -> ") for w in insp["writes"])
     status, _added = live.post("/api/projects/add", {"path": str(legacy), "label": None, "inspected": insp["inspected"]})
     assert status == 200
-    assert _files(legacy) - {"a.py"} == {".rce/README"}
+    assert _files(legacy) - {"a.py"} == {".researchos/README"}
     assert paths.legacy_index_db_path(legacy).exists()
 
 
@@ -222,8 +222,8 @@ def test_the_page_says_a_pre_v5_graph_moves_and_a_new_folder_gets_a_snapshot():
         ("addWritesText", [{"kind": "pre_v5", "can_add": True, "moves_graph": True}]),
         ("addWritesText", [{"kind": "pre_v5", "can_add": True, "moves_graph": False}]),
     )
-    assert ".rce/backups/" in out[0]
-    assert "graph.db 会移到 ~/.rce 下" in out[1] and "README" in out[1]
+    assert ".researchos/backups/" in out[0]
+    assert "graph.db 会移到 ~/.researchos 下" in out[1] and "README" in out[1]
     assert out[2].startswith("加入只会把它写进项目列表。")
 
 
@@ -255,7 +255,7 @@ def test_a_folder_swapped_for_a_symlink_after_the_check_is_not_written_into(fake
     with pytest.raises(addproject.AddRefused) as refused:
         addproject.add(folder, label=None, inspected=insp.token)
     assert refused.value.code == "inspected_changed"
-    assert _tree(documents, skip_rce=False) == before and not (documents / ".rce").exists()
+    assert _tree(documents, skip_rce=False) == before and not (documents / ".researchos").exists()
     assert not registry.registry_path().exists()
 
 
@@ -291,7 +291,7 @@ def test_the_chosen_name_survives_an_answer_that_leads_to_a_second_question(no_p
     registry.register(Path(paths._canonical_path(original)), records_situation.classify(original).project_id)
     lost = tmp_path / "r" / "lost"
     shutil.copytree(original, lost)
-    (lost / ".rce" / "project.toml").unlink()
+    (lost / ".researchos" / "project.toml").unlink()
     _, insp = live.post("/api/projects/inspect", {"path": str(lost)})
     assert insp["situation"]["answers"] == ["restore", "adopt"]
     status, added = live.post("/api/projects/add", {"path": str(lost), "label": "丢失的项目", "inspected": insp["inspected"]})

@@ -1,4 +1,4 @@
-"""Tests for rce.records.lock (DESIGN.md section 9.7): the cross-process
+"""Tests for researchos.records.lock (DESIGN.md section 9.7): the cross-process
 project lock. The two-process test is the point -- every pre-V5 lock was
 in-process, which is how 600 concurrent writes lost 279 (9.0)."""
 
@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from rce import paths
-from rce.records import lock
+from researchos import paths
+from researchos.records import lock
 
 PID = "p-" + "ab" * 16
 
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
-    """A project folder beside (not containing) the isolated RCE home."""
+    """A project folder beside (not containing) the isolated Research OS home."""
     root = tmp_path / "proj"
     root.mkdir()
     return root
@@ -38,19 +38,19 @@ def test_malformed_ids_are_refused_not_sanitized(tmp_path):
             lock.lock_key(tmp_path, bad)
 
 
-def test_lock_file_lives_under_rce_home_never_in_the_project(tmp_path, isolated_rce_home):
+def test_lock_file_lives_under_rce_home_never_in_the_project(tmp_path, isolated_researchos_home):
     project = tmp_path / "proj"
     project.mkdir()
     with lock.project_lock(project, PID) as held:
-        assert held.path == isolated_rce_home / "locks" / f"{PID}.lock"
+        assert held.path == isolated_researchos_home / "locks" / f"{PID}.lock"
         assert held.is_held()
-    assert not (project / ".rce").exists()
+    assert not (project / ".researchos").exists()
 
 
 def test_rce_home_inside_the_project_is_refused(tmp_path, monkeypatch):
     project = tmp_path / "proj"
     project.mkdir()
-    monkeypatch.setenv("RCE_HOME", str(project / "home"))
+    monkeypatch.setenv("RESEARCHOS_HOME", str(project / "home"))
     with pytest.raises(lock.ProjectLockError):
         with lock.project_lock(project, PID):
             pass
@@ -140,7 +140,7 @@ def test_flock_failure_raises(project, monkeypatch):
 def _spawn_holder(project: Path, hold_s: float) -> subprocess.Popen:
     code = (
         "import sys, time\n"
-        "from rce.records import lock\n"
+        "from researchos.records import lock\n"
         f"with lock.project_lock({str(project)!r}, {PID!r}):\n"
         "    print('held', flush=True)\n"
         f"    time.sleep({hold_s})\n"
@@ -153,7 +153,7 @@ def _spawn_holder(project: Path, hold_s: float) -> subprocess.Popen:
 _COUNTER_CHILD = """
 import sys, time
 from pathlib import Path
-from rce.records import lock
+from researchos.records import lock
 project, counter, n = sys.argv[1], Path(sys.argv[2]), int(sys.argv[3])
 for _ in range(n):
     with lock.project_lock(project, {pid!r}):

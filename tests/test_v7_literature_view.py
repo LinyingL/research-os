@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from rce import literature, paths
-from rce import project as project_identity
-from rce.ingest import pipeline
-from rce.records import ledger as ledger_mod
-from rce.records import situation as records_situation
-from rce.webapp import literature_api, registry, server
+from researchos import literature, paths
+from researchos import project as project_identity
+from researchos.ingest import pipeline
+from researchos.records import ledger as ledger_mod
+from researchos.records import situation as records_situation
+from researchos.webapp import literature_api, registry, server
 
 from test_v6_add_project import _live
 from test_v6_page import NODE, _src, needs_node
@@ -361,7 +361,7 @@ def test_11_5_6_with_no_drafts_and_before_any_scan(tmp_path, no_network):
     project_identity.init_project(root)
     conn = _conn(root)
     try:
-        from rce import db
+        from researchos import db
 
         db.migrate(conn)
         data = literature_api.citations_payload(conn, root)
@@ -511,8 +511,8 @@ def test_11_5_6_review_a_cloud_only_draft_says_so_in_the_view(tmp_path, monkeypa
     """11.1 / 11.5 #1 (review fix): a draft only in OneDrive's cloud with
     the client not running is named in the 文献 view with 11.1's sentence,
     not a guess; the engine's text stays behind 「详情」."""
-    from rce import cloud
-    from rce.ingest import citations as citations_ingest
+    from researchos import cloud
+    from researchos.ingest import citations as citations_ingest
 
     root = tmp_path / "proj"
     root.mkdir()
@@ -529,7 +529,7 @@ def test_11_5_6_review_a_cloud_only_draft_says_so_in_the_view(tmp_path, monkeypa
     monkeypatch.setattr(citations_ingest, "parse_draft", parse)
     rep = citations_ingest.report(root, ["a.md", "cloud.md"])
     gone = next(d for d in rep["drafts"] if d["file"] == "cloud.md")
-    assert gone["message_zh"] == "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 RCE 才能读到"
+    assert gone["message_zh"] == "这些文件只在 OneDrive 云端；OneDrive 客户端没有运行，打开它并登录后 Research OS 才能读到"
     assert "only in the OneDrive cloud" in gone["detail"]
     assert rep["cloud"] == [gone["message_zh"]] and rep["totals"]["unreadable"] == 1
     page = _src()
@@ -586,7 +586,7 @@ def test_11_5_6_review_a_citation_judgment_under_review_reads_in_chinese():
 
 def test_11_5_6_review_items_carry_reference_titles(tmp_path):
     """8.8 (review fix): `GET /api/review` gives a reference end its title."""
-    from rce import db as rce_db
+    from researchos import db as rce_db
 
     conn = rce_db.connect(":memory:")
     rce_db.migrate(conn)

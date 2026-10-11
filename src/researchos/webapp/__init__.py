@@ -1,0 +1,15 @@
+"""Local read-only web view over the graph (DESIGN.md section 7, "Later"),
+task V1.
+
+`researchos serve [path] [--port N]` starts `researchos.webapp.server`'s stdlib-only HTTP
+server, bound to 127.0.0.1 only -- never reachable from another machine.
+Every endpoint is a read of the graph or the project filesystem; the sole
+side effect anywhere in this package is `POST /api/open`, which shells out to
+macOS's `open` to reveal a file in Finder or open it with its default
+application, never to execute or modify project content. See
+researchos.webapp.server's module docstring for the full endpoint list.
+
+`/` serves the single-page app (`src/researchos/webapp/app.html`, task V2): a
+two-view client (Decision Tree / Lineage) built entirely against the same
+JSON API -- inline CSS/JS, zero external resources, zero build step.
+"""

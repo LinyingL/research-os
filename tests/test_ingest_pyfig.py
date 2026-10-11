@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.pyfig (T6). parse_py_file needs only a directory +
+"""Tests for researchos.ingest.pyfig (T6). parse_py_file needs only a directory +
 relative path (no git), mirroring tests/test_ingest_latex.py. ingest_pyfig_repo
 now resolves each edge's src via `git blame` (batch3-fix), so those tests use
 real throwaway repos via subprocess `git`, following tests/test_ingest_git.py's
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from rce import db
-from rce.ingest import git as git_ingest
-from rce.ingest import pyfig
+from researchos import db
+from researchos.ingest import git as git_ingest
+from researchos.ingest import pyfig
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -39,7 +39,7 @@ def test_parse_py_file_finds_literal_calls_and_skips_fstring(tmp_path, caplog):
         "fig.savefig(f'figs/out_{i}.png')\n"  # f-string -- must be skipped
         "savefig('bare.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "plot.py")
 
     assert [(c.callee, c.literal, c.line) for c in calls] == [
@@ -79,7 +79,7 @@ def test_ingest_pyfig_repo_literal_fstring_missing_file_and_idempotent(tmp_path,
         git_ingest.ingest_git_repo(conn, repo)  # creates the Commit node the FK needs
 
         for _ in range(2):  # second run proves idempotency
-            with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+            with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
                 counts = pyfig.ingest_pyfig_repo(conn, repo, ["scripts/gen.py"], known_images)
             assert counts == {"generates": 2}
 
@@ -168,7 +168,7 @@ def test_uncommitted_savefig_line_is_skipped_not_guessed(tmp_path, caplog):
     db.migrate(conn)
     try:
         git_ingest.ingest_git_repo(conn, repo)
-        with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
             counts = pyfig.ingest_pyfig_repo(conn, repo, ["gen.py"], known_images)
         assert counts == {"generates": 0}
         assert db.query_edges(conn, type="generates") == []
@@ -186,7 +186,7 @@ def test_unborn_repo_skips_entire_scan(tmp_path, caplog):
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
             counts = pyfig.ingest_pyfig_repo(conn, repo, ["plot.py"], ["plot.png"])
         assert counts == {"generates": 0}
         assert db.query_edges(conn, type="generates") == []
@@ -207,7 +207,7 @@ def test_non_git_repo_skips_entire_scan_gracefully(tmp_path, caplog):
     conn = db.connect(":memory:")
     db.migrate(conn)
     try:
-        with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
             counts = pyfig.ingest_pyfig_repo(conn, project, ["plot.py"], ["plot.png"])
         assert counts == {"generates": 0}
         assert db.query_edges(conn, type="generates") == []
@@ -261,7 +261,7 @@ def test_parse_py_file_skips_fstring_with_loop_variable(tmp_path, caplog):
         "for i in range(1):\n"
         "    plt.savefig(f'figs/{i}.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -275,7 +275,7 @@ def test_parse_py_file_skips_reassigned_module_constant(tmp_path, caplog):
         "SAVE_DIR = 'figs2'\n"
         "plt.savefig(f'{SAVE_DIR}/loss.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -318,7 +318,7 @@ def test_parse_py_file_skips_conditional_if_and_module_level_for_reassignment(tm
         "    pass\n"
         "plt.savefig(D + '/f2.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert sum("not guessing" in r.message for r in caplog.records) == 2
@@ -351,7 +351,7 @@ def test_parse_py_file_skips_try_except_with_and_walrus_reassignment(tmp_path, c
         "    pass\n"
         "plt.savefig(WALRUS + '/f4.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert sum("not guessing" in r.message for r in caplog.records) == 4
@@ -379,7 +379,7 @@ def test_parse_py_file_skips_name_shadowed_inside_function_scope(tmp_path, caplo
         "    D = 'overridden'\n"
         "    plt.savefig(D + '/z.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert sum("not guessing" in r.message for r in caplog.records) == 3
@@ -391,7 +391,7 @@ def test_parse_py_file_skips_name_touched_by_delete_after_assignment(tmp_path, c
         "del D\n"
         "plt.savefig(D + '/after_del.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -405,7 +405,7 @@ def test_parse_py_file_still_skips_imported_name_never_folds(tmp_path, caplog):
         "from config import OUT\n"
         "plt.savefig(OUT + '/f1.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -421,7 +421,7 @@ def test_parse_py_file_still_skips_pathlib_slash_operator(tmp_path, caplog):
         "SAVE_DIR = Path('figs')\n"
         "plt.savefig(SAVE_DIR / 'loss.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -443,7 +443,7 @@ def test_parse_py_file_skips_lambda_parameter_shadowing_module_constant(tmp_path
         "OUT = 'figures'\n"
         "save = lambda OUT: plt.savefig(OUT + '/f1.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -460,7 +460,7 @@ def test_parse_py_file_skips_match_case_capture_shadowing_module_constant(tmp_pa
         "    case ['save', OUT]:\n"
         "        plt.savefig(OUT + '/f1.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -479,7 +479,7 @@ def test_parse_py_file_skips_type_alias_shadowing_module_constant(tmp_path, capl
         "type OUT = str\n"
         "plt.savefig(OUT + '/f1.png')\n"
     )
-    with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+    with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
         calls = pyfig.parse_py_file(tmp_path, "gen.py")
     assert calls == []
     assert any("not guessing" in r.message for r in caplog.records)
@@ -657,7 +657,7 @@ def test_folded_path_not_a_tracked_image_is_still_caught(tmp_path, caplog):
     db.migrate(conn)
     try:
         git_ingest.ingest_git_repo(conn, repo)
-        with caplog.at_level("WARNING", logger="rce.ingest.pyfig"):
+        with caplog.at_level("WARNING", logger="researchos.ingest.pyfig"):
             counts = pyfig.ingest_pyfig_repo(conn, repo, ["gen.py"], known_images)
         assert counts == {"generates": 0}
         assert db.query_edges(conn, type="generates") == []

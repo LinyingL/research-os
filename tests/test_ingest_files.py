@@ -1,4 +1,4 @@
-"""Tests for rce.ingest.files (W1): the filesystem-walk fallback inventory
+"""Tests for researchos.ingest.files (W1): the filesystem-walk fallback inventory
 used when a project root is not a git repository. No subprocess `git`
 involved here -- plain directories/files built via tmp_path, mirroring the
 category assertions tests/test_ingest_git.py already makes for its git
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from rce.ingest import files as files_ingest
+from researchos.ingest import files as files_ingest
 
 
 def test_categorizes_every_tracked_extension(tmp_path: Path):
@@ -58,7 +58,7 @@ def test_recurses_into_ordinary_subdirectories(tmp_path: Path):
 
 @pytest.mark.parametrize(
     "noise_dir",
-    [".git", ".rce", "__pycache__", ".venv", "node_modules", ".Rproj.user", "_cache", ".ipynb_checkpoints"],
+    [".git", ".researchos", "__pycache__", ".venv", "node_modules", ".Rproj.user", "_cache", ".ipynb_checkpoints"],
 )
 def test_skips_known_noise_directories(tmp_path: Path, noise_dir: str):
     (tmp_path / noise_dir).mkdir()

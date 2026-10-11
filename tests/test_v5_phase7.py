@@ -19,10 +19,10 @@ from typing import Any
 
 import pytest
 
-from rce import inventory, lineage, migration
-from rce.records import judgements
-from rce.records import ledger as ledger_mod
-from rce.webapp import registry, server
+from researchos import inventory, lineage, migration
+from researchos.records import judgements
+from researchos.records import ledger as ledger_mod
+from researchos.webapp import registry, server
 
 from test_records_judgements import READ, _conn, _project, _scan
 
@@ -105,7 +105,7 @@ def test_reject_from_the_card_carries_its_note(live):
 
 
 def test_records_endpoint_lists_each_kind_with_a_code_for_the_page(live):
-    """9.2 「记录」: the inventory `rce records` prints, each row named by a
+    """9.2 「记录」: the inventory `researchos records` prints, each row named by a
     stable code with its numbers, so the page words it in Chinese."""
     base, root, _ = live
     _call(base, "POST", "/api/judgements", {**BODY, "verdict": "confirmed"})
@@ -114,14 +114,14 @@ def test_records_endpoint_lists_each_kind_with_a_code_for_the_page(live):
     rows = {r["code"]: r for r in payload["rows"]}
     assert set(rows) >= {"judgements", "mappings", "attempts", "attempts_config", "canvas", "variables"}
     j = rows["judgements"]
-    assert j["path"] == ".rce/judgements.toml" and j["facts"]["entries"] == 1 and j["facts"]["standing"] == 1
+    assert j["path"] == ".researchos/judgements.toml" and j["facts"]["entries"] == 1 and j["facts"]["standing"] == 1
     assert j["facts"]["exists"] is True and j["facts"]["issues"] == []
     assert rows["mappings"]["facts"]["state"] == "absent"
     assert rows["canvas"]["facts"]["state"] == "absent"
 
 
 def test_records_endpoint_names_a_problem_in_a_code_and_keeps_the_english(live):
-    """A ledger RCE cannot read is listed with its issue (`invalid`, the
+    """A ledger Research OS cannot read is listed with its issue (`invalid`, the
     line) for the page's sentence, and the engine's English for 「详情」."""
     base, root, _ = live
     _call(base, "POST", "/api/judgements", {**BODY, "verdict": "confirmed"})
@@ -149,7 +149,7 @@ def test_scenario_1_move_while_open_then_reopen_and_choose_the_new_place(live, t
     attaches nothing; with the moved folder the project opens again, all
     records present, the index directory unchanged."""
     base, root, httpd = live
-    registry.register(root, httpd.get_served().project_id)  # as `rce serve` does
+    registry.register(root, httpd.get_served().project_id)  # as `researchos serve` does
     _call(base, "POST", "/api/judgements", {**BODY, "verdict": "confirmed"})
     before = _ledger_text(root)
     moved = tmp_path / "moved-here"
@@ -178,10 +178,10 @@ def test_scenario_1_move_while_open_then_reopen_and_choose_the_new_place(live, t
 
 def test_reopen_of_a_healthy_project_reopens_it_and_writes_nothing(live):
     base, root, _ = live
-    before = sorted(p.name for p in (root / ".rce").iterdir())
+    before = sorted(p.name for p in (root / ".researchos").iterdir())
     status, payload = _call(base, "POST", "/api/project/reopen", {})
     assert status == 200 and payload["blocked"] is None and payload["read_only"] is False
-    assert sorted(p.name for p in (root / ".rce").iterdir()) == before
+    assert sorted(p.name for p in (root / ".researchos").iterdir()) == before
 
 
 def test_reopen_runs_the_origin_check_first(live):
@@ -297,7 +297,7 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",
         "迁移这些记录", "这不是这个项目的", "迁移后才能记录判断", " 条里有 ", " 条的两端能在这个文件夹里扫到",
         "原位置暂时无法确认", "项目身份文件无法读取", "人工记录", "在 Finder 中显示", "最新快照：",
-        "画布位置", "旧索引已移到：", "请先退出 RCE 与 MCP 服务",
+        "画布位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
     ):
         assert copy in html, copy
     for copy in ("确认这条连线", "标记为错误提取", "撤回", "撤销", "在待复核列表中查看", "备注（可选）",

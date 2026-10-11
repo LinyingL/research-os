@@ -1,8 +1,8 @@
 """DESIGN.md Section 10 (task V6), phase A: adding a project from the app --
-the engine (`rce.addproject`), the server endpoints, the registry, and the
+the engine (`researchos.addproject`), the server endpoints, the registry, and the
 command line. Each test names the 10.8 acceptance scenario it covers.
 
-Every test runs with `RCE_HOME` in a throwaway directory (conftest) and a
+Every test runs with `RESEARCHOS_HOME` in a throwaway directory (conftest) and a
 throwaway `HOME` where a test needs the home folder's top-level folders.
 """
 
@@ -25,42 +25,42 @@ from typing import Any
 
 import pytest
 
-from rce import addproject, cli, db, paths
-from rce import project as project_identity
-from rce.ingest import files as files_ingest
-from rce.ingest import scan as scan_mod
-from rce.records import identity as identity_mod
-from rce.records import judgements
-from rce.records import lock as records_lock
-from rce.records import situation as records_situation
-from rce.webapp import registry, server
+from researchos import addproject, cli, db, paths
+from researchos import project as project_identity
+from researchos.ingest import files as files_ingest
+from researchos.ingest import scan as scan_mod
+from researchos.records import identity as identity_mod
+from researchos.records import judgements
+from researchos.records import lock as records_lock
+from researchos.records import situation as records_situation
+from researchos.webapp import registry, server
 
 
 # -- helpers ----------------------------------------------------------------------
 
 
 def _tree(root: Path, *, skip_rce: bool = True) -> dict[str, tuple[bytes, int]]:
-    """Every file under `root` (outside `.rce/` unless asked): its bytes
+    """Every file under `root` (outside `.researchos/` unless asked): its bytes
     and its modification time in nanoseconds -- 10.8 #2's comparison."""
     found: dict[str, tuple[bytes, int]] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        if skip_rce and rel_dir.parts[:1] == (".rce",):
+        if skip_rce and rel_dir.parts[:1] == (".researchos",):
             dirnames[:] = []
             continue
         for name in filenames:
             full = Path(dirpath) / name
             rel = (rel_dir / name).as_posix()
-            if skip_rce and rel.startswith(".rce/"):
+            if skip_rce and rel.startswith(".researchos/"):
                 continue
             found[rel] = (full.read_bytes(), os.lstat(full).st_mtime_ns)
     return found
 
 
 def _home_state() -> dict[str, tuple[bytes, int]]:
-    """Everything under RCE_HOME except the lock files (taking a lock is
+    """Everything under RESEARCHOS_HOME except the lock files (taking a lock is
     not a write of state)."""
-    home = paths.rce_home()
+    home = paths.researchos_home()
     if not home.exists():
         return {}
     return {k: v for k, v in _tree(home, skip_rce=False).items() if not k.startswith("locks/")}
@@ -264,8 +264,8 @@ def test_new_folder_preview_counts_equal_what_the_first_scan_reads(tmp_path):
 
 
 def test_new_folder_after_adding_holds_only_rce_and_every_other_file_is_unchanged(tmp_path):
-    """10.8 scenario 2: afterwards the folder holds `.rce/project.toml` and
-    `.rce/README` and is otherwise unchanged -- every other file's bytes and
+    """10.8 scenario 2: afterwards the folder holds `.researchos/project.toml` and
+    `.researchos/README` and is otherwise unchanged -- every other file's bytes and
     modification time compared before and after; the registry has the
     chosen display name; nothing is under review."""
     folder = _research_folder(tmp_path / "study")
@@ -276,9 +276,9 @@ def test_new_folder_after_adding_holds_only_rce_and_every_other_file_is_unchange
     report = addproject.rescan(added.root)
     assert report.ok
     assert _tree(folder) == before
-    assert sorted(p.name for p in folder.iterdir()) == sorted(before_names + [".rce"])
-    assert (folder / ".rce" / "project.toml").is_file() and (folder / ".rce" / "README").is_file()
-    assert set(os.listdir(folder / ".rce")) <= {"project.toml", "README", "backups"}
+    assert sorted(p.name for p in folder.iterdir()) == sorted(before_names + [".researchos"])
+    assert (folder / ".researchos" / "project.toml").is_file() and (folder / ".researchos" / "README").is_file()
+    assert set(os.listdir(folder / ".researchos")) <= {"project.toml", "README", "backups"}
     [entry] = registry.load()
     assert entry["label"] == "我的研究" and entry["id"] == added.project_id
     conn = db.connect(records_situation.index_db_path(added.project_id))
@@ -289,7 +289,7 @@ def test_new_folder_after_adding_holds_only_rce_and_every_other_file_is_unchange
 
 
 def test_inspecting_writes_nothing_anywhere_and_opens_no_file(tmp_path, monkeypatch):
-    """10.2 / 10.6: inspecting writes nothing anywhere (the folder and RCE's
+    """10.2 / 10.6: inspecting writes nothing anywhere (the folder and Research OS's
     home byte-for-byte unchanged, no registry) and never opens a file of
     the folder."""
     folder = _research_folder(tmp_path / "study")
@@ -309,7 +309,7 @@ def test_inspecting_writes_nothing_anywhere_and_opens_no_file(tmp_path, monkeypa
     monkeypatch.setattr("io.open", real_open)
     assert insp.kind == addproject.NEW_FOLDER
     assert opened == []
-    assert _tree(folder, skip_rce=False) == before and not (folder / ".rce").exists()
+    assert _tree(folder, skip_rce=False) == before and not (folder / ".researchos").exists()
     assert _home_state() == home_before and not registry.registry_path().exists()
 
 
@@ -412,7 +412,7 @@ def test_copy_of_a_v5_project_returns_its_question_and_writes_nothing(tmp_path):
     included, until it is answered."""
     _original, copy = _copy_of_a_project(tmp_path)
     insp = addproject.inspect(copy)
-    assert insp.kind == addproject.RCE_PROJECT and not insp.can_add
+    assert insp.kind == addproject.RESEARCHOS_PROJECT and not insp.can_add
     c = records_situation.classify(copy)
     assert insp.payload()["situation"] == c.payload()
     assert insp.payload()["situation"]["answers"] == ["fork", "claim", "other"]
@@ -461,7 +461,7 @@ def test_pre_v5_project_is_registered_and_opened_frozen_and_no_scan_writes_into_
     db_before = (legacy_db.read_bytes(), legacy_db.stat().st_mtime_ns)
     _, insp = live.post("/api/projects/inspect", {"path": str(old)})
     assert insp["kind"] == "pre_v5" and insp["can_add"]
-    assert insp["message"] == "这是旧版 RCE 项目：加入后需要先迁移，才能记录判断"
+    assert insp["message"] == "这是旧版 Research OS 项目：加入后需要先迁移，才能记录判断"
     status, added = live.post("/api/projects/add", {"path": str(old), "label": "旧项目", "inspected": insp["inspected"]})
     assert status == 200 and added["kind"] == "pre_v5" and added["scanning"] is False
     [entry] = registry.load()
@@ -474,7 +474,7 @@ def test_pre_v5_project_is_registered_and_opened_frozen_and_no_scan_writes_into_
         addproject.rescan(old)
     assert refused.value.code == "frozen"
     assert (legacy_db.read_bytes(), legacy_db.stat().st_mtime_ns) == db_before
-    assert not (old / ".rce").exists()
+    assert not (old / ".researchos").exists()
 
 
 # -- 10.8 scenario 7: refusals -------------------------------------------------------------
@@ -545,12 +545,12 @@ def test_a_file_and_a_missing_path_are_refused(tmp_path):
 
 
 def test_rce_home_and_anything_inside_it_are_refused(tmp_path):
-    """10.8 scenario 7: `~/.rce` (RCE_HOME) or anything inside it."""
-    home = paths.rce_home()
+    """10.8 scenario 7: `~/.researchos` (RESEARCHOS_HOME) or anything inside it."""
+    home = paths.researchos_home()
     (home / "graphs").mkdir(parents=True, exist_ok=True)
     for target in (home, home / "graphs"):
         insp = addproject.inspect(target)
-        assert insp.refusal.code == "rce_home"
+        assert insp.refusal.code == "researchos_home"
 
 
 def test_inside_or_containing_a_registered_project_is_refused_and_a_gone_entry_does_not_count(tmp_path):
@@ -589,8 +589,8 @@ def test_a_symlink_that_resolves_into_a_refused_place_is_refused(fake_home, tmp_
     os.symlink(fake_home / "Documents", tmp_path / "docs-link")
     insp = addproject.inspect(tmp_path / "docs-link")
     assert insp.refusal.code == "top_level"
-    os.symlink(paths.rce_home(), tmp_path / "home-link")
-    assert addproject.inspect(tmp_path / "home-link").refusal.code == "rce_home"
+    os.symlink(paths.researchos_home(), tmp_path / "home-link")
+    assert addproject.inspect(tmp_path / "home-link").refusal.code == "researchos_home"
 
 
 def test_refusals_over_http_carry_the_sentence_and_write_nothing(no_project_server, fake_home, tmp_path):
@@ -618,13 +618,13 @@ def test_a_project_toml_appearing_after_inspecting_refuses_the_add(no_project_se
     folder = _research_folder(tmp_path / "study")
     _, insp = live.post("/api/projects/inspect", {"path": str(folder)})
     identity_mod.create_identity(folder)  # someone else initialised it meanwhile
-    toml_before = (folder / ".rce" / "project.toml").read_bytes()
+    toml_before = (folder / ".researchos" / "project.toml").read_bytes()
     status, body = live.post("/api/projects/add", {"path": str(folder), "label": "x", "inspected": insp["inspected"]})
     assert status == 409 and body["state"] == "inspected_changed"
     assert body["error"] == addproject.INSPECTED_CHANGED_MESSAGE
-    assert body["inspection"]["kind"] == "rce_project"
-    assert registry.load() == [] and (folder / ".rce" / "project.toml").read_bytes() == toml_before
-    assert not (paths.rce_home() / "graphs").exists()
+    assert body["inspection"]["kind"] == "researchos_project"
+    assert registry.load() == [] and (folder / ".researchos" / "project.toml").read_bytes() == toml_before
+    assert not (paths.researchos_home() / "graphs").exists()
 
 
 def test_a_token_from_another_folder_or_made_up_is_refused(tmp_path):
@@ -637,7 +637,7 @@ def test_a_token_from_another_folder_or_made_up_is_refused(tmp_path):
         with pytest.raises(addproject.AddRefused) as refused:
             addproject.add(b, label=None, inspected=token)
         assert refused.value.code == "inspected_changed"
-    assert not (b / ".rce").exists() and registry.load() == []
+    assert not (b / ".researchos").exists() and registry.load() == []
 
 
 # -- 10.8 scenario 9: the list ----------------------------------------------------------------
@@ -767,7 +767,7 @@ def test_rescan_is_refused_while_another_process_holds_the_project_lock(tmp_path
 
 
 def test_rescan_runs_the_attempt_check_and_mappings_in_order(tmp_path):
-    """10.3: the same calls rce ingest, rce attempts --check, rce mappings
+    """10.3: the same calls researchos ingest, researchos attempts --check, researchos mappings
     and the record's application make, in that order."""
     folder = tmp_path / "p"
     folder.mkdir()
@@ -776,7 +776,7 @@ def test_rescan_runs_the_attempt_check_and_mappings_in_order(tmp_path):
         "| 1 | 2026-01-01 | d | v | r | ok |\n"
     )
     project_identity.init_project(folder)
-    (folder / ".rce" / "attempts.toml").write_text(
+    (folder / ".researchos" / "attempts.toml").write_text(
         'file = "map.md"\nheading = "H"\n\n[columns]\nid = "#"\ndate = "date"\ndescription = "desc"\n'
         'variables = "vars"\nresult = "result"\nverdict = "verdict"\n'
     )
@@ -812,7 +812,7 @@ def test_new_endpoints_refuse_cross_origin_and_wrong_host_and_write_nothing(proj
     status, reply = live.raw("POST", endpoint, sent, body)
     assert status == 403
     assert registry.registry_path().read_bytes() == reg_before and _home_state() == home_before
-    assert not (folder / ".rce").exists()
+    assert not (folder / ".researchos").exists()
     _, gen = live.get("/api/generation")
     assert gen["scanning"] is None
 
@@ -849,7 +849,7 @@ def test_a_blocking_listing_answers_waiting_within_the_deadline_and_completes_la
     third = addproject.inspect(folder, deadline=5)
     assert third.kind == addproject.NEW_FOLDER and third.preview.to_scan == 6
     assert len(calls) == 1
-    assert not (folder / ".rce").exists()
+    assert not (folder / ".researchos").exists()
 
 
 def test_waiting_over_http_and_then_the_answer(no_project_server, tmp_path, monkeypatch):
@@ -907,5 +907,5 @@ def test_cli_projects_add_refuses_and_blocks_writing_nothing(fake_home, tmp_path
     assert "top-level" in capsys.readouterr().err
     _original, copy = _copy_of_a_project(tmp_path)
     assert cli.main(["projects", "add", str(copy), "--yes"]) == 1
-    assert "rce project fork" in capsys.readouterr().out
+    assert "researchos project fork" in capsys.readouterr().out
     assert not registry.registry_path().exists()

@@ -25,10 +25,10 @@ from typing import Any
 
 import pytest
 
-from rce import paths
-from rce import project as project_identity
-from rce.records import situation as records_situation
-from rce.webapp import registry, server
+from researchos import paths
+from researchos import project as project_identity
+from researchos.records import situation as records_situation
+from researchos.webapp import registry, server
 
 APP_HTML = Path(server.__file__).parent / "app.html"
 NODE = shutil.which("node")
@@ -122,7 +122,7 @@ def _labels() -> list[str]:
 
 def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothing_else(engine):
     """10.8 #1 (first launch), 10.1 "No project yet": with an empty registry
-    the served page carries the welcome -- two sentences on what RCE does,
+    the served page carries the welcome -- two sentences on what Research OS does,
     「添加项目…」, one line on what a project is -- and every tab shows only
     it: no view, notice, attempt button or 记录 while there is no project,
     and nothing asks the engine for a project's data (it would be refused)."""
@@ -215,16 +215,16 @@ def test_preview_words_the_engines_counts_for_a_plain_folder():
     scan -- and says what is not read; the numbers are the engine's (the
     scan's own inventory), never recounted on the page."""
     (out,) = _wording(("addPreviewText", [_preview()]))
-    assert out["head"] == "RCE 会读取这个文件夹里的这些文件："
+    assert out["head"] == "Research OS 会读取这个文件夹里的这些文件："
     assert out["items"] == [
         ["脚本（.py、.R、.Rmd）", "3"], ["数据文件", "1"], ["文稿（.md、.tex、.bib）", "2"], ["图片", "1"], ["共计要扫描", "7"],
     ]
-    assert out["notes"] == [{"text": "另有 1 个文件不属于这几类，RCE 不读它们。", "tone": ""}]
+    assert out["notes"] == [{"text": "另有 1 个文件不属于这几类，Research OS 不读它们。", "tone": ""}]
 
 
 @needs_node
 def test_preview_names_tracked_and_untracked_files_of_a_git_repository():
-    """10.8 #3 (a git repository with untracked files): RCE reads the files
+    """10.8 #3 (a git repository with untracked files): Research OS reads the files
     git tracks, how many those are, and how many more sit in the folder
     untracked and will not be read -- 「另有 N 个未被 git 跟踪的文件不会被扫描」;
     a git that could not be asked is said, not hidden."""
@@ -236,7 +236,7 @@ def test_preview_names_tracked_and_untracked_files_of_a_git_repository():
         ("addPreviewText", [_preview(source="git", git={"tracked": None, "untracked": None, "untracked_truncated": False, "error": "fatal"})]),
         ("addPreviewText", [_preview(source="git", git=dict(git, untracked=None, error="count failed"))]),
     )
-    assert out[0]["head"] == "这是一个 git 仓库：RCE 只读取 git 跟踪的文件，共 1,234 个。其中要扫描的有："
+    assert out[0]["head"] == "这是一个 git 仓库：Research OS 只读取 git 跟踪的文件，共 1,234 个。其中要扫描的有："
     assert {"text": "另有 5 个未被 git 跟踪的文件不会被扫描。", "tone": "warn"} in out[0]["notes"]
     assert {"text": "另有 至少 100,000 个未被 git 跟踪的文件不会被扫描。", "tone": "warn"} in out[1]["notes"]
     assert not any("未被 git 跟踪" in n["text"] for n in out[2]["notes"])
@@ -266,21 +266,21 @@ def test_preview_says_cloud_files_the_entry_cap_and_asks_twice_above_five_thousa
 
 @needs_node
 def test_what_adding_writes_is_said_per_kind():
-    """10.2: the preview says what adding writes -- a `.rce/` folder inside
+    """10.2: the preview says what adding writes -- a `.researchos/` folder inside
     the project holding its identity file and a short README, and an index
-    under ~/.rce; nothing else in the folder. An RCE project that opens and
+    under ~/.researchos; nothing else in the folder. An Research OS project that opens and
     one from before V5 are only written into the list (10.8 #6)."""
     out = _wording(
         ("addWritesText", [{"kind": "new_folder"}]),
         ("addWritesText", [{"kind": "pre_v5", "can_add": True}]),
-        ("addWritesText", [{"kind": "rce_project", "can_add": True, "situation": {"situation": "normal"}}]),
-        ("addWritesText", [{"kind": "rce_project", "can_add": True, "situation": {"situation": "moved"}}]),
-        ("addWritesText", [{"kind": "rce_project", "can_add": True, "situation": {"situation": "no_index"}}]),
-        ("addWritesText", [{"kind": "rce_project", "can_add": False, "situation": {"situation": "copy"}}]),
+        ("addWritesText", [{"kind": "researchos_project", "can_add": True, "situation": {"situation": "normal"}}]),
+        ("addWritesText", [{"kind": "researchos_project", "can_add": True, "situation": {"situation": "moved"}}]),
+        ("addWritesText", [{"kind": "researchos_project", "can_add": True, "situation": {"situation": "no_index"}}]),
+        ("addWritesText", [{"kind": "researchos_project", "can_add": False, "situation": {"situation": "copy"}}]),
         ("addWritesText", [{"kind": "refused"}]),
     )
-    assert out[0] == ("加入会写入：这个文件夹里的 .rce/（项目身份文件 project.toml、它的一份备份 .rce/backups/，"
-                      "和一份简短的 README），以及 ~/.rce 下的索引。文件夹里别的东西都不会被创建或改动。")
+    assert out[0] == ("加入会写入：这个文件夹里的 .researchos/（项目身份文件 project.toml、它的一份备份 .researchos/backups/，"
+                      "和一份简短的 README），以及 ~/.researchos 下的索引。文件夹里别的东西都不会被创建或改动。")
     assert out[1].startswith("加入只会把它写进项目列表。迁移旧记录")
     assert out[2] == "加入只会把它写进项目列表。"
     assert "新位置" in out[3] and "重新建立" in out[4]
@@ -340,9 +340,9 @@ def test_add_project_refusals_show_the_engines_chinese_sentence_and_its_detail_b
          "detail": "/x is inside the registered project /y"},
         {"error": "显示名称不能超过 100 个字符", "state": "bad_label", "message": "显示名称不能超过 100 个字符", "detail": "too long"},
         {"error": "这个项目正在扫描，请等它结束", "state": "scan_running", "message": "这个项目正在扫描，请等它结束", "detail": "running"},
-        {"error": "这是旧版 RCE 项目：迁移之后才能重新扫描", "state": "frozen", "message": "这是旧版 RCE 项目：迁移之后才能重新扫描", "detail": "frozen"},
+        {"error": "这是旧版 Research OS 项目：迁移之后才能重新扫描", "state": "frozen", "message": "这是旧版 Research OS 项目：迁移之后才能重新扫描", "detail": "frozen"},
         {"error": "这个文件夹在你查看之后变了，请重新查看", "state": "inspected_changed", "message": "这个文件夹在你查看之后变了，请重新查看",
-         "detail": "changed", "inspection": {"kind": "rce_project"}},
+         "detail": "changed", "inspection": {"kind": "researchos_project"}},
         {"error": "还没有项目：请先添加一个项目文件夹", "state": "no_project", "message": "还没有项目：请先添加一个项目文件夹"},
         {"error": "Something", "state": "some_other_code", "message": "不该被采用"},
         {"error": "x", "state": "project_moved", "message": "也不该被采用"},
@@ -355,7 +355,7 @@ def test_add_project_refusals_show_the_engines_chinese_sentence_and_its_detail_b
     assert out[0] == ["这个文件夹在项目「甲」里面", "/x is inside the registered project /y", False]
     assert out[1][0] == "显示名称不能超过 100 个字符"
     assert out[2][0] == "这个项目正在扫描，请等它结束"
-    assert out[3][0] == "这是旧版 RCE 项目：迁移之后才能重新扫描"
+    assert out[3][0] == "这是旧版 Research OS 项目：迁移之后才能重新扫描"
     assert out[4] == ["这个文件夹在你查看之后变了，请重新查看", "changed", True]
     assert out[5][0] == "还没有项目：请先添加一个项目文件夹"
     assert out[6][0] == "框架句"  # an unknown code keeps the caller's framing
@@ -434,7 +434,7 @@ def test_the_project_menu_is_keyboard_reachable_and_closes_on_escape_and_outside
 def test_rename_changes_the_label_only_and_remove_says_what_stays(engine, tmp_path):
     """10.8 #9 and 10.4: 「重命名显示名称…」 (Enter saves) posts the label for
     the entry's id (a pre-V5 entry: its path); 「从列表中移除…」's sentence
-    says the folder, its .rce/ records and its index stay, and adding it
+    says the folder, its .researchos/ records and its index stay, and adding it
     again brings everything back. Removing another project answers without
     `no_project`; removing the open one names what is served now -- the
     page reloads every view only then."""
@@ -444,7 +444,7 @@ def test_rename_changes_the_label_only_and_remove_says_what_stays(engine, tmp_pa
     assert "只改项目列表里显示的名字，文件夹本身不会改名。" in rename
     assert ('apiPost("/api/projects/rename", entry.id ? { id: entry.id, label: label } : { path: entry.path, label: label })'
             in _function("saveRename"))
-    assert _function("removeConfirmText").count("文件夹本身、里面的 .rce/ 记录和 ~/.rce 下的索引都原样保留；以后再添加这个文件夹，一切都会回来。") == 1
+    assert _function("removeConfirmText").count("文件夹本身、里面的 .researchos/ 记录和 ~/.researchos 下的索引都原样保留；以后再添加这个文件夹，一切都会回来。") == 1
     remove = _function("removeFromMenu")
     assert 'apiPost("/api/projects/remove", { path: p.path })' in remove
     assert 'Object.prototype.hasOwnProperty.call(res, "no_project")' in remove
@@ -461,15 +461,15 @@ def test_rename_changes_the_label_only_and_remove_says_what_stays(engine, tmp_pa
         engine.wait_scan()
     entries = {e["label"]: e for e in registry.load()}
     status, res = engine.post("/api/projects/rename", {"id": entries["b"]["id"], "label": "乙"})
-    assert status == 200 and res["entry"]["label"] == "乙" and (b / ".rce" / "project.toml").is_file()
+    assert status == 200 and res["entry"]["label"] == "乙" and (b / ".researchos" / "project.toml").is_file()
     status, res = engine.post("/api/projects/rename", {"id": entries["b"]["id"], "label": "  "})
     assert status == 400 and res["state"] == "bad_label" and res["message"] == "显示名称不能为空"
-    before = sorted(p.name for p in (a / ".rce").iterdir())
+    before = sorted(p.name for p in (a / ".researchos").iterdir())
     status, res = engine.post("/api/projects/remove", {"path": entries["a"]["path"]})  # not the open one
     assert status == 200 and "no_project" not in res
     status, res = engine.post("/api/projects/remove", {"path": entries["b"]["path"]})  # the open one, the last
     assert status == 200 and res["no_project"] is True and res["current"] is None
-    assert sorted(p.name for p in (a / ".rce").iterdir()) == before  # records untouched
+    assert sorted(p.name for p in (a / ".researchos").iterdir()) == before  # records untouched
     _, projects = engine.get("/api/projects")
     assert projects["no_project"] is True
 
@@ -536,13 +536,13 @@ def test_already_in_the_list_offers_the_switch_and_writes_nothing(engine, tmp_pa
     _, insp = engine.post("/api/projects/inspect", {"path": str(folder)})
     engine.post("/api/projects/add", {"path": insp["path"], "label": "proj", "inspected": insp["inspected"]})
     engine.wait_scan()
-    registry_before = paths.rce_home().joinpath("projects.json").read_bytes()
+    registry_before = paths.researchos_home().joinpath("projects.json").read_bytes()
     status, again = engine.post("/api/projects/inspect", {"path": str(folder)})
     assert status == 200 and again["kind"] == "already_registered" and again["message"] == "这个项目已经在列表里"
     assert again["entry"]["label"] == "proj"
     status, sw = engine.post("/api/projects/switch", {"path": again["entry"]["path"], "id": again["entry"]["id"]})
     assert status == 200 and sw["label"] == "proj"
-    assert paths.rce_home().joinpath("projects.json").read_bytes() == registry_before
+    assert paths.researchos_home().joinpath("projects.json").read_bytes() == registry_before
 
 
 def test_a_copy_asks_the_9_4_question_in_the_dialog_and_nothing_is_written_until_answered(engine, tmp_path):
@@ -566,7 +566,7 @@ def test_a_copy_asks_the_9_4_question_in_the_dialog_and_nothing_is_written_until
     copy = tmp_path / "copy"
     shutil.copytree(original, copy)
     status, insp = engine.post("/api/projects/inspect", {"path": str(copy)})
-    assert status == 200 and insp["kind"] == "rce_project" and insp["can_add"] is False
+    assert status == 200 and insp["kind"] == "researchos_project" and insp["can_add"] is False
     assert insp["situation"]["situation"] == "copy" and "fork" in insp["situation"]["answers"]
     copy_id = insp["situation"]["project_id"]
     assert _labels() == []
@@ -596,7 +596,7 @@ def test_a_changed_folder_is_looked_at_again_and_the_dialog_says_why(engine, tmp
     status, body = engine.post("/api/projects/add", {"path": insp["path"], "label": "late", "inspected": insp["inspected"]})
     assert status == 409 and body["state"] == "inspected_changed"
     assert body["message"] == "这个文件夹在你查看之后变了，请重新查看"
-    assert body["inspection"]["kind"] == "rce_project" and body["inspection"]["can_add"] is True
+    assert body["inspection"]["kind"] == "researchos_project" and body["inspection"]["can_add"] is True
     assert _labels() == []
 
 
@@ -612,7 +612,7 @@ def test_a_waiting_inspection_is_asked_again_every_two_seconds_until_it_changes(
     assert "inspectForAdd(subject, addDialog.path, addDialog.why, addDialog.whyErr);" in show
     inspect = _function("inspectForAdd")
     assert "if (!addDialogLive(subject) || addDialog.path !== path) return; // closed, or another folder chosen meanwhile" in inspect
-    assert "RCE 每隔两秒会再问一次，页面不会卡住；也可以换一个文件夹。" in _function("renderInspection")
+    assert "Research OS 每隔两秒会再问一次，页面不会卡住；也可以换一个文件夹。" in _function("renderInspection")
 
 
 def test_refusals_are_one_sentence_with_nothing_to_press_but_choose_again(engine, tmp_path):
@@ -634,11 +634,11 @@ def test_refusals_are_one_sentence_with_nothing_to_press_but_choose_again(engine
         str(tmp_path / "nope"): "这个文件夹不存在",
         str(nested / "clean.py"): "这不是一个文件夹",
     }
-    registry_before = paths.rce_home().joinpath("projects.json").read_bytes()
+    registry_before = paths.researchos_home().joinpath("projects.json").read_bytes()
     for path, sentence in cases.items():
         status, res = engine.post("/api/projects/inspect", {"path": path})
         assert status == 200 and res["kind"] == "refused" and res["message"] == sentence, path
         assert res["can_add"] is False and res["refusal"]["detail"]
-    assert paths.rce_home().joinpath("projects.json").read_bytes() == registry_before
+    assert paths.researchos_home().joinpath("projects.json").read_bytes() == registry_before
     status, res = engine.post("/api/projects/inspect", {"path": "relative/path"})
     assert status == 400 and res["state"] == "bad_path" and res["message"] == "请输入完整的文件夹路径（以 / 或 ~ 开头）"
