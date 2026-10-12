@@ -324,7 +324,9 @@ def english_offenders(table: dict[str, Any]) -> list[str]:
 
 
 def _node(script: str) -> Any:
-    out = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
+    # The script goes in on stdin, not as an argument: these scripts carry
+    # whole page modules, and Linux caps a single argument at 128 KB.
+    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
 
@@ -2106,6 +2108,9 @@ def test_13_7_the_github_state_in_both_languages(tmp_path, stand_in, linked):
     assert _DATE.sub("<date>", github.fetch(linked, lang="en")["message"]) == "Locally 2 commits ahead, 1 behind (fetched <date>)"
     assert _DATE.sub("<date>", github.fetch(linked)["message"]) == "本地领先 2 个提交，落后 1 个（<date> 获取）"
     _git(linked, "branch", "--unset-upstream")
+    # Without an upstream the engine compares with the remote's default
+    # branch; git 2.48+ records origin/HEAD on fetch, older git does not.
+    _git(linked, "remote", "set-head", "origin", "-d")
     assert _github_both(linked) == ("GitHub 上没有可以对比的分支（<date> 获取）", "No branch on GitHub to compare with (fetched <date>)")
 
     unborn = tmp_path / "unborn"
