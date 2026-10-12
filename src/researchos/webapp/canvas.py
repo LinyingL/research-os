@@ -48,7 +48,9 @@ Scope (section 8.7)
 -------------------
 
 `scope=all` shows every canvas node plus every attempt's ghosts. Scoping
-to an attempt shows its step files, every dataset/figure its step scripts
+to an attempt shows its files -- 14.3's one membership rule, its step files
+and the files attached with 「关联文件」 (`researchos.trace.attempt_members`),
+as on the node page and the desk -- every dataset/figure its scripts
 read/write/generate, and one hop further UPSTREAM along `writes -> reads`
 chains: the scripts that write a dataset a step script reads (8.7: "so
 upstream generators stay visible"). Downstream readers of a step's outputs
@@ -107,8 +109,8 @@ from sqlite3 import Connection
 from typing import Any
 
 from researchos import db, lineage, paths
+from researchos import trace as trace_mod
 from researchos.ingest import attempts as attempts_ingest
-from researchos.ingest import dataflow as dataflow_ingest
 from researchos.ingest import mappings as mappings_ingest
 from researchos.records import files as record_files
 from researchos.records import judgements
@@ -276,25 +278,6 @@ def is_canvas_edge(conn: Connection, edge: dict[str, Any]) -> bool:
 # -- attempts and scope ----------------------------------------------------------
 
 
-def _steps_dir(project_root: Path) -> str | None:
-    """`.researchos/attempts.toml`'s `steps_dir`, or None (same degrade as
-    `server._load_steps_dir`: no config, no step layer -- never a guess)."""
-    try:
-        return attempts_ingest.load_config(project_root).steps_dir
-    except attempts_ingest.AttemptsConfigError:
-        return None
-
-
-def _step_paths(attempt: dict[str, Any], steps_dir: str | None) -> list[str]:
-    if not steps_dir:
-        return []
-    out = []
-    for name in attempt["attrs"].get("step_files") or []:
-        if isinstance(name, str) and name:
-            out.append(posixpath.normpath(f"{steps_dir}/{name}"))
-    return out
-
-
 def _attempt_order_key(node: dict[str, Any]) -> tuple[Any, ...]:
     attrs = node["attrs"]
     return (attempts_ingest.attempt_sort_key(attrs.get("number", "")), attrs.get("source_file", ""))
@@ -360,19 +343,20 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     if scope != SCOPE_ALL and scope not in by_id:
         raise UnknownScopeError(f"no attempt {scope!r} in the graph (scope must be 'all' or an attempt id)")
 
-    steps_dir = _steps_dir(root)
-    # Step files of each attempt, typed; ghosts are the on-disk ones with no node.
+    # Each attempt's files by 14.3's one membership rule (its step files and
+    # its 「关联文件」, `trace.attempt_members`), the canvas's types only;
+    # ghosts are the step files on disk with no node.
     step_ids: dict[str, list[str]] = {}
     ghosts: dict[str, tuple[str, str]] = {}
+    members = trace_mod.attempt_members(conn, root, attempts)
     for attempt in attempts:
         ids = []
-        for path in _step_paths(attempt, steps_dir):
-            node_type = dataflow_ingest.node_type_for_path(path)
-            if node_type is None:
+        for node_id, how in members[attempt["id"]].items():
+            node_type, _sep, path = node_id.partition(":")
+            if node_type not in CANVAS_NODE_TYPES:
                 continue
-            node_id = f"{node_type}:{path}"
             if node_id not in nodes:
-                if not _on_disk(root, path):
+                if how["via"] != trace_mod.STEP_FILES or not _on_disk(root, path):
                     continue
                 ghosts[node_id] = (node_type, path)
             ids.append(node_id)

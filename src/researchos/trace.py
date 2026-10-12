@@ -40,6 +40,7 @@ Every break is explicit, never an empty list that looks like "nothing":
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -108,6 +109,38 @@ def _attempts_config(root: Path):
         return attempts_ingest.load_config(root)
     except attempts_ingest.AttemptsConfigError:
         return None
+
+
+STEP_FILES, ATTACHED = "step_files", "belongs_to"
+
+
+def attempt_members(conn: Connection, root: Path,
+                    attempts: list[dict[str, Any]] | None = None) -> dict[str, dict[str, dict[str, Any]]]:
+    """DESIGN.md 14.3's one membership rule -- an attempt's files as the
+    desk's panel, the node page and 关系图's attempt view all count them:
+    the step files its description names, resolved under `steps_dir`
+    (never guessed), and the files attached to it with 「关联文件」 (a live
+    `belongs_to` link). `{attempt id: {file node id: {"via": "step_files" |
+    "belongs_to", "link"?: the belongs_to link's key}}}`, step files first;
+    for every attempt of the index, or for `attempts`. A file may belong to
+    several attempts, and a step file need not be in the index yet."""
+    config = _attempts_config(root)
+    steps_dir = config.steps_dir if config is not None else None
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for attempt in attempts if attempts is not None else db.get_nodes_by_type(conn, "attempt"):
+        found = out.setdefault(attempt["id"], {})
+        for name in (attempt.get("attrs") or {}).get("step_files") or []:
+            if steps_dir and isinstance(name, str) and name:
+                try:
+                    member = notes_mod.normalize_node(posixpath.normpath(f"{steps_dir.rstrip('/')}/{name}"))
+                except ValueError:
+                    continue
+                found.setdefault(member, {"via": STEP_FILES})
+    for edge in _live(db.query_edges(conn, type=ATTACHED)):
+        if edge["dst"] in out:
+            out[edge["dst"]].setdefault(edge["src"], {"via": ATTACHED})["link"] = {
+                k: edge[k] for k in ("src", "dst", "type", "extractor")}
+    return out
 
 
 def chain(conn: Connection, project_root: str | Path, node: str) -> dict[str, Any]:

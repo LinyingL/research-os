@@ -347,27 +347,13 @@ def _dedupe_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: judgements.LinkFlags) -> dict[str, Any]:
     """An attempt's page: its files -- the step scripts its description
     names and the files attached to it (「关联文件」) -- as 读取的数据 | 脚本
-    | 产出, with the scripts' reads and writes."""
+    | 产出, with the scripts' reads and writes. Its files are 14.3's one
+    membership rule (`trace.attempt_members`), as on the desk and in 关系图."""
     node_id = record["id"]
-    members: dict[str, dict[str, Any]] = {}
-    config = trace_mod._attempts_config(root)
-    steps_dir = config.steps_dir if config is not None else None
-    for name in record["attrs"].get("step_files") or []:
-        if steps_dir and isinstance(name, str) and name:
-            rel = posixpath.normpath(f"{steps_dir.rstrip('/')}/{name}")
-            try:
-                member = notes_mod.normalize_node(rel)
-            except ValueError:
-                continue
-            members.setdefault(member, {"via": "step_files"})
-    attached = []
-    for edge in _live(db.query_edges(conn, dst=node_id, type="belongs_to")):
-        members.setdefault(edge["src"], {"via": "belongs_to"})["link"] = {
-            k: edge[k] for k in ("src", "dst", "type", "extractor")}
-        attached.append(edge["src"])
+    members = trace_mod.attempt_members(conn, root, [record])[node_id]
     inputs, scripts, outputs, lines = [], [], [], []
     for member, how in members.items():
-        item = _item(conn, root, member, member=how["via"], attached=member in attached)
+        item = _item(conn, root, member, member=how["via"], attached="link" in how)
         if "link" in how:
             item["link"] = how["link"]
         kind = item["type"]
