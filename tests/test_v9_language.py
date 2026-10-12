@@ -162,18 +162,36 @@ def _unescape(raw: str) -> str:
     return re.sub(r"\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", one, raw, flags=re.S)
 
 
+def _t_argument(src: str, start: int, quote: str, raw: str) -> bool | None:
+    """Whether the literal at `start` is the first argument of a t() call
+    -- `t("…")`, `I.t('…')`, never `at("…")` -- and, if it is, whether it is
+    the WHOLE argument (True) or the start of a concatenation (False)."""
+    before = src[:start].rstrip()
+    if quote == "`" or not before.endswith("t(") or re.search(r"[\w$]t\($", before[-3:]):
+        return None
+    after = src[start + len(raw) + 2:].lstrip()
+    return after[:1] in (")", ",")
+
+
 def t_calls(src: str) -> list[tuple[str, bool]]:
     """Each string literal passed to t() -- `t("…")`, `I.t('…')` -- with
     whether it is the WHOLE first argument (a `+` after it is a sentence
     built by concatenation, which English word order cannot reuse: 13.6)."""
     found = []
     for start, quote, raw in js_literals(src):
-        before = src[:start].rstrip()
-        if quote == "`" or not before.endswith("t(") or re.search(r"[\w$]t\($", before[-3:]):
-            continue
-        after = src[start + len(raw) + 2:].lstrip()
-        found.append((_unescape(raw), after[:1] in (")", ",")))
+        whole = _t_argument(src, start, quote, raw)
+        if whole is not None:
+            found.append((_unescape(raw), whole))
     return found
+
+
+def _paired_with_its_label(src: str, start: int, raw: str, text: str) -> bool:
+    """A bare literal immediately followed by `, t(<the same text>)`: the
+    code compared with the engine's label, beside its words for the screen
+    (desk.js defaultVerdict, 13.1) -- the only bare Chinese a converted
+    surface may hold by position."""
+    m = re.match(r"\s*,\s*t\(\s*([\"'])((?:\\.|(?!\1).)*)\1\s*\)", src[start + len(raw) + 2:])
+    return bool(m) and _unescape(m.group(2)) == text
 
 
 def markup_keys(html: str) -> list[str]:
@@ -224,23 +242,35 @@ def missing_entries(table: dict[str, Any]) -> list[str]:
     return missing
 
 
+def untranslated_in(where: str, src: str, table: dict[str, Any]) -> list[str]:
+    """In one converted stretch, each Chinese literal judged by its own
+    position: it is the whole first argument of t() with an English entry,
+    or in ALLOWED_CHINESE, or a code paired with its own t() label; else it
+    is reported -- not passed to t(), built by concatenation, or a key with
+    no entry. (The same text passed to t() elsewhere excuses nothing.)"""
+    found = []
+    for start, quote, raw in js_literals(src):
+        text = _unescape(raw)
+        if not CJK.search(text) or text in ALLOWED_CHINESE:
+            continue
+        whole = _t_argument(src, start, quote, raw)
+        if whole is None:
+            if not _paired_with_its_label(src, start, raw, text):
+                found.append(f"{where}: {text!r} is not passed to t()")
+        elif not whole:
+            found.append(f"{where}: t({text!r} + ...) is built by concatenation")
+        elif text not in table:
+            found.append(f"{where}: t({text!r}) has no English entry")
+    return found
+
+
 def untranslated(table: dict[str, Any]) -> list[str]:
     """In each CONVERTED surface: a Chinese literal that is not the whole
     argument of t() (and not in ALLOWED_CHINESE), and a key with no entry."""
     found = []
     for name, start, end in CONVERTED:
         src = _slice((WEBAPP / name).read_text(encoding="utf-8"), start, end)
-        keys = {key: whole for key, whole in t_calls(src)}
-        for _pos, _quote, raw in js_literals(src):
-            text = _unescape(raw)
-            if not CJK.search(text) or text in ALLOWED_CHINESE:
-                continue
-            if text not in keys:
-                found.append(f"{name} ({start}): {text!r} is not passed to t()")
-            elif not keys[text]:
-                found.append(f"{name} ({start}): t({text!r} + ...) is built by concatenation")
-            elif text not in table:
-                found.append(f"{name} ({start}): t({text!r}) has no English entry")
+        found += untranslated_in(f"{name} ({start})", src, table)
     return found
 
 
@@ -842,6 +872,12 @@ def test_13_6_the_completeness_scanner_is_not_vacuous():
         'const g = t( "壬\\u4e00" ); const re = /t("x")/;\n'
     )
     assert t_calls(src) == [("甲", True), ("乙", True), ("戊", False), ("壬一", True)]
+    # Each literal by its position: the same text passed to t() elsewhere excuses a bare one.
+    stretch = ('const a = t("甲"); x = "甲"; y = t("乙" + n); z = t("丙");\n'
+               'const pair = ["丁", t("丁")]; const odd = ["戊", t("己")]; const at = at("庚");\n')
+    assert untranslated_in("x.js", stretch, {"甲": "A", "乙": "B", "丁": "D", "己": "F"}) == [
+        "x.js: '甲' is not passed to t()", "x.js: t('乙' + ...) is built by concatenation",
+        "x.js: t('丙') has no English entry", "x.js: '戊' is not passed to t()", "x.js: '庚' is not passed to t()"]
     assert markup_keys('<p data-i18n>工作台</p><b data-i18n><i>x</i></b>'
                        '<button title="停止" data-i18n-attr="title placeholder">x</button><!-- <p data-i18n>注</p> -->') == [
         "工作台", "<b data-i18n> holds no text of its own", "停止",
