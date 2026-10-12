@@ -542,6 +542,7 @@ def record_file_paths(root: Path) -> list[Path]:
         record_dir / "canvas.json",
         notes_mod.notes_path(root),
         record_dir / "decisions.toml",  # 12.3/12.4: approved decisions (researchos.records.decisions)
+        record_dir / "papers.toml",  # 12.13: the drafts marked 「设为论文正文」 (researchos.records.papers)
     ]
     try:
         config = attempts_ingest.load_config(root)

@@ -41,7 +41,19 @@ The exchange directory is configured per project on each machine -- the
 `shared` key of the project's entry in `<home>/projects.json` (phase 4;
 `configure` / `configured`; phase 3's `<home>/exchanges.json` is still
 read) -- and is never inside the project folder it serves, nor inside any
-other project: a proposal's files would otherwise be scanned into the
+other project.
+
+**Two folders for a member** (12.13). On a personal OneDrive a subfolder
+shared with other rights than its parent arrives on the member's Mac as a
+separate shortcut: `已发布/` (view only) and the member's own `提议/<member
+id>/` (edit) are two folders there, anywhere. `Folders` says where each
+area is on this machine: the published folder, the proposals folder (the
+PI's `提议/`, absent for a member who set two folders), and member areas
+set apart -- a member's own (`--mine`), or one the PI recorded because it
+lives elsewhere. Every reader and writer here goes through it; a shared
+folder given as one path is `Folders.single`. The project's entry in
+`projects.json` keeps `published` and `areas` beside `shared`
+(`folders_for`). No folder is ever inside a project: a proposal's files would otherwise be scanned into the
 official index before anyone approved them (12.4, "not a node until
 approved"). Nor is it Research OS's home or a top-level folder (10.2).
 
@@ -125,6 +137,74 @@ class ExchangeError(Exception):
             "ambiguous": "同一个提议编号出现在不止一位成员的区域里：其中一份是复制的，请指明是哪位成员的提议",
             "damaged": "公盘上已有的这个文件内容已损坏（指纹不符）；Research OS 不会改写它",
         }.get(self.code, "交换目录出错")
+
+
+# -- where the areas are ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Folders:
+    """Where the shared drive's areas are on this machine (module
+    docstring). `root` is the shared folder when there is one; `proposals`
+    the folder holding every member's area by id (`<root>/提议`), None for
+    a member who set two folders; `areas` the areas set apart, by member."""
+
+    published: Path
+    proposals: Path | None = None
+    areas: tuple[tuple[str, Path], ...] = ()
+    root: Path | None = None
+
+    @classmethod
+    def single(cls, root: str | Path, areas: Mapping[str, str | Path] | None = None) -> "Folders":
+        root = Path(root)
+        return cls(published=root / PUBLISHED_AREA, proposals=root / PROPOSALS_AREA,
+                   areas=tuple(sorted((m, Path(p)) for m, p in (areas or {}).items())), root=root)
+
+    @classmethod
+    def two(cls, published: str | Path, areas: Mapping[str, str | Path] | None = None) -> "Folders":
+        return cls(published=Path(published), areas=tuple(sorted((m, Path(p)) for m, p in (areas or {}).items())))
+
+    def area_set_apart(self, member: str) -> Path | None:
+        return next((p for m, p in self.areas if m == member), None)
+
+    def area(self, member: str) -> Path:
+        if not people.is_member_id(member):
+            raise ExchangeError("invalid", f"not a member id: {member!r}")
+        apart = self.area_set_apart(member)
+        if apart is not None:
+            return apart
+        if self.proposals is None:
+            raise ExchangeError("not_configured", f"the proposals folder of {member} is not set on this machine: "
+                                                  f"researchos share set --published DIR --mine DIR",
+                                message_zh="还没有选你自己的提议文件夹：在「成员」里选好两个文件夹")
+        return self.proposals / member
+
+    @property
+    def anchor(self) -> Path:
+        """The folder whose presence says the shared drive is reachable."""
+        return self.root if self.root is not None else self.published
+
+    def is_dir(self) -> bool:
+        try:
+            return self.anchor.is_dir()
+        except OSError:
+            return False
+
+    def __str__(self) -> str:
+        return str(self.anchor)
+
+    def payload(self) -> dict[str, Any]:
+        return {"shared": str(self.root) if self.root is not None else None, "published": str(self.published),
+                "areas": {m: str(p) for m, p in self.areas}}
+
+
+def as_folders(value: "str | Path | Folders") -> Folders:
+    return value if isinstance(value, Folders) else Folders.single(value)
+
+
+def nested(a: Path, b: Path) -> bool:
+    """Whether either folder lies inside the other (or they are one)."""
+    return _inside(a, b) or _inside(b, a)
 
 
 # -- the per-machine setting ----------------------------------------------------------
@@ -225,7 +305,40 @@ def configure(project_id: str, directory: str | Path, project_root: str | Path |
     return directory
 
 
+def configure_folders(project_id: str, folders: Folders, project_root: str | Path | None = None) -> Folders:
+    """Remember where the project's shared drive is on this machine (12.13):
+    one shared folder (`configure`), or a member's published folder and
+    own proposals folder, and areas the PI recorded elsewhere -- in the
+    project's entry of `projects.json`, registering `project_root` first
+    when it is not listed yet. Every folder checked where it may be."""
+    from researchos.webapp import registry  # noqa: PLC0415
+
+    check_folders(folders, project_root)
+    mine = folders.anchor
+    for entry in registry.load():
+        if entry.get("id") == project_id:
+            continue
+        for key in ("shared", "published"):
+            other = entry.get(key)
+            if other and _same_folder(Path(other), mine):
+                raise ExchangeError("bad_location", f"{mine} is already the shared folder of project {entry.get('id')}",
+                                    message_zh="这个公盘文件夹已经是另一个项目的公盘了：每个项目用自己的文件夹")
+    values = {"shared": str(folders.root) if folders.root is not None else None,
+              "published": None if folders.root is not None else str(folders.published),
+              "areas": {m: str(p) for m, p in folders.areas} or None}
+    if not registry.set_layout(project_id, **values):
+        if project_root is None:
+            raise ExchangeError("not_configured", f"project {project_id} is not registered on this machine; "
+                                                  f"name its folder to set its shared folder")
+        registry.register(Path(project_root), project_id)
+        if not registry.set_layout(project_id, **values):
+            raise ExchangeError("unreachable", f"{registry.registry_path()} cannot be written now")
+    return folders
+
+
 def configured(project_id: str) -> Path | None:
+    """The one shared folder set for the project on this machine (None for
+    a member who set two folders: `folders_for`)."""
     from researchos.webapp import registry  # noqa: PLC0415
 
     entry = registry.find(project_id)
@@ -233,17 +346,49 @@ def configured(project_id: str) -> Path | None:
     return Path(value) if value else None
 
 
-def for_project(project_id: str, project_root: str | Path | None = None, *, override: str | Path | None = None) -> "LocalExchange":
+def folders_for(project_id: str) -> Folders | None:
+    """Where this machine has the project's shared-drive areas (module
+    docstring), or None when nothing is set."""
+    from researchos.webapp import registry  # noqa: PLC0415
+
+    entry = registry.find(project_id) or {}
+    shared = entry.get("shared") or _load_config().get(project_id)
+    published = entry.get("published")
+    areas = entry.get("areas") if isinstance(entry.get("areas"), dict) else {}
+    if published:
+        folders = Folders.two(published, areas)
+        if shared:
+            folders = Folders(published=Path(published), proposals=Path(shared) / PROPOSALS_AREA,
+                              areas=folders.areas, root=Path(shared))
+        return folders
+    if shared:
+        return Folders.single(shared, areas)
+    return None
+
+
+def check_folders(folders: Folders, project_root: str | Path | None) -> Folders:
+    """`check_location` for every folder of `folders`."""
+    if folders.root is not None:
+        check_location(folders.root, project_root)
+    else:
+        check_location(folders.published, project_root)
+    for _member, path in folders.areas:
+        check_location(path, project_root)
+    return folders
+
+
+def for_project(project_id: str, project_root: str | Path | None = None, *,
+                override: "str | Path | Folders | None" = None) -> "LocalExchange":
     """The exchange this machine uses for `project_id`: `override` when
     given (a command's --exchange), else the configured one."""
-    directory = Path(override) if override is not None else configured(project_id)
-    if directory is None:
+    folders = as_folders(override) if override is not None else folders_for(project_id)
+    if folders is None:
         raise ExchangeError(
             "not_configured",
             f"no exchange is set for project {project_id} on this machine: "
             f"researchos exchange set DIR [PATH] (or --exchange DIR)",
         )
-    return LocalExchange(check_location(directory, project_root), verifier=verifier_for(project_root, project_id))
+    return LocalExchange(check_folders(folders, project_root), verifier=verifier_for(project_root, project_id))
 
 
 def verifier_for(project_root: str | Path | None, project_id: str | None = None) -> "signing.Verifier | None":
@@ -528,24 +673,62 @@ class LocalExchange:
     """The exchange as a local (or synced) directory -- the module docstring's
     layout. Every method reads or writes only under `root`."""
 
-    def __init__(self, root: str | Path, *, verifier: "signing.Verifier | None" = None) -> None:
-        self.root = Path(root)
+    def __init__(self, root: "str | Path | Folders", *, verifier: "signing.Verifier | None" = None) -> None:
+        self.folders = as_folders(root)
+        self.root = self.folders.anchor
         self.verifier = verifier
 
     # areas
     def member_area(self, member: str) -> Path:
-        if not people.is_member_id(member):
-            raise ExchangeError("invalid", f"not a member id: {member!r}")
-        return self.root / PROPOSALS_AREA / member
+        return self.folders.area(member)
 
     def outcomes_area(self, proposal_id: str) -> Path:
         if not PROPOSAL_ID_RE.match(proposal_id or ""):
             raise ExchangeError("invalid", f"not a proposal id: {proposal_id!r}")
-        return self.root / PUBLISHED_AREA / OUTCOMES_DIRNAME / proposal_id
+        return self.folders.published / OUTCOMES_DIRNAME / proposal_id
 
     def _require_root(self) -> None:
         if not self.root.is_dir():
             raise ExchangeError("unreachable", f"the exchange {self.root} is not a directory that can be reached now")
+
+    def _writable_area(self, member: str) -> Path:
+        """The member's area for a write: one set apart is a folder that
+        must be there already (a shared folder's shortcut is never made
+        here); one under `提议/` is made as before."""
+        area = self.member_area(member)
+        if self.folders.area_set_apart(member) is not None:
+            if not area.is_dir():
+                raise ExchangeError("unreachable", f"the proposals folder {area} cannot be reached now",
+                                    message_zh="你自己的提议文件夹现在打不开")
+        else:
+            self._require_root()
+            area.mkdir(parents=True, exist_ok=True)
+        return area
+
+    def areas(self, member: str | None = None) -> tuple[list[tuple[str, Path]], list[Problem]]:
+        """Every member's area (or `member`'s), and what was found in the
+        proposals folder that is not one."""
+        found: dict[str, Path] = {}
+        problems: list[Problem] = []
+        holder = self.folders.proposals
+        if holder is not None and holder.is_dir():
+            for name in sorted(os.listdir(holder)):
+                path = holder / name
+                if not people.is_member_id(name) or not path.is_dir():
+                    if not (name.startswith(".") and ".tmp-" in name):
+                        problems.append(Problem("unexpected", str(path), "not a member's area; not read"))
+                    continue
+                found[name] = path
+        for name, path in self.folders.areas:
+            found[name] = path  # set apart: it is where that member's area is
+        if member is not None:
+            found = {member: found[member]} if member in found else {}
+            if not found:
+                try:
+                    found = {member: self.member_area(member)}
+                except ExchangeError:
+                    found = {}
+        return sorted(found.items()), problems
 
     # proposals
     def write_proposal(self, member: str, proposal_id: str, proposal_bytes: bytes,
@@ -555,11 +738,9 @@ class LocalExchange:
         under `files/`, `blobs` (sha256 -> source) to the member's blob
         store first; the member's signature beside proposal.toml;
         `ready.toml` last."""
-        self._require_root()
         if not PROPOSAL_ID_RE.match(proposal_id):
             raise ExchangeError("invalid", f"not a proposal id: {proposal_id!r}")
-        area = self.member_area(member)
-        area.mkdir(parents=True, exist_ok=True)
+        area = self._writable_area(member)
         for sha, source in blobs.items():
             self.put_blob(member, sha, source)
         contents: list[tuple[str, bytes | Path]] = [(PROPOSAL_FILE, proposal_bytes)]
@@ -603,18 +784,14 @@ class LocalExchange:
         """Every complete proposal (of `member`, or of everyone), and what
         was not read and why."""
         listing = Listing()
-        area = self.root / PROPOSALS_AREA
         if not self.root.is_dir():
             raise ExchangeError("unreachable", f"the exchange {self.root} cannot be reached now")
-        if not area.is_dir():
-            return listing
-        for name in sorted(os.listdir(area)):
-            path = area / name
-            if not people.is_member_id(name) or not path.is_dir():
-                if not (name.startswith(".") and ".tmp-" in name):
-                    listing.problems.append(Problem("unexpected", str(path), "not a member's area; not read"))
-                continue
-            if member is not None and name != member:
+        if member is not None and self.folders.proposals is None and self.folders.area_set_apart(member) is None:
+            self.member_area(member)  # raises: this member's proposals folder is not set here
+        found, problems = self.areas(member)
+        listing.problems.extend(problems)
+        for name, path in found:
+            if not path.is_dir():
                 continue
             for entry in sorted(os.listdir(path)):
                 sub = path / entry
@@ -632,14 +809,11 @@ class LocalExchange:
     def open_proposal(self, proposal_id: str, *, member: str | None = None) -> StoredProposal:
         if not PROPOSAL_ID_RE.match(proposal_id or ""):
             raise ExchangeError("no_such_proposal", f"not a proposal id: {proposal_id!r}")
-        area = self.root / PROPOSALS_AREA
-        members = [member] if member is not None else (
-            sorted(n for n in os.listdir(area) if people.is_member_id(n)) if area.is_dir() else []
-        )
+        areas, _problems = self.areas(member)
         found: list[StoredProposal] = []
         failed: list[Problem] = []
-        for name in members:
-            directory = area / name / proposal_id
+        for name, path in areas:
+            directory = path / proposal_id
             if directory.is_dir():
                 stored, problems = self._read_proposal_dir(name, directory)
                 if stored is None:
@@ -663,13 +837,12 @@ class LocalExchange:
     def write_packet(self, member: str, packet_id: str, raw: bytes, signature: bytes | None = None) -> Path:
         """One packet of the member's ledger entries into their area, once,
         `ready.toml` last."""
-        self._require_root()
         if not PACKET_ID_RE.match(packet_id):
             raise ExchangeError("invalid", f"not a packet id: {packet_id!r}")
         contents: list[tuple[str, bytes | Path]] = [(PACKET_FILE, raw)]
         if signature is not None:
             contents.append((PACKET_SIG, signature))
-        final = self.member_area(member) / packet_id
+        final = self._writable_area(member) / packet_id
         _write_dir_once(final, contents, _ready_bytes("packet", packet_id, raw))
         return final
 

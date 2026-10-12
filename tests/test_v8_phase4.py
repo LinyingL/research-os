@@ -224,7 +224,7 @@ def test_12_10_3_end_to_end_propose_approve_publish_sync_and_5_write_once(drive)
     file in the shared folder was created once and never modified."""
     with drive.member():
         _member_new_attempt(drive)
-    stored = _propose(drive)
+    stored = _propose(drive, add=["data/big.bin"])  # 12.13: the member adds the data file to the attempt's
     drive.witness.look()
     assert (stored.directory / "proposal.toml.sig").is_file()
     assert (drive.shared / "提议" / MEMBER[1] / "blobs").is_dir()

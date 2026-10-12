@@ -200,7 +200,7 @@ def take_snapshot(project_root: Path) -> WatchSnapshot:
     files: dict[str, tuple[int, int]] = {}
     steps: set[str] = set()
 
-    for record in (*record_paths(project_root), notes_record_path(project_root)):
+    for record in (*record_paths(project_root), notes_record_path(project_root), papers_record_path(project_root)):
         record_entry = _stat_entry(record)
         if record_entry is not None:
             files[str(record)] = record_entry
@@ -265,6 +265,14 @@ def notes_record_path(project_root: Path) -> Path:
     from researchos.records import notes  # noqa: PLC0415 -- leaf use
 
     return notes.notes_path(project_root)
+
+
+def papers_record_path(project_root: Path) -> Path:
+    """The drafts marked 「设为论文正文」 (12.13): a change only refreshes
+    the page (成果 reads the file); nothing is ingested."""
+    from researchos.records import papers  # noqa: PLC0415 -- leaf use
+
+    return papers.papers_path(project_root)
 
 
 def card_record_paths(project_root: Path) -> list[Path]:
@@ -669,11 +677,13 @@ class ProjectWatcher:
         self._snapshot_records(root, changed)
         mappings_file, ledger_file, canvas_file = (str(p) for p in record_paths(root))
         notes_file = str(notes_record_path(root))
+        papers_file = str(papers_record_path(root))
         mappings_changed = mappings_file in changed
         ledger_changed = ledger_file in changed or notes_file in changed
         impl_paths = (baseline.impl_paths | snapshot.impl_paths) - (baseline.steps_paths | snapshot.steps_paths)
         cards_changed = {path for path in changed if _is_card_file(path, root) or path in impl_paths}
-        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file} - cards_changed)
+        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file, papers_file}
+                                - cards_changed)
         error: str | None = None
         try:
             if attempts_changed or mappings_changed or ledger_changed or cards_changed:

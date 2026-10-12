@@ -176,7 +176,19 @@ def test_12_9_results_lists_the_drafts_figures_by_section_with_their_trace_state
     states = {i["path"]: i["trace"]["label"] for i in group["items"]}
     assert states == {"figs/fig1.png": "缺来源", "figs/fig2.png": "完整"}
     assert [(i["path"], i["trace"]["label"]) for i in out["loose"]] == [("figs/loose.png", "缺尝试")]
+    # 12.13: claims only from a draft marked 「设为论文正文」 -- none yet; every draft is offered.
+    assert out["claims"] == [] and out["papers"]["marked"] == []
+    assert {"file": "paper.md", "marked": False, "claims": 1, "node": "file:paper.md"} in out["drafts"]
+    from researchos.records import papers
+
+    assert papers.set_marked(root, "paper.md", True, via="cli")["changed"]
+    conn = _conn(root)
+    try:
+        out = nodepage.results(conn, root)
+    finally:
+        conn.close()
     assert out["claims"] == [{"file": "paper.md", "count": 1}]
+    assert [d["file"] for d in out["drafts"] if d["marked"]] == ["paper.md"]
     assert claims["total"] == 1 and claims["sections"][0]["claims"][0]["trace"]["label"] == "缺来源"
     assert claims["sections"][0]["claims"][0]["number"] == "0.42"
 
@@ -251,7 +263,7 @@ def test_12_6_notes_judgments_and_the_word_only_diff_through_the_endpoints(live)
     (root / "data" / "panel.csv").write_text(_csv(97, ("id", "x", "log_ret")))
     _scan(root)
     status, diff = _call(f"{base}/api/history/diff?node={_q('data/panel.csv')}")
-    assert status == 200 and diff["summary_words"] == "行数 96 改为 97，新增列 log_ret"
+    assert status == 200 and diff["summary_words"] == "行数从 96 增至 97，新增列 log_ret"
     assert not FORBIDDEN.search(diff["summary_words"])
     status, notes = _call(f"{base}/api/notes?node={_q('dataset:data/panel.csv')}")
     note = notes["notes"][0]

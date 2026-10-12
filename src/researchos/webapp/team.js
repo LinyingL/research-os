@@ -40,10 +40,10 @@
 
   const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件" };
   const KIND_CHOICES = [
-    ["attempt_new", "新的尝试", "尝试表里新加的一行，连同它的脚本和数据"],
-    ["verdict_change", "改判", "尝试表里一行的判决和结果"],
+    ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
+    ["verdict_change", "改判", "只有尝试表里这一行的判决和结果"],
     ["variable_version", "变量定义", "一张变量定义卡的新版本"],
-    ["files", "只有文件", "改过或新加的脚本、数据和文稿"],
+    ["files", "只有文件", "你选的脚本、数据和文稿"],
   ];
   const PROPOSAL_STATES = {
     pending: ["提议中", "ochre"], conflict: ["批准与退回的记录互相矛盾", "clay"], approved: ["已批准", "olive"],
@@ -100,11 +100,23 @@
     return head + "。";
   }
 
+  // What a proposal of this kind carries unless the member adds or unticks (12.13).
+  function carryWords(kind) {
+    return {
+      verdict_change: "改判只带尝试表里的这一行；要一起发送文件，在下面勾选。",
+      attempt_new: "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。",
+      variable_version: "变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。",
+      files: "只带勾选的文件。",
+    }[kind] || "只带勾选的文件。";
+  }
+
   // What sending a proposal writes, before it is sent.
   function sendWrites(draft, me) {
     const files = ((draft && draft.file) || []).filter((f) => f.action !== "removed");
     const blobs = files.filter((f) => f.store === "blob");
-    const where = "公盘的「提议/" + (me || "你的邮箱") + "/」";
+    const c = typeof RODesk !== "undefined" ? RODesk.context() : null;
+    const where = c && c.share && c.share.mine && c.share.mine.path ? "你自己的提议文件夹（" + c.share.mine.path + "）"
+      : "公盘的「提议/" + (me || "你的邮箱") + "/」"; // 12.13: or a folder of its own
     let s = "发送会在" + where + "里写入一份新的提议";
     if (files.length) {
       s += "，带上 " + files.length + " 个文件";
@@ -119,6 +131,7 @@
     const parts = [];
     if (c.notes) parts.push(c.notes + " 条笔记");
     if (c.judgements) parts.push(c.judgements + " 条关联判断");
+    if (c.papers) parts.push(c.papers + " 处「设为论文正文」的标记");
     if (c.links_added) parts.push("增加 " + c.links_added + " 条连线");
     if (c.links_removed) parts.push("删除 " + c.links_removed + " 条连线");
     return parts.join("、");
@@ -241,8 +254,11 @@
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
     d.appendChild(mk("summary", null, "你的和官方的有什么不同"));
+    // 12.13: a table's rows and columns first, its line diff below when small.
+    if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
     if (f.diff) d.appendChild(RONode.diffBlock(RONode._diffRows(f.diff), f.truncated));
-    else d.appendChild(mk("p", "desk-note plain", f.summary || "两个文件不同（不是文本，没有逐行比较）"));
+    else if (f.table) d.appendChild(mk("p", "desk-note plain", "表格较大：只比较行和列，不逐行对比。"));
+    else if (!f.summary) d.appendChild(mk("p", "desk-note plain", "两个文件不同（不是文本，没有逐行比较）"));
     if (open) d.open = true;
     return d;
   }
@@ -747,7 +763,7 @@
     const head = mk("header", "node-head");
     head.appendChild(mk("div", "node-kind", (KIND_WORDS[full.kind] || "") + "提议"));
     head.appendChild(mk("h2", "node-name", full.sentence || id));
-    const meta = [RODesk.nameOf(full.by, team) + "（" + full.by + "）", when(full.at)];
+    const meta = [RODesk.nameOf(full.by, team), when(full.at)]; // 12.13: the name, never the raw id
     if (full.base_seq != null) meta.push("基于官方版本第 " + full.base_seq + " 版");
     head.appendChild(mk("div", "desk-meta", meta.join(" · ")));
     const marks = mk("div", "node-marks");
@@ -850,9 +866,13 @@
         fp.title = String(f.sha256);
         li.appendChild(fp);
       }
+      // 12.13: a table's rows and columns first; its line diff below only when small.
       if (f.table_words && f.table_words !== f.summary_words) li.appendChild(mk("p", "desk-note plain", "表格：" + f.table_words));
       if (f.summary_words) li.appendChild(mk("p", "desk-note plain", f.summary_words));
-      if (f.diff) {
+      else if (f.sentence_words && f.store === "blob") li.appendChild(mk("p", "desk-note plain", f.sentence_words));
+      if (f.diff && f.table_small === false) {
+        li.appendChild(mk("p", "desk-note plain", "表格较大：只比较行和列，不逐行对比。"));
+      } else if (f.diff) {
         const d = mk("details", "proposal-diff");
         d.appendChild(mk("summary", null, "查看改动"));
         d.appendChild(diffOf(f.diff, f.truncated));
@@ -1144,23 +1164,35 @@
       box.appendChild(line("变量 " + d.variable.card + " 的第 " + d.variable.version + " 版定义（成员的回答：" +
         (ATTESTED_WORDS[d.variable.attested] || d.variable.attested) + "）", ""));
     }
-    // files, each with a box to leave it out
-    const files = (draft.preview && draft.preview.files) || d.file || [];
+    // 12.13: what travels depends on the kind -- a verdict change its row
+    // only, a new attempt its row and the files linked to it, a files
+    // proposal the files chosen. Every file that differs is offered, ticked
+    // when it travels; the member adds or unticks, then looks again.
+    const carried = {};
+    ((draft.preview && draft.preview.files) || d.file || []).forEach((f) => { carried[f.path] = f; });
+    const candidates = (draft.preview && draft.preview.candidates) ||
+      Object.keys(carried).map((p) => Object.assign({ chosen: true }, carried[p]));
     box.appendChild(mk("h4", "proposal-h4", "带上的文件"));
-    if (!files.length) box.appendChild(line("没有文件。", "quiet"));
+    box.appendChild(line(carryWords(d.kind), "quiet"));
+    if (!candidates.length) box.appendChild(line("工作副本里没有和官方版本不同的文件。", "quiet"));
     const picks = [];
-    files.forEach((f) => {
-      const row = mk("div", "draft-file");
+    candidates.forEach((c) => {
+      const f = carried[c.path] || c;
+      const row = mk("div", "draft-file" + (c.chosen ? "" : " left-out"));
       const lab = mk("label", "desk-head");
       const cb = mk("input");
       cb.type = "checkbox";
-      cb.checked = true;
-      cb.value = f.path;
+      cb.checked = !!c.chosen;
+      cb.value = c.path;
       picks.push(cb);
-      lab.append(cb, mk("span", "evidence-role", FILE_ACTIONS[f.action] || ""), mk("span", "mono", f.path));
-      if (f.size != null && f.action !== "removed") lab.appendChild(mk("span", "desk-meta", sizeWords(f.size) + (f.store === "blob" ? "，大文件" : "")));
+      lab.append(cb, mk("span", "evidence-role", FILE_ACTIONS[c.action] || ""), mk("span", "mono", c.path));
+      if (c.size != null && c.action !== "removed") lab.appendChild(mk("span", "desk-meta", sizeWords(c.size) + (c.store === "blob" ? "，大文件" : "")));
+      if (c.linked) lab.appendChild(mk("span", "desk-meta", "与这条尝试关联"));
+      const own = c.officialness && (c.officialness.state === "proposed" || c.officialness.state === "approved") ? ownMark(c) : null;
+      if (own) lab.appendChild(own);
       row.appendChild(lab);
-      if (f.diff) {
+      if ((c.returned || []).length) row.appendChild(mk("p", "desk-break", "这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。"));
+      if (c.chosen && f.diff) {
         const det = mk("details", "proposal-diff");
         det.appendChild(mk("summary", null, "查看改动"));
         det.appendChild(diffOf(f.diff, f.truncated));
@@ -1168,8 +1200,8 @@
       }
       box.appendChild(row);
     });
-    if (files.length) {
-      const again = mkButton("只带勾选的文件，重新查看", "btn btn-small", () => {
+    if (candidates.length) {
+      const again = mkButton("按勾选的文件重新查看", "btn btn-small", () => {
         const only = picks.filter((c) => c.checked).map((c) => c.value);
         composeInto(host, Object.assign({}, body, { only: only }), status);
       });
@@ -1258,6 +1290,7 @@
       renderTeam(page, share, me);
       if (role === "pi") {
         renderShared(page, share);
+        memberAreas(page, share);
         renderAddMember(page, share);
       } else if (share.joined) {
         renderMemberShare(page, share);
@@ -1550,11 +1583,20 @@
     s.appendChild(pi);
     s.appendChild(line("和 PI 当面或电话核对过这一串，就可以相信公盘上用它签名的每一版。" +
       (j.trusted_on_first_join ? "（" + when(j.trusted_on_first_join) + "记下）" : ""), "quiet"));
-    if (share.shared) {
+    if (share.two_folders) {
+      const where = mk("p", "team-line");
+      where.append("公盘的「已发布」文件夹：", mk("span", "mono", share.shared), share.reachable ? "" : "（现在打不开）");
+      s.appendChild(where);
+      const mine = mk("p", "team-line");
+      if (share.mine) mine.append("你自己的提议文件夹：", mk("span", "mono", share.mine.path), share.mine.reachable ? "" : "（现在打不开）");
+      else mine.append("你自己的提议文件夹还没有选：选好以后才能发送提议、笔记和连线。");
+      s.appendChild(mine);
+    } else if (share.shared) {
       const where = mk("p", "team-line");
       where.append("公盘文件夹：", mk("span", "mono", share.shared), share.reachable ? "" : "（现在打不开）");
       s.appendChild(where);
     }
+    s.appendChild(twoFolders(share));
     const last = share.last_snapshot;
     s.appendChild(line("你的工作副本基于第 " + j.seq + " 版" + (last && share.behind ? "；公盘上已经有第 " + last.seq + " 版" : "，已是最新") +
       (j.synced ? "。上次同步：" + when(j.synced) : "。"), ""));
@@ -1617,6 +1659,83 @@
       failed(writes, "没能查看同步会写入什么", err);
       btn.disabled = false;
     });
+  }
+
+  // 12.13: on a personal OneDrive the PI shares 「已发布」 (view only) and
+  // the member's own proposals folder (edit) separately, and they arrive as
+  // two shortcuts: the member chooses each. Both are checked before use --
+  // the published folder holds this project's signed snapshots, and the
+  // member can write into their own folder.
+  function twoFolders(share) {
+    const det = mk("details", "team-pending");
+    det.appendChild(mk("summary", null, share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
+    det.appendChild(line("在个人版 OneDrive 里，PI 分别共享「已发布」（只能查看）和你自己的提议文件夹（可以编辑），它们会在你的电脑上变成两个文件夹。分别选好：", "quiet"));
+    const pub = pathField("公盘的「已发布」文件夹（PI 共享给你，只能查看）", "shared", "已发布文件夹的完整路径");
+    const mine = pathField("你自己的提议文件夹（PI 共享给你，可以编辑）", "shared", "你的提议文件夹的完整路径");
+    if (share.two_folders && share.shared) pub.input.value = share.shared;
+    if (share.mine && share.mine.path) mine.input.value = share.mine.path;
+    det.append(pub.wrap, mine.wrap);
+    det.appendChild(line("使用前会检查：「已发布」里有这个项目经过 PI 签名的快照；你能写入自己的提议文件夹（在里面建一个空文件，马上删掉，不留下任何东西）。只记在这台电脑的设置里。", "writes"));
+    const status = mk("div", "notice-status");
+    const btn = mkButton("检查并使用这两个文件夹", "btn btn-primary", async () => {
+      const p = pub.input.value.trim(), m = mine.input.value.trim();
+      if (!p || !m) { setStatus(status, "err", "请选好两个文件夹"); return; }
+      btn.disabled = true;
+      setStatus(status, "", "正在检查…");
+      let res;
+      try {
+        res = await apiPost("/api/share/set", { published: p, mine: m });
+      } catch (err) {
+        btn.disabled = false;
+        failed(status, "没有使用这两个文件夹", err);
+        return;
+      }
+      pub.input.value = ""; mine.input.value = "";
+      await RODesk.refreshSidebar();
+      await after("members", [{ text: "已检查并使用：「已发布」里有第 " + res.seq + " 版快照，签名已验证；你能写入自己的提议文件夹。" }]);
+    });
+    det.append(btn, status);
+    return det;
+  }
+
+  // The PI: where each member's area is (12.13) -- under 提议/ on the
+  // shared folder, or recorded elsewhere on this machine.
+  function memberAreas(page, share) {
+    const areas = share.areas || [];
+    if (!areas.length) return;
+    const s = block("成员的提议区");
+    s.appendChild(line("每位成员的提议区默认在公盘的「提议/成员邮箱/」。如果某位成员的提议区在这台电脑的别处，可以在这里记下它的位置。", "quiet"));
+    const ul = mk("ul", "desk-files");
+    areas.forEach((a) => {
+      const li = mk("li", "beside-item");
+      const head = mk("div", "desk-head");
+      head.append(mk("span", "strong", a.name || a.member), mk("span", "mono", a.area));
+      if (!a.reachable) head.appendChild(label("现在打不开", "ochre"));
+      li.appendChild(head);
+      const det = mk("details", "team-pending");
+      det.appendChild(mk("summary", null, "提议区在别处"));
+      const pf = pathField("这位成员的提议区在这台电脑上的位置", "shared", "完整路径");
+      const status = mk("div", "notice-status");
+      const btn = mkButton("记下", "btn btn-small", async () => {
+        const where = pf.input.value.trim();
+        if (!where) { setStatus(status, "err", "请选择文件夹"); return; }
+        btn.disabled = true;
+        try {
+          await apiPost("/api/share/set", { member: a.member, area: where });
+        } catch (err) {
+          btn.disabled = false;
+          failed(status, "没有记下", err);
+          return;
+        }
+        pf.input.value = "";
+        await after("members", [{ text: "已记下" + (a.name || a.member) + "的提议区：" + where + "。" }]);
+      });
+      det.append(pf.wrap, line("只记在这台电脑的设置里（projects.json）；公盘和项目里都不写入任何东西。", "writes"), btn, status);
+      li.appendChild(det);
+      ul.appendChild(li);
+    });
+    s.appendChild(ul);
+    page.appendChild(s);
   }
 
   // What 同步 did, counted from what it reports: `conflicts` are the
@@ -1749,22 +1868,26 @@
     }
     // 3. where
     panelBody.appendChild(mk("h3", "panel-h3", "3. 公盘和工作副本"));
-    const shared = pathField("公盘文件夹（PI 共享给你的那个）", "shared", "公盘文件夹的完整路径");
+    const shared = pathField("公盘文件夹，或 PI 共享给你的「已发布」文件夹", "shared", "公盘文件夹的完整路径");
+    const mine = pathField("你自己的提议文件夹（PI 单独共享给你时才选；也可以以后在「成员」里选）", "shared", "可以不填");
     const folder = pathField("工作副本放在哪里（一个新的或空的文件夹）", "working", "例如 ~/Documents/某某项目_我的副本");
-    panelBody.append(shared.wrap, folder.wrap);
+    panelBody.append(shared.wrap, mine.wrap, folder.wrap);
     const status = mk("div", "notice-status");
     const result = mk("div", "join-result");
-    const look = mkButton("查看", "btn btn-primary", () => lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result));
+    const look = mkButton("查看", "btn btn-primary", () => lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result,
+      mine.input.value.trim()));
     panelBody.append(look, status, result);
   }
 
-  async function lookJoin(subject, shared, folder, status, result) {
+  async function lookJoin(subject, shared, folder, status, result, mine) {
     result.innerHTML = "";
     if (!shared || !folder) { setStatus(status, "err", "请选择公盘文件夹和工作副本的位置"); return; }
     setStatus(status, "", "正在查看公盘…");
     let p;
+    const where = { shared: shared, folder: folder };
+    if (mine) where.mine = mine;
     try {
-      p = await apiPost("/api/share/join-preview", { shared: shared, folder: folder });
+      p = await apiPost("/api/share/join-preview", where);
     } catch (err) {
       if (!joinLive(subject)) return;
       failed(status, "没能查看这个公盘文件夹", err);
@@ -1774,7 +1897,7 @@
     setStatus(status, "", "");
     const box = mk("div", "draft");
     const head = mk("p", "team-line");
-    head.append("项目由 ", mk("strong", null, p.pi_name || p.pi), "（" + p.pi + "）发布；最新的是第 " + p.seq + " 版，" + when(p.at) + (p.note ? "：" + p.note : "。"));
+    head.append("项目由 ", mk("strong", null, p.pi_name || p.pi), " 发布；最新的是第 " + p.seq + " 版，" + when(p.at) + (p.note ? "：" + p.note : "。"));
     box.appendChild(head);
     const fp = mk("div", "join-fp");
     fp.append(mk("div", "team-help", "PI 公钥指纹"), mk("div", "mono strong", p.pi_fingerprint || "（PI 没有公钥：快照无法验证）"));
@@ -1784,6 +1907,10 @@
     (p.warnings || []).forEach((w) => box.appendChild(line(w, "warn")));
     if ((p.refused || []).length) box.appendChild(line("公盘上有 " + p.refused.length + " 个版本没有通过签名验证，不会采用。", "warn"));
     if ((p.waiting || []).length) box.appendChild(line("有 " + p.waiting.length + " 个文件还在从云端下载：等它们下载完再加入。", "warn"));
+    if (p.mine) box.appendChild(line("你自己的提议文件夹：" + p.mine + "（已检查：你能写入它）", "quiet"));
+    else if (p.two_folders) {
+      box.appendChild(line("还没有选你自己的提议文件夹：加入以后在「成员」里选好，才能发送提议。", "quiet"));
+    }
     box.appendChild(line(joinWrites(p), "writes"));
     const st = mk("div", "notice-status");
     const btn = mkButton("核对无误，加入", "btn btn-primary", async () => {
@@ -1791,7 +1918,7 @@
       setStatus(st, "", "正在写入工作副本…");
       let res;
       try {
-        res = await apiPost("/api/share/join", { shared: shared, folder: folder, expect_pi: p.pi_fingerprint || "" });
+        res = await apiPost("/api/share/join", Object.assign({}, where, { expect_pi: p.pi_fingerprint || "" }));
       } catch (err) {
         btn.disabled = false;
         failed(st, "没能加入，什么都没有写入", err);
@@ -1814,7 +1941,7 @@
     composeInto, mode, syncWrites, syncDone, syncFlash, differenceBlock,
     // pure, for tests/test_v8_u4.py
     _sizeWords: sizeWords, _stateLabel: stateLabel, _signatureWords: signatureWords, _approveSentence: approveSentence,
-    _sendWrites: sendWrites, _publishWrites: publishWrites, _syncWrites: syncWrites, _joinWrites: joinWrites,
+    _sendWrites: sendWrites, _carryWords: carryWords, _publishWrites: publishWrites, _syncWrites: syncWrites, _joinWrites: joinWrites,
     _packetWords: packetWords, _syncDone: syncDone,
     _reasonSource: reasonSource, _routeProposals: routeProposals,
   });

@@ -225,6 +225,10 @@ def _settle_path(args: argparse.Namespace) -> None:
         given = [v for v in (args.src, args.dst, args.type, args.extractor) if v is not None]
         if len(given) == 1 and args.src is not None:
             positional, args.src = args.src, None
+    if (getattr(args, "func", None) is cmd_share and getattr(args, "share_command", None) == "set" and positional is None
+            and args.directory is not None and (args.published or args.mine or args.area)):
+        # 'share set --published P --mine M PROJECT' / 'share set --area M=D PROJECT': the one positional is the project.
+        positional, args.directory = args.directory, None
     args.path = settle_project_path(positional, args.path_flag, args.path_default)
     args.path_flag = None
 
@@ -1628,6 +1632,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
         draft = proposals_mod.make_proposal(
             root, args.kind, args.sentence, number=args.number, result=args.result, reason=args.reason,
             card=args.card, attested=args.attested, only=args.only, supersedes=args.supersedes,
+            add=args.add, leave=args.leave,
         )
         if args.json and not args.yes:
             print(json.dumps({"proposal": draft.data, "preview": draft.preview, "fingerprint": draft.fingerprint},
@@ -1649,6 +1654,11 @@ def cmd_propose(args: argparse.Namespace) -> int:
         _print_files(draft.preview.get("files", []))
         for item in data.get("not_carried", []):
             print(f"  not carried: {item['path']} -- {item['reason']}")
+        for item in draft.preview.get("candidates", []):
+            if item.get("returned"):
+                print(f"  {item['path']} was part of a returned proposal ({', '.join(item['returned'])})")
+        if any(not item["chosen"] for item in draft.preview.get("candidates", [])):
+            print("  (add a file with --add FILE, leave one out with --leave FILE)")
         if not args.yes:
             print("Dry run: nothing written. Add --yes to write this proposal to the exchange.")
             return 0
@@ -1889,7 +1899,7 @@ def cmd_share(args: argparse.Namespace) -> int:
     command = args.share_command
     try:
         if command == "join":
-            done = share_mod.join(args.shared, args.folder, project=args.project)
+            done = share_mod.join(args.shared, args.folder, project=args.project, mine=args.mine)
             if args.json:
                 print(json.dumps(done, ensure_ascii=False, indent=2, sort_keys=True))
                 return 0
@@ -1901,15 +1911,36 @@ def cmd_share(args: argparse.Namespace) -> int:
                 print(f"  the PI {done['pi']} has no key in team.toml: snapshots cannot be verified")
             if done["role"] != "member":
                 print(f"  you are not a member in team.toml yet ({done['role']}); the PI adds you with 'researchos team add'")
+            if done.get("mine"):
+                print(f"  your own proposals folder: {done['mine']} (checked: you can write into it)")
             _print_refused(done)
             return 0
+        if command == "set" and args.published is None and args.mine is None and args.area is None and args.directory is None:
+            raise CliError("name the shared folder (researchos share set DIR), or a member's two folders "
+                           "(--published DIR --mine DIR)")
         opened = _open(args.path)
         root = opened.root
         if command == "set":
             if opened.project_id is None:
                 raise CliError(f"{root} has no project identity")
-            where = exchange_mod.configure(opened.project_id, args.directory, root)
-            print(f"Shared folder for {opened.project_id} on this machine: {where}")
+            if args.published is not None or args.mine is not None:
+                if args.published is None or args.mine is None or args.directory is not None:
+                    raise CliError("a member sets both folders: --published DIR (the 已发布 folder the PI shared) and "
+                                   "--mine DIR (your own proposals folder)")
+                done = share_mod.set_member_folders(root, args.published, args.mine)
+                print(f"Published folder for {opened.project_id} on this machine: {done['published']} (snapshot "
+                      f"{done['seq']} verified)")
+                print(f"Your own proposals folder: {done['mine']} (checked: you can write into it)")
+                return 0
+            if args.directory is not None:
+                where = exchange_mod.configure(opened.project_id, args.directory, root)
+                print(f"Shared folder for {opened.project_id} on this machine: {where}")
+            for given in args.area or []:
+                member, sep, folder = given.partition("=")
+                if not sep or not member or not folder:
+                    raise CliError(f"--area takes MEMBER=DIR, got {given!r}")
+                done = share_mod.set_member_area(root, member.strip(), folder.strip())
+                print(f"{done['member']}'s proposal area on this machine: {done['area']}")
             return 0
         if command == "publish":
             done = share_mod.publish(root, note=args.note, expected_id=opened.project_id)
@@ -1992,6 +2023,12 @@ def cmd_share(args: argparse.Namespace) -> int:
         print(json.dumps(got, ensure_ascii=False, indent=2, sort_keys=True, default=str))
         return 0
     print(f"Shared folder: {got['shared'] or 'not set'}" + ("" if got["reachable"] or not got["shared"] else " (cannot be reached now)"))
+    if got.get("two_folders"):
+        print(f"  two folders: published {got['layout']['published']}; yours "
+              f"{(got.get('mine') or {}).get('path') or 'not set (researchos share set --published DIR --mine DIR)'}")
+    for area in got.get("areas") or []:
+        if area.get("set_apart"):
+            print(f"  {area['member']}'s proposal area: {area['area']}" + ("" if area["reachable"] else " (cannot be reached now)"))
     print(f"  role: {got['role']}; ssh-keygen: {'yes' if got['ssh_keygen'] else 'MISSING'}")
     last = got.get("last_snapshot")
     if last:
@@ -3399,6 +3436,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--attested", default=None, choices=["yes", "no", "unknown"],
                    help="variable_version: was the output as it stands built with this definition")
     p.add_argument("--only", action="append", default=None, metavar="FILE", help="carry only these files (repeatable)")
+    p.add_argument("--add", action="append", default=None, metavar="FILE",
+                   help="also carry this file (repeatable; a verdict change carries its row only, a new attempt the "
+                        "files linked to it)")
+    p.add_argument("--leave", action="append", default=None, metavar="FILE", help="do not carry this file (repeatable)")
     p.add_argument("--supersedes", default=None, metavar="ID", help="a proposal of yours this one replaces")
     p.add_argument("--exchange", default=None, metavar="DIR", help="the exchange directory (default: the one set)")
     p.add_argument("--yes", action="store_true", help="write the proposal (otherwise a dry run)")
@@ -3480,8 +3521,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("share", help="The shared folder (12.2): 'researchos share set|show|publish|sync|join|prune|repair'")
     share_sub = p.add_subparsers(dest="share_command", required=True)
-    q = share_sub.add_parser("set", help="set this project's shared folder on this machine (never inside a project)")
-    q.add_argument("directory", metavar="DIR")
+    q = share_sub.add_parser("set", help="set this project's shared folder on this machine (never inside a project); "
+                                         "a member on a personal OneDrive sets two: --published DIR --mine DIR")
+    q.add_argument("directory", metavar="DIR", nargs="?", default=None)
+    q.add_argument("--published", default=None, metavar="DIR",
+                   help="a member: the 已发布 folder the PI shared with you (view only)")
+    q.add_argument("--mine", default=None, metavar="DIR",
+                   help="a member: your own proposals folder the PI shared with you (edit)")
+    q.add_argument("--area", action="append", default=None, metavar="MEMBER=DIR",
+                   help="the PI: where a member's proposal area is on this machine, when it is not under 提议/")
     add_project_path(q)
     q.set_defaults(func=cmd_share)
     q = share_sub.add_parser("show", help="role, shared folder, last snapshot, verification, what is pending")
@@ -3502,6 +3550,8 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("folder", metavar="FOLDER")
     q.add_argument("--project", default=None, metavar="ID",
                    help="which project, when the shared folder holds snapshots of more than one")
+    q.add_argument("--mine", default=None, metavar="DIR",
+                   help="your own proposals folder, when it is a separate folder (SHARED is then the 已发布 folder)")
     q.add_argument("--json", action="store_true")
     q.set_defaults(func=cmd_share)
     q = share_sub.add_parser("repair", help="list (and with --yes remove) published blobs whose content is damaged; "

@@ -95,7 +95,8 @@ _SCHEMA = (
         stored INTEGER NOT NULL DEFAULT 0,
         summary TEXT NOT NULL DEFAULT '{}',
         stat TEXT,
-        approved_by TEXT
+        approved_by TEXT,
+        snapshot INTEGER
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_versions_node ON versions(node, seq)",
@@ -133,6 +134,7 @@ class Version:
     summary: dict[str, Any]
     stat: str | None
     approved_by: str | None = None
+    snapshot: int | None = None
 
 
 class Store:
@@ -152,6 +154,9 @@ class Store:
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(versions)")}
         if "approved_by" not in columns:
             self.conn.execute("ALTER TABLE versions ADD COLUMN approved_by TEXT")
+        # 12.13: the published snapshot a version installed by 同步 came from.
+        if "snapshot" not in columns:
+            self.conn.execute("ALTER TABLE versions ADD COLUMN snapshot INTEGER")
         self.conn.commit()
 
     @classmethod
@@ -178,6 +183,7 @@ class Store:
             seq=row["seq"], node=row["node"], at=row["at"], sha256=row["sha256"], size=row["size"], who=row["who"],
             source=row["source"], note=row["note"], kind=row["kind"], stored=bool(row["stored"]),
             summary=json.loads(row["summary"] or "{}"), stat=row["stat"], approved_by=row["approved_by"],
+            snapshot=row["snapshot"],
         )
 
     def latest(self, node: str) -> Version | None:
@@ -196,14 +202,15 @@ class Store:
 
     def add(self, node: str, *, sha256: str, size: int | None, kind: str, source: str = "scan", who: str | None = None,
             note: str | None = None, stored: bool = False, summary: dict[str, Any] | None = None,
-            stat: str | None = None, at: str | None = None, approved_by: str | None = None) -> Version:
+            stat: str | None = None, at: str | None = None, approved_by: str | None = None,
+            snapshot: int | None = None) -> Version:
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}, got {source!r}")
         cur = self.conn.execute(
-            "INSERT INTO versions (node, at, sha256, size, who, source, note, kind, stored, summary, stat, approved_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO versions (node, at, sha256, size, who, source, note, kind, stored, summary, stat, approved_by, "
+            "snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (node, at or _now(), sha256, size, who, source, note, kind, int(stored),
-             json.dumps(summary or {}, ensure_ascii=False, sort_keys=True), stat, approved_by),
+             json.dumps(summary or {}, ensure_ascii=False, sort_keys=True), stat, approved_by, snapshot),
         )
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM versions WHERE seq = ?", (cur.lastrowid,)).fetchone()
@@ -460,14 +467,16 @@ def _hash_file(path: Path) -> tuple[str, bytes | None, int]:
 
 
 def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who: str | None = None,
-                note: str | None = None, approved_by: str | None = None) -> str:
+                note: str | None = None, approved_by: str | None = None, snapshot: int | None = None) -> str:
     """Record `rel`'s current content as a version if it differs from the
     newest one. Returns "recorded", "unchanged", "missing", "dataless" or
     "unreadable". A file whose size, modification time and inode are what
     the newest version saw is not read again. A version that came through
     an approved proposal (12.3) carries the member as `who` and the PI as
     `approved_by`; it is recorded even when the content is unchanged, so
-    the approval itself is part of the file's history."""
+    the approval itself is part of the file's history. A version 同步
+    installed (`source = "publish"`) carries the PI as `who` and the
+    snapshot it came from (12.13), and is recorded the same way."""
     full = root / rel
     try:
         st = full.lstat()
@@ -498,7 +507,7 @@ def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who
     if text:
         store.put_blob(data)  # type: ignore[arg-type]
     store.add(node, sha256=sha, size=size, kind=kind, source=source, who=who, note=note, stored=text,
-              summary=summary or {}, stat=stat, approved_by=approved_by)
+              summary=summary or {}, stat=stat, approved_by=approved_by, snapshot=snapshot)
     return "recorded"
 
 
@@ -849,7 +858,7 @@ def _store_payload(v: Version) -> dict[str, Any]:
     return {
         "version": str(v.seq), "at": v.at, "sha256": v.sha256, "size": v.size, "who": v.who,
         "who_label": _who_label(v.who), "source": v.source, "note": v.note, "kind": v.kind,
-        "summary": v.summary, "stored": v.stored, "approved_by": v.approved_by,
+        "summary": v.summary, "stored": v.stored, "approved_by": v.approved_by, "snapshot": v.snapshot,
     }
 
 
@@ -1021,9 +1030,24 @@ def unified(old: str, new: str, label_a: str, label_b: str) -> tuple[str, bool]:
     return "".join(lines), truncated
 
 
-def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | None:
+def _moved(name: str, a: Any, b: Any, words: bool, unit: str = "", more: str = "") -> str:
+    """One quantity as it moved: 「行数 96 → 97」 for the command line, and
+    -- `words`, for the page (12.13: words, not arrows) -- 「行数从 96 增至
+    97」 / 「行数从 97 减至 96」, or 「大小从 a 变为 b 字节」 when the two do
+    not compare as numbers."""
+    if not words:
+        return f"{name} {a} → {b}{more}{(' ' + unit) if unit else ''}"
+    verb = "变为"
+    if not more and isinstance(a, int) and isinstance(b, int) and not isinstance(a, bool):
+        verb = "增至" if b > a else "减至" if b < a else "变为"
+    return f"{name}从 {a} {verb} {b}{more}{(' ' + unit) if unit else ''}"
+
+
+def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words: bool = False) -> str | None:
     """「行数 96 → 97，列不变」, 「新增列 log_ret」 -- what changed in a table,
-    in the app's words; None when neither side is a table."""
+    in the app's words; None when neither side is a table. `words`: the
+    screen's form, 「行数从 96 增至 97」 (12.13); the command line keeps its
+    arrows."""
     if not a and not b:
         return None
     a, b = a or {}, b or {}
@@ -1033,8 +1057,8 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | 
         ca, cb = a.get("sheet_columns"), b.get("sheet_columns")
         if ra is None or rb is None:
             return "工作表的行列数未比对"
-        parts = [f"行数 {ra} → {rb}" if ra != rb else f"行数不变（{rb}）"]
-        parts.append(f"列数 {ca} → {cb}" if ca != cb else "列数不变")
+        parts = [_moved("行数", ra, rb, words) if ra != rb else f"行数不变（{rb}）"]
+        parts.append(_moved("列数", ca, cb, words) if ca != cb else "列数不变")
         return "，".join(parts)
     parts = []
     ra, rb = a.get("rows"), b.get("rows")
@@ -1042,7 +1066,7 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | 
         parts.append("行数未比对")
     elif ra != rb or not (a.get("rows_complete", True) and b.get("rows_complete", True)):
         more = "" if b.get("rows_complete", True) else " 以上"
-        parts.append(f"行数 {ra} → {rb}{more}")
+        parts.append(_moved("行数", ra, rb, words, more=more))
     cols_a, cols_b = a.get("columns"), b.get("columns")
     if cols_a is None or cols_b is None:
         parts.append("列未比对")
@@ -1083,8 +1107,11 @@ def _decode(data: bytes | None) -> str | None:
     return data.decode("utf-8")
 
 
-def diff(project_root: str | Path, node: str, a: str | None = None, b: str | None = None) -> dict[str, Any]:
-    """Compare two versions of `node` (module docstring)."""
+def diff(project_root: str | Path, node: str, a: str | None = None, b: str | None = None, *,
+         words: bool = False) -> dict[str, Any]:
+    """Compare two versions of `node` (module docstring). `words`: every
+    sentence in the screen's form, a relation said in words and never an
+    arrow (12.13) -- the page's; the command line keeps its arrows."""
     root = Path(project_root)
     listed = versions(root, node)
     found = listed["versions"]
@@ -1092,9 +1119,9 @@ def diff(project_root: str | Path, node: str, a: str | None = None, b: str | Non
     out: dict[str, Any] = {"node": listed["node"], "kind": listed["kind"], "a": va, "b": vb, "diff": None,
                            "truncated": False, "summary": None, "same": False}
     if listed["kind"] == "attempt":
-        return {**out, **_attempt_change(va, vb)}
+        return {**out, **_attempt_change(va, vb, words=words)}
     if listed["kind"] == "variable":
-        return {**out, "summary": _variable_change(va, vb)}
+        return {**out, "summary": _variable_change(va, vb, words=words)}
     if listed["kind"] != "file":
         return out
     path = listed["path"]
@@ -1115,9 +1142,10 @@ def diff(project_root: str | Path, node: str, a: str | None = None, b: str | Non
         out["diff"], out["truncated"] = unified(
             old_text, new_text, f"{path} ({_label(va)})", f"{path} ({_label(vb)})",
         )
-    out["summary"] = table_sentence(sum_a, sum_b)
+    out["summary"] = table_sentence(sum_a, sum_b, words=words)
+    out["table"] = bool(sum_a or sum_b) and Path(path or "").suffix.lower() in _TABLE_DELIMITERS
     if out["summary"] is None and out["diff"] is None:
-        out["summary"] = "内容相同" if out["same"] else _size_sentence(va, vb)
+        out["summary"] = "内容相同" if out["same"] else _size_sentence(va, vb, words=words)
     return out
 
 
@@ -1129,20 +1157,44 @@ def _label(v: dict[str, Any]) -> str:
     return f"版本 {v.get('version')} · {v.get('at')}"
 
 
-def _size_sentence(va: dict[str, Any], vb: dict[str, Any]) -> str:
+def _size_sentence(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> str:
     sa, sb = va.get("size"), vb.get("size")
     if sa is None or sb is None:
         return "内容不同（未比对内容）"
-    return f"内容不同（大小 {sa} → {sb} 字节）" if sa != sb else "内容不同（大小不变，指纹不同）"
+    if sa == sb:
+        return "内容不同（大小不变，指纹不同）"
+    if words:
+        return f"内容不同（大小从 {sa} 变为 {sb} 字节）"
+    return f"内容不同（大小 {sa} → {sb} 字节）"
 
 
-def _attempt_change(va: dict[str, Any], vb: dict[str, Any]) -> dict[str, Any]:
+def _verdict_word(v: dict[str, Any]) -> str:
+    status = v.get("verdict_status") or {}
+    return str(status.get("label") or v.get("verdict") or "其它")
+
+
+def _attempt_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> dict[str, Any]:
     old_v, new_v = va.get("verdict") or "（空）", vb.get("verdict") or "（空）"
-    parts = [f"{old_v} → {new_v}" if old_v != new_v else f"结论不变（{new_v}）"]
+    if words:
+        # 12.13: 「判决从「待定」改为「现行」」 -- the status words, never the markers.
+        la, lb = _verdict_word(va), _verdict_word(vb)
+        parts = [f"判决从「{la}」改为「{lb}」" if old_v != new_v else f"判决不变（「{lb}」）"]
+    else:
+        parts = [f"{old_v} → {new_v}" if old_v != new_v else f"结论不变（{new_v}）"]
     if (va.get("result") or "") != (vb.get("result") or ""):
         parts.append(f"结果改为：{vb.get('result') or '（空）'}")
     return {"summary": "，".join(parts), "same": va.get("sha256") == vb.get("sha256")}
 
 
-def _variable_change(va: dict[str, Any], vb: dict[str, Any]) -> str:
+#: A variable card's acts in words (the page's ACT_WORDS).
+CARD_ACT_WORDS = {"confirmed": "确认", "corrected": "更正", "reaffirmed": "确认口径未变", "abandoned": "弃用",
+                  "revived": "恢复", "removed": "以文件为准移除", "settled": "指明以哪几条为准"}
+
+
+def _variable_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> str:
+    if words:
+        def one(v: dict[str, Any]) -> str:
+            act = CARD_ACT_WORDS.get(str(v.get("act")), str(v.get("act") or "记录"))
+            return f"{act}第 {v.get('number')} 版" if v.get("number") else act
+        return f"从「{one(va)}」改为「{one(vb)}」"
     return f"{va.get('act')} v{va.get('number') or ''} → {vb.get('act')} v{vb.get('number') or ''}".replace(" v ", " ")

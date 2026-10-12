@@ -134,6 +134,13 @@ def test_12_10_3_a_new_attempt_with_a_200mb_file_is_no_node_until_approved(team)
         _member_new_attempt(team)
         draft = proposals.make_proposal(team.work, "attempt_new", "加一条大面板的尝试")
         assert draft.data["attempt"]["number"] == "18"
+        # 12.13: a new attempt carries the files linked to it -- its step
+        # script -- and the member adds the data file before sending.
+        assert [f["path"] for f in draft.data["file"]] == ["steps/18-big.py"]
+        offered = {c["path"]: (c["chosen"], c["linked"]) for c in draft.preview["candidates"]}
+        assert offered == {"data/big.bin": (False, False), "steps/18-big.py": (True, True)}
+        draft = proposals.make_proposal(team.work, "attempt_new", "加一条大面板的尝试",
+                                        only=["steps/18-big.py", "data/big.bin"])
         assert {f["path"]: (f["action"], f["store"]) for f in draft.data["file"]} == {
             "data/big.bin": ("added", "blob"), "steps/18-big.py": ("added", "text"),
         }

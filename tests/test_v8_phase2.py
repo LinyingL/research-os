@@ -650,7 +650,7 @@ def test_12_10_2_http_notes_history_trace_and_me(live):
     status, body = _call(f"{base}/api/history?node=data%2Fpanel.csv")
     assert status == 200 and len(body["versions"]) == 2
     status, body = _call(f"{base}/api/history/diff?node=data%2Fpanel.csv")
-    assert status == 200 and body["summary"] == "行数 96 → 97，列不变"
+    assert status == 200 and body["summary"] == "行数从 96 增至 97，列不变"
     status, body = _call(f"{base}/api/trace?node=figs%2Ffig2.png")
     assert status == 200 and body["attempts"][0]["id"] == "attempt:map.md#16"
     status, body = _call(f"{base}/api/trace?node=figs%2Fnope.png")

@@ -79,7 +79,8 @@ def test_12_10_3_an_approval_killed_after_the_version_file_is_finished_by_approv
         (card_dir / "v1.toml").write_text(CARD)
         _edit_build(team.work, "# v1 card\n")
         stored = proposals.write_proposal(
-            team.work, proposals.make_proposal(team.work, "variable_version", "TopicShift 定义", attested="unknown"))
+            team.work, proposals.make_proposal(team.work, "variable_version", "TopicShift 定义", attested="unknown",
+                                               add=["steps/16-build.py"]))  # 12.13: the member adds the script
     code = (
         "import os, signal, sys\n"
         "from researchos import proposals\n"
@@ -156,7 +157,8 @@ def test_12_10_3_content_damaged_on_the_drive_refuses_the_approval_before_anythi
     with team.member():
         _new_attempt(team.work)
         (team.work / "data" / "big.bin").rename(team.work / "zz-big.bin")
-        stored = proposals.write_proposal(team.work, proposals.make_proposal(team.work, "attempt_new", "大面板"))
+        stored = proposals.write_proposal(team.work, proposals.make_proposal(team.work, "attempt_new", "大面板",
+                                                                             add=["zz-big.bin"]))
     blob = next((team.exchange / "提议" / MEMBER[1] / "blobs").iterdir())
     data = bytearray(blob.read_bytes())
     data[3] ^= 0xFF

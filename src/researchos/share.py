@@ -34,6 +34,23 @@ writes again -- each shown first, removed only when confirmed. A member's
 area `提议/<member id>/` is made once by the PI's `team add` (or the first
 publish after the shared folder is set), never touched again.
 
+**Two folders for a member** (12.13). On a personal OneDrive the PI
+shares `已发布/` (view only) and each member's `提议/<member id>/` (edit)
+separately, and they arrive on the member's Mac as two shortcuts, anywhere.
+A member then names both -- `join` takes the published folder itself (it
+holds `snapshots/`) and `mine`, `set_member_folders` sets or changes them
+-- and each is checked before use: the published folder holds this
+project's snapshots signed by the PI this copy trusts, and the member can
+write into their own folder (a uniquely named empty probe file, created and
+removed at once). The PI keeps one shared folder and may record where a
+member's area is when it lives elsewhere (`set_member_area`). Where the
+areas are is `researchos.exchange.Folders`; every function here that takes
+`shared` takes one.
+
+**What 同步 installs is the publish's** (12.13): each file goes into the
+history store with the PI as its author and the snapshot it came from
+(`record_installed`), never as 「本机」.
+
 **One shared folder, one project.** A folder whose snapshots name another
 project is refused for publishing, and a join that finds snapshots of more
 than one project asks which (`project`); a manifest's project id must have
@@ -139,7 +156,7 @@ STORE_BLOB = "blob"
 OFFICIAL_INFIX = ".official"
 #: The record files a snapshot carries (besides `variables/`).
 RECORD_FILES = ("project.toml", "attempts.toml", "mappings.toml", "team.toml", "judgements.toml", "notes.toml",
-                "decisions.toml", "canvas.json")
+                "decisions.toml", "canvas.json", "papers.toml")
 VARIABLES_DIRNAME = "variables"
 _SEQ_RE = re.compile(r"^[1-9][0-9]{0,8}$")
 _TMP_SEQ_RE = re.compile(r"^\.([1-9][0-9]{0,8})\.tmp-")
@@ -173,7 +190,7 @@ MESSAGES = {
 
 #: The ledgers whose entries a member's sync carries, without approval
 #: (12.4): file name -> TOML table.
-TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement"}
+TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement", "papers.toml": "paper"}
 #: 12.12: hand-drawn links travel the same way (`researchos.ingest.mappings`,
 #: "a member's links travel"): the packet's `[[mapping]]` (added) and
 #: `[[mapping_removed]]` (removed) tables.
@@ -230,8 +247,10 @@ def _signing_refused(exc: signing.SigningError) -> ShareError:
 # -- where things are ---------------------------------------------------------------------------
 
 
-def published_dir(shared: Path) -> Path:
-    return Path(shared) / ex_mod.PUBLISHED_AREA
+def published_dir(shared: "Path | ex_mod.Folders") -> Path:
+    """`已发布/` -- inside the shared folder, or wherever a member's own
+    published folder is (12.13, `researchos.exchange.Folders`)."""
+    return ex_mod.as_folders(shared).published
 
 
 def snapshots_dir(shared: Path) -> Path:
@@ -242,11 +261,12 @@ def blobs_dir(shared: Path) -> Path:
     return published_dir(shared) / ex_mod.BLOBS_DIRNAME
 
 
-def shared_for(project_id: str, project_root: Path | None, override: str | Path | None = None) -> Path:
-    """The shared folder this machine uses for the project (checked where
-    it may be, `researchos.exchange.check_location`)."""
+def shared_for(project_id: str, project_root: Path | None,
+               override: "str | Path | ex_mod.Folders | None" = None) -> "ex_mod.Folders":
+    """Where this machine has the project's shared drive (checked where it
+    may be, `researchos.exchange.check_location`)."""
     try:
-        return ex_mod.for_project(project_id, project_root, override=override).root
+        return ex_mod.for_project(project_id, project_root, override=override).folders
     except ExchangeError as exc:
         raise ShareError("not_configured" if exc.code == "not_configured" else "invalid", str(exc),
                          message_zh=exc.message_zh) from exc
@@ -420,7 +440,7 @@ def validate_manifest(data: Mapping[str, Any], seq: int) -> None:
 
 def read_snapshots(shared: Path) -> tuple[list[Snapshot], list[Problem]]:
     """Every complete snapshot, by seq, and what was not read and why."""
-    shared = Path(shared)
+    shared = ex_mod.as_folders(shared)
     if not shared.is_dir():
         raise ShareError("unreachable", f"the shared folder {shared} cannot be reached now")
     area = snapshots_dir(shared)
@@ -784,6 +804,21 @@ def _write_state(project_id: str, state: Mapping[str, Any]) -> None:
     record_files.durable_write(path, (json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True) + "\n").encode("utf-8"))
 
 
+def state_folders(state: Mapping[str, Any], me: str | None = None) -> "ex_mod.Folders":
+    """Where a joined working copy's shared drive is (12.13): one shared
+    folder, or the published folder and the member's own proposals folder
+    set apart."""
+    areas = state.get("areas") if isinstance(state.get("areas"), dict) else {}
+    if state.get("published"):
+        folders = ex_mod.Folders.two(str(state["published"]), areas)
+        if state.get("shared"):
+            folders = ex_mod.Folders(published=folders.published,
+                                     proposals=Path(str(state["shared"])) / ex_mod.PROPOSALS_AREA,
+                                     areas=folders.areas, root=Path(str(state["shared"])))
+        return folders
+    return ex_mod.Folders.single(str(state.get("shared") or ""), areas)
+
+
 def pinned_pi(project_id: str) -> dict[str, Any] | None:
     """The PI (and key) this machine trusted when it joined, or None."""
     try:
@@ -878,6 +913,28 @@ def _texts_for_base(shared: Path, root: Path, files: Mapping[str, Mapping[str, A
     return texts
 
 
+def record_installed(root: Path, pid: str, rels: Iterable[str], snap: "Snapshot", pi: str | None) -> int:
+    """12.13: a version 同步 (or 加入) installed is attributed to the publish
+    it came from -- the PI and the snapshot -- not to 「本机」: each file
+    goes into the history store with `source = "publish"`, `who` = the PI,
+    `snapshot` = its seq and the publish's note. A file git tracks has git
+    as its history. Contained: the history never fails the sync."""
+    count = 0
+    try:
+        tracked = history._tracked(root) if history._is_git(root) else None
+        with history.Store.open(pid) as store:
+            for rel in rels:
+                if tracked is not None and rel in tracked:
+                    continue
+                note = snap.data.get("note")
+                got = history.record_file(store, root, rel, source="publish", who=pi, snapshot=snap.seq,
+                                          note=str(note) if isinstance(note, str) and note else None)
+                count += got == "recorded"
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.exception("recording the published versions in %s failed", root)
+    return count
+
+
 def _base_files(snap: Snapshot) -> dict[str, dict[str, Any]]:
     return {rel: {"sha256": e["sha256"], "size": e["size"]} for rel, e in snap.files.items()}
 
@@ -885,25 +942,79 @@ def _base_files(snap: Snapshot) -> dict[str, dict[str, Any]]:
 # -- joining (a member) -------------------------------------------------------------------------------
 
 
-def _join_target(shared: str | Path, folder: str | Path, project: str | None) -> dict[str, Any]:
+def _absolute(path: str | Path) -> Path:
+    found = Path(path).expanduser()
+    return found if found.is_absolute() else found.resolve()
+
+
+def locate(shared: str | Path, *, mine: str | Path | None = None, me: str | None = None) -> "ex_mod.Folders":
+    """The shared drive as a folder given for it (12.13): the shared folder
+    itself (it holds `已发布/`), or -- a member's shortcut of `已发布/` on a
+    personal OneDrive -- the published folder alone (it holds `snapshots/`);
+    with `mine`, the member's own proposals folder, set apart."""
+    shared = _absolute(shared)
+    areas = {me: str(_absolute(mine))} if mine is not None and me else None
+    try:
+        alone = not (shared / ex_mod.PUBLISHED_AREA).is_dir() and (shared / SNAPSHOTS_DIRNAME).is_dir()
+    except OSError:
+        alone = False
+    return ex_mod.Folders.two(shared, areas) if alone else ex_mod.Folders.single(shared, areas)
+
+
+def check_writable(folder: Path) -> None:
+    """12.13: the member can write into their own proposals folder --
+    shown by creating a uniquely named empty file there and removing it at
+    once; nothing is left behind."""
+    if not folder.is_dir():
+        raise ShareError("unreachable", f"{folder} is not a folder that can be reached now",
+                         message_zh="你自己的提议文件夹现在打不开：请确认它已经加到这台电脑的 OneDrive 里")
+    probe = folder / f".researchos-probe-{secrets.token_hex(8)}"
+    try:
+        handle = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError as exc:
+        raise ShareError("not_writable", f"{folder} cannot be written: {exc}",
+                         message_zh="不能写入你自己的提议文件夹：请确认 PI 给了你这个文件夹的编辑权限") from exc
+    os.close(handle)
+    try:
+        os.unlink(probe)
+    except OSError as exc:
+        raise ShareError("not_writable", f"the probe {probe} could not be removed: {exc}",
+                         message_zh="你自己的提议文件夹可以写入，但试写的空文件没能删掉：请手动删除它") from exc
+
+
+def _check_mine(folders: "ex_mod.Folders", me: str) -> Path | None:
+    """The member's own folder, if set apart: never the published folder,
+    nor inside it, nor holding it; writable."""
+    mine = folders.area_set_apart(me)
+    if mine is None:
+        return None
+    for other in (folders.published, folders.root):
+        if other is not None and ex_mod.nested(mine, other):
+            raise ShareError("invalid", f"{mine} and {other} must be two separate folders",
+                             message_zh="你自己的提议文件夹和公盘的已发布文件夹必须是两个分开的文件夹")
+    check_writable(mine)
+    return mine
+
+
+def _join_target(shared: str | Path, folder: str | Path, project: str | None,
+                 mine: str | Path | None = None) -> dict[str, Any]:
     """What joining `shared` into `folder` would start from, read only:
     every refusal of `join` before anything is written (who I am, the
-    folder, the snapshots, which project, the chain), and the latest good
-    snapshot with the PI found in the first one."""
+    folder, the snapshots, which project, the chain, and -- with `mine` --
+    that the member can write into their own proposals folder), and the
+    latest good snapshot with the PI found in the first one. `shared` is
+    the shared folder, or the published folder alone (`locate`)."""
     me = _me()
-    shared_dir = Path(shared).expanduser()
-    if not shared_dir.is_absolute():
-        shared_dir = shared_dir.resolve()
-    dest = Path(folder).expanduser()
-    if not dest.is_absolute():
-        dest = dest.resolve()
+    shared_dir = locate(shared, mine=mine, me=me)
+    dest = _absolute(folder)
     if dest.exists() and (not dest.is_dir() or any(dest.iterdir())):
         raise ShareError("not_empty", f"{dest} is not an empty folder; a working copy starts in an empty one")
     try:
-        ex_mod.check_location(shared_dir, dest)
+        ex_mod.check_folders(shared_dir, dest)
         _check_working_location(dest)
     except ExchangeError as exc:
         raise ShareError("invalid", str(exc), message_zh=exc.message_zh) from exc
+    _check_mine(shared_dir, me)
     snaps, problems = read_snapshots(shared_dir)
     if not snaps:
         raise ShareError("nothing_published", f"no complete snapshot in {snapshots_dir(shared_dir)}",
@@ -932,18 +1043,21 @@ def _join_target(shared: str | Path, folder: str | Path, project: str | None) ->
             "problems": problems}
 
 
-def join_preview(shared: str | Path, folder: str | Path, *, project: str | None = None) -> dict[str, Any]:
+def join_preview(shared: str | Path, folder: str | Path, *, project: str | None = None,
+                 mine: str | Path | None = None) -> dict[str, Any]:
     """What 「加入」 would write, before it writes anything (12.3, 12.5): the
     new folder, the snapshot it starts from (number, files, total size),
     the project, and the PI with the fingerprint of the key that will be
     trusted from then on -- to compare with the PI before joining."""
-    found = _join_target(shared, folder, project)
+    found = _join_target(shared, folder, project, mine)
     target, lead, shared_dir = found["target"], found["lead"], found["shared"]
     files = target.files
     team = snapshot_team(shared_dir, target) or ()
     me = found["me"]
     return {
         "shared": str(shared_dir), "folder": str(found["dest"]), "exists": found["dest"].exists(),
+        "published": str(shared_dir.published), "mine": _mine_of(shared_dir, me),
+        "two_folders": shared_dir.root is None,
         "project": found["pid"], "seq": target.seq, "at": target.data.get("at"), "note": target.data.get("note"),
         "files": len(files), "size": sum(int(e.get("size") or 0) for e in files.values()),
         "pi": lead.id, "pi_name": lead.name, "pi_fingerprint": signing.fingerprint(lead.key) if lead.key else None,
@@ -955,7 +1069,7 @@ def join_preview(shared: str | Path, folder: str | Path, *, project: str | None 
 
 
 def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] | None = None,
-         project: str | None = None, expect_pi: str | None = None) -> dict[str, Any]:
+         project: str | None = None, expect_pi: str | None = None, mine: str | Path | None = None) -> dict[str, Any]:
     """「加入」: a working copy in `folder` (new, or empty) from the latest
     good snapshot; the PI's key from the first snapshot is trusted from now
     on (module docstring) -- its fingerprint is in the answer, to compare
@@ -965,7 +1079,7 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
     key is no longer that one is refused, nothing written."""
     from researchos import proposals  # noqa: PLC0415
 
-    found = _join_target(shared, folder, project)
+    found = _join_target(shared, folder, project, mine)
     me, shared_dir, dest, pid = found["me"], found["shared"], found["dest"], found["pid"]
     lead, chain, target, problems = found["lead"], found["chain"], found["target"], found["problems"]
     if expect_pi is not None and (signing.fingerprint(lead.key) if lead.key else "") != expect_pi:
@@ -988,8 +1102,9 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
         raise
     base = proposals.write_base(pid, dest.resolve(), _base_files(target),
                                 texts=_texts_for_base(shared_dir, dest, files), official=None)
+    record_installed(dest.resolve(), pid, sorted(files), target, lead.id)
     state = {
-        "format": FORMAT, "project": pid, "shared": str(shared_dir), "working_copy": str(dest.resolve()),
+        "format": FORMAT, "project": pid, "working_copy": str(dest.resolve()), **_state_layout(shared_dir),
         "pi": lead.id, "pi_key": signing.parse_public_key(lead.key) if lead.key else None,
         "pi_fingerprint": signing.fingerprint(lead.key) if lead.key else None,
         "trusted_on_first_join": _now_iso(now), "seq": target.seq, "manifest_sha256": target.sha256,
@@ -997,7 +1112,10 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
     }
     _write_state(pid, state)
     try:
-        ex_mod.configure(pid, shared_dir, dest)
+        if shared_dir.root is not None and not shared_dir.areas:
+            ex_mod.configure(pid, shared_dir.root, dest)
+        else:
+            ex_mod.configure_folders(pid, shared_dir, dest)
     except ExchangeError as exc:
         logger.warning("the shared folder was not remembered for %s: %s", pid, exc)
     team = snapshot_team(shared_dir, target) or ()
@@ -1006,8 +1124,106 @@ def join(shared: str | Path, folder: str | Path, *, now: Callable[[], datetime] 
         "working_copy": str(dest.resolve()), "project": pid, "seq": target.seq, "files": len(files),
         "pi": lead.id, "pi_fingerprint": state["pi_fingerprint"], "role": role, "base": base.snapshot,
         "trust": "first_use", "refused": chain.refused, "problems": [p.payload() for p in problems],
-        "warnings": warnings(lead.key),
+        "warnings": warnings(lead.key), "published": str(shared_dir.published), "mine": _mine_of(shared_dir, me),
     }
+
+
+def _mine_of(folders: "ex_mod.Folders", me: str | None) -> str | None:
+    found = folders.area_set_apart(me) if me else None
+    return str(found) if found is not None else None
+
+
+def _state_layout(folders: "ex_mod.Folders") -> dict[str, Any]:
+    """How a working copy's share state says where the shared drive is."""
+    out: dict[str, Any] = {"shared": str(folders.root) if folders.root is not None else None}
+    if folders.root is None:
+        out["published"] = str(folders.published)
+    if folders.areas:
+        out["areas"] = {m: str(p) for m, p in folders.areas}
+    return out
+
+
+def _area_words(folders: "ex_mod.Folders", me: str) -> str:
+    apart = folders.area_set_apart(me)
+    return str(apart) if apart is not None else f"{ex_mod.PROPOSALS_AREA}/{me}/"
+
+
+def set_member_folders(working_copy: str | Path, published: str | Path, mine: str | Path) -> dict[str, Any]:
+    """`researchos share set --published DIR --mine DIR` and 成员's two
+    choosers (12.13): a member on a personal OneDrive has `已发布/` and their
+    own `提议/<id>/` as two separate shortcuts. Checked before use: the
+    published folder holds this project's snapshots, signed by the PI this
+    copy trusts, including the one the copy is based on; the member can
+    write into their own folder (a probe file, created and removed). Only
+    this machine's settings are written -- the share state and
+    `projects.json`; nothing in either folder, nothing in the project."""
+    root = Path(working_copy)
+    pid, state = _joined(root)
+    me = _me()
+    for given in (published, mine):
+        if not Path(given).expanduser().is_absolute():
+            raise ShareError("invalid", "both folders are named by their full path", message_zh="请给出完整的文件夹路径")
+    folders = locate(published, mine=mine, me=me)
+    try:
+        ex_mod.check_folders(folders, root)
+    except ExchangeError as exc:
+        raise ShareError("invalid", str(exc), message_zh=exc.message_zh) from exc
+    if not folders.is_dir():
+        raise ShareError("unreachable", f"{folders.published} cannot be reached now",
+                         message_zh="公盘的已发布文件夹现在打不开：请确认它已经加到这台电脑的 OneDrive 里")
+    snaps, problems = read_snapshots(folders)
+    mine_snaps = [s for s in snaps if str(s.data.get("project")) == pid]
+    chain = verify_chain(folders, mine_snaps, pid, state["pi"], state.get("pi_key"))
+    if chain.last_good is None:
+        raise ShareError("nothing_published", f"{folders.published} holds no snapshot of project {pid} signed by "
+                                              f"{state['pi']}", details={"refused": chain.refused},
+                         message_zh="这个文件夹里没有这个项目经过 PI 签名的快照：请选 PI 共享给你的「已发布」文件夹")
+    have = next((s for s in chain.good if s.seq == state.get("seq")), None)
+    if have is None or have.sha256 != state.get("manifest_sha256"):
+        raise ShareError("untrusted", f"{folders.published} does not hold snapshot {state.get('seq')}, which this copy "
+                                      f"is based on", message_zh=f"这个文件夹里没有你的工作副本所依据的第 {state.get('seq')} 版")
+    _check_mine(folders, me)
+    state.update(_state_layout(folders))
+    if folders.root is not None:
+        state.pop("published", None)
+    _write_state(pid, state)
+    try:
+        ex_mod.configure_folders(pid, folders, root)
+    except ExchangeError as exc:
+        raise ShareError("invalid", str(exc), message_zh=exc.message_zh) from exc
+    return {"published": str(folders.published), "mine": _mine_of(folders, me), "shared": str(folders),
+            "seq": chain.last_good.seq, "problems": [p.payload() for p in problems], "refused": chain.refused}
+
+
+def set_member_area(official_root: str | Path, member: str, folder: str | Path) -> dict[str, Any]:
+    """`researchos share set --area MEMBER=DIR` (12.13): the PI keeps one
+    shared folder, but may record where a member's area is when it lives
+    elsewhere. Only this machine's `projects.json` is written."""
+    root = Path(official_root)
+    pid = _project_id(root)
+    _require_pi_team(root)
+    team = people.read_team(root)
+    if not any(m.id == member and m.role == "member" for m in team.members):
+        raise ShareError("invalid", f"{member} is not a member of this project", message_zh="这个人不在成员名单里")
+    folders = ex_mod.folders_for(pid)
+    if folders is None or folders.root is None:
+        raise ShareError("not_configured", "set the shared folder first: researchos share set DIR",
+                         message_zh="先设置公盘文件夹")
+    where = _absolute(folder)
+    if not where.is_dir():
+        raise ShareError("unreachable", f"{where} is not a folder that can be reached now", message_zh="找不到这个文件夹")
+    if ex_mod.nested(where, folders.published):
+        raise ShareError("invalid", f"{where} and the published folder must be separate",
+                         message_zh="成员的提议区不能在「已发布」文件夹里")
+    areas = {m: str(p) for m, p in folders.areas}
+    areas[member] = str(where)
+    updated = ex_mod.Folders(published=folders.published, proposals=folders.proposals,
+                             areas=tuple(sorted((m, Path(p)) for m, p in areas.items())), root=folders.root)
+    try:
+        ex_mod.configure_folders(pid, updated, root)
+    except ExchangeError as exc:
+        raise ShareError("invalid", str(exc), message_zh=exc.message_zh) from exc
+    return {"member": member, "area": str(where), "shared": str(folders.root)}
 
 
 def _check_working_location(dest: Path) -> None:
@@ -1039,7 +1255,7 @@ def available(root: str | Path) -> dict[str, Any]:
     latest good snapshot and what was refused."""
     root = Path(root)
     pid, state = _joined(root)
-    shared = Path(state["shared"])
+    shared = state_folders(state)
     snaps, problems = read_snapshots(shared)
     chain = verify_chain(shared, snaps, pid, state["pi"], state.get("pi_key"))
     have = next((s for s in chain.good if s.seq == state["seq"]), None)
@@ -1058,7 +1274,7 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
     seen = available(root)
     state, chain = seen["state"], seen["chain"]
     pid = state["project"]
-    seen_shared = Path(state["shared"])
+    seen_shared = state_folders(state)
     target = chain.last_good
     out: dict[str, Any] = {"from": state["seq"], "to": state["seq"], "update": [], "remove": [], "beside": [],
                            "kept": [], "records": [], "refused": chain.refused,
@@ -1078,7 +1294,7 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
         me = None
     out["sending"] = (outgoing_summary(_outgoing(root, state, base, me, out["problems"])) if me is not None
                       else outgoing_summary({}))
-    out["area"] = f"{ex_mod.PROPOSALS_AREA}/{me}/" if me else None
+    out["area"] = _area_words(seen_shared, me) if me else None
     if target is None or target.seq <= state["seq"]:
         out["up_to_date"] = True
         return out
@@ -1163,7 +1379,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
     seen = available(root)
     state, chain = seen["state"], seen["chain"]
     pid = state["project"]
-    shared = Path(state["shared"])
+    shared = state_folders(state)
     out: dict[str, Any] = {
         "from": state["seq"], "seq": state["seq"], "updated": [], "removed": [], "kept_yours": [], "conflicts": [],
         "problems": [p.payload() for p in seen["problems"]], "refused": chain.refused, "warnings": warnings(state.get("pi_key")),
@@ -1272,6 +1488,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         else:
             new_files[rel] = dict(kept)
     proposals.write_base(pid, root.resolve(), new_files, texts=texts, official=None)
+    record_installed(root, pid, out["updated"], target, target.data.get("by") or state.get("pi"))
     state.update(seq=target.seq, manifest_sha256=target.sha256, synced=_now_iso(now),
                  official_copies=sorted(c for c in copies if (root / c).exists()))
     _write_state(pid, state)
@@ -1297,22 +1514,32 @@ def proposals_fingerprint(path: Path) -> dict[str, Any] | None:
 
 
 def _difference(mine: Path, official: Path, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """The member's file against the official one put beside it: a line
+    diff for text; for a table (CSV, TSV) its rows and columns first, in
+    the screen's words (12.13), and the line diff below only when it is
+    small."""
     from researchos import proposals  # noqa: PLC0415
 
     try:
         size = mine.stat().st_size
     except OSError:
         size = None
-    a, b = proposals._text_of(mine, size), proposals._text_of(official, entry["size"])
-    if a is not None and b is not None:
-        diff, truncated = history.unified(a, b, "yours", "official")
-        return {"diff": diff, "truncated": truncated}
+    out: dict[str, Any] = {}
     try:
         sa = history.data_summary(mine, str(mine.name))
         sb = history.data_summary(official, str(mine.name))
     except OSError:
         sa = sb = None
-    return {"summary": history.table_sentence(sa, sb) if (sa or sb) else None}
+    if sa or sb:
+        out["summary"] = history.table_sentence(sa, sb, words=True)
+        out["table"] = True
+        out["table_small"] = max(int(size or 0), int(entry.get("size") or 0)) <= proposals.SMALL_TABLE_BYTES
+        if not out["table_small"]:
+            return out
+    a, b = proposals._text_of(mine, size), proposals._text_of(official, entry["size"])
+    if a is not None and b is not None:
+        out["diff"], out["truncated"] = history.unified(a, b, "yours", "official")
+    return out
 
 
 # -- notes and link judgments (12.4: no approval) ------------------------------------------------------------
@@ -1327,7 +1554,10 @@ def _travelling(rel: str) -> str | None:
 def _schema(name: str):
     from researchos.records import ledger as ledger_mod  # noqa: PLC0415
     from researchos.records import notes as notes_mod  # noqa: PLC0415
+    from researchos.records import papers as papers_mod  # noqa: PLC0415
 
+    if name == papers_mod.PAPERS_FILENAME:
+        return papers_mod.PAPERS_SCHEMA
     return notes_mod.NOTES_SCHEMA if name == "notes.toml" else ledger_mod.JUDGEMENT_SCHEMA
 
 
@@ -1461,6 +1691,7 @@ def outgoing_summary(going: Mapping[str, Any]) -> dict[str, int]:
     kinds = list(going.get("kinds") or [])
     links = going.get("links") or {}
     return {"notes": kinds.count("notes.toml"), "judgements": kinds.count("judgements.toml"),
+            "papers": kinds.count("papers.toml"),
             "links_added": len(links.get(PACKET_ADDED) or []), "links_removed": len(links.get(PACKET_REMOVED) or [])}
 
 
@@ -1534,7 +1765,7 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
     try:
         pid = _project_id(root)
         team = people.read_team(root)
-        shared_dir = Path(shared) if shared is not None else shared_for(pid, root)
+        shared_dir = ex_mod.as_folders(shared) if shared is not None else shared_for(pid, root)
         ex = ex_mod.LocalExchange(shared_dir, verifier=ex_mod.verifier_for(root, pid))
         members = [m.id for m in team.members if m.role == "member"]
         incoming: list[tuple[str, str, dict[str, Any]]] = []
@@ -1568,8 +1799,13 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
                     schema = _schema(name)
                     path = paths.project_dir(root) / name
                     for member, entry in batch:
-                        loaded, decision = (notes_mod.assess(conn, root, identity) if name == "notes.toml"
-                                            else judgements_mod.assess(conn, root, identity))
+                        if name == "papers.toml":
+                            from researchos.records import papers as papers_mod  # noqa: PLC0415
+
+                            loaded, decision = papers_mod.assess(root, identity)
+                        else:
+                            loaded, decision = (notes_mod.assess(conn, root, identity) if name == "notes.toml"
+                                                else judgements_mod.assess(conn, root, identity))
                         if not decision.may_write:
                             out["problems"].append({"kind": "ledger_untrusted", "path": name,
                                                     "detail": f"{decision.reason}: 成员的记录没有收进来"})
@@ -1820,7 +2056,11 @@ def ensure_member_area(shared: Path, member: str) -> str:
     """`提议/<member id>/`, made once (12.12): an empty folder created under
     a temporary name and renamed into place. "created", or "exists" -- an
     area already there is never touched, whatever it holds."""
-    area = ex_mod.LocalExchange(shared).member_area(member)
+    folders = ex_mod.as_folders(shared)
+    area = folders.area(member)
+    if folders.area_set_apart(member) is not None:
+        # 12.13: recorded elsewhere by the PI -- never made here.
+        return "exists" if area.is_dir() else "missing"
     if area.exists() or area.is_symlink():
         return "exists"
     parent = area.parent
@@ -1860,7 +2100,7 @@ def _member_areas(members: Iterable[people.Member], shared: Path | None) -> list
             out.append({"member": m.id, "state": "failed", "detail": str(exc)})
             continue
         item: dict[str, Any] = {"member": m.id, "state": state,
-                                "area": str(shared / ex_mod.PROPOSALS_AREA / m.id)}
+                                "area": str(ex_mod.as_folders(shared).area(m.id))}
         if state == "created":
             item.update(edit_rights_sentence(m.id, m.name))
         out.append(item)
@@ -1904,7 +2144,7 @@ def team_add(root: str | Path, member: str, name: str, key_text: str, *, role: s
             record_files.append_bytes(path, ("\n" + block).encode("utf-8"), expected_old=got.data)
         except record_files.RecordFileError as exc:
             raise ShareError("team_unreadable", str(exc)) from exc
-    shared = ex_mod.configured(_project_id(root))
+    shared = ex_mod.folders_for(_project_id(root))
     areas = _member_areas([m for m in people.read_team(root).members if m.id == member_id], shared)
     area = areas[0] if areas else {"member": member_id, "state": "failed"}
     out = {"path": str(path), "member": member_id, "name": name, "role": role, "fingerprint": signing.fingerprint(key),
@@ -1945,11 +2185,19 @@ def status(root: str | Path) -> dict[str, Any]:
     pid = _project_id(root)
     role, me, team = proposals.role_of(root)
     is_pi = team.state == "present" and team.pi is not None and team.pi.id == me
-    shared = ex_mod.configured(pid)
+    try:
+        state = None if is_pi else read_state(pid)
+    except ShareError:
+        state = None
+    joined_here = bool(state and Path(state.get("working_copy", "")) == root.resolve())
+    shared = state_folders(state) if joined_here and state else ex_mod.folders_for(pid)
     local = signing.local_public_key()
     out: dict[str, Any] = {
         "project": pid, "role": "pi" if is_pi else role, "me": me, "shared": str(shared) if shared else None,
         "reachable": bool(shared and shared.is_dir()), "ssh_keygen": signing.tool() is not None,
+        # 12.13: where each area is on this machine -- one shared folder, or
+        # a member's two folders; areas the PI recorded elsewhere.
+        "layout": shared.payload() if shared else None,
         "my_key": {"fingerprint": signing.fingerprint(local)} if local else None,
         "team": [{**m.payload(), "fingerprint": signing.fingerprint(m.key) if m.key else None} for m in team.members],
         "warnings": [],
@@ -1974,6 +2222,10 @@ def status(root: str | Path) -> dict[str, Any]:
             # 12.12: what 发布 (and 批准, which publishes) appends to the
             # official ledgers first, from the members' packets.
             out["incoming"] = incoming(root, shared, team)
+            out["areas"] = [{"member": m.id, "name": m.name, "area": str(shared.area(m.id)),
+                             "set_apart": shared.area_set_apart(m.id) is not None,
+                             "reachable": shared.area(m.id).is_dir()}
+                            for m in team.members if m.role == "member"]
             if role == "pi":
                 try:
                     listed = proposals.listing(root)
@@ -1981,17 +2233,16 @@ def status(root: str | Path) -> dict[str, Any]:
                 except Exception as exc:  # noqa: BLE001 -- a status never fails on the inbox
                     out["inbox_error"] = str(exc)
         return out
-    try:
-        state = read_state(pid)
-    except ShareError:
-        state = None
-    if state and Path(state.get("working_copy", "")) == root.resolve():
+    if joined_here and state:
         out["joined"] = {k: state.get(k) for k in ("seq", "pi", "pi_fingerprint", "trusted_on_first_join", "synced",
                                                     "official_copies")}
         # 12.3: each official copy put beside the member's file, with the
         # difference shown.
         out["joined"]["beside"] = _beside(root, state.get("official_copies") or [])
         out["warnings"] = warnings(state.get("pi_key"))
+        mine = shared.area_set_apart(me) if me else None
+        out["mine"] = {"path": str(mine), "reachable": mine.is_dir()} if mine is not None else None
+        out["two_folders"] = shared.root is None
         if out["reachable"]:
             seen = available(root)
             chain = seen["chain"]
@@ -2019,14 +2270,13 @@ def inbox_marker(root: Path) -> tuple[str, ...] | None:
         return None
     if team.state != "present" or team.pi is None or team.pi.id != me:
         return _published_marker(root, pid)
-    shared = ex_mod.configured(pid)
-    area = shared / ex_mod.PROPOSALS_AREA if shared else None
-    if area is None or not area.is_dir():
+    shared = ex_mod.folders_for(pid)
+    if shared is None or not shared.is_dir():
         return None
     names = []
-    for member in sorted(os.listdir(area)):
-        folder = area / member
-        if not people.is_member_id(member) or not folder.is_dir():
+    found, _problems = ex_mod.LocalExchange(shared).areas()
+    for member, folder in found:
+        if not folder.is_dir():
             continue
         for name in sorted(os.listdir(folder)):
             if ex_mod.PROPOSAL_ID_RE.match(name) and (folder / name / ex_mod.READY_FILE).exists():
@@ -2042,7 +2292,7 @@ def _published_marker(root: Path, pid: str) -> tuple[str, ...] | None:
         return None
     if not state or Path(str(state.get("working_copy", ""))) != Path(root).resolve():
         return None
-    published = published_dir(Path(str(state.get("shared", ""))))
+    published = published_dir(state_folders(state))
     if not published.is_dir():
         return None
     names: list[str] = []
@@ -2068,7 +2318,7 @@ def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
     taken)."""
     from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
 
-    out: dict[str, Any] = {"notes": 0, "judgements": 0, "links_added": 0, "links_removed": 0, "members": [],
+    out: dict[str, Any] = {"notes": 0, "judgements": 0, "papers": 0, "links_added": 0, "links_removed": 0, "members": [],
                            "removals": [], "files": []}
     try:
         pid = _project_id(root)
@@ -2097,7 +2347,7 @@ def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
                     fresh = [e for e in data.get(table) or [] if isinstance(e, dict)
                              and str(e.get("id")) not in official[name] and e.get("by") == member]
                     if fresh:
-                        out["notes" if name == "notes.toml" else "judgements"] += len(fresh)
+                        out[{"notes.toml": "notes", "papers.toml": "papers"}.get(name, "judgements")] += len(fresh)
                         touched.add(name)
                         took = True
                 if packet_id not in received and (data.get(PACKET_ADDED) or data.get(PACKET_REMOVED)):

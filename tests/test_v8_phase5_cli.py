@@ -356,7 +356,10 @@ def test_12_10_3_and_5_two_people_through_the_cli(tmp_path):
     dry = term.run("member", "propose", "attempt_new", "--sentence", "加一条大面板的尝试", work)
     # 12.12: the PI made the member's area, empty; a dry run puts nothing in it.
     assert "Dry run: nothing written" in dry.out and not [p for p in (shared / "提议").rglob("*") if p.is_file()]
-    sent = term.run("member", "propose", "attempt_new", "--sentence", "加一条大面板的尝试", "--yes", work)
+    # 12.13: a new attempt carries the files linked to it; the data file is offered, and added.
+    assert "not carried: data/big.bin -- not chosen for this proposal" in dry.out and "--add FILE" in dry.out
+    sent = term.run("member", "propose", "attempt_new", "--sentence", "加一条大面板的尝试", "--add", "data/big.bin",
+                    "--yes", work)
     assert "data/big.bin 209715200B (blob)" in sent.out
     [first] = _ids(term, "member", work, "pending")
     assert "My proposals: 1 pending" in term.run("member", "status", work).out

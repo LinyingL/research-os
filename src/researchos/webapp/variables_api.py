@@ -165,7 +165,24 @@ def _full(conn: Connection | None, root: Path, card: V.Card, dead: list[dict[str
             version["upstream"].append({"ref": pinned.label, "resolves": resolves,
                                         "unresolvable": None if resolves else V.UNRESOLVABLE})
     out["implementation"] = implementation.stored(conn).get(card.id) if card.readable else None
+    _name_authors(root, card, out)
     return out
+
+
+def _name_authors(root: Path, card: V.Card, out: dict[str, Any]) -> None:
+    """12.13: every entry of the card's log names its author as the team
+    (or me.toml) names them -- `by_label`, never the raw id; an entry
+    without `by` is the first researcher's -- and who approved it."""
+    from researchos import people  # noqa: PLC0415
+
+    team = people.read_team(root)
+    known = team if team.state == "present" else None
+    for item, entry in zip(out.get("history") or [], card.entries):
+        item["by"] = entry.data.get("by")
+        item["by_label"] = people.attribution(entry.data, known)["label"]
+        approved = entry.data.get("approved_by")
+        if isinstance(approved, str) and approved:
+            item["approved_by_label"] = people.attribution({"by": approved}, known)["label"]
 
 
 def list_payload(conn: Connection | None, root: Path) -> dict[str, Any]:

@@ -257,6 +257,7 @@ class Mapping:
     date: str | None = None
     index: int = 0
     line: int | None = None
+    by: str | None = None
 
     @property
     def from_id(self) -> str:
@@ -532,9 +533,11 @@ def _validate_entries(project_root: Path, raw_entries: list[Any], text: str) -> 
         elif date is not None and not isinstance(date, str):
             problems.append(MappingProblem(index, line, "bad_date", "'date' must be a date string; ignored"))
             date = None
+        by = entry.get("by")  # who drew it (12.12); commentary like `note`, never identity
         mappings.append(Mapping(
             from_path=from_path, to_path=to_path, type=edge_type,
             from_type=from_type, to_type=to_type, note=note, date=date, index=index, line=line,
+            by=by if isinstance(by, str) and by else None,
         ))
     return LoadResult(file_present=True, mappings=mappings, problems=problems)
 
@@ -642,6 +645,8 @@ def _ingest_mappings(conn: Connection, project_root: Path, sc: scan_mod.Scan) ->
             details["note"] = m.note
         if m.date is not None:
             details["date"] = m.date
+        if m.by is not None:
+            details["by"] = m.by
         db.upsert_edge(
             conn, m.src_id, m.dst_id, m.type, EXTRACTOR,
             evidence={"file": MAPPINGS_RELATIVE_PATH, "source": "human"},

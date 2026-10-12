@@ -2,8 +2,10 @@
 
 In a member's working copy, what differs from the official snapshot it was
 last synced to is that member's own work, not part of the official record.
-Every view marks it -- 「我的改动，尚未提交」, or 「提议中」 when a pending
-proposal of theirs carries exactly it -- and it never appears as official.
+Every view marks it -- 「我的改动，尚未提交」, 「提议中」 when a pending
+proposal of theirs carries exactly it, or 「已批准，待同步」 (12.13) when the
+PI approved a proposal that carries exactly it and the member has not
+synced since -- and it never appears as official.
 Nothing is dropped: a member's new script is still a node of their index,
 shown with its state.
 
@@ -20,8 +22,9 @@ shown with its state.
 
 and answers, for a file, an attempt-table row, a variable card or a node
 id: `official` (as in the base), `mine` (differs from it: added, changed
-or removed) or `proposed` (differs, and a pending proposal carries exactly
-this). The official version itself -- the PI's project, or one person's --
+or removed), `proposed` (differs, and a pending proposal carries exactly
+this) or `approved` (differs, and an approved proposal carries exactly
+this: the next sync brings it in as official). The official version itself -- the PI's project, or one person's --
 is `official` throughout and nothing is read.
 
 `annotate(view, payload)` adds the field `officialness` to every object of
@@ -37,8 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-OFFICIAL, MINE, PROPOSED = "official", "mine", "proposed"
-LABELS = {MINE: "我的改动，尚未提交", PROPOSED: "提议中"}
+OFFICIAL, MINE, PROPOSED, APPROVED = "official", "mine", "proposed", "approved"
+LABELS = {MINE: "我的改动，尚未提交", PROPOSED: "提议中", APPROVED: "已批准，待同步"}
 FIELD = "officialness"
 MODE_FIELD = "officialness_mode"
 FILE_PREFIXES = frozenset({"script", "dataset", "figure", "file"})
@@ -66,6 +69,8 @@ class View:
     proposed_files: dict[str, tuple[str | None, str]] = field(default_factory=dict)
     proposed_rows: dict[str, tuple[dict[str, str], str]] = field(default_factory=dict)
     proposed_cards: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    #: The state of each proposal named above: "pending" or "approved".
+    proposal_states: dict[str, str] = field(default_factory=dict)
     pending_known: bool = True
     problems: list[str] = field(default_factory=list)
 
@@ -74,6 +79,9 @@ class View:
     def _sha(self, rel: str, where: Mapping[str, Any]) -> str | None:
         got = where.get(rel)
         return got.get("sha256") if isinstance(got, Mapping) else got
+
+    def _carried_state(self, proposal: str) -> str:
+        return APPROVED if self.proposal_states.get(proposal) == "approved" else PROPOSED
 
     def file_state(self, rel: str | None) -> tuple[str, str | None]:
         """(state, proposal id) of a project-relative file."""
@@ -84,7 +92,7 @@ class View:
             return OFFICIAL, None
         carried = self.proposed_files.get(rel)
         if carried is not None and carried[0] == now:
-            return PROPOSED, carried[1]
+            return self._carried_state(carried[1]), carried[1]
         return MINE, None
 
     def attempt_state(self, table: str, number: str) -> tuple[str, str | None]:
@@ -95,7 +103,7 @@ class View:
             return OFFICIAL, None
         carried = self.proposed_rows.get(number)
         if carried is not None and now is not None and self._row_carried(now, then or {}, carried[0]):
-            return PROPOSED, carried[1]
+            return self._carried_state(carried[1]), carried[1]
         return MINE, None
 
     @staticmethod
@@ -122,7 +130,7 @@ class View:
             return OFFICIAL, None
         carried = self.proposed_cards.get(card)
         if carried is not None and changed == [carried[0]] and self.current.get(carried[0]) == carried[1]:
-            return PROPOSED, carried[2]
+            return self._carried_state(carried[2]), carried[2]
         return MINE, None
 
     def link_state(self, from_: str, to: str, kind: str) -> tuple[str, str | None]:
@@ -240,7 +248,10 @@ def _links(root: Path, base, out: View) -> None:
 
 
 def _pending(root: Path, pid: str, out: View) -> None:
-    """What the member's pending proposals carry (their own area only)."""
+    """What the member's pending proposals carry (their own area only) --
+    and their approved ones (12.13: 「已批准，待同步」 until the member's
+    next sync makes it official); a pending one wins where both carry the
+    same thing."""
     from researchos import exchange as exchange_mod  # noqa: PLC0415
     from researchos import people, proposals  # noqa: PLC0415
 
@@ -253,15 +264,19 @@ def _pending(root: Path, pid: str, out: View) -> None:
     except Exception:  # noqa: BLE001 -- no shared folder now: pending proposals are not known, said so
         out.pending_known = False
         return
+    carrying = []
     for stored in found:
-        data = stored.data
-        if data.get("project") != pid:
+        if stored.data.get("project") != pid:
             continue
         try:
-            if proposals.state_of(ex, stored, found)["state"] != "pending":
-                continue
+            state = proposals.state_of(ex, stored, found)["state"]
         except Exception:  # noqa: BLE001
             continue
+        if state in ("pending", "approved"):
+            carrying.append((0 if state == "approved" else 1, str(stored.data.get("at") or ""), state, stored))
+    for _order, _at, state, stored in sorted(carrying, key=lambda c: c[:2]):
+        data = stored.data
+        out.proposal_states[stored.id] = state
         for item in data.get("file") or []:
             if isinstance(item, dict) and isinstance(item.get("path"), str):
                 out.proposed_files[item["path"]] = (item.get("sha256") if item.get("action") != "removed" else None,

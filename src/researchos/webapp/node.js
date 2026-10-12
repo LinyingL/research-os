@@ -142,6 +142,13 @@
     return parts.join("，");
   }
 
+  // Where a version came from, in words; one 同步 installed names the
+  // publish it came from (12.13): 「随第 3 版发布同步」.
+  function sourceWords(v) {
+    if (v && v.source === "publish" && v.snapshot != null) return "随第 " + v.snapshot + " 版发布同步";
+    return (v && SOURCE_WORDS[v.source]) || "";
+  }
+
   // A table's first recorded version in words: 「3 行，列 month、topic」.
   function tableWords(summary) {
     if (!summary || typeof summary !== "object") return "";
@@ -169,6 +176,9 @@
     (links || []).forEach((l) => {
       const j = l.judgement;
       if (j && j.verdict && j.at && !l.human) out.push({ kind: "judgment", at: j.at, link: l, j: j });
+      // 12.13: a link drawn with 「关联文件」 / 「补上来源」, with the note written with it.
+      const m = l.human ? l.mapping : null;
+      if (m && (m.date || m.note)) out.push({ kind: "link", at: m.date || "", link: l, m: m });
     });
     out.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
     return out;
@@ -344,6 +354,13 @@
       if (d.basis) actions.appendChild(mkButton("当时的依据", "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
     if (page.type === "variable") actions.appendChild(mkButton("打开定义卡", "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
+    if (page.paper) {
+      // 12.13: a draft's own page marks it as the paper, or no longer.
+      actions.appendChild(paperButton(page.paper.draft, page.paper.marked, status, () => loadNode(views.node, true)));
+      marks.appendChild(mk("span", "status-label tone-" + (page.paper.marked ? "olive" : "plain"),
+        page.paper.marked ? "论文正文" : "不是论文正文"));
+      if (!head.contains(marks)) head.insertBefore(marks, actions.parentNode === head ? actions : null);
+    }
     if (actions.childElementCount) head.append(actions, status);
     host.appendChild(head);
     renderDetails(host, page);
@@ -744,7 +761,7 @@
           if (e.prev) diffs += 1;
         } else if (e.kind === "verdict") {
           main.appendChild(mk("div", "tl-what", e.words));
-          main.appendChild(mk("div", "tl-meta", [e.v.who_label, SOURCE_WORDS[e.v.source] || ""].filter(Boolean).join(" · ")));
+          main.appendChild(mk("div", "tl-meta", [e.v.who_label, sourceWords(e.v)].filter(Boolean).join(" · ")));
           if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", "经 " + (e.v.approved_by_label || e.v.approved_by) + " 批准"));
           if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
         } else if (e.kind === "card") {
@@ -754,6 +771,10 @@
           if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
         } else if (e.kind === "note") {
           renderNote(main, page, e.note, me);
+        } else if (e.kind === "link") {
+          main.appendChild(mk("div", "tl-what", "连线：" + linkSentence(e.link)));
+          main.appendChild(mk("div", "tl-meta", [e.m.by_label || "", "人工标注"].filter(Boolean).join(" · ")));
+          if (e.m.note) main.appendChild(mk("p", "tl-note", e.m.note));
         } else if (e.kind === "judgment") {
           main.appendChild(mk("div", "tl-what", (JUDGE_WORDS[e.j.verdict] || "判断了") + "这条关联：" + linkSentence(e.link)));
           if (e.j.at_label) main.appendChild(mk("div", "tl-meta", e.j.at_label));
@@ -774,7 +795,7 @@
     if (!e.prev) head.textContent = v.version === "worktree" ? "工作区里还没有提交的改动" : "最早记下的版本";
     else head.textContent = v.version === "worktree" ? "工作区里还没有提交的改动" : (v.kind === "data" ? "数据有改动" : "内容有改动");
     host.appendChild(head);
-    const meta = [v.who_label, SOURCE_WORDS[v.source] || ""];
+    const meta = [v.who_label, sourceWords(v)];
     if (v.approved_by) meta.push("经 " + (v.approved_by_label || v.approved_by) + " 批准");
     host.appendChild(mk("div", "tl-meta", meta.filter(Boolean).join(" · ")));
     if (v.note && v.version !== "worktree") host.appendChild(mk("p", "tl-note", v.note));
@@ -806,23 +827,13 @@
       return;
     }
     slot.innerHTML = "";
+    // 12.13: a table leads with its rows and columns; a small one shows its
+    // line diff below, a large one only says it was left out.
     const words = d.summary_words || "";
-    const isData = b.kind === "data" || a.kind === "data";
     if (words) slot.appendChild(mk("p", "tl-summary", words));
-    if (d.diff) {
-      const rows = diffRows(d.diff);
-      if (isData) {
-        const holder = mk("div");
-        const toggle = mkButton("逐行对比", "btn btn-small", () => {
-          toggle.remove();
-          holder.appendChild(diffBlock(rows, d.truncated));
-        });
-        holder.appendChild(toggle);
-        slot.appendChild(holder);
-      } else slot.appendChild(diffBlock(rows, d.truncated));
-    } else if (!words && d.same) {
-      slot.appendChild(mk("p", "tl-summary", "内容相同"));
-    }
+    if (d.diff) slot.appendChild(diffBlock(diffRows(d.diff), d.truncated));
+    else if (d.diff_left_out) slot.appendChild(mk("p", "node-sub", "表格较大：只比较行和列，不逐行对比。"));
+    else if (!words && d.same) slot.appendChild(mk("p", "tl-summary", "内容相同"));
   }
 
   function diffBlock(rows, truncated) {
@@ -879,10 +890,14 @@
     const c = ctx || (typeof RODesk !== "undefined" ? RODesk.context() : null);
     if (!c || c.mode !== "member") return "";
     const me = c.me && c.me.me ? c.me.me.id : "你的邮箱";
-    const what = { note: "这条笔记", link: "这条连线", judgment: "你的确认和否决", unlink: "这次删除" }[kind] || "这条记录";
+    const what = { note: "这条笔记", link: "这条连线", judgment: "你的确认和否决", unlink: "这次删除",
+      paper: "「设为论文正文」的标记" }[kind] || "这条记录";
     const then = kind === "unlink" ? "PI 下次发布时从正式的 mappings.toml 里删去这条连线"
-      : "PI 下次发布时加入" + (kind === "link" ? "正式的 mappings.toml" : "正式记录");
-    return what + "先记在你的工作副本里；下次同步时写入公盘的「提议/" + me + "/」，" + then + "，署你的名字，不需要批准。";
+      : "PI 下次发布时加入" + (kind === "link" ? "正式的 mappings.toml" : kind === "paper" ? "正式的 papers.toml" : "正式记录");
+    // 12.13: a member's own proposals folder may be a folder of its own.
+    const mine = c.share && c.share.mine && c.share.mine.path;
+    const where = mine ? "你自己的提议文件夹" : "公盘的「提议/" + me + "/」";
+    return what + "先记在你的工作副本里；下次同步时写入" + where + "，" + then + "，署你的名字，不需要批准。";
   }
 
   function noteForm(page, notes) {
@@ -1097,19 +1112,98 @@
     page.appendChild(figs);
     const claims = mk("section", "res-block");
     claims.appendChild(mk("h2", "desk-title", "论断"));
-    if (!data.claims.length) claims.appendChild(mk("p", "node-empty", "文稿里还没有找到带数字的论断。"));
-    else claims.appendChild(mk("p", "node-sub", "按文稿列出；展开一份文稿才载入它的论断。"));
-    data.claims.forEach((c) => claims.appendChild(draftClaims(c)));
+    renderPapers(claims, data);
     page.appendChild(claims);
     host.appendChild(page);
     host.dataset.loaded = "1";
     if (refresh) window.scrollTo(0, top);
   }
 
-  function draftClaims(c) {
+  // 12.13: 「设为论文正文」 / 「不再作为论文正文」 -- one entry appended to
+  // .researchos/papers.toml; in a member's copy it travels with the next sync.
+  function paperButton(draft, marked, status, done) {
+    const b = mkButton(marked ? "不再作为论文正文" : "设为论文正文", "btn btn-small", async () => {
+      b.disabled = true;
+      setStatus(status, "", "正在记下…");
+      try {
+        await apiPost("/api/papers", { draft: draft, marked: !marked });
+      } catch (err) {
+        b.disabled = false;
+        setStatus(status, "err", "没能记下", err);
+        return;
+      }
+      setStatus(status, "ok", marked ? "已不再作为论文正文。" : "已设为论文正文：成果会列出它的论断。");
+      if (done) done();
+    });
+    const blocked = humanRecordsBlocked();
+    if (blocked) { b.disabled = true; b.title = blocked; }
+    const travels = travelsWords("paper");
+    if (travels) b.title = (b.title ? b.title + "\n" : "") + travels;
+    return b;
+  }
+
+  // A quiet line chevron for disclosure (12.13), turned by CSS when open;
+  // the browser's own triangle is hidden.
+  function chevron() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("class", "res-chevron");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const p = document.createElementNS(SVG_NS, "path");
+    p.setAttribute("d", "M6 4l4 4-4 4");
+    svg.appendChild(p);
+    return svg;
+  }
+
+  // 12.13: every draft on its own line, with the mark; claims only under
+  // a draft marked 「设为论文正文」.
+  function renderPapers(section, data) {
+    const papers = data.papers || {};
+    const drafts = data.drafts || [];
+    const marked = drafts.filter((d) => d.marked);
+    if (papers.message) {
+      const p = mk("p", "trace-break");
+      renderBlockingError(p, papers.message, "");
+      section.appendChild(p);
+    }
+    if (!drafts.length) {
+      section.appendChild(mk("p", "node-empty", "还没有读到文稿。"));
+      return;
+    }
+    if (!marked.length) {
+      section.appendChild(mk("p", "node-sub", "成果只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——" +
+        "在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。"));
+    } else {
+      section.appendChild(mk("p", "node-sub", "只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。"));
+    }
+    const status = mk("div", "notice-status");
+    const list = mk("div", "res-drafts");
+    drafts.forEach((d) => list.appendChild(d.marked ? draftClaims(d, status) : draftLine(d, status)));
+    section.append(list, status);
+    const travels = travelsWords("paper");
+    if (travels) section.appendChild(mk("p", "node-sub writes", travels));
+  }
+
+  function draftLine(d, status) {
+    const row = mk("div", "res-draft res-draft-plain");
+    const head = mk("div", "res-draft-summary");
+    head.append(link(d.file, "mono", () => openNode(d.node), "打开这份文稿的页面"),
+      mk("span", "node-sub-inline", d.claims ? d.claims + " 处带数字的句子，不列出" : "没有带数字的句子"));
+    head.appendChild(paperButton(d.file, false, status, () => loadResults(views.results, true)));
+    row.appendChild(head);
+    return row;
+  }
+
+  function draftClaims(c, status) {
     const box = mk("details", "res-draft");
     const summary = mk("summary", "res-draft-summary");
-    summary.append(mk("span", "mono", c.file), mk("span", "node-sub-inline", c.count + " 条"));
+    summary.append(chevron(), mk("span", "mono", c.file), mk("span", "node-sub-inline", (c.claims != null ? c.claims : c.count) + " 条论断"));
+    if (status) {
+      const off = paperButton(c.file, true, status, () => loadResults(views.results, true));
+      off.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); }); // not a toggle
+      summary.appendChild(off);
+    }
     box.appendChild(summary);
     const body = mk("div", "res-draft-body");
     box.appendChild(body);
@@ -1248,6 +1342,6 @@
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
-    _tableWords: tableWords, _timeline: timeline, _inFilter: inFilter, _fileRelations: fileRelations,
+    _tableWords: tableWords, _timeline: timeline, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
   });
 })();

@@ -23,10 +23,20 @@ Its snapshot id is the manifest's hash (`snapshot_id`).
 writing anything, what differs from the base: the attempt-table row a new
 attempt adds or the verdict a row changes, a variable card's new version
 file, and the files added, changed or removed (`.researchos/` and the
-attempt table itself excepted: the table travels as rows). What it does
-not carry -- another new row, a change outside the table's rows -- is
-listed in `not_carried`, so nothing is dropped silently. The member sees
-it (the CLI's dry run) before `write_proposal` writes it.
+attempt table itself excepted: the table travels as rows). **What it
+carries depends on its kind** (12.13): a verdict change its row only; a
+new attempt its row and the files linked to that attempt (its step
+scripts, named by the row's description, and the files attached to it
+with 「关联文件」); a files proposal the files the member chose (all that
+differ, unless `only` names them); a variable version its version file.
+`only` -- the member's own choice -- replaces the kind's default; `add`
+and `leave` add files to it or untick them. Every file that differs is in the preview's
+`candidates`, with whether it is carried, whether it is linked to the
+attempt, and whether it was part of one of the member's returned
+proposals (`returned`). What it does not carry -- a file not chosen,
+another new row, a change outside the table's rows -- is listed in
+`not_carried`, so nothing is dropped silently. The member sees it (the
+CLI's dry run) before `write_proposal` writes it.
 
 The kinds, and what each carries besides its files:
 
@@ -160,7 +170,7 @@ APPROVED_BACKUPS = "approved"
 ROW_FIELDS = ("date", "description", "variables", "result", "verdict")
 #: The record files a working copy starts with (besides `variables/`).
 _RECORD_FILES = ("project.toml", "attempts.toml", "mappings.toml", "team.toml", "judgements.toml", "notes.toml",
-                 "decisions.toml", "canvas.json")
+                 "decisions.toml", "canvas.json", "papers.toml")
 
 _PROPOSAL_HEADER = "# 一份提议：成员工作副本里的改动，PI 批准后才进入正式版本。由 Research OS 写入，写成后不再改动。\n"
 _OUTCOME_HEADER = "# PI 对一份提议的答复。由 Research OS 写入，写成后不再改动。\n"
@@ -602,6 +612,50 @@ def _file_changes(root: Path, base: Base, work: Mapping[str, Mapping[str, Any]],
     return changes
 
 
+def attempt_files(root: Path, config, number: str, description: str) -> set[str]:
+    """The files linked to attempt `number` in the copy as it is (12.13):
+    the step scripts its description names, resolved in `steps_dir` the
+    way the attempts ingest does (never guessed), and the files a
+    `belongs_to` mapping attaches to it (「关联文件」). Reads only."""
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    found: set[str] = set()
+    steps_dir = getattr(config, "steps_dir", None)
+    if steps_dir:
+        refs = attempts_ingest._extract_step_refs(description or "")
+        names, _broken = attempts_ingest._resolve_step_files(root / steps_dir, refs)
+        found |= {posixpath.normpath(f"{steps_dir.rstrip('/')}/{name}") for name in names}
+    try:
+        text = (root / mappings_ingest.MAPPINGS_RELATIVE_PATH).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = None
+    target = f"{config.file}#{number}"
+    for frm, to, kind in mappings_ingest._entries_by_key(root, text):
+        if kind == mappings_ingest.ATTEMPT_LINK and to == target:
+            found.add(frm)
+    return found
+
+
+def _returned_paths(root: Path, pid: str, me: str) -> dict[str, list[str]]:
+    """Each file that was part of one of my returned proposals, with those
+    proposals' ids (12.13: flagged when it is proposed again). Nothing when
+    the shared folder cannot be read now."""
+    out: dict[str, list[str]] = {}
+    try:
+        ex = exchange_mod.for_project(pid, root)
+        found = ex.list_proposals(me).proposals
+        for stored in found:
+            if stored.data.get("project") != pid or state_of(ex, stored, found)["state"] != "returned":
+                continue
+            for item in stored.data.get("file") or []:
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    out.setdefault(item["path"], []).append(stored.id)
+    except Exception:  # noqa: BLE001 -- no shared folder now: nothing flagged, nothing wrong
+        return {}
+    return out
+
+
 def _pick(candidates: list[str], given: str | None, what: str) -> str:
     if given is not None:
         if given not in candidates:
@@ -626,6 +680,8 @@ def make_proposal(
     attested: str | None = None,
     only: Iterable[str] | None = None,
     supersedes: str | None = None,
+    add: Iterable[str] | None = None,
+    leave: Iterable[str] | None = None,
 ) -> Draft:
     """What a proposal of `kind` from `working_copy` would carry (module
     docstring). Reads only."""
@@ -652,6 +708,7 @@ def make_proposal(
         data["supersedes"] = supersedes
     not_carried: list[dict[str, str]] = []
     preview: dict[str, Any] = {}
+    linked: set[str] = set()
 
     # The attempt table travels as rows.
     if table is not None and (table in base.files or table in work):
@@ -668,6 +725,7 @@ def make_proposal(
                 chosen = _pick(new_rows, number, "new attempt row")
                 data["attempt"] = {"number": chosen, **work_rows[chosen], "table_base_sha256": table_base}
                 carried.add(chosen)
+                linked = attempt_files(root, config, chosen, work_rows[chosen].get("description") or "")
             elif kind == "verdict_change":
                 verdicts = [n for n in changed if work_rows[n]["verdict"] != base_rows[n]["verdict"]]
                 chosen = _pick(verdicts, number, "attempt verdict")
@@ -742,9 +800,23 @@ def make_proposal(
                   else "canvas arrangements do not travel: each person keeps their own" if name == share.CANVAS_NAME
                   else "Research OS's own record files are not part of a proposal")
         not_carried.append({"path": rel, "reason": reason})
-    files = _file_changes(root, base, work, skip=skip, only=set(only) if only is not None else None)
+    candidates = _file_changes(root, base, work, skip=skip, only=None)
+    if only is not None:
+        chosen_paths = set(only)
+    elif kind == "attempt_new":
+        chosen_paths = linked
+    elif kind == "files":
+        chosen_paths = {c["path"] for c in candidates}
+    else:  # a verdict change carries its row only; a variable version its version file
+        chosen_paths = set()
+    # The member's own choice on top of the kind's: files added, files unticked.
+    chosen_paths = (set(chosen_paths) | set(add or ())) - set(leave or ())
+    files = [c for c in candidates if c["path"] in chosen_paths]
     if kind == "files" and not files:
-        raise ProposalRefused("nothing", "no file differs from the official version")
+        raise ProposalRefused("nothing", "no file differs from the official version" if not candidates
+                              else "no file is chosen for this proposal")
+    not_carried += [{"path": c["path"], "reason": "not chosen for this proposal"}
+                    for c in candidates if c["path"] not in chosen_paths]
     data["file"] = files
     if not_carried:
         data["not_carried"] = not_carried
@@ -760,6 +832,12 @@ def make_proposal(
     if "variable" in data:
         draft.texts[data["variable"]["file"]] = root / data["variable"]["file"]
     preview["files"] = [_member_file_preview(root, base, item) for item in files]
+    returned = _returned_paths(root, pid, me) if candidates else {}
+    preview["candidates"] = [
+        {**{k: c.get(k) for k in ("path", "action", "size", "store")}, "chosen": c["path"] in chosen_paths,
+         "linked": c["path"] in linked, "returned": returned.get(c["path"], [])}
+        for c in candidates
+    ]
     draft.preview = preview
     return draft
 
@@ -1166,9 +1244,15 @@ def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
     return out
 
 
+SMALL_TABLE_BYTES = 64 * 1024  # 12.13: a table this small also shows its line diff, below its summary
+
+
 def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]) -> None:
     """A line diff for text; for data, size, fingerprint and -- for tables
-    -- rows and columns (12.3)."""
+    -- rows and columns (12.3). Every sentence also in the screen's words
+    (`*_words`, 12.13: never an arrow); the command line keeps its own. A
+    table (CSV, TSV) leads with its rows and columns; its line diff is
+    kept only when it is small (`table_small`)."""
     old_path = root / rel
     old_text = _text_of(old_path, out.get("official_size")) if out.get("official_sha256") else ""
     if item["action"] == "removed":
@@ -1188,6 +1272,9 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
         if before or after:
             out["table"] = (history.table_sentence(before, after) if before and after
                             else history.table_shape(after or before))
+            out["table_words"] = (history.table_sentence(before, after, words=True) if before and after
+                                  else history.table_shape(after or before))
+            out["table_small"] = max(int(out.get("official_size") or 0), int(item.get("size") or 0)) <= SMALL_TABLE_BYTES
         return
     try:
         a = history.data_summary(old_path, rel) if out.get("official_sha256") else None
@@ -1195,10 +1282,15 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
     except OSError:
         a = b = None
     out["summary"] = history.table_sentence(a, b) if (a or b) else None
+    out["summary_words"] = history.table_sentence(a, b, words=True) if (a or b) else None
     if b and not a:
-        out["table"] = history.table_shape(b)
-    sizes = f"{out.get('official_size') if out.get('official_size') is not None else '—'} → {item.get('size') if item.get('size') is not None else '—'} 字节"
+        out["table"] = out["table_words"] = history.table_shape(b)
+    official_size = out.get("official_size") if out.get("official_size") is not None else "—"
+    size = item.get("size") if item.get("size") is not None else "—"
+    sizes = f"{official_size} → {size} 字节"
     out["sentence"] = (out["summary"] + "；" if out.get("summary") else "") + f"大小 {sizes}"
+    moved = (f"大小从 {official_size} 变为 {size} 字节" if official_size != size else f"大小不变（{size} 字节）")
+    out["sentence_words"] = (out["summary_words"] + "；" if out.get("summary_words") else "") + moved
 
 
 def abandon_result(result: str, reason: str | None, verdict: str) -> str:
@@ -1252,7 +1344,7 @@ def _table_at(root: Path, config, sha: Any) -> str | None:
         data = None
         from researchos import share  # noqa: PLC0415
 
-        shared = exchange_mod.configured(pid)
+        shared = exchange_mod.folders_for(pid)
         try:
             snaps, _problems = share.read_snapshots(shared) if shared is not None else ([], [])
             for snap in reversed(snaps):
@@ -1927,7 +2019,7 @@ def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: flo
     from researchos import share  # noqa: PLC0415
 
     try:
-        return share.publish(root, shared=ex.root, note=note, expected_id=expected_id, timeout=timeout)
+        return share.publish(root, shared=ex.folders, note=note, expected_id=expected_id, timeout=timeout)
     except share.ShareError as exc:
         return {"published": False, "error": exc.code, "message": exc.message_zh, "detail": str(exc)}
     except Exception as exc:  # noqa: BLE001 -- see the docstring

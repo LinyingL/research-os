@@ -198,6 +198,16 @@ def _read_entries() -> list[dict[str, str]]:
             # 12.2 (V8 phase 4): the project's shared folder on THIS machine
             # -- per machine, never in the project.
             item["shared"] = entry["shared"]
+        if item["id"] is not None:
+            # 12.13: a member's two folders (the published one, their own
+            # proposals folder), and areas the PI recorded elsewhere.
+            if isinstance(entry.get("published"), str) and entry["published"]:
+                item["published"] = entry["published"]
+            areas = entry.get("areas")
+            if isinstance(areas, dict):
+                kept = {k: v for k, v in areas.items() if isinstance(k, str) and isinstance(v, str) and k and v}
+                if kept:
+                    item["areas"] = kept  # type: ignore[assignment]
         entries.append(item)
     return entries
 
@@ -279,8 +289,9 @@ def register(path: Path, project_id: str | None = None, *, label: str | None = N
             entry = existing
         elif existing is not None:
             entry = {"id": project_id, "path": resolved, "label": _label_after_move(existing, resolved)}
-            if existing.get("shared"):
-                entry["shared"] = existing["shared"]
+            for key in SHARED_KEYS:
+                if existing.get(key):
+                    entry[key] = existing[key]
         else:
             entry = {"id": project_id, "path": resolved, "label": Path(resolved).name}
         if label is not None:
@@ -381,6 +392,34 @@ def _label_after_move(entry: dict, new_path: str) -> str:
     return label
 
 
+#: The keys of a project's entry that say where its shared drive is (12.2, 12.13).
+SHARED_KEYS = ("shared", "published", "areas")
+
+
+def set_layout(project_id: str, *, shared: str | None, published: str | None = None,
+               areas: dict[str, str] | None = None) -> bool:
+    """Set where the project's shared drive is on this machine, all at once
+    (12.13): `shared` (one folder), or `published` with the member's own
+    area in `areas` (two folders), and areas the PI recorded elsewhere.
+    Returns whether an entry was there to carry it."""
+    found: list[bool] = []
+
+    def change(entries: list[dict]) -> bool:
+        existing = next((e for e in entries if e.get("id") == project_id), None)
+        if existing is None:
+            return False
+        found.append(True)
+        for key, value in (("shared", shared), ("published", published), ("areas", areas or None)):
+            if value:
+                existing[key] = value
+            else:
+                existing.pop(key, None)
+        return True
+
+    _update(change)
+    return bool(found)
+
+
 def set_shared(project_id: str, shared: str | None) -> bool:
     """Set (or, with None, clear) the shared folder of the entry for
     `project_id` (DESIGN.md 12.2: a path per machine, never in the
@@ -396,6 +435,7 @@ def set_shared(project_id: str, shared: str | None) -> bool:
             existing["shared"] = shared
         else:
             existing.pop("shared", None)
+        existing.pop("published", None)  # one shared folder again: the published folder is inside it
         return True
 
     _update(change)

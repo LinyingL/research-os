@@ -3388,6 +3388,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     ))
                 payload["generation"] = self.server.watcher.record_write({str(notes_mod.notes_path(served.root))})
                 self._send_json(200, payload)
+            elif parsed.path == "/api/papers":
+                # 12.13: 「设为论文正文」 -- one entry appended to
+                # .researchos/papers.toml (`researchos.records.papers`, which
+                # takes the project lock and re-checks identity).
+                from researchos.records import papers as papers_mod  # noqa: PLC0415
+
+                body = self._read_json_object()
+                served = self._served()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.papers_post_payload(
+                        served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S,
+                    ))
+                payload["generation"] = self.server.watcher.record_write({str(papers_mod.papers_path(served.root))})
+                self._send_json(200, payload)
             elif parsed.path == "/api/proposals":
                 # 12.3: a proposal from this working copy -- the dry run, or
                 # (with `write`) written once to the exchange. Writes nothing

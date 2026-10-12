@@ -619,8 +619,16 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-main .node-link.claim { font-size: 0.84rem; border-bottom-color: var(--line); }
 .res-path { font-size: 0.74rem; color: var(--ink-soft); word-break: break-all; }
 .res-draft { border-bottom: 1px solid var(--line); }
-.res-draft-summary { display: list-item; cursor: pointer; padding: 0.5rem 0.3rem; font-size: 0.86rem; }
-.res-draft-summary > span { margin-right: 0.6rem; }
+/* 12.13: a quiet line chevron for disclosure; the browser's triangle is hidden. */
+.res-draft-summary { display: flex; align-items: center; gap: 0.6rem; list-style: none; cursor: pointer; padding: 0.5rem 0.3rem; font-size: 0.86rem; }
+.res-draft-summary::-webkit-details-marker { display: none; }
+.res-draft-summary::marker { content: ""; }
+.res-draft-summary > .btn { margin-left: auto; }
+.res-draft-plain > .res-draft-summary { cursor: default; padding-left: calc(0.3rem + 12px + 0.6rem); }
+.res-draft-plain > .res-draft-summary:hover { background: none; }
+.res-chevron { width: 12px; height: 12px; flex: none; fill: none; stroke: var(--ink-soft); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+.res-draft[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.draft-file.left-out .mono { color: var(--ink-soft); }
 .res-draft-summary:hover { background: var(--paper-alt); }
 .res-draft-summary:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
 .res-draft-body { padding: 0 0 0.8rem 1.4rem; }
@@ -4229,7 +4237,9 @@ function coverageLine(item, kind) {
 function cardActText(entry) {
   const what = (ACT_WORDS[entry.act] || entry.act) + (entry.version ? " v" + entry.version : "");
   const via = VIA_WORDS_CARD[entry.via] ? "（" + VIA_WORDS_CARD[entry.via] + "）" : "";
-  return atText(entry.at) + " · " + what + via;
+  // 12.13: who, by the name the team gives them.
+  const who = entry.by_label ? " · " + entry.by_label + (entry.approved_by_label ? "，经 " + entry.approved_by_label + " 批准" : "") : "";
+  return atText(entry.at) + " · " + what + via + who;
 }
 // -- end of variable wording ----------------------------------------------------
 

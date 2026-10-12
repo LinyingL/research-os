@@ -114,19 +114,15 @@ def _line_counts(store: history.Store, old_sha: str | None, new_sha: str | None)
     return added, removed
 
 
-def _words(sentence: str | None) -> str | None:
-    """12.11: an engine sentence shown on the desk says its relation in
-    words -- 「行数 96 改为 97」, never an arrow."""
-    return None if sentence is None else sentence.replace(" → ", " 改为 ").replace("→", "改为")
-
-
 def _file_what(store: history.Store, before: sqlite3.Row | None, latest: sqlite3.Row) -> str:
     if before is None:
         return "新文件"
     if latest["kind"] == "data" or before["kind"] == "data":
-        sentence = history.table_sentence(json.loads(before["summary"] or "{}"), json.loads(latest["summary"] or "{}"))
+        # 12.13: the engine's word form -- 「行数从 96 增至 97」, never an arrow.
+        sentence = history.table_sentence(json.loads(before["summary"] or "{}"), json.loads(latest["summary"] or "{}"),
+                                          words=True)
         if sentence:
-            return _words(sentence) or "内容有改动"
+            return sentence
     if latest["stored"] and before["stored"]:
         counts = _line_counts(store, before["sha256"], latest["sha256"])
         if counts is not None:
@@ -135,7 +131,7 @@ def _file_what(store: history.Store, before: sqlite3.Row | None, latest: sqlite3
                 parts = ([f"增加 {added} 行"] if added else []) + ([f"删去 {removed} 行"] if removed else [])
                 return "，".join(parts)
     if before["size"] is not None and latest["size"] is not None and before["size"] != latest["size"]:
-        return f"大小 {before['size']} 字节改为 {latest['size']} 字节"
+        return f"大小从 {before['size']} 变为 {latest['size']} 字节"
     return "内容有改动"
 
 
@@ -174,7 +170,8 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             first_seen = _parse(versions[0]["at"])
             # The first version the first scan of its kind recorded is the
             # baseline, not a change (module docstring).
-            base = (versions[0]["source"] == "scan" and first_seen is not None and group in baseline
+            # A first version 加入 installed (`publish`) is a baseline too.
+            base = (versions[0]["source"] in ("scan", "publish") and first_seen is not None and group in baseline
                     and first_seen - baseline[group] < BASELINE_WINDOW)
             recent = [(i, v) for i, v in enumerate(versions)
                       if (_parse(v["at"]) or since) > since and not (i == 0 and base)]
@@ -189,7 +186,7 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             item: dict[str, Any] = {
                 "node": node, "at": latest["at"], "who": whos, "notes": list(dict.fromkeys(notes)),
                 "approved_by": [_who(a, team) for a in dict.fromkeys(approved)], "versions": len(window),
-                "source": latest["source"],
+                "source": latest["source"], "snapshot": latest["snapshot"],
             }
             if group == "attempt":
                 new = json.loads(latest["summary"] or "{}")

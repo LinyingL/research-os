@@ -16,8 +16,12 @@ the files -- nothing here writes:
   attempt's page, its files.
 - `results(conn, root, draft=None)` -- 成果: the figures and tables the
   drafts include, grouped by draft section, figures no draft includes, and
-  the drafts' claims (per draft, on request: a draft can hold hundreds),
-  each with its trace state 完整 / 缺来源 / 缺尝试.
+  the claims of the drafts marked 「设为论文正文」 only (12.13,
+  `researchos.records.papers`: a draft's revision log or review notes hold
+  numbers that are not the paper's claims) -- per draft, on request: a
+  draft can hold hundreds -- each with its trace state 完整 / 缺来源 /
+  缺尝试. Every draft is listed with whether it is marked, so the page
+  can offer the mark on its line.
 - `data_code(conn, root)` -- 数据与代码: every script and data file with what
   it reads and writes, and which of the lineage report's blocks it is in
   (无来源的输入 / 断链 / 同名拷贝), so the page can filter.
@@ -171,7 +175,25 @@ def _file_choices(conn: Connection, root: Path, types: tuple[str, ...]) -> list[
 # -- the links touching a node (判断) ---------------------------------------------------------
 
 
-def _links(conn: Connection, node_id: str, flags: judgements.LinkFlags) -> list[dict[str, Any]]:
+def _team(root: Path) -> Any:
+    from researchos import people  # noqa: PLC0415
+
+    try:
+        team = people.read_team(root)
+    except Exception:  # noqa: BLE001 -- a name is a nicety; the id stays
+        return None
+    return team if team.state == "present" else None
+
+
+def _person(team: Any, member: str) -> str:
+    """A person as every view names them (12.13): by their name."""
+    from researchos import people  # noqa: PLC0415
+
+    return people.attribution({"by": member}, team)["label"]
+
+
+def _links(conn: Connection, node_id: str, flags: judgements.LinkFlags,
+           root_people: Any = None) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for edge in db.query_edges(conn, src=node_id) + db.query_edges(conn, dst=node_id):
         key = judgements.key_of(edge)
@@ -186,6 +208,14 @@ def _links(conn: Connection, node_id: str, flags: judgements.LinkFlags) -> list[
         item["src_label"] = _label(conn, edge["src"])
         item["dst_label"] = _label(conn, edge["dst"])
         item["other"] = {"id": other, "type": _type_of(other), "path": notes_mod.node_path(other)}
+        if item["human"]:
+            # 12.13: the note written with 「关联文件」 / 「补上来源」 goes into the
+            # node's change timeline with the link -- its note, its date, who drew it.
+            drawn = (edge["evidence"] or {}).get("mapping") if isinstance(edge["evidence"], dict) else None
+            if isinstance(drawn, dict):
+                item["mapping"] = {k: drawn.get(k) for k in ("note", "date", "by") if drawn.get(k)}
+                if drawn.get("by"):
+                    item["mapping"]["by_label"] = _person(root_people, drawn["by"])
         occurrences = trace_mod._occurrences(edge["evidence"])
         item["evidence"] = [{"file": o.get("file"), "line": o.get("line"), "callee": o.get("callee")}
                             for o in occurrences[:5] if o.get("line") is not None]
@@ -519,6 +549,9 @@ def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, An
         out["trace"] = _attempt_trace(conn, root, record, flags)
         out["choices"] = {"files": _file_choices(conn, root, ("script", "dataset", "figure"))}
     elif prefix in FILE_NODE_TYPES:
+        if prefix == "file" and path is not None and path in _draft_files(conn):
+            # 12.13: a draft's page offers 「设为论文正文」 too.
+            out["paper"] = {"draft": path, "marked": path in _marked(root)["drafts"]}
         chain = trace_mod.chain(conn, root, node_id)
         out["trace"] = _columns_from_chain(conn, root, node_id, chain, flags)
         out["choices"] = {"attempts": _attempt_choices(conn, root)}
@@ -540,7 +573,7 @@ def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, An
         elif prefix == "section":
             out["details"] = {"level": record["attrs"].get("level")}
         out["trace"] = _text_trace(conn, root, node_id, record, flags)
-    out["links"] = _links(conn, node_id, flags)
+    out["links"] = _links(conn, node_id, flags, _team(root))
     out["review"] = sum(1 for link in out["links"] if link.get("review") or link.get("conflict"))
     return out
 
@@ -617,12 +650,40 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         file = _file_of(claim["id"])
         if file:
             counts[file] = counts.get(file, 0) + 1
+    papers = _marked(root)
+    marked = set(papers["drafts"])
+    drafts = sorted(_draft_files(conn) | set(counts))
     return {
         "sections": ordered,
         "loose": sorted(loose, key=lambda i: i["path"] or i["id"]),
-        "claims": [{"file": f, "count": n} for f, n in sorted(counts.items())],
+        # 12.13: claims only from the drafts marked 「设为论文正文」.
+        "claims": [{"file": f, "count": counts[f]} for f in drafts if f in marked and f in counts],
+        "drafts": [{"file": f, "marked": f in marked, "claims": counts.get(f, 0), "node": notes_mod.normalize_node(f)} for f in drafts],
+        "papers": {"marked": sorted(marked), "trusted": papers["trusted"], "message": papers["message"],
+                   "path": papers["path"]},
         "states": TRACE_STATES,
     }
+
+
+def _marked(root: Path) -> dict[str, Any]:
+    from researchos.records import papers  # noqa: PLC0415
+
+    try:
+        return papers.marked(root)
+    except Exception as exc:  # noqa: BLE001 -- 成果 still lists figures and tables
+        return {"drafts": [], "trusted": False, "message": f"论文正文记录文件无法读取：{exc}",
+                "path": f".researchos/{papers.PAPERS_FILENAME}"}
+
+
+def _draft_files(conn: Connection) -> set[str]:
+    """Every draft the index read: the files its sections and claims are in."""
+    found: set[str] = set()
+    for kind in ("section", "claim"):
+        for row in conn.execute("SELECT id FROM nodes WHERE type = ?", (kind,)).fetchall():
+            file = _file_of(row[0])
+            if file:
+                found.add(file)
+    return found
 
 
 def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
@@ -915,7 +976,7 @@ def _published_content(project_id: str, rel: str, sha256: str) -> bytes | None:
     from researchos import share  # noqa: PLC0415
 
     try:
-        shared = exchange_mod.configured(project_id)
+        shared = exchange_mod.folders_for(project_id)
         if shared is None:
             return None
         snaps, _problems = share.read_snapshots(shared)

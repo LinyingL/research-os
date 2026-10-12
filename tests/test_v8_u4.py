@@ -148,12 +148,15 @@ def test_u4_a_proposal_page_says_its_variable_versions_and_not_carried_changes_i
         _member_new_attempt(drive)
         (drive.work / "data" / "raw.csv").write_text("id,x\n1,2\n2,3\n")
         (drive.work / "map.md").write_text((drive.work / "map.md").read_text() + "| 19 | 08-03 | Another | a |  | 🕒 |\n")
-        draft = node_api.proposal_create_payload(drive.work, {"kind": "attempt_new", "sentence": "大面板", "number": "18"})
+        chosen = ["steps/18-big.py", "data/big.bin", "data/raw.csv"]  # 12.13: the member adds two files
+        draft = node_api.proposal_create_payload(drive.work, {"kind": "attempt_new", "sentence": "大面板", "number": "18",
+                                                              "only": chosen})
         reasons = [n["reason_zh"] for n in draft["proposal"]["not_carried"]]
         assert "尝试表第 19 行（新增）不在这份提议里" in reasons
         assert draft["proposal"]["attempt"]["verdict_status"]["label"] == "待定"
         written = node_api.proposal_create_payload(drive.work, {"kind": "attempt_new", "sentence": "大面板", "number": "18",
-                                                                "write": True, "expected": draft["fingerprint"]})
+                                                                "only": chosen, "write": True,
+                                                                "expected": draft["fingerprint"]})
     with drive.pi():
         page = node_api.proposal_payload(drive.official, written["id"])
         uses = {(u["card"], u["path"]) for u in page["uses"]}

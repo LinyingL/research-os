@@ -338,6 +338,11 @@ def test_8_8_a_timeline_names_the_member_and_the_pi_and_nobody_recorded_is_the_f
         assert table[-1]["who_label"] == "最初的研究者"
     with drive.member():
         assert cli.main(["ingest", str(drive.work)]) == 0
+        # 12.13: a version 加入/同步 installed is the publish's -- the PI and the snapshot.
+        [joined] = history.versions(drive.work, "steps/16-build.py")["versions"]
+        assert joined["who_label"] == PI[0] and joined["source"] == "publish" and joined["snapshot"] == 1
+        (drive.work / "steps" / "16-build.py").write_text("print('mine')\n")
+        assert cli.main(["ingest", str(drive.work)]) == 0
         assert history.versions(drive.work, "steps/16-build.py")["versions"][0]["who_label"] == "本机"
     node_js = (WEBAPP / "node.js").read_text(encoding="utf-8")
     assert "本机扫描时记下" not in node_js and node_js.count("approved_by_label || ") == 2
@@ -382,9 +387,9 @@ def test_12_12_the_publish_and_sync_previews_name_the_packets(drive):
         mi.delete_mapping(drive.work, *PI_LINK)
         preview = share.sync_preview(drive.work)
         assert preview["up_to_date"] and preview["area"] == f"提议/{MEMBER[1]}/"
-        assert preview["sending"] == {"notes": 1, "judgements": 0, "links_added": 1, "links_removed": 1}
+        assert preview["sending"] == {"notes": 1, "judgements": 0, "papers": 0, "links_added": 1, "links_removed": 1}
         assert share.sync(drive.work)["entries_sent"] == 3
-        assert share.sync_preview(drive.work)["sending"] == {"notes": 0, "judgements": 0, "links_added": 0,
+        assert share.sync_preview(drive.work)["sending"] == {"notes": 0, "judgements": 0, "papers": 0, "links_added": 0,
                                                              "links_removed": 0}
     with drive.pi():
         coming = share.status(drive.official)["incoming"]

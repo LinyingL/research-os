@@ -293,7 +293,7 @@ def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
     by_node = {c["node"]: c for c in out["changes"]}
     assert by_node["script:steps/16-build.py"]["what"] == "增加 1 行"
     table = by_node["dataset:data/panel.csv"]["what"]
-    assert "行数 96 改为 97" in table and "新增列 log_ret" in table and "→" not in table
+    assert "行数从 96 增至 97" in table and "新增列 log_ret" in table and "→" not in table
     assert by_node["figure:figs/fig3.png"]["what"] == "新文件"
     attempt = by_node["attempt:map.md#16"]
     assert attempt["what"] == "判决改了" and attempt["number"] == "16"
