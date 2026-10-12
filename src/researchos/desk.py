@@ -168,7 +168,9 @@ def _file_what(store: history.Store, before: sqlite3.Row | None, latest: sqlite3
                                               lang, n=history.number_text(removed, lang)))
                 return "lines", settings.say("，", ", ", lang).join(parts)
     if before["size"] is not None and latest["size"] is not None and before["size"] != latest["size"]:
-        return "size", settings.say("大小从 {a} 变为 {b} 字节", "Size changed from {a} to {b} bytes", lang,
+        # 13.5: the English noun follows b ("from 2 to 1 byte", "from 1 to 2 bytes").
+        en = "Size changed from {a} to {b} byte" if latest["size"] == 1 else "Size changed from {a} to {b} bytes"
+        return "size", settings.say("大小从 {a} 变为 {b} 字节", en, lang,
                                     a=history.number_text(before["size"], lang), b=history.number_text(latest["size"], lang))
     return "changed", _what("changed", lang)
 

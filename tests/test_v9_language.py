@@ -1476,6 +1476,23 @@ def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
     assert left == []
 
 
+@pytest.mark.parametrize("a, b, en", [
+    (2, 1, "Size changed from 2 to 1 byte"), (0, 1, "Size changed from 0 to 1 byte"),
+    (1, 2, "Size changed from 1 to 2 bytes"), (1000, 1497, "Size changed from 1,000 to 1,497 bytes"),
+])
+def test_13_5_a_files_size_change_has_a_singular_and_a_plural(a, b, en):
+    """13.5: every counted noun has a singular and a plural -- a file whose
+    lines cannot be compared says its size, the noun following the new
+    size; the Chinese has one form, as before."""
+    from researchos import desk
+
+    def version(size: int) -> dict[str, Any]:
+        return {"kind": "binary", "stored": 0, "size": size, "sha256": f"{size:064x}", "summary": None}
+
+    assert desk._file_what(None, version(a), version(b), "en") == ("size", en)
+    assert desk._file_what(None, version(a), version(b)) == ("size", f"大小从 {a} 变为 {b} 字节")
+
+
 def test_13_7_a_git_projects_desk_and_the_officialness_words_in_english(tmp_path):
     """Edits git has not seen yet are 「本机」's, "This Mac" in English; a
     member's own work is marked in the page's language (13.4)."""
