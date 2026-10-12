@@ -1709,9 +1709,10 @@ def _marks(value: Any) -> set[str]:
 
 def test_13_7_officialness_and_people_words_follow_the_language_on_every_page(drive):
     """13.7 as amended: officialness states and people words are shared
-    words -- the same English on Research routes, the node page, its history
-    and the tree as on the desk, for one request's language; Chinese without
-    the header, exactly as with zh."""
+    words -- the same English on Research routes, the node page, its history,
+    the tree, Data & code and Variables (their marks and the mode's labels)
+    as on the desk, for one request's language; Chinese without the header,
+    exactly as with zh."""
     from researchos import proposals
     from test_v8_phase2 import _call
     from test_v8_phase3 import _serve
@@ -1723,7 +1724,7 @@ def test_13_7_officialness_and_people_words_follow_the_language_on_every_page(dr
         proposals.write_proposal(drive.work, proposals.make_proposal(drive.work, "files", "画图改了",
                                                                      only=["steps/17-plot.py"]))
         paths = ("/api/routes", "/api/node?node=script%3Asteps%2F17-plot.py",
-                 "/api/history?node=script%3Asteps%2F17-plot.py", "/api/tree")
+                 "/api/history?node=script%3Asteps%2F17-plot.py", "/api/tree", "/api/data-code", "/api/variables")
         with _serve(drive.work) as base:
             got = [{path: _call(f"{base}{path}", headers=h) for path in paths}
                    for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
