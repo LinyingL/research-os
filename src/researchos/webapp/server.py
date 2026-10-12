@@ -703,13 +703,14 @@ class MappingEditError(ApiError):
 
     `code` is the writer's machine-readable cause. The refusals of a line
     between attempts the researcher can cause from the map (DESIGN.md 14.2:
-    an attempt not in the index, a line to itself, one that closes a circle)
-    also carry a `state` -- `mapping_` + the code -- so the page says one
-    sentence per cause; every other refusal stays framed generically."""
+    an attempt not in the index, a line to itself, one that closes a circle,
+    a member's line, which goes as a `route_link` proposal) also carry a
+    `state` -- `mapping_` + the code -- so the page says one sentence per
+    cause; every other refusal stays framed generically."""
 
     status = 400
     #: The codes with a sentence of their own on the page (8.8).
-    STATED = ("attempt_not_found", "self_link", "circle")
+    STATED = ("attempt_not_found", "self_link", "circle", "member_proposes")
 
     def __init__(self, message: str, code: str | None = None) -> None:
         super().__init__(message)
@@ -3244,7 +3245,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if not rest:
                     self._send_json(200, self._node_api(lambda: node_api.proposals_payload(served.root)))
                 elif "/" not in rest:
-                    self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest)))
+                    self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest, self._lang())))
                 else:
                     raise NotFoundError(f"no such endpoint: {path}")
             elif path == "/api/desk":

@@ -903,6 +903,19 @@ def _check_round_trip(new_text: str, expected: list[Any]) -> None:
         )
 
 
+def _refuse_member_line(project_root: str | Path, type: str) -> None:
+    """14.2: in a member's working copy a line between attempts is drawn or
+    removed only as a `route_link` proposal the PI approves; written there,
+    it would reach no one (it never travels in a packet)."""
+    if type != DERIVES_FROM:
+        return
+    from researchos import proposals  # noqa: PLC0415 -- proposals imports this module
+
+    if proposals.role_of(project_root)[0] in ("member", "none"):
+        raise MappingsWriteError("member_proposes", "in a member's working copy a line between attempts goes to the "
+                                                    "PI as a proposal (route_link); nothing written")
+
+
 def add_mapping(
     project_root: str | Path,
     from_path: str,
@@ -910,14 +923,19 @@ def add_mapping(
     type: str,
     note: str | None = None,
     date: str | None = None,
+    *,
+    by: str | None = None,
+    check_index: bool = True,
 ) -> dict[str, Any]:
     """`_add_mapping` under the project lock with the identity re-checked
     (DESIGN.md 9.4, 9.7): a human record, so a pre-V5 project refuses it
     (`NeedsMigrationError`) and two processes take turns."""
     from researchos.records import situation  # noqa: PLC0415 -- records imports nothing from ingest
 
+    _refuse_member_line(project_root, type)
     with situation.write_guard(project_root, human=True):
-        return _add_mapping(project_root, from_path, to_path, type, note=note, date=date)
+        return _add_mapping(project_root, from_path, to_path, type, note=note, date=date, by=by,
+                            check_index=check_index)
 
 
 def _add_mapping(
@@ -927,19 +945,25 @@ def _add_mapping(
     type: str,
     note: str | None = None,
     date: str | None = None,
+    *,
+    by: str | None = None,
+    check_index: bool = True,
 ) -> dict[str, Any]:
     """Append one entry to `.researchos/mappings.toml` (creating the file with the
     8.5 header if needed). `date` defaults to today's LOCAL date (8.5:
     "本地日期，写入时填"). Paths are stored in their normalized form.
     Raises `MappingsWriteError` (file untouched) on any refusal. Returns
     `{file, backup, entry}`. Does not re-ingest -- the caller does, under
-    the watcher's ingest lock."""
+    the watcher's ingest lock. `by` names who drew it when that is not me
+    (an approved proposal: the member); `check_index=False` writes a line
+    between attempts the caller found in the attempt table itself (an
+    approval), which waits in the file until the index has both."""
     project_root = Path(project_root)
     if date is None:
         date = _dt.date.today().isoformat()
     candidate = {"from": from_path, "to": to_path, "type": type, "note": note, "date": date}
     norm_from, norm_to, edge_type = _validate_for_write(project_root, candidate)
-    if edge_type == DERIVES_FROM:
+    if edge_type == DERIVES_FROM and check_index:
         _check_attempts_present(project_root, [_ATTEMPT_PREFIX + norm_from, _ATTEMPT_PREFIX + norm_to])
     old_text, raw, loaded = _load_for_write(project_root)
     if any(m.key == (norm_from, norm_to, edge_type) for m in loaded.mappings):
@@ -961,7 +985,7 @@ def _add_mapping(
     from researchos import people  # noqa: PLC0415
 
     try:
-        author = people.current_member_id()
+        author = by if by is not None else people.current_member_id()
     except people.PeopleError as exc:
         raise MappingsWriteError("no_me", f"who you are cannot be read: {exc}") from exc
     if author is not None:
@@ -1004,6 +1028,7 @@ def delete_mapping(project_root: str | Path, from_path: str, to_path: str, type:
     """`_delete_mapping` under the project write guard (see `add_mapping`)."""
     from researchos.records import situation  # noqa: PLC0415
 
+    _refuse_member_line(project_root, type)
     with situation.write_guard(project_root, human=True):
         return _delete_mapping(project_root, from_path, to_path, type)
 

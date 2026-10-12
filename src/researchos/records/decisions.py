@@ -22,6 +22,8 @@ written only by the PI's Research OS when it approves a proposal:
     result      = "t=0.41"
     reason      = "残差不平稳，协整关系不成立"
     note        = "同意"                  # the PI's note, when given
+    # a route_link (14.2) also names op ("add" | "remove"), child and parent;
+    # a new attempt the `parents` it grew out of
     via         = "cli"
     evidence    = [{ path = "steps/16-build.py", role = "script", sha256 = "…", size = 812, state = "kept" }, …]
 
@@ -161,7 +163,8 @@ DECISIONS_SCHEMA = LedgerSchema(
     key_fields=(),
     field_order=(
         "id", "seq", "at", "by", "act", "approved_by", "proposal", "kind", "attempt", "number", "verdict", "result",
-        "reason", "card", "version", "files", "note", "via", "recovered_from", "recovered_at", "evidence",
+        "reason", "card", "version", "op", "child", "parent", "parents", "files", "note", "via", "recovered_from",
+        "recovered_at", "evidence",
     ),
     header=_HEADER,
     validate=_validate,

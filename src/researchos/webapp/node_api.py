@@ -296,6 +296,9 @@ _PROPOSAL_STATUS = {
     "reason_required": 400, "no_attempt_table": 409, "attested_required": 400, "changed_since_shown": 409,
     "decided": 409, "not_approvable": 409, "invalid": 400, "wrong_project": 409, "empty_reason": 400,
     "empty_text": 400, "cannot_sign": 409,
+    # a 「源自」 line (14.2)
+    "bad_route": 400, "self_link": 400, "circle": 409, "attempt_not_found": 409, "line_exists": 409,
+    "no_such_line": 409,
 }
 _EXCHANGE_STATUS = {"not_configured": 409, "inside_project": 409, "unreachable": 503, "exists": 409,
                     "no_such_proposal": 404, "invalid": 400, "half_written": 409, "content": 409,
@@ -377,13 +380,14 @@ def proposals_payload(root: Path) -> dict[str, Any]:
     return _proposal_call(lambda: proposals_mod.listing(root))
 
 
-def proposal_payload(root: Path, proposal_id: str) -> dict[str, Any]:
+def proposal_payload(root: Path, proposal_id: str, lang: str = "zh") -> dict[str, Any]:
     """GET /api/proposals/<id>: for the PI with exactly what approving would
-    do; with `uses`, the variable versions its files use (12.3, U4)."""
+    do (a line's words in `lang`); with `uses`, the variable versions its
+    files use (12.3, U4)."""
     from researchos import nodepage  # noqa: PLC0415
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id)), root)
+    out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id, lang=lang)), root)
     files = (out.get("changes") or {}).get("files") or out.get("files") or []
     try:
         out["uses"] = nodepage.variables_used(root, files)
@@ -394,23 +398,30 @@ def proposal_payload(root: Path, proposal_id: str) -> dict[str, Any]:
 
 def proposal_create_payload(root: Path, body: dict[str, Any], lang: str = "zh") -> dict[str, Any]:
     """POST /api/proposals {kind, sentence, number?, result?, reason?, card?,
-    attested?, only?, write?, expected?}: without `write`, the dry run (with
-    the `fingerprint` to send back); with it, the proposal is written --
-    refused if it is no longer the one shown."""
+    attested?, only?, parents?, write?, expected?}: without `write`, the dry
+    run (with the `fingerprint` to send back); with it, the proposal is
+    written -- refused if it is no longer the one shown. A member's 「源自」
+    line (14.2) is `{kind: "route_link", op, child, parent, note?}`, its
+    sentence optional; a new attempt may name its `parents`."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    kind, sentence = body.get("kind"), body.get("sentence")
+    kind = body.get("kind")
+    sentence = body.get("sentence", "" if kind == "route_link" else None)
     if not isinstance(kind, str) or not isinstance(sentence, str):
         raise NodeApiRefused(400, "missing", "request body must carry string 'kind' and 'sentence'", "请选择提议类型并写一句说明")
-    options = {}
+    options: dict[str, Any] = {}
     for name in ("number", "result", "reason", "card", "attested", "supersedes"):
         value = body.get(name)
         if value is not None and not isinstance(value, str):
             raise NodeApiRefused(400, "missing", f"{name!r} must be text", "提议的内容不对")
         options[name] = value
-    only = body.get("only")
-    if only is not None and (not isinstance(only, list) or not all(isinstance(x, str) for x in only)):
-        raise NodeApiRefused(400, "missing", "'only' must be a list of paths", "提议的内容不对")
+    if kind == "route_link":
+        options["route"] = {k: body.get(k) for k in ("op", "child", "parent", "note")}
+    for name in ("only", "parents"):
+        value = body.get(name)
+        if value is not None and (not isinstance(value, list) or not all(isinstance(x, str) for x in value)):
+            raise NodeApiRefused(400, "missing", f"{name!r} must be a list of text", "提议的内容不对")
+    only, options["parents"] = body.get("only"), body.get("parents")
 
     def run() -> dict[str, Any]:
         draft = proposals_mod.make_proposal(root, kind, sentence, only=only, **options)

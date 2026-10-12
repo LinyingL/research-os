@@ -73,6 +73,9 @@ class View:
     proposed_files: dict[str, tuple[str | None, str]] = field(default_factory=dict)
     proposed_rows: dict[str, tuple[dict[str, str], str]] = field(default_factory=dict)
     proposed_cards: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    #: 「源自」 lines (14.2) a `route_link` -- or a new attempt's `parents` --
+    #: carries: (child, parent) as `<table>#<n>` -> (op, proposal).
+    proposed_lines: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
     #: The state of each proposal named above: "pending" or "approved".
     proposal_states: dict[str, str] = field(default_factory=dict)
     pending_known: bool = True
@@ -137,9 +140,21 @@ class View:
             return self._carried_state(carried[2]), carried[2]
         return MINE, None
 
+    def line_state(self, child: str, parent: str) -> tuple[str, str | None]:
+        """A 「源自」 line a member's proposal adds or removes: 提议中 (or
+        已批准，待同步) until the official version they synced to says so."""
+        carried = self.proposed_lines.get((child, parent))
+        if self.mode == OFFICIAL or carried is None:
+            return OFFICIAL, None
+        if ((child, parent, "derives_from") in self.base_links) == (carried[0] == "add"):
+            return OFFICIAL, None
+        return self._carried_state(carried[1]), carried[1]
+
     def link_state(self, from_: str, to: str, kind: str) -> tuple[str, str | None]:
         if self.mode == OFFICIAL:
             return OFFICIAL, None
+        if kind == "derives_from" and (from_, to) in self.proposed_lines:
+            return self.line_state(from_, to)
         key = (from_, to, kind)
         return (OFFICIAL, None) if key in self.base_links or key not in self.links else (MINE, None)
 
@@ -293,11 +308,31 @@ def _pending(root: Path, pid: str, out: View) -> None:
         attempt, verdict, variable = data.get("attempt"), data.get("verdict"), data.get("variable")
         if isinstance(attempt, dict) and isinstance(attempt.get("number"), str):
             out.proposed_rows[attempt["number"]] = ({k: attempt.get(k) for k in proposals.ROW_FIELDS}, stored.id)
+            for parent in attempt.get("parents") or []:
+                out.proposed_lines[(f"{out.table}#{attempt['number']}", str(parent).removeprefix("attempt:"))] = \
+                    ("add", stored.id)
+        route = data.get("route")
+        if isinstance(route, dict) and route.get("op") in proposals.ROUTE_OPS:
+            ends = tuple(str(route.get(k, "")).removeprefix("attempt:") for k in ("child", "parent"))
+            out.proposed_lines[ends] = (route["op"], stored.id)
         if isinstance(verdict, dict) and isinstance(verdict.get("number"), str):
             out.proposed_rows[verdict["number"]] = ({"verdict": verdict.get("new"), "result": verdict.get("result")},
                                                     stored.id)
         if isinstance(variable, dict) and isinstance(variable.get("card"), str):
             out.proposed_cards[variable["card"]] = (str(variable.get("file")), str(variable.get("sha256")), stored.id)
+
+
+def proposed_lines(v: View, lang: str = "zh") -> list[dict[str, Any]]:
+    """The 「源自」 lines a member's map draws from their own proposals
+    (14.2): each being added or removed, marked 提议中 or 已批准，待同步 in
+    `lang`. A returned proposal's line is not among them: it disappears."""
+    out = []
+    for (child, parent), (op, _proposal) in sorted(v.proposed_lines.items()):
+        state = v.line_state(child, parent)
+        if state[0] != OFFICIAL:
+            out.append({"src": "attempt:" + child, "dst": "attempt:" + parent, "type": "derives_from", "op": op,
+                        FIELD: mark(state, lang)})
+    return out
 
 
 # -- payloads ---------------------------------------------------------------------------------

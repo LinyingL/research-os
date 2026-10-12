@@ -48,7 +48,15 @@ The kinds, and what each carries besides its files:
 - `variable_version` -- the card id and the version file's bytes, and the
   member's own answer to "was the output built with this definition"
   (`attested`, 9.11), which the PI's confirmation records as theirs;
-- `files` -- only files.
+- `files` -- only files;
+- `route_link` -- a 「源自」 line between two official attempts drawn or
+  removed on the route map (14.2): `op` (`add` | `remove`), the child, the
+  parent and the member's note; no files. Approving writes it to the
+  official `mappings.toml` through the same writer and rules as a line the
+  PI draws (a missing end or a circle then is a conflict, nothing applied).
+
+A new attempt may also name the official attempts it grew out of
+(`parents`); approving it adds those lines once its row is written.
 
 A file is carried as text under the proposal's `files/` (UTF-8, at most
 5 MB) or as a blob by content (large or binary), always with the base
@@ -153,7 +161,8 @@ from researchos.records.situation import READ_NOW, index_db_path, write_guard
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("attempt_new", "verdict_change", "variable_version", "files")
+KINDS = ("attempt_new", "verdict_change", "variable_version", "files", "route_link")
+ROUTE_OPS = ("add", "remove")
 ACTIONS = ("added", "changed", "removed")
 STORES = ("text", "blob")
 OUTCOME_ACTS = ("approved", "returned", "discussed")
@@ -176,6 +185,7 @@ _PROPOSAL_HEADER = "# 一份提议：成员工作副本里的改动，PI 批准�
 _OUTCOME_HEADER = "# PI 对一份提议的答复。由 Research OS 写入，写成后不再改动。\n"
 _VERSION_FILE_RE = re.compile(r"^\.researchos/variables/([^/]+)/v([1-9][0-9]*)\.toml$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_ATTEMPT_ID_RE = re.compile(r"^attempt:[^\x00-\x1f]+#[^\x00-\x1f#]+$")
 
 #: Product language (8.8) for every refusal.
 MESSAGES = {
@@ -203,6 +213,13 @@ MESSAGES = {
     "empty_text": "请写下要讨论的内容",
     "cannot_sign": "无法签名",
     "approval_started": "这份提议的批准已经开始应用，不能再退回：请再次批准以完成",
+    # A 「源自」 line (14.2), proposed by a member against the official version they synced to.
+    "bad_route": "请指明这条连线从哪个尝试连到哪个尝试",
+    "self_link": "一个尝试不能源自它自己",
+    "circle": "这条连线会绕成一个圈：它要连的来处本身就源自它",
+    "attempt_not_found": "连线的一端不是正式版本里的尝试：新的尝试请在它自己的提议里写明源自哪里",
+    "line_exists": "这条连线已经在正式版本里了",
+    "no_such_line": "正式版本里没有这条连线",
 }
 
 
@@ -561,6 +578,131 @@ def _outside_rows(text: str | None) -> list[str]:
     return [line for line in (text or "").splitlines() if not line.strip().startswith("|")]
 
 
+def _table_rows(root: Path, config) -> dict[str, dict[str, str]]:
+    try:
+        return _rows((root / config.file).read_text(encoding="utf-8"), config) or {}
+    except (OSError, UnicodeDecodeError):
+        return {}
+
+
+# -- 「源自」 lines between attempts (14.2) ------------------------------------------------
+
+
+def _line_number(value: Any, table: str) -> str:
+    """One end of a 「源自」 line as its number in the attempt table `table`:
+    given as the node id (`attempt:<table>#<n>`), `<table>#<n>` or the number."""
+    text = value.strip().removeprefix("attempt:") if isinstance(value, str) else ""
+    file, sep, number = text.rpartition("#")
+    if not number.strip():
+        raise ProposalRefused("bad_route", f"{value!r} does not name an attempt")
+    if sep and file != table:
+        raise ProposalRefused("attempt_not_found", f"{value!r} is not a row of the attempt table {table}")
+    return number.strip()
+
+
+def _mappings_text(root: Path, base: Base | None = None) -> str | None:
+    """The mappings file as the official version has it: the base's copy
+    for a working copy (the copy's own when the base has none), else the file."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    rel = mappings_ingest.MAPPINGS_RELATIVE_PATH
+    text = base.text(rel) if base is not None else None
+    if text is None:
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+    return text
+
+
+def _lines_in(root: Path, text: str | None) -> dict[str, set[str]]:
+    """{child: the attempts it grew out of}, each as `<table>#<n>`."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    out: dict[str, set[str]] = {}
+    for child, parent, kind in mappings_ingest._entries_by_key(root, text):
+        if kind == mappings_ingest.DERIVES_FROM:
+            out.setdefault(child, set()).add(parent)
+    return out
+
+
+def _route_of(root: Path, config, base: Base, route: Any) -> dict[str, str]:
+    """A `route_link` proposal's [route], checked against the official
+    version the copy was synced to: both ends rows of its table, no line to
+    itself, and -- to add -- not there yet and closing no circle; to remove,
+    there."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    if config is None:
+        raise ProposalRefused("no_attempt_table", "no attempt table is configured (.researchos/attempts.toml)")
+    if not isinstance(route, Mapping) or route.get("op") not in ROUTE_OPS:
+        raise ProposalRefused("bad_route", "a route_link proposal names its op (add or remove), the child and the parent")
+    child, parent = (_line_number(route.get(k), config.file) for k in ("child", "parent"))
+    if child == parent:
+        raise ProposalRefused("self_link", f"attempt {child} cannot grow out of itself")
+    rows = _rows(base.text(config.file), config) or {}
+    missing = [n for n in (child, parent) if n not in rows]
+    if missing:
+        raise ProposalRefused("attempt_not_found", f"row {', '.join(missing)} is not in the official attempt table "
+                                                   f"this copy was synced to")
+    c, p = f"{config.file}#{child}", f"{config.file}#{parent}"
+    lines = _lines_in(root, _mappings_text(root, base))
+    if route["op"] == "add" and p in lines.get(c, ()):
+        raise ProposalRefused("line_exists", f"#{child} already grows out of #{parent} in the official version")
+    if route["op"] == "add" and mappings_ingest._reaches(lines, p, c):
+        raise ProposalRefused("circle", f"#{parent} already grows out of #{child}: the line would close a circle")
+    if route["op"] == "remove" and p not in lines.get(c, ()):
+        raise ProposalRefused("no_such_line", f"the official version has no line #{child} grew out of #{parent}")
+    out = {"op": route["op"], "child": "attempt:" + c, "parent": "attempt:" + p}
+    note = " ".join(str(route.get("note") or "").split())
+    if note:
+        out["note"] = note
+    return out
+
+
+def _parents_of(config, rows: Mapping[str, Any], number: str, parents: Iterable[Any]) -> list[str]:
+    """What a new attempt grew out of (14.2), as node ids: official rows only."""
+    out: list[str] = []
+    for value in parents:
+        parent = _line_number(value, config.file)
+        if parent == number:
+            raise ProposalRefused("self_link", f"attempt {number} cannot grow out of itself")
+        if parent not in rows:
+            raise ProposalRefused("attempt_not_found", f"row {parent} is not in the official attempt table")
+        if f"attempt:{config.file}#{parent}" not in out:
+            out.append(f"attempt:{config.file}#{parent}")
+    return out
+
+
+def _route_summary(route: Any) -> dict[str, Any] | None:
+    if not isinstance(route, Mapping):
+        return None
+    return {**route, "child_number": str(route.get("child", "")).rpartition("#")[2],
+            "parent_number": str(route.get("parent", "")).rpartition("#")[2]}
+
+
+def _apply_line(root: Path, op: str, child: str, parent: str, note: str | None, *, by: str) -> bool:
+    """One 「源自」 line into the official mappings.toml (14.2) through the
+    writer a line the PI draws goes through, `by` the member; its ends were
+    found in the attempt table, so it is written even while the index lags.
+    False when the file already says so."""
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    try:
+        if op == "add":
+            mappings_ingest.add_mapping(root, child, parent, mappings_ingest.DERIVES_FROM, note=note, by=by,
+                                        check_index=False)
+        else:
+            mappings_ingest.delete_mapping(root, child, parent, mappings_ingest.DERIVES_FROM)
+    except mappings_ingest.MappingsWriteError as exc:
+        if exc.code in ("duplicate", "not_found"):
+            return False
+        raise ProposalRefused("not_approvable", f"the line {child} -> {parent} was not written ({exc}); approve again "
+                              f"once mappings.toml can be written",
+                              message_zh="连线没有写进正式版本的连线记录（mappings.toml），处理后请再次批准") from exc
+    return True
+
+
 # -- making a proposal (the member) ---------------------------------------------------------
 
 
@@ -682,13 +824,17 @@ def make_proposal(
     supersedes: str | None = None,
     add: Iterable[str] | None = None,
     leave: Iterable[str] | None = None,
+    route: Mapping[str, Any] | None = None,
+    parents: Iterable[str] | None = None,
 ) -> Draft:
     """What a proposal of `kind` from `working_copy` would carry (module
-    docstring). Reads only."""
+    docstring). Reads only. `route` is a `route_link`'s {op, child,
+    parent, note}; `parents` what a new attempt grew out of. A line says
+    what it is, so a `route_link` needs no sentence of its own."""
     root = Path(working_copy)
     if kind not in KINDS:
         raise ProposalRefused("bad_kind", f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
-    if not isinstance(sentence, str) or not sentence.strip() or len(sentence) > MAX_SENTENCE:
+    if not isinstance(sentence, str) or len(sentence) > MAX_SENTENCE or (not sentence.strip() and kind != "route_link"):
         raise ProposalRefused("invalid", "a proposal says what it is in a sentence of your own",
                               message_zh="请用一句话说明这份提议")
     me = _require_member(root)
@@ -709,6 +855,8 @@ def make_proposal(
     not_carried: list[dict[str, str]] = []
     preview: dict[str, Any] = {}
     linked: set[str] = set()
+    if kind == "route_link":
+        data["route"] = _route_of(root, config, base, route)
 
     # The attempt table travels as rows.
     if table is not None and (table in base.files or table in work):
@@ -724,6 +872,8 @@ def make_proposal(
             if kind == "attempt_new":
                 chosen = _pick(new_rows, number, "new attempt row")
                 data["attempt"] = {"number": chosen, **work_rows[chosen], "table_base_sha256": table_base}
+                if parents:
+                    data["attempt"]["parents"] = _parents_of(config, base_rows, chosen, parents)
                 carried.add(chosen)
                 linked = attempt_files(root, config, chosen, work_rows[chosen].get("description") or "")
             elif kind == "verdict_change":
@@ -860,6 +1010,8 @@ def _scalar(value: Any) -> str:
         raise ProposalRefused("invalid", "true/false is not written in a proposal")
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, list):  # a list of scalars, inside a table too (a new attempt's `parents`)
+        return "[" + ", ".join(_scalar(v) for v in value) + "]"
     return ledger_mod.toml_string(str(value))
 
 
@@ -942,6 +1094,19 @@ def validate(data: Mapping[str, Any]) -> None:
             raise ValueError("an attempt_new proposal carries [attempt]")
         for name in ("number", *ROW_FIELDS):
             _text_field(attempt, name)
+        if "parents" in attempt and (not isinstance(attempt["parents"], list)
+                                     or not all(_ATTEMPT_ID_RE.match(str(p)) for p in attempt["parents"])):
+            raise ValueError("[attempt] parents names attempts as attempt:<table>#<number>")
+    if kind == "route_link":
+        route = data.get("route")
+        if not isinstance(route, dict) or route.get("op") not in ROUTE_OPS:
+            raise ValueError("a route_link proposal carries [route] with op add or remove")
+        ends = [route.get("child"), route.get("parent")]
+        if not all(_ATTEMPT_ID_RE.match(str(e)) for e in ends) or ends[0] == ends[1]:
+            raise ValueError("[route] names two attempts as attempt:<table>#<number>")
+        _text_field(route, "note", required=False)
+        if data.get("file"):
+            raise ValueError("a route_link proposal carries no files")
     if kind == "verdict_change":
         verdict = data.get("verdict")
         if not isinstance(verdict, dict):
@@ -1103,6 +1268,7 @@ def _summary(stored: StoredProposal, state: Mapping[str, Any], labels: Mapping[s
         "id": stored.id, "by": stored.member, "at": data.get("at"), "kind": data.get("kind"),
         "sentence": data.get("sentence"), "base": data.get("base"), "attempt": verdict_words(data.get("attempt"), labels),
         "verdict": verdict_words(data.get("verdict"), labels), "variable": data.get("variable"),
+        "route": _route_summary(data.get("route")),
         "files": [{k: f.get(k) for k in ("path", "action", "size", "store")} for f in files],
         "not_carried": data.get("not_carried") or [], "supersedes": data.get("supersedes"),
         "base_seq": data.get("base_seq"),
@@ -1147,11 +1313,11 @@ def listing(root: str | Path, *, exchange: LocalExchange | None = None) -> dict[
 
 
 def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | None = None,
-             member: str | None = None) -> dict[str, Any]:
+             member: str | None = None, lang: str = "zh") -> dict[str, Any]:
     """One proposal as its reader may see it: the PI gets `changes`
-    (`what_changes`), its author the proposal and its outcomes; anyone else
-    is refused. A member opens only their own area; the PI names `member`
-    when the id is in more than one area."""
+    (`what_changes`, its sentences in `lang`), its author the proposal and
+    its outcomes; anyone else is refused. A member opens only their own
+    area; the PI names `member` when the id is in more than one area."""
     root = Path(root)
     role, me, _team = role_of(root)
     if role not in ("pi", "member"):
@@ -1172,7 +1338,7 @@ def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | No
     siblings = ex.list_proposals(stored.member).proposals
     out = _summary(stored, state_of(ex, stored, siblings), _labels(root))
     if role == "pi":
-        out["changes"] = what_changes(stored, root)
+        out["changes"] = what_changes(stored, root, lang)
     return out
 
 
@@ -1360,7 +1526,68 @@ def _table_at(root: Path, config, sha: Any) -> str | None:
         return None
 
 
-def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+def _route_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any], lang: str) -> dict[str, Any] | None:
+    """What approving a `route_link` would do to the official mappings.toml
+    (14.2), in words: `apply`, `same` (the file already says so), `done`
+    (this approval wrote it before it was interrupted), or `conflict` with
+    a `code` -- an end no longer in the official table (`attempt_not_found`)
+    or a line that would now close a circle (`circle`)."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    route = data.get("route")
+    if data["kind"] != "route_link" or not isinstance(route, Mapping):
+        return None
+    out: dict[str, Any] = {**_route_summary(route), "file": mappings_ingest.MAPPINGS_RELATIVE_PATH}
+    numbers = {"child": out["child_number"], "parent": out["parent_number"]}
+    out["words"] = (settings.say("批准后加上连线：#{child} 源自 #{parent}", "Approving adds the line: #{child} grew out "
+                                 "of #{parent}", lang, **numbers) if route["op"] == "add"
+                    else settings.say("批准后去掉连线：#{child} 源自 #{parent}", "Approving removes the line: #{child} "
+                                      "grew out of #{parent}", lang, **numbers))
+    if done.get("route_applied"):
+        out["state"] = "done"
+        return out
+    c, p = route["child"].removeprefix("attempt:"), route["parent"].removeprefix("attempt:")
+    lines = _lines_in(root, _mappings_text(root))
+    present = p in lines.get(c, ())
+    if route["op"] == "remove" or present:
+        out["state"] = "apply" if present == (route["op"] == "remove") else "same"
+        return out
+    config = _attempts_config(root)
+    rows = _table_rows(root, config) if config is not None else {}
+    if any(end.rpartition("#")[0] != getattr(config, "file", None) or end.rpartition("#")[2] not in rows
+           for end in (c, p)):
+        out.update(state="conflict", code="attempt_not_found", reason=settings.say(
+            "连线的一端在正式版本的尝试表里找不到了", "One end of the line is no longer in the official attempt table", lang))
+    elif mappings_ingest._reaches(lines, p, c):
+        out.update(state="conflict", code="circle", reason=settings.say(
+            "这条连线会绕成一个圈：它要连的来处本身就源自它",
+            "This line would close a circle: the attempt it would grow out of already grows out of it", lang))
+    else:
+        out["state"] = "apply"
+    return out
+
+
+def _parents_conflict(root: Path, config, rows: Mapping[str, Any], number: str, parents: list[str],
+                      lang: str) -> str | None:
+    """Why the lines a new attempt names (14.2) cannot be added now, if they cannot."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.ingest import mappings as mappings_ingest  # noqa: PLC0415
+
+    table = f"attempt:{config.file}#"
+    gone = [p.rpartition("#")[2] for p in parents if not p.startswith(table) or p[len(table):] not in rows]
+    if gone:
+        return settings.say("它源自的第 {n} 行在正式版本的尝试表里不在了",
+                            "Row {n}, which it grew out of, is no longer in the official attempt table",
+                            lang, n="、".join(gone) if lang != "en" else ", ".join(gone))
+    lines = _lines_in(root, _mappings_text(root))
+    if any(mappings_ingest._reaches(lines, p.removeprefix("attempt:"), f"{config.file}#{number}") for p in parents):
+        return settings.say("它源自的连线会绕成一个圈", "The lines it grew out of would close a circle", lang)
+    return None
+
+
+def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any] | None = None,
+                    lang: str = "zh") -> dict[str, Any] | None:
     from researchos.webapp import mapedit  # noqa: PLC0415
 
     config = _attempts_config(root)
@@ -1392,6 +1619,12 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
             out["state"] = "done"
             return out
         out["table_moved"] = table_moved
+        if row.get("parents"):
+            out["parents"] = list(row["parents"])
+            stale = _parents_conflict(root, config, rows, number, out["parents"], lang)
+            if stale:
+                out.update(state="conflict", reason=stale)
+                return out
         if number in rows:
             # The number it takes is taken: by the PI, or by another
             # member's proposal approved first.
@@ -1523,9 +1756,9 @@ def _draft_is(directory: Path, number: int, sha: str) -> bool:
         return False
 
 
-def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str, Any]:
+def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = "zh") -> dict[str, Any]:
     """Exactly what approving `stored` would do to the official version
-    (module docstring). Reads only."""
+    (module docstring). Reads only. A line's words in `lang` (13.6)."""
     root = Path(official_root)
     data = _parsed(stored)
     problems: list[str] = []
@@ -1544,7 +1777,8 @@ def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str,
     if done["member"] is not None and done["member"] != stored.member:
         problems.append(f"这个编号的另一份提议（{done['member']}）已经在批准中")
     out["resuming"] = done["started"]
-    out["attempt"] = _attempt_change(root, data, done)
+    out["attempt"] = _attempt_change(root, data, done, lang)
+    out["route"] = _route_change(root, data, done, lang)
     if out["attempt"] is not None:
         labels = _labels(root)
         out["attempt"] = verdict_words(out["attempt"], labels)
@@ -1555,9 +1789,11 @@ def what_changes(stored: StoredProposal, official_root: str | Path) -> dict[str,
     out["files"] = [_file_change(root, stored, item, done) for item in data.get("file") or []]
     out["not_carried"] = data.get("not_carried") or []
     conflicts = []
-    for part in ([out["attempt"]] if out["attempt"] else []) + ([out["variable"]] if out["variable"] else []) + out["files"]:
+    parts = [p for p in (out["attempt"], out["variable"], out["route"]) if p] + out["files"]
+    for part in parts:
         if part.get("state") == "conflict":
-            conflicts.append({"path": part.get("path") or part.get("file") or part.get("card"), "reason": part.get("reason")})
+            conflicts.append({"path": part.get("path") or part.get("file") or part.get("card"), "reason": part.get("reason"),
+                              **({"code": part["code"]} if part.get("code") else {})})
         elif part.get("state") == "problem":
             problems.append(f"{part.get('path') or part.get('file') or part.get('card')}: {part.get('reason')}")
     check = getattr(stored, "check", None)
@@ -1603,7 +1839,7 @@ def read_journal(root: Path, proposal_id: str) -> dict[str, Any]:
     """What an earlier, interrupted approval of `proposal_id` did (module
     docstring). A torn last line is ignored."""
     done: dict[str, Any] = {"started": False, "member": None, "placed": set(), "attempt_started": False,
-                            "attempt_applied": False, "version": None, "deciding": False}
+                            "attempt_applied": False, "version": None, "deciding": False, "route_applied": False}
     try:
         lines = journal_path(root, proposal_id).read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -1630,6 +1866,8 @@ def read_journal(root: Path, proposal_id: str) -> dict[str, Any]:
             done["version"] = {"card": step.get("card"), "number": step.get("number")}
         elif kind == "deciding":
             done["deciding"] = True
+        elif kind == "route_applied":
+            done["route_applied"] = True
     return done
 
 
@@ -1903,7 +2141,7 @@ def approve(
         _pending(ex, stored)
         member_id, data = stored.member, stored.data
         identity_id = _project_id(root)
-        applied: dict[str, Any] = {"files": [], "attempt": None, "variable": None, "evidence": None}
+        applied: dict[str, Any] = {"files": [], "attempt": None, "variable": None, "evidence": None, "lines": []}
         decision = decisions_mod.for_proposal(root, stored.id)
         if decision is not None and decision.get("by") != member_id:
             raise ProposalRefused("not_approvable", f"a proposal {stored.id} of {decision.get('by')} was already approved; "
@@ -1975,6 +2213,19 @@ def approve(
                         )
                         applied["variable"] = {"card": variable["card"], "version": confirmed.entry.get("version"),
                                                "entry": confirmed.entry.id, "reference": confirmed.reference.label}
+
+                    # 14.2: a line, or the lines a new attempt grew out of (after its row exists).
+                    lines = [(r["op"], r["child"], r["parent"], r.get("note"))
+                             for r in [changes["route"]] if r is not None and r["state"] == "apply"]
+                    if data["kind"] == "attempt_new" and attempt is not None:
+                        lines += [("add", attempt["node"], p, None) for p in data["attempt"].get("parents") or []]
+                    if lines:
+                        _mark(root, stored, "route", lines=len(lines))
+                        for op, child, parent, line_note in lines:
+                            if _apply_line(root, op, child, parent, line_note, by=member_id):
+                                applied["lines"].append({"op": op, "child": child, "parent": parent})
+                        if changes["route"] is not None:
+                            _mark(root, stored, "route_applied")
             finally:
                 _unstage(staged)
 
@@ -1991,6 +2242,10 @@ def approve(
                     fields["evidence"] = applied["evidence"] or []
             if variable is not None:
                 fields.update(card=variable["card"], version=variable.get("number"))
+            if data["kind"] == "route_link":
+                fields.update({k: data["route"][k] for k in ("op", "child", "parent")})
+            elif data["kind"] == "attempt_new" and data["attempt"].get("parents"):
+                fields["parents"] = list(data["attempt"]["parents"])
             _mark(root, stored, "deciding")
             try:
                 entry = decisions_mod.append_decision(root, fields, lock=held, now=now)
