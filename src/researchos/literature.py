@@ -64,9 +64,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable
 
 from researchos import paths
+# The settings file's helpers live in `researchos.settings` (shared with the
+# interface language, DESIGN.md 13.2); the DOI cache uses the same JSON I/O.
+from researchos.settings import (  # noqa: F401 -- SETTINGS_FILENAME, settings_path: this module's public names
+    SETTINGS_FILENAME, read_json as _read_json, read_settings, settings_path, update_setting, write_json as _write_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -569,7 +574,6 @@ def attachment_file(item_key: Any, attachment_key: Any = None, *, library: Zoter
 
 # -- DOI online (opt-in) -----------------------------------------------------------
 
-SETTINGS_FILENAME = "settings.json"
 CACHE_FILENAME = "doi-cache.json"
 DOI_LOOKUP_SETTING = "doi_online_lookup"
 CROSSREF_WORKS = "https://api.crossref.org/works/"
@@ -585,38 +589,17 @@ class LookupFailed(Exception):
         self.network = network
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_json(path: Path, data: Mapping[str, Any]) -> None:
-    from researchos.records import files  # noqa: PLC0415 -- records imports paths, which this module imports
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    files.durable_write(path, (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-
-
-def settings_path() -> Path:
-    return paths.researchos_home() / SETTINGS_FILENAME
-
-
 def cache_path() -> Path:
     return paths.researchos_home() / CACHE_FILENAME
 
 
 def doi_lookup_enabled() -> bool:
     """The machine setting 「用 DOI 联网查文献信息」; off unless turned on."""
-    return _read_json(settings_path()).get(DOI_LOOKUP_SETTING) is True
+    return read_settings().get(DOI_LOOKUP_SETTING) is True
 
 
 def set_doi_lookup(enabled: bool) -> None:
-    data = _read_json(settings_path())
-    data[DOI_LOOKUP_SETTING] = bool(enabled)
-    _write_json(settings_path(), data)
+    update_setting(DOI_LOOKUP_SETTING, bool(enabled))
 
 
 def cached(doi: str) -> dict[str, Any] | None:
