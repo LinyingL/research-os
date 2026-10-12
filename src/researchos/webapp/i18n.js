@@ -6,9 +6,13 @@
 // known synchronously, before anything is drawn, with no request.
 //
 // It defines one global, window.ROI18N:
-//   lang    "zh" or "en": the saved choice; with none, the Mac's -- the first
-//           of navigator.languages starting with "zh" is Chinese, anything
-//           else English (13.2);
+//   lang    "zh" or "en": the saved choice; with none, the Mac's (13.2) --
+//           inside the shell its own answer, `window.ROI18N_SYSTEM`, which
+//           it injects at document start from Locale.preferredLanguages (a
+//           web view in an app with no localizations may report English in
+//           navigator.languages on a Chinese Mac); without it, the first of
+//           navigator.languages: starting with "zh" is Chinese, anything else
+//           (nothing known included) English;
 //   saved   the saved choice, or null;
 //   t(zh, vars)  the words for the screen (13.6): the Chinese text in the
 //           source is the key; in English, its entry in the table below,
@@ -231,8 +235,12 @@
 
   function validLang(value) { return value === "zh" || value === "en" ? value : null; }
 
-  // 13.2: with no saved choice, the Mac's first preferred language.
+  // 13.2: with no saved choice, the Mac's first preferred language: the
+  // shell's answer when it gave one ("zh" or "en", nothing else), then the
+  // browser's.
   function macLang() {
+    var shell = validLang(typeof window !== "undefined" ? window.ROI18N_SYSTEM : null);
+    if (shell) return shell;
     var nav = typeof navigator !== "undefined" ? navigator : null;
     var first = nav ? ((nav.languages && nav.languages[0]) || nav.language || "") : "";
     return /^zh/i.test(String(first)) ? "zh" : "en";

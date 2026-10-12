@@ -605,6 +605,94 @@ def test_13_2_the_page_resolves_its_language(saved, languages, lang):
     assert got == [lang, saved if saved in ("zh", "en") else None]
 
 
+def _expected_language(case: dict[str, Any]) -> str:
+    """13.2 as amended: the saved choice, then the shell's answer, then the
+    browser's first language, then English; anything but exactly "zh" or
+    "en" in the first two counts as none."""
+    for value in (case["saved"], case.get("system")):
+        if value in ("zh", "en"):
+            return value
+    first = (case["languages"] or [""])[0]
+    return "zh" if first.lower().startswith("zh") else "en"
+
+
+@needs_node
+def test_13_2_the_saved_choice_then_the_shells_answer_then_the_browsers_in_every_combination():
+    """Inside the shell the page does not trust navigator.languages (a web
+    view in an app with no localizations may say English on a Chinese Mac):
+    the shell injects window.ROI18N_SYSTEM at document start. Every
+    combination of a saved choice, the shell's answer (absent, valid or
+    not) and the browser's languages (no navigator at all included), each
+    run through /i18n.js as served, in one node process."""
+    cases = []
+    for saved in (None, "zh", "en", "fr", 1):
+        for system in ("<absent>", None, "zh", "en", "ZH", "", "fr", 1):
+            for languages in (None, [], ["zh-Hans-CN", "en-US"], ["zh-TW"], ["en-US", "zh-Hans-CN"], ["de-DE"]):
+                case = {"saved": saved, "languages": languages}
+                if system != "<absent>":
+                    case["system"] = system
+                cases.append(case)
+    script = (
+        "const vm = require('vm');\n"
+        f"const src = {json.dumps(_i18n_source())};\n"
+        f"const cases = {json.dumps(cases)};\n"
+        "const got = cases.map((c) => {\n"
+        "  global.window = {};\n"
+        "  if ('system' in c) window.ROI18N_SYSTEM = c.system;\n"
+        "  Object.defineProperty(globalThis, 'navigator', {value: c.languages === null ? undefined"
+        " : {languages: c.languages}, configurable: true});\n"
+        "  window.ROI18N_SAVED = c.saved;\n"
+        "  vm.runInThisContext(src);\n"
+        "  return [window.ROI18N.lang, window.ROI18N.saved];\n"
+        "});\n"
+        "process.stdout.write(JSON.stringify(got));\n"
+    )
+    got = _node(script)
+    assert len(got) == len(cases) == 240
+    wrong = [(case, lang) for case, (lang, _saved) in zip(cases, got) if lang != _expected_language(case)]
+    assert wrong == []
+    assert [s for _lang, s in got] == [c["saved"] if c["saved"] in ("zh", "en") else None for c in cases]
+    # The shell's answer decides only where it should: a Chinese Mac whose web view says English.
+    assert _expected_language({"saved": None, "system": "zh", "languages": ["en-US"]}) == "zh"
+
+
+@needs_node
+@pytest.mark.parametrize("saved, line, languages, lang", [
+    (None, 'window.ROI18N_SYSTEM = "zh";', ["en-US"], "zh"),        # 13.8 #1: a Chinese Mac stays Chinese in the shell
+    (None, 'window.ROI18N_SYSTEM = "en";', ["zh-Hans-CN"], "en"),
+    ("en", 'window.ROI18N_SYSTEM = "zh";', ["zh-Hans-CN"], "en"),   # the saved choice still wins
+    ("zh", 'window.ROI18N_SYSTEM = "en";', ["en-US"], "zh"),
+    (None, "", ["zh-Hans-CN"], "zh"),                                # a browser: exactly as before
+])
+def test_13_2_the_shells_line_as_it_injects_it(saved, line, languages, lang):
+    """The line RCEShell.swift's systemLanguageScript writes (pinned in
+    test_webapp_macapp), run at document start before /i18n.js; the page's
+    <html lang> follows."""
+    got = _with_i18n("[window.ROI18N.lang, document.documentElement.lang]", saved=saved, languages=languages,
+                     prelude=line + "\nglobal.document = { documentElement: { setAttribute(k, v) { this[k] = v; } },"
+                     " querySelectorAll: () => [] };\n")
+    assert got == [lang, "en" if lang == "en" else "zh-CN"]
+
+
+@needs_node
+def test_13_3_the_page_and_the_shell_agree_on_the_language_message():
+    """After a successful save the page posts exactly {type: "language"}:
+    one key, no language named (the shell would not trust it). The shell,
+    merged from v9-shell, accepts exactly that shape: `body.count == 1`."""
+    script = (
+        "const sent = [];\n"
+        "global.window = { webkit: { messageHandlers: { rce: { postMessage: (m) => sent.push(m) } } } };\n"
+        + _app_function("function postShellLanguage(")
+        + "postShellLanguage();\n"
+        "process.stdout.write(JSON.stringify(sent.map((m) => [Object.keys(m), m.type])));\n"
+    )
+    assert _node(script) == [[["type"], "language"]]
+    swift = (WEBAPP / "shell" / "RCEShell.swift").read_text(encoding="utf-8")
+    handler = swift[swift.index("didReceive message: WKScriptMessage"):]
+    handler = handler[: handler.index("\n    }\n")]
+    assert re.findall(r'body\.count == (\d+), body\["type"\] as\? String == "language"', handler) == ["1"]
+
+
 @needs_node
 def test_13_6_t_in_both_languages_with_fields_plurals_and_fallback():
     entries = {"{n} 个提议": {"one": "{n} proposal", "other": "{n} proposals"},

@@ -82,6 +82,10 @@
 //   saved), the Mac's first preferred language: "zh..." is Chinese, any
 //   other English. Menus, the waiting page, alert buttons and panel texts
 //   follow it. The Chinese stays in this source as the key (englishText).
+//   The page is told the Mac's answer (never the saved choice, which it
+//   reads from /i18n.js) at document start, `window.ROI18N_SYSTEM = "zh"`
+//   or `"en"`: a web view in an app that declares no localizations may
+//   report English in navigator.languages on a Chinese Mac.
 // - Navigation: only http://127.0.0.1:<port> (and the placeholder's
 //   about:blank) load in the window. Any other http(s)/mailto link opens
 //   in the default browser; every other scheme is refused. Developer
@@ -241,6 +245,15 @@ func savedInterfaceLanguage(_ settings: URL) -> String? {
 func interfaceLanguage(saved: String?, preferred: [String]) -> String {
     if let saved = saved { return saved }
     return preferred.first?.lowercased().hasPrefix("zh") == true ? "zh" : "en"
+}
+
+// 13.2: the shell's own answer for the page, injected at document start.
+// i18n.js takes the saved choice first, then this, then navigator.languages,
+// which inside this shell may say English on a Chinese Mac. The Mac's
+// languages only (the page reads the saved choice from /i18n.js on every
+// load, so a switch never leaves this stale), and only "zh" or "en".
+func systemLanguageScript(preferred: [String]) -> String {
+    "window.ROI18N_SYSTEM = \"" + interfaceLanguage(saved: nil, preferred: preferred) + "\";"
 }
 
 // -- end of the two languages ---------------------------------------------------
@@ -442,6 +455,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         config.userContentController.add(self, name: "rce")
         config.userContentController.addUserScript(WKUserScript(
             source: shellFeaturesScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.addUserScript(WKUserScript(
+            source: systemLanguageScript(preferred: Locale.preferredLanguages),
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView = WKWebView(frame: window.contentView!.bounds, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self

@@ -913,6 +913,29 @@ def test_shell_takes_a_language_message_and_rereads_the_file():
     assert "NSApp.windowsMenu = windowMenu.submenu" in build and "NSApp.helpMenu = helpMenu.submenu" in build
 
 
+def test_shell_tells_the_page_the_macs_language_at_document_start():
+    """13.2 (amended): inside the shell the page does not trust
+    navigator.languages, so the shell injects its own answer from
+    Locale.preferredLanguages, beside RCEShellFeatures, at document start in
+    the main frame: `window.ROI18N_SYSTEM = "zh"` or `"en"`, from the same
+    rule as its menus but with no saved choice (the page reads that from
+    /i18n.js on every load). The value is one of two fixed words, never
+    text from outside the shell."""
+    section = _SHELL[_SHELL.index("// -- Two languages"):_SHELL.index("// -- end of the two languages")]
+    script = section[section.index("func systemLanguageScript"):]
+    script = script[: script.index("\n}\n")]
+    assert script.split("\n")[1:] == [
+        '    "window.ROI18N_SYSTEM = \\"" + interfaceLanguage(saved: nil, preferred: preferred) + "\\";"']
+    window = _SHELL[_SHELL.index("func buildWindow"):]
+    window = window[: window.index("\n    }\n")]
+    features = window.index("source: shellFeaturesScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))")
+    system = window.index("config.userContentController.addUserScript(WKUserScript(\n"
+                          "            source: systemLanguageScript(preferred: Locale.preferredLanguages),\n"
+                          "            injectionTime: .atDocumentStart, forMainFrameOnly: true))")
+    assert features < system < window.index("webView = WKWebView(frame:")
+    assert window.count("addUserScript(") == 2 and _SHELL.count("systemLanguageScript(") == 2
+
+
 _LANGUAGE_HARNESS = r"""
 let dir = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 var out: [String: String] = [:]
@@ -923,7 +946,10 @@ let macs: [String: [String]] = [
     "zh-Hans": ["zh-Hans-CN", "en-US"], "zh-Hant": ["zh-Hant-TW"], "zh": ["zh"],
     "en": ["en-US", "zh-Hans-CN"], "de": ["de-DE"], "empty": [],
 ]
-for (mac, preferred) in macs { out["mac " + mac] = interfaceLanguage(saved: nil, preferred: preferred) }
+for (mac, preferred) in macs {
+    out["mac " + mac] = interfaceLanguage(saved: nil, preferred: preferred)
+    out["page " + mac] = systemLanguageScript(preferred: preferred)
+}
 out["zh chosen on an English Mac"] = interfaceLanguage(saved: "zh", preferred: ["en-US"])
 out["en chosen on a Chinese Mac"] = interfaceLanguage(saved: "en", preferred: ["zh-Hans-CN"])
 out["html zh"] = htmlLanguage("zh")
@@ -982,6 +1008,9 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     }
     assert {k[4:]: v for k, v in out.items() if k.startswith("mac ")} == {
         "zh-Hans": "zh", "zh-Hant": "zh", "zh": "zh", "en": "en", "de": "en", "empty": "en"}
+    # 13.2: what the page is told is the same answer, as one fixed line of script.
+    assert {k[5:]: v for k, v in out.items() if k.startswith("page ")} == {
+        mac: f'window.ROI18N_SYSTEM = "{out["mac " + mac]}";' for mac in ("zh-Hans", "zh-Hant", "zh", "en", "de", "empty")}
     assert out["zh chosen on an English Mac"] == "zh" and out["en chosen on a Chinese Mac"] == "en"
     assert (out["html zh"], out["html en"]) == ("zh-CN", "en")
     path = '/a/{path}/日志 "x"/serve.log'

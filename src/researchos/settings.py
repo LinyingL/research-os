@@ -10,7 +10,9 @@ file that is missing, unreadable or not a JSON object reads as `{}`.
 
 **The interface language** (13.2) is `"zh"` or `"en"`; no saved choice is
 `None`, and so is anything else found in the file -- the page then follows
-the Mac (`navigator.languages`), the shell `Locale.preferredLanguages`.
+the Mac: inside the shell, the shell's own answer from
+`Locale.preferredLanguages`, injected at document start; else
+`navigator.languages`. The shell reads `Locale.preferredLanguages` itself.
 The engine never guesses: a sentence it composes for the page is in the
 language the page asks for on that request, in the header
 `X-ResearchOS-Lang` (`request_language`); without it, Chinese, so the
