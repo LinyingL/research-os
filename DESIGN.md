@@ -1097,7 +1097,7 @@ changing scope; Enter fits the camera to the matches.
 
 ### 8.8 Product language
 
-All UI copy is Chinese product language — not only what V4 adds. The
+All UI copy is Chinese product language — not only what V4 adds. (English is the second interface language since V9; see Section 13.) The
 three tabs read 「决策树」「血缘」「画布」, and the English left over from
 V1–V3 is translated in the same pass. The brand mark stays `Research OS`; its
 subtitle becomes 「研究脉络」 (the old "decision tree & lineage" named two
@@ -3001,7 +3001,7 @@ app, the shell and the documentation's screenshots:
   待定, 不利证据, 被否, 归档 — in a quiet tinted label, followed by the
   researcher's own words. The mapping from marker to status is read from
   `attempts.toml` (`[verdict_labels]`), with these defaults; an unknown
-  marker shows as 「其它」 plus the researcher's words. The raw marker
+  marker shows as 「其它」 plus the researcher's words. English words for these statuses: 13.4. The raw marker
   appears only where the source file itself is shown (history, diff).
 - **No arrow characters as connectors or decoration** — →, ←, ↔, ->, =>,
   ▸, ▾, ＋ and the like. A relation is said in words (读取, 写出, 生成,
@@ -3077,7 +3077,7 @@ The command line, a developer surface, may keep its arrows.
 *The shell's menus* replace 8.9's list: 文件 — 添加项目… ⌘O, 提交提议…
 (member) or 发布 (PI) when the project is collaborative, 关闭 ⌘W; 视图 — the
 eight sections on ⌘1–⌘8, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
-title, mode and choose-folder / choose-file messages, nothing else.
+title, mode and choose-folder / choose-file messages, nothing else. (Amended by 13.3: also `{type: "language"}`.)
 
 *Who.* A version installed by 同步 is attributed to the publish it came
 from — the PI and the snapshot — not to 「本机」. In a member's working copy a
@@ -3127,3 +3127,196 @@ choose them in 成员; compare the PI's key fingerprint; 同步. And for the PI:
 which folder to share with which rights, where to click in OneDrive's
 personal web interface. It is tested step by step on a clean account-like
 setup before it is handed over.
+
+## Section 13 — Two interface languages (task V9)
+
+The researcher, 2026-10-12: "现在给 APP 添加英文切换功能". A collaborator or
+a PI who does not read Chinese must be able to use Research OS. The same
+day the researcher chose the scope of the first increment (13.7: the frame
+only), approved the glossary of 13.4, chose that the first launch follows
+the Mac's language (13.2), and asked for an English install guide.
+
+### 13.1 What switches and what never does
+
+The language is a property of **the screen, not of the record**. It changes
+only the words Research OS itself writes on screen — in the page and in the
+shell. It never changes:
+
+- **The researcher's text**: attempt titles, verdict cells, results, notes,
+  reasons, card fields, proposal sentences, project labels, people's names,
+  file and folder names. Shown as written, in whatever language it is in.
+- **Anything written to disk or to the shared drive**: the folder names
+  `已发布` and `提议`, record file headers and comments, `decisions.toml`,
+  「（放弃理由：…）」 in the attempt table, the commit message
+  「Research OS：人工记录」, stored values such as `已核对`. Two people whose
+  screens are in different languages share one folder and one record; a
+  file written by one Mac is byte-identical whichever language it shows.
+- **The vocabulary that reads the researcher's files**: `[verdict_labels]`,
+  headings, column names, the default verdict words used as parse keys.
+- **The command line** (8.8: a developer surface, English).
+
+Where an English screen has to name a fixed on-disk name, it shows the real
+name, with the meaning in brackets the first time on that screen:
+"the 提议 folder (proposals)".
+
+### 13.2 Where the choice lives
+
+Per person, per Mac: the key `interface_language` (`"zh"` or `"en"`) in
+`~/.researchos/settings.json`, beside `doi_online_lookup`. It is written only
+when the person chooses, never by default. The read-modify-write helpers
+move from `literature.py` to a small `researchos/settings.py` used by both
+settings.
+
+With no saved choice, Research OS follows the Mac: if the first preferred
+language starts with `zh`, Chinese; anything else, English. The page reads
+`navigator.languages`, the shell reads `Locale.preferredLanguages`; both see
+the same macOS setting. (The researcher's Mac is `zh-Hans`, so nothing
+changes for them until they choose.)
+
+The engine never guesses. A sentence it composes for the page is in the
+language the page asks for on that request (the header
+`X-ResearchOS-Lang: en|zh`, set in one place, `apiGet`/`apiPost`); without
+the header it is Chinese, so the command line, MCP and an older page are
+unaffected.
+
+### 13.3 The switch
+
+A quiet text button in the sidebar's tool row beside 记录 and 停止服务,
+named in the language it switches to: 「English」 on a Chinese screen,
+「中文」 on an English one. No flag, no globe, no icon. One click saves the
+choice, tells the shell, and reloads the page on the same section (the
+remembered view). `<html lang>` is `zh-CN` or `en` accordingly. The fonts do not
+change (Section 8): Songti and PingFang carry Latin letters, and English text
+keeps the same serif/sans/mono roles. Labels must fit at the sidebar's
+fixed width in both languages; a longer English word wraps, it is never cut
+with an ellipsis.
+
+The shell follows the page: the bridge accepts one more message,
+`{type: "language"}`, on which the shell re-reads `settings.json` (it never
+trusts the message's content), rebuilds its menus and re-applies the team
+mode. This amends 12.13's "nothing else". At launch the shell builds its
+menus, waiting page, alerts and panel prompts in the saved language, or the
+Mac's when none is saved.
+
+### 13.4 Glossary (binding; approved 2026-10-12)
+
+One English word per concept, everywhere it appears; sentence case; the
+same register as the Chinese — short, concrete, no jargon. 8.8's spirit
+holds: the user is never told "node", "edge" or "socket". English strings
+obey 12.11: no arrows, no emoji; quotation marks are “ ” where the Chinese
+has 「 」.
+
+| 中文 | English |
+|---|---|
+| 工作台 | Desk |
+| 研究路线 | Research routes |
+| 成果 | Outputs |
+| 变量 | Variables |
+| 文献 | Literature |
+| 数据与代码 | Data & code |
+| 提议 | Proposals |
+| 成员 | Members |
+| 现行 | Current |
+| 已放弃 | Abandoned |
+| 待定 | Pending |
+| 不利证据 | Adverse evidence |
+| 被否 | Rejected |
+| 归档 | Archived |
+| 其它 | Other |
+| 来龙去脉 | Provenance |
+| 改动与备注 | Changes & notes |
+| 判断 | Judgments |
+| 关系图 | Relation map |
+| 尝试 / 判决 / 结果 | Attempt / Verdict / Result |
+| 待复核 | Needs review |
+| 缺来源 / 补上来源 | Missing source / Add source |
+| 缺尝试 / 关联文件 | No attempt / Link files |
+| 公盘 | Shared folder |
+| 官方版本 | Official version |
+| 工作副本 | Working copy |
+| 批准并加入 | Approve |
+| 退回并说明 | Return with reason |
+| 我的改动，尚未提交 | My change, not yet proposed |
+| 提议中 | Proposed |
+| 已批准，待同步 | Approved, awaiting sync |
+| 本机 | This Mac |
+| 最初的研究者 | Original researcher |
+| 含义 / 输入 / 构建口径 | Meaning / Inputs / Construction |
+| 实现依据 / 人工决策 | Implementation / Human decision |
+| 草稿 / 确认这一版 | Draft / Confirm this version |
+
+Verdicts: the six default statuses and 「其它」 take the words above. A
+status the researcher named in `[verdict_labels]` shows their word as
+written (status `labelled`), in either language.
+
+Fixed for the desk and the frame (first increment): 等你批准 "Awaiting your
+approval"; 我的提议 "My proposals"; 你上次查看以来的改动 "Changes since you
+last looked"; 依据变了的成果 "Outputs whose basis changed"; 已放弃的路线
+"Abandoned routes"; 记录 "Records"; 停止服务 "Stop service"; 研究脉络 (the
+brand's subtitle) "Research provenance"; PI stays "PI"; 成员 as a role
+"Member"; 同步 "Sync"; 发布 "Publish".
+
+### 13.5 Dates, numbers and plurals
+
+Chinese stays as it is. English uses explicit formats, not `Intl`, so tests
+are deterministic: "Today 09:24", "Yesterday 18:02", "4 Oct", "4 Oct 2025"
+outside the current year; 24-hour time as in Chinese; thousands separated by
+commas ("1,497"). Every counted noun has a singular and a plural ("1
+proposal", "2 proposals"); Chinese has one form.
+
+### 13.6 How text is translated
+
+- **The Chinese stays in the source as the key.** `t("工作台")` returns the
+  English in English mode and the Chinese otherwise; values are filled by
+  name (`{n}`, `{name}`); a plural entry holds a singular and a plural form
+  chosen by `n`. Sentences built by concatenation become one template each,
+  because English word order differs.
+- **One served file, `/i18n.js`, loaded first**, defines `window.ROI18N`
+  (the language and the English table). Every module looks it up at call
+  time and falls back to the Chinese when it is absent, so a module loaded
+  alone — as the node-run tests do — behaves exactly as before.
+- **The page never compares displayed text.** Where it compared Chinese the
+  server sent (the desk's `what`, and the others found in the 2026-10-12
+  survey), the payload gains a code and the page compares codes.
+- **The engine** looks up the sentences it composes for the page through
+  one helper, by the request's language, Chinese by default.
+- **A missing English entry shows the Chinese**, never a key or a blank, and
+  a test lists every one for the surfaces declared converted.
+
+### 13.7 Increments
+
+**First increment — the frame** (this task): the setting, the header and
+`/i18n.js`; the switch; the sidebar (section names, the project switcher and
+its menu, the who-am-I and published/synced lines, 记录, 停止服务); page
+titles; the welcome shown without a project; the stopped-service page; the
+desk entirely (its own words, the sentences the engine composes for it, the
+verdict words it shows); the shell (menus, waiting page, alerts, panel
+prompts); the English install guide `docs/install-and-join.en.md`.
+
+**Later increments**, one section at a time: 研究路线, 成果, 变量, 文献,
+数据与代码 with 关系图, 提议, 成员, the node page, forms and dialogs, and the
+error sentences (`BLOCKING_ERROR_TEXT`, the engine's refusals). Until a
+section's increment lands, that section shows Chinese in English mode, and
+so do error sentences everywhere. Within a converted surface, every word
+Research OS writes is English.
+
+### 13.8 Acceptance of the first increment
+
+1. No setting, Mac in Chinese: every screen reads exactly as before.
+2. English (by choice, or a browser whose first language is not Chinese and
+   no setting): sidebar, page titles, welcome and desk carry no Chinese
+   except the researcher's text and fixed on-disk names; verdict words as
+   in 13.4; the researcher's own `[verdict_labels]` words unchanged.
+3. The switch round-trips: 「English」, reload, English; `settings.json`
+   gains exactly `interface_language`, `doi_online_lookup` untouched;
+   「中文」 brings it back.
+4. Nothing on disk depends on the language: the two-person flow of 12.10.3
+   run with an English screen writes the same folder names, record files,
+   decisions and commit message as with a Chinese one.
+5. The shell's menus follow the switch without a restart; with no setting
+   on an English Mac its waiting page is English.
+6. Command-line output is unchanged; every existing test passes; new tests
+   cover the setting, the header, the desk in both languages, the shell's
+   two tables, and the completeness and 12.11 rules for English strings.
+7. Screenshots of every converted surface in both languages, taken by the
+   reviewer in a browser, before the merge.
