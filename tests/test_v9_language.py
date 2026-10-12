@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import threading
 import tomllib
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -55,11 +56,22 @@ T_LINE = 'function t(s, v) { var I = typeof window !== "undefined" && window.ROI
 CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("app.html", "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state"),
     ("app.html", "// -- The language switch (DESIGN.md 13.2, 13.3)", "// -- Native shell bridge"),
+    # T2, the frame (13.7): the page titles, the stopped page and its question; in desk.js the
+    # dates (13.5), the shared folder's line and the sidebar's live parts (the count's title, who
+    # I am). 新增尝试 in renderSidebar belongs to 研究路线's increment, so it is left between them.
+    ("app.html", "// A section's title on screen (13.4)", "let lastDataView"),
+    ("app.html", "function renderStoppedState() {", "// -- The language switch (DESIGN.md 13.2, 13.3)"),
+    ("desk.js", "  // When something happened, as a person says it", "  function toneOf("),
+    ("desk.js", "  // The shared drive's status line (12.9)", "  // A proposal in one line"),
+    ("desk.js", "  // The sidebar's live parts", "    // U4: a member proposes"),
+    ("desk.js", "    const me = ctx.me && ctx.me.me;", "  // -- the desk"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
 #: name). Keys are the exact literal.
-ALLOWED_CHINESE: dict[str, str] = {}
+ALLOWED_CHINESE: dict[str, str] = {
+    "停止服务失败": "13.7: an error sentence -- errors everywhere are converted in their own increment",
+}
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
@@ -718,4 +730,341 @@ def test_13_6_the_completeness_scanner_is_not_vacuous():
         "'空': blank",
         "'第 {n} 版': fields ['m'] where the key has ['n']",
         "'共 {n} 项': fields [] where the key has ['n']",
+    ]
+
+
+# -- 13.7: the frame -- the sidebar, the page titles, the stopped page (T2) --------------------------------------
+
+#: The frame's markup converted so far, as stretches of the served page: the
+#: sidebar's own label and its brand, the eight sections, the shared folder's
+#: line, who I am and the tool row, and the page title. The project line (its
+#: eyebrow, the switcher and its menu) and the welcome are the frame's next part.
+FRAME_MARKUP = [
+    ('<aside class="sidebar"', '<div class="side-project"'),
+    ('<nav class="side-nav"', "</aside>"),
+    ('<h1 class="page-title"', "</h1>"),
+]
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+
+def _elements(markup: str) -> list[dict[str, Any]]:
+    """Each element of a stretch of markup as /i18n.js sees it: its
+    attributes, the text directly inside it and its number of child
+    elements (comments are not elements)."""
+    els: list[dict[str, Any]] = []
+    stack: list[dict[str, Any]] = []
+
+    class _Parser(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            el = {"tag": tag, "attrs": {k: v or "" for k, v in attrs}, "text": "", "children": 0}
+            if stack:
+                stack[-1]["children"] += 1
+            els.append(el)
+            if tag not in _VOID:
+                stack.append(el)
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+            if tag not in _VOID:
+                stack.pop()
+
+        def handle_endtag(self, tag):
+            if stack and stack[-1]["tag"] == tag:
+                stack.pop()
+
+        def handle_data(self, data):
+            if stack:
+                stack[-1]["text"] += data
+
+    parser = _Parser(convert_charrefs=True)
+    parser.feed(markup)
+    parser.close()
+    return els
+
+
+def _frame_on_screen(page: str, i18n_js: str, languages: list[str] | None) -> tuple[list[dict], list[dict]]:
+    """The frame's elements before and after the served /i18n.js runs over
+    them under node (its own translateMarkup, on a small stand-in DOM)."""
+    before = [el for start, end in FRAME_MARKUP for el in _elements(_slice(page, start, end))]
+    nav = json.dumps({"languages": languages}) if languages is not None else "undefined"
+    script = (
+        "global.window = {};\n"
+        f"Object.defineProperty(globalThis, 'navigator', {{value: {nav}, configurable: true}});\n"
+        f"const data = {json.dumps(before, ensure_ascii=False)};\n"
+        "const els = data.map((d) => ({ attrs: Object.assign({}, d.attrs), textContent: d.text,"
+        " children: new Array(d.children).fill(null),"
+        " hasAttribute(n) { return Object.prototype.hasOwnProperty.call(this.attrs, n); },"
+        " getAttribute(n) { return this.hasAttribute(n) ? this.attrs[n] : null; },"
+        " setAttribute(n, v) { this.attrs[n] = String(v); } }));\n"
+        "global.document = { documentElement: { setAttribute() {} }, querySelectorAll(sel) {\n"
+        "  if (sel === '[data-i18n], [data-i18n-attr]') return els.filter((e) => e.hasAttribute('data-i18n') || e.hasAttribute('data-i18n-attr'));\n"
+        "  if (sel === '[data-i18n-switch]') return els.filter((e) => e.hasAttribute('data-i18n-switch'));\n"
+        "  return []; } };\n"
+        + i18n_js
+        + "\nprocess.stdout.write(JSON.stringify(els.map((e) => ({ text: e.textContent, attrs: e.attrs }))));\n"
+    )
+    after = _node(script)
+    return before, [{**el, "text": got["text"], "attrs": got["attrs"]} for el, got in zip(before, after)]
+
+
+def _served_page_and_i18n(live: _Live, saved: str | None) -> tuple[str, str]:
+    if saved is not None:
+        assert live.post("/api/settings/language", {"language": saved})[0] == 200
+    page = live.call("GET", "/")[2].decode("utf-8")
+    return page, live.call("GET", "/i18n.js")[2].decode("utf-8")
+
+
+def _words(els: list[dict], cls: str) -> list[str]:
+    return [el["text"].strip() for el in els if cls in el["attrs"].get("class", "").split()]
+
+
+@needs_node
+@pytest.mark.parametrize("saved, languages", [("en", ["zh-Hans-CN"]), (None, ["en-GB"])])
+def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, languages):
+    """13.8 #2: English by choice, or by a browser whose first language is
+    not Chinese with nothing saved -- the sidebar's words, its labels and
+    hover titles and the page title carry no Chinese; the switch alone is
+    named 「中文」 in Chinese (13.3). Section names per 13.4."""
+    page, i18n_js = _served_page_and_i18n(live, saved)
+    _before, after = _frame_on_screen(page, i18n_js, languages)
+    chinese = []
+    for el in after:
+        if "data-i18n-switch" in el["attrs"]:
+            assert el["text"] == "中文"
+            continue
+        if CJK.search(el["text"]):
+            chinese.append((el["tag"], el["text"].strip()))
+        chinese += [(el["tag"], name, el["attrs"][name]) for name in ("title", "aria-label", "placeholder", "alt")
+                    if CJK.search(el["attrs"].get(name, ""))]
+    assert chinese == []
+    assert _words(after, "brand-sub") == ["Research provenance"]
+    assert _words(after, "side-label") == ["Desk", "Research routes", "Outputs", "Variables", "Literature",
+                                           "Data & code", "Proposals", "Members"]
+    assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
+    assert _words(after, "page-title") == ["Desk"]
+    labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
+              for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn")}
+    assert labels == {"sidebar": ("Project and sections", None), "side-nav": ("Sections", None),
+                      "records-btn": (None, "See where this project’s human records are kept"),
+                      "shutdown-btn": (None, "Stop the local service process")}
+
+
+@needs_node
+@pytest.mark.parametrize("saved, languages", [("zh", ["en-US"]), (None, ["zh-Hans-CN"])])
+def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
+    """13.8 #1: a Chinese screen -- chosen, or the Mac's with nothing
+    saved -- shows the frame's markup exactly as written: every word and
+    attribute as before, the eight sections as 12.9 names them."""
+    page, i18n_js = _served_page_and_i18n(live, saved)
+    before, after = _frame_on_screen(page, i18n_js, languages)
+    assert after == before
+    assert _words(after, "side-label") == ["工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["工作台"]
+    assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
+
+
+def test_13_3_the_frame_wraps_and_never_cuts_a_word():
+    """13.3: labels fit the sidebar's fixed width in both languages; a
+    longer English word wraps, never cut with an ellipsis -- no rule for
+    the frame's words sets nowrap or text-overflow, and the width is 12.9's."""
+    css = re.search(r"<style>(.*?)</style>", APP_HTML.read_text(encoding="utf-8"), re.S).group(1)
+    frame = (".sidebar", ".side-brand", ".brand-sub", ".side-nav", ".side-item", ".side-label", ".side-count",
+             ".side-foot", ".share-line", ".me-line", ".me-role", ".me-unset", ".side-tools", ".shutdown-btn",
+             ".page-title", ".stopped-note")
+    rules = [(sel, body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+             if any(re.search(re.escape(cls) + r"(?![\w-])", sel) for cls in frame)]
+    assert len(rules) >= 15
+    assert [sel.strip() for sel, body in rules if "nowrap" in body or "text-overflow" in body] == []
+    assert re.search(r"\.sidebar \{[^}]*width: 236px;", css)
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh", "en"])
+def test_13_7_page_titles_follow_the_language(saved):
+    """The page title (activateView) names each section in the screen's
+    language; SECTION_TITLES stays the Chinese node.js's 「返回…」 reads."""
+    html = APP_HTML.read_text(encoding="utf-8")
+    assert 'document.getElementById("page-title").textContent = sectionTitle(section);' in html
+    assert ('const SECTION_TITLES = {\n  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", '
+            'literature: "文献",\n  data: "数据与代码", proposals: "提议", members: "成员",\n};') in html
+    code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
+            + _app_function("function sectionTitle("))
+    sections = ["desk", "routes", "results", "variables", "literature", "data", "proposals", "members", "node", None]
+    expr = f"(function () {{ {code} return {json.dumps(sections)}.map(sectionTitle); }})()"
+    got = _node("global.window = {};\n" + f"process.stdout.write(JSON.stringify({expr}));\n") if saved is None \
+        else _with_i18n(expr, saved=saved)
+    if saved == "en":
+        assert got == ["Desk", "Research routes", "Outputs", "Variables", "Literature", "Data & code", "Proposals",
+                       "Members", "", ""]
+    else:
+        assert got == ["工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
+
+
+_STOPPED_ZH = ('<main id="main"><div class="stopped-note"><h2>服务已停止</h2><p>本地服务已经关闭，可以关闭此页。</p>'
+               "<p>下次要查看时，双击 Research OS.app，或在终端运行 <code>researchos serve</code>。</p></div></main>")
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh", "en"])
+def test_13_7_the_stopped_page_and_its_question(saved):
+    """停止服务's question and the page left once the service stopped, in
+    the screen's language: Chinese byte for byte as before; English with
+    the command still set in <code>."""
+    code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
+            + _app_function("function escapeHtml(")
+            + _app_block("function renderStoppedState() {", "// -- The language switch (DESIGN.md 13.2, 13.3)"))
+    prelude = (
+        "const asked = []; const appEl = { innerHTML: '' }; const handlers = {};\n"
+        "window.confirm = (q) => { asked.push(q); return false; };\n"
+        "global.document = { getElementById: (id) => id === 'app' ? appEl : id === 'shutdown-btn'"
+        " ? { addEventListener: (e, fn) => { handlers[e] = fn; } } : null };\n"
+        "let pollTimer = null; function closePanel() {}\n"
+    )
+    expr = f"(function () {{ {code} renderStoppedState(); handlers.click(); return [appEl.innerHTML, asked]; }})()"
+    if saved is None:
+        page, asked = _node("global.window = {};\n" + prelude + f"process.stdout.write(JSON.stringify({expr}));\n")
+    else:
+        page, asked = _with_i18n(expr, saved=saved, prelude=prelude)
+    if saved == "en":
+        assert page == ('<main id="main"><div class="stopped-note"><h2>Service stopped</h2>'
+                        "<p>The local service has stopped. You can close this page.</p>"
+                        "<p>To look again, double-click Research OS.app or run <code>researchos serve</code> in Terminal.</p>"
+                        "</div></main>")
+        assert asked == ["Stop the local service? Once it stops, this page can no longer be used."]
+    else:
+        assert page == _STOPPED_ZH
+        assert asked == ["确定要停止本地服务吗？停止后这个页面将无法继续使用。"]
+
+
+_NOW = "2026-10-11T15:00:00"
+_MEMBER_SHARE = {"shared": "/x", "reachable": True, "role": "member", "joined": {"synced": "2026-10-11T08:00:00"},
+                 "verification": "verified", "refused": [], "behind": False}
+_PI_SHARE = {"shared": "/x", "reachable": True, "role": "pi", "last_snapshot": {"at": "2026-10-10T18:00:00"},
+             "pending_publish": {"count": 2}}
+_WHEN_CASES = ["2026-10-11T09:05:00", "2026-10-10T23:30:00", "2026-10-04T12:00:00", "2025-03-01T12:00:00",
+               "2026-01-31T07:00:00", "not a date"]
+_SHARE_CASES = [
+    _MEMBER_SHARE, {**_MEMBER_SHARE, "behind": True}, {**_MEMBER_SHARE, "verification": "no_tool"},
+    {**_MEMBER_SHARE, "reachable": False}, {**_MEMBER_SHARE, "refused": ["s-3"]},
+    {**_MEMBER_SHARE, "joined": {"synced": None}, "verification": "no_tool"},
+    _PI_SHARE, {**_PI_SHARE, "pending_publish": {"count": 0}, "last_snapshot": {"at": "2026-10-04T09:00:00"}},
+    {**_PI_SHARE, "last_snapshot": None}, {"shared": None},
+]
+
+
+def _desk_lines(saved: str | None) -> list:
+    """desk.js's dates and the shared folder's line, with /i18n.js loaded
+    AFTER desk.js (t() is looked up at call time), or with no /i18n.js."""
+    desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
+    expr = (f"(function () {{ const now = new Date({json.dumps(_NOW)}); const D = window.RODesk;"
+            f" return [{json.dumps(_WHEN_CASES)}.map((a) => D._whenWords(a, now)),"
+            f" {json.dumps(_SHARE_CASES)}.map((s) => D._shareLineText(s, now))]; }})()")
+    if saved is None:
+        return _node("global.window = {};\n" + desk_js + f"\nprocess.stdout.write(JSON.stringify({expr}));\n")
+    return _with_i18n(expr, saved=saved, prelude=desk_js + "\n")
+
+
+_DESK_LINES_ZH = [
+    ["今天 09:05", "昨天 23:30", "10月4日", "2025年3月1日", "1月31日", ""],
+    ["已同步 今天 08:00", "有新的官方版本", "未验证 · 已同步 今天 08:00", "公盘现在打不开", "公盘上有未通过验证的版本",
+     "未验证 · 已同步", "有改动尚未发布 · 已发布 昨天 18:00", "已发布 10月4日", "还没有发布过", ""],
+]
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh"])
+def test_13_8_the_sidebar_lines_in_chinese_are_as_before(saved):
+    assert _desk_lines(saved) == _DESK_LINES_ZH
+
+
+@needs_node
+def test_13_5_the_sidebar_lines_in_english_dates_and_the_shared_folder():
+    """13.5's dates (Today 09:05, Yesterday 23:30, 4 Oct, 1 Mar 2025); the
+    shared folder's line per 13.4, its date lower case inside the line."""
+    assert _desk_lines("en") == [
+        ["Today 09:05", "Yesterday 23:30", "4 Oct", "1 Mar 2025", "31 Jan", ""],
+        ["Synced today 08:00", "A new official version is available", "Unverified · Synced today 08:00",
+         "The shared folder cannot be opened right now", "The shared folder holds a version that failed verification",
+         "Unverified · Synced", "Changes not yet published · Published yesterday 18:00", "Published 4 Oct",
+         "Not published yet", ""],
+    ]
+
+
+_SIDEBAR_PRELUDE = """
+function fakeEl() {
+  return { textContent: "", title: "", kids: [], dataset: {}, hidden: false,
+    classList: { toggle(c, on) { this.owner.hidden = !!on; } },
+    append(...xs) { this.kids.push(...xs); } };
+}
+function els() {
+  const out = {};
+  for (const id of ["side-count-proposals", "share-line", "me-line", "new-attempt-btn"]) {
+    out[id] = fakeEl();
+    out[id].classList.owner = out[id];
+  }
+  return out;
+}
+let shown = els();
+global.document = { getElementById: (id) => shown[id] || null, querySelectorAll: () => [] };
+global.mk = (tag, cls, text) => ({ tag, cls, textContent: text });
+global.state = { noProject: false, dataEpoch: 0 };
+"""
+
+_SIDEBAR_CASES = """
+[
+  { mode: "pi", me: { id: "li@example.com", name: "Li" }, share: { shared: "/OneDrive/proj", reachable: false },
+    pending: 2 },
+  { mode: "pi", me: { id: "li@example.com", name: "Li" }, share: null, pending: 1 },
+  { mode: "member", me: { id: "wang@example.com", name: "Wang" }, share: { shared: "/x", reachable: false }, pending: 3 },
+  { mode: "none", me: { id: "zhao@example.com" }, share: null, pending: 0 },
+  { mode: "single", me: null, share: null, pending: 0 },
+].map((c) => {
+  shown = els();
+  const ctx = window.RODesk.context();
+  ctx.mode = c.mode; ctx.share = c.share; ctx.me = c.me ? { me: c.me } : null;
+  ctx.proposals = { proposals: Array.from({ length: c.pending }, () => ({ state: "pending" })) };
+  window.RODesk.renderSidebar();
+  return [shown["side-count-proposals"].textContent, shown["side-count-proposals"].title,
+          shown["share-line"].textContent, shown["share-line"].title,
+          shown["me-line"].kids.map((k) => [k.cls, k.textContent]), shown["me-line"].title];
+})
+"""
+
+
+def _sidebar(saved: str | None) -> list:
+    desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
+    if saved is None:
+        return _node("global.window = {};\n" + _SIDEBAR_PRELUDE + desk_js
+                     + f"\nprocess.stdout.write(JSON.stringify({_SIDEBAR_CASES}));\n")
+    return _with_i18n(_SIDEBAR_CASES, saved=saved, prelude=_SIDEBAR_PRELUDE + desk_js + "\n")
+
+
+_SIDEBAR_ZH = [
+    ["2", "2 条提议等你批准", "公盘现在打不开", "公盘：/OneDrive/proj", [["me-name", "Li"], ["me-role", "PI"]], "li@example.com"],
+    ["1", "1 条提议等你批准", "", "", [["me-name", "Li"], ["me-role", "PI"]], "li@example.com"],
+    ["", "", "公盘现在打不开", "公盘：/x", [["me-name", "Wang"], ["me-role", "成员"]], "wang@example.com"],
+    ["", "", "", "", [["me-name", "zhao@example.com"], ["me-role", "尚未加入团队"]], "zhao@example.com"],
+    ["", "", "", "", [["me-unset", "还没有设置你是谁"]], "在「成员」一栏里设置"],
+]
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh"])
+def test_13_8_who_i_am_and_the_count_in_chinese_are_as_before(saved):
+    assert _sidebar(saved) == _SIDEBAR_ZH
+
+
+@needs_node
+def test_13_4_who_i_am_and_the_count_in_english():
+    """The role word (PI stays PI; 成员 as a role is “Member”), the count's
+    hover title with its plural, the shared folder's hover title; the
+    person's name and id as written."""
+    assert _sidebar("en") == [
+        ["2", "2 proposals awaiting your approval", "The shared folder cannot be opened right now",
+         "Shared folder: /OneDrive/proj", [["me-name", "Li"], ["me-role", "PI"]], "li@example.com"],
+        ["1", "1 proposal awaiting your approval", "", "", [["me-name", "Li"], ["me-role", "PI"]], "li@example.com"],
+        ["", "", "The shared folder cannot be opened right now", "Shared folder: /x",
+         [["me-name", "Wang"], ["me-role", "Member"]], "wang@example.com"],
+        ["", "", "", "", [["me-name", "zhao@example.com"], ["me-role", "Not in the team yet"]], "zhao@example.com"],
+        ["", "", "", "", [["me-unset", "Who you are is not set yet"]], "Set it in “Members”"],
     ]

@@ -691,7 +691,7 @@ def test_served_app_tabs_read_in_product_language(live_server):
     the sidebar's sections, in product language; the brand mark stays
     Research OS, and the old English tab labels are gone."""
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
-    sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label">([^<]+)</span>', html)
+    sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(v, label) for _s, v, label in sections] == [
         ("desk", "工作台"), ("tree", "研究路线"), ("results", "成果"), ("variables", "变量"), ("literature", "文献"),
         ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
@@ -845,7 +845,7 @@ def test_served_brand_subtitle_is_yanjiu_mailuo(live_server):
     """8.8 (amended): the brand mark stays Research OS; its subtitle becomes
     「研究脉络」 (the old English one named two of three views)."""
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
-    assert '<span class="brand-sub">研究脉络</span>' in html
+    assert '<span class="brand-sub" data-i18n>研究脉络</span>' in html
     assert "decision tree &amp; lineage" not in html
 
 

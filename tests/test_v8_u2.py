@@ -192,7 +192,7 @@ def test_12_9_the_sidebar_has_the_projects_and_the_sections_in_order():
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'class="tab' not in html and 'role="tablist" aria-label="数据与代码"' in html
     found = re.findall(r'<button type="button" class="side-item" data-section="(\w+)" data-view="(\w+)">'
-                       r'<svg class="side-icon"[^>]*><path d="[^"]+"/></svg><span class="side-label">([^<]+)</span>', html)
+                       r'<svg class="side-icon"[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(s, label) for s, _v, label in found] == SECTIONS
     assert dict((s, v) for s, v, _l in found)["routes"] == "tree" and dict((s, v) for s, v, _l in found)["data"] == "lineage"
     nav = html[html.index('<aside class="sidebar"'):html.index("</aside>")]

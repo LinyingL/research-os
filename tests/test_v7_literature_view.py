@@ -429,7 +429,7 @@ def test_11_5_6_page_wording_summary_how_and_badges():
 def test_11_5_6_page_tab_setting_lazy_drafts_and_the_one_write_path():
     src = _src()
     # 12.9 (V8 U2): 文献 is a section of the sidebar.
-    assert 'data-section="literature" data-view="literature">' in src and '<span class="side-label">文献</span>' in src
+    assert 'data-section="literature" data-view="literature">' in src and '<span class="side-label" data-i18n>文献</span>' in src
     assert '<section id="view-literature" class="view hidden"></section>' in src
     start = src.index("// -- 文献 (DESIGN.md 11.4")
     view = src[start:src.index("// -- end of the 文献 view", start)]

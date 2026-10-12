@@ -1179,8 +1179,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
        (10.1's menu, re-skinned: a real menu button, no glyph), the open
        project's sections, and at the bottom the shared drive's line and who
        I am. Icons are monochrome line drawings (12.11), written here. -->
-  <aside class="sidebar" id="sidebar" aria-label="项目与栏目">
-    <div class="side-brand"><span class="brand-mark">Research OS</span><span class="brand-sub">研究脉络</span></div>
+  <aside class="sidebar" id="sidebar" aria-label="项目与栏目" data-i18n-attr="aria-label">
+    <div class="side-brand"><span class="brand-mark">Research OS</span><span class="brand-sub" data-i18n>研究脉络</span></div>
     <div class="side-project" id="project-line">
       <div class="side-eyebrow" id="project-eyebrow">项目</div>
       <span class="project-menu-wrap" id="project-menu-wrap">
@@ -1188,29 +1188,29 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目"></div>
       </span>
     </div>
-    <nav class="side-nav" id="side-nav" aria-label="栏目">
-      <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label">工作台</span></button>
-      <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label">研究路线</span></button>
-      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label">成果</span></button>
-      <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label">变量</span></button>
-      <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label">文献</span></button>
-      <button type="button" class="side-item" data-section="data" data-view="lineage"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 4c0-.9 2.2-1.5 5-1.5s5 .6 5 1.5-2.2 1.5-5 1.5S3 4.9 3 4zM3 4v8c0 .9 2.2 1.5 5 1.5s5-.6 5-1.5V4M3 8c0 .9 2.2 1.5 5 1.5S13 8.9 13 8"/></svg><span class="side-label">数据与代码</span></button>
-      <button type="button" class="side-item" data-section="proposals" data-view="proposals"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3M2.5 9.5 4 3.5h8l1.5 6v3h-11z"/></svg><span class="side-label">提议</span><span class="side-count" id="side-count-proposals"></span></button>
-      <button type="button" class="side-item" data-section="members" data-view="members"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5zM2 13.5c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5M11 7.2a1.8 1.8 0 1 0 0-3.6M11.6 10c1.5.3 2.4 1.5 2.4 3.5"/></svg><span class="side-label">成员</span></button>
+    <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
+      <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label" data-i18n>工作台</span></button>
+      <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
+      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>成果</span></button>
+      <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label" data-i18n>变量</span></button>
+      <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label" data-i18n>文献</span></button>
+      <button type="button" class="side-item" data-section="data" data-view="lineage"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 4c0-.9 2.2-1.5 5-1.5s5 .6 5 1.5-2.2 1.5-5 1.5S3 4.9 3 4zM3 4v8c0 .9 2.2 1.5 5 1.5s5-.6 5-1.5V4M3 8c0 .9 2.2 1.5 5 1.5S13 8.9 13 8"/></svg><span class="side-label" data-i18n>数据与代码</span></button>
+      <button type="button" class="side-item" data-section="proposals" data-view="proposals"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3M2.5 9.5 4 3.5h8l1.5 6v3h-11z"/></svg><span class="side-label" data-i18n>提议</span><span class="side-count" id="side-count-proposals"></span></button>
+      <button type="button" class="side-item" data-section="members" data-view="members"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5zM2 13.5c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5M11 7.2a1.8 1.8 0 1 0 0-3.6M11.6 10c1.5.3 2.4 1.5 2.4 3.5"/></svg><span class="side-label" data-i18n>成员</span></button>
     </nav>
     <div class="side-foot">
       <div id="share-line" class="share-line hidden" role="status"></div>
       <div id="me-line" class="me-line"></div>
       <div class="side-tools">
-        <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里">记录</button>
-        <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程">停止服务</button>
+        <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里" data-i18n-attr="title" data-i18n>记录</button>
+        <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程" data-i18n-attr="title" data-i18n>停止服务</button>
         <button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" data-i18n-attr="title" data-i18n-switch>English</button>
       </div>
     </div>
   </aside>
   <div class="workspace">
     <header class="topbar">
-      <h1 class="page-title" id="page-title">工作台</h1>
+      <h1 class="page-title" id="page-title" data-i18n>工作台</h1>
       <span id="project-line-msg" class="project-line-msg"></span>
       <span id="project-state" class="project-state hidden" role="status"></span>
       <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
@@ -1817,6 +1817,16 @@ const SECTION_TITLES = {
   desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
+// A section's title on screen (13.4): the page title, in the screen's
+// language. SECTION_TITLES above stays the Chinese, which node.js's
+// 「返回…」 link still reads until the node page's increment (13.7).
+function sectionTitle(section) {
+  const titles = {
+    desk: t("工作台"), routes: t("研究路线"), results: t("成果"), variables: t("变量"), literature: t("文献"),
+    data: t("数据与代码"), proposals: t("提议"), members: t("成员"),
+  };
+  return Object.prototype.hasOwnProperty.call(titles, section) ? titles[section] : "";
+}
 let lastDataView = "lineage"; // 数据与代码 reopens on the list or 关系图, as last left
 
 // The last view (tab) is remembered per browser: a per-viewer convenience
@@ -1853,7 +1863,7 @@ function activateView(name) {
     btn.setAttribute("aria-selected", String(btn.dataset.subview === name));
   });
   document.getElementById("data-switch").classList.toggle("hidden", section !== "data" || name === "node");
-  document.getElementById("page-title").textContent = SECTION_TITLES[section] || "";
+  document.getElementById("page-title").textContent = sectionTitle(section);
   // 新增尝试 belongs to the attempts (研究路线); the native menu still
   // reaches the form from anywhere.
   document.getElementById("new-attempt-btn").classList.toggle("hidden", section !== "routes");
@@ -6385,26 +6395,30 @@ async function answerForAdd(subject, answer, statusEl, buttons) {
 }
 
 // -- 停止服务 (task V3 phase 4) ----------------------------------------------
-// The footer button POSTs /api/shutdown behind an explicit Chinese confirm.
+// The footer button POSTs /api/shutdown behind an explicit confirm.
 // Success replaces the whole page with a plain stopped state and stops the
 // generation poll -- the server is gone, and polling it would only spray
 // connection errors into the console. Failure re-enables the button and
 // says so in the header line (same spot a failed project switch reports),
 // leaving the page fully usable.
 
+// The stopped page in the screen's language (13.7); the command stays as
+// typed, set in <code> where the sentence names {command}.
 function renderStoppedState() {
   if (pollTimer !== null) clearInterval(pollTimer);
   closePanel();
+  const command = escapeHtml(t("下次要查看时，双击 Research OS.app，或在终端运行 {command}。"))
+    .replace("{command}", "<code>researchos serve</code>");
   document.getElementById("app").innerHTML =
     '<main id="main"><div class="stopped-note">' +
-    "<h2>服务已停止</h2>" +
-    "<p>本地服务已经关闭，可以关闭此页。</p>" +
-    "<p>下次要查看时，双击 Research OS.app，或在终端运行 <code>researchos serve</code>。</p>" +
+    "<h2>" + escapeHtml(t("服务已停止")) + "</h2>" +
+    "<p>" + escapeHtml(t("本地服务已经关闭，可以关闭此页。")) + "</p>" +
+    "<p>" + command + "</p>" +
     "</div></main>";
 }
 
 document.getElementById("shutdown-btn").addEventListener("click", async () => {
-  if (!window.confirm("确定要停止本地服务吗？停止后这个页面将无法继续使用。")) return;
+  if (!window.confirm(t("确定要停止本地服务吗？停止后这个页面将无法继续使用。"))) return;
   const btn = document.getElementById("shutdown-btn");
   btn.disabled = true;
   try {

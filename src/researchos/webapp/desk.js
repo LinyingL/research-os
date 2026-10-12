@@ -31,6 +31,11 @@
 (function () {
   "use strict";
 
+  // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
+  // at call time; without it (this file evaluated alone) the Chinese.
+  function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
+  function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
+
   // -- pure wording (loaded into node by tests/test_v8_u2.py) ------------------
 
   const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件" };
@@ -48,18 +53,21 @@
   function pad2(n) { return String(n).padStart(2, "0"); }
 
   // When something happened, as a person says it: 今天 14:02, 昨天 09:10,
-  // 10月4日, 2025年10月4日. `now` is a Date (the tests pass one).
+  // 10月4日, 2025年10月4日; in English (13.5) Today 14:02, Yesterday 09:10,
+  // 4 Oct, 4 Oct 2025. `now` is a Date (the tests pass one).
   function whenWords(at, now) {
     const d = new Date(String(at || ""));
     if (isNaN(d.getTime())) return "";
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const days = Math.round((today - day) / 86400000);
-    const hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    if (days === 0) return "今天 " + hm;
-    if (days === 1) return "昨天 " + hm;
-    const md = (d.getMonth() + 1) + "月" + d.getDate() + "日";
-    return d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + "年" + md;
+    const time = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    if (days === 0) return t("今天 {time}", { time: time });
+    if (days === 1) return t("昨天 {time}", { time: time });
+    const month = [t("1月"), t("2月"), t("3月"), t("4月"), t("5月"), t("6月"),
+      t("7月"), t("8月"), t("9月"), t("10月"), t("11月"), t("12月")][d.getMonth()];
+    return d.getFullYear() === now.getFullYear() ? t("{month}{day}日", { month: month, day: d.getDate() })
+      : t("{year}年{month}{day}日", { year: d.getFullYear(), month: month, day: d.getDate() });
   }
 
   function toneOf(status) {
@@ -77,22 +85,26 @@
     return m && m.name ? m.name : String(id || "");
   }
 
-  // The shared drive's status line (12.9), or "" for a project without one.
+  // The shared drive's status line (12.9), or "" for a project without one:
+  // its parts joined by " · ". A date inside the line starts lower case
+  // (13.5's forms start a line in English; Chinese has no case).
   function shareLineText(share, now) {
     if (!share || !share.shared) return "";
-    if (!share.reachable) return "公盘现在打不开";
+    if (!share.reachable) return t("公盘现在打不开");
     const last = share.last_snapshot;
     const unverified = share.verification && share.verification !== "verified";
+    const when = (at) => { const w = whenWords(at, now); return w.charAt(0).toLowerCase() + w.slice(1); };
     if (share.role === "pi") {
-      if (!last) return "还没有发布过";
+      if (!last) return t("还没有发布过");
       const pending = share.pending_publish && share.pending_publish.count > 0;
-      return (pending ? "有改动尚未发布 · " : "") + "已发布 " + whenWords(last.at, now);
+      return (pending ? [t("有改动尚未发布")] : []).concat(t("已发布 {when}", { when: when(last.at) })).join(" · ");
     }
     if (share.joined) {
-      if (share.refused && share.refused.length) return "公盘上有未通过验证的版本";
-      if (share.behind) return "有新的官方版本";
+      if (share.refused && share.refused.length) return t("公盘上有未通过验证的版本");
+      if (share.behind) return t("有新的官方版本");
       const synced = share.joined.synced;
-      return (unverified ? "未验证 · " : "") + (synced ? "已同步 " + whenWords(synced, now) : "已同步");
+      return (unverified ? [t("未验证")] : [])
+        .concat(synced ? t("已同步 {when}", { when: when(synced) }) : t("已同步")).join(" · ");
     }
     return "";
   }
@@ -243,11 +255,11 @@
     if (typeof postShellMode === "function") postShellMode(state.noProject ? "single" : ctx.mode);
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
-    count.title = n > 0 ? n + " 条提议等你批准" : "";
+    count.title = n > 0 ? t("{n} 条提议等你批准", { n: n }) : "";
     const line = state.noProject ? "" : shareLineText(ctx.share, now());
     shareLine.textContent = line;
     shareLine.classList.toggle("hidden", !line);
-    shareLine.title = ctx.share && ctx.share.shared ? "公盘：" + ctx.share.shared : "";
+    shareLine.title = ctx.share && ctx.share.shared ? t("公盘：{folder}", { folder: ctx.share.shared }) : "";
     meLine.textContent = "";
     // U4: a member proposes a new attempt; someone not in the team yet
     // cannot propose at all.
@@ -259,12 +271,14 @@
     const me = ctx.me && ctx.me.me;
     if (me) {
       meLine.append(mk("span", "me-name", me.name || me.id));
-      const role = ctx.mode === "pi" ? "PI" : ctx.mode === "member" ? "成员" : ctx.mode === "none" ? "尚未加入团队" : "";
+      // The role word (13.4): PI stays PI; 成员 as a role is the singular.
+      const role = ctx.mode === "pi" ? "PI" : ctx.mode === "member" ? t("成员", { n: 1 })
+        : ctx.mode === "none" ? t("尚未加入团队") : "";
       if (role && !state.noProject) meLine.append(mk("span", "me-role", role));
       meLine.title = me.id || "";
     } else {
-      meLine.append(mk("span", "me-unset", "还没有设置你是谁"));
-      meLine.title = "在「成员」一栏里设置";
+      meLine.append(mk("span", "me-unset", t("还没有设置你是谁")));
+      meLine.title = t("在「成员」一栏里设置");
     }
   }
 

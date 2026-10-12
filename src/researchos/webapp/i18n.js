@@ -42,6 +42,50 @@
     // The switch (13.3).
     "切换界面语言": "Switch the interface language",
     "没能切换界面语言": "Could not switch the interface language",
+
+    // The frame (13.7): the sidebar, the page titles, the stopped page.
+    "项目与栏目": "Project and sections",
+    "研究脉络": "Research provenance",
+    "栏目": "Sections",
+    "工作台": "Desk",
+    "研究路线": "Research routes",
+    "成果": "Outputs",
+    "变量": "Variables",
+    "文献": "Literature",
+    "数据与代码": "Data & code",
+    "提议": "Proposals",
+    // The section, and with {n: 1} the role (13.4: 成员 as a role is “Member”).
+    "成员": { one: "Member", other: "Members" },
+    "尚未加入团队": "Not in the team yet",
+    "还没有设置你是谁": "Who you are is not set yet",
+    "在「成员」一栏里设置": "Set it in “Members”",
+    "{n} 条提议等你批准": { one: "{n} proposal awaiting your approval", other: "{n} proposals awaiting your approval" },
+    "公盘：{folder}": "Shared folder: {folder}",
+    "公盘现在打不开": "The shared folder cannot be opened right now",
+    "还没有发布过": "Not published yet",
+    "有改动尚未发布": "Changes not yet published",
+    "已发布 {when}": "Published {when}",
+    "公盘上有未通过验证的版本": "The shared folder holds a version that failed verification",
+    "有新的官方版本": "A new official version is available",
+    "未验证": "Unverified",
+    "已同步 {when}": "Synced {when}",
+    "已同步": "Synced",
+    "记录": "Records",
+    "查看这个项目的人工记录放在哪里": "See where this project’s human records are kept",
+    "停止服务": "Stop service",
+    "停止本地服务进程": "Stop the local service process",
+    "确定要停止本地服务吗？停止后这个页面将无法继续使用。": "Stop the local service? Once it stops, this page can no longer be used.",
+    "服务已停止": "Service stopped",
+    "本地服务已经关闭，可以关闭此页。": "The local service has stopped. You can close this page.",
+    "下次要查看时，双击 Research OS.app，或在终端运行 {command}。": "To look again, double-click Research OS.app or run {command} in Terminal.",
+
+    // Dates (13.5): Today 09:24, Yesterday 18:02, 4 Oct, 4 Oct 2025.
+    "今天 {time}": "Today {time}",
+    "昨天 {time}": "Yesterday {time}",
+    "{month}{day}日": "{day} {month}",
+    "{year}年{month}{day}日": "{day} {month} {year}",
+    "1月": "Jan", "2月": "Feb", "3月": "Mar", "4月": "Apr", "5月": "May", "6月": "Jun",
+    "7月": "Jul", "8月": "Aug", "9月": "Sep", "10月": "Oct", "11月": "Nov", "12月": "Dec",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

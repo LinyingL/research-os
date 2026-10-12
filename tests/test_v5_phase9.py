@@ -542,7 +542,7 @@ def test_the_page_carries_the_variables_view_in_product_language(live):
     conn.request("GET", "/")
     html = conn.getresponse().read().decode("utf-8")
     conn.close()
-    assert 'data-view="variables"' in html and '<span class="side-label">变量</span>' in html  # 12.9 sidebar
+    assert 'data-view="variables"' in html and '<span class="side-label" data-i18n>变量</span>' in html  # 12.9 sidebar
     for copy in (
         "草稿 · 改动不留版本", "在编辑器中打开", "确认这一版", "修订口径", "弃用", "恢复", "查看当时的代码",
         "磁盘上的输出文件：", "你当时的说明：输出按此口径生成 — ", "口径未变", "口径已变", "全部口径未变",
