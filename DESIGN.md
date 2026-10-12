@@ -3176,6 +3176,12 @@ language starts with `zh`, Chinese; anything else, English. The page reads
 the same macOS setting. (The researcher's Mac is `zh-Hans`, so nothing
 changes for them until they choose.)
 
+Inside the shell the page does not trust `navigator.languages`: a web view
+in an app that declares no localizations may report English on a Chinese
+Mac. The shell injects its own answer from `Locale.preferredLanguages` at
+document start, and the page uses it before `navigator.languages`. Order:
+the saved choice, then the shell's answer, then the browser's.
+
 The engine never guesses. A sentence it composes for the page is in the
 language the page asks for on that request (the header
 `X-ResearchOS-Lang: en|zh`, set in one place, `apiGet`/`apiPost`); without
@@ -3290,7 +3296,8 @@ proposal", "2 proposals"); Chinese has one form.
 ### 13.7 Increments
 
 **First increment — the frame** (this task): the setting, the header and
-`/i18n.js`; the switch; the sidebar (section names, the project switcher and
+`/i18n.js`; the switch; the top bar's action button (新增尝试 / 提议新的尝试;
+the form it opens is later); the sidebar (section names, the project switcher and
 its menu, the who-am-I and published/synced lines, 记录, 停止服务); page
 titles; the welcome shown without a project; the stopped-service page; the
 desk entirely (its own words, the sentences the engine composes for it, the
@@ -3301,7 +3308,12 @@ prompts); the English install guide `docs/install-and-join.en.md`.
 数据与代码 with 关系图, 提议, 成员, the node page, forms and dialogs, and the
 error sentences (`BLOCKING_ERROR_TEXT`, the engine's refusals). Until a
 section's increment lands, that section shows Chinese in English mode, and
-so do error sentences everywhere. Within a converted surface, every word
+so do error sentences everywhere. **Shared words are the exception**: words several
+sections take from one helper — dates and times, verdict status words,
+people words, officialness states, the one-line description of a proposal —
+follow the interface language on every page, converted or not, so a Chinese
+sentence on a section not yet converted may carry an English date or status
+word until its increment lands. One copy of each helper is worth that. Within a converted surface, every word
 Research OS writes is English.
 
 ### 13.8 Acceptance of the first increment
