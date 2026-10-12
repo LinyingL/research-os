@@ -210,6 +210,12 @@ Endpoints (all GET unless noted):
                             see `researchos.webapp.literature_api`.
     POST /api/citations/lookup-setting -- `{"on": bool}`: 「用 DOI 联网查文献
                             信息」, Research OS's own setting; nothing is asked here.
+    POST /api/settings/language -- `{"language": "zh"|"en"}` (DESIGN.md
+                            13.2, 13.3): the switch beside 记录 and 停止服务
+                            saves this Mac's interface language
+                            (`researchos.settings`), that one key of
+                            `settings.json`; anything else is a 400 and
+                            writes nothing. Allowed with no project served.
     POST /api/zotero/open-attachment -- `{"item_key", "attachment_key"?}`:
                             「打开 PDF」, only the file the Zotero database
                             names for that item, inside its storage
@@ -253,6 +259,17 @@ Endpoints (all GET unless noted):
                             external resources, zero build step -- it reads
                             this same JSON API entirely client-side (see that
                             file's own top comment for the two-view contract).
+    GET  /i18n.js      -- the interface language and the English table
+                            (DESIGN.md 13.6), loaded first by the page:
+                            `src/researchos/webapp/i18n.js` read fresh, under
+                            one line written at serve time,
+                            `window.ROI18N_SAVED = "zh"|"en"|null;` (the
+                            saved choice, 13.2), so the page knows its
+                            language before it draws anything, with no
+                            request; `Cache-Control: no-store`.
+    Every API request from the page carries `X-ResearchOS-Lang: zh|en`
+    (13.2); a sentence the engine composes for the page follows it
+    (`RceRequestHandler._lang`, `researchos.settings.say`), Chinese without it.
     GET  /desk.js      -- the sidebar and the desk (DESIGN.md 12.0, 12.9;
                             task V8 phase U2), served verbatim from
                             `src/researchos/webapp/desk.js` exactly as
@@ -534,6 +551,7 @@ from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, github, githubpush, inventory, lineage, migration, names, officialness, paths
+from researchos import settings as settings_mod
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
 from researchos import desk as desk_mod
@@ -820,6 +838,17 @@ class LiteratureApiError(ApiError):
         self.status = exc.status
         self.state = exc.state
         self.extra = exc.extra
+
+
+class LanguageSettingError(ApiError):
+    """POST /api/settings/language refused (DESIGN.md 13.2): `state` is
+    `language_bad_setting` (400: not "zh" or "en"; nothing written) or
+    `language_setting_failed` (500: the file could not be written)."""
+
+    def __init__(self, code: str, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.state = "language_" + code
 
 
 class ReadOnlyError(ApiError):
@@ -1603,6 +1632,20 @@ def literature_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
         return literature_api.open_item_payload(body, open_external)
     except literature_api.LiteratureRefused as exc:
         raise LiteratureApiError(exc) from exc
+
+
+def language_setting_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """`POST /api/settings/language` {language}: saves this Mac's interface
+    language (13.2), the one key `interface_language` of `settings.json`.
+    The page reloads after it; the shell re-reads the file itself."""
+    lang = body.get("language")
+    if not isinstance(lang, str) or lang not in settings_mod.LANGUAGES:
+        raise LanguageSettingError("bad_setting", 400, "request body 'language' must be \"zh\" or \"en\"")
+    try:
+        settings_mod.set_interface_language(lang)
+    except OSError as exc:
+        raise LanguageSettingError("setting_failed", 500, f"{settings_mod.settings_path()}: {exc}") from exc
+    return {"ok": True, "language": lang}
 
 
 # -- /api/projects + POST /api/projects/switch (task V3 phase 1) --------------
@@ -2673,6 +2716,7 @@ _CANVAS_JS_PATH = Path(__file__).parent / "canvas.js"
 _DESK_JS_PATH = Path(__file__).parent / "desk.js"
 _NODE_JS_PATH = Path(__file__).parent / "node.js"
 _TEAM_JS_PATH = Path(__file__).parent / "team.js"
+_I18N_JS_PATH = Path(__file__).parent / "i18n.js"
 
 
 def _canvas_js() -> str:
@@ -2700,6 +2744,15 @@ def _team_js() -> str:
     """`src/researchos/webapp/team.js` verbatim (研究路线, 提议 and 成员,
     DESIGN.md 12.3, 12.4, 12.9; V8 U4), read fresh per request."""
     return _TEAM_JS_PATH.read_text(encoding="utf-8")
+
+
+def _i18n_js() -> str:
+    """`src/researchos/webapp/i18n.js` (DESIGN.md 13.6), read fresh per
+    request, under one line written now: the saved interface language
+    (13.2), `"zh"`, `"en"` or `null` -- the page resolves its language
+    from it synchronously, before it draws, with no request of its own."""
+    saved = settings_mod.interface_language()
+    return f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _I18N_JS_PATH.read_text(encoding="utf-8")
 
 
 # -- HTTP plumbing -------------------------------------------------------------
@@ -2945,11 +2998,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
     def _send_html(self, status: int, html: str) -> None:
         self._send_text(status, html, "text/html; charset=utf-8")
 
-    def _send_text(self, status: int, text: str, content_type: str) -> None:
+    def _send_text(self, status: int, text: str, content_type: str, *, no_store: bool = False) -> None:
         body = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if no_store:  # an answer that depends on a setting (/i18n.js): never reused after a switch
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -3015,6 +3070,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 f"request Origin {origin!r} does not match this server; refusing"
             )
 
+    def _lang(self) -> str:
+        """The language this request asks for (13.2): "en" or "zh" from
+        its `X-ResearchOS-Lang` header, Chinese without one. For the
+        sentences the engine composes for the page (`settings.say`)."""
+        return settings_mod.request_language(self.headers.get(settings_mod.LANG_HEADER))
+
     def _refuse_without_project(self, path: str, allowed: frozenset[str]) -> None:
         """10.1: with no project served, every project endpoint answers 409
         `no_project` -- before routing, so no handler ever sees the
@@ -3036,6 +3097,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_html(200, _app_html())
             elif path == "/canvas.js":
                 self._send_text(200, _canvas_js(), "text/javascript; charset=utf-8")
+            elif path == "/i18n.js":
+                self._send_text(200, _i18n_js(), "text/javascript; charset=utf-8", no_store=True)
             elif path == "/desk.js":
                 self._send_text(200, _desk_js(), "text/javascript; charset=utf-8")
             elif path == "/node.js":
@@ -3317,6 +3380,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 11.4: the 「文献」 view's setting and its two openers; a
                 # judgment on a candidate is POST /api/judgements.
                 self._send_json(200, literature_post(parsed.path, self._read_json_object()))
+            elif parsed.path == "/api/settings/language":
+                # 13.3: the language switch -- this Mac's setting, no project needed.
+                self._send_json(200, language_setting_payload(self._read_json_object()))
             elif parsed.path == "/api/projects/rename":
                 # 10.4: the registry label only, never the folder.
                 self._send_json(200, rename_payload(self._read_json_object()))
@@ -3579,12 +3645,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/api/projects", "/api/engine",
-                             "/api/generation", "/api/me", "/api/me/key"})
+_NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/api/projects",
+                             "/api/engine", "/api/generation", "/api/me", "/api/me/key"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",
-    "/api/me/key", "/api/share/join-preview", "/api/share/join",
+    "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
 })
 
 

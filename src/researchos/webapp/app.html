@@ -95,6 +95,13 @@
   「从列表中移除…」 drops any entry from ~/.researchos/projects.json (POST
   /api/projects/remove) -- a bookmark removal, nothing on disk.
 
+  Two interface languages (DESIGN.md Section 13, task V9): /i18n.js, loaded
+  first, defines window.ROI18N (the language and the English table); the
+  page's words go through t() (the Chinese is the key), apiGet/apiPost name
+  the language on every request (X-ResearchOS-Lang), and the quiet switch
+  beside 停止服务 (「English」 / 「中文」) saves the choice
+  (POST /api/settings/language), tells the shell and reloads.
+
   Stopping the server (task V3 phase 4): a quiet 停止服务 text button in
   the page footer, behind an explicit Chinese window.confirm. Confirming
   POSTs /api/shutdown; on success the whole page is replaced by a plain
@@ -211,7 +218,7 @@ body {
 .me-line { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: baseline; }
 .me-name { color: var(--ink); }
 .me-role, .me-unset { color: var(--ink-soft); }
-.side-tools { display: flex; gap: 1rem; margin-top: 0.2rem; }
+.side-tools { display: flex; flex-wrap: wrap; gap: 0.1rem 1rem; margin-top: 0.2rem; }
 body.no-project .side-nav, body.no-project .share-line { display: none !important; }
 
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
@@ -1197,6 +1204,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <div class="side-tools">
         <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里">记录</button>
         <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程">停止服务</button>
+        <button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" data-i18n-attr="title" data-i18n-switch>English</button>
       </div>
     </div>
   </aside>
@@ -1257,6 +1265,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
   <div class="panel-body" id="panel-body"></div>
 </aside>
 
+<!-- The interface language and the English table (DESIGN.md 13.6):
+     window.ROI18N, first, after the markup it translates (a no-op on a
+     Chinese screen). Every script looks it up at call time. -->
+<script src="/i18n.js"></script>
 <!-- The 画布 view (DESIGN.md section 8): defines window.RCECanvas only; it
      calls this page's helpers below at run time, never at load time. -->
 <script src="/canvas.js"></script>
@@ -1268,6 +1280,14 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <script src="/team.js"></script>
 <script>
 "use strict";
+
+// -- The interface language (DESIGN.md 13.6) ---------------------------------
+// t() gives the words for the screen, looked up at call time in /i18n.js's
+// table; without it (a block run alone) the Chinese, its {name} values
+// filled. uiLang() is the language every API request names (apiGet/apiPost).
+function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
+function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
+function uiLang() { return typeof window !== "undefined" && window.ROI18N && window.ROI18N.lang === "en" ? "en" : "zh"; }
 
 // -- Small shared state ------------------------------------------------------
 // attemptsById is populated once per Tree-view load from /api/attempts (which
@@ -1375,7 +1395,7 @@ function projectStateOf(err) {
 async function apiGet(path) {
   let res;
   try {
-    res = await fetch(path, { headers: { "Accept": "application/json" } });
+    res = await fetch(path, { headers: { "Accept": "application/json", "X-ResearchOS-Lang": uiLang() } });
   } catch (err) {
     throw new Error("请求 " + path + " 时网络出错：" + err.message);
   }
@@ -1406,7 +1426,7 @@ async function apiPost(path, payload) {
   try {
     res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-ResearchOS-Lang": uiLang() },
       body: JSON.stringify(payload),
     });
   } catch (err) {
@@ -6397,6 +6417,25 @@ document.getElementById("shutdown-btn").addEventListener("click", async () => {
   renderStoppedState();
 });
 
+// -- The language switch (DESIGN.md 13.2, 13.3) ------------------------------
+// Named in the language it switches to (i18n.js names it on an English
+// screen). One click saves the choice on this Mac, tells the shell -- which
+// re-reads settings.json itself -- and reloads on the same section (the
+// remembered view). A refusal leaves everything as it was and says so.
+document.getElementById("lang-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("lang-btn");
+  btn.disabled = true;
+  try {
+    await apiPost("/api/settings/language", { language: uiLang() === "en" ? "zh" : "en" });
+  } catch (err) {
+    btn.disabled = false;
+    showHeaderError(t("没能切换界面语言"), err);
+    return;
+  }
+  postShellLanguage();
+  window.location.reload();
+});
+
 // -- Native shell bridge (DESIGN.md section 8.9, task V4 phase 3) ----------
 // Research OS.app is a native window around this same page. Its menus reach the
 // page through ONE entry point, window.RCE.command(name), which the shell
@@ -6577,6 +6616,18 @@ function postShellTitle() {
     if (bridge) bridge.postMessage({ type: "title", text: String(state.projectLabel || "") });
   } catch (err) {
     /* no shell, or the shell went away: the page works the same */
+  }
+}
+
+// 13.3: the language changed -- the shell re-reads settings.json (it never
+// trusts a message's content) and rebuilds its menus. A shell built before
+// V9 ignores a shape it does not know.
+function postShellLanguage() {
+  try {
+    const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rce;
+    if (bridge) bridge.postMessage({ type: "language" });
+  } catch (err) {
+    /* no shell: the page works the same */
   }
 }
 
