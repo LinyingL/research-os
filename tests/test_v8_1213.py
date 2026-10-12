@@ -444,3 +444,39 @@ def test_12_13_two_folders_through_the_command_line_and_the_endpoint(drive, tmp_
         areas = share.status(drive.official)["areas"]
         assert areas == [{"member": MEMBER[1], "name": MEMBER[0], "area": str(mine), "set_apart": True,
                           "reachable": True}]
+
+
+# -- installing for a collaborator (12.13) -----------------------------------------------------------
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GUIDE = ROOT / "docs" / "安装与加入团队.md"
+#: Every label of Research OS's own screens the guide tells a reader to look
+#: for or click; a renamed button must not leave the guide pointing at nothing.
+GUIDE_APP_LABELS = (
+    "添加项目…", "从公盘加入项目…", "我是谁", "保存", "我的公钥", "生成我的公钥", "复制", "请手动选中复制",
+    "公盘和工作副本", "选择…", "公盘文件夹，或 PI 共享给你的「已发布」文件夹", "你自己的提议文件夹",
+    "工作副本放在哪里", "查看", "PI 公钥指纹", "核对无误，加入", "公盘与同步", "同步", "已经是最新的官方版本",
+    "开始协作", "建立成员名单", "设为公盘", "发布", "添加成员", "公钥文字", "公钥文件", "加入团队", "指纹：",
+    "选择文件夹…", "加入并扫描", "提交提议", "新的尝试", "改判", "变量定义", "只有文件", "查看将要发送的内容",
+    "按勾选的文件重新查看", "发送提议", "提议中", "已批准", "已退回", "已批准，待同步", "批准并加入", "退回并说明",
+    "讨论", "两边都改过", "放在旁边的官方版本", "团队", "关闭",
+)
+
+
+def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_app_shows():
+    text = GUIDE.read_text(encoding="utf-8")
+    assert not FORBIDDEN.search(text), FORBIDDEN.search(text)  # 12.11: no emoji, no arrows
+    for command in ("xcode-select --install", "curl -LsSf https://astral.sh/uv/install.sh | sh",
+                    "uv tool install git+https://github.com/LinyingL/research-os\n",
+                    "uv tool install git+https://github.com/LinyingL/research-context-engine\n",
+                    "researchos app\n", "uv tool upgrade researchos"):
+        assert command in text, command
+    screens = "".join((WEBAPP / name).read_text(encoding="utf-8") for name in ("app.html", "team.js", "node.js", "desk.js"))
+    screens += "".join(officialness.LABELS.values())  # the engine names a member's own work
+    missing = [label for label in GUIDE_APP_LABELS if label not in screens]
+    assert missing == [] and all(label in text for label in GUIDE_APP_LABELS)
+    # the command the guide installs, and the folder it says the app goes to
+    assert "researchos" in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
+    assert "~/Applications" in (cli.cmd_app.__doc__ or "")
+    assert "docs/安装与加入团队.md" in (ROOT / "README.md").read_text(encoding="utf-8")

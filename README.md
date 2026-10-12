@@ -137,7 +137,10 @@ Running `researchos attempts` with no config prints this exact template (see
 ## Working with a team
 
 This section is for a PI who runs a project with one or more collaborators
-and does not use git. Nothing here needs git, a server or an account: the
+and does not use git. For a collaborator who does not program, the
+step-by-step guide in Chinese -- installing OneDrive, uv and Research OS,
+accepting the PI's two sharing invitations, joining and syncing, and the
+PI's side of it -- is [docs/安装与加入团队.md](docs/安装与加入团队.md). Nothing here needs git, a server or an account: the
 team shares one folder on OneDrive (or any folder a sync service keeps in
 step), and Research OS on each person's computer reads and writes plain
 files in it.
@@ -193,11 +196,14 @@ says so. Then share:
 
 | Folder | With | Permission |
 |---|---|---|
-| the shared folder itself (and so `已发布`) | every member | **Can view** |
+| `已发布` | every member | **Can view** |
 | `提议/<member e-mail>` | that member only | **Can edit** |
 
-Members add the shared folder to their own OneDrive ("Add shortcut to My
-files") so it syncs to their computer. On every computer, mark the shared
+Never share the shared folder itself or the whole `提议` folder. Each member
+adds both shared folders to their own OneDrive ("Add shortcut to My files");
+on a personal OneDrive they arrive as two separate folders, which the member
+names separately (`--published` and `--mine` below, or the two choosers in
+成员). On every computer, mark the shared
 folder "Always keep on this device": Research OS never reads a file that is
 still only in the cloud, and says so instead.
 
@@ -206,11 +212,13 @@ still only in the cloud, and says so instead.
 ```bash
 researchos me set --name "Wang" --email wang@example.com
 researchos me key --out wang.pub          # send this file and your e-mail to the PI
-researchos share join ~/OneDrive/my-paper-shared ~/Projects/my-paper-copy
+researchos share join ~/OneDrive/已发布 ~/Projects/my-paper-copy --mine ~/OneDrive/wang@example.com
 ```
 
 `share join` makes the working copy in a new, empty folder and prints the
-PI's key fingerprint. Compare it with the one the PI told you; if they
+PI's key fingerprint. It first checks that `已发布` holds this project's
+snapshots signed by the PI and that you can write into your own folder;
+`researchos share set --published DIR --mine DIR` changes the two later. Compare it with the one the PI told you; if they
 differ, stop and ask. Once the PI has added you and published, run
 `researchos share sync ~/Projects/my-paper-copy`.
 
