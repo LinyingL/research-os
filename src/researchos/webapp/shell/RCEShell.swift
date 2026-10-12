@@ -231,9 +231,12 @@ func htmlLanguage(_ language: String) -> String {
 }
 
 // The language saved in settings.json, or nil: no file, not JSON, not an
-// object, no key, or a value other than exactly "zh" or "en".
+// object, no key, or a value other than exactly "zh" or "en". The bytes
+// the engine accepts and no others (settings.read_json, 13.2): UTF-8, a
+// BOM allowed, never UTF-16 or UTF-32 (whose NUL bytes are valid UTF-8).
 func savedInterfaceLanguage(_ settings: URL) -> String? {
     guard let data = try? Data(contentsOf: settings),
+          String(data: data, encoding: .utf8) != nil, !data.contains(0),
           let object = try? JSONSerialization.jsonObject(with: data),
           let values = object as? [String: Any],
           let language = values[interfaceLanguageKey] as? String,

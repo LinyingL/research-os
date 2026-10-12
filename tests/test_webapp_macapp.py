@@ -873,6 +873,8 @@ def test_shell_reads_the_language_from_settings_and_otherwise_follows_the_mac():
     saved = _SHELL[_SHELL.index("func savedInterfaceLanguage"):]
     saved = saved[: saved.index("\n}\n")]
     assert "JSONSerialization.jsonObject(with: data)" in saved and "as? [String: Any]" in saved
+    # Only the bytes the engine reads too (SETTINGS_BYTES): UTF-8, never UTF-16 or UTF-32.
+    assert saved.index("String(data: data, encoding: .utf8) != nil, !data.contains(0),") < saved.index("JSONSerialization")
     assert 'language == "zh" || language == "en" else { return nil }' in saved
     current = _SHELL[_SHELL.index("func currentInterfaceLanguage"):]
     current = current[: current.index("\n}\n")]
@@ -936,6 +938,22 @@ def test_shell_tells_the_page_the_macs_language_at_document_start():
     assert window.count("addUserScript(") == 2 and _SHELL.count("systemLanguageScript(") == 2
 
 
+#: settings.json files that the shell (Foundation) and the engine (`researchos.settings.read_json`)
+#: must read alike (13.2: one source of truth), as bytes, with the language each must find. The same
+#: table runs on both sides: here through the compiled shell section, and in tests/test_v9_language.py
+#: through the engine.
+SETTINGS_BYTES = {
+    "bom-utf8.json": (b"\xef\xbb\xbf" + b'{"interface_language": "en"}', "en"),
+    "bom-utf16.json": ('{"interface_language": "en"}'.encode("utf-16"), "none"),
+    "utf16le.json": ('{"interface_language": "en"}'.encode("utf-16-le"), "none"),
+    "repeated-en-zh.json": (b'{"interface_language": "en", "interface_language": "zh"}', "en"),
+    "repeated-zh-en.json": (b'{"interface_language": "zh", "interface_language": "en"}', "zh"),
+    "nan.json": (b'{"interface_language": "en", "x": NaN}', "none"),
+    "infinity.json": (b'{"interface_language": "en", "x": Infinity}', "none"),
+    "surrogate.json": (b'{"interface_language": "en", "x": "\\ud800"}', "none"),
+    "deep.json": (b'{"interface_language": "en", "x": ' + b"[" * 100000 + b"]" * 100000 + b"}", "none"),
+}
+
 _LANGUAGE_HARNESS = r"""
 let dir = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 var out: [String: String] = [:]
@@ -990,7 +1008,9 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     folder.mkdir()
     for name, text in settings.items():
         (folder / name).write_text(text, encoding="utf-8")
-    names = [*settings, "missing.json"]
+    for name, (raw, _lang) in SETTINGS_BYTES.items():
+        (folder / name).write_bytes(raw)
+    names = [*settings, *SETTINGS_BYTES, "missing.json"]
     section = _SHELL[_SHELL.index("// -- Two languages"):_SHELL.index("// -- end of the two languages")]
     harness = tmp_path / "main.swift"
     harness.write_text("import Foundation\nlet documentsHint = " + _DOCUMENTS_HINT + "\n" + section
@@ -1004,7 +1024,7 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     assert {name: out["saved " + name] for name in names} == {
         "en.json": "en", "zh.json": "zh", "fr.json": "none", "upper.json": "none", "number.json": "none",
         "absent.json": "none", "list.json": "none", "broken.json": "none", "empty.json": "none",
-        "missing.json": "none",
+        "missing.json": "none", **{name: lang for name, (_raw, lang) in SETTINGS_BYTES.items()},
     }
     assert {k[4:]: v for k, v in out.items() if k.startswith("mac ")} == {
         "zh-Hans": "zh", "zh-Hant": "zh", "zh": "zh", "en": "en", "de": "en", "empty": "en"}

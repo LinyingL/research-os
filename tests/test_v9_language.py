@@ -32,6 +32,7 @@ from test_v7_connections import GITHUB_URL, _colleague_pushes, linked, linked_se
 from test_v8_1213 import GUIDE_EN, GUIDE_EN_CHINESE_LABELS
 from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import _KEYWORDS_BEFORE, _REGEX_BEFORE, FORBIDDEN, _served_scripts
+from test_webapp_macapp import SETTINGS_BYTES
 from test_webapp_macapp import _english_table as shell_english_table
 
 WEBAPP = Path(server.__file__).parent
@@ -402,6 +403,33 @@ def test_13_2_anything_saved_but_zh_or_en_is_no_choice(stored):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(stored, encoding="utf-8")
     assert settings.interface_language() is None
+
+
+@pytest.mark.parametrize("name", sorted(SETTINGS_BYTES))
+def test_13_2_the_engine_reads_settings_bytes_as_the_shell_does(name):
+    """13.2: one source of truth -- the engine and the shell (Foundation)
+    accept and refuse the same bytes: a UTF-8 BOM is read, UTF-16 is not; a
+    repeated key keeps its first value; NaN, Infinity, a lone surrogate and
+    nesting too deep to read make the whole file no choice. The same table
+    runs through the compiled shell (test_webapp_macapp)."""
+    raw, lang = SETTINGS_BYTES[name]
+    path = settings.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    assert (settings.interface_language() or "none") == lang
+
+
+def test_13_2_a_settings_file_nested_too_deep_is_read_as_empty_and_the_switch_repairs_it(live):
+    """A damaged settings.json nested too deep for the parser is no choice,
+    not a failure: /i18n.js still answers (the page would otherwise fall
+    back to Chinese without its table), and the switch rewrites the file."""
+    path = settings.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+    status, _h, raw = live.call("GET", "/i18n.js")
+    assert status == 200 and raw.decode("utf-8").startswith("window.ROI18N_SAVED = null;\n")
+    assert live.post("/api/settings/language", {"language": "en"}) == (200, {"ok": True, "language": "en"})
+    assert _settings_file() == {"interface_language": "en"}
 
 
 @pytest.mark.parametrize("bad", ["fr", "EN", "", None, 1, ["en"]])

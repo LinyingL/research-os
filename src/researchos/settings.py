@@ -39,12 +39,30 @@ LANGUAGES = ("zh", "en")
 LANG_HEADER = "X-ResearchOS-Lang"
 
 
+def _first(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A repeated key keeps its FIRST value, as Foundation's reader does."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        out.setdefault(key, value)
+    return out
+
+
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")
+
+
 def read_json(path: Path) -> dict[str, Any]:
     """A JSON object file, tolerantly: anything that is not a readable JSON
-    object is `{}`."""
+    object is `{}` -- nested too deeply to read included. The shell reads
+    settings.json with Foundation (RCEShell.swift `savedInterfaceLanguage`),
+    and both accept the same bytes (13.2: one source of truth): UTF-8, a
+    BOM allowed; a repeated key's first value; no NaN or Infinity; no lone
+    surrogate."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+        data = json.loads(path.read_bytes().decode("utf-8-sig"), object_pairs_hook=_first,
+                          parse_constant=_no_constant)
+        json.dumps(data, ensure_ascii=False).encode("utf-8")  # a lone surrogate: Foundation refuses the file
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 
