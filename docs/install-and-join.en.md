@@ -15,7 +15,7 @@ After the two parts come how to use it every day, what to do when a file was cha
 
 The choice is yours and belongs to this Mac only. It changes the words on your screen and nothing else: the files and folders Research OS writes are the same in either language, so you and a colleague whose screen is in Chinese work in the same shared folder.
 
-**What is in English so far.** In this version the sidebar (with the menu that opens when you click the project's name), the page titles, the welcome page, the **Desk**, the **New attempt** button at the top of **Research routes** (for a member it reads **Propose a new attempt**) and the Mac menus are in English. The **Members** and **Proposals** pages, what the other sections show, the side panels and forms (such as the panel that opens when you join a project, or the form behind **New attempt**) and error messages are still in Chinese. A few words on those pages are already in English, because the **Desk** uses them too: dates, verdict words such as **Current** and **Abandoned**, and the one-line description of a proposal. For every button or field that is still in Chinese, this guide gives the label exactly as it appears on screen, in bold, followed by its meaning in brackets, for example **生成我的公钥** (Generate my public key). Look for the same characters on screen. If Research OS shows a message you cannot read, take a screenshot and send it to the PI.
+**What is in English so far.** In this version the sidebar (with the menu that opens when you click the project's name), the page titles, the welcome page, the **Desk**, the **New attempt** button at the top of **Research routes** (for a member it reads **Propose a new attempt**) and the Mac menus are in English. The **Members** and **Proposals** pages, what the other sections show, the side panels and forms (such as the panel that opens when you join a project, or the form behind **New attempt**) and error messages are still in Chinese. A few words on those pages are already in English, because the **Desk** uses them too: dates, verdict words such as **Current** and **Abandoned**, the one-line description of a proposal, and what a sync will write and what it did. For every button or field that is still in Chinese, this guide gives the label exactly as it appears on screen, in bold, followed by its meaning in brackets, for example **生成我的公钥** (Generate my public key). Look for the same characters on screen. If Research OS shows a message you cannot read, take a screenshot and send it to the PI.
 
 **Two folder names are always Chinese**, whatever the language of the screen, because they are names on disk that the whole team shares: `已发布` (published), where the PI's official versions go, and `提议` (proposals), where each member's proposals go.
 
@@ -153,7 +153,7 @@ After you join, Research OS opens your working copy, scans it, and shows the **M
 ### 11. Sync
 
 1. On the **Members** page, under **公盘与同步** (Shared folder and sync), you can see which version your working copy is based on, and the two folders you chose.
-2. Click **同步** (Sync). If the PI has already published since adding you to the team, it says **已经是最新的官方版本** (Already the latest official version); otherwise, wait until the PI publishes and sync once more.
+2. Click **同步** (Sync). If the PI has already published since adding you to the team, it says **Already the latest official version**; otherwise, wait until the PI publishes and sync once more.
 3. When your name appears under **团队** (Team), you are a member.
 
 ## Part 2: PI

@@ -137,7 +137,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from researchos import exchange as ex_mod
-from researchos import history, paths, people, signing
+from researchos import history, paths, people, settings, signing
 from researchos.exchange import ExchangeError, Problem
 from researchos.records import files as record_files
 from researchos.records.identity import IdentityState, read_identity
@@ -1277,12 +1277,24 @@ def available(root: str | Path) -> dict[str, Any]:
     return {"state": state, "chain": chain, "problems": problems, "have": have, "snaps": snaps}
 
 
-def sync_preview(working_copy: str | Path) -> dict[str, Any]:
+#: Why a file of the member's stays theirs in a sync, in the page's language (13.6): the reasons the
+#: preview and the sync give, Chinese for the command line.
+_CANVAS_KEPT = ("关系图上的摆放是每个人自己的", "the arrangement on the relation map is each person’s own")
+_CANVAS_KEPT_SYNC = ("关系图上的摆放是每个人自己的，不随同步改变",
+                     "the arrangement on the relation map is each person’s own and does not change with a sync")
+_DELETED_KEPT = ("正式版本删除了这个文件；你改过它，所以留着你的",
+                 "the official version deleted this file; you changed it, so yours is kept")
+_BOTH_CHANGED = ("你和正式版本都改了这个文件：留着你的，正式版本的放在旁边",
+                 "you and the official version both changed this file: yours is kept, and the official one is put beside it")
+
+
+def sync_preview(working_copy: str | Path, *, lang: str = "zh") -> dict[str, Any]:
     """What 「同步」 would do, before it does anything (read only): the
     snapshot it brings the copy to, the files it would update or remove,
     and the files both sides changed -- left as the member's, the official
     one put beside as `.official` (never a merge). Record files that travel
-    (notes, judgments, links) are said apart: their entries are kept."""
+    (notes, judgments, links) are said apart: their entries are kept.
+    `lang`: the language of the reasons it gives (13.2; Chinese by default)."""
     from researchos import proposals  # noqa: PLC0415
 
     root = Path(working_copy)
@@ -1331,9 +1343,9 @@ def sync_preview(working_copy: str | Path) -> dict[str, Any]:
         if lsha == b:
             out["update" if entry is not None else "remove"].append(rel)
         elif rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}":
-            out["kept"].append({"path": rel, "reason": "关系图上的摆放是每个人自己的"})
+            out["kept"].append({"path": rel, "reason": settings.say(*_CANVAS_KEPT, lang)})
         elif entry is None:
-            out["kept"].append({"path": rel, "reason": "正式版本删除了这个文件；你改过它，所以留着你的"})
+            out["kept"].append({"path": rel, "reason": settings.say(*_DELETED_KEPT, lang)})
         elif _travelling(rel) or rel == f"{paths.PROJECT_DIRNAME}/{MAPPINGS_NAME}":
             out["records"].append(rel)
         elif _table_carried(root, rel, seen_shared, entry, base):
@@ -1371,10 +1383,11 @@ def _table_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any],
 
 
 def sync(working_copy: str | Path, *, expected_id: Any = READ_NOW, timeout: float | None = None,
-         now: Callable[[], datetime] | None = None) -> dict[str, Any]:
+         now: Callable[[], datetime] | None = None, lang: str = "zh") -> dict[str, Any]:
     """「同步」 (module docstring): the working copy brought to the latest
     good snapshot; the member's own changes are never overwritten. Under
-    the project lock."""
+    the project lock. `lang`: the language of the reasons and the table
+    sentences it reports (13.2; Chinese by default)."""
     from researchos.records.lock import project_lock  # noqa: PLC0415
 
     root = Path(working_copy)
@@ -1385,10 +1398,10 @@ def sync(working_copy: str | Path, *, expected_id: Any = READ_NOW, timeout: floa
     # this machine's by the share state above, whether or not it has been
     # opened (and indexed) here yet.
     with project_lock(root, pid, timeout=timeout):
-        return _sync_locked(root, now)
+        return _sync_locked(root, now, lang)
 
 
-def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, Any]:
+def _sync_locked(root: Path, now: Callable[[], datetime] | None, lang: str = "zh") -> dict[str, Any]:
     from researchos import proposals  # noqa: PLC0415
 
     seen = available(root)
@@ -1437,7 +1450,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
             continue
         if rel == f"{paths.PROJECT_DIRNAME}/{CANVAS_NAME}" and lsha != b and local is not None:
             # 12.12: the member's own arrangement stays theirs; nothing beside it.
-            out["kept_yours"].append({"path": rel, "reason": "关系图上的摆放是每个人自己的，不随同步改变"})
+            out["kept_yours"].append({"path": rel, "reason": settings.say(*_CANVAS_KEPT_SYNC, lang)})
             continue
         ledger = _travelling(rel)
         carried = None
@@ -1451,7 +1464,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         if lsha == b:
             plan.append(("update" if entry is not None else "remove", rel, entry))
         elif entry is None:
-            out["kept_yours"].append({"path": rel, "reason": "正式版本删除了这个文件；你改过它，所以留着你的"})
+            out["kept_yours"].append({"path": rel, "reason": settings.say(*_DELETED_KEPT, lang)})
         elif carried == "carried":
             # Every entry of yours is in the official ledger now: it replaces
             # yours, nothing lost (module docstring).
@@ -1494,8 +1507,8 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
                 continue
             copies.add(placed)
             extra[rel] = root / placed
-            item: dict[str, Any] = {"path": rel, "official_copy": placed, "reason": "你和正式版本都改了这个文件：留着你的，正式版本的放在旁边"}
-            item.update(_difference(root / rel, root / placed, entry))
+            item: dict[str, Any] = {"path": rel, "official_copy": placed, "reason": settings.say(*_BOTH_CHANGED, lang)}
+            item.update(_difference(root / rel, root / placed, entry, lang))
             out["conflicts"].append(item)
     new_files = _base_files(target)
     texts = _texts_for_base(shared, root, tfiles, extra)
@@ -1531,11 +1544,11 @@ def proposals_fingerprint(path: Path) -> dict[str, Any] | None:
     return proposals.fingerprint(path)
 
 
-def _difference(mine: Path, official: Path, entry: Mapping[str, Any]) -> dict[str, Any]:
+def _difference(mine: Path, official: Path, entry: Mapping[str, Any], lang: str = "zh") -> dict[str, Any]:
     """The member's file against the official one put beside it: a line
     diff for text; for a table (CSV, TSV) its rows and columns first, in
-    the screen's words (12.13), and the line diff below only when it is
-    small."""
+    the screen's words (12.13) and the page's language (13.6), and the line
+    diff below only when it is small."""
     from researchos import proposals  # noqa: PLC0415
 
     try:
@@ -1549,7 +1562,7 @@ def _difference(mine: Path, official: Path, entry: Mapping[str, Any]) -> dict[st
     except OSError:
         sa = sb = None
     if sa or sb:
-        out["summary"] = history.table_sentence(sa, sb, words=True)
+        out["summary"] = history.table_sentence(sa, sb, words=True, lang=lang)
         out["table"] = True
         out["table_small"] = max(int(size or 0), int(entry.get("size") or 0)) <= proposals.SMALL_TABLE_BYTES
         if not out["table_small"]:

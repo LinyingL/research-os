@@ -36,6 +36,27 @@
 (function () {
   "use strict";
 
+  // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
+  // at call time; without it (this file evaluated alone) the Chinese. So far
+  // the sentences a member's desk shows about 同步 (13.7: the desk entirely)
+  // -- packetWords, syncWrites, differenceBlock, syncDone, syncFlash -- which
+  // 成员 shares (one helper, every page).
+  function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
+  function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
+
+  function english() { const I = typeof window !== "undefined" && window.ROI18N; return !!I && I.lang === "en"; }
+
+  // A number as 13.5 writes it: 1,497 in English; in Chinese as before.
+  function numberText(n) {
+    const s = String(n);
+    return english() && /^\d{4,}$/.test(s) ? s.replace(/\B(?=(\d{3})+$)/g, ",") : s;
+  }
+
+  // Items in a sentence: 「、」 in Chinese; in English commas, "and" before the last.
+  function andSeries(xs) {
+    return english() && xs.length > 1 ? xs.slice(0, -1).join(t("、")) + " and " + xs[xs.length - 1] : xs.join(t("、"));
+  }
+
   // -- pure wording (loaded into node by tests/test_v8_u4.py) ----------------------
 
   const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件" };
@@ -129,12 +150,12 @@
   function packetWords(c) {
     if (!c) return "";
     const parts = [];
-    if (c.notes) parts.push(c.notes + " 条笔记");
-    if (c.judgements) parts.push(c.judgements + " 条关联判断");
-    if (c.papers) parts.push(c.papers + " 处「设为论文正文」的标记");
-    if (c.links_added) parts.push("增加 " + c.links_added + " 条连线");
-    if (c.links_removed) parts.push("删除 " + c.links_removed + " 条连线");
-    return parts.join("、");
+    if (c.notes) parts.push(t("{n} 条笔记", { n: numberText(c.notes) }));
+    if (c.judgements) parts.push(t("{n} 条关联判断", { n: numberText(c.judgements) }));
+    if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
+    if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
+    if (c.links_removed) parts.push(t("删除 {n} 条连线", { n: numberText(c.links_removed) }));
+    return andSeries(parts);
   }
 
   // What 发布 writes, before it is pressed (12.12: the members' packets
@@ -168,19 +189,26 @@
   // then what it brings.
   function syncWrites(p) {
     if (!p) return "";
-    if (p.untrusted) return "你的工作副本所依据的版本在公盘上已经无法验证，不能同步。";
+    if (p.untrusted) return t("你的工作副本所依据的版本在公盘上已经无法验证，不能同步。");
     const sending = packetWords(p.sending);
-    const send = sending ? "同步会先把你还没发送的 " + sending + "写进公盘的「" + (p.area || "提议/你的邮箱/") +
-      "」：不需要批准，PI 下次发布时加入正式记录。" : "";
-    if (p.up_to_date) return send + "你的工作副本已经是最新的官方版本" + (send ? "。" : "，没有要发送的笔记、判断或连线。");
+    // 13.1: the member's area is a fixed name on the shared drive (提议/<id>/), shown as it is.
+    const send = sending ? t("同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。",
+      { sending: sending, area: p.area || "提议/你的邮箱/" }) : "";
+    if (p.up_to_date) {
+      return send ? t("{send}你的工作副本已经是最新的官方版本。", { send: send })
+        : t("你的工作副本已经是最新的官方版本，没有要发送的笔记、判断或连线。");
+    }
     const parts = [];
-    if (p.update && p.update.length) parts.push("更新 " + p.update.length + " 个你没改过的文件");
-    if (p.remove && p.remove.length) parts.push("删除 " + p.remove.length + " 个正式版本已删除的文件");
-    if (p.beside && p.beside.length) parts.push(p.beside.length + " 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）");
-    if (p.records && p.records.length) parts.push("笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的");
-    let s = send + (send ? "然后" : "同步会") + "把工作副本带到第 " + p.to + " 版";
-    s += parts.length ? "：" + parts.join("；") : "";
-    return s + "。从不合并，你改过的内容不会被覆盖。";
+    if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
+    if (p.remove && p.remove.length) parts.push(t("删除 {n} 个正式版本已删除的文件", { n: numberText(p.remove.length) }));
+    if (p.beside && p.beside.length) {
+      parts.push(t("{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
+    }
+    if (p.records && p.records.length) parts.push(t("笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
+    const listed = parts.length ? t("：{parts}", { parts: parts.join(t("；")) }) : "";
+    return send ? t("{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。",
+      { send: send, seq: numberText(p.to), parts: listed })
+      : t("同步会把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。", { seq: numberText(p.to), parts: listed });
   }
 
   // What 加入 writes, from the engine's look at it (join-preview).
@@ -253,12 +281,13 @@
   // put beside it -- yours first, then the official one.
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
-    d.appendChild(mk("summary", null, "你的和官方的有什么不同"));
-    // 12.13: a table's rows and columns first, its line diff below when small.
+    d.appendChild(mk("summary", null, t("你的和官方的有什么不同")));
+    // 12.13: a table's rows and columns first (the engine's sentence, in the
+    // page's language), its line diff below when small.
     if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
     if (f.diff) d.appendChild(RONode.diffBlock(RONode._diffRows(f.diff), f.truncated));
-    else if (f.table) d.appendChild(mk("p", "desk-note plain", "表格较大：只比较行和列，不逐行对比。"));
-    else if (!f.summary) d.appendChild(mk("p", "desk-note plain", "两个文件不同（不是文本，没有逐行比较）"));
+    else if (f.table) d.appendChild(mk("p", "desk-note plain", t("表格较大：只比较行和列，不逐行对比。")));
+    else if (!f.summary) d.appendChild(mk("p", "desk-note plain", t("两个文件不同（不是文本，没有逐行比较）")));
     if (open) d.open = true;
     return d;
   }
@@ -1745,24 +1774,30 @@
   // deleted); `notes_waiting` are record files whose entries have not
   // reached the official version yet.
   function syncDone(res) {
-    const sent = res.entries_sent ? "已把你的 " + res.entries_sent + " 条笔记、判断或连线改动发送到公盘" : "";
-    if (res.up_to_date) return "已经是最新的官方版本" + (sent ? "；" + sent : "") + "。";
-    const parts = ["已同步到第 " + res.seq + " 版"];
+    const sent = res.entries_sent ? t("已把你的 {n} 条笔记、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
+    if (res.up_to_date) return sent ? t("已经是最新的官方版本；{sent}。", { sent: sent }) : t("已经是最新的官方版本。");
+    const parts = [t("已同步到第 {seq} 版", { seq: numberText(res.seq) })];
     if (sent) parts.push(sent);
-    if ((res.updated || []).length) parts.push("更新了 " + res.updated.length + " 个文件");
-    if ((res.removed || []).length) parts.push("删除了 " + res.removed.length + " 个正式版本已删除的文件");
-    if ((res.conflicts || []).length) parts.push(res.conflicts.length + " 个两边都改过的文件留着你的，官方的一份放在旁边");
-    if ((res.kept_yours || []).length) parts.push(res.kept_yours.length + " 个文件留着你的（" +
-      res.kept_yours.map((k) => k.reason).filter(Boolean)[0] + "）");
-    if ((res.notes_waiting || []).length) parts.push("你的笔记和连线还在等 PI 发布，记录文件暂时留着你的");
-    return parts.join("；") + "。";
+    if ((res.updated || []).length) parts.push(t("更新了 {n} 个文件", { n: numberText(res.updated.length) }));
+    if ((res.removed || []).length) parts.push(t("删除了 {n} 个正式版本已删除的文件", { n: numberText(res.removed.length) }));
+    if ((res.conflicts || []).length) {
+      parts.push(t("{n} 个两边都改过的文件留着你的，官方的一份放在旁边", { n: numberText(res.conflicts.length) }));
+    }
+    // The engine's reason, in the page's language (13.2).
+    if ((res.kept_yours || []).length) {
+      parts.push(t("{n} 个文件留着你的（{reason}）", { n: numberText(res.kept_yours.length),
+        reason: res.kept_yours.map((k) => k.reason).filter(Boolean)[0] }));
+    }
+    if ((res.notes_waiting || []).length) parts.push(t("你的笔记和连线还在等 PI 发布，记录文件暂时留着你的"));
+    return t("{parts}。", { parts: parts.join(t("；")) });
   }
 
   // The flash lines of one sync: the sentence, then each .official copy
   // with its difference.
   function syncFlash(res) {
     const lists = [{ text: syncDone(res) }];
-    (res.conflicts || []).forEach((c) => lists.push({ text: "官方的 " + c.path + " 放在了旁边：" + (c.official_copy || "") + "；你的没有动。",
+    (res.conflicts || []).forEach((c) => lists.push({
+      text: t("官方的 {path} 放在了旁边：{copy}；你的没有动。", { path: c.path, copy: c.official_copy || "" }),
       diff: c.diff, truncated: c.truncated, summary: c.summary }));
     return lists;
   }

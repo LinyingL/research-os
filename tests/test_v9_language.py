@@ -73,6 +73,14 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # steps, which are flows of their own (a later increment).
     ("app.html", "// -- The project menu (DESIGN.md 10.1, 10.4; task V6)", "// -- 「推送到 GitHub…」 (DESIGN.md 11.3, task V7)"),
     ("app.html", "function backToMenuList() {", "// 10.4: 「重命名显示名称…」 changes the registry label only"),
+    # The desk's 「官方版本有更新」 block (13.7: the desk entirely): what 同步 will write and what it
+    # did, the difference beside an .official copy -- helpers 成员 shares (13.7: one helper, every page).
+    ("team.js", "function packetWords(c) {", "\n  }\n"),
+    ("team.js", "function syncWrites(p) {", "\n  }\n"),
+    ("team.js", "function differenceBlock(f, open) {", "\n  }\n"),
+    ("team.js", "function syncDone(res) {", "\n  }\n"),
+    ("team.js", "function syncFlash(res) {", "\n  }\n"),
+    ("node.js", "function diffBlock(rows, truncated) {", "\n  }\n"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
@@ -85,6 +93,9 @@ ALLOWED_CHINESE: dict[str, str] = {
     "切换项目失败": _ERROR,
     "没能使用这个位置": _ERROR,
     "没能开始扫描": _ERROR,
+    # 13.1: a member's area on the shared drive, 提议/<their e-mail>/, a fixed on-disk name shown as
+    # it is (with its meaning in brackets in English); the engine names it, this is its stand-in.
+    "提议/你的邮箱/": "13.1: the 提议 folder's fixed name on the shared drive",
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
@@ -1271,7 +1282,7 @@ function el(tag, cls, text) {
   return e;
 }
 global.mk = (tag, cls, text) => el(tag, cls, text);
-global.mkButton = (label, cls) => el("button", cls || "btn btn-small", label);
+global.mkButton = (label, cls, onClick) => Object.assign(el("button", cls || "btn btn-small", label), { onClick });
 global.document = { getElementById: () => null, querySelectorAll: () => [] };
 global.state = { noProject: false, dataEpoch: 0, currentId: "p-1" };
 global.views = {};
@@ -1288,17 +1299,32 @@ function dump(node, out) {
   node.kids.forEach((k) => { if (typeof k !== "string") dump(k, out); });
   return out;
 }
-async function renderDesk(c) {
-  const answers = { "/api/me": c.me, "/api/proposals": c.proposals, "/api/share": c.share, "/api/share/sync-preview": {} };
+async function deskHost(c) {
+  const answers = { "/api/me": c.me, "/api/proposals": c.proposals, "/api/share": c.share,
+    "/api/share/sync-preview": c.preview || {} };
   global.apiGet = async (path) => (path.startsWith("/api/desk") ? c.desk : answers[path]);
   const host = el("div", "host");
+  views.desk = host;
   await window.RODesk.loadDesk(host, false);
-  return dump(host, []);
+  return host;
+}
+async function renderDesk(c) {
+  return dump(await deskHost(c), []);
 }
 """
 
-#: The researcher's own words in the fixture (13.1: shown as written in either language).
-_THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了", "先补稳健性", "这里的缺失值要先处理"]
+#: The real team.js and node.js after desk.js (13.7: the desk's 「官方版本有更新」 block draws with
+#: their syncWrites, syncFlash, differenceBlock and diffBlock), instead of _DESK_DOM's stand-ins.
+_TEAM_AND_NODE = (
+    "\nwindow.addEventListener = () => {};\n" + (WEBAPP / "node.js").read_text(encoding="utf-8")
+    + "\n" + (WEBAPP / "team.js").read_text(encoding="utf-8")
+    + "\nglobal.ROTeam = window.ROTeam; global.RONode = window.RONode;\n"
+)
+
+#: The researcher's own words in the fixture (13.1: shown as written in either language), a file
+#: name of theirs among them, and the member's area on the shared drive, a fixed on-disk name.
+_THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了", "先补稳健性", "这里的缺失值要先处理", "figs/图3.png",
+           "figs/图3.official.png", "提议/li@example.com/"]
 
 
 def _desk_cases(lang: str) -> list[dict]:
@@ -1367,10 +1393,16 @@ def _desk_cases(lang: str) -> list[dict]:
     team = [{"id": "wang@example.com", "name": "Wang"}]
     member = {"shared": "/x", "reachable": True, "role": "member", "team": team,
               "last_snapshot": {"at": "2024-03-01T12:00:00", "seq": 1497, "note": "fixes"}}
+    # What 同步 would write (GET /api/share/sync-preview): sending, updating, removing, an .official copy.
+    preview = {"from": 3, "to": 1497, "update": ["a.py", "b.py"], "remove": ["c.py"],
+               "beside": [{"path": "d.py", "official_copy": "d.official.py"}], "records": [".researchos/notes.toml"],
+               "kept": [], "area": "提议/li@example.com/",
+               "sending": {"notes": 1, "judgements": 2, "papers": 1, "links_added": 1, "links_removed": 0}}
     return [
         {"me": me, "proposals": {"role": "pi", "proposals": proposals}, "share": {"shared": "/x", "role": "pi", "team": team}, "desk": busy},
         {"me": me, "proposals": {"role": "pi", "proposals": []}, "share": {}, "desk": quiet},
-        {"me": me, "proposals": {"role": "member", "proposals": proposals}, "share": {**member, "behind": True}, "desk": {**quiet, "default_days": 1}},
+        {"me": me, "proposals": {"role": "member", "proposals": proposals}, "share": {**member, "behind": True},
+         "preview": preview, "desk": {**quiet, "default_days": 1}},
         {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {**member, "last_snapshot": {"seq": 3}}, "desk": quiet},
         {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": True}, "desk": quiet},
         {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": False}, "desk": quiet},
@@ -1379,12 +1411,14 @@ def _desk_cases(lang: str) -> list[dict]:
     ]
 
 
-def _desks(saved: str | None, desk_js: str | None = None) -> list[list[str]]:
+def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False) -> list[list[str]]:
     """Every desk of the fixture rendered by desk.js (or `desk_js`), with
-    /i18n.js in the saved language, or alone (None)."""
+    /i18n.js in the saved language, or alone (None); with `team`, through
+    the real team.js and node.js."""
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     cases = json.dumps(_desk_cases(saved or "zh"), ensure_ascii=False)
     return _node("global.window = {};\n" + i18n + _DESK_DOM + (desk_js or (WEBAPP / "desk.js").read_text(encoding="utf-8"))
+                 + (_TEAM_AND_NODE if team else "")
                  + f"\n(async () => {{ const out = []; for (const c of {cases}) out.push(await renderDesk(c));"
                  " process.stdout.write(JSON.stringify(out)); })();\n")
 
@@ -1410,8 +1444,10 @@ def test_13_7_the_desk_in_english():
     """Every word the desk writes is English (13.4's words, 13.5's dates,
     numbers and plurals, 12.13's sentences without arrows); the
     researcher's own words, a [verdict_labels] word among them, as
-    written; the page picks a row's form by what_code, never by words."""
-    desks = _desks("en")
+    written; the page picks a row's form by what_code, never by words.
+    Drawn with the real team.js and node.js: a member's 「官方版本有更新」
+    says what 同步 will write in English too."""
+    desks = _desks("en", team=True)
     lines = [line for desk in desks for line in desk]
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
@@ -1443,7 +1479,15 @@ def test_13_7_the_desk_in_english():
                  "desk-meta: Returned: redo it", "desk-what strong: 3 files: 1.py, 2.py and others", "status-label tone-plain: Proposal",
                  "desk-what strong: #17: change the verdict from “Current” to “成立”", "desk-title: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
-                 "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 1 day."]:
+                 "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 1 day.",
+                 "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 linked judgments, "
+                 "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
+                 "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
+                 "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
+                 "the official version deleted; keep your version of 1 file changed on both sides and put the official "
+                 "copy beside it (.official); replace each record file of notes, judgments and links with the official "
+                 "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
+                 "you changed is overwritten."]:
         assert line in desks[2], line
     assert "desk-empty: Your working copy is the latest official version (version 3)." in desks[3]
     assert "desk-empty: The PI has not published an official version yet." in desks[4]
@@ -1482,6 +1526,170 @@ def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
         assert meta == ["desk-what strong: #16: change the verdict from “Pending” to “Current”", "desk-meta: wang@example.com",
                         "desk-meta: Li, Wang and Original researcher · Approved by Zhao and Qian",
                         "desk-meta: Proposed by Wang · Approved by Li and Zhao"]
+
+
+def _sync_result(lang: str) -> dict[str, Any]:
+    """What POST /api/share/sync answers, its reasons and the table's
+    sentence as the engine composes them in `lang`."""
+    def w(zh: str, en: str) -> str:
+        return en if lang == "en" else zh
+
+    diff = "--- yours\n+++ official\n@@ -1,24 +1,25 @@\n" + "".join(f"-{i},0.5\n+{i},0.7\n" for i in range(12))
+    return {"ok": True, "from": 3, "seq": 1497, "updated": ["a.py", "b.py"], "removed": ["c.py"], "entries_sent": 3,
+            "notes_waiting": [".researchos/notes.toml"],
+            "conflicts": [{"path": "data/panel.csv", "official_copy": "data/panel.official.csv",
+                           "reason": w("你和正式版本都改了这个文件：留着你的，正式版本的放在旁边",
+                                       "you and the official version both changed this file: yours is kept, and the "
+                                       "official one is put beside it"),
+                           "summary": w("行数从 96 增至 97，新增列 log_ret", "Rows from 96 to 97; column added: log_ret"),
+                           "table": True, "table_small": True, "diff": diff, "truncated": True},
+                          {"path": "figs/图3.png", "official_copy": "figs/图3.official.png", "reason": "x"}],
+            "kept_yours": [{"path": ".researchos/canvas.json",
+                            "reason": w("关系图上的摆放是每个人自己的，不随同步改变",
+                                        "the arrangement on the relation map is each person’s own and does not change "
+                                        "with a sync")}]}
+
+
+def _desk_synced(saved: str | None) -> list[str]:
+    """A member's desk, behind the official version, after 「同步」 is
+    clicked on it: the sentence of what it did and each .official copy
+    with its difference, drawn by the real team.js and node.js; then the
+    difference block's other two forms (a large table, a file that is not
+    text), which 成员's list of copies beside shows."""
+    lang = saved or "zh"
+    i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
+    case = json.dumps(_desk_cases(lang)[2], ensure_ascii=False)
+    res = json.dumps(_sync_result(lang), ensure_ascii=False)
+    return _node("global.window = {};\n" + i18n + _DESK_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8")
+                 + _TEAM_AND_NODE
+                 + f"global.apiPost = async (path) => (path === '/api/share/sync' ? {res} : null);\n"
+                 "const find = (n) => { for (const k of n.kids) if (typeof k !== 'string') {"
+                 " if (k.className === 'btn' && k.onClick) return k; const f = find(k); if (f) return f; } return null; };\n"
+                 f"(async () => {{ const host = await deskHost({case}); await find(host).onClick();"
+                 " const shown = []; dump(host.querySelector('.desk-sync-done'), shown);"
+                 " dump(ROTeam.differenceBlock({ summary: 'S', table: true }, false), shown);"
+                 " dump(ROTeam.differenceBlock({}, false), shown);"
+                 " process.stdout.write(JSON.stringify(shown)); })();\n")
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh", "en"])
+def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
+    """13.7 (the desk entirely) and 13.8 #2: after 「同步」 on a member's
+    desk, what it did, each .official copy and its difference read in the
+    screen's language -- the engine's reason and table sentence as it
+    composed them for the request -- with nothing Chinese in English but
+    the researcher's file names; in Chinese exactly the sentences 成员
+    showed before (one helper, every page)."""
+    shown = _desk_synced(saved)
+    if saved == "en":
+        assert shown == [
+            "team-done: Synced to version 1,497; sent your 3 changes to notes, judgments or links to the shared folder; "
+            "updated 2 files; removed 1 file the official version deleted; kept your versions of 2 files changed on both "
+            "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relation "
+            "map is each person’s own and does not change with a sync); your notes and links still wait for the PI to "
+            "publish, so the record files stay yours for now.",
+            "team-done: The official data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
+            ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
+            *[line for line in shown if line.startswith("dl-row")],
+            "btn btn-small diff-more: Show the remaining 5 lines",
+            "node-sub: The change is too long; only its beginning was compared.",
+            "team-done: The official figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
+            ": How yours differs from the official one", "desk-note plain: S",
+            "desk-note plain: A large table: only its rows and columns are compared, not line by line.",
+            ": How yours differs from the official one",
+            "desk-note plain: The two files differ (not text, so not compared line by line)",
+        ]
+        assert len([line for line in shown if line.startswith("dl-row")]) == 20
+        left = [line for line in shown if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
+        assert left == [] and not any(FORBIDDEN.search(line) for line in shown)
+    else:
+        assert [line for line in shown if not line.startswith("dl-row")] == [
+            "team-done: 已同步到第 1497 版；已把你的 3 条笔记、判断或连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
+            "2 个两边都改过的文件留着你的，官方的一份放在旁边；1 个文件留着你的（关系图上的摆放是每个人自己的，不随同步改变）；"
+            "你的笔记和连线还在等 PI 发布，记录文件暂时留着你的。",
+            "team-done: 官方的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
+            ": 你的和官方的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
+            "btn btn-small diff-more: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
+            "team-done: 官方的 figs/图3.png 放在了旁边：figs/图3.official.png；你的没有动。",
+            ": 你的和官方的有什么不同", "desk-note plain: S", "desk-note plain: 表格较大：只比较行和列，不逐行对比。",
+            ": 你的和官方的有什么不同", "desk-note plain: 两个文件不同（不是文本，没有逐行比较）",
+        ]
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh"])
+def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
+    """13.8 #1: the desk's 「官方版本有更新」, drawn with the real team.js,
+    says what 同步 will write in the words 成员 always used."""
+    desks = _desks(saved, team=True)
+    assert ("team-line writes: 同步会先把你还没发送的 1 条笔记、2 条关联判断、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
+            "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
+            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；笔记、判断和连线的记录文件："
+            "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]
+
+
+@pytest.fixture
+def drive(tmp_path, monkeypatch):
+    """A PI and a member on one machine (tests/test_v8_phase4.Drive)."""
+    from researchos import signing
+    from test_v8_phase4 import Drive
+
+    if signing.tool() is None:
+        pytest.skip("ssh-keygen is not installed here")
+    return Drive(tmp_path, monkeypatch)
+
+
+def test_13_7_sync_and_its_preview_speak_the_requests_language(drive):
+    """GET /api/share/sync-preview and POST /api/share/sync compose their
+    reasons and a table's sentence in the language the page's request names
+    (13.2, 13.6): English with X-ResearchOS-Lang: en, Chinese without the
+    header (the command line's and MCP's case) or with zh."""
+    from researchos import share
+    from test_v8_phase2 import _call
+    from test_v8_phase3 import _serve
+
+    def official_changes(rows: int, deleted: str) -> None:
+        with drive.pi():
+            (drive.official / "data" / "panel.csv").write_text(_csv(rows))
+            (drive.official / deleted).unlink()
+            share.publish(drive.official)
+
+    def mine(changed: str) -> None:
+        (drive.work / "data" / "panel.csv").write_text(_csv(96, ("id", "x", "log_ret")))
+        (drive.work / changed).write_text("# the member's own change\n")
+
+    official_changes(97, "steps/17-plot.py")
+    with drive.member():
+        mine("steps/17-plot.py")
+        with _serve(drive.work) as base:
+            asked = [_call(f"{base}/api/share/sync-preview", headers=h)
+                     for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
+            assert [status for status, _p in asked] == [200, 200, 200] and asked[0][1] == asked[1][1]
+            zh, en = asked[1][1], asked[2][1]
+            assert zh["kept"] == [{"path": "steps/17-plot.py", "reason": "正式版本删除了这个文件；你改过它，所以留着你的"}]
+            assert en["kept"] == [{"path": "steps/17-plot.py",
+                                   "reason": "the official version deleted this file; you changed it, so yours is kept"}]
+            assert {k: v for k, v in zh.items() if k != "kept"} == {k: v for k, v in en.items() if k != "kept"}
+            status, done = _call(f"{base}/api/share/sync", "POST", {}, headers={"X-ResearchOS-Lang": "en"})
+    assert status == 200
+    [conflict] = done["conflicts"]
+    assert conflict["reason"] == ("you and the official version both changed this file: yours is kept, and the "
+                                  "official one is put beside it")
+    assert conflict["summary"].startswith("Rows from 96 to 97; ") and not CJK.search(conflict["summary"])
+    assert conflict["diff"] and done["kept_yours"] == [
+        {"path": "steps/17-plot.py", "reason": "the official version deleted this file; you changed it, so yours is kept"}]
+
+    official_changes(98, "steps/16-build.py")
+    with drive.member():
+        mine("steps/16-build.py")
+        with _serve(drive.work) as base:
+            status, done = _call(f"{base}/api/share/sync", "POST", {})
+    assert status == 200
+    [conflict] = done["conflicts"]
+    assert conflict["reason"] == "你和正式版本都改了这个文件：留着你的，正式版本的放在旁边"
+    assert conflict["summary"].startswith("行数从 96 增至 98") and CJK.search(conflict["summary"])
+    assert done["kept_yours"] == [{"path": "steps/16-build.py", "reason": "正式版本删除了这个文件；你改过它，所以留着你的"}]
 
 
 #: Payload keys that hold the researcher's text or a fixed name (13.1), shown as written in either language.
@@ -1863,6 +2071,8 @@ GUIDE_EN_ENGLISH_LABELS = (
     "English", "Desk", "Research routes", "Members", "Proposals", "Project", "Add project…",
     "Join a project from the shared folder…", "New attempt", "Propose a new attempt", "Current", "Abandoned",
 )
+#: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
+GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
 #: The shell's menu items the guide names, each written **item** from the File menu.
 GUIDE_EN_SHELL_ITEMS = ("Submit Proposal…", "Publish")
 #: Bold that is emphasis, not a label.
@@ -1879,7 +2089,7 @@ _GUIDE_EN_SAME_WORDS = {
     "提议中": "officialness", "已批准，待同步": "officialness", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
-_GUIDE_EN_SENTENCE_STARTS = ("已经是最新的官方版本", "指纹：")
+_GUIDE_EN_SENTENCE_STARTS = ("指纹：",)
 
 
 def _still_chinese_texts() -> set[str]:
@@ -1921,13 +2131,15 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     english = {form for value in table.values() for form in (value.values() if isinstance(value, dict) else [value])}
     shell = shell_english_table()
     bold = re.findall(r"\*\*(.+?)\*\*", text)
-    known = set(GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_SHELL_ITEMS + GUIDE_EN_EMPHASIS)
+    known = set(GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_ENGLISH_SENTENCE_STARTS + GUIDE_EN_SHELL_ITEMS + GUIDE_EN_EMPHASIS)
     assert [b for b in bold if not CJK.search(b) and b not in known] == []
     assert [b for b in bold if CJK.search(b) and b not in GUIDE_EN_CHINESE_LABELS + ("中文",)] == []
     # English from the page.
     assert names["en"] == "English"
     assert [label for label in GUIDE_EN_ENGLISH_LABELS if label not in english | {names["en"]}] == []
-    assert [label for label in GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_SHELL_ITEMS if f"**{label}**" not in text] == []
+    assert [label for label in GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_ENGLISH_SENTENCE_STARTS + GUIDE_EN_SHELL_ITEMS
+            if f"**{label}**" not in text] == []
+    assert [s for s in GUIDE_EN_ENGLISH_SENTENCE_STARTS if not any(form.startswith(s) for form in english)] == []
     # English from the shell: its items, each in the menu that holds it; any of its menus named holds a named item.
     assert [item for item in GUIDE_EN_SHELL_ITEMS if item not in shell.values()] == []
     menus = {shell[zh] for zh in ("文件", "编辑", "视图", "窗口", "帮助")}

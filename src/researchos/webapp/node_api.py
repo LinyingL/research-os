@@ -504,12 +504,13 @@ def share_publish_payload(root: Path, project_id: str | None, body: dict[str, An
     return {"ok": True, **_share_call(lambda: share.publish(root, note=note, expected_id=project_id, timeout=timeout))}
 
 
-def share_sync_payload(root: Path, project_id: str | None, *, timeout: float) -> dict[str, Any]:
+def share_sync_payload(root: Path, project_id: str | None, *, timeout: float, lang: str = "zh") -> dict[str, Any]:
     """POST /api/share/sync: 「同步」 -- this working copy to the latest
-    verified snapshot; the member's own changes are never overwritten."""
+    verified snapshot; the member's own changes are never overwritten. Its
+    reasons and table sentences in the request's language (13.2)."""
     from researchos import share  # noqa: PLC0415
 
-    return {"ok": True, **_share_call(lambda: share.sync(root, expected_id=project_id, timeout=timeout))}
+    return {"ok": True, **_share_call(lambda: share.sync(root, expected_id=project_id, timeout=timeout, lang=lang))}
 
 
 def team_add_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -589,11 +590,12 @@ def join_preview_payload(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, **_share_call(lambda: share.join_preview(shared_path, folder_path, project=project, mine=mine))}
 
 
-def sync_preview_payload(root: Path) -> dict[str, Any]:
-    """GET /api/share/sync-preview: what 「同步」 would write -- read only."""
+def sync_preview_payload(root: Path, lang: str = "zh") -> dict[str, Any]:
+    """GET /api/share/sync-preview: what 「同步」 would write -- read only;
+    its reasons in the request's language (13.2)."""
     from researchos import share  # noqa: PLC0415
 
-    return _share_call(lambda: share.sync_preview(root))
+    return _share_call(lambda: share.sync_preview(root, lang=lang))
 
 
 def me_key_payload() -> dict[str, Any]:

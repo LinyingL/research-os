@@ -225,6 +225,62 @@
     "同步": "Sync",
     "正在同步…": "Syncing…",
     "没能同步，工作副本没有改动": "Could not sync; the working copy is unchanged",
+    // What 同步 will write and what it did (team.js, shared with 成员), and the
+    // difference beside an .official copy (team.js differenceBlock, node.js diffBlock).
+    "{n} 条笔记": { one: "{n} note", other: "{n} notes" },
+    "{n} 条关联判断": { one: "{n} linked judgment", other: "{n} linked judgments" },
+    "{n} 处「设为论文正文」的标记": { one: "{n} “Set as the paper” mark", other: "{n} “Set as the paper” marks" },
+    "增加 {n} 条连线": { one: "{n} link added", other: "{n} links added" },
+    "删除 {n} 条连线": { one: "{n} link removed", other: "{n} links removed" },
+    "你的工作副本所依据的版本在公盘上已经无法验证，不能同步。":
+      "The version your working copy is based on can no longer be verified in the shared folder, so it cannot sync.",
+    "同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。":
+      "Syncing first writes what you have not sent yet ({sending}) into “{area}” (your proposals folder) in the shared folder: no approval is needed, and the PI adds it to the official record at the next publish.",
+    "{send}你的工作副本已经是最新的官方版本。": "{send} Your working copy is already the latest official version.",
+    "你的工作副本已经是最新的官方版本，没有要发送的笔记、判断或连线。":
+      "Your working copy is already the latest official version, and there are no notes, judgments or links to send.",
+    "更新 {n} 个你没改过的文件": { one: "update {n} file you have not changed", other: "update {n} files you have not changed" },
+    "删除 {n} 个正式版本已删除的文件": {
+      one: "remove {n} file the official version deleted", other: "remove {n} files the official version deleted",
+    },
+    "{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）": {
+      one: "keep your version of {n} file changed on both sides and put the official copy beside it (.official)",
+      other: "keep your versions of {n} files changed on both sides and put the official copies beside them (.official)",
+    },
+    "笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
+      "replace each record file of notes, judgments and links with the official one where all your entries are in it, and keep yours where they are not yet",
+    "：{parts}": ": {parts}",
+    "；": "; ",
+    "{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
+      "{send} Then it brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
+    "同步会把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
+      "Syncing brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
+    "已把你的 {n} 条笔记、判断或连线改动发送到公盘": {
+      one: "sent your {n} change to notes, judgments or links to the shared folder",
+      other: "sent your {n} changes to notes, judgments or links to the shared folder",
+    },
+    "已经是最新的官方版本。": "Already the latest official version.",
+    "已经是最新的官方版本；{sent}。": "Already the latest official version; {sent}.",
+    "已同步到第 {seq} 版": "Synced to version {seq}",
+    "更新了 {n} 个文件": { one: "updated {n} file", other: "updated {n} files" },
+    "删除了 {n} 个正式版本已删除的文件": {
+      one: "removed {n} file the official version deleted", other: "removed {n} files the official version deleted",
+    },
+    "{n} 个两边都改过的文件留着你的，官方的一份放在旁边": {
+      one: "kept your version of {n} file changed on both sides, with the official copy beside it",
+      other: "kept your versions of {n} files changed on both sides, with the official copies beside them",
+    },
+    "{n} 个文件留着你的（{reason}）": { one: "kept your version of {n} file ({reason})", other: "kept your versions of {n} files ({reason})" },
+    "你的笔记和连线还在等 PI 发布，记录文件暂时留着你的":
+      "your notes and links still wait for the PI to publish, so the record files stay yours for now",
+    "{parts}。": "{parts}.",
+    "官方的 {path} 放在了旁边：{copy}；你的没有动。": "The official {path} is beside yours as {copy}; yours was not changed.",
+    "你的和官方的有什么不同": "How yours differs from the official one",
+    "表格较大：只比较行和列，不逐行对比。": "A large table: only its rows and columns are compared, not line by line.",
+    "两个文件不同（不是文本，没有逐行比较）": "The two files differ (not text, so not compared line by line)",
+    "收起": "Show less",
+    "显示其余 {n} 行": { one: "Show the remaining {n} line", other: "Show the remaining {n} lines" },
+    "改动太长，只比较了开头的一部分。": "The change is too long; only its beginning was compared.",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

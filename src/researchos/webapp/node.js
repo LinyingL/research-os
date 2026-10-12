@@ -40,6 +40,12 @@
 (function () {
   "use strict";
 
+  // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
+  // at call time; without it (this file evaluated alone) the Chinese. So far
+  // diffBlock alone, which a member's desk shows under 同步 (13.7).
+  function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
+  function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
+
   const SVG_NS = "http://www.w3.org/2000/svg";
   const DIFF_SHOWN = 20;
   const DIFFS_AUTO = 5;
@@ -864,10 +870,10 @@
       const shown = all ? rows : rows.slice(0, DIFF_SHOWN);
       shown.forEach((r) => wrap.appendChild(mk("div", "dl-row " + r.cls, r.text || " ")));
       if (rows.length > DIFF_SHOWN) {
-        wrap.appendChild(mkButton(all ? "收起" : "显示其余 " + (rows.length - DIFF_SHOWN) + " 行", "btn btn-small diff-more",
+        wrap.appendChild(mkButton(all ? t("收起") : t("显示其余 {n} 行", { n: rows.length - DIFF_SHOWN }), "btn btn-small diff-more",
           () => render(!all)));
       }
-      if (truncated) wrap.appendChild(mk("p", "node-sub", "改动太长，只比较了开头的一部分。"));
+      if (truncated) wrap.appendChild(mk("p", "node-sub", t("改动太长，只比较了开头的一部分。")));
     };
     render(false);
     return wrap;

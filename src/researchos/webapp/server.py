@@ -3244,7 +3244,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/share/sync-preview":
                 # U4: what 「同步」 would write -- reads only.
                 served = self._require_unblocked()
-                self._send_json(200, self._node_api(lambda: node_api.sync_preview_payload(served.root)))
+                self._send_json(200, self._node_api(lambda: node_api.sync_preview_payload(served.root, self._lang())))
             elif path == "/api/records":
                 # The 「记录」 panel (9.2): read even for a blocked project --
                 # it lists the folder's own files and writes nothing.
@@ -3517,7 +3517,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._require_unblocked()
                 with self.server.write_guard(human=True):
                     payload = self._node_api(lambda: node_api.share_sync_payload(
-                        served.root, served.project_id, timeout=WRITE_LOCK_TIMEOUT_S))
+                        served.root, served.project_id, timeout=WRITE_LOCK_TIMEOUT_S, lang=self._lang()))
                 payload["generation"] = self.server.watcher.record_external_change(None)
                 if payload.get("updated") or payload.get("removed"):
                     try:
