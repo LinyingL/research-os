@@ -72,6 +72,16 @@
 //   project's role. It only shows or hides 文件 > 提交提议… (a member) and
 //   发布 (the PI); both commands only take the page to the place that says
 //   what they would write -- nothing is written from a menu.
+//   Since V9 (DESIGN.md 13.3): `{type: "language"}`, exactly one key, sent
+//   when the researcher switches the interface language in the page. The
+//   shell re-reads settings.json -- the message names no language and the
+//   shell would not trust one -- and rebuilds its menus.
+// - Language (DESIGN.md 13.2): `interface_language` ("zh" or "en") in
+//   settings.json in the Research OS home, read with JSONSerialization at
+//   launch and on the language message; with none saved (or anything else
+//   saved), the Mac's first preferred language: "zh..." is Chinese, any
+//   other English. Menus, the waiting page, alert buttons and panel texts
+//   follow it. The Chinese stays in this source as the key (englishText).
 // - Navigation: only http://127.0.0.1:<port> (and the placeholder's
 //   about:blank) load in the window. Any other http(s)/mailto link opens
 //   in the default browser; every other scheme is refused. Developer
@@ -130,6 +140,110 @@ func filePanelMessage(_ purpose: String) -> String? {
     default: return nil
     }
 }
+
+// -- Two languages (DESIGN.md 13.2, 13.4, 13.6) --------------------------------
+// Every text the shell writes is looked up by its Chinese when it is shown:
+// Chinese shows the key itself, byte for byte; English shows its entry here,
+// and a missing entry shows the Chinese, never a key or a blank. The menus
+// follow macOS's title case and standard names; the eight sections take
+// 13.4's words. `{path}` is filled in after the lookup, once.
+
+let settingsFilename = "settings.json"
+let interfaceLanguageKey = "interface_language"
+
+let englishText: [String: String] = [
+    // the Research OS menu
+    "关于 Research OS": "About Research OS",
+    "退出": "Quit Research OS",
+    // 文件
+    "文件": "File",
+    "添加项目…": "Add Project…",
+    "提交提议…": "Submit Proposal…",
+    "发布": "Publish",
+    "关闭": "Close",
+    // 编辑
+    "编辑": "Edit",
+    "撤销": "Undo",
+    "重做": "Redo",
+    "剪切": "Cut",
+    "拷贝": "Copy",
+    "粘贴": "Paste",
+    "全选": "Select All",
+    // 视图
+    "视图": "View",
+    "工作台": "Desk",
+    "研究路线": "Research Routes",
+    "成果": "Outputs",
+    "变量": "Variables",
+    "文献": "Literature",
+    "数据与代码": "Data & Code",
+    "提议": "Proposals",
+    "成员": "Members",
+    "重新载入": "Reload",
+    "放大": "Zoom In",
+    "缩小": "Zoom Out",
+    "实际大小": "Actual Size",
+    // 窗口, 帮助
+    "窗口": "Window",
+    "最小化": "Minimize",
+    "缩放": "Zoom",
+    "帮助": "Help",
+    "打开项目地图": "Open Project Map",
+    // the waiting page
+    "正在启动引擎…": "Starting the engine…",
+    documentsHint: "Starting the engine… If macOS asks whether Research OS may access the “Documents” folder, click “Allow”.",
+    "找不到 Research OS 引擎的位置": "Research OS does not know where its engine is",
+    "请在终端里重新运行 researchos app。": "Run researchos app again in Terminal.",
+    "找不到 Research OS 引擎": "Research OS cannot find its engine",
+    "{path} 不存在或不可执行。请在终端里重新运行 researchos app。":
+        "{path} does not exist or cannot be run. Run researchos app again in Terminal.",
+    "无法启动 Research OS 引擎": "Research OS cannot start its engine",
+    "引擎启动失败": "The engine failed to start",
+    "还没有日志文件：{path}": "No log file yet: {path}",
+    "以下是 {path} 的最后几行（⌘R 重试）：": "The last lines of {path} (⌘R to try again):",
+    // the page's alert and confirm sheets
+    "好": "OK",
+    "取消": "Cancel",
+    // the open panels
+    "选择": "Choose",
+    "选择要加入 Research OS 的项目文件夹": "Choose the project folder to add to Research OS",
+    "选择项目文件夹的新位置": "Choose the new location of the project folder",
+    "选择公盘文件夹（和团队共享的 OneDrive 文件夹）": "Choose the shared folder (the OneDrive folder shared with the team)",
+    "选择一个空文件夹，用来放你的工作副本": "Choose an empty folder for your working copy",
+    "选择你自己的提议文件夹（PI 共享给你、你可以编辑的那个）":
+        "Choose your own proposals folder (the one the PI shared with you, which you can edit)",
+    "选择成员发来的公钥文件（.pub）": "Choose the public key file the member sent (.pub)",
+]
+
+func shellText(_ zh: String, _ language: String, path: String? = nil) -> String {
+    let text = language == "en" ? (englishText[zh] ?? zh) : zh
+    guard let path = path else { return text }
+    return text.replacingOccurrences(of: "{path}", with: path)
+}
+
+// <html lang> of the waiting page (13.3).
+func htmlLanguage(_ language: String) -> String {
+    language == "en" ? "en" : "zh-CN"
+}
+
+// The language saved in settings.json, or nil: no file, not JSON, not an
+// object, no key, or a value other than exactly "zh" or "en".
+func savedInterfaceLanguage(_ settings: URL) -> String? {
+    guard let data = try? Data(contentsOf: settings),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let values = object as? [String: Any],
+          let language = values[interfaceLanguageKey] as? String,
+          language == "zh" || language == "en" else { return nil }
+    return language
+}
+
+// The saved choice wins; without one, the Mac's first preferred language.
+func interfaceLanguage(saved: String?, preferred: [String]) -> String {
+    if let saved = saved { return saved }
+    return preferred.first?.lowercased().hasPrefix("zh") == true ? "zh" : "en"
+}
+
+// -- end of the two languages ---------------------------------------------------
 
 func isFolderRequest(_ request: String) -> Bool {
     !request.isEmpty && request.count <= folderRequestLimit
@@ -219,6 +333,12 @@ func rceHome() -> URL {
     return current
 }
 
+// The language the shell shows now (13.2), read from the file each time.
+func currentInterfaceLanguage() -> String {
+    interfaceLanguage(saved: savedInterfaceLanguage(rceHome().appendingPathComponent(settingsFilename)),
+                      preferred: Locale.preferredLanguages)
+}
+
 func logTail(_ url: URL, maxBytes: Int = 16 * 1024, maxLines: Int = 40) -> String? {
     guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
     defer { try? handle.close() }
@@ -233,7 +353,7 @@ func logTail(_ url: URL, maxBytes: Int = 16 * 1024, maxLines: Int = 40) -> Strin
 
 // -- Placeholder pages (fixed markup; only escaped text is ever inserted) -----
 
-func placeholderPage(headline: String, detail: String?, logText: String?) -> String {
+func placeholderPage(headline: String, detail: String?, logText: String?, htmlLang: String) -> String {
     var body = "<div class=\"mark\">Research OS</div><p class=\"msg\">\(htmlEscape(headline))</p>"
     if let detail = detail {
         body += "<p class=\"detail\">\(htmlEscape(detail))</p>"
@@ -242,7 +362,7 @@ func placeholderPage(headline: String, detail: String?, logText: String?) -> Str
         body += "<pre>\(htmlEscape(logText))</pre>"
     }
     return """
-    <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+    <!doctype html><html lang="\(htmlEscape(htmlLang))"><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
     <style>
     html, body { margin: 0; height: 100%; background: #F7F2E9; color: #26221B; }
@@ -276,6 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     var signalSources: [DispatchSourceSignal] = []
     var choosingFolder = false
     var teamMode = "single"
+    var language = "zh"
     var proposeItem: NSMenuItem!
     var publishItem: NSMenuItem!
     var teamSeparator: NSMenuItem!
@@ -293,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     // MARK: launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        language = currentInterfaceLanguage()
         NSApp.mainMenu = buildMainMenu()
         buildWindow()
         installSignalHandlers()
@@ -339,11 +461,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         }
     }
 
+    // MARK: language
+
+    // A text in the language the shell shows now (englishText).
+    func tr(_ zh: String, path: String? = nil) -> String {
+        shellText(zh, language, path: path)
+    }
+
+    // 13.3: the page saved a new choice. Re-read the file, never the
+    // message; buildMainMenu recreates 提交提议… / 发布 and re-applies the
+    // team mode to them.
+    func applyLanguage() {
+        language = currentInterfaceLanguage()
+        NSApp.mainMenu = buildMainMenu()
+    }
+
     // MARK: engine lifecycle
 
     func showPlaceholder(_ headline: String, detail: String? = nil, log: String? = nil) {
         appLoaded = false
-        webView.loadHTMLString(placeholderPage(headline: headline, detail: detail, logText: log), baseURL: nil)
+        let page = placeholderPage(headline: headline, detail: detail, logText: log,
+                                   htmlLang: htmlLanguage(language))
+        webView.loadHTMLString(page, baseURL: nil)
     }
 
     func probe(_ done: @escaping (Bool) -> Void) {
@@ -362,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         showingLog = false
         hintShown = false
         launchStarted = Date()
-        showPlaceholder("正在启动引擎…")
+        showPlaceholder(tr("正在启动引擎…"))
         probe { [weak self] ok in
             guard let self = self else { return }
             if ok { self.loadApp(); return }
@@ -375,11 +514,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
 
     func spawnEngine() -> Bool {
         guard let rcePath = resourceText("engine-path"), !rcePath.isEmpty else {
-            showPlaceholder("找不到 Research OS 引擎的位置", detail: "请在终端里重新运行 researchos app。")
+            showPlaceholder(tr("找不到 Research OS 引擎的位置"), detail: tr("请在终端里重新运行 researchos app。"))
             return false
         }
         guard FileManager.default.isExecutableFile(atPath: rcePath) else {
-            showPlaceholder("找不到 Research OS 引擎", detail: rcePath + " 不存在或不可执行。请在终端里重新运行 researchos app。")
+            showPlaceholder(tr("找不到 Research OS 引擎"),
+                            detail: tr("{path} 不存在或不可执行。请在终端里重新运行 researchos app。", path: rcePath))
             return false
         }
         let home = rceHome()
@@ -408,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         do {
             try process.run()
         } catch {
-            showPlaceholder("无法启动 Research OS 引擎", detail: error.localizedDescription)
+            showPlaceholder(tr("无法启动 Research OS 引擎"), detail: error.localizedDescription)
             return false
         }
         child = process
@@ -418,7 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     func engineExited() {
         if quitting || appLoaded { return }
         probeTimer?.invalidate()
-        showLog(headline: "引擎启动失败")
+        showLog(headline: tr("引擎启动失败"))
     }
 
     func schedulePolling() {
@@ -440,7 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
                 // log tail here -- a suspended engine has written nothing;
                 // the log is shown only once the engine has EXITED.
                 self.hintShown = true
-                self.showPlaceholder(documentsHint)
+                self.showPlaceholder(self.tr(documentsHint))
             }
         }
     }
@@ -449,8 +589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         showingLog = true
         let tail = logTail(logURL)
         let detail = tail == nil
-            ? "还没有日志文件：" + logURL.path
-            : "以下是 " + logURL.path + " 的最后几行（⌘R 重试）："
+            ? tr("还没有日志文件：{path}", path: logURL.path)
+            : tr("以下是 {path} 的最后几行（⌘R 重试）：", path: logURL.path)
         showPlaceholder(headline, detail: detail, log: tail ?? nil)
     }
 
@@ -494,9 +634,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
 
     // MARK: menus
 
+    // Every title below is written in Chinese and shown through tr.
     func item(_ title: String, _ action: Selector?, _ key: String = "",
               _ modifiers: NSEvent.ModifierFlags = [.command], command: String? = nil) -> NSMenuItem {
-        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let menuItem = NSMenuItem(title: tr(title), action: action, keyEquivalent: key)
         menuItem.keyEquivalentModifierMask = modifiers
         if let command = command {
             precondition(shellCommands.contains(command))
@@ -512,8 +653,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     }
 
     func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
-        let top = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: title)
+        let top = NSMenuItem(title: tr(title), action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: tr(title))
         items.forEach { menu.addItem($0) }
         top.submenu = menu
         return top
@@ -668,7 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: tr("好"))
         alert.beginSheetModal(for: window) { _ in completionHandler() }
     }
 
@@ -676,8 +817,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "好")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: tr("好"))
+        alert.addButton(withTitle: tr("取消"))
         alert.beginSheetModal(for: window) { response in
             completionHandler(response == .alertFirstButtonReturn)
         }
@@ -709,6 +850,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
                   let request = body["request"] as? String, isFolderRequest(request),
                   let purpose = body["purpose"] as? String, filePanelMessage(purpose) != nil {
             chooseFile(request, purpose: purpose)
+        } else if body.count == 1, body["type"] as? String == "language" {
+            applyLanguage()
         }
     }
 
@@ -725,8 +868,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = "选择"
-        panel.message = panelMessage
+        panel.prompt = tr("选择")
+        panel.message = tr(panelMessage)
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self = self else { return }
             self.choosingFolder = false
@@ -749,8 +892,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = purpose == "working"
-        panel.prompt = "选择"
-        panel.message = panelMessage
+        panel.prompt = tr("选择")
+        panel.message = tr(panelMessage)
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self = self else { return }
             self.choosingFolder = false

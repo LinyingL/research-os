@@ -16,6 +16,7 @@ really opening Finder.
 
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import re
@@ -28,6 +29,7 @@ import pytest
 
 from researchos import cli
 from researchos.webapp import macapp
+from test_v8_u2 import FORBIDDEN
 
 
 def _fake_rce(tmp_path: Path, dirname: str = "bin") -> Path:
@@ -480,7 +482,7 @@ def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
     choose = _SHELL[_SHELL.index("func chooseFolder"):]
     choose = choose[: choose.index("\n    }\n")]
     assert "let panelMessage = folderPanelMessage(purpose)" in choose
-    assert "panel.message = panelMessage" in choose
+    assert "panel.message = tr(panelMessage)" in choose  # V9 13.3: in the shell's language
     # V8 U4: only the panel for a member's new working copy may make a folder
     assert 'panel.canCreateDirectories = purpose == "working"' in choose
     # the page sends the purpose only to a shell that says it takes it
@@ -768,3 +770,228 @@ def test_shell_waiting_page_names_the_documents_prompt_and_shows_the_log_only_af
     assert "showLog" not in poll and "documentsHint" in poll
     exited = _SHELL[_SHELL.index("func engineExited"):_SHELL.index("func schedulePolling")]
     assert "showLog" in exited
+
+
+# -- Two languages (DESIGN.md 13.2, 13.3, 13.4, 13.7) ----------------------------------
+# The Chinese stays in the Swift source as the key; `englishText` holds the
+# English. These read both tables out of the source; the native test below
+# compiles the language rules on their own and runs them.
+
+_SWIFT_STRING = r'"(?:[^"\\\n]|\\.)*"'
+_CJK = re.compile(r"[　-〿一-鿿＀-￯]")
+_DOCUMENTS_HINT = re.search(r"^let documentsHint = (" + _SWIFT_STRING + ")$", _SHELL, re.M).group(1)
+_TABLE_START = "let englishText: [String: String] = ["
+_ENGLISH_MENUS = {
+    "关于 Research OS": "About Research OS", "退出": "Quit Research OS",
+    "文件": "File", "添加项目…": "Add Project…", "提交提议…": "Submit Proposal…", "发布": "Publish",
+    "关闭": "Close",
+    "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
+    "全选": "Select All",
+    "视图": "View", "工作台": "Desk", "研究路线": "Research Routes", "成果": "Outputs", "变量": "Variables",
+    "文献": "Literature", "数据与代码": "Data & Code", "提议": "Proposals", "成员": "Members",
+    "重新载入": "Reload", "放大": "Zoom In", "缩小": "Zoom Out", "实际大小": "Actual Size",
+    "窗口": "Window", "最小化": "Minimize", "缩放": "Zoom",
+    "帮助": "Help", "打开项目地图": "Open Project Map",
+}
+
+
+def _swift_value(literal: str) -> str:
+    assert not re.search(r'\\[^"]', literal), literal  # the shell's texts escape only quotes
+    return literal[1:-1].replace('\\"', '"')
+
+
+def _code_without_comments(src: str) -> str:
+    return "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("//"))
+
+
+def _english_entries() -> list[tuple[str, str]]:
+    block = _SHELL[_SHELL.index(_TABLE_START) + len(_TABLE_START):]
+    block = _code_without_comments(block[: block.index("\n]\n")])
+    entry = re.compile(r"(documentsHint|" + _SWIFT_STRING + r")\s*:\s*(" + _SWIFT_STRING + "),")
+    assert entry.sub("", block).strip() == "", "an entry of englishText was not read"
+    return [(_swift_value(_DOCUMENTS_HINT if key == "documentsHint" else key), _swift_value(value))
+            for key, value in entry.findall(block)]
+
+
+def _english_table() -> dict[str, str]:
+    return dict(_english_entries())
+
+
+def test_shell_english_table_covers_every_text_the_shell_writes():
+    """13.6: every Chinese text the shell puts on screen -- menu titles, the
+    waiting page, the log lines, alert buttons, panel prompt and messages --
+    is shown through the table, and the table holds nothing else. A
+    duplicate key would stop the app at its first menu (Swift traps)."""
+    entries = _english_entries()
+    keys = [key for key, _ in entries]
+    assert len(keys) == len(set(keys))
+    code = _code_without_comments(_SHELL)
+    outside = code[: code.index(_TABLE_START)] + code[code.index("\n]\n", code.index(_TABLE_START)):]
+    shown = set()
+    for match in re.finditer(_SWIFT_STRING, outside):
+        if not _CJK.search(match.group(0)):
+            continue
+        text = _swift_value(match.group(0))
+        before = outside[max(0, match.start() - 40): match.start()]
+        assert re.search(r'(\btr\(|\b(?:item|cmd|submenu)\(|case "[a-z]+": return |^let documentsHint = )$',
+                         before, re.M), f"Chinese shown without the table: {text}"
+        shown.add(text)
+    assert "self.tr(documentsHint)" in _SHELL
+    assert _SHELL.count("panel.message = tr(panelMessage)") == 2 and _SHELL.count('panel.prompt = tr("选择")') == 2
+    assert set(keys) == shown
+
+
+def test_shell_english_follows_the_glossary_and_macos_names():
+    """13.4: the menus in macOS's title case and standard names, the eight
+    sections in the glossary's words; every English text free of Chinese,
+    emoji and arrows (12.11), with “ ” for quotation marks."""
+    table = _english_table()
+    for zh, en in _ENGLISH_MENUS.items():
+        assert table[zh] == en, zh
+        assert all(word[0].isupper() or word == "&" for word in en.split()), en
+    titles = {t for t in re.findall(r'(?:item|cmd|submenu)\("([^"]+)"', _SHELL) if _CJK.search(t)}
+    assert titles == set(_ENGLISH_MENUS)
+    design = (Path(__file__).parents[1] / "DESIGN.md").read_text(encoding="utf-8")
+    glossary = dict(re.findall(r"^\| (\S+) \| ([^|]+?) \|$", design[design.index("### 13.4"):], re.M))
+    for section in ("工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"):
+        title_case = " ".join(word[:1].upper() + word[1:] for word in glossary[section].split(" "))
+        assert table[section] == title_case, section
+    assert (table["好"], table["取消"], table["选择"]) == ("OK", "Cancel", "Choose")
+    for zh, en in table.items():
+        assert en.strip() and not _CJK.search(en) and not FORBIDDEN.search(en), en
+        assert "..." not in en and '"' not in en and "'" not in en, en
+        assert en.count("{path}") == zh.count("{path}") <= 1, en
+    assert "“Documents” folder, click “Allow”." in table[_swift_value(_DOCUMENTS_HINT)]
+
+
+def test_shell_reads_the_language_from_settings_and_otherwise_follows_the_mac():
+    """13.2: `interface_language` in settings.json in the Research OS home,
+    read at launch before the menus are built; without a valid choice, the
+    Mac's first preferred language. The waiting page says its language."""
+    assert 'let settingsFilename = "settings.json"' in _SHELL
+    assert 'let interfaceLanguageKey = "interface_language"' in _SHELL
+    saved = _SHELL[_SHELL.index("func savedInterfaceLanguage"):]
+    saved = saved[: saved.index("\n}\n")]
+    assert "JSONSerialization.jsonObject(with: data)" in saved and "as? [String: Any]" in saved
+    assert 'language == "zh" || language == "en" else { return nil }' in saved
+    current = _SHELL[_SHELL.index("func currentInterfaceLanguage"):]
+    current = current[: current.index("\n}\n")]
+    assert "rceHome().appendingPathComponent(settingsFilename)" in current
+    assert "preferred: Locale.preferredLanguages" in current
+    launch = _SHELL[_SHELL.index("func applicationDidFinishLaunching"):]
+    launch = launch[: launch.index("\n    }\n")]
+    assert launch.index("language = currentInterfaceLanguage()") < launch.index("NSApp.mainMenu = buildMainMenu()")
+    assert launch.index("NSApp.mainMenu") < launch.index("startEngine()")
+    page = _SHELL[_SHELL.index("func placeholderPage"):]
+    page = page[: page.index("\n}\n")]
+    assert '<html lang="\\(htmlEscape(htmlLang))">' in page and 'lang="zh-CN"' not in page
+    assert "htmlLang: htmlLanguage(language)" in _SHELL
+    menus = _SHELL[_SHELL.index("func item(_ title"):_SHELL.index("func buildMainMenu")]
+    assert "NSMenuItem(title: tr(title), action: action" in menus
+    assert 'NSMenuItem(title: tr(title), action: nil, keyEquivalent: "")' in menus
+    assert "NSMenu(title: tr(title))" in menus
+
+
+def test_shell_takes_a_language_message_and_rereads_the_file():
+    """13.3: one more bridge shape, `{type: "language"}` with exactly that
+    one key; the shell re-reads settings.json instead of trusting the
+    message, and rebuilds its menus -- which recreates 提交提议… / 发布 and
+    re-applies the team mode. Every other shape is as before."""
+    handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
+    handler = handler[: handler.index("\n    }\n")]
+    assert set(re.findall(r'body\["type"\] as\? String == "([a-z-]+)"', handler)) == {
+        "title", "mode", "choose-folder", "choose-file", "language"}
+    branch = handler[handler.index('body.count == 1, body["type"] as? String == "language" {'):]
+    assert branch.split("\n")[1].strip() == "applyLanguage()"
+    apply = _SHELL[_SHELL.index("func applyLanguage"):]
+    apply = apply[: apply.index("\n    }\n")]
+    assert "language = currentInterfaceLanguage()" in apply and "NSApp.mainMenu = buildMainMenu()" in apply
+    assert "body" not in apply and "message" not in apply.split("\n", 1)[1]
+    build = _SHELL[_SHELL.index("func buildMainMenu"):]
+    build = build[: build.index("\n    }\n")]
+    assert build.index('publishItem = cmd("发布", "publish")') < build.index("applyTeamMode()")
+    assert "NSApp.windowsMenu = windowMenu.submenu" in build and "NSApp.helpMenu = helpMenu.submenu" in build
+
+
+_LANGUAGE_HARNESS = r"""
+let dir = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+var out: [String: String] = [:]
+for name in NAMES {
+    out["saved " + name] = savedInterfaceLanguage(dir.appendingPathComponent(name)) ?? "none"
+}
+let macs: [String: [String]] = [
+    "zh-Hans": ["zh-Hans-CN", "en-US"], "zh-Hant": ["zh-Hant-TW"], "zh": ["zh"],
+    "en": ["en-US", "zh-Hans-CN"], "de": ["de-DE"], "empty": [],
+]
+for (mac, preferred) in macs { out["mac " + mac] = interfaceLanguage(saved: nil, preferred: preferred) }
+out["zh chosen on an English Mac"] = interfaceLanguage(saved: "zh", preferred: ["en-US"])
+out["en chosen on a Chinese Mac"] = interfaceLanguage(saved: "en", preferred: ["zh-Hans-CN"])
+out["html zh"] = htmlLanguage("zh")
+out["html en"] = htmlLanguage("en")
+let path = "/a/{path}/日志 \"x\"/serve.log"
+for language in ["zh", "en"] {
+    out[language + " log"] = shellText("以下是 {path} 的最后几行（⌘R 重试）：", language, path: path)
+    out[language + " no log"] = shellText("还没有日志文件：{path}", language, path: path)
+    out[language + " desk"] = shellText("工作台", language)
+    out[language + " missing"] = shellText("没有这一条", language)
+    out[language + " hint"] = shellText(documentsHint, language)
+}
+out["zh is every key itself"] = englishText.keys.allSatisfy { shellText($0, "zh") == $0 } ? "yes" : "no"
+out["entries"] = String(englishText.count)
+let data = try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+FileHandle.standardOutput.write(data)
+"""
+
+
+@native_only
+def test_shell_language_rules_run_as_swift(tmp_path):
+    """The language section of RCEShell.swift, compiled on its own with a
+    small harness: the saved choice and the Mac's languages (13.2), the
+    Chinese byte for byte as the old concatenations, the English, the
+    fallback to the Chinese, and `{path}` filled once."""
+    settings = {
+        "en.json": '{"doi_online_lookup": true, "interface_language": "en"}',
+        "zh.json": '{"interface_language": "zh"}',
+        "fr.json": '{"interface_language": "fr"}',
+        "upper.json": '{"interface_language": "EN"}',
+        "number.json": '{"interface_language": 1}',
+        "absent.json": '{"doi_online_lookup": true}',
+        "list.json": '["en"]',
+        "broken.json": '{"interface_language": "en"',
+        "empty.json": "",
+    }
+    folder = tmp_path / "settings"
+    folder.mkdir()
+    for name, text in settings.items():
+        (folder / name).write_text(text, encoding="utf-8")
+    names = [*settings, "missing.json"]
+    section = _SHELL[_SHELL.index("// -- Two languages"):_SHELL.index("// -- end of the two languages")]
+    harness = tmp_path / "main.swift"
+    harness.write_text("import Foundation\nlet documentsHint = " + _DOCUMENTS_HINT + "\n" + section
+                       + _LANGUAGE_HARNESS.replace("NAMES", json.dumps(names)), encoding="utf-8")
+    binary = tmp_path / "language"
+    compiled = subprocess.run(["swiftc", "-target", macapp._swift_target(), "-o", str(binary), str(harness)],
+                              capture_output=True, text=True, timeout=300)
+    assert compiled.returncode == 0, compiled.stderr
+    out = json.loads(subprocess.run([str(binary), str(folder)], capture_output=True, text=True,
+                                    check=True, timeout=60).stdout)
+    assert {name: out["saved " + name] for name in names} == {
+        "en.json": "en", "zh.json": "zh", "fr.json": "none", "upper.json": "none", "number.json": "none",
+        "absent.json": "none", "list.json": "none", "broken.json": "none", "empty.json": "none",
+        "missing.json": "none",
+    }
+    assert {k[4:]: v for k, v in out.items() if k.startswith("mac ")} == {
+        "zh-Hans": "zh", "zh-Hant": "zh", "zh": "zh", "en": "en", "de": "en", "empty": "en"}
+    assert out["zh chosen on an English Mac"] == "zh" and out["en chosen on a Chinese Mac"] == "en"
+    assert (out["html zh"], out["html en"]) == ("zh-CN", "en")
+    path = '/a/{path}/日志 "x"/serve.log'
+    assert out["zh log"] == "以下是 " + path + " 的最后几行（⌘R 重试）："
+    assert out["zh no log"] == "还没有日志文件：" + path
+    assert out["en log"] == "The last lines of " + path + " (⌘R to try again):"
+    assert out["en no log"] == "No log file yet: " + path
+    assert (out["zh desk"], out["en desk"]) == ("工作台", "Desk")
+    assert out["zh missing"] == out["en missing"] == "没有这一条"
+    assert out["zh hint"] == _swift_value(_DOCUMENTS_HINT)
+    assert out["en hint"] == _english_table()[_swift_value(_DOCUMENTS_HINT)]
+    assert out["zh is every key itself"] == "yes"
+    assert out["entries"] == str(len(_english_entries()))
