@@ -2759,7 +2759,8 @@ deliberately:
 - **No statistics dashboard.** "24 attempts, 38 % of citations resolved"
   helps nobody decide anything. The home page is a desk: what waits for
   *my* decision, what changed since *I* last looked and exactly where,
-  which results lost their evidence, which routes were abandoned and why.
+  which results lost their evidence, which routes were abandoned and why. (Since V10 the desk is
+  the route map with what waits for me beside it: Section 14.)
 - **Not a file manager.** OneDrive already manages files. Research OS
   manages what the files mean, how they relate, and which changes the
   team has accepted.
@@ -2864,6 +2865,7 @@ From the researcher's decisions:
 | A file of the official version added or changed | proposal (it is how the member's work reaches the official version) |
 | A note on a node | no approval; travels with the next sync of the member's area, appended with `by` |
 | Confirming / rejecting a machine link | no approval; same path as notes |
+| Drawing or removing a 「源自」 line between attempts | proposal (`route_link`, Section 14.2) |
 
 **"Does not become a node until approved"** is literal: a pending proposal
 is not in the official index, not in the decision tree, not in any trace.
@@ -2959,7 +2961,7 @@ and broken links as filters), **提议** (inbox for the PI; 我的提议 for a
 member), **成员**. Every object opens the same **node page**: its trace,
 its changes and notes as one timeline, its judgments, and its actions. The
 canvas becomes 「关系图」, a view inside a node page and inside 数据与代码 —
-not a destination of its own. The visual language stays the paper palette
+not a destination of its own. (Except the route map, which is the desk since V10: Section 14.) The visual language stays the paper palette
 of 8.2. Desk, node page and proposal review were shown to the researcher
 as a concept on 2026-10-11.
 
@@ -3336,3 +3338,184 @@ Research OS writes is English.
    two tables, and the completeness and 12.11 rules for English strings.
 7. Screenshots of every converted surface in both languages, taken by the
    reviewer in a browser, before the merge.
+
+## Section 14 — The desk is the route map (task V10)
+
+The researcher, 2026-10-12: "工作台的逻辑应该改掉，应该将之前研究路线的流程图/
+决策树画布放到这里，点击并编辑每个节点，且能看到并处理最核心最重要的事". This
+reopens canvas work, which had been paused since the external review (the
+researcher's own decision, made knowingly). Decided by the researcher the same
+day:
+
+1. Lines between attempts — 「源自」, *grew out of* — are drawn by hand on the
+   map and kept in the project's records, never in the Markdown map file;
+   attempts with no such line wait in a row by date. Nothing infers them:
+   the map file records no lineage, and a machine guess at which route grew
+   out of which would be worse than no line (Section 0).
+2. The urgent work on the desk is of two kinds only: proposals awaiting
+   approval, and judgments needing review (待复核).
+3. The top level shows attempts only; an attempt's scripts and data are seen
+   by opening it — in the side panel, not by unfolding the map.
+4. In a project with members, a member may draw or remove a line, but as a
+   proposal the PI approves.
+5. The old desk blocks are folded into the map (14.5).
+6. 源自 is "Grew out of" in English (13.4).
+
+This supersedes, for the desk: 12.0's list of what the desk shows; 12.9's
+"the canvas … not a destination of its own" (the route map is the desk's
+main view; 关系图 stays where it is); 8.1's "attempts are frames, not nodes"
+(on the route map, attempts are the cards; in 关系图 they stay frames).
+
+### 14.1 The route map
+
+The desk is the route map with a column beside it (14.4). The map's cards
+are the attempts of the official table — in a member's working copy also
+the member's own rows, marked as 12.12 says. A pending new attempt
+proposed by someone else is never a card (12.4); it is listed in the column.
+
+A card: 「#16」 and the researcher's title; the date as written; the verdict
+as a text status from `route_status` (so `[abandoned_verdicts]` and the
+researcher's own labels count, 12.11), in its tone; abandoned cards quieter.
+Marks on a card are words in a quiet label, never icons or counts in
+circles: 「等你批准」 or 「提议中」 when a proposal touches it, 「待复核 2」,
+「有改动」 (14.5).
+
+Lines are 「源自」 lines only, drawn as a human's lines (clay, 8.2). The map
+reads left to right in time: a parent stands left of what grew out of it;
+no arrowheads, no arrow characters (12.11). Layout: a forest by generation
+(longest path from a root), siblings by date; an attempt with neither a
+parent nor a child stands in a row below the forest, 「还没标来处」, by date.
+Dates in the table are free text (`07-26`, `≤07-07`, `07-08~09`): order by
+the date where `attempts.toml`'s `date_year` makes it readable, then by the
+table's own number (`attempt_sort_key`).
+
+Positions are per person, in `canvas.json` under the view `routes`
+(they never travel, 12.12). 8.4 holds: the whole view is pinned on the
+first move; afterwards a new attempt joins the end of the 「还没标来处」 row
+and nothing pinned moves; 「重新排列」 asks, then lays the view out afresh.
+The route map is its own renderer, not a second use of the 关系图 canvas
+object, so the desk, 数据与代码 and the node page never share state.
+
+### 14.2 Drawing a line
+
+Drag from the small handle on a card's right edge onto another card: a
+popover says 「#17 源自 #16」 with an optional note; confirm saves. A click
+without dragging opens the panel (14.3). A click on a line selects it;
+「删除这条连线」 asks first.
+
+The record: `mappings.toml` gains the type `derives_from`, `from` the child
+attempt, `to` the parent (`attempt:<table>#<n>` both), with `note`, `by`
+and the date like every hand-drawn mapping (8.5). It is not a file link and
+is kept out of the file grammar (as `belongs_to` is). Rules, each refused
+with its own sentence (8.8): both ends must exist when drawn from the app;
+no line from an attempt to itself; no duplicate; no line that would close a
+circle. An attempt may grow out of several. Read back, an entry that would
+close a circle (a hand edit, two packets) is ignored and reported as a
+mapping problem; an entry whose end no longer exists (a renumbered row)
+stays in the file, is listed in the column as 「连线的一端找不到了」, and is
+not a records-verification failure.
+
+**Who draws.** The PI — and the researcher in a single-person project —
+draws and removes lines directly. A member's drawing or removal is a
+proposal of the new kind `route_link` (`add` or `remove`, child, parent,
+note), shown on the member's map dashed and marked 「提议中」 until decided;
+returned, it disappears and its reason stays in 我的提议. A member's
+new-attempt proposal may name what it grew out of; approving the attempt
+adds those lines. A member's `derives_from` entries never travel in the
+no-approval mapping packets of 12.12. Every approved `route_link` is an
+entry in `decisions.toml` (12.12).
+
+### 14.3 The panel
+
+Clicking a card opens the side panel on the desk, without leaving it:
+
+- **The attempt**: number, title, date, verdict; edit the verdict and the
+  result. Saving goes through the existing preview-then-confirm write of
+  the map file, sending only what changed. A member's edit becomes a
+  verdict-change proposal (12.4). **Abandoning asks for the reason and
+  freezes the basis for everyone** — the PI and a single researcher too,
+  not only a proposal — because an abandoned route keeps its basis (12.4).
+  Description, date and variables are edited in 研究路线's form, not here.
+- **写备注**: a note on the attempt (the notes ledger, 12.6).
+- **来龙去脉**: the attempt's data, scripts and outputs in columns joined by
+  real lines — the node page's trace, drawn in the panel. One membership
+  rule (its step files plus 「关联文件」) serves the panel, the node page and
+  关系图's attempt view, so they never disagree.
+- **源自 / 由它而来**: its parents and children, each removable (a proposal
+  for a member).
+- **Its urgent work**: proposals touching it, decided in place with the full
+  「批准以后会怎样」 (approve, return with reason, discuss); its 待复核
+  judgments, confirmed again or rejected in place.
+- **打开详情页**: the node page.
+
+### 14.4 The column
+
+Beside the map, newest first:
+
+- **等你批准** (the PI): every pending proposal — new attempts, verdict
+  changes, variable versions, files, lines. A click opens it in the panel
+  and, when it touches an attempt, highlights that card.
+- **我的提议** (a member): their proposals with their state — 提议中,
+  已退回 with the reason, 已批准，待同步.
+- **待复核**: judgments whose basis changed, under the attempt they belong
+  to (through the membership rule of 14.3), else under 「不属于任何尝试」
+  (claims, variable cards, files no attempt holds).
+- **官方版本有更新** and 同步 (a member), as the desk had it.
+- Lines with a missing end (14.2).
+
+With nothing to do the column says so in one quiet line.
+
+### 14.5 Where the old desk went (12.0 amended)
+
+- *Abandoned routes*: the quieter cards; the reason is in the panel.
+- *What changed since I last looked*: 「有改动」 on every attempt whose row
+  changed, or one of whose files changed, since the last visit to the desk
+  (the visit time is kept as before); the panel's timeline says what.
+- *Results that lost their evidence*: on 成果 (12.13), not on the desk.
+
+The desk is still not a statistics dashboard: no counts for their own sake.
+
+### 14.6 Language
+
+The desk is a converted surface (13.7): the map, the column and the panel
+— including the edit form, the proposal decision and the review actions
+when shown there — carry no Chinese in English mode except the
+researcher's text. 13.4 gains: 源自 "Grew out of"; 由它而来 "What grew out
+of it"; 路线图 "Route map"; 还没标来处 "Origin not marked yet"; 有改动
+"Changed"; 待办 "To handle". The words 节点 and 画布 stay off the screen
+(8.8), in both languages.
+
+### 14.7 Increments (branch v10-desk-map, merged after acceptance)
+
+A. The engine: the `derives_from` type with its rules and index migration;
+the `route_link` proposal and parents on a new attempt; abandonment asks a
+reason and freezes the basis on a direct write; the shared membership rule;
+the desk payload for the map, the marks and the column, in the request's
+language. B. The route map renderer and the `routes` view in
+`canvas.json`. C. The column and the panel: editing, notes, trace, lines,
+proposals and reviews in place, all in both languages. Then review,
+re-baselining the desk tests deliberately (13.8's pin of the Chinese desk
+describes the old desk), and acceptance.
+
+### 14.8 Acceptance
+
+1. On a copy of the researcher's project: 24 cards, all in 「还没标来处」 by
+   date; drawing 「#17 源自 #16」 forms a two-card forest; a reload keeps
+   it; `mappings.toml` gains exactly one entry; the map file is unchanged
+   byte for byte.
+2. A circle, a self-line and a duplicate are each refused with their own
+   sentence.
+3. Clicking #16: verdict, result, note form, and a trace with data, scripts
+   and outputs. Changing the result previews and then writes only that
+   cell. Setting an abandoning verdict asks for a reason and freezes the
+   basis.
+4. Two people (12.10.3's setup): a member's verdict change shows on its
+   card and in the PI's column and is approved in the panel; a member's
+   line is dashed 「提议中」 until approved, then official; a returned one
+   disappears with its reason.
+5. A judgment whose script changed puts 「待复核 1」 on its attempt;
+   confirming it again in the panel clears it.
+6. 「有改动」 appears after a change and clears after the next visit.
+7. English mode: no Chinese on the map, column or panel except the
+   researcher's text. No emoji, no arrows, no 节点 or 画布 anywhere.
+8. Every existing test passes, with the desk pins re-baselined on purpose.
