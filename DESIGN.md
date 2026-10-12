@@ -3200,8 +3200,9 @@ Mac's when none is saved.
 
 ### 13.4 Glossary (binding; approved 2026-10-12)
 
-One English word per concept, everywhere it appears; sentence case; the
-same register as the Chinese — short, concrete, no jargon. 8.8's spirit
+One English word per concept, everywhere it appears; sentence case (the
+shell's menus alone follow macOS's title case and its standard names: Undo,
+Select All, Zoom In, Minimize); the same register as the Chinese — short, concrete, no jargon. 8.8's spirit
 holds: the user is never told "node", "edge" or "socket". English strings
 obey 12.11: no arrows, no emoji; quotation marks are “ ” where the Chinese
 has 「 」.
