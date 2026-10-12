@@ -58,7 +58,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import IO, Any, Iterable
 
-from researchos import db, paths
+from researchos import db, paths, settings
 from researchos.records import notes as notes_mod
 from researchos.records.identity import IdentityState, read_identity
 
@@ -841,11 +841,30 @@ def _who_label(who: str | None, name: str | None = None) -> str:
     return name or who or LOCAL_LABEL
 
 
-def unknown_who_label(root: Path) -> str:
+def local_label(lang: str = "zh") -> str:
+    """「本机」 in the request's language (13.4: "This Mac")."""
+    return settings.say(LOCAL_LABEL, "This Mac", lang)
+
+
+def first_researcher_label(lang: str = "zh") -> str:
+    """「最初的研究者」 (12.12) in the request's language (13.4: "Original
+    researcher")."""
+    from researchos import people  # noqa: PLC0415
+
+    return settings.say(people.FIRST_RESEARCHER_LABEL, "Original researcher", lang)
+
+
+def number_text(value: Any, lang: str = "zh") -> Any:
+    """A number as the screen writes it (13.5): 1,497 in English; anything
+    else, and every number in Chinese, as it is."""
+    return f"{value:,}" if lang == "en" and isinstance(value, int) and not isinstance(value, bool) else value
+
+
+def unknown_who_label(root: Path, lang: str = "zh") -> str:
     """What a version without `who` is said to be (12.12: a missing `by` is
     「最初的研究者」) -- except in a member's working copy, where a version
     this machine's scan saw is the member's own or the snapshot's, and
-    「本机」 is the only thing known."""
+    「本机」 is the only thing known. In the request's language (13.6)."""
     from researchos import people, proposals  # noqa: PLC0415
 
     try:
@@ -856,7 +875,7 @@ def unknown_who_label(root: Path) -> str:
         member_copy = proposals.joined_not_pi(root, me)
     except Exception:  # noqa: BLE001 -- not a working copy as far as anything here knows
         member_copy = False
-    return LOCAL_LABEL if member_copy else people.FIRST_RESEARCHER_LABEL
+    return local_label(lang) if member_copy else first_researcher_label(lang)
 
 
 def name_people(root: Path, versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1062,58 +1081,84 @@ def unified(old: str, new: str, label_a: str, label_b: str) -> tuple[str, bool]:
     return "".join(lines), truncated
 
 
-def _moved(name: str, a: Any, b: Any, words: bool, unit: str = "", more: str = "") -> str:
+#: The quantities `_moved` names, in English (13.4; lower case: a part of a sentence).
+_QUANTITY_EN = {"行数": "rows", "列数": "columns"}
+
+
+def _moved(name: str, a: Any, b: Any, words: bool, unit: str = "", more: str = "", lang: str = "zh") -> str:
     """One quantity as it moved: 「行数 96 → 97」 for the command line, and
     -- `words`, for the page (12.13: words, not arrows) -- 「行数从 96 增至
     97」 / 「行数从 97 减至 96」, or 「大小从 a 变为 b 字节」 when the two do
-    not compare as numbers."""
-    if not words:
+    not compare as numbers. In English (the page only), "rows from 96 to
+    97" (13.5's numbers)."""
+    if not words and lang != "en":
         return f"{name} {a} → {b}{more}{(' ' + unit) if unit else ''}"
     verb = "变为"
     if not more and isinstance(a, int) and isinstance(b, int) and not isinstance(a, bool):
         verb = "增至" if b > a else "减至" if b < a else "变为"
-    return f"{name}从 {a} {verb} {b}{more}{(' ' + unit) if unit else ''}"
+    return settings.say("{name}从 {a} {verb} {b}{more}{unit}", "{name} from {a} to {b}{more}{unit}", lang,
+                        name=_QUANTITY_EN.get(name, name) if lang == "en" else name, verb=verb,
+                        a=number_text(a, lang), b=number_text(b, lang),
+                        more=settings.say(more, " or more", lang) if more else "", unit=(" " + unit) if unit else "")
 
 
-def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words: bool = False) -> str | None:
+def _sentence(parts: list[str], lang: str) -> str:
+    """A table sentence's parts as one sentence: 「，」 in Chinese; in English
+    "; " (a part may hold a list of columns) and a capital first letter."""
+    if lang != "en":
+        return "，".join(parts)
+    text = "; ".join(parts)
+    return text[:1].upper() + text[1:]
+
+
+def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words: bool = False,
+                   lang: str = "zh") -> str | None:
     """「行数 96 → 97，列不变」, 「新增列 log_ret」 -- what changed in a table,
     in the app's words; None when neither side is a table. `words`: the
     screen's form, 「行数从 96 增至 97」 (12.13); the command line keeps its
-    arrows."""
+    arrows. `lang`: the page's language (13.6), "Rows from 96 to 97;
+    column added: log_ret" in English."""
     if not a and not b:
         return None
     a, b = a or {}, b or {}
+    sep = settings.say("、", ", ", lang)
     if (a.get("format") == "xlsx" or b.get("format") == "xlsx") and not (a.get("columns") is not None
                                                                          and b.get("columns") is not None):
         ra, rb = a.get("sheet_rows"), b.get("sheet_rows")
         ca, cb = a.get("sheet_columns"), b.get("sheet_columns")
         if ra is None or rb is None:
-            return "工作表的行列数未比对"
-        parts = [_moved("行数", ra, rb, words) if ra != rb else f"行数不变（{rb}）"]
-        parts.append(_moved("列数", ca, cb, words) if ca != cb else "列数不变")
-        return "，".join(parts)
+            return settings.say("工作表的行列数未比对", "The sheet’s rows and columns were not compared", lang)
+        parts = [_moved("行数", ra, rb, words, lang=lang) if ra != rb
+                 else settings.say("行数不变（{n}）", "rows unchanged ({n})", lang, n=number_text(rb, lang))]
+        parts.append(_moved("列数", ca, cb, words, lang=lang) if ca != cb
+                     else settings.say("列数不变", "columns unchanged", lang))
+        return _sentence(parts, lang)
     parts = []
     ra, rb = a.get("rows"), b.get("rows")
     if ra is None or rb is None:
-        parts.append("行数未比对")
+        parts.append(settings.say("行数未比对", "rows not compared", lang))
     elif ra != rb or not (a.get("rows_complete", True) and b.get("rows_complete", True)):
         more = "" if b.get("rows_complete", True) else " 以上"
-        parts.append(_moved("行数", ra, rb, words, more=more))
+        parts.append(_moved("行数", ra, rb, words, more=more, lang=lang))
+    rows_said = bool(parts)
     cols_a, cols_b = a.get("columns"), b.get("columns")
     if cols_a is None or cols_b is None:
-        parts.append("列未比对")
+        parts.append(settings.say("列未比对", "columns not compared", lang))
     else:
         added = [c for c in cols_b if c not in cols_a]
         removed = [c for c in cols_a if c not in cols_b]
         if added:
-            parts.append(f"新增列 {'、'.join(added)}")
+            parts.append(settings.say("新增列 {cols}", "column added: {cols}" if len(added) == 1
+                                      else "columns added: {cols}", lang, cols=sep.join(added)))
         if removed:
-            parts.append(f"删除列 {'、'.join(removed)}")
+            parts.append(settings.say("删除列 {cols}", "column removed: {cols}" if len(removed) == 1
+                                      else "columns removed: {cols}", lang, cols=sep.join(removed)))
         if not added and not removed:
-            parts.append("列不变" if cols_a == cols_b else "列的顺序变了")
-    if parts == ["列不变"]:
-        return "行数与列都没变（内容有改动）"
-    return "，".join(parts)
+            parts.append(settings.say("列不变", "columns unchanged", lang) if cols_a == cols_b
+                         else settings.say("列的顺序变了", "column order changed", lang))
+    if not rows_said and cols_a is not None and cols_a == cols_b:  # nothing but 「列不变」
+        return settings.say("行数与列都没变（内容有改动）", "Rows and columns unchanged (content changed)", lang)
+    return _sentence(parts, lang)
 
 
 def table_shape(summary: dict[str, Any] | None) -> str | None:

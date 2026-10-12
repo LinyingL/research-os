@@ -3024,8 +3024,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         is dropped. Contained: a view is never refused over this."""
         try:
             seen = officialness.view(self._project_root())
-            if desk:
-                return officialness.annotate_desk(seen, payload)
+            if desk:  # the desk is in the page's language (13.7), its labels too
+                return officialness.annotate_desk(seen, payload, self._lang())
             return officialness.annotate_cards(seen, payload) if cards else officialness.annotate(seen, payload)
         except Exception:  # noqa: BLE001
             logger.exception("officialness not added to a payload")
@@ -3225,7 +3225,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._require_unblocked()
                 since = (query.get("since") or [None])[0]
                 # 12.12: a member's own work is marked on the desk too.
-                self._json_from_conn(lambda conn: self._official(desk_mod.desk(conn, served.root, since), desk=True))
+                # 13.7: its sentences in the page's language.
+                self._json_from_conn(lambda conn: self._official(
+                    desk_mod.desk(conn, served.root, since, lang=self._lang()), desk=True))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.

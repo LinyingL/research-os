@@ -38,12 +38,87 @@
 
   // -- pure wording (loaded into node by tests/test_v8_u2.py) ------------------
 
-  const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件" };
-  const STATE_WORDS = {
-    pending: "等待 PI 批准", conflict: "批准与退回的记录互相矛盾", approved: "已批准",
-    returned: "已退回", superseded: "已被你后来的提议替代",
-  };
-  const FILE_ACTION_WORDS = { added: "新增", changed: "改动", removed: "删除" };
+  // A proposal's kind as its label, or null for a kind this page does not know.
+  function kindWord(kind) {
+    switch (kind) {
+      case "attempt_new": return t("新尝试");
+      case "verdict_change": return t("判决变更");
+      case "variable_version": return t("变量定义");
+      case "files": return t("文件");
+      default: return null;
+    }
+  }
+
+  // How a proposal stands, as its author reads it.
+  function stateWord(state) {
+    switch (state) {
+      case "pending": return t("等待 PI 批准");
+      case "conflict": return t("批准与退回的记录互相矛盾");
+      case "approved": return t("已批准");
+      case "returned": return t("已退回");
+      case "superseded": return t("已被你后来的提议替代");
+      default: return String(state || "");
+    }
+  }
+
+  // What an approval did, one sentence per kind (13.6: English word order).
+  function approvedWords(kind) {
+    switch (kind) {
+      case "attempt_new": return t("批准了一条新尝试提议");
+      case "verdict_change": return t("批准了一条判决变更提议");
+      case "variable_version": return t("批准了一条变量定义提议");
+      case "files": return t("批准了一条文件提议");
+      default: return t("批准了一条提议");
+    }
+  }
+
+  // The six default verdict words and 其它 by status code (ingest/attempts.py
+  // VERDICT_STATUSES), each with its words for the screen.
+  function defaultVerdict(code) {
+    switch (code) {
+      case "current": return ["现行", t("现行")];
+      case "abandoned": return ["已放弃", t("已放弃")];
+      case "pending": return ["待定", t("待定")];
+      case "adverse": return ["不利证据", t("不利证据")];
+      case "rejected": return ["被否", t("被否")];
+      case "archived": return ["归档", t("归档")];
+      case "other": return ["其它", t("其它")];
+      default: return null;
+    }
+  }
+
+  // A verdict's word (13.4): a default status in the screen's language, by
+  // its code; a word the researcher named in [verdict_labels] as written --
+  // status labelled, or an abandoned route under their own word.
+  function verdictWord(status) {
+    if (!status || !status.label) return t("其它");
+    const d = defaultVerdict(status.status);
+    return d && d[0] === status.label ? d[1] : status.label;
+  }
+
+  function english() { const I = typeof window !== "undefined" && window.ROI18N; return !!I && I.lang === "en"; }
+
+  // A number as 13.5 writes it: 1,497 in English; in Chinese as before.
+  function numberText(n) {
+    const s = String(n);
+    return english() && /^\d{4,}$/.test(s) ? s.replace(/\B(?=(\d{3})+$)/g, ",") : s;
+  }
+
+  // Names in a row: 「、」 in Chinese, a comma in English. (Not `list`: the
+  // render functions keep a local of that name.)
+  function series(xs) { return xs.join(t("、")); }
+
+  // A sentence whose fields are elements (a verdict's label): the template's
+  // text around them, in the template's own word order (13.6).
+  function fillNodes(parent, template, nodes) {
+    String(template).split(/(\{\w+\})/).forEach((part) => {
+      const key = part.slice(1, -1);
+      if (/^\{\w+\}$/.test(part) && Object.prototype.hasOwnProperty.call(nodes, key)) parent.append(nodes[key]);
+      else if (part) parent.append(part);
+    });
+    return parent;
+  }
+
   const VERDICT_TONES = {
     current: "olive", abandoned: "gray", pending: "ochre", adverse: "clay",
     rejected: "plain", archived: "plain", labelled: "plain", other: "plain",
@@ -70,6 +145,13 @@
       : t("{year}年{month}{day}日", { year: d.getFullYear(), month: month, day: d.getDate() });
   }
 
+  // A date inside a line starts lower case (13.5's forms start a line in
+  // English; Chinese has no case).
+  function whenInLine(at, now) {
+    const w = whenWords(at, now);
+    return w.charAt(0).toLowerCase() + w.slice(1);
+  }
+
   function toneOf(status) {
     const s = status && status.status;
     return Object.prototype.hasOwnProperty.call(VERDICT_TONES, s) ? VERDICT_TONES[s] : "plain";
@@ -93,7 +175,7 @@
     if (!share.reachable) return t("公盘现在打不开");
     const last = share.last_snapshot;
     const unverified = share.verification && share.verification !== "verified";
-    const when = (at) => { const w = whenWords(at, now); return w.charAt(0).toLowerCase() + w.slice(1); };
+    const when = (at) => whenInLine(at, now);
     if (share.role === "pi") {
       if (!last) return t("还没有发布过");
       const pending = share.pending_publish && share.pending_publish.count > 0;
@@ -112,24 +194,26 @@
   // A proposal in one line: what approving it would do.
   function proposalWhat(p) {
     const files = Array.isArray(p.files) ? p.files : [];
-    const filesPart = files.length ? "，附带 " + files.length + " 个文件" : "";
+    const filesPart = files.length ? t("，附带 {n} 个文件", { n: numberText(files.length) }) : "";
     if (p.kind === "attempt_new" && p.attempt) {
       const a = p.attempt;
-      return "新增尝试 #" + String(a.number || "").replace(/^#/, "") + "：" + (a.description || "（无描述）") + filesPart;
+      return t("新增尝试 #{number}：{description}", { number: String(a.number || "").replace(/^#/, ""),
+        description: a.description || t("（无描述）") }) + filesPart;
     }
     if (p.kind === "verdict_change" && p.verdict) {
       const v = p.verdict;
-      const was = v.old_status ? v.old_status.label : "";
-      const became = v.new_status ? v.new_status.label : "";
-      return "#" + String(v.number || "").replace(/^#/, "") + " 的判决从「" + was + "」改为「" + became + "」" +
-        (v.abandons ? "，放弃这条路线" : "") + filesPart;
+      return t("#{number} 的判决从「{was}」改为「{became}」", { number: String(v.number || "").replace(/^#/, ""),
+        was: v.old_status ? verdictWord(v.old_status) : "", became: v.new_status ? verdictWord(v.new_status) : "" }) +
+        (v.abandons ? t("，放弃这条路线") : "") + filesPart;
     }
     if (p.kind === "variable_version" && p.variable) {
-      return "变量 " + (p.variable.card || "") + " 的第 " + (p.variable.version || "") + " 版定义" + filesPart;
+      return t("变量 {card} 的第 {version} 版定义", { card: p.variable.card || "", version: p.variable.version || "" }) +
+        filesPart;
     }
     if (files.length) {
-      const names = files.slice(0, 2).map((f) => String(f.path || "").split("/").pop()).join("、");
-      return files.length + " 个文件：" + names + (files.length > 2 ? " 等" : "");
+      const names = series(files.slice(0, 2).map((f) => String(f.path || "").split("/").pop()));
+      return files.length > 2 ? t("{n} 个文件：{names} 等", { n: numberText(files.length), names: names })
+        : t("{n} 个文件：{names}", { n: numberText(files.length), names: names });
     }
     return "";
   }
@@ -141,16 +225,15 @@
 
   // How a member reads the state of one of their own proposals.
   function proposalStateText(p) {
-    const base = Object.prototype.hasOwnProperty.call(STATE_WORDS, p.state) ? STATE_WORDS[p.state] : String(p.state || "");
     if (p.state === "returned") {
       const o = lastOutcome(p, "returned");
-      return base + (o && o.text ? "：" + o.text : "");
+      if (o && o.text) return t("已退回：{reason}", { reason: o.text });
     }
     if (p.state === "pending") {
       const talk = lastOutcome(p, "discussed") || lastOutcome(p, "discuss");
-      return base + (talk && talk.text ? " · PI 说：" + talk.text : "");
+      if (talk && talk.text) return t("等待 PI 批准 · PI 说：{text}", { text: talk.text });
     }
-    return base;
+    return stateWord(p.state);
   }
 
   // -- runtime --------------------------------------------------------------------
@@ -192,7 +275,7 @@
   }
 
   function statusLabel(status) {
-    const span = mk("span", "status-label tone-" + toneOf(status), status && status.label ? status.label : "其它");
+    const span = mk("span", "status-label tone-" + toneOf(status), verdictWord(status));
     return span;
   }
 
@@ -319,33 +402,32 @@
     const at = mk("span", "desk-when", whenWords(item.at, now()));
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    const who = (item.who || []).join("、");
+    const who = series(item.who || []);
     if (item.kind === "file") {
-      head.appendChild(rowLink(item.path, "mono", () => RONode.openNode(item.node || item.path), "打开这个文件"));
-      head.appendChild(mk("span", "desk-what", item.what + (item.uncommitted ? "（还没有提交）" : "")));
-      if (item.exists === false) head.appendChild(mk("span", "desk-flag", "文件不存在"));
+      head.appendChild(rowLink(item.path, "mono", () => RONode.openNode(item.node || item.path), t("打开这个文件")));
+      head.appendChild(mk("span", "desk-what", item.uncommitted ? t("{what}（还没有提交）", { what: item.what })
+        : String(item.what)));
+      if (item.exists === false) head.appendChild(mk("span", "desk-flag", t("文件不存在")));
     } else if (item.kind === "attempt") {
-      head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), "打开这条尝试"));
-      if (item.what === "判决改了" && item.old_status) {
-        const change = mk("span", "desk-what");
-        change.append("判决 ", verdictInline(item.old_status), " 改为 ", verdictInline(item.new_status));
-        head.appendChild(change);
-      } else if (item.what === "新增尝试") {
-        const change = mk("span", "desk-what");
-        change.append("新增的尝试 ", verdictInline(item.new_status));
-        head.appendChild(change);
+      head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), t("打开这条尝试")));
+      // 13.6: the engine's code decides the form, never the words it sends.
+      if (item.what_code === "verdict_changed" && item.old_status) {
+        head.appendChild(fillNodes(mk("span", "desk-what"), t("判决 {was} 改为 {became}"),
+          { was: verdictInline(item.old_status), became: verdictInline(item.new_status) }));
+      } else if (item.what_code === "new_attempt") {
+        head.appendChild(fillNodes(mk("span", "desk-what"), t("新增的尝试 {verdict}"), { verdict: verdictInline(item.new_status) }));
       } else {
-        head.appendChild(mk("span", "desk-what", "结果改为：" + (item.result || "（空）")));
+        head.appendChild(mk("span", "desk-what", t("结果改为：{result}", { result: item.result || t("（空）") })));
       }
     } else if (item.kind === "decision") {
-      const what = item.act === "abandoned" ? "放弃了这条路线" : "批准了" + (KIND_WORDS[item.proposal_kind] ? "一条" + KIND_WORDS[item.proposal_kind] + "提议" : "一条提议");
-      if (item.node) head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), "打开这条尝试"));
+      const what = item.act === "abandoned" ? t("放弃了这条路线") : approvedWords(item.proposal_kind);
+      if (item.node) head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), t("打开这条尝试")));
       head.appendChild(mk("span", "desk-what", what));
       if (item.verdict_status) head.appendChild(verdictInline(item.verdict_status));
     } else if (item.kind === "note") {
       // 8.8: the file's path, or what the note is on as a reader names it.
-      const target = item.path || item.label || "一处记录";
-      head.appendChild(mk("span", "desk-what", "笔记，写在"));
+      const target = item.path || item.label || t("一处记录");
+      head.appendChild(mk("span", "desk-what", t("笔记，写在")));
       head.appendChild(rowLink(target, item.path ? "mono" : "", () => RONode.openNode(item.node || item.path)));
     }
     const own = item.kind === "file" || item.kind === "attempt" ? ownMark(item) : null;
@@ -353,46 +435,46 @@
     main.appendChild(head);
     const meta = [];
     if (item.kind === "decision") {
-      meta.push("提议人 " + who);
-      if (item.approved_by && item.approved_by.length) meta.push("批准人 " + item.approved_by.join("、"));
+      meta.push(t("提议人 {who}", { who: who }));
+      if (item.approved_by && item.approved_by.length) meta.push(t("批准人 {who}", { who: series(item.approved_by) }));
     } else if (who) {
       meta.push(who);
-      if (item.approved_by && item.approved_by.length) meta.push("经 " + item.approved_by.join("、") + " 批准");
+      if (item.approved_by && item.approved_by.length) meta.push(t("经 {who} 批准", { who: series(item.approved_by) }));
     }
-    if (item.versions > 1) meta.push("这段时间里改了 " + item.versions + " 次");
+    if (item.versions > 1) meta.push(t("这段时间里改了 {n} 次", { n: numberText(item.versions) }));
     main.appendChild(metaLine(meta));
     const quotes = item.kind === "note" ? [item.text] : (item.notes || []);
-    if (item.kind === "decision" && item.reason) quotes.unshift("理由：" + item.reason);
+    if (item.kind === "decision" && item.reason) quotes.unshift(t("理由：{reason}", { reason: item.reason }));
     quotes.filter(Boolean).slice(0, 3).forEach((q) => main.appendChild(mk("p", "desk-note", q)));
     row.append(at, main);
     return row;
   }
 
   function renderChanges(host, data) {
-    const sec = block("你上次查看以来的改动");
+    const sec = block(t("你上次查看以来的改动"));
     const since = data.since_default
-      ? "还没有记录你上次查看的时间，这里列出过去 " + (data.default_days || DESK_DAYS) + " 天的改动。"
-      : "上次查看：" + whenWords(data.since, now());
+      ? t("还没有记录你上次查看的时间，这里列出过去 {n} 天的改动。", { n: numberText(data.default_days || DESK_DAYS) })
+      : t("上次查看：{when}", { when: whenInLine(data.since, now()) });
     sec.appendChild(mk("p", "desk-sub", since));
     const changes = data.changes || [];
     if (!changes.length) {
-      sec.appendChild(emptyLine("这段时间里没有改动。"));
+      sec.appendChild(emptyLine(t("这段时间里没有改动。")));
     } else {
       const ul = mk("ul", "desk-list");
       const team = (ctx.share && ctx.share.team) || [];
       changes.forEach((c) => ul.appendChild(renderChange(c, team)));
       sec.appendChild(ul);
-      if (data.more_changes > 0) sec.appendChild(mk("p", "desk-sub", "更早的改动没有列出，可以在各个文件的历史里查看。"));
+      if (data.more_changes > 0) sec.appendChild(mk("p", "desk-sub", t("更早的改动没有列出，可以在各个文件的历史里查看。")));
     }
     host.appendChild(sec);
   }
 
   function renderResults(host, data) {
-    const sec = block("依据变了的成果");
+    const sec = block(t("依据变了的成果"));
     const results = data.results || [];
     const review = typeof data.review === "number" ? data.review : 0;
     if (!results.length && !review) {
-      sec.appendChild(emptyLine("所有成果的来源都还在。"));
+      sec.appendChild(emptyLine(t("所有成果的来源都还在。")));
       host.appendChild(sec);
       return;
     }
@@ -402,22 +484,23 @@
         const row = mk("li", "desk-row");
         const main = mk("div", "desk-main");
         const head = mk("div", "desk-head");
-        head.appendChild(rowLink(r.path || r.node, "mono", () => RONode.openNode(r.node || r.path), "打开这个成果"));
-        if (r.exists === false) head.appendChild(mk("span", "desk-flag", "文件不存在"));
+        head.appendChild(rowLink(r.path || r.node, "mono", () => RONode.openNode(r.node || r.path), t("打开这个成果")));
+        if (r.exists === false) head.appendChild(mk("span", "desk-flag", t("文件不存在")));
         const own = ownMark(r);
         if (own) head.appendChild(own);
         main.appendChild(head);
         (r.breaks || []).forEach((b) => {
-          const line = mk("p", "desk-break", b.label + (b.path && b.path !== r.path ? "：" + b.path : ""));
-          if (b.repair) line.appendChild(mk("span", "desk-repair", "可以" + b.repair));
+          const line = mk("p", "desk-break", b.path && b.path !== r.path ? t("{label}：{path}", { label: b.label, path: b.path })
+            : String(b.label));
+          if (b.repair) line.appendChild(mk("span", "desk-repair", t("可以{repair}", { repair: b.repair })));
           main.appendChild(line);
         });
         if (r.review) {
-          const line = mk("p", "desk-break", "它的来源里有 " + r.review + " 条关联的判断待复核");
-          line.appendChild(rowLink("复核", "", () => openReviewPanel(null)));
+          const line = mk("p", "desk-break", t("它的来源里有 {n} 条关联的判断待复核", { n: numberText(r.review) }));
+          line.appendChild(rowLink(t("复核"), "", () => openReviewPanel(null)));
           main.appendChild(line);
         }
-        if (r.drafts && r.drafts.length) main.appendChild(metaLine(["文稿 " + r.drafts.join("、") + " 引用了它"]));
+        if (r.drafts && r.drafts.length) main.appendChild(metaLine([t("文稿 {drafts} 引用了它", { drafts: series(r.drafts) })]));
         row.appendChild(main);
         ul.appendChild(row);
       });
@@ -425,8 +508,8 @@
     }
     if (review) {
       const line = mk("p", "desk-sub");
-      line.append(review + " 条判断的依据变了，等你复核。");
-      line.appendChild(rowLink("查看", "", () => openReviewPanel(null)));
+      line.append(t("{n} 条判断的依据变了，等你复核。", { n: numberText(review) }));
+      line.appendChild(rowLink(t("查看"), "", () => openReviewPanel(null)));
       sec.appendChild(line);
     }
     host.appendChild(sec);
@@ -435,31 +518,31 @@
   // 12.0: which routes were abandoned and why -- each route by its number
   // and title, its result and its reason, opening its page.
   function renderAbandoned(host, data) {
-    const sec = block("已放弃的路线");
+    const sec = block(t("已放弃的路线"));
     const list = data.abandoned || [];
     if (!list.length) {
-      sec.appendChild(emptyLine("还没有放弃过的路线。"));
+      sec.appendChild(emptyLine(t("还没有放弃过的路线。")));
     } else {
       const ul = mk("ul", "desk-list");
       list.forEach((a) => {
         const row = mk("li", "desk-row");
         const main = mk("div", "desk-main");
         const head = mk("div", "desk-head");
-        head.appendChild(rowLink(attemptName(a) || "一条尝试", "", () => openAttempt(a.id), "打开这条路线"));
+        head.appendChild(rowLink(attemptName(a) || t("一条尝试"), "", () => openAttempt(a.id), t("打开这条路线")));
         if (a.verdict_status) head.appendChild(verdictInline(a.verdict_status));
         const own = ownMark(a);
         if (own) head.appendChild(own);
         main.appendChild(head);
-        if (a.result) main.appendChild(mk("p", "desk-note plain", "结果：" + a.result));
+        if (a.result) main.appendChild(mk("p", "desk-note plain", t("结果：{result}", { result: a.result })));
         // The verdict's own words beside the label often are the reason;
         // a reason recorded apart (an approval, 「放弃理由：…」) is said too.
-        if (a.reason) main.appendChild(mk("p", "desk-note", "理由：" + a.reason));
+        if (a.reason) main.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: a.reason })));
         row.appendChild(main);
         ul.appendChild(row);
       });
       sec.appendChild(ul);
       const line = mk("p", "desk-sub");
-      line.appendChild(rowLink("在研究路线中查看它们当时的依据", "", () => showAbandonedRoutes()));
+      line.appendChild(rowLink(t("在研究路线中查看它们当时的依据"), "", () => showAbandonedRoutes()));
       sec.appendChild(line);
     }
     host.appendChild(sec);
@@ -469,7 +552,7 @@
     const row = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    head.appendChild(mk("span", "status-label tone-plain", KIND_WORDS[p.kind] || "提议"));
+    head.appendChild(mk("span", "status-label tone-plain", kindWord(p.kind) || t("提议", { n: 1 })));
     head.appendChild(mk("span", "desk-what strong", p.sentence || proposalWhat(p) || p.id));
     main.appendChild(head);
     const what = proposalWhat(p);
@@ -477,17 +560,17 @@
     const meta = forPi ? [nameOf(p.by, team)] : [proposalStateText(p)];
     main.appendChild(metaLine(meta));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton("查看", "btn btn-small", () => ROTeam.openProposal(p.id, p.by)));
+    actions.appendChild(mkButton(t("查看"), "btn btn-small", () => ROTeam.openProposal(p.id, p.by)));
     main.appendChild(actions);
     row.append(mk("span", "desk-when", whenWords(p.at, now())), main);
     return row;
   }
 
   function renderWaiting(host) {
-    const sec = block("等你批准");
+    const sec = block(t("等你批准"));
     const team = (ctx.share && ctx.share.team) || [];
     const list = ((ctx.proposals && ctx.proposals.proposals) || []).filter((p) => p.state === "pending" || p.state === "conflict");
-    if (!list.length) sec.appendChild(emptyLine("没有等你批准的提议。"));
+    if (!list.length) sec.appendChild(emptyLine(t("没有等你批准的提议。")));
     else {
       const ul = mk("ul", "desk-list");
       list.forEach((p) => ul.appendChild(renderProposalRow(p, team, true)));
@@ -497,10 +580,10 @@
   }
 
   function renderMine(host) {
-    const sec = block("我的提议");
+    const sec = block(t("我的提议"));
     const team = (ctx.share && ctx.share.team) || [];
     const list = (ctx.proposals && ctx.proposals.proposals) || [];
-    if (!list.length) sec.appendChild(emptyLine("你还没有提交过提议。"));
+    if (!list.length) sec.appendChild(emptyLine(t("你还没有提交过提议。")));
     else {
       const ul = mk("ul", "desk-list");
       list.forEach((p) => ul.appendChild(renderProposalRow(p, team, false)));
@@ -525,23 +608,25 @@
   }
 
   function renderOfficial(host) {
-    const sec = block("官方版本有更新");
+    const sec = block(t("官方版本有更新"));
     const share = ctx.share || {};
     const last = share.last_snapshot;
     if (!share.shared) {
-      sec.appendChild(emptyLine("这个工作副本还没有连上公盘。"));
+      sec.appendChild(emptyLine(t("这个工作副本还没有连上公盘。")));
     } else if (!share.reachable) {
-      sec.appendChild(emptyLine("公盘现在打不开，等它同步好再来看。"));
+      sec.appendChild(emptyLine(t("公盘现在打不开，等它同步好再来看。")));
     } else if (share.behind && last) {
-      sec.querySelector(".desk-title").textContent = "官方版本有更新";
-      const line = mk("p", "desk-sub", "PI 于 " + whenWords(last.at, now()) + " 发布了第 " + last.seq + " 版" +
-        (last.note ? "：" + last.note : "。"));
+      sec.querySelector(".desk-title").textContent = t("官方版本有更新");
+      const when = whenInLine(last.at, now());
+      const line = mk("p", "desk-sub", last.note
+        ? t("PI 于 {when} 发布了第 {seq} 版：{note}", { when: when, seq: numberText(last.seq), note: last.note })
+        : t("PI 于 {when} 发布了第 {seq} 版。", { when: when, seq: numberText(last.seq) }));
       sec.appendChild(line);
       // What 同步 will write is said first (the engine's sync-preview),
       // exactly as on 成员; the button waits for it.
-      const writes = mk("p", "team-line writes", "正在查看同步会写入什么…");
+      const writes = mk("p", "team-line writes", t("正在查看同步会写入什么…"));
       const status = mk("div", "notice-status");
-      const btn = mkButton("同步", "btn", () => syncNow(btn, status));
+      const btn = mkButton(t("同步"), "btn", () => syncNow(btn, status));
       btn.disabled = true;
       const actions = mk("div", "desk-actions");
       actions.append(btn);
@@ -550,12 +635,13 @@
         writes.textContent = ROTeam.syncWrites(p);
         btn.disabled = !!p.untrusted;
       }).catch((err) => {
-        setStatus(writes, "err", "没能查看同步会写入什么", err);
+        setStatus(writes, "err", t("没能查看同步会写入什么"), err);
         btn.disabled = false;
       });
     } else {
-      sec.querySelector(".desk-title").textContent = "官方版本";
-      sec.appendChild(emptyLine(last ? "你的工作副本已经是最新的官方版本（第 " + last.seq + " 版）。" : "PI 还没有发布过官方版本。"));
+      sec.querySelector(".desk-title").textContent = t("官方版本");
+      sec.appendChild(emptyLine(last ? t("你的工作副本已经是最新的官方版本（第 {seq} 版）。", { seq: numberText(last.seq) })
+        : t("PI 还没有发布过官方版本。")));
     }
     renderSyncShown(sec);
     host.appendChild(sec);
@@ -563,13 +649,13 @@
 
   async function syncNow(btn, status) {
     btn.disabled = true;
-    setStatus(status, "", "正在同步…");
+    setStatus(status, "", t("正在同步…"));
     let res;
     try {
       res = await apiPost("/api/share/sync", {});
     } catch (err) {
       btn.disabled = false;
-      setStatus(status, "err", "没能同步，工作副本没有改动", err);
+      setStatus(status, "err", t("没能同步，工作副本没有改动"), err);
       return;
     }
     setStatus(status, "", "");
@@ -585,7 +671,7 @@
   async function loadDesk(host, refresh) {
     const epoch = state.dataEpoch;
     if (!refresh) {
-      host.innerHTML = '<p class="empty-note">载入中…</p>';
+      host.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
       syncShown = null;
     }
     let data;
@@ -607,7 +693,7 @@
     host.innerHTML = "";
     const desk = mk("div", "desk");
     if (ctx.mode === "none") {
-      desk.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
+      desk.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
     }
     if (ctx.mode === "pi") {
       renderWaiting(desk);
@@ -643,7 +729,7 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context,
-    KIND_WORDS, STATE_WORDS, FILE_ACTION_WORDS, proposalWhat, proposalStateText, nameOf, whenWords,
+    kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,

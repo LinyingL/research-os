@@ -487,7 +487,7 @@ def test_12_12_the_desk_marks_a_members_unsubmitted_and_proposed_changes(drive):
         assert all("officialness" not in c for c in got["changes"] if c["kind"] in ("decision", "note"))
     desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
     assert desk_js.count("ownMark(") >= 3 and 'renderAbandoned(desk, data);\n    } else {' in desk_js
-    assert "list.length + \" 条路线已经放弃" not in desk_js and '"理由：" + a.reason' in desk_js
+    assert "list.length + \" 条路线已经放弃" not in desk_js and 't("理由：{reason}", { reason: a.reason })' in desk_js
 
 
 # -- the page: wording run under node, and the served markup (12.3, 12.9, 12.11, 8.8) --------------------------------

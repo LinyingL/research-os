@@ -40,8 +40,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from researchos import settings
+
 OFFICIAL, MINE, PROPOSED, APPROVED = "official", "mine", "proposed", "approved"
 LABELS = {MINE: "我的改动，尚未提交", PROPOSED: "提议中", APPROVED: "已批准，待同步"}
+#: The same, on an English screen (13.4).
+LABELS_EN = {MINE: "My change, not yet proposed", PROPOSED: "Proposed", APPROVED: "Approved, awaiting sync"}
 FIELD = "officialness"
 MODE_FIELD = "officialness_mode"
 FILE_PREFIXES = frozenset({"script", "dataset", "figure", "file"})
@@ -156,16 +160,21 @@ class View:
             return self.file_state(rel)
         return OFFICIAL, None
 
-    def mode_payload(self) -> dict[str, Any]:
-        return {"mode": self.mode, "seq": self.seq, "pending_known": self.pending_known, "labels": dict(LABELS),
-                "problems": list(self.problems)}
+    def mode_payload(self, lang: str = "zh") -> dict[str, Any]:
+        return {"mode": self.mode, "seq": self.seq, "pending_known": self.pending_known,
+                "labels": {state: label(state, lang) for state in LABELS}, "problems": list(self.problems)}
 
 
-def mark(state: tuple[str, str | None]) -> dict[str, Any]:
-    """The field as a payload carries it."""
+def label(state: str, lang: str = "zh") -> str:
+    """A state's words in the request's language (13.6)."""
+    return settings.say(LABELS[state], LABELS_EN[state], lang)
+
+
+def mark(state: tuple[str, str | None], lang: str = "zh") -> dict[str, Any]:
+    """The field as a payload carries it, its label in `lang`."""
     out: dict[str, Any] = {"state": state[0]}
     if state[0] in LABELS:
-        out["label"] = LABELS[state[0]]
+        out["label"] = label(state[0], lang)
     if state[1]:
         out["proposal"] = state[1]
     return out
@@ -353,25 +362,26 @@ def annotate(v: View, payload: Any) -> Any:
     return payload
 
 
-def annotate_desk(v: View, payload: Any) -> Any:
+def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
     """The desk's payload (`researchos.desk`): a file's or an attempt's
     change, a result and an abandoned route carry the state of what they
     name; a decision (official by definition: the PI's approval) and a
     note (it travels without approval, 12.4) do not take the state of the
-    node they are about."""
+    node they are about. The labels in the page's language (13.7: the
+    desk entirely)."""
     if isinstance(payload, dict):
         for item in payload.get("changes") or []:
             if isinstance(item, dict) and item.get("kind") in ("file", "attempt"):
                 got = _subject(v, item)
                 if got is not None:
-                    item[FIELD] = mark(got)
+                    item[FIELD] = mark(got, lang)
         for key in ("results", "abandoned"):
             for item in payload.get(key) or []:
                 if isinstance(item, dict):
                     got = _subject(v, item)
                     if got is not None:
-                        item[FIELD] = mark(got)
-        payload[MODE_FIELD] = v.mode_payload()
+                        item[FIELD] = mark(got, lang)
+        payload[MODE_FIELD] = v.mode_payload(lang)
     return payload
 
 

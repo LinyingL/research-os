@@ -61,10 +61,10 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # I am). 新增尝试 in renderSidebar belongs to 研究路线's increment, so it is left between them.
     ("app.html", "// A section's title on screen (13.4)", "let lastDataView"),
     ("app.html", "function renderStoppedState() {", "// -- The language switch (DESIGN.md 13.2, 13.3)"),
-    ("desk.js", "  // When something happened, as a person says it", "  function toneOf("),
-    ("desk.js", "  // The shared drive's status line (12.9)", "  // A proposal in one line"),
-    ("desk.js", "  // The sidebar's live parts", "    // U4: a member proposes"),
-    ("desk.js", "    const me = ctx.me && ctx.me.me;", "  // -- the desk"),
+    # T3, the desk (13.7): all of desk.js but the header button's 新增尝试 / 提议新的尝试, which
+    # belong to 研究路线's increment with the attempt form they open.
+    ("desk.js", None, "    // U4: a member proposes"),
+    ("desk.js", "    const me = ctx.me && ctx.me.me;", None),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own

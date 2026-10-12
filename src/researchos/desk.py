@@ -32,8 +32,13 @@ or a decision the researcher can open.
   the list.
 - **abandoned**: the attempts whose verdict is 已放弃, with their words.
 
-Reads only. Everything here is the researcher's own text or the engine's
-Chinese; no English reaches the page except inside 「详情」.
+Reads only. Everything here is the researcher's own text or a sentence
+the engine composes in the page's language (`lang`, the request's
+`X-ResearchOS-Lang`; Chinese without it, so the command line and MCP are
+unchanged -- 13.6). Every change carries `what_code`, which the page
+compares; `what` is only shown (13.6: the page never compares displayed
+text). A verdict's `label` stays the vocabulary that read the researcher's
+file (13.1); the page words a default status by its code.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db, history, people
+from researchos import db, history, people, settings
 from researchos.records import notes as notes_mod
 from researchos.records.identity import IdentityState, read_identity
 
@@ -58,6 +63,24 @@ BASELINE_WINDOW = timedelta(minutes=10)
 DIFF_COUNT_LIMIT = 1024 * 1024
 ATTENTION_BREAKS = ("no_generating_script", "script_missing", "data_missing", "script_unreadable")
 RECORD_PREFIX = ".researchos/"
+#: A change's fixed words by its `what_code`, Chinese and English (13.4);
+#: the other codes -- "lines", "size", "table" -- are composed sentences.
+WHAT_WORDS = {
+    "new_file": ("新文件", "New file"),
+    "deleted": ("已删除", "Deleted"),
+    "changed": ("内容有改动", "Content changed"),
+    "new_attempt": ("新增尝试", "New attempt"),
+    "verdict_changed": ("判决改了", "Verdict changed"),
+    "result_changed": ("结果改了", "Result changed"),
+}
+#: researchos.trace's words for the breaks the desk shows, and their repairs, in English.
+BREAK_WORDS_EN = {
+    "no_generating_script": "No script that generates it was found",
+    "script_unreadable": "The script cannot be read or parsed right now",
+    "script_missing": "The script file is not on disk",
+    "data_missing": "The data file is not on disk",
+}
+REPAIR_WORDS_EN = {"generates": "Add source", "writes": "Add source", "belongs_to": "Link files"}
 
 
 def _parse(at: Any) -> datetime | None:
@@ -83,14 +106,20 @@ def _iso(when: datetime) -> str:
     return when.isoformat(timespec="seconds")
 
 
+def _what(code: str, lang: str) -> str:
+    """A change's fixed words (WHAT_WORDS) in the page's language."""
+    zh, en = WHAT_WORDS[code]
+    return settings.say(zh, en, lang)
+
+
 def _who(by: str | None, team: people.TeamRead | None, *, name: str | None = None,
-         unknown: str = people.FIRST_RESEARCHER_LABEL) -> str:
+         unknown: str | None = None, lang: str = "zh") -> str:
     """A person as every view says them (8.8): the member's name; nobody
     recorded is 「最初的研究者」 (12.12), or `unknown` where that is wrong."""
     if name:
         return name
     if not by:
-        return unknown
+        return unknown if unknown is not None else history.first_researcher_label(lang)
     return people.attribution({"by": by}, team)["label"]
 
 
@@ -114,25 +143,34 @@ def _line_counts(store: history.Store, old_sha: str | None, new_sha: str | None)
     return added, removed
 
 
-def _file_what(store: history.Store, before: sqlite3.Row | None, latest: sqlite3.Row) -> str:
+def _file_what(store: history.Store, before: sqlite3.Row | None, latest: sqlite3.Row,
+               lang: str = "zh") -> tuple[str, str]:
+    """(what_code, what): what changed in a file, in the page's language."""
     if before is None:
-        return "新文件"
+        return "new_file", _what("new_file", lang)
     if latest["kind"] == "data" or before["kind"] == "data":
         # 12.13: the engine's word form -- 「行数从 96 增至 97」, never an arrow.
         sentence = history.table_sentence(json.loads(before["summary"] or "{}"), json.loads(latest["summary"] or "{}"),
-                                          words=True)
+                                          words=True, lang=lang)
         if sentence:
-            return sentence
+            return "table", sentence
     if latest["stored"] and before["stored"]:
         counts = _line_counts(store, before["sha256"], latest["sha256"])
         if counts is not None:
             added, removed = counts
             if added or removed:
-                parts = ([f"增加 {added} 行"] if added else []) + ([f"删去 {removed} 行"] if removed else [])
-                return "，".join(parts)
+                parts = []
+                if added:
+                    parts.append(settings.say("增加 {n} 行", "{n} line added" if added == 1 else "{n} lines added",
+                                              lang, n=history.number_text(added, lang)))
+                if removed:
+                    parts.append(settings.say("删去 {n} 行", "{n} line removed" if removed == 1 else "{n} lines removed",
+                                              lang, n=history.number_text(removed, lang)))
+                return "lines", settings.say("，", ", ", lang).join(parts)
     if before["size"] is not None and latest["size"] is not None and before["size"] != latest["size"]:
-        return f"大小从 {before['size']} 变为 {latest['size']} 字节"
-    return "内容有改动"
+        return "size", settings.say("大小从 {a} 变为 {b} 字节", "Size changed from {a} to {b} bytes", lang,
+                                    a=history.number_text(before["size"], lang), b=history.number_text(latest["size"], lang))
+    return "changed", _what("changed", lang)
 
 
 def _attempt_titles(conn: Connection | None) -> dict[str, dict[str, Any]]:
@@ -146,7 +184,8 @@ def _attempt_titles(conn: Connection | None) -> dict[str, dict[str, Any]]:
 
 
 def _store_changes(root: Path, project_id: str, since: datetime, team: people.TeamRead | None,
-                   tracked: set[str] | None, labels: dict[str, str], attempts: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+                   tracked: set[str] | None, labels: dict[str, str], attempts: dict[str, dict[str, Any]],
+                   lang: str = "zh") -> list[dict[str, Any]]:
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     store = history.Store.existing(project_id)
@@ -163,7 +202,7 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             if when is not None and (group not in baseline or when < baseline[group]):
                 baseline[group] = when
         out = []
-        unknown = history.unknown_who_label(root)
+        unknown = history.unknown_who_label(root, lang)
         for node, versions in by_node.items():
             latest = versions[-1]
             group = "attempt" if latest["kind"] == "attempt" else "file"
@@ -180,12 +219,12 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
             first_i = recent[0][0]
             before = versions[first_i - 1] if first_i > 0 else None
             window = [v for _, v in recent]
-            whos = list(dict.fromkeys(_who(v["who"], team, unknown=unknown) for v in window))
+            whos = list(dict.fromkeys(_who(v["who"], team, unknown=unknown, lang=lang) for v in window))
             notes = [v["note"] for v in window if v["note"]]
             approved = [v["approved_by"] for v in window if v["approved_by"]]
             item: dict[str, Any] = {
                 "node": node, "at": latest["at"], "who": whos, "notes": list(dict.fromkeys(notes)),
-                "approved_by": [_who(a, team) for a in dict.fromkeys(approved)], "versions": len(window),
+                "approved_by": [_who(a, team, lang=lang) for a in dict.fromkeys(approved)], "versions": len(window),
                 "source": latest["source"], "snapshot": latest["snapshot"],
             }
             if group == "attempt":
@@ -198,18 +237,19 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
                                         if old is not None else None),
                             result=new.get("result", ""))
                 if old is None:
-                    item["what"] = "新增尝试"
+                    item["what_code"] = "new_attempt"
                 elif old.get("verdict", "") != new.get("verdict", ""):
-                    item["what"] = "判决改了"
+                    item["what_code"] = "verdict_changed"
                 else:
-                    item["what"] = "结果改了"
+                    item["what_code"] = "result_changed"
+                item["what"] = _what(item["what_code"], lang)
                 out.append(item)
                 continue
             path = notes_mod.node_path(node)
             if path is None or path.startswith(RECORD_PREFIX) or (tracked is not None and path in tracked):
                 continue
-            item.update(kind="file", path=path, what=_file_what(store, before, latest),
-                        exists=(root / path).exists())
+            code, what = _file_what(store, before, latest, lang)
+            item.update(kind="file", path=path, what_code=code, what=what, exists=(root / path).exists())
             out.append(item)
         return out
     finally:
@@ -219,7 +259,7 @@ def _store_changes(root: Path, project_id: str, since: datetime, team: people.Te
 _GIT_FORMAT = "%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f"
 
 
-def _git_changes(root: Path, since: datetime) -> tuple[list[dict[str, Any]], set[str] | None]:
+def _git_changes(root: Path, since: datetime, lang: str = "zh") -> tuple[list[dict[str, Any]], set[str] | None]:
     """Files git tracks: commits since `since`, and uncommitted edits."""
     if not (root / ".git").exists():
         return [], None
@@ -243,18 +283,19 @@ def _git_changes(root: Path, since: datetime) -> tuple[list[dict[str, Any]], set
             if item is None:  # newest commit first
                 item = found[path] = {"kind": "file", "node": notes_mod.normalize_node(path), "path": path, "at": at,
                                       "who": [], "notes": [], "approved_by": [], "versions": 0, "source": "git",
-                                      "what": "", "exists": (root / path).exists()}
+                                      "what_code": "", "exists": (root / path).exists()}
             item["versions"] += 1
-            who = name or email or history.LOCAL_LABEL
+            who = name or email or history.local_label(lang)
             if who not in item["who"]:
                 item["who"].append(who)
             if subject and subject not in item["notes"]:
                 item["notes"].append(subject)
             # The oldest commit in the window decides 新文件 / 已删除.
-            item["what"] = {"A": "新文件", "D": "已删除"}.get(status[:1], "内容有改动")
+            item["what_code"] = {"A": "new_file", "D": "deleted"}.get(status[:1], "changed")
     for item in found.values():
-        if item["what"] == "已删除" and item["exists"]:
-            item["what"] = "内容有改动"
+        if item["what_code"] == "deleted" and item["exists"]:
+            item["what_code"] = "changed"
+        item["what"] = _what(item["what_code"], lang)
     status_out = history._git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=no"])
     entries = str(status_out or "").split("\x00")
     skip_next = False
@@ -276,15 +317,17 @@ def _git_changes(root: Path, since: datetime) -> tuple[list[dict[str, Any]], set
         if mtime <= since:
             continue
         item = found.setdefault(path, {"kind": "file", "node": notes_mod.normalize_node(path), "path": path,
-                                       "at": _iso(mtime), "who": [history.LOCAL_LABEL], "notes": [], "approved_by": [],
-                                       "versions": 0, "source": "git", "what": "内容有改动", "exists": True})
+                                       "at": _iso(mtime), "who": [history.local_label(lang)], "notes": [],
+                                       "approved_by": [], "versions": 0, "source": "git", "what_code": "changed",
+                                       "what": _what("changed", lang), "exists": True})
         item["uncommitted"] = True
         item["at"] = max(item["at"], _iso(mtime), key=lambda a: _parse(a) or since)
     return list(found.values()), tracked
 
 
 def _decision_changes(root: Path, since: datetime, team: people.TeamRead | None,
-                      labels: dict[str, str], attempts: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+                      labels: dict[str, str], attempts: dict[str, dict[str, Any]],
+                      lang: str = "zh") -> list[dict[str, Any]]:
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
     from researchos.records import decisions  # noqa: PLC0415
 
@@ -298,8 +341,8 @@ def _decision_changes(root: Path, since: datetime, team: people.TeamRead | None,
         out.append({
             "kind": "decision", "node": attempt, "at": entry.get("at"), "act": entry.get("act"),
             "proposal_kind": entry.get("kind"), "number": entry.get("number") or info.get("number"),
-            "title": info.get("title"), "who": [_who(entry.get("by"), team)],
-            "approved_by": [_who(entry.get("approved_by"), team)] if entry.get("approved_by") else [],
+            "title": info.get("title"), "who": [_who(entry.get("by"), team, lang=lang)],
+            "approved_by": [_who(entry.get("approved_by"), team, lang=lang)] if entry.get("approved_by") else [],
             "verdict_status": (attempts_ingest.verdict_status(entry.get("verdict"), labels)
                                if entry.get("verdict") else None),
             "reason": entry.get("reason"), "notes": [entry["note"]] if entry.get("note") else [],
@@ -338,7 +381,17 @@ def _note_changes(root: Path, conn: Connection | None, since: datetime, me: str 
     return out
 
 
-def _results(conn: Connection | None, root: Path) -> tuple[list[dict[str, Any]], int]:
+def _break_words(b: dict[str, Any], lang: str) -> dict[str, Any]:
+    """A break as the desk shows it: its kind, the trace's words for it and
+    for its repair in the page's language."""
+    repair = b.get("repair") or {}
+    return {"kind": b["kind"], "label": settings.say(b["label"], BREAK_WORDS_EN.get(b["kind"], b["label"]), lang),
+            "path": b.get("path"),
+            "repair": (settings.say(repair["label"], REPAIR_WORDS_EN.get(repair.get("type"), repair["label"]), lang)
+                       if repair.get("label") else None)}
+
+
+def _results(conn: Connection | None, root: Path, lang: str = "zh") -> tuple[list[dict[str, Any]], int]:
     """Figures whose trace lost its evidence or runs through a link under
     review; (the list, how many figures were not looked at)."""
     from researchos import trace as trace_mod  # noqa: PLC0415
@@ -358,8 +411,7 @@ def _results(conn: Connection | None, root: Path) -> tuple[list[dict[str, Any]],
             continue
         out.append({
             "node": node, "path": chain["node"].get("path"), "exists": chain["node"].get("exists"),
-            "breaks": [{"kind": b["kind"], "label": b["label"], "path": b.get("path"),
-                        "repair": (b.get("repair") or {}).get("label")} for b in breaks],
+            "breaks": [_break_words(b, lang) for b in breaks],
             "review": len(review),
             "drafts": sorted({d["file"] for d in chain.get("drafts", []) if d.get("file")}),
         })
@@ -415,8 +467,8 @@ def _abandoned(conn: Connection | None, labels: dict[str, str], root: Path | Non
 
 
 def desk(conn: Connection | None, project_root: str | Path, since: str | None = None, *,
-         now: datetime | None = None) -> dict[str, Any]:
-    """`GET /api/desk` (module docstring)."""
+         now: datetime | None = None, lang: str = "zh") -> dict[str, Any]:
+    """`GET /api/desk` (module docstring); its sentences in `lang` (13.6)."""
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     root = Path(project_root)
@@ -431,14 +483,14 @@ def desk(conn: Connection | None, project_root: str | Path, since: str | None = 
         me = None
     labels = attempts_ingest.verdict_labels(root)
     attempts = _attempt_titles(conn)
-    git_items, tracked = _git_changes(root, when)
+    git_items, tracked = _git_changes(root, when, lang)
     changes = list(git_items)
     if project_id is not None:
-        changes += _store_changes(root, project_id, when, team_known, tracked, labels, attempts)
-    changes += _decision_changes(root, when, team_known, labels, attempts)
+        changes += _store_changes(root, project_id, when, team_known, tracked, labels, attempts, lang)
+    changes += _decision_changes(root, when, team_known, labels, attempts, lang)
     changes += _note_changes(root, conn, when, me)
     changes.sort(key=lambda c: _parse(c.get("at")) or when, reverse=True)
-    results, unlooked = _results(conn, root)
+    results, unlooked = _results(conn, root, lang)
     return {
         "since": _iso(when), "since_default": default, "default_days": DEFAULT_DAYS,
         "changes": changes[:CHANGE_LIMIT], "more_changes": max(0, len(changes) - CHANGE_LIMIT),
