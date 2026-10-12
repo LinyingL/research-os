@@ -308,9 +308,12 @@ Endpoints (all GET unless noted):
     GET  /api/desk     -- `?since=<ISO time>` (default: the last seven
                             days): the desk's changes since then, the
                             results whose trace lost its evidence, the
-                            abandoned routes (`researchos.desk.desk`). Reads
-                            only; proposals and the shared drive's state
-                            come from /api/proposals and /api/share.
+                            abandoned routes, and (DESIGN.md 14) the route
+                            map: the attempts with their marks, the 「源自」
+                            lines and the column -- proposals, 待复核, a
+                            member's sync state, read from the shared folder
+                            for at most a few seconds (`researchos.desk.payload`).
+                            Reads only.
     GET  /canvas.js    -- the node canvas's script (DESIGN.md section 8, task
                             V4 phase 2a), served verbatim from
                             `src/researchos/webapp/canvas.js` with the same
@@ -3039,7 +3042,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             conn.close()
         self._send_json(200, payload)
 
-    def _official(self, payload: Any, *, cards: bool = False, desk: bool = False) -> Any:
+    def _official(self, payload: Any, *, cards: bool = False) -> Any:
         """12.12 "A member's own work": every object of a view's payload
         that names a node, a file or a hand-drawn link carries
         `officialness` (`researchos.officialness`) -- official, the
@@ -3050,8 +3053,6 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         try:
             seen = officialness.view(self._project_root())
             lang = self._lang()
-            if desk:
-                return officialness.annotate_desk(seen, payload, lang)
             return officialness.annotate_cards(seen, payload, lang) if cards else officialness.annotate(seen, payload, lang)
         except Exception:  # noqa: BLE001
             logger.exception("officialness not added to a payload")
@@ -3249,13 +3250,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 else:
                     raise NotFoundError(f"no such endpoint: {path}")
             elif path == "/api/desk":
-                # 12.0 / 12.9: the desk -- reads only.
+                # 12.0 / 14: the desk and its route map -- reads only. 12.12:
+                # a member's own work is marked (`desk.payload` bounds the
+                # shared folder's read itself). 13.7: its sentences in the
+                # page's language.
                 served = self._require_unblocked()
                 since = (query.get("since") or [None])[0]
-                # 12.12: a member's own work is marked on the desk too.
-                # 13.7: its sentences in the page's language.
-                self._json_from_conn(lambda conn: self._official(
-                    desk_mod.desk(conn, served.root, since, lang=self._lang()), desk=True))
+                self._json_from_conn(lambda conn: desk_mod.payload(conn, served.root, since, lang=self._lang()))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.

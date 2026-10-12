@@ -209,10 +209,12 @@ def _project_id(root: Path) -> str | None:
     return got.identity.id if got.state is IdentityState.PRESENT and got.identity is not None else None
 
 
-def view(project_root: str | Path) -> View:
+def view(project_root: str | Path, *, pending: bool = True) -> View:
     """The officialness of `project_root` as this machine knows it now
     (module docstring). Never raises for what it cannot read: a part that
-    cannot be read is said in `problems` and the rest still answers."""
+    cannot be read is said in `problems` and the rest still answers.
+    `pending=False` leaves out the one read of the shared folder (a caller
+    that bounds it in time reads it with `pending_of`)."""
     from researchos import proposals, share  # noqa: PLC0415
 
     root = Path(project_root)
@@ -242,8 +244,35 @@ def view(project_root: str | Path) -> View:
         out.current[rel] = out._sha(rel, out.base)
     _attempt_rows(root, base, out)
     _links(root, base, out)
-    _pending(root, pid, out)
+    if pending:
+        _pending(root, pid, out)
     return out
+
+
+def pending_of(v: View) -> View:
+    """What `view` reads from the shared folder for a working copy -- the
+    member's pending and approved proposals -- into a View of its own, which
+    `with_pending` merges (the desk reads it on a thread it waits for only
+    so long, 14.4)."""
+    got = View(mode=v.mode, root=v.root, table=v.table)
+    pid = _project_id(v.root) if v.mode != OFFICIAL and v.root is not None else None
+    if pid is not None:
+        _pending(v.root, pid, got)
+    return got
+
+
+def with_pending(v: View, got: View | None) -> View:
+    """`v` with what `pending_of` read; without it (the shared folder could
+    not be read in time), the pending proposals are not known, said so."""
+    if v.mode == OFFICIAL:
+        return v
+    if got is None:
+        v.pending_known = False
+        return v
+    for name in ("proposed_files", "proposed_rows", "proposed_cards", "proposed_lines", "proposal_states"):
+        setattr(v, name, getattr(got, name))
+    v.pending_known = got.pending_known
+    return v
 
 
 def _attempt_rows(root: Path, base, out: View) -> None:
@@ -404,20 +433,28 @@ def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
     change, a result and an abandoned route carry the state of what they
     name; a decision (official by definition: the PI's approval) and a
     note (it travels without approval, 12.4) do not take the state of the
-    node they are about. The labels in the page's language (13.7: the
-    desk entirely)."""
+    node they are about. On the route map (14.1) every attempt, every
+    「源自」 line (one a proposal carries keeps the mark it came with) and
+    every 待复核 group's attempt carries its state. The labels in the page's
+    language (13.7: the desk entirely)."""
     if isinstance(payload, dict):
         for item in payload.get("changes") or []:
             if isinstance(item, dict) and item.get("kind") in ("file", "attempt"):
                 got = _subject(v, item)
                 if got is not None:
                     item[FIELD] = mark(got, lang)
-        for key in ("results", "abandoned"):
-            for item in payload.get(key) or []:
+        review = (payload.get("column") or {}).get("review") or {}
+        for items in (payload.get("results"), payload.get("abandoned"), payload.get("attempts"), review.get("groups")):
+            for item in items or []:
                 if isinstance(item, dict):
                     got = _subject(v, item)
                     if got is not None:
                         item[FIELD] = mark(got, lang)
+        for key in ("lines", "lines_missing"):
+            for item in payload.get(key) or []:
+                if isinstance(item, dict) and FIELD not in item:
+                    ends = [str(item.get(k, "")).partition(":")[2] for k in ("child", "parent")]
+                    item[FIELD] = mark(v.link_state(ends[0], ends[1], "derives_from"), lang)
         payload[MODE_FIELD] = v.mode_payload(lang)
     return payload
 

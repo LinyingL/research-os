@@ -133,8 +133,27 @@ REASON_LABELS = {
     RECORD_CONFLICT: "记录冲突，待处理",
     NOT_IN_INDEX: "图谱里还没有这条关联",
 }
+#: The same on an English screen (13.4); the desk names a reason with `reason_label`.
+REASON_LABELS_EN = {
+    BASIS_CHANGED: "The basis changed",
+    NOT_PRODUCED: "The machine no longer finds this link",
+    ENDPOINT_GONE: "One end of the link is not in this scan",
+    SOURCE_UNREADABLE: "The source file cannot be read right now",
+    RECORD_CONFLICT: "The records disagree; to be settled",
+    NOT_IN_INDEX: "This link is not recorded yet",
+}
 REVIEW_LABEL = "待复核"
 CANDIDATE_HINT = "可能对应一条待复核的旧判断"
+
+
+def reason_label(reason: str | None, lang: str = "zh") -> str | None:
+    """A review reason's words in the page's language (13.6)."""
+    from researchos import settings  # noqa: PLC0415
+
+    if reason not in REASON_LABELS:
+        return None
+    return settings.say(REASON_LABELS[reason], REASON_LABELS_EN[reason], lang)
+
 
 #: 9.12: an entry the migration wrote (`via = "migrated"`) carries the
 #: migration's time, not the judgment's. Readers get `migrated: true` and
