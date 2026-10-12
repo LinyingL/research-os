@@ -812,22 +812,22 @@ def _decisions(root: Path) -> tuple[list[dict[str, Any]], str | None]:
         return [], str(exc)
 
 
-def _who(entry: dict[str, Any], key: str, team: Any) -> dict[str, Any] | None:
+def _who(entry: dict[str, Any], key: str, team: Any, lang: str = "zh") -> dict[str, Any] | None:
     from researchos import people  # noqa: PLC0415
 
     value = entry.get(key)
     if key != "by" and not value:
         return None
-    got = people.attribution({"by": value}, team)
+    got = people.attribution({"by": value}, team, lang)
     return {"id": got["by"], "label": got["label"]}
 
 
-def _decision_payload(entry: dict[str, Any], team: Any, labels: dict[str, str]) -> dict[str, Any]:
+def _decision_payload(entry: dict[str, Any], team: Any, labels: dict[str, str], lang: str = "zh") -> dict[str, Any]:
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     out = {k: entry.get(k) for k in ("id", "at", "act", "kind", "proposal", "note", "result", "reason", "via")}
-    out["by"] = _who(entry, "by", team)
-    out["approved_by"] = _who(entry, "approved_by", team)
+    out["by"] = _who(entry, "by", team, lang)
+    out["approved_by"] = _who(entry, "approved_by", team, lang)
     if isinstance(entry.get("verdict"), str):
         out["verdict_status"] = attempts_ingest.verdict_status(entry["verdict"], labels)
     out["evidence_count"] = len(entry.get("evidence") or [])
@@ -836,14 +836,15 @@ def _decision_payload(entry: dict[str, Any], team: Any, labels: dict[str, str]) 
     return out
 
 
-def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
+def routes(conn: Connection, project_root: str | Path, lang: str = "zh") -> dict[str, Any]:
     """研究路线 (12.9, U4): every attempt of the table, grouped by its
     verdict's status in `ROUTE_ORDER`, each in the table's own order: its
     number, date, the researcher's title, the status and the researcher's
     words; for an abandoned route its result and its reason -- from
     `decisions.toml` when an approval recorded it (with who proposed and
     who approved, and how many files of its basis were frozen), else from
-    the table's own 「放弃理由：…」. Reads only."""
+    the table's own 「放弃理由：…」. People are named in `lang` (13.7).
+    Reads only."""
     from researchos import people  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
@@ -877,7 +878,7 @@ def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
         }
         entry = last.get(n["id"])
         if entry is not None:
-            item["decision"] = _decision_payload(entry, team, labels)
+            item["decision"] = _decision_payload(entry, team, labels, lang)
             if entry.get("act") == "abandoned" and str(entry.get("reason") or "").strip():
                 item["reason"], item["reason_from"] = str(entry["reason"]).strip(), "decision"
         key = status["status"] if status["status"] != "labelled" else "labelled:" + status["label"]
@@ -894,7 +895,7 @@ def routes(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     return out
 
 
-def evidence(conn: Connection, project_root: str | Path, given: str) -> dict[str, Any]:
+def evidence(conn: Connection, project_root: str | Path, given: str, lang: str = "zh") -> dict[str, Any]:
     """「当时的依据」 (12.4): the decisions about one attempt, newest first,
     each with the files its approval froze -- by fingerprint, and whether
     the file is still as it was then (the version store's latest look at
@@ -923,7 +924,7 @@ def evidence(conn: Connection, project_root: str | Path, given: str) -> dict[str
     try:
         decisions_out = []
         for entry in reversed(mine):
-            item = _decision_payload(entry, team, labels)
+            item = _decision_payload(entry, team, labels, lang)
             files = []
             for ev in entry.get("evidence") or []:
                 rel = ev.get("path")

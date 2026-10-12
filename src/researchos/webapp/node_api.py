@@ -95,9 +95,9 @@ def me_set_payload(body: dict[str, Any]) -> dict[str, Any]:
 # -- notes ----------------------------------------------------------------------------
 
 
-def notes_payload(conn: Connection | None, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+def notes_payload(conn: Connection | None, root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
     try:
-        return notes_mod.notes_for(root, _arg(query, "node"), conn)
+        return notes_mod.notes_for(root, _arg(query, "node"), conn, lang=lang)
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
 
@@ -155,9 +155,9 @@ def _history_refused(exc: history.HistoryError) -> NodeApiRefused:
     return NodeApiRefused(status, exc.code, str(exc), zh)
 
 
-def history_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+def history_payload(root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
     try:
-        return history.versions(root, _arg(query, "node", required=True) or "")
+        return history.versions(root, _arg(query, "node", required=True) or "", lang)
     except history.HistoryError as exc:
         raise _history_refused(exc) from exc
 
@@ -245,20 +245,20 @@ def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 
 
-def routes_payload(conn: Connection, root: Path) -> dict[str, Any]:
+def routes_payload(conn: Connection, root: Path, lang: str = "zh") -> dict[str, Any]:
     """GET /api/routes: 研究路线 (`researchos.nodepage.routes`)."""
     from researchos import nodepage  # noqa: PLC0415
 
-    return nodepage.routes(conn, root)
+    return nodepage.routes(conn, root, lang)
 
 
-def evidence_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+def evidence_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
     """GET /api/evidence?node=attempt:…: 「当时的依据」."""
     from researchos import nodepage  # noqa: PLC0415
 
     given = _arg(query, "node", required=True) or ""
     try:
-        return nodepage.evidence(conn, root, given)
+        return nodepage.evidence(conn, root, given, lang)
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "这不是一条尝试") from exc
     except nodepage.NotFound as exc:
@@ -392,7 +392,7 @@ def proposal_payload(root: Path, proposal_id: str) -> dict[str, Any]:
     return out
 
 
-def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
+def proposal_create_payload(root: Path, body: dict[str, Any], lang: str = "zh") -> dict[str, Any]:
     """POST /api/proposals {kind, sentence, number?, result?, reason?, card?,
     attested?, only?, write?, expected?}: without `write`, the dry run (with
     the `fingerprint` to send back); with it, the proposal is written --
@@ -420,7 +420,7 @@ def proposal_create_payload(root: Path, body: dict[str, Any]) -> dict[str, Any]:
             from researchos import officialness  # noqa: PLC0415
 
             try:
-                officialness.annotate(officialness.view(root), draft.preview.get("candidates") or [])
+                officialness.annotate(officialness.view(root), draft.preview.get("candidates") or [], lang)
             except Exception:  # noqa: BLE001 -- a mark is a nicety; the files are still offered
                 pass
             return {"ok": True, "written": False, "proposal": _worded(dict(draft.data), root), "preview": draft.preview,

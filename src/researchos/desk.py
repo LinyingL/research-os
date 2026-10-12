@@ -120,7 +120,7 @@ def _who(by: str | None, team: people.TeamRead | None, *, name: str | None = Non
         return name
     if not by:
         return unknown if unknown is not None else history.first_researcher_label(lang)
-    return people.attribution({"by": by}, team)["label"]
+    return people.attribution({"by": by}, team, lang)["label"]
 
 
 def _line_counts(store: history.Store, old_sha: str | None, new_sha: str | None) -> tuple[int, int] | None:

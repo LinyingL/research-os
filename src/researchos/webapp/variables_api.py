@@ -145,7 +145,8 @@ def _identity(root: Path):
     return got.identity if got.state is IdentityState.PRESENT else None
 
 
-def _full(conn: Connection | None, root: Path, card: V.Card, dead: list[dict[str, Any]]) -> dict[str, Any]:
+def _full(conn: Connection | None, root: Path, card: V.Card, dead: list[dict[str, Any]],
+          lang: str = "zh") -> dict[str, Any]:
     decision = cards.assess_card(conn, root, card, _identity(root))
     out = cards.card_payload(root, card, decision, dead)
     out["name"] = _name(out)
@@ -165,24 +166,25 @@ def _full(conn: Connection | None, root: Path, card: V.Card, dead: list[dict[str
             version["upstream"].append({"ref": pinned.label, "resolves": resolves,
                                         "unresolvable": None if resolves else V.UNRESOLVABLE})
     out["implementation"] = implementation.stored(conn).get(card.id) if card.readable else None
-    _name_authors(root, card, out)
+    _name_authors(root, card, out, lang)
     return out
 
 
-def _name_authors(root: Path, card: V.Card, out: dict[str, Any]) -> None:
+def _name_authors(root: Path, card: V.Card, out: dict[str, Any], lang: str = "zh") -> None:
     """12.13: every entry of the card's log names its author as the team
     (or me.toml) names them -- `by_label`, never the raw id; an entry
-    without `by` is the first researcher's -- and who approved it."""
+    without `by` is the first researcher's, in `lang` (13.7) -- and who
+    approved it."""
     from researchos import people  # noqa: PLC0415
 
     team = people.read_team(root)
     known = team if team.state == "present" else None
     for item, entry in zip(out.get("history") or [], card.entries):
         item["by"] = entry.data.get("by")
-        item["by_label"] = people.attribution(entry.data, known)["label"]
+        item["by_label"] = people.attribution(entry.data, known, lang)["label"]
         approved = entry.data.get("approved_by")
         if isinstance(approved, str) and approved:
-            item["approved_by_label"] = people.attribution({"by": approved}, known)["label"]
+            item["approved_by_label"] = people.attribution({"by": approved}, known, lang)["label"]
 
 
 def list_payload(conn: Connection | None, root: Path) -> dict[str, Any]:
@@ -219,10 +221,11 @@ def _open(root: Path, card_id: str) -> V.Card:
     return V.read_card(root, found[0])
 
 
-def card_payload(conn: Connection | None, root: Path, card_id: str) -> dict[str, Any]:
-    """`GET /api/variables/card?id=`: the whole card (module docstring)."""
+def card_payload(conn: Connection | None, root: Path, card_id: str, lang: str = "zh") -> dict[str, Any]:
+    """`GET /api/variables/card?id=`: the whole card (module docstring);
+    people named in `lang` (13.7)."""
     card = _open(root, _card_id(card_id))
-    return _full(conn, root, card, cards.dead_variable_flags(root, [card]))
+    return _full(conn, root, card, cards.dead_variable_flags(root, [card]), lang)
 
 
 def _entry(card: V.Card, entry_id: Any):

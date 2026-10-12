@@ -1692,6 +1692,97 @@ def test_13_7_sync_and_its_preview_speak_the_requests_language(drive):
     assert done["kept_yours"] == [{"path": "steps/16-build.py", "reason": "正式版本删除了这个文件；你改过它，所以留着你的"}]
 
 
+def _marks(value: Any) -> set[str]:
+    """Every officialness label in a payload."""
+    found: set[str] = set()
+    if isinstance(value, dict):
+        mark = value.get(officialness.FIELD)
+        if isinstance(mark, dict) and "label" in mark:
+            found.add(mark["label"])
+        for child in value.values():
+            found |= _marks(child)
+    elif isinstance(value, list):
+        for child in value:
+            found |= _marks(child)
+    return found
+
+
+def test_13_7_officialness_and_people_words_follow_the_language_on_every_page(drive):
+    """13.7 as amended: officialness states and people words are shared
+    words -- the same English on Research routes, the node page, its history
+    and the tree as on the desk, for one request's language; Chinese without
+    the header, exactly as with zh."""
+    from researchos import proposals
+    from test_v8_phase2 import _call
+    from test_v8_phase3 import _serve
+    from test_v8_phase4 import MEMBER, PI
+
+    with drive.member():
+        (drive.work / "map.md").write_text(_map("☠️ 伪协整"))  # row 16 re-judged: my change, not yet proposed
+        (drive.work / "steps" / "17-plot.py").write_text("# the member's own change\n")
+        proposals.write_proposal(drive.work, proposals.make_proposal(drive.work, "files", "画图改了",
+                                                                     only=["steps/17-plot.py"]))
+        paths = ("/api/routes", "/api/node?node=script%3Asteps%2F17-plot.py",
+                 "/api/history?node=script%3Asteps%2F17-plot.py", "/api/tree")
+        with _serve(drive.work) as base:
+            got = [{path: _call(f"{base}{path}", headers=h) for path in paths}
+                   for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
+    plain, zh, en = got
+    assert plain == zh and all(status == 200 for status, _b in zh.values())
+    marks = [{path: _marks(body) for path, (_s, body) in lang.items()} for lang in (zh, en)]
+    assert marks[0]["/api/routes"] == {"我的改动，尚未提交"} and marks[0][paths[2]] == {"提议中"}
+    assert set().union(*marks[0].values()) == {"我的改动，尚未提交", "提议中"}
+    to_en = {officialness.LABELS[state]: officialness.LABELS_EN[state] for state in officialness.LABELS}
+    assert marks[1] == {path: {to_en[m] for m in got} for path, got in marks[0].items()}
+    assert all(body["officialness_mode"]["labels"] == officialness.LABELS_EN for _s, body in en.values())
+    # The history names this Mac's own versions in the member's copy as 13.4 does.
+    who = [{v["who_label"] for v in lang[paths[2]][1]["versions"]} for lang in (zh, en)]
+    assert "本机" in who[0] and "This Mac" in who[1] and not any(CJK.search(w) for w in who[1] - {MEMBER[0], PI[0]})
+
+
+def test_13_7_the_original_researcher_is_named_in_the_requests_language(tmp_path):
+    """A version, a note and a card entry with no `by` are the original
+    researcher's (12.12) -- “Original researcher” on an English screen on
+    the node page's history, its notes and a variable card; Chinese without
+    the header (the command line's and MCP's case) or with zh."""
+    from researchos import nodepage
+    from researchos.records import cards
+    from researchos.records import notes as notes_mod
+
+    root = _project(tmp_path / "proj")
+    _scan(root)
+    notes_mod.add_note(root, "figs/fig2.png", "单位", via="cli")
+    cards.new_card(root, "panelx")
+    (root / ".researchos" / "variables" / "panelx" / "v1.toml").write_text(
+        'name = "Panel X"\nmeaning = \'\'\'x\'\'\'\nunit = "1"\ngranularity = "月"\n\n'
+        '[[input]]\ndataset = "data/raw.csv"\n\n[construction]\nformula = \'\'\'x\'\'\'\n\n'
+        '[implementation]\nscript = "steps/16-build.py"\noutput = "data/panel.csv"\nfield = "x"\n\n'
+        "[decision]\nwhy = '''because'''\n", encoding="utf-8")
+    cards.confirm(root, "panelx", attested="yes")
+    httpd, thread = _serving(root)
+    try:
+        def ask(headers: dict[str, str]) -> list[Any]:
+            def get(path: str) -> Any:
+                status, _h, raw = _Live(httpd).call("GET", path, headers=headers)
+                assert status == 200, raw
+                return json.loads(raw)
+            return [sorted({v["who_label"] for v in get("/api/history?node=script%3Asteps%2F16-build.py")["versions"]}),
+                    [n["label"] for n in get("/api/notes?node=figure%3Afigs%2Ffig2.png")["notes"]],
+                    [e["by_label"] for e in get("/api/variables/card?id=panelx")["history"]],
+                    sorted({v["who_label"] for v in get("/api/history?node=variable%3Apanelx")["versions"]})]
+        plain, zh, en = ask({}), ask({"X-ResearchOS-Lang": "zh"}), ask({"X-ResearchOS-Lang": "en"})
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+    assert plain == zh == [["最初的研究者"]] * 4
+    assert en == [["Original researcher"]] * 4
+    # A decision recorded before names existed (no `by`), as Research routes and 「当时的依据」 name it.
+    entry = {"id": "d-1", "act": "abandoned", "attempt": "attempt:map.md#16"}
+    assert nodepage._decision_payload(entry, None, {}, "en")["by"] == {"id": None, "label": "Original researcher"}
+    assert nodepage._decision_payload(entry, None, {})["by"] == {"id": None, "label": "最初的研究者"}
+
+
 #: Payload keys that hold the researcher's text or a fixed name (13.1), shown as written in either language.
 _THEIR_KEYS = {"title", "words", "result", "reason", "notes", "text", "path", "node", "id", "drafts", "number"}
 
@@ -2073,6 +2164,9 @@ GUIDE_EN_ENGLISH_LABELS = (
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
 GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
+#: The officialness marks the guide quotes in English: the engine's words on an English screen
+#: (13.7: shared words follow the interface language on every page).
+GUIDE_EN_OFFICIALNESS_LABELS = ("Approved, awaiting sync",)
 #: The shell's menu items the guide names, each written **item** from the File menu.
 GUIDE_EN_SHELL_ITEMS = ("Submit Proposal…", "Publish")
 #: Bold that is emphasis, not a label.
@@ -2086,7 +2180,8 @@ GUIDE_EN_EMPHASIS = (
 #: reader sees where the same word is in English.
 _GUIDE_EN_SAME_WORDS = {
     "记录": "page", "停止服务": "page", "同步": "page", "已批准": "page", "已退回": "page",
-    "提议中": "officialness", "已批准，待同步": "officialness", "发布": "shell",
+    # 提议's own status word for a pending proposal; the officialness helper says the same word (13.4).
+    "提议中": "officialness", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
 _GUIDE_EN_SENTENCE_STARTS = ("指纹：",)
@@ -2096,9 +2191,10 @@ def _still_chinese_texts() -> set[str]:
     """Every whole text a surface not yet converted shows: the string
     literals of the served scripts (not /i18n.js, whose Chinese is the
     table's keys) and of app.html's inline script, and the text of
-    app.html's unmarked markup, each with its CONVERTED stretches removed;
-    and the officialness words the engine sends outside the desk."""
-    texts = set(officialness.LABELS.values())
+    app.html's unmarked markup, each with its CONVERTED stretches removed.
+    (The engine's officialness words follow the request's language on every
+    page, 13.7, so none of them is still Chinese.)"""
+    texts: set[str] = set()
     for path in [APP_HTML, *(p for p in _served_scripts() if p != I18N_JS)]:
         text = path.read_text(encoding="utf-8")
         for name, start, end in CONVERTED:
@@ -2131,7 +2227,8 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     english = {form for value in table.values() for form in (value.values() if isinstance(value, dict) else [value])}
     shell = shell_english_table()
     bold = re.findall(r"\*\*(.+?)\*\*", text)
-    known = set(GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_ENGLISH_SENTENCE_STARTS + GUIDE_EN_SHELL_ITEMS + GUIDE_EN_EMPHASIS)
+    known = set(GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_ENGLISH_SENTENCE_STARTS + GUIDE_EN_OFFICIALNESS_LABELS
+                + GUIDE_EN_SHELL_ITEMS + GUIDE_EN_EMPHASIS)
     assert [b for b in bold if not CJK.search(b) and b not in known] == []
     assert [b for b in bold if CJK.search(b) and b not in GUIDE_EN_CHINESE_LABELS + ("中文",)] == []
     # English from the page.
@@ -2140,6 +2237,9 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     assert [label for label in GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_ENGLISH_SENTENCE_STARTS + GUIDE_EN_SHELL_ITEMS
             if f"**{label}**" not in text] == []
     assert [s for s in GUIDE_EN_ENGLISH_SENTENCE_STARTS if not any(form.startswith(s) for form in english)] == []
+    # English from the engine: the officialness marks as /api/... say them with X-ResearchOS-Lang: en.
+    assert [label for label in GUIDE_EN_OFFICIALNESS_LABELS
+            if label not in officialness.LABELS_EN.values() or f"**{label}**" not in text] == []
     # English from the shell: its items, each in the menu that holds it; any of its menus named holds a named item.
     assert [item for item in GUIDE_EN_SHELL_ITEMS if item not in shell.values()] == []
     menus = {shell[zh] for zh in ("文件", "编辑", "视图", "窗口", "帮助")}

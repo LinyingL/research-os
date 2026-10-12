@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from researchos import paths
+from researchos import paths, settings
 from researchos.records import files as record_files
 from researchos.records.files import RecordState
 
@@ -60,6 +60,7 @@ ME_FILENAME = "me.toml"
 TEAM_FILENAME = "team.toml"
 ROLES = ("pi", "member")
 FIRST_RESEARCHER_LABEL = "最初的研究者"  # 12.12: a missing `by`
+FIRST_RESEARCHER_LABEL_EN = "Original researcher"  # 13.4
 
 _ME_HEADER = "# 这台电脑上的使用者。由 Research OS 写入（researchos me set），请用这个命令修改。\n"
 _ME_KEYS = ("id", "name", "email")
@@ -340,13 +341,15 @@ def is_single_person(project_root: str | Path) -> bool:
 # -- readers ----------------------------------------------------------------------
 
 
-def attribution(entry: Mapping[str, Any], team: TeamRead | None = None) -> dict[str, Any]:
+def attribution(entry: Mapping[str, Any], team: TeamRead | None = None, lang: str = "zh") -> dict[str, Any]:
     """Who made an entry, as a reader shows it: `by` and the member's name
     when the team file knows it; an entry without `by` is the project's
-    first researcher's (12.1)."""
+    first researcher's (12.1), labelled in `lang` -- people words follow the
+    interface language on every page (13.7); Chinese by default."""
     by = entry.get("by")
     if not isinstance(by, str) or not by:
-        return {"by": None, "first_researcher": True, "name": None, "label": FIRST_RESEARCHER_LABEL}
+        return {"by": None, "first_researcher": True, "name": None,
+                "label": settings.say(FIRST_RESEARCHER_LABEL, FIRST_RESEARCHER_LABEL_EN, lang)}
     name = None
     if team is not None:
         name = next((m.name for m in team.members if m.id == by), None)

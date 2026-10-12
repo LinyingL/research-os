@@ -339,17 +339,19 @@ def _exists(root: Path, rel: str) -> bool:
         return False
 
 
-def annotate(v: View, payload: Any) -> Any:
+def annotate(v: View, payload: Any, lang: str = "zh") -> Any:
     """`payload` with `officialness` on every object that names a node, a
     file or a hand-drawn link, and `officialness_mode` at the top (when it
-    is an object). Changes `payload` in place and returns it."""
+    is an object), the labels in `lang` -- officialness states follow the
+    interface language on every page (13.7). Changes `payload` in place and
+    returns it."""
 
     def walk(value: Any) -> None:
         if isinstance(value, dict):
             if FIELD not in value:
                 got = _subject(v, value)
                 if got is not None:
-                    value[FIELD] = mark(got)
+                    value[FIELD] = mark(got, lang)
             for child in list(value.values()):
                 walk(child)
         elif isinstance(value, list):
@@ -358,7 +360,7 @@ def annotate(v: View, payload: Any) -> Any:
 
     walk(payload)
     if isinstance(payload, dict):
-        payload[MODE_FIELD] = v.mode_payload()
+        payload[MODE_FIELD] = v.mode_payload(lang)
     return payload
 
 
@@ -385,15 +387,16 @@ def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
     return payload
 
 
-def annotate_cards(v: View, payload: Any) -> Any:
+def annotate_cards(v: View, payload: Any, lang: str = "zh") -> Any:
     """The 「变量」 view's payloads: a card is named by its id, not a node
-    id -- each card row (and a single card) carries its card's state."""
+    id -- each card row (and a single card) carries its card's state, its
+    label in `lang`."""
     if isinstance(payload, dict):
         rows = payload.get("cards")
         if isinstance(rows, list):
             for row in rows:
                 if isinstance(row, dict) and isinstance(row.get("id"), str):
-                    row[FIELD] = mark(v.card_state(row["id"]))
+                    row[FIELD] = mark(v.card_state(row["id"]), lang)
         elif isinstance(payload.get("id"), str) and ":" not in payload["id"]:
-            payload[FIELD] = mark(v.card_state(payload["id"]))
-    return annotate(v, payload)
+            payload[FIELD] = mark(v.card_state(payload["id"]), lang)
+    return annotate(v, payload, lang)

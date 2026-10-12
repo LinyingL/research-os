@@ -851,7 +851,7 @@ def first_researcher_label(lang: str = "zh") -> str:
     researcher")."""
     from researchos import people  # noqa: PLC0415
 
-    return settings.say(people.FIRST_RESEARCHER_LABEL, "Original researcher", lang)
+    return settings.say(people.FIRST_RESEARCHER_LABEL, people.FIRST_RESEARCHER_LABEL_EN, lang)
 
 
 def number_text(value: Any, lang: str = "zh") -> Any:
@@ -878,11 +878,11 @@ def unknown_who_label(root: Path, lang: str = "zh") -> str:
     return local_label(lang) if member_copy else first_researcher_label(lang)
 
 
-def name_people(root: Path, versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") -> list[dict[str, Any]]:
     """Every version's `who_label` and `approved_by_label` as the rest of
     the page says people (8.8, one term per concept): the member's name
     from the team file, not their id; a version without `who` as
-    `unknown_who_label`."""
+    `unknown_who_label`, in `lang` (13.7: people words on every page)."""
     from researchos import people  # noqa: PLC0415
 
     team = people.read_team(root)
@@ -893,15 +893,15 @@ def name_people(root: Path, versions: list[dict[str, Any]]) -> list[dict[str, An
         if name:
             v["who_label"] = name
         elif isinstance(who, str) and who and "@" in who:
-            v["who_label"] = people.attribution({"by": who}, team)["label"]
+            v["who_label"] = people.attribution({"by": who}, team, lang)["label"]
         elif isinstance(who, str) and who:
             v["who_label"] = who
         else:
-            unknown = unknown or unknown_who_label(root)
+            unknown = unknown or unknown_who_label(root, lang)
             v["who_label"] = unknown
         approved = v.get("approved_by")
         if isinstance(approved, str) and approved:
-            v["approved_by_label"] = people.attribution({"by": approved}, team)["label"]
+            v["approved_by_label"] = people.attribution({"by": approved}, team, lang)["label"]
     return versions
 
 
@@ -913,8 +913,9 @@ def _store_payload(v: Version) -> dict[str, Any]:
     }
 
 
-def versions(project_root: str | Path, node: str) -> dict[str, Any]:
-    """Every version of `node`, newest first (module docstring)."""
+def versions(project_root: str | Path, node: str, lang: str = "zh") -> dict[str, Any]:
+    """Every version of `node`, newest first (module docstring); people
+    named in `lang` (13.7)."""
     root = Path(project_root)
     try:
         node_id = notes_mod.normalize_node(node)
@@ -923,7 +924,7 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
     pid = _identity_id(root)
     prefix = node_id.partition(":")[0]
     if prefix == "variable":
-        return _variable_versions(root, node_id)
+        return _variable_versions(root, node_id, lang)
     if prefix == "attempt":
         store = Store.existing(pid)
         from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
@@ -932,7 +933,8 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
         found = [] if store is None else [_attempt_payload(v, labels) for v in store.versions(node_id)]
         if store is not None:
             store.close()
-        return {"node": node_id, "kind": "attempt", "origin": "store", "path": None, "versions": name_people(root, found)}
+        return {"node": node_id, "kind": "attempt", "origin": "store", "path": None,
+                "versions": name_people(root, found, lang)}
     rel = _file_of(node_id)
     if rel is None:
         return {"node": node_id, "kind": "other", "origin": None, "path": None, "versions": [],
@@ -944,13 +946,13 @@ def versions(project_root: str | Path, node: str) -> dict[str, Any]:
         out = ([worktree] if worktree else []) + found
         _attribute_git(root, pid, file_node, out)
         return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "git", "path": rel,
-                "versions": name_people(root, out)}
+                "versions": name_people(root, out, lang)}
     store = Store.existing(pid)
     found = [] if store is None else [_store_payload(v) for v in store.versions(file_node)]
     if store is not None:
         store.close()
     return {"node": node_id, "file_node": file_node, "kind": "file", "origin": "store", "path": rel,
-            "versions": name_people(root, found)}
+            "versions": name_people(root, found, lang)}
 
 
 def _git_sha256(root: Path, version: dict[str, Any]) -> str | None:
@@ -1017,7 +1019,7 @@ def _attempt_payload(v: Version, labels: dict[str, str] | None = None) -> dict[s
     return out
 
 
-def _variable_versions(root: Path, node_id: str) -> dict[str, Any]:
+def _variable_versions(root: Path, node_id: str, lang: str = "zh") -> dict[str, Any]:
     from researchos.records import variables as variables_mod  # noqa: PLC0415
 
     card_id = node_id.partition(":")[2]
@@ -1036,12 +1038,10 @@ def _variable_versions(root: Path, node_id: str) -> dict[str, Any]:
     numbers = [
         {"number": n, "status": view.status, "file": view.path.name} for n, view in sorted(card.versions.items(), reverse=True)
     ]
-    from researchos import people  # noqa: PLC0415
-
-    name_people(root, [e for e in entries if e.get("who")])
+    name_people(root, [e for e in entries if e.get("who")], lang)
     for item in entries:  # a card entry without `by` is the first researcher's (12.1), wherever it is read
         if not item.get("who"):
-            item["who_label"] = people.FIRST_RESEARCHER_LABEL
+            item["who_label"] = first_researcher_label(lang)
     return {"node": node_id, "kind": "variable", "origin": "card", "path": None, "versions": entries,
             "card_versions": numbers, "in_use": card.in_use, "state": card.state}
 

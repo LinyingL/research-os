@@ -537,9 +537,11 @@ def _public(data: Mapping[str, Any]) -> dict[str, Any]:
     return {k: _jsonable(data[k]) for k in keep if k in data}
 
 
-def _timeline(entries: list[Mapping[str, Any]], node: str | None, team: people.TeamRead | None) -> list[dict[str, Any]]:
+def _timeline(entries: list[Mapping[str, Any]], node: str | None, team: people.TeamRead | None,
+              lang: str = "zh") -> list[dict[str, Any]]:
     """Every note (of `node`, or all), oldest first, each with who wrote it
-    and whether -- by whom, when -- it was withdrawn."""
+    and whether -- by whom, when -- it was withdrawn; people named in
+    `lang` (13.7)."""
     ledger = ledger_mod.Ledger(
         schema=NOTES_SCHEMA,
         entries=tuple(ledger_mod.LedgerEntry(data=d, index=i, line=None, key=(str(d.get("node")),)) for i, d in enumerate(entries)),
@@ -556,21 +558,23 @@ def _timeline(entries: list[Mapping[str, Any]], node: str | None, team: people.T
         if e.get("act") != NOTE_ACT or (node is not None and e.get("node") != node):
             continue
         item = _public(e.data)
-        item.update(people.attribution(e.data, team))
+        item.update(people.attribution(e.data, team, lang))
         w = withdrawn.get(e.id)
         item["withdrawn"] = w is not None
         if w is not None:
             item["withdrawn_at"] = _public(w.data).get("at")
-            item["withdrawn_by"] = people.attribution(w.data, team)
+            item["withdrawn_by"] = people.attribution(w.data, team, lang)
             item["withdrawal_id"] = w.id
         out.append(item)
     return out
 
 
-def notes_for(project_root: str | Path, node: str | None = None, conn: Connection | None = None) -> dict[str, Any]:
+def notes_for(project_root: str | Path, node: str | None = None, conn: Connection | None = None,
+              lang: str = "zh") -> dict[str, Any]:
     """What a reader shows: the notes on `node` (all when None) as the file
     holds them when it can be trusted; otherwise as the index last applied
-    them, with `stale` set and the reason. Reads only."""
+    them, with `stale` set and the reason. People are named in `lang` (13.7;
+    Chinese by default). Reads only."""
     root = Path(project_root)
     node_id = normalize_node(node) if node is not None else None
     identity = _identity_now(root)
@@ -589,7 +593,7 @@ def notes_for(project_root: str | Path, node: str | None = None, conn: Connectio
         stale = True
     return {
         "node": node_id,
-        "notes": _timeline(entries, node_id, team if team.state == "present" else None),
+        "notes": _timeline(entries, node_id, team if team.state == "present" else None, lang),
         "trusted": trusted,
         "stale": stale,
         "file_state": loaded.state.value,

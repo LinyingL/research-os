@@ -2554,7 +2554,7 @@ def _variables_served(served: ServedProject) -> None:
         raise ProjectMovedApiError(f"{served.root} now holds project {got.identity.id}, not {served.project_id}; reopen it")
 
 
-def variables_get(served: ServedProject, path: str, query: dict[str, list[str]]) -> dict[str, Any]:
+def variables_get(served: ServedProject, path: str, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
     """The 「变量」 view's GET endpoints (`researchos.webapp.variables_api`), for a
     project that is served as itself (`_variables_served`)."""
     arg = lambda name: (query.get(name) or [None])[0]  # noqa: E731
@@ -2564,7 +2564,7 @@ def variables_get(served: ServedProject, path: str, query: dict[str, list[str]])
         if path == "/api/variables":
             return variables_api.list_payload(conn, served.root)
         if path == "/api/variables/card":
-            return variables_api.card_payload(conn, served.root, arg("id"))
+            return variables_api.card_payload(conn, served.root, arg("id"), lang)
         if path == "/api/variables/code":
             return variables_api.code_payload(served.root, arg("id"), arg("entry"))
         if path == "/api/variables/frozen":
@@ -3024,12 +3024,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         that names a node, a file or a hand-drawn link carries
         `officialness` (`researchos.officialness`) -- official, the
         member's own unsubmitted change, or in a pending proposal; nothing
-        is dropped. Contained: a view is never refused over this."""
+        is dropped. Contained: a view is never refused over this. The
+        labels in the page's language on every page (13.7: officialness
+        states are shared words)."""
         try:
             seen = officialness.view(self._project_root())
-            if desk:  # the desk is in the page's language (13.7), its labels too
-                return officialness.annotate_desk(seen, payload, self._lang())
-            return officialness.annotate_cards(seen, payload) if cards else officialness.annotate(seen, payload)
+            lang = self._lang()
+            if desk:
+                return officialness.annotate_desk(seen, payload, lang)
+            return officialness.annotate_cards(seen, payload, lang) if cards else officialness.annotate(seen, payload, lang)
         except Exception:  # noqa: BLE001
             logger.exception("officialness not added to a payload")
             return payload
@@ -3165,7 +3168,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # The 「变量」 view (9.11): the cards are read from their files
                 # (the index adds the trust decision); a blocked or moved
                 # project answers 409 with what to do (`_variables_served`).
-                self._send_json(200, self._official(variables_get(self._served(), path, query), cards=True))
+                self._send_json(200, self._official(variables_get(self._served(), path, query, self._lang()), cards=True))
             elif path == "/api/migration":
                 self._send_json(200, migration_payload(self._served()))
             elif path == "/api/history":
@@ -3173,7 +3176,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if "node" in query:
                     # 12.6: a node's versions; without `node`, a link's
                     # judgment history (9.3) as before.
-                    self._send_json(200, self._official(self._node_api(lambda: node_api.history_payload(served.root, query))))
+                    self._send_json(200, self._official(self._node_api(
+                        lambda: node_api.history_payload(served.root, query, self._lang()))))
                 else:
                     self._send_json(200, history_payload(served, query))
             elif path == "/api/history/version":
@@ -3185,7 +3189,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._node_api(lambda: node_api.diff_payload(served.root, query)))
             elif path == "/api/notes":
                 served = self._require_unblocked()
-                self._json_from_conn(lambda conn: self._node_api(lambda: node_api.notes_payload(conn, served.root, query)))
+                self._json_from_conn(lambda conn: self._node_api(
+                    lambda: node_api.notes_payload(conn, served.root, query, self._lang())))
             elif path == "/api/trace":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(
@@ -3202,12 +3207,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/routes":
                 # U4: 研究路线 -- the attempts grouped by status, reads only.
                 served = self._require_unblocked()
-                self._json_from_conn(lambda conn: self._official(node_api.routes_payload(conn, served.root)))
+                self._json_from_conn(lambda conn: self._official(node_api.routes_payload(conn, served.root, self._lang())))
             elif path == "/api/evidence":
                 # U4: an abandoned route's frozen basis (12.4), reads only.
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(
-                    self._node_api(lambda: node_api.evidence_payload(conn, served.root, query))))
+                    self._node_api(lambda: node_api.evidence_payload(conn, served.root, query, self._lang()))))
             elif path == "/api/data-code":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(node_api.data_code_payload(conn, served.root)))
@@ -3479,7 +3484,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # in the project.
                 body = self._read_json_object()
                 served = self._require_unblocked()
-                self._send_json(200, self._node_api(lambda: node_api.proposal_create_payload(served.root, body)))
+                self._send_json(200, self._node_api(lambda: node_api.proposal_create_payload(served.root, body, self._lang())))
             elif parsed.path.startswith("/api/proposals/"):
                 # 12.3: 「批准」「退回并说明」「讨论」 -- the PI only. Approving
                 # writes the official version (files, the attempt table, a

@@ -281,6 +281,9 @@
     "收起": "Show less",
     "显示其余 {n} 行": { one: "Show the remaining {n} line", other: "Show the remaining {n} lines" },
     "改动太长，只比较了开头的一部分。": "The change is too long; only its beginning was compared.",
+    // People words (13.4), shared by every page (13.7); the engine names people in the
+    // request's language, and node.js falls back to this one.
+    "最初的研究者": "Original researcher",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

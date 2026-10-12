@@ -882,7 +882,7 @@
   function renderNote(host, page, note, me) {
     const head = mk("div", "tl-what", "笔记");
     host.appendChild(head);
-    host.appendChild(mk("div", "tl-meta", note.label || note.name || note.by || "最初的研究者"));
+    host.appendChild(mk("div", "tl-meta", note.label || note.name || note.by || t("最初的研究者")));
     const text = mk("p", "tl-note" + (note.withdrawn ? " withdrawn" : ""), note.text || "");
     host.appendChild(text);
     if (note.withdrawn) {
