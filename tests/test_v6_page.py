@@ -133,7 +133,7 @@ def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothin
     assert len(paragraphs) == 3
     assert "脚本、数据和文稿" in paragraphs[0] and "判断" in paragraphs[1]
     assert paragraphs[2] == "项目就是存放一项研究的那个文件夹。"
-    assert '<button id="welcome-add-btn" class="btn" type="button">添加项目…</button>' in welcome
+    assert '<button id="welcome-add-btn" class="btn" type="button" data-i18n>添加项目…</button>' in welcome
     assert "error" not in welcome
     css = html[html.index("<style>"):html.index("</style>")]
     assert "body.no-project .welcome { display: block; }" in css
@@ -400,16 +400,16 @@ def test_the_project_menu_replaces_the_select_and_offers_what_10_1_lists():
     assert 'id="project-switcher"' not in src and 'id="remove-missing-btn"' not in src and "<select id=" not in src
     assert ('<button id="project-menu-btn" class="project-menu-btn" type="button" aria-haspopup="menu" '
             'aria-expanded="false" aria-controls="project-menu" aria-describedby="project-eyebrow">') in src
-    assert '<div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目"></div>' in src
+    assert '<div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>' in src
     # 12.11 (V8 U2): the button names the project and nothing else -- 「项目」
     # is the line above it, no ▾; the open project's mark is a drawn check.
     assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in src
-    assert '<div class="side-eyebrow" id="project-eyebrow">项目</div>' in src
+    assert '<div class="side-eyebrow" id="project-eyebrow" data-i18n>项目</div>' in src
     menu = _function("renderProjectMenu")
     order = [menu.index(s) for s in (
-        'role: "menuitemradio", mark: current, title: p.path', '"找不到文件夹"', 'pmItem("选择新位置…"',
-        'mk("hr", "pm-rule")', 'pmItem("添加项目…"', 'pmItem("重新扫描这个项目"', 'pmItem("重命名显示名称…"',
-        'pmItem("从列表中移除…"',
+        'role: "menuitemradio", mark: current, title: p.path', 't("找不到文件夹")', 'pmItem(t("选择新位置…")',
+        'mk("hr", "pm-rule")', 'pmItem(t("添加项目…")', 'pmItem(t("重新扫描这个项目")', 'pmItem(t("重命名显示名称…")',
+        'pmItem(t("从列表中移除…")',
     )]
     assert order == sorted(order)
     assert 'rule.setAttribute("role", "separator");' in menu
@@ -528,7 +528,7 @@ def test_the_add_dialog_chooses_with_the_shell_or_a_path_field_and_looks_before_
     assert 'mkButton("重新选择", "btn"' in render
     assert '"add-project": () => openAddDialog(),' in src
     assert 'document.getElementById("welcome-add-btn").addEventListener("click", () => openAddDialog());' in src
-    assert 'pmItem("添加项目…", () => { closeProjectMenu(false); openAddDialog(); })' in src
+    assert 'pmItem(t("添加项目…"), () => { closeProjectMenu(false); openAddDialog(); })' in src
 
 
 def test_already_in_the_list_offers_the_switch_and_writes_nothing(engine, tmp_path):

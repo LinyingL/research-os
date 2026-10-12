@@ -25,9 +25,10 @@ from typing import Any
 
 import pytest
 
-from researchos import literature, settings
+from researchos import github, literature, settings
 from researchos.webapp import server
 
+from test_v7_connections import GITHUB_URL, _colleague_pushes, linked, linked_server, stand_in  # noqa: F401 -- fixtures
 from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import _KEYWORDS_BEFORE, _REGEX_BEFORE, FORBIDDEN, _served_scripts
 
@@ -61,16 +62,26 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # I am). 新增尝试 in renderSidebar belongs to 研究路线's increment, so it is left between them.
     ("app.html", "// A section's title on screen (13.4)", "let lastDataView"),
     ("app.html", "function renderStoppedState() {", "// -- The language switch (DESIGN.md 13.2, 13.3)"),
-    # T3, the desk (13.7): all of desk.js but the header button's 新增尝试 / 提议新的尝试, which
-    # belong to 研究路线's increment with the attempt form they open.
-    ("desk.js", None, "    // U4: a member proposes"),
-    ("desk.js", "    const me = ctx.me && ctx.me.me;", None),
+    # T3, the desk (13.7), and the frame's part B (13.7 as amended: the top bar's 新增尝试 /
+    # 提议新的尝试 belong to the frame; the attempt form they open is later): all of desk.js.
+    ("desk.js", None, None),
+    # The frame's part B: the switcher button, the project menu and its GitHub lines; then the
+    # menu's own actions (switch, choose a new location, rescan) up to the rename and remove
+    # steps, which are flows of their own (a later increment).
+    ("app.html", "// -- The project menu (DESIGN.md 10.1, 10.4; task V6)", "// -- 「推送到 GitHub…」 (DESIGN.md 11.3, task V7)"),
+    ("app.html", "function backToMenuList() {", "// 10.4: 「重命名显示名称…」 changes the registry label only"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
 #: name). Keys are the exact literal.
+_ERROR = "13.7: an error sentence -- errors everywhere are converted in their own increment"
 ALLOWED_CHINESE: dict[str, str] = {
-    "停止服务失败": "13.7: an error sentence -- errors everywhere are converted in their own increment",
+    "停止服务失败": _ERROR,
+    # The project menu's error framings (8.8 "Errors"), shown before the engine's own text.
+    "没能从 GitHub 获取": _ERROR,
+    "切换项目失败": _ERROR,
+    "没能使用这个位置": _ERROR,
+    "没能开始扫描": _ERROR,
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
@@ -735,14 +746,16 @@ def test_13_6_the_completeness_scanner_is_not_vacuous():
 
 # -- 13.7: the frame -- the sidebar, the page titles, the stopped page (T2) --------------------------------------
 
-#: The frame's markup converted so far, as stretches of the served page: the
-#: sidebar's own label and its brand, the eight sections, the shared folder's
-#: line, who I am and the tool row, and the page title. The project line (its
-#: eyebrow, the switcher and its menu) and the welcome are the frame's next part.
+#: The frame's markup, as stretches of the served page: the whole sidebar (its
+#: label and brand, the project line with its eyebrow, switcher and menu, the
+#: eight sections, the shared folder's line, who I am and the tool row), the
+#: page title, the top bar's action button and the welcome shown without a
+#: project (13.7).
 FRAME_MARKUP = [
-    ('<aside class="sidebar"', '<div class="side-project"'),
-    ('<nav class="side-nav"', "</aside>"),
+    ('<aside class="sidebar"', "</aside>"),
     ('<h1 class="page-title"', "</h1>"),
+    ('<button id="new-attempt-btn"', "</button>"),
+    ('<section id="welcome"', "</section>"),
 ]
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
@@ -842,11 +855,21 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                                            "Data & code", "Proposals", "Members"]
     assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Desk"]
+    assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
     labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
-              for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn")}
+              for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn",
+                                                           "project-menu", "welcome")}
     assert labels == {"sidebar": ("Project and sections", None), "side-nav": ("Sections", None),
                       "records-btn": (None, "See where this project’s human records are kept"),
-                      "shutdown-btn": (None, "Stop the local service process")}
+                      "shutdown-btn": (None, "Stop the local service process"),
+                      "project-menu": ("Project", None), "welcome": ("No project yet", None)}
+    welcome = [el["text"].strip() for el in after if el["tag"] in ("p", "button") and el["text"].strip()
+               and el["attrs"].get("id") not in ("project-menu-btn", "lang-btn", "new-attempt-btn")
+               and "shutdown-btn" not in el["attrs"].get("class", "") and "side-item" not in el["attrs"].get("class", "")]
+    assert welcome == [
+        "Research OS reads the scripts, data and drafts in a research folder and works out how they connect, step by step.",
+        "Research OS records the judgments you make about these links and keeps them with the study’s files.",
+        "Add project…", "Join a project from the shared folder…", "A project is the folder that holds one study."]
 
 
 @needs_node
@@ -861,6 +884,9 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     assert _words(after, "side-label") == ["工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["工作台"]
     assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
+    assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
+    assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-add-btn", "welcome-join-btn")] == [
+        "添加项目…", "从公盘加入项目…"]
 
 
 def test_13_3_the_frame_wraps_and_never_cuts_a_word():
@@ -1031,12 +1057,12 @@ _SIDEBAR_CASES = """
 """
 
 
-def _sidebar(saved: str | None) -> list:
+def _sidebar(saved: str | None, cases: str = _SIDEBAR_CASES) -> list:
     desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
     if saved is None:
         return _node("global.window = {};\n" + _SIDEBAR_PRELUDE + desk_js
-                     + f"\nprocess.stdout.write(JSON.stringify({_SIDEBAR_CASES}));\n")
-    return _with_i18n(_SIDEBAR_CASES, saved=saved, prelude=_SIDEBAR_PRELUDE + desk_js + "\n")
+                     + f"\nprocess.stdout.write(JSON.stringify({cases}));\n")
+    return _with_i18n(cases, saved=saved, prelude=_SIDEBAR_PRELUDE + desk_js + "\n")
 
 
 _SIDEBAR_ZH = [
@@ -1355,3 +1381,248 @@ def test_13_7_a_git_projects_desk_and_the_officialness_words_in_english(tmp_path
                                                                       ("changed", "Content changed", ["This Mac"])]
     assert officialness.mark(("mine", None)) == {"state": "mine", "label": "我的改动，尚未提交"}
     assert officialness.mark(("proposed", "p-1"), "en") == {"state": "proposed", "label": "Proposed", "proposal": "p-1"}
+
+
+# -- 13.7: the frame, part B -- the switcher and its menu, the GitHub lines, the top bar's button ----------------
+
+#: A stand-in DOM for the project menu under node, run with app.html's own mk, basename and menu
+#: block: an element keeps its class, title, disabled state and children; innerHTML only clears
+#: (the drawn check mark). The menu reads back as [class, label, flag, title, disabled] per item
+#: and [class, words] per other element holding words.
+_MENU_DOM = r"""
+function el(tag) {
+  return { tag, className: "", title: "", disabled: false, kids: [], attrs: {},
+    get textContent() { return this.kids.map((k) => (typeof k === "string" ? k : k.textContent)).join(""); },
+    set textContent(v) { this.kids = [String(v)]; },
+    set innerHTML(v) { this.kids = []; },
+    appendChild(c) { this.kids.push(c); return c; }, append(...cs) { this.kids.push(...cs); },
+    setAttribute(n, v) { this.attrs[n] = String(v); }, addEventListener() {},
+    querySelector(sel) {
+      const walk = (n) => { for (const k of n.kids) if (typeof k !== "string") {
+        if (k.className.split(" ").includes(sel.slice(1))) return k; const f = walk(k); if (f) return f; } return null; };
+      return walk(this);
+    },
+    classList: { contains: () => false, add() {}, remove() {}, toggle() {} } };
+}
+const ids = { "project-menu-btn": el("button"), "project-menu": el("div"), "project-menu-wrap": el("span") };
+global.document = { getElementById: (id) => ids[id] || null, createElement: el };
+global.state = {};
+function read(menu) {
+  const out = [];
+  const visit = (n) => {
+    if (typeof n === "string") return;
+    const part = (cls) => { const k = n.kids.find((x) => typeof x !== "string" && x.className === cls); return k ? k.textContent : ""; };
+    if (n.tag === "button") { out.push([n.className, part("pm-label"), part("pm-flag"), n.title, n.disabled]); return; }
+    const own = n.kids.filter((k) => typeof k === "string").join("");
+    if (own) out.push([n.className, own]);
+    n.kids.forEach(visit);
+  };
+  menu.kids.forEach(visit);
+  return out;
+}
+"""
+
+_MENU_CASES = r"""
+(async () => {
+  const P = [
+    { label: "我的论文", path: "/r/a", id: "p-1", initialized: true, available: true },
+    { label: "旧项目", path: "/r/b", id: "p-2", initialized: true, available: false, missing: true },
+    { label: "old", path: "/r/c", initialized: false, available: true },
+  ];
+  const GH = { linked: true, owner: "rce-test", repo: "demo", url: "https://github.com/rce-test/demo", message: "<engine>" };
+  const out = [
+    { noProject: true, projects: [], currentPath: "", currentEntry: null, projectLabel: "" },
+    { projects: P, currentPath: "/r/a", currentId: "p-1", currentEntry: P[0], projectLabel: "我的论文", github: GH },
+    { projects: P, currentPath: "/r/x", currentId: null, currentEntry: null, projectLabel: "x", github: GH,
+      githubFetching: true },
+  ].map((c) => {
+    global.state = Object.assign({ noProject: false, dataEpoch: 0, currentBlocked: false, githubFetching: false }, c);
+    projectMenuMode = "list";
+    setProjectMenuLabel(c.projectLabel, c.currentPath);
+    renderProjectMenu();
+    return [projectMenuBtn.textContent, projectMenuBtn.title, read(projectMenu)];
+  });
+  // 「从 GitHub 获取最新状态」: its progress word, and back after a failure under the framing.
+  global.state.githubFetching = false;
+  global.apiPost = () => Promise.reject(new Error("offline"));
+  global.renderBlockingError = (node, framing) => { node.textContent = framing; };
+  const status = mk("div", "pm-status");
+  const button = pmItem(t("从 GitHub 获取最新状态"), () => {});
+  const pending = fetchGitHub(status, button);
+  const during = button.querySelector(".pm-label").textContent;
+  await pending;
+  out.push([during, button.querySelector(".pm-label").textContent, status.textContent]);
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+def _menu(saved: str | None) -> list:
+    """The switcher button and the menu, rendered by app.html's own code, with
+    /i18n.js in the saved language or alone (None)."""
+    code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
+            + _app_function("function mk(") + _app_function("function basename(")
+            + _app_block("// -- The project menu (DESIGN.md 10.1, 10.4; task V6)",
+                         "// -- 「推送到 GitHub…」 (DESIGN.md 11.3, task V7)"))
+    i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
+    return _node("global.window = {};\n" + i18n + _MENU_DOM + code + _MENU_CASES)
+
+
+def _menu_expected(w: dict[str, str]) -> list:
+    """The three menus and the fetch's words, the screen's words given by `w`
+    (the Chinese key when absent); the researcher's project names as written."""
+    def x(key: str) -> str:
+        return w.get(key, key)
+
+    tail = [["pm-item", x("推送到 GitHub…"), "", "", False], ["pm-item", x("添加项目…"), "", "", False],
+            ["pm-item", x("从公盘加入项目…"), "", "", False]]
+    listed = [["pm-item", "旧项目", x("找不到文件夹"), "/r/b", True], ["pm-item pm-sub", x("选择新位置…"), "", "", False],
+              ["pm-item", "old", x("未初始化"), "/r/c", True]]
+
+    def github_lines(state: str, item: str, fetching: bool) -> list:
+        return [["pm-github", x("GitHub：")], ["", "rce-test/demo"], ["pm-github-state", state],
+                ["pm-item", item, "", "", fetching]]
+
+    return [
+        [x("还没有项目"), x("添加项目"), [["pm-empty", x("列表里还没有项目")]]
+         + [["pm-item", x("推送到 GitHub…"), "", "", True]] + tail[1:]
+         + [["pm-item", x(k), "", "", True] for k in ("重新扫描这个项目", "重命名显示名称…", "从列表中移除…")]],
+        ["我的论文", "/r/a\n" + x("切换项目或管理列表"), [["pm-item", "我的论文", "", "/r/a", False], *listed,
+         *github_lines("<engine>", x("从 GitHub 获取最新状态"), False), *tail]
+         + [["pm-item", x(k), "", "", False] for k in ("重新扫描这个项目", "重命名显示名称…", "从列表中移除…")]],
+        ["x", "/r/x\n" + x("切换项目或管理列表"), [["pm-item", "x", x("不在列表里"), "/r/x", False],
+         ["pm-item", "我的论文", "", "/r/a", False], *listed,
+         *github_lines(x("正在从 GitHub 获取…"), x("正在从 GitHub 获取…"), True), *tail,
+         ["pm-item", x("重新扫描这个项目"), "", "", False], ["pm-item", x("重命名显示名称…"), "", "", True],
+         ["pm-item", x("从列表中移除…"), "", "", False]]],
+        [x("正在从 GitHub 获取…"), x("从 GitHub 获取最新状态"), "没能从 GitHub 获取"],
+    ]
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh"])
+def test_13_8_the_switcher_and_its_menu_in_chinese_are_as_before(saved):
+    """13.8 #1: the switcher button, its hover title and every item and flag
+    of the project menu with its GitHub lines read exactly as before."""
+    assert _menu(saved) == _menu_expected({})
+
+
+@needs_node
+def test_13_7_the_switcher_and_its_menu_in_english():
+    """The project line's switcher (its name, its hover title) and every item
+    and flag of the menu in English, the GitHub line's own words too; the
+    researcher's project names as written (13.1), the engine's sentence as
+    the engine sent it (it asks in the page's language), and the failure's
+    framing still Chinese (13.7: error sentences are their own increment)."""
+    words = {
+        "还没有项目": "No project yet", "添加项目": "Add project", "切换项目或管理列表": "Switch project or manage the list",
+        "列表里还没有项目": "No projects in the list yet", "不在列表里": "Not in the list", "找不到文件夹": "Folder not found",
+        "未初始化": "Not initialized", "选择新位置…": "Choose a new location…", "推送到 GitHub…": "Push to GitHub…",
+        "添加项目…": "Add project…", "从公盘加入项目…": "Join a project from the shared folder…",
+        "重新扫描这个项目": "Rescan this project", "重命名显示名称…": "Change display name…",
+        "从列表中移除…": "Remove from the list…", "GitHub：": "GitHub: ", "正在从 GitHub 获取…": "Fetching from GitHub…",
+        "从 GitHub 获取最新状态": "Fetch the latest state from GitHub",
+    }
+    got = _menu("en")
+    assert got == _menu_expected(words)
+    shown = json.dumps(got[:3], ensure_ascii=False)
+    for theirs in ("我的论文", "旧项目"):
+        shown = shown.replace(theirs, "")
+    assert not CJK.search(shown)
+
+
+_ADD_BUTTON_CASES = """
+["pi", "member", "none", "single"].map((mode) => {
+  shown = els();
+  const ctx = window.RODesk.context();
+  ctx.mode = mode; ctx.share = null; ctx.me = null; ctx.proposals = { proposals: [] };
+  window.RODesk.renderSidebar();
+  return shown["new-attempt-btn"].textContent;
+})
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh", "en"])
+def test_13_7_the_top_bar_button_follows_the_language(saved):
+    """The top bar's action button (13.7): 新增尝试, and 提议新的尝试 for a
+    member (U4), in the screen's language; Chinese exactly as before."""
+    got = _sidebar(saved, _ADD_BUTTON_CASES)
+    if saved == "en":
+        assert got == ["New attempt", "Propose a new attempt", "New attempt", "New attempt"]
+    else:
+        assert got == ["新增尝试", "提议新的尝试", "新增尝试", "新增尝试"]
+
+
+def test_13_3_the_menu_wraps_its_english_words_and_keeps_chinese_as_it_was():
+    """13.3 in the project menu, which keeps to the sidebar's width: on an
+    English screen an action's label wraps and 「选择新位置…」 drops below its
+    project; a project's own name keeps its ellipsis; nothing changes on a
+    Chinese screen (the rules name <html lang="en">, which /i18n.js sets)."""
+    css = re.search(r"<style>(.*?)</style>", APP_HTML.read_text(encoding="utf-8"), re.S).group(1)
+    assert ".pm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }" in css
+    assert 'html[lang="en"] .pm-item[role="menuitem"] .pm-label { white-space: normal; }' in css
+    assert 'html[lang="en"] .pm-row { flex-wrap: wrap; }' in css
+    assert 'html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }' in css
+    rules = re.findall(r"([^{}]+)\{([^{}]*)\}", re.sub(r"/\*.*?\*/", "", css, flags=re.S))
+    assert [sel.strip() for sel, _b in rules if "lang=" in sel] == [
+        'html[lang="en"] .pm-item[role="menuitem"] .pm-label', 'html[lang="en"] .pm-row', 'html[lang="en"] .pm-row .pm-sub']
+
+
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
+
+def _github_both(root: Path) -> tuple[str, str]:
+    """The state's sentence in Chinese and English (dates masked); asked for
+    nothing, it is the Chinese one, and every other field is the same."""
+    zh, zh_asked, en = github.state(root), github.state(root, "zh"), github.state(root, "en")
+    assert zh == zh_asked
+    assert {k: v for k, v in zh.items() if k != "message"} == {k: v for k, v in en.items() if k != "message"}
+    return _DATE.sub("<date>", zh["message"]), _DATE.sub("<date>", en["message"])
+
+
+def test_13_7_the_github_state_in_both_languages(tmp_path, stand_in, linked):
+    """The engine's sentence under the menu's GitHub line (11.2), composed in
+    the language asked for (13.2, 13.6) with a singular and a plural (13.5):
+    Chinese when nothing is asked, as the command line and a push's payload
+    ask nothing; the same facts in both."""
+    from test_v7_connections import _git
+
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    _git(fresh, "init", "-q", "-b", "main")
+    _git(fresh, "remote", "add", "origin", GITHUB_URL)
+    assert _github_both(fresh) == ("还没有从 GitHub 获取过", "Not fetched from GitHub yet")
+    assert _github_both(linked) == ("与 GitHub 一致", "In sync with GitHub")
+    _git(linked, "commit", "-q", "--allow-empty", "-m", "one")
+    assert _github_both(linked) == ("本地领先 1 个提交，落后 0 个（<date> 推送）", "Locally 1 commit ahead, 0 behind (pushed <date>)")
+    _git(linked, "commit", "-q", "--allow-empty", "-m", "two")
+    assert _github_both(linked) == ("本地领先 2 个提交，落后 0 个（<date> 推送）", "Locally 2 commits ahead, 0 behind (pushed <date>)")
+    _colleague_pushes(tmp_path, stand_in)
+    assert _DATE.sub("<date>", github.fetch(linked, lang="en")["message"]) == "Locally 2 commits ahead, 1 behind (fetched <date>)"
+    assert _DATE.sub("<date>", github.fetch(linked)["message"]) == "本地领先 2 个提交，落后 1 个（<date> 获取）"
+    _git(linked, "branch", "--unset-upstream")
+    assert _github_both(linked) == ("GitHub 上没有可以对比的分支（<date> 获取）", "No branch on GitHub to compare with (fetched <date>)")
+
+    unborn = tmp_path / "unborn"
+    unborn.mkdir()
+    _git(unborn, "init", "-q", "-b", "main")
+    _git(unborn, "remote", "add", "origin", GITHUB_URL)
+    _git(unborn, "fetch", "-q", "origin")
+    _git(unborn, "remote", "set-head", "origin", "main")
+    assert _github_both(unborn) == ("本地还没有提交（<date> 获取）", "No local commits yet (fetched <date>)")
+
+
+def test_13_7_api_github_speaks_the_requests_language(tmp_path, stand_in, linked_server):
+    """/api/github and /api/github/fetch compose their sentence in the
+    language the page's request names; without the header, Chinese."""
+    live, _work = linked_server
+    asked = [live.raw("GET", "/api/github", h) for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
+    assert [(status, st["message"]) for status, st in asked] == [(200, "与 GitHub 一致"), (200, "与 GitHub 一致"),
+                                                                 (200, "In sync with GitHub")]
+    _colleague_pushes(tmp_path, stand_in)
+    status, st = live.raw("POST", "/api/github/fetch", {"Content-Type": "application/json", "X-ResearchOS-Lang": "en"}, {})
+    assert status == 200 and (st["ahead"], st["behind"]) == (0, 1)
+    assert _DATE.sub("<date>", st["message"]) == "Locally 0 commits ahead, 1 behind (fetched <date>)"
+    status, st = live.raw("GET", "/api/github", {})
+    assert status == 200 and _DATE.sub("<date>", st["message"]) == "本地领先 0 个提交，落后 1 个（<date> 获取）"

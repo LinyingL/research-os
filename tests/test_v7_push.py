@@ -741,7 +741,7 @@ def test_page_menu_opens_the_push_panel_and_only_its_push_button_pushes():
     step with an editable name; 「推送」 is the only control that POSTs a
     push, with the plan's token; afterwards the GitHub line refreshes."""
     menu = _function("renderProjectMenu")
-    assert 'pmItem("推送到 GitHub…", () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject })' in menu
+    assert 'pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject })' in menu
     assert 'apiGet("/api/github/push-plan")' in _function("loadPushPlan")
     render = _function("renderPushPlan")
     assert "先把人工记录提交一次" in render and 'mkButton(pushDialog.busy ? "正在推送…" : "推送", "btn", () => sendPush(subject, go))' in render

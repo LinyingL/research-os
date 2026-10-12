@@ -265,6 +265,11 @@ body.no-project .side-nav, body.no-project .share-line { display: none !importan
 .pm-mark { flex: none; width: 1em; color: var(--ink); align-self: center; display: inline-flex; } /* 12.11: never colored */
 .pm-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .pm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 13.3: on an English screen a menu action's longer words wrap, never cut;
+   a project's own name keeps its ellipsis, and 「选择新位置…」 drops below it. */
+html[lang="en"] .pm-item[role="menuitem"] .pm-label { white-space: normal; }
+html[lang="en"] .pm-row { flex-wrap: wrap; }
+html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }
 .pm-flag { flex: none; font-size: 0.74rem; color: var(--ink-soft); }
 .pm-row { display: flex; align-items: baseline; }
 .pm-row .pm-item { flex: 1; min-width: 0; }
@@ -1182,10 +1187,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
   <aside class="sidebar" id="sidebar" aria-label="项目与栏目" data-i18n-attr="aria-label">
     <div class="side-brand"><span class="brand-mark">Research OS</span><span class="brand-sub" data-i18n>研究脉络</span></div>
     <div class="side-project" id="project-line">
-      <div class="side-eyebrow" id="project-eyebrow">项目</div>
+      <div class="side-eyebrow" id="project-eyebrow" data-i18n>项目</div>
       <span class="project-menu-wrap" id="project-menu-wrap">
         <button id="project-menu-btn" class="project-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="project-menu" aria-describedby="project-eyebrow">…</button>
-        <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目"></div>
+        <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>
       </span>
     </div>
     <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
@@ -1215,7 +1220,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <span id="project-state" class="project-state hidden" role="status"></span>
       <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
       <span id="scan-chip" class="scan-chip hidden" role="status" aria-live="polite"></span>
-      <button id="new-attempt-btn" class="btn new-attempt-btn hidden" type="button">新增尝试</button>
+      <button id="new-attempt-btn" class="btn new-attempt-btn hidden" type="button" data-i18n>新增尝试</button>
     </header>
     <main id="main">
       <!-- V5: what the record needs from the researcher right now (a
@@ -1223,14 +1228,14 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
            a read-only open, a project moved under the page). -->
       <div id="notices" class="notices" aria-live="polite"></div>
       <!-- DESIGN.md 10.1: no project yet -- every section shows only this. -->
-      <section id="welcome" class="welcome" aria-label="还没有项目">
-        <p>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
-        <p>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
+      <section id="welcome" class="welcome" aria-label="还没有项目" data-i18n-attr="aria-label">
+        <p data-i18n>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
+        <p data-i18n>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
         <div class="welcome-actions">
-          <button id="welcome-add-btn" class="btn" type="button">添加项目…</button>
-          <button id="welcome-join-btn" class="btn" type="button">从公盘加入项目…</button>
+          <button id="welcome-add-btn" class="btn" type="button" data-i18n>添加项目…</button>
+          <button id="welcome-join-btn" class="btn" type="button" data-i18n>从公盘加入项目…</button>
         </div>
-        <p class="welcome-what">项目就是存放一项研究的那个文件夹。</p>
+        <p class="welcome-what" data-i18n>项目就是存放一项研究的那个文件夹。</p>
       </section>
       <!-- 数据与代码 (12.9): the lineage report as a list, and 关系图 (the
            canvas, no longer a destination of its own). -->
@@ -2015,7 +2020,7 @@ async function loadProjectSummary(force) {
 const projectMenuBtn = document.getElementById("project-menu-btn");
 const projectMenu = document.getElementById("project-menu");
 const projectMenuWrap = document.getElementById("project-menu-wrap");
-const NO_PROJECT_NAME = "还没有项目";
+const NO_PROJECT_NAME = t("还没有项目");
 let projectMenuMode = "list"; // "list" | "rename" | "remove"
 
 // 12.11: the button is the project's display name and nothing else; that
@@ -2023,7 +2028,7 @@ let projectMenuMode = "list"; // "list" | "rename" | "remove"
 // 「项目」 line above it, never by a glyph.
 function setProjectMenuLabel(label, path) {
   projectMenuBtn.textContent = label || NO_PROJECT_NAME;
-  projectMenuBtn.title = path ? path + "\n切换项目或管理列表" : "添加项目";
+  projectMenuBtn.title = path ? path + "\n" + t("切换项目或管理列表") : t("添加项目");
 }
 
 // The menu's mark for the open project: a drawn check (12.11), not a glyph
@@ -2148,13 +2153,13 @@ function renderProjectMenu() {
   projectMenuMode = "list";
   const projects = state.projects || [];
   if (!projects.length && (state.noProject || state.currentEntry)) {
-    projectMenu.appendChild(mk("div", "pm-empty", "列表里还没有项目"));
+    projectMenu.appendChild(mk("div", "pm-empty", t("列表里还没有项目")));
   }
   if (!state.noProject && !state.currentEntry && state.currentPath) {
     // Served, but not in the list (a folder opened read-only from the add
     // dialog, say): said, so the menu never claims another one is open.
     const it = pmItem(state.projectLabel || basename(state.currentPath), () => closeProjectMenu(true), {
-      role: "menuitemradio", mark: true, flag: "不在列表里", title: state.currentPath,
+      role: "menuitemradio", mark: true, flag: t("不在列表里"), title: state.currentPath,
     });
     it.setAttribute("aria-checked", "true");
     projectMenu.appendChild(it);
@@ -2168,12 +2173,12 @@ function renderProjectMenu() {
     const row = mk("div", "pm-row" + (gone ? " pm-missing" : ""));
     const main = pmItem(p.label, () => chooseProject(p), {
       role: "menuitemradio", mark: current, title: p.path,
-      flag: gone ? "找不到文件夹" : (uninitialized ? "未初始化" : ""),
+      flag: gone ? t("找不到文件夹") : (uninitialized ? t("未初始化") : ""),
       disabled: !current && (gone || uninitialized),
     });
     main.setAttribute("aria-checked", current ? "true" : "false");
     row.appendChild(main);
-    if (gone && p.id) row.appendChild(pmItem("选择新位置…", () => relocateFromMenu(p), { cls: "pm-sub", noMark: true }));
+    if (gone && p.id) row.appendChild(pmItem(t("选择新位置…"), () => relocateFromMenu(p), { cls: "pm-sub", noMark: true }));
     projectMenu.appendChild(row);
   });
   const rule = mk("hr", "pm-rule");
@@ -2186,17 +2191,17 @@ function renderProjectMenu() {
   }
   // 11.3: for every served project -- linked, without a remote (a private
   // repository is offered), or not a git repository (the panel explains).
-  projectMenu.appendChild(pmItem("推送到 GitHub…", () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
-  projectMenu.appendChild(pmItem("添加项目…", () => { closeProjectMenu(false); openAddDialog(); }));
-  projectMenu.appendChild(pmItem("从公盘加入项目…", () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));
+  projectMenu.appendChild(pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
+  projectMenu.appendChild(pmItem(t("添加项目…"), () => { closeProjectMenu(false); openAddDialog(); }));
+  projectMenu.appendChild(pmItem(t("从公盘加入项目…"), () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));
   const status = mk("div", "pm-status");
-  const rescan = pmItem("重新扫描这个项目", () => rescanFromMenu(status, rescan), { disabled: state.noProject });
+  const rescan = pmItem(t("重新扫描这个项目"), () => rescanFromMenu(status, rescan), { disabled: state.noProject });
   projectMenu.appendChild(rescan);
-  projectMenu.appendChild(pmItem("重命名显示名称…", () => {
+  projectMenu.appendChild(pmItem(t("重命名显示名称…"), () => {
     projectMenuMode = "rename";
     renderProjectMenu();
   }, { disabled: !state.currentEntry }));
-  projectMenu.appendChild(pmItem("从列表中移除…", () => {
+  projectMenu.appendChild(pmItem(t("从列表中移除…"), () => {
     projectMenuMode = "remove";
     renderProjectMenu();
   }, { disabled: !projects.length }));
@@ -2255,11 +2260,11 @@ function renderGitHubMenu() {
   const gh = state.github;
   if (state.noProject || !gh || !gh.linked) return false;
   const line = mk("div", "pm-github");
-  line.append("GitHub：", externalLink(gh.owner + "/" + gh.repo, gh.url));
+  line.append(t("GitHub："), externalLink(gh.owner + "/" + gh.repo, gh.url));
   projectMenu.appendChild(line);
-  projectMenu.appendChild(mk("div", "pm-github-state", state.githubFetching ? "正在从 GitHub 获取…" : (gh.message || "")));
+  projectMenu.appendChild(mk("div", "pm-github-state", state.githubFetching ? t("正在从 GitHub 获取…") : (gh.message || "")));
   const status = mk("div", "pm-status");
-  const fetchItem = pmItem(state.githubFetching ? "正在从 GitHub 获取…" : "从 GitHub 获取最新状态",
+  const fetchItem = pmItem(state.githubFetching ? t("正在从 GitHub 获取…") : t("从 GitHub 获取最新状态"),
     () => fetchGitHub(status, fetchItem), { disabled: state.githubFetching });
   projectMenu.appendChild(fetchItem);
   projectMenu.appendChild(status);
@@ -2270,7 +2275,7 @@ async function fetchGitHub(statusEl, button) {
   if (state.githubFetching) return;
   state.githubFetching = true;
   button.disabled = true;
-  button.querySelector(".pm-label").textContent = "正在从 GitHub 获取…";
+  button.querySelector(".pm-label").textContent = t("正在从 GitHub 获取…");
   const epoch = state.dataEpoch;
   try {
     const data = await apiPost("/api/github/fetch", {});
@@ -2281,7 +2286,7 @@ async function fetchGitHub(statusEl, button) {
   } catch (err) {
     state.githubFetching = false;
     button.disabled = false;
-    button.querySelector(".pm-label").textContent = "从 GitHub 获取最新状态";
+    button.querySelector(".pm-label").textContent = t("从 GitHub 获取最新状态");
     // 8.8 "Errors": the sentence, git's own text behind 「详情」.
     renderBlockingError(statusEl, "没能从 GitHub 获取", err);
   }

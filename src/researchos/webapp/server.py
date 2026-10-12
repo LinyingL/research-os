@@ -1503,27 +1503,29 @@ def file_payload(project_root: Path, rel_path: str) -> dict[str, Any]:
 # -- GitHub (DESIGN.md 11.2) ----------------------------------------------------
 
 
-def github_state_payload(served: ServedProject) -> dict[str, Any]:
+def github_state_payload(served: ServedProject, lang: str = "zh") -> dict[str, Any]:
     """`GET /api/github`: `researchos.github.state` for the served project, or
-    `{"linked": false}`. Reads local refs only; writes nothing."""
+    `{"linked": false}`. Reads local refs only; writes nothing. Its sentence
+    is in the request's language (13.2)."""
     if served.no_project:
         return {"linked": False, "git": False}
     try:
-        return github.state(served.root)
+        return github.state(served.root, lang)
     except git_ingest.GitIngestError:
         logger.info("no GitHub state for %s", served.root, exc_info=True)
         return {"linked": False, "git": False}
 
 
-def github_fetch_payload(served: ServedProject) -> dict[str, Any]:
+def github_fetch_payload(served: ServedProject, lang: str = "zh") -> dict[str, Any]:
     """`POST /api/github/fetch`: refused for a project whose question is
-    open or that is opened read-only (a fetch writes into `.git`)."""
+    open or that is opened read-only (a fetch writes into `.git`); the new
+    state's sentence in the request's language."""
     if served.blocked is not None:
         raise ProjectBlockedError(served.blocked)
     if served.read_only:
         raise ReadOnlyError("the project is open read-only; nothing fetched")
     try:
-        return github.fetch(served.root, served.project_id)
+        return github.fetch(served.root, served.project_id, lang)
     except github.GitHubError as exc:
         raise GitHubApiError(exc) from exc
 
@@ -3150,7 +3152,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._json_from_conn(lambda conn: review_payload(conn, root))
             elif path == "/api/github":
                 # 11.2: the linked repository's state, from local refs only.
-                self._send_json(200, github_state_payload(self._served()))
+                self._send_json(200, github_state_payload(self._served(), lang=self._lang()))
             elif path == "/api/github/push-plan":
                 # 11.3: what a push would do -- reads only, no network.
                 self._send_json(200, github_push_plan_payload(self._served()))
@@ -3368,7 +3370,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 11.2: 「从 GitHub 获取最新状态」 -- `git fetch` for the linked
                 # remote, the only network Research OS does here, only on this click.
                 self._read_json_object()
-                self._send_json(200, github_fetch_payload(self._served()))
+                self._send_json(200, github_fetch_payload(self._served(), lang=self._lang()))
             elif parsed.path == "/api/github/commit-records":
                 # 11.3 「先把人工记录提交一次」: the `.researchos/` files only.
                 self._send_json(200, github_commit_records_payload(self._served(), self._read_json_object()))

@@ -79,6 +79,35 @@
     "服务已停止": "Service stopped",
     "本地服务已经关闭，可以关闭此页。": "The local service has stopped. You can close this page.",
     "下次要查看时，双击 Research OS.app，或在终端运行 {command}。": "To look again, double-click Research OS.app or run {command} in Terminal.",
+    // The project line, its switcher and menu, and the GitHub lines in it
+    // (the state sentence itself comes from the engine in the request's language).
+    "项目": "Project",
+    "还没有项目": "No project yet",
+    "切换项目或管理列表": "Switch project or manage the list",
+    "添加项目": "Add project",
+    "列表里还没有项目": "No projects in the list yet",
+    "不在列表里": "Not in the list",
+    "找不到文件夹": "Folder not found",
+    "未初始化": "Not initialized",
+    "选择新位置…": "Choose a new location…",
+    "推送到 GitHub…": "Push to GitHub…",
+    "添加项目…": "Add project…",
+    "从公盘加入项目…": "Join a project from the shared folder…",
+    "重新扫描这个项目": "Rescan this project",
+    "重命名显示名称…": "Change display name…",
+    "从列表中移除…": "Remove from the list…",
+    "GitHub：": "GitHub: ",
+    "正在从 GitHub 获取…": "Fetching from GitHub…",
+    "从 GitHub 获取最新状态": "Fetch the latest state from GitHub",
+    // The top bar's action button (the attempt form it opens is a later increment).
+    "新增尝试": "New attempt",
+    "提议新的尝试": "Propose a new attempt",
+    // The welcome, shown while there is no project (10.1).
+    "Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。":
+      "Research OS reads the scripts, data and drafts in a research folder and works out how they connect, step by step.",
+    "你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。":
+      "Research OS records the judgments you make about these links and keeps them with the study’s files.",
+    "项目就是存放一项研究的那个文件夹。": "A project is the folder that holds one study.",
 
     // Dates (13.5): Today 09:24, Yesterday 18:02, 4 Oct, 4 Oct 2025.
     "今天 {time}": "Today {time}",

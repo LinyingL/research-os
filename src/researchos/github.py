@@ -23,7 +23,10 @@ remote, else the remote's default branch, `refs/remotes/<remote>/HEAD`),
 how far the local branch is ahead of and behind it, and when that was
 learnt: the last fetch (`FETCH_HEAD`'s modification time) or, newer, a
 clone or push the reflog records (「（<日期> 获取）」 / 「（<日期> 推送）」).
-Remote-tracking refs with no such date read 「还没有从 GitHub 获取过」.
+Remote-tracking refs with no such date read 「还没有从 GitHub 获取过」. The
+sentence is in the language the page asks for (`lang`, DESIGN.md 13.2,
+13.6); Chinese by default, so the command line and a push's own payload
+read as before.
 
 `fetch(root)` -- `git fetch <remote>`, the only network Research OS does here, only
 on the researcher's click; never `pull`, never a merge. Under the project
@@ -52,7 +55,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from researchos import cloud
+from researchos import cloud, settings
 from researchos.ingest import git as git_ingest
 from researchos.records import lock as records_lock
 
@@ -78,6 +81,9 @@ REASON_MESSAGES = {
 LOCAL_CHANGES_MESSAGE = "本地有未推送或未提交的改动"
 NEVER_FETCHED = "还没有从 GitHub 获取过"
 IN_SYNC = "与 GitHub 一致"
+#: The same two for an English screen (13.6).
+NEVER_FETCHED_EN = "Not fetched from GitHub yet"
+IN_SYNC_EN = "In sync with GitHub"
 
 ERROR_MESSAGES = {
     "not_linked": "这个项目没有关联 GitHub 仓库",
@@ -355,6 +361,7 @@ def _known_at(root: Path, remote: str, base_ref: str | None) -> tuple[datetime, 
 
 
 _KNOWN_WORDS = {"fetch": "获取", "push": "推送"}
+_KNOWN_WORDS_EN = {"fetch": "fetched", "push": "pushed"}
 
 
 def _has_remote_refs(root: Path, remote: str) -> bool:
@@ -366,10 +373,11 @@ def _date_text(when: datetime) -> str:
     return when.strftime("%Y-%m-%d %H:%M")
 
 
-def state(root: str | Path) -> dict[str, Any]:
+def state(root: str | Path, lang: str = "zh") -> dict[str, Any]:
     """The linked repository's state as of the last fetch (module
     docstring), from local refs only; `{"linked": False, "git": bool}` for
-    a project that is not linked."""
+    a project that is not linked. `message` is in `lang` (13.6); every
+    other field is the same in both languages."""
     root = Path(root)
     if not _is_repo(root):
         return {"linked": False, "git": False}
@@ -387,22 +395,30 @@ def state(root: str | Path) -> dict[str, Any]:
         except ValueError:
             ahead = behind = None
     known = _known_at(root, linked.remote, base_ref)
-    when = f"（{_date_text(known[0])} {_KNOWN_WORDS[known[1]]}）" if known else ""
+    en = lang == "en"
+    when = settings.say("（{date} {how}）", " ({how} {date})", lang, date=_date_text(known[0]),
+                        how=(_KNOWN_WORDS_EN if en else _KNOWN_WORDS)[known[1]]) if known else ""
     if sha is None:
         if fetched is None and not _has_remote_refs(root, linked.remote):
-            message = NEVER_FETCHED
+            message = settings.say(NEVER_FETCHED, NEVER_FETCHED_EN, lang)
         else:
-            message = "GitHub 上没有可以对比的分支" + when
+            message = settings.say("GitHub 上没有可以对比的分支{when}", "No branch on GitHub to compare with{when}",
+                                   lang, when=when)
     elif known is None:
         # Remote-tracking refs no fetch, clone or push of this repository
         # is known to have written: not presented as GitHub's state.
-        message = NEVER_FETCHED
+        message = settings.say(NEVER_FETCHED, NEVER_FETCHED_EN, lang)
     elif ahead == 0 and behind == 0:
-        message = IN_SYNC
+        message = settings.say(IN_SYNC, IN_SYNC_EN, lang)
     elif ahead is None:
-        message = "本地还没有提交" + when
+        message = settings.say("本地还没有提交{when}", "No local commits yet{when}", lang, when=when)
     else:
-        message = f"本地领先 {ahead} 个提交，落后 {behind} 个" + when
+        # 13.5: a singular and a plural; numbers grouped in English.
+        message = settings.say(
+            "本地领先 {ahead} 个提交，落后 {behind} 个{when}",
+            "Locally {ahead} commit ahead, {behind} behind{when}" if ahead == 1
+            else "Locally {ahead} commits ahead, {behind} behind{when}",
+            lang, ahead=f"{ahead:,}" if en else ahead, behind=f"{behind:,}" if en else behind, when=when)
     return {
         "linked": True,
         "git": True,
@@ -480,9 +496,9 @@ def _run_fetch(root: Path, remote: str) -> None:
         raise GitHubError("fetch_failed", detail)
 
 
-def fetch(root: str | Path, project_id: str | None = None) -> dict[str, Any]:
+def fetch(root: str | Path, project_id: str | None = None, lang: str = "zh") -> dict[str, Any]:
     """`git fetch <remote>` for the linked remote (module docstring), under
-    the project lock; returns the new `state`."""
+    the project lock; returns the new `state`, its sentence in `lang`."""
     root = Path(root)
     if not _is_repo(root):
         raise GitHubError("not_linked", f"{root} is not a git repository")
@@ -500,7 +516,7 @@ def fetch(root: str | Path, project_id: str | None = None) -> dict[str, Any]:
             _run_fetch(root, linked.remote)
     except records_lock.ProjectLockTimeout as exc:
         raise GitHubError("busy", str(exc)) from exc
-    return state(root)
+    return state(root, lang)
 
 
 # -- links ---------------------------------------------------------------------------

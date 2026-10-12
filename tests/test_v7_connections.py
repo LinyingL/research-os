@@ -649,7 +649,7 @@ def test_page_menu_has_the_github_line_its_state_and_the_fetch_with_progress_and
     state under it, 「从 GitHub 获取最新状态」 with its progress, and a failure
     through the shared error helper; the file panel's link or reason."""
     menu = _function("renderGitHubMenu")
-    assert 'line.append("GitHub：", externalLink(gh.owner + "/" + gh.repo, gh.url));' in menu
+    assert 'line.append(t("GitHub："), externalLink(gh.owner + "/" + gh.repo, gh.url));' in menu
     assert '"pm-github-state"' in menu and "gh.message" in menu
     assert '"从 GitHub 获取最新状态"' in menu and "正在从 GitHub 获取…" in menu
     fetch = _function("fetchGitHub")

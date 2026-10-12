@@ -348,7 +348,7 @@
     // cannot propose at all.
     const add = document.getElementById("new-attempt-btn");
     if (add) {
-      add.textContent = ctx.mode === "member" ? "提议新的尝试" : "新增尝试";
+      add.textContent = ctx.mode === "member" ? t("提议新的尝试") : t("新增尝试");
       add.dataset.role = ctx.mode || "";
     }
     const me = ctx.me && ctx.me.me;
