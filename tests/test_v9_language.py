@@ -25,12 +25,14 @@ from typing import Any
 
 import pytest
 
-from researchos import github, literature, settings
+from researchos import github, literature, officialness, settings
 from researchos.webapp import server
 
 from test_v7_connections import GITHUB_URL, _colleague_pushes, linked, linked_server, stand_in  # noqa: F401 -- fixtures
+from test_v8_1213 import GUIDE_EN, GUIDE_EN_CHINESE_LABELS
 from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import _KEYWORDS_BEFORE, _REGEX_BEFORE, FORBIDDEN, _served_scripts
+from test_webapp_macapp import _english_table as shell_english_table
 
 WEBAPP = Path(server.__file__).parent
 APP_HTML = WEBAPP / "app.html"
@@ -1714,3 +1716,99 @@ def test_13_7_api_github_speaks_the_requests_language(tmp_path, stand_in, linked
     assert _DATE.sub("<date>", st["message"]) == "Locally 0 commits ahead, 1 behind (fetched <date>)"
     status, st = live.raw("GET", "/api/github", {})
     assert status == 200 and _DATE.sub("<date>", st["message"]) == "本地领先 0 个提交，落后 1 个（<date> 获取）"
+
+
+# -- the English install guide against the real strings (13.7, 12.13) ----------------------------------------
+
+#: The English labels the guide quotes, in bold, from surfaces now in English (13.7): each is an
+#: English entry of /i18n.js (either form of a plural) or the switch's own name.
+GUIDE_EN_ENGLISH_LABELS = (
+    "English", "Desk", "Research routes", "Members", "Proposals", "Project", "Add project…",
+    "Join a project from the shared folder…", "New attempt", "Propose a new attempt", "Current", "Abandoned",
+)
+#: The shell's menu items the guide names, each written **item** from the File menu.
+GUIDE_EN_SHELL_ITEMS = ("Submit Proposal…", "Publish")
+#: Bold that is emphasis, not a label.
+GUIDE_EN_EMPHASIS = (
+    "Part 1: Member.", "Part 2: PI.", "Switching to English.", "What is in English so far.",
+    "Two folder names are always Chinese", "can only view", "can edit", "this", "The PI sees a proposal marked",
+    "A member's sync meets a file changed on both sides",
+)
+#: Chinese labels quoted for the Chinese screen before the switch (its neighbours), and words a
+#: still-Chinese page shares with an English surface: the meaning in brackets is the English the
+#: reader sees where the same word is in English.
+_GUIDE_EN_SAME_WORDS = {
+    "记录": "page", "停止服务": "page", "同步": "page", "已批准": "page", "已退回": "page",
+    "提议中": "officialness", "已批准，待同步": "officialness", "发布": "shell",
+}
+#: A message quoted by its first words (the rest of the line varies).
+_GUIDE_EN_SENTENCE_STARTS = ("已经是最新的官方版本", "指纹：")
+
+
+def _still_chinese_texts() -> set[str]:
+    """Every whole text a surface not yet converted shows: the string
+    literals of the served scripts (not /i18n.js, whose Chinese is the
+    table's keys) and of app.html's inline script, and the text of
+    app.html's unmarked markup, each with its CONVERTED stretches removed;
+    and the officialness words the engine sends outside the desk."""
+    texts = set(officialness.LABELS.values())
+    for path in [APP_HTML, *(p for p in _served_scripts() if p != I18N_JS)]:
+        text = path.read_text(encoding="utf-8")
+        for name, start, end in CONVERTED:
+            if name == path.name:
+                text = text.replace(_slice((WEBAPP / name).read_text(encoding="utf-8"), start, end), "\0")
+        if path.suffix == ".html":
+            texts |= {_unescape(raw) for _p, _q, raw in js_literals("\n".join(re.findall(r"<script>(.*?)</script>", text, re.S)))}
+            body = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", re.sub(r"<!--.*?-->", "", text, flags=re.S), flags=re.S)
+            for m in re.finditer(r"<([a-zA-Z][\w-]*)\b([^>]*)>([^<]*)", body):
+                if not re.search(r"\bdata-i18n\b(?!-)", m.group(2)):
+                    texts.add(html_mod.unescape(m.group(3)).strip())
+        else:
+            texts |= {_unescape(raw) for _p, _q, raw in js_literals(text)}
+    return texts
+
+
+@needs_node
+def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
+    """docs/install-and-join.en.md against the strings now on screen: every
+    bold English label is an English entry of /i18n.js (or the switch's own
+    name), every shell menu item it names is in the shell's English table,
+    in its menu; every Chinese label it quotes for a page still in Chinese
+    is a whole text such a page shows (a CONVERTED stretch no longer counts);
+    and where a word it quotes in Chinese is English elsewhere, its meaning
+    is that English. No other bold but listed emphasis."""
+    text = GUIDE_EN.read_text(encoding="utf-8")
+    table = english_table()
+    names = _node("global.window = {};\n" + I18N_JS.read_text(encoding="utf-8")
+                  + "\nprocess.stdout.write(JSON.stringify(window.ROI18N.names));\n")
+    english = {form for value in table.values() for form in (value.values() if isinstance(value, dict) else [value])}
+    shell = shell_english_table()
+    bold = re.findall(r"\*\*(.+?)\*\*", text)
+    known = set(GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_SHELL_ITEMS + GUIDE_EN_EMPHASIS)
+    assert [b for b in bold if not CJK.search(b) and b not in known] == []
+    assert [b for b in bold if CJK.search(b) and b not in GUIDE_EN_CHINESE_LABELS + ("中文",)] == []
+    # English from the page.
+    assert names["en"] == "English"
+    assert [label for label in GUIDE_EN_ENGLISH_LABELS if label not in english | {names["en"]}] == []
+    assert [label for label in GUIDE_EN_ENGLISH_LABELS + GUIDE_EN_SHELL_ITEMS if f"**{label}**" not in text] == []
+    # English from the shell: its items, each in the menu that holds it; any of its menus named holds a named item.
+    assert [item for item in GUIDE_EN_SHELL_ITEMS if item not in shell.values()] == []
+    menus = {shell[zh] for zh in ("文件", "编辑", "视图", "窗口", "帮助")}
+    named = re.findall(r"(\*\*([^*]+)\*\*|\S+) from the (\w+) menu", text)
+    assert {item for _all, item, menu in named if menu in menus} == set(GUIDE_EN_SHELL_ITEMS)
+    assert all(item and menu == shell["文件"] for _all, item, menu in named if menu in menus)
+    # Chinese labels: what a page still in Chinese shows, whole (a message by its first words).
+    still = _still_chinese_texts()
+    for label in GUIDE_EN_CHINESE_LABELS:
+        if label in ("记录", "停止服务"):
+            continue  # the switch's neighbours, quoted for the Chinese screen; their meaning is checked below
+        if label in _GUIDE_EN_SENTENCE_STARTS:
+            assert any(s.startswith(label) for s in still), label
+        else:
+            assert label in still, label
+    # A word quoted in Chinese that is English elsewhere means that English.
+    by_state = {zh: officialness.LABELS_EN[state] for state, zh in officialness.LABELS.items()}
+    source = {"page": table, "officialness": by_state, "shell": shell}
+    for label, where in _GUIDE_EN_SAME_WORDS.items():
+        meanings = set(re.findall(r"\*\*" + re.escape(label) + r"\*\* \(([^)]*)\)", text))
+        assert meanings == {source[where][label]}, (label, meanings)
