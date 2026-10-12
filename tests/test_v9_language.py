@@ -28,7 +28,7 @@ import pytest
 from researchos import literature, settings
 from researchos.webapp import server
 
-from test_v8_phase2 import _project, _scan
+from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import _KEYWORDS_BEFORE, _REGEX_BEFORE, FORBIDDEN, _served_scripts
 
 WEBAPP = Path(server.__file__).parent
@@ -1068,3 +1068,290 @@ def test_13_4_who_i_am_and_the_count_in_english():
         ["", "", "", "", [["me-name", "zhao@example.com"], ["me-role", "Not in the team yet"]], "zhao@example.com"],
         ["", "", "", "", [["me-unset", "Who you are is not set yet"]], "Set it in “Members”"],
     ]
+
+
+# -- 13.7: the desk (T3) ------------------------------------------------------------------------------------------
+
+#: A stand-in DOM for the whole desk under node: an element keeps its class,
+#: title and children in order (text as strings); app.html's helpers stubbed.
+#: Each rendered desk is one line per element holding words: "class: words".
+_DESK_DOM = r"""
+function el(tag, cls, text) {
+  const e = { tag, className: cls || "", title: "", dataset: {}, disabled: false, kids: [],
+    get textContent() { return this.kids.map((k) => (typeof k === "string" ? k : k.textContent)).join(""); },
+    set textContent(v) { this.kids = [String(v)]; },
+    set innerHTML(v) { this.kids = v ? ["<html>" + v] : []; },
+    appendChild(c) { this.kids.push(c); return c; }, append(...cs) { this.kids.push(...cs); }, addEventListener() {},
+    querySelector(sel) {
+      const walk = (n) => { for (const k of n.kids) if (typeof k !== "string") {
+        if (k.className.split(" ").includes(sel.slice(1))) return k; const f = walk(k); if (f) return f; } return null; };
+      return walk(this);
+    }, classList: { toggle() {} } };
+  if (text != null) e.textContent = text;
+  return e;
+}
+global.mk = (tag, cls, text) => el(tag, cls, text);
+global.mkButton = (label, cls) => el("button", cls || "btn btn-small", label);
+global.document = { getElementById: () => null, querySelectorAll: () => [] };
+global.state = { noProject: false, dataEpoch: 0, currentId: "p-1" };
+global.views = {};
+global.ownMark = (item) => item && item.officialness && item.officialness.state !== "official"
+  ? el("span", "own-mark", item.officialness.label) : null;
+global.setStatus = (node, kind, text) => { node.textContent = text; };
+global.renderViewFailure = () => {};
+global.ROTeam = { syncWrites: () => "[team.js]", openProposal() {}, differenceBlock: () => el("div", "diff") };
+global.RONode = { openNode() {} };
+function dump(node, out) {
+  const own = node.kids.filter((k) => typeof k === "string").join("");
+  const all = node.kids.map((k) => (typeof k === "string" ? k : "[" + k.className + "]")).join("");
+  if (own || node.title) out.push(node.className + ": " + all + (node.title ? " (title: " + node.title + ")" : ""));
+  node.kids.forEach((k) => { if (typeof k !== "string") dump(k, out); });
+  return out;
+}
+async function renderDesk(c) {
+  const answers = { "/api/me": c.me, "/api/proposals": c.proposals, "/api/share": c.share, "/api/share/sync-preview": {} };
+  global.apiGet = async (path) => (path.startsWith("/api/desk") ? c.desk : answers[path]);
+  const host = el("div", "host");
+  await window.RODesk.loadDesk(host, false);
+  return dump(host, []);
+}
+"""
+
+#: The researcher's own words in the fixture (13.1: shown as written in either language).
+_THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了", "先补稳健性", "这里的缺失值要先处理"]
+
+
+def _desk_cases(lang: str) -> list[dict]:
+    """Every kind of desk row and every desk layout (PI, member behind, up to
+    date, without the shared folder, not in the team, a single person) with
+    /api/desk's words as the engine sends them in `lang`."""
+    def w(zh: str, en: str) -> str:
+        return en if lang == "en" else zh
+
+    def st(status: str, label: str, words: str = "") -> dict:
+        return {"status": status, "label": label, "words": words}
+
+    who = {"approved_by": [], "versions": 1, "notes": []}
+    changes = [
+        {**who, "kind": "file", "path": "steps/16-build.py", "at": "2024-03-01T12:00:00", "who": ["Li", w("最初的研究者", "Original researcher")],
+         "approved_by": ["Wang"], "versions": 3, "notes": ["dropna first"], "what_code": "lines", "uncommitted": True,
+         "what": w("增加 12 行，删去 1 行", "12 lines added, 1 line removed"),
+         "officialness": {"state": "mine", "label": w("我的改动，尚未提交", "My change, not yet proposed")}},
+        {**who, "kind": "file", "path": "figs/fig3.png", "at": "2024-03-01T11:00:00", "who": ["Li"], "what_code": "new_file",
+         "what": w("新文件", "New file"), "exists": False},
+        {**who, "kind": "attempt", "node": "a16", "number": "16", "title": "TopicShift 波动", "at": "2024-03-01T10:00:00",
+         "who": ["Li"], "what_code": "verdict_changed", "what": w("判决改了", "Verdict changed"),
+         "old_status": st("pending", "待定"), "new_status": st("abandoned", "已放弃", "伪协整")},
+        {**who, "kind": "attempt", "node": "a18", "number": "18", "title": "New route", "at": "2024-03-01T09:00:00",
+         "who": ["Wang"], "approved_by": ["Li"], "what_code": "new_attempt", "what": w("新增尝试", "New attempt"),
+         "new_status": st("labelled", "成立", "robust")},
+        {**who, "kind": "attempt", "node": "a19", "number": "19", "at": "2024-03-01T08:00:00", "who": ["Li"], "versions": 2,
+         "what_code": "result_changed", "what": w("结果改了", "Result changed"), "result": ""},
+        {**who, "kind": "decision", "node": "a16", "number": "16", "at": "2024-02-28T12:00:00", "act": "approved",
+         "proposal_kind": "verdict_change", "who": ["Wang"], "approved_by": ["Li"], "verdict_status": st("other", "其它", "?"),
+         "notes": ["agreed"]},
+        {**who, "kind": "decision", "node": "a17", "number": "17", "title": "Plot", "at": "2024-02-27T12:00:00",
+         "act": "abandoned", "who": [w("最初的研究者", "Original researcher")], "verdict_status": st("abandoned", "已放弃"),
+         "reason": "spurious"},
+        {**who, "kind": "decision", "at": "2024-02-26T12:00:00", "act": "approved", "proposal_kind": "files", "who": ["Wang"],
+         "approved_by": ["Li"]},
+        {"kind": "note", "path": "steps/17-plot.py", "at": "2024-02-25T12:00:00", "who": ["Wang"], "text": "这里的缺失值要先处理"},
+        {"kind": "note", "path": None, "label": None, "at": "2024-02-23T12:00:00", "who": ["Wang"], "text": "?"},
+    ]
+    breaks = [{"kind": "no_generating_script", "label": w("没有找到生成它的脚本", "No script that generates it was found"),
+               "path": "figs/fig1.png", "repair": w("补上来源", "Add source")},
+              {"kind": "data_missing", "label": w("数据文件不在磁盘上", "The data file is not on disk"), "path": "data/raw.csv"}]
+    busy = {"since": "2024-02-20T12:00:00", "since_default": False, "changes": changes, "more_changes": 4, "review": 1497,
+            "results": [{"path": "figs/fig1.png", "exists": False, "review": 2, "drafts": ["paper.md", "notes.md"],
+                         "breaks": breaks, "officialness": {"state": "proposed", "label": w("提议中", "Proposed")}},
+                        {"path": "figs/fig2.png", "review": 1, "drafts": [], "breaks": []}],
+            "abandoned": [{"number": "16", "title": "TopicShift 波动", "verdict_status": st("abandoned", "已放弃", "伪协整"),
+                           "result": "t=0.4", "reason": "spurious"},
+                          {"number": "", "verdict_status": st("abandoned", "放弃了"),
+                           "officialness": {"state": "approved", "label": w("已批准，待同步", "Approved, awaiting sync")}}]}
+    quiet = {"since_default": True, "default_days": 7, "changes": [], "results": [], "review": 0, "abandoned": []}
+    proposals = [
+        {"kind": "attempt_new", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T12:00:00",
+         "attempt": {"number": "18", "description": "新路线"}, "files": [{"path": "steps/18.py"}],
+         "outcomes": [{"act": "discussed", "text": "先补稳健性"}]},
+        {"kind": "verdict_change", "state": "conflict", "by": "wang@example.com", "at": "2024-03-01T11:00:00", "files": [{"path": "a/x.csv"}, {"path": "b/y.csv"}],
+         "verdict": {"number": "16", "old_status": st("pending", "待定"), "new_status": st("abandoned", "已放弃"), "abandons": True}},
+        {"kind": "variable_version", "state": "returned", "at": "2024-03-01T10:00:00", "variable": {"card": "log_ret", "version": 2},
+         "outcomes": [{"act": "returned", "text": "redo it"}], "sentence": "Redefine log_ret"},
+        {"kind": "files", "state": "approved", "at": "2024-03-01T09:00:00", "files": [{"path": "a/1.py"}, {"path": "a/2.py"}, {"path": "a/3.py"}]},
+        {"id": "p5", "kind": "odd", "state": "superseded", "at": "2024-03-01T08:00:00"},
+        {"kind": "verdict_change", "state": "returned", "at": "2024-03-01T07:00:00",
+         "verdict": {"number": "#17", "old_status": st("current", "现行"), "new_status": st("labelled", "成立")}},
+    ]
+    me = {"me": {"id": "li@example.com", "name": "Li"}}
+    team = [{"id": "wang@example.com", "name": "Wang"}]
+    member = {"shared": "/x", "reachable": True, "role": "member", "team": team,
+              "last_snapshot": {"at": "2024-03-01T12:00:00", "seq": 1497, "note": "fixes"}}
+    return [
+        {"me": me, "proposals": {"role": "pi", "proposals": proposals}, "share": {"shared": "/x", "role": "pi", "team": team}, "desk": busy},
+        {"me": me, "proposals": {"role": "pi", "proposals": []}, "share": {}, "desk": quiet},
+        {"me": me, "proposals": {"role": "member", "proposals": proposals}, "share": {**member, "behind": True}, "desk": {**quiet, "default_days": 1}},
+        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {**member, "last_snapshot": {"seq": 3}}, "desk": quiet},
+        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": True}, "desk": quiet},
+        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": False}, "desk": quiet},
+        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": None}, "desk": quiet},
+        {"me": me, "proposals": {"role": "none", "proposals": []}, "share": {}, "desk": quiet},
+    ]
+
+
+def _desks(saved: str | None, desk_js: str | None = None) -> list[list[str]]:
+    """Every desk of the fixture rendered by desk.js (or `desk_js`), with
+    /i18n.js in the saved language, or alone (None)."""
+    i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
+    cases = json.dumps(_desk_cases(saved or "zh"), ensure_ascii=False)
+    return _node("global.window = {};\n" + i18n + _DESK_DOM + (desk_js or (WEBAPP / "desk.js").read_text(encoding="utf-8"))
+                 + f"\n(async () => {{ const out = []; for (const c of {cases}) out.push(await renderDesk(c));"
+                 " process.stdout.write(JSON.stringify(out)); })();\n")
+
+
+#: sha256 of the Chinese desks above as rendered by desk.js before this increment (commit 041c510;
+#: `_desks(None, <that file>)`): 13.8 #1, a Chinese screen reads byte for byte as before.
+_DESK_ZH_SHA256 = "188bf3eca8bb323c481b4118e7186da503a6b2a9748296bfedb0c3db80ce5dda"
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh"])
+def test_13_8_the_desk_in_chinese_is_as_before(saved):
+    import hashlib
+
+    desks = _desks(saved)
+    assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
+    assert "desk-what: 判决 [verdict-inline] 改为 [verdict-inline]" in desks[0]
+    assert "desk-sub: 1497 条判断的依据变了，等你复核。[desk-link]" in desks[0]
+
+
+@needs_node
+def test_13_7_the_desk_in_english():
+    """Every word the desk writes is English (13.4's words, 13.5's dates,
+    numbers and plurals, 12.13's sentences without arrows); the
+    researcher's own words, a [verdict_labels] word among them, as
+    written; the page picks a row's form by what_code, never by words."""
+    desks = _desks("en")
+    lines = [line for desk in desks for line in desk]
+    left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
+    assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
+    for line in [
+        "desk-title: Awaiting your approval", "desk-when: 1 Mar 2024", "status-label tone-plain: New attempt",
+        "desk-what strong: New attempt #18: 新路线, with 1 file",
+        "desk-what strong: #16: verdict changed from “Pending” to “Abandoned”, abandoning the route, with 2 files",
+        "desk-sub: Last looked: 20 Feb 2024", "desk-link mono: steps/16-build.py (title: Open this file)",
+        "desk-what: 12 lines added, 1 line removed (not committed yet)", "own-mark: My change, not yet proposed",
+        "desk-meta: Li, Original researcher · Approved by Wang · Changed 3 times in this period",
+        "desk-what: Verdict changed from [verdict-inline] to [verdict-inline]", "status-label tone-ochre: Pending",
+        "desk-what: New attempt, verdict [verdict-inline]", "status-label tone-plain: 成立",
+        "desk-what: Result changed to: (empty)", "status-label tone-plain: Other", "desk-note: Reason: spurious",
+        "desk-what: Approved a proposal to change a verdict", "desk-meta: Proposed by Wang · Approved by Li",
+        "desk-what: Note on", "desk-link: a record", "desk-repair: Fix with “Add source”",
+        "desk-break: The data file is not on disk: data/raw.csv",
+        "desk-break: 2 linked judgments in its sources need review[desk-link]", "desk-meta: Cited by paper.md, notes.md",
+        "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
+        "status-label tone-gray: 放弃了", "desk-link: See their basis at the time in Research routes",
+    ]:
+        assert line in desks[0], line
+    assert desks[1] == ["desk-title: Awaiting your approval", "desk-empty: No proposals await your approval.",
+                        "desk-title: Changes since you last looked",
+                        "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 7 days.",
+                        "desk-empty: No changes in this period.", "desk-title: Outputs whose basis changed",
+                        "desk-empty: Every output still has its sources.", "desk-title: Abandoned routes",
+                        "desk-empty: No route has been abandoned yet."]
+    for line in ["desk-meta: Awaiting PI approval · The PI says: 先补稳健性", "desk-note plain: Variable log_ret: definition version 2",
+                 "desk-meta: Returned: redo it", "desk-what strong: 3 files: 1.py, 2.py and others", "status-label tone-plain: Proposal",
+                 "desk-what strong: #17: verdict changed from “Current” to “成立”", "desk-title: Official version updated",
+                 "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
+                 "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 1 day."]:
+        assert line in desks[2], line
+    assert "desk-empty: Your working copy is the latest official version (version 3)." in desks[3]
+    assert "desk-empty: The PI has not published an official version yet." in desks[4]
+    assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
+    assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
+
+
+#: Payload keys that hold the researcher's text or a fixed name (13.1), shown as written in either language.
+_THEIR_KEYS = {"title", "words", "result", "reason", "notes", "text", "path", "node", "id", "drafts", "number"}
+
+
+def _strings(value: Any, key: str = ""):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _strings(v, k)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v, key)
+    elif isinstance(value, str):
+        yield key, value
+
+
+def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
+    """/api/desk without the header (the command line's and MCP's case) and
+    with zh is the Chinese it was; with en every sentence the engine
+    composes is English, the codes are the same, and nothing Chinese is
+    left but the researcher's text and the verdict vocabulary (13.1)."""
+    from researchos.ingest import attempts as attempts_ingest
+    from test_v8_u2 import _backdate
+
+    root = _project(tmp_path / "proj")
+    _backdate(root)
+    (root / "steps" / "16-build.py").write_text((root / "steps" / "16-build.py").read_text() + "df = df.dropna()\n")
+    (root / "data" / "panel.csv").write_text(_csv(97, ("id", "x", "log_ret")))
+    (root / "figs" / "fig3.png").write_bytes(b"\x89PNG fig3")
+    (root / "map.md").write_text(_map("☠️ 伪协整"))
+    _scan(root)
+    since = "2000-01-01T00:00:00%2B00:00"
+    httpd, thread = _serving(root)
+    try:
+        got = [json.loads(_Live(httpd).call("GET", f"/api/desk?since={since}", headers=h)[2])
+               for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+    zh, zh_asked, en = got
+    assert zh == zh_asked
+    by = [{c["node"]: c for c in payload["changes"]} for payload in (zh, en)]
+    words = [{n: (c["what_code"], c["what"], c["who"]) for n, c in b.items()} for b in by]
+    assert words[0]["script:steps/16-build.py"] == ("lines", "增加 1 行", ["最初的研究者"])
+    assert words[1]["script:steps/16-build.py"] == ("lines", "1 line added", ["Original researcher"])
+    assert words[0]["dataset:data/panel.csv"] == ("table", "行数从 96 增至 97，新增列 log_ret", ["最初的研究者"])
+    assert words[1]["dataset:data/panel.csv"] == ("table", "Rows from 96 to 97; column added: log_ret", ["Original researcher"])
+    assert words[1]["figure:figs/fig3.png"][:2] == ("new_file", "New file")
+    assert words[1]["attempt:map.md#16"][:2] == ("verdict_changed", "Verdict changed")
+    assert words[0]["attempt:map.md#16"][:2] == ("verdict_changed", "判决改了")
+    assert {n: w[0] for n, w in words[0].items()} == {n: w[0] for n, w in words[1].items()}
+    assert [(b["label"], b["repair"]) for r in zh["results"] for b in r["breaks"]] == [("没有找到生成它的脚本", "补上来源")]
+    assert [(b["label"], b["repair"]) for r in en["results"] for b in r["breaks"]] == [
+        ("No script that generates it was found", "Add source")]
+    assert en["officialness_mode"]["labels"] == {"mine": "My change, not yet proposed", "proposed": "Proposed",
+                                                 "approved": "Approved, awaiting sync"}
+    vocabulary = set(attempts_ingest.DEFAULT_VERDICT_LABELS.values()) | {attempts_ingest.OTHER_VERDICT_LABEL}
+    left = [(k, s) for k, s in _strings(en) if CJK.search(s) and k not in _THEIR_KEYS and not (k == "label" and s in vocabulary)]
+    assert left == []
+
+
+def test_13_7_a_git_projects_desk_and_the_officialness_words_in_english(tmp_path):
+    """Edits git has not seen yet are 「本机」's, "This Mac" in English; a
+    member's own work is marked in the page's language (13.4)."""
+    from researchos import desk, officialness
+    from test_v8_phase2 import _conn, _git
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _project(root)
+    _git(root, "add", "steps", "data", "figs", "paper.md", "map.md")
+    _git(root, "commit", "-q", "-m", "first", date="2026-01-01T10:00:00+00:00")
+    (root / "paper.md").write_text((root / "paper.md").read_text() + "\nMore.\n")
+    conn = _conn(root)
+    try:
+        out = [desk.desk(conn, root, "2026-06-01T00:00:00+00:00", lang=lang) for lang in ("zh", "en")]
+    finally:
+        conn.close()
+    paper = [next(c for c in o["changes"] if c.get("path") == "paper.md") for o in out]
+    assert [(p["what_code"], p["what"], p["who"]) for p in paper] == [("changed", "内容有改动", ["本机"]),
+                                                                      ("changed", "Content changed", ["This Mac"])]
+    assert officialness.mark(("mine", None)) == {"state": "mine", "label": "我的改动，尚未提交"}
+    assert officialness.mark(("proposed", "p-1"), "en") == {"state": "proposed", "label": "Proposed", "proposal": "p-1"}
