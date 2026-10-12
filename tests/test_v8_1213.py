@@ -610,3 +610,63 @@ def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_
     assert "researchos" in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
     assert "~/Applications" in (cli.cmd_app.__doc__ or "")
     assert "docs/安装与加入团队.md" in (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+# -- the English install guide (13.7) ----------------------------------------------------------------
+
+GUIDE_EN = ROOT / "docs" / "install-and-join.en.md"
+#: The app labels the Chinese guide names that the first English increment shows in English (the
+#: welcome and the project menu); the English guide names them in English.
+GUIDE_LABELS_NOW_ENGLISH = ("添加项目…", "从公盘加入项目…")
+#: Every Chinese label the English guide quotes from a screen still in Chinese, each written
+#: **label** (meaning), so that a reader who does not read Chinese can match it on screen.
+GUIDE_EN_CHINESE_LABELS = (
+    "记录", "停止服务", "1. 我是谁", "我是谁", "名字", "邮箱", "保存", "2. 我的公钥", "我的公钥", "生成我的公钥",
+    "复制", "请手动选中复制", "关闭", "3. 公盘和工作副本", "选择…", "公盘文件夹，或 PI 共享给你的「已发布」文件夹",
+    "你自己的提议文件夹", "工作副本放在哪里", "查看", "PI 公钥指纹", "核对无误，加入", "公盘与同步", "同步",
+    "已经是最新的官方版本", "团队", "选择文件夹…", "加入并扫描", "开始协作", "建立成员名单", "公盘", "设为公盘", "发布",
+    "添加成员", "公钥文字", "公钥文件", "加入团队", "指纹：", "提交提议", "新的尝试", "改判", "变量定义", "只有文件",
+    "查看将要发送的内容", "按勾选的文件重新查看", "发送提议", "提议中", "已批准", "已退回", "已批准，待同步",
+    "关联文件", "补上来源", "批准并加入", "退回并说明", "讨论", "两边都改过", "放在旁边的官方版本",
+)
+#: The only other Chinese the English guide may show: the line `researchos app` prints, the two
+#: fixed folder names on the shared drive (13.1) and the switch's label on an English screen (13.3).
+GUIDE_EN_OTHER_CHINESE = ("双击 Research OS.app 即可打开研究地图", "已发布", "提议", "中文")
+CJK = re.compile(r"[⺀-鿿豈-﫿＀-￯]")
+CODE_BLOCK = re.compile(r"^```(\w*)\n(.*?)^```$", re.M | re.S)
+
+
+def test_13_7_the_english_guide_takes_the_same_steps_and_explains_every_chinese_label():
+    text = GUIDE_EN.read_text(encoding="utf-8")
+    assert not FORBIDDEN.search(text), FORBIDDEN.search(text)  # 12.11: no emoji, no arrows
+    # The same commands as the Chinese guide, verbatim and in the same order, one per bash block.
+    zh_commands = [line for _, body in CODE_BLOCK.findall(GUIDE.read_text(encoding="utf-8"))
+                   for line in body.splitlines() if line.strip()]
+    blocks = CODE_BLOCK.findall(text)
+    assert all(lang == "bash" and body.count("\n") == 1 for lang, body in blocks), blocks
+    assert [body.strip() for _, body in blocks] == zh_commands
+    assert "research-context-engine" not in text
+    for words in ("Installed 2 executables: rce, researchos", "Git operation failed", "could not read Username",
+                  "Installed 1 executable: rce", "everything's installed!", "already installed", "is not on your PATH"):
+        assert f"`{words}`" in text, words
+    # How to switch the app to English comes before the first step.
+    assert text.index("**English**") < text.index("## Part 1")
+    # Every app label the Chinese guide names is named here too, in Chinese where the screen still is.
+    assert [label for label in GUIDE_APP_LABELS if label not in GUIDE_LABELS_NOW_ENGLISH and label not in text] == []
+    assert not any(label in text for label in GUIDE_LABELS_NOW_ENGLISH)
+    # Each Chinese label is one the app shows, and comes with its meaning.
+    screens = "".join((WEBAPP / name).read_text(encoding="utf-8") for name in ("app.html", "team.js", "node.js", "desk.js"))
+    screens += "".join(officialness.LABELS.values())
+    assert [label for label in GUIDE_EN_CHINESE_LABELS if label not in screens] == []
+    assert [label for label in GUIDE_EN_CHINESE_LABELS if f"**{label}** (" not in text] == []
+    assert GUIDE_EN_OTHER_CHINESE[0] in (ROOT / "src" / "researchos" / "cli.py").read_text(encoding="utf-8")
+    rest = text
+    for label in sorted(GUIDE_EN_CHINESE_LABELS, key=len, reverse=True):
+        rest = rest.replace(f"**{label}**", "")
+    for words in GUIDE_EN_OTHER_CHINESE:
+        rest = rest.replace(words, "")
+    assert CJK.findall(rest) == []
+    # The README links it beside the Chinese guide, and DESIGN.md 12.13 names it.
+    assert "docs/install-and-join.en.md" in (ROOT / "README.md").read_text(encoding="utf-8")
+    design = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert "docs/install-and-join.en.md" in design[design.index("### 12.13"):design.index("## Section 13")]

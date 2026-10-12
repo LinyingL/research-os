@@ -3126,7 +3126,10 @@ accept the PI's sharing invitations and add both folders to their OneDrive;
 choose them in 成员; compare the PI's key fingerprint; 同步. And for the PI:
 which folder to share with which rights, where to click in OneDrive's
 personal web interface. It is tested step by step on a clean account-like
-setup before it is handed over.
+setup before it is handed over. Its English counterpart (13.7),
+`docs/install-and-join.en.md`, takes the same steps in the same order with
+the same commands, and names each label of a screen still in Chinese as the
+screen shows it, with its meaning in brackets.
 
 ## Section 13 — Two interface languages (task V9)
 

@@ -140,7 +140,9 @@ This section is for a PI who runs a project with one or more collaborators
 and does not use git. For a collaborator who does not program, the
 step-by-step guide in Chinese -- installing OneDrive, uv and Research OS,
 accepting the PI's two sharing invitations, joining and syncing, and the
-PI's side of it -- is [docs/安装与加入团队.md](docs/安装与加入团队.md). Nothing here needs git, a server or an account: the
+PI's side of it -- is [docs/安装与加入团队.md](docs/安装与加入团队.md); the same guide in English, for a
+collaborator who does not read Chinese, is [docs/install-and-join.en.md](docs/install-and-join.en.md).
+Nothing here needs git, a server or an account: the
 team shares one folder on OneDrive (or any folder a sync service keeps in
 step), and Research OS on each person's computer reads and writes plain
 files in it.
