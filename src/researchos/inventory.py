@@ -75,14 +75,19 @@ LOG_FILENAME = "log.toml"
 def mapping_differences(conn: Connection, root: Path) -> list[str] | None:
     """Where the index's hand-drawn links differ from `.researchos/mappings.toml`
     (English, one line each); None when the file cannot be compared (it is
-    absent -- not a deletion, 8.12 -- or cannot be read)."""
+    absent -- not a deletion, 8.12 -- or cannot be read). An entry waiting
+    for an attempt the index does not hold (a renumbered row, 14.2) is not
+    expected in the index, so it is no difference."""
     try:
         loaded = mappings_ingest.load_mappings(root)
     except mappings_ingest.MappingsFileError:
         return None
     if not loaded.file_present:
         return None
-    want = {(m.src_id, m.dst_id, m.type) for m in loaded.mappings}
+    want = {
+        (m.src_id, m.dst_id, m.type) for m in loaded.mappings
+        if all(db.get_node(conn, node_id) is not None for node_id in mappings_ingest.attempt_ends(m))
+    }
     have = {
         (e["src"], e["dst"], e["type"]): e["status"]
         for e in db.query_edges(conn) if e["extractor"] == mappings_ingest.EXTRACTOR

@@ -284,6 +284,14 @@
     // People words (13.4), shared by every page (13.7); the engine names people in the
     // request's language, and node.js falls back to this one.
     "最初的研究者": "Original researcher",
+    // The route map (Section 14): a line between attempts (13.4 gains 源自), and
+    // what refuses one (app.html's BLOCKING_ERROR_TEXT, 14.2).
+    "源自": "Grew out of",
+    "连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试":
+      "One end of the line is no longer in the table, perhaps just renumbered; reload and try again",
+    "一个尝试不能源自它自己": "An attempt cannot grow out of itself",
+    "这条连线会绕成一个圈：它要连的来处本身就源自它":
+      "This line would close a circle: the attempt it would grow out of already grows out of it",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

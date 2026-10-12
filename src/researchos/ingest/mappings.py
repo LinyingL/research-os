@@ -182,7 +182,19 @@ GRAMMAR: dict[str, tuple[str, str]] = {
 # of such a link (9.6) is its identity.
 ATTEMPT_LINK = "belongs_to"
 ATTEMPT_FROM_TYPES = ("script", "dataset", "figure")
-MAPPING_TYPES = (*GRAMMAR, ATTEMPT_LINK)
+# DESIGN.md 14.2 「源自」: one attempt grew out of another. `from` is the
+# child, `to` the attempt it grew out of, both written as node ids; stored
+# as written ("#17 源自 #16"). Not a file link, so it stays out of `GRAMMAR`
+# as `belongs_to` does. Rules beyond one entry's own shape: no line from an
+# attempt to itself, and none that closes a circle -- read back, the entry
+# that would close one (in file order) is ignored and reported (`circle`).
+# Both attempts must be in the index for the line to be asserted; neither is
+# ever conjured, and an entry whose end is missing waits in the file.
+DERIVES_FROM = "derives_from"
+MAPPING_TYPES = (*GRAMMAR, ATTEMPT_LINK, DERIVES_FROM)
+#: The problem code of an entry waiting for an attempt that is not in the
+#: index (a renumbered row, a table not read yet): kept, not an error.
+WAITING = "attempt_not_found"
 _ATTEMPT_PREFIX = "attempt:"
 
 # The header a freshly created file starts with -- verbatim from 8.5.
@@ -239,6 +251,11 @@ class MappingProblem:
 
     def location(self) -> str:
         return f"line {self.line}" if self.line is not None else f"entry #{self.index}"
+
+    @property
+    def waiting(self) -> bool:
+        """An entry kept for an attempt not in the index yet -- not an error."""
+        return self.code == WAITING
 
 
 @dataclass(frozen=True)
@@ -415,6 +432,12 @@ def _validate_identity(project_root: Path, entry: dict[str, Any]) -> tuple[str, 
         if from_type not in ATTEMPT_FROM_TYPES:
             raise _EntryRefused("grammar", f"'{ATTEMPT_LINK}' goes from a script, data file or figure, not a {from_type}")
         return from_path, _attempt_ref(project_root, entry["to"]), edge_type, from_type, "attempt"
+    if edge_type == DERIVES_FROM:
+        child = _attempt_ref(project_root, entry["from"], "from")
+        parent = _attempt_ref(project_root, entry["to"], "to")
+        if child == parent:
+            raise _EntryRefused("self_link", f"attempt:{child} cannot grow out of itself")
+        return child, parent, edge_type, "attempt", "attempt"
     from_path = _confine(project_root, entry["from"], "from")
     to_path = _confine(project_root, entry["to"], "to")
     from_type = _classify(from_path, "from")
@@ -432,33 +455,68 @@ def _validate_identity(project_root: Path, entry: dict[str, Any]) -> tuple[str, 
     return from_path, to_path, edge_type, from_type, to_type
 
 
-def _attempt_ref(project_root: Path, raw: object) -> str:
-    """`to` of a `belongs_to` entry as `<table file>#<number>`: the attempt
-    table's path confined like any path, and the row's number."""
+def _attempt_ref(project_root: Path, raw: object, what: str = "to") -> str:
+    """An attempt end (`to` of `belongs_to`, both ends of `derives_from`) as
+    `<table file>#<number>`: the attempt table's path confined like any
+    path, and the row's number."""
     if not isinstance(raw, str):
-        raise _EntryRefused("not_string", f"'to' must be a string, got {type(raw).__name__}")
+        raise _EntryRefused("not_string", f"'{what}' must be a string, got {type(raw).__name__}")
     value = raw.strip()
     if value.startswith(_ATTEMPT_PREFIX):
         value = value[len(_ATTEMPT_PREFIX):]
     table, sep, number = value.rpartition("#")
     if not sep or not table or not number.strip():
         raise _EntryRefused(
-            "bad_attempt", f"'to' {raw!r} must name an attempt as attempt:<table file>#<number>"
+            "bad_attempt", f"'{what}' {raw!r} must name an attempt as attempt:<table file>#<number>"
         )
-    return f"{_confine(project_root, table, 'to')}#{number.strip()}"
+    return f"{_confine(project_root, table, what)}#{number.strip()}"
 
 
 def _written_to(m_type: str, to_path: str) -> str:
     """How `to` is written in the file: an attempt by its node id."""
-    return f"{_ATTEMPT_PREFIX}{to_path}" if m_type == ATTEMPT_LINK else to_path
+    return f"{_ATTEMPT_PREFIX}{to_path}" if m_type in (ATTEMPT_LINK, DERIVES_FROM) else to_path
+
+
+def _written_from(m_type: str, from_path: str) -> str:
+    """How `from` is written in the file: an attempt by its node id."""
+    return f"{_ATTEMPT_PREFIX}{from_path}" if m_type == DERIVES_FROM else from_path
+
+
+def attempt_ends(m: Mapping) -> list[str]:
+    """The node ids of an entry's attempt ends, which are never conjured."""
+    if m.type == DERIVES_FROM:
+        return [m.from_id, m.to_id]
+    return [m.to_id] if m.type == ATTEMPT_LINK else []
+
+
+def _reaches(parents: dict[str, set[str]], start: str, goal: str) -> bool:
+    """Whether `goal` is `start` or one of its ancestors along `derives_from`."""
+    stack, seen = [start], set()
+    while stack:
+        node = stack.pop()
+        if node == goal:
+            return True
+        if node not in seen:
+            seen.add(node)
+            stack.extend(parents.get(node, ()))
+    return False
+
+
+def _route_parents(mappings: list[Mapping]) -> dict[str, set[str]]:
+    parents: dict[str, set[str]] = {}
+    for m in mappings:
+        if m.type == DERIVES_FROM:
+            parents.setdefault(m.from_path, set()).add(m.to_path)
+    return parents
 
 
 def has_attempt_links(project_root: str | Path) -> bool:
-    """Whether the file holds any `belongs_to` entry (so that an attempts
-    ingest, which may have just created the attempt it names, re-runs the
-    mappings ingest). False when the file cannot be read."""
+    """Whether the file holds any entry naming an attempt (`belongs_to`,
+    `derives_from`), so that an attempts ingest, which may have just created
+    the attempt it names, re-runs the mappings ingest. False when the file
+    cannot be read."""
     try:
-        return any(m.type == ATTEMPT_LINK for m in load_mappings(project_root).mappings)
+        return any(attempt_ends(m) for m in load_mappings(project_root).mappings)
     except MappingsFileError:
         return False
 
@@ -506,6 +564,7 @@ def _validate_entries(project_root: Path, raw_entries: list[Any], text: str) -> 
     mappings: list[Mapping] = []
     problems: list[MappingProblem] = []
     seen: set[tuple[str, str, str]] = set()
+    parents: dict[str, set[str]] = {}  # derives_from kept so far: child -> what it grew out of
     for i, entry in enumerate(raw_entries):
         index, line = i + 1, lines[i]
         if not isinstance(entry, dict):
@@ -522,6 +581,17 @@ def _validate_entries(project_root: Path, raw_entries: list[Any], text: str) -> 
                 f"same from/to/type as an earlier entry ({from_path} -> {to_path}, {edge_type}); skipped",
             ))
             continue
+        if edge_type == DERIVES_FROM:
+            # 14.2: in file order, the entry that would close a circle (a hand
+            # edit, two packets) is ignored -- every earlier line stands.
+            if _reaches(parents, to_path, from_path):
+                problems.append(MappingProblem(
+                    index, line, "circle",
+                    f"attempt:{from_path} {edge_type} attempt:{to_path} would close a circle "
+                    "(the parent already grows out of the child); ignored",
+                ))
+                continue
+            parents.setdefault(from_path, set()).add(to_path)
         seen.add((from_path, to_path, edge_type))
         note = entry.get("note")
         if note is not None and not isinstance(note, str):
@@ -610,7 +680,7 @@ def _ingest_mappings(conn: Connection, project_root: Path, sc: scan_mod.Scan) ->
         mark = sc.mark(EXTRACTOR, MAPPINGS_RELATIVE_PATH, scan_mod.basis(EXTRACTOR, "reads"))
     counts = {
         "mappings": len(result.mappings), "refused": 0, "nodes_created": 0,
-        "edges_confirmed": 0, "edges_removed": 0, "nodes_removed": 0,
+        "edges_confirmed": 0, "edges_removed": 0, "nodes_removed": 0, "waiting": 0,
     }
     counts["refused"] = sum(1 for p in result.problems if p.code not in ("bad_note", "bad_date"))
     # info, not warning: the problems are returned, and every caller shows
@@ -621,19 +691,25 @@ def _ingest_mappings(conn: Connection, project_root: Path, sc: scan_mod.Scan) ->
     asserted: set[tuple[str, str, str]] = set()
     if any(m.type == ATTEMPT_LINK for m in result.mappings):
         db.ensure_v8_tables(conn)  # the edge type of migration 0007
+    if any(m.type == DERIVES_FROM for m in result.mappings):
+        db.ensure_derives_from(conn)  # the edge type of migration 0008
     for m in result.mappings:
-        if m.type == ATTEMPT_LINK and db.get_node(conn, m.to_id) is None:
+        missing = [node_id for node_id in attempt_ends(m) if db.get_node(conn, node_id) is None]
+        if missing:
+            # Waiting, not refused: the entry stays in the file and is
+            # asserted once the attempt is there (a row read again, renumbered back).
             problem = MappingProblem(
-                m.index, m.line, "attempt_not_found",
-                f"{m.to_id} is not in the index (is the attempt table read? see 'researchos attempts'); "
+                m.index, m.line, WAITING,
+                f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not in the index "
+                "(is the attempt table read? see 'researchos attempts'); "
                 "the entry is kept and asserted once the attempt is there",
             )
             result.problems.append(problem)
-            counts["refused"] += 1
+            counts["waiting"] += 1
             logger.info("%s %s: %s", MAPPINGS_RELATIVE_PATH, problem.location(), problem.message)
             continue
-        ends = [(m.from_id, m.from_type, m.from_path)]
-        if m.type != ATTEMPT_LINK:
+        ends = [] if m.type == DERIVES_FROM else [(m.from_id, m.from_type, m.from_path)]
+        if m.type not in (ATTEMPT_LINK, DERIVES_FROM):
             ends.append((m.to_id, m.to_type, m.to_path))
         for node_id, node_type, rel in ends:
             if db.get_node(conn, node_id) is None:
@@ -794,6 +870,26 @@ def _commit(project_root: Path, old_text: str | None, new_text: str) -> str | No
     return backup
 
 
+def _check_attempts_present(project_root: Path, node_ids: list[str]) -> None:
+    """14.2: a line between attempts is drawn only between attempts the
+    index holds (a hand edit may still name one that is not: it waits).
+    No index at all holds none. Read only; never creates the index."""
+    db_path = paths.graph_db_path(project_root)
+    missing = list(node_ids)
+    if db_path.exists():
+        conn = db.connect(db_path)
+        try:
+            missing = [node_id for node_id in node_ids if db.get_node(conn, node_id) is None]
+        finally:
+            conn.close()
+    if missing:
+        raise MappingsWriteError(
+            WAITING,
+            f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not in the index "
+            "(is the attempt table read? see 'researchos attempts'); nothing written",
+        )
+
+
 def _check_round_trip(new_text: str, expected: list[Any]) -> None:
     try:
         parsed = tomllib.loads(new_text).get("mapping", [])
@@ -843,12 +939,20 @@ def _add_mapping(
         date = _dt.date.today().isoformat()
     candidate = {"from": from_path, "to": to_path, "type": type, "note": note, "date": date}
     norm_from, norm_to, edge_type = _validate_for_write(project_root, candidate)
+    if edge_type == DERIVES_FROM:
+        _check_attempts_present(project_root, [_ATTEMPT_PREFIX + norm_from, _ATTEMPT_PREFIX + norm_to])
     old_text, raw, loaded = _load_for_write(project_root)
     if any(m.key == (norm_from, norm_to, edge_type) for m in loaded.mappings):
         raise MappingsWriteError(
             "duplicate", f"mapping {norm_from} -> {norm_to} ({edge_type}) already exists"
         )
-    entry = {"from": norm_from, "to": _written_to(edge_type, norm_to), "type": edge_type}
+    if edge_type == DERIVES_FROM and _reaches(_route_parents(loaded.mappings), norm_to, norm_from):
+        raise MappingsWriteError(
+            "circle",
+            f"attempt:{norm_from} cannot grow out of attempt:{norm_to}: "
+            f"attempt:{norm_to} already grows out of attempt:{norm_from}, and the line would close a circle",
+        )
+    entry = {"from": _written_from(edge_type, norm_from), "to": _written_to(edge_type, norm_to), "type": edge_type}
     if note is not None:
         entry["note"] = note
     entry["date"] = date
@@ -1009,12 +1113,13 @@ def member_changes(project_root: str | Path, base_text: str | None, text: str | 
     in `base_text` (the official file their copy was synced to) and are the
     member's -- written by them, or by hand without a `by` -- and the links
     of `base_text` no longer in `text`. Entries that do not validate are
-    not carried."""
+    not carried, and neither is a line between attempts (14.2: a member's
+    「源自」 is a proposal the PI approves, never a packet entry)."""
     root = Path(project_root)
     base, mine = _entries_by_key(root, base_text), _entries_by_key(root, text)
     added = []
     for key, entry in mine.items():
-        if key in base or entry.get("by") not in (None, me):
+        if key in base or entry.get("by") not in (None, me) or key[2] == DERIVES_FROM:
             continue
         item = {"from": key[0], "to": _written_to(key[2], key[1]), "type": key[2]}
         for name in ("note", "date"):
@@ -1024,7 +1129,8 @@ def member_changes(project_root: str | Path, base_text: str | None, text: str | 
             if isinstance(value, str):
                 item[name] = value
         added.append(item)
-    removed = [{"from": k[0], "to": _written_to(k[2], k[1]), "type": k[2]} for k in base if k not in mine]
+    removed = [{"from": k[0], "to": _written_to(k[2], k[1]), "type": k[2]}
+               for k in base if k not in mine and k[2] != DERIVES_FROM]
     return added, removed
 
 
@@ -1092,6 +1198,8 @@ def apply_received(project_root: str | Path, packet_id: str, member: str, added:
             if not isinstance(entry, dict) or entry.get("by") != member:
                 raise _EntryRefused("not_theirs", "a removal carried from a member's area is that member's own")
             key = _validate_identity(root, entry)[:3]
+            if key[2] == DERIVES_FROM:
+                raise _EntryRefused("route_link", "a line between attempts goes as a proposal, not in a packet")
         except _EntryRefused as exc:
             out["problems"].append(f"removal #{n}: {exc}")
             continue
@@ -1108,6 +1216,8 @@ def apply_received(project_root: str | Path, packet_id: str, member: str, added:
             if not isinstance(entry, dict) or entry.get("by") != member:
                 raise _EntryRefused("not_theirs", "a link carried from a member's area is that member's own")
             norm_from, norm_to, edge_type = _validate_for_write(root, entry)
+            if edge_type == DERIVES_FROM:
+                raise _EntryRefused("route_link", "a line between attempts goes as a proposal, not in a packet")
         except (MappingsWriteError, _EntryRefused) as exc:
             out["problems"].append(f"link #{n}: {exc}")
             continue

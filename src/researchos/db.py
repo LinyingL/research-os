@@ -116,6 +116,10 @@ EDGE_TYPES = frozenset(
         # --belongs_to--> attempt`, a hand-drawn mapping only (extractor
         # "mapping", from `.researchos/mappings.toml`) -- 「关联文件」.
         "belongs_to",
+        # Added in migration 0008 (DESIGN.md 14.2): `attempt --derives_from-->
+        # attempt`, the child to the attempt it grew out of -- a hand-drawn
+        # mapping only, like `belongs_to` -- 「源自」.
+        "derives_from",
     }
 )
 
@@ -1308,6 +1312,24 @@ def ensure_v8_tables(conn: sqlite3.Connection) -> None:
     it, which holds the project lock (as `researchos.records.cards` does for
     0006)."""
     if not has_v8_tables(conn):
+        migrate(conn)
+
+
+def has_derives_from(conn: sqlite3.Connection) -> bool:
+    """Whether this index has migration 0008 (the `derives_from` edge type).
+    It adds no table, so its schema_migrations row is the evidence."""
+    try:
+        row = conn.execute("SELECT 1 FROM schema_migrations WHERE version = 8").fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return row is not None
+
+
+def ensure_derives_from(conn: sqlite3.Connection) -> None:
+    """Migrate an index made before 0008 -- by the first caller that needs
+    the type (the mappings ingest, which holds the project lock), as
+    `ensure_v8_tables` does for 0007."""
+    if not has_derives_from(conn):
         migrate(conn)
 
 

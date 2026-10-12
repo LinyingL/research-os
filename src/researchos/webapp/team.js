@@ -1584,7 +1584,7 @@
   // The link removals a publish would apply, each named (12.12: a member's
   // removal takes a link out of the official version).
   const RELATION_WORDS = { reads: "读取", writes: "写出", generates: "生成", belongs_to: "属于", includes: "引用",
-    cites: "引用", backed_by: "依据" };
+    cites: "引用", backed_by: "依据", derives_from: "源自" };
   function removalList(coming) {
     const wrap = mk("div", "team-removals");
     const list = (coming && coming.removals) || [];

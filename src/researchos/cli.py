@@ -694,7 +694,7 @@ def cmd_mappings(args: argparse.Namespace) -> int:
         return 0
     print(f"Mappings ({mappings_ingest.MAPPINGS_RELATIVE_PATH}): {_format_counts(report.counts)}")
     for problem in report.problems:
-        print(f"  refused {problem.location()}: {problem.message}")
+        print(f"  {'waiting' if problem.waiting else 'refused'} {problem.location()}: {problem.message}")
     return 0
 
 
@@ -1386,8 +1386,10 @@ def _trace_chain(project_root: Path, node: str, *, as_json: bool) -> int:
 def cmd_link(args: argparse.Namespace) -> int:
     """`researchos link FROM TO --type T` (DESIGN.md 8.5, 12.7): a hand-drawn
     mapping appended to .researchos/mappings.toml -- 「补上来源」 (`generates`,
-    `writes`) and 「关联文件」 (`belongs_to`, TO = attempt:<table>#<n>) --
-    then the mappings read again. `--remove` deletes the entry instead."""
+    `writes`), 「关联文件」 (`belongs_to`, TO = attempt:<table>#<n>) and
+    「源自」 (`derives_from`, DESIGN.md 14.2: FROM grew out of TO, both
+    attempt:<table>#<n>, both in the index) -- then the mappings read
+    again. `--remove` deletes the entry instead."""
     opened = _open(args.path)
     _refuse_frozen(opened, "researchos link")
     root = opened.root
@@ -1411,7 +1413,7 @@ def cmd_link(args: argparse.Namespace) -> int:
     verb = "Removed" if args.remove else "Added"
     print(f"{verb} {args.from_path} -> {args.to_path} ({args.type}) in {result['file']}")
     for problem in report.problems:
-        print(f"  refused {problem.location()}: {problem.message}")
+        print(f"  {'waiting' if problem.waiting else 'refused'} {problem.location()}: {problem.message}")
     return 0
 
 
@@ -3365,10 +3367,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "link",
         help="Append a hand-drawn mapping to .researchos/mappings.toml (repair a broken trace): "
-             "'generates'/'writes' (补上来源) or 'belongs_to' with TO = attempt:<table>#<n> (关联文件)",
+             "'generates'/'writes' (补上来源), 'belongs_to' with TO = attempt:<table>#<n> (关联文件), or "
+             "'derives_from' with FROM and TO both attempt:<table>#<n>: FROM grew out of TO (源自)",
     )
-    p.add_argument("from_path", metavar="FROM", help="project-relative path (script, data file or figure)")
-    p.add_argument("to_path", metavar="TO", help="project-relative path, or attempt:<table file>#<number> for belongs_to")
+    p.add_argument("from_path", metavar="FROM",
+                   help="project-relative path (script, data file or figure), or attempt:<table file>#<number> "
+                        "for derives_from")
+    p.add_argument("to_path", metavar="TO",
+                   help="project-relative path, or attempt:<table file>#<number> for belongs_to and derives_from")
     p.add_argument("--type", required=True, choices=list(mappings_ingest.MAPPING_TYPES))
     p.add_argument("--note", default=None, help="optional note, in your words")
     p.add_argument("--remove", action="store_true", help="remove this mapping instead")

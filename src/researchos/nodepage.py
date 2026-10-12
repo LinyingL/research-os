@@ -51,7 +51,7 @@ TYPE_WORDS = {
 RELATION_WORDS = {
     "reads": "读取", "writes": "写出", "generates": "生成", "includes": "引用", "cites": "引用",
     "belongs_to": "属于", "backed_by": "依据", "produces": "产出", "implements": "实现", "uses": "使用",
-    "supports": "支持", "authored_by": "作者是",
+    "supports": "支持", "authored_by": "作者是", "derives_from": "源自",
 }
 #: A relation no word above names (a newer engine's) -- never its English type on screen (8.8).
 RELATION_FALLBACK = "关联"

@@ -127,7 +127,7 @@ def test_0002_migration_preserves_data_from_0001_only_db(tmp_path):
         # Now upgrade with the package's real migrations dir: 0001 is already
         # recorded, so this applies [2, 3] (migration 0003 -- task W2 -- now
         # also ships in DEFAULT_MIGRATIONS_DIR).
-        assert db.migrate(conn) == [2, 3, 4, 5, 6, 7]
+        assert db.migrate(conn) == [2, 3, 4, 5, 6, 7, 8]
 
         for node_id, before in nodes_before.items():
             assert db.get_node(conn, node_id) == before
@@ -147,7 +147,7 @@ def test_0002_migration_applies_cleanly_on_a_fresh_empty_db(tmp_path):
     conn = db.connect(tmp_path / "fresh.db")
     try:
         # Migration 0003 (task W2) now also ships in DEFAULT_MIGRATIONS_DIR.
-        assert db.migrate(conn) == [1, 2, 3, 4, 5, 6, 7]
+        assert db.migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8]
         tables = {
             row[0]
             for row in conn.execute(
@@ -208,7 +208,7 @@ def test_0003_migration_preserves_data_from_0001_0002_db(tmp_path):
 
         # Upgrade with the package's real migrations dir: 0001/0002 already
         # recorded, so this applies exactly [3].
-        assert db.migrate(conn) == [3, 4, 5, 6, 7]
+        assert db.migrate(conn) == [3, 4, 5, 6, 7, 8]
 
         for node_id, before in nodes_before.items():
             assert db.get_node(conn, node_id) == before
@@ -249,6 +249,64 @@ def test_reads_writes_edge_types_accepted(conn):
     assert len(edges) == 1
     assert edges[0]["src"] == "script:scripts/gen.py"
     assert edges[0]["dst"] == "dataset:data/out.csv"
+
+
+# -- migration 0008: the 源自 line between attempts (DESIGN.md 14.2) -------
+
+
+def _edges_shape(conn):
+    columns = [tuple(r) for r in conn.execute("PRAGMA table_info(edges)").fetchall()]
+    indexes = sorted(
+        (r["name"], r["sql"]) for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'edges'"
+        ).fetchall()
+    )
+    return columns, indexes
+
+
+def test_0008_widens_the_edge_type_on_an_old_index_keeping_every_row_column_and_index(tmp_path):
+    """An index that ran 0001-0007 (a researcher's index before V10), with
+    rows carrying 0004's scan stamps and 0005's machine status, picks up
+    0008 through `ensure_derives_from`: nothing lost, the same columns and
+    indexes, and a `derives_from` row accepted where it was refused."""
+    upto_7 = tmp_path / "upto_7"
+    upto_7.mkdir()
+    for path in sorted(db.DEFAULT_MIGRATIONS_DIR.glob("*.sql")):
+        if int(path.stem.split("_", 1)[0]) <= 7:
+            (upto_7 / path.name).write_text(path.read_text())
+    conn = db.connect(tmp_path / "graph.db")
+    try:
+        assert db.migrate(conn, upto_7) == [1, 2, 3, 4, 5, 6, 7]
+        assert not db.has_derives_from(conn)
+        for node_id, kind in (("attempt:map.md#16", "attempt"), ("attempt:map.md#17", "attempt"),
+                              ("script:s.py", "script"), ("dataset:d.csv", "dataset")):
+            db.upsert_node(conn, node_id, kind, title=node_id)
+        db.upsert_edge(conn, "script:s.py", "dataset:d.csv", "writes", "dataflow",
+                       {"file": "s.py", "line": 3}, 0.9, scan_id=1, scan_source="s.py", basis={"a": 1})
+        db.upsert_edge(conn, "script:s.py", "attempt:map.md#16", "belongs_to", "mapping",
+                       {"file": ".researchos/mappings.toml", "source": "human"}, 1.0, human_source=True)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.upsert_edge(conn, "attempt:map.md#17", "attempt:map.md#16", "derives_from", "mapping",
+                           {"file": ".researchos/mappings.toml", "source": "human"}, 1.0, human_source=True)
+        conn.rollback()
+        rows_before = conn.execute("SELECT * FROM edges ORDER BY id").fetchall()
+        shape_before = _edges_shape(conn)
+
+        db.ensure_derives_from(conn)
+
+        assert db.has_derives_from(conn)
+        assert [tuple(r) for r in conn.execute("SELECT * FROM edges ORDER BY id").fetchall()] == \
+            [tuple(r) for r in rows_before]
+        assert _edges_shape(conn) == shape_before
+        assert db.migrate(conn) == []
+        db.upsert_edge(conn, "attempt:map.md#17", "attempt:map.md#16", "derives_from", "mapping",
+                       {"file": ".researchos/mappings.toml", "source": "human"}, 1.0, human_source=True)
+        (edge,) = db.query_edges(conn, type="derives_from")
+        assert (edge["src"], edge["dst"]) == ("attempt:map.md#17", "attempt:map.md#16")
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
 
 
 # -- node type CHECK -----------------------------------------------------

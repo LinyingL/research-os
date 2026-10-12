@@ -173,7 +173,9 @@ Endpoints (all GET unless noted):
     POST /api/mappings/add -- body `{"from", "to", "type", "note"?}`: append
                             one human mapping to `.researchos/mappings.toml` and
                             re-ingest it; returns the resulting link (8.5;
-                            see "Canvas write defense" below).
+                            see "Canvas write defense" below). With type
+                            `derives_from`, both ends are attempts
+                            (`attempt:<table>#<n>`, 14.2).
     POST /api/mappings/delete -- body `{"from", "to", "type"}`: remove that
                             entry from the file and re-ingest.
     POST /api/edges/reject -- body `{"src", "dst", "type", "extractor",
@@ -595,9 +597,10 @@ class ApiError(Exception):
     refusals that have their own product-language sentence
     (`mapping_exists` -> 「这条映射已存在」, `human_link` -> delete the
     标注 instead), the canvas layout's `project_changed` (the page drops
-    the write, `ProjectChangedError`), and the attempt form's coded refusals
-    (`AttemptEditError`, `attempt_*`) carry one; every other error stays a
-    plain message the page frames generically."""
+    the write, `ProjectChangedError`), the attempt form's coded refusals
+    (`AttemptEditError`, `attempt_*`) and a 「源自」 line's (`MappingEditError`,
+    `mapping_*`) carry one; every other error stays a plain message the page
+    frames generically."""
 
     status = 400
     state: str | None = None
@@ -696,9 +699,23 @@ class MappingEditError(ApiError):
     """`POST /api/mappings/add`/`.../delete` asked for an entry the
     phase-1a writer refuses (grammar, confinement, unknown extension, line
     breaks, an unreadable file) -- 400, its English message intact for the
-    hover title; the page frames it as 「无法标注：…」 (section 8.8)."""
+    hover title; the page frames it as 「无法标注：…」 (section 8.8).
+
+    `code` is the writer's machine-readable cause. The refusals of a line
+    between attempts the researcher can cause from the map (DESIGN.md 14.2:
+    an attempt not in the index, a line to itself, one that closes a circle)
+    also carry a `state` -- `mapping_` + the code -- so the page says one
+    sentence per cause; every other refusal stays framed generically."""
 
     status = 400
+    #: The codes with a sentence of their own on the page (8.8).
+    STATED = ("attempt_not_found", "self_link", "circle")
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        if code in self.STATED:
+            self.state = "mapping_" + code
 
 
 class MappingExistsError(ApiError):
@@ -2192,7 +2209,7 @@ def _mapping_write_error(exc: mappings_ingest.MappingsWriteError) -> ApiError:
         return MappingExistsError(str(exc))
     if exc.code == "not_found":
         return NotFoundError(str(exc))
-    return MappingEditError(str(exc))
+    return MappingEditError(str(exc), exc.code)
 
 
 def _reingest_mappings(project_root: Path) -> None:
@@ -2218,17 +2235,19 @@ def _mapping_link(project_root: Path, entry: dict[str, Any]) -> dict[str, Any] |
     """The link the just-written entry became, read back from the graph --
     so the response is what the canvas will draw, not an echo of the
     request. None if the re-ingest did not land it."""
-    from_type = dataflow_ingest.node_type_for_path(entry["from"])
-    to_path = entry["to"]
-    if entry["type"] == mappings_ingest.ATTEMPT_LINK:
-        # 12.7: `to` is the attempt's node id.
-        to_type, to_path = "attempt", to_path.removeprefix("attempt:")
-    else:
-        to_type = dataflow_ingest.node_type_for_path(entry["to"])
+    def end(value: str, attempt: bool) -> tuple[str | None, str]:
+        # 12.7, 14.2: an attempt end is written as the attempt's node id.
+        if attempt:
+            return "attempt", value.removeprefix("attempt:")
+        return dataflow_ingest.node_type_for_path(value), value
+
+    kind = entry["type"]
+    from_type, from_path = end(entry["from"], kind == mappings_ingest.DERIVES_FROM)
+    to_type, to_path = end(entry["to"], kind in (mappings_ingest.ATTEMPT_LINK, mappings_ingest.DERIVES_FROM))
     if from_type is None or to_type is None:
         return None
     mapping = mappings_ingest.Mapping(
-        from_path=entry["from"], to_path=to_path, type=entry["type"],
+        from_path=from_path, to_path=to_path, type=kind,
         from_type=from_type, to_type=to_type,
     )
     db_path = paths.graph_db_path(project_root)
