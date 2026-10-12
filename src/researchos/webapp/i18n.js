@@ -144,7 +144,7 @@
     "文件": "Files",
     "新增尝试 #{number}：{description}": "New attempt #{number}: {description}",
     "（无描述）": "(no description)",
-    "#{number} 的判决从「{was}」改为「{became}」": "#{number}: verdict changed from “{was}” to “{became}”",
+    "#{number} 的判决从「{was}」改为「{became}」": "#{number}: change the verdict from “{was}” to “{became}”",
     "，放弃这条路线": ", abandoning the route",
     "变量 {card} 的第 {version} 版定义": "Variable {card}: definition version {version}",
     "，附带 {n} 个文件": { one: ", with {n} file", other: ", with {n} files" },

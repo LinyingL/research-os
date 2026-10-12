@@ -1382,17 +1382,17 @@ def test_13_7_the_desk_in_english():
     for line in [
         "desk-title: Awaiting your approval", "desk-when: 1 Mar 2024", "status-label tone-plain: New attempt",
         "desk-what strong: New attempt #18: 新路线, with 1 file",
-        "desk-what strong: #16: verdict changed from “Pending” to “Abandoned”, abandoning the route, with 2 files",
+        "desk-what strong: #16: change the verdict from “Pending” to “Abandoned”, abandoning the route, with 2 files",
         "desk-sub: Last looked: 20 Feb 2024", "desk-link mono: steps/16-build.py (title: Open this file)",
         "desk-what: 12 lines added, 1 line removed (not committed yet)", "own-mark: My change, not yet proposed",
-        "desk-meta: Li, Original researcher · Approved by Wang · Changed 3 times in this period",
+        "desk-meta: Li and Original researcher · Approved by Wang · Changed 3 times in this period",
         "desk-what: Verdict changed from [verdict-inline] to [verdict-inline]", "status-label tone-ochre: Pending",
         "desk-what: New attempt, verdict [verdict-inline]", "status-label tone-plain: 成立",
         "desk-what: Result changed to: (empty)", "status-label tone-plain: Other", "desk-note: Reason: spurious",
         "desk-what: Approved a proposal to change a verdict", "desk-meta: Proposed by Wang · Approved by Li",
         "desk-what: Note on", "desk-link: a record", "desk-repair: Fix with “Add source”",
         "desk-break: The data file is not on disk: data/raw.csv",
-        "desk-break: 2 linked judgments in its sources need review[desk-link]", "desk-meta: Cited by paper.md, notes.md",
+        "desk-break: 2 linked judgments in its sources need review[desk-link]", "desk-meta: Cited by paper.md and notes.md",
         "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
         "status-label tone-gray: 放弃了", "desk-link: See their basis at the time in Research routes",
     ]:
@@ -1405,7 +1405,7 @@ def test_13_7_the_desk_in_english():
                         "desk-empty: No route has been abandoned yet."]
     for line in ["desk-meta: Awaiting PI approval · The PI says: 先补稳健性", "desk-note plain: Variable log_ret: definition version 2",
                  "desk-meta: Returned: redo it", "desk-what strong: 3 files: 1.py, 2.py and others", "status-label tone-plain: Proposal",
-                 "desk-what strong: #17: verdict changed from “Current” to “成立”", "desk-title: Official version updated",
+                 "desk-what strong: #17: change the verdict from “Current” to “成立”", "desk-title: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 1 day."]:
         assert line in desks[2], line
@@ -1413,6 +1413,39 @@ def test_13_7_the_desk_in_english():
     assert "desk-empty: The PI has not published an official version yet." in desks[4]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "zh", "en"])
+def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
+    """A row's people (and the PIs who approved) as each language lists
+    them: in English the last two joined by “and”, 13.4's “Original
+    researcher” as the glossary writes it; in Chinese with 「、」 as before.
+    A proposal's line says what approving it would do, not what is done."""
+    zh = saved != "en"
+    first = "最初的研究者" if zh else "Original researcher"
+    change = {"kind": "file", "path": "a.py", "at": "2024-03-01T12:00:00", "who": ["Li", "Wang", first],
+              "approved_by": ["Zhao", "Qian"], "versions": 1, "notes": [], "what_code": "changed",
+              "what": "内容有改动" if zh else "Content changed"}
+    decision = {"kind": "decision", "at": "2024-02-26T12:00:00", "act": "approved", "proposal_kind": "files",
+                "who": ["Wang"], "approved_by": ["Li", "Zhao"], "versions": 1, "notes": []}
+    verdict = {"kind": "verdict_change", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T11:00:00",
+               "verdict": {"number": "16", "old_status": {"status": "pending", "label": "待定"},
+                           "new_status": {"status": "current", "label": "现行"}}}
+    case = {"me": {"me": {"id": "li@example.com", "name": "Li"}}, "proposals": {"role": "pi", "proposals": [verdict]},
+            "share": {}, "desk": {"since_default": True, "default_days": 7, "changes": [change, decision], "results": [],
+                                  "review": 0, "abandoned": []}}
+    i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
+    desk = _node("global.window = {};\n" + i18n + _DESK_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8")
+                 + f"\n(async () => process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case)}))))();\n")
+    meta = [line for line in desk if line.startswith(("desk-meta", "desk-what strong"))]
+    if zh:
+        assert meta == ["desk-what strong: #16 的判决从「待定」改为「现行」", "desk-meta: wang@example.com",
+                        "desk-meta: Li、Wang、最初的研究者 · 经 Zhao、Qian 批准", "desk-meta: 提议人 Wang · 批准人 Li、Zhao"]
+    else:
+        assert meta == ["desk-what strong: #16: change the verdict from “Pending” to “Current”", "desk-meta: wang@example.com",
+                        "desk-meta: Li, Wang and Original researcher · Approved by Zhao and Qian",
+                        "desk-meta: Proposed by Wang · Approved by Li and Zhao"]
 
 
 #: Payload keys that hold the researcher's text or a fixed name (13.1), shown as written in either language.

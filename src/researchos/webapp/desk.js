@@ -108,6 +108,12 @@
   // render functions keep a local of that name.)
   function series(xs) { return xs.join(t("、")); }
 
+  // People (and drafts) named in a sentence: in English the last two joined
+  // by "and" ("Li, Wang and Original researcher"); in Chinese as series.
+  function andSeries(xs) {
+    return english() && xs.length > 1 ? series(xs.slice(0, -1)) + " and " + xs[xs.length - 1] : series(xs);
+  }
+
   // A sentence whose fields are elements (a verdict's label): the template's
   // text around them, in the template's own word order (13.6).
   function fillNodes(parent, template, nodes) {
@@ -402,7 +408,7 @@
     const at = mk("span", "desk-when", whenWords(item.at, now()));
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    const who = series(item.who || []);
+    const who = andSeries(item.who || []);
     if (item.kind === "file") {
       head.appendChild(rowLink(item.path, "mono", () => RONode.openNode(item.node || item.path), t("打开这个文件")));
       head.appendChild(mk("span", "desk-what", item.uncommitted ? t("{what}（还没有提交）", { what: item.what })
@@ -436,10 +442,10 @@
     const meta = [];
     if (item.kind === "decision") {
       meta.push(t("提议人 {who}", { who: who }));
-      if (item.approved_by && item.approved_by.length) meta.push(t("批准人 {who}", { who: series(item.approved_by) }));
+      if (item.approved_by && item.approved_by.length) meta.push(t("批准人 {who}", { who: andSeries(item.approved_by) }));
     } else if (who) {
       meta.push(who);
-      if (item.approved_by && item.approved_by.length) meta.push(t("经 {who} 批准", { who: series(item.approved_by) }));
+      if (item.approved_by && item.approved_by.length) meta.push(t("经 {who} 批准", { who: andSeries(item.approved_by) }));
     }
     if (item.versions > 1) meta.push(t("这段时间里改了 {n} 次", { n: numberText(item.versions) }));
     main.appendChild(metaLine(meta));
@@ -500,7 +506,7 @@
           line.appendChild(rowLink(t("复核"), "", () => openReviewPanel(null)));
           main.appendChild(line);
         }
-        if (r.drafts && r.drafts.length) main.appendChild(metaLine([t("文稿 {drafts} 引用了它", { drafts: series(r.drafts) })]));
+        if (r.drafts && r.drafts.length) main.appendChild(metaLine([t("文稿 {drafts} 引用了它", { drafts: andSeries(r.drafts) })]));
         row.appendChild(main);
         ul.appendChild(row);
       });
