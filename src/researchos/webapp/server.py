@@ -1573,15 +1573,16 @@ def github_create_repo_payload(served: ServedProject, body: dict[str, Any]) -> d
         raise GitHubPushApiError(exc) from exc
 
 
-def github_push_payload(served: ServedProject, body: dict[str, Any]) -> dict[str, Any]:
-    """`POST /api/github/push` (11.3): `{token, commit_records?}`."""
+def github_push_payload(served: ServedProject, body: dict[str, Any], lang: str = "zh") -> dict[str, Any]:
+    """`POST /api/github/push` (11.3): `{token, commit_records?}`; the
+    returned state's sentence in `lang` (13.2)."""
     root = _push_served(served, writes=True)
     token = _token_of(body)
     tick = body.get("commit_records", False)
     if not isinstance(tick, bool):
         raise MissingParamError("'commit_records' must be true or false")
     try:
-        return githubpush.push(root, token, served.project_id, commit_records=tick)
+        return githubpush.push(root, token, served.project_id, commit_records=tick, lang=lang)
     except githubpush.PushError as exc:
         raise GitHubPushApiError(exc) from exc
 
@@ -3379,7 +3380,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, github_create_repo_payload(self._served(), self._read_json_object()))
             elif parsed.path == "/api/github/push":
                 # 11.3 「推送」: the only request that pushes; never forced.
-                self._send_json(200, github_push_payload(self._served(), self._read_json_object()))
+                self._send_json(200, github_push_payload(self._served(), self._read_json_object(), lang=self._lang()))
             elif parsed.path in ("/api/citations/lookup-setting", "/api/zotero/open-attachment", "/api/zotero/open-item"):
                 # 11.4: the 「文献」 view's setting and its two openers; a
                 # judgment on a candidate is POST /api/judgements.

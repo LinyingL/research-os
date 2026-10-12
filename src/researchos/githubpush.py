@@ -846,10 +846,13 @@ def _run_push(root: Path, remote: str, branch: str, set_upstream: bool) -> str:
     raise PushError(code, f"git push {remote} {branch} failed: {text}")
 
 
-def push(root: str | Path, token: Any, project_id: str | None = None, *, commit_records: bool = False) -> dict[str, Any]:
+def push(root: str | Path, token: Any, project_id: str | None = None, *, commit_records: bool = False,
+         lang: str = "zh") -> dict[str, Any]:
     """Re-plan, refuse on any blocker or a changed plan, then `git push`
     (module docstring). With `commit_records`, the records are committed
-    first (the plan's 「先把人工记录提交一次」)."""
+    first (the plan's 「先把人工记录提交一次」). `lang`: the language of the
+    returned `state`'s sentence, which the page shows under the project
+    menu's GitHub line (13.2, 13.7); the push's own words stay Chinese."""
     root = Path(root)
     committed = None
     try:
@@ -875,7 +878,7 @@ def push(root: str | Path, token: Any, project_id: str | None = None, *, commit_
             if current["nothing_to_push"]:
                 return {
                     "pushed": False, "records": committed, "message": "GitHub 已经有全部提交，没有要推送的",
-                    "detail": "", "state": github.state(root), "plan": current,
+                    "detail": "", "state": github.state(root, lang), "plan": current,
                 }
             remote = current["remote"]["remote"]
             branch = current["branch"]
@@ -889,6 +892,6 @@ def push(root: str | Path, token: Any, project_id: str | None = None, *, commit_
         "count": count,
         "message": f"已推送到 GitHub：{count} 个提交（{remote}/{branch}）",
         "detail": text,
-        "state": github.state(root),
+        "state": github.state(root, lang),
         "plan": plan(root),
     }

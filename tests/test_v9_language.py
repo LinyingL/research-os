@@ -1746,6 +1746,29 @@ def test_13_7_api_github_speaks_the_requests_language(tmp_path, stand_in, linked
     assert status == 200 and _DATE.sub("<date>", st["message"]) == "本地领先 0 个提交，落后 1 个（<date> 获取）"
 
 
+def test_13_7_api_github_push_answers_with_the_state_in_the_requests_language(stand_in, linked_server):
+    """POST /api/github/push answers with the state the page puts under the
+    project menu's GitHub line at once (13.2): in the request's language, as
+    /api/github does -- after a push and when there was nothing to push;
+    Chinese without the header or with zh. The push's own words stay
+    Chinese (the push dialog is a later increment)."""
+    from test_v7_push import _commit
+
+    live, work = linked_server
+    said = []
+    for n, headers in enumerate(({"X-ResearchOS-Lang": "en"}, {}, {"X-ResearchOS-Lang": "zh"})):
+        _commit(work, f"step{n}.py", "x\n", f"step {n}")
+        for _round in ("pushed", "nothing to push"):
+            status, plan = live.raw("GET", "/api/github/push-plan", {})
+            assert status == 200
+            status, res = live.raw("POST", "/api/github/push", {"Content-Type": "application/json", **headers},
+                                   {"token": plan["token"]})
+            assert status == 200 and CJK.search(res["message"])
+            said.append((res["pushed"], res["state"]["message"]))
+    assert said == [(True, "In sync with GitHub"), (False, "In sync with GitHub"),
+                    (True, "与 GitHub 一致"), (False, "与 GitHub 一致"), (True, "与 GitHub 一致"), (False, "与 GitHub 一致")]
+
+
 # -- the English install guide against the real strings (13.7, 12.13) ----------------------------------------
 
 #: The English labels the guide quotes, in bold, from surfaces now in English (13.7): each is an
