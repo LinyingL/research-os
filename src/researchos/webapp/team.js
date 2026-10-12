@@ -1371,10 +1371,11 @@
     const myId = me && me.me ? me.me.id : null;
     team.forEach((t) => {
       const tr = mk("tr");
-      const nameCell = mk("td", null, t.name || t.id);
+      const nameCell = mk("td", "team-name", t.name || t.id);
       if (t.id === myId) nameCell.appendChild(mk("span", "team-you", "你"));
-      tr.append(nameCell, mk("td", null, ROLE_WORDS[t.role] || t.role), mk("td", "mono", t.id),
-        mk("td", "mono", t.fingerprint || "没有公钥"));
+      // Only the fingerprint, one long unbroken string, may break anywhere.
+      tr.append(nameCell, mk("td", "team-role", ROLE_WORDS[t.role] || t.role), mk("td", "mono team-email", t.id),
+        mk("td", "mono team-fp", t.fingerprint || "没有公钥"));
       tbody.appendChild(tr);
     });
     table.append(thead, tbody);
@@ -1671,7 +1672,7 @@
     det.appendChild(mk("summary", null, share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
     det.appendChild(line("在个人版 OneDrive 里，PI 分别共享「已发布」（只能查看）和你自己的提议文件夹（可以编辑），它们会在你的电脑上变成两个文件夹。分别选好：", "quiet"));
     const pub = pathField("公盘的「已发布」文件夹（PI 共享给你，只能查看）", "shared", "已发布文件夹的完整路径");
-    const mine = pathField("你自己的提议文件夹（PI 共享给你，可以编辑）", "shared", "你的提议文件夹的完整路径");
+    const mine = pathField("你自己的提议文件夹（PI 共享给你，可以编辑）", "mine", "你的提议文件夹的完整路径");
     if (share.two_folders && share.shared) pub.input.value = share.shared;
     if (share.mine && share.mine.path) mine.input.value = share.mine.path;
     det.append(pub.wrap, mine.wrap);
@@ -1869,7 +1870,7 @@
     // 3. where
     panelBody.appendChild(mk("h3", "panel-h3", "3. 公盘和工作副本"));
     const shared = pathField("公盘文件夹，或 PI 共享给你的「已发布」文件夹", "shared", "公盘文件夹的完整路径");
-    const mine = pathField("你自己的提议文件夹（PI 单独共享给你时才选；也可以以后在「成员」里选）", "shared", "可以不填");
+    const mine = pathField("你自己的提议文件夹（PI 单独共享给你时才选；也可以以后在「成员」里选）", "mine", "可以不填");
     const folder = pathField("工作副本放在哪里（一个新的或空的文件夹）", "working", "例如 ~/Documents/某某项目_我的副本");
     panelBody.append(shared.wrap, mine.wrap, folder.wrap);
     const status = mk("div", "notice-status");

@@ -335,7 +335,7 @@ def test_8_8_a_timeline_names_the_member_and_the_pi_and_nobody_recorded_is_the_f
         assert newest["who_label"] == MEMBER[0] and newest["approved_by_label"] == PI[0]
         table = history.versions(drive.official, "map.md")["versions"]
         assert table[0]["who_label"] == MEMBER[0] and table[0]["approved_by_label"] == PI[0]
-        assert table[-1]["who_label"] == "最初的研究者"
+        assert table[-1]["who_label"] == PI[0]  # 12.13: the PI's own scan (me.toml set) is named
     with drive.member():
         assert cli.main(["ingest", str(drive.work)]) == 0
         # 12.13: a version 加入/同步 installed is the publish's -- the PI and the snapshot.

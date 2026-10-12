@@ -180,8 +180,19 @@
       const m = l.human ? l.mapping : null;
       if (m && (m.date || m.note)) out.push({ kind: "link", at: m.date || "", link: l, m: m });
     });
-    out.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+    out.sort((a, b) => timeKey(b.at) - timeKey(a.at));
     return out;
+  }
+
+  // A link's `date` in mappings.toml is a local calendar day with no time
+  // (8.5): it is not midnight UTC. It sorts at the end of that day, the
+  // latest it can be; any other time sorts by the instant it names.
+  const DAY_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+  function timeKey(at) {
+    const m = DAY_ONLY.exec(String(at || ""));
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59, 999).getTime();
+    const t = Date.parse(String(at || ""));
+    return isNaN(t) ? -Infinity : t;
   }
 
   // -- runtime ------------------------------------------------------------------------
@@ -192,7 +203,17 @@
   let meCache = { epoch: -1, id: null, loaded: false };
 
   function now() { return new Date(); }
-  function when(at) { return at ? RODesk._whenWords(at, now()) || String(at) : ""; }
+  // A day with no time is said as the day (「今天」, 「10月4日」), never a made-up hour.
+  function when(at) {
+    if (!at) return "";
+    const m = DAY_ONLY.exec(String(at));
+    if (!m) return RODesk._whenWords(at, now()) || String(at);
+    const t = now();
+    const days = Math.round((new Date(t.getFullYear(), t.getMonth(), t.getDate()) - new Date(+m[1], +m[2] - 1, +m[3])) / 86400000);
+    if (days === 0) return "今天";
+    if (days === 1) return "昨天";
+    return (+m[1] === t.getFullYear() ? "" : +m[1] + "年") + +m[2] + "月" + +m[3] + "日";
+  }
 
   function icon(type) {
     const d = ICONS[type === "ref" ? "reference" : type] || ICONS.file;
@@ -1342,6 +1363,6 @@
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
-    _tableWords: tableWords, _timeline: timeline, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
+    _tableWords: tableWords, _timeline: timeline, _when: when, _timeKey: timeKey, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
   });
 })();

@@ -65,6 +65,8 @@
 //   "choose-file", request, purpose: "key"}` (a member's public key file,
 //   for the PI), answered through the same callback. The page learns of
 //   them from "choose-folder-share" and "choose-file-key".
+//   Since V8 12.13: one more folder purpose, "mine" (a member's own
+//   proposals folder, shared with them on its own), from "choose-folder-mine".
 //   Since V8 U5 (DESIGN.md 12.9): `{type: "mode", mode: String}`, mode
 //   exactly one of teamModes, sent by the page whenever it learns the open
 //   project's role. It only shows or hides 文件 > 提交提议… (a member) and
@@ -104,7 +106,7 @@ let startupBudget: TimeInterval = 4.0
 let documentsHint = "正在启动引擎… 如果系统询问是否允许 Research OS 访问\"文稿\"文件夹，请点\"允许\"。"
 let titleLimit = 60
 // What the page may ask the shell for (app.html, shellCan).
-let shellFeaturesScript = "window.RCEShellFeatures = [\"choose-folder\", \"choose-folder-purpose\", \"choose-folder-share\", \"choose-file-key\"];"
+let shellFeaturesScript = "window.RCEShellFeatures = [\"choose-folder\", \"choose-folder-purpose\", \"choose-folder-share\", \"choose-folder-mine\", \"choose-file-key\"];"
 // The page's own request ids ("folder-<time>-<random>"): anything else is ignored.
 let folderRequestLimit = 80
 
@@ -116,6 +118,7 @@ func folderPanelMessage(_ purpose: String) -> String? {
     case "locate": return "选择项目文件夹的新位置"
     case "shared": return "选择公盘文件夹（和团队共享的 OneDrive 文件夹）"
     case "working": return "选择一个空文件夹，用来放你的工作副本"
+    case "mine": return "选择你自己的提议文件夹（PI 共享给你、你可以编辑的那个）"
     default: return nil
     }
 }

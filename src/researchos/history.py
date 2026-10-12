@@ -515,6 +515,24 @@ def _attempt_digest(fields: dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(fields, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def record_attempt_rows(store: Store, rows: Iterable[tuple[str, Any, Any]], *, source: str = "scan",
+                        who: str | None = None, note: str | None = None, approved_by: str | None = None,
+                        snapshot: int | None = None) -> int:
+    """Each (attempt node id, verdict, result), recorded when it differs
+    from the newest version of that attempt."""
+    recorded = 0
+    for node_id, verdict, result in rows:
+        fields = {"verdict": str(verdict or ""), "result": str(result or "")}
+        digest = _attempt_digest(fields)
+        latest = store.latest(node_id)
+        if latest is not None and latest.sha256 == digest:
+            continue
+        store.add(node_id, sha256=digest, size=None, kind="attempt", source=source, who=who, note=note,
+                  summary=fields, approved_by=approved_by, snapshot=snapshot)
+        recorded += 1
+    return recorded
+
+
 def record_attempts(store: Store, conn: Connection, *, source: str = "scan", who: str | None = None,
                     note: str | None = None, approved_by: str | None = None,
                     only: Iterable[str] | None = None) -> int:
@@ -522,21 +540,34 @@ def record_attempts(store: Store, conn: Connection, *, source: str = "scan", who
     newest version (an attempt no longer in the table keeps its history).
     `only` limits it to those attempt node ids (an approval records the
     one attempt it changed, with who proposed and who approved)."""
-    recorded = 0
     wanted = set(only) if only is not None else None
+    rows = []
     for node in db.get_nodes_by_type(conn, "attempt"):
         if wanted is not None and node["id"] not in wanted:
             continue
         hf = node.get("human_fields") or {}
-        fields = {"verdict": str(hf.get("verdict") or ""), "result": str(hf.get("result") or "")}
-        digest = _attempt_digest(fields)
-        latest = store.latest(node["id"])
-        if latest is not None and latest.sha256 == digest:
-            continue
-        store.add(node["id"], sha256=digest, size=None, kind="attempt", source=source, who=who, note=note,
-                  summary=fields, approved_by=approved_by)
-        recorded += 1
-    return recorded
+        rows.append((node["id"], hf.get("verdict"), hf.get("result")))
+    return record_attempt_rows(store, rows, source=source, who=who, note=note, approved_by=approved_by)
+
+
+def scan_who(root: Path) -> str | None:
+    """Who a version this machine's scan sees is credited to (12.13): the
+    researcher named in me.toml -- except in a member's working copy, where
+    a version with no other attribution is 「本机」, and on a machine
+    without me.toml (nobody to name; read as 「最初的研究者」)."""
+    from researchos import people, proposals  # noqa: PLC0415
+
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        return None
+    if me is None:
+        return None
+    try:
+        member_copy = proposals.joined_not_pi(root, me)
+    except Exception:  # noqa: BLE001 -- not a working copy as far as anything here knows
+        member_copy = False
+    return None if member_copy else me
 
 
 def _is_git(root: Path) -> bool:
@@ -590,14 +621,15 @@ def record_scan(conn: Connection | None, project_root: str | Path, *, files: Ite
         candidates += _record_paths(root)
     else:
         candidates = list(files)
+    who = scan_who(root)
     with Store.open(got.identity.id) as store:
         for rel in dict.fromkeys(candidates):
             if tracked is not None and rel in tracked:
                 continue
-            outcome = record_file(store, root, rel)
+            outcome = record_file(store, root, rel, who=who)
             counts[outcome] = counts.get(outcome, 0) + 1
         if conn is not None:
-            counts["attempts"] = record_attempts(store, conn)
+            counts["attempts"] = record_attempts(store, conn, who=who)
     return counts
 
 

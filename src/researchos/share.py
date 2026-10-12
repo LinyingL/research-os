@@ -918,18 +918,33 @@ def record_installed(root: Path, pid: str, rels: Iterable[str], snap: "Snapshot"
     it came from -- the PI and the snapshot -- not to 「本机」: each file
     goes into the history store with `source = "publish"`, `who` = the PI,
     `snapshot` = its seq and the publish's note. A file git tracks has git
-    as its history. Contained: the history never fails the sync."""
+    as its history. An installed attempt table's rows that moved are
+    recorded the same way, before the member's next scan re-reads them
+    (which then finds nothing new). Contained: the history never fails the
+    sync."""
+    from researchos import proposals  # noqa: PLC0415
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
     count = 0
+    note = snap.data.get("note")
+    note = str(note) if isinstance(note, str) and note else None
+    rels = list(rels)
     try:
         tracked = history._tracked(root) if history._is_git(root) else None
         with history.Store.open(pid) as store:
             for rel in rels:
                 if tracked is not None and rel in tracked:
                     continue
-                note = snap.data.get("note")
-                got = history.record_file(store, root, rel, source="publish", who=pi, snapshot=snap.seq,
-                                          note=str(note) if isinstance(note, str) and note else None)
+                got = history.record_file(store, root, rel, source="publish", who=pi, snapshot=snap.seq, note=note)
                 count += got == "recorded"
+            config = proposals._attempts_config(root)
+            if config is not None and config.file in rels:
+                text = (root / config.file).read_text(encoding="utf-8")
+                rows = {}
+                for row in attempts_ingest.parse_attempts_table(text, config.heading, config.columns):
+                    rows.setdefault(attempts_ingest._node_id(config.file, row.number), (row.verdict, row.result))
+                count += history.record_attempt_rows(store, [(n, v, r) for n, (v, r) in rows.items()],
+                                                     source="publish", who=pi, snapshot=snap.seq, note=note)
     except Exception:  # noqa: BLE001 -- see the docstring
         logger.exception("recording the published versions in %s failed", root)
     return count
@@ -1393,7 +1408,10 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None) -> dict[str, An
         raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
     # 12.4: the member's own notes and link judgments go with every sync.
     out["entries_sent"] = _send_entries(root, pid, state, base, shared, out["problems"], now)
-    if out["entries_sent"]:
+    present = _present(root, state.get("official_copies"))
+    pruned = present != list(state.get("official_copies") or [])
+    state["official_copies"] = present  # a copy the member deleted is no longer beside their file
+    if out["entries_sent"] or pruned:
         _write_state(pid, state)  # what was sent is never sent again
     target = chain.last_good
     if target is None or target.seq <= state["seq"]:
@@ -2234,11 +2252,11 @@ def status(root: str | Path) -> dict[str, Any]:
                     out["inbox_error"] = str(exc)
         return out
     if joined_here and state:
-        out["joined"] = {k: state.get(k) for k in ("seq", "pi", "pi_fingerprint", "trusted_on_first_join", "synced",
-                                                    "official_copies")}
+        out["joined"] = {k: state.get(k) for k in ("seq", "pi", "pi_fingerprint", "trusted_on_first_join", "synced")}
         # 12.3: each official copy put beside the member's file, with the
-        # difference shown.
-        out["joined"]["beside"] = _beside(root, state.get("official_copies") or [])
+        # difference shown -- one the member has deleted is gone from here.
+        out["joined"]["official_copies"] = _present(root, state.get("official_copies"))
+        out["joined"]["beside"] = _beside(root, out["joined"]["official_copies"])
         out["warnings"] = warnings(state.get("pi_key"))
         mine = shared.area_set_apart(me) if me else None
         out["mine"] = {"path": str(mine), "reachable": mine.is_dir()} if mine is not None else None
@@ -2367,6 +2385,11 @@ def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
 
 
 _COPY_RE = re.compile(r"^(?P<stem>.+?)" + re.escape(OFFICIAL_INFIX) + r"(?:-\d+)?(?P<ext>\.[^./]*)?$")
+
+
+def _present(root: Path, copies: Iterable[str] | None) -> list[str]:
+    """The `.official` copies still in the working copy."""
+    return [str(c) for c in (copies or []) if os.path.lexists(root / str(c))]
 
 
 def _beside(root: Path, copies: Iterable[str]) -> list[dict[str, Any]]:

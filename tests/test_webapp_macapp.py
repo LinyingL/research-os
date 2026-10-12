@@ -437,7 +437,7 @@ def test_shell_choose_folder_answers_through_a_fixed_callback_with_arguments():
     assert '["request": request, "path": path ?? NSNull()]' in answer
     assert "\\(" not in answer  # no string interpolation anywhere in the callback
     assert ('let shellFeaturesScript = "window.RCEShellFeatures = [\\"choose-folder\\", \\"choose-folder-purpose\\", '
-            '\\"choose-folder-share\\", \\"choose-file-key\\"];"') in _SHELL
+            '\\"choose-folder-share\\", \\"choose-folder-mine\\", \\"choose-file-key\\"];"') in _SHELL
     assert "injectionTime: .atDocumentStart, forMainFrameOnly: true" in _SHELL
     validator = _SHELL[_SHELL.index("func isFolderRequest"):]
     validator = validator[: validator.index("\n}\n")]

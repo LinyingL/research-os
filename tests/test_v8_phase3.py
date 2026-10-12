@@ -323,7 +323,7 @@ def test_12_10_3_a_changed_file_approved_keeps_the_replaced_version(team):
         kept = team.official / ".researchos" / "backups" / "approved" / stored.id / "steps" / "16-build.py"
         assert kept.read_text() == original
         whos = [v["who"] for v in history.versions(team.official, "steps/16-build.py")["versions"]]
-        assert whos[0] == "wang@example.com" and None in whos[1:]
+        assert whos[0] == "wang@example.com" and "li@example.com" in whos[1:]  # 12.13: the PI's own scan is named
 
 
 # -- variable versions ----------------------------------------------------------------------

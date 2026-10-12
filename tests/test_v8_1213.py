@@ -129,8 +129,64 @@ def test_12_13_a_version_sync_installed_is_the_publish_s_the_pi_and_the_snapshot
         assert cli.main(["ingest", str(drive.work)]) == 0
         assert history.versions(drive.work, "steps/16-build.py")["versions"][0]["who_label"] == "本机"
     with drive.pi():
-        unknown = history.versions(drive.official, "steps/17-plot.py")["versions"][-1]
-        assert unknown["who_label"] == "最初的研究者"
+        # The PI's own scan (me.toml present) is named; a pre-V8 entry without `by` is 「最初的研究者」.
+        assert history.versions(drive.official, "steps/17-plot.py")["versions"][-1]["who_label"] == PI[0]
+        with history.Store.open(drive.pid) as store:
+            store.add("file:steps/old.py", sha256="0" * 64, size=1, kind="text")
+            [old] = [history._store_payload(v) for v in store.versions("file:steps/old.py")]
+        assert history.name_people(drive.official, [old])[0]["who_label"] == "最初的研究者"
+
+
+def test_12_13_an_attempt_row_sync_installed_is_the_publish_s_not_this_machine_s(drive):
+    """Verifier round 3: a row the PI changed and published reads as the
+    PI and the snapshot in the member's copy, after the member's scan."""
+    with drive.pi():
+        (drive.official / "map.md").write_text(_map("✅").replace("t=2.91", "t=3.05"))
+        published = share.publish(drive.official, note="16 的结果更新")
+    with drive.member():
+        share.sync(drive.work)
+        assert cli.main(["ingest", str(drive.work)]) == 0
+        [newest, *_older] = history.versions(drive.work, "attempt:map.md#16")["versions"]
+        assert (newest["source"], newest["who"], newest["snapshot"]) == ("publish", PI[1], published["seq"])
+        assert newest["who_label"] == PI[0] and newest["result"] == "t=3.05" and newest["note"] == "16 的结果更新"
+        assert all(v["who_label"] != "本机" for v in history.versions(drive.work, "attempt:map.md#16")["versions"])
+
+
+def test_12_13_the_pi_s_own_scan_is_named_not_the_first_researcher(drive):
+    """Verifier round 3: on the PI's machine (me.toml set) a V8 scan names
+    the PI, in the history and on the desk."""
+    from researchos import desk
+
+    with drive.pi():
+        (drive.official / "data" / "panel.csv").write_text(_csv(97))
+        _scan(drive.official)
+        newest = history.versions(drive.official, "data/panel.csv")["versions"][0]
+        assert (newest["who"], newest["who_label"]) == (PI[1], PI[0])
+        conn = _conn(drive.official)
+        try:
+            changes = desk.desk(conn, drive.official, None)["changes"]
+        finally:
+            conn.close()
+        [panel] = [c for c in changes if c.get("path") == "data/panel.csv"]
+        assert panel["who"] == [PI[0]]
+
+
+def test_12_13_a_deleted_official_copy_leaves_the_list_without_a_new_snapshot(drive):
+    """Verifier round 3 (the guide's conflict section): once the member
+    deletes the `.official` copy, 「放在旁边的官方版本」 no longer lists it --
+    at once in the status, and an up-to-date 同步 forgets it."""
+    with drive.pi():
+        (drive.official / "steps" / "16-build.py").write_text("# PI tweak\n")
+        share.publish(drive.official)
+    with drive.member():
+        (drive.work / "steps" / "16-build.py").write_text("# member tweak\n")
+        share.sync(drive.work)
+        assert share.status(drive.work)["joined"]["official_copies"] == ["steps/16-build.official.py"]
+        (drive.work / "steps" / "16-build.official.py").unlink()
+        joined = share.status(drive.work)["joined"]
+        assert joined["official_copies"] == [] and joined["beside"] == []
+        assert share.sync(drive.work).get("up_to_date") is True
+        assert share.official_copies(drive.pid) == set()
 
 
 @needs_node
@@ -248,6 +304,34 @@ def test_12_13_the_note_written_with_a_link_is_in_the_node_s_timeline(tmp_path, 
     if NODE is not None:
         entries = _node_call("_timeline", {"kind": "file", "versions": []}, [], page["links"])
         assert [e["kind"] for e in entries] == ["link"]
+
+
+@needs_node
+@pytest.mark.parametrize("tz", ["Europe/Berlin", "America/Los_Angeles", "Asia/Shanghai"])
+def test_12_13_a_link_s_day_is_said_as_a_day_and_sorts_by_time_not_by_string(tz):
+    """Verifier round 3: mappings.toml keeps a local day with no time; the
+    timeline says 「今天」, not a made-up 02:00 (or yesterday west of UTC),
+    and a link drawn today is not listed below this morning's versions."""
+    import datetime as dt
+
+    morning = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    history_body = {"kind": "file", "versions": [{"at": morning}, {"at": "2020-01-01T00:00:00+00:00"}]}
+    script = (
+        "global.window = {addEventListener(){}}; global.document = {getElementById(){return null}};\n"
+        "window.RODesk = {_whenWords(){ return 'TIME'; }};\n"
+        + (WEBAPP / "node.js").read_text(encoding="utf-8")
+        + "\nconst day = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-'"
+        + " + String(d.getDate()).padStart(2, '0');"
+        + "\nconst today = day(new Date()), yesterday = day(new Date(Date.now() - 86400000));"
+        + "\nconst links = [{human: true, mapping: {date: today, note: '补上来源'}}];"
+        + f"\nconst t = window.RONode._timeline({json.dumps(history_body)}, [], links);"
+        + "\nprocess.stdout.write(JSON.stringify([t.map((e) => e.kind), window.RONode._when(today),"
+        + " window.RONode._when(yesterday)]));\n"
+    )
+    out = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True, env={**os.environ, "TZ": tz})
+    kinds, said_today, said_yesterday = json.loads(out.stdout)
+    assert kinds == ["link", "version", "version"]
+    assert (said_today, said_yesterday) == ("今天", "昨天")
 
 
 # -- 成果 and 设为论文正文 (12.13) ------------------------------------------------------------------
@@ -446,6 +530,47 @@ def test_12_13_two_folders_through_the_command_line_and_the_endpoint(drive, tmp_
                           "reachable": True}]
 
 
+def test_12_13_only_the_fingerprint_breaks_anywhere_in_the_team_table():
+    """Verifier round 3: at 900 px the long fingerprint squeezed 「成员」 to
+    one character a line; names and roles stay whole, e-mails break only
+    when they must, and only the fingerprint breaks anywhere."""
+    page = (WEBAPP / "app.html").read_text(encoding="utf-8")
+    rules = {m.group(1).strip(): m.group(2) for m in re.finditer(r"^(\.team-table[^{]*)\{([^}]*)\}", page, re.M)}
+    assert "break-all" not in rules[".team-table td"]
+    assert "nowrap" in rules[".team-table td.team-name, .team-table td.team-role"]
+    assert "break-all" in rules[".team-table td.team-fp"] and "break-all" not in rules[".team-table td.team-email"]
+    team_js = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert all(f'"{cls}' in team_js or f' {cls}"' in team_js for cls in ("team-name", "team-role", "team-email", "team-fp"))
+
+
+@needs_node
+@pytest.mark.parametrize("features, sent", [
+    (["choose-folder", "choose-folder-purpose", "choose-folder-share", "choose-folder-mine"], "mine"),
+    (["choose-folder", "choose-folder-purpose", "choose-folder-share"], "shared"),  # a shell built before
+])
+def test_12_13_the_member_s_own_folder_is_chosen_with_its_own_panel_message(features, sent):
+    """Verifier round 3: 「你自己的提议文件夹」 asks the shell for purpose
+    "mine", whose panel says so -- not the shared-folder prompt; a shell
+    that does not name the feature still gets a panel it knows."""
+    team_js = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert team_js.count('"mine", "') == 2 and '提议文件夹（PI 共享给你，可以编辑）", "shared"' not in team_js
+    shell = (WEBAPP / "shell" / "RCEShell.swift").read_text(encoding="utf-8")
+    helper = shell[shell.index("func folderPanelMessage"):]
+    helper = helper[: helper.index("\n}\n")]
+    assert 'case "mine": return "选择你自己的提议文件夹（PI 共享给你、你可以编辑的那个）"' in helper
+    page = (WEBAPP / "app.html").read_text(encoding="utf-8")
+    code = page[page.index("function shellCan(feature)"):]
+    code = code[: code.index("\n}\n", code.index("function chooseFolder(purpose)")) + 3]
+    script = (
+        "const sent = []; global.folderRequests = new Map();\n"
+        f"global.window = {{RCEShellFeatures: {json.dumps(features)}, "
+        "webkit: {messageHandlers: {rce: {postMessage(m) { sent.push(m); }}}}};\n"
+        + code + "\nchooseFolder('mine'); process.stdout.write(JSON.stringify(sent[0].purpose));\n"
+    )
+    out = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == sent
+
+
 # -- installing for a collaborator (12.13) -----------------------------------------------------------
 
 
@@ -469,9 +594,14 @@ def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_
     assert not FORBIDDEN.search(text), FORBIDDEN.search(text)  # 12.11: no emoji, no arrows
     for command in ("xcode-select --install", "curl -LsSf https://astral.sh/uv/install.sh | sh",
                     "uv tool install git+https://github.com/LinyingL/research-os\n",
-                    "uv tool install git+https://github.com/LinyingL/research-context-engine\n",
-                    "researchos app\n", "uv tool upgrade researchos"):
+                    "researchos app\n", "uv tool upgrade researchos", "uv tool uninstall rce\n"):
         assert command in text, command
+    # Verifier round 3: no fallback to the old address (it installs the V7 `rce` package, which has no
+    # `researchos`); a failed install is told by the words uv really prints, and the reader stops.
+    assert "research-context-engine" not in text
+    for words in ("Installed 2 executables: rce, researchos", "Git operation failed", "could not read Username",
+                  "Installed 1 executable: rce"):
+        assert f"`{words}`" in text, words
     screens = "".join((WEBAPP / name).read_text(encoding="utf-8") for name in ("app.html", "team.js", "node.js", "desk.js"))
     screens += "".join(officialness.LABELS.values())  # the engine names a member's own work
     missing = [label for label in GUIDE_APP_LABELS if label not in screens]

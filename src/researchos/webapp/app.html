@@ -1124,7 +1124,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .team-block > .btn, .decide > .btn, .draft > .btn { margin-top: 0.3rem; }
 .team-table { border-collapse: collapse; font-size: 0.84rem; width: 100%; max-width: 820px; }
 .team-table th { text-align: left; font-weight: normal; color: var(--ink-soft); font-size: 0.76rem; padding: 0.3rem 0.8rem 0.3rem 0; border-bottom: 1px solid var(--line-strong); }
-.team-table td { padding: 0.4rem 0.8rem 0.4rem 0; border-bottom: 1px solid var(--line); vertical-align: baseline; word-break: break-all; }
+.team-table td { padding: 0.4rem 0.8rem 0.4rem 0; border-bottom: 1px solid var(--line); vertical-align: baseline; }
+.team-table td.team-name, .team-table td.team-role { white-space: nowrap; }
+.team-table td.team-email { overflow-wrap: break-word; }
+.team-table td.team-fp { word-break: break-all; }
 .team-you { font-size: 0.72rem; color: var(--ink-soft); margin-left: 0.4rem; }
 .team-me { display: flex; gap: 0.8rem; align-items: baseline; margin: 0.2rem 0; }
 .team-me-name { font-weight: 600; }
@@ -5824,6 +5827,9 @@ const FOLDER_PURPOSES = ["add", "locate"];
 // V8 U4: the shared folder and a member's new working copy -- sent only to
 // a shell that says it takes them ("choose-folder-share").
 const SHARE_FOLDER_PURPOSES = ["shared", "working"];
+// 12.13: a member's own proposals folder -- its own panel message, sent only
+// to a shell that says it takes it ("choose-folder-mine"); an older shell
+// gets the shared-folder panel, as before.
 
 function chooseFolder(purpose) {
   return new Promise((resolve) => {
@@ -5831,6 +5837,8 @@ function chooseFolder(purpose) {
     folderRequests.set(request, resolve);
     const message = { type: "choose-folder", request: request };
     if (FOLDER_PURPOSES.indexOf(purpose) >= 0 && shellCan("choose-folder-purpose")) message.purpose = purpose;
+    else if (purpose === "mine" && shellCan("choose-folder-mine")) message.purpose = "mine";
+    else if (purpose === "mine" && shellCan("choose-folder-share")) message.purpose = "shared";
     else if (SHARE_FOLDER_PURPOSES.indexOf(purpose) >= 0 && shellCan("choose-folder-share")) message.purpose = purpose;
     try {
       window.webkit.messageHandlers.rce.postMessage(message);
