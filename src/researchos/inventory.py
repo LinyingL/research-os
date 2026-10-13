@@ -194,7 +194,8 @@ def _shown(path: Path, root: Path) -> str:
 
 
 def _snapshot(root: Path, path: Path) -> str | None:
-    newest = record_files.newest_snapshot(root, path)
+    """The latest backup of `path`: a daily snapshot or a copy taken before a write."""
+    newest = record_files.newest_snapshot(root, path, writes=True)
     return newest.name if newest is not None else None
 
 

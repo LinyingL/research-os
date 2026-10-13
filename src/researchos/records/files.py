@@ -35,9 +35,17 @@ snapshot-before-entry rule of 9.10), so the copy is the state the day
 started from; a hand edit is covered the first time Research OS looks at the file
 after it. `snapshot_now` is the explicit copy taken before an act that
 discards something (「重新排列」 dropping an arrangement), whatever the day.
-The naming is `researchos.webapp.mapedit.write_backup_bytes`' --
-`<name>.<UTC stamp>Z<suffix>` -- so the backups those writers already take
-and these snapshots are one series per file, pruned to one budget.
+The naming is `<name>.<UTC stamp>Z<suffix>`, the newest SNAPSHOT_KEEP kept.
+
+The copy a writer of a researcher-owned file takes before every write
+(`researchos.webapp.mapedit.write_backup_bytes`: the map file, mappings.toml
+-- 8.5's "back up before each write") is a series of its own,
+`<name>.<UTC stamp>Z.write<suffix>` (WRITE_INFIX), pruned to its own
+budget: a busy day of edits -- a line drawn on the desk per click --
+rotates only those, never the daily snapshots, so the 20 kept per file
+stay 20 days of history (9.2). Those writers take the day's snapshot
+first, too. `newest_snapshot(..., writes=True)` is the newest copy of
+either kind ("the latest backup").
 
 Reading: four answers, not two
 ------------------------------
@@ -342,10 +350,15 @@ def _confine(project_root: Path, path: Path) -> None:
 
 
 _STAMP_RE = r"(\d{8}T\d{12})Z(?:\.\d+)?"
+#: The infix of a copy taken before a write (module docstring): never one of the daily snapshots.
+WRITE_INFIX = ".write"
 
 
-def _snapshots_of(backups: Path, name: str, suffix: str) -> list[tuple[datetime, Path]]:
-    pattern = re.compile(rf"^{re.escape(name)}\.{_STAMP_RE}{re.escape(suffix)}$")
+def _snapshots_of(backups: Path, name: str, suffix: str, *, writes: bool = False) -> list[tuple[datetime, Path]]:
+    """The daily snapshots of `name`, oldest first -- or, `writes`, the
+    copies taken before each write (a series of their own)."""
+    infix = re.escape(WRITE_INFIX) if writes else ""
+    pattern = re.compile(rf"^{re.escape(name)}\.{_STAMP_RE}{infix}{re.escape(suffix)}$")
     found = []
     try:
         entries = list(backups.iterdir())
@@ -427,14 +440,22 @@ def snapshot_now(
     return _write_snapshot(project_root, _backups_dir(project_root, subdir), path, current.data or b"", moment)
 
 
-def snapshots(project_root: str | Path, path: str | Path, subdir: str | None = None) -> list[Path]:
-    """Every snapshot of `path`, oldest first."""
+def snapshots(project_root: str | Path, path: str | Path, subdir: str | None = None, *,
+              writes: bool = False) -> list[Path]:
+    """Every daily snapshot of `path`, oldest first (`writes`: the copies
+    taken before each write instead)."""
     project_root, path = Path(project_root), Path(path)
-    return [p for _stamp, p in _snapshots_of(_backups_dir(project_root, subdir), path.name, path.suffix)]
+    return [p for _stamp, p in _snapshots_of(_backups_dir(project_root, subdir), path.name, path.suffix, writes=writes)]
 
 
-def newest_snapshot(project_root: str | Path, path: str | Path, subdir: str | None = None) -> Path | None:
-    """The newest snapshot of `path`, for `researchos records` (9.8)."""
+def newest_snapshot(project_root: str | Path, path: str | Path, subdir: str | None = None, *,
+                    writes: bool = False) -> Path | None:
+    """The newest snapshot of `path`, for `researchos records` (9.8); with
+    `writes`, the newest copy of either kind -- the latest backup."""
     project_root, path = Path(project_root), Path(path)
-    found = _snapshots_of(_backups_dir(project_root, subdir), path.name, path.suffix)
+    backups = _backups_dir(project_root, subdir)
+    found = _snapshots_of(backups, path.name, path.suffix)
+    if writes:
+        found = sorted(found + _snapshots_of(backups, path.name, path.suffix, writes=True),
+                       key=lambda item: (item[0], item[1].name))
     return found[-1][1] if found else None

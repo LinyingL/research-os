@@ -41,8 +41,11 @@ plus the old/new row, writing nothing; `apply_edit` re-plans from a fresh
 read (the file may have moved since the preview -- re-validating against
 what is actually on disk is the point, not an inefficiency), then:
 
-  1. backs the file up verbatim to `.researchos/backups/<name>.<UTC stamp>Z.md`,
-     pruning to the newest `BACKUP_KEEP` backups of that same file;
+  1. takes the day's snapshot of the file the first time it is written
+     that day (9.2), then backs it up verbatim to
+     `.researchos/backups/<name>.<UTC stamp>Z.write.md` -- a series of its
+     own, pruned to the newest `BACKUP_KEEP`, so a busy day of writes
+     never rotates the daily snapshots away;
   2. writes atomically AND durably -- full new content to a tmp file in
      the same directory, fsynced, then `os.replace`, then a best-effort
      directory fsync (the backup is fsynced the same way) -- so a crash
@@ -536,30 +539,30 @@ def _fsync_dir(dir_path: Path) -> None:
 
 
 def write_backup_bytes(project_root: Path, source_path: Path, raw: bytes, ext: str) -> str:
-    """`raw`, verbatim, to `.researchos/backups/<name>.<stamp>Z<ext>`; then prune
-    that file's own backups to the newest `BACKUP_KEEP`. The stamp is
-    zero-padded UTC down to microseconds, so lexicographic name order IS
-    chronological order and pruning needs no mtime reads. Shared by every
-    writer of a researcher-owned file (this module's map edits, and
+    """`raw`, verbatim, to `.researchos/backups/<name>.<stamp>Z.write<ext>`;
+    then prune the copies taken before writes of that file -- that series
+    alone, never the daily snapshots (`records.files`, 9.2) -- to the
+    newest `BACKUP_KEEP`. The stamp is zero-padded UTC down to
+    microseconds, so lexicographic name order IS chronological order and
+    pruning needs no mtime reads. Shared by every writer of a
+    researcher-owned file (this module's map edits, and
     `researchos.ingest.mappings`' `.researchos/mappings.toml` writer, DESIGN.md section
     8.5) -- one backup discipline, not two that could drift. Returns the
     backup's project-relative path."""
     backups_dir = paths.project_dir(project_root) / BACKUPS_DIRNAME
     records_files.ensure_dir_within(project_root, backups_dir)  # never re-creates a moved project
     source_name = source_path.name
+    infix = records_files.WRITE_INFIX
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    backup_path = backups_dir / f"{source_name}.{stamp}Z{ext}"
+    backup_path = backups_dir / f"{source_name}.{stamp}Z{infix}{ext}"
     counter = 0
     while backup_path.exists():  # same microsecond twice: disambiguate, never overwrite
         counter += 1
-        backup_path = backups_dir / f"{source_name}.{stamp}Z.{counter}{ext}"
+        backup_path = backups_dir / f"{source_name}.{stamp}Z.{counter}{infix}{ext}"
     _write_bytes_durably(backup_path, raw)
     _fsync_dir(backups_dir)  # the new backup's directory entry, durable too
 
-    siblings = sorted(
-        p for p in backups_dir.iterdir()
-        if p.is_file() and p.name.startswith(source_name + ".") and p.name.endswith(ext)
-    )
+    siblings = [p for _stamp, p in records_files._snapshots_of(backups_dir, source_name, ext, writes=True)]
     for old in siblings[:-BACKUP_KEEP]:
         old.unlink()
         logger.info("pruned old backup %s (keeping newest %d)", old, BACKUP_KEEP)
@@ -647,6 +650,8 @@ def apply_edit(
     # in-process ingest lock -- the one order every writer uses.
     with records_situation.write_guard(project_root, human=True), lock:
         plan = _plan_edit(project_root, op, number, fields)
+        # 9.2: the state the day started from, in the daily series, before the write's own copy.
+        records_files.snapshot_if_first_change_today(project_root, plan.source_path)
         backup = _write_backup(project_root, plan)
         _atomic_write(plan)
         ingest_error: str | None = None

@@ -865,6 +865,8 @@ def _commit(project_root: Path, old_text: str | None, new_text: str) -> str | No
         raise MappingsWriteError("file_unreadable", str(exc)) from exc
     backup = None
     if old_text is not None:
+        # 9.2: the state the day started from, in the daily series, before the write's own copy.
+        records_files.snapshot_if_first_change_today(project_root, path)
         backup = mapedit.write_backup_bytes(project_root, path, old_text.encode("utf-8"), ".toml")
     mapedit.atomic_replace_bytes(path, new_text.encode("utf-8"))
     return backup

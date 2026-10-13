@@ -410,3 +410,42 @@ def test_14_6_a_publish_made_by_an_approval_is_said_in_the_screens_words(drive, 
     else:
         assert said[0].startswith("desk-sub: PI 于 今天 ") and said[0].endswith("批准提议「大面板」后发布了第 2 版。")
     assert stored.id not in said[0]
+
+
+# -- 4: a busy day of writes never rotates the daily snapshots away -----------------------------------------------
+
+
+def test_9_2_twenty_five_lines_in_one_day_keep_yesterdays_snapshot_and_todays_start(tmp_path):
+    """mappings.toml has yesterday's snapshot, then a hand edit; 25 lines
+    are drawn today. Yesterday's snapshot survives, today's first snapshot
+    is the file as the day started (the hand edit in it), and the copies
+    taken before each write -- a series of their own -- stay at 20. The map
+    file's writes keep the same discipline."""
+    from datetime import datetime, timedelta
+
+    from researchos.ingest import mappings as mappings_ingest
+    from researchos.records import files as record_files
+    from researchos.webapp import mapedit
+
+    root = _project(tmp_path / "proj")
+    path = mappings_ingest.mappings_path(root)
+    mappings_ingest.add_mapping(root, "steps/16-build.py", "figs/f0.png", "generates")
+    yesterday = datetime.now().astimezone() - timedelta(days=1)
+    [old] = [record_files.snapshot_if_first_change_today(root, path, now=lambda: yesterday)]
+    path.write_text(path.read_text() + "# 手改的一行\n")
+    started = path.read_bytes()
+    for i in range(1, 26):
+        mappings_ingest.add_mapping(root, "steps/16-build.py", f"figs/f{i}.png", "generates")
+    daily = record_files.snapshots(root, path)
+    assert daily[0] == old and old.exists() and len(daily) == 2
+    assert daily[1].read_bytes() == started
+    writes = record_files.snapshots(root, path, writes=True)
+    assert len(writes) == mapedit.BACKUP_KEEP and all(w.name.endswith(".write.toml") for w in writes)
+    assert record_files.newest_snapshot(root, path, writes=True) == writes[-1]  # the latest backup, either kind
+
+    map_md = root / "map.md"
+    before = map_md.read_bytes()
+    for verdict in ("✅ 一", "✅ 二", "✅ 三"):
+        mapedit.apply_edit(root, "update", "16", {"verdict": verdict})
+    [today] = record_files.snapshots(root, map_md)
+    assert today.read_bytes() == before and len(record_files.snapshots(root, map_md, writes=True)) == 3

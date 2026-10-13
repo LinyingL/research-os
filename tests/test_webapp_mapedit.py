@@ -359,21 +359,31 @@ def test_apply_backs_up_original_before_writing(tmp_path):
 
 
 def test_backups_pruned_to_newest_20(tmp_path):
+    """Re-baselined on purpose for the V10 review (finding 4, DESIGN.md 9.2): the
+    copies taken before writes are a series of their own,
+    `<name>.<stamp>Z.write.md`, pruned to BACKUP_KEEP; the daily snapshots
+    are never a write's to prune (before, both shared one series and one
+    budget, so a busy day rotated the days away)."""
     _make_project(tmp_path)
     backups_dir = tmp_path / ".researchos" / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)  # init keeps a snapshot of project.toml there (9.12)
-    # 25 pre-existing backups with sortable (zero-padded) stamps, oldest first.
+    # 25 pre-existing copies taken before writes, with sortable (zero-padded) stamps, oldest first.
     for i in range(25):
-        (backups_dir / f"00-项目地图.md.20260101T0000{i:02d}000000Z.md").write_text("old")
+        (backups_dir / f"00-项目地图.md.20260101T0000{i:02d}000000Z.write.md").write_text("old")
+    # ...three daily snapshots, which pruning never touches...
+    daily = [backups_dir / f"00-项目地图.md.202512{d}T000000000000Z.md" for d in (29, 30, 31)]
+    for snap in daily:
+        snap.write_text("day")
     # ...plus an unrelated file that must never be touched by pruning.
     (backups_dir / "unrelated.txt").write_text("keep me")
 
     result = mapedit.apply_edit(tmp_path, "append", "17", _FIELDS_17)
 
-    kept = sorted(p.name for p in backups_dir.iterdir() if p.name.startswith("00-项目地图.md."))
+    kept = sorted(p.name for p in backups_dir.iterdir() if p.name.startswith("00-项目地图.md.") and p.name.endswith(".write.md"))
     assert len(kept) == mapedit.BACKUP_KEEP
     assert Path(str(result["backup"])).name in kept  # the newest (just written) survived
-    assert kept[0] == "00-项目地图.md.20260101T00000600" + "0000Z.md"  # oldest 6 pruned
+    assert kept[0] == "00-项目地图.md.20260101T00000600" + "0000Z.write.md"  # oldest 6 pruned
+    assert all(snap.exists() for snap in daily)
     assert (backups_dir / "unrelated.txt").exists()
 
 
@@ -478,8 +488,10 @@ def test_write_fsyncs_data_before_replace_and_fsyncs_backup(tmp_path, monkeypatc
 
     mapedit.apply_edit(tmp_path, "append", "17", _FIELDS_17)
 
+    # The map file's own replace is the last one: since the V10 review (finding 4) the day's
+    # snapshot is written first, through its own durable replace.
     replace_idx, tmp_ino = next(
-        (i, ino) for i, (kind, ino) in enumerate(events) if kind == "replace"
+        (i, ino) for i, (kind, ino) in reversed(list(enumerate(events))) if kind == "replace"
     )
     before_replace = events[:replace_idx]
     assert ("fsync", tmp_ino) in before_replace  # tmp data durable before the rename
