@@ -10,9 +10,11 @@ asks). Every test names its scenario."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from researchos import history, nodepage, proposals, signing
+from researchos import desk, history, nodepage, proposals, signing
 from researchos.records import decisions as decisions_mod
 from researchos.records.identity import read_identity
 from researchos.webapp import server
@@ -20,7 +22,7 @@ from researchos.webapp import server
 from test_v8_phase2 import _call, _conn, _project, _scan
 from test_v8_phase3 import _serve
 from test_v8_phase4 import PI, Drive
-from test_v9_language import APP_HTML, _app_function, english_table
+from test_v9_language import APP_HTML, WEBAPP, _app_function, _i18n_source, _node, english_table, needs_node
 
 A16 = "attempt:map.md#16"
 ABANDON = {"verdict": "☠️ 伪协整"}
@@ -82,9 +84,13 @@ def test_14_3_a_single_researcher_abandoning_is_asked_why_and_the_basis_is_froze
     try:
         [gone] = [i for g in nodepage.routes(conn, root)["groups"] for i in g["items"] if i["id"] == A16]
         basis = nodepage.evidence(conn, root, A16)["decisions"][0]
+        card = next(a for a in desk.payload(conn, root, lang="en")["attempts"] if a["id"] == A16)
     finally:
         conn.close()
     assert (gone["result"], gone["reason"], gone["reason_from"]) == ("t=2.91", "残差不平稳，协整不成立", "decision")
+    # The desk's card carries the same decision for its panel (ruled 2026-10-13: 「由 {who} 放弃」).
+    assert (card["reason"], card["decision"]["act"], card["decision"]["proposal"], card["decision"]["by"]["label"]) == (
+        "残差不平稳，协整不成立", "abandoned", None, "Original researcher")
     assert basis["approved_by"] is None and {f["path"] for f in basis["files"]} == set(evidence)
 
 
@@ -207,3 +213,67 @@ def test_14_3_http_and_the_page(tmp_path):
     for key in ("放弃的理由（必填）", "为什么放弃这条路线", "放弃一条路线时必须写明理由",
                 "理由会写进结果一栏，这条路线当时的依据也会冻结下来。"):
         assert key in form and key in table
+
+
+def test_14_3_while_the_team_file_cannot_be_read_an_abandoning_write_is_refused(tmp_path):
+    """Ruled 2026-10-13: with team.toml unreadable nobody can tell the PI's
+    direct write from a member's own row, so a write that would abandon a
+    route is refused with its own sentence -- with or without a reason, in
+    the preview and the write -- and nothing is written or recorded; a write
+    that abandons nothing still lands."""
+    root = _project(tmp_path / "proj")
+    (root / ".researchos" / "team.toml").write_text("[[member]\nbroken\n")
+    assert proposals.role_of(root)[0] == "unknown"
+    refused = _refused(root)
+    assert refused.code == "role_unknown" and refused.message_zh == proposals.DIRECT_ROLE_UNKNOWN
+    with pytest.raises(proposals.ProposalRefused) as again:
+        _write(root, reason="伪协整")
+    assert again.value.code == "role_unknown" and "☠" not in _row(root) and decisions_mod.entries(root) == []
+    body = {"op": "update", "number": "16", "fields": dict(ABANDON), "reason": "伪协整"}
+    with _serve(root) as base:
+        for endpoint in ("preview", "write"):
+            status, out = _call(f"{base}/api/attempts/{endpoint}", "POST", body)
+            assert (status, out["state"], out["message_zh"]) == (400, "attempt_role_unknown", proposals.DIRECT_ROLE_UNKNOWN)
+    assert "☠" not in _row(root) and decisions_mod.entries(root) == []
+    assert _write(root, {"result": "t=3.05"})["decision"] is None and "| t=3.05 |" in _row(root)
+    assert english_table()[proposals.DIRECT_ROLE_UNKNOWN].startswith("The members file (team.toml) cannot be read")
+
+
+#: 当时的依据 (team.js openEvidence) under node with app.html's helpers stood in: the meta lines
+#: and the headings of each decision, in the order drawn.
+_EVIDENCE_RUN = r"""
+const el = (tag, cls, text) => ({ tag, cls: cls || "", text: text == null ? "" : String(text), kids: [],
+  set innerHTML(v) { this.kids = []; }, appendChild(c) { this.kids.push(c); return c; }, append(...cs) { this.kids.push(...cs); } });
+Object.assign(global, { mk: el, mkButton: (text, cls) => el("button", cls, text), state: {}, openPanel() {},
+  panelTitle: el("h2"), panelSubtitle: el("div"), panelBody: el("div"), document: { getElementById: () => null },
+  RODesk: { whenWords: () => "W", verdictInline: () => el("span", "status-label") } });
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_3_a_direct_abandonment_reads_abandoned_by_never_proposer(lang):
+    """Ruled 2026-10-13: an abandonment with no proposal reads 「由 {who}
+    放弃」 ("Abandoned by {who}") wherever a decision is shown -- 研究路线's
+    reason line and 「当时的依据」, whose file list is 「放弃时冻结的文件」;
+    an approved one still names who proposed and who approved it."""
+    direct = {"act": "abandoned", "proposal": None, "at": "2026-10-13T10:00:00+02:00", "by": {"label": "李"},
+              "approved_by": None, "files": []}
+    approved = {**direct, "proposal": "p-1", "by": {"label": "王"}, "approved_by": {"label": "李"}}
+    i18n = f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
+    script = ("global.window = {};\n" + i18n + _EVIDENCE_RUN + (WEBAPP / "team.js").read_text(encoding="utf-8")
+              + f"\nglobal.apiGet = async () => ({{ decisions: {json.dumps([direct, approved], ensure_ascii=False)} }});\n"
+              "(async () => { await window.ROTeam.openEvidence('attempt:map.md#16', { number: '16', title: 't' });\n"
+              "  const out = []; const walk = (n) => { if (!n || typeof n !== 'object') return;\n"
+              "    if (n.cls === 'desk-meta' || n.cls === 'panel-h3') out.push(n.cls + ': ' + n.text); n.kids.forEach(walk); };\n"
+              "  walk(panelBody);\n"
+              "  const source = (d) => window.ROTeam._reasonSource({ reason: 'x', reason_from: 'decision', decision: d });\n"
+              f"  out.push(source({json.dumps(direct, ensure_ascii=False)}), source({json.dumps(approved, ensure_ascii=False)}));\n"
+              "  process.stdout.write(JSON.stringify(out)); })();\n")
+    got = _node(script)
+    by = "Abandoned by 李" if lang == "en" else "由 李 放弃"
+    frozen = "Files frozen when it was abandoned" if lang == "en" else "放弃时冻结的文件"
+    assert got == [f"desk-meta: W · {by}", f"panel-h3: {frozen}",
+                   "desk-meta: W · 提议人 王 · 批准人 李", "panel-h3: 批准时冻结的文件",
+                   by, "提议人 王，批准人 李"]
+    assert not any("提议人" in line for line in got[:2])

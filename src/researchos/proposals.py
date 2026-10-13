@@ -2086,6 +2086,9 @@ def _evidence(conn, root: Path, attempt_node: str, store: history.Store, *, who:
 
 #: 8.8: a direct write that abandons a route without saying why, refused.
 DIRECT_REASON_REQUIRED = "放弃一条路线时必须写明理由"
+#: 8.8 (ruled 2026-10-13): with the team file unreadable nobody can tell the PI's direct write from
+#: a member's own row, so a write that would abandon a route is refused.
+DIRECT_ROLE_UNKNOWN = "成员文件（team.toml）当前无法读取，无法判断你能否直接放弃这条路线"
 
 
 def direct_abandonment(root: str | Path, op: str, number: str, fields: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -2096,15 +2099,16 @@ def direct_abandonment(root: str | Path, op: str, number: str, fields: Mapping[s
     researcher: a member's row is their own change, and the proposal it
     becomes asks for the reason (12.4). Rewording a verdict that already
     abandons asks nothing again. None, or {node, number, cells: the row's
-    cells as written now, None for a new row}."""
+    cells as written now, None for a new row}; refused (`role_unknown`)
+    while the team file cannot be read, as whose write it is cannot be told."""
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
     from researchos.webapp import mapedit  # noqa: PLC0415
 
     root = Path(root)
     verdict = fields.get("verdict")
     config = _attempts_config(root)
-    if op not in ("append", "update") or not isinstance(verdict, str) or config is None \
-            or role_of(root)[0] in ("member", "none"):
+    role = role_of(root)[0]
+    if op not in ("append", "update") or not isinstance(verdict, str) or config is None or role in ("member", "none"):
         return None
     labels, markers = attempts_ingest.verdict_labels(root), abandon_markers(root)
 
@@ -2117,6 +2121,10 @@ def direct_abandonment(root: str | Path, op: str, number: str, fields: Mapping[s
     cells = mapedit.row_cells(root, number) if op == "update" else None
     if op == "update" and (cells is None or abandons(cells["verdict"])):
         return None  # no such row (the write refuses it), or abandoned already
+    if role == "unknown":
+        raise ProposalRefused("role_unknown", f"{root / '.researchos' / 'team.toml'} cannot be read, so abandoning "
+                              f"attempt {number.strip()} directly is refused; nothing written",
+                              message_zh=DIRECT_ROLE_UNKNOWN)
     return {"node": f"attempt:{config.file}#{number.strip()}", "number": number.strip(), "cells": cells}
 
 

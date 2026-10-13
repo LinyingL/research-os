@@ -331,6 +331,13 @@
     "放弃一条路线时必须写明理由": "Abandoning a route needs a reason",
     "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。":
       "Abandoning a route needs a reason: it is written into the result, and the route's basis is frozen.",
+    "成员文件（team.toml）当前无法读取，无法判断你能否直接放弃这条路线":
+      "The members file (team.toml) cannot be read right now, so whether you may abandon this route directly cannot be told",
+    // Who abandoned a route (12.4, ruled 2026-10-13): directly (no proposal), or proposed and approved.
+    "由 {who} 放弃": "Abandoned by {who}",
+    "放弃时冻结的文件": "Files frozen when it was abandoned",
+    "提议人 {who}": "Proposed by {who}",
+    "批准人 {who}": "Approved by {who}",
     "迁移后才能记录判断": "Judgments can be recorded once the old records are migrated",
     "只读打开：不会写入任何东西": "Opened read-only: nothing is written",
     // The desk's side panel (14.3): an attempt opened from its card.

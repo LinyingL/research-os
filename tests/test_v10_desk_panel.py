@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
+
 from test_v8_phase2 import _call, _project
 from test_v8_phase3 import _serve
 from test_v8_u2 import FORBIDDEN
@@ -232,6 +234,31 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
                  "desk-meta: Original researcher · 2026-10-12", "btn btn-small: Delete this line"]:
         assert line in lines, line
     assert not any("节点" in line or "画布" in line for line in out["lines"])
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_3_an_abandoned_cards_panel_says_who_abandoned_it(lang):
+    """Ruled 2026-10-13: a route abandoned by a direct write (a decision
+    with no proposal) reads 「由 {who} 放弃」 ("Abandoned by {who}") under its
+    reason, never 提议人; one abandoned through an approved proposal names
+    who proposed and who approved it."""
+    w = (lambda zh, en: en if lang == "en" else zh)
+    seen = []
+    for decision in ({"act": "abandoned", "proposal": None, "at": "2024-03-01T12:00:00",
+                      "by": {"id": None, "label": w("最初的研究者", "Original researcher")}, "approved_by": None},
+                     {"act": "abandoned", "proposal": "p-1", "at": "2024-03-01T12:00:00", "by": {"id": "w", "label": "Wang"},
+                      "approved_by": {"id": "l", "label": "Li"}}):
+        case = _case("single", lang)
+        case["desk"]["attempts"][0].update(abandoned=True, reason="无信号", decision=decision)
+        lines = _run(case, "await window.RODesk.openAttempt(" + json.dumps(A16) + ");", lang=lang)["lines"]
+        at = next(i for i, line in enumerate(lines) if line.startswith("desk-note: "))
+        seen.append(lines[at:at + 2])
+    day = w("2024年3月1日", "1 Mar 2024")
+    assert seen == [[w("desk-note: 放弃的理由：无信号", "desk-note: Reason for abandoning: 无信号"),
+                     w(f"desk-meta: 由 最初的研究者 放弃 · {day}", f"desk-meta: Abandoned by Original researcher · {day}")],
+                    [w("desk-note: 放弃的理由：无信号", "desk-note: Reason for abandoning: 无信号"),
+                     w(f"desk-meta: 提议人 Wang · 批准人 Li · {day}", f"desk-meta: Proposed by Wang · Approved by Li · {day}")]]
 
 
 @needs_node

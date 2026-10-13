@@ -218,12 +218,19 @@
       "），并在这台电脑上记下 PI 的公钥：以后只接受用这把钥匙签名的版本。";
   }
 
-  // A route row's reason line: where the reason came from.
+  // A route abandoned by a direct write (14.3): a decision with no proposal.
+  function directAbandonment(d) {
+    return !!d && d.act === "abandoned" && !d.proposal;
+  }
+
+  // A route row's reason line: where the reason came from -- 「由 X 放弃」 for
+  // a direct abandonment, else who proposed and who approved it.
   function reasonSource(item) {
     if (!item || !item.reason) return "";
     if (item.reason_from === "decision" && item.decision) {
       const by = item.decision.by && item.decision.by.label;
       const ok = item.decision.approved_by && item.decision.approved_by.label;
+      if (directAbandonment(item.decision)) return by ? t("由 {who} 放弃", { who: by }) : "";
       return [by ? "提议人 " + by : "", ok ? "批准人 " + ok : ""].filter(Boolean).join("，");
     }
     return item.reason_from === "table" ? "写在尝试表里" : "";
@@ -559,13 +566,15 @@
       head.appendChild(mk("span", "desk-what strong", d.act === "abandoned" ? "放弃这条路线" : "批准"));
       if (d.verdict_status) head.appendChild(RODesk.verdictInline(d.verdict_status));
       sec.appendChild(head);
-      const who = [when(d.at), d.by ? "提议人 " + d.by.label : "", d.approved_by ? "批准人 " + d.approved_by.label : ""];
+      const direct = directAbandonment(d);
+      const by = d.by ? (direct ? t("由 {who} 放弃", { who: d.by.label }) : "提议人 " + d.by.label) : "";
+      const who = [when(d.at), by, d.approved_by ? "批准人 " + d.approved_by.label : ""];
       sec.appendChild(mk("div", "desk-meta", who.filter(Boolean).join(" · ")));
       if (d.result) sec.appendChild(mk("p", "desk-note", "结果：" + d.result));
       if (d.reason) sec.appendChild(mk("p", "desk-note", "理由：" + d.reason));
       if (d.note) sec.appendChild(mk("p", "desk-note", "PI 的附言：" + d.note));
       if (d.missing_from_file) sec.appendChild(line("这条记录已经不在 decisions.toml 里了（这台电脑记得它）。", "warn"));
-      sec.appendChild(mk("h3", "panel-h3", "批准时冻结的文件"));
+      sec.appendChild(mk("h3", "panel-h3", direct ? t("放弃时冻结的文件") : "批准时冻结的文件"));
       const ul = mk("ul", "evidence-files");
       (d.files || []).forEach((f) => ul.appendChild(evidenceFile(f)));
       if (!(d.files || []).length) ul.appendChild(mk("li", "node-empty", "当时没有找到属于这条路线的文件。"));

@@ -134,23 +134,25 @@ def _git_times(root: Path) -> tuple[dict[str, datetime], set[str] | None]:
     return times, tracked
 
 
-def _abandoned(conn: Connection | None, labels: dict[str, str], root: Path | None = None) -> list[dict[str, Any]]:
+def _abandoned(conn: Connection | None, labels: dict[str, str], root: Path | None = None,
+               team: people.TeamRead | None = None, lang: str = "zh") -> list[dict[str, Any]]:
     """Every abandoned route with its words (12.0: "which routes were
-    abandoned and why"): the result and the reason -- from the approval
+    abandoned and why"): the result and the reason -- from the decision
     that recorded it, else from the table's own 「放弃理由：…」 -- in the
-    table's order."""
+    table's order; that `decision` as 研究路线 shows it (who proposed and
+    who approved, or, with no proposal, who abandoned it directly: 14.3)."""
     from researchos import nodepage, proposals  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     if conn is None:
         return []
     markers = proposals.abandon_markers(root) if root is not None else [proposals.DEFAULT_ABANDON_MARKER]
-    reasons: dict[str, str] = {}
+    decided: dict[str, dict[str, Any]] = {}
     if root is not None:
         for entry in nodepage._decisions(root)[0]:
             if entry.get("act") == "abandoned" and isinstance(entry.get("attempt"), str) \
                     and str(entry.get("reason") or "").strip():
-                reasons[entry["attempt"]] = str(entry["reason"]).strip()
+                decided[entry["attempt"]] = entry
     out = []
     nodes = sorted(db.get_nodes_by_type(conn, "attempt"),
                    key=lambda n: ((n.get("attrs") or {}).get("source_file", ""),
@@ -162,9 +164,11 @@ def _abandoned(conn: Connection | None, labels: dict[str, str], root: Path | Non
         if status["status"] == "abandoned":
             attrs = node.get("attrs") or {}
             result, reason = nodepage._reason_in(str(human.get("result") or ""))
+            entry = decided.get(node["id"])
             out.append({"id": node["id"], "number": attrs.get("number"), "title": attrs.get("description"),
                         "verdict_status": status, "result": result,
-                        "reason": reasons.get(node["id"]) or reason})
+                        "reason": str(entry["reason"]).strip() if entry else reason,
+                        "decision": nodepage._decision_payload(entry, team, labels, lang) if entry else None})
     return out
 
 
@@ -378,7 +382,7 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
             holders.setdefault(f, []).append(attempt_id)
     got = read_identity(root)
     times = _change_times(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None)
-    abandoned = {a["id"]: a for a in _abandoned(conn, labels, root)}
+    abandoned = {a["id"]: a for a in _abandoned(conn, labels, root, team_known, lang)}
     attempts = []
     for n in nodes:
         attrs, human = n.get("attrs") or {}, n.get("human_fields") or {}
@@ -391,7 +395,8 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
             "date_key": _date_key(attrs.get("date"), config.date_year if config is not None else None),
             "route_status": status, "tone": TONES.get(status["status"], "plain"), "abandoned": gone is not None,
             "result": gone["result"] if gone else str(human.get("result") or ""),
-            "reason": gone["reason"] if gone else None, "changed_at": _iso(max(changed)) if changed else None,
+            "reason": gone["reason"] if gone else None, "decision": gone["decision"] if gone else None,
+            "changed_at": _iso(max(changed)) if changed else None,
             "marks": {"proposals": [], "review": None}, "_source": attrs.get("source_file", ""),
         })
     attempts.sort(key=lambda a: (a["date_key"] is None, a["date_key"] or "",
@@ -481,9 +486,10 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
     - **attempts** -- the cards, in the map's order (`order`: by the date
       where `date_year` makes it readable -- `date_key` -- then by the
       table's number): number, title, the date as written, `route_status`
-      and its `tone`, `abandoned` with the `reason`, `changed_at` (the
-      newest change of its row or of any of its files, 14.3's membership
-      rule; the page compares it with its own last visit for 「有改动」),
+      and its `tone`, `abandoned` with the `reason` and the `decision`
+      that recorded it (who abandoned it: 14.3), `changed_at` (the newest
+      change of its row or of any of its files, 14.3's membership rule;
+      the page compares it with its own last visit for 「有改动」),
       and `marks`: the proposals touching it (等你批准 for the PI, 提议中
       for its author) and its 待复核 count;
     - **lines** -- the 「源自」 lines, child and parent, note, who drew them

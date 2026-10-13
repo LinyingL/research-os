@@ -2110,7 +2110,9 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     `{file, diff, old_row, new_row}` -- nothing on disk moves -- and
     `reason_required` (14.3): the write turns the route abandoned, so the PI
     or a single researcher must say why (the body's `reason`); with one,
-    the rows shown carry it in the result as the write will."""
+    the rows shown carry it in the result as the write will. Such a write
+    while the team file cannot be read is refused here as it would be
+    (`attempt_role_unknown`)."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     op, number, fields = _parse_attempt_edit_body(body)
@@ -2120,7 +2122,7 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
         said = " ".join(str(body.get("reason") or "").split())
         if turn is not None and said:
             out = mapedit.preview_edit(project_root, op, number, proposals_mod.with_reason(fields, turn, said))
-    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
+    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError, proposals_mod.ProposalRefused) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
     out = {**out, "reason_required": turn is not None}
     if isinstance(fields.get("verdict"), str):

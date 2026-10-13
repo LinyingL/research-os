@@ -826,6 +826,15 @@
     return s;
   }
 
+  // Who a decision names (12.4): 「由 X 放弃」 for a route abandoned directly
+  // (no proposal, 14.3), else who proposed it and who approved it.
+  function decisionWho(d) {
+    const by = d.by && d.by.label;
+    if (d.act === "abandoned" && !d.proposal) return by ? t("由 {who} 放弃", { who: by }) : "";
+    return [by ? t("提议人 {who}", { who: by }) : "", d.approved_by ? t("批准人 {who}", { who: d.approved_by.label }) : ""]
+      .filter(Boolean).join(" · ");
+  }
+
   // Its verdict in its tone, its marks as quiet words (14.1), 打开详情页.
   function panelHead(a, id) {
     const head = mk("div", "dp-head");
@@ -838,6 +847,7 @@
       .filter(Boolean).forEach((w) => marks.appendChild(mk("span", "dp-mark", w)));
     head.appendChild(marks);
     if (a.abandoned && a.reason) head.appendChild(mk("p", "desk-note", t("放弃的理由：{reason}", { reason: a.reason })));
+    if (a.abandoned && a.decision) head.appendChild(metaLine([decisionWho(a.decision), whenWords(a.decision.at, now())]));
     const actions = mk("div", "desk-actions");
     actions.appendChild(mkButton(t("打开详情页"), "btn btn-small", () => leaveTo(id)));
     head.appendChild(actions);
