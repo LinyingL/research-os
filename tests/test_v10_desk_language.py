@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pytest
+
 from researchos import db
 from researchos.records import cards, implementation, judgements
 from researchos.records.situation import index_db_path
@@ -291,3 +293,25 @@ def test_14_6_the_review_panel_in_chinese_reads_as_before():
         assert expected in lines, expected
     digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
     assert digest == _REVIEW_ZH_SHA256
+
+
+@needs_node
+@pytest.mark.parametrize("lang, said", [
+    ("en", ["1 judgment needs review", "2 judgments need review", "1,497 judgments need review"]),
+    ("zh", ["1 条判断待复核", "2 条判断待复核", "1497 条判断待复核"]),
+])
+def test_14_6_the_top_bars_review_count_has_a_singular_and_a_plural(lang, said):
+    """Ruled 2026-10-13: the header's 「N 条判断待复核」 is frame -- English in
+    English mode with a singular and a plural and its thousands separated
+    (13.5); the Chinese as before. app.html's own code for it, under node."""
+    src = APP_HTML.read_text(encoding="utf-8")
+    chip = _app_slice(src, 'if (typeof data.review === "number" && data.review > 0) {', "line.append(btn);")
+    script = ("global.window = {};\n" + f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
+              + _app_slice(src, "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
+              + _app_slice(src, "function groupedNumber(n) {", "\n}\n")
+              + "\nconst said = [];\nglobal.document = { createElement: () => ({ addEventListener() {} }) };\n"
+              + "for (const n of [1, 2, 1497]) {\n  const data = { review: n };\n"
+              + "  const line = { append: (b) => said.push([b.className, b.textContent]) };\n"
+              + chip + "line.append(btn);\n  }\n}\nprocess.stdout.write(JSON.stringify(said));\n")
+    assert _node(script) == [["review-count-btn line-part has", text] for text in said]
+

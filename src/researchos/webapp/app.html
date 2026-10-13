@@ -2077,7 +2077,8 @@ async function loadProjectSummary(force) {
       btn.type = "button";
       btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
-      btn.textContent = t("{n} 条判断待复核", { n: data.review });
+      // 13.5: a plural in English, its thousands separated ("1,497"); the Chinese as it was.
+      btn.textContent = t("{n} 条判断待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
       btn.title = t("查看证据变了的旧判断");
       btn.addEventListener("click", (e) => { e.stopPropagation(); openReviewPanel(null); });
       line.append(btn);
