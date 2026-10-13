@@ -107,6 +107,29 @@ NOT_COMPARED_LABELS = {
 }
 CHANGED_LABEL = "有变化"
 DRAFT_WAITING = "已打开草稿 v{n}：确认它之后，它取代这一版"
+#: The same words on an English screen (13.4, 13.6): 待复核 on the desk words a
+#: stored comparison again from its codes (`review_groups(conn, "en")`).
+REASON_LABELS_EN = {
+    SCRIPT_CHANGED: "The implementing script changed after confirmation",
+    INPUT_CHANGED: "The input data changed after confirmation",
+    CHUNK_MISSING: "The code chunk cannot be found",
+    FUNCTION_MISSING: "The function cannot be found",
+}
+GROUP_MESSAGE_EN = {"one": "This script’s change touches {n} variable", "other": "This script’s change touches {n} variables"}
+CANNOT_TELL_EN = "Research OS can see only that the implementation changed, not whether the construction changed: that is for you to judge."
+COVERAGE_LABELS_EN = {
+    "full": "Whole file unchanged",
+    "region": "The named part unchanged (the rest not compared)",
+    "size": "Size unchanged (content not compared)",
+    "mtime": "Modified time changed; content not compared",
+}
+NOT_COMPARED_LABELS_EN = {
+    "unreadable": "Cannot be read right now; not compared",
+    "unparseable": "The script cannot be parsed; not compared",
+    "no_baseline": "Not recorded at confirmation; not compared",
+    "none": "No implementing script written",
+}
+DRAFT_WAITING_EN = "Draft v{n} is open: once it is confirmed, it replaces this version"
 
 #: Fingerprint coverages recorded on a `reaffirmed` entry.
 RECORDED_FULL = "full"
@@ -609,15 +632,34 @@ def compare(root: Path, card: V.Card, cache: dict[str, Any], *, large_bytes: int
 # -- what readers see ---------------------------------------------------------------------------
 
 
-def _coverage_text(item: Mapping[str, Any]) -> str:
+def _coverage_text(item: Mapping[str, Any], lang: str = "zh") -> str:
+    en = lang == "en"
     state = item.get("state")
+    changed = "Changed" if en else CHANGED_LABEL
     if state == "changed":
-        return CHANGED_LABEL
+        return changed
     if state == "region_missing":
-        return REASON_LABELS.get(item.get("reason") or "", CHANGED_LABEL)
+        return (REASON_LABELS_EN if en else REASON_LABELS).get(item.get("reason") or "", changed)
     if state == "same":
-        return COVERAGE_LABELS[item.get("coverage") or "full"]
-    return NOT_COMPARED_LABELS.get(state or "", "未比对")
+        return (COVERAGE_LABELS_EN if en else COVERAGE_LABELS)[item.get("coverage") or "full"]
+    return (NOT_COMPARED_LABELS_EN if en else NOT_COMPARED_LABELS).get(state or "", "Not compared" if en else "未比对")
+
+
+def _in_lang(review: Mapping[str, Any], lang: str) -> dict[str, Any]:
+    """A stored comparison (worded in Chinese when it was stored) with its
+    words in `lang`, from its codes (13.6)."""
+    out = dict(review)
+    if lang != "en":
+        return out
+    out["reasons"] = [{**r, "label": REASON_LABELS_EN.get(r.get("code"), r.get("label"))} for r in review.get("reasons") or []]
+    if isinstance(review.get("script"), Mapping):
+        out["script"] = {**review["script"], "text": _coverage_text(review["script"], lang)}
+    out["inputs"] = [{**i, "text": _coverage_text(i, lang)} for i in review.get("inputs") or []]
+    if review.get("cannot_tell"):
+        out["cannot_tell"] = CANNOT_TELL_EN
+    if review.get("draft_note"):
+        out["draft_note"] = DRAFT_WAITING_EN.format(n=review.get("draft"))
+    return out
 
 
 def public(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -693,16 +735,20 @@ def stored(conn: Connection | None) -> dict[str, Any]:
     return dict(cards_) if isinstance(cards_, Mapping) else {}
 
 
-def review_groups(conn: Connection | None) -> dict[str, Any]:
+def review_groups(conn: Connection | None, lang: str = "zh") -> dict[str, Any]:
     """The cards' part of 9.6's list: one item per changed script (「此脚本
     的改动涉及 N 个变量」, naming every card on it), one per card whose
     inputs alone changed. `count` is the items with a member not waiting on
-    an open draft (a 「口径已变」 answered by opening the next draft)."""
+    an open draft (a 「口径已变」 answered by opening the next draft). Its
+    words are in `lang` (13.6; Chinese by default)."""
+    from researchos import settings  # noqa: PLC0415
+
     by_script: dict[str, list[dict[str, Any]]] = {}
     alone: list[dict[str, Any]] = []
     for review in sorted(stored(conn).values(), key=lambda r: r["card"]):
         if not review.get("under_review"):
             continue
+        review = _in_lang(review, lang)
         codes = {r["code"] for r in review["reasons"]}
         if codes & set(SCRIPT_REASONS) and review["script"].get("path"):
             by_script.setdefault(review["script"]["path"], []).append(review)
@@ -712,7 +758,8 @@ def review_groups(conn: Connection | None) -> dict[str, Any]:
     for script, members in sorted(by_script.items()):
         groups.append({
             "key": "script:" + script, "script": script, "cards": members,
-            "message": GROUP_MESSAGE.format(n=len(members)),
+            "message": settings.say(GROUP_MESSAGE, GROUP_MESSAGE_EN["one" if len(members) == 1 else "other"], lang,
+                                    n=len(members)),
             "counted": any(m["counted"] for m in members),
         })
     for review in alone:
@@ -720,7 +767,8 @@ def review_groups(conn: Connection | None) -> dict[str, Any]:
             "key": "card:" + review["card"], "script": None, "cards": [review], "message": None,
             "counted": review["counted"],
         })
-    return {"groups": groups, "count": sum(1 for g in groups if g["counted"]), "cannot_tell": CANNOT_TELL}
+    return {"groups": groups, "count": sum(1 for g in groups if g["counted"]),
+            "cannot_tell": settings.say(CANNOT_TELL, CANNOT_TELL_EN, lang)}
 
 
 _WATCH_CACHE: dict[str, tuple[tuple[Any, ...], list[Path]]] = {}

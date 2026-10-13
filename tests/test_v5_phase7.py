@@ -324,7 +324,8 @@ def test_every_new_action_failure_goes_through_the_shared_helper():
     their own sentence."""
     html = APP_HTML.read_text(encoding="utf-8")
     js = CANVAS_JS.read_text(encoding="utf-8")
-    assert 'setStatus(statusEl, "err", "没能记录这条判断", err)' in html
+    # V10 (14.6): the 待复核 panel the desk opens is converted, its framing through t().
+    assert 'setStatus(statusEl, "err", t("没能记录这条判断"), err)' in html
     assert 'setStatus(statusEl, "err", "没能完成这个选择", err)' in html
     assert 'setStatus(statusEl, "err", "没能使用这个位置", err)' in html
     assert 'setStatus(statusEl, "err", "没能完成这个回答", err)' in html
@@ -357,7 +358,9 @@ process.stdout.write(JSON.stringify(calls.map(([fn, args]) => W[fn](...args))));
 
 def _wording(*calls: tuple[str, list[Any]]) -> list[Any]:
     html = APP_HTML.read_text(encoding="utf-8")
-    block = html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")]
+    # The block's words go through the page's one t() helper (13.6): run alone, Chinese.
+    block = (html[html.index("// -- The interface language (DESIGN.md 13.6)"):html.index("// -- Small shared state")]
+             + html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")])
     result = subprocess.run(
         [NODE, "-e", _WORDING_RUNNER, json.dumps(list(calls))],
         input=block, capture_output=True, text=True, check=True, timeout=30,

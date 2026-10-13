@@ -89,6 +89,21 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", "function traceItem(item, col, open) {", "\n  }\n"),
     ("node.js", "function gapBox(page, gap, bare) {", "\n  }\n"),
     ("node.js", "function drawLines(grid) {", "\n  }\n"),
+    # V10 (14.4, 14.6): 待复核, which the desk's column (and the top bar's count) opens in the side
+    # panel -- the judgments, their links and bases in words, the acts, and the variable cards' part.
+    ("app.html", 'btn.className = "review-count-btn line-part has";', "line.append(btn);"),
+    ("app.html", "function verdictWord(verdict) {", "\n}\n"),
+    ("app.html", "function whenText(entry) {", "\n}\n"),
+    ("app.html", "function basisLines(basis) {", "\n}\n"),
+    ("app.html", "function endName(id, title) {", "\n}\n"),
+    ("app.html", "function refEndName(id, title) {", "\n}\n"),
+    ("app.html", "function linkText(key) {", "\n}\n"),
+    ("app.html", "function historyEntryText(entry) {", "\n}\n"),
+    ("app.html", "// -- 待复核 (9.6)", "// -- 记录 (9.2"),
+    ("app.html", "function coverageLine(item, kind) {", "\n}\n"),
+    ("app.html", "async function variableAction(", "\n}\n"),
+    ("app.html", "function cardReviewMember(review, standalone) {", "\n}\n"),
+    ("app.html", "function renderCardReviewGroups(host, cardItems) {", "\n}\n"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own

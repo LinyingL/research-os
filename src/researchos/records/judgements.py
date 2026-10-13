@@ -161,6 +161,7 @@ def reason_label(reason: str | None, lang: str = "zh") -> str | None:
 #: researcher judged.
 MIGRATED_VIA = "migrated"
 MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）"
+MIGRATED_AT_LABEL_EN = "Migrated from the old index (when it was judged is not known)"
 
 #: `basis_recorded` values `judge` writes.
 AT_JUDGMENT = "at-judgment"
@@ -891,14 +892,16 @@ def _restore_missing(
 # -- what readers show ----------------------------------------------------------------------
 
 
-def _public_item(key: Key, item: Mapping[str, Any]) -> dict[str, Any]:
+def _public_item(key: Key, item: Mapping[str, Any], lang: str = "zh") -> dict[str, Any]:
+    from researchos import settings  # noqa: PLC0415
+
     reason = item.get("reason")
     migrated = bool((item.get("detail") or {}).get("migrated"))
     return {
         "src": key[0], "dst": key[1], "type": key[2], "extractor": key[3],
         "outcome": item["outcome"],
         "reason": reason,
-        "label": REASON_LABELS.get(reason) if reason else None,
+        "label": reason_label(reason, lang) if reason else None,
         "verdict": item.get("verdict"),
         "entry_id": item.get("entry_id"),
         "at": item.get("at"),
@@ -911,20 +914,21 @@ def _public_item(key: Key, item: Mapping[str, Any]) -> dict[str, Any]:
         # 9.12: `at` of a migrated entry is the migration's time; a reader
         # shows `at_label` in its place.
         "migrated": migrated,
-        "at_label": MIGRATED_AT_LABEL if migrated else None,
+        "at_label": settings.say(MIGRATED_AT_LABEL, MIGRATED_AT_LABEL_EN, lang) if migrated else None,
     }
 
 
-def review_items(conn: Connection) -> dict[str, Any]:
+def review_items(conn: Connection, lang: str = "zh") -> dict[str, Any]:
     """The list of 9.6 (`researchos review`, `GET /api/review`): links under review
     and in conflict (counted in 待复核), then judgments held or kept
     because their source could not be read, and judgments whose link the
-    index does not hold -- plus the ledger's trust state."""
+    index does not hold -- plus the ledger's trust state. Each reason and a
+    migrated entry's time are worded in `lang` (13.6; Chinese by default)."""
     states = db.judgement_states(conn)
     live = db.edge_statuses(conn)
     review, held, absent = [], [], []
     for key, item in states.items():
-        public = _public_item(key, item)
+        public = _public_item(key, item, lang)
         # A candidate's status as the index holds it NOW, not as it was when
         # the item was evaluated: the old verdict may have been applied to it
         # since (in the same application, or a later one) -- and a page must

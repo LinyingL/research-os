@@ -566,7 +566,9 @@ process.stdout.write(JSON.stringify(calls.map(([fn, args]) => W[fn](...args))));
 
 def _wording(*calls: tuple[str, list[Any]]) -> list[Any]:
     html = APP_HTML.read_text(encoding="utf-8")
-    block = html[html.index("// -- Variable wording (pure"):html.index("// -- end of variable wording")]
+    # The block's words go through the page's one t() helper (13.6): run alone, Chinese.
+    block = (html[html.index("// -- The interface language (DESIGN.md 13.6)"):html.index("// -- Small shared state")]
+             + html[html.index("// -- Variable wording (pure"):html.index("// -- end of variable wording")])
     result = subprocess.run([NODE, "-e", _WORDING_RUNNER, json.dumps(list(calls))],
                             input=block, capture_output=True, text=True, check=True, timeout=30)
     return json.loads(result.stdout)

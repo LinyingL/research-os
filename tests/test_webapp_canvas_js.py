@@ -653,7 +653,9 @@ process.stdout.write(JSON.stringify(out));
 def _blocking_error_source() -> str:
     start = _APP_SRC.index("const BLOCKING_ERROR_TEXT = {")
     end = _APP_SRC.index("\n}\n", _APP_SRC.index("function renderBlockingError(")) + 3
-    return _APP_SRC[start:end]
+    # Its words go through the page's one t() helper (13.6): run alone, Chinese.
+    helpers = _APP_SRC[_APP_SRC.index("// -- The interface language (DESIGN.md 13.6)"):_APP_SRC.index("// -- Small shared state")]
+    return helpers + _APP_SRC[start:end]
 
 
 def test_blocking_error_shows_coded_sentence_and_a_collapsed_detail_button():

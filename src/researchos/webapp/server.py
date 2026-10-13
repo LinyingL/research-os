@@ -2576,20 +2576,21 @@ def _reference_titles(conn: Connection, items: list[dict[str, Any]]) -> None:
                     link[f"{end}_title"] = titles[node_id]
 
 
-def review_payload(conn: Connection, project_root: Path | None = None) -> dict[str, Any]:
+def review_payload(conn: Connection, project_root: Path | None = None, lang: str = "zh") -> dict[str, Any]:
     """`GET /api/review`: 9.6's list of links, plus the variable cards whose
     implementation moved under a confirmed version (9.11 stage (b)) --
-    one list, one count. A pre-V5 index (a project frozen until it is
+    one list, one count, its reasons in the request's language (the desk
+    opens it, 14.6). A pre-V5 index (a project frozen until it is
     migrated, 9.12) keeps no review: its judgments move into the record when
     it is migrated, so it is read as an empty list, as `researchos review` reads
     it -- never a crash on a column the old index does not have."""
     if not db._has_machine_status(conn):
         return {"review": [], "count": 0, "source_unreadable": [], "not_in_index": [], "ledger": None,
-                "cards": card_implementation.review_groups(None), "pre_v5": True}
-    payload = judgements.review_items(conn)
+                "cards": card_implementation.review_groups(None, lang), "pre_v5": True}
+    payload = judgements.review_items(conn, lang)
     _reference_titles(conn, [*payload["review"], *payload["source_unreadable"], *payload["not_in_index"]])
     _held_cloud_notes(project_root, payload["source_unreadable"])
-    card_items = card_implementation.review_groups(conn)
+    card_items = card_implementation.review_groups(conn, lang)
     payload["cards"] = card_items
     payload["count"] = payload["count"] + card_items["count"]
     return payload
@@ -3231,7 +3232,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     {**canvas_payload(conn, self._project_root(), scope), "frozen": frozen}))
             elif path == "/api/review":
                 root = self._project_root()
-                self._json_from_conn(lambda conn: review_payload(conn, root))
+                self._json_from_conn(lambda conn: review_payload(conn, root, self._lang()))
             elif path == "/api/github":
                 # 11.2: the linked repository's state, from local refs only.
                 self._send_json(200, github_state_payload(self._served(), lang=self._lang()))

@@ -548,7 +548,8 @@ process.stdout.write(JSON.stringify(calls.map(([fn, args]) => W[fn](...args))));
 
 def _page_functions(names, consts, *calls):
     src = _src()
-    parts = []
+    # The functions' words go through the page's one t() helper (13.6): run alone, Chinese.
+    parts = [src[src.index("// -- The interface language (DESIGN.md 13.6)"):src.index("// -- Small shared state")]]
     for c in consts:
         start = src.index(f"const {c} = ")
         parts.append(src[start:src.index("};", start) + 2])

@@ -1546,7 +1546,9 @@ function escapeHtml(value) {
 // loads this block into node -- used by the 待复核 list, the shrink
 // question and (at run time) canvas.js's link card and hover text. A
 // migrated entry's time is the migration's, so it is never shown as when
-// the researcher judged (9.12): it reads MIGRATED_AT_LABEL instead.
+// the researcher judged (9.12): it reads MIGRATED_AT_LABEL instead. What the
+// desk's 待复核 panel shows is in the screen's language (14.6): the maps'
+// words through t() where they are read (each has an English entry).
 const MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）";
 const VERDICT_WORDS = { confirmed: "确认", rejected: "否决", withdrawn: "撤回", undone: "撤销" };
 const VIA_WORDS = { canvas: "在关系图上", cli: "在命令行里", mcp: "通过 MCP" };
@@ -1567,14 +1569,14 @@ function candidateApplied(candidate, verdict) {
 }
 
 function verdictWord(verdict) {
-  return Object.prototype.hasOwnProperty.call(VERDICT_WORDS, verdict) ? VERDICT_WORDS[verdict] : String(verdict || "");
+  return Object.prototype.hasOwnProperty.call(VERDICT_WORDS, verdict) ? t(VERDICT_WORDS[verdict]) : String(verdict || "");
 }
 
 // When an entry was made, as written by the machine that made it (no
 // time-zone arithmetic: `at` is for a person to read, 9.3).
 function whenText(entry) {
   if (!entry) return "";
-  if (entry.migrated) return entry.at_label || MIGRATED_AT_LABEL;
+  if (entry.migrated) return entry.at_label || t("迁移自旧索引（原判断时间未知）");
   const at = entry.at == null ? "" : String(entry.at);
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? at.slice(0, 10) + " " + at.slice(11, 16) : at;
 }
@@ -1583,36 +1585,37 @@ function whenText(entry) {
 function basisLines(basis) {
   if (basis == null || typeof basis !== "object") return [];
   const keys = Object.keys(basis);
-  if (!keys.length) return ["只凭这条关联本身"];
+  if (!keys.length) return [t("只凭这条关联本身")];
+  const series = (xs) => [].concat(xs).join(t("、"));
   return keys.map((k) => {
     const v = basis[k];
-    if (k === "calls") return "调用：" + [].concat(v).join("、");
-    if (k === "artifacts") return "产物：" + [].concat(v).join("、");
-    if (k === "sentence") return "论断：「" + v + "」";
-    if (k === "number") return "数值：" + v;
+    if (k === "calls") return t("调用：{calls}", { calls: series(v) });
+    if (k === "artifacts") return t("产物：{artifacts}", { artifacts: series(v) });
+    if (k === "sentence") return t("论断：「{sentence}」", { sentence: v });
+    if (k === "number") return t("数值：{number}", { number: v });
     if (k === "old_index") {
       // 9.5 step 2: the old index held several bases at once; each is kept
       // as it was stored (canonical JSON), never merged into one.
       const each = [].concat(v).map((b) => {
         let parsed = b;
         try { parsed = typeof b === "string" ? JSON.parse(b) : b; } catch (err) { return String(b); }
-        return parsed && typeof parsed === "object" ? basisLines(parsed).join("，") : String(b);
+        return parsed && typeof parsed === "object" ? basisLines(parsed).join(t("，")) : String(b);
       });
-      return "旧索引里记着几种不同的依据：" + each.join(" / ");
+      return t("旧索引里记着几种不同的依据：{bases}", { bases: each.join(" / ") });
     }
     if (k === "metrics") {
       const names = v && typeof v === "object" ? Object.keys(v).map((n) => n + " = " + v[n]) : [];
-      return "指标：" + (names.length ? names.join("、") : "没有对得上的指标");
+      return t("指标：{metrics}", { metrics: names.length ? series(names) : t("没有对得上的指标") });
     }
     // 11.4: a `cites` link rests on how the draft wrote the citation, the
     // DOI of the reference-list entry it matched, and that entry's text.
-    if (k === "cited") return "文中的引用：" + [].concat(v).map(citedText).join("、");
+    if (k === "cited") return t("文中的引用：{cited}", { cited: series([].concat(v).map(citedText)) });
     if (k === "entry_dois") {
       const dois = [].concat(v).filter(Boolean);
-      return dois.length ? "文末条目的 DOI：" + dois.join("、") : "";
+      return dois.length ? t("文末条目的 DOI：{dois}", { dois: series(dois) }) : "";
     }
-    if (k === "entries") return "文末条目：" + [].concat(v).map((e) => "「" + e + "」").join("、");
-    return k + "：" + (typeof v === "string" ? v : JSON.stringify(v));
+    if (k === "entries") return t("文末条目：{entries}", { entries: series([].concat(v).map((e) => t("「{entry}」", { entry: e }))) });
+    return t("{key}：{value}", { key: k, value: typeof v === "string" ? v : JSON.stringify(v) });
   }).filter(Boolean);
 }
 
@@ -1642,37 +1645,38 @@ function endName(id, title) {
   const rest = colon > 0 ? s.slice(colon + 1) : s;
   const file = rest.split("#")[0];
   const base = file.split("/").filter(Boolean).pop() || file || rest;
-  return Object.prototype.hasOwnProperty.call(NODE_KIND_WORDS, kind) ? NODE_KIND_WORDS[kind] + "（" + base + "）" : base;
+  return Object.prototype.hasOwnProperty.call(NODE_KIND_WORDS, kind) ? t("{kind}（{name}）", { kind: t(NODE_KIND_WORDS[kind]), name: base }) : base;
 }
 
 function refEndName(id, title) {
   const shown = title ? String(title) : "";
-  if (shown) return "文献《" + (shown.length > 60 ? shown.slice(0, 59) + "…" : shown) + "》";
-  if (id.startsWith("ref:doi:")) return "文献（DOI " + id.slice("ref:doi:".length) + "）";
+  if (shown) return t("文献《{title}》", { title: shown.length > 60 ? shown.slice(0, 59) + "…" : shown });
+  if (id.startsWith("ref:doi:")) return t("文献（DOI {doi}）", { doi: id.slice("ref:doi:".length) });
   if (id.startsWith("ref:entry:")) {
     const rest = id.slice("ref:entry:".length);
     const hash = rest.lastIndexOf("#");
     const draft = hash >= 0 ? rest.slice(0, hash) : rest;
     const base = draft.split("/").filter(Boolean).pop() || draft;
-    return base + " 的文末条目" + (hash >= 0 ? "第 " + rest.slice(hash + 1) + " 条" : "");
+    return hash >= 0 ? t("{draft} 的文末条目第 {n} 条", { draft: base, n: rest.slice(hash + 1) }) : t("{draft} 的文末条目", { draft: base });
   }
-  return "Zotero 里的一篇文献";
+  return t("Zotero 里的一篇文献");
 }
 
 // A link {src, dst, type} in product language: 「17.Rmd 读取 panel.csv」.
 function linkText(key) {
-  const verb = Object.prototype.hasOwnProperty.call(LINK_VERBS, key.type) ? LINK_VERBS[key.type] : "关联";
+  const verb = Object.prototype.hasOwnProperty.call(LINK_VERBS, key.type) ? t(LINK_VERBS[key.type]) : t("关联");
   return endName(key.src, key.src_title) + " " + verb + " " + endName(key.dst, key.dst_title);
 }
 
 // Who did what, when, from where: 「2026-10-04 21:15 · 你在画布上否决」.
 function historyEntryText(entry) {
-  const what = entry.verdict === "undone" ? "撤销了上一步"
-    : entry.verdict === "withdrawn" ? "撤回了判断" : verdictWord(entry.verdict);
-  if (entry.migrated) return whenText(entry) + " · " + what;
-  if (entry.via === "recovered") return whenText(entry) + " · 补回文件里缺少的判断：" + what;
-  const via = Object.prototype.hasOwnProperty.call(VIA_WORDS, entry.via) ? VIA_WORDS[entry.via] : "";
-  return whenText(entry) + " · 你" + via + what;
+  const what = entry.verdict === "undone" ? t("撤销了上一步")
+    : entry.verdict === "withdrawn" ? t("撤回了判断") : verdictWord(entry.verdict);
+  const when = whenText(entry);
+  if (entry.migrated) return when + " · " + what;
+  if (entry.via === "recovered") return t("{when} · 补回文件里缺少的判断：{what}", { when: when, what: what });
+  const via = Object.prototype.hasOwnProperty.call(VIA_WORDS, entry.via) ? t(VIA_WORDS[entry.via]) : "";
+  return via ? t("{when} · 你{via}{what}", { when: when, via: via, what: what }) : t("{when} · 你{what}", { when: when, what: what });
 }
 
 // The basis a verdict was made on, for its history line ("" for an undo
@@ -1767,7 +1771,11 @@ function renderBlockingError(el, framing, err) {
   el.title = "";
   const text = document.createElement("span");
   text.className = "err-text";
-  text.textContent = blockingErrorText(framing, err);
+  // In the screen's language where the sentence has an English entry (the
+  // desk's refusals, 14.6) -- its key is its Chinese, as every t() key is:
+  // the page's table, the engine's Chinese, or a framing already worded by
+  // its caller; the others stay Chinese until 13.7's increment for errors.
+  text.textContent = t(blockingErrorText(framing, err));
   el.appendChild(text);
   const raw = (err && typeof err === "object" && typeof err.detail === "string" && err.detail) ? err.detail
     : err instanceof Error ? err.message : (err == null ? "" : String(err));
@@ -1775,7 +1783,7 @@ function renderBlockingError(el, framing, err) {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "err-detail-toggle";
-  toggle.textContent = "详情";
+  toggle.textContent = t("详情");
   toggle.setAttribute("aria-expanded", "false");
   const detail = document.createElement("span");
   detail.className = "err-detail hidden";
@@ -2069,8 +2077,8 @@ async function loadProjectSummary(force) {
       btn.type = "button";
       btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
-      btn.textContent = data.review + " 条判断待复核";
-      btn.title = "查看证据变了的旧判断";
+      btn.textContent = t("{n} 条判断待复核", { n: data.review });
+      btn.title = t("查看证据变了的旧判断");
       btn.addEventListener("click", (e) => { e.stopPropagation(); openReviewPanel(null); });
       line.append(btn);
     }
@@ -3947,34 +3955,37 @@ const reviewNotes = new Map(); // keyId -> a note being typed, kept across re-re
 async function openReviewPanel(focus) {
   const subject = { kind: "review", focus: focus ? keyId(focus) : null, scrolled: false };
   state.panelSubject = subject;
-  panelTitle.textContent = "待复核";
+  panelTitle.textContent = t("待复核");
   panelTitle.title = "";
-  panelSubtitle.textContent = "证据变了的旧判断，等你再看一眼";
-  panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
+  panelSubtitle.textContent = t("证据变了的旧判断，等你再看一眼");
+  panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderReviewPanel(subject);
 }
 
 function reasonNow(item) {
   if (item.basis_now) return basisLines(item.basis_now);
-  if (item.reason === "not_produced") return ["本次扫描读到了两端，但没有得出这条关联"];
-  if (item.reason === "endpoint_gone") return ["关联的一端不在本次扫描结果里"];
-  return ["本次扫描没有给出依据"];
+  if (item.reason === "not_produced") return [t("本次扫描读到了两端，但没有得出这条关联")];
+  if (item.reason === "endpoint_gone") return [t("关联的一端不在本次扫描结果里")];
+  return [t("本次扫描没有给出依据")];
 }
 
 function basisColumn(title, lines) {
   const col = mk("div", "basis-col");
   col.appendChild(mk("div", "basis-col-title", title));
-  (lines.length ? lines : ["（没有记录依据）"]).forEach((l) => col.appendChild(mk("div", null, l)));
+  (lines.length ? lines : [t("（没有记录依据）")]).forEach((l) => col.appendChild(mk("div", null, l)));
   return col;
 }
 
+// Each act as [its button, the verdict it records, what is said once done].
 function reviewActions(item) {
+  const withdraw = [t("撤回"), "withdrawn", t("已撤回")];
   if (item.outcome === "conflict") {
-    return [["定为确认", "confirmed"], ["定为否决", "rejected"], ["撤回", "withdrawn"]];
+    return [[t("定为确认"), "confirmed", t("已定为确认")], [t("定为否决"), "rejected", t("已定为否决")], withdraw];
   }
-  const opposite = item.verdict === "confirmed" ? ["改为否决", "rejected"] : ["改为确认", "confirmed"];
-  return [["仍然成立", item.verdict], opposite, ["撤回", "withdrawn"]];
+  const opposite = item.verdict === "confirmed" ? [t("改为否决"), "rejected", t("已改为否决")]
+    : [t("改为确认"), "confirmed", t("已改为确认")];
+  return [[t("仍然成立"), item.verdict, t("已记录：仍然成立")], opposite, withdraw];
 }
 
 // `origin`: the review item the act was made from -- the 「撤销」 offer is
@@ -3982,19 +3993,19 @@ function reviewActions(item) {
 // scrolled panel, where it would expire unseen).
 async function judgeFromReview(target, verdict, note, statusEl, buttons, done, origin) {
   buttons.forEach((b) => { b.disabled = true; });
-  setStatus(statusEl, "", "正在记录…");
+  setStatus(statusEl, "", t("正在记录…"));
   try {
     const res = await postJudgement(target, verdict, note);
     // This page re-fetches right below; the poll need not do it again.
     if (res && typeof res.generation === "number") lastGeneration = res.generation;
   } catch (err) {
     buttons.forEach((b) => { b.disabled = false; });
-    setStatus(statusEl, "err", "没能记录这条判断", err);
+    setStatus(statusEl, "err", t("没能记录这条判断"), err);
     return;
   }
   reviewNotes.delete(keyId(target));
   state.reviewOffer = {
-    text: done + "：" + linkText(target), key: keyOf(target), until: Date.now() + JUDGE_UNDO_MS,
+    text: t("{done}：{link}", { done: done, link: linkText(target) }), key: keyOf(target), until: Date.now() + JUDGE_UNDO_MS,
     origin: origin || null, shown: false,
   };
   setTimeout(() => {
@@ -4009,12 +4020,12 @@ async function judgeFromReview(target, verdict, note, statusEl, buttons, done, o
 
 async function undoFromReview(key, statusEl) {
   state.reviewOffer = null;
-  setStatus(statusEl, "", "正在撤销…");
+  setStatus(statusEl, "", t("正在撤销…"));
   try {
     const res = await postJudgement(key, "undone");
     if (res && typeof res.generation === "number") lastGeneration = res.generation;
   } catch (err) {
-    setStatus(statusEl, "err", "无法撤销", err);
+    setStatus(statusEl, "err", t("无法撤销"), err);
     return;
   }
   await refreshCurrentView();
@@ -4025,31 +4036,33 @@ function renderReviewItem(item, subject) {
   const box = mk("div", "review-item" + (subject.focus === id ? " focus" : ""));
   box.dataset.key = id;
   const link = mk("div", "review-link", linkText(item));
-  link.title = item.src + "\n" + item.dst + "\n（" + item.type + " · " + item.extractor + "）";
-  box.append(link, mk("span", "review-reason", item.label || "待复核"));
+  link.title = item.src + "\n" + item.dst + "\n" + t("（{type} · {extractor}）", { type: item.type, extractor: item.extractor });
+  box.append(link, mk("span", "review-reason", item.label || t("待复核")));
   if (item.outcome === "conflict") {
     const d = item.detail || {};
     box.appendChild(mk("p", "review-note", d.contradicts
-      ? "迁移来的旧判断和记录里已有的判断相反（两台电脑各判断过一次）。Research OS 不按迁移日期替你选，请写一条新判断定下它。"
-      : "两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新判断定下它。"));
-    if (d.common && d.common.length) box.appendChild(mk("div", "review-note", "共同的记录：" + d.common.map(historyEntryText).join("；")));
+      ? t("迁移来的旧判断和记录里已有的判断相反（两台电脑各判断过一次）。Research OS 不按迁移日期替你选，请写一条新判断定下它。")
+      : t("两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新判断定下它。")));
+    if (d.common && d.common.length) {
+      box.appendChild(mk("div", "review-note", t("共同的记录：{entries}", { entries: d.common.map(historyEntryText).join(t("；")) })));
+    }
     const branches = mk("div", "review-branches");
     (d.branches || []).forEach((branch, i) => {
       const col = mk("div", "basis-col");
-      col.appendChild(mk("div", "basis-col-title", (d.contradicts ? ["记录里原有的", "迁移来的"][i] : "第 " + (i + 1) + " 份") || ("第 " + (i + 1) + " 份")));
+      col.appendChild(mk("div", "basis-col-title", (d.contradicts ? [t("记录里原有的"), t("迁移来的")][i] : null) || t("第 {n} 份", { n: i + 1 })));
       branch.forEach((e) => col.appendChild(mk("div", null, historyEntryText(e) + (e.note ? " · " + e.note : ""))));
       branches.appendChild(col);
     });
     box.appendChild(branches);
   } else {
-    box.appendChild(mk("div", "review-was", "原判断：" + verdictWord(item.verdict) + " · " + whenText(item)));
-    if (item.note) box.appendChild(mk("div", "review-note", "备注：" + item.note));
+    box.appendChild(mk("div", "review-was", t("原判断：{verdict} · {when}", { verdict: verdictWord(item.verdict), when: whenText(item) })));
+    if (item.note) box.appendChild(mk("div", "review-note", t("备注：{note}", { note: item.note })));
     const pair = mk("div", "basis-pair");
-    pair.append(basisColumn("当时的依据", basisLines(item.basis)), basisColumn("现在", reasonNow(item)));
+    pair.append(basisColumn(t("当时的依据"), basisLines(item.basis)), basisColumn(t("现在"), reasonNow(item)));
     box.appendChild(pair);
   }
   const noteInput = mk("input", "form-input");
-  noteInput.placeholder = "备注（可选）";
+  noteInput.placeholder = t("备注（可选）");
   noteInput.dataset.noteFor = id;
   noteInput.value = reviewNotes.get(id) || "";
   noteInput.addEventListener("input", () => reviewNotes.set(id, noteInput.value));
@@ -4059,18 +4072,18 @@ function renderReviewItem(item, subject) {
   if (candidates.length && (item.verdict === "confirmed" || item.verdict === "rejected")) {
     const cands = mk("div", "review-cands");
     cands.appendChild(mk("div", "review-cands-title",
-      "可能对应的新关联（同一次扫描里新出现）：旧判断不会自己转过去，点了才会在它上面记下一条新判断，旧的这条保持原样。"));
+      t("可能对应的新关联（同一次扫描里新出现）：旧判断不会自己转过去，点了才会在它上面记下一条新判断，旧的这条保持原样。")));
     candidates.forEach((c) => {
       const row = mk("div", "review-cand");
-      const t = mk("span", "review-link", linkText(c));
-      t.title = c.src + "\n" + c.dst;
-      row.appendChild(t);
+      const name = mk("span", "review-link", linkText(c));
+      name.title = c.src + "\n" + c.dst;
+      row.appendChild(name);
       if (candidateApplied(c, item.verdict)) {
         // Applied already (9.6: one click, one entry): said, not offered again.
-        row.appendChild(mk("span", "review-note", "已用到这条关联上（" + verdictWord(item.verdict) + "）"));
+        row.appendChild(mk("span", "review-note", t("已用到这条关联上（{verdict}）", { verdict: verdictWord(item.verdict) })));
       } else {
-        const b = mkButton("把这条旧判断用到它上面", "btn btn-small", () =>
-          judgeFromReview(c, item.verdict, noteInput.value, status, buttons, "已用到新关联上（" + verdictWord(item.verdict) + "）", id));
+        const b = mkButton(t("把这条旧判断用到它上面"), "btn btn-small", () =>
+          judgeFromReview(c, item.verdict, noteInput.value, status, buttons, t("已用到新关联上（{verdict}）", { verdict: verdictWord(item.verdict) }), id));
         buttons.push(b);
         row.appendChild(b);
       }
@@ -4084,8 +4097,7 @@ function renderReviewItem(item, subject) {
     actions.appendChild(mk("span", "review-note", blocked));
   } else {
     actions.appendChild(noteInput);
-    reviewActions(item).forEach(([label, verdict]) => {
-      const done = verdict === "withdrawn" ? "已撤回" : label === "仍然成立" ? "已记录：仍然成立" : "已" + label;
+    reviewActions(item).forEach(([label, verdict, done]) => {
       const b = mkButton(label, "btn btn-small", () => judgeFromReview(item, verdict, noteInput.value, status, buttons, done, id));
       buttons.push(b);
       actions.appendChild(b);
@@ -4116,15 +4128,15 @@ async function renderReviewPanel(subject) {
   const ledger = data.ledger || {};
   if (ledger.state && ledger.state !== "ok") {
     const warn = mk("div", "notice bad");
-    warn.appendChild(mk("div", "notice-title", ledger.message || "判断记录文件当前无法读取，请先恢复它"));
-    warn.appendChild(mk("p", null, "修好之前，这里的操作都不会被记录。"));
+    warn.appendChild(mk("div", "notice-title", ledger.message || t("判断记录文件当前无法读取，请先恢复它")));
+    warn.appendChild(mk("p", null, t("修好之前，这里的操作都不会被记录。")));
     panelBody.appendChild(warn);
   }
   const offer = state.reviewOffer;
   const offerStatus = mk("div", "panel-status ok");
   if (offer && offer.until > Date.now()) {
     offerStatus.appendChild(mk("span", null, offer.text));
-    const undo = mkButton("撤销", "err-detail-toggle", () => undoFromReview(offer.key, offerStatus));
+    const undo = mkButton(t("撤销"), "err-detail-toggle", () => undoFromReview(offer.key, offerStatus));
     offerStatus.appendChild(undo);
   }
   const offerAnchor = mk("div");
@@ -4132,19 +4144,20 @@ async function renderReviewPanel(subject) {
   const cardGroups = (data.cards && data.cards.groups) || [];
   if (data.review.length || !cardGroups.length) {
     panelBody.appendChild(mk("p", "review-intro",
-      "这些判断做出时依据的事实，这次扫描看到的不一样了。判断没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。"));
+      t("这些判断做出时依据的事实，这次扫描看到的不一样了。判断没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。")));
   }
-  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", "没有待复核的旧判断。"));
+  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", t("没有待复核的旧判断。")));
   data.review.forEach((item) => panelBody.appendChild(renderReviewItem(item, subject)));
   // 9.11 stage (b): variable cards whose implementation moved, in the same list.
   if (cardGroups.length) renderCardReviewGroups(panelBody, data.cards);
   const held = data.source_unreadable || [], absent = data.not_in_index || [];
   if (held.length || absent.length) {
-    panelBody.appendChild(mk("div", "review-quiet-title", "不计入待复核"));
+    panelBody.appendChild(mk("div", "review-quiet-title", t("不计入待复核")));
     held.forEach((item) => {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
-        " · 来源文件暂不可读：" + sourceFiles(item).join("、") + " · 判断照旧（" + verdictWord(item.verdict) + "）" +
+        " · " + t("来源文件暂不可读：{files}", { files: sourceFiles(item).join(t("、")) }) +
+        " · " + t("判断照旧（{verdict}）", { verdict: verdictWord(item.verdict) }) +
         // 11.1: only in a synced folder's cloud, its client not running
         (typeof item.cloud === "string" && item.cloud ? " · " + item.cloud : ""));
       panelBody.appendChild(row);
@@ -4152,7 +4165,7 @@ async function renderReviewPanel(subject) {
     absent.forEach((item) => {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
-        " · 图谱里还没有这条关联 · 你的判断：" + verdictWord(item.verdict) + "（" + whenText(item) + "）");
+        " · " + t("图谱里还没有这条关联") + " · " + t("你的判断：{verdict}（{when}）", { verdict: verdictWord(item.verdict), when: whenText(item) }));
       panelBody.appendChild(row);
     });
   }
@@ -4385,8 +4398,9 @@ function confirmationWording(v) {
 
 // A stage-(b) comparison, always with how far it looked.
 function coverageLine(item, kind) {
-  if (kind === "script") return "实现脚本" + (item.path ? " " + item.path : "") + "：" + (item.text || "未比对");
-  return "输入 " + (item.dataset || "") + "：" + (item.text || "未比对");
+  const text = item.text || t("未比对");
+  if (kind === "script") return item.path ? t("实现脚本 {path}：{text}", { path: item.path, text: text }) : t("实现脚本：{text}", { text: text });
+  return t("输入 {dataset}：{text}", { dataset: item.dataset || "", text: text });
 }
 
 function cardActText(entry) {
@@ -4416,7 +4430,7 @@ function varNote(key, placeholder) {
 
 async function variableAction(action, body, statusEl, buttons, framing) {
   buttons.forEach((b) => { b.disabled = true; });
-  setStatus(statusEl, "", "正在记录…");
+  setStatus(statusEl, "", t("正在记录…"));
   let res;
   try {
     res = await apiPost("/api/variables/" + action, body);
@@ -4993,28 +5007,28 @@ function cardReviewMember(review, standalone) {
   const region = review.reasons.some((r) => r.code === "chunk_missing" || r.code === "function_missing");
   let dataVersion = null;
   if (review.needs_data_version && !region) {
-    dataVersion = varNote("dv:" + review.card + ":" + review.signature, "新的数据版本说明（必填），例：2017-01 至 2024-12，2026-10 重新下载");
+    dataVersion = varNote("dv:" + review.card + ":" + review.signature, t("新的数据版本说明（必填），例：2017-01 至 2024-12，2026-10 重新下载"));
     actions.appendChild(dataVersion);
   }
   if (region) {
-    box.appendChild(mk("p", "review-note", "卡片指定的代码块或函数找不到了：如果只是改了名字，在卡片文件里改正 chunk / function，再回答「这是更正」；否则选「口径已变」。"));
+    box.appendChild(mk("p", "review-note", t("卡片指定的代码块或函数找不到了：如果只是改了名字，在卡片文件里改正 chunk / function，再回答「这是更正」；否则选「口径已变」。")));
   } else {
-    const same = mkButton("口径未变", "btn", () => {
-      if (dataVersion && !dataVersion.value.trim()) { setStatus(status, "err", "输入数据变了：请写下新的数据版本说明"); return; }
+    const same = mkButton(t("口径未变"), "btn", () => {
+      if (dataVersion && !dataVersion.value.trim()) { setStatus(status, "err", t("输入数据变了：请写下新的数据版本说明")); return; }
       const item = { id: review.card, version: review.version, signature: review.signature };
       if (dataVersion) item.data_version = dataVersion.value.trim();
-      variableAction("reaffirm", { items: [item] }, status, buttons, "没能记下口径未变");
+      variableAction("reaffirm", { items: [item] }, status, buttons, t("没能记下口径未变"));
     });
-    same.title = "记下：实现变了，但这一版的口径没有变（附上现在的指纹）";
+    same.title = t("记下：实现变了，但这一版的口径没有变（附上现在的指纹）");
     buttons.push(same);
     actions.appendChild(same);
   }
   if (review.draft != null) {
     actions.appendChild(mk("span", "review-note", review.draft_note));
   } else {
-    const changed = mkButton("口径已变", "btn", () =>
-      variableAction("revise", { id: review.card }, status, buttons, "没能打开下一版草稿"));
-    changed.title = "打开下一版草稿，在草稿里写下新的口径";
+    const changed = mkButton(t("口径已变"), "btn", () =>
+      variableAction("revise", { id: review.card }, status, buttons, t("没能打开下一版草稿")));
+    changed.title = t("打开下一版草稿，在草稿里写下新的口径");
     buttons.push(changed);
     actions.appendChild(changed);
   }
@@ -5024,27 +5038,27 @@ function cardReviewMember(review, standalone) {
 
 // The cards' part of the 待复核 list: one item per changed script.
 function renderCardReviewGroups(host, cardItems) {
-  host.appendChild(mk("div", "review-quiet-title", "变量卡：实现依据有变化"));
+  host.appendChild(mk("div", "review-quiet-title", t("变量卡：实现依据有变化")));
   cardItems.groups.forEach((group) => {
     const box = mk("div", "review-item");
     if (group.script) {
       box.appendChild(mk("div", "review-link", group.script));
       box.appendChild(mk("span", "review-reason", group.message));
     } else {
-      box.appendChild(mk("div", "review-link", "输入数据"));
+      box.appendChild(mk("div", "review-link", t("输入数据")));
     }
-    if (!group.counted) box.appendChild(mk("div", "review-note", "已为它打开下一版草稿，不计入待复核数；确认草稿之后这一项自然消失。"));
+    if (!group.counted) box.appendChild(mk("div", "review-note", t("已为它打开下一版草稿，不计入待复核数；确认草稿之后这一项自然消失。")));
     const status = mk("div", "notice-status");
     const answerable = group.cards.filter((m) => m.draft == null);
     const together = group.cards.length > 1 && answerable.length > 1 && !humanRecordsBlocked() &&
       answerable.every((m) => !m.needs_data_version && !m.reasons.some((r) => r.code !== "script_changed"));
     if (together) {
       const actions = mk("div", "var-actions");
-      const all = mkButton("全部口径未变", "btn btn-primary", () => variableAction("reaffirm", {
+      const all = mkButton(t("全部口径未变"), "btn btn-primary", () => variableAction("reaffirm", {
         items: answerable.map((m) => ({ id: m.card, version: m.version, signature: m.signature })),
-      }, status, [all], "没能全部记下口径未变"));
-      all.title = "为下面每张卡各记一条「口径未变」";
-      actions.append(all, mk("span", "answer-help", "下面 " + answerable.length + " 张卡各记一条；也可以逐个回答。"));
+      }, status, [all], t("没能全部记下口径未变")));
+      all.title = t("为下面每张卡各记一条「口径未变」");
+      actions.append(all, mk("span", "answer-help", t("下面 {n} 张卡各记一条；也可以逐个回答。", { n: answerable.length })));
       box.append(actions, status);
     }
     group.cards.forEach((m) => box.appendChild(cardReviewMember(m, false)));
