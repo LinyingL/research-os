@@ -2500,7 +2500,9 @@ def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_l
     """The scripts an approval just placed, read by the dataflow extractor
     (one partial scan: those files, nothing else, 9.6) -- under the
     watcher's ingest lock when the app passes it -- so the outputs they
-    write are in the index before an abandoned route's basis is frozen."""
+    write are in the index before an abandoned route's basis is frozen.
+    Contained, as the scan after an approval is: a failure leaves the basis
+    frozen with what the index holds, never the approval half done."""
     from researchos.ingest import dataflow as dataflow_ingest  # noqa: PLC0415
 
     kinds: dict[str, list[str]] = {".py": [], ".r": [], ".rmd": []}
@@ -2511,8 +2513,11 @@ def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_l
             kinds[suffix].append(rel)
     if not any(kinds.values()):
         return
-    with ingest_lock if ingest_lock is not None else contextlib.nullcontext():
-        dataflow_ingest.ingest_dataflow_repo(conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"])
+    try:
+        with ingest_lock if ingest_lock is not None else contextlib.nullcontext():
+            dataflow_ingest.ingest_dataflow_repo(conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"])
+    except Exception:  # noqa: BLE001 -- contained: the basis is frozen with what the index holds
+        logger.exception("scanning the scripts an approval placed in %s failed", root)
 
 
 def _rescan(root: Path) -> None:
