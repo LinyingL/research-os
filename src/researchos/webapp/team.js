@@ -941,6 +941,7 @@
         s.appendChild(mk("p", "desk-note", t("结果：{result}", { result: a.result || "" })));
         s.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: a.reason || "" })));
       }
+      (a.parent_words || []).forEach((w) => s.appendChild(mk("p", "desk-note plain", w)));
     }
     if (full.verdict) {
       const v = full.verdict;
@@ -1025,6 +1026,7 @@
         if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
         part.appendChild(p);
         if (a.abandons) abandonsLines(part, full.attempt || {}, a);
+        (a.parent_words || []).forEach((w) => part.appendChild(mk("p", "desk-note plain", w))); // 14.2, in the engine's words
       } else {
         part.appendChild(phrase(mk("p", "desk-head"), t("尝试表第 {number} 行的判决 {old} 改为 {new}", { number: a.number }),
           { old: RODesk.verdictInline(a.old_status), new: RODesk.verdictInline(a.new_status) }));
@@ -1225,6 +1227,10 @@
         inputs.number = textInput("不填：只有一行时自动找出", true);
         extra.appendChild(field("尝试的编号", inputs.number, "工作副本里改了不止一行时，填上要提议的那一行"));
       }
+      if (kind === "attempt_new") {
+        inputs.parents = textInput(t("例如 16, 17"), true);
+        extra.appendChild(field(t("源自（可选）"), inputs.parents, t("它源自的正式尝试；PI 批准后，这些连线画到路线图上")));
+      }
       if (kind === "verdict_change") {
         inputs.result = textArea(2, "不填：用尝试表里这一行现在的结果");
         extra.appendChild(field("结果", inputs.result));
@@ -1253,6 +1259,8 @@
       if (inputs.number && inputs.number.value.trim()) body.number = inputs.number.value.trim().replace(/^#/, "");
       if (inputs.result && inputs.result.value.trim()) body.result = inputs.result.value.trim();
       if (inputs.reason && inputs.reason.value.trim()) body.reason = inputs.reason.value.trim();
+      const parents = inputs.parents ? parentNumbers(inputs.parents.value) : [];
+      if (parents.length) body.parents = parents;
       if (inputs.card) body.card = inputs.card.value.trim();
       if (inputs.attested) {
         if (!inputs.attested.value) { setStatus(status, "err", "请回答：现有的输出文件是否按这个定义生成"); return; }
@@ -1265,6 +1273,11 @@
     const result = mk("div", "compose-result");
     s.append(form, result);
     page.appendChild(s);
+  }
+
+  // 「源自」 numbers as typed -- "16, 17", "#16 #17", 「16、17」 -- one each.
+  function parentNumbers(text) {
+    return Array.from(new Set(String(text || "").split(/[\s,，、;；]+/).map((x) => x.replace(/^#/, "").trim()).filter(Boolean)));
   }
 
   // The engine's dry run of a proposal, shown exactly, then 发送提议. Used
@@ -1299,6 +1312,7 @@
         box.appendChild(mk("p", "desk-note", t("结果：{result}", { result: d.attempt.result || t("（空）") })));
         box.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: d.attempt.reason || "" })));
       }
+      (d.attempt.parent_words || []).forEach((w) => box.appendChild(mk("p", "desk-note plain", w)));
     }
     if (d.verdict) {
       const v = d.verdict;
@@ -2098,6 +2112,6 @@
     _sizeWords: sizeWords, _stateLabel: stateLabel, _signatureWords: signatureWords, _approveSentence: approveSentence,
     _sendWrites: sendWrites, _carryWords: carryWords, _publishWrites: publishWrites, _syncWrites: syncWrites, _joinWrites: joinWrites,
     _packetWords: packetWords, _syncDone: syncDone,
-    _reasonSource: reasonSource, _routeProposals: routeProposals,
+    _reasonSource: reasonSource, _routeProposals: routeProposals, _parentNumbers: parentNumbers,
   });
 })();

@@ -218,7 +218,7 @@ MESSAGES = {
     "bad_route": "请指明这条连线从哪个尝试连到哪个尝试",
     "self_link": "一个尝试不能源自它自己",
     "circle": "这条连线会绕成一个圈：它要连的来处本身就源自它",
-    "attempt_not_found": "连线的一端不是正式版本里的尝试：新的尝试请在它自己的提议里写明源自哪里",
+    "attempt_not_found": "连线的一端不在你上次同步的正式版本里：请同步后再试",
     "line_exists": "这条连线已经在正式版本里了",
     "no_such_line": "正式版本里没有这条连线",
 }
@@ -673,6 +673,16 @@ def _parents_of(config, rows: Mapping[str, Any], number: str, parents: Iterable[
         if f"attempt:{config.file}#{parent}" not in out:
             out.append(f"attempt:{config.file}#{parent}")
     return out
+
+
+def parent_words(attempt: Mapping[str, Any], lang: str = "zh") -> list[str]:
+    """The lines approving a new attempt adds (14.2: what it grew out of),
+    each said as approving a line says it, in `lang` (13.6)."""
+    from researchos import settings  # noqa: PLC0415
+
+    child = str(attempt.get("number") or "")
+    return [settings.say("批准后加上连线：#{child} 源自 #{parent}", "Approving adds the line: #{child} grew out of #{parent}",
+                         lang, child=child, parent=str(p).rpartition("#")[2]) for p in attempt.get("parents") or []]
 
 
 def _route_summary(route: Any) -> dict[str, Any] | None:
@@ -1649,6 +1659,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         out["table_moved"] = table_moved
         if row.get("parents"):
             out["parents"] = list(row["parents"])
+            out["parent_words"] = parent_words(row, lang)  # 12.3: the lines approving adds, said, never left unseen
             stale = _parents_conflict(root, config, rows, number, out["parents"], lang)
             if stale:
                 out.update(state="conflict", reason=stale)

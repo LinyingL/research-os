@@ -136,7 +136,9 @@ def _run_map(desk: dict, steps: str, lang: str | None = None) -> dict:
     script = ("global.window = {};\n" + i18n + (WEBAPP / "routemap.js").read_text(encoding="utf-8") + "\n" + _MAP_DOM
               + f"(async () => {{ map.update({json.dumps(desk, ensure_ascii=False)}, {{ changed: () => false }});\n{steps}\n"
               " process.stdout.write(JSON.stringify({ posted, asked, opened, status: status(), extra: global.extra || null,"
-              " pop: texts('.cv-pop-line').concat(texts('.rm-pop-sub')), buttons: texts('.cv-linkcard button'),"
+              " pop: texts('.cv-pop-line').concat(texts('.rm-pop-sub')), card: texts('.cv-linkcard-assert'),"
+              " buttons: root.querySelectorAll('.cv-linkcard').flatMap((c) => c.all().filter((k) => k.tag === 'BUTTON'))"
+              ".map((b) => b.textContent),"
               " linking: root.cls.has('linking') })); })();\n")
     return _node(script)
 
@@ -227,6 +229,7 @@ def test_14_2_the_map_offers_no_line_while_the_role_cannot_be_told(lang):
     """ % {"a16": json.dumps(A16), "a18": json.dumps(A18), "a17": json.dumps(A17)}
     out = _run_map(_desk("unknown", lines=[(A17, A16)], notice=notice), steps, lang=lang)
     assert out["pop"] == [] and out["posted"] == [] and out["extra"]["after_drag"] == notice
+    assert out["card"] == ["#17 源自 #16" if lang == "zh" else "#17 grew out of #16"]
     assert out["buttons"] == []  # the line card says what the line is, and offers nothing
     zh = ["成员文件（team.toml）当前无法读取，无法判断谁是 PI", "成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线"]
     assert out["extra"]["refusals"] == (zh if lang == "zh" else [english_table()[s] for s in zh])
@@ -302,3 +305,187 @@ def test_8_8_a_members_line_refusal_and_an_unknown_role_have_their_own_sentences
     table = english_table()
     assert all(s in table and not CJK.search(table[s]) for s in said)
     assert re.search(r'STATED = \(.*"role_unknown"\)', (WEBAPP / "server.py").read_text(encoding="utf-8"))
+
+
+# -- 2, 9: a line to a card not yet official; what a new attempt grew out of ------------------------------
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_2_a_members_line_to_their_own_new_row_is_refused_before_anything_is_asked(lang):
+    """A member drags from #16 onto their own new row #19 (我的改动): refused
+    on the map, before the popover and the dashed line, with what they can
+    do -- name it in #19's proposal, or draw it once approved; #19 as the
+    parent can only wait; an approved row waits for the sync. Nothing is
+    posted. The engine's attempt_not_found no longer points at a control:
+    it says sync."""
+    steps = """
+      dragLine(%(a16)s, %(a19)s); global.extra = { child: status() };
+      dragLine(%(a19)s, %(a16)s); extra.parent = status();
+      extra.engine = window.RORouteMap.lineRefusal("attempt_not_found");
+    """ % {"a16": json.dumps(A16), "a19": json.dumps(A19)}
+    out = _run_map(_desk("member", mine=True), steps, lang=lang)
+    approved = _desk("member", mine=True)
+    approved["attempts"][-1]["officialness"] = {"state": "approved", "label": "已批准，待同步"}
+    later = _run_map(approved, steps, lang=lang)
+    zh = ["#19 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线",
+          "#19 还不在正式版本里：PI 批准它以后才能画这条连线", "连线的一端不在你上次同步的正式版本里：请同步后再试"]
+    en = ["#19 is not in the official version yet: name what it grew out of in its proposal, or draw the line once the PI "
+          "approves it", "#19 is not in the official version yet: the line can be drawn once the PI approves it",
+          "One end of the line is not in the official version you last synced: sync, then try again"]
+    said = zh if lang == "zh" else en
+    assert [out["extra"]["child"], out["extra"]["parent"], out["extra"]["engine"]] == said
+    sync = "#19 已经批准，同步以后才能画这条连线" if lang == "zh" else "#19 is approved: the line can be drawn once you sync"
+    assert later["extra"]["child"] == later["extra"]["parent"] == sync
+    assert out["pop"] == [] and out["posted"] == [] and later["posted"] == []
+    assert proposals.MESSAGES["attempt_not_found"] == zh[2]
+    pi = _run_map(_desk("pi"), "dragLine(%s, %s);" % (json.dumps(A16), json.dumps(A18)), lang=lang)
+    assert pi["pop"][0] == ("#18 源自 #16" if lang == "zh" else "#18 grew out of #16")  # the PI's cards are all official
+
+
+@needs_node
+def test_14_8_2_a_line_dropped_back_on_its_own_card_says_so():
+    """Drag from #16's handle away and back onto #16: refused with the
+    self-line's own sentence, never silence; a click on the handle (no
+    drag) still opens the card; a drop on empty space does nothing."""
+    steps = """
+      const a = screen(0, 0);
+      dragLine(%(a16)s, %(a16)s, { via: [{ x: a.x + 600, y: a.y + 600 }] });
+      global.extra = { back: status() };
+      const left = window.RORouteMap; // the handle clicked, not dragged
+      const h = card(%(a16)s).querySelector(".rm-handle");
+      root.on.pointerdown[0]({ button: 0, target: h, clientX: 10, clientY: 10, pointerId: 1, preventDefault() {} });
+      root.on.pointerup[0]({ button: 0, target: h, clientX: 11, clientY: 10, pointerId: 1, type: "pointerup", preventDefault() {} });
+    """ % {"a16": json.dumps(A16)}
+    out = _run_map(_desk("pi"), steps)
+    assert out["extra"]["back"] == "一个尝试不能源自它自己"
+    assert out["opened"] == [A16] and out["pop"] == [] and out["posted"] == []
+    nothing = _run_map(_desk("pi"), "dragLine(%s, { x: 5000, y: 5000 });" % json.dumps(A16))
+    assert nothing["status"] is None and nothing["pop"] == []
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_2_a_members_line_card_proposes_the_removal_and_says_so(lang):
+    """The map's line card: a member is offered 「提议删除这条连线」 -- what
+    clicking it does -- the PI 「删除这条连线」."""
+    step = "clickLine(%s, %s);" % (json.dumps(A17), json.dumps(A16))
+    member = _run_map(_desk("member", lines=[(A17, A16)]), step, lang=lang)
+    pi = _run_map(_desk("pi", lines=[(A17, A16)]), step, lang=lang)
+    assert member["buttons"] == ["提议删除这条连线" if lang == "zh" else "Propose removing this line"]
+    assert pi["buttons"] == ["删除这条连线" if lang == "zh" else "Delete this line"]
+
+
+@needs_node
+def test_14_2_escape_during_a_line_drag_ends_it_whole():
+    """Escape mid-drag: the draft and the crosshair (`linking`) both go, and
+    the release that follows does nothing."""
+    out = _run_map(_desk("pi"), "dragLine(%s, %s, { key: 'Escape' });" % (json.dumps(A16), json.dumps(A18)))
+    assert out["linking"] is False and out["pop"] == [] and out["posted"] == [] and out["status"] is None
+    held = _run_map(_desk("pi"), "dragLine(%s, %s, { up: false });" % (json.dumps(A16), json.dumps(A18)))
+    assert held["linking"] is True  # the crosshair stands while a line is dragged
+
+
+def test_14_2_a_new_attempts_lines_are_said_where_they_are_proposed_and_approved(tmp_path, monkeypatch):
+    """A member's new attempt names #17 and #16: the draft and their own
+    proposal say the lines it brings, the PI's 「批准以后会怎样」 says them
+    -- in the request's language -- and the command line proposes it with
+    --parent, and a route_link with --op, --child and --parent."""
+    _parents_case(tmp_path, monkeypatch)
+
+
+def _parents_case(tmp_path, monkeypatch):
+    """The scenario above, as the next tests start from it: the drive and
+    the new attempt's proposal id."""
+    from researchos import share, signing
+    from researchos.webapp import node_api
+
+    from test_v8_phase4 import Drive
+
+    if signing.tool() is None:
+        pytest.skip("ssh-keygen is not installed here")
+    d = Drive(tmp_path, monkeypatch, join=False)
+    with d.pi():
+        (d.official / "map.md").write_text(_map())
+        _scan(d.official)
+        share.publish(d.official, note="三行")
+    with d.member():
+        share.join(d.shared, d.work)
+        (d.work / "map.md").write_text(_map(("16", "17", "18", "19")))
+        body = {"kind": "attempt_new", "sentence": "第 19 条", "parents": ["17", A16]}
+        draft = node_api.proposal_create_payload(d.work, body, "en")
+        assert draft["proposal"]["attempt"]["parent_words"] == ["Approving adds the line: #19 grew out of #17",
+                                                               "Approving adds the line: #19 grew out of #16"]
+        assert cli.main(["propose", "attempt_new", "--sentence", "第 19 条", "--parent", "17", "--parent", "16", "--yes",
+                         str(d.work)]) == 0
+        (mine,) = proposals.listing(d.work)["proposals"]
+        assert node_api.proposal_payload(d.work, mine["id"])["attempt"]["parent_words"] == [
+            "批准后加上连线：#19 源自 #17", "批准后加上连线：#19 源自 #16"]
+        assert cli.main(["propose", "route_link", "--op", "add", "--child", "18", "--parent", "17", "--note", "同一数据",
+                         "--yes", str(d.work)]) == 0
+        assert cli.main(["propose", "route_link", "--op", "add", "--child", "18", "--parent", "17", "--parent", "16",
+                         str(d.work)]) == 1
+    with d.pi():
+        listed = proposals.listing(d.official)["proposals"]
+        new = next(p for p in listed if p["kind"] == "attempt_new")
+        line = next(p for p in listed if p["kind"] == "route_link")
+        assert line["route"]["note"] == "同一数据" and (line["route"]["child_number"], line["route"]["parent_number"]) == ("18", "17")
+        changes = proposals.open_for(d.official, new["id"], lang="en")["changes"]
+        assert changes["attempt"]["parent_words"] == ["Approving adds the line: #19 grew out of #17",
+                                                      "Approving adds the line: #19 grew out of #16"]
+        assert cli.main(["proposals", "--show", new["id"], str(d.official)]) == 0
+        assert cli.main(["proposals", "--show", line["id"], str(d.official)]) == 0
+    return d, new["id"]
+
+
+def test_14_2_the_command_line_shows_a_new_attempts_lines_and_a_lines_words_in_english(tmp_path, monkeypatch, capsys):
+    """researchos proposals --show (8.8: the command line is English): the
+    lines a new attempt adds and a route_link's line."""
+    _parents_case(tmp_path, monkeypatch)
+    out = capsys.readouterr().out
+    assert "  Approving adds the line: #19 grew out of #17" in out and "  Approving adds the line: #19 grew out of #16" in out
+    assert "  Approving adds the line: #18 grew out of #17 [apply]" in out
+    ours = re.sub("第 19 条|同一数据|提议/", "", out)  # the member's words, and the shared folder's fixed name (13.1)
+    assert not CJK.search(ours), [line for line in ours.splitlines() if CJK.search(line)]
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_2_the_pi_reads_the_lines_approving_a_new_attempt_adds(tmp_path, monkeypatch, lang):
+    """「批准以后会怎样」 for the real proposal lists the lines, in the
+    engine's words -- never left for the approval to add unseen (12.3)."""
+    from test_v10_desk_proposals import _run_team
+    from test_v10_fix_records import _OPEN_P1, _real_pi_case
+
+    d, pid = _parents_case(tmp_path, monkeypatch)
+
+    class Stored:
+        id = pid
+
+    out = _run_team(_real_pi_case(d, Stored, lang), _OPEN_P1 % json.dumps("View" if lang == "en" else "查看"),
+                    lang=None if lang == "zh" else lang)
+    said = ["Approving adds the line: #19 grew out of #17", "Approving adds the line: #19 grew out of #16"] if lang == "en" \
+        else ["批准后加上连线：#19 源自 #17", "批准后加上连线：#19 源自 #16"]
+    for line in said:
+        assert "desk-note plain: " + line in out["lines"], line
+
+
+@needs_node
+def test_14_2_the_members_forms_offer_what_a_new_attempt_grew_out_of():
+    """提议新的尝试 offers the official attempts as 「源自」 and sends the ones
+    ticked; 提交提议 takes their numbers as typed; both say the lines are
+    drawn once approved -- each word with its English."""
+    from test_v9_language import _app_function
+
+    form = _app_function("function renderAttemptForm(")
+    assert 'const official = attempts.filter((a) => !a.officialness || a.officialness.state === "official");' in form
+    assert "if (parents.length) propose.parents = parents;" in form
+    composer = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert 'if (kind === "attempt_new") {\n        inputs.parents = textInput(t("例如 16, 17"), true);' in composer
+    got = _node("global.window = {};\nglobal.document = {getElementById(){return null}};\n"
+                + (WEBAPP / "team.js").read_text(encoding="utf-8")
+                + "\nprocess.stdout.write(JSON.stringify(window.ROTeam._parentNumbers('16, #17 16、18；19')));\n")
+    assert got == ["16", "17", "18", "19"]
+    table = english_table()
+    for key in ("源自（可选）", "它源自的正式尝试；PI 批准后，这些连线画到路线图上", "例如 16, 17"):
+        assert key in form + composer and key in table

@@ -372,13 +372,17 @@ def not_carried_words(items: Any, lang: str = "zh") -> list[dict[str, Any]]:
 def _worded(out: dict[str, Any], root: Path, lang: str = "zh") -> dict[str, Any]:
     """A proposal payload as the page shows it (12.11, 8.8): verdicts as
     words, data summaries in the engine's word form (12.13), `not_carried`
-    in words, in the request's language."""
+    and a new attempt's lines (`parent_words`) in words, in the request's
+    language."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     labels = proposals_mod._labels(root)
     for key in ("attempt", "verdict"):
         if isinstance(out.get(key), dict) and not any(k.endswith("_status") for k in out[key]):
             out[key] = proposals_mod.verdict_words(out[key], labels)
+    if isinstance(out.get("attempt"), dict) and out["attempt"].get("parents"):
+        # 14.2: the lines a new attempt brings, said where its author sees it (the draft, 我的提议).
+        out["attempt"]["parent_words"] = proposals_mod.parent_words(out["attempt"], lang)
     out["not_carried"] = not_carried_words(out.get("not_carried"), lang)
     changes = out.get("changes")
     if isinstance(changes, dict):

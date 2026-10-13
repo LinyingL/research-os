@@ -1004,6 +1004,11 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .rm-line-dot { fill: var(--clay); pointer-events: none; }
 .rm-line-label { font-family: var(--font-sans); font-size: 11px; fill: var(--clay); pointer-events: none; }
 .rm-draft { fill: none; stroke: var(--clay); stroke-width: 2.25; stroke-opacity: 0.85; pointer-events: none; }
+/* 提议新的尝试's 源自 (14.2): the official attempts, a short scrolling list. */
+.parent-picks { display: flex; flex-direction: column; gap: 2px; max-height: 9rem; overflow-y: auto; padding: 4px 6px;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--paper); }
+.parent-pick { display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; color: var(--ink); }
+.parent-pick .mono { color: var(--ink-soft); }
 .rm-pop-sub { margin: -0.3rem 0 0.55rem; font-size: 0.78rem; color: var(--ink-soft); }
 
 /* -- V5: the human record's surfaces (DESIGN.md 9.3-9.6, task V5 phase 7) --
@@ -3694,6 +3699,28 @@ function renderAttemptForm(mode, attemptId) {
     reasonField.appendChild(mk("div", "team-help", "判决标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
     form.appendChild(reasonField);
   }
+  // 14.2: a member's new attempt may name what it grew out of -- official
+  // attempts only (a line is proposed against the official version);
+  // approving the attempt adds those lines.
+  let parentPicks = null;
+  if (proposing && mode === "append") {
+    const official = attempts.filter((a) => !a.officialness || a.officialness.state === "official");
+    if (official.length) {
+      const box = mk("div", "parent-picks");
+      parentPicks = official.map((a) => {
+        const lab = mk("label", "parent-pick");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = a.id;
+        lab.append(cb, mk("span", "mono", "#" + ((a.attrs || {}).number || "")), " " + ((a.attrs || {}).description || ""));
+        box.appendChild(lab);
+        return cb;
+      });
+      const parentField = formFieldEl(t("源自（可选）"), box);
+      parentField.appendChild(mk("div", "team-help", t("它源自的正式尝试；PI 批准后，这些连线画到路线图上")));
+      form.appendChild(parentField);
+    }
+  }
   // 12.4 / 14.3: a member's new row abandoned from the start asks the same as
   // abandoning one later -- its result and a reason, shown once the preview
   // says the row abandons the route.
@@ -3776,6 +3803,7 @@ function renderAttemptForm(mode, attemptId) {
     EDITABLE_KEYS.forEach((key) => { inputs[key].disabled = disabled || inputs[key].dataset.fixed === "1"; });
     if (sentenceInput) sentenceInput.disabled = disabled;
     if (reasonInput) reasonInput.disabled = disabled;
+    (parentPicks || []).forEach((cb) => { cb.disabled = disabled; });
     submitBtn.disabled = disabled;
   }
 
@@ -3851,6 +3879,8 @@ function renderAttemptForm(mode, attemptId) {
         if (reasonInput && reasonInput.value.trim() && (!memberReason || !memberReason.classList.contains("hidden"))) {
           propose.reason = reasonInput.value.trim();
         }
+        const parents = (parentPicks || []).filter((cb) => cb.checked).map((cb) => cb.value);
+        if (parents.length) propose.parents = parents;
         const composeStatus = mk("div", "notice-status");
         const composeHost = mk("div", "compose-result");
         previewHost.append(composeStatus, composeHost);

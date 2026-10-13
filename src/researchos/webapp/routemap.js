@@ -61,6 +61,7 @@
   const SAVE_MS = 400;
   const RESIZE_MS = 150;
   const DRAG_PX = 3;
+  const HANDLE_PX = 16;             // a drag this far from where it started is a drag, not a jittery click
   const NOTICE_MS = 5000;
   const SCOPE = "routes";           // researchos.webapp.canvas.SCOPE_ROUTES
   const UNUSABLE = ["invalid", "unreadable", "dataless"];
@@ -174,7 +175,7 @@
       case "mapping_exists": return t("这两条尝试之间已经有这条连线了");
       case "line_exists": return t("这条连线已经在正式版本里了");
       case "mapping_attempt_not_found": return t("连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试");
-      case "attempt_not_found": return t("连线的一端不是正式版本里的尝试：新的尝试请在它自己的提议里写明源自哪里");
+      case "attempt_not_found": return t("连线的一端不在你上次同步的正式版本里：请同步后再试");
       case "no_such_line": return t("正式版本里没有这条连线");
       case "mapping_member_proposes": return t("你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画");
       case "mapping_role_unknown": return t("成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线");
@@ -702,9 +703,10 @@
         return;
       }
       const why = checkLine(allLines(), child, parent);
-      if (why) {
+      const early = why ? refusal(why) : notYetOfficial(child, parent);
+      if (early) {
         drawDraft(null, null);
-        showStatus(refusal(why), null, { ms: NOTICE_MS });
+        showStatus(early, null, { ms: NOTICE_MS });
         return;
       }
       const pop = el("div", "cv-pop rm-pop");
@@ -738,6 +740,22 @@
       drawDraft(parent, { x: at[0], y: at[1] + CARD_H / 2 });
       floating(pop, at[0], at[1] + CARD_H / 2);
       input.focus();
+    }
+
+    // A member proposes a line against the official version they synced to
+    // (14.2): an end that is their own row not yet official -- or approved
+    // and not synced yet -- is refused here, before anything is asked, with
+    // what they can do instead; the engine would refuse it too.
+    function notYetOfficial(child, parent) {
+      if (!proposes()) return null;
+      const state = (id) => { const own = (m.byId.get(id) || {}).officialness; return own && own.state ? own.state : "official"; };
+      const end = [child, parent].find((id) => state(id) !== "official");
+      if (!end) return null;
+      const n = numberOf(end);
+      if (state(end) === "approved") return t("#{n} 已经批准，同步以后才能画这条连线", { n: n });
+      return end === child && state(parent) === "official"
+        ? t("#{n} 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线", { n: n })
+        : t("#{n} 还不在正式版本里：PI 批准它以后才能画这条连线", { n: n });
     }
 
     function writeLine(op, child, parent, note) {
@@ -804,7 +822,7 @@
     }
 
     // A line selected: what it says, its note, who drew it and when, and
-    // 「删除这条连线」 where it can be removed (or its removal proposed).
+    // 「删除这条连线」 where it can be removed -- 「提议删除这条连线」 for a member.
     function selectLine(key) {
       if (m.pop && m.pop.kind === "line") closePop();
       m.selectedLine = key;
@@ -822,7 +840,7 @@
       if (mark) card.appendChild(el("div", "cv-linkcard-hint", mark));
       if (canRemove(l)) {
         const actions = el("div", "cv-linkcard-actions");
-        const del = el("button", "cv-text-btn", t("删除这条连线"));
+        const del = el("button", "cv-text-btn", proposes() ? t("提议删除这条连线") : t("删除这条连线"));
         del.type = "button";
         del.addEventListener("click", () => removeLine(l));
         actions.appendChild(del);
@@ -880,6 +898,8 @@
         m.dom.root.classList.add("linking");
         const w = worldAt(e.clientX, e.clientY), hit = cardAt(w.x, w.y);
         d.target = hit && hit !== d.from ? hit : null;
+        d.over = hit; // the card under the pointer, its own included (a self-line, 14.8 #2)
+        if (hit !== d.from || Math.hypot(dx, dy) > HANDLE_PX) d.left = true;
         markTarget(d.target);
         drawDraft(d.from, d.target ? { x: m.positions[d.target][0], y: m.positions[d.target][1] + CARD_H / 2 } : w);
       }
@@ -888,10 +908,8 @@
     function onUp(e) {
       const d = m.drag;
       if (!d) return;
-      m.drag = null;
-      m.dom.root.classList.remove("panning", "linking");
+      endDrag();
       try { m.dom.root.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
-      markTarget(null);
       if (d.kind === "pan") {
         if (d.moved) userCamera();
         else if (d.line) selectLine(d.line);
@@ -904,8 +922,17 @@
         drawDraft(null, null);
         if (!d.moved && e.type !== "pointercancel") openCard(d.from); // a click on the handle is a click on its card
       } else if (d.target) askLine(d.from, d.target);
+      else if (d.over === d.from && d.left) askLine(d.from, d.from); // back on its own card: refused, said
       else drawDraft(null, null); // dropped on nothing: nothing happens
       afterDrag();
+    }
+
+    // What every end of a drag clears -- a drop and Escape alike: the drag,
+    // the cursor's state and the card marked as the target.
+    function endDrag() {
+      m.drag = null;
+      m.dom.root.classList.remove("panning", "linking");
+      markTarget(null);
     }
 
     function afterDrag() {
@@ -946,7 +973,7 @@
       const panel = document.getElementById("panel");
       if (panel && !panel.classList.contains("hidden")) return; // the side panel has the keys
       if (e.key === "Escape") {
-        if (m.drag && m.drag.kind === "line") { m.drag = null; drawDraft(null, null); markTarget(null); afterDrag(); return; }
+        if (m.drag && m.drag.kind === "line") { endDrag(); drawDraft(null, null); afterDrag(); return; }
         if (m.pop) { closePop(); if (m.selectedLine) selectLine(null); return; }
         select(null);
         return;

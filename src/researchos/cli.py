@@ -1630,11 +1630,21 @@ def cmd_propose(args: argparse.Namespace) -> int:
     exchange (once; ready.toml last)."""
     opened = _open(args.path)
     root = opened.root
+    route = parents = None
+    if args.kind == "route_link":
+        # 14.2: a 「源自」 line, --child grew out of the one --parent.
+        if len(args.parent or []) > 1:
+            raise CliError("a route_link names one --parent: the attempt the --child grew out of")
+        route = {"op": args.op, "child": args.child, "parent": (args.parent or [None])[0], "note": args.note}
+    else:
+        if args.op or args.child or args.note:
+            raise CliError("--op, --child and --note name a route_link's line; a new attempt names --parent only")
+        parents = args.parent
     try:
         draft = proposals_mod.make_proposal(
-            root, args.kind, args.sentence, number=args.number, result=args.result, reason=args.reason,
+            root, args.kind, args.sentence or "", number=args.number, result=args.result, reason=args.reason,
             card=args.card, attested=args.attested, only=args.only, supersedes=args.supersedes,
-            add=args.add, leave=args.leave,
+            add=args.add, leave=args.leave, route=route, parents=parents,
         )
         if args.json and not args.yes:
             print(json.dumps({"proposal": draft.data, "preview": draft.preview, "fingerprint": draft.fingerprint},
@@ -1646,6 +1656,10 @@ def cmd_propose(args: argparse.Namespace) -> int:
             row = data["attempt"]
             print(f"  new attempt row #{row['number']}: {row['description']} | {row['verdict']} | {row['result']}"
                   + (f"; abandoned, reason: {row['reason']}" if row.get("abandons") == "yes" else ""))
+            for line in proposals_mod.parent_words(row, "en"):
+                print(f"  {line}")
+        if data.get("route"):
+            print(f"  {_route_words(data['route'])}")
         if data.get("verdict"):
             v = data["verdict"]
             print(f"  attempt #{v['number']}: verdict {v['old']} -> {v['new']}; result {v['old_result']!r} -> {v['result']!r}"
@@ -1672,6 +1686,14 @@ def cmd_propose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _route_words(route: dict) -> str:
+    """A route_link's line in the command line's English (8.8)."""
+    words = proposals_mod._route_summary(route) or {}
+    said = ("Adds" if route.get("op") == "add" else "Removes") + \
+        f" the line: #{words.get('child_number')} grew out of #{words.get('parent_number')}"
+    return said + (f" ({route['note']})" if route.get("note") else "")
+
+
 def cmd_proposals(args: argparse.Namespace) -> int:
     """`researchos proposals` (12.3): the PI's inbox, or a member's own
     proposals; `--show ID` for one, with -- for the PI -- exactly what
@@ -1681,7 +1703,7 @@ def cmd_proposals(args: argparse.Namespace) -> int:
     try:
         ex = _exchange_arg(args, root, opened.project_id)
         if args.show:
-            shown = proposals_mod.open_for(root, args.show, exchange=ex, member=args.from_member)
+            shown = proposals_mod.open_for(root, args.show, exchange=ex, member=args.from_member, lang="en")
             if args.json:
                 print(json.dumps(shown, ensure_ascii=False, indent=2, sort_keys=True, default=str))
                 return 0
@@ -1689,6 +1711,10 @@ def cmd_proposals(args: argparse.Namespace) -> int:
             print(f"  {shown['sentence']}")
             for o in shown["outcomes"]:
                 print(f"  {o.get('at')} {o.get('act')} by {o.get('by')}" + (f": {o['text']}" if o.get("text") else ""))
+            if shown.get("route") and shown.get("changes") is None:  # the member's own line
+                print(f"  {_route_words(shown['route'])}")
+            for line in proposals_mod.parent_words(shown.get("attempt") or {}, "en") if shown.get("changes") is None else []:
+                print(f"  {line}")
             changes = shown.get("changes")
             if changes is not None:
                 attempt = changes.get("attempt")
@@ -1697,6 +1723,11 @@ def cmd_proposals(args: argparse.Namespace) -> int:
                           + (f": {attempt['reason']}" if attempt.get("reason") else ""))
                     for line in (attempt.get("diff") or "").splitlines():
                         print(f"    {line}")
+                    for line in attempt.get("parent_words") or []:
+                        print(f"  {line}")
+                route = changes.get("route")
+                if route:
+                    print(f"  {route['words']} [{route['state']}]" + (f": {route['reason']}" if route.get("reason") else ""))
                 variable = changes.get("variable")
                 if variable:
                     print(f"  variable {variable['card']} -> v{variable.get('number')} [{variable['state']}]"
@@ -3435,7 +3466,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Propose what this working copy changed (DESIGN.md 12.3): a dry run unless --yes",
     )
     p.add_argument("kind", choices=list(proposals_mod.KINDS))
-    p.add_argument("--sentence", required=True, help="what this proposal is, in a sentence of your own")
+    p.add_argument("--sentence", default=None,
+                   help="what this proposal is, in a sentence of your own (a route_link may leave it out)")
     p.add_argument("--number", default=None, help="the attempt row, when more than one differs")
     p.add_argument("--result", default=None, help="verdict_change: the result (default: the row's result cell)")
     p.add_argument("--reason", default=None,
@@ -3448,6 +3480,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also carry this file (repeatable; a verdict change carries its row only, a new attempt the "
                         "files linked to it)")
     p.add_argument("--leave", action="append", default=None, metavar="FILE", help="do not carry this file (repeatable)")
+    p.add_argument("--parent", action="append", default=None, metavar="N",
+                   help="attempt_new: an official attempt it grew out of (repeatable); route_link: the line's parent")
+    p.add_argument("--op", default=None, choices=list(proposals_mod.ROUTE_OPS),
+                   help="route_link: add or remove the line --child grew out of --parent")
+    p.add_argument("--child", default=None, metavar="N", help="route_link: the attempt that grew out of --parent")
+    p.add_argument("--note", default=None, help="route_link: a note on the line")
     p.add_argument("--supersedes", default=None, metavar="ID", help="a proposal of yours this one replaces")
     p.add_argument("--exchange", default=None, metavar="DIR", help="the exchange directory (default: the one set)")
     p.add_argument("--yes", action="store_true", help="write the proposal (otherwise a dry run)")

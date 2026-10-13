@@ -302,8 +302,18 @@
     "这两条尝试之间已经有这条连线了": "These two attempts already have this line",
     "这条连线已经在正式版本里了": "This line is already in the official version",
     "正式版本里没有这条连线": "The official version has no such line",
-    "连线的一端不是正式版本里的尝试：新的尝试请在它自己的提议里写明源自哪里":
-      "One end of the line is not an attempt of the official version: a new attempt says what it grew out of in its own proposal",
+    "连线的一端不在你上次同步的正式版本里：请同步后再试":
+      "One end of the line is not in the official version you last synced: sync, then try again",
+    "#{n} 还不在正式版本里：PI 批准它以后才能画这条连线":
+      "#{n} is not in the official version yet: the line can be drawn once the PI approves it",
+    "#{n} 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线":
+      "#{n} is not in the official version yet: name what it grew out of in its proposal, or draw the line once the PI approves it",
+    "#{n} 已经批准，同步以后才能画这条连线": "#{n} is approved: the line can be drawn once you sync",
+    // A member's new attempt names what it grew out of (14.2): 提议新的尝试 and 提交提议.
+    "源自（可选）": "Grew out of (optional)",
+    "它源自的正式尝试；PI 批准后，这些连线画到路线图上":
+      "The official attempts it grew out of; once the PI approves, these lines are drawn on the route map",
+    "例如 16, 17": "For example 16, 17",
     "你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画":
       "You are a member of this project: a line goes to the PI as a proposal; reload and draw it again",
     "你是 PI：连线直接写入正式版本；请刷新后再画": "You are the PI: a line goes straight into the official version; reload and draw it again",
