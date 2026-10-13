@@ -129,6 +129,25 @@
       : t("{year}年{month}{day}日", { year: d.getFullYear(), month: month, day: d.getDate() });
   }
 
+  // A day with no time -- a 「源自」 line's date, as mappings.toml writes it
+  // (2026-10-13) -- in the same forms (13.5): 今天, 昨天, 10月13日,
+  // 2025年10月13日; Today, Yesterday, 13 Oct, 13 Oct 2025. Read as that day
+  // where the researcher is: never new Date(iso), which reads UTC midnight
+  // and moves the day west of Greenwich; no hour is invented. Anything else
+  // comes back as it is.
+  function dayWords(at, now) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(at || ""));
+    if (!m) return at == null ? "" : String(at);
+    const day = new Date(+m[1], +m[2] - 1, +m[3]);
+    const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - day) / 86400000);
+    if (days === 0) return t("今天");
+    if (days === 1) return t("昨天");
+    const month = [t("1月"), t("2月"), t("3月"), t("4月"), t("5月"), t("6月"),
+      t("7月"), t("8月"), t("9月"), t("10月"), t("11月"), t("12月")][day.getMonth()];
+    return day.getFullYear() === now.getFullYear() ? t("{month}{day}日", { month: month, day: day.getDate() })
+      : t("{year}年{month}{day}日", { year: day.getFullYear(), month: month, day: day.getDate() });
+  }
+
   // A date inside a line starts lower case (13.5's forms start a line in
   // English; Chinese has no case).
   function whenInLine(at, now) {
@@ -408,11 +427,12 @@
     if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
 
-  function pickLink(row, text, key, ids) {
+  // `title`: what marking it does, when the row is not a proposal's.
+  function pickLink(row, text, key, ids, title) {
     row.dataset.pick = key;
     drawnKeys.add(key);
     if (picked && picked.key === key) row.classList.add("picked");
-    return rowLink(text, "strong", () => pick(key, ids), ids.length ? t("在路线图上标出它涉及的尝试") : "");
+    return rowLink(text, "strong", () => pick(key, ids), ids.length ? title || t("在路线图上标出它涉及的尝试") : "");
   }
 
   function listBlock(host, title, rows) {
@@ -548,7 +568,7 @@
       const row = mk("li", "desk-row");
       const main = mk("div", "desk-main");
       const head = mk("div", "desk-head");
-      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id]));
+      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], t("在路线图上标出这条尝试")));
       const own = ownMark(g);
       if (own) head.appendChild(own);
       if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openAttempt(g.id, true))); // judged in its panel (14.3)
@@ -1087,8 +1107,13 @@
     const own = ownMark(a);
     if (own) marks.appendChild(own);
     const m = a.marks || {};
+    const said = new Set(own ? [own.textContent] : []); // each said once (14.1), as on its card
     (m.proposals || []).map((p) => p.label).concat(m.review ? m.review.label : [], lastChanged && lastChanged(a) ? t("有改动") : [])
-      .filter(Boolean).forEach((w) => marks.appendChild(mk("span", "dp-mark", w)));
+      .filter(Boolean).forEach((w) => {
+        if (said.has(String(w))) return;
+        said.add(String(w));
+        marks.appendChild(mk("span", "dp-mark", w));
+      });
     head.appendChild(marks);
     if (a.abandoned && a.reason) head.appendChild(mk("p", "desk-note", t("放弃的理由：{reason}", { reason: a.reason })));
     if (a.abandoned && a.decision) head.appendChild(metaLine([decisionWho(a.decision), whenWords(a.decision.at, now())]));
@@ -1139,6 +1164,16 @@
       return s;
     }
     const proposing = role === "member";
+    // A member's own row the official version does not have yet (the engine's
+    // new_row): proposed whole, as a new attempt -- replacing their pending
+    // one when it is proposed already; once approved, it waits for the sync.
+    const own = (proposing && a.officialness) || {};
+    const newRow = !!own.new_row;
+    if (newRow && own.state === "approved") {
+      if (d.result) s.appendChild(mk("p", "desk-note", d.result));
+      s.appendChild(mk("p", "desk-alone", t("这一行已经批准，正式版本里有了：先同步，再改它。")));
+      return s;
+    }
     const number = String(d.number || a.number || ""); // the row's identity, as the table writes it
     const verdict = typedField("input", d.verdict || "");
     const result = typedField("textarea", d.result || "");
@@ -1210,6 +1245,11 @@
       shown.appendChild(mk("div", "confirm-note", proposing
         ? t("将写入你的工作副本里的 {file}（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。", { file: p.file })
         : t("将写入 {file}（已自动备份）", { file: p.file })));
+      if (newRow) {
+        shown.appendChild(mk("div", "confirm-note", own.state === "proposed" && own.proposal
+          ? t("这一行还不在正式版本里：它会整行作为新的尝试再提议一次，替换你还在等待的那份提议。")
+          : t("这一行还不在正式版本里：它会整行作为一条新的尝试提议。")));
+      }
       if (!proposing && p.reason_required) shown.appendChild(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
       const actions = mk("div", "form-actions");
       const ok = mkButton(proposing ? t("写入工作副本，查看提议") : t("确认写入"), "btn btn-primary", () => write(b, ok, back));
@@ -1236,7 +1276,8 @@
         // engine's dry run of it, sent only on 发送提议 (team.js).
         shown.textContent = "";
         setStatus(status, "", t("这一行已写进你的工作副本。"));
-        const draft = { kind: "verdict_change", sentence: sentence.value.trim(), number: number };
+        const draft = { kind: newRow ? "attempt_new" : "verdict_change", sentence: sentence.value.trim(), number: number };
+        if (newRow && own.state === "proposed" && own.proposal) draft.supersedes = own.proposal;
         if (reason.value.trim()) draft.reason = reason.value.trim();
         const composeStatus = mk("div", "notice-status");
         const composeHost = mk("div", "compose-result");
@@ -1341,7 +1382,7 @@
       if (mark) head.appendChild(mk("span", "own-mark", mark));
       main.appendChild(head);
       if (l.note) main.appendChild(mk("p", "desk-note", l.note));
-      main.appendChild(metaLine([l.by_label, l.date]));
+      main.appendChild(metaLine([l.by_label, dayWords(l.date, now())]));
       const status = mk("div", "notice-status");
       const proposing = role === "member";
       if ((role === "single" || role === "pi" || proposing) && !(l.pending && (l.pending.op === "add" || proposing))) {
@@ -1377,8 +1418,20 @@
     await drawPanel(subject);
   }
 
+  // Going to another view (app.html activateView): the desk's panel goes
+  // with the desk, after asking when something in it is half typed. False
+  // when the researcher stays.
+  function leaveDesk() {
+    const s = state.panelSubject;
+    if (!s || (s.kind !== "desk-attempt" && s.kind !== "desk-proposal") || !panelShown()) return true;
+    if (!mayLeavePanel()) return false;
+    closePanel();
+    return true;
+  }
+
   // app.html's revalidatePanel, after the desk read itself again.
   function revalidatePanel(subject) {
+    if (typeof currentView !== "undefined" && currentView !== "desk") return null; // drawn from the desk's payload only
     if (subject && subject.kind === "desk-attempt") return drawPanel(subject);
     return subject && subject.kind === "desk-proposal" ? drawProposal(subject) : null;
   }
@@ -1395,8 +1448,8 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
-    kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, relationWord,
-    openAttempt, openProposal, revalidatePanel,
+    kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
+    openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,

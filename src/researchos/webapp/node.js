@@ -131,6 +131,10 @@
     return out;
   }
 
+  // One panel at a time (14.3): app.html's question before a panel holding
+  // half-typed text is replaced; this file evaluated alone never asks.
+  function mayReplace() { return typeof mayReplacePanel !== "function" || mayReplacePanel(); }
+
   // A hand-drawn link as its mappings.toml entry names it: `reads` is
   // written data-first (8.5), every other type as it is stored.
   function mappingEnds(link) {
@@ -398,7 +402,7 @@
       // table; someone not in the team yet cannot change it at all.
       const role = ROTeam.mode();
       const edit = role === "member" ? "提议改判" : "编辑这一行";
-      if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => openAttemptForm("update", page.id)));
+      if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
       if (d.basis) actions.appendChild(mkButton("当时的依据", "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
     if (page.type === "variable") actions.appendChild(mkButton("打开定义卡", "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
@@ -1370,7 +1374,7 @@
     if (f.unreadable) head.appendChild(mk("span", "status-label tone-clay", "暂时无法读取"));
     if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", "无来源输入"));
     if (f.review) {
-      const tag = mkButton(f.review + " 条关联待复核", "review-tag", () => openReviewPanel(null));
+      const tag = mkButton(f.review + " 条关联待复核", "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
       tag.title = "打开待复核的判断";
       head.appendChild(tag);
     }

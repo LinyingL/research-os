@@ -1490,7 +1490,9 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 041c510's lists of changes, outputs and abandoned routes) describes a desk that is gone.
 #: Moved again by the ruling of 2026-10-13 (DESIGN.md 14.4): a member's returned proposal stays in
 #: 我的提议 until 「知道了」, so the member's two returned rows gain that button -- nothing else moved.
-_DESK_ZH_SHA256 = "f59f8fb75932896634b7a1f0180f60cb1ecb4923b3a6768595b7eebac2fdb247"
+#: Moved by the V10 review (finding 22): a 待复核 row is the attempt itself, so its hover reads
+#: 「在路线图上标出这条尝试」 (three rows) -- nothing else moved.
+_DESK_ZH_SHA256 = "22a04173a0ca4fdae5cb8c5678315cca32470f259f6be2d1c3aa2b3b0e7115dc"
 
 
 @needs_node
@@ -1526,7 +1528,7 @@ def test_13_7_the_desk_in_english():
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
         "(title: Mark the attempts it touches on the route map)",
         "desk-title: Needs review", "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
-        "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark the attempts it touches on the route map)",
+        "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark this attempt on the route map)",
         ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
         "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
         ": [desk-reason]other.py generates figs/图3.png", "desk-reason: The machine no longer finds this link",
@@ -1683,9 +1685,9 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
         assert left == [] and not any(FORBIDDEN.search(line) for line in shown)
     else:
         assert [line for line in shown if not line.startswith("dl-row")] == [
-            "team-done: 已同步到第 1497 版；已把你的 3 条笔记、判断或连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
+            "team-done: 已同步到第 1497 版；已把你的 3 条备注、判断或连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
             "2 个两边都改过的文件留着你的，官方的一份放在旁边；1 个文件留着你的（关系图上的摆放是每个人自己的，不随同步改变）；"
-            "你的笔记和连线还在等 PI 发布，记录文件暂时留着你的。",
+            "你的备注和连线还在等 PI 发布，记录文件暂时留着你的。",
             "team-done: 官方的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
             ": 你的和官方的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
             "btn btn-small diff-more: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
@@ -1701,9 +1703,9 @@ def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
     """13.8 #1: the desk's 「官方版本有更新」, drawn with the real team.js,
     says what 同步 will write in the words 成员 always used."""
     desks = _desks(saved, team=True)
-    assert ("team-line writes: 同步会先把你还没发送的 1 条笔记、2 条关联判断、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
+    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条关联判断、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
             "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
-            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；笔记、判断和连线的记录文件："
+            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；备注、判断和连线的记录文件："
             "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]
 
 

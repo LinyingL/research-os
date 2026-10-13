@@ -760,7 +760,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .chip:hover { border-color: var(--ink); }
 .form-actions { display: flex; gap: 0.6rem; margin-top: 0.3rem; }
 .btn-primary { background: var(--ochre-soft); border-color: var(--ochre); }
-.diff-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); margin: 0.6rem 0 0.2rem; }
+.diff-label { font-size: 0.72rem; color: var(--ink-soft); margin: 0.6rem 0 0.2rem; } /* sentence case (13.4) */
 .diff-row { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; padding: 0.45rem 0.6rem; border: 1px solid var(--line); overflow-x: auto; white-space: pre; }
 .diff-row.old { background: var(--clay-soft); border-color: var(--clay); }
 .diff-row.new { background: var(--olive-soft); border-color: var(--olive); }
@@ -1954,6 +1954,10 @@ const FULL_WINDOW_VIEWS = ["canvas", "desk"];
 function activateView(name) {
   if (!Object.prototype.hasOwnProperty.call(views, name)) name = "desk";
   if (currentView === name) return null;
+  // 14.3: the desk's panel (no backdrop) belongs to the desk -- leaving it
+  // closes it, after asking when something in it is half typed; declined,
+  // the desk stays. Every way to another view comes through here.
+  if (currentView === "desk" && window.RODesk && RODesk.leaveDesk && !RODesk.leaveDesk()) return null;
   currentView = name;
   // A node page is not remembered: it reopens on the section it came from.
   try { window.localStorage.setItem(VIEW_STORAGE_KEY, name === "node" ? RONode.section() : name); } catch (err) { /* convenience only */ }
@@ -2089,7 +2093,7 @@ async function loadProjectSummary(force) {
       // 13.5: a plural in English, its thousands separated ("1,497"); the Chinese as it was.
       btn.textContent = t("{n} 条判断待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
       btn.title = t("查看证据变了的旧判断");
-      btn.addEventListener("click", (e) => { e.stopPropagation(); openReviewPanel(null); });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); if (mayReplacePanel()) openReviewPanel(null); });
       line.append(btn);
     }
     // The edit form's column names (attemptsConfig, above) ride along on
@@ -2975,8 +2979,12 @@ async function revalidatePanel() {
   // V5: the 待复核 list and the 记录 inventory follow the record live.
   if (subject.kind === "review") { await renderReviewPanel(subject); return; }
   if (subject.kind === "records") { await renderRecordsPanel(subject); return; }
-  // V10 (14.3, 14.4): an attempt or a proposal opened on the desk, drawn again unless something is typed in it.
-  if (subject.kind === "desk-attempt" || subject.kind === "desk-proposal") { await RODesk.revalidatePanel(subject); return; }
+  // V10 (14.3, 14.4): an attempt or a proposal opened on the desk, drawn again unless something is typed in it --
+  // and only on the desk, whose payload it is drawn from.
+  if (subject.kind === "desk-attempt" || subject.kind === "desk-proposal") {
+    if (currentView === "desk") await RODesk.revalidatePanel(subject);
+    return;
+  }
 }
 
 async function refreshCurrentView() {
@@ -3252,6 +3260,13 @@ function closePanel() {
   panel.setAttribute("aria-hidden", "true");
   panelTitle.classList.remove("plain-title"); // a proposal's title is words, not a path
   state.panelSubject = null;
+}
+
+// One panel at a time (14.3): an opener the frame offers on every screen asks
+// before it takes the place of a panel holding half-typed text, as every
+// opener inside the desk does (RODesk.mayLeavePanel; true when nothing is typed).
+function mayReplacePanel() {
+  return !(window.RODesk && RODesk.mayLeavePanel) || RODesk.mayLeavePanel();
 }
 
 document.getElementById("panel-close").addEventListener("click", closePanel);
@@ -3945,7 +3960,7 @@ function renderAttemptForm(mode, attemptId) {
   (mode === "append" ? numberInput : inputs.description).focus();
 }
 
-document.getElementById("new-attempt-btn").addEventListener("click", () => openAttemptForm("append"));
+document.getElementById("new-attempt-btn").addEventListener("click", () => { if (mayReplacePanel()) openAttemptForm("append"); });
 
 // -- The human record's surfaces (DESIGN.md 9.3-9.6, task V5 phase 7) --------
 // The 待复核 list (9.6), the 记录 inventory (9.2), the identity questions
@@ -4373,7 +4388,7 @@ async function renderRecordsPanel(subject) {
   });
 }
 
-document.getElementById("records-btn").addEventListener("click", () => openRecordsPanel());
+document.getElementById("records-btn").addEventListener("click", () => { if (mayReplacePanel()) openRecordsPanel(); });
 
 // -- 变量 (9.11 "In the app"; task V5 phase 9) ------------------------------------
 // The cards, the version in use set as a readable document, the history
@@ -6773,7 +6788,7 @@ const SHELL_COMMANDS_BEFORE_U5 = {
   "tree": () => activateView("tree"),
   "lineage": () => activateView("lineage"),
   "canvas": () => activateView("canvas"),
-  "new-attempt": () => openAttemptForm("append"),
+  "new-attempt": () => { if (mayReplacePanel()) openAttemptForm("append"); },
   // 适应全部 is a canvas notion; from another view it brings the canvas up
   // first rather than silently doing nothing -- and when that starts the
   // canvas's first load, fits once the cards are there (fitting the empty

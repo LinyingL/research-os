@@ -116,6 +116,8 @@
     // Dates (13.5): Today 09:24, Yesterday 18:02, 4 Oct, 4 Oct 2025.
     "今天 {time}": "Today {time}",
     "昨天 {time}": "Yesterday {time}",
+    "今天": "Today",
+    "昨天": "Yesterday",
     "{month}{day}日": "{day} {month}",
     "{year}年{month}{day}日": "{day} {month} {year}",
     "1月": "Jan", "2月": "Feb", "3月": "Mar", "4月": "Apr", "5月": "May", "6月": "Jun",
@@ -185,7 +187,7 @@
     "没能同步，工作副本没有改动": "Could not sync; the working copy is unchanged",
     // What 同步 will write and what it did (team.js, shared with 成员), and the
     // difference beside an .official copy (team.js differenceBlock, node.js diffBlock).
-    "{n} 条笔记": { one: "{n} note", other: "{n} notes" },
+    "{n} 条备注": { one: "{n} note", other: "{n} notes" },
     "{n} 条关联判断": { one: "{n} linked judgment", other: "{n} linked judgments" },
     "{n} 处「设为论文正文」的标记": { one: "{n} “Set as the paper” mark", other: "{n} “Set as the paper” marks" },
     "增加 {n} 条连线": { one: "{n} link added", other: "{n} links added" },
@@ -195,7 +197,7 @@
     "同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。":
       "Syncing first writes what you have not sent yet ({sending}) into “{area}” (your proposals folder) in the shared folder: no approval is needed, and the PI adds it to the official record at the next publish.",
     "{send}你的工作副本已经是最新的官方版本。": "{send} Your working copy is already the latest official version.",
-    "你的工作副本已经是最新的官方版本，没有要发送的笔记、判断或连线。":
+    "你的工作副本已经是最新的官方版本，没有要发送的备注、判断或连线。":
       "Your working copy is already the latest official version, and there are no notes, judgments or links to send.",
     "更新 {n} 个你没改过的文件": { one: "update {n} file you have not changed", other: "update {n} files you have not changed" },
     "删除 {n} 个正式版本已删除的文件": {
@@ -205,7 +207,7 @@
       one: "keep your version of {n} file changed on both sides and put the official copy beside it (.official)",
       other: "keep your versions of {n} files changed on both sides and put the official copies beside them (.official)",
     },
-    "笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
+    "备注、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
       "replace each record file of notes, judgments and links with the official one where all your entries are in it, and keep yours where they are not yet",
     "：{parts}": ": {parts}",
     "；": "; ",
@@ -213,7 +215,7 @@
       "{send} Then it brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
     "同步会把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
       "Syncing brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
-    "已把你的 {n} 条笔记、判断或连线改动发送到公盘": {
+    "已把你的 {n} 条备注、判断或连线改动发送到公盘": {
       one: "sent your {n} change to notes, judgments or links to the shared folder",
       other: "sent your {n} changes to notes, judgments or links to the shared folder",
     },
@@ -229,7 +231,7 @@
       other: "kept your versions of {n} files changed on both sides, with the official copies beside them",
     },
     "{n} 个文件留着你的（{reason}）": { one: "kept your version of {n} file ({reason})", other: "kept your versions of {n} files ({reason})" },
-    "你的笔记和连线还在等 PI 发布，记录文件暂时留着你的":
+    "你的备注和连线还在等 PI 发布，记录文件暂时留着你的":
       "your notes and links still wait for the PI to publish, so the record files stay yours for now",
     "{parts}。": "{parts}.",
     "官方的 {path} 放在了旁边：{copy}；你的没有动。": "The official {path} is beside yours as {copy}; yours was not changed.",
@@ -270,6 +272,7 @@
     "待办": "To handle",
     "现在没有要处理的事。": "Nothing to handle right now.",
     "在路线图上标出它涉及的尝试": "Mark the attempts it touches on the route map",
+    "在路线图上标出这条尝试": "Mark this attempt on the route map",
     "提议中 · PI 说：{text}": "Proposed · The PI says: {text}",
     "已批准，待同步": "Approved, awaiting sync",
     "待复核": "Needs review",
@@ -309,6 +312,13 @@
     "#{n} 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线":
       "#{n} is not in the official version yet: name what it grew out of in its proposal, or draw the line once the PI approves it",
     "#{n} 已经批准，同步以后才能画这条连线": "#{n} is approved: the line can be drawn once you sync",
+    // A member's own new row changed in the desk's panel (14.3): proposed whole, as a new attempt.
+    "这一行已经批准，正式版本里有了：先同步，再改它。":
+      "This row is approved and in the official version: sync first, then change it.",
+    "这一行还不在正式版本里：它会整行作为一条新的尝试提议。":
+      "This row is not in the official version yet: it is proposed whole, as a new attempt.",
+    "这一行还不在正式版本里：它会整行作为新的尝试再提议一次，替换你还在等待的那份提议。":
+      "This row is not in the official version yet: it is proposed whole as a new attempt again, replacing your proposal still waiting.",
     // A member's new attempt names what it grew out of (14.2): 提议新的尝试 and 提交提议.
     "源自（可选）": "Grew out of (optional)",
     "它源自的正式尝试；PI 批准后，这些连线画到路线图上":
@@ -377,7 +387,8 @@
     "正在生成预览…": "Preparing the preview…",
     "无法生成预览": "Could not prepare the preview",
     "放弃一条路线时，结果和理由都必须填写": "Abandoning a route needs both the result and the reason",
-    "原行": "Current row",
+    // 原行: the row before the change ("Current" is 13.4's word for 现行).
+    "原行": "Earlier row",
     "新行": "New row",
     "将写入你的工作副本里的 {file}（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。":
       "This writes {file} in your working copy (backed up first). It is your own change, not yet proposed; next you see the proposal, and it goes to the PI only once you confirm.",

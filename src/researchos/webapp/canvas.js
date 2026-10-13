@@ -1961,7 +1961,8 @@ window.RCECanvas = (function () {
       if (machine && (link.review || link.conflict) && typeof openReviewPanel === "function") {
         const b = htmlEl("button", "cv-text-btn", "在待复核列表中查看");
         b.type = "button";
-        b.addEventListener("click", () => openReviewPanel(link));
+        // One panel at a time (14.3): asked first when the open panel holds half-typed text.
+        b.addEventListener("click", () => { if (typeof mayReplacePanel !== "function" || mayReplacePanel()) openReviewPanel(link); });
         row.appendChild(b);
       }
       card.appendChild(row);

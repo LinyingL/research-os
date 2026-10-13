@@ -1255,13 +1255,15 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert opener.index("载入中…") < opener.index("await ensureAttemptData()") < opener.index("renderAttemptForm(mode, attemptId)")
     assert "panelErrorBoxCn(" in opener and "state.panelSubject !== subject" in opener
     assert _APP_SRC.count("renderAttemptForm(") == 2  # its definition and that one call
-    assert 'addEventListener("click", () => openAttemptForm("append"))' in _APP_SRC
-    assert '"new-attempt": () => openAttemptForm("append"),' in _APP_SRC
+    # One panel at a time (14.3; V10 review, finding 7): every frame opener asks first when the open
+    # panel holds half-typed text -- re-baselined from the bare call.
+    assert 'addEventListener("click", () => { if (mayReplacePanel()) openAttemptForm("append"); })' in _APP_SRC
+    assert '"new-attempt": () => { if (mayReplacePanel()) openAttemptForm("append"); },' in _APP_SRC
     node_js = (CANVAS_JS.parent / "node.js").read_text(encoding="utf-8")
     # V8 U4: the node page's button reads 「提议改判」 for a member (the form
     # then proposes); it opens the same form either way.
     assert 'const edit = role === "member" ? "提议改判" : "编辑这一行";' in node_js
-    assert 'mkButton(edit, "btn btn-small", () => openAttemptForm("update", page.id))' in node_js
+    assert 'mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); })' in node_js
     assert node_js.count("openAttemptForm(") == 1
     assert _APP_SRC.count("openAttemptForm(") == 3  # definition + the two entry points in the page
     form = _function_body(_APP_SRC, "function renderAttemptForm(")

@@ -834,7 +834,8 @@
       const card = el("div", "cv-linkcard human rm-linecard");
       card.appendChild(el("div", "cv-linkcard-assert", lineWords(numberOf(l.child), numberOf(l.parent))));
       if (l.note) card.appendChild(el("div", "cv-linkcard-hint", l.note));
-      const who = [l.by_label, l.date].filter(Boolean).join(" · ");
+      const day = window.RODesk && window.RODesk.dayWords ? window.RODesk.dayWords(l.date, new Date()) : l.date;
+      const who = [l.by_label, day].filter(Boolean).join(" · ");
       if (who) card.appendChild(el("div", "cv-linkcard-hint", who));
       const mark = lineMark(l);
       if (mark) card.appendChild(el("div", "cv-linkcard-hint", mark));

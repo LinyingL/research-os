@@ -341,7 +341,7 @@ _NOT_CARRIED = (
      lambda m: "A new version of a variable definition is sent in a “Variable definition” proposal"),
     (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的官方版本，不会发送",
      lambda m: "The official copy that sync put beside yours is not sent"),
-    (r"^notes, link judgments and hand-drawn links travel", lambda m: "笔记、关联判断和手工连线随同步发送，不需要批准",
+    (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、关联判断和手工连线随同步发送，不需要批准",
      lambda m: "Notes, link judgments and hand-drawn links travel with sync, with no approval needed"),
     (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
      lambda m: "Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),

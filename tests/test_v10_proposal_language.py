@@ -184,7 +184,7 @@ def test_14_6_an_english_pi_decides_a_proposal_in_the_panel_with_no_chinese_but_
         "team-line quiet: The official version changed after this proposal; approval is blocked only where both sides changed the same place.",
         "team-line warn: Approving this proposal did not finish last time: approving again completes the rest.",
         "desk-head: Row 16 of the attempt table: the verdict changes from  to ", "desk-note: Result: t=0",
-        "desk-note: Reason for abandoning: 残差不平稳", "diff-label: Current row", "diff-label: New row",
+        "desk-note: Reason for abandoning: 残差不平稳", "diff-label: Earlier row", "diff-label: New row",
         "desk-head: New variable card topicshift: definition version 3",
         "desk-note plain: Were the existing output files made by this definition? The member answers: Not sure",
         "proposal-h4: Files", "evidence-role: Added", "desk-meta: 1 byte", "status-label tone-olive: Written on approval",

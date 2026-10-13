@@ -186,11 +186,11 @@
     return t("发送会在{where}里写入一份新的提议{files}；写成以后不再改动。你的工作副本不会改变。", { where: where, files: carried });
   }
 
-  // What the members' packets carry, in words: 「1 条笔记、增加 2 条连线、删除 1 条连线」.
+  // What the members' packets carry, in words: 「1 条备注、增加 2 条连线、删除 1 条连线」.
   function packetWords(c) {
     if (!c) return "";
     const parts = [];
-    if (c.notes) parts.push(t("{n} 条笔记", { n: numberText(c.notes) }));
+    if (c.notes) parts.push(t("{n} 条备注", { n: numberText(c.notes) }));
     if (c.judgements) parts.push(t("{n} 条关联判断", { n: numberText(c.judgements) }));
     if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
     if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
@@ -236,7 +236,7 @@
       { sending: sending, area: p.area || "提议/你的邮箱/" }) : "";
     if (p.up_to_date) {
       return send ? t("{send}你的工作副本已经是最新的官方版本。", { send: send })
-        : t("你的工作副本已经是最新的官方版本，没有要发送的笔记、判断或连线。");
+        : t("你的工作副本已经是最新的官方版本，没有要发送的备注、判断或连线。");
     }
     const parts = [];
     if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
@@ -244,7 +244,7 @@
     if (p.beside && p.beside.length) {
       parts.push(t("{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
     }
-    if (p.records && p.records.length) parts.push(t("笔记、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
+    if (p.records && p.records.length) parts.push(t("备注、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
     const listed = parts.length ? t("：{parts}", { parts: parts.join(t("；")) }) : "";
     return send ? t("{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。",
       { send: send, seq: numberText(p.to), parts: listed })
@@ -1907,7 +1907,7 @@
   // deleted); `notes_waiting` are record files whose entries have not
   // reached the official version yet.
   function syncDone(res) {
-    const sent = res.entries_sent ? t("已把你的 {n} 条笔记、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
+    const sent = res.entries_sent ? t("已把你的 {n} 条备注、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
     if (res.up_to_date) return sent ? t("已经是最新的官方版本；{sent}。", { sent: sent }) : t("已经是最新的官方版本。");
     const parts = [t("已同步到第 {seq} 版", { seq: numberText(res.seq) })];
     if (sent) parts.push(sent);
@@ -1921,7 +1921,7 @@
       parts.push(t("{n} 个文件留着你的（{reason}）", { n: numberText(res.kept_yours.length),
         reason: res.kept_yours.map((k) => k.reason).filter(Boolean)[0] }));
     }
-    if ((res.notes_waiting || []).length) parts.push(t("你的笔记和连线还在等 PI 发布，记录文件暂时留着你的"));
+    if ((res.notes_waiting || []).length) parts.push(t("你的备注和连线还在等 PI 发布，记录文件暂时留着你的"));
     return t("{parts}。", { parts: parts.join(t("；")) });
   }
 

@@ -138,7 +138,8 @@ def _case(role: str, lang: str = "zh") -> dict:
         {"id": A18, "number": "18", "title": "Plain panel", "date": "≤07-07", "route_status": _st("current", "现行"),
          "tone": "olive", "abandoned": False, "result": "r18", "changed_at": None, "officialness": official, "marks": {}},
     ]
-    lines = [{"child": A17, "parent": A16, "note": "换轴", "date": "2026-10-12", "by": None,
+    # A line's date is a day (mappings.toml); an earlier year keeps the pins below true on any day.
+    lines = [{"child": A17, "parent": A16, "note": "换轴", "date": "2024-10-12", "by": None,
               "by_label": w("最初的研究者", "Original researcher"), "pending": None, "officialness": official}]
     if role == "member":
         lines.append({"child": A18, "parent": A16, "note": "", "date": "2026-10-13", "by": "wang@example.com", "by_label": "Wang",
@@ -208,7 +209,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
                  "node-sec-title: 来龙去脉", "trace-col-title: 读取的数据", "trace-item-name: raw.csv", "status-label tone-plain: 原始数据",
                  "status-label tone-plain: 步骤脚本", "status-label tone-clay: 文件不存在", "status-label tone-plain: 人工关联",
                  "node-sec-title: 源自", "desk-empty: 还没标来处", "node-sec-title: 由它而来", "desk-link: #17 事件轴",
-                 "status-label tone-gray: 已放弃", "desk-note: 换轴", "desk-meta: 最初的研究者 · 2026-10-12", "btn btn-small: 删除这条连线"]:
+                 "status-label tone-gray: 已放弃", "desk-note: 换轴", "desk-meta: 最初的研究者 · 2024年10月12日", "btn btn-small: 删除这条连线"]:
         assert line in lines, line
     assert not any("撤回了" in line for line in lines)  # a withdrawn note is not shown
     assert not any("关联文件" in line or "还有文件属于" in line for line in lines)  # the node page's repairs stay there
@@ -231,7 +232,8 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
                  "btn btn-small: Add note", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
                  "node-sec-title: Grew out of", "desk-empty: Origin not marked yet", "node-sec-title: What grew out of it",
-                 "desk-meta: Original researcher · 2026-10-12", "btn btn-small: Delete this line"]:
+                 # 13.5 (V10 review, finding 20): a line's date in the screen's form, re-baselined from its ISO day.
+                 "desk-meta: Original researcher · 12 Oct 2024", "btn btn-small: Delete this line"]:
         assert line in lines, line
     assert not any("节点" in line or "画布" in line for line in out["lines"])
 

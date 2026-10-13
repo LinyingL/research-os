@@ -419,11 +419,12 @@ def test_8_8_the_publish_and_sync_sentences_never_say_nothing_is_written_when_pa
     busy = team("_publishWrites", {"last_snapshot": last, "pending_publish": {"count": 0},
                                    "incoming": {"notes": 1, "judgements": 0, "links_added": 1, "links_removed": 1,
                                                 "members": ["王"], "files": [".researchos/notes.toml"]}})
-    assert "不写入任何东西" not in busy and "1 条笔记" in busy and "删除 1 条" in busy and "王" in busy
+    # 备注 is the word for notes everywhere (ruled 2026-10-13): re-baselined from 「1 条笔记」.
+    assert "不写入任何东西" not in busy and "1 条备注" in busy and "删除 1 条" in busy and "王" in busy
     assert "第 5 版" in busy
     sync = team("_syncWrites", {"up_to_date": True, "area": "提议/wang@example.com/",
                                 "sending": {"notes": 1, "judgements": 0, "links_added": 2, "links_removed": 1}})
-    assert "1 条笔记" in sync and "增加 2 条" in sync and "删除 1 条" in sync and "提议/wang@example.com/" in sync
+    assert "1 条备注" in sync and "增加 2 条" in sync and "删除 1 条" in sync and "提议/wang@example.com/" in sync
     idle = team("_syncWrites", {"up_to_date": True,
                                 "sending": {"notes": 0, "judgements": 0, "links_added": 0, "links_removed": 0}})
     assert "没有要发送" in idle

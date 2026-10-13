@@ -446,8 +446,9 @@ def annotate(v: View, payload: Any, lang: str = "zh") -> Any:
 def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
     """The desk's payload (`researchos.desk`), the route map (14.1): every
     attempt, every 「源自」 line (one a proposal carries keeps the mark it
-    came with) and every 待复核 group's attempt carries its state. The
-    labels in the page's language (13.7: the desk entirely)."""
+    came with) and every 待复核 group's attempt carries its state -- an
+    attempt the member's base does not have also `new_row`. The labels in
+    the page's language (13.7: the desk entirely)."""
     if isinstance(payload, dict):
         review = (payload.get("column") or {}).get("review") or {}
         for items in (payload.get("attempts"), review.get("groups")):
@@ -456,6 +457,14 @@ def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
                     got = _subject(v, item)
                     if got is not None:
                         item[FIELD] = mark(got, lang)
+        # A member's own row the official version they synced to does not have
+        # (`new_row`): changing it is proposing it whole, as a new attempt --
+        # never a verdict change of an official row that is not there.
+        for item in payload.get("attempts") or []:
+            if (isinstance(item, dict) and isinstance(item.get(FIELD), dict) and v.mode != OFFICIAL and v.table
+                    and str(item.get("id", "")).startswith(f"attempt:{v.table}#")
+                    and str(item.get("number") or "") not in v.base_rows):
+                item[FIELD]["new_row"] = True
         for key in ("lines", "lines_missing"):
             for item in payload.get(key) or []:
                 if isinstance(item, dict) and FIELD not in item:
