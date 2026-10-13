@@ -489,3 +489,89 @@ def test_14_2_the_members_forms_offer_what_a_new_attempt_grew_out_of():
     table = english_table()
     for key in ("源自（可选）", "它源自的正式尝试；PI 批准后，这些连线画到路线图上", "例如 16, 17"):
         assert key in form + composer and key in table
+
+
+# -- 12, 15: a card's marks and a line's word are never cut or covered -----------------------------------
+
+
+def test_14_1_a_cards_marks_wrap_whole_and_the_card_grows():
+    """13.3: a longer English word wraps and is never cut -- the marks row
+    wraps (no overflow:hidden, no nowrap), each mark moves whole and wraps
+    inside itself only when wider than the card, and the card grows from
+    its 88px (two lines of marks stay inside the 116px row pitch)."""
+    from test_v9_language import APP_HTML
+
+    css = APP_HTML.read_text(encoding="utf-8")
+    marks = re.search(r"\n\.rm-marks \{([^}]*)\}", css).group(1)
+    assert "flex-wrap: wrap" in marks and "overflow" not in marks and "nowrap" not in marks
+    mark = re.search(r"\n\.rm-mark \{([^}]*)\}", css).group(1)
+    assert "flex: none" in mark and "max-width: 100%" in mark and "white-space: normal" in mark
+    card = re.search(r"\n\.rm-card \{([^}]*)\}", css).group(1)
+    assert "min-height: 88px" in card and re.search(r"(^|[^-])height: 88px", card) is None
+    assert "\n.rm-head, .rm-meta { display: flex;" in css  # the title may still end in an ellipsis: theirs
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_1_a_cards_hover_lists_every_mark(lang):
+    """The card's hover title says its number, title, verdict words and
+    every mark, so none is ever only on a line that could not show it."""
+    data = _desk("pi")
+    waiting = "等你批准" if lang == "zh" else "Awaiting your approval"
+    review = "待复核 1" if lang == "zh" else "Needs review: 1"
+    data["attempts"][0]["marks"] = {"proposals": [{"label": waiting}], "review": {"count": 1, "label": review}}
+    out = _run_map(data, "global.extra = card(%s).title;" % json.dumps(A16), lang=lang)
+    changed = "有改动" if lang == "zh" else "Changed"
+    assert out["extra"] == "#16 Route 16\n" + " / ".join([waiting, review])  # 有改动 only when the desk says so
+    script = "map.update(%s, { changed: () => true }); global.extra = card(%s).title;" % (json.dumps(data), json.dumps(A16))
+    assert _run_map(data, script, lang=lang)["extra"].endswith(" / " + changed)
+
+
+#: Every word a line can carry on the map, in both languages (officialness and lineMark).
+_LINE_WORDS = ["提议中", "提议删除", "已批准，待同步", "Proposed", "Removal proposed", "Approved, awaiting sync"]
+
+
+def _covered(plan: dict, boxes: list, width) -> list:
+    """The cards (x, y, w, h) a label's lines overlap: each line a box of
+    its measured width centred on plan.x, from 9px above its baseline to 3px below."""
+    hits = []
+    for i, text in enumerate(plan["lines"]):
+        base = plan["below"] if i else plan["y"]
+        x0, x1, y0, y1 = plan["x"] - width(text) / 2, plan["x"] + width(text) / 2, base - 9, base + 3
+        hits += [b for b in boxes if x0 < b[0] + b[2] and b[0] < x1 and y0 < b[1] + b[3] and b[1] < y1]
+    return hits
+
+
+@needs_node
+def test_14_2_a_lines_word_is_never_under_a_card():
+    """In the forest's default layout and in a pinned one with cards moved
+    close, every line's word -- 已批准，待同步 and "Approved, awaiting sync"
+    above all -- stands where no card (even one grown by a second line of
+    marks) covers it, whole: centred above the dot when it fits, broken at
+    its language's break when not, above the higher card (or below the
+    lower) when even that does not fit or another card stands there."""
+    width_js = "(s) => Array.from(String(s)).reduce((n, ch) => n + (/[\\u2e80-\\uffef]/.test(ch) ? 11 : 6.2), 0)"
+    attempts = [{"id": f"attempt:map.md#{n}"} for n in range(16, 24)]
+    lines = [("17", "16"), ("18", "16"), ("19", "17"), ("20", "19"), ("21", "18")]
+    drawn = [{"child": f"attempt:map.md#{c}", "parent": f"attempt:map.md#{p}"} for c, p in lines]
+    near = {"attempt:map.md#16": [0, 0], "attempt:map.md#17": [232 + 40, 0], "attempt:map.md#18": [232 + 90, 116]}
+    script = (f"(() => {{ const width = {width_js};\nconst out = [];\n"
+              f"for (const fixed of [{{}}, {json.dumps(near)}]) {{\n"
+              f"  const lay = R._layoutRoutes({json.dumps(attempts)}, {json.dumps(drawn)}, {{ fixed }});\n"
+              f"  for (const l of {json.dumps(drawn)}) for (const w of {json.dumps(_LINE_WORDS, ensure_ascii=False)})\n"
+              "  { const boxes = Object.values(lay.positions).map((p) => [p[0], p[1], R._geometry.CARD_W, R._geometry.CARD_H + 20]);\n"
+              "    out.push({ plan: R._labelPlan(w, lay.positions[l.parent], lay.positions[l.child], width, boxes), boxes }); }\n"
+              "}\nreturn out; })()")
+    from test_v10_route_map import _node as _map_node
+
+    got = _map_node(script)
+
+    def width(text):
+        return sum(11 if re.match(r"[⺀-￯]", ch) else 6.2 for ch in text)
+
+    assert all(_covered(g["plan"], g["boxes"], width) == [] for g in got)
+    split = {tuple(g["plan"]["lines"]) for g in got if len(g["plan"]["lines"]) == 2}
+    assert ("Approved,", "awaiting sync") in split  # broken where English breaks, each line whole
+    assert {"".join(g["plan"]["lines"]).replace(" ", "") for g in got} <= {w.replace(" ", "") for w in _LINE_WORDS}
+    assert _map_node("[R._splitLabel('已批准，待同步'), R._splitLabel('Removal proposed'), R._splitLabel('提议删除')]") == [
+        ["已批准，", "待同步"], ["Removal", "proposed"], ["提议", "删除"]]

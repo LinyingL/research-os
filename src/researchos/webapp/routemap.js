@@ -45,6 +45,7 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   const CARD_W = 232;
   const CARD_H = 88;
+  const CARD_TALL = CARD_H + 20;    // a card whose marks wrap to a second line (app.html .rm-card min-height)
   const COL_PITCH = CARD_W + 112;   // one generation to the next: room for the curve
   const ROW_PITCH = CARD_H + 28;    // rows of the forest
   const ROW_X = CARD_W + 24;        // 「还没标来处」, card to card
@@ -201,6 +202,58 @@
       lines.forEach((l) => { if (l.child === id) todo.push(l.parent); });
     }
     return null;
+  }
+
+  // Where a line's word stands (14.2: the word stays on the map, and no card
+  // may cover it -- cards are drawn above the lines). Centred on the line's
+  // midpoint, above its dot, when it fits the free span between the two
+  // cards; else broken where its language breaks (「已批准，」「待同步」,
+  // "Approved," "awaiting sync") into two lines, one above the dot and one
+  // below; else -- a gap narrower than its longest line, the cards moved
+  // there -- just above the higher card, or below the lower one. A place
+  // another card (`boxes`, [x, y, w, h]) would cover is not taken; a line
+  // swinging below both (its child left of its parent) tries its midpoint
+  // first. `width(text)` measures a line of it.
+  const LABEL_PAD = 8;
+  const LABEL_LIFT = 6;
+  const LABEL_LINE = 13;
+  const WIDE_COMMA = String.fromCharCode(0xff0c); // 「，」: where a Chinese word breaks, never a word on screen
+  function splitLabel(word) {
+    const w = String(word);
+    let at = w.indexOf(WIDE_COMMA) >= 0 ? w.indexOf(WIDE_COMMA) + 1 : w.indexOf(", ") >= 0 ? w.indexOf(", ") + 1 : -1;
+    if (at < 0) {
+      const spaces = [];
+      for (let i = 0; i < w.length; i += 1) if (w[i] === " ") spaces.push(i);
+      if (spaces.length) at = spaces.reduce((b, i) => (Math.abs(i - w.length / 2) < Math.abs(b - w.length / 2) ? i : b));
+      else at = Math.ceil(w.length / 2);
+    }
+    return [w.slice(0, at).trim(), w.slice(at).trim()].filter(Boolean);
+  }
+
+  function labelCovered(plan, boxes, width) {
+    return plan.lines.some((text, i) => {
+      const base = i ? plan.below : plan.y, half = width(text) / 2;
+      return (boxes || []).some((b) => plan.x - half < b[0] + b[2] && b[0] < plan.x + half && base - 9 < b[1] + b[3] && b[1] < base + 3);
+    });
+  }
+
+  function labelPlan(word, parentPos, childPos, width, boxes) {
+    const e = { x1: parentPos[0] + CARD_W, y1: parentPos[1] + CARD_H / 2, x2: childPos[0], y2: childPos[1] + CARD_H / 2 };
+    const mid = curve(e).mid;
+    const one = { x: mid.x, y: mid.y - LABEL_LIFT, lines: [String(word)] };
+    const swings = e.x2 < e.x1 + 20; // below both cards: the midpoint is between no two cards
+    const free = swings ? Infinity : childPos[0] - (parentPos[0] + CARD_W) - 2 * LABEL_PAD;
+    const two = splitLabel(word);
+    const tall = Math.max(...(boxes || []).filter((b) => (b[0] === parentPos[0] && b[1] === parentPos[1])
+      || (b[0] === childPos[0] && b[1] === childPos[1])).map((b) => b[3]), CARD_H);
+    const tries = [
+      width(word) <= free ? one : null,
+      !swings && two.length === 2 && Math.max(width(two[0]), width(two[1])) <= free
+        ? { x: mid.x, y: mid.y - LABEL_LIFT, lines: two, below: mid.y + LABEL_LINE } : null,
+      { x: mid.x, y: Math.min(parentPos[1], childPos[1]) - LABEL_LIFT, lines: [String(word)] },
+      { x: mid.x, y: Math.max(parentPos[1], childPos[1]) + tall + LABEL_LINE, lines: [String(word)] },
+    ].filter(Boolean);
+    return tries.find((plan) => !labelCovered(plan, boxes, width)) || tries[0];
   }
 
   // ComfyUI's curve, as 关系图 draws it: horizontal tangents; a line whose
@@ -409,14 +462,15 @@
       c.dataset.id = a.id;
       const num = "#" + numberOf(a.id);
       const words = a.route_status && a.route_status.words;
-      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "");
+      const said = markWords(a, !!(m.changed && m.changed(a)));
+      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "") + (said.length ? "\n" + said.join(" / ") : "");
       const head = el("div", "rm-head");
       head.append(el("span", "rm-num", num), el("span", "rm-title", a.title || ""));
       const meta = el("div", "rm-meta");
       if (a.date) meta.appendChild(el("span", "rm-date", a.date));
       meta.appendChild(el("span", "status-label tone-" + tone, verdictWord(a.route_status)));
       const marks = el("div", "rm-marks");
-      markWords(a, !!(m.changed && m.changed(a))).forEach((w) => marks.appendChild(el("span", "rm-mark", w)));
+      said.forEach((w) => marks.appendChild(el("span", "rm-mark", w)));
       const handle = el("div", "rm-handle");
       handle.title = t("从这里拖到另一条尝试上：那一条源自这一条");
       c.append(head, meta, marks, handle);
@@ -456,13 +510,36 @@
         grp.append(svgEl("path", { d: c.d }, "rm-line-hit"), svgEl("path", { d: c.d }, "rm-line-path"),
           svgEl("circle", { cx: c.mid.x, cy: c.mid.y, r: 3 }, "rm-line-dot"));
         const word = lineMark(l);
-        if (word) {
-          const label = svgEl("text", { x: c.mid.x + 8, y: c.mid.y - 8 }, "rm-line-label");
-          label.textContent = word;
-          grp.appendChild(label);
-        }
         g.appendChild(grp);
+        if (word) grp.appendChild(lineLabel(word, l));
       });
+    }
+
+    // The line's word, laid out by labelPlan, measured as drawn (an estimate
+    // while the map is not shown and nothing can be measured).
+    function lineLabel(word, l) {
+      const label = svgEl("text", { "text-anchor": "middle" }, "rm-line-label");
+      m.dom.links.appendChild(label);
+      const width = (text) => {
+        label.textContent = text;
+        const got = typeof label.getComputedTextLength === "function" ? label.getComputedTextLength() : 0;
+        return got || Array.from(String(text)).reduce((n, ch) => n + (/[\u2e80-\uffef]/.test(ch) ? 11 : 6.2), 0);
+      };
+      const boxes = m.attempts.map((a) => m.positions[a.id]).filter(Boolean).map((p) => [p[0], p[1], CARD_W, CARD_TALL]);
+      const plan = labelPlan(word, m.positions[l.parent], m.positions[l.child], width, boxes);
+      label.remove();
+      label.textContent = "";
+      label.setAttribute("x", plan.x);
+      label.setAttribute("y", plan.y);
+      if (plan.lines.length === 1) label.textContent = plan.lines[0];
+      else {
+        plan.lines.forEach((text, i) => {
+          const span = svgEl("tspan", { x: plan.x, y: i ? plan.below : plan.y });
+          span.textContent = text;
+          label.appendChild(span);
+        });
+      }
+      return label;
     }
 
     function drawDraft(from, to) {
@@ -1003,7 +1080,7 @@
     lineRefusal: refusal, // the desk's side panel says a refused removal the same way (14.3)
     // pure, for tests/test_v10_route_map.py
     _layoutRoutes: layoutRoutes, _markWords: markWords, _lineWords: lineWords, _refusal: refusal,
-    _checkLine: checkLine, _curve: curve,
+    _checkLine: checkLine, _curve: curve, _labelPlan: labelPlan, _splitLabel: splitLabel,
     _geometry: Object.freeze({ CARD_W, CARD_H, COL_PITCH, ROW_PITCH, ROW_X, ROW_Y, CAPTION_H }),
   });
 })();
