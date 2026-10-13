@@ -1161,19 +1161,38 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words:
     return _sentence(parts, lang)
 
 
-def table_shape(summary: dict[str, Any] | None) -> str | None:
+def _counted(n: Any, one: str, other: str) -> str:
+    """「1 row」, 「2 rows」, 「1,497 rows」 (13.5: a singular and a plural)."""
+    return f"{number_text(n, 'en')} {one if n == 1 else other}"
+
+
+def table_shape(summary: dict[str, Any] | None, lang: str = "zh") -> str | None:
     """「2 行，列 a、b」 -- one table's rows and columns, in the app's
-    words; None when it is not a table that was read."""
+    words; None when it is not a table that was read. `lang`: the page's
+    language (13.6), "2 rows; columns a, b" in English."""
     if not summary:
         return None
     if summary.get("columns") is None:
         rows, cols = summary.get("sheet_rows"), summary.get("sheet_columns")
         if rows is None:
             return None
+        if lang == "en":
+            return f"{_counted(rows, 'row', 'rows')}, {_counted(cols, 'column', 'columns')}"
         return f"{rows} 行，{cols} 列"
     rows = summary.get("rows")
-    more = "" if summary.get("rows_complete", True) else " 以上"
+    complete = summary.get("rows_complete", True)
     cols = [str(c) for c in summary.get("columns") or []]
+    if lang == "en":
+        parts = []
+        if rows is not None:
+            parts.append(_counted(rows, "row", "rows") if complete else f"{number_text(rows, 'en')} or more rows")
+        if cols:
+            listed = ", ".join(cols[:12]) + (f" and {number_text(len(cols) - 12, 'en')} more" if len(cols) > 12 else "")
+            parts.append(("column " if len(cols) == 1 else "columns ") + listed)
+        else:
+            parts.append("no columns")
+        return "; ".join(parts)
+    more = "" if complete else " 以上"
     shown = "、".join(cols[:12]) + ("等 " + str(len(cols)) + " 列" if len(cols) > 12 else "")
     return (f"{rows}{more} 行，" if rows is not None else "") + (f"列 {shown}" if cols else "没有列")
 

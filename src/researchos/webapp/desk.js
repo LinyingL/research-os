@@ -648,9 +648,7 @@
     const sec = block(behind ? t("官方版本有更新") : t("官方版本"));
     if (behind) {
       const when = whenInLine(last.at, now());
-      sec.appendChild(mk("p", "desk-sub", last.note
-        ? t("PI 于 {when} 发布了第 {seq} 版：{note}", { when: when, seq: numberText(last.seq), note: last.note })
-        : t("PI 于 {when} 发布了第 {seq} 版。", { when: when, seq: numberText(last.seq) })));
+      sec.appendChild(mk("p", "desk-sub", publishedWords(last, when)));
       const writes = mk("p", "team-line writes", t("正在查看同步会写入什么…"));
       const status = mk("div", "notice-status");
       const btn = mkButton(t("同步"), "btn", () => syncNow(btn, status));
@@ -671,6 +669,21 @@
     renderSyncShown(sec);
     host.appendChild(sec);
     return true;
+  }
+
+  // What the PI's last publish says (13.6: Research OS's own note -- one
+  // published on approving -- by its code, with the proposal's sentence
+  // when it is the member's own; a note the PI typed, as typed).
+  function publishedWords(last, when) {
+    const seq = numberText(last.seq);
+    if (last.note_code === "approved") {
+      const mine = ((lastData && lastData.column && lastData.column.mine) || []).find((p) => p.id === last.proposal);
+      const what = mine && (mine.sentence || proposalWhat(mine));
+      return what ? t("PI 于 {when} 批准提议「{what}」后发布了第 {seq} 版。", { when: when, seq: seq, what: what })
+        : t("PI 于 {when} 批准提议后发布了第 {seq} 版。", { when: when, seq: seq });
+    }
+    return last.note ? t("PI 于 {when} 发布了第 {seq} 版：{note}", { when: when, seq: seq, note: last.note })
+      : t("PI 于 {when} 发布了第 {seq} 版。", { when: when, seq: seq });
   }
 
   async function syncNow(btn, status) {

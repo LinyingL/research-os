@@ -455,6 +455,10 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
         if role == "member" and isinstance(status, dict):
             column["sync"] = {k: status.get(k) for k in ("shared", "reachable", "behind", "last_snapshot")}
             column["sync"]["seq"] = (status.get("joined") or {}).get("seq")
+            last = column["sync"]["last_snapshot"]
+            approved = proposals.approval_note(last.get("note")) if isinstance(last, dict) else None
+            if approved:  # published on approving a proposal: said by its code, never Research OS's Chinese note (13.6)
+                column["sync"]["last_snapshot"] = {**last, "note_code": "approved", "proposal": approved}
         for p in sorted((listing or {}).get("proposals") or [], key=lambda p: str(p.get("at") or ""), reverse=True):
             p = dict(p, by_label=_who(p.get("by"), team_known, lang=lang), touches=_touches(p, table, holders, role))
             returned = [o for o in p.get("outcomes") or [] if o.get("act") == "returned"]

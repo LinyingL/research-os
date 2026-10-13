@@ -179,6 +179,9 @@
     "官方版本有更新": "Official version updated",
     "PI 于 {when} 发布了第 {seq} 版：{note}": "The PI published version {seq} ({when}): {note}",
     "PI 于 {when} 发布了第 {seq} 版。": "The PI published version {seq} ({when}).",
+    "PI 于 {when} 批准提议后发布了第 {seq} 版。": "The PI published version {seq} ({when}) on approving a proposal.",
+    "PI 于 {when} 批准提议「{what}」后发布了第 {seq} 版。":
+      "The PI published version {seq} ({when}) on approving the proposal “{what}”.",
     "你的工作副本已经是最新的官方版本（第 {seq} 版）。": "Your working copy is the latest official version (version {seq}).",
     "正在查看同步会写入什么…": "Checking what syncing will write…",
     "没能查看同步会写入什么": "Could not check what syncing will write",

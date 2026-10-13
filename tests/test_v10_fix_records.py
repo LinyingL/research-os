@@ -17,6 +17,7 @@ Every test names its scenario."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -304,3 +305,108 @@ def test_14_4_a_shared_folder_slower_than_the_wait_shows_what_it_last_read(drive
         assert visit()["shared"]["state"] == "unreadable"
         time.sleep(0.1)
         assert desk._LAST[key] == kept  # a failed read is never kept
+
+
+# -- 13: the PI's decision in English, from the engine's real payload -------------------------------------------
+
+
+@needs_node
+def test_14_6_a_files_proposal_and_a_conflict_read_in_english_in_the_panel(drive):
+    """A member proposes a new CSV and a change to data/panel.csv; the PI
+    then changes panel.csv too. 「批准以后会怎样」 in English, drawn by
+    team.js from GET /api/proposals/<id>'s real payload: the table's rows
+    and columns, the size, the both-sides conflict and why it cannot be
+    approved -- no Chinese but the researcher's own words. Chinese stays
+    the default (the command line, the old pins)."""
+    import re
+
+    from test_v8_phase2 import _csv
+    from test_v9_language import CJK
+    from test_v10_desk_proposals import _run_team
+
+    with drive.member():
+        (drive.work / "data" / "new.csv").write_text(_csv(1))
+        (drive.work / "data" / "panel.csv").write_text(_csv(97))
+        stored = proposals.write_proposal(drive.work, proposals.make_proposal(drive.work, "files", "加数据"))
+    with drive.pi():
+        (drive.official / "data" / "panel.csv").write_text(_csv(98))
+        zh = proposals.open_for(drive.official, stored.id)["changes"]
+    by = {f["path"]: f for f in zh["files"]}
+    assert by["data/new.csv"]["table_words"] == "1 行，列 id、x"
+    assert by["data/panel.csv"]["reason"] == "这个文件在提议之后，正式版本里也改了"
+    out = _run_team(_real_pi_case(drive, stored, "en"), _OPEN_P1 % json.dumps("View"), lang="en")
+    lines = out["lines"]
+    for line in ["desk-note plain: Table: 1 row; columns id, x", "status-label tone-clay: Changed on both sides",
+                 "desk-break: The official version also changed this file after the proposal",
+                 "node-sec-title: Cannot be approved yet"]:
+        assert line in lines, line
+    assert any(line.startswith("desk-break: ") and "The official version also changed this file" in line
+               for line in lines[lines.index("node-sec-title: Cannot be approved yet"):])
+    theirs = "加数据|王|data/new.csv|data/panel.csv|提议/|已发布/"  # their words, the shared folder's fixed names (13.1)
+    assert [line for line in lines if CJK.search(re.sub(theirs, "", line))] == []
+
+
+def test_13_6_a_tables_shape_and_a_files_size_in_english(tmp_path):
+    """history.table_shape and the size sentence in English: singular and
+    plural, an incomplete count, a sheet, more than twelve columns said as
+    how many more -- Chinese unchanged."""
+    from researchos import history
+
+    many = [f"c{i}" for i in range(15)]
+    assert history.table_shape({"rows": 1, "columns": ["id"]}, "en") == "1 row; column id"
+    assert history.table_shape({"rows": 1497, "columns": ["a", "b"], "rows_complete": False}, "en") == \
+        "1,497 or more rows; columns a, b"
+    assert history.table_shape({"rows": 2, "columns": many}, "en") == "2 rows; columns " + ", ".join(many[:12]) + " and 3 more"
+    assert history.table_shape({"rows": 0, "columns": []}, "en") == "0 rows; no columns"
+    assert history.table_shape({"sheet_rows": 1, "sheet_columns": 3, "columns": None}, "en") == "1 row, 3 columns"
+    assert history.table_shape({"rows": 2, "columns": many}) == "2 行，列 " + "、".join(many[:12]) + "等 15 列"
+    assert history.table_shape({"rows": 9, "columns": ["a"], "rows_complete": False}) == "9 以上 行，列 a"
+
+
+# -- 21: what an approval's publish says on a member's desk ----------------------------------------------------
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_14_6_a_publish_made_by_an_approval_is_said_in_the_screens_words(drive, lang):
+    """The PI approves the member's new attempt, which publishes with
+    Research OS's own note 「批准提议 pr-…」 (written as ever). The member's
+    desk gets it by its code and the proposal, and 「官方版本有更新」 says the
+    PI published on approving their proposal -- its sentence, never the
+    Chinese note or the bare id -- in either language."""
+    import re
+
+    from researchos import cli, desk
+
+    from test_v8_phase2 import _conn
+    from test_v9_language import CJK, _DESK_DOM, _i18n_source, _node
+
+    with drive.member():
+        (drive.work / "steps" / "18-big.py").write_text(NEW_SCRIPT)
+        (drive.work / "map.md").write_text(_map() + DEAD_18.format(result="t=1.10").replace("☠️ 太慢", "🕒"))
+        stored = proposals.write_proposal(drive.work, proposals.make_proposal(drive.work, "attempt_new", "大面板"))
+    with drive.pi():
+        done = proposals.approve(drive.official, stored.id)
+    assert done["published"]["published"] and proposals.approval_note(f"批准提议 {stored.id}") == stored.id
+    with drive.member():
+        assert cli.main(["ingest", str(drive.work)]) == 0
+        conn = _conn(drive.work)
+        try:
+            data = desk.payload(conn, drive.work, lang=lang)
+        finally:
+            conn.close()
+    last = data["column"]["sync"]["last_snapshot"]
+    assert (last["note"], last["note_code"], last["proposal"]) == (f"批准提议 {stored.id}", "approved", stored.id)
+    i18n = f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
+    case = {"desk": data, "me": {"me": {"id": "wang@example.com"}}, "proposals": {"role": "member", "proposals": []},
+            "share": {}, "preview": {}}
+    lines = _node("global.window = {};\n" + i18n + _DESK_DOM + "global.ROTeam.syncWrites = () => 'W';\n"
+                  + (Path(__file__).parents[1] / "src/researchos/webapp/desk.js").read_text(encoding="utf-8")
+                  + f"\n(async () => {{ process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case, ensure_ascii=False)}))); }})();\n")
+    said = [line for line in lines if line.startswith("desk-sub: ")]
+    if lang == "en":
+        assert said == ["desk-sub: The PI published version 2 (today " + said[0].split("(today ")[1]]
+        assert said[0].endswith("on approving the proposal “大面板”.") and not CJK.search(re.sub("大面板", "", said[0]))
+    else:
+        assert said[0].startswith("desk-sub: PI 于 今天 ") and said[0].endswith("批准提议「大面板」后发布了第 2 版。")
+    assert stored.id not in said[0]

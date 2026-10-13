@@ -1386,21 +1386,57 @@ def _confined(root: Path, rel: str) -> Path:
     return target
 
 
+#: Why a part of a proposal cannot simply be applied, by a code that never changes (the page
+#: compares codes, never words: 13.6), in Chinese and English.
+REASONS = {
+    "placed": ("这次批准已经放入了这个文件", "This approval already placed this file"),
+    "dataless": ("正式版本里的这个文件还在云端，无法比较", "The official copy of this file is still in the cloud, so it cannot be compared"),
+    "both_changed": ("这个文件在提议之后，正式版本里也改了", "The official version also changed this file after the proposal"),
+    "gone": ("这个文件在正式版本里已经不在了", "The official version no longer has this file"),
+    "content_missing": ("提议里缺少这个文件的内容", "The proposal is missing this file's content"),
+    "no_table": ("正式版本没有配置尝试表", "The official version has no attempt table configured"),
+    "table_unreadable": ("尝试表无法读取：{error}", "The attempt table cannot be read: {error}"),
+    "row_taken": ("正式版本的尝试表里已经有第 {n} 行", "The official attempt table already has row {n}"),
+    "row_missing": ("正式版本的尝试表里没有第 {n} 行", "The official attempt table has no row {n}"),
+    "verdict_moved": ("第 {n} 行的结论或结果在正式版本里也改了", "Row {n}'s verdict or result also changed in the official version"),
+    "row_moved": ("第 {n} 行在提议之后，正式版本里也改了", "Row {n} also changed in the official version after the proposal"),
+    "reason_required": (MESSAGES["reason_required"], "Abandoning a route needs both the result and the reason"),
+    "version_missing": ("提议里缺少这个版本文件", "The proposal is missing this version file"),
+    "version_mismatch": ("版本文件与提议记录的指纹不符", "The version file does not match the fingerprint the proposal recorded"),
+    "version_unreadable": ("版本文件无法读取：{error}", "The version file cannot be read: {error}"),
+    "version_incomplete": ("这一版还不完整，缺少：{missing}", "This version is not complete yet; it lacks: {missing}"),
+    "card_gone": ("这个变量卡在正式版本里已经不在了", "The official version no longer has this variable card"),
+    "card_draft": ("正式版本里这个变量卡有未确认的草稿 v{n}", "The official version has an unconfirmed draft v{n} of this variable card"),
+    "card_moved": ("这个变量卡在正式版本里已经有 v{n}（提议基于 v{base}）",
+                   "The official version already has v{n} of this variable card (the proposal is based on v{base})"),
+    "wrong_project": (MESSAGES["wrong_project"], "This proposal belongs to another project"),
+    "not_member": ("{who}: 不是这个项目的成员，提议不能批准", "{who}: not a member of this project, so the proposal cannot be approved"),
+    "id_in_approval": ("这个编号的另一份提议（{who}）已经在批准中", "Another proposal with this id ({who}) is being approved"),
+}
+
+
+def _reason(code: str, lang: str = "zh", **values: Any) -> dict[str, str]:
+    """`reason` (the sentence, in `lang`) and `reason_code` for a part."""
+    from researchos import settings  # noqa: PLC0415
+
+    return {"reason": settings.say(*REASONS[code], lang, **values), "reason_code": code}
+
+
 def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
-                 done: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 done: Mapping[str, Any] | None = None, lang: str = "zh") -> dict[str, Any]:
     rel = item["path"]
     out: dict[str, Any] = {k: item.get(k) for k in ("path", "action", "size", "sha256", "base_sha256", "base_size", "store")}
     _confined(root, rel)
     if rel in (done or {}).get("placed", ()):
         # This approval placed it before it was interrupted; whatever the
         # file is now, it is not the proposal's to place again.
-        out.update(state="done", reason="这次批准已经放入了这个文件")
+        out.update(state="done", **_reason("placed", lang))
         return out
     official = _official_fp(root, rel)
     out["official_sha256"] = official.get("sha256") if official else None
     out["official_size"] = official.get("size") if official else None
     if official is not None and official.get("dataless"):
-        out.update(state="problem", reason="正式版本里的这个文件还在云端，无法比较")
+        out.update(state="problem", **_reason("dataless", lang))
         return out
     proposed = item.get("sha256")
     current = official.get("sha256") if official else None
@@ -1412,7 +1448,7 @@ def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
         state = "apply" if current == item.get("base_sha256") else ("same" if official is None else "conflict")
     out["state"] = state
     if state == "conflict":
-        out["reason"] = "这个文件在提议之后，正式版本里也改了" if official is not None else "这个文件在正式版本里已经不在了"
+        out.update(_reason("both_changed" if official is not None else "gone", lang))
     if item["action"] != "removed":
         try:
             content = stored.content_path(item)
@@ -1424,23 +1460,23 @@ def _file_change(root: Path, stored: StoredProposal, item: Mapping[str, Any],
         except OSError:
             size = None
         if size != item.get("size"):
-            out.update(state="problem", reason="提议里缺少这个文件的内容")
+            out.update(state="problem", **_reason("content_missing", lang))
             return out
         out["content"] = str(content)
     if state in ("apply", "conflict"):
-        _describe(root, rel, item, out)
+        _describe(root, rel, item, out, lang)
     return out
 
 
 SMALL_TABLE_BYTES = 64 * 1024  # 12.13: a table this small also shows its line diff, below its summary
 
 
-def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]) -> None:
+def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any], lang: str = "zh") -> None:
     """A line diff for text; for data, size, fingerprint and -- for tables
     -- rows and columns (12.3). Every sentence also in the screen's words
-    (`*_words`, 12.13: never an arrow); the command line keeps its own. A
-    table (CSV, TSV) leads with its rows and columns; its line diff is
-    kept only when it is small (`table_small`)."""
+    (`*_words`, 12.13: never an arrow, in `lang`, 13.6); the command line
+    keeps its own. A table (CSV, TSV) leads with its rows and columns; its
+    line diff is kept only when it is small (`table_small`)."""
     old_path = root / rel
     old_text = _text_of(old_path, out.get("official_size")) if out.get("official_sha256") else ""
     if item["action"] == "removed":
@@ -1460,8 +1496,8 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
         if before or after:
             out["table"] = (history.table_sentence(before, after) if before and after
                             else history.table_shape(after or before))
-            out["table_words"] = (history.table_sentence(before, after, words=True) if before and after
-                                  else history.table_shape(after or before))
+            out["table_words"] = (history.table_sentence(before, after, words=True, lang=lang) if before and after
+                                  else history.table_shape(after or before, lang))
             out["table_small"] = max(int(out.get("official_size") or 0), int(item.get("size") or 0)) <= SMALL_TABLE_BYTES
         return
     try:
@@ -1470,15 +1506,19 @@ def _describe(root: Path, rel: str, item: Mapping[str, Any], out: dict[str, Any]
     except OSError:
         a = b = None
     out["summary"] = history.table_sentence(a, b) if (a or b) else None
-    out["summary_words"] = history.table_sentence(a, b, words=True) if (a or b) else None
+    out["summary_words"] = history.table_sentence(a, b, words=True, lang=lang) if (a or b) else None
     if b and not a:
-        out["table"] = out["table_words"] = history.table_shape(b)
+        out["table"], out["table_words"] = history.table_shape(b), history.table_shape(b, lang)
     official_size = out.get("official_size") if out.get("official_size") is not None else "—"
     size = item.get("size") if item.get("size") is not None else "—"
     sizes = f"{official_size} → {size} 字节"
     out["sentence"] = (out["summary"] + "；" if out.get("summary") else "") + f"大小 {sizes}"
-    moved = (f"大小从 {official_size} 变为 {size} 字节" if official_size != size else f"大小不变（{size} 字节）")
-    out["sentence_words"] = (out["summary_words"] + "；" if out.get("summary_words") else "") + moved
+    from researchos import settings  # noqa: PLC0415
+
+    said = {"a": history.number_text(official_size, lang), "b": history.number_text(size, lang)}
+    moved = (settings.say("大小从 {a} 变为 {b} 字节", "Size changed from {a} to {b} bytes", lang, **said)
+             if official_size != size else settings.say("大小不变（{b} 字节）", "Size unchanged ({b} bytes)", lang, **said))
+    out["sentence_words"] = (out["summary_words"] + settings.say("；", "; ", lang) if out.get("summary_words") else "") + moved
 
 
 def abandon_result(result: str, reason: str | None, verdict: str) -> str:
@@ -1625,12 +1665,12 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         return None
     done = done or {}
     if config is None:
-        return {"state": "problem", "reason": "正式版本没有配置尝试表"}
+        return {"state": "problem", **_reason("no_table", lang)}
     try:
         raw = (root / config.file).read_bytes()
         text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return {"state": "problem", "reason": f"尝试表无法读取：{exc}"}
+        return {"state": "problem", **_reason("table_unreadable", lang, error=exc)}
     rows = _rows(text, config) or {}
     node = f"attempt:{config.file}#"
     carried = data["attempt"] if kind == "attempt_new" else data["verdict"]
@@ -1651,7 +1691,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
                                "reason": row.get("reason")}
         if abandons and (not str(row.get("reason") or "").strip() or not row["result"].strip()):
             # Proposed before 14.3 asked for them: returned and proposed again, as an old verdict change is.
-            out.update(state="problem", reason=MESSAGES["reason_required"])
+            out.update(state="problem", **_reason("reason_required", lang))
             return out
         if done.get("attempt_applied"):
             out["state"] = "done"
@@ -1670,7 +1710,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
             if rows[number] == out["fields"]:
                 out["state"] = "same"
             else:
-                out.update(state="conflict", reason=f"正式版本的尝试表里已经有第 {number} 行")
+                out.update(state="conflict", **_reason("row_taken", lang, n=number))
             return out
     else:
         v = data["verdict"]
@@ -1684,7 +1724,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
                "old": v["old"], "new": v["new"], "abandons": abandons,
                "result": v["result"], "reason": v.get("reason")}
         if abandons and (not str(v.get("reason") or "").strip() or not v["result"].strip()):
-            out.update(state="problem", reason=MESSAGES["reason_required"])
+            out.update(state="problem", **_reason("reason_required", lang))
             return out
         if done.get("attempt_applied"):
             out["state"] = "done"
@@ -1692,13 +1732,13 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         out["table_moved"] = table_moved
         current = rows.get(number)
         if current is None:
-            out.update(state="conflict", reason=f"正式版本的尝试表里没有第 {number} 行")
+            out.update(state="conflict", **_reason("row_missing", lang, n=number))
             return out
         if current["verdict"] == v["new"] and current["result"] == written:
             out["state"] = "same"
             return out
         if current["verdict"] != v["old"] or current["result"] != v["old_result"]:
-            out.update(state="conflict", reason=f"第 {number} 行的结论或结果在正式版本里也改了")
+            out.update(state="conflict", **_reason("verdict_moved", lang, n=number))
             return out
         # The row's other cells, against the row as the proposal's base had
         # it (the base table found by its fingerprint): a row the PI edited
@@ -1707,7 +1747,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         if base_row is not None:
             moved_cells = [k for k in ROW_FIELDS if k not in ("verdict", "result") and current[k] != base_row[k]]
             if moved_cells:
-                out.update(state="conflict", reason=f"第 {number} 行在提议之后，正式版本里也改了")
+                out.update(state="conflict", **_reason("row_moved", lang, n=number))
                 return out
         elif table_moved:
             out["base_row_unknown"] = True  # only the verdict and result could be compared
@@ -1724,7 +1764,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
 
 
 def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any],
-                     done: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+                     done: Mapping[str, Any] | None = None, lang: str = "zh") -> dict[str, Any] | None:
     from researchos.records import variables as V  # noqa: PLC0415
 
     variable = data.get("variable")
@@ -1735,18 +1775,18 @@ def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]
     try:
         raw = stored.content_path({"path": variable["file"], "store": "text"}).read_bytes()
     except (OSError, ExchangeError):
-        return {**out, "state": "problem", "reason": "提议里缺少这个版本文件"}
+        return {**out, "state": "problem", **_reason("version_missing", lang)}
     if hashlib.sha256(raw).hexdigest() != variable["sha256"]:
-        return {**out, "state": "problem", "reason": "版本文件与提议记录的指纹不符"}
+        return {**out, "state": "problem", **_reason("version_mismatch", lang)}
     try:
         parsed = V.parse_version(raw.decode("utf-8"))
     except (V.VersionInvalid, UnicodeDecodeError) as exc:
-        return {**out, "state": "problem", "reason": f"版本文件无法读取：{exc}"}
+        return {**out, "state": "problem", **_reason("version_unreadable", lang, error=exc)}
     missing = V.missing_for_confirm(parsed)
     out["content"] = V.content_hash(parsed)
     out["text"] = raw.decode("utf-8")
     if missing:
-        return {**out, "state": "problem", "reason": "这一版还不完整，缺少：" + "、".join(missing)}
+        return {**out, "state": "problem", **_reason("version_incomplete", lang, missing=("、" if lang != "en" else ", ").join(missing))}
     problem = V.id_problem(card_id)
     if problem:
         return {**out, "state": "problem", "reason": problem}
@@ -1756,7 +1796,7 @@ def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]
     if not found:
         out.update(number=1, new_card=True)
         if variable["base_version"] != 0:
-            out.update(state="conflict", reason="这个变量卡在正式版本里已经不在了")
+            out.update(state="conflict", **_reason("card_gone", lang))
         else:
             out["state"] = "apply"
         return out
@@ -1776,9 +1816,9 @@ def _variable_change(root: Path, stored: StoredProposal, data: Mapping[str, Any]
         # confirmed now, not written again and not taken for a conflict.
         out.update(state="apply", number=card.draft, written=True)
     elif card.draft is not None:
-        out.update(state="conflict", reason=f"正式版本里这个变量卡有未确认的草稿 v{card.draft}")
+        out.update(state="conflict", **_reason("card_draft", lang, n=card.draft))
     elif highest != variable["base_version"]:
-        out.update(state="conflict", reason=f"这个变量卡在正式版本里已经有 v{highest}（提议基于 v{variable['base_version']}）")
+        out.update(state="conflict", **_reason("card_moved", lang, n=highest, base=variable["base_version"]))
     else:
         out["state"] = "apply"
         if card.in_use is not None:
@@ -1802,11 +1842,11 @@ def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = 
     data = _parsed(stored)
     problems: list[str] = []
     if data["project"] != _project_id(root):
-        problems.append(MESSAGES["wrong_project"])
+        problems.append(_reason("wrong_project", lang)["reason"])
     team = people.read_team(root)
     author = next((m for m in team.members if m.id == stored.member), None)
     if author is None or author.role != "member":
-        problems.append(f"{stored.member}: 不是这个项目的成员，提议不能批准")
+        problems.append(_reason("not_member", lang, who=stored.member)["reason"])
     current = snapshot_id(manifest(root))
     out: dict[str, Any] = {
         "id": stored.id, "kind": data["kind"], "by": stored.member, "sentence": data["sentence"], "base": data["base"],
@@ -1814,7 +1854,7 @@ def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = 
     }
     done = read_journal(root, stored.id)
     if done["member"] is not None and done["member"] != stored.member:
-        problems.append(f"这个编号的另一份提议（{done['member']}）已经在批准中")
+        problems.append(_reason("id_in_approval", lang, who=done["member"])["reason"])
     out["resuming"] = done["started"]
     out["attempt"] = _attempt_change(root, data, done, lang)
     out["route"] = _route_change(root, data, done, lang)
@@ -1824,8 +1864,8 @@ def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = 
         if isinstance((out["attempt"].get("fields") or {}).get("verdict"), str):
             # Beside `fields`, never in it: `fields` is what approving writes.
             out["attempt"]["verdict_status"] = verdict_words(out["attempt"]["fields"], labels)["verdict_status"]
-    out["variable"] = _variable_change(root, stored, data, done)
-    out["files"] = [_file_change(root, stored, item, done) for item in data.get("file") or []]
+    out["variable"] = _variable_change(root, stored, data, done, lang)
+    out["files"] = [_file_change(root, stored, item, done, lang) for item in data.get("file") or []]
     out["not_carried"] = data.get("not_carried") or []
     conflicts = []
     parts = [p for p in (out["attempt"], out["variable"], out["route"]) if p] + out["files"]
@@ -2421,11 +2461,24 @@ def approve(
             "variable": (applied["variable"] or {}).get("reference")
             or (f"{decision['card']} v{decision['version']}" if decision.get("card") and decision.get("version") else None),
         }, now, root=root)
-        published = _publish_after(root, ex, expected_id, timeout, f"批准提议 {stored.id}")
+        published = _publish_after(root, ex, expected_id, timeout, APPROVAL_NOTE.format(id=stored.id))
         if rescan:
             _rescan(root)
     return {"proposal": stored.id, "applied": applied, "decision": _jsonable(decision), "outcome": outcome,
             "published": published, "resumed": resumed}
+
+
+#: The note a snapshot an approval published carries (written as it always was: the manifest, its
+#: signature and old snapshots stay as they are). Read back by its shape (`approval_note`), so a
+#: screen says it in its own words rather than showing Research OS's Chinese (13.6).
+APPROVAL_NOTE = "批准提议 {id}"
+_APPROVAL_NOTE_RE = re.compile(r"^批准提议 (pr-[0-9a-f]+)$")
+
+
+def approval_note(note: Any) -> str | None:
+    """The proposal a snapshot's note says it was published on approving, if it says so."""
+    found = _APPROVAL_NOTE_RE.match(note) if isinstance(note, str) else None
+    return found.group(1) if found else None
 
 
 def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: float | None, note: str) -> dict[str, Any]:
