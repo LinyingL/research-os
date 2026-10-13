@@ -111,6 +111,14 @@
   // (canvas.js linkActions): confirm unless it stands confirmed, reject,
   // and withdraw while a verdict stands.
   function judgeActions(link) {
+    if (link.human && link.type === "derives_from") {
+      // 14.2: a 「源自」 line is removed by the PI or a single researcher; a
+      // member proposes its removal; anyone else (not in the team yet, or
+      // team.toml unreadable) is offered nothing here.
+      const c = typeof RODesk !== "undefined" && RODesk.context ? RODesk.context() : null;
+      const role = c && c.mode;
+      return role === "pi" || role === "single" ? ["delete"] : role === "member" ? ["propose_remove"] : [];
+    }
     if (link.human) return ["delete"];
     const j = link.judgement;
     const waiting = !!(link.review || link.conflict);
@@ -1049,7 +1057,8 @@
     const blocked = humanRecordsBlocked();
     const buttons = [];
     judgeActions(l).forEach((a) => {
-      const text = a === "delete" ? "删除标注" : a === "confirmed" ? "确认" : a === "rejected" ? "否决" : "撤回";
+      const text = a === "propose_remove" ? t("提议删除这条连线") : a === "delete" ? "删除标注" : a === "confirmed" ? "确认"
+        : a === "rejected" ? "否决" : "撤回";
       const b = mkButton(text, "btn btn-small", () => judge(l, a, status, buttons));
       if (blocked) { b.disabled = true; b.title = blocked; }
       buttons.push(b);
@@ -1060,7 +1069,9 @@
   }
 
   async function judge(l, verdict, status, buttons) {
-    const travels = travelsWords("unlink");
+    // A 「源自」 line never travels in a packet (14.2): the no-approval sentence is never said of it.
+    const travels = l.type === "derives_from" ? "" : travelsWords("unlink");
+    if (verdict === "propose_remove") { await proposeRemoval(l, status, buttons); return; }
     if (verdict === "delete" && !window.confirm("删除这条人工标注？\n\n" + linkSentence(l) + "\n\n它会从 .researchos/mappings.toml 里移除。" +
       (travels ? "\n\n" + travels : ""))) return;
     buttons.forEach((b) => { b.disabled = true; });
@@ -1077,10 +1088,32 @@
       }
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", verdict === "delete" ? "没能删除这条标注" : "没能记下这个判断", err);
+      setStatus(status, "err", (verdict === "delete" && lineRefusal(err)) || (verdict === "delete" ? "没能删除这条标注" : "没能记下这个判断"), err);
       return;
     }
     loadNode(views.node, true);
+  }
+
+  // A refused 「源自」 line says the route map's own sentence (8.8), when the map is loaded.
+  function lineRefusal(err) {
+    return typeof RORouteMap !== "undefined" && RORouteMap.lineRefusal ? RORouteMap.lineRefusal(err && err.state) : null;
+  }
+
+  // A member removes a 「源自」 line by proposing it (14.2), as the desk's map and panel do.
+  async function proposeRemoval(l, status, buttons) {
+    if (!window.confirm(t("提议删除这条连线？PI 批准后它才会从路线图上消失。"))) return;
+    buttons.forEach((b) => { b.disabled = true; });
+    setStatus(status, "", t("正在写入公盘…"));
+    try {
+      await apiPost("/api/proposals", { kind: "route_link", op: "remove", child: l.src, parent: l.dst, write: true });
+    } catch (err) {
+      buttons.forEach((b) => { b.disabled = false; });
+      setStatus(status, "err", lineRefusal(err) || t("没能删除这条连线"), err);
+      return;
+    }
+    setStatus(status, "ok", t("已把删除这条连线作为提议交给 PI。"));
+    if (typeof markViewsStale === "function") markViewsStale(); // the desk marks the line 提议删除
+    if (typeof RODesk !== "undefined" && RODesk.refreshSidebar) RODesk.refreshSidebar();
   }
 
   // -- 关系图 (the canvas, scoped to this node's neighbourhood) ----------------------------
@@ -1403,7 +1436,7 @@
     verdictMove, sourceWords,
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
-    _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
+    _judgeActions: judgeActions, _linkRow: linkRow, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
     _tableWords: tableWords, _timeline: timeline, _when: when, _timeKey: timeKey, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
   });
 })();

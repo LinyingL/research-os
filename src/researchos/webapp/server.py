@@ -720,13 +720,14 @@ class MappingEditError(ApiError):
     `code` is the writer's machine-readable cause. The refusals of a line
     between attempts the researcher can cause from the map (DESIGN.md 14.2:
     an attempt not in the index, a line to itself, one that closes a circle,
-    a member's line, which goes as a `route_link` proposal) also carry a
-    `state` -- `mapping_` + the code -- so the page says one sentence per
-    cause; every other refusal stays framed generically."""
+    a member's line, which goes as a `route_link` proposal, a line written
+    while team.toml cannot be read) also carry a `state` -- `mapping_` + the
+    code -- so the page says one sentence per cause; every other refusal
+    stays framed generically."""
 
     status = 400
     #: The codes with a sentence of their own on the page (8.8).
-    STATED = ("attempt_not_found", "self_link", "circle", "member_proposes")
+    STATED = ("attempt_not_found", "self_link", "circle", "member_proposes", "role_unknown")
 
     def __init__(self, message: str, code: str | None = None) -> None:
         super().__init__(message)

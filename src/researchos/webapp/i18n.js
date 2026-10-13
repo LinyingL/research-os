@@ -333,6 +333,12 @@
     "放弃一条路线时必须写明理由": "Abandoning a route needs a reason",
     "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。":
       "Abandoning a route needs a reason: it is written into the result, and the route's basis is frozen.",
+    "成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线":
+      "The members file (team.toml) cannot be read right now, so whether you may draw or remove this line directly cannot be told",
+    "成员文件（team.toml）当前无法读取，无法判断谁是 PI":
+      "The members file (team.toml) cannot be read right now, so who the PI is cannot be told",
+    "你是这个项目的成员：连线的增删要作为提议交给 PI 批准":
+      "You are a member of this project: drawing or removing a line goes to the PI as a proposal",
     "成员文件（team.toml）当前无法读取，无法判断你能否直接放弃这条路线":
       "The members file (team.toml) cannot be read right now, so whether you may abandon this route directly cannot be told",
     // Who abandoned a route (12.4, ruled 2026-10-13): directly (no proposal), or proposed and approved.

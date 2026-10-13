@@ -177,6 +177,8 @@
       case "attempt_not_found": return t("连线的一端不是正式版本里的尝试：新的尝试请在它自己的提议里写明源自哪里");
       case "no_such_line": return t("正式版本里没有这条连线");
       case "mapping_member_proposes": return t("你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画");
+      case "mapping_role_unknown": return t("成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线");
+      case "team_unreadable": return t("成员文件（team.toml）当前无法读取，无法判断谁是 PI");
       case "pi_changes_directly": return t("你是 PI：连线直接写入正式版本；请刷新后再画");
       case "not_in_team": return t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步");
       default: return null;
@@ -247,7 +249,18 @@
       marked: [], save: emptySave(), saveTimer: null, resizeTimer: null, statusTimer: null,
     };
 
+    // Anyone but the PI and a single researcher proposes a line (14.2) -- kept
+    // for an unknown role too, so its write never goes to /api/mappings/*.
     function proposes() { return m.role !== "pi" && m.role !== "single"; }
+    // Whether lines are drawn or removed here at all: not by someone not in
+    // the team yet, nor while team.toml cannot be read (ruled 2026-10-13;
+    // the panel offers no editing either).
+    function mayEdit() { return m.role === "pi" || m.role === "single" || m.role === "member"; }
+    // Why not, in the column's own words (the engine's, in the request's language).
+    function notEditable() {
+      const notice = m.data && m.data.column && m.data.column.notice;
+      return notice || refusal(m.role === "none" ? "not_in_team" : "team_unreadable");
+    }
     function numberOf(id) { const a = m.byId.get(id); return a ? String(a.number).replace(/^#/, "") : String(id).split("#").pop(); }
     function allLines() { return m.lines.concat(m.optimistic); }
     function lineOf(key) { return allLines().find((l) => lineKey(l.child, l.parent) === key) || null; }
@@ -683,6 +696,11 @@
 
     function askLine(parent, child) {
       closePop();
+      if (!mayEdit()) {
+        drawDraft(null, null);
+        showStatus(notEditable(), null, { ms: NOTICE_MS });
+        return;
+      }
       const why = checkLine(allLines(), child, parent);
       if (why) {
         drawDraft(null, null);
@@ -767,7 +785,7 @@
     }
 
     function canRemove(l) {
-      return !l.optimistic && !(l.pending && (l.pending.op === "add" || proposes()));
+      return mayEdit() && !l.optimistic && !(l.pending && (l.pending.op === "add" || proposes()));
     }
 
     async function removeLine(l) {

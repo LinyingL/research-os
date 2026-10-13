@@ -906,14 +906,20 @@ def _check_round_trip(new_text: str, expected: list[Any]) -> None:
 def _refuse_member_line(project_root: str | Path, type: str) -> None:
     """14.2: in a member's working copy a line between attempts is drawn or
     removed only as a `route_link` proposal the PI approves; written there,
-    it would reach no one (it never travels in a packet)."""
+    it would reach no one (it never travels in a packet). While the team
+    file cannot be read, whose copy this is cannot be told, so the line is
+    not written directly either (`role_unknown`, ruled 2026-10-13)."""
     if type != DERIVES_FROM:
         return
     from researchos import proposals  # noqa: PLC0415 -- proposals imports this module
 
-    if proposals.role_of(project_root)[0] in ("member", "none"):
+    role = proposals.role_of(project_root)[0]
+    if role in ("member", "none"):
         raise MappingsWriteError("member_proposes", "in a member's working copy a line between attempts goes to the "
                                                     "PI as a proposal (route_link); nothing written")
+    if role == "unknown":
+        raise MappingsWriteError("role_unknown", "the members file (team.toml) cannot be read, so whether this line "
+                                                 "may be drawn or removed directly cannot be told; nothing written")
 
 
 def add_mapping(
