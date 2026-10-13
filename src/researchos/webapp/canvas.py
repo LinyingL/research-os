@@ -70,8 +70,10 @@ written under the project lock with the write-time identity re-check
 a snapshot the first time it changes each day and one before 「重新排列」
 discards a view's arrangement. It holds one arrangement and one viewport
 PER VIEW (8.4 as amended: "each view keeps its own"), `{"views": {<scope
-id>: {"positions", "viewport"}}}`, the scope id being `all` or an attempt
-node id.
+id>: {"positions", "viewport"}}}`, the scope id being `all`, an attempt
+node id, or `routes` -- the desk's route map (DESIGN.md 14.1), whose cards
+are the attempts themselves; it is drawn by `/routemap.js` from `GET
+/api/desk` (`routes_layout`), never by `build_canvas`.
 
 A record Research OS cannot read is never overwritten (9.3's rule, applied to
 this file): a file that is not JSON, not an object, or whose `views` is
@@ -127,6 +129,9 @@ SCOPE_ALL = "all"
 # time: no arrangement is kept for it (a layout write naming it is refused),
 # so canvas.json does not grow by one view per node ever opened.
 NEAR_PREFIX = "near:"
+# DESIGN.md 14.1 (task V10): the desk's route map keeps its arrangement here
+# too, per person, as the view `routes`; its cards are the attempt ids.
+SCOPE_ROUTES = "routes"
 # Section 8.7: "the ✅ row when there is exactly one". The literal marker,
 # not the attempts config's `active_verdicts` (which also counts 🕒 rows as
 # alive for the dead-variable check -- a different question).
@@ -317,7 +322,10 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     id, the visible card ids, and what `build_canvas` needs to describe
     them. Shared by the GET and by the layout POST, which may only write
     positions for the cards of the view it names. `UnknownScopeError` for
-    a scope that is neither `all` nor an attempt in the graph."""
+    a scope that is neither `all` nor an attempt in the graph. The route
+    map's view (`routes`) shows the attempts themselves, nothing else."""
+    if scope == SCOPE_ROUTES:
+        return {"scope": scope, "visible": {a["id"] for a in db.get_nodes_by_type(conn, "attempt")}}
     nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t)}
     edges = [
         e for t in CANVAS_EDGE_TYPES for e in db.query_edges(conn, type=t)
@@ -388,7 +396,10 @@ def view_card_ids(conn: Connection, project_root: Path, scope: str) -> set[str]:
 def build_canvas(conn: Connection, project_root: Path, scope: str | None = None) -> dict[str, Any]:
     """The whole `GET /api/canvas` body (module docstring). `scope` is
     `"all"`, an attempt node id, or None for the default scope; anything
-    else raises `UnknownScopeError`."""
+    else raises `UnknownScopeError` -- `routes` too: the route map is drawn
+    from the desk's payload, not as a 关系图 view."""
+    if scope == SCOPE_ROUTES:
+        raise UnknownScopeError("the route map is the desk's (GET /api/desk), not a view of this canvas")
     root = Path(project_root).resolve()
     view = _view(conn, root, scope)
     scope, nodes, edges, visible = view["scope"], view["nodes"], view["edges"], view["visible"]
@@ -606,6 +617,17 @@ def load_layout(project_root: Path, scope: str) -> dict[str, Any]:
     return load_views(project_root).get(scope) or _empty_view()
 
 
+def routes_layout(project_root: Path) -> dict[str, Any]:
+    """The route map's arrangement for the desk (DESIGN.md 14.1): the view
+    `routes` -- `positions` by attempt id and `viewport` -- with the
+    record's `state` and whether a write could land (`writable`; a record
+    Research OS cannot read is never written over)."""
+    record = layout_record(project_root)
+    view = record.views.get(SCOPE_ROUTES) or _empty_view()
+    return {"positions": view["positions"], "viewport": view["viewport"], "state": record.state,
+            "writable": record.writable}
+
+
 def parse_layout_body(body: dict[str, Any]) -> tuple[str, dict[str, list[float] | None], Any, bool]:
     """Validate a layout POST body; returns `(scope, positions, viewport,
     reset)` where `viewport` is the sentinel `...` when absent. `scope` is
@@ -619,7 +641,7 @@ def parse_layout_body(body: dict[str, Any]) -> tuple[str, dict[str, list[float] 
         raise LayoutShapeError(f"unknown key(s) in layout body: {', '.join(sorted(unknown))}")
     scope = body.get("scope")
     if not isinstance(scope, str) or not scope:
-        raise LayoutShapeError("layout body must name its view: 'scope' is 'all' or an attempt id")
+        raise LayoutShapeError("layout body must name its view: 'scope' is 'all', an attempt id or 'routes'")
     reset = body.get("reset", False)
     if not isinstance(reset, bool):
         raise LayoutShapeError("'reset' must be true or false")

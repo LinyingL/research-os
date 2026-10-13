@@ -165,7 +165,7 @@ Endpoints (all GET unless noted):
                             and scope list (DESIGN.md 8.1/8.7; see
                             `researchos.webapp.canvas.build_canvas`).
     POST /api/canvas/layout -- body `{"project": <as GET /api/canvas
-                            returned it>, "scope": "all"|<attempt id>,
+                            returned it>, "scope": "all"|<attempt id>|"routes",
                             "positions"?: {id: [x, y] | null},
                             "viewport"?: {x, y, zoom} | null,
                             "reset"?: bool}`: merge into THAT view's entry
@@ -315,8 +315,10 @@ Endpoints (all GET unless noted):
                             map: the attempts with their marks, the 「源自」
                             lines and the column -- proposals, 待复核, a
                             member's sync state, read from the shared folder
-                            for at most a few seconds (`researchos.desk.payload`).
-                            Reads only.
+                            for at most a few seconds (`researchos.desk.payload`),
+                            and `layout`: the map's arrangement, the view
+                            `routes` of canvas.json, with the `project` a
+                            layout POST echoes (`desk_payload`). Reads only.
     GET  /canvas.js    -- the node canvas's script (DESIGN.md section 8, task
                             V4 phase 2a), served verbatim from
                             `src/researchos/webapp/canvas.js` with the same
@@ -2189,6 +2191,21 @@ def canvas_payload(conn: Connection, project_root: Path, scope: str | None) -> d
     return payload
 
 
+def desk_payload(conn: Connection, served: ServedProject, since: str | None, lang: str) -> dict[str, Any]:
+    """`GET /api/desk`: `researchos.desk.payload` plus `layout`, the route
+    map's arrangement (DESIGN.md 14.1: the view `routes` of canvas.json,
+    per person) -- `positions`, `viewport`, the record's `state`, the
+    `project` a layout POST must echo, and `writable`: false for a record
+    that cannot be read, a project frozen until it is migrated or opened
+    read-only, so the page sends nothing that would only be refused."""
+    out = desk_mod.payload(conn, served.root, since, lang=lang)
+    layout = canvas.routes_layout(served.root)
+    layout.update(project=_canvas_project(served.root),
+                  writable=layout["writable"] and not (served.needs_migration or served.read_only))
+    out["layout"] = layout
+    return out
+
+
 class ProjectChangedError(ApiError):
     """A layout POST made in a page still showing another project: the
     server was switched (from another window, or Research OS.app) after that page
@@ -3285,7 +3302,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # page's language.
                 served = self._require_unblocked()
                 since = (query.get("since") or [None])[0]
-                self._json_from_conn(lambda conn: desk_mod.payload(conn, served.root, since, lang=self._lang()))
+                self._json_from_conn(lambda conn: desk_payload(conn, served, since, self._lang()))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.
