@@ -249,7 +249,13 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
         assert block in js, block
     for gone in ("你上次查看以来的改动", "依据变了的成果", "已放弃的路线"):
         assert gone not in js, gone
-    assert 'apiPost("/api/share/sync", {})' in js and js.count("apiPost(") == 1  # the desk's one write
+    # The desk's writes: 同步, and -- re-baselined for V10 (DESIGN.md 14.3) -- the side panel's,
+    # each through an existing endpoint: the attempt's preview and write, a note, a line removed
+    # (a member's removal proposed). Nothing else.
+    writes = re.findall(r'apiPost\("(/api/[\w/-]+)"', js)
+    assert 'apiPost("/api/share/sync", {})' in js and js.count("apiPost(") == len(writes) == 6
+    assert sorted(writes) == ["/api/attempts/preview", "/api/attempts/write", "/api/mappings/delete", "/api/notes",
+                              "/api/proposals", "/api/share/sync"]
 
 
 # -- 12.0: the desk's data -----------------------------------------------------------------------------------

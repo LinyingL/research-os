@@ -38,7 +38,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db, lineage
+from researchos import db, lineage, settings
 from researchos import trace as trace_mod
 from researchos.records import judgements
 from researchos.records import notes as notes_mod
@@ -344,11 +344,13 @@ def _dedupe_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: judgements.LinkFlags) -> dict[str, Any]:
+def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: judgements.LinkFlags,
+                   lang: str = "zh") -> dict[str, Any]:
     """An attempt's page: its files -- the step scripts its description
     names and the files attached to it (「关联文件」) -- as 读取的数据 | 脚本
     | 产出, with the scripts' reads and writes. Its files are 14.3's one
-    membership rule (`trace.attempt_members`), as on the desk and in 关系图."""
+    membership rule (`trace.attempt_members`), as on the desk and in 关系图.
+    Its words are in `lang` (13.6): the desk's panel draws it too (14.6)."""
     node_id = record["id"]
     members = trace_mod.attempt_members(conn, root, [record])[node_id]
     inputs, scripts, outputs, lines = [], [], [], []
@@ -374,14 +376,15 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
         marked = {i["id"]: i for i in column if i.get("member")}
         column[:] = [marked.get(i["id"], i) for i in column]
     columns = [
-        {"key": "in", "title": "读取的数据", "items": _dedupe(inputs)},
-        {"key": "scripts", "title": "脚本", "items": _dedupe(scripts)},
-        {"key": "out", "title": "产出", "items": _dedupe(outputs)},
+        {"key": "in", "title": settings.say("读取的数据", "Data read", lang), "items": _dedupe(inputs)},
+        {"key": "scripts", "title": settings.say("脚本", "Scripts", lang), "items": _dedupe(scripts)},
+        {"key": "out", "title": settings.say("产出", "Outputs", lang), "items": _dedupe(outputs)},
     ]
     breaks = []
     if not members:
-        breaks.append({"kind": "no_files", "node": node_id, "path": None, "label": "这条尝试还没有关联任何文件",
-                       "repair": {"type": "belongs_to", "label": "关联文件", "file": None}})
+        breaks.append({"kind": "no_files", "node": node_id, "path": None,
+                       "label": settings.say("这条尝试还没有关联任何文件", "No files are linked to this attempt yet", lang),
+                       "repair": {"type": "belongs_to", "label": settings.say("关联文件", "Link files", lang), "file": None}})
         columns[1]["gap"] = breaks[0]
     return {"columns": columns, "lines": _dedupe_lines(lines), "deeper": 0, "breaks": breaks, "attempts": [],
             "variables": []}
@@ -491,9 +494,10 @@ def _text_trace(conn: Connection, root: Path, node_id: str, record: dict[str, An
 # -- the node page -----------------------------------------------------------------------------
 
 
-def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, Any]:
+def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh") -> dict[str, Any]:
     """One node's page (module docstring). `ValueError` for something that
-    cannot name a node; `NotFound` for a node nothing knows."""
+    cannot name a node; `NotFound` for a node nothing knows. An attempt's
+    来龙去脉 is worded in `lang` (13.6); the rest of the page is not yet."""
     root = Path(project_root)
     node_id = notes_mod.normalize_node(given)
     prefix = _type_of(node_id)
@@ -532,7 +536,7 @@ def node(conn: Connection, project_root: str | Path, given: str) -> dict[str, An
         # U4: an abandoned route whose approval froze its basis (12.4) offers 「当时的依据」.
         decided, _problem = _decisions(root)
         out["details"]["basis"] = sum(1 for e in decided if e.get("attempt") == node_id and e.get("evidence"))
-        out["trace"] = _attempt_trace(conn, root, record, flags)
+        out["trace"] = _attempt_trace(conn, root, record, flags, lang)
         out["choices"] = {"files": _file_choices(conn, root, ("script", "dataset", "figure"))}
     elif prefix in FILE_NODE_TYPES:
         if prefix == "file" and path is not None and path in _draft_files(conn):

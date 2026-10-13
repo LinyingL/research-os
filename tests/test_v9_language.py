@@ -83,6 +83,12 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", "function diffBlock(rows, truncated) {", "\n  }\n"),
     # V10 (DESIGN.md 14.6): the desk's route map, all of it.
     ("routemap.js", None, None),
+    # V10 (14.3, 14.6): 来龙去脉, which the desk's side panel draws with the node page's renderer.
+    ("node.js", "function renderTraceSection(host, page, opts) {", "\n  }\n"),
+    ("node.js", "function viaWord(via) {", "\n  }\n"),
+    ("node.js", "function traceItem(item, col, open) {", "\n  }\n"),
+    ("node.js", "function gapBox(page, gap, bare) {", "\n  }\n"),
+    ("node.js", "function drawLines(grid) {", "\n  }\n"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own

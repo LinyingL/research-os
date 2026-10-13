@@ -3277,7 +3277,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 12.6, 12.7, 12.9: one object's page -- reads only.
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(
-                    self._node_api(lambda: node_api.node_payload(conn, served.root, query))))
+                    self._node_api(lambda: node_api.node_payload(conn, served.root, query, self._lang()))))
             elif path == "/api/results":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(

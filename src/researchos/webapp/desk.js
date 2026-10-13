@@ -372,11 +372,6 @@
     return b;
   }
 
-  // A click on a card opens it: its node page (12.9) until the panel (14.3).
-  function openAttempt(id) {
-    RONode.openNode(id);
-  }
-
   function attemptName(item) {
     const num = item.number != null && item.number !== "" ? "#" + String(item.number).replace(/^#/, "") : "";
     return [num, item.title || ""].filter(Boolean).join(" ");
@@ -450,13 +445,14 @@
     const state = forPi ? (p.state === "conflict" ? stateWord(p.state) : "") : mineState(p);
     main.appendChild(metaLine([forPi ? p.by_label || p.by : "", state, whenWords(p.at, now())]));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton(t("查看"), "btn btn-small", () => ROTeam.openProposal(p.id, p.by)));
+    actions.appendChild(mkButton(t("查看"), "btn btn-small", () => { if (mayLeavePanel()) ROTeam.openProposal(p.id, p.by); }));
     main.appendChild(actions);
     row.appendChild(main);
     return row;
   }
 
-  // A link's relation in words (12.11), never its type.
+  // A link's relation in words (12.11), never its type: nodepage.RELATION_WORDS'
+  // in the screen's language (node.js's trace lines say it too).
   function relationWord(type) {
     switch (type) {
       case "reads": return t("读取");
@@ -469,6 +465,8 @@
       case "implements": return t("实现");
       case "uses": return t("使用");
       case "supports": return t("支持");
+      case "authored_by": return t("作者是");
+      case "derives_from": return t("源自");
       default: return t("关联");
     }
   }
@@ -497,7 +495,7 @@
     if (!review || !review.count) return false;
     const sec = block(t("待复核"));
     const sub = mk("p", "desk-sub", t("{n} 条判断的依据变了，等你复核。", { n: numberText(review.count) }));
-    sub.appendChild(rowLink(t("复核"), "", () => openReviewPanel(null)));
+    sub.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
     sec.appendChild(sub);
     const ul = mk("ul", "desk-list");
     (review.groups || []).forEach((g) => {
@@ -507,7 +505,7 @@
       head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id]));
       const own = ownMark(g);
       if (own) head.appendChild(own);
-      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openReviewPanel(g.items[0])));
+      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(g.items[0]); }));
       main.append(head, reviewItems(g.items, []));
       row.appendChild(main);
       ul.appendChild(row);
@@ -706,10 +704,428 @@
     if (epoch !== state.dataEpoch) return;
     if (drawnEpoch !== epoch) picked = null;
     renderSidebar();
+    lastData = data;
+    lastChanged = changedSince(since);
     renderColumn(deskColumn(host), data);
-    if (routeMap) routeMap.update(data, { changed: changedSince(since) });
+    if (routeMap) routeMap.update(data, { changed: lastChanged });
     drawnEpoch = epoch;
     host.dataset.loaded = "1";
+  }
+
+  // -- the side panel (DESIGN.md 14.3) ----------------------------------------------------
+  // A card opens its attempt in app.html's side panel, on the desk, the map
+  // live beside it (no backdrop): the attempt -- its verdict and result
+  // changed through the map file's preview-then-confirm write, dirty cells
+  // only; a member's change becomes a verdict-change proposal (12.4); turning
+  // a route abandoned asks its reason --, 写备注, 来龙去脉 (the node page's
+  // trace), 源自 and 由它而来 with remove, 打开详情页. One panel at a time:
+  // what is half typed in it is never replaced unasked.
+
+  const NOTES_SHOWN = 5;
+  let lastData = null;     // the desk payload last drawn: attempts, lines, the column
+  let lastChanged = null;  // its 「有改动」 rule
+  let panelSaid = null;    // { id, text }: what the last write in the panel did, said until another opens
+
+  function byIdOf(id) { return document.getElementById(id); }
+
+  function panelShown() {
+    const p = byIdOf("panel");
+    return !!p && !p.classList.contains("hidden");
+  }
+
+  // A field typed in (app.html marks it data-typed) whose words are not written.
+  function halfTyped() {
+    const body = byIdOf("panel-body");
+    if (!body || !panelShown()) return false;
+    return Array.from(body.querySelectorAll("textarea, input")).some((f) =>
+      f.dataset.typed === "1" && f.value.trim() !== String(f.dataset.initial || "").trim());
+  }
+
+  function mayLeavePanel() {
+    return !halfTyped() || window.confirm(t("这里有还没写入的内容，离开它就不保存了。继续吗？"));
+  }
+
+  function attemptOf(id) {
+    return ((lastData && lastData.attempts) || []).find((a) => a.id === id) || null;
+  }
+
+  function deskRole() {
+    const c = (lastData && lastData.column) || {};
+    return c.role || (lastData && lastData.role) || "single";
+  }
+
+  // 「打开详情页」, or a file of its trace: the node page, asked first.
+  function leaveTo(nodeId) {
+    if (mayLeavePanel()) RONode.openNode(nodeId);
+  }
+
+  // A card clicked, or an attempt named in the panel: opened in the panel;
+  // the one open already stays as it is, typing and all.
+  function openAttempt(id) {
+    const s = state.panelSubject;
+    if (s && s.kind === "desk-attempt" && s.id === id && panelShown()) return null;
+    if (!mayLeavePanel()) return null;
+    const subject = { kind: "desk-attempt", id: id, hold: false };
+    state.panelSubject = subject;
+    panelSaid = null;
+    const a = attemptOf(id) || {};
+    const title = byIdOf("panel-title");
+    title.textContent = attemptName(a) || id;
+    title.title = "";
+    title.classList.add("plain-title");
+    byIdOf("panel-subtitle").textContent = a.date || "";
+    byIdOf("panel-body").innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
+    openPanel();
+    const backdrop = byIdOf("panel-backdrop");
+    if (backdrop) backdrop.classList.add("hidden"); // the map stays live beside it
+    return drawPanel(subject);
+  }
+
+  // Drawn again after a write or a refresh (app.html revalidatePanel) --
+  // unless something is typed in it, or a preview or a proposal's draft stands.
+  async function drawPanel(subject) {
+    const id = subject.id;
+    let page, notes;
+    try {
+      [page, notes] = await Promise.all([
+        apiGet("/api/node?node=" + encodeURIComponent(id)),
+        apiGet("/api/notes?node=" + encodeURIComponent(id)).catch((err) => ({ failed: err })),
+        typeof fetchAttemptRecords === "function" ? fetchAttemptRecords().catch(() => false) : false,
+      ]);
+    } catch (err) {
+      if (state.panelSubject !== subject || subject.hold || halfTyped()) return;
+      const body = byIdOf("panel-body");
+      body.textContent = "";
+      const box = mk("div", "notice-status");
+      setStatus(box, "err", t("没能打开这条尝试"), err);
+      body.appendChild(box);
+      return;
+    }
+    if (state.panelSubject !== subject || subject.hold || halfTyped()) return;
+    const d = page.details || {};
+    const a = attemptOf(id) || { id: id, number: d.number, title: d.description, date: d.date, route_status: d.verdict_status };
+    byIdOf("panel-title").textContent = attemptName(a) || page.name || id;
+    byIdOf("panel-subtitle").textContent = a.date || "";
+    const body = byIdOf("panel-body");
+    const top = body.scrollTop;
+    body.textContent = "";
+    if (panelSaid && panelSaid.id === id) body.appendChild(mk("div", "notice-status ok", panelSaid.text));
+    body.appendChild(panelHead(a, id));
+    body.appendChild(editPart(subject, a, page));
+    body.appendChild(notesPart(subject, page, notes));
+    if (window.RONode && RONode.renderTrace) RONode.renderTrace(body, page, { panel: true, open: leaveTo });
+    body.appendChild(linesPart(subject, id, "parent"));
+    body.appendChild(linesPart(subject, id, "child"));
+    body.scrollTop = top;
+    if (window.RONode && RONode.drawTraceLines) RONode.drawTraceLines(body);
+  }
+
+  function part(title) {
+    const s = mk("section", "node-sec dp-part");
+    s.appendChild(mk("h3", "node-sec-title", title));
+    return s;
+  }
+
+  // Its verdict in its tone, its marks as quiet words (14.1), 打开详情页.
+  function panelHead(a, id) {
+    const head = mk("div", "dp-head");
+    const marks = mk("div", "node-marks");
+    marks.appendChild(verdictInline(a.route_status));
+    const own = ownMark(a);
+    if (own) marks.appendChild(own);
+    const m = a.marks || {};
+    (m.proposals || []).map((p) => p.label).concat(m.review ? m.review.label : [], lastChanged && lastChanged(a) ? t("有改动") : [])
+      .filter(Boolean).forEach((w) => marks.appendChild(mk("span", "dp-mark", w)));
+    head.appendChild(marks);
+    if (a.abandoned && a.reason) head.appendChild(mk("p", "desk-note", t("放弃的理由：{reason}", { reason: a.reason })));
+    const actions = mk("div", "desk-actions");
+    actions.appendChild(mkButton(t("打开详情页"), "btn btn-small", () => leaveTo(id)));
+    head.appendChild(actions);
+    return head;
+  }
+
+  function typedField(tag, value, placeholder) {
+    const f = mk(tag, tag === "textarea" ? "form-textarea" : "form-input");
+    if (tag === "textarea") f.rows = 2;
+    f.value = value || "";
+    f.dataset.initial = f.value;
+    if (placeholder) f.placeholder = placeholder;
+    return f;
+  }
+
+  // The verdicts this table already holds, as 12.11 shows them; a click puts
+  // the cell's own text, its marker included, into the field.
+  function verdictChips(field) {
+    const records = state.attemptsById ? Array.from(state.attemptsById.values()) : [];
+    const values = typeof distinctVerdicts === "function" ? distinctVerdicts(records) : [];
+    if (!values.length) return null;
+    const statusOf = new Map(records.map((r) => [(r.verdict || "").trim(), r.verdict_status]));
+    const chips = mk("div", "verdict-chips");
+    values.forEach((v) => {
+      const vs = statusOf.get(v);
+      chips.appendChild(mkButton(vs ? [verdictWord(vs), vs.words].filter(Boolean).join(" ") : v, "chip", () => {
+        field.value = v;
+        field.dataset.typed = "1";
+      }));
+    });
+    return chips;
+  }
+
+  // The attempt's verdict and result (14.3): preview, then confirm; only the
+  // cells changed are sent. Description, date and variables are 研究路线's.
+  function editPart(subject, a, page) {
+    const d = page.details || {};
+    const role = deskRole();
+    const s = part(t("判决与结果"));
+    if (role !== "single" && role !== "pi" && role !== "member") {
+      if (d.result) s.appendChild(mk("p", "desk-note", d.result));
+      const c = (lastData && lastData.column) || {};
+      s.appendChild(mk("p", "desk-alone", role === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")
+        : c.notice || t("现在说不清你在这个项目里的角色，判决先不能改。")));
+      return s;
+    }
+    const proposing = role === "member";
+    const number = String(d.number || a.number || ""); // the row's identity, as the table writes it
+    const verdict = typedField("input", d.verdict || "");
+    const result = typedField("textarea", d.result || "");
+    const verdictField = formFieldEl(t("判决"), verdict);
+    const chips = verdictChips(verdict);
+    if (chips) verdictField.appendChild(chips);
+    s.append(verdictField, formFieldEl(t("结果"), result));
+    let sentence = null;
+    if (proposing) {
+      sentence = typedField("textarea", "", t("用你自己的话说明这份提议：PI 会先看到这句话"));
+      s.appendChild(formFieldEl(t("一句话说明（必填）"), sentence));
+    }
+    const reason = typedField("textarea", "", t("为什么放弃这条路线"));
+    const reasonField = formFieldEl(proposing ? t("理由（放弃一条路线时必填）") : t("放弃的理由（必填）"), reason);
+    reasonField.appendChild(mk("div", "team-help", t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
+    reasonField.classList.add("hidden"); // until the preview says this write abandons the route
+    s.appendChild(reasonField);
+    const status = mk("div", "notice-status");
+    const shown = mk("div", "dp-preview");
+    const go = mkButton(proposing ? t("预览这一行") : t("预览改动"), "btn btn-primary", () => preview());
+    const row = mk("div", "form-actions");
+    row.appendChild(go);
+    s.append(row, status, shown);
+    const fields = [verdict, result, reason].concat(sentence ? [sentence] : []);
+    const freeze = (on) => { fields.forEach((f) => { f.disabled = on; }); go.disabled = on; subject.hold = on; };
+
+    function body() {
+      const changed = {};
+      if (verdict.value !== verdict.dataset.initial) changed.verdict = toCellText(verdict.value);
+      if (result.value !== result.dataset.initial) changed.result = toCellText(result.value);
+      if (!Object.keys(changed).length) return null;
+      const b = { op: "update", number: number, fields: changed };
+      if (!proposing && !reasonField.classList.contains("hidden") && reason.value.trim()) b.reason = reason.value.trim();
+      return b;
+    }
+
+    async function preview(again) {
+      if (proposing && !sentence.value.trim()) { setStatus(status, "err", t("请用一句话说明这份提议")); sentence.focus(); return; }
+      const b = body();
+      if (!b) { setStatus(status, "", t("没有需要写入的改动")); return; }
+      setStatus(status, "", t("正在生成预览…"));
+      let p;
+      try {
+        p = await apiPost("/api/attempts/preview", b);
+      } catch (err) {
+        setStatus(status, "err", t("无法生成预览"), err);
+        return;
+      }
+      // A2b: the PI and a single researcher give the reason when this write
+      // turns the route abandoned; a member's proposal whenever it abandons.
+      const asks = proposing ? !!p.abandons : !!p.reason_required;
+      reasonField.classList.toggle("hidden", !asks);
+      if (asks && !reason.value.trim()) { setStatus(status, "err", t("放弃一条路线时必须写明理由")); reason.focus(); return; }
+      if (asks && !b.reason && !proposing && !again) return preview(true); // its field shows now: the row with the reason
+      if (proposing && p.abandons && !result.value.trim()) {
+        setStatus(status, "err", t("放弃一条路线时，结果和理由都必须填写"));
+        result.focus();
+        return;
+      }
+      setStatus(status, "", "");
+      showPreview(p, b);
+    }
+
+    function showPreview(p, b) {
+      freeze(true);
+      shown.textContent = "";
+      if (p.old_row != null) shown.append(mk("div", "diff-label", t("原行")), mk("div", "diff-row old", p.old_row));
+      shown.append(mk("div", "diff-label", t("新行")), mk("div", "diff-row new", p.new_row));
+      shown.appendChild(mk("div", "confirm-note", proposing
+        ? t("将写入你的工作副本里的 {file}（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。", { file: p.file })
+        : t("将写入 {file}（已自动备份）", { file: p.file })));
+      if (!proposing && p.reason_required) shown.appendChild(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
+      const actions = mk("div", "form-actions");
+      const ok = mkButton(proposing ? t("写入工作副本，查看提议") : t("确认写入"), "btn btn-primary", () => write(b, ok, back));
+      const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); setStatus(status, "", ""); });
+      actions.append(ok, back);
+      shown.appendChild(actions);
+    }
+
+    async function write(b, ok, back) {
+      ok.disabled = true;
+      back.disabled = true;
+      setStatus(status, "", t("正在写入…"));
+      let res;
+      try {
+        res = await apiPost("/api/attempts/write", b); // the confirmed body, verbatim
+      } catch (err) {
+        setStatus(status, "err", t("写入失败，文件没有被修改"), err);
+        back.disabled = false;
+        return;
+      }
+      if (typeof pollGeneration === "function") pollGeneration();
+      if (proposing) {
+        // The row is the member's own change now; the proposal is the
+        // engine's dry run of it, sent only on 发送提议 (team.js).
+        shown.textContent = "";
+        setStatus(status, "", t("这一行已写进你的工作副本。"));
+        const draft = { kind: "verdict_change", sentence: sentence.value.trim(), number: number };
+        if (reason.value.trim()) draft.reason = reason.value.trim();
+        const composeStatus = mk("div", "notice-status");
+        const composeHost = mk("div", "compose-result");
+        shown.append(composeStatus, composeHost);
+        if (!(await ROTeam.composeInto(composeHost, draft, composeStatus))) {
+          composeStatus.appendChild(mk("div", "team-help", t("这一行已经在你的工作副本里，可以稍后在「提议」一栏里提交。")));
+        }
+        return; // the draft holds the panel until it is closed
+      }
+      if (res.ingest_error) {
+        setStatus(status, "err", t("已写入并备份，但重扫失败"), res.ingest_error);
+        back.disabled = false;
+        return;
+      }
+      // Written: these fields hold the row as it is now; the panel is drawn
+      // again unless something else in it is half typed.
+      reason.value = "";
+      reasonField.classList.add("hidden");
+      fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+      shown.textContent = "";
+      freeze(false);
+      panelSaid = { id: subject.id, text: t("已写入 {file}。", { file: res.file }) };
+      setStatus(status, "ok", panelSaid.text);
+      await drawPanel(subject);
+    }
+    return s;
+  }
+
+  // 写备注 (12.6): the notes ledger, newest first, and a note added.
+  function notesPart(subject, page, notes) {
+    const s = part(t("写备注"));
+    if (notes && notes.failed) {
+      const failed = mk("div", "notice-status");
+      setStatus(failed, "err", t("没能读到这条尝试的备注"), notes.failed);
+      s.appendChild(failed);
+    }
+    const list = notes && !notes.failed ? (notes.notes || []).filter((n) => !n.withdrawn) : [];
+    list.slice(-NOTES_SHOWN).reverse().forEach((n) => {
+      s.appendChild(mk("p", "tl-note", n.text || ""));
+      s.appendChild(metaLine([n.label || n.name || n.by || t("最初的研究者"), whenWords(n.at, now())]));
+    });
+    if (list.length > NOTES_SHOWN) {
+      s.appendChild(mk("p", "desk-empty", t("更早的 {n} 条备注在详情页。", { n: numberText(list.length - NOTES_SHOWN) })));
+    }
+    const input = typedField("textarea", "", t("写一条备注：为什么这样做、要注意什么"));
+    input.rows = 3;
+    input.setAttribute("aria-label", t("备注"));
+    const status = mk("div", "notice-status");
+    const add = mkButton(t("添加备注"), "btn btn-small", async () => {
+      const text = input.value.trim();
+      if (!text) { setStatus(status, "err", t("备注是空的")); return; }
+      add.disabled = true;
+      setStatus(status, "", t("正在保存…"));
+      try {
+        await apiPost("/api/notes", { action: "add", node: page.id, text: text });
+      } catch (err) {
+        add.disabled = false;
+        setStatus(status, "err", t("备注没有保存"), err);
+        return;
+      }
+      input.value = "";
+      delete input.dataset.typed;
+      add.disabled = false;
+      panelSaid = { id: subject.id, text: t("备注已保存。") };
+      setStatus(status, "ok", panelSaid.text);
+      await drawPanel(subject);
+    });
+    const blocked = humanRecordsBlocked() || (notes && notes.trusted === false ? t("备注记录文件现在无法写入") : null);
+    if (blocked) { add.disabled = true; add.title = blocked; }
+    const row = mk("div", "form-actions");
+    row.appendChild(add);
+    s.append(input, row, status);
+    if (deskRole() === "member") {
+      s.appendChild(mk("p", "node-sub writes", t("备注先记在你的工作副本里；下次同步时交到公盘，PI 下次发布时加入正式记录，署你的名字，不需要批准。")));
+    }
+    return s;
+  }
+
+  // 源自 (its parents) or 由它而来 (what grew out of it, `side` "child"),
+  // each with its note and who drew it; removed by the PI or a single
+  // researcher, a member's removal proposed (14.2).
+  function linesPart(subject, id, side) {
+    const parents = side === "parent";
+    const s = part(parents ? t("源自") : t("由它而来"));
+    const lines = ((lastData && lastData.lines) || []).filter((l) => (parents ? l.child : l.parent) === id);
+    if (!lines.length) {
+      s.appendChild(emptyLine(parents ? t("还没标来处") : t("还没有尝试源自它")));
+      return s;
+    }
+    const role = deskRole();
+    const ul = mk("ul", "desk-list");
+    lines.forEach((l) => {
+      const other = parents ? l.parent : l.child;
+      const a = attemptOf(other);
+      const li = mk("li", "desk-row");
+      const main = mk("div", "desk-main");
+      const head = mk("div", "desk-head");
+      head.appendChild(rowLink(a ? attemptName(a) : "#" + String(other).split("#").pop(), "", () => openAttempt(other)));
+      if (a) head.appendChild(statusLabel(a.route_status));
+      const mark = l.officialness && l.officialness.state !== "official" && l.officialness.label ? l.officialness.label
+        : l.pending ? (l.pending.op === "remove" ? t("提议删除") : t("提议中")) : null;
+      if (mark) head.appendChild(mk("span", "own-mark", mark));
+      main.appendChild(head);
+      if (l.note) main.appendChild(mk("p", "desk-note", l.note));
+      main.appendChild(metaLine([l.by_label, l.date]));
+      const status = mk("div", "notice-status");
+      const proposing = role === "member";
+      if ((role === "single" || role === "pi" || proposing) && !(l.pending && (l.pending.op === "add" || proposing))) {
+        const actions = mk("div", "desk-actions");
+        const del = mkButton(proposing ? t("提议删除这条连线") : t("删除这条连线"), "btn btn-small", () => removeLine(subject, l, proposing, del, status));
+        actions.appendChild(del);
+        main.appendChild(actions);
+      }
+      main.appendChild(status);
+      li.appendChild(main);
+      ul.appendChild(li);
+    });
+    s.appendChild(ul);
+    return s;
+  }
+
+  async function removeLine(subject, l, proposing, btn, status) {
+    if (!window.confirm(proposing ? t("提议删除这条连线？PI 批准后它才会从路线图上消失。") : t("删除这条连线？它会从项目的记录里删去。"))) return;
+    btn.disabled = true;
+    setStatus(status, "", t("正在写入…"));
+    try {
+      if (proposing) await apiPost("/api/proposals", { kind: "route_link", op: "remove", child: l.child, parent: l.parent, write: true });
+      else await apiPost("/api/mappings/delete", { from: l.child, to: l.parent, type: "derives_from" });
+    } catch (err) {
+      btn.disabled = false;
+      const refusal = window.RORouteMap && RORouteMap.lineRefusal ? RORouteMap.lineRefusal(err && err.state) : null;
+      setStatus(status, "err", refusal || t("没能删除这条连线"), err);
+      return;
+    }
+    panelSaid = { id: subject.id, text: proposing ? t("已把删除这条连线作为提议交给 PI。") : t("这条连线已删去。") };
+    setStatus(status, "ok", panelSaid.text);
+    await loadDesk(views.desk, true); // the map without it (or marked), then the panel
+    await drawPanel(subject);
+  }
+
+  // app.html's revalidatePanel, after the desk read itself again.
+  function revalidatePanel(subject) {
+    return subject && subject.kind === "desk-attempt" ? drawPanel(subject) : null;
   }
 
   // The context's freshness: fetched again once the project (epoch) moved.
@@ -724,7 +1140,8 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
-    kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords,
+    kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, relationWord,
+    openAttempt, revalidatePanel,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,

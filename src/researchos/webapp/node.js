@@ -42,7 +42,8 @@
 
   // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
   // at call time; without it (this file evaluated alone) the Chinese. So far
-  // diffBlock alone, which a member's desk shows under 同步 (13.7).
+  // diffBlock, which a member's desk shows under 同步 (13.7), and 来龙去脉,
+  // which the desk's side panel draws (14.6).
   function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
   function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
 
@@ -52,7 +53,6 @@
   const LINKS_SHOWN = 40;
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
   const SOURCE_WORDS = { scan: "扫描时记下", approval: "批准后写入", publish: "发布时记下", git: "git 提交", card: "定义卡记录" };
-  const VIA_WORDS = { step_files: "步骤脚本", belongs_to: "人工关联" };
   const STATUS_WORDS = { pending: "待确认", confirmed: "已确认", rejected: "已否决", auto: "机器提取" };
   const JUDGE_WORDS = { confirmed: "确认了", rejected: "否决了", withdrawn: "撤回了对它的判断", undone: "撤销了上一次判断" };
   const FILTERS = [
@@ -448,43 +448,58 @@
 
   // -- 来龙去脉 (12.7) -------------------------------------------------------------------
 
-  function renderTraceSection(host, page) {
-    const s = sec("来龙去脉", "node-trace-sec");
-    const t = page.trace || { columns: [], lines: [], breaks: [] };
-    if (t.deeper) s.appendChild(mk("p", "node-sub", "更上游还有 " + t.deeper + " 个文件，这里只画出最近的几层。"));
+  // The node page draws it with its repairs; the desk's side panel (DESIGN.md
+  // 14.3, `opts.panel`) draws the same columns and lines without them, a file
+  // opening through `opts.open`. Its words go through t() (14.6); the
+  // columns' titles come from the engine in the request's language.
+  function renderTraceSection(host, page, opts) {
+    const o = opts || {};
+    const s = sec(t("来龙去脉"), "node-trace-sec");
+    const tr = page.trace || { columns: [], lines: [], breaks: [] };
+    if (tr.deeper) s.appendChild(mk("p", "node-sub", t("更上游还有 {n} 个文件，这里只画出最近的几层。", { n: tr.deeper })));
     const scroller = mk("div", "trace-scroll");
     const grid = mk("div", "trace");
-    t.columns.forEach((col, ci) => {
+    tr.columns.forEach((col, ci) => {
       const c = mk("div", "trace-col" + (col.key === "self" ? " is-self" : ""));
       c.dataset.col = String(ci);
       c.appendChild(mk("div", "trace-col-title", col.title));
-      col.items.forEach((item) => c.appendChild(traceItem(item, ci)));
-      if (col.gap) c.appendChild(gapBox(page, col.gap));
-      if (!col.items.length && !col.gap) c.appendChild(mk("div", "trace-empty", "没有"));
+      col.items.forEach((item) => c.appendChild(traceItem(item, ci, o.open)));
+      if (col.gap) c.appendChild(gapBox(page, col.gap, o.panel));
+      if (!col.items.length && !col.gap) c.appendChild(mk("div", "trace-empty", t("没有")));
       grid.appendChild(c);
     });
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", "trace-lines");
     svg.setAttribute("aria-hidden", "true");
     grid.appendChild(svg);
-    grid._lines = t.lines || [];
+    grid._lines = tr.lines || [];
     // Columns share the width down to 120px each; below that the trace scrolls sideways.
-    grid.style.minWidth = (t.columns.length * 120 + Math.max(0, t.columns.length - 1) * 32) + "px";
+    grid.style.minWidth = (tr.columns.length * 120 + Math.max(0, tr.columns.length - 1) * 32) + "px";
     scroller.appendChild(grid);
     s.appendChild(scroller);
-    renderBelongs(s, page);
-    const other = (t.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
-    other.forEach((b) => s.appendChild(mk("p", "trace-break", b.label + (b.path ? "：" + b.path : ""))));
+    if (!o.panel) renderBelongs(s, page);
+    const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
+    other.forEach((b) => s.appendChild(mk("p", "trace-break", b.path ? t("{label}：{path}", { label: b.label, path: b.path }) : b.label)));
     host.appendChild(s);
+    return s;
   }
 
-  function traceItem(item, col) {
+  // How a file belongs to an attempt (14.3's membership rule), in words.
+  function viaWord(via) {
+    switch (via) {
+      case "step_files": return t("步骤脚本");
+      case "belongs_to": return t("人工关联");
+      default: return via ? String(via) : "";
+    }
+  }
+
+  function traceItem(item, col, open) {
     const self = !!item.self;
     const el = mk(self ? "div" : "button", "trace-item t-" + item.type + (self ? " self" : "") +
       (item.exists === false ? " missing" : ""));
     if (!self) {
       el.type = "button";
-      el.addEventListener("click", () => openNode(item.id));
+      el.addEventListener("click", () => (open || openNode)(item.id));
     }
     // The full name on hover for every card, this node's own included: a
     // long name is cut short with an ellipsis in a narrow window (12.11 sweep).
@@ -497,10 +512,10 @@
     const where = item.path ? posixDir(item.path) : (item.file || "");
     if (where) el.appendChild(mk("span", "trace-item-dir mono", where));
     const flags = [];
-    if (item.exists === false) flags.push(["文件不存在", "clay"]);
-    if (item.unreadable) flags.push(["暂时无法读取", "clay"]);
-    if (item.raw && item.type === "dataset") flags.push(["原始数据", "plain"]);
-    if (item.member) flags.push([VIA_WORDS[item.member] || "", "plain"]);
+    if (item.exists === false) flags.push([t("文件不存在"), "clay"]);
+    if (item.unreadable) flags.push([t("暂时无法读取"), "clay"]);
+    if (item.raw && item.type === "dataset") flags.push([t("原始数据"), "plain"]);
+    if (item.member) flags.push([viaWord(item.member), "plain"]);
     if (item.note) flags.push([item.note, "plain"]);
     if (flags.length) {
       const f = mk("span", "trace-item-flags");
@@ -517,11 +532,12 @@
     return i > 0 ? String(path).slice(0, i) : "";
   }
 
-  // A break, drawn where the missing piece would be, with its repair.
-  function gapBox(page, gap) {
+  // A break, drawn where the missing piece would be, with its repair (not
+  // in the desk's panel: `bare`).
+  function gapBox(page, gap, bare) {
     const box = mk("div", "trace-gap");
     box.appendChild(mk("div", "trace-gap-label", gap.label));
-    if (gap.repair) box.appendChild(repairControl(page, gap.repair.type));
+    if (gap.repair && !bare) box.appendChild(repairControl(page, gap.repair.type));
     return box;
   }
 
@@ -663,7 +679,7 @@
         const one = mk("span", "trace-attempt");
         one.appendChild(RODesk.statusLabel(a.verdict_status));
         one.appendChild(link("#" + String(a.number || "").replace(/^#/, "") + " " + (a.title || ""), "", () => openNode(a.id)));
-        const via = (a.via || []).map((v) => VIA_WORDS[v.via] || v.via).filter((x, i, all) => all.indexOf(x) === i);
+        const via = (a.via || []).map((v) => viaWord(v.via)).filter((x, i, all) => all.indexOf(x) === i);
         if (via.length) one.appendChild(mk("span", "node-sub-inline", "（" + via.join("、") + "）"));
         line.appendChild(one);
       });
@@ -723,7 +739,9 @@
       path.setAttribute("class", "trace-line" + (l.human ? " human" : "") + (l.status === "pending" ? " pending" : "") +
         (l.review ? " review" : ""));
       const title = document.createElementNS(SVG_NS, "title");
-      title.textContent = l.relation + (l.human ? "（人工标注）" : "");
+      // The relation in the screen's language, by its type (13.6).
+      const relation = typeof RODesk !== "undefined" && RODesk.relationWord ? RODesk.relationWord(l.type) : l.relation;
+      title.textContent = l.human ? t("{relation}（人工标注）", { relation: relation }) : relation;
       path.appendChild(title);
       svg.appendChild(path);
       if (l.human) {
@@ -1366,6 +1384,8 @@
 
   window.RONode = Object.freeze({
     openNode, back, section, loadNode, loadResults, loadDataCode, current: () => nav.id, diffBlock,
+    // the desk's side panel (14.3): an attempt's 来龙去脉, and its lines drawn once it shows
+    renderTrace: renderTraceSection, drawTraceLines: drawAllLines,
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,

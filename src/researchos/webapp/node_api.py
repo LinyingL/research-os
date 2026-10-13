@@ -222,13 +222,14 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
 # -- the node page, 成果, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
 
 
-def node_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
-    """GET /api/node?node=…: one object's page (`researchos.nodepage.node`)."""
+def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
+    """GET /api/node?node=…: one object's page (`researchos.nodepage.node`),
+    an attempt's 来龙去脉 in the request's language."""
     from researchos import nodepage  # noqa: PLC0415
 
     given = _arg(query, "node", required=True) or ""
     try:
-        return nodepage.node(conn, root, given)
+        return nodepage.node(conn, root, given, lang)
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
     except nodepage.NotFound as exc:

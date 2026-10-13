@@ -954,6 +954,7 @@
 
   window.RORouteMap = Object.freeze({
     create,
+    lineRefusal: refusal, // the desk's side panel says a refused removal the same way (14.3)
     // pure, for tests/test_v10_route_map.py
     _layoutRoutes: layoutRoutes, _markWords: markWords, _lineWords: lineWords, _refusal: refusal,
     _checkLine: checkLine, _curve: curve,

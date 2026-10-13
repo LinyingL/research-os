@@ -37,7 +37,9 @@ def _page_strings() -> list[tuple[str, str]]:
 def test_no_control_is_labelled_with_a_glyph():
     offenders = [f"{where}: {s!r}" for where, s in _page_strings() if GLYPH_LABEL.match(s)]
     assert offenders == []
-    assert '<button class="panel-close" id="panel-close" type="button">关闭</button>' in APP_HTML
+    # Re-baselined for V10 (DESIGN.md 14.6): the side panel opens on the desk, a converted surface,
+    # so its 关闭 is marked for the English table -- still the word, never a glyph.
+    assert '<button class="panel-close" id="panel-close" type="button" data-i18n>关闭</button>' in APP_HTML
     assert APP_HTML.count('mkButton("关闭", "scan-chip-close", hideScanChip)') == 2
     assert 'mkButton("关闭", "notice-close", onClose)' in APP_HTML
     canvas = (WEBAPP / "canvas.js").read_text(encoding="utf-8")
