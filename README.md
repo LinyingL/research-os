@@ -1,328 +1,170 @@
 # Research OS
 
+[![Version: 0.1.0 Demo](https://img.shields.io/badge/version-0.1.0%20Demo-956b4b)](pyproject.toml)
 [![tests](https://github.com/LinyingL/research-os/actions/workflows/tests.yml/badge.svg)](https://github.com/LinyingL/research-os/actions/workflows/tests.yml)
 
-A **local-first** provenance engine for research projects. It reads your
-existing git repo, LaTeX/.bib sources, and W&B/MLflow run history, and builds
-a queryable evidence graph that answers one question: *where did this result
-come from?* No cloud, no accounts, no lock-in — everything lives in one
-SQLite file on your own machine, at `~/.researchos/graphs/<id>/graph.db`. It sits
-outside the project on purpose: a project in an iCloud- or Dropbox-synced
-folder makes opening a database there block until the file provider hands it
-back, and SQLite under a sync provider is a documented corruption path. Your
-project's own `.researchos/` keeps only files you wrote (`attempts.toml`, backups),
-and `researchos init` leaves a one-line `.researchos/README` saying where the graph went.
-Set `RESEARCHOS_HOME` to put that state somewhere else (the old `RCE_HOME`
-is still honoured while `RESEARCHOS_HOME` is unset).
+**A workspace for managing research projects, reviewing team changes, and tracing results back to their evidence.**
 
-**Formerly RCE.** The command was `rce`, the folders `.rce/` and `~/.rce`.
-`rce` still works for one release (it prints `rce is now researchos` and runs
-the same command). The first command or app start after upgrading renames
-each project's `.rce/` to `.researchos/` and `~/.rce` to `~/.researchos` --
-one rename on the same disk, then every file is read back and compared byte
-for byte; on any failure the folder is renamed back and left exactly as it
-was. A folder that has both names is left alone and reported. The macOS app
-is now `Research OS.app` (a new bundle identifier, so macOS asks once more
-for access to the Documents folder).
+Research OS connects research attempts, data, code, figures, drafts, and the
+decisions behind them. Use it to keep several projects in view on your own,
+or work with a PI and collaborators through a shared folder.
 
-## Quick start
+> **Current version: 0.1.0 Demo.** This is an early preview for trying the
+> research and collaboration workflows. Features and interfaces are still
+> evolving. Start with a backed-up copy of a project.
 
-```bash
-pip install -e .            # zero required third-party dependencies
-researchos init /path/to/project   # creates the graph (outside the project; `researchos status` prints where)
-researchos ingest /path/to/project [--mlruns DIR] [--wandb entity/project]
-researchos trace figure:overview.png --path /path/to/project --hops 4
-```
+## What it helps you answer
 
-None of the above touch any AI client — `researchos` is a complete, useful tool on
-its own from the command line.
+- Where did this figure come from, and which data and scripts are linked to it?
+- What did we try, what did we decide, and why was a route abandoned?
+- What changed in this file or variable definition, and who approved it?
+- Which proposals and judgments need my attention?
 
-- `researchos init <path>` — initialize the graph database for a project.
-- `researchos ingest <path>` — scan git history, LaTeX/.bib sources, and
-  (optionally) MLflow/W&B runs into the graph.
-- `researchos query <node-id> [--path P]` — show one node and its immediate,
-  single-hop edges, with evidence.
-- `researchos trace <node-id> [--path P] [--hops N] [--json]` — walk the multi-hop
-  provenance chain outward from a node (default 4 hops, must be >= 1);
-  `--json` for scripting.
-- `researchos lineage [<path>] [--orphans] [--json]` — read-only report over the
-  data-lineage graph (`script --reads/writes--> dataset|figure`, built by
-  `researchos ingest`): **orphan inputs** (a data file read by a script but written
-  by none — "where did this come from?"), **lineage chains** (a file with
-  both a writer and a reader, shown as `written by file:line` /
-  `read by file:line`), **broken links** (a script reads/writes a file that
-  isn't actually on disk), and **duplicate copies** (a file a script reads
-  has other same-named copies elsewhere in the project — which one did it
-  actually read?). Every block prints only when it has something to say; an
-  entirely empty result states what was scanned and why, never a bare `OK`.
-  `--orphans` narrows the report to the first block alone. Exits 1 if any
-  orphan input or broken link was found, 0 otherwise (duplicates/chains are
-  informational and never affect the exit code).
-- `researchos projects list` / `researchos projects remove <path>` — inspect and prune the
-  registry of known projects that the app's project switcher reads
-  (`~/.researchos/projects.json`). `list` flags an entry whose directory is gone or
-  which was never `researchos init`ed; `remove` drops one entry and deletes nothing
-  on disk. Both exist so the registry never has to be hand-edited.
-- `researchos status [--path P] [--pending] [--limit N]` — whole-graph node/edge
-  counts, the graph file's actual location, and the pending confirmation
-  queue's size; then who you are, your role in the project, the shared
-  folder (last snapshot, whether it verified, how far your copy is behind),
-  the proposals waiting, and the notes and history kept (see "Working with a
-  team" below); `--pending` also lists
-  each pending edge (src/dst/type/extractor/confidence/evidence), so it can
-  be reviewed and acted on without the optional `mcp` extra.
-- `researchos confirm <src> <dst> <type> <extractor> --status confirmed|rejected`
-  (or `researchos confirm --index N --status ...` against the queue `--pending`
-  just showed) — confirm or reject one pending edge; the baseline
-  counterpart to the optional MCP server's `rce_confirm_edge` tool.
-- `researchos judge [--path P] [--limit N] [--dry-run]` — optional semantic layer:
-  a local model reviews pending `backed_by` candidates and annotates each
-  with its opinion (`evidence.semantic_review`). It never confirms or
-  rejects anything — see "Design principles" below.
-- `researchos attempts [<path>] [--path P] [--check] [-v]` — ingest a
-  hand-maintained attempt-timeline table (a Markdown table logging every
-  research path tried, one row per attempt) via `.researchos/attempts.toml`, then
-  either list what is registered, or run three deterministic consistency
-  checks with `--check`: broken step references, stale verdicts, and
-  revived dead variables. Config-gated on purpose — with no
-  `.researchos/attempts.toml` present it prints a copy-pasteable template and
-  exits 1 rather than guessing which table in the project is the attempt
-  timeline. See "`researchos attempts` configuration" below for the file format.
+For example, open a figure from a paper to inspect its linked scripts, input
+data, and research attempt. Open that attempt to see its result, notes, and
+decision history. If a relationship could not be extracted, you can add an
+attributed link yourself.
 
-`--path` defaults to `.` for `query`/`trace`/`status`/`confirm`/`attempts`,
-so they also work by `cd`-ing into the project root first and dropping
-`--path` entirely; `attempts` (like `init`/`ingest`) also accepts the
-project root as a plain positional argument instead. `lineage` follows the
-`init`/`ingest` convention directly: a plain positional `path` (default `.`),
-no separate `--path` flag.
+## What is in the demo
 
-A global `-v`/`--verbose` flag (placed before the subcommand, e.g. `researchos -v
-attempts --check`) turns on INFO-level diagnostic logging — skip reasons,
-orphan-node preservation, and similar detail that every extractor already
-logs but which is otherwise invisible in normal use.
+| Area | What you can do |
+| --- | --- |
+| Research routes | Work from a route map, open attempts in a side panel, record results and verdicts, and draw how one attempt grew out of another. |
+| Results and evidence | Follow links between figures, drafts, scripts, data, and attempts; see gaps and add missing relationships. |
+| Changes and decisions | Inspect text differences, table summaries, notes, and the record of who proposed and approved a change. |
+| Team review | Propose attempts, verdict changes, variable definitions, files, and route links; approve, return with a reason, or discuss. |
+| Variable definitions | Keep versioned definitions, construction rules, implementation references, and the reasons for adopting a definition. |
+| Projects and literature | Switch between projects and connect draft citations to bibliography entries and a local Zotero library. |
 
-### `researchos attempts` configuration
+The engine reads existing Python and R scripts, Markdown and LaTeX drafts,
+bibliographies, and optionally git history and MLflow/W&B run logs. A git
+repository and an AI assistant are **not required** for the core workflow.
 
-`researchos attempts` never guesses which table in your project is the attempt
-timeline — create `.researchos/attempts.toml` (relative to the project root):
+## How collaboration works
 
-```toml
-# All top-level keys below MUST appear before the [columns] table -- TOML
-# nests any bare key written after a [table] header into that table.
-file = "00-project-map.md"      # markdown file, relative to the project root
-heading = "Attempt timeline"    # heading right above the table (prefix match is enough)
-steps_dir = "repro/steps"       # optional: numbered step-script dir, for step-ref linking
+1. **Work locally.** Each member edits their own working copy using their
+   usual research tools.
+2. **Propose a change.** Review what will be sent, add an explanation, and
+   submit it through the shared folder.
+3. **Review as PI.** Inspect the changes and their context, then approve,
+   return with a reason, or leave a discussion note.
+4. **Publish and sync.** Approval applies the change to the official project
+   and publishes a snapshot. Members sync to receive the accepted version.
 
-# Optional, gates the "revived dead variable" check:
-dead_variables = ["entropy weighting", "lnRate config ratio"]
-active_verdicts = ["✅", "🕒"]   # verdict markers that count as "alive"
+An unapproved proposal does not enter the official research record. A
+member's local drafts remain visible to that member with their status.
+**Single-person projects have no approval step.**
 
-# Optional, gates the "stale verdict" check's looser date parsing (a bare
-# "MM-DD", a "<=MM-DD"/"≤MM-DD" upper bound, or an "MM-DD~DD" range) --
-# leave unset and only a full "YYYY-MM-DD" date parses.
-date_year = 2026
+The current approval rules cover research attempts, verdicts, variable
+versions, project file changes, and links between attempts. Notes,
+judgments on machine-extracted links, and manual file relationships travel
+with sync without individual approval.
 
-[columns]                       # markdown header text for each field, as YOU wrote it
-id = "#"
-date = "Date"
-description = "Path"
-variables = "Variables"
-result = "Result"
-verdict = "Verdict"
-```
+### Where the files live
 
-Running `researchos attempts` with no config prints this exact template (see
-`researchos.ingest.attempts.SAMPLE_CONFIG`) and exits 1.
+| Location | Purpose |
+| --- | --- |
+| PI's computer | The official project; approved changes are applied here. |
+| Shared folder | Published snapshots, proposal files, and the PI's responses. A service such as OneDrive transports them between computers. |
+| Member's computer | A local working copy for editing and analysis. |
 
-## Working with a team
+Research OS manages the proposals, versions, and evidence relationships.
+It does not operate a hosted collaboration service or connect to the PI's
+computer. Team members need their own shared-folder accounts and the
+appropriate folder permissions; no Research OS account is required.
 
-This section is for a PI who runs a project with one or more collaborators
-and does not use git. For a collaborator who does not program, the
-step-by-step guide in Chinese -- installing OneDrive, uv and Research OS,
-accepting the PI's two sharing invitations, joining and syncing, and the
-PI's side of it -- is [docs/安装与加入团队.md](docs/安装与加入团队.md); the same guide in English, for a
-collaborator who does not read Chinese, is [docs/install-and-join.en.md](docs/install-and-join.en.md).
-Nothing here needs git, a server or an account: the
-team shares one folder on OneDrive (or any folder a sync service keeps in
-step), and Research OS on each person's computer reads and writes plain
-files in it.
+## Try the demo
 
-**Three places.**
+### macOS app
 
-- **The official version** is the project folder on the PI's computer.
-  Only the PI's Research OS changes it. Nobody ever connects to the PI's
-  computer: it is where approvals are applied, nothing more.
-- **The shared folder** on OneDrive has two parts. `已发布` ("published")
-  holds signed snapshots of the official version and the PI's answers to
-  proposals; only the PI writes there. `提议/<member e-mail>` ("proposals")
-  is each member's own corner, where their proposals go.
-- **A working copy** is a member's own copy of the project, made from the
-  latest snapshot. Members work there as they always have.
+The desktop demo targets **macOS 12 or later**. It is currently installed
+from source and built on your Mac, using Apple's command line tools and
+`uv`. The installation guides cover these prerequisites and team setup:
 
-A member's change -- a new attempt in the attempt table, a changed verdict,
-a new variable definition, a new or changed script or data file -- reaches
-the official version only as a **proposal** the PI approves. Until then it
-is nowhere in the official record. A project with no team (or only its PI)
-has no approval step at all.
+- [Installation and joining a team — English](docs/install-and-join.en.md)
+- [安装与加入团队 — 中文](docs/安装与加入团队.md)
 
-`researchos collaborate` walks either person through the setup below in
-order: it shows each step, whether it is done, and the exact next command;
-`researchos collaborate STEP --yes` runs that one step, and a step taken out
-of order is refused with the reason. `researchos status` says at any time
-who you are, your role, the state of the shared folder and what is waiting.
-
-### What the PI does once
+Once the prerequisites are installed:
 
 ```bash
-researchos me set --name "Li Lin" --email li@example.com   # the e-mail of your OneDrive account
-researchos init ~/Projects/my-paper                         # if the project is not a Research OS project yet
-researchos team init ~/Projects/my-paper                    # you, as the PI, with your signing key
-researchos share set ~/OneDrive/my-paper-shared ~/Projects/my-paper
-researchos share publish ~/Projects/my-paper                # the first signed snapshot
+uv tool install git+https://github.com/LinyingL/research-os
+researchos app
 ```
 
-`team init` prints your key's fingerprint (`SHA256:...`). Tell it to each
-member by phone or in person: they compare it with what they see when they
-join. Then, for each member, once they have sent you their key file:
+Open **Research OS.app** from `~/Applications`, then choose **Add project…**
+for your own project or **Join a project from the shared folder…** for a
+team project. The app previews a project's contents before adding it.
+
+### Command line and development
+
+Requires **Python 3.11 or later**. Install from a checkout:
 
 ```bash
-researchos team add wang@example.com --name "Wang" --key wang.pub ~/Projects/my-paper
-researchos share publish ~/Projects/my-paper                # their copy now carries the team
+git clone https://github.com/LinyingL/research-os.git
+cd research-os
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
 ```
 
-**Sharing permissions in OneDrive -- these are what make "only the PI can
-approve" a rule rather than a request.** `team add` (or, for a member added
-before the shared folder was set, the next `share publish`) creates the
-member's empty folder `提议/<member e-mail>` in the shared folder, once, and
-says so. Then share:
-
-| Folder | With | Permission |
-|---|---|---|
-| `已发布` | every member | **Can view** |
-| `提议/<member e-mail>` | that member only | **Can edit** |
-
-Never share the shared folder itself or the whole `提议` folder. Each member
-adds both shared folders to their own OneDrive ("Add shortcut to My files");
-on a personal OneDrive they arrive as two separate folders, which the member
-names separately (`--published` and `--mine` below, or the two choosers in
-成员). On every computer, mark the shared
-folder "Always keep on this device": Research OS never reads a file that is
-still only in the cloud, and says so instead.
-
-### What a member does once
+Initialize and inspect an existing project, replacing the example paths
+with your own:
 
 ```bash
-researchos me set --name "Wang" --email wang@example.com
-researchos me key --out wang.pub          # send this file and your e-mail to the PI
-researchos share join ~/OneDrive/已发布 ~/Projects/my-paper-copy --mine ~/OneDrive/wang@example.com
+researchos init /path/to/project
+researchos ingest /path/to/project
+researchos status --path /path/to/project
+researchos trace figure:figures/result.png --path /path/to/project --chain
 ```
 
-`share join` makes the working copy in a new, empty folder and prints the
-PI's key fingerprint. It first checks that `已发布` holds this project's
-snapshots signed by the PI and that you can write into your own folder;
-`researchos share set --published DIR --mine DIR` changes the two later. Compare it with the one the PI told you; if they
-differ, stop and ask. Once the PI has added you and published, run
-`researchos share sync ~/Projects/my-paper-copy`.
+For a browser view, run `researchos serve /path/to/project`. For more
+commands, attempt-table configuration, team setup, and optional MCP/model
+features, see the [command-line guide](docs/cli-reference.md).
 
-### The daily loop
+## Records and storage
 
-A member:
+- **Your project** holds its research files and `.researchos/` records:
+  identity, configuration, notes, judgments, mappings, variable cards, and
+  decisions. The attempt timeline remains in your own Markdown table.
+- **Your machine** holds the derived SQLite graph under
+  `~/.researchos/graphs/<id>/graph.db`, outside cloud-synced project folders.
+  The graph can be rebuilt from the sources and records.
+- **Local file history** is stored separately beside the graph, or read
+  from git for tracked files. This retained material is not a rebuildable
+  cache and needs to be included in backups.
+- **Team exchanges** use signed snapshots and proposals, with completion
+  markers and content checks. Shared-folder permissions are part of setup.
 
-```bash
-researchos share sync ~/Projects/my-paper-copy        # start from the latest official version
-# ... work as usual: scripts, data, the attempt table, variable cards ...
-researchos propose attempt_new --sentence "Big panel with 2025 data" ~/Projects/my-paper-copy
-#   shows exactly what would be sent; add --yes to send it
-researchos proposals ~/Projects/my-paper-copy         # pending, approved, or returned with the reason
-```
+`researchos records /path/to/project` lists the records and retained
+material. `RESEARCHOS_HOME` changes the location of machine-local state.
 
-The kinds are `attempt_new` (a new row in the attempt table), `verdict_change`
-(abandoning a route needs `--result` and `--reason`), `variable_version` (a
-new definition of a variable) and `files` (scripts and data alone).
+## Demo boundaries
 
-The PI:
+- **A code relationship is not proof of execution.** Extracted links,
+  imported run logs, and author-added relationships have different bases.
+  The demo does not guarantee a complete, version-pinned record of every
+  execution that produced a result.
+- **History has limits.** The local history store retains text up to 5 MB;
+  larger and binary files are generally represented by fingerprints,
+  sizes, and available table summaries. Published team snapshots retain
+  file contents separately. A fingerprint alone cannot restore a file.
+- **Conflicts need a person.** Research OS does not automatically merge
+  two people's edits to the same file. On sync it preserves the local file
+  and places the official version beside it for comparison.
+- **Platform and language coverage is still growing.** The native desktop
+  shell is for macOS. The interface offers Chinese and English, with some
+  forms and messages still in Chinese.
 
-```bash
-researchos inbox ~/Projects/my-paper                    # what waits for you
-researchos proposals --show <ID> ~/Projects/my-paper    # exactly what approving would change
-researchos approve <ID> --note "OK" ~/Projects/my-paper # applied, recorded, published
-researchos return <ID> --reason "..." ~/Projects/my-paper
-researchos discuss <ID> --text "..." ~/Projects/my-paper  # a note; the proposal stays open
-researchos share publish ~/Projects/my-paper            # after changing the official version yourself
-```
+## Documentation and feedback
 
-Every approved change is recorded with who proposed it and who approved
-it, and an abandoned route keeps the result and the reason it was dropped.
+- [Command-line guide](docs/cli-reference.md)
+- [Install and join a team](docs/install-and-join.en.md) · [中文指南](docs/安装与加入团队.md)
+- [Product and architecture design](DESIGN.md)
+- [Report a bug or suggest a change](https://github.com/LinyingL/research-os/issues)
 
-### When both sides changed the same file
+When reporting a demo issue, include your operating system, the steps to
+reproduce it, and what you expected to happen.
 
-If the PI changed a file after the member's last sync and the member changed
-it too, the PI is told which file, and the proposal cannot be approved; the
-member syncs and proposes again. The attempt table is compared row by row:
-a proposal is blocked only when its own row (or the number a new row takes)
-changed in the official version, never because the PI edited other rows. When the member syncs, their own version
-is kept and the official one is put beside it as `<name>.official.<ext>`,
-with the difference shown. Compare the two, keep what is right in the
-original file, and delete the `.official` one.
+## License
 
-### What Research OS never does
-
-- **It never merges two people's edits of a file.** It shows both and lets
-  a person decide.
-- **It never edits anything in the shared folder.** Every snapshot,
-  proposal and answer is written once under a new name and never changed;
-  an unfinished one (no `ready.toml`) and a sync service's conflict copy are
-  reported and never read. Notes, link judgments and hand-drawn links (「关联文件」,
-  「补上来源」, removals included) travel the same way, in signed packets the
-  PI's next publish takes in; canvas arrangements stay each person's own.
-  If a published file is ever damaged by the sync service, the PI removes it
-  with `researchos share repair` (a dry run; `--yes` removes only damaged
-  files) and the next `share publish` writes it again.
-- **It never contacts the PI's computer**, and working with a team opens
-  no network connection of its own: the only link between the team is the
-  shared folder, which OneDrive keeps in step.
-- **It never accepts a snapshot it cannot verify.** Snapshots are signed with
-  the PI's key (with `ssh-keygen`, part of macOS); a snapshot written by
-  anyone else is refused, and the last good one is kept. Where `ssh-keygen`
-  is missing, Research OS says so, and the sharing permissions above are the
-  only protection.
-
-## Optional: MCP
-
-`researchos mcp` starts an MCP (Model Context Protocol) stdio server exposing the
-same graph — `researchos_trace`, `researchos_find`, `researchos_status`, `researchos_confirm_edge` — to
-any MCP-capable client, including open-source and locally hosted-model
-clients, not just one particular vendor's assistant. It is one of several
-ways to consume the graph, not a requirement; install it separately with:
-
-```bash
-pip install "researchos[mcp]"
-```
-
-Everything above works without it.
-
-## Design principles
-
-- **Deterministic first.** Git/LaTeX/.bib/run-log parsing is plain code
-  (AST, regex, standard APIs) with zero model calls. `Claim` nodes and
-  `backed_by` candidate edges are already populated this way: a claim's
-  printed number is matched against experiment metrics with no model
-  involved, and every candidate is written `status=pending` for a human to
-  confirm or reject — the extractor itself never does, and neither can the
-  semantic layer below.
-- **Humans own judgement.** A local semantic layer (`researchos judge`) is
-  implemented: it reviews pending `backed_by` candidates and attaches a
-  model's opinion to each as `evidence.semantic_review`. It is structurally
-  forbidden from confirming or rejecting anything — it can only annotate;
-  moving an edge to `confirmed`/`rejected` is a separate, human-only write
-  path (`researchos confirm`). Confidence-scored `supports` edges are a planned
-  extension on top of this same annotation-only layer; `supports` is still
-  schema-only until then.
-- **Every edge is evidence-carrying.** No edge exists without a recorded
-  extractor, an evidence pointer (file:line / commit SHA / run ID), and a
-  confidence score.
-- **No edge is invented.** If the graph has no provenance for something, Research OS
-  says so explicitly — it never guesses or fabricates a chain to look
-  useful.
-
-See `DESIGN.md` for the full product specification.
+[AGPL-3.0-or-later](LICENSE).
