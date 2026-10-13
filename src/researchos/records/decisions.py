@@ -6,7 +6,7 @@ written only by the PI's Research OS when it approves a proposal:
 
 ::
 
-    # 经 PI 批准的决定。Research OS 只追加、不改写。
+    # 经 PI 批准的提议和直接放弃的路线，各附依据。Research OS 只追加、不改写。
     [[decision]]
     id          = "d-…"
     seq         = 4
@@ -83,7 +83,10 @@ EVIDENCE_ROLES = frozenset({"script", "output", "file"})
 EVIDENCE_STATES = frozenset({"kept", "fingerprint", "missing", "dataless", "unreadable"})
 MAX_TEXT = 20_000
 
-_HEADER = "# 经 PI 批准的决定。Research OS 只追加、不改写；放弃一条路线时，它当时的依据也记在这里。\n"
+#: The line a new file opens with (written only when the file is founded; an
+#: existing file keeps its own header, 9.3): approved proposals and routes
+#: abandoned directly, by the PI or a single researcher, with no approval (14.3).
+_HEADER = "# 经 PI 批准的提议和直接放弃的路线，各附依据。Research OS 只追加、不改写。\n"
 
 MESSAGES = {
     "no_identity": "项目身份文件无法读取",
