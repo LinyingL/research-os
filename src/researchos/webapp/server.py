@@ -283,6 +283,8 @@ Endpoints (all GET unless noted):
     GET  /node.js      -- the node page, 成果 and 数据与代码 (DESIGN.md
                             12.6, 12.7, 12.9; task V8 phase U3), served the
                             same way.
+    GET  /routemap.js  -- the desk's route map (DESIGN.md 14.1, 14.2; task
+                            V10), its own renderer, served the same way.
     GET  /api/node     -- `?node=<id or path>`: one object's page -- its
                             trace as columns with the lines between them,
                             its breaks with their repairs, the links that
@@ -2788,6 +2790,7 @@ _CANVAS_JS_PATH = Path(__file__).parent / "canvas.js"
 _DESK_JS_PATH = Path(__file__).parent / "desk.js"
 _NODE_JS_PATH = Path(__file__).parent / "node.js"
 _TEAM_JS_PATH = Path(__file__).parent / "team.js"
+_ROUTEMAP_JS_PATH = Path(__file__).parent / "routemap.js"
 _I18N_JS_PATH = Path(__file__).parent / "i18n.js"
 
 
@@ -2816,6 +2819,12 @@ def _team_js() -> str:
     """`src/researchos/webapp/team.js` verbatim (研究路线, 提议 and 成员,
     DESIGN.md 12.3, 12.4, 12.9; V8 U4), read fresh per request."""
     return _TEAM_JS_PATH.read_text(encoding="utf-8")
+
+
+def _routemap_js() -> str:
+    """`src/researchos/webapp/routemap.js` verbatim (the desk's route map,
+    DESIGN.md 14.1, 14.2; V10), read fresh per request."""
+    return _ROUTEMAP_JS_PATH.read_text(encoding="utf-8")
 
 
 def _i18n_js() -> str:
@@ -3178,6 +3187,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _node_js(), "text/javascript; charset=utf-8")
             elif path == "/team.js":
                 self._send_text(200, _team_js(), "text/javascript; charset=utf-8")
+            elif path == "/routemap.js":
+                self._send_text(200, _routemap_js(), "text/javascript; charset=utf-8")
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
@@ -3722,7 +3733,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/api/projects",
+_NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js",
+                             "/api/projects",
                              "/api/engine", "/api/generation", "/api/me", "/api/me/key"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",

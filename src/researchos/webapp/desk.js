@@ -674,17 +674,62 @@
     if (shown && typeof shown.scrollIntoView === "function") shown.scrollIntoView({ block: "center" });
   }
 
+  // -- the route map (DESIGN.md 14.1, 14.2) ------------------------------------------
+  // Drawn by /routemap.js above the desk's blocks (increment C lays the desk
+  // out around it). Its element is made once and kept: the desk's refreshes
+  // redraw what is beside it, so the map keeps its camera, its selection and
+  // a drag in progress. Without /routemap.js (a module run alone) no map.
+  let routeMap = null;
+  let mapEl = null;
+  let mapEpoch = -1; // the project (state.dataEpoch) the map last showed
+
+  function mapHost() {
+    if (!window.RORouteMap) return null;
+    if (!mapEl) {
+      mapEl = mk("div", "desk-map");
+      routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
+      routeMap.mount(mapEl);
+    }
+    return mapEl;
+  }
+
+  function clearBesideMap(host) {
+    Array.from(host.childNodes).forEach((n) => { if (n !== mapEl) host.removeChild(n); });
+  }
+
+  // 「有改动」 (14.5): the attempt's row or one of its files changed since the
+  // last visit to the desk (deskSince, kept as before); with none remembered,
+  // in the engine's default days.
+  function changedSince(since) {
+    const from = since ? new Date(since).getTime() : now().getTime() - DESK_DAYS * 86400000;
+    return (a) => !!a.changed_at && new Date(a.changed_at).getTime() > from;
+  }
+
+  // The shell's 放大 / 缩小 / 实际大小 on the desk move the map's camera.
+  function mapZoom(step) {
+    if (!routeMap || !routeMap.visible()) return false;
+    if (step > 0) routeMap.zoomIn();
+    else if (step < 0) routeMap.zoomOut();
+    else routeMap.zoomReset();
+    return true;
+  }
+
   async function loadDesk(host, refresh) {
     const epoch = state.dataEpoch;
     if (!refresh) {
-      host.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
+      // The map stays while the same project's desk is read again; another
+      // project's is taken off until its own payload arrives.
+      if (mapEl && mapEl.parentNode === host && mapEpoch === epoch) {
+        clearBesideMap(host);
+        host.appendChild(mk("p", "empty-note", t("载入中…")));
+      } else host.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
       syncShown = null;
     }
-    let data;
+    let data, since;
     try {
       // Who I am first (it keys "last seen"), then the rest side by side.
       if (!ctx.me || ctx.project !== projectKey()) ctx.me = await apiGet("/api/me").catch(() => null);
-      const since = deskSince();
+      since = deskSince();
       [, data] = await Promise.all([
         fetchContext(),
         apiGet("/api/desk" + (since ? "?since=" + encodeURIComponent(since) : "")),
@@ -696,7 +741,11 @@
     }
     if (epoch !== state.dataEpoch) return;
     renderSidebar();
-    host.innerHTML = "";
+    const map = mapHost();
+    if (map) {
+      clearBesideMap(host);
+      if (map.parentNode !== host) host.prepend(map);
+    } else host.innerHTML = "";
     const desk = mk("div", "desk");
     if (ctx.mode === "none") {
       desk.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
@@ -720,6 +769,10 @@
       renderAbandoned(desk, data);
     }
     host.appendChild(desk);
+    if (map) {
+      mapEpoch = epoch;
+      routeMap.update(data, { changed: changedSince(since) });
+    }
     host.dataset.loaded = "1";
   }
 
@@ -734,7 +787,7 @@
   function context() { return ctx; }
 
   window.RODesk = Object.freeze({
-    loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context,
+    loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,

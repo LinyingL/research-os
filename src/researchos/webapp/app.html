@@ -938,6 +938,54 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 }
 .cv-notice .cv-notice-title { color: var(--clay); font-weight: 600; }
 
+/* -- 路线图, the desk's route map (DESIGN.md 14.1, 14.2; drawn by routemap.js) --
+   The attempts are the cards, toned by their verdict's status; the 「源自」
+   lines are a human's lines (clay, 8.2); marks are quiet words. Its toolbar,
+   chip and popover take 关系图's classes. */
+.desk-map { position: relative; height: clamp(360px, 62vh, 820px); margin-bottom: 2rem; border: 1px solid var(--line-strong); }
+.rm-root {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  background-color: var(--paper); background-image: radial-gradient(circle, var(--line) 1px, transparent 1.2px);
+}
+.rm-root.panning { cursor: grabbing; }
+.rm-root.linking, .rm-root.linking .rm-card { cursor: crosshair; }
+.rm-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.rm-lines { position: absolute; left: 0; top: 0; overflow: visible; }
+.rm-card {
+  position: absolute; width: 232px; height: 88px; padding: 6px 14px 6px 11px; display: flex; flex-direction: column; gap: 2px;
+  font-size: 13px; line-height: 22px; background: var(--paper-alt); border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--line-strong); border-radius: 6px; cursor: grab;
+}
+.rm-card.tone-olive { border-left-color: var(--olive); }
+.rm-card.tone-ochre { border-left-color: var(--ochre); }
+.rm-card.tone-clay { border-left-color: var(--clay); }
+.rm-card.tone-gray { border-left-color: var(--gray); }
+.rm-card:hover { box-shadow: 0 0 0 1px var(--ink-soft); }
+.rm-card.selected, .rm-card.target { box-shadow: 0 0 0 2px var(--clay); }
+.rm-card.target { background: var(--clay-soft); }
+.rm-card.dragging { cursor: grabbing; box-shadow: 0 6px 14px rgba(38, 34, 27, 0.18); }
+.rm-card.abandoned { background: var(--paper); opacity: 0.62; }
+.rm-head, .rm-meta, .rm-marks { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.rm-num { flex: none; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+.rm-title { overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.rm-date { flex: none; font-size: 12px; color: var(--ink-soft); }
+.rm-meta .status-label { flex: none; }
+.rm-mark { flex: none; font-size: 11px; line-height: 17px; color: var(--ink-soft); background: var(--paper); padding: 0 6px; }
+.rm-handle {
+  position: absolute; right: -7px; top: 37px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--paper); border: 1.5px solid var(--clay); cursor: crosshair;
+}
+.rm-handle:hover { background: var(--clay-soft); }
+.rm-caption { position: absolute; font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--ink-soft); white-space: nowrap; pointer-events: none; }
+.rm-line-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+.rm-line-path { fill: none; stroke: var(--clay); stroke-width: 2.25; pointer-events: none; }
+.rm-line.pending .rm-line-path { stroke-dasharray: 6 4; }
+.rm-line.selected .rm-line-path { stroke-width: 3.5; }
+.rm-line-dot { fill: var(--clay); pointer-events: none; }
+.rm-line-label { font-family: var(--font-sans); font-size: 11px; fill: var(--clay); pointer-events: none; }
+.rm-draft { fill: none; stroke: var(--clay); stroke-width: 2.25; stroke-opacity: 0.85; pointer-events: none; }
+.rm-pop-sub { margin: -0.3rem 0 0.55rem; font-size: 0.78rem; color: var(--ink-soft); }
+
 /* -- V5: the human record's surfaces (DESIGN.md 9.3-9.6, task V5 phase 7) --
    Ochre = "waits for you" (待复核, a question), clay = "something is wrong",
    on the same tokens as everything else. */
@@ -1277,6 +1325,9 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <!-- The 画布 view (DESIGN.md section 8): defines window.RCECanvas only; it
      calls this page's helpers below at run time, never at load time. -->
 <script src="/canvas.js"></script>
+<!-- The desk's route map (DESIGN.md 14.1, 14.2): window.RORouteMap, a renderer of
+     its own (never 关系图's canvas object); desk.js makes one and feeds it. -->
+<script src="/routemap.js"></script>
 <!-- The sidebar's live lines and the desk (DESIGN.md 12.0, 12.9): window.RODesk. -->
 <script src="/desk.js"></script>
 <!-- The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
@@ -6516,9 +6567,10 @@ document.getElementById("lang-btn").addEventListener("click", async () => {
 const TEXT_ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.5];
 let textZoomIndex = TEXT_ZOOM_STEPS.indexOf(1);
 
-// 放大/缩小/实际大小: the canvas zooms its own camera; the two reading
-// views scale their own sections (never the canvas section, whose pointer
-// geometry must stay in unscaled CSS pixels).
+// 放大/缩小/实际大小: the canvas and the desk's route map (DESIGN.md 14.1)
+// zoom their own cameras; the reading views scale their own sections
+// (never the canvas or the desk, whose pointer geometry must stay in
+// unscaled CSS pixels).
 function shellZoom(step) {
   if (currentView === "canvas") {
     if (step > 0) RCECanvas.zoomIn();
@@ -6526,11 +6578,12 @@ function shellZoom(step) {
     else RCECanvas.zoomReset();
     return;
   }
+  if (currentView === "desk" && RODesk.mapZoom(step)) return;
   textZoomIndex = step === 0 ? TEXT_ZOOM_STEPS.indexOf(1)
     : Math.max(0, Math.min(TEXT_ZOOM_STEPS.length - 1, textZoomIndex + step));
   const z = TEXT_ZOOM_STEPS[textZoomIndex];
   Object.entries(views).forEach(([key, node]) => {
-    if (key !== "canvas") node.style.zoom = z === 1 ? "" : String(z);
+    if (key !== "canvas" && key !== "desk") node.style.zoom = z === 1 ? "" : String(z);
   });
 }
 

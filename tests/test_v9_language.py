@@ -81,6 +81,8 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("team.js", "function syncDone(res) {", "\n  }\n"),
     ("team.js", "function syncFlash(res) {", "\n  }\n"),
     ("node.js", "function diffBlock(rows, truncated) {", "\n  }\n"),
+    # V10 (DESIGN.md 14.6): the desk's route map, all of it.
+    ("routemap.js", None, None),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
