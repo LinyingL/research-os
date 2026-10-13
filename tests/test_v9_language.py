@@ -104,6 +104,18 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("app.html", "async function variableAction(", "\n}\n"),
     ("app.html", "function cardReviewMember(review, standalone) {", "\n}\n"),
     ("app.html", "function renderCardReviewGroups(host, cardItems) {", "\n}\n"),
+    # V10 D3 (14.3, 14.6): a proposal decided in the desk's panel (team.js renderProposalInto, which
+    # 提议 draws too) -- its head, answers, what approving does, what it carries, the files, the
+    # variable versions it uses, the answers to give -- and a member's draft (composeInto).
+    *(("team.js", head, "\n  }\n") for head in (
+        "function fileAction(action) {", "function fileState(state) {", "function attestedWord(answer) {",
+        "function verifyWord(state) {", "function sizeWords(n) {", "function stateLabel(p) {",
+        "function signatureWords(v) {", "function approveSentence(res) {", "function carryWords(kind) {",
+        "function sendWrites(draft, me) {", "function failed(el, framing, err) {", "function phrase(host, text, nodes) {",
+        "async function renderProposalInto(", "function renderCarried(page, full) {", "function fileList(files, changes) {",
+        "function renderWhatApprovingDoes(page, full) {", "function renderUses(page, uses, open) {",
+        "function renderDecide(page, full, team, onDone) {", "async function composeInto(",
+        "function renderDraft(host, body, draft, status) {", "function removalList(coming) {")),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
@@ -119,6 +131,8 @@ ALLOWED_CHINESE: dict[str, str] = {
     # 13.1: a member's area on the shared drive, 提议/<their e-mail>/, a fixed on-disk name shown as
     # it is (with its meaning in brackets in English); the engine names it, this is its stand-in.
     "提议/你的邮箱/": "13.1: the 提议 folder's fixed name on the shared drive",
+    "提议/": "13.1: the 提议 folder's fixed name, before a member's id (team.js sendWrites)",
+    "已发布/outcomes/": "13.1: the 已发布 folder's fixed name, where the PI's answers are written",
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
@@ -2222,6 +2236,9 @@ def test_13_7_api_github_push_answers_with_the_state_in_the_requests_language(st
 GUIDE_EN_ENGLISH_LABELS = (
     "English", "Desk", "Research routes", "Members", "Proposals", "Project", "Add project…",
     "Join a project from the shared folder…", "New attempt", "Propose a new attempt", "Current", "Abandoned",
+    # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
+    "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
+    "Return with reason", "Discuss", "Changed on both sides",
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
 GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
@@ -2240,9 +2257,7 @@ GUIDE_EN_EMPHASIS = (
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.
 _GUIDE_EN_SAME_WORDS = {
-    "记录": "page", "停止服务": "page", "同步": "page", "已批准": "page", "已退回": "page",
-    # 提议's own status word for a pending proposal; the officialness helper says the same word (13.4).
-    "提议中": "officialness", "发布": "shell",
+    "记录": "page", "停止服务": "page", "同步": "page", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
 _GUIDE_EN_SENTENCE_STARTS = ("指纹：",)

@@ -40,7 +40,9 @@
   // at call time; without it (this file evaluated alone) the Chinese. So far
   // the sentences a member's desk shows about 同步 (13.7: the desk entirely)
   // -- packetWords, syncWrites, differenceBlock, syncDone, syncFlash -- which
-  // 成员 shares (one helper, every page).
+  // 成员 shares (one helper, every page); and (14.6) a proposal as the desk's
+  // panel decides it (renderProposalInto, which 提议 draws too) and a
+  // member's draft (composeInto).
   function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
   function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
 
@@ -58,33 +60,64 @@
   }
 
   // -- pure wording (loaded into node by tests/test_v8_u4.py) ----------------------
+  // A proposal's kind is the desk's word for it (RODesk.kindWord); 14.6: the
+  // words a proposal is decided and drafted with go through t().
 
-  const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件", route_link: "连线" };
   const KIND_CHOICES = [
     ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
     ["verdict_change", "改判", "只有尝试表里这一行的判决和结果"],
     ["variable_version", "变量定义", "一张变量定义卡的新版本"],
     ["files", "只有文件", "你选的脚本、数据和文稿"],
   ];
-  const PROPOSAL_STATES = {
-    pending: ["提议中", "ochre"], conflict: ["批准与退回的记录互相矛盾", "clay"], approved: ["已批准", "olive"],
-    returned: ["已退回", "gray"], superseded: ["已被后来的提议替代", "plain"],
-  };
-  const FILE_ACTIONS = { added: "新增", changed: "改动", removed: "删除" };
-  const FILE_STATES = {
-    apply: "批准后写入", same: "正式版本里已经是这样", conflict: "两边都改过", problem: "有问题", done: "这次批准已经写入",
-  };
-  const ATTESTED_WORDS = { yes: "是", no: "否", unknown: "不确定" };
+  // What a proposal does to a file.
+  function fileAction(action) {
+    switch (action) {
+      case "added": return t("新增");
+      case "changed": return t("改动");
+      case "removed": return t("删除");
+      default: return "";
+    }
+  }
+
+  // Where a file stands against the official version (12.3).
+  function fileState(state) {
+    switch (state) {
+      case "apply": return t("批准后写入");
+      case "same": return t("正式版本里已经是这样");
+      case "conflict": return t("两边都改过");
+      case "problem": return t("有问题");
+      case "done": return t("这次批准已经写入");
+      default: return String(state || "");
+    }
+  }
+
+  // The member's answer: were the existing outputs made by this definition?
+  function attestedWord(answer) {
+    switch (answer) {
+      case "yes": return t("是");
+      case "no": return t("否");
+      case "unknown": return t("不确定");
+      default: return String(answer || "");
+    }
+  }
+
+  // Why a signature could not be checked, when the engine names no sentence.
+  function verifyWord(state) {
+    switch (state) {
+      case "verified": return t("签名已验证");
+      case "no_key": return t("没有公钥可以核对");
+      case "no_tool": return t("这台电脑无法核对签名");
+      default: return "";
+    }
+  }
+
   const ROLE_WORDS = { pi: "PI", member: "成员" };
-  const VERIFY_WORDS = {
-    verified: "签名已验证", no_key: "没有公钥可以核对", no_tool: "这台电脑无法核对签名",
-  };
 
   // A size as a person reads it.
   function sizeWords(n) {
     const v = Number(n);
     if (n == null || !isFinite(v) || v < 0) return "";
-    if (v < 1024) return v + " 字节";
+    if (v < 1024) return t("{n} 字节", { n: v });
     if (v < 1024 * 1024) return (v / 1024).toFixed(v < 10 * 1024 ? 1 : 0) + " KB";
     if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(v < 10 * 1024 * 1024 ? 1 : 0) + " MB";
     return (v / 1024 / 1024 / 1024).toFixed(1) + " GB";
@@ -92,16 +125,24 @@
 
   // A proposal's state as a label: [words, tone].
   function stateLabel(p) {
-    const got = PROPOSAL_STATES[p && p.state];
-    return got ? { label: got[0], tone: got[1] } : { label: String((p && p.state) || ""), tone: "plain" };
+    const state = p && p.state;
+    switch (state) {
+      case "pending": return { label: t("提议中"), tone: "ochre" };
+      case "conflict": return { label: t("批准与退回的记录互相矛盾"), tone: "clay" };
+      case "approved": return { label: t("已批准"), tone: "olive" };
+      case "returned": return { label: t("已退回"), tone: "gray" };
+      case "superseded": return { label: t("已被后来的提议替代"), tone: "plain" };
+      default: return { label: String(state || ""), tone: "plain" };
+    }
   }
 
   // The signature, as 12.5 asks the PI to read it: 已验证, or 未验证 with
-  // the reason.
+  // the reason -- the engine's sentence (signing.CHECK_MESSAGES, a fixed
+  // table) in the screen's language by its Chinese.
   function signatureWords(v) {
-    if (!v || typeof v !== "object") return { label: "未验证", tone: "ochre", reason: "这份提议没有可以核对的签名信息" };
-    if (v.state === "verified") return { label: "已验证", tone: "olive", reason: "签名和成员名单里这个人的公钥相符" };
-    return { label: "未验证", tone: v.trusted === false ? "clay" : "ochre", reason: v.message || VERIFY_WORDS[v.state] || "" };
+    if (!v || typeof v !== "object") return { label: t("未验证"), tone: "ochre", reason: t("这份提议没有可以核对的签名信息") };
+    if (v.state === "verified") return { label: t("已验证"), tone: "olive", reason: t("签名和成员名单里这个人的公钥相符") };
+    return { label: t("未验证"), tone: v.trusted === false ? "clay" : "ochre", reason: v.message ? t(v.message) : verifyWord(v.state) };
   }
 
   // The last answer of one kind on a proposal.
@@ -113,22 +154,23 @@
   // What approving did, in one sentence (12.3: approving publishes).
   function approveSentence(res) {
     const pub = (res && res.published) || {};
-    const head = "已批准，改动已写入正式版本";
     if (pub.published === false) {
-      return head + "；但这次没有发布到公盘：" + (pub.message || "发布没有完成") + "。可以在「成员」一栏里再发布一次。";
+      return t("已批准，改动已写入正式版本；但这次没有发布到公盘：{why}。可以在「成员」一栏里再发布一次。",
+        { why: pub.message ? t(pub.message) : t("发布没有完成") });
     }
-    if (pub.seq != null) return head + "，并发布为第 " + pub.seq + " 版：成员同步后就会看到。";
-    return head + "。";
+    if (pub.seq != null) return t("已批准，改动已写入正式版本，并发布为第 {seq} 版：成员同步后就会看到。", { seq: numberText(pub.seq) });
+    return t("已批准，改动已写入正式版本。");
   }
 
   // What a proposal of this kind carries unless the member adds or unticks (12.13).
   function carryWords(kind) {
-    return {
-      verdict_change: "改判只带尝试表里的这一行；要一起发送文件，在下面勾选。",
-      attempt_new: "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。",
-      variable_version: "变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。",
-      files: "只带勾选的文件。",
-    }[kind] || "只带勾选的文件。";
+    switch (kind) {
+      case "verdict_change": return t("改判只带尝试表里的这一行；要一起发送文件，在下面勾选。");
+      case "attempt_new":
+        return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
+      case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
+      default: return t("只带勾选的文件。");
+    }
   }
 
   // What sending a proposal writes, before it is sent.
@@ -136,14 +178,12 @@
     const files = ((draft && draft.file) || []).filter((f) => f.action !== "removed");
     const blobs = files.filter((f) => f.store === "blob");
     const c = typeof RODesk !== "undefined" ? RODesk.context() : null;
-    const where = c && c.share && c.share.mine && c.share.mine.path ? "你自己的提议文件夹（" + c.share.mine.path + "）"
-      : "公盘的「提议/" + (me || "你的邮箱") + "/」"; // 12.13: or a folder of its own
-    let s = "发送会在" + where + "里写入一份新的提议";
-    if (files.length) {
-      s += "，带上 " + files.length + " 个文件";
-      if (blobs.length) s += "（其中 " + blobs.length + " 个大文件按内容只存一份）";
-    }
-    return s + "；写成以后不再改动。你的工作副本不会改变。";
+    // 12.13: or a folder of its own; 13.1: the member's area, 提议/<id>/, a fixed name shown as it is.
+    const where = c && c.share && c.share.mine && c.share.mine.path ? t("你自己的提议文件夹（{path}）", { path: c.share.mine.path })
+      : t("公盘的「{area}」", { area: me ? "提议/" + me + "/" : "提议/你的邮箱/" });
+    const carried = files.length ? t("，带上 {n} 个文件", { n: numberText(files.length) }) +
+      (blobs.length ? t("（其中 {n} 个大文件按内容只存一份）", { n: numberText(blobs.length) }) : "") : "";
+    return t("发送会在{where}里写入一份新的提议{files}；写成以后不再改动。你的工作副本不会改变。", { where: where, files: carried });
   }
 
   // What the members' packets carry, in words: 「1 条笔记、增加 2 条连线、删除 1 条连线」.
@@ -304,10 +344,23 @@
   function mode() { const c = RODesk.context(); return c && c.mode; }
 
   // A refusal: the engine's own Chinese sentence when it names one, the
-  // framing otherwise; the raw text behind 「详情」 (8.8).
+  // framing otherwise; the raw text behind 「详情」 (8.8). On an English
+  // screen the engine's sentence only where it has English (14.6; errors
+  // are 13.7's own increment), else the framing its caller worded.
   function failed(el, framing, err) {
-    const sentence = err && typeof err.engineMessage === "string" && err.engineMessage ? err.engineMessage : framing;
-    setStatus(el, "err", sentence, err);
+    const own = err && typeof err.engineMessage === "string" && err.engineMessage ? err.engineMessage : "";
+    setStatus(el, "err", own && (!english() || t(own) !== own) ? own : framing, err);
+  }
+
+  // A sentence holding elements -- a file name, a verdict's label (12.11):
+  // its template already through t() with its words filled, each {field}
+  // named in `nodes` put where it stands (13.6: one template per sentence).
+  function phrase(host, text, nodes) {
+    String(text).split(/\{(\w+)\}/).forEach((piece, i) => {
+      if (i % 2) host.append(Object.prototype.hasOwnProperty.call(nodes, piece) ? nodes[piece] : "{" + piece + "}");
+      else if (piece) host.append(piece);
+    });
+    return host;
   }
 
   function label(text, tone) {
@@ -696,7 +749,7 @@
     const li = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    head.appendChild(label(KIND_WORDS[p.kind] || "提议", "plain"));
+    head.appendChild(label(RODesk.kindWord(p.kind) || "提议", "plain"));
     head.appendChild(mkButton(p.sentence || RODesk.proposalWhat(p) || p.id, "desk-link strong", () => openProposal(p.id, p.by)));
     const st = stateLabel(p);
     head.appendChild(label(st.label, st.tone));
@@ -804,7 +857,7 @@
       full = await apiGet("/api/proposals/" + encodeURIComponent(id) + (member ? "?from=" + encodeURIComponent(member) : ""));
     } catch (err) {
       const box = mk("div", "node-failed");
-      failed(box, "没能打开这份提议", err);
+      failed(box, t("没能打开这份提议"), err);
       host.appendChild(box);
       return null;
     }
@@ -812,10 +865,11 @@
     const team = (ctx && ctx.share && ctx.share.team) || [];
     // who, when, kind, the member's sentence
     const head = mk("header", "node-head");
-    head.appendChild(mk("div", "node-kind", (KIND_WORDS[full.kind] || "") + "提议"));
+    const kind = RODesk.kindWord(full.kind);
+    head.appendChild(mk("div", "node-kind", kind ? t("{kind}提议", { kind: kind }) : t("提议", { n: 1 })));
     if (!options.panel) head.appendChild(mk("h2", "node-name", full.sentence || id));
     const meta = [RODesk.nameOf(full.by, team), when(full.at)]; // 12.13: the name, never the raw id
-    if (full.base_seq != null) meta.push("基于官方版本第 " + full.base_seq + " 版");
+    if (full.base_seq != null) meta.push(t("基于官方版本第 {seq} 版", { seq: numberText(full.base_seq) }));
     head.appendChild(mk("div", "desk-meta", meta.join(" · ")));
     const marks = mk("div", "node-marks");
     const st = stateLabel(full);
@@ -828,13 +882,15 @@
     // its answers so far
     const outs = full.outcomes || [];
     if (outs.length) {
-      const s = sec("答复");
+      const s = sec(t("答复"));
       const ul = mk("ul", "desk-list");
       outs.forEach((o) => {
         const li = mk("li", "desk-row");
-        const words = { approved: "批准了", returned: "退回了", discussed: "说" }[o.act] || o.act;
+        const who = RODesk.nameOf(o.by, team);
+        const said = o.act === "approved" ? t("{who} 批准了", { who: who }) : o.act === "returned" ? t("{who} 退回了", { who: who })
+          : o.act === "discussed" ? t("{who} 说", { who: who }) : who + " " + o.act;
         const main = mk("div", "desk-main");
-        main.appendChild(mk("div", "desk-head", RODesk.nameOf(o.by, team) + " " + words));
+        main.appendChild(mk("div", "desk-head", said));
         if (o.text) main.appendChild(mk("p", "desk-note", o.text));
         li.append(mk("span", "desk-when", when(o.at)), main);
         ul.appendChild(li);
@@ -848,7 +904,11 @@
     else renderCarried(host, full);
     renderUses(host, full.uses, options.open);
     if (full.changes && full.state === "pending") renderDecide(host, full, team, onDone);
-    if (full.state === "conflict") host.appendChild(line("这份提议的答复记录互相矛盾（同时有批准和退回）：请在公盘上检查 已发布/outcomes/ 里它的答复。", "warn"));
+    if (full.state === "conflict") {
+      // 13.1: the shared drive's 已发布 folder, a fixed name shown as it is.
+      host.appendChild(line(t("这份提议的答复记录互相矛盾（同时有批准和退回）：请在公盘上检查 {folder} 里它的答复。",
+        { folder: "已发布/outcomes/" }), "warn"));
+    }
     return full;
   }
 
@@ -870,61 +930,64 @@
 
   // The member's own view: what the proposal carries.
   function renderCarried(page, full) {
-    const s = sec(full.state === "approved" ? "已写入正式版本的改动" : "提议带来的改动");
+    const s = sec(full.state === "approved" ? t("已写入正式版本的改动") : t("提议带来的改动"));
     if (full.attempt) {
       const a = full.attempt;
       const p = mk("p", "desk-head");
-      p.append("尝试表新增第 " + a.number + " 行：" + (a.description || ""), " ");
+      p.append(t("尝试表新增第 {number} 行：{description}", { number: a.number, description: a.description || "" }), " ");
       if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
       s.appendChild(p);
     }
     if (full.verdict) {
       const v = full.verdict;
-      const p = mk("p", "desk-head");
-      p.append("第 " + v.number + " 行的判决 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
-      s.appendChild(p);
-      if (v.result) s.appendChild(mk("p", "desk-note", "结果：" + v.result));
-      if (v.reason) s.appendChild(mk("p", "desk-note", "理由：" + v.reason));
+      s.appendChild(phrase(mk("p", "desk-head"), t("第 {number} 行的判决 {old} 改为 {new}", { number: v.number }),
+        { old: RODesk.verdictInline(v.old_status), new: RODesk.verdictInline(v.new_status) }));
+      if (v.result) s.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result })));
+      if (v.reason) s.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: v.reason })));
     }
-    if (full.variable) s.appendChild(line("变量 " + full.variable.card + " 的第 " + full.variable.version + " 版定义", ""));
+    if (full.variable) {
+      s.appendChild(line(t("变量 {card} 的第 {version} 版定义", { card: full.variable.card, version: full.variable.version }), ""));
+    }
     if (full.route) s.appendChild(line(RODesk.proposalWhat(full), ""));
-    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", "说明：" + full.route.note));
+    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("说明：{note}", { note: full.route.note })));
     s.appendChild(fileList(full.files || [], null));
     page.appendChild(s);
   }
 
   function fileList(files, changes) {
     const ul = mk("ul", "proposal-files");
-    if (!files.length) ul.appendChild(mk("li", "node-empty", "没有文件。"));
+    if (!files.length) ul.appendChild(mk("li", "node-empty", t("没有文件。")));
     files.forEach((f) => {
       const li = mk("li", "proposal-file");
       const head = mk("div", "desk-head");
-      head.appendChild(mk("span", "evidence-role", FILE_ACTIONS[f.action] || ""));
+      head.appendChild(mk("span", "evidence-role", fileAction(f.action)));
       head.appendChild(mk("span", "mono", f.path));
       if (f.size != null && f.action !== "removed") head.appendChild(mk("span", "desk-meta", sizeWords(f.size)));
-      if (changes && f.state) head.appendChild(label(FILE_STATES[f.state] || f.state, f.state === "conflict" || f.state === "problem" ? "clay" : f.state === "apply" ? "olive" : "plain"));
+      if (changes && f.state) head.appendChild(label(fileState(f.state), f.state === "conflict" || f.state === "problem" ? "clay" : f.state === "apply" ? "olive" : "plain"));
       li.appendChild(head);
       if (f.store === "blob" && f.action !== "removed") {
-        li.appendChild(mk("div", "desk-meta", "大文件，按内容存放在公盘" + (f.content ? "：" : "")));
+        li.appendChild(mk("div", "desk-meta", f.content ? t("大文件，按内容存放在公盘：") : t("大文件，按内容存放在公盘")));
         if (f.content) li.appendChild(mk("div", "evidence-sha mono", f.content));
       }
       if (changes && f.reason) li.appendChild(mk("p", "desk-break", f.reason));
       // 12.3: for data, the fingerprint and -- for tables -- rows and columns.
       if (f.action !== "removed" && f.sha256 && (f.store === "blob" || f.table_words || f.summary_words)) {
-        const fp = mk("div", "desk-meta", "指纹 ");
+        const fp = mk("div", "desk-meta", t("指纹 "));
         fp.appendChild(mk("span", "mono", String(f.sha256).slice(0, 16)));
         fp.title = String(f.sha256);
         li.appendChild(fp);
       }
       // 12.13: a table's rows and columns first; its line diff below only when small.
-      if (f.table_words && f.table_words !== f.summary_words) li.appendChild(mk("p", "desk-note plain", "表格：" + f.table_words));
+      if (f.table_words && f.table_words !== f.summary_words) {
+        li.appendChild(mk("p", "desk-note plain", t("表格：{words}", { words: f.table_words })));
+      }
       if (f.summary_words) li.appendChild(mk("p", "desk-note plain", f.summary_words));
       else if (f.sentence_words && f.store === "blob") li.appendChild(mk("p", "desk-note plain", f.sentence_words));
       if (f.diff && f.table_small === false) {
-        li.appendChild(mk("p", "desk-note plain", "表格较大：只比较行和列，不逐行对比。"));
+        li.appendChild(mk("p", "desk-note plain", t("表格较大：只比较行和列，不逐行对比。")));
       } else if (f.diff) {
         const d = mk("details", "proposal-diff");
-        d.appendChild(mk("summary", null, "查看改动"));
+        d.appendChild(mk("summary", null, t("查看改动")));
         d.appendChild(diffOf(f.diff, f.truncated));
         if (f.action === "added" || files.length <= 3) d.open = true;
         li.appendChild(d);
@@ -937,94 +1000,98 @@
   // The PI's view: exactly what approving would do (12.3).
   function renderWhatApprovingDoes(page, full) {
     const c = full.changes;
-    const s = sec("批准以后会怎样");
-    if (c.moved) s.appendChild(line("提议之后正式版本又有了改动；只有两边改了同一处时才会挡住批准。", "quiet"));
-    if (c.resuming) s.appendChild(line("这份提议的批准上次没有做完：再次批准会接着把剩下的做完。", "warn"));
+    const s = sec(t("批准以后会怎样"));
+    if (c.moved) s.appendChild(line(t("提议之后正式版本又有了改动；只有两边改了同一处时才会挡住批准。"), "quiet"));
+    if (c.resuming) s.appendChild(line(t("这份提议的批准上次没有做完：再次批准会接着把剩下的做完。"), "warn"));
     const a = c.attempt;
     if (a) {
-      const t = mk("div", "proposal-part");
+      const part = mk("div", "proposal-part");
       if (a.op === "append") {
-        const p = mk("p", "desk-head");
-        p.append("在尝试表 ", mk("span", "mono", a.file || ""), " 里新增第 " + a.number + " 行");
+        const p = phrase(mk("p", "desk-head"), t("在尝试表 {file} 里新增第 {number} 行", { number: a.number }),
+          { file: mk("span", "mono", a.file || "") });
         if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
-        t.appendChild(p);
+        part.appendChild(p);
       } else {
-        const p = mk("p", "desk-head");
-        p.append("尝试表第 " + a.number + " 行的判决 ", RODesk.verdictInline(a.old_status), " 改为 ", RODesk.verdictInline(a.new_status));
-        t.appendChild(p);
+        part.appendChild(phrase(mk("p", "desk-head"), t("尝试表第 {number} 行的判决 {old} 改为 {new}", { number: a.number }),
+          { old: RODesk.verdictInline(a.old_status), new: RODesk.verdictInline(a.new_status) }));
         const v = full.verdict || {};
         if (a.abandons) {
-          t.appendChild(mk("p", "desk-note", "结果：" + (v.result || a.result || "")));
-          t.appendChild(mk("p", "desk-note", "放弃理由：" + (v.reason || "")));
-          t.appendChild(line("批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。", "quiet"));
+          part.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result || a.result || "" })));
+          part.appendChild(mk("p", "desk-note", t("放弃理由：{reason}", { reason: v.reason || "" })));
+          part.appendChild(line(t("批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。"), "quiet"));
         } else if (v.result && v.result !== v.old_result) {
-          t.appendChild(mk("p", "desk-note", "结果改为：" + v.result));
+          part.appendChild(mk("p", "desk-note", t("结果改为：{result}", { result: v.result })));
         }
       }
-      if (a.state === "conflict" || a.state === "problem") t.appendChild(mk("p", "desk-break", a.reason || ""));
-      else if (a.state === "same") t.appendChild(line("正式版本里这一行已经是这样了。", "quiet"));
+      if (a.state === "conflict" || a.state === "problem") part.appendChild(mk("p", "desk-break", a.reason || ""));
+      else if (a.state === "same") part.appendChild(line(t("正式版本里这一行已经是这样了。"), "quiet"));
       if (a.old_row || a.new_row) {
-        if (a.old_row) { t.appendChild(mk("div", "diff-label", "原行")); t.appendChild(mk("div", "diff-row old", a.old_row)); }
-        if (a.new_row) { t.appendChild(mk("div", "diff-label", "新行")); t.appendChild(mk("div", "diff-row new", a.new_row)); }
+        if (a.old_row) { part.appendChild(mk("div", "diff-label", t("原行"))); part.appendChild(mk("div", "diff-row old", a.old_row)); }
+        if (a.new_row) { part.appendChild(mk("div", "diff-label", t("新行"))); part.appendChild(mk("div", "diff-row new", a.new_row)); }
       }
-      s.appendChild(t);
+      s.appendChild(part);
     }
     const v = c.variable;
     if (v) {
-      const t = mk("div", "proposal-part");
-      t.appendChild(mk("p", "desk-head", (v.new_card ? "新建变量卡 " : "确认变量 ") + v.card + " 的第 " + (v.number || "") + " 版定义"));
-      t.appendChild(mk("p", "desk-note plain", "成员的回答：现有的输出文件是按这个定义生成的吗？" + (ATTESTED_WORDS[v.attested] || v.attested || "")));
-      if (v.reason) t.appendChild(mk("p", "desk-break", v.reason));
-      if (v.diff) t.appendChild(diffOf(v.diff, v.truncated));
-      s.appendChild(t);
+      const part = mk("div", "proposal-part");
+      const which = { card: v.card, version: v.number || "" };
+      part.appendChild(mk("p", "desk-head", v.new_card ? t("新建变量卡 {card} 的第 {version} 版定义", which)
+        : t("确认变量 {card} 的第 {version} 版定义", which)));
+      part.appendChild(mk("p", "desk-note plain", t("成员的回答：现有的输出文件是按这个定义生成的吗？{answer}",
+        { answer: attestedWord(v.attested) })));
+      if (v.reason) part.appendChild(mk("p", "desk-break", v.reason));
+      if (v.diff) part.appendChild(diffOf(v.diff, v.truncated));
+      s.appendChild(part);
     }
     const r = c.route; // a 「源自」 line (14.2), in the engine's words
     if (r) {
       const box = mk("div", "proposal-part");
       box.appendChild(mk("p", "desk-head", r.words || ""));
-      if (r.note) box.appendChild(mk("p", "desk-note", "说明：" + r.note));
+      if (r.note) box.appendChild(mk("p", "desk-note", t("说明：{note}", { note: r.note })));
       if (r.state === "conflict" || r.state === "problem") box.appendChild(mk("p", "desk-break", r.reason || ""));
-      else if (r.state === "same") box.appendChild(line("正式版本的连线记录里已经是这样了。", "quiet"));
+      else if (r.state === "same") box.appendChild(line(t("正式版本的连线记录里已经是这样了。"), "quiet"));
       s.appendChild(box);
     }
     const files = c.files || [];
     if (files.length) {
-      s.appendChild(mk("h4", "proposal-h4", "文件"));
+      s.appendChild(mk("h4", "proposal-h4", t("文件")));
       s.appendChild(fileList(files, c));
     }
-    if (!a && !v && !r && !files.length) s.appendChild(line("这份提议没有带来任何改动。", "quiet"));
+    if (!a && !v && !r && !files.length) s.appendChild(line(t("这份提议没有带来任何改动。"), "quiet"));
     const ctxNow = RODesk.context();
     const coming = ctxNow && ctxNow.share && ctxNow.share.incoming;
     const carried = packetWords(coming);
-    s.appendChild(line("批准还会在 decisions.toml 里记下一条：提议人 " + RODesk.nameOf(full.by, (ctxNow && ctxNow.share && ctxNow.share.team) || []) +
-      "，批准人是你；然后把正式版本发布到公盘" +
-      (carried ? "。发布前会先把成员同步来的 " + carried + "加进正式记录（不需要批准）" : "") + "。", carried ? "writes" : "quiet"));
+    const who = RODesk.nameOf(full.by, (ctxNow && ctxNow.share && ctxNow.share.team) || []);
+    s.appendChild(line(carried
+      ? t("批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。发布前会先把成员同步来的 {carried}加进正式记录（不需要批准）。",
+        { who: who, carried: carried })
+      : t("批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。", { who: who }),
+    carried ? "writes" : "quiet"));
     if (carried) s.appendChild(removalList(coming));
     page.appendChild(s);
     if ((c.not_carried || []).length) {
-      const n = sec("没有随提议发送的改动");
+      const n = sec(t("没有随提议发送的改动"));
       const ul = mk("ul", "desk-files");
       c.not_carried.forEach((x) => {
         const li = mk("li");
         li.appendChild(mk("span", "mono", x.path || ""));
-        const r = mk("span", "team-help");
-        renderBlockingError(r, x.reason_zh || "这一处改动没有包含在提议里", x.reason || "");
-        li.appendChild(r);
+        const why = mk("span", "team-help");
+        renderBlockingError(why, x.words || x.reason_zh || t("这一处改动没有包含在提议里"), x.reason || "");
+        li.appendChild(why);
         ul.appendChild(li);
       });
       n.appendChild(ul);
       page.appendChild(n);
     }
     if ((c.conflicts || []).length || (c.problems || []).length) {
-      const k = sec("现在还不能批准");
+      const k = sec(t("现在还不能批准"));
       (c.conflicts || []).forEach((x) => {
         const p = mk("p", "desk-break");
-        p.append(mk("span", "mono", x.path || ""), "：" + (x.reason || "两边都改过"));
+        p.append(mk("span", "mono", x.path || ""), t("：{reason}", { reason: x.reason || t("两边都改过") }));
         k.appendChild(p);
       });
       if ((c.conflicts || []).length) {
-        k.appendChild(line("Research OS 不会替两个人合并同一个文件。请成员先同步到最新的官方版本，在那上面重新提议；" +
-          "这份可以退回并说明。", ""));
+        k.appendChild(line(t("Research OS 不会替两个人合并同一个文件。请成员先同步到最新的官方版本，在那上面重新提议；这份可以退回并说明。"), ""));
       }
       (c.problems || []).forEach((x) => k.appendChild(mk("p", "desk-break", x)));
       page.appendChild(k);
@@ -1033,11 +1100,11 @@
 
   function renderUses(page, uses, open) {
     if (!uses || !uses.length) return;
-    const s = sec("用到的变量版本");
+    const s = sec(t("用到的变量版本"));
     const ul = mk("ul", "desk-files");
     uses.forEach((u) => {
       const li = mk("li");
-      li.appendChild(mkButton(u.name + " 第 " + u.version + " 版", "desk-link", () => (open || RONode.openNode)("variable:" + u.card)));
+      li.appendChild(mkButton(t("{name} 第 {version} 版", { name: u.name, version: u.version }), "desk-link", () => (open || RONode.openNode)("variable:" + u.card)));
       li.appendChild(mk("span", "team-help", u.how || ""));
       ul.appendChild(li);
     });
@@ -1048,59 +1115,61 @@
   // 批准并加入 / 退回并说明 / 讨论 (12.3); what the answer did goes to onDone.
   function renderDecide(page, full, team, onDone) {
     const c = full.changes;
-    const s = sec("你的答复");
+    const s = sec(t("你的答复"));
     const status = mk("div", "notice-status");
     const name = RODesk.nameOf(full.by, team);
     // approve
     const approve = mk("div", "decide");
-    const note = textArea(2, "给这次批准写一句附言（可以不写）");
-    approve.appendChild(field("批准附言", note));
-    const approveBtn = mkButton("批准并加入", "btn btn-primary", () => decide("approve", { note: note.value.trim() || undefined }));
+    const note = textArea(2, t("给这次批准写一句附言（可以不写）"));
+    approve.appendChild(field(t("批准附言"), note));
+    const approveBtn = mkButton(t("批准并加入"), "btn btn-primary", () => decide("approve", { note: note.value.trim() || undefined }));
     approve.appendChild(approveBtn);
     if (!c.approvable) {
       approveBtn.disabled = true;
-      approve.appendChild(line("有两边都改过的地方或问题，现在不能批准（见上面）。", "warn"));
+      approve.appendChild(line(t("有两边都改过的地方或问题，现在不能批准（见上面）。"), "warn"));
     }
     s.appendChild(approve);
     // return
     const ret = mk("div", "decide");
-    const reason = textArea(2, "为什么退回：" + name + " 会看到这句话");
-    ret.appendChild(field("退回的理由（必填）", reason));
-    const retBtn = mkButton("退回并说明", "btn", () => {
-      if (!reason.value.trim()) { setStatus(status, "err", "请写明退回的理由"); reason.focus(); return; }
+    const reason = textArea(2, t("为什么退回：{who} 会看到这句话", { who: name }));
+    ret.appendChild(field(t("退回的理由（必填）"), reason));
+    const retBtn = mkButton(t("退回并说明"), "btn", () => {
+      if (!reason.value.trim()) { setStatus(status, "err", t("请写明退回的理由")); reason.focus(); return; }
       decide("return", { reason: reason.value.trim() });
     });
     ret.appendChild(retBtn);
     s.appendChild(ret);
     // discuss
     const dis = mk("div", "decide");
-    const text = textArea(2, "想问或想说的话：提议保持打开");
-    dis.appendChild(field("讨论", text));
-    const disBtn = mkButton("讨论", "btn", () => {
-      if (!text.value.trim()) { setStatus(status, "err", "请写下要讨论的内容"); text.focus(); return; }
+    const text = textArea(2, t("想问或想说的话：提议保持打开"));
+    dis.appendChild(field(t("讨论"), text));
+    const disBtn = mkButton(t("讨论"), "btn", () => {
+      if (!text.value.trim()) { setStatus(status, "err", t("请写下要讨论的内容")); text.focus(); return; }
       decide("discuss", { text: text.value.trim() });
     });
     dis.appendChild(disBtn);
     s.appendChild(dis);
-    s.appendChild(line("答复会签名后写进公盘的「已发布/outcomes/」，" + name + " 同步时就会看到；写成以后不再改动。", "quiet"));
+    // 13.1: the shared drive's 已发布 folder, a fixed name shown as it is.
+    s.appendChild(line(t("答复会签名后写进公盘的「{folder}」，{who} 同步时就会看到；写成以后不再改动。",
+      { folder: "已发布/outcomes/", who: name }), "quiet"));
     s.appendChild(status);
     page.appendChild(s);
     const buttons = [approveBtn, retBtn, disBtn];
 
     async function decide(act, body) {
       buttons.forEach((b) => { b.disabled = true; });
-      setStatus(status, "", act === "approve" ? "正在批准并发布…" : "正在写入答复…");
+      setStatus(status, "", act === "approve" ? t("正在批准并发布…") : t("正在写入答复…"));
       let res;
       try {
         res = await apiPost("/api/proposals/" + encodeURIComponent(full.id) + "/" + act, Object.assign({ from: full.by }, body));
       } catch (err) {
         buttons.forEach((b) => { b.disabled = false; });
         if (!c.approvable) approveBtn.disabled = true;
-        failed(status, act === "approve" ? "没能批准，正式版本没有改动" : "没能写入答复", err);
+        failed(status, act === "approve" ? t("没能批准，正式版本没有改动") : t("没能写入答复"), err);
         return;
       }
       const done = act === "approve" ? approveSentence(res)
-        : act === "return" ? "已退回：" + name + " 会看到你的理由。" : "已写下：提议保持打开。";
+        : act === "return" ? t("已退回：{who} 会看到你的理由。", { who: name }) : t("已写下：提议保持打开。");
       // Answered: nothing here is left half typed, and it says what it did
       // until whoever drew it draws it again.
       [note, reason, text].forEach((f) => { f.value = ""; delete f.dataset.typed; });
@@ -1189,13 +1258,13 @@
   // The engine's dry run of a proposal, shown exactly, then 发送提议. Used
   // by 提交提议 and by the attempt form's 提议新的尝试 / 提议改判.
   async function composeInto(host, body, status) {
-    setStatus(status, "", "正在比较你的工作副本和官方版本…");
+    setStatus(status, "", t("正在比较你的工作副本和官方版本…"));
     host.innerHTML = "";
     let draft;
     try {
       draft = await apiPost("/api/proposals", body);
     } catch (err) {
-      failed(status, "没能生成提议", err);
+      failed(status, t("没能生成提议"), err);
       return null;
     }
     setStatus(status, "", "");
@@ -1207,25 +1276,24 @@
     host.innerHTML = "";
     const d = draft.proposal || {};
     const box = mk("div", "draft");
-    box.appendChild(mk("h3", "node-sec-title", "将要发送的提议"));
+    box.appendChild(mk("h3", "node-sec-title", t("将要发送的提议")));
     box.appendChild(mk("p", "proposal-sentence", d.sentence || ""));
     if (d.attempt) {
       const p = mk("p", "desk-head");
-      p.append("尝试表新增第 " + d.attempt.number + " 行：" + (d.attempt.description || ""), " ");
+      p.append(t("尝试表新增第 {number} 行：{description}", { number: d.attempt.number, description: d.attempt.description || "" }), " ");
       if (d.attempt.verdict_status) p.appendChild(RODesk.verdictInline(d.attempt.verdict_status));
       box.appendChild(p);
     }
     if (d.verdict) {
       const v = d.verdict;
-      const p = mk("p", "desk-head");
-      p.append("第 " + v.number + " 行的判决 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
-      box.appendChild(p);
-      box.appendChild(mk("p", "desk-note", "结果：" + (v.result || "（空）")));
-      if (v.reason) box.appendChild(mk("p", "desk-note", "理由：" + v.reason));
+      box.appendChild(phrase(mk("p", "desk-head"), t("第 {number} 行的判决 {old} 改为 {new}", { number: v.number }),
+        { old: RODesk.verdictInline(v.old_status), new: RODesk.verdictInline(v.new_status) }));
+      box.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result || t("（空）") })));
+      if (v.reason) box.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: v.reason })));
     }
     if (d.variable) {
-      box.appendChild(line("变量 " + d.variable.card + " 的第 " + d.variable.version + " 版定义（成员的回答：" +
-        (ATTESTED_WORDS[d.variable.attested] || d.variable.attested) + "）", ""));
+      box.appendChild(line(t("变量 {card} 的第 {version} 版定义（成员的回答：{answer}）",
+        { card: d.variable.card, version: d.variable.version, answer: attestedWord(d.variable.attested) }), ""));
     }
     // 12.13: what travels depends on the kind -- a verdict change its row
     // only, a new attempt its row and the files linked to it, a files
@@ -1235,9 +1303,9 @@
     ((draft.preview && draft.preview.files) || d.file || []).forEach((f) => { carried[f.path] = f; });
     const candidates = (draft.preview && draft.preview.candidates) ||
       Object.keys(carried).map((p) => Object.assign({ chosen: true }, carried[p]));
-    box.appendChild(mk("h4", "proposal-h4", "带上的文件"));
+    box.appendChild(mk("h4", "proposal-h4", t("带上的文件")));
     box.appendChild(line(carryWords(d.kind), "quiet"));
-    if (!candidates.length) box.appendChild(line("工作副本里没有和官方版本不同的文件。", "quiet"));
+    if (!candidates.length) box.appendChild(line(t("工作副本里没有和官方版本不同的文件。"), "quiet"));
     const picks = [];
     candidates.forEach((c) => {
       const f = carried[c.path] || c;
@@ -1248,37 +1316,39 @@
       cb.checked = !!c.chosen;
       cb.value = c.path;
       picks.push(cb);
-      lab.append(cb, mk("span", "evidence-role", FILE_ACTIONS[c.action] || ""), mk("span", "mono", c.path));
-      if (c.size != null && c.action !== "removed") lab.appendChild(mk("span", "desk-meta", sizeWords(c.size) + (c.store === "blob" ? "，大文件" : "")));
-      if (c.linked) lab.appendChild(mk("span", "desk-meta", "与这条尝试关联"));
+      lab.append(cb, mk("span", "evidence-role", fileAction(c.action)), mk("span", "mono", c.path));
+      if (c.size != null && c.action !== "removed") {
+        lab.appendChild(mk("span", "desk-meta", c.store === "blob" ? t("{size}，大文件", { size: sizeWords(c.size) }) : sizeWords(c.size)));
+      }
+      if (c.linked) lab.appendChild(mk("span", "desk-meta", t("与这条尝试关联")));
       const own = c.officialness && (c.officialness.state === "proposed" || c.officialness.state === "approved") ? ownMark(c) : null;
       if (own) lab.appendChild(own);
       row.appendChild(lab);
-      if ((c.returned || []).length) row.appendChild(mk("p", "desk-break", "这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。"));
+      if ((c.returned || []).length) row.appendChild(mk("p", "desk-break", t("这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。")));
       if (c.chosen && f.diff) {
         const det = mk("details", "proposal-diff");
-        det.appendChild(mk("summary", null, "查看改动"));
+        det.appendChild(mk("summary", null, t("查看改动")));
         det.appendChild(diffOf(f.diff, f.truncated));
         row.appendChild(det);
       }
       box.appendChild(row);
     });
     if (candidates.length) {
-      const again = mkButton("按勾选的文件重新查看", "btn btn-small", () => {
+      const again = mkButton(t("按勾选的文件重新查看"), "btn btn-small", () => {
         const only = picks.filter((c) => c.checked).map((c) => c.value);
         composeInto(host, Object.assign({}, body, { only: only }), status);
       });
       box.appendChild(again);
     }
     if ((d.not_carried || []).length) {
-      box.appendChild(mk("h4", "proposal-h4", "不会发送的改动"));
+      box.appendChild(mk("h4", "proposal-h4", t("不会发送的改动")));
       const ul = mk("ul", "desk-files");
       d.not_carried.forEach((x) => {
         const li = mk("li");
         li.appendChild(mk("span", "mono", x.path || ""));
-        const r = mk("span", "team-help");
-        renderBlockingError(r, x.reason_zh || "这一处改动没有包含在提议里", x.reason || "");
-        li.appendChild(r);
+        const why = mk("span", "team-help");
+        renderBlockingError(why, x.words || x.reason_zh || t("这一处改动没有包含在提议里"), x.reason || "");
+        li.appendChild(why);
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -1287,20 +1357,20 @@
     const me = ctx && ctx.me && ctx.me.me ? ctx.me.me.id : null;
     box.appendChild(line(sendWrites(d, me), "writes"));
     const sendStatus = mk("div", "notice-status");
-    const send = mkButton("发送提议", "btn btn-primary", async () => {
+    const send = mkButton(t("发送提议"), "btn btn-primary", async () => {
       send.disabled = true;
-      setStatus(sendStatus, "", "正在写入公盘…");
+      setStatus(sendStatus, "", t("正在写入公盘…"));
       let res;
       try {
         res = await apiPost("/api/proposals", Object.assign({}, body, { write: true, expected: draft.fingerprint }));
       } catch (err) {
         send.disabled = false;
-        failed(sendStatus, "没能发送提议，公盘上没有写入", err);
+        failed(sendStatus, t("没能发送提议，公盘上没有写入"), err);
         return;
       }
-      const sent = "已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。";
+      const sent = t("已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。");
       setStatus(sendStatus, "ok", sent);
-      send.textContent = "已发送";
+      send.textContent = t("已发送");
       view.compose = null;
       await RODesk.refreshSidebar();
       // Every view now marks what this proposal carries 「提议中」: the
@@ -1616,20 +1686,19 @@
   }
 
   // The link removals a publish would apply, each named (12.12: a member's
-  // removal takes a link out of the official version).
-  const RELATION_WORDS = { reads: "读取", writes: "写出", generates: "生成", belongs_to: "属于", includes: "引用",
-    cites: "引用", backed_by: "依据", derives_from: "源自" };
+  // removal takes a link out of the official version), its relation in the
+  // desk's words (RODesk.relationWord).
   function removalList(coming) {
     const wrap = mk("div", "team-removals");
     const list = (coming && coming.removals) || [];
     if (!list.length) return wrap;
     const det = mk("details", "team-pending");
-    det.appendChild(mk("summary", null, "会删除的连线（" + list.length + " 条）"));
+    det.appendChild(mk("summary", null, t("会删除的连线（{n} 条）", { n: numberText(list.length) })));
     const ul = mk("ul", "desk-files");
     list.forEach((r) => {
       const li = mk("li");
-      li.append(mk("span", "mono", r.from), " " + (RELATION_WORDS[r.type] || "关联") + " ", mk("span", "mono", r.to),
-        mk("span", "team-help", "删除人 " + (r.by || "")));
+      li.append(mk("span", "mono", r.from), " " + RODesk.relationWord(r.type) + " ", mk("span", "mono", r.to),
+        mk("span", "team-help", t("删除人 {who}", { who: r.by || "" })));
       ul.appendChild(li);
     });
     det.appendChild(ul);

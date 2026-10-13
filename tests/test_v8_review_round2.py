@@ -461,7 +461,8 @@ def test_12_3_the_review_shows_a_tables_rows_and_columns_and_its_fingerprint(dri
         [f] = [x for x in full["changes"]["files"] if x["path"] == "data/out24.csv"]
         assert f["sha256"] and f["diff"] and f["table_words"] == "2 行，列 a、b"
     team_js = (WEBAPP / "team.js").read_text(encoding="utf-8")
-    assert '"表格：" + f.table_words' in team_js and '"指纹 "' in team_js
+    # V10 D3 (14.6): the table's words are one template through t().
+    assert 't("表格：{words}", { words: f.table_words })' in team_js and 't("指纹 ")' in team_js
 
 
 # -- the desk marks a member's own work, and says every abandoned route (12.0, 12.12) ------------------------------

@@ -1055,6 +1055,7 @@ def version_content(project_root: str | Path, given: str, version: str | None, s
 # -- what a proposal's files use (12.3: the variable versions it uses; V8 U4) -------------------------
 
 _ROLE_WORDS_CARD = {"script": "实现脚本", "output": "输出", "input": "输入数据"}
+_ROLE_WORDS_CARD_EN = {"script": "implementation script", "output": "output", "input": "input data"}
 
 
 def _card_paths(root: Path) -> dict[str, list[dict[str, Any]]]:
@@ -1119,11 +1120,13 @@ def _script_reads(rel: str, content: str | None) -> list[str]:
     return found
 
 
-def variables_used(project_root: str | Path, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def variables_used(project_root: str | Path, files: list[dict[str, Any]], lang: str = "zh") -> list[dict[str, Any]]:
     """The variable versions a proposal's files use (12.3): a file that is
     a card's input, implementation script or output in the version in use,
-    and a proposed script that reads such a file -- each once, with how."""
+    and a proposed script that reads such a file -- each once, with how
+    (in the request's language, 13.6)."""
     root = Path(project_root)
+    roles = _ROLE_WORDS_CARD_EN if lang == "en" else _ROLE_WORDS_CARD
     named = _card_paths(root)
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -1135,7 +1138,8 @@ def variables_used(project_root: str | Path, files: list[dict[str, Any]]) -> lis
             key = (use["card"], rel, use["role"])
             if key not in seen:
                 seen.add(key)
-                out.append({**use, "path": rel, "how": f"{rel} 是这个变量的{_ROLE_WORDS_CARD[use['role']]}"})
+                out.append({**use, "path": rel, "how": settings.say("{rel} 是这个变量的{role}", "{rel} is this variable's {role}",
+                                                                     lang, rel=rel, role=roles[use["role"]])})
         for read in _script_reads(rel, f.get("content")):
             for use in named.get(read, []):
                 if use["role"] == "script":
@@ -1143,6 +1147,7 @@ def variables_used(project_root: str | Path, files: list[dict[str, Any]]) -> lis
                 key = (use["card"], rel, "reads:" + read)
                 if key not in seen:
                     seen.add(key)
-                    out.append({**use, "path": rel, "reads": read,
-                                "how": f"{rel} 读取 {read}，这是这个变量的{_ROLE_WORDS_CARD[use['role']]}"})
+                    out.append({**use, "path": rel, "reads": read, "how": settings.say(
+                        "{rel} 读取 {read}，这是这个变量的{role}", "{rel} reads {read}, which is this variable's {role}",
+                        lang, rel=rel, read=read, role=roles[use["role"]])})
     return out

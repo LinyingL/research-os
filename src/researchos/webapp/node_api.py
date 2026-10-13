@@ -329,22 +329,33 @@ def _proposal_call(fn):  # noqa: ANN001, ANN202
 
 _NOT_CARRIED = (
     (r"^row (\S+) \((new|removed|changed)\) is not part of this proposal$",
-     lambda m: f"尝试表第 {m.group(1)} 行（{ {'new': '新增', 'removed': '删除', 'changed': '改动'}[m.group(2)] }）不在这份提议里"),
+     lambda m: f"尝试表第 {m.group(1)} 行（{ {'new': '新增', 'removed': '删除', 'changed': '改动'}[m.group(2)] }）不在这份提议里",
+     lambda m: f"Row {m.group(1)} of the attempt table ({ {'new': 'added', 'removed': 'removed', 'changed': 'changed'}[m.group(2)] })"
+               " is not part of this proposal"),
     (r"^row (\S+): changes to (.+) are not part of a verdict change$",
-     lambda m: f"第 {m.group(1)} 行其它格子的改动不属于改判，不会发送"),
-    (r"^changes outside the table's rows are not proposed$", lambda m: "尝试表的行以外的改动不会提议"),
-    (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送"),
-    (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的官方版本，不会发送"),
-    (r"^notes, link judgments and hand-drawn links travel", lambda m: "笔记、关联判断和手工连线随同步发送，不需要批准"),
-    (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的"),
-    (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议"),
-    (r"^not chosen for this proposal$", lambda m: "没有选进这份提议"),
+     lambda m: f"第 {m.group(1)} 行其它格子的改动不属于改判，不会发送",
+     lambda m: f"Changes to the other cells of row {m.group(1)} are not part of a verdict change and are not sent"),
+    (r"^changes outside the table's rows are not proposed$", lambda m: "尝试表的行以外的改动不会提议",
+     lambda m: "Changes outside the table's rows are not proposed"),
+    (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送",
+     lambda m: "A new version of a variable definition is sent in a “Variable definition” proposal"),
+    (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的官方版本，不会发送",
+     lambda m: "The official copy that sync put beside yours is not sent"),
+    (r"^notes, link judgments and hand-drawn links travel", lambda m: "笔记、关联判断和手工连线随同步发送，不需要批准",
+     lambda m: "Notes, link judgments and hand-drawn links travel with sync, with no approval needed"),
+    (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
+     lambda m: "Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
+    (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议",
+     lambda m: "Research OS's own record files are not part of a proposal"),
+    (r"^not chosen for this proposal$", lambda m: "没有选进这份提议", lambda m: "Not chosen for this proposal"),
 )
+NOT_CARRIED_OTHER = ("这一处改动没有包含在提议里", "This change is not part of the proposal")
 
 
-def not_carried_words(items: Any) -> list[dict[str, Any]]:
+def not_carried_words(items: Any, lang: str = "zh") -> list[dict[str, Any]]:
     """A proposal's `not_carried` with each reason also in words (8.8):
-    `reason_zh`; the engine's English stays as `reason` for 「详情」."""
+    `words` in the request's language (13.6), `reason_zh` in Chinese; the
+    engine's English stays as `reason` for 「详情」."""
     import re  # noqa: PLC0415
 
     out = []
@@ -352,25 +363,26 @@ def not_carried_words(items: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         reason = str(item.get("reason") or "")
-        words = next((fn(m) for pattern, fn in _NOT_CARRIED for m in [re.match(pattern, reason)] if m), None)
-        out.append({**item, "reason_zh": words or "这一处改动没有包含在提议里"})
+        found = next(((zh(m), en(m)) for pattern, zh, en in _NOT_CARRIED for m in [re.match(pattern, reason)] if m),
+                     NOT_CARRIED_OTHER)
+        out.append({**item, "reason_zh": found[0], "words": found[1] if lang == "en" else found[0]})
     return out
 
 
-def _worded(out: dict[str, Any], root: Path) -> dict[str, Any]:
+def _worded(out: dict[str, Any], root: Path, lang: str = "zh") -> dict[str, Any]:
     """A proposal payload as the page shows it (12.11, 8.8): verdicts as
     words, data summaries in the engine's word form (12.13), `not_carried`
-    in words."""
+    in words, in the request's language."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     labels = proposals_mod._labels(root)
     for key in ("attempt", "verdict"):
         if isinstance(out.get(key), dict) and not any(k.endswith("_status") for k in out[key]):
             out[key] = proposals_mod.verdict_words(out[key], labels)
-    out["not_carried"] = not_carried_words(out.get("not_carried"))
+    out["not_carried"] = not_carried_words(out.get("not_carried"), lang)
     changes = out.get("changes")
     if isinstance(changes, dict):
-        changes["not_carried"] = not_carried_words(changes.get("not_carried"))
+        changes["not_carried"] = not_carried_words(changes.get("not_carried"), lang)
     return out
 
 
@@ -390,10 +402,10 @@ def proposal_payload(root: Path, proposal_id: str, lang: str = "zh", member: str
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id, member=member or None, lang=lang)),
-                  root)
+                  root, lang)
     files = (out.get("changes") or {}).get("files") or out.get("files") or []
     try:
-        out["uses"] = nodepage.variables_used(root, files)
+        out["uses"] = nodepage.variables_used(root, files, lang)
     except Exception:  # noqa: BLE001 -- nothing said rather than something wrong
         out["uses"] = []
     return out
@@ -437,7 +449,7 @@ def proposal_create_payload(root: Path, body: dict[str, Any], lang: str = "zh") 
                 officialness.annotate(officialness.view(root), draft.preview.get("candidates") or [], lang)
             except Exception:  # noqa: BLE001 -- a mark is a nicety; the files are still offered
                 pass
-            return {"ok": True, "written": False, "proposal": _worded(dict(draft.data), root), "preview": draft.preview,
+            return {"ok": True, "written": False, "proposal": _worded(dict(draft.data), root, lang), "preview": draft.preview,
                     "fingerprint": draft.fingerprint}
         expected = body.get("expected")
         stored = proposals_mod.write_proposal(root, draft, expected=expected if isinstance(expected, str) else None)

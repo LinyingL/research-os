@@ -518,6 +518,154 @@
     "没能全部记下口径未变": "Could not record “Construction unchanged” for all",
     "为下面每张卡各记一条「口径未变」": "Record “Construction unchanged” for each card below",
     "下面 {n} 张卡各记一条；也可以逐个回答。": "Records one entry for each of the {n} cards below; you can also answer them one by one.",
+    // A proposal decided in place (14.3, 14.6: team.js renderProposalInto, on the desk's panel and
+    // on 提议): its head and answers, what approving does, what it carries, the answers to give.
+    "{kind}提议": "{kind} proposal",
+    "没能打开这份提议": "Could not open this proposal",
+    "基于官方版本第 {seq} 版": "Based on official version {seq}",
+    "已被后来的提议替代": "Replaced by a later proposal",
+    "已验证": "Verified",
+    "签名和成员名单里这个人的公钥相符": "The signature matches this person's public key in the members list",
+    "这份提议没有可以核对的签名信息": "This proposal carries no signature to check",
+    "没有公钥可以核对": "No public key to check it against",
+    "这台电脑无法核对签名": "This Mac cannot check signatures",
+    // The engine's sentence for a signature (signing.CHECK_MESSAGES), shown by its Chinese.
+    "签名已验证": "Signature verified",
+    "成员名单里没有这个人的公钥：无法验证签名，只能依靠公盘的共享权限":
+      "The members list has no public key for this person: the signature cannot be verified, so only the shared folder's permissions vouch for it",
+    "这台电脑没有 ssh-keygen：无法验证签名，只能依靠公盘的共享权限":
+      "This Mac has no ssh-keygen: the signature cannot be verified, so only the shared folder's permissions vouch for it",
+    "没有签名：无法确认是谁写的": "Not signed: who wrote it cannot be confirmed",
+    "签名不对：不是名单上这个人的密钥签的，或者签名之后内容被改过":
+      "The signature is wrong: it was not made with this person's key in the list, or the content changed after signing",
+    "答复": "Answers",
+    "{who} 批准了": "{who} approved",
+    "{who} 退回了": "{who} returned it",
+    "{who} 说": "{who} said",
+    "这份提议的答复记录互相矛盾（同时有批准和退回）：请在公盘上检查 {folder} 里它的答复。":
+      "This proposal's answer records contradict each other (it is both approved and returned): check its answers in {folder} (the published answers) in the shared folder.",
+    "批准以后会怎样": "What approving does",
+    "提议之后正式版本又有了改动；只有两边改了同一处时才会挡住批准。":
+      "The official version changed after this proposal; approval is blocked only where both sides changed the same place.",
+    "这份提议的批准上次没有做完：再次批准会接着把剩下的做完。":
+      "Approving this proposal did not finish last time: approving again completes the rest.",
+    "在尝试表 {file} 里新增第 {number} 行": "Add row {number} to the attempt table {file}",
+    "尝试表第 {number} 行的判决 {old} 改为 {new}": "Row {number} of the attempt table: the verdict changes from {old} to {new}",
+    "第 {number} 行的判决 {old} 改为 {new}": "Row {number}: the verdict changes from {old} to {new}",
+    "结果：{result}": "Result: {result}",
+    "结果改为：{result}": "The result becomes: {result}",
+    "理由：{reason}": "Reason: {reason}",
+    "放弃理由：{reason}": "Reason for abandoning: {reason}",
+    "批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。":
+      "Approving writes the result and the reason into the attempt table and freezes the route's basis at this moment: its step scripts and the files they write.",
+    "正式版本里这一行已经是这样了。": "The official version already has this row as it is.",
+    "新建变量卡 {card} 的第 {version} 版定义": "New variable card {card}: definition version {version}",
+    "确认变量 {card} 的第 {version} 版定义": "Confirm variable {card}: definition version {version}",
+    "成员的回答：现有的输出文件是按这个定义生成的吗？{answer}":
+      "Were the existing output files made by this definition? The member answers: {answer}",
+    "是": "Yes",
+    "否": "No",
+    "不确定": "Not sure",
+    "说明：{note}": "Note: {note}",
+    "正式版本的连线记录里已经是这样了。": "The official version's line records already have this.",
+    "这份提议没有带来任何改动。": "This proposal brings no change.",
+    "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。":
+      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder.",
+    "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。发布前会先把成员同步来的 {carried}加进正式记录（不需要批准）。":
+      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder. Before publishing, it first adds what members synced ({carried}) to the official record, with no approval needed.",
+    "会删除的连线（{n} 条）": { one: "The link to be removed ({n})", other: "Links to be removed ({n})" },
+    "删除人 {who}": "Removed by {who}",
+    "没有随提议发送的改动": "Changes not sent with the proposal",
+    "这一处改动没有包含在提议里": "This change is not part of the proposal",
+    "现在还不能批准": "Cannot be approved yet",
+    "：{reason}": ": {reason}",
+    "Research OS 不会替两个人合并同一个文件。请成员先同步到最新的官方版本，在那上面重新提议；这份可以退回并说明。":
+      "Research OS never merges one file for two people. Ask the member to sync to the latest official version and propose again on it; this one can be returned with a reason.",
+    "已写入正式版本的改动": "Changes written into the official version",
+    "提议带来的改动": "Changes the proposal brings",
+    "尝试表新增第 {number} 行：{description}": "New row {number} in the attempt table: {description}",
+    // A proposal's files (12.3, 12.13).
+    "没有文件。": "No files.",
+    "新增": "Added",
+    "改动": "Changed",
+    "删除": "Removed",
+    "批准后写入": "Written on approval",
+    "正式版本里已经是这样": "Already so in the official version",
+    "两边都改过": "Changed on both sides",
+    "有问题": "Has a problem",
+    "这次批准已经写入": "Written by this approval",
+    "{n} 字节": { one: "{n} byte", other: "{n} bytes" },
+    "大文件，按内容存放在公盘": "A large file, stored in the shared folder by its content",
+    "大文件，按内容存放在公盘：": "A large file, stored in the shared folder by its content:",
+    "指纹 ": "Fingerprint ",
+    "表格：{words}": "Table: {words}",
+    "查看改动": "Show the change",
+    "用到的变量版本": "Variable versions it uses",
+    "{name} 第 {version} 版": "{name}, version {version}",
+    // The PI's answers (12.3; 13.4: 批准并加入 “Approve”, 退回并说明 “Return with reason”).
+    "你的答复": "Your answer",
+    "给这次批准写一句附言（可以不写）": "A note with this approval (optional)",
+    "批准附言": "Note with the approval",
+    "批准并加入": "Approve",
+    "有两边都改过的地方或问题，现在不能批准（见上面）。":
+      "Something was changed on both sides or has a problem, so it cannot be approved now (see above).",
+    "为什么退回：{who} 会看到这句话": "Why it is returned: {who} will see this",
+    "退回的理由（必填）": "Reason for returning (required)",
+    "退回并说明": "Return with reason",
+    "请写明退回的理由": "Write why it is returned",
+    "想问或想说的话：提议保持打开": "What you want to ask or say: the proposal stays open",
+    "讨论": "Discuss",
+    "请写下要讨论的内容": "Write what you want to discuss",
+    "答复会签名后写进公盘的「{folder}」，{who} 同步时就会看到；写成以后不再改动。":
+      "The answer is signed and written into “{folder}” (the published answers) in the shared folder; {who} sees it on their next sync. It is never changed once written.",
+    "正在批准并发布…": "Approving and publishing…",
+    "正在写入答复…": "Writing the answer…",
+    "没能批准，正式版本没有改动": "Could not approve; the official version is unchanged",
+    "没能写入答复": "Could not write the answer",
+    "已批准，改动已写入正式版本。": "Approved: the change is written into the official version.",
+    "已批准，改动已写入正式版本，并发布为第 {seq} 版：成员同步后就会看到。":
+      "Approved: the change is written into the official version and published as version {seq}; members see it once they sync.",
+    "已批准，改动已写入正式版本；但这次没有发布到公盘：{why}。可以在「成员」一栏里再发布一次。":
+      "Approved: the change is written into the official version, but it was not published to the shared folder this time: {why}. You can publish again in “Members”.",
+    "发布没有完成": "Publishing did not finish",
+    "已退回：{who} 会看到你的理由。": "Returned: {who} will see your reason.",
+    "已写下：提议保持打开。": "Written: the proposal stays open.",
+    // A member's draft (team.js composeInto, renderDraft): what it carries and what sending writes.
+    "正在比较你的工作副本和官方版本…": "Comparing your working copy with the official version…",
+    "没能生成提议": "Could not prepare the proposal",
+    "将要发送的提议": "The proposal to send",
+    "变量 {card} 的第 {version} 版定义（成员的回答：{answer}）":
+      "Variable {card}: definition version {version} (the member's answer: {answer})",
+    "带上的文件": "Files it carries",
+    "改判只带尝试表里的这一行；要一起发送文件，在下面勾选。":
+      "A verdict change carries only its row of the attempt table; to send files with it, tick them below.",
+    "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。":
+      "A new attempt carries its row and the files linked to it (the step scripts its description names, and files added with “Link files”); you can add or untick files.",
+    "变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。":
+      "A variable definition carries only the new version's definition file; to send files with it, tick them below.",
+    "只带勾选的文件。": "Only the ticked files.",
+    "工作副本里没有和官方版本不同的文件。": "No file in the working copy differs from the official version.",
+    "{size}，大文件": "{size}, a large file",
+    "与这条尝试关联": "Linked to this attempt",
+    "这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。":
+      "This file was in a returned proposal: read why it was returned before deciding whether to carry it.",
+    "按勾选的文件重新查看": "Review again with the ticked files",
+    "不会发送的改动": "Changes that will not be sent",
+    "你自己的提议文件夹（{path}）": "your own proposals folder ({path})",
+    "公盘的「{area}」": "“{area}” (your proposals folder) in the shared folder",
+    "，带上 {n} 个文件": { one: ", carrying {n} file", other: ", carrying {n} files" },
+    "（其中 {n} 个大文件按内容只存一份）": {
+      one: " ({n} of them a large file, stored once by its content)",
+      other: " ({n} of them large files, each stored once by its content)",
+    },
+    "发送会在{where}里写入一份新的提议{files}；写成以后不再改动。你的工作副本不会改变。":
+      "Sending writes a new proposal into {where}{files}. It is never changed once written, and your working copy does not change.",
+    "发送提议": "Send proposal",
+    "正在写入公盘…": "Writing to the shared folder…",
+    "没能发送提议，公盘上没有写入": "Could not send the proposal; nothing was written to the shared folder",
+    "已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。":
+      "Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the official record.",
+    "已发送": "Sent",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).
