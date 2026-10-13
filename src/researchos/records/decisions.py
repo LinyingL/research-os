@@ -30,7 +30,11 @@ written only by the PI's Research OS when it approves a proposal:
 `abandoned` is 12.4's "an abandoned route keeps its basis": the result,
 the reason, and the attempt's evidence frozen at the moment of approval --
 the step scripts and the outputs they wrote, by fingerprint, and (text up
-to 5 MB) by content in the history store. Every other approval is one
+to 5 MB) by content in the history store. The PI, or a single researcher,
+who abandons a route by writing the attempt table directly (14.3) leaves
+the same entry, frozen the same way, with no `proposal` and no
+`approved_by` -- nobody approved it, `by` made it (absent for a single
+researcher who has not said who they are, 12.1). Every other approval is one
 `approved` entry naming the proposal, its kind and what it changed, so the
 official version keeps its own trace of who proposed what and who approved
 it (12.3: every entry recorded with `by` = the member and `approved_by` =
@@ -122,17 +126,24 @@ def _text(entry: Mapping[str, Any], name: str, *, required: bool) -> None:
 
 def _validate(entry: Mapping[str, Any]) -> None:
     approved_by = entry.get("approved_by")
-    if not people.is_member_id(approved_by):
+    direct = entry.get("proposal") is None  # 14.3: a route abandoned by a direct write
+    if direct:
+        if entry.get("act") != ABANDONED_ACT:
+            raise ValueError("a decision without a proposal is a route abandoned directly ('act' abandoned)")
+        if approved_by is not None:
+            raise ValueError("a route abandoned directly names no 'approved_by'")
+    elif not people.is_member_id(approved_by):
         raise ValueError(f"'approved_by' must name the PI (a member id), got {approved_by!r}")
-    _text(entry, "proposal", required=True)
+    _text(entry, "proposal", required=not direct)
     _text(entry, "kind", required=True)
     _text(entry, "note", required=False)
     via = entry.get("via")
     if via is not None and via not in VIAS:
         raise ValueError(f"'via' must be one of {', '.join(sorted(VIAS))}, got {via!r}")
     if entry.get("act") == ABANDONED_ACT:
-        for name in ("attempt", "number", "verdict", "result", "reason"):
+        for name in ("attempt", "number", "verdict", "reason"):
             _text(entry, name, required=True)
+        _text(entry, "result", required=not direct)  # a direct write may abandon a row with no result yet
         evidence = entry.get("evidence")
         if not isinstance(evidence, list) or not all(isinstance(e, dict) for e in evidence):
             raise ValueError("an 'abandoned' decision lists its evidence as tables in 'evidence'")
@@ -150,7 +161,10 @@ def _validate(entry: Mapping[str, Any]) -> None:
 def _validate_new(entry: Mapping[str, Any]) -> None:
     if entry.get("via") not in VIAS:
         raise ValueError(f"'via' must be one of {', '.join(sorted(VIAS))}, got {entry.get('via')!r}")
-    if not people.is_member_id(entry.get(ledger_mod.BY_FIELD)):
+    by = entry.get(ledger_mod.BY_FIELD)
+    if entry.get("proposal") is None and by is None:
+        return  # 14.3: a single researcher who has not said who they are (12.1)
+    if not people.is_member_id(by):
         raise ValueError("a decision names the member who proposed it in 'by'")
 
 

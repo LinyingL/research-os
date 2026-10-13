@@ -1427,9 +1427,11 @@ def test_http_attempts_write_update_changes_the_row(live_server):
     base_url, project = live_server
     _map_project(project)
 
+    # Re-baselined for DESIGN.md 14.3: ✅ to ☠️ turns the route abandoned,
+    # so the write now carries its reason (tests/test_v10_abandon_direct.py).
     status, payload = _post(
         base_url, "/api/attempts/write",
-        {"op": "update", "number": "1", "fields": {"verdict": "☠️ 放弃"}},
+        {"op": "update", "number": "1", "fields": {"verdict": "☠️ 放弃"}, "reason": "不稳"},
     )
 
     assert status == 200 and payload["ok"] is True

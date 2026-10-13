@@ -1637,6 +1637,7 @@ const BLOCKING_ERROR_TEXT = {
   attempt_line_break: "有一格里含有看不见的换行字符（常见于从 PDF 复制的文字），请删掉它；需要换行时写 <br>。",
   attempt_table_missing: "找不到尝试年表了：年表文件、它的标题或 .researchos/attempts.toml 已经不在。",
   attempt_unknown_field: "表单里有一栏年表已经没有了，请刷新页面后再试。",
+  attempt_reason_required: "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。",
   // the canvas's refusals, in the wording 8.5 already gave them
   mapping_exists: "这条映射已存在",
   human_link: "这是你的标注：请用「删除标注」移除",
@@ -3599,6 +3600,21 @@ function renderAttemptForm(mode, attemptId) {
     reasonField.appendChild(mk("div", "team-help", "判决标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
     form.appendChild(reasonField);
   }
+  // 14.3: abandoning a route asks the PI and a single researcher for the
+  // reason too. The field shows once the engine's preview says this write
+  // turns the route abandoned (reason_required); rewording a verdict that
+  // already abandons it asks nothing.
+  let directReason = null;
+  if (!proposing) {
+    reasonInput = document.createElement("textarea");
+    reasonInput.className = "form-textarea";
+    reasonInput.rows = 2;
+    reasonInput.placeholder = t("为什么放弃这条路线");
+    directReason = formFieldEl(t("放弃的理由（必填）"), reasonInput);
+    directReason.appendChild(mk("div", "team-help", t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
+    directReason.classList.add("hidden");
+    form.appendChild(directReason);
+  }
 
   const statusEl = document.createElement("div");
   statusEl.className = "panel-status";
@@ -3639,7 +3655,11 @@ function renderAttemptForm(mode, attemptId) {
         return null;
       }
     }
-    return { op: mode, number: num, fields: fields };
+    const body = { op: mode, number: num, fields: fields };
+    if (directReason && !directReason.classList.contains("hidden") && reasonInput.value.trim()) {
+      body.reason = reasonInput.value.trim();
+    }
+    return body;
   }
 
   function setFormDisabled(disabled) {
@@ -3691,7 +3711,11 @@ function renderAttemptForm(mode, attemptId) {
       statusEl.textContent = "";
     });
     confirmActions.append(confirmBtn, backBtn);
-    previewHost.append(note, confirmActions);
+    previewHost.append(note);
+    if (!proposing && preview.reason_required) {
+      previewHost.append(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
+    }
+    previewHost.append(confirmActions);
 
     confirmBtn.addEventListener("click", async () => {
       confirmBtn.disabled = true;
@@ -3760,6 +3784,14 @@ function renderAttemptForm(mode, attemptId) {
       setFormStatus(statusEl, "err", "放弃一条路线时，结果和理由都必须填写");
       (inputs.result.value.trim() ? reasonInput : inputs.result).focus();
       return;
+    }
+    if (directReason) {
+      directReason.classList.toggle("hidden", !preview.reason_required);
+      if (preview.reason_required && !body.reason) {
+        setFormStatus(statusEl, "err", t("放弃一条路线时必须写明理由"));
+        reasonInput.focus();
+        return;
+      }
     }
     statusEl.textContent = "";
     renderPreview(preview, body);

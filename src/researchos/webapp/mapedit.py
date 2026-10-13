@@ -475,6 +475,34 @@ def preview_edit(project_root: str | Path, op: str, number: str, fields: dict[st
     return {"file": plan.config.file, "diff": diff, "old_row": plan.old_row, "new_row": plan.new_row}
 
 
+def row_cells(project_root: str | Path, number: str) -> dict[str, str] | None:
+    """The editable cells of row `number` as the file holds them -- padding
+    trimmed and `\\|` read as `|`, so sending one back in an update writes
+    it as it was, Markdown decoration and `<br>` included (unlike the
+    parser's cleaned values, which callers must never round-trip: module
+    docstring). For a caller that adds to a cell the user did not touch
+    (14.3: an abandonment's reason, appended to the result). None when the
+    table has no such row, or several; refuses like `preview_edit` for a
+    file it would not rewrite."""
+    root = Path(project_root)
+    config = attempts_ingest.load_config(root)
+    source_path = root / config.file
+    try:
+        raw = source_path.read_bytes()
+    except OSError as exc:
+        code = "table_missing" if isinstance(exc, (FileNotFoundError, NotADirectoryError)) else None
+        raise MapEditError(f"cannot read {source_path}: {exc}", code=code) from exc
+    text, lines, _newline, _trailing = _decode_source(raw, source_path)
+    wanted = _validate_number(number)
+    rows = [r for r in attempts_ingest.parse_attempts_table(text, config.heading, config.columns) if r.number == wanted]
+    located = attempts_ingest._find_table(lines, config.heading)
+    if len(rows) != 1 or located is None:
+        return None
+    _header_cells, col_index = _column_index(lines[located[0]], config.columns)
+    _prefix, cells, _suffix = _split_raw_row(lines[rows[0].line - 1])
+    return {key: cells[col_index[key]].strip().replace("\\|", "|") for key in EDITABLE_FIELDS}
+
+
 def _write_bytes_durably(path: Path, data: bytes) -> None:
     """`write_bytes` plus an `fsync` before close: `os.replace` makes the
     RENAME atomic, but on most filesystems the rename's metadata can reach

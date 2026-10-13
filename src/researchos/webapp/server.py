@@ -139,13 +139,16 @@ Endpoints (all GET unless noted):
                             edit against the researcher's own map file --
                             unified diff plus old/new row, NOTHING written
                             (see `attempts_preview_payload` and
-                            `researchos.webapp.mapedit`).
+                            `researchos.webapp.mapedit`), and
+                            `reason_required` (14.3).
     POST /api/attempts/write -- same body: actually performs the edit --
                             backup, atomic write into the source Markdown,
                             re-ingest under the watcher's own ingest lock,
                             generation bump -- and returns `{ok, backup,
-                            generation, ingest_error}`. See "Write-path
-                            defense" below (see `attempts_write_payload`).
+                            generation, ingest_error, decision}`. A write
+                            that turns a route abandoned carries `reason`
+                            (14.3). See "Write-path defense" below (see
+                            `attempts_write_payload`).
     GET  /api/generation -- the auto-refresh watcher's status
                             (`researchos.webapp.watcher`, task V3 phase 2):
                             `{"generation": int, "refreshing": bool,
@@ -688,13 +691,21 @@ class AttemptEditError(ApiError):
 
     status = 400
 
-    def __init__(self, message: str, code: str | None = None) -> None:
+    def __init__(self, message: str, code: str | None = None, message_zh: str | None = None) -> None:
         super().__init__(message)
         if code is not None:
             self.state = "attempt_" + code
+        if message_zh:
+            self.extra = {"message_zh": message_zh}
 
 
 def _attempt_edit_error(exc: Exception, project_root: Path) -> AttemptEditError:
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
+    if isinstance(exc, proposals_mod.ProposalRefused):
+        # 14.3: an abandonment with no reason (`attempt_reason_required`), or
+        # a decisions.toml that cannot take its basis now -- said in Chinese.
+        return AttemptEditError(str(exc), exc.code, exc.message_zh)
     return AttemptEditError(str(exc), mapedit.error_code(exc, project_root))
 
 
@@ -2087,23 +2098,33 @@ def _parse_attempt_edit_body(body: dict[str, Any]) -> tuple[str, str, dict[str, 
     fields = body.get("fields", {})
     if not isinstance(fields, dict):
         raise MissingParamError("request body 'fields' must be a JSON object")
+    if body.get("reason") is not None and not isinstance(body["reason"], str):
+        raise MissingParamError("request body 'reason' must be a string")
     return op, number, fields
 
 
 def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[str, Any]:
     """A pure dry run: `researchos.webapp.mapedit.preview_edit`'s
-    `{file, diff, old_row, new_row}`, verbatim -- nothing on disk moves."""
+    `{file, diff, old_row, new_row}` -- nothing on disk moves -- and
+    `reason_required` (14.3): the write turns the route abandoned, so the PI
+    or a single researcher must say why (the body's `reason`); with one,
+    the rows shown carry it in the result as the write will."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
     op, number, fields = _parse_attempt_edit_body(body)
     try:
         out = mapedit.preview_edit(project_root, op, number, fields)
+        turn = proposals_mod.direct_abandonment(project_root, op, number, fields)
+        said = " ".join(str(body.get("reason") or "").split())
+        if turn is not None and said:
+            out = mapedit.preview_edit(project_root, op, number, proposals_mod.with_reason(fields, turn, said))
     except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
+    out = {**out, "reason_required": turn is not None}
     if isinstance(fields.get("verdict"), str):
         # U4: whether the verdict abandons the route (☠, or a marker of
         # attempts.toml's abandoned_verdicts) -- a member's 提议改判 then
         # asks for the result and the reason before anything is written.
-        from researchos import proposals as proposals_mod  # noqa: PLC0415
-
         out = {**out, "abandons": proposals_mod.is_abandonment(fields["verdict"],
                                                                 proposals_mod.abandon_markers(project_root)),
                "verdict_status": attempts_ingest.verdict_status(fields["verdict"],
@@ -2121,13 +2142,20 @@ def attempts_write_payload(
     generation, recording (or clearing) the write's own contained
     post-write ingest failure. `ingest_error` is passed through to the
     response so the UI can say "file written and backed up, but the rescan
-    failed" rather than hiding a half-landed state behind a bare ok."""
+    failed" rather than hiding a half-landed state behind a bare ok.
+
+    14.3: a write that turns a route abandoned carries `reason`, else it is
+    refused (`attempt_reason_required`, nothing written); the reason goes
+    into the result and the basis is frozen in decisions.toml
+    (`researchos.proposals.write_directly`) -- `decision` names that entry."""
+    from researchos import proposals as proposals_mod  # noqa: PLC0415
+
     op, number, fields = _parse_attempt_edit_body(body)
     try:
-        result = mapedit.apply_edit(
-            project_root, op, number, fields, ingest_lock=watcher.ingest_lock,
+        result = proposals_mod.write_directly(
+            project_root, op, number, fields, body.get("reason"), ingest_lock=watcher.ingest_lock,
         )
-    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
+    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError, proposals_mod.ProposalRefused) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
     generation = watcher.record_external_change(result["ingest_error"])
     return {
@@ -2136,6 +2164,7 @@ def attempts_write_payload(
         "backup": result["backup"],
         "generation": generation,
         "ingest_error": result["ingest_error"],
+        "decision": (result["decision"] or {}).get("id"),
     }
 
 

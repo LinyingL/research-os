@@ -2082,6 +2082,111 @@ def _evidence(conn, root: Path, attempt_node: str, store: history.Store, *, who:
     return evidence
 
 
+# -- a route abandoned by a direct write (14.3) ------------------------------------------
+
+#: 8.8: a direct write that abandons a route without saying why, refused.
+DIRECT_REASON_REQUIRED = "放弃一条路线时必须写明理由"
+
+
+def direct_abandonment(root: str | Path, op: str, number: str, fields: Mapping[str, Any]) -> dict[str, Any] | None:
+    """14.3: whether a direct write of the attempt table TURNS a route
+    abandoned -- a new row whose verdict abandons it, or a row whose verdict
+    did not -- as the map says it (`route_status`: ☠, `[abandoned_verdicts]`,
+    the researcher's own `[verdict_labels]`). Only for the PI and a single
+    researcher: a member's row is their own change, and the proposal it
+    becomes asks for the reason (12.4). Rewording a verdict that already
+    abandons asks nothing again. None, or {node, number, cells: the row's
+    cells as written now, None for a new row}."""
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+    from researchos.webapp import mapedit  # noqa: PLC0415
+
+    root = Path(root)
+    verdict = fields.get("verdict")
+    config = _attempts_config(root)
+    if op not in ("append", "update") or not isinstance(verdict, str) or config is None \
+            or role_of(root)[0] in ("member", "none"):
+        return None
+    labels, markers = attempts_ingest.verdict_labels(root), abandon_markers(root)
+
+    def abandons(cell: str) -> bool:
+        status = attempts_ingest.route_status(attempts_ingest._clean_cell(cell), labels, markers)
+        return status["status"] == "abandoned"
+
+    if not abandons(verdict):
+        return None
+    cells = mapedit.row_cells(root, number) if op == "update" else None
+    if op == "update" and (cells is None or abandons(cells["verdict"])):
+        return None  # no such row (the write refuses it), or abandoned already
+    return {"node": f"attempt:{config.file}#{number.strip()}", "number": number.strip(), "cells": cells}
+
+
+def with_reason(fields: Mapping[str, str], turn: Mapping[str, Any], reason: str) -> dict[str, str]:
+    """The cells a direct abandonment writes: `fields`, with the reason in
+    the result as an approval writes it (`abandon_result`) -- after the
+    result sent, else after the row's own cell as written, its decoration
+    kept (`mapedit.row_cells`)."""
+    out = dict(fields)
+    result = out["result"] if "result" in out else (turn["cells"] or {}).get("result", "")
+    written = abandon_result(result, reason, out["verdict"])
+    if "result" in out or written != result:
+        out["result"] = written
+    return out
+
+
+def write_directly(root: str | Path, op: str, number: str, fields: Mapping[str, Any], reason: str | None = None, *,
+                   ingest_lock: Any = None, via: str = "app",
+                   now: Callable[[], datetime] | None = None) -> dict[str, Any]:
+    """The attempt table written directly (`mapedit.apply_edit`) under
+    14.3's rule: a write that turns a route abandoned (`direct_abandonment`)
+    carries its reason, else it is refused (`reason_required`, nothing
+    written); the reason goes into the result as an approval writes it
+    (`with_reason`), and the basis is frozen as an approved abandonment
+    freezes it -- `_evidence` at this moment, in a `decisions.toml` entry
+    with act `abandoned`, by whoever wrote it, with no proposal and nobody
+    approving. `apply_edit`'s result plus `decision` (the entry, or None)."""
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+    from researchos.webapp import mapedit  # noqa: PLC0415
+
+    root = Path(root)
+    with write_guard(root, human=True) as held:
+        turn = direct_abandonment(root, op, number, fields) if isinstance(fields, Mapping) else None
+        if turn is None:
+            return {**mapedit.apply_edit(root, op, number, fields, ingest_lock), "decision": None}
+        mapedit.preview_edit(root, op, number, dict(fields))  # refused as the write would be, before the reason
+        said = " ".join(str(reason or "").split())
+        if not said:
+            raise ProposalRefused("reason_required", f"abandoning attempt {turn['number']} needs a reason; "
+                                  "nothing written", message_zh=DIRECT_REASON_REQUIRED)
+        try:
+            me = people.current_member_id()  # asked first: the entry names who, or the write would stop halfway
+            decisions_mod.require_writable(root)
+        except people.PeopleError as exc:
+            raise ProposalRefused("no_me", str(exc), message_zh=exc.message_zh) from exc
+        except decisions_mod.DecisionRefused as exc:
+            raise ProposalRefused("decisions_unwritable", str(exc), message_zh=exc.message_zh) from exc
+        written = mapedit.apply_edit(root, op, number, with_reason(fields, turn, said), ingest_lock)
+        identity_id = _project_id(root)
+        with history.Store.open(identity_id) as store:
+            conn = db.connect(index_db_path(identity_id))
+            try:
+                evidence = _evidence(conn, root, turn["node"], store, who=me or "", approved_by="", note=None)
+            finally:
+                conn.close()
+        result = fields["result"] if "result" in fields else (turn["cells"] or {}).get("result", "")
+        entry = {"act": decisions_mod.ABANDONED_ACT, "kind": "attempt_new" if op == "append" else "verdict_change",
+                 "attempt": turn["node"], "number": turn["number"],
+                 "verdict": attempts_ingest._clean_cell(fields["verdict"]),
+                 "result": attempts_ingest._clean_cell(result) or None, "reason": said, "via": via,
+                 "evidence": evidence}
+        try:
+            decision = decisions_mod.append_decision(root, entry, lock=held, now=now)
+        except decisions_mod.DecisionRefused as exc:
+            raise ProposalRefused("decisions_unwritable", f"the row was written, but its basis could not be "
+                                  f"recorded ({exc})", message_zh="尝试表已经写入，但放弃时的依据没能记进 "
+                                  "decisions.toml：" + exc.message_zh) from exc
+    return {**written, "decision": _jsonable(dict(decision.data))}
+
+
 def _outcome(ex: LocalExchange, stored: StoredProposal, act: str, by: str, text: str | None,
              extra: Mapping[str, Any] | None, now: Callable[[], datetime] | None, *,
              root: Path | None = None) -> dict[str, Any]:

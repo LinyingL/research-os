@@ -292,6 +292,17 @@
     "一个尝试不能源自它自己": "An attempt cannot grow out of itself",
     "这条连线会绕成一个圈：它要连的来处本身就源自它":
       "This line would close a circle: the attempt it would grow out of already grows out of it",
+    // Abandoning a route asks for its reason, the PI and a single researcher too (14.3):
+    // the attempt form, and what refuses a write without one (BLOCKING_ERROR_TEXT).
+    "为什么放弃这条路线": "Why this route is abandoned",
+    "放弃的理由（必填）": "Reason for abandoning (required)",
+    "理由会写进结果一栏，这条路线当时的依据也会冻结下来。":
+      "The reason is written into the result, and the route's basis at this moment is frozen.",
+    "这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。":
+      "This row abandons the route: the reason goes into the result, and its basis at this moment is frozen.",
+    "放弃一条路线时必须写明理由": "Abandoning a route needs a reason",
+    "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。":
+      "Abandoning a route needs a reason: it is written into the result, and the route's basis is frozen.",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).
