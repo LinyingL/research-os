@@ -791,6 +791,7 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
             p = dict(p, by_label=_who(p.get("by"), team_known, lang=lang), touches=_touches(p, table, holders, role))
             returned = [o for o in p.get("outcomes") or [] if o.get("act") == "returned"]
             p["reason"] = returned[-1].get("text") if p.get("state") == "returned" and returned else None
+            p["awaiting_sync"] = bool(role == "member" and seen is not None and seen.awaiting_sync(p["id"]))
             marked = p["state"] in ("pending", "conflict") if role == "pi" else p["state"] == "pending"
             if role == "pi" and marked:
                 column["waiting"].append(p)
@@ -823,7 +824,9 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
                 lines.append(line)
             if line is not None:
                 line.update(pending=pending, **{officialness.FIELD: mark})
-    column["empty"] = not (column["waiting"] or column["mine"] or review["count"] or missing
+    # 14.4: a member's proposal waits while pending, returned (its reason stays) or approved until synced.
+    listed = [p for p in column["mine"] if p["state"] in ("pending", "conflict", "returned") or p["awaiting_sync"]]
+    column["empty"] = not (column["waiting"] or listed or review["count"] or missing
                            or (column["sync"] or {}).get("behind"))
     return {"role": role, "attempts": attempts, "lines": lines, "lines_missing": missing,
             "lines_problem": lines_problem, "column": column}
@@ -831,8 +834,9 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
 
 def payload(conn: Connection, project_root: str | Path, since: str | None = None, *, now: datetime | None = None,
             lang: str = "zh", timeout: float | None = None) -> dict[str, Any]:
-    """`GET /api/desk` (DESIGN.md 14.1, 14.3-14.5): `desk`'s blocks (kept for
-    the page until the route map replaces it) and the route map:
+    """`GET /api/desk` (DESIGN.md 14.1, 14.3-14.5): `desk`'s blocks (the first
+    desk's; since V10's C1 the page reads only the route map and its column,
+    and these are left to be removed) and the route map:
 
     - **attempts** -- the cards, in the map's order (`order`: by the date
       where `date_year` makes it readable -- `date_key` -- then by the
@@ -848,7 +852,8 @@ def payload(conn: Connection, project_root: str | Path, since: str | None = None
       with an end the map does not have;
     - **column** -- the role (from the team file, never the shared folder),
       the PI's `waiting` proposals of every kind or a member's own (`mine`,
-      each with the attempts it `touches` and a returned one's `reason`),
+      each with the attempts it `touches`, a returned one's `reason`, and
+      `awaiting_sync`: approved, something it carries not synced yet),
       待复核 grouped by attempt (`review`), a member's `sync` state, and
       `shared`: whether the shared folder could be read -- the map never
       waits on it longer than SHARED_TIMEOUT.

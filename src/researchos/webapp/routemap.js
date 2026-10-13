@@ -244,7 +244,7 @@
       positions: {}, caption: null, pinned: false,
       camera: { x: 0, y: 0, zoom: 1 }, autoFit: true, needsFit: false, cameraSet: false,
       selected: null, selectedLine: null, focus: null, drag: null, pop: null, gesture: null, later: null,
-      save: emptySave(), saveTimer: null, resizeTimer: null, statusTimer: null,
+      marked: [], save: emptySave(), saveTimer: null, resizeTimer: null, statusTimer: null,
     };
 
     function proposes() { return m.role !== "pi" && m.role !== "single"; }
@@ -322,7 +322,7 @@
       if (project !== m.project) {
         clearTimeout(m.saveTimer);
         Object.assign(m, { project, save: emptySave(), local: {}, resetting: false, selected: null, selectedLine: null,
-          optimistic: [], focus: null, cameraSet: false });
+          optimistic: [], focus: null, cameraSet: false, marked: [] });
         closePop();
         hideStatus();
         if (UNUSABLE.includes(layout.state)) {
@@ -343,6 +343,7 @@
       arrange();
       if (m.selected && !m.byId.has(m.selected)) m.selected = null;
       if (m.selectedLine && !lineOf(m.selectedLine)) selectLine(null);
+      m.marked = m.marked.filter((id) => m.byId.has(id));
       render();
       if (!m.cameraSet) {
         m.cameraSet = true;
@@ -389,7 +390,8 @@
 
     function cardEl(a) {
       const tone = a.tone || "plain";
-      const c = el("div", "rm-card tone-" + tone + (a.abandoned ? " abandoned" : "") + (a.id === m.selected ? " selected" : ""));
+      const c = el("div", "rm-card tone-" + tone + (a.abandoned ? " abandoned" : "") + (a.id === m.selected ? " selected" : "")
+        + (m.marked.includes(a.id) ? " marked" : ""));
       c.dataset.id = a.id;
       const num = "#" + numberOf(a.id);
       const words = a.route_status && a.route_status.words;
@@ -463,6 +465,25 @@
     function select(id) {
       m.selected = id;
       m.dom.cards.querySelectorAll(".rm-card").forEach((c) => c.classList.toggle("selected", c.dataset.id === id));
+    }
+
+    // The cards a row of the desk's column touches (14.4): marked, and the
+    // first brought to the middle when none of them is on screen.
+    function highlight(ids) {
+      m.marked = (ids || []).filter((id) => m.byId.has(id));
+      if (!m.dom) return;
+      m.dom.cards.querySelectorAll(".rm-card").forEach((c) => c.classList.toggle("marked", m.marked.includes(c.dataset.id)));
+      const v = size(), z = m.camera.zoom;
+      if (!m.marked.length || !v.w) return;
+      const shown = (id) => {
+        const x = m.positions[id][0] * z + m.camera.x, y = m.positions[id][1] * z + m.camera.y;
+        return x + CARD_W * z > 0 && x < v.w && y + CARD_H * z > TOOLBAR_H && y < v.h;
+      };
+      if (m.marked.some(shown)) return;
+      const p = m.positions[m.marked[0]];
+      m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + CARD_H / 2) * z, zoom: z };
+      applyCamera();
+      userCamera();
     }
 
     // -- the camera (关系图's: 25%-250%, fit never past 100%) -------------------------
@@ -924,7 +945,7 @@
     }
 
     return Object.freeze({
-      mount, update, visible, fitAll,
+      mount, update, visible, fitAll, highlight,
       zoomIn: () => zoomCenter(m.camera.zoom * 1.2),
       zoomOut: () => zoomCenter(m.camera.zoom / 1.2),
       zoomReset: () => zoomCenter(1),

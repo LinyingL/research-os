@@ -485,9 +485,16 @@ def test_12_12_the_desk_marks_a_members_unsubmitted_and_proposed_changes(drive):
         assert by_node["file:map.md"]["officialness"]["state"] != "official"
         assert [a["officialness"]["state"] for a in got["abandoned"]] == ["proposed"]
         assert all("officialness" not in c for c in got["changes"] if c["kind"] in ("decision", "note"))
+        # The route map's card (V10, 14.1): abandoned, with its result, marked as the member's proposal.
+        card = next(a for a in got["attempts"] if a["number"] == "16")
+        assert (card["abandoned"], card["result"], card["officialness"]["state"]) == (True, "t=0.1", "proposed")
+    # Re-baselined for V10 (14.5): the desk is the route map. A member's own work is marked on its
+    # card (routemap.js, from the payload's officialness) and in the column (ownMark); every
+    # abandoned route is a quieter card, its reason kept for the panel.
     desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
-    assert desk_js.count("ownMark(") >= 3 and 'renderAbandoned(desk, data);\n    } else {' in desk_js
-    assert "list.length + \" 条路线已经放弃" not in desk_js and 't("理由：{reason}", { reason: a.reason })' in desk_js
+    map_js = (WEBAPP / "routemap.js").read_text(encoding="utf-8")
+    assert desk_js.count("ownMark(") >= 2 and 'if (own && own.state !== "official") add(own.label);' in map_js
+    assert '(a.abandoned ? " abandoned" : "")' in map_js and "list.length + \" 条路线已经放弃" not in desk_js
 
 
 # -- the page: wording run under node, and the served markup (12.3, 12.9, 12.11, 8.8) --------------------------------

@@ -150,6 +150,21 @@ class View:
             return OFFICIAL, None
         return self._carried_state(carried[1]), carried[1]
 
+    def awaiting_sync(self, proposal: str) -> bool:
+        """An approved proposal something of which is still marked 已批准，待同步
+        here: the next sync brings it in (14.4); once synced, nothing is."""
+        if self.mode == OFFICIAL or self.proposal_states.get(proposal) != "approved":
+            return False
+
+        def mine(carried: Mapping[Any, tuple]) -> list[Any]:
+            return [k for k, v in carried.items() if v[-1] == proposal]
+
+        states = ([self.file_state(r) for r in mine(self.proposed_files)]
+                  + [self.attempt_state(self.table or "", n) for n in mine(self.proposed_rows)]
+                  + [self.card_state(c) for c in mine(self.proposed_cards)]
+                  + [self.line_state(*k) for k in mine(self.proposed_lines)])
+        return any(s[0] == APPROVED for s in states)
+
     def link_state(self, from_: str, to: str, kind: str) -> tuple[str, str | None]:
         if self.mode == OFFICIAL:
             return OFFICIAL, None

@@ -170,6 +170,46 @@ def test_8_8_and_12_11_the_route_map_is_served_and_says_neither_node_nor_canvas(
     assert 'if (key !== "canvas" && key !== "desk") node.style.zoom' in html
 
 
+# -- the desk around the map (14.4, 14.5; increment C1) ----------------------------------------------------
+
+
+@needs_node
+def test_14_4_the_desk_redraws_in_place_and_a_picked_row_marks_its_attempts_on_the_map():
+    """The desk is drawn once -- the map's element and the column kept -- and
+    a refresh or another visit redraws the column in place: 载入中… only
+    before the first drawing, never over a desk already drawn. Picking a row
+    of the column marks the attempts it touches on the map; picking it again
+    unmarks them. The map gets the payload and 「有改动」's rule each time."""
+    from test_v9_language import _DESK_DOM, _desk_cases
+
+    case = json.dumps(_desk_cases("zh")[0], ensure_ascii=False)
+    script = (
+        "global.window = {};\n" + _DESK_DOM + "const calls = [];\n"
+        "window.RORouteMap = { create() { return { mount() { calls.push(['mount']); },"
+        " update(d, o) { calls.push(['update', d.role, typeof o.changed]); }, highlight(ids) { calls.push(['highlight', ids]); },"
+        " visible() { return true; } }; } };\n"
+        + (WEBAPP / "desk.js").read_text(encoding="utf-8")
+        + "\nconst wiped = (h) => h.kids.some((k) => typeof k === 'string' && k.includes('载入中'));\n"
+        "const find = (n, f) => { for (const k of n.kids) if (typeof k !== 'string') { if (f(k)) return k;"
+        " const got = find(k, f); if (got) return got; } return null; };\n"
+        f"(async () => {{ const c = {case}; const host = await deskHost(c); const layout = host.kids[0];\n"
+        "  const seen = [];\n"
+        "  global.apiGet = async (path) => { if (path === '/api/desk') { seen.push(wiped(host)); return c.desk; }"
+        " return { '/api/me': c.me, '/api/proposals': c.proposals, '/api/share': c.share }[path]; };\n"
+        "  await window.RODesk.loadDesk(host, false); await window.RODesk.loadDesk(host, true);\n"
+        "  const line = find(host, (k) => k.className === 'desk-link strong' && k.textContent.startsWith('加上连线'));\n"
+        "  line.onClick(); line.onClick();\n"
+        "  process.stdout.write(JSON.stringify({ seen, same: host.kids.length === 1 && host.kids[0] === layout,"
+        " column: layout.kids.map((k) => k.className), calls })); })();\n"
+    )
+    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["seen"] == [False, False] and got["same"] is True
+    assert got["column"] == ["desk-map", "desk-column"]
+    assert got["calls"] == [["mount"], ["update", "pi", "function"], ["update", "pi", "function"],
+                            ["update", "pi", "function"], ["highlight", [A[18], A[17]]], ["highlight", []]]
+
+
 # -- the arrangement (14.1: canvas.json's view `routes`) ----------------------------------------------------
 
 

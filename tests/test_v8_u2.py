@@ -240,11 +240,15 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     assert '"webapp/desk.js"' in pyproject
     js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
     assert re.search(r"https?://", js) is None
-    # The desk per 12.0 for each person, and 12.12's sentence for a member
-    # not yet in the team (not a project of one).
-    for block in ("等你批准", "你上次查看以来的改动", "依据变了的成果", "已放弃的路线", "我的提议", "官方版本有更新",
+    # The desk's column per 14.4 for each person, and 12.12's sentence for someone not yet in
+    # the team (not a project of one). Re-baselined for V10: the desk is the route map with the
+    # column beside it, and 14.5 folds the first desk's lists of changes, outputs whose basis
+    # changed and abandoned routes into the map's cards (and 成果).
+    for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "官方版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
+    for gone in ("你上次查看以来的改动", "依据变了的成果", "已放弃的路线"):
+        assert gone not in js, gone
     assert 'apiPost("/api/share/sync", {})' in js and js.count("apiPost(") == 1  # the desk's one write
 
 

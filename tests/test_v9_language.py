@@ -1268,20 +1268,23 @@ def test_13_4_who_i_am_and_the_count_in_english():
 # -- 13.7: the desk (T3) ------------------------------------------------------------------------------------------
 
 #: A stand-in DOM for the whole desk under node: an element keeps its class,
-#: title and children in order (text as strings); app.html's helpers stubbed.
-#: Each rendered desk is one line per element holding words: "class: words".
+#: title, parent and children in order (text as strings); app.html's helpers
+#: stubbed. Each rendered desk is one line per element holding words:
+#: "class: words".
 _DESK_DOM = r"""
 function el(tag, cls, text) {
-  const e = { tag, className: cls || "", title: "", dataset: {}, disabled: false, kids: [],
+  const adopt = (c) => { if (c && typeof c === "object") c.parentNode = e; return c; };
+  const e = { tag, className: cls || "", title: "", dataset: {}, disabled: false, kids: [], parentNode: null, scrollTop: 0,
     get textContent() { return this.kids.map((k) => (typeof k === "string" ? k : k.textContent)).join(""); },
-    set textContent(v) { this.kids = [String(v)]; },
+    set textContent(v) { this.kids = v === "" ? [] : [String(v)]; },
     set innerHTML(v) { this.kids = v ? ["<html>" + v] : []; },
-    appendChild(c) { this.kids.push(c); return c; }, append(...cs) { this.kids.push(...cs); }, addEventListener() {},
+    appendChild(c) { this.kids.push(adopt(c)); return c; }, append(...cs) { this.kids.push(...cs.map(adopt)); },
+    addEventListener() {}, querySelectorAll() { return []; },
     querySelector(sel) {
       const walk = (n) => { for (const k of n.kids) if (typeof k !== "string") {
         if (k.className.split(" ").includes(sel.slice(1))) return k; const f = walk(k); if (f) return f; } return null; };
       return walk(this);
-    }, classList: { toggle() {} } };
+    }, classList: { toggle() {}, add() {}, remove() {} } };
   if (text != null) e.textContent = text;
   return e;
 }
@@ -1294,6 +1297,7 @@ global.ownMark = (item) => item && item.officialness && item.officialness.state 
   ? el("span", "own-mark", item.officialness.label) : null;
 global.setStatus = (node, kind, text) => { node.textContent = text; };
 global.renderViewFailure = () => {};
+global.openReviewPanel = () => {};
 global.ROTeam = { syncWrites: () => "[team.js]", openProposal() {}, differenceBlock: () => el("div", "diff") };
 global.RONode = { openNode() {} };
 function dump(node, out) {
@@ -1328,90 +1332,104 @@ _TEAM_AND_NODE = (
 #: The researcher's own words in the fixture (13.1: shown as written in either language), a file
 #: name of theirs among them, and the member's area on the shared drive, a fixed on-disk name.
 _THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了", "先补稳健性", "这里的缺失值要先处理", "figs/图3.png",
-           "figs/图3.official.png", "提议/li@example.com/"]
+           "figs/图3.official.png", "提议/li@example.com/", "换轴"]
 
 
 def _desk_cases(lang: str) -> list[dict]:
-    """Every kind of desk row and every desk layout (PI, member behind, up to
-    date, without the shared folder, not in the team, a single person) with
-    /api/desk's words as the engine sends them in `lang`."""
+    """Every part of the desk's column (DESIGN.md 14.4) and every role -- the
+    PI busy and with nothing to do; a member behind the official version,
+    up to date, before any publish, with a shared folder that cannot be read
+    or is not set; someone not in the team; a team file that cannot be read;
+    one person -- with /api/desk's column and words as the engine sends them
+    in `lang`."""
+    from researchos import desk as engine
+
     def w(zh: str, en: str) -> str:
         return en if lang == "en" else zh
 
     def st(status: str, label: str, words: str = "") -> dict:
         return {"status": status, "label": label, "words": words}
 
-    who = {"approved_by": [], "versions": 1, "notes": []}
-    changes = [
-        {**who, "kind": "file", "path": "steps/16-build.py", "at": "2024-03-01T12:00:00", "who": ["Li", w("最初的研究者", "Original researcher")],
-         "approved_by": ["Wang"], "versions": 3, "notes": ["dropna first"], "what_code": "lines", "uncommitted": True,
-         "what": w("增加 12 行，删去 1 行", "12 lines added, 1 line removed"),
-         "officialness": {"state": "mine", "label": w("我的改动，尚未提交", "My change, not yet proposed")}},
-        {**who, "kind": "file", "path": "figs/fig3.png", "at": "2024-03-01T11:00:00", "who": ["Li"], "what_code": "new_file",
-         "what": w("新文件", "New file"), "exists": False},
-        {**who, "kind": "attempt", "node": "a16", "number": "16", "title": "TopicShift 波动", "at": "2024-03-01T10:00:00",
-         "who": ["Li"], "what_code": "verdict_changed", "what": w("判决改了", "Verdict changed"),
-         "old_status": st("pending", "待定"), "new_status": st("abandoned", "已放弃", "伪协整")},
-        {**who, "kind": "attempt", "node": "a18", "number": "18", "title": "New route", "at": "2024-03-01T09:00:00",
-         "who": ["Wang"], "approved_by": ["Li"], "what_code": "new_attempt", "what": w("新增尝试", "New attempt"),
-         "new_status": st("labelled", "成立", "robust")},
-        {**who, "kind": "attempt", "node": "a19", "number": "19", "at": "2024-03-01T08:00:00", "who": ["Li"], "versions": 2,
-         "what_code": "result_changed", "what": w("结果改了", "Result changed"), "result": ""},
-        {**who, "kind": "decision", "node": "a16", "number": "16", "at": "2024-02-28T12:00:00", "act": "approved",
-         "proposal_kind": "verdict_change", "who": ["Wang"], "approved_by": ["Li"], "verdict_status": st("other", "其它", "?"),
-         "notes": ["agreed"]},
-        {**who, "kind": "decision", "node": "a17", "number": "17", "title": "Plot", "at": "2024-02-27T12:00:00",
-         "act": "abandoned", "who": [w("最初的研究者", "Original researcher")], "verdict_status": st("abandoned", "已放弃"),
-         "reason": "spurious"},
-        {**who, "kind": "decision", "at": "2024-02-26T12:00:00", "act": "approved", "proposal_kind": "files", "who": ["Wang"],
-         "approved_by": ["Li"]},
-        {"kind": "note", "path": "steps/17-plot.py", "at": "2024-02-25T12:00:00", "who": ["Wang"], "text": "这里的缺失值要先处理"},
-        {"kind": "note", "path": None, "label": None, "at": "2024-02-23T12:00:00", "who": ["Wang"], "text": "?"},
-    ]
-    breaks = [{"kind": "no_generating_script", "label": w("没有找到生成它的脚本", "No script that generates it was found"),
-               "path": "figs/fig1.png", "repair": w("补上来源", "Add source")},
-              {"kind": "data_missing", "label": w("数据文件不在磁盘上", "The data file is not on disk"), "path": "data/raw.csv"}]
-    busy = {"since": "2024-02-20T12:00:00", "since_default": False, "changes": changes, "more_changes": 4, "review": 1497,
-            "results": [{"path": "figs/fig1.png", "exists": False, "review": 2, "drafts": ["paper.md", "notes.md"],
-                         "breaks": breaks, "officialness": {"state": "proposed", "label": w("提议中", "Proposed")}},
-                        {"path": "figs/fig2.png", "review": 1, "drafts": [], "breaks": []}],
-            "abandoned": [{"number": "16", "title": "TopicShift 波动", "verdict_status": st("abandoned", "已放弃", "伪协整"),
-                           "result": "t=0.4", "reason": "spurious"},
-                          {"number": "", "verdict_status": st("abandoned", "放弃了"),
-                           "officialness": {"state": "approved", "label": w("已批准，待同步", "Approved, awaiting sync")}}]}
-    quiet = {"since_default": True, "default_days": 7, "changes": [], "results": [], "review": 0, "abandoned": []}
+    a = {n: f"attempt:map.md#{n}" for n in (16, 17, 18, 20)}
+    route = {"op": "add", "child": a[18], "parent": a[17], "child_number": "18", "parent_number": "17"}
     proposals = [
-        {"kind": "attempt_new", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T12:00:00",
+        {"id": "p1", "kind": "attempt_new", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T12:00:00",
          "attempt": {"number": "18", "description": "新路线"}, "files": [{"path": "steps/18.py"}],
          "outcomes": [{"act": "discussed", "text": "先补稳健性"}]},
-        {"kind": "verdict_change", "state": "conflict", "by": "wang@example.com", "at": "2024-03-01T11:00:00", "files": [{"path": "a/x.csv"}, {"path": "b/y.csv"}],
+        {"id": "p2", "kind": "verdict_change", "state": "conflict", "by": "wang@example.com", "at": "2024-03-01T11:00:00", "files": [{"path": "a/x.csv"}, {"path": "b/y.csv"}],
          "verdict": {"number": "16", "old_status": st("pending", "待定"), "new_status": st("abandoned", "已放弃"), "abandons": True}},
-        {"kind": "variable_version", "state": "returned", "at": "2024-03-01T10:00:00", "variable": {"card": "log_ret", "version": 2},
+        {"id": "p3", "kind": "variable_version", "state": "returned", "at": "2024-03-01T10:00:00", "variable": {"card": "log_ret", "version": 2},
          "outcomes": [{"act": "returned", "text": "redo it"}], "sentence": "Redefine log_ret"},
-        {"kind": "files", "state": "approved", "at": "2024-03-01T09:00:00", "files": [{"path": "a/1.py"}, {"path": "a/2.py"}, {"path": "a/3.py"}]},
+        {"id": "p4", "kind": "files", "state": "approved", "at": "2024-03-01T09:00:00", "files": [{"path": "a/1.py"}, {"path": "a/2.py"}, {"path": "a/3.py"}]},
         {"id": "p5", "kind": "odd", "state": "superseded", "at": "2024-03-01T08:00:00"},
-        {"kind": "verdict_change", "state": "returned", "at": "2024-03-01T07:00:00",
+        {"id": "p6", "kind": "verdict_change", "state": "returned", "at": "2024-03-01T07:00:00",
          "verdict": {"number": "#17", "old_status": st("current", "现行"), "new_status": st("labelled", "成立")}},
+        {"id": "p7", "kind": "route_link", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T06:00:00",
+         "sentence": "", "route": route},
+        {"id": "p8", "kind": "route_link", "state": "approved", "at": "2024-03-01T05:00:00", "route": {**route, "op": "remove"}},
     ]
+    touches = {"p2": [a[16]], "p6": [a[17]], "p7": [a[18], a[17]], "p8": [a[18], a[17]]}
+
+    def listed(p: dict) -> dict:  # the column's proposal: the listing's summary, as desk.route_map adds to it
+        returned = [o["text"] for o in p.get("outcomes", []) if o["act"] == "returned"]
+        return {**p, "by_label": "Wang" if p.get("by") else None, "touches": touches.get(p["id"], []),
+                "reason": returned[-1] if p["state"] == "returned" and returned else None, "awaiting_sync": p["id"] == "p4"}
+
+    def item(src: str, kind: str, dst: str, reason: str, on: list) -> dict:
+        from researchos.records import judgements
+
+        return {"src": src, "dst": dst, "type": kind, "extractor": "python_ast", "outcome": "review", "reason": reason,
+                "label": judgements.reason_label(reason, lang), "src_label": src.partition(":")[2],
+                "dst_label": dst.partition(":")[2], "attempts": on}
+
+    both = item("script:steps/16-build.py", "reads", "dataset:data/panel.csv", "basis_changed", [a[16], a[17]])
+    review = {"count": 1497, "groups": [
+        {"id": a[16], "items": [item("script:steps/16-build.py", "writes", "dataset:data/clean.csv", "basis_changed", [a[16]]),
+                                both], "officialness": {"state": "official"}},
+        {"id": a[17], "items": [both], "officialness": {"state": "mine", "label": w("我的改动，尚未提交", "My change, not yet proposed")}}],
+        "none": {"items": [item("script:other.py", "generates", "figure:figs/图3.png", "not_produced", []),
+                           item("script:other.py", "odd", "file:x.md", "basis_changed", [])],
+                 "cards": [{"key": "script:steps/vars.py", "script": "steps/vars.py", "cards": ["log_ret", "vol"], "counted": True,
+                            "words": w("此脚本的改动涉及 2 个变量", "This script’s change touches 2 variables")},
+                           {"key": "card:log_ret", "script": None, "cards": ["log_ret", "vol"], "counted": True, "words": None}]}}
+    missing = [{"child": a[20], "parent": a[16], "child_number": "20", "parent_number": "16", "missing": ["child"], "note": "换轴",
+                "by_label": w("最初的研究者", "Original researcher"), "officialness": {"state": "official"}}]
+    attempts = [{"id": a[16], "number": "16", "title": "TopicShift 波动"}, {"id": a[17], "number": "17", "title": "Plot"}]
+
+    def desk(role: str, **column) -> dict:
+        shared = column.pop("shared", "ok" if role in ("pi", "member") else "not_needed")
+        return {"role": role, "attempts": attempts, "lines": [], "lines_missing": column.pop("missing", []), "column": {
+            "role": role, "me": "li@example.com", "notice": w(*engine.ROLE_WORDS[role]) if role in engine.ROLE_WORDS else None,
+            "shared": {"state": shared, "message": w(*engine.SHARED_WORDS[shared]) if shared in engine.SHARED_WORDS else None},
+            "waiting": [], "mine": [], "review": {"count": 0, "groups": [], "none": {"items": [], "cards": []}}, "sync": None,
+            **column}}
+
     me = {"me": {"id": "li@example.com", "name": "Li"}}
     team = [{"id": "wang@example.com", "name": "Wang"}]
-    member = {"shared": "/x", "reachable": True, "role": "member", "team": team,
+    behind = {"shared": "/x", "reachable": True, "behind": True, "seq": 3,
               "last_snapshot": {"at": "2024-03-01T12:00:00", "seq": 1497, "note": "fixes"}}
     # What 同步 would write (GET /api/share/sync-preview): sending, updating, removing, an .official copy.
     preview = {"from": 3, "to": 1497, "update": ["a.py", "b.py"], "remove": ["c.py"],
                "beside": [{"path": "d.py", "official_copy": "d.official.py"}], "records": [".researchos/notes.toml"],
                "kept": [], "area": "提议/li@example.com/",
                "sending": {"notes": 1, "judgements": 2, "papers": 1, "links_added": 1, "links_removed": 0}}
+    pi_list = {"role": "pi", "proposals": proposals}
+    member_list = {"role": "member", "proposals": []}
     return [
-        {"me": me, "proposals": {"role": "pi", "proposals": proposals}, "share": {"shared": "/x", "role": "pi", "team": team}, "desk": busy},
-        {"me": me, "proposals": {"role": "pi", "proposals": []}, "share": {}, "desk": quiet},
-        {"me": me, "proposals": {"role": "member", "proposals": proposals}, "share": {**member, "behind": True},
-         "preview": preview, "desk": {**quiet, "default_days": 1}},
-        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {**member, "last_snapshot": {"seq": 3}}, "desk": quiet},
-        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": True}, "desk": quiet},
-        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": "/x", "reachable": False}, "desk": quiet},
-        {"me": me, "proposals": {"role": "member", "proposals": []}, "share": {"shared": None}, "desk": quiet},
-        {"me": me, "proposals": {"role": "none", "proposals": []}, "share": {}, "desk": quiet},
+        {"me": me, "proposals": pi_list, "share": {"shared": "/x", "role": "pi", "team": team},
+         "desk": desk("pi", waiting=[listed(p) for p in proposals if p["state"] in ("pending", "conflict")], review=review,
+                      missing=missing)},
+        {"me": me, "proposals": {"role": "pi", "proposals": []}, "share": {}, "desk": desk("pi")},
+        {"me": me, "proposals": {"role": "member", "proposals": proposals}, "share": {}, "preview": preview,
+         "desk": desk("member", mine=[listed(p) for p in proposals], sync=behind)},
+        {"me": me, "proposals": member_list, "share": {}, "desk": desk("member", sync={**behind, "behind": False, "last_snapshot": {"seq": 3}})},
+        {"me": me, "proposals": member_list, "share": {}, "desk": desk("member", sync={**behind, "behind": False, "last_snapshot": None})},
+        {"me": me, "proposals": member_list, "share": {}, "desk": desk("member", shared="unreadable", sync={**behind, "reachable": False})},
+        {"me": me, "proposals": member_list, "share": {}, "desk": desk("member", shared="not_configured", sync={"shared": None})},
+        {"me": me, "proposals": {"role": "none", "proposals": []}, "share": {}, "desk": desk("none")},
+        {"me": me, "proposals": {"role": "unknown", "proposals": []}, "share": {}, "desk": desk("unknown")},
+        {"me": me, "proposals": None, "share": None, "desk": desk("single", review={**review, "count": 1, "groups": review["groups"][:1],
+                                                                               "none": {"items": [], "cards": []}}, missing=missing)},
     ]
 
 
@@ -1427,9 +1445,11 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
                  " process.stdout.write(JSON.stringify(out)); })();\n")
 
 
-#: sha256 of the Chinese desks above as rendered by desk.js before this increment (commit 041c510;
-#: `_desks(None, <that file>)`): 13.8 #1, a Chinese screen reads byte for byte as before.
-_DESK_ZH_SHA256 = "188bf3eca8bb323c481b4118e7186da503a6b2a9748296bfedb0c3db80ce5dda"
+#: sha256 of the Chinese desks above as rendered by desk.js (`_desks(None)`): 13.8 #1, a Chinese
+#: screen reads byte for byte as designed. Re-baselined on purpose for V10 (DESIGN.md 14.5, 14.7):
+#: the desk is the route map with the column beside it, so the first increment's pin (commit
+#: 041c510's lists of changes, outputs and abandoned routes) describes a desk that is gone.
+_DESK_ZH_SHA256 = "8745dfe1b2bb2f3fe30e084d73d455e35834f18d74470582f91d47496da852ec"
 
 
 @needs_node
@@ -1439,51 +1459,51 @@ def test_13_8_the_desk_in_chinese_is_as_before(saved):
 
     desks = _desks(saved)
     assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
-    assert "desk-what: 判决 [verdict-inline] 改为 [verdict-inline]" in desks[0]
+    assert desks[0][:2] == ["desk-column-title: 待办", "desk-title: 等你批准"]
     assert "desk-sub: 1497 条判断的依据变了，等你复核。[desk-link]" in desks[0]
+    assert "desk-link strong: 加上连线：#18 源自 #17 (title: 在路线图上标出它涉及的尝试)" in desks[0]
 
 
 @needs_node
 def test_13_7_the_desk_in_english():
-    """Every word the desk writes is English (13.4's words, 13.5's dates,
-    numbers and plurals, 12.13's sentences without arrows); the
-    researcher's own words, a [verdict_labels] word among them, as
-    written; the page picks a row's form by what_code, never by words.
-    Drawn with the real team.js and node.js: a member's 「官方版本有更新」
-    says what 同步 will write in English too."""
+    """Every word the desk's column writes is English (13.4's words and 14.6's,
+    13.5's dates, numbers and plurals); the researcher's own words, a
+    [verdict_labels] word among them, as written; the engine's sentences
+    as it composed them for the request. Drawn with the real team.js and
+    node.js: a member's 「官方版本有更新」 says what 同步 will write in
+    English too."""
     desks = _desks("en", team=True)
     lines = [line for desk in desks for line in desk]
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in [
-        "desk-title: Awaiting your approval", "desk-when: 1 Mar 2024", "status-label tone-plain: New attempt",
-        "desk-what strong: New attempt #18: 新路线, with 1 file",
-        "desk-what strong: #16: change the verdict from “Pending” to “Abandoned”, abandoning the route, with 2 files",
-        "desk-sub: Last looked: 20 Feb 2024", "desk-link mono: steps/16-build.py (title: Open this file)",
-        "desk-what: 12 lines added, 1 line removed (not committed yet)", "own-mark: My change, not yet proposed",
-        "desk-meta: Li and Original researcher · Approved by Wang · Changed 3 times in this period",
-        "desk-what: Verdict changed from [verdict-inline] to [verdict-inline]", "status-label tone-ochre: Pending",
-        "desk-what: New attempt, verdict [verdict-inline]", "status-label tone-plain: 成立",
-        "desk-what: Result changed to: (empty)", "status-label tone-plain: Other", "desk-note: Reason: spurious",
-        "desk-what: Approved a proposal to change a verdict", "desk-meta: Proposed by Wang · Approved by Li",
-        "desk-what: Note on", "desk-link: a record", "desk-repair: Fix with “Add source”",
-        "desk-break: The data file is not on disk: data/raw.csv",
-        "desk-break: 2 linked judgments in its sources need review[desk-link]", "desk-meta: Cited by paper.md and notes.md",
-        "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
-        "status-label tone-gray: 放弃了", "desk-link: See their basis at the time in Research routes",
+        "desk-column-title: To handle", "desk-title: Awaiting your approval", "status-label tone-plain: New attempt",
+        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · 1 Mar 2024", "btn btn-small: View",
+        "desk-link strong: #16: change the verdict from “Pending” to “Abandoned”, abandoning the route, with 2 files "
+        "(title: Mark the attempts it touches on the route map)",
+        "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
+        "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
+        "(title: Mark the attempts it touches on the route map)",
+        "desk-title: Needs review", "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
+        "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark the attempts it touches on the route map)",
+        ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
+        "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
+        ": [desk-reason]other.py generates figs/图3.png", "desk-reason: The machine no longer finds this link",
+        ": [desk-reason]other.py is linked to x.md", ": [mono] This script’s change touches 2 variables", ": log_ret, vol",
+        "desk-title: Lines with a missing end", "desk-what: #20 grew out of #16",
+        "desk-meta: #20 is not in the table · Original researcher",
     ]:
         assert line in desks[0], line
-    assert desks[1] == ["desk-title: Awaiting your approval", "desk-empty: No proposals await your approval.",
-                        "desk-title: Changes since you last looked",
-                        "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 7 days.",
-                        "desk-empty: No changes in this period.", "desk-title: Outputs whose basis changed",
-                        "desk-empty: Every output still has its sources.", "desk-title: Abandoned routes",
-                        "desk-empty: No route has been abandoned yet."]
-    for line in ["desk-meta: Awaiting PI approval · The PI says: 先补稳健性", "desk-note plain: Variable log_ret: definition version 2",
-                 "desk-meta: Returned: redo it", "desk-what strong: 3 files: 1.py, 2.py and others", "status-label tone-plain: Proposal",
-                 "desk-what strong: #17: change the verdict from “Current” to “成立”", "desk-title: Official version updated",
+    # A judgment two attempts hold is under both, and the count says it once (the engine's).
+    assert desks[0].count(": [desk-reason]steps/16-build.py reads data/panel.csv") == 2
+    assert desks[1] == ["desk-column-title: To handle", "desk-empty: Nothing to handle right now."]
+    for line in ["desk-title: My proposals", "desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
+                 "desk-note plain: Variable log_ret: definition version 2", "desk-meta: Returned: redo it · 1 Mar 2024",
+                 "desk-link strong: 3 files: 1.py, 2.py and others", "desk-meta: Approved, awaiting sync · 1 Mar 2024",
+                 "desk-link strong: #17: change the verdict from “Current” to “成立” "
+                 "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
+                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
-                 "desk-sub: When you last looked is not recorded yet, so this lists the changes of the past 1 day.",
                  "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 linked judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
                  "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
@@ -1493,43 +1513,54 @@ def test_13_7_the_desk_in_english():
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
-    assert "desk-empty: Your working copy is the latest official version (version 3)." in desks[3]
-    assert "desk-empty: The PI has not published an official version yet." in desks[4]
+    # 14.4: what waits -- a proposal superseded, or approved and synced since, is not listed.
+    assert not any(line.startswith("desk-link strong: Remove the line") for line in desks[2])
+    assert not any("Replaced by your later proposal" in line for line in desks[2])
+    for i in (3, 4):  # a member up to date, or before any publish: nothing to handle
+        assert desks[i] == desks[1], i
+    assert desks[5] == ["desk-column-title: To handle", "desk-alone: The shared folder cannot be opened right now: "
+                        "proposals and sync cannot be shown"]  # never 「同步」 while it cannot be opened
+    assert "desk-alone: This project is not connected to a shared folder: proposals and sync cannot be shown" in desks[6]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
+    assert "desk-alone: The members file (team.toml) cannot be read right now, so who the PI is cannot be told" in desks[8]
+    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 judgment changed; it awaits your review.[desk-link]"]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
 
 
 @needs_node
 @pytest.mark.parametrize("saved", [None, "zh", "en"])
 def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
-    """A row's people (and the PIs who approved) as each language lists
-    them: in English the last two joined by “and”, 13.4's “Original
-    researcher” as the glossary writes it; in Chinese with 「、」 as before.
-    A proposal's line says what approving it would do, not what is done."""
+    """A row of the desk's column names its people as the engine named them
+    in the request's language -- who proposed, who drew a line (13.4's
+    “Original researcher”) -- and its names as each language lists them: in
+    English with a comma, in Chinese with 「、」. A proposal's line says what
+    approving it would do, not what is done. (V10, 14.5: the rows of changes
+    that named several people are gone; what changed is 「有改动」 on a card.)"""
     zh = saved != "en"
     first = "最初的研究者" if zh else "Original researcher"
-    change = {"kind": "file", "path": "a.py", "at": "2024-03-01T12:00:00", "who": ["Li", "Wang", first],
-              "approved_by": ["Zhao", "Qian"], "versions": 1, "notes": [], "what_code": "changed",
-              "what": "内容有改动" if zh else "Content changed"}
-    decision = {"kind": "decision", "at": "2024-02-26T12:00:00", "act": "approved", "proposal_kind": "files",
-                "who": ["Wang"], "approved_by": ["Li", "Zhao"], "versions": 1, "notes": []}
-    verdict = {"kind": "verdict_change", "state": "pending", "by": "wang@example.com", "at": "2024-03-01T11:00:00",
+    verdict = {"id": "p1", "kind": "verdict_change", "state": "pending", "by": "wang@example.com", "by_label": "Wang",
+               "at": "2024-03-01T11:00:00", "touches": ["attempt:map.md#16"],
                "verdict": {"number": "16", "old_status": {"status": "pending", "label": "待定"},
                            "new_status": {"status": "current", "label": "现行"}}}
+    line = {"child": "attempt:map.md#20", "parent": "attempt:map.md#16", "child_number": "20", "parent_number": "16",
+            "missing": ["child", "parent"], "by_label": first}
+    cards = {"key": "card:x", "script": None, "cards": ["log_ret", "vol", "ret"], "counted": True, "words": None}
+    review = {"count": 1, "groups": [], "none": {"items": [], "cards": [cards]}}
     case = {"me": {"me": {"id": "li@example.com", "name": "Li"}}, "proposals": {"role": "pi", "proposals": [verdict]},
-            "share": {}, "desk": {"since_default": True, "default_days": 7, "changes": [change, decision], "results": [],
-                                  "review": 0, "abandoned": []}}
+            "share": {}, "desk": {"role": "pi", "attempts": [], "lines_missing": [line], "column": {
+                "role": "pi", "shared": {"state": "ok", "message": None}, "waiting": [verdict], "review": review}}}
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     desk = _node("global.window = {};\n" + i18n + _DESK_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8")
                  + f"\n(async () => process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case)}))))();\n")
-    meta = [line for line in desk if line.startswith(("desk-meta", "desk-what strong"))]
+    meta = [line for line in desk if line.startswith(("desk-meta", "desk-link strong", ": log_ret"))]
     if zh:
-        assert meta == ["desk-what strong: #16 的判决从「待定」改为「现行」", "desk-meta: wang@example.com",
-                        "desk-meta: Li、Wang、最初的研究者 · 经 Zhao、Qian 批准", "desk-meta: 提议人 Wang · 批准人 Li、Zhao"]
+        assert meta == ["desk-link strong: #16 的判决从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
+                        "desk-meta: Wang · 2024年3月1日", ": log_ret、vol、ret", "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
     else:
-        assert meta == ["desk-what strong: #16: change the verdict from “Pending” to “Current”", "desk-meta: wang@example.com",
-                        "desk-meta: Li, Wang and Original researcher · Approved by Zhao and Qian",
-                        "desk-meta: Proposed by Wang · Approved by Li and Zhao"]
+        assert meta == ["desk-link strong: #16: change the verdict from “Pending” to “Current” "
+                        "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · 1 Mar 2024",
+                        ": log_ret, vol, ret",
+                        "desk-meta: #20 is not in the table · #16 is not in the table · Original researcher"]
 
 
 def _sync_result(lang: str) -> dict[str, Any]:

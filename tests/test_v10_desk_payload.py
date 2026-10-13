@@ -222,3 +222,20 @@ def test_14_4_a_shared_folder_that_cannot_be_read_never_holds_back_the_map(drive
     with drive.pi():  # the role comes from the team file: the PI's desk never falls back to single
         pi = _payload(drive.official)
     assert (pi["role"], pi["column"]["shared"]["state"], pi["column"]["waiting"]) == ("pi", "unreadable", [])
+
+
+def test_14_4_an_approved_proposal_waits_in_my_proposals_until_the_sync_brings_it_in(drive):
+    """The designer's ruling (2026-10-12): 已批准，待同步 stays in a member's
+    column only while something the proposal carries is still marked
+    approved here; the sync that brings it in takes it off the list."""
+    verdict, add, _remove = _two_people(drive)
+    with drive.pi():
+        proposals.approve(drive.official, add.id)
+    with drive.member():
+        column = _payload(drive.work)["column"]
+        mine = {p["id"]: p for p in column["mine"]}
+        assert (mine[add.id]["state"], mine[add.id]["awaiting_sync"]) == ("approved", True)
+        assert (mine[verdict.id]["state"], mine[verdict.id]["awaiting_sync"]) == ("pending", False)
+        share.sync(drive.work)
+        after = {p["id"]: p for p in _payload(drive.work)["column"]["mine"]}
+    assert (after[add.id]["state"], after[add.id]["awaiting_sync"]) == ("approved", False)

@@ -1,33 +1,35 @@
-// The sidebar's live lines and the desk (工作台) -- DESIGN.md 12.0, 12.9,
-// 12.11; task V8 phase U2. Served verbatim at /desk.js by the same process
-// and loaded by app.html with a plain same-origin <script src>, exactly as
-// /canvas.js is: zero build, zero external resources, same origin check.
+// The sidebar's live lines and the desk (工作台) -- DESIGN.md 12.9, 12.11 and
+// Section 14 (task V10: the desk is the route map). Served verbatim at
+// /desk.js by the same process and loaded by app.html with a plain
+// same-origin <script src>, exactly as /canvas.js is: zero build, zero
+// external resources, same origin check.
 //
 // It defines one global, window.RODesk, and calls app.html's helpers (mk,
-// mkButton, apiGet, apiPost, renderBlockingError, renderErrorBox, setStatus,
-// RONode.openNode (every object opens its node page, U3), ROTeam.openProposal
-// (a proposal opens its page in 提议, U4), openReviewPanel,
-// showAbandonedRoutes, state, ...) only at run time, never while loading.
+// mkButton, apiGet, apiPost, renderBlockingError, renderViewFailure,
+// setStatus, ownMark, openReviewPanel, RONode.openNode, ROTeam.openProposal,
+// state, ...) and /routemap.js's window.RORouteMap only at run time, never
+// while loading.
 //
 // What it reads (all GET, all origin-checked by the server):
 //   /api/me         -- who I am on this machine (the sidebar's last line);
-//   /api/share      -- the shared drive's state of a collaborative project
-//                      (the status line; a member's 官方版本有更新);
-//   /api/proposals  -- the PI's inbox or a member's own proposals (the quiet
-//                      count beside 提议; 等你批准 / 我的提议 on the desk);
-//   /api/desk?since -- what changed since I last looked, results that lost
-//                      their evidence, abandoned routes (researchos.desk).
+//   /api/share      -- the shared drive's state (the sidebar's status line);
+//   /api/proposals  -- the quiet count beside 提议 and the shell's mode;
+//   /api/desk       -- the route map's cards, lines and arrangement, and the
+//                      column beside it (researchos.desk.payload).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
 //
-// The desk is what 12.0 says and nothing else: what waits for my decision,
-// what changed since I last looked and exactly where, which results lost
-// their evidence, which routes were abandoned. No statistics, no charts, no
-// counters for their own sake. Nothing typed on the page ever becomes a
-// filesystem path: every path shown comes from the server.
+// The desk is the route map with what waits for me beside it (14.1, 14.4):
+// the PI's 等你批准, a member's 我的提议, 待复核 under the attempt it
+// belongs to, a member's 官方版本有更新 with 同步, the lines with a missing
+// end -- or one quiet line. What changed since I last looked is 「有改动」
+// on the cards, abandoned routes are the quieter cards (14.5). No
+// statistics, no charts, no counters for their own sake. Nothing typed on
+// the page ever becomes a filesystem path: every path shown comes from the
+// server.
 //
 // 12.11: no emoji, no arrow characters, verdicts as text status labels (the
 // server's verdict_status, mapped from the researcher's own markers), the
-// researcher's own words shown as written.
+// researcher's own words shown as written. 13.6: every word through t().
 (function () {
   "use strict";
 
@@ -45,6 +47,7 @@
       case "verdict_change": return t("判决变更");
       case "variable_version": return t("变量定义");
       case "files": return t("文件");
+      case "route_link": return t("连线");
       default: return null;
     }
   }
@@ -58,17 +61,6 @@
       case "returned": return t("已退回");
       case "superseded": return t("已被你后来的提议替代");
       default: return String(state || "");
-    }
-  }
-
-  // What an approval did, one sentence per kind (13.6: English word order).
-  function approvedWords(kind) {
-    switch (kind) {
-      case "attempt_new": return t("批准了一条新尝试提议");
-      case "verdict_change": return t("批准了一条判决变更提议");
-      case "variable_version": return t("批准了一条变量定义提议");
-      case "files": return t("批准了一条文件提议");
-      default: return t("批准了一条提议");
     }
   }
 
@@ -107,23 +99,6 @@
   // Names in a row: 「、」 in Chinese, a comma in English. (Not `list`: the
   // render functions keep a local of that name.)
   function series(xs) { return xs.join(t("、")); }
-
-  // People (and drafts) named in a sentence: in English the last two joined
-  // by "and" ("Li, Wang and Original researcher"); in Chinese as series.
-  function andSeries(xs) {
-    return english() && xs.length > 1 ? series(xs.slice(0, -1)) + " and " + xs[xs.length - 1] : series(xs);
-  }
-
-  // A sentence whose fields are elements (a verdict's label): the template's
-  // text around them, in the template's own word order (13.6).
-  function fillNodes(parent, template, nodes) {
-    String(template).split(/(\{\w+\})/).forEach((part) => {
-      const key = part.slice(1, -1);
-      if (/^\{\w+\}$/.test(part) && Object.prototype.hasOwnProperty.call(nodes, key)) parent.append(nodes[key]);
-      else if (part) parent.append(part);
-    });
-    return parent;
-  }
 
   const VERDICT_TONES = {
     current: "olive", abandoned: "gray", pending: "ochre", adverse: "clay",
@@ -211,6 +186,10 @@
       return t("#{number} 的判决从「{was}」改为「{became}」", { number: String(v.number || "").replace(/^#/, ""),
         was: v.old_status ? verdictWord(v.old_status) : "", became: v.new_status ? verdictWord(v.new_status) : "" }) +
         (v.abandons ? t("，放弃这条路线") : "") + filesPart;
+    }
+    if (p.kind === "route_link" && p.route) {
+      const ends = { child: p.route.child_number || "", parent: p.route.parent_number || "" };
+      return p.route.op === "remove" ? t("删去连线：#{child} 源自 #{parent}", ends) : t("加上连线：#{child} 源自 #{parent}", ends);
     }
     if (p.kind === "variable_version" && p.variable) {
       return t("变量 {card} 的第 {version} 版定义", { card: p.variable.card || "", version: p.variable.version || "" }) +
@@ -371,7 +350,11 @@
     }
   }
 
-  // -- the desk ----------------------------------------------------------------------
+  // -- the desk: the route map and the column beside it (DESIGN.md 14.1, 14.4, 14.5) -------
+  // Both are made once and kept: a refresh hands the map the new payload and
+  // redraws the column's contents in place, so the map keeps its camera, its
+  // selection and a drag in progress, and the column its scroll. Without
+  // /routemap.js (this file run alone) the column alone.
 
   function block(title, cls) {
     const sec = mk("section", "desk-block" + (cls ? " " + cls : ""));
@@ -389,7 +372,7 @@
     return b;
   }
 
-  // 12.9: every object the desk names opens its node page.
+  // A click on a card opens it: its node page (12.9) until the panel (14.3).
   function openAttempt(id) {
     RONode.openNode(id);
   }
@@ -403,204 +386,167 @@
     return mk("div", "desk-meta", parts.filter(Boolean).join(" · "));
   }
 
-  function renderChange(item, team) {
-    const row = mk("li", "desk-row");
-    const at = mk("span", "desk-when", whenWords(item.at, now()));
-    const main = mk("div", "desk-main");
-    const head = mk("div", "desk-head");
-    const who = andSeries(item.who || []);
-    if (item.kind === "file") {
-      head.appendChild(rowLink(item.path, "mono", () => RONode.openNode(item.node || item.path), t("打开这个文件")));
-      head.appendChild(mk("span", "desk-what", item.uncommitted ? t("{what}（还没有提交）", { what: item.what })
-        : String(item.what)));
-      if (item.exists === false) head.appendChild(mk("span", "desk-flag", t("文件不存在")));
-    } else if (item.kind === "attempt") {
-      head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), t("打开这条尝试")));
-      // 13.6: the engine's code decides the form, never the words it sends.
-      if (item.what_code === "verdict_changed" && item.old_status) {
-        head.appendChild(fillNodes(mk("span", "desk-what"), t("判决 {was} 改为 {became}"),
-          { was: verdictInline(item.old_status), became: verdictInline(item.new_status) }));
-      } else if (item.what_code === "new_attempt") {
-        head.appendChild(fillNodes(mk("span", "desk-what"), t("新增的尝试 {verdict}"), { verdict: verdictInline(item.new_status) }));
-      } else {
-        head.appendChild(mk("span", "desk-what", t("结果改为：{result}", { result: item.result || t("（空）") })));
-      }
-    } else if (item.kind === "decision") {
-      const what = item.act === "abandoned" ? t("放弃了这条路线") : approvedWords(item.proposal_kind);
-      if (item.node) head.appendChild(rowLink(attemptName(item) || item.node, "", () => openAttempt(item.node), t("打开这条尝试")));
-      head.appendChild(mk("span", "desk-what", what));
-      if (item.verdict_status) head.appendChild(verdictInline(item.verdict_status));
-    } else if (item.kind === "note") {
-      // 8.8: the file's path, or what the note is on as a reader names it.
-      const target = item.path || item.label || t("一处记录");
-      head.appendChild(mk("span", "desk-what", t("笔记，写在")));
-      head.appendChild(rowLink(target, item.path ? "mono" : "", () => RONode.openNode(item.node || item.path)));
-    }
-    const own = item.kind === "file" || item.kind === "attempt" ? ownMark(item) : null;
-    if (own) head.appendChild(own); // 12.12: a member's own work is never shown as official
-    main.appendChild(head);
-    const meta = [];
-    if (item.kind === "decision") {
-      meta.push(t("提议人 {who}", { who: who }));
-      if (item.approved_by && item.approved_by.length) meta.push(t("批准人 {who}", { who: andSeries(item.approved_by) }));
-    } else if (who) {
-      meta.push(who);
-      if (item.approved_by && item.approved_by.length) meta.push(t("经 {who} 批准", { who: andSeries(item.approved_by) }));
-    }
-    if (item.versions > 1) meta.push(t("这段时间里改了 {n} 次", { n: numberText(item.versions) }));
-    main.appendChild(metaLine(meta));
-    const quotes = item.kind === "note" ? [item.text] : (item.notes || []);
-    if (item.kind === "decision" && item.reason) quotes.unshift(t("理由：{reason}", { reason: item.reason }));
-    quotes.filter(Boolean).slice(0, 3).forEach((q) => main.appendChild(mk("p", "desk-note", q)));
-    row.append(at, main);
-    return row;
+  let routeMap = null;
+  let layoutEl = null;
+  let columnEl = null;
+  let drawnEpoch = -1;          // the project (state.dataEpoch) the desk last showed
+  let picked = null;            // the column's row picked: { key, ids }
+  const drawnKeys = new Set();  // the rows the column shows now
+
+  // A row of the column picked (14.4): the attempts it touches are marked on
+  // the map and brought into view; picked again, unmarked.
+  function pick(key, ids) {
+    picked = picked && picked.key === key ? null : { key: key, ids: ids };
+    columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
+    if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
 
-  function renderChanges(host, data) {
-    const sec = block(t("你上次查看以来的改动"));
-    const since = data.since_default
-      ? t("还没有记录你上次查看的时间，这里列出过去 {n} 天的改动。", { n: numberText(data.default_days || DESK_DAYS) })
-      : t("上次查看：{when}", { when: whenInLine(data.since, now()) });
-    sec.appendChild(mk("p", "desk-sub", since));
-    const changes = data.changes || [];
-    if (!changes.length) {
-      sec.appendChild(emptyLine(t("这段时间里没有改动。")));
-    } else {
-      const ul = mk("ul", "desk-list");
-      const team = (ctx.share && ctx.share.team) || [];
-      changes.forEach((c) => ul.appendChild(renderChange(c, team)));
-      sec.appendChild(ul);
-      if (data.more_changes > 0) sec.appendChild(mk("p", "desk-sub", t("更早的改动没有列出，可以在各个文件的历史里查看。")));
-    }
+  function pickLink(row, text, key, ids) {
+    row.dataset.pick = key;
+    drawnKeys.add(key);
+    if (picked && picked.key === key) row.classList.add("picked");
+    return rowLink(text, "strong", () => pick(key, ids), ids.length ? t("在路线图上标出它涉及的尝试") : "");
+  }
+
+  function listBlock(host, title, rows) {
+    if (!rows.length) return false;
+    const sec = block(title);
+    const ul = mk("ul", "desk-list");
+    rows.forEach((r) => ul.appendChild(r));
+    sec.appendChild(ul);
     host.appendChild(sec);
+    return true;
   }
 
-  function renderResults(host, data) {
-    const sec = block(t("依据变了的成果"));
-    const results = data.results || [];
-    const review = typeof data.review === "number" ? data.review : 0;
-    if (!results.length && !review) {
-      sec.appendChild(emptyLine(t("所有成果的来源都还在。")));
-      host.appendChild(sec);
-      return;
+  // How a member's own proposal stands (14.4): 提议中 (with what the PI
+  // said), 已退回 with the reason, 已批准，待同步.
+  function mineState(p) {
+    if (p.state === "pending") {
+      const talk = lastOutcome(p, "discussed") || lastOutcome(p, "discuss");
+      return talk && talk.text ? t("提议中 · PI 说：{text}", { text: talk.text }) : t("提议中");
     }
-    if (results.length) {
-      const ul = mk("ul", "desk-list");
-      results.forEach((r) => {
-        const row = mk("li", "desk-row");
-        const main = mk("div", "desk-main");
-        const head = mk("div", "desk-head");
-        head.appendChild(rowLink(r.path || r.node, "mono", () => RONode.openNode(r.node || r.path), t("打开这个成果")));
-        if (r.exists === false) head.appendChild(mk("span", "desk-flag", t("文件不存在")));
-        const own = ownMark(r);
-        if (own) head.appendChild(own);
-        main.appendChild(head);
-        (r.breaks || []).forEach((b) => {
-          const line = mk("p", "desk-break", b.path && b.path !== r.path ? t("{label}：{path}", { label: b.label, path: b.path })
-            : String(b.label));
-          if (b.repair) line.appendChild(mk("span", "desk-repair", t("可以{repair}", { repair: b.repair })));
-          main.appendChild(line);
-        });
-        if (r.review) {
-          const line = mk("p", "desk-break", t("它的来源里有 {n} 条关联的判断待复核", { n: numberText(r.review) }));
-          line.appendChild(rowLink(t("复核"), "", () => openReviewPanel(null)));
-          main.appendChild(line);
-        }
-        if (r.drafts && r.drafts.length) main.appendChild(metaLine([t("文稿 {drafts} 引用了它", { drafts: andSeries(r.drafts) })]));
-        row.appendChild(main);
-        ul.appendChild(row);
-      });
-      sec.appendChild(ul);
-    }
-    if (review) {
-      const line = mk("p", "desk-sub");
-      line.append(t("{n} 条判断的依据变了，等你复核。", { n: numberText(review) }));
-      line.appendChild(rowLink(t("查看"), "", () => openReviewPanel(null)));
-      sec.appendChild(line);
-    }
-    host.appendChild(sec);
+    if (p.state === "returned") return p.reason ? t("已退回：{reason}", { reason: p.reason }) : t("已退回");
+    return p.state === "approved" ? t("已批准，待同步") : stateWord(p.state);
   }
 
-  // 12.0: which routes were abandoned and why -- each route by its number
-  // and title, its result and its reason, opening its page.
-  function renderAbandoned(host, data) {
-    const sec = block(t("已放弃的路线"));
-    const list = data.abandoned || [];
-    if (!list.length) {
-      sec.appendChild(emptyLine(t("还没有放弃过的路线。")));
-    } else {
-      const ul = mk("ul", "desk-list");
-      list.forEach((a) => {
-        const row = mk("li", "desk-row");
-        const main = mk("div", "desk-main");
-        const head = mk("div", "desk-head");
-        head.appendChild(rowLink(attemptName(a) || t("一条尝试"), "", () => openAttempt(a.id), t("打开这条路线")));
-        if (a.verdict_status) head.appendChild(verdictInline(a.verdict_status));
-        const own = ownMark(a);
-        if (own) head.appendChild(own);
-        main.appendChild(head);
-        if (a.result) main.appendChild(mk("p", "desk-note plain", t("结果：{result}", { result: a.result })));
-        // The verdict's own words beside the label often are the reason;
-        // a reason recorded apart (an approval, 「放弃理由：…」) is said too.
-        if (a.reason) main.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: a.reason })));
-        row.appendChild(main);
-        ul.appendChild(row);
-      });
-      sec.appendChild(ul);
-      const line = mk("p", "desk-sub");
-      line.appendChild(rowLink(t("在研究路线中查看它们当时的依据"), "", () => showAbandonedRoutes()));
-      sec.appendChild(line);
-    }
-    host.appendChild(sec);
+  // What waits in 我的提议: a proposal pending or returned (its reason
+  // stays), or approved while something it carries is not synced yet.
+  function waits(p) {
+    return p.state === "pending" || p.state === "conflict" || p.state === "returned" || !!p.awaiting_sync;
   }
 
-  function renderProposalRow(p, team, forPi) {
+  // A proposal in the column (14.4): what approving it would do, who and
+  // when -- or, for its author, how it stands. Its title marks the attempts
+  // it touches; 「查看」 opens its page (in the panel once there is one, 14.3).
+  function proposalRow(p, forPi) {
     const row = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    head.appendChild(mk("span", "status-label tone-plain", kindWord(p.kind) || t("提议", { n: 1 })));
-    head.appendChild(mk("span", "desk-what strong", p.sentence || proposalWhat(p) || p.id));
-    main.appendChild(head);
     const what = proposalWhat(p);
+    head.appendChild(mk("span", "status-label tone-plain", kindWord(p.kind) || t("提议", { n: 1 })));
+    head.appendChild(pickLink(row, p.sentence || what || p.id, "p:" + p.id, p.touches || []));
+    main.appendChild(head);
     if (what && p.sentence) main.appendChild(mk("p", "desk-note plain", what));
-    const meta = forPi ? [nameOf(p.by, team)] : [proposalStateText(p)];
-    main.appendChild(metaLine(meta));
+    const state = forPi ? (p.state === "conflict" ? stateWord(p.state) : "") : mineState(p);
+    main.appendChild(metaLine([forPi ? p.by_label || p.by : "", state, whenWords(p.at, now())]));
     const actions = mk("div", "desk-actions");
     actions.appendChild(mkButton(t("查看"), "btn btn-small", () => ROTeam.openProposal(p.id, p.by)));
     main.appendChild(actions);
-    row.append(mk("span", "desk-when", whenWords(p.at, now())), main);
+    row.appendChild(main);
     return row;
   }
 
-  function renderWaiting(host) {
-    const sec = block(t("等你批准"));
-    const team = (ctx.share && ctx.share.team) || [];
-    const list = ((ctx.proposals && ctx.proposals.proposals) || []).filter((p) => p.state === "pending" || p.state === "conflict");
-    if (!list.length) sec.appendChild(emptyLine(t("没有等你批准的提议。")));
-    else {
-      const ul = mk("ul", "desk-list");
-      list.forEach((p) => ul.appendChild(renderProposalRow(p, team, true)));
-      sec.appendChild(ul);
+  // A link's relation in words (12.11), never its type.
+  function relationWord(type) {
+    switch (type) {
+      case "reads": return t("读取");
+      case "writes": return t("写出");
+      case "generates": return t("生成");
+      case "includes": case "cites": return t("引用");
+      case "belongs_to": return t("属于");
+      case "backed_by": return t("依据");
+      case "produces": return t("产出");
+      case "implements": return t("实现");
+      case "uses": return t("使用");
+      case "supports": return t("支持");
+      default: return t("关联");
     }
-    host.appendChild(sec);
   }
 
-  function renderMine(host) {
-    const sec = block(t("我的提议"));
-    const team = (ctx.share && ctx.share.team) || [];
-    const list = (ctx.proposals && ctx.proposals.proposals) || [];
-    if (!list.length) sec.appendChild(emptyLine(t("你还没有提交过提议。")));
-    else {
-      const ul = mk("ul", "desk-list");
-      list.forEach((p) => ul.appendChild(renderProposalRow(p, team, false)));
-      sec.appendChild(ul);
+  function reviewItems(items, cards) {
+    const ul = mk("ul", "desk-items");
+    items.forEach((i) => {
+      const li = mk("li");
+      if (i.label) li.appendChild(mk("span", "desk-reason", i.label));
+      li.append([i.src_label || i.src, relationWord(i.type), i.dst_label || i.dst].join(" "));
+      ul.appendChild(li);
+    });
+    cards.forEach((g) => {
+      const li = mk("li");
+      if (g.script) li.append(mk("span", "mono", g.script), " ");
+      li.append(g.words || series(g.cards || []));
+      ul.appendChild(li);
+    });
+    return ul;
+  }
+
+  // 待复核 (14.4): the judgments whose basis changed, under the attempt each
+  // belongs to (14.3's membership rule), else under 「不属于任何尝试」; one
+  // two attempts hold is under both and counted once (the engine's count).
+  function renderReview(host, review, byId) {
+    if (!review || !review.count) return false;
+    const sec = block(t("待复核"));
+    const sub = mk("p", "desk-sub", t("{n} 条判断的依据变了，等你复核。", { n: numberText(review.count) }));
+    sub.appendChild(rowLink(t("复核"), "", () => openReviewPanel(null)));
+    sec.appendChild(sub);
+    const ul = mk("ul", "desk-list");
+    (review.groups || []).forEach((g) => {
+      const row = mk("li", "desk-row");
+      const main = mk("div", "desk-main");
+      const head = mk("div", "desk-head");
+      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id]));
+      const own = ownMark(g);
+      if (own) head.appendChild(own);
+      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openReviewPanel(g.items[0])));
+      main.append(head, reviewItems(g.items, []));
+      row.appendChild(main);
+      ul.appendChild(row);
+    });
+    const none = review.none || {};
+    if ((none.items || []).length || (none.cards || []).length) {
+      const row = mk("li", "desk-row");
+      const main = mk("div", "desk-main");
+      main.append(mk("div", "desk-head", t("不属于任何尝试")), reviewItems(none.items || [], none.cards || []));
+      row.appendChild(main);
+      ul.appendChild(row);
     }
+    sec.appendChild(ul);
     host.appendChild(sec);
+    return true;
+  }
+
+  // 「连线的一端找不到了」 (14.2): a line whose end the table no longer has
+  // (a renumbered row) waits in the record; it is said here, never dropped.
+  function renderMissing(host, missing) {
+    return listBlock(host, t("连线的一端找不到了"), (missing || []).map((l) => {
+      const row = mk("li", "desk-row");
+      const main = mk("div", "desk-main");
+      const head = mk("div", "desk-head");
+      head.appendChild(mk("span", "desk-what", t("#{child} 源自 #{parent}", { child: l.child_number, parent: l.parent_number })));
+      const own = ownMark(l);
+      if (own) head.appendChild(own);
+      main.appendChild(head);
+      const gone = (l.missing || []).map((end) => t("年表里没有 #{n}", { n: end === "parent" ? l.parent_number : l.child_number }));
+      main.appendChild(metaLine(gone.concat(l.by_label || "")));
+      if (l.note) main.appendChild(mk("p", "desk-note", l.note));
+      row.appendChild(main);
+      return row;
+    }));
   }
 
   // What the last 同步 from the desk did: kept on the desk until it is
   // opened afresh, because the sync itself moves the generation and the
-  // desk is rebuilt at once.
+  // desk is drawn again at once.
   let syncShown = null;
 
   function renderSyncShown(sec) {
@@ -613,23 +559,20 @@
     sec.appendChild(done);
   }
 
-  function renderOfficial(host) {
-    const sec = block(t("官方版本有更新"));
-    const share = ctx.share || {};
-    const last = share.last_snapshot;
-    if (!share.shared) {
-      sec.appendChild(emptyLine(t("这个工作副本还没有连上公盘。")));
-    } else if (!share.reachable) {
-      sec.appendChild(emptyLine(t("公盘现在打不开，等它同步好再来看。")));
-    } else if (share.behind && last) {
-      sec.querySelector(".desk-title").textContent = t("官方版本有更新");
+  // 官方版本有更新 and 同步 (14.4, a member), as the desk had them: what 同步
+  // will write is said first (the engine's sync-preview), and the button
+  // waits for it; after a sync, what it did. A shared folder not set or not
+  // open is the column's notice instead.
+  function renderOfficial(host, sync) {
+    const last = sync && sync.last_snapshot;
+    const behind = !!(sync && sync.shared && sync.reachable && sync.behind && last);
+    if (!behind && !syncShown) return false;
+    const sec = block(behind ? t("官方版本有更新") : t("官方版本"));
+    if (behind) {
       const when = whenInLine(last.at, now());
-      const line = mk("p", "desk-sub", last.note
+      sec.appendChild(mk("p", "desk-sub", last.note
         ? t("PI 于 {when} 发布了第 {seq} 版：{note}", { when: when, seq: numberText(last.seq), note: last.note })
-        : t("PI 于 {when} 发布了第 {seq} 版。", { when: when, seq: numberText(last.seq) }));
-      sec.appendChild(line);
-      // What 同步 will write is said first (the engine's sync-preview),
-      // exactly as on 成员; the button waits for it.
+        : t("PI 于 {when} 发布了第 {seq} 版。", { when: when, seq: numberText(last.seq) })));
       const writes = mk("p", "team-line writes", t("正在查看同步会写入什么…"));
       const status = mk("div", "notice-status");
       const btn = mkButton(t("同步"), "btn", () => syncNow(btn, status));
@@ -644,13 +587,12 @@
         setStatus(writes, "err", t("没能查看同步会写入什么"), err);
         btn.disabled = false;
       });
-    } else {
-      sec.querySelector(".desk-title").textContent = t("官方版本");
-      sec.appendChild(emptyLine(last ? t("你的工作副本已经是最新的官方版本（第 {seq} 版）。", { seq: numberText(last.seq) })
-        : t("PI 还没有发布过官方版本。")));
+    } else if (last) {
+      sec.appendChild(emptyLine(t("你的工作副本已经是最新的官方版本（第 {seq} 版）。", { seq: numberText(last.seq) })));
     }
     renderSyncShown(sec);
     host.appendChild(sec);
+    return true;
   }
 
   async function syncNow(btn, status) {
@@ -674,27 +616,53 @@
     if (shown && typeof shown.scrollIntoView === "function") shown.scrollIntoView({ block: "center" });
   }
 
-  // -- the route map (DESIGN.md 14.1, 14.2) ------------------------------------------
-  // Drawn by /routemap.js above the desk's blocks (increment C lays the desk
-  // out around it). Its element is made once and kept: the desk's refreshes
-  // redraw what is beside it, so the map keeps its camera, its selection and
-  // a drag in progress. Without /routemap.js (a module run alone) no map.
-  let routeMap = null;
-  let mapEl = null;
-  let mapEpoch = -1; // the project (state.dataEpoch) the map last showed
-
-  function mapHost() {
-    if (!window.RORouteMap) return null;
-    if (!mapEl) {
-      mapEl = mk("div", "desk-map");
-      routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
-      routeMap.mount(mapEl);
+  // The column (14.4), newest first in each part: who I am not yet (or a
+  // team file that cannot be read) and a shared folder that cannot be read,
+  // said first; the PI's 等你批准 or a member's 我的提议; 待复核; a member's
+  // 官方版本有更新; the lines with a missing end -- or one quiet line.
+  function renderColumn(col, data) {
+    const c = data.column || {};
+    const byId = new Map((data.attempts || []).map((a) => [a.id, a]));
+    const top = col.scrollTop;
+    col.textContent = "";
+    drawnKeys.clear();
+    col.appendChild(mk("h2", "desk-column-title", t("待办")));
+    const notices = [c.role === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步") : c.notice,
+      c.shared && c.shared.message].filter(Boolean);
+    notices.forEach((n) => col.appendChild(mk("p", "desk-alone", n)));
+    const shown = [
+      listBlock(col, t("等你批准"), c.role === "pi" ? (c.waiting || []).map((p) => proposalRow(p, true)) : []),
+      listBlock(col, t("我的提议"), c.role === "member" ? (c.mine || []).filter(waits).map((p) => proposalRow(p, false)) : []),
+      renderReview(col, c.review, byId),
+      c.role === "member" && renderOfficial(col, c.sync),
+      renderMissing(col, data.lines_missing),
+    ].some(Boolean);
+    if (!shown && !notices.length) col.appendChild(emptyLine(t("现在没有要处理的事。")));
+    if (picked && !drawnKeys.has(picked.key)) { // its row is gone: nothing stays marked
+      picked = null;
+      if (routeMap) routeMap.highlight([]);
     }
-    return mapEl;
+    col.scrollTop = top;
   }
 
-  function clearBesideMap(host) {
-    Array.from(host.childNodes).forEach((n) => { if (n !== mapEl) host.removeChild(n); });
+  // The desk's two parts, made once, in `host`.
+  function deskColumn(host) {
+    if (!layoutEl) {
+      layoutEl = mk("div", "desk-layout");
+      if (window.RORouteMap) {
+        const map = mk("div", "desk-map");
+        routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
+        routeMap.mount(map);
+        layoutEl.appendChild(map);
+      }
+      columnEl = mk("aside", "desk-column");
+      layoutEl.appendChild(columnEl);
+    }
+    if (layoutEl.parentNode !== host) {
+      host.textContent = "";
+      host.appendChild(layoutEl);
+    }
+    return columnEl;
   }
 
   // 「有改动」 (14.5): the attempt's row or one of its files changed since the
@@ -714,15 +682,14 @@
     return true;
   }
 
+  // `refresh`: the project's generation moved. Gone to again (not a
+  // refresh), the desk drawn for this project stays until the new reading
+  // arrives; only a first visit, or another project's, says it is loading.
   async function loadDesk(host, refresh) {
     const epoch = state.dataEpoch;
+    const drawn = !!layoutEl && layoutEl.parentNode === host && drawnEpoch === epoch;
     if (!refresh) {
-      // The map stays while the same project's desk is read again; another
-      // project's is taken off until its own payload arrives.
-      if (mapEl && mapEl.parentNode === host && mapEpoch === epoch) {
-        clearBesideMap(host);
-        host.appendChild(mk("p", "empty-note", t("载入中…")));
-      } else host.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
+      if (!drawn) host.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
       syncShown = null;
     }
     let data, since;
@@ -730,49 +697,18 @@
       // Who I am first (it keys "last seen"), then the rest side by side.
       if (!ctx.me || ctx.project !== projectKey()) ctx.me = await apiGet("/api/me").catch(() => null);
       since = deskSince();
-      [, data] = await Promise.all([
-        fetchContext(),
-        apiGet("/api/desk" + (since ? "?since=" + encodeURIComponent(since) : "")),
-      ]);
+      [, data] = await Promise.all([fetchContext(), apiGet("/api/desk")]);
     } catch (err) {
       if (epoch !== state.dataEpoch) return;
-      renderViewFailure(host, err);
+      renderViewFailure(drawn ? columnEl : host, err); // a desk drawn keeps its map
       return;
     }
     if (epoch !== state.dataEpoch) return;
+    if (drawnEpoch !== epoch) picked = null;
     renderSidebar();
-    const map = mapHost();
-    if (map) {
-      clearBesideMap(host);
-      if (map.parentNode !== host) host.prepend(map);
-    } else host.innerHTML = "";
-    const desk = mk("div", "desk");
-    if (ctx.mode === "none") {
-      desk.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
-    }
-    if (ctx.mode === "pi") {
-      renderWaiting(desk);
-      renderChanges(desk, data);
-      renderResults(desk, data);
-      renderAbandoned(desk, data);
-    } else if (ctx.mode === "member") {
-      // 12.0 names no role exception: a member's desk also says which
-      // results lost their evidence and which routes were abandoned.
-      renderMine(desk);
-      renderOfficial(desk);
-      renderChanges(desk, data);
-      renderResults(desk, data);
-      renderAbandoned(desk, data);
-    } else {
-      renderChanges(desk, data);
-      renderResults(desk, data);
-      renderAbandoned(desk, data);
-    }
-    host.appendChild(desk);
-    if (map) {
-      mapEpoch = epoch;
-      routeMap.update(data, { changed: changedSince(since) });
-    }
+    renderColumn(deskColumn(host), data);
+    if (routeMap) routeMap.update(data, { changed: changedSince(since) });
+    drawnEpoch = epoch;
     host.dataset.loaded = "1";
   }
 
