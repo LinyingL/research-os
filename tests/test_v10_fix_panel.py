@@ -182,7 +182,7 @@ def test_14_3_the_desk_says_which_of_a_members_rows_the_official_version_lacks(d
 _CHANGE = """
   await window.RODesk.openAttempt(%(a16)s);
   global.extra = { before: panelLines() };
-  find("已放弃 方向反了").click();
+  find("已放弃", "BUTTON").click();
   type(field("用你自己的话说明这份提议：PI 会先看到这句话"), "一条死路");
   type(field("为什么放弃这条路线"), "残差不平稳");
   find("预览这一行").click(); await settle(); await settle();

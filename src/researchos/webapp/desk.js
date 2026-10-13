@@ -1186,18 +1186,64 @@
     return f;
   }
 
-  // The verdicts this table already holds, as 12.11 shows them; a click puts
-  // the cell's own text, its marker included, into the field.
+  // The verdict field's quick picks (14.3, 12.11): one chip per status the
+  // table holds, said by its word alone -- never the researcher's long cells.
+  // Each carries the researcher's own marker for that status: the leading
+  // token its cells use most, counted only when it is a marker (no letter,
+  // digit or CJK). A status no cell leads with a marker offers no chip; one
+  // the researcher named in [verdict_labels] is a chip per word, before 其它.
+  const CHIP_ORDER = ["current", "pending", "adverse", "archived", "rejected", "abandoned", "labelled", "other"];
+  const NOT_A_MARKER = /[\p{L}\p{N}\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/u;
+
+  function leadingMarker(text) {
+    const m = /^\s*(\S+)/.exec(String(text == null ? "" : text));
+    return m && !NOT_A_MARKER.test(m[1]) ? m : null;
+  }
+
+  // `rows`: [{verdict, status}], the status as the payload says it.
+  function verdictChoices(rows) {
+    const groups = new Map();
+    (rows || []).forEach((r) => {
+      const s = r && r.status;
+      const lead = s && CHIP_ORDER.indexOf(s.status) >= 0 ? leadingMarker(r.verdict) : null;
+      if (!lead) return;
+      const key = s.status === "labelled" ? "labelled " + s.label : s.status;
+      if (!groups.has(key)) groups.set(key, { code: s.status, markers: new Map() });
+      const seen = groups.get(key).markers;
+      const one = seen.get(lead[1]) || { n: 0, status: s };
+      one.n += 1;
+      seen.set(lead[1], one);
+    });
+    return Array.from(groups.values()).map((g) => {
+      let best = null; // the most used; on a tie, the first the table has
+      g.markers.forEach((one, marker) => { if (!best || one.n > best.n) best = { n: one.n, marker: marker, status: one.status }; });
+      return { code: g.code, marker: best.marker, status: best.status, word: verdictWord(best.status) };
+    }).sort((x, y) => CHIP_ORDER.indexOf(x.code) - CHIP_ORDER.indexOf(y.code));
+  }
+
+  // A chip's click: the field's leading marker, if it has one, becomes the
+  // status's marker; the researcher's words after it stay as written.
+  function withMarker(text, marker) {
+    const s = String(text == null ? "" : text);
+    const lead = leadingMarker(s);
+    if (lead) return marker + s.slice(lead[0].length);
+    const words = s.replace(/^\s+/, "");
+    return words ? marker + " " + words : marker;
+  }
+
+  // The table's rows as the map reads them: a card's route_status (so
+  // [abandoned_verdicts] counts, 14.1), else the row's verdict_status.
   function verdictChips(field) {
     const records = state.attemptsById ? Array.from(state.attemptsById.values()) : [];
-    const values = typeof distinctVerdicts === "function" ? distinctVerdicts(records) : [];
-    if (!values.length) return null;
-    const statusOf = new Map(records.map((r) => [(r.verdict || "").trim(), r.verdict_status]));
+    const choices = verdictChoices(records.map((r) => {
+      const card = attemptOf(r.id);
+      return { verdict: r.verdict, status: (card && card.route_status) || r.verdict_status };
+    }));
+    if (!choices.length) return null;
     const chips = mk("div", "verdict-chips");
-    values.forEach((v) => {
-      const vs = statusOf.get(v);
-      chips.appendChild(mkButton(vs ? [verdictWord(vs), vs.words].filter(Boolean).join(" ") : v, "chip", () => {
-        field.value = v;
+    choices.forEach((c) => {
+      chips.appendChild(mkButton(c.word, "chip", () => {
+        field.value = withMarker(field.value, c.marker);
         field.dataset.typed = "1";
       }));
     });
@@ -1508,5 +1554,6 @@
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,
+    _verdictChoices: verdictChoices, _withMarker: withMarker,
   });
 })();

@@ -29,9 +29,9 @@ from test_v10_desk_panel import _THEIRS as _PANEL_THEIRS
 from test_v10_desk_panel import A16, _st
 from test_v10_desk_proposals import FROM, _run_team, _team_case
 
-#: The researcher's own text in these fixtures (13.1: a verdict cell as written, too), and the
-#: shared drive's fixed folder names.
-_THEIRS = [*_PANEL_THEIRS, "待定 先看", "☠ 方向反了", "放弃 16", "加上数据", "王", "残差不平稳", "同一数据", "数据从哪来？", "先补数据",
+#: The researcher's own text in these fixtures (13.1: a verdict cell as written, too -- 「☠ 待定 先看」 is
+#: 「待定 先看」 with their ☠ put before it by the 已放弃 chip), and the shared drive's fixed folder names.
+_THEIRS = [*_PANEL_THEIRS, "待定 先看", "☠ 方向反了", "☠ 待定 先看", "放弃 16", "加上数据", "王", "残差不平稳", "同一数据", "数据从哪来？", "先补数据",
            "已发布/outcomes/", "提议/"]
 #: A card whose version in use names a script and an output (nodepage._card_paths' shape).
 _CARD = {"steps/16-build.py": [{"card": "topicshift", "name": "TopicShift", "version": 3, "role": "script"}],
@@ -256,7 +256,7 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
       button(panelPart("panel-body"), %(view)s).click(); await settle(); await settle();
       global.extra = { carried: panelLines() };
       answer("/api/proposals", (body) => body.write ? { ok: true, written: true, id: "p7" } : %(draft)s);
-      find(%(chip)s).click();
+      find(%(chip)s, "BUTTON").click();
       type(field(%(sentence)s), "放弃 16");
       type(field(%(why)s), "残差不平稳");
       find(%(look)s).click(); await settle(); await settle();
@@ -264,7 +264,7 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
       extra.draft = panelLines();
       find(%(send)s).click(); for (let i = 0; i < 6; i++) await settle();
     """ % {"a16": json.dumps(A16), "view": json.dumps(w("查看", "View")), "draft": json.dumps(_draft(lang), ensure_ascii=False),
-           "chip": json.dumps(w("已放弃 方向反了", "Abandoned 方向反了")),
+           "chip": json.dumps(w("已放弃", "Abandoned")),
            "sentence": json.dumps(w("用你自己的话说明这份提议：PI 会先看到这句话",
                                     "Say what this proposal does in your own words: the PI reads this first")),
            "why": json.dumps(w("为什么放弃这条路线", "Why this route is abandoned")),

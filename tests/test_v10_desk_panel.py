@@ -70,7 +70,6 @@ global.openReviewPanel = () => {};
 global.openPanel = () => { parts.panel.classList.remove("hidden"); parts["panel-backdrop"].classList.remove("hidden"); };
 global.formFieldEl = (label, input) => { const w = el("div", "form-field"); w.append(el("label", null, label), input); return w; };
 global.toCellText = (v) => v.replace(/\r\n?/g, "\n").split("\n").map((s) => s.trim()).join("<br>").trim();
-global.distinctVerdicts = (records) => Array.from(new Set(records.map((r) => (r.verdict || "").trim()).filter(Boolean))).slice(0, 8);
 global.humanRecordsBlocked = () => null;
 global.pollGeneration = () => {};
 global.asked = [];
@@ -203,7 +202,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
     assert out["subject"] == A16 and out["backdrop"] == "hidden"
     for line in ["panel-title plain-title: #16 TopicShift 波动", "panel-subtitle: 07-26", "status-label tone-ochre: 待定",
                  "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 判决与结果",
-                 "form-input:  = 待定 先看", "chip: 待定 先看", "chip: 已放弃 方向反了", "form-textarea:  = t=2.91",
+                 "form-input:  = 待定 先看", "chip: 已放弃", "form-textarea:  = t=2.91",
                  "btn btn-primary: 预览改动", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
                  "form-textarea:  =  (写一条备注：为什么这样做、要注意什么)", "btn btn-small: 添加备注",
                  "node-sec-title: 来龙去脉", "trace-col-title: 读取的数据", "trace-item-name: raw.csv", "status-label tone-plain: 原始数据",
@@ -211,6 +210,9 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
                  "node-sec-title: 源自", "desk-empty: 还没标来处", "node-sec-title: 由它而来", "desk-link: #17 事件轴",
                  "status-label tone-gray: 已放弃", "desk-note: 换轴", "desk-meta: 最初的研究者 · 2024年10月12日", "btn btn-small: 删除这条连线"]:
         assert line in lines, line
+    # Re-baselined at acceptance (2026-10-13): one chip per status a cell leads with a marker --
+    # 「☠ 方向反了」 gives 已放弃; 「待定 先看」 leads with none, so 待定 is not offered.
+    assert [line for line in lines if line.startswith("chip: ")] == ["chip: 已放弃"]
     assert not any("撤回了" in line for line in lines)  # a withdrawn note is not shown
     assert not any("关联文件" in line or "还有文件属于" in line for line in lines)  # the node page's repairs stay there
     reason = [line for line in lines if "放弃的理由（必填）" in line]
@@ -227,7 +229,7 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
-                 "btn btn-small: Open the details page", "node-sec-title: Verdict and result", "chip: Abandoned 方向反了",
+                 "btn btn-small: Open the details page", "node-sec-title: Verdict and result", "chip: Abandoned",
                  "btn btn-primary: Preview the change", "node-sec-title: Write a note", "desk-meta: Li · 1 Mar 2024",
                  "btn btn-small: Add note", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
@@ -235,6 +237,7 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
                  # 13.5 (V10 review, finding 20): a line's date in the screen's form, re-baselined from its ISO day.
                  "desk-meta: Original researcher · 12 Oct 2024", "btn btn-small: Delete this line"]:
         assert line in lines, line
+    assert [line for line in lines if line.startswith("chip: ")] == ["chip: Abandoned"]
     assert not any("节点" in line or "画布" in line for line in out["lines"])
 
 
@@ -281,7 +284,7 @@ def test_14_3_a_change_previews_then_writes_only_the_cells_changed_and_abandonin
       type(fields().find((f) => f.tag === "TEXTAREA" && f.value === "t=2.91"), "t=3.10");
       find("预览改动").click(); await settle(); await settle();
       find("确认写入").click(); await settle(); await settle(); await settle();
-      find("已放弃 方向反了").click();
+      find("已放弃", "BUTTON").click();
       find("预览改动").click(); await settle(); await settle();
       global.extra = panelLines().filter((l) => l.startsWith("notice-status") || l.includes("放弃的理由"));
       type(field("为什么放弃这条路线"), "残差不平稳");
@@ -293,8 +296,9 @@ def test_14_3_a_change_previews_then_writes_only_the_cells_changed_and_abandonin
     assert posted[0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}]
     assert posted[1] == ["/api/attempts/write", posted[0][1]]
     # The abandoning verdict, first without its reason: previewed, refused before anything is shown.
-    assert posted[2] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 方向反了"}}]
-    assert posted[3] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 方向反了"},
+    # (Re-baselined at acceptance: the 已放弃 chip puts the table's ☠ before the field's words, 待定 not being a marker.)
+    assert posted[2] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"}}]
+    assert posted[3] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"},
                                                    "reason": "残差不平稳"}]
     assert posted[4] == ["/api/attempts/write", posted[3][1]] and len(posted) == 5
     # Asked before the row was shown: the reason's field, said in its own sentence.
@@ -316,7 +320,7 @@ def test_14_3_a_members_change_becomes_a_verdict_change_proposal():
     steps = """
       await window.RODesk.openAttempt(%(id)s);
       global.before = panelLines();
-      find("已放弃 方向反了").click();
+      find("已放弃", "BUTTON").click();
       find("预览这一行").click(); await settle();
       const noSentence = panelLines().filter((l) => l.startsWith("notice-status err"));
       type(field("用你自己的话说明这份提议：PI 会先看到这句话"), "放弃 16");
@@ -328,7 +332,7 @@ def test_14_3_a_members_change_becomes_a_verdict_change_proposal():
       global.extra = { noSentence, before };
     """ % {"id": json.dumps(A16)}
     out = _run(case, steps)
-    assert out["posted"][0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 方向反了"}}]
+    assert out["posted"][0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"}}]
     assert out["posted"][1] == ["/api/attempts/write", out["posted"][0][1]]  # the reason goes with the proposal, not the row
     assert out["composed"] == [{"kind": "verdict_change", "sentence": "放弃 16", "number": "16", "reason": "残差不平稳"}]
     assert out["posted"][2] == ["/api/proposals", {"kind": "route_link", "op": "remove", "child": A17, "parent": A16, "write": True}]
