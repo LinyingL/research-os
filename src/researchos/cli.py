@@ -1644,7 +1644,8 @@ def cmd_propose(args: argparse.Namespace) -> int:
         print(f"Proposal ({data['kind']}) by {data['by']} against {data['base'][:19]}: {data['sentence']}")
         if data.get("attempt"):
             row = data["attempt"]
-            print(f"  new attempt row #{row['number']}: {row['description']} | {row['verdict']} | {row['result']}")
+            print(f"  new attempt row #{row['number']}: {row['description']} | {row['verdict']} | {row['result']}"
+                  + (f"; abandoned, reason: {row['reason']}" if row.get("abandons") == "yes" else ""))
         if data.get("verdict"):
             v = data["verdict"]
             print(f"  attempt #{v['number']}: verdict {v['old']} -> {v['new']}; result {v['old_result']!r} -> {v['result']!r}"
@@ -3437,7 +3438,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sentence", required=True, help="what this proposal is, in a sentence of your own")
     p.add_argument("--number", default=None, help="the attempt row, when more than one differs")
     p.add_argument("--result", default=None, help="verdict_change: the result (default: the row's result cell)")
-    p.add_argument("--reason", default=None, help="verdict_change: why -- required when abandoning a route")
+    p.add_argument("--reason", default=None,
+                   help="verdict_change, or attempt_new whose row is abandoned: why -- required when abandoning a route")
     p.add_argument("--card", default=None, help="variable_version: the card id")
     p.add_argument("--attested", default=None, choices=["yes", "no", "unknown"],
                    help="variable_version: was the output as it stands built with this definition")

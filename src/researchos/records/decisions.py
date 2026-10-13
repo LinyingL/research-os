@@ -183,8 +183,26 @@ DECISIONS_SCHEMA = LedgerSchema(
     header=_HEADER,
     validate=_validate,
     validate_new=_validate_new,
-    multiline=frozenset({"decision.reason", "decision.note", "decision.result"}),
+    # A verdict or result the researcher wrote over two lines (`<br>` in the cell) is read as a line feed.
+    multiline=frozenset({"decision.reason", "decision.note", "decision.result", "decision.verdict"}),
 )
+
+
+def check(fields: Mapping[str, Any]) -> None:
+    """Raise `DecisionRefused` (`invalid`) unless `fields` could be appended
+    as they are -- asked by a writer before it changes what the decision
+    goes with, so a decision that could never be recorded refuses the write
+    rather than leaving it done with nothing recorded. `evidence`, frozen
+    only after the write, may be left out."""
+    entry = {k: v for k, v in fields.items() if v is not None}
+    if entry.get("act") == ABANDONED_ACT:
+        entry.setdefault("evidence", [])
+    try:
+        _validate(entry)
+        _validate_new(entry)
+        ledger_mod._reject_line_breaks(entry, DECISIONS_SCHEMA.table, DECISIONS_SCHEMA.multiline)
+    except (ValueError, LedgerWriteRefused) as exc:
+        raise DecisionRefused("invalid", f"the decision could not be recorded ({exc}) -- nothing written") from exc
 
 
 def decisions_path(project_root: str | Path) -> Path:

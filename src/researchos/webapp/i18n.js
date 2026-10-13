@@ -328,6 +328,8 @@
       "The reason is written into the result, and the route's basis at this moment is frozen.",
     "这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。":
       "This row abandons the route: the reason goes into the result, and its basis at this moment is frozen.",
+    "这一行一开始就放弃了这条路线：结果和理由都必须填写，PI 批准后它们写进尝试表，这条路线当时的依据也会冻结下来。":
+      "This row abandons the route from the start: the result and the reason are both required; once the PI approves, they go into the attempt table and the route's basis is frozen.",
     "放弃一条路线时必须写明理由": "Abandoning a route needs a reason",
     "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。":
       "Abandoning a route needs a reason: it is written into the result, and the route's basis is frozen.",

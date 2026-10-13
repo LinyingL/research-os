@@ -937,6 +937,10 @@
       p.append(t("尝试表新增第 {number} 行：{description}", { number: a.number, description: a.description || "" }), " ");
       if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
       s.appendChild(p);
+      if (a.abandons === "yes") {
+        s.appendChild(mk("p", "desk-note", t("结果：{result}", { result: a.result || "" })));
+        s.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: a.reason || "" })));
+      }
     }
     if (full.verdict) {
       const v = full.verdict;
@@ -997,6 +1001,15 @@
     return ul;
   }
 
+  // An abandonment approving would record (12.4): its result, its reason --
+  // as the proposal carries them (`carried`); `a.reason` is a problem's
+  // sentence when there is one -- and that the route's basis freezes.
+  function abandonsLines(part, carried, a) {
+    part.appendChild(mk("p", "desk-note", t("结果：{result}", { result: carried.result || a.result || "" })));
+    part.appendChild(mk("p", "desk-note", t("放弃理由：{reason}", { reason: carried.reason || "" })));
+    part.appendChild(line(t("批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。"), "quiet"));
+  }
+
   // The PI's view: exactly what approving would do (12.3).
   function renderWhatApprovingDoes(page, full) {
     const c = full.changes;
@@ -1011,14 +1024,13 @@
           { file: mk("span", "mono", a.file || "") });
         if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
         part.appendChild(p);
+        if (a.abandons) abandonsLines(part, full.attempt || {}, a);
       } else {
         part.appendChild(phrase(mk("p", "desk-head"), t("尝试表第 {number} 行的判决 {old} 改为 {new}", { number: a.number }),
           { old: RODesk.verdictInline(a.old_status), new: RODesk.verdictInline(a.new_status) }));
         const v = full.verdict || {};
         if (a.abandons) {
-          part.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result || a.result || "" })));
-          part.appendChild(mk("p", "desk-note", t("放弃理由：{reason}", { reason: v.reason || "" })));
-          part.appendChild(line(t("批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。"), "quiet"));
+          abandonsLines(part, v, a);
         } else if (v.result && v.result !== v.old_result) {
           part.appendChild(mk("p", "desk-note", t("结果改为：{result}", { result: v.result })));
         }
@@ -1283,6 +1295,10 @@
       p.append(t("尝试表新增第 {number} 行：{description}", { number: d.attempt.number, description: d.attempt.description || "" }), " ");
       if (d.attempt.verdict_status) p.appendChild(RODesk.verdictInline(d.attempt.verdict_status));
       box.appendChild(p);
+      if (d.attempt.abandons === "yes") {
+        box.appendChild(mk("p", "desk-note", t("结果：{result}", { result: d.attempt.result || t("（空）") })));
+        box.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: d.attempt.reason || "" })));
+      }
     }
     if (d.verdict) {
       const v = d.verdict;

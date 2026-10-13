@@ -136,6 +136,7 @@ proposer's 「我的提议」 and the PI's inbox; anyone else sees none.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -874,6 +875,13 @@ def make_proposal(
                 data["attempt"] = {"number": chosen, **work_rows[chosen], "table_base_sha256": table_base}
                 if parents:
                     data["attempt"]["parents"] = _parents_of(config, base_rows, chosen, parents)
+                if is_abandonment(work_rows[chosen]["verdict"], abandon_markers(root)):
+                    # 12.4 / 14.3: a route abandoned from the start keeps its basis as one abandoned later does.
+                    said = (reason or "").strip()
+                    if not work_rows[chosen]["result"].strip() or not said:
+                        raise ProposalRefused("reason_required", f"the new attempt {chosen} is abandoned: it needs its "
+                                                                 f"result in the row and a reason (--reason)")
+                    data["attempt"].update(reason=said, abandons="yes")
                 carried.add(chosen)
                 linked = attempt_files(root, config, chosen, work_rows[chosen].get("description") or "")
             elif kind == "verdict_change":
@@ -1097,6 +1105,10 @@ def validate(data: Mapping[str, Any]) -> None:
         if "parents" in attempt and (not isinstance(attempt["parents"], list)
                                      or not all(_ATTEMPT_ID_RE.match(str(p)) for p in attempt["parents"])):
             raise ValueError("[attempt] parents names attempts as attempt:<table>#<number>")
+        _text_field(attempt, "reason", required=False)
+        if attempt.get("abandons") == "yes" and (not str(attempt.get("reason") or "").strip()
+                                                 or not attempt["result"].strip()):
+            raise ValueError("an abandonment carries its result and reason")
     if kind == "route_link":
         route = data.get("route")
         if not isinstance(route, dict) or route.get("op") not in ROUTE_OPS:
@@ -1472,6 +1484,13 @@ def abandon_result(result: str, reason: str | None, verdict: str) -> str:
 _REASON_SUFFIX = re.compile(r"^（放弃理由：.*）$", re.S)
 
 
+def _as_cells(fields: Mapping[str, str]) -> dict[str, str]:
+    """A row's cells as read (`_clean_cell`: a `<br>` the researcher wrote is
+    a line feed) back into the table's own spelling, so an approval writes
+    a cell over two lines as `<br>` -- a line feed would split the row."""
+    return {k: v.replace("\n", "<br>") if isinstance(v, str) else v for k, v in fields.items()}
+
+
 def row_as_approved(mine: Mapping[str, str], official: Mapping[str, str] | None) -> bool:
     """`official` is the member's row `mine` as an approval wrote it: the
     same cells, the result perhaps followed by the reason `abandon_result`
@@ -1613,8 +1632,17 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
     if kind == "attempt_new":
         row = data["attempt"]
         number = row["number"]
+        abandons = row.get("abandons") == "yes" or is_abandonment(row["verdict"], abandon_markers(root))
+        fields = {k: row[k] for k in ROW_FIELDS}
+        if abandons:
+            fields["result"] = abandon_result(row["result"], row.get("reason"), row["verdict"])
         out: dict[str, Any] = {"op": "append", "number": number, "node": node + number, "file": config.file,
-                               "fields": {k: row[k] for k in ROW_FIELDS}}
+                               "fields": fields, "abandons": abandons, "result": row["result"],
+                               "reason": row.get("reason")}
+        if abandons and (not str(row.get("reason") or "").strip() or not row["result"].strip()):
+            # Proposed before 14.3 asked for them: returned and proposed again, as an old verdict change is.
+            out.update(state="problem", reason=MESSAGES["reason_required"])
+            return out
         if done.get("attempt_applied"):
             out["state"] = "done"
             return out
@@ -1673,7 +1701,7 @@ def _attempt_change(root: Path, data: Mapping[str, Any], done: Mapping[str, Any]
         elif table_moved:
             out["base_row_unknown"] = True  # only the verdict and result could be compared
     try:
-        shown = mapedit.preview_edit(root, out["op"], number, out["fields"])
+        shown = mapedit.preview_edit(root, out["op"], number, _as_cells(out["fields"]))
     except mapedit.MapEditError as exc:
         out.update(state="problem", reason=str(exc), code=exc.code)
         return out
@@ -2165,9 +2193,17 @@ def write_directly(root: str | Path, op: str, number: str, fields: Mapping[str, 
         if not said:
             raise ProposalRefused("reason_required", f"abandoning attempt {turn['number']} needs a reason; "
                                   "nothing written", message_zh=DIRECT_REASON_REQUIRED)
+        result = fields["result"] if "result" in fields else (turn["cells"] or {}).get("result", "")
+        entry = {"act": decisions_mod.ABANDONED_ACT, "kind": "attempt_new" if op == "append" else "verdict_change",
+                 "attempt": turn["node"], "number": turn["number"],
+                 "verdict": attempts_ingest._clean_cell(fields["verdict"]),
+                 "result": attempts_ingest._clean_cell(result) or None, "reason": said, "via": via}
         try:
             me = people.current_member_id()  # asked first: the entry names who, or the write would stop halfway
             decisions_mod.require_writable(root)
+            # The entry as it will be recorded, checked before the row is written: a decision that could
+            # never be recorded must not leave the route abandoned with no basis.
+            decisions_mod.check({**entry, "by": me})
         except people.PeopleError as exc:
             raise ProposalRefused("no_me", str(exc), message_zh=exc.message_zh) from exc
         except decisions_mod.DecisionRefused as exc:
@@ -2177,15 +2213,9 @@ def write_directly(root: str | Path, op: str, number: str, fields: Mapping[str, 
         with history.Store.open(identity_id) as store:
             conn = db.connect(index_db_path(identity_id))
             try:
-                evidence = _evidence(conn, root, turn["node"], store, who=me or "", approved_by="", note=None)
+                entry["evidence"] = _evidence(conn, root, turn["node"], store, who=me or "", approved_by="", note=None)
             finally:
                 conn.close()
-        result = fields["result"] if "result" in fields else (turn["cells"] or {}).get("result", "")
-        entry = {"act": decisions_mod.ABANDONED_ACT, "kind": "attempt_new" if op == "append" else "verdict_change",
-                 "attempt": turn["node"], "number": turn["number"],
-                 "verdict": attempts_ingest._clean_cell(fields["verdict"]),
-                 "result": attempts_ingest._clean_cell(result) or None, "reason": said, "via": via,
-                 "evidence": evidence}
         try:
             decision = decisions_mod.append_decision(root, entry, lock=held, now=now)
         except decisions_mod.DecisionRefused as exc:
@@ -2298,7 +2328,8 @@ def approve(
                             from researchos.webapp import mapedit  # noqa: PLC0415
 
                             _mark(root, stored, "attempt", node=attempt["node"])
-                            result = mapedit.apply_edit(root, attempt["op"], attempt["number"], attempt["fields"], ingest_lock)
+                            result = mapedit.apply_edit(root, attempt["op"], attempt["number"],
+                                                          _as_cells(attempt["fields"]), ingest_lock)
                             _mark(root, stored, "attempt_applied", node=attempt["node"])
                             applied["attempt"] = {"node": attempt["node"], "op": attempt["op"], "backup": result["backup"],
                                                   "ingest_error": result["ingest_error"]}
@@ -2308,7 +2339,11 @@ def approve(
                             if attempt["state"] == "apply":
                                 _attribute_attempt(store, conn, attempt["node"], before, who=member_id, approved_by=pi,
                                                    note=note)
-                            if data["kind"] == "verdict_change" and attempt.get("abandons"):
+                            if attempt.get("abandons"):
+                                if data["kind"] == "attempt_new":
+                                    # The scripts this approval placed, read before the basis is frozen:
+                                    # otherwise it records them but not the outputs they write.
+                                    _scan_placed(conn, root, applied["files"], ingest_lock)
                                 applied["evidence"] = _evidence(conn, root, attempt["node"], store, who=member_id,
                                                                 approved_by=pi, note=note)
                         finally:
@@ -2350,9 +2385,11 @@ def approve(
                 fields.update(attempt=attempt["node"], number=attempt["number"])
             if data["kind"] == "verdict_change":
                 fields.update(verdict=attempt["new"], result=attempt["result"], reason=attempt.get("reason"))
-                if attempt.get("abandons"):
-                    fields["act"] = "abandoned"
-                    fields["evidence"] = applied["evidence"] or []
+            elif data["kind"] == "attempt_new" and attempt.get("abandons"):
+                fields.update(verdict=data["attempt"]["verdict"], result=attempt["result"], reason=attempt.get("reason"))
+            if attempt is not None and attempt.get("abandons"):
+                fields["act"] = "abandoned"
+                fields["evidence"] = applied["evidence"] or []
             if variable is not None:
                 fields.update(card=variable["card"], version=variable.get("number"))
             if data["kind"] == "route_link":
@@ -2393,6 +2430,25 @@ def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: flo
     except Exception as exc:  # noqa: BLE001 -- see the docstring
         logger.exception("publishing after approving into %s failed", root)
         return {"published": False, "error": "failed", "message": "发布没有完成", "detail": str(exc)}
+
+
+def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_lock: Any = None) -> None:
+    """The scripts an approval just placed, read by the dataflow extractor
+    (one partial scan: those files, nothing else, 9.6) -- under the
+    watcher's ingest lock when the app passes it -- so the outputs they
+    write are in the index before an abandoned route's basis is frozen."""
+    from researchos.ingest import dataflow as dataflow_ingest  # noqa: PLC0415
+
+    kinds: dict[str, list[str]] = {".py": [], ".r": [], ".rmd": []}
+    for item in placed:
+        rel = str(item.get("path") or "")
+        suffix = Path(rel).suffix.lower()
+        if item.get("action") != "removed" and suffix in kinds and (root / rel).is_file():
+            kinds[suffix].append(rel)
+    if not any(kinds.values()):
+        return
+    with ingest_lock if ingest_lock is not None else contextlib.nullcontext():
+        dataflow_ingest.ingest_dataflow_repo(conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"])
 
 
 def _rescan(root: Path) -> None:

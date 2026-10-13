@@ -3692,6 +3692,21 @@ function renderAttemptForm(mode, attemptId) {
     reasonField.appendChild(mk("div", "team-help", "判决标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
     form.appendChild(reasonField);
   }
+  // 12.4 / 14.3: a member's new row abandoned from the start asks the same as
+  // abandoning one later -- its result and a reason, shown once the preview
+  // says the row abandons the route.
+  let memberReason = null;
+  if (proposing && mode === "append") {
+    reasonInput = document.createElement("textarea");
+    reasonInput.className = "form-textarea";
+    reasonInput.rows = 2;
+    reasonInput.placeholder = t("为什么放弃这条路线");
+    memberReason = formFieldEl(t("放弃的理由（必填）"), reasonInput);
+    memberReason.appendChild(mk("div", "team-help",
+      t("这一行一开始就放弃了这条路线：结果和理由都必须填写，PI 批准后它们写进尝试表，这条路线当时的依据也会冻结下来。")));
+    memberReason.classList.add("hidden");
+    form.appendChild(memberReason);
+  }
   // 14.3: abandoning a route asks the PI and a single researcher for the
   // reason too. The field shows once the engine's preview says this write
   // turns the route abandoned (reason_required); rewording a verdict that
@@ -3831,7 +3846,9 @@ function renderAttemptForm(mode, attemptId) {
         setFormStatus(statusEl, "", "这一行已写进你的工作副本。");
         const propose = { kind: mode === "append" ? "attempt_new" : "verdict_change", sentence: sentenceInput.value.trim(),
           number: body.number };
-        if (reasonInput && reasonInput.value.trim()) propose.reason = reasonInput.value.trim();
+        if (reasonInput && reasonInput.value.trim() && (!memberReason || !memberReason.classList.contains("hidden"))) {
+          propose.reason = reasonInput.value.trim();
+        }
         const composeStatus = mk("div", "notice-status");
         const composeHost = mk("div", "compose-result");
         previewHost.append(composeStatus, composeHost);
@@ -3869,11 +3886,13 @@ function renderAttemptForm(mode, attemptId) {
       setFormStatus(statusEl, "err", "无法生成预览", err);
       return;
     }
-    // 12.4: abandoning a route through a proposal needs its result and its
-    // reason -- refused here, before anything is written.
-    if (proposing && mode === "update" && preview.abandons &&
+    // 12.4: abandoning a route through a proposal -- a verdict changed, or a
+    // new row abandoned from the start -- needs its result and its reason,
+    // refused here, before anything is written.
+    if (memberReason) memberReason.classList.toggle("hidden", !preview.abandons);
+    if (proposing && preview.abandons &&
         (!inputs.result.value.trim() || !(reasonInput && reasonInput.value.trim()))) {
-      setFormStatus(statusEl, "err", "放弃一条路线时，结果和理由都必须填写");
+      setFormStatus(statusEl, "err", t("放弃一条路线时，结果和理由都必须填写"));
       (inputs.result.value.trim() ? reasonInput : inputs.result).focus();
       return;
     }
