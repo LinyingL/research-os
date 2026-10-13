@@ -16,7 +16,7 @@
 //   /api/routes             -- 研究路线: the attempts grouped by status;
 //   /api/evidence?node=     -- an abandoned route's frozen basis;
 //   /api/history/version?node=&sha256= (or &version=) -- one kept version's content;
-//   /api/proposals, /api/proposals/<id> -- the inbox / 我的提议, one proposal;
+//   /api/proposals, /api/proposals/<id>[?from=] -- the inbox / 我的提议, one proposal;
 //   /api/share, /api/share/sync-preview -- the shared folder, what 同步 would do;
 //   /api/me, /api/me/key    -- who I am, my public key.
 // What it writes, each only after saying what it will write:
@@ -59,7 +59,7 @@
 
   // -- pure wording (loaded into node by tests/test_v8_u4.py) ----------------------
 
-  const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件" };
+  const KIND_WORDS = { attempt_new: "新尝试", verdict_change: "判决变更", variable_version: "变量定义", files: "文件", route_link: "连线" };
   const KIND_CHOICES = [
     ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
     ["verdict_change", "改判", "只有尝试表里这一行的判决和结果"],
@@ -773,34 +773,47 @@
 
   // -- one proposal's page -------------------------------------------------------------
 
+  // The 提议 page: the way back, then the proposal itself.
   async function renderProposalPage(host, id, member, refresh) {
     const epoch = state.dataEpoch;
-    let full;
-    try {
-      full = await apiGet("/api/proposals/" + encodeURIComponent(id));
-    } catch (err) {
-      if (epoch !== state.dataEpoch || view.proposal !== id) return;
-      host.innerHTML = "";
-      const page = mk("div", "node-page");
-      page.appendChild(backBar());
-      const box = mk("div", "node-failed");
-      failed(box, "没能打开这份提议", err);
-      page.appendChild(box);
-      host.appendChild(page);
-      host.dataset.loaded = "1";
-      return;
-    }
-    if (epoch !== state.dataEpoch || view.proposal !== id) return;
-    const ctx = RODesk.context();
-    const team = (ctx && ctx.share && ctx.share.team) || [];
-    const top = window.scrollY;
-    host.innerHTML = "";
     const page = mk("div", "node-page proposal-page");
     page.appendChild(backBar());
+    const full = await renderProposalInto(page, id, member, (said) => after("proposals", [{ text: said.text }]));
+    if (epoch !== state.dataEpoch || view.proposal !== id) return;
+    const top = window.scrollY;
+    host.innerHTML = "";
+    if (full) showFlash(page, "proposals", page.children[1] || null);
+    host.appendChild(page);
+    host.dataset.loaded = "1";
+    if (full && refresh) window.scrollTo(0, top);
+  }
+
+  // One proposal drawn into `host` -- the 提议 page or the desk's side panel
+  // (14.3) --, read first, so `host` is untouched until it arrives (a
+  // refusal is said in it instead): who and when, its answers, what
+  // approving would do (the PI) or what it carries, the variable versions
+  // its files use, and while it waits 批准并加入 / 退回并说明 / 讨论, each
+  // answer followed by onDone({text, act, result}). `member` names whose it
+  // is (an id in two members' areas). opts.panel: the name is left to the
+  // panel's title; opts.open(nodeId) opens a variable (else its page).
+  // Resolves to the proposal, or null when it could not be read.
+  async function renderProposalInto(host, id, member, onDone, opts) {
+    const options = opts || {};
+    let full;
+    try {
+      full = await apiGet("/api/proposals/" + encodeURIComponent(id) + (member ? "?from=" + encodeURIComponent(member) : ""));
+    } catch (err) {
+      const box = mk("div", "node-failed");
+      failed(box, "没能打开这份提议", err);
+      host.appendChild(box);
+      return null;
+    }
+    const ctx = RODesk.context();
+    const team = (ctx && ctx.share && ctx.share.team) || [];
     // who, when, kind, the member's sentence
     const head = mk("header", "node-head");
     head.appendChild(mk("div", "node-kind", (KIND_WORDS[full.kind] || "") + "提议"));
-    head.appendChild(mk("h2", "node-name", full.sentence || id));
+    if (!options.panel) head.appendChild(mk("h2", "node-name", full.sentence || id));
     const meta = [RODesk.nameOf(full.by, team), when(full.at)]; // 12.13: the name, never the raw id
     if (full.base_seq != null) meta.push("基于官方版本第 " + full.base_seq + " 版");
     head.appendChild(mk("div", "desk-meta", meta.join(" · ")));
@@ -811,7 +824,7 @@
     marks.appendChild(label(sig.label, sig.tone));
     marks.appendChild(mk("span", "node-sub-inline", sig.reason));
     head.appendChild(marks);
-    page.appendChild(head);
+    host.appendChild(head);
     // its answers so far
     const outs = full.outcomes || [];
     if (outs.length) {
@@ -827,19 +840,16 @@
         ul.appendChild(li);
       });
       s.appendChild(ul);
-      page.appendChild(s);
+      host.appendChild(s);
     }
     // What approving would do is the PI's question while it waits; once
-    // answered, the page says what the proposal carried.
-    if (full.changes && (full.state === "pending" || full.state === "conflict")) renderWhatApprovingDoes(page, full);
-    else renderCarried(page, full);
-    renderUses(page, full.uses);
-    if (full.changes && full.state === "pending") renderDecide(page, full, team);
-    if (full.state === "conflict") page.appendChild(line("这份提议的答复记录互相矛盾（同时有批准和退回）：请在公盘上检查 已发布/outcomes/ 里它的答复。", "warn"));
-    showFlash(page, "proposals", page.children[1] || null);
-    host.appendChild(page);
-    host.dataset.loaded = "1";
-    if (refresh) window.scrollTo(0, top);
+    // answered, it says what the proposal carried.
+    if (full.changes && (full.state === "pending" || full.state === "conflict")) renderWhatApprovingDoes(host, full);
+    else renderCarried(host, full);
+    renderUses(host, full.uses, options.open);
+    if (full.changes && full.state === "pending") renderDecide(host, full, team, onDone);
+    if (full.state === "conflict") host.appendChild(line("这份提议的答复记录互相矛盾（同时有批准和退回）：请在公盘上检查 已发布/outcomes/ 里它的答复。", "warn"));
+    return full;
   }
 
   function backBar() {
@@ -877,6 +887,8 @@
       if (v.reason) s.appendChild(mk("p", "desk-note", "理由：" + v.reason));
     }
     if (full.variable) s.appendChild(line("变量 " + full.variable.card + " 的第 " + full.variable.version + " 版定义", ""));
+    if (full.route) s.appendChild(line(RODesk.proposalWhat(full), ""));
+    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", "说明：" + full.route.note));
     s.appendChild(fileList(full.files || [], null));
     page.appendChild(s);
   }
@@ -966,12 +978,21 @@
       if (v.diff) t.appendChild(diffOf(v.diff, v.truncated));
       s.appendChild(t);
     }
+    const r = c.route; // a 「源自」 line (14.2), in the engine's words
+    if (r) {
+      const box = mk("div", "proposal-part");
+      box.appendChild(mk("p", "desk-head", r.words || ""));
+      if (r.note) box.appendChild(mk("p", "desk-note", "说明：" + r.note));
+      if (r.state === "conflict" || r.state === "problem") box.appendChild(mk("p", "desk-break", r.reason || ""));
+      else if (r.state === "same") box.appendChild(line("正式版本的连线记录里已经是这样了。", "quiet"));
+      s.appendChild(box);
+    }
     const files = c.files || [];
     if (files.length) {
       s.appendChild(mk("h4", "proposal-h4", "文件"));
       s.appendChild(fileList(files, c));
     }
-    if (!a && !v && !files.length) s.appendChild(line("这份提议没有带来任何改动。", "quiet"));
+    if (!a && !v && !r && !files.length) s.appendChild(line("这份提议没有带来任何改动。", "quiet"));
     const ctxNow = RODesk.context();
     const coming = ctxNow && ctxNow.share && ctxNow.share.incoming;
     const carried = packetWords(coming);
@@ -1010,13 +1031,13 @@
     }
   }
 
-  function renderUses(page, uses) {
+  function renderUses(page, uses, open) {
     if (!uses || !uses.length) return;
     const s = sec("用到的变量版本");
     const ul = mk("ul", "desk-files");
     uses.forEach((u) => {
       const li = mk("li");
-      li.appendChild(mkButton(u.name + " 第 " + u.version + " 版", "desk-link", () => RONode.openNode("variable:" + u.card)));
+      li.appendChild(mkButton(u.name + " 第 " + u.version + " 版", "desk-link", () => (open || RONode.openNode)("variable:" + u.card)));
       li.appendChild(mk("span", "team-help", u.how || ""));
       ul.appendChild(li);
     });
@@ -1024,8 +1045,8 @@
     page.appendChild(s);
   }
 
-  // 批准并加入 / 退回并说明 / 讨论 (12.3).
-  function renderDecide(page, full, team) {
+  // 批准并加入 / 退回并说明 / 讨论 (12.3); what the answer did goes to onDone.
+  function renderDecide(page, full, team, onDone) {
     const c = full.changes;
     const s = sec("你的答复");
     const status = mk("div", "notice-status");
@@ -1080,9 +1101,13 @@
       }
       const done = act === "approve" ? approveSentence(res)
         : act === "return" ? "已退回：" + name + " 会看到你的理由。" : "已写下：提议保持打开。";
+      // Answered: nothing here is left half typed, and it says what it did
+      // until whoever drew it draws it again.
+      [note, reason, text].forEach((f) => { f.value = ""; delete f.dataset.typed; });
+      setStatus(status, "ok", done);
       await RODesk.refreshSidebar();
       markViewsStale(); // 研究路线 and the desk list this proposal too
-      await after("proposals", [{ text: done }]);
+      if (typeof onDone === "function") await onDone({ text: done, act: act, result: res });
       if (act === "approve" && typeof pollGeneration === "function") pollGeneration();
     }
   }
@@ -1983,7 +2008,7 @@
 
   window.ROTeam = Object.freeze({
     loadRoutes, loadProposals, loadMembers, openProposal, openEvidence, openJoinDialog, showAbandoned, showList,
-    composeInto, mode, syncWrites, syncDone, syncFlash, differenceBlock,
+    composeInto, mode, syncWrites, syncDone, syncFlash, differenceBlock, renderProposalInto,
     // pure, for tests/test_v8_u4.py
     _sizeWords: sizeWords, _stateLabel: stateLabel, _signatureWords: signatureWords, _approveSentence: approveSentence,
     _sendWrites: sendWrites, _carryWords: carryWords, _publishWrites: publishWrites, _syncWrites: syncWrites, _joinWrites: joinWrites,

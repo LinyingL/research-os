@@ -6,9 +6,9 @@
 //
 // It defines one global, window.RODesk, and calls app.html's helpers (mk,
 // mkButton, apiGet, apiPost, renderBlockingError, renderViewFailure,
-// setStatus, ownMark, openReviewPanel, RONode.openNode, ROTeam.openProposal,
-// state, ...) and /routemap.js's window.RORouteMap only at run time, never
-// while loading.
+// setStatus, ownMark, openReviewPanel, RONode.openNode,
+// ROTeam.renderProposalInto, state, ...) and /routemap.js's
+// window.RORouteMap only at run time, never while loading.
 //
 // What it reads (all GET, all origin-checked by the server):
 //   /api/me         -- who I am on this machine (the sidebar's last line);
@@ -389,9 +389,10 @@
   const drawnKeys = new Set();  // the rows the column shows now
 
   // A row of the column picked (14.4): the attempts it touches are marked on
-  // the map and brought into view; picked again, unmarked.
-  function pick(key, ids) {
-    picked = picked && picked.key === key ? null : { key: key, ids: ids };
+  // the map and brought into view; picked again, unmarked. `on` true: marked
+  // whatever it was (its proposal opened in the panel).
+  function pick(key, ids, on) {
+    picked = on || !(picked && picked.key === key) ? { key: key, ids: ids } : null;
     columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
     if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
@@ -432,21 +433,32 @@
 
   // A proposal in the column (14.4): what approving it would do, who and
   // when -- or, for its author, how it stands. Its title marks the attempts
-  // it touches; 「查看」 opens its page (in the panel once there is one, 14.3).
-  function proposalRow(p, forPi) {
+  // it touches; 「查看」 opens it in the panel (14.3). In an attempt's panel
+  // (`subject`), 「查看」 opens it in place, under its row.
+  function proposalRow(p, forPi, subject) {
     const row = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
     const what = proposalWhat(p);
+    const name = p.sentence || what || p.id;
     head.appendChild(mk("span", "status-label tone-plain", kindWord(p.kind) || t("提议", { n: 1 })));
-    head.appendChild(pickLink(row, p.sentence || what || p.id, "p:" + p.id, p.touches || []));
+    head.appendChild(subject ? mk("span", "desk-what", name) : pickLink(row, name, "p:" + p.id, p.touches || []));
     main.appendChild(head);
     if (what && p.sentence) main.appendChild(mk("p", "desk-note plain", what));
     const state = forPi ? (p.state === "conflict" ? stateWord(p.state) : "") : mineState(p);
     main.appendChild(metaLine([forPi ? p.by_label || p.by : "", state, whenWords(p.at, now())]));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton(t("查看"), "btn btn-small", () => { if (mayLeavePanel()) ROTeam.openProposal(p.id, p.by); }));
     main.appendChild(actions);
+    if (!subject) {
+      actions.appendChild(mkButton(t("查看"), "btn btn-small", () => openProposal(p)));
+    } else {
+      const key = (p.by || "") + "/" + p.id;
+      const inner = mk("div", "dp-in-place");
+      main.appendChild(inner);
+      const open = () => { subject.open.add(key); actions.textContent = ""; openInPlace(subject, p, inner); };
+      if (subject.open.has(key)) open();
+      else actions.appendChild(mkButton(t("查看"), "btn btn-small", open));
+    }
     row.appendChild(main);
     return row;
   }
@@ -718,8 +730,11 @@
   // changed through the map file's preview-then-confirm write, dirty cells
   // only; a member's change becomes a verdict-change proposal (12.4); turning
   // a route abandoned asks its reason --, 写备注, 来龙去脉 (the node page's
-  // trace), 源自 and 由它而来 with remove, 打开详情页. One panel at a time:
-  // what is half typed in it is never replaced unasked.
+  // trace), 源自 and 由它而来 with remove, 待办 (the proposals touching it,
+  // each opened in place and answered there), 打开详情页. The column's 查看
+  // opens a proposal there as its own subject (team.js draws it, reading
+  // /api/proposals/<id>?from=). One panel at a time: what is half typed in
+  // it is never replaced unasked.
 
   const NOTES_SHOWN = 5;
   let lastData = null;     // the desk payload last drawn: attempts, lines, the column
@@ -765,20 +780,94 @@
     const s = state.panelSubject;
     if (s && s.kind === "desk-attempt" && s.id === id && panelShown()) return null;
     if (!mayLeavePanel()) return null;
-    const subject = { kind: "desk-attempt", id: id, hold: false };
+    const subject = { kind: "desk-attempt", id: id, hold: false, open: new Set() };
+    const a = attemptOf(id) || {};
+    showPanel(subject, attemptName(a) || id, a.date || "");
+    return drawPanel(subject);
+  }
+
+  // The panel opened on the desk for `subject`, the map live beside it (no
+  // backdrop); what an earlier write said is not carried over.
+  function showPanel(subject, title, subtitle) {
     state.panelSubject = subject;
     panelSaid = null;
-    const a = attemptOf(id) || {};
-    const title = byIdOf("panel-title");
-    title.textContent = attemptName(a) || id;
-    title.title = "";
-    title.classList.add("plain-title");
-    byIdOf("panel-subtitle").textContent = a.date || "";
+    const head = byIdOf("panel-title");
+    head.textContent = title;
+    head.title = "";
+    head.classList.add("plain-title");
+    byIdOf("panel-subtitle").textContent = subtitle;
     byIdOf("panel-body").innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
     openPanel();
     const backdrop = byIdOf("panel-backdrop");
-    if (backdrop) backdrop.classList.add("hidden"); // the map stays live beside it
-    return drawPanel(subject);
+    if (backdrop) backdrop.classList.add("hidden");
+  }
+
+  // A proposal from the column (14.4) opened in the panel as its own
+  // subject -- also one touching no attempt (files, a variable's version) --,
+  // and the cards it touches marked on the map. The one open already stays.
+  function openProposal(p) {
+    const s = state.panelSubject;
+    const mark = () => pick("p:" + p.id, p.touches || [], true);
+    if (s && s.kind === "desk-proposal" && s.id === p.id && s.by === (p.by || null) && panelShown()) { mark(); return null; }
+    if (!mayLeavePanel()) return null;
+    const subject = { kind: "desk-proposal", id: p.id, by: p.by || null, hold: false };
+    showPanel(subject, p.sentence || proposalWhat(p) || p.id,
+      [kindWord(p.kind) || t("提议", { n: 1 }), p.by_label || p.by].filter(Boolean).join(" · "));
+    mark();
+    return drawProposal(subject);
+  }
+
+  // The proposal drawn by team.js (renderProposalInto): what approving does,
+  // 批准并加入 / 退回并说明 / 讨论; read again on a refresh unless something
+  // in it is typed.
+  async function drawProposal(subject) {
+    if (subject.hold || halfTyped()) return;
+    const host = mk("div", "dp-proposal");
+    await ROTeam.renderProposalInto(host, subject.id, subject.by, (said) => answered(subject, "p:" + subject.id, said),
+      { panel: true, open: leaveTo });
+    if (state.panelSubject !== subject || subject.hold || halfTyped()) return;
+    const body = byIdOf("panel-body");
+    const top = body.scrollTop;
+    body.textContent = "";
+    if (panelSaid && panelSaid.id === "p:" + subject.id) body.appendChild(mk("div", "notice-status ok", panelSaid.text));
+    body.appendChild(host);
+    body.scrollTop = top;
+  }
+
+  // An answer given in the panel (approve, return, discuss; team.js empties
+  // its fields): what it did is said at the panel's top, and the map, the
+  // column and the panel are drawn again in place.
+  async function answered(subject, key, said) {
+    panelSaid = { id: key, text: said.text };
+    await loadDesk(views.desk, true);
+    if (state.panelSubject !== subject) return;
+    await (subject.kind === "desk-proposal" ? drawProposal(subject) : drawPanel(subject));
+  }
+
+  // One proposal opened in place under its row in an attempt's panel.
+  async function openInPlace(subject, p, inner) {
+    const host = mk("div", "dp-proposal");
+    inner.textContent = "";
+    inner.appendChild(mk("p", "empty-note", t("载入中…")));
+    await ROTeam.renderProposalInto(host, p.id, p.by, (said) => answered(subject, subject.id, said), { panel: true, open: leaveTo });
+    inner.textContent = "";
+    inner.appendChild(host);
+  }
+
+  // 待办 (14.3: its urgent work): the proposals touching this attempt -- the
+  // PI's waiting ones, a member's own still waiting (14.4) --, each opened in
+  // place with the full 「批准以后会怎样」 and its answers.
+  function urgentPart(subject, id) {
+    const c = (lastData && lastData.column) || {};
+    const role = deskRole();
+    const list = role === "pi" ? c.waiting || [] : role === "member" ? (c.mine || []).filter(waits) : [];
+    const touching = list.filter((p) => (p.touches || []).indexOf(id) >= 0);
+    if (!touching.length) return null;
+    const s = part(t("待办"));
+    const ul = mk("ul", "desk-list");
+    touching.forEach((p) => ul.appendChild(proposalRow(p, role === "pi", subject)));
+    s.appendChild(ul);
+    return s;
   }
 
   // Drawn again after a write or a refresh (app.html revalidatePanel) --
@@ -816,6 +905,8 @@
     if (window.RONode && RONode.renderTrace) RONode.renderTrace(body, page, { panel: true, open: leaveTo });
     body.appendChild(linesPart(subject, id, "parent"));
     body.appendChild(linesPart(subject, id, "child"));
+    const urgent = urgentPart(subject, id);
+    if (urgent) body.appendChild(urgent);
     body.scrollTop = top;
     if (window.RONode && RONode.drawTraceLines) RONode.drawTraceLines(body);
   }
@@ -1135,7 +1226,8 @@
 
   // app.html's revalidatePanel, after the desk read itself again.
   function revalidatePanel(subject) {
-    return subject && subject.kind === "desk-attempt" ? drawPanel(subject) : null;
+    if (subject && subject.kind === "desk-attempt") return drawPanel(subject);
+    return subject && subject.kind === "desk-proposal" ? drawProposal(subject) : null;
   }
 
   // The context's freshness: fetched again once the project (epoch) moved.
@@ -1151,7 +1243,7 @@
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, relationWord,
-    openAttempt, revalidatePanel,
+    openAttempt, openProposal, revalidatePanel,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,

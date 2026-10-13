@@ -3304,7 +3304,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if not rest:
                     self._send_json(200, self._node_api(lambda: node_api.proposals_payload(served.root)))
                 elif "/" not in rest:
-                    self._send_json(200, self._node_api(lambda: node_api.proposal_payload(served.root, rest, self._lang())))
+                    member = (query.get("from") or [None])[0]  # whose, when the id is in two areas
+                    self._send_json(200, self._node_api(lambda: node_api.proposal_payload(
+                        served.root, rest, self._lang(), member)))
                 else:
                     raise NotFoundError(f"no such endpoint: {path}")
             elif path == "/api/desk":

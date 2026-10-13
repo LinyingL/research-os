@@ -349,7 +349,8 @@ def test_u4_every_new_endpoint_is_origin_checked(tmp_path, method, path, body):
 def test_u4_team_js_is_served_packaged_and_loaded_by_the_page(tmp_path):
     """/team.js is served from the package (and listed in pyproject's
     package data); the page loads it after node.js; nothing placeholders
-    提议 or 成员 any more; the desk's 查看 opens a proposal's page."""
+    提议 or 成员 any more; the desk's 查看 opens a proposal in the desk's
+    panel, drawn by team.js (V10, 14.3-14.4: decided in place)."""
     root = _project(tmp_path / "proj")
     with _serve(root) as base:
         import urllib.request
@@ -362,7 +363,8 @@ def test_u4_team_js_is_served_packaged_and_loaded_by_the_page(tmp_path):
     assert html.index('<script src="/node.js"></script>') < html.index('<script src="/team.js"></script>')
     assert "PLACEHOLDER" not in html and "renderPlaceholder" not in html
     desk = (WEBAPP / "desk.js").read_text(encoding="utf-8")
-    assert "ROTeam.openProposal(p.id, p.by)" in desk and "renderPlaceholder" not in desk
+    assert "ROTeam.renderProposalInto(host, subject.id, subject.by," in desk and "renderPlaceholder" not in desk
+    assert "ROTeam.openProposal" not in desk
 
 
 # -- the page's wording, run under node against the real team.js ------------------------------------

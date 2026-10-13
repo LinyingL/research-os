@@ -714,6 +714,8 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .dp-mark { font-size: 0.74rem; color: var(--ink-soft); }
 .dp-part .desk-list { border-top: none; }
 .dp-part .desk-alone { margin-top: 0.5rem; }
+.dp-proposal { display: flex; flex-direction: column; gap: 1.2rem; }
+.dp-in-place { margin-top: 0.6rem; }
 
 .panel-actions { display: flex; gap: 0.6rem; margin: 0 0 0.7rem; }
 .btn { font: inherit; font-size: 0.82rem; padding: 0.4rem 0.85rem; background: var(--paper-alt); border: 1px solid var(--line-strong); cursor: pointer; color: var(--ink); }
@@ -2966,8 +2968,8 @@ async function revalidatePanel() {
   // V5: the 待复核 list and the 记录 inventory follow the record live.
   if (subject.kind === "review") { await renderReviewPanel(subject); return; }
   if (subject.kind === "records") { await renderRecordsPanel(subject); return; }
-  // V10 (14.3): an attempt opened on the desk, drawn again unless something is typed in it.
-  if (subject.kind === "desk-attempt") { await RODesk.revalidatePanel(subject); return; }
+  // V10 (14.3, 14.4): an attempt or a proposal opened on the desk, drawn again unless something is typed in it.
+  if (subject.kind === "desk-attempt" || subject.kind === "desk-proposal") { await RODesk.revalidatePanel(subject); return; }
 }
 
 async function refreshCurrentView() {

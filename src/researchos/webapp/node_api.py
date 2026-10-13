@@ -381,14 +381,16 @@ def proposals_payload(root: Path) -> dict[str, Any]:
     return _proposal_call(lambda: proposals_mod.listing(root))
 
 
-def proposal_payload(root: Path, proposal_id: str, lang: str = "zh") -> dict[str, Any]:
-    """GET /api/proposals/<id>: for the PI with exactly what approving would
-    do (a line's words in `lang`); with `uses`, the variable versions its
-    files use (12.3, U4)."""
+def proposal_payload(root: Path, proposal_id: str, lang: str = "zh", member: str | None = None) -> dict[str, Any]:
+    """GET /api/proposals/<id>[?from=<member>]: for the PI with exactly what
+    approving would do (a line's words in `lang`); with `uses`, the variable
+    versions its files use (12.3, U4). `member` names whose proposal it is
+    when the id is in more than one member's area, as the acts' `from` does."""
     from researchos import nodepage  # noqa: PLC0415
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id, lang=lang)), root)
+    out = _worded(_proposal_call(lambda: proposals_mod.open_for(root, proposal_id, member=member or None, lang=lang)),
+                  root)
     files = (out.get("changes") or {}).get("files") or out.get("files") or []
     try:
         out["uses"] = nodepage.variables_used(root, files)
