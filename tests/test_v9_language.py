@@ -2244,8 +2244,7 @@ def test_13_7_api_github_push_answers_with_the_state_in_the_requests_language(st
 #: The English labels the guide quotes, in bold, from surfaces now in English (13.7): each is an
 #: English entry of /i18n.js (either form of a plural) or the switch's own name.
 GUIDE_EN_ENGLISH_LABELS = (
-    "English", "Desk", "Research routes", "Members", "Proposals", "Project", "Add project…",
-    "Join a project from the shared folder…", "New attempt", "Propose a new attempt", "Current", "Abandoned",
+    "English", "Members", "Proposals", "Add project…", "Join a project from the shared folder…",
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
     "Return with reason", "Discuss", "Changed on both sides",
@@ -2255,14 +2254,10 @@ GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
 #: The officialness marks the guide quotes in English: the engine's words on an English screen
 #: (13.7: shared words follow the interface language on every page).
 GUIDE_EN_OFFICIALNESS_LABELS = ("Approved, awaiting sync",)
-#: The shell's menu items the guide names, each written **item** from the File menu.
-GUIDE_EN_SHELL_ITEMS = ("Submit Proposal…", "Publish")
+#: The streamlined guide uses page buttons, not shell menu shortcuts.
+GUIDE_EN_SHELL_ITEMS = ()
 #: Bold that is emphasis, not a label.
-GUIDE_EN_EMPHASIS = (
-    "Part 1: Member.", "Part 2: PI.", "Switching to English.", "What is in English so far.",
-    "Two folder names are always Chinese", "can only view", "can edit", "this", "The PI sees a proposal marked",
-    "A member's sync meets a file changed on both sides",
-)
+GUIDE_EN_EMPHASIS = ("0.1.0 Demo",)
 #: Chinese labels quoted for the Chinese screen before the switch (its neighbours), and words a
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.
