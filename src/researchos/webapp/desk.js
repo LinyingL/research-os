@@ -6,8 +6,9 @@
 //
 // It defines one global, window.RODesk, and calls app.html's helpers (mk,
 // mkButton, apiGet, apiPost, renderBlockingError, renderViewFailure,
-// setStatus, ownMark, openReviewPanel, RONode.openNode,
-// ROTeam.renderProposalInto, state, ...) and /routemap.js's
+// setStatus, ownMark, openReviewPanel, renderReviewItem, keyId,
+// undoFromReview, RONode.openNode, ROTeam.renderProposalInto, state, ...)
+// and /routemap.js's
 // window.RORouteMap only at run time, never while loading.
 //
 // What it reads (all GET, all origin-checked by the server):
@@ -15,7 +16,9 @@
 //   /api/share      -- the shared drive's state (the sidebar's status line);
 //   /api/proposals  -- the quiet count beside 提议 and the shell's mode;
 //   /api/desk       -- the route map's cards, lines and arrangement, and the
-//                      column beside it (researchos.desk.payload).
+//                      column beside it (researchos.desk.payload);
+//   /api/review     -- an attempt's 待复核, judged in its panel (14.3);
+//   /api/history    -- how its row moved, for the panel's timeline (14.5).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
 //
 // The desk is the route map with what waits for me beside it (14.1, 14.4):
@@ -143,6 +146,12 @@
     return "ro.desk.seen:" + String(project || "") + ":" + String(me || "-");
   }
 
+  // ... and of the returned proposals a member said 「知道了」 to (ruled
+  // 2026-10-13), kept in this browser like the last visit.
+  function gotItKey(project, me) {
+    return "ro.desk.gotit:" + String(project || "") + ":" + String(me || "-");
+  }
+
   function nameOf(id, team) {
     const m = (team || []).find((x) => x.id === id);
     return m && m.name ? m.name : String(id || "");
@@ -225,6 +234,8 @@
 
   const ctx = { me: null, share: null, proposals: null, mode: null, project: null, epoch: -1 };
   const sessionSince = new Map(); // project key -> the last-seen time this page session shows from
+  const gotItNow = new Map();     // gotItKey -> the returned proposals said 「知道了」 to (storage may be off)
+  const GOT_IT_KEPT = 200;
 
   function now() { return new Date(); }
 
@@ -425,10 +436,32 @@
     return p.state === "approved" ? t("已批准，待同步") : stateWord(p.state);
   }
 
-  // What waits in 我的提议: a proposal pending or returned (its reason
-  // stays), or approved while something it carries is not synced yet.
+  // What waits in 我的提议: a proposal pending, returned (its reason stays
+  // until its author says 「知道了」), or approved while something it carries
+  // is not synced yet.
   function waits(p) {
-    return p.state === "pending" || p.state === "conflict" || p.state === "returned" || !!p.awaiting_sync;
+    if (p.state === "returned") return !gotIt().has(String(p.id));
+    return p.state === "pending" || p.state === "conflict" || !!p.awaiting_sync;
+  }
+
+  function gotIt() {
+    const key = gotItKey(projectKey(), meId());
+    if (!gotItNow.has(key)) {
+      let kept = [];
+      try { kept = JSON.parse(storageGet(key) || "[]"); } catch (err) { kept = []; }
+      gotItNow.set(key, new Set(Array.isArray(kept) ? kept.map(String) : []));
+    }
+    return gotItNow.get(key);
+  }
+
+  // 「知道了」 on a returned proposal: it leaves 我的提议 and the panel's 待办.
+  function sayGotIt(p) {
+    const ids = gotIt();
+    ids.add(String(p.id));
+    storageSet(gotItKey(projectKey(), meId()), JSON.stringify(Array.from(ids).slice(-GOT_IT_KEPT)));
+    renderColumn(columnEl, lastData);
+    const s = state.panelSubject;
+    return s && s.kind === "desk-attempt" && panelShown() ? drawPanel(s) : null;
   }
 
   // A proposal in the column (14.4): what approving it would do, who and
@@ -451,6 +484,7 @@
     main.appendChild(actions);
     if (!subject) {
       actions.appendChild(mkButton(t("查看"), "btn btn-small", () => openProposal(p)));
+      if (!forPi && p.state === "returned") actions.appendChild(mkButton(t("知道了"), "btn btn-small", () => sayGotIt(p)));
     } else {
       const key = (p.by || "") + "/" + p.id;
       const inner = mk("div", "dp-in-place");
@@ -517,7 +551,7 @@
       head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id]));
       const own = ownMark(g);
       if (own) head.appendChild(own);
-      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(g.items[0]); }));
+      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openAttempt(g.id, true))); // judged in its panel (14.3)
       main.append(head, reviewItems(g.items, []));
       row.appendChild(main);
       ul.appendChild(row);
@@ -678,8 +712,12 @@
   // 「有改动」 (14.5): the attempt's row or one of its files changed since the
   // last visit to the desk (deskSince, kept as before); with none remembered,
   // in the engine's default days.
+  function sinceTime(since) {
+    return since ? new Date(since).getTime() : now().getTime() - DESK_DAYS * 86400000;
+  }
+
   function changedSince(since) {
-    const from = since ? new Date(since).getTime() : now().getTime() - DESK_DAYS * 86400000;
+    const from = sinceTime(since);
     return (a) => !!a.changed_at && new Date(a.changed_at).getTime() > from;
   }
 
@@ -718,6 +756,7 @@
     renderSidebar();
     lastData = data;
     lastChanged = changedSince(since);
+    lastFrom = sinceTime(since);
     renderColumn(deskColumn(host), data);
     if (routeMap) routeMap.update(data, { changed: lastChanged });
     drawnEpoch = epoch;
@@ -731,7 +770,8 @@
   // only; a member's change becomes a verdict-change proposal (12.4); turning
   // a route abandoned asks its reason --, 写备注, 来龙去脉 (the node page's
   // trace), 源自 and 由它而来 with remove, 待办 (the proposals touching it,
-  // each opened in place and answered there), 打开详情页. The column's 查看
+  // each opened in place and answered there), its 待复核 judged in place,
+  // what changed since the last visit (14.5), 打开详情页. The column's 查看
   // opens a proposal there as its own subject (team.js draws it, reading
   // /api/proposals/<id>?from=). One panel at a time: what is half typed in
   // it is never replaced unasked.
@@ -739,6 +779,7 @@
   const NOTES_SHOWN = 5;
   let lastData = null;     // the desk payload last drawn: attempts, lines, the column
   let lastChanged = null;  // its 「有改动」 rule
+  let lastFrom = Infinity; // ... from this time
   let panelSaid = null;    // { id, text }: what the last write in the panel did, said until another opens
 
   function byIdOf(id) { return document.getElementById(id); }
@@ -775,12 +816,16 @@
   }
 
   // A card clicked, or an attempt named in the panel: opened in the panel;
-  // the one open already stays as it is, typing and all.
-  function openAttempt(id) {
+  // the one open already stays as it is, typing and all. `toReview` (the
+  // column's 复核): brought to its 待复核.
+  function openAttempt(id, toReview) {
     const s = state.panelSubject;
-    if (s && s.kind === "desk-attempt" && s.id === id && panelShown()) return null;
+    if (s && s.kind === "desk-attempt" && s.id === id && panelShown()) {
+      if (toReview === true) showReviewPart();
+      return null;
+    }
     if (!mayLeavePanel()) return null;
-    const subject = { kind: "desk-attempt", id: id, hold: false, open: new Set() };
+    const subject = { kind: "desk-attempt", id: id, hold: false, open: new Set(), judged: new Set(), toReview: toReview === true };
     const a = attemptOf(id) || {};
     showPanel(subject, attemptName(a) || id, a.date || "");
     return drawPanel(subject);
@@ -874,12 +919,16 @@
   // unless something is typed in it, or a preview or a proposal's draft stands.
   async function drawPanel(subject) {
     const id = subject.id;
-    let page, notes;
+    const keys = reviewKeys(id);
+    const rowMoved = newChanges(attemptOf(id)).some((c) => c.node === id);
+    let page, notes, review, hist;
     try {
-      [page, notes] = await Promise.all([
+      [page, notes, , review, hist] = await Promise.all([
         apiGet("/api/node?node=" + encodeURIComponent(id)),
         apiGet("/api/notes?node=" + encodeURIComponent(id)).catch((err) => ({ failed: err })),
         typeof fetchAttemptRecords === "function" ? fetchAttemptRecords().catch(() => false) : false,
+        keys.length || offerHere(subject) ? apiGet("/api/review").catch((err) => ({ failed: err })) : null,
+        rowMoved ? apiGet("/api/history?node=" + encodeURIComponent(id)).catch((err) => ({ failed: err })) : null,
       ]);
     } catch (err) {
       if (state.panelSubject !== subject || subject.hold || halfTyped()) return;
@@ -901,18 +950,122 @@
     if (panelSaid && panelSaid.id === id) body.appendChild(mk("div", "notice-status ok", panelSaid.text));
     body.appendChild(panelHead(a, id));
     body.appendChild(editPart(subject, a, page));
+    const changes = changesPart(a, id, hist);
+    if (changes) body.appendChild(changes);
     body.appendChild(notesPart(subject, page, notes));
     if (window.RONode && RONode.renderTrace) RONode.renderTrace(body, page, { panel: true, open: leaveTo });
     body.appendChild(linesPart(subject, id, "parent"));
     body.appendChild(linesPart(subject, id, "child"));
     const urgent = urgentPart(subject, id);
     if (urgent) body.appendChild(urgent);
+    const judged = reviewPart(subject, keys, review);
+    if (judged) body.appendChild(judged);
     body.scrollTop = top;
+    if (subject.toReview) { subject.toReview = false; showReviewPart(); }
+    const offered = subject.offered;
+    subject.offered = null;
+    if (offered && typeof offered.scrollIntoView === "function") offered.scrollIntoView({ block: "nearest" });
     if (window.RONode && RONode.drawTraceLines) RONode.drawTraceLines(body);
   }
 
-  function part(title) {
-    const s = mk("section", "node-sec dp-part");
+  // 「有改动」 said in place (14.5): what changed on this attempt since the
+  // last visit, newest first -- its row as the node page's timeline says it
+  // (how the verdict and the result moved, who, how it came), reduced to the
+  // versions since then; each of its files that changed, opened on its own
+  // page. Nothing changed since: no part.
+  function newChanges(a) {
+    return ((a && a.changed) || []).filter((c) => new Date(c.at).getTime() > lastFrom);
+  }
+
+  function changesPart(a, id, hist) {
+    const news = newChanges(a);
+    if (!news.length) return null;
+    const s = part(t("你上次查看以来的改动"));
+    const versions = hist && !hist.failed && window.RONode && RONode.verdictMove ? hist.versions || [] : [];
+    const moved = versions.map((v, i) => ({ at: v.at, v: v, prev: versions[i + 1] || null }))
+      .filter((e) => new Date(e.at).getTime() > lastFrom);
+    const row = news.find((c) => c.node === id);
+    const entries = news.filter((c) => c.node !== id).map((c) => ({ at: c.at, file: c }))
+      .concat(row ? (moved.length ? moved : [{ at: row.at, row: true }]) : []);
+    entries.sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
+    const ul = mk("ul", "node-timeline");
+    entries.forEach((e) => {
+      const li = mk("li", "tl-row");
+      li.appendChild(mk("span", "tl-when", whenWords(e.at, now())));
+      const main = mk("div", "tl-main");
+      if (e.v) {
+        main.appendChild(mk("div", "tl-what", RONode.verdictMove(e.prev, e.v)));
+        main.appendChild(mk("div", "tl-meta", [e.v.who_label, RONode.sourceWords(e.v)].filter(Boolean).join(" · ")));
+        if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", t("经 {who} 批准", { who: e.v.approved_by_label || e.v.approved_by })));
+        if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
+      } else if (e.row) {
+        main.appendChild(mk("div", "tl-what", t("这一行有改动")));
+      } else {
+        const what = mk("div", "tl-what");
+        what.appendChild(rowLink(e.file.path || e.file.node, "mono", () => leaveTo(e.file.node), t("打开它的详情页")));
+        main.append(what, mk("div", "tl-meta", t("文件有改动")));
+      }
+      li.appendChild(main);
+      ul.appendChild(li);
+    });
+    s.appendChild(ul);
+    if (a.changed_more && news.length === a.changed.length) {
+      s.appendChild(mk("p", "desk-empty", t("更早改动的 {n} 个文件没有列在这里。", { n: numberText(a.changed_more) })));
+    }
+    return s;
+  }
+
+  // Its 待复核 (14.3): the judgments the column lists under this attempt,
+  // each drawn by the review panel's own item (app.html renderReviewItem),
+  // confirmed again, changed or withdrawn in place. An act made here offers
+  // its 「撤销」 here -- in its item while it is listed, else at the top of
+  // this part -- for as long as the review panel would (state.reviewOffer).
+  function reviewKeys(id) {
+    const groups = ((((lastData && lastData.column) || {}).review) || {}).groups || [];
+    const g = groups.find((x) => x.id === id);
+    return g && typeof keyId === "function" ? (g.items || []).map(keyId) : [];
+  }
+
+  function offerHere(subject) {
+    const o = state.reviewOffer;
+    return o && o.until > Date.now() && subject.judged && subject.judged.has(o.origin) ? o : null;
+  }
+
+  function showReviewPart() {
+    const sec = byIdOf("panel-body").querySelector(".dp-review");
+    if (sec && typeof sec.scrollIntoView === "function") sec.scrollIntoView({ block: "start" });
+  }
+
+  function reviewPart(subject, keys, review) {
+    const offer = offerHere(subject);
+    if (!keys.length && !offer) return null;
+    const s = part(t("待复核"), "dp-review");
+    const top = mk("div");
+    s.appendChild(top);
+    if (review && review.failed) {
+      const box = mk("div", "notice-status");
+      setStatus(box, "err", t("没能读到待复核的判断"), review.failed);
+      s.appendChild(box);
+    } else if (review && review.ledger && review.ledger.state && review.ledger.state !== "ok") {
+      s.appendChild(mk("p", "desk-alone", t("判断记录文件当前无法读取，请先恢复它")));
+    }
+    const wanted = new Set(keys);
+    const boxes = (review && !review.failed ? review.review || [] : []).filter((i) => wanted.has(keyId(i))).map((i) => {
+      subject.judged.add(keyId(i));
+      return s.appendChild(renderReviewItem(i, { focus: null }));
+    });
+    if (offer) {
+      const said = mk("div", "panel-status ok");
+      said.append(mk("span", null, offer.text), mkButton(t("撤销"), "err-detail-toggle", () => undoFromReview(offer.key, said)));
+      (boxes.find((b) => b.dataset.key === offer.origin) || top).appendChild(said);
+      setTimeout(() => { said.textContent = ""; said.classList.add("hidden"); }, Math.max(0, offer.until - Date.now()) + 50);
+      if (!offer.shown) { offer.shown = true; subject.offered = said; }
+    }
+    return s;
+  }
+
+  function part(title, cls) {
+    const s = mk("section", "node-sec dp-part" + (cls ? " " + cls : ""));
     s.appendChild(mk("h3", "node-sec-title", title));
     return s;
   }

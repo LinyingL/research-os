@@ -52,7 +52,6 @@
   const DIFFS_AUTO = 5;
   const LINKS_SHOWN = 40;
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
-  const SOURCE_WORDS = { scan: "扫描时记下", approval: "批准后写入", publish: "发布时记下", git: "git 提交", card: "定义卡记录" };
   const STATUS_WORDS = { pending: "待确认", confirmed: "已确认", rejected: "已否决", auto: "机器提取" };
   const JUDGE_WORDS = { confirmed: "确认了", rejected: "否决了", withdrawn: "撤回了对它的判断", undone: "撤销了上一次判断" };
   const FILTERS = [
@@ -136,23 +135,37 @@
     return meId ? note.by === meId : !note.by;
   }
 
-  // An attempt's verdict as it moved between two recorded versions.
+  // An attempt's verdict as it moved between two recorded versions, in the
+  // screen's words (13.6; the desk's panel says it too, 14.5): a default
+  // verdict by its code (RODesk.verdictWord), the researcher's own as written.
   function verdictMove(prev, cur) {
-    const parts = [];
-    const a = prev && prev.verdict_status ? prev.verdict_status.label : "";
-    const b = cur && cur.verdict_status ? cur.verdict_status.label : "";
-    if (!prev) parts.push("记下这条尝试，判决为「" + (b || "其它") + "」");
-    else if ((prev.verdict || "") !== (cur.verdict || "")) parts.push("判决从「" + (a || "其它") + "」改为「" + (b || "其它") + "」");
-    if (prev && (prev.result || "") !== (cur.result || "")) parts.push("结果改为：" + (cur.result || "（空）"));
-    if (prev && !parts.length) parts.push("判决不变（" + (b || "其它") + "）");
-    return parts.join("，");
+    const word = (v) => {
+      const s = v && v.verdict_status;
+      if (!s || !s.label) return t("其它");
+      const D = typeof window !== "undefined" && window.RODesk;
+      return D && D.verdictWord ? D.verdictWord(s) : s.label;
+    };
+    if (!prev) return t("记下这条尝试，判决为「{verdict}」", { verdict: word(cur) });
+    const moved = (prev.verdict || "") !== (cur.verdict || "");
+    const result = (prev.result || "") !== (cur.result || "") ? cur.result || t("（空）") : null;
+    const words = { was: word(prev), became: word(cur), result: result };
+    if (moved && result !== null) return t("判决从「{was}」改为「{became}」，结果改为：{result}", words);
+    if (moved) return t("判决从「{was}」改为「{became}」", words);
+    return result !== null ? t("结果改为：{result}", words) : t("判决不变（{verdict}）", { verdict: word(cur) });
   }
 
   // Where a version came from, in words; one 同步 installed names the
   // publish it came from (12.13): 「随第 3 版发布同步」.
   function sourceWords(v) {
-    if (v && v.source === "publish" && v.snapshot != null) return "随第 " + v.snapshot + " 版发布同步";
-    return (v && SOURCE_WORDS[v.source]) || "";
+    if (v && v.source === "publish" && v.snapshot != null) return t("随第 {n} 版发布同步", { n: v.snapshot });
+    switch (v && v.source) {
+      case "scan": return t("扫描时记下");
+      case "approval": return t("批准后写入");
+      case "publish": return t("发布时记下");
+      case "git": return t("git 提交");
+      case "card": return t("定义卡记录");
+      default: return "";
+    }
   }
 
   // A table's first recorded version in words: 「3 行，列 month、topic」.
@@ -1386,6 +1399,8 @@
     openNode, back, section, loadNode, loadResults, loadDataCode, current: () => nav.id, diffBlock,
     // the desk's side panel (14.3): an attempt's 来龙去脉, and its lines drawn once it shows
     renderTrace: renderTraceSection, drawTraceLines: drawAllLines,
+    // and its timeline of what changed since the last visit (14.5): a row's move, where a version came from
+    verdictMove, sourceWords,
     // pure, for tests/test_v8_u3.py
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,

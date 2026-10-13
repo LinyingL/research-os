@@ -247,8 +247,12 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "官方版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
-    for gone in ("你上次查看以来的改动", "依据变了的成果", "已放弃的路线"):
+    for gone in ("依据变了的成果", "已放弃的路线"):
         assert gone not in js, gone
+    # 14.5: what changed since I last looked is 「有改动」 on a card and the panel's timeline, which
+    # carries 13.4's fixed words for it as its title -- never a block of the column.
+    assert js.count("你上次查看以来的改动") == 1 and 'part(t("你上次查看以来的改动"))' in js
+    assert js.index("function changesPart(") < js.index("你上次查看以来的改动") < js.index("function reviewKeys(")
     # The desk's writes: 同步, and -- re-baselined for V10 (DESIGN.md 14.3) -- the side panel's,
     # each through an existing endpoint: the attempt's preview and write, a note, a line removed
     # (a member's removal proposed). Nothing else.

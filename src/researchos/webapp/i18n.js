@@ -553,7 +553,7 @@
     "尝试表第 {number} 行的判决 {old} 改为 {new}": "Row {number} of the attempt table: the verdict changes from {old} to {new}",
     "第 {number} 行的判决 {old} 改为 {new}": "Row {number}: the verdict changes from {old} to {new}",
     "结果：{result}": "Result: {result}",
-    "结果改为：{result}": "The result becomes: {result}",
+    "结果改为：{result}": "New result: {result}",
     "理由：{reason}": "Reason: {reason}",
     "放弃理由：{reason}": "Reason for abandoning: {reason}",
     "批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。":
@@ -666,6 +666,26 @@
     "已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。":
       "Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the official record.",
     "已发送": "Sent",
+    // V10 D4 (14.3-14.5): an attempt's 待复核 judged in its panel; what changed on it since the
+    // last visit (the node page's timeline, reduced); a member's returned proposal put away.
+    "知道了": "Got it",
+    "没能读到待复核的判断": "Could not read the judgments that need review",
+    "这一行有改动": "This row changed",
+    "文件有改动": "File changed",
+    "打开它的详情页": "Open its details page",
+    "经 {who} 批准": "Approved by {who}",
+    "更早改动的 {n} 个文件没有列在这里。": {
+      one: "{n} file changed earlier is not listed here.", other: "{n} files changed earlier are not listed here.",
+    },
+    "记下这条尝试，判决为「{verdict}」": "Attempt recorded with the verdict “{verdict}”",
+    "判决从「{was}」改为「{became}」": "Verdict changed from “{was}” to “{became}”",
+    "判决从「{was}」改为「{became}」，结果改为：{result}": "Verdict changed from “{was}” to “{became}”; new result: {result}",
+    "判决不变（{verdict}）": "Verdict unchanged ({verdict})",
+    "随第 {n} 版发布同步": "Synced with published version {n}",
+    "扫描时记下": "Recorded at a scan",
+    "发布时记下": "Recorded at a publish",
+    "git 提交": "Git commit",
+    "定义卡记录": "Recorded on the card",
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

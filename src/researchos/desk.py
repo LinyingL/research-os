@@ -40,6 +40,7 @@ from researchos.records.identity import IdentityState, read_identity
 logger = logging.getLogger(__name__)
 
 GIT_COMMIT_LIMIT = 300
+CHANGED_LISTED = 20  # an attempt's newest changes the panel's timeline can say (14.5)
 BASELINE_WINDOW = timedelta(minutes=10)
 RECORD_PREFIX = ".researchos/"
 
@@ -388,7 +389,7 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
         attrs, human = n.get("attrs") or {}, n.get("human_fields") or {}
         status = attempts_ingest.route_status(human.get("verdict", ""), labels, markers)
         gone = abandoned.get(n["id"])
-        changed = [times[i] for i in (n["id"], *members.get(n["id"], {})) if i in times]
+        changed = sorted(((times[i], i) for i in (n["id"], *members.get(n["id"], {})) if i in times), reverse=True)
         attempts.append({
             "id": n["id"], "number": str(attrs.get("number") or ""),
             "title": attrs.get("description") or n.get("title") or "", "date": str(attrs.get("date") or ""),
@@ -396,7 +397,9 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
             "route_status": status, "tone": TONES.get(status["status"], "plain"), "abandoned": gone is not None,
             "result": gone["result"] if gone else str(human.get("result") or ""),
             "reason": gone["reason"] if gone else None, "decision": gone["decision"] if gone else None,
-            "changed_at": _iso(max(changed)) if changed else None,
+            "changed_at": _iso(changed[0][0]) if changed else None,
+            "changed": [{"node": i, "path": notes_mod.node_path(i), "at": _iso(when)} for when, i in changed[:CHANGED_LISTED]],
+            "changed_more": max(0, len(changed) - CHANGED_LISTED),
             "marks": {"proposals": [], "review": None}, "_source": attrs.get("source_file", ""),
         })
     attempts.sort(key=lambda a: (a["date_key"] is None, a["date_key"] or "",
@@ -489,7 +492,10 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
       and its `tone`, `abandoned` with the `reason` and the `decision`
       that recorded it (who abandoned it: 14.3), `changed_at` (the newest
       change of its row or of any of its files, 14.3's membership rule;
-      the page compares it with its own last visit for 「有改动」),
+      the page compares it with its own last visit for 「有改动」) and
+      `changed`, what changed, newest first -- the row (`node` the
+      attempt, `path` None) or a file -- for the panel's timeline (at most
+      CHANGED_LISTED; `changed_more` counts the earlier ones left out),
       and `marks`: the proposals touching it (等你批准 for the PI, 提议中
       for its author) and its 待复核 count;
     - **lines** -- the 「源自」 lines, child and parent, note, who drew them

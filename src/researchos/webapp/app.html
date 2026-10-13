@@ -4007,6 +4007,11 @@ async function judgeFromReview(target, verdict, note, statusEl, buttons, done, o
     return;
   }
   reviewNotes.delete(keyId(target));
+  // Its note went with the act: the field is emptied, so a panel that keeps
+  // what is half typed (the desk's, DESIGN.md 14.3) is drawn again.
+  panelBody.querySelectorAll("input").forEach((f) => {
+    if (origin && f.dataset.noteFor === origin) { f.value = ""; delete f.dataset.typed; }
+  });
   state.reviewOffer = {
     text: t("{done}：{link}", { done: done, link: linkText(target) }), key: keyOf(target), until: Date.now() + JUDGE_UNDO_MS,
     origin: origin || null, shown: false,

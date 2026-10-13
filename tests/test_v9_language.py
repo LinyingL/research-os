@@ -116,6 +116,10 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
         "function renderWhatApprovingDoes(page, full) {", "function renderUses(page, uses, open) {",
         "function renderDecide(page, full, team, onDone) {", "async function composeInto(",
         "function renderDraft(host, body, draft, status) {", "function removalList(coming) {")),
+    # V10 D4 (14.5, 14.6): how an attempt's row moved and where a version came from, which the
+    # desk's panel says in its timeline of what changed since the last visit.
+    ("node.js", "function verdictMove(prev, cur) {", "\n  }\n"),
+    ("node.js", "function sourceWords(v) {", "\n  }\n"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
@@ -1484,7 +1488,9 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: screen reads byte for byte as designed. Re-baselined on purpose for V10 (DESIGN.md 14.5, 14.7):
 #: the desk is the route map with the column beside it, so the first increment's pin (commit
 #: 041c510's lists of changes, outputs and abandoned routes) describes a desk that is gone.
-_DESK_ZH_SHA256 = "8745dfe1b2bb2f3fe30e084d73d455e35834f18d74470582f91d47496da852ec"
+#: Moved again by the ruling of 2026-10-13 (DESIGN.md 14.4): a member's returned proposal stays in
+#: 我的提议 until 「知道了」, so the member's two returned rows gain that button -- nothing else moved.
+_DESK_ZH_SHA256 = "f59f8fb75932896634b7a1f0180f60cb1ecb4923b3a6768595b7eebac2fdb247"
 
 
 @needs_node
@@ -1548,6 +1554,8 @@ def test_13_7_the_desk_in_english():
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
+    # Ruled 2026-10-13: each returned proposal stays until its author says “Got it”.
+    assert desks[2].count("btn btn-small: Got it") == 2
     # 14.4: what waits -- a proposal superseded, or approved and synced since, is not listed.
     assert not any(line.startswith("desk-link strong: Remove the line") for line in desks[2])
     assert not any("Replaced by your later proposal" in line for line in desks[2])
