@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from researchos import desk, history, people, proposals
+from researchos import desk, history, nodepage, people, proposals
 from researchos.records import notes as notes_mod
 from researchos.records.identity import read_identity
 from researchos.webapp import server
@@ -271,114 +271,137 @@ def _backdate(root: Path, days: int = 10) -> None:
             conn.execute("UPDATE versions SET at = ? WHERE seq = ?", (when.isoformat(timespec="seconds"), seq))
 
 
-def _desk(root: Path, since: str | None = None) -> dict:
+def _desk(root: Path) -> dict:
     conn = _conn(root)
     try:
-        return desk.desk(conn, root, since)
+        return desk.payload(conn, root)
     finally:
         conn.close()
+
+
+def _card(out: dict, number: str) -> dict:
+    return next(a for a in out["attempts"] if a["number"] == number)
+
+
+# Re-baselined for V10 (DESIGN.md 14.5): the desk is the route map. What changed since I last
+# looked is each card's `changed_at` (its row or one of its files; the page compares it with its
+# own last visit for 「有改动」) and the panel's timeline -- the node's history -- says what and
+# who; abandoned routes are the quieter cards; results that lost their evidence are on 成果.
 
 
 def test_12_0_a_project_just_added_reports_no_change_for_every_file(tmp_path):
     """The first scan's versions are the baseline: a project added today
-    does not list each of its files as new."""
+    marks no attempt as changed, and the first desk's list is gone."""
     root = _project(tmp_path / "proj")
     out = _desk(root)
-    assert out["since_default"] and out["default_days"] == 7
-    assert out["changes"] == []
+    assert [(a["number"], a["changed_at"]) for a in out["attempts"]] == [("16", None)]
+    assert not {"since", "since_default", "default_days", "changes", "more_changes"} & set(out)
 
 
 def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
     """After the project was added: a script gains lines, a table gains
-    rows and a column, a figure appears, an attempt's verdict moves. Each
-    is one item saying exactly what, with the verdict as words."""
+    rows and a column, an attempt's verdict moves. The attempt's card is
+    changed since the last visit (and not after it), abandoned with its
+    words; its timeline says exactly what, the verdict as words, and who."""
     root = _project(tmp_path / "proj")
     _backdate(root)
+    visit = datetime.now(timezone.utc) - timedelta(days=1)
     (root / "steps" / "16-build.py").write_text((root / "steps" / "16-build.py").read_text() + "df = df.dropna()\n")
     (root / "data" / "panel.csv").write_text(_csv(97, ("id", "x", "log_ret")))
-    (root / "figs" / "fig3.png").write_bytes(b"\x89PNG fig3")
     (root / "map.md").write_text(_map("☠️ 伪协整"))
     _scan(root)
-    out = _desk(root)
-    by_node = {c["node"]: c for c in out["changes"]}
-    assert by_node["script:steps/16-build.py"]["what"] == "增加 1 行"
-    table = by_node["dataset:data/panel.csv"]["what"]
+    card = _card(_desk(root), "16")
+    assert visit < desk._parse(card["changed_at"]) < datetime.now(timezone.utc) + timedelta(minutes=1)
+    assert card["abandoned"] and card["route_status"] == {"status": "abandoned", "label": "已放弃", "words": "伪协整"}
+    assert "+df = df.dropna()" in history.diff(root, "steps/16-build.py", words=True)["diff"]
+    table = history.diff(root, "data/panel.csv", words=True)["summary"]
     assert "行数从 96 增至 97" in table and "新增列 log_ret" in table and "→" not in table
-    assert by_node["figure:figs/fig3.png"]["what"] == "新文件"
-    attempt = by_node["attempt:map.md#16"]
-    assert attempt["what"] == "判决改了" and attempt["number"] == "16"
-    assert attempt["old_status"]["label"] == "待定" and attempt["new_status"] == {
-        "status": "abandoned", "label": "已放弃", "words": "伪协整"}
-    assert all(c["who"] == ["最初的研究者"] for c in out["changes"] if c["kind"] in ("file", "attempt"))  # 12.12
-    # Newest first; nothing from before `since`.
-    later = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
-    assert _desk(root, later)["changes"] == []
-    # The abandoned route is listed with its words.
-    assert [(a["number"], a["verdict_status"]["label"]) for a in out["abandoned"]] == [("16", "已放弃")]
+    assert history.diff(root, "attempt:map.md#16", words=True)["summary"] == "判决从「待定」改为「已放弃」"
+    for node in ("steps/16-build.py", "data/panel.csv", "attempt:map.md#16"):  # 12.12
+        assert history.versions(root, node)["versions"][0]["who_label"] == "最初的研究者"
 
 
 def test_12_0_results_that_lost_their_evidence(tmp_path):
-    """figs/fig1.png is cited by the paper but nothing makes it: listed
-    with 「补上来源」; figs/fig2.png, whose chain is whole, is not -- and
-    once its data file is gone it is, with the break named."""
+    """figs/fig1.png is cited by the paper but nothing makes it: 缺来源, the
+    break named; figs/fig2.png, whose chain is whole, is not -- and once
+    its data file is gone it is. On 成果 (12.13), not on the desk."""
     root = _project(tmp_path / "proj")
-    out = _desk(root)
-    assert [r["path"] for r in out["results"]] == ["figs/fig1.png"]
-    assert out["results"][0]["breaks"][0]["kind"] == "no_generating_script"
-    assert out["results"][0]["breaks"][0]["repair"] == "补上来源" and out["results"][0]["drafts"] == ["paper.md"]
+
+    def traces() -> dict:
+        conn = _conn(root)
+        try:
+            got = nodepage.results(conn, root)
+        finally:
+            conn.close()
+        return {i["path"]: (g["file"], i["trace"]) for g in got["sections"] for i in g["items"]}
+
+    found = traces()
+    assert found["figs/fig1.png"][0] == "paper.md" and found["figs/fig1.png"][1]["state"] == "no_source"
+    assert found["figs/fig1.png"][1]["breaks"][0] == "没有找到生成它的脚本"
+    assert found["figs/fig2.png"][1]["state"] != "no_source"
     (root / "data" / "raw.csv").unlink()
-    paths = {r["path"]: r for r in _desk(root)["results"]}
-    assert [b["kind"] for b in paths["figs/fig2.png"]["breaks"]] == ["data_missing"]
+    gone = traces()["figs/fig2.png"][1]
+    assert gone["state"] == "no_source" and "数据文件不在磁盘上" in gone["breaks"]
+    assert "results" not in _desk(root)
 
 
-def test_12_0_notes_by_others_and_never_my_own(tmp_path, monkeypatch):
-    """A note shows on the desk of everyone but its author."""
+def test_12_0_a_note_is_read_where_it_was_written_by_everyone(tmp_path, monkeypatch):
+    """A note is no longer a desk item: it is on its file's page, which the
+    panel's 来龙去脉 opens, its author named for everyone, its author too."""
     monkeypatch.setenv("RESEARCHOS_HOME", str(tmp_path / "home"))
     root = _project(tmp_path / "proj")
     people.write_me(*PI)
     notes_mod.add_note(root, "steps/16-build.py", "这里的缺失值要先处理", via="cli")
-    since = datetime.now(timezone.utc) - timedelta(days=1)
     conn = _conn(root)
     try:
-        mine = desk._note_changes(root, conn, since, PI[1])
-        theirs = desk._note_changes(root, conn, since, MEMBER[1])
+        listed = notes_mod.notes_for(root, "steps/16-build.py", conn)["notes"]
     finally:
         conn.close()
-    assert mine == []
-    assert [(n["path"], n["text"], n["who"]) for n in theirs] == [("steps/16-build.py", "这里的缺失值要先处理", [PI[0]])]
+    assert [(n["text"], n["by"], n["label"]) for n in listed] == [("这里的缺失值要先处理", PI[1], PI[0])]
+    assert "changes" not in _desk(root)
 
 
 def test_12_0_an_approval_is_on_the_pis_desk_with_who_proposed_and_who_approved(tmp_path, monkeypatch):
     """The member proposes a verdict change and the PI approves it: the
-    official desk lists the decision -- the member as proposer, the PI as
-    approver -- and the verdict the attempt now has, as words."""
+    official desk's card has the verdict as words and is changed; who
+    proposed and who approved are on 研究路线's decision."""
     team = Team(tmp_path, monkeypatch)
     with team.member():
         (team.work / "map.md").write_text(_map("✅ 稳健"))
         stored = proposals.write_proposal(team.work, proposals.make_proposal(team.work, "verdict_change", "16 成立"))
     with team.pi():
         proposals.approve(team.official, stored.id, note="同意")
-        out = _desk(team.official)
-    decision = next(c for c in out["changes"] if c["kind"] == "decision")
-    assert decision["who"] == [MEMBER[0]] and decision["approved_by"] == [PI[0]]
-    assert decision["notes"] == ["同意"] and decision["number"] == "16"
-    assert decision["verdict_status"]["label"] == "现行"
+        card = _card(_desk(team.official), "16")
+        conn = _conn(team.official)
+        try:
+            routes = nodepage.routes(conn, team.official)
+        finally:
+            conn.close()
+    assert card["route_status"]["label"] == "现行" and card["changed_at"] is not None
+    decision = next(i for g in routes["groups"] for i in g["items"] if i["number"] == "16")["decision"]
+    assert decision["by"]["label"] == MEMBER[0] and decision["approved_by"]["label"] == PI[0]
+    assert decision["note"] == "同意" and decision["proposal"] == stored.id
 
 
-def test_12_0_http_desk_is_origin_checked_and_takes_since(live):
+def test_12_0_http_desk_is_origin_checked_and_takes_no_since(live):
+    """The page compares each card's `changed_at` with its own last visit:
+    /api/desk takes no `since` (one sent changes nothing)."""
     base, _root = live
     status, body = _call(f"{base}/api/desk")
-    assert status == 200 and body["since_default"] is True and "changes" in body and "abandoned" in body
-    assert body["review"] == 0  # 9.6's count, as /api/summary has it
-    status, body = _call(f"{base}/api/desk?since=2026-01-01T00:00:00%2B00:00")
-    assert status == 200 and body["since_default"] is False and body["since"].startswith("2026-01-01")
+    assert status == 200 and {"attempts", "lines", "column", "layout"} <= set(body)
+    assert not {"since", "changes", "results", "review", "abandoned"} & set(body)
+    assert body["column"]["review"]["count"] == 0  # 9.6's count, as /api/summary has it
+    status, again = _call(f"{base}/api/desk?since=2026-01-01T00:00:00%2B00:00")
+    assert status == 200 and again["attempts"] == body["attempts"]
     status, body = _call(f"{base}/api/desk", headers={"Origin": "http://evil.example"})
     assert status == 403
 
 
 def test_12_0_a_git_project_reports_commits_and_uncommitted_edits(tmp_path):
-    """In a git project the desk reads the files git tracks from git: each
-    commit since then (author, subject) and edits not yet committed."""
+    """In a git project the desk reads the files git tracks from git: an
+    attempt is changed when one of its files' newest commit or an edit not
+    committed yet is; a file no attempt holds marks no card. The commit's
+    author and subject are the timeline's."""
     from test_v8_phase2 import _git
 
     root = tmp_path / "proj"
@@ -388,13 +411,15 @@ def test_12_0_a_git_project_reports_commits_and_uncommitted_edits(tmp_path):
     _git(root, "add", "steps", "data", "figs", "paper.md", "map.md")
     _git(root, "commit", "-q", "-m", "first", date="2026-01-01T10:00:00+00:00")
     (root / "steps" / "17-plot.py").write_text((root / "steps" / "17-plot.py").read_text() + "# v2\n")
-    _git(root, "commit", "-q", "-am", "图 2 改用对数刻度")
+    _git(root, "commit", "-q", "-am", "图 2 改用对数刻度", date="2026-06-02T10:00:00+00:00")
     (root / "paper.md").write_text((root / "paper.md").read_text() + "\nMore.\n")
-    out = _desk(root, "2026-06-01T00:00:00+00:00")
-    by_path = {c.get("path"): c for c in out["changes"] if c["kind"] == "file"}
-    assert by_path["steps/17-plot.py"]["notes"] == ["图 2 改用对数刻度"] and by_path["steps/17-plot.py"]["who"] == ["Li"]
-    assert by_path["paper.md"].get("uncommitted") is True
-    assert "data/raw.csv" not in by_path
+    assert _card(_desk(root), "16")["changed_at"] == "2026-06-02T10:00:00+00:00"
+    newest = history.versions(root, "steps/17-plot.py")["versions"][0]
+    assert (newest["note"], newest["who_label"]) == ("图 2 改用对数刻度", "Li")
+    build = root / "steps" / "16-build.py"
+    build.write_text(build.read_text() + "df = df.dropna()\n")
+    edited = datetime.fromtimestamp(build.stat().st_mtime, timezone.utc).astimezone()
+    assert _card(_desk(root), "16")["changed_at"] == edited.isoformat(timespec="seconds")
 
 
 # -- the desk's wording, run under node against the real desk.js ---------------------------------------------

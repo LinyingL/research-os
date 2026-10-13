@@ -59,7 +59,7 @@ def test_14_3_one_membership_rule_for_the_node_page_the_relation_map_and_the_des
 def _payload(root, lang="zh", **options) -> dict:
     conn = _conn(root)
     try:
-        return desk.payload(conn, root, None, lang=lang, **options)
+        return desk.payload(conn, root, lang=lang, **options)
     finally:
         conn.close()
 
@@ -104,7 +104,9 @@ def test_14_1_a_single_persons_map_cards_lines_marks_and_column(tmp_path):
     root, (key16, key_other) = _single(tmp_path)
     before = time.time()
     got = _payload(root)
-    assert got["role"] == "single" and "changes" in got and "abandoned" in got  # the old blocks stay until C
+    # Re-baselined (V10 D1): the first desk's blocks are gone from the payload (14.5).
+    assert got["role"] == "single" and not {"since", "since_default", "default_days", "changes", "more_changes",
+                                            "results", "results_not_checked", "review", "abandoned"} & set(got)
     cards = [(a["number"], a["date"], a["date_key"], a["order"], a["route_status"]["status"], a["tone"], a["abandoned"])
              for a in got["attempts"]]
     assert cards == [("18", "≤07-07", "2026-07-07", 0, "current", "olive", False),

@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from researchos import github, literature, officialness, settings
+from researchos import github, history, literature, officialness, settings
 from researchos.webapp import server
 
 from test_v7_connections import GITHUB_URL, _colleague_pushes, linked, linked_server, stand_in  # noqa: F401 -- fixtures
@@ -1859,7 +1859,10 @@ def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
     """/api/desk without the header (the command line's and MCP's case) and
     with zh is the Chinese it was; with en every sentence the engine
     composes is English, the codes are the same, and nothing Chinese is
-    left but the researcher's text and the verdict vocabulary (13.1)."""
+    left but the researcher's text and the verdict vocabulary (13.1).
+    Re-baselined for V10 (14.5): the desk is the route map -- what changed
+    is a card's `changed_at`, a time, the same in both languages (the
+    timeline says what), so the first desk's sentences are gone."""
     from researchos.ingest import attempts as attempts_ingest
     from test_v8_u2 import _backdate
 
@@ -1870,10 +1873,9 @@ def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
     (root / "figs" / "fig3.png").write_bytes(b"\x89PNG fig3")
     (root / "map.md").write_text(_map("☠️ 伪协整"))
     _scan(root)
-    since = "2000-01-01T00:00:00%2B00:00"
     httpd, thread = _serving(root)
     try:
-        got = [json.loads(_Live(httpd).call("GET", f"/api/desk?since={since}", headers=h)[2])
+        got = [json.loads(_Live(httpd).call("GET", "/api/desk", headers=h)[2])
                for h in ({}, {"X-ResearchOS-Lang": "zh"}, {"X-ResearchOS-Lang": "en"})]
     finally:
         httpd.shutdown()
@@ -1881,19 +1883,10 @@ def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
         thread.join(timeout=5)
     zh, zh_asked, en = got
     assert zh == zh_asked
-    by = [{c["node"]: c for c in payload["changes"]} for payload in (zh, en)]
-    words = [{n: (c["what_code"], c["what"], c["who"]) for n, c in b.items()} for b in by]
-    assert words[0]["script:steps/16-build.py"] == ("lines", "增加 1 行", ["最初的研究者"])
-    assert words[1]["script:steps/16-build.py"] == ("lines", "1 line added", ["Original researcher"])
-    assert words[0]["dataset:data/panel.csv"] == ("table", "行数从 96 增至 97，新增列 log_ret", ["最初的研究者"])
-    assert words[1]["dataset:data/panel.csv"] == ("table", "Rows from 96 to 97; column added: log_ret", ["Original researcher"])
-    assert words[1]["figure:figs/fig3.png"][:2] == ("new_file", "New file")
-    assert words[1]["attempt:map.md#16"][:2] == ("verdict_changed", "Verdict changed")
-    assert words[0]["attempt:map.md#16"][:2] == ("verdict_changed", "判决改了")
-    assert {n: w[0] for n, w in words[0].items()} == {n: w[0] for n, w in words[1].items()}
-    assert [(b["label"], b["repair"]) for r in zh["results"] for b in r["breaks"]] == [("没有找到生成它的脚本", "补上来源")]
-    assert [(b["label"], b["repair"]) for r in en["results"] for b in r["breaks"]] == [
-        ("No script that generates it was found", "Add source")]
+    cards = [{a["id"]: a for a in payload["attempts"]}["attempt:map.md#16"] for payload in (zh, en)]
+    assert cards[0]["changed_at"] is not None and cards[0]["changed_at"] == cards[1]["changed_at"]
+    assert [(c["route_status"]["status"], c["tone"], c["abandoned"], c["reason"]) for c in cards] == [
+        ("abandoned", "gray", True, None)] * 2
     assert en["officialness_mode"]["labels"] == {"mine": "My change, not yet proposed", "proposed": "Proposed",
                                                  "approved": "Approved, awaiting sync"}
     vocabulary = set(attempts_ingest.DEFAULT_VERDICT_LABELS.values()) | {attempts_ingest.OTHER_VERDICT_LABEL}
@@ -1901,26 +1894,30 @@ def test_13_7_api_desk_speaks_the_requests_language(tmp_path):
     assert left == []
 
 
-@pytest.mark.parametrize("a, b, en", [
-    (2, 1, "Size changed from 2 to 1 byte"), (0, 1, "Size changed from 0 to 1 byte"),
-    (1, 2, "Size changed from 1 to 2 bytes"), (1000, 1497, "Size changed from 1,000 to 1,497 bytes"),
+@pytest.mark.parametrize("before, after, en, zh", [
+    (["id"], ["id", "x"], "Column added: x", "新增列 x"), (["id"], ["id", "x", "y"], "Columns added: x, y", "新增列 x、y"),
+    (["id", "x"], ["id"], "Column removed: x", "删除列 x"), (["id", "x", "y"], ["id"], "Columns removed: x, y", "删除列 x、y"),
 ])
-def test_13_5_a_files_size_change_has_a_singular_and_a_plural(a, b, en):
-    """13.5: every counted noun has a singular and a plural -- a file whose
-    lines cannot be compared says its size, the noun following the new
-    size; the Chinese has one form, as before."""
-    from researchos import desk
-
-    def version(size: int) -> dict[str, Any]:
-        return {"kind": "binary", "stored": 0, "size": size, "sha256": f"{size:064x}", "summary": None}
-
-    assert desk._file_what(None, version(a), version(b), "en") == ("size", en)
-    assert desk._file_what(None, version(a), version(b)) == ("size", f"大小从 {a} 变为 {b} 字节")
+def test_13_5_a_tables_column_change_has_a_singular_and_a_plural(before, after, en, zh):
+    """13.5: every counted noun has a singular and a plural -- the Chinese
+    has one form, as before. Re-baselined for V10 (14.5): the first desk's
+    sentence for a file's size left with its list of changes; a change is
+    now worded by the timeline and the sync preview, whose table sentence
+    counts columns (`history.table_sentence`, in the request's language)."""
+    a, b = {"rows": 2, "columns": before}, {"rows": 2, "columns": after}
+    assert history.table_sentence(a, b, words=True, lang="en") == en
+    assert history.table_sentence(a, b, words=True) == zh
 
 
 def test_13_7_a_git_projects_desk_and_the_officialness_words_in_english(tmp_path):
-    """Edits git has not seen yet are 「本机」's, "This Mac" in English; a
-    member's own work is marked in the page's language (13.4)."""
+    """Edits git has not seen yet: the desk marks the attempt holding them
+    (a time, the same in both languages); who made them is the timeline's,
+    in the page's language -- the original researcher in a project of one,
+    「本机」 "This Mac" in a member's copy; a member's own work is marked in
+    the page's language (13.4). Re-baselined for V10 (14.5): the first
+    desk's change rows are gone."""
+    from datetime import datetime, timezone
+
     from researchos import desk, officialness
     from test_v8_phase2 import _conn, _git
 
@@ -1930,15 +1927,19 @@ def test_13_7_a_git_projects_desk_and_the_officialness_words_in_english(tmp_path
     _project(root)
     _git(root, "add", "steps", "data", "figs", "paper.md", "map.md")
     _git(root, "commit", "-q", "-m", "first", date="2026-01-01T10:00:00+00:00")
-    (root / "paper.md").write_text((root / "paper.md").read_text() + "\nMore.\n")
+    plot = root / "steps" / "17-plot.py"
+    plot.write_text(plot.read_text() + "# mine\n")
     conn = _conn(root)
     try:
-        out = [desk.desk(conn, root, "2026-06-01T00:00:00+00:00", lang=lang) for lang in ("zh", "en")]
+        out = [desk.payload(conn, root, lang=lang) for lang in ("zh", "en")]
     finally:
         conn.close()
-    paper = [next(c for c in o["changes"] if c.get("path") == "paper.md") for o in out]
-    assert [(p["what_code"], p["what"], p["who"]) for p in paper] == [("changed", "内容有改动", ["本机"]),
-                                                                      ("changed", "Content changed", ["This Mac"])]
+    edited = desk._iso(datetime.fromtimestamp(plot.stat().st_mtime, timezone.utc).astimezone())
+    assert out[0]["attempts"][0]["changed_at"] == out[1]["attempts"][0]["changed_at"] == edited
+    newest = [history.versions(root, "steps/17-plot.py", lang)["versions"][0] for lang in ("zh", "en")]
+    assert [(v["version"], v["who_label"]) for v in newest] == [(history.WORKTREE, "最初的研究者"),
+                                                                 (history.WORKTREE, "Original researcher")]
+    assert (history.local_label(), history.local_label("en")) == ("本机", "This Mac")
     assert officialness.mark(("mine", None)) == {"state": "mine", "label": "我的改动，尚未提交"}
     assert officialness.mark(("proposed", "p-1"), "en") == {"state": "proposed", "label": "Proposed", "proposal": "p-1"}
 

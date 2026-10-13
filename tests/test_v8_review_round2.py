@@ -178,13 +178,16 @@ COLS = ('[columns]\nid = "#"\ndate = "Date"\ndescription = "Path"\nvariables = "
 
 
 def _abandoned_and_groups(root: Path):
+    """The desk's abandoned routes -- re-baselined for V10 (14.5): the
+    abandoned cards of the route map -- and 研究路线's groups."""
     conn = _conn(root)
     try:
-        got = desk.desk(conn, root)
+        got = desk.payload(conn, root)
         routes = nodepage.routes(conn, root)
     finally:
         conn.close()
-    return got["abandoned"], [(g["status"], g["label"], [i["number"] for i in g["items"]]) for g in routes["groups"]]
+    return ([a for a in got["attempts"] if a["abandoned"]],
+            [(g["status"], g["label"], [i["number"] for i in g["items"]]) for g in routes["groups"]])
 
 
 def test_12_12_a_declared_abandoned_marker_and_a_renamed_skull_are_abandoned_routes(tmp_path):
@@ -199,7 +202,7 @@ def test_12_12_a_declared_abandoned_marker_and_a_renamed_skull_are_abandoned_rou
     (root / ".researchos" / "attempts.toml").write_text(HEAD + COLS + '[verdict_labels]\n"☠️" = "放弃"\n')
     _scan(root)
     abandoned, groups = _abandoned_and_groups(root)
-    assert [a["number"] for a in abandoned] == ["16"] and abandoned[0]["verdict_status"]["label"] == "放弃"
+    assert [a["number"] for a in abandoned] == ["16"] and abandoned[0]["route_status"]["label"] == "放弃"
     assert groups == [("abandoned", "放弃", ["16"])]
 
 
@@ -478,16 +481,17 @@ def test_12_12_the_desk_marks_a_members_unsubmitted_and_proposed_changes(drive):
 
         assert addproject.rescan(drive.work).ok
         with _serve(drive.work) as base:
-            status, got = _call(f"{base}/api/desk?since=2000-01-01T00:00:00%2B00:00")
+            status, got = _call(f"{base}/api/desk")
+            # Re-baselined for V10 (14.5): the desk's changes are its cards; a member's own
+            # change to a file is marked where the file is shown -- the panel's 来龙去脉.
+            status_node, page = _call(f"{base}/api/node?node=attempt%3Amap.md%2316")
         assert status == 200 and got["officialness_mode"]["mode"] == "working_copy"
-        by_node = {c.get("node"): c for c in got["changes"] if c["kind"] in ("file", "attempt")}
-        assert by_node["script:steps/17-plot.py"]["officialness"]["label"] == "我的改动，尚未提交"
-        assert by_node["file:map.md"]["officialness"]["state"] != "official"
-        assert [a["officialness"]["state"] for a in got["abandoned"]] == ["proposed"]
-        assert all("officialness" not in c for c in got["changes"] if c["kind"] in ("decision", "note"))
+        traced = {i["id"]: i for c in page["trace"]["columns"] for i in c["items"]}
+        assert status_node == 200 and traced["script:steps/17-plot.py"]["officialness"]["label"] == "我的改动，尚未提交"
         # The route map's card (V10, 14.1): abandoned, with its result, marked as the member's proposal.
         card = next(a for a in got["attempts"] if a["number"] == "16")
         assert (card["abandoned"], card["result"], card["officialness"]["state"]) == (True, "t=0.1", "proposed")
+        assert [a["number"] for a in got["attempts"] if a["abandoned"]] == ["16"]
     # Re-baselined for V10 (14.5): the desk is the route map. A member's own work is marked on its
     # card (routemap.js, from the payload's officialness) and in the column (ownMark); every
     # abandoned route is a quieter card, its reason kept for the panel.

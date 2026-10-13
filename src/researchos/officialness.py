@@ -444,22 +444,13 @@ def annotate(v: View, payload: Any, lang: str = "zh") -> Any:
 
 
 def annotate_desk(v: View, payload: Any, lang: str = "zh") -> Any:
-    """The desk's payload (`researchos.desk`): a file's or an attempt's
-    change, a result and an abandoned route carry the state of what they
-    name; a decision (official by definition: the PI's approval) and a
-    note (it travels without approval, 12.4) do not take the state of the
-    node they are about. On the route map (14.1) every attempt, every
-    「源自」 line (one a proposal carries keeps the mark it came with) and
-    every 待复核 group's attempt carries its state. The labels in the page's
-    language (13.7: the desk entirely)."""
+    """The desk's payload (`researchos.desk`), the route map (14.1): every
+    attempt, every 「源自」 line (one a proposal carries keeps the mark it
+    came with) and every 待复核 group's attempt carries its state. The
+    labels in the page's language (13.7: the desk entirely)."""
     if isinstance(payload, dict):
-        for item in payload.get("changes") or []:
-            if isinstance(item, dict) and item.get("kind") in ("file", "attempt"):
-                got = _subject(v, item)
-                if got is not None:
-                    item[FIELD] = mark(got, lang)
         review = (payload.get("column") or {}).get("review") or {}
-        for items in (payload.get("results"), payload.get("abandoned"), payload.get("attempts"), review.get("groups")):
+        for items in (payload.get("attempts"), review.get("groups")):
             for item in items or []:
                 if isinstance(item, dict):
                     got = _subject(v, item)

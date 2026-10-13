@@ -310,15 +310,13 @@ Endpoints (all GET unless noted):
                             nothing) and GET /api/share/sync-preview: U4's
                             collaborative acts, each said before it writes;
                             a join opens the new working copy.
-    GET  /api/desk     -- `?since=<ISO time>` (default: the last seven
-                            days): the desk's changes since then, the
-                            results whose trace lost its evidence, the
-                            abandoned routes, and (DESIGN.md 14) the route
-                            map: the attempts with their marks, the 「源自」
-                            lines and the column -- proposals, 待复核, a
-                            member's sync state, read from the shared folder
-                            for at most a few seconds (`researchos.desk.payload`),
-                            and `layout`: the map's arrangement, the view
+    GET  /api/desk     -- the desk, the route map (DESIGN.md 14): the
+                            attempts with their marks and when each last
+                            changed, the 「源自」 lines and the column --
+                            proposals, 待复核, a member's sync state, read
+                            from the shared folder for at most a few
+                            seconds (`researchos.desk.payload`) -- and
+                            `layout`: the map's arrangement, the view
                             `routes` of canvas.json, with the `project` a
                             layout POST echoes (`desk_payload`). Reads only.
     GET  /canvas.js    -- the node canvas's script (DESIGN.md section 8, task
@@ -2193,14 +2191,14 @@ def canvas_payload(conn: Connection, project_root: Path, scope: str | None) -> d
     return payload
 
 
-def desk_payload(conn: Connection, served: ServedProject, since: str | None, lang: str) -> dict[str, Any]:
+def desk_payload(conn: Connection, served: ServedProject, lang: str) -> dict[str, Any]:
     """`GET /api/desk`: `researchos.desk.payload` plus `layout`, the route
     map's arrangement (DESIGN.md 14.1: the view `routes` of canvas.json,
     per person) -- `positions`, `viewport`, the record's `state`, the
     `project` a layout POST must echo, and `writable`: false for a record
     that cannot be read, a project frozen until it is migrated or opened
     read-only, so the page sends nothing that would only be refused."""
-    out = desk_mod.payload(conn, served.root, since, lang=lang)
+    out = desk_mod.payload(conn, served.root, lang=lang)
     layout = canvas.routes_layout(served.root)
     layout.update(project=_canvas_project(served.root),
                   writable=layout["writable"] and not (served.needs_migration or served.read_only))
@@ -3313,8 +3311,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # shared folder's read itself). 13.7: its sentences in the
                 # page's language.
                 served = self._require_unblocked()
-                since = (query.get("since") or [None])[0]
-                self._json_from_conn(lambda conn: desk_payload(conn, served, since, self._lang()))
+                self._json_from_conn(lambda conn: desk_payload(conn, served, self._lang()))
             elif path == "/api/share":
                 # 12.2: the shared folder's state (role, folder, last
                 # snapshot, verification, what is pending) -- reads only.

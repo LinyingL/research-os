@@ -89,11 +89,12 @@ def test_12_13_every_payload_the_page_reads_says_its_change_in_words(tmp_path):
 
     conn = _conn(root)
     try:
-        out = desk.desk(conn, root, None)
+        out = desk.payload(conn, root)
     finally:
         conn.close()
-    whats = [c.get("what") or "" for c in out["changes"]]
-    assert not any(ARROWS.search(w) for w in whats)
+    # Re-baselined for V10 (14.5): the desk words no change itself any more (a card's changed_at);
+    # nothing it sends carries an arrow.
+    assert not ARROWS.search(json.dumps(out, ensure_ascii=False))
     for name in ("node.js", "team.js", "desk.js"):
         source = (WEBAPP / name).read_text(encoding="utf-8")
         assert "→" not in source and "▸" not in source and "▾" not in source
@@ -154,21 +155,25 @@ def test_12_13_an_attempt_row_sync_installed_is_the_publish_s_not_this_machine_s
 
 def test_12_13_the_pi_s_own_scan_is_named_not_the_first_researcher(drive):
     """Verifier round 3: on the PI's machine (me.toml set) a V8 scan names
-    the PI, in the history and on the desk."""
+    the PI, in the history; re-baselined for V10 (14.5), the desk marks the
+    attempt holding the file changed by that very version, and the panel's
+    timeline names the PI."""
     from researchos import desk
 
     with drive.pi():
         (drive.official / "data" / "panel.csv").write_text(_csv(97))
+        (drive.official / "steps" / "16-build.py").write_text("print('pi')\n")
         _scan(drive.official)
         newest = history.versions(drive.official, "data/panel.csv")["versions"][0]
         assert (newest["who"], newest["who_label"]) == (PI[1], PI[0])
+        script = history.versions(drive.official, "steps/16-build.py", "en")["versions"][0]
+        assert (script["who"], script["who_label"]) == (PI[1], PI[0])
         conn = _conn(drive.official)
         try:
-            changes = desk.desk(conn, drive.official, None)["changes"]
+            card = next(a for a in desk.payload(conn, drive.official)["attempts"] if a["number"] == "16")
         finally:
             conn.close()
-        [panel] = [c for c in changes if c.get("path") == "data/panel.csv"]
-        assert panel["who"] == [PI[0]]
+        assert desk._parse(card["changed_at"]) == desk._parse(script["at"])
 
 
 def test_12_13_a_deleted_official_copy_leaves_the_list_without_a_new_snapshot(drive):
