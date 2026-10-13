@@ -3398,8 +3398,11 @@ object, so the desk, 数据与代码 and the node page never share state.
 
 ### 14.2 Drawing a line
 
-Drag from the small handle on a card's right edge onto another card: a
-popover says 「#17 源自 #16」 with an optional note; confirm saves. A click
+Drag from the small handle on the right edge of the attempt something grew
+out of, onto the attempt that grew out of it — left to right, as the map
+reads: dragging from #16 onto #17 offers 「#17 源自 #16」, with an optional
+note; confirm saves. The popover always says the sentence before anything is
+written. A click
 without dragging opens the panel (14.3). A click on a line selects it;
 「删除这条连线」 asks first.
 
