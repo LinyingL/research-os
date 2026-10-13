@@ -224,3 +224,83 @@ def test_14_3_the_members_form_asks_the_reason_for_a_new_row_that_abandons():
     assert "if (proposing && preview.abandons &&" in form and 'proposing && mode === "update" && preview.abandons' not in form
     help_ = "这一行一开始就放弃了这条路线：结果和理由都必须填写，PI 批准后它们写进尝试表，这条路线当时的依据也会冻结下来。"
     assert help_ in form and english_table()[help_].startswith("This row abandons the route from the start")
+
+
+# -- 25: a file name no node can have, in the desk's git history ---------------------------------------------
+
+
+def test_14_5_a_committed_file_name_with_a_line_break_never_breaks_the_desk(tmp_path):
+    """A git project whose last commits hold a file named with a line feed
+    and one with a NEL: the desk still draws -- the map and its column,
+    over the engine and GET /api/desk -- those names on no card; a file
+    that changed in the same commits still marks its attempt."""
+    from researchos import desk
+
+    from test_v8_phase2 import _call, _conn, _git
+    from test_v8_phase3 import _serve
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _project(root)
+    (root / "notes").mkdir()
+    for name in ("a\nb.txt", "c\x85d.txt"):
+        (root / "notes" / name).write_text("x\n")
+    _git(root, "add", "steps", "data", "figs", "paper.md", "map.md", "notes")
+    _git(root, "commit", "-q", "-m", "first", date="2026-01-01T10:00:00+00:00")
+    assert "a\nb.txt" in _git(root, "ls-files", "-z", "notes")
+    conn = _conn(root)
+    try:
+        out = desk.payload(conn, root, lang="en")
+    finally:
+        conn.close()
+    assert [a["number"] for a in out["attempts"]] == ["16"] and out["attempts"][0]["changed_at"] is not None
+    with _serve(root) as base:
+        status, body = _call(f"{base}/api/desk")
+    assert status == 200 and [a["number"] for a in body["attempts"]] == ["16"]
+
+
+# -- 26: a shared folder always slower than the desk waits ----------------------------------------------------
+
+
+def test_14_4_a_shared_folder_slower_than_the_wait_shows_what_it_last_read(drive, monkeypatch):
+    """The PI's shared folder answers in 0.4 s, the desk waits 0.1 s: the
+    first visit says it is slow; the read finishes anyway and is kept, so
+    the next visit lists the waiting proposal and says it is the last read
+    (stale, with its time) -- never 「稍后再看」 for ever. A read that fails is
+    never kept."""
+    import time
+
+    from researchos import desk
+
+    from test_v8_phase2 import _conn
+
+    with drive.member():
+        (drive.work / "steps" / "18-big.py").write_text(NEW_SCRIPT)
+        (drive.work / "map.md").write_text(_map() + DEAD_18.format(result="t=1.10").replace("☠️ 太慢", "🕒"))
+        stored = proposals.write_proposal(drive.work, proposals.make_proposal(drive.work, "attempt_new", "大面板"))
+    real = desk._read_shared
+    monkeypatch.setattr(desk, "_read_shared", lambda *a: time.sleep(0.4) or real(*a))
+
+    def visit(lang="en"):
+        conn = _conn(drive.official)
+        try:
+            return desk.payload(conn, drive.official, lang=lang, timeout=0.1)["column"]
+        finally:
+            conn.close()
+
+    with drive.pi():
+        first = visit()
+        assert first["shared"] == {"state": "slow", "message": desk.SHARED_WORDS["slow"][1]} and first["waiting"] == []
+        time.sleep(0.8)  # the read finishes after the desk stopped waiting
+        later = visit()
+        assert later["shared"]["state"] == "stale" and later["shared"]["message"] == desk.SHARED_WORDS["stale"][1]
+        assert later["shared"]["at"] and [p["id"] for p in later["waiting"]] == [stored.id]
+        assert visit("zh")["shared"]["message"] == "公盘现在读得太慢：提议和同步显示的是上次读到的情况"
+        time.sleep(0.8)
+        key = next(k for k in desk._LAST if k.startswith(str(drive.official.resolve())))
+        kept = desk._LAST[key]
+        monkeypatch.setattr(desk, "_read_shared", lambda *a: {"errors": {"listing": OSError("gone")}})
+        assert visit()["shared"]["state"] == "unreadable"
+        time.sleep(0.1)
+        assert desk._LAST[key] == kept  # a failed read is never kept

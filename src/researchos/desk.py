@@ -109,7 +109,10 @@ def _git_times(root: Path) -> tuple[dict[str, datetime], set[str] | None]:
 
     def seen(path: str, when: datetime | None) -> None:
         if when is not None and path and not path.startswith(RECORD_PREFIX):
-            node = notes_mod.normalize_node(path)
+            try:
+                node = notes_mod.normalize_node(path)
+            except ValueError:  # a name no node can have (a line break in it): never on the map
+                return
             times[node] = max(when, times.get(node, when))
 
     out = history._git(root, ["log", f"--max-count={GIT_COMMIT_LIMIT}", "--no-show-signature", "--no-textconv",
@@ -194,15 +197,22 @@ SHARED_WORDS = {
                    "The shared folder cannot be opened right now: proposals and sync cannot be shown"),
     "slow": ("公盘现在读得太慢：提议和同步的情况稍后再看",
              "The shared folder is slow to read right now: proposals and sync will show later"),
+    "stale": ("公盘现在读得太慢：提议和同步显示的是上次读到的情况",
+              "The shared folder is slow to read right now: proposals and sync are shown as last read"),
 }
 _JOBS: dict[str, dict[str, Any]] = {}
+#: The last read of each key that finished well, kept when a later one is slow (14.4): (when, result).
+_LAST: dict[str, tuple[datetime, Any]] = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def _start(key: str, fn: Callable[[], Any]) -> dict[str, Any]:
+def _start(key: str, fn: Callable[[], Any], keep: Callable[[Any], bool] = lambda result: True) -> dict[str, Any]:
     """`fn` on a thread of its own -- one per `key` at a time: a request
     that finds one running waits on it, so a folder that hangs holds one
-    thread, not one per visit to the desk."""
+    thread, not one per visit to the desk. A read that finishes -- even
+    after its request stopped waiting -- is kept as the key's last
+    (`_LAST`) when `keep` says it read well, errors never: a folder always
+    slower than the wait still shows what it last said."""
     with _JOBS_LOCK:
         job = _JOBS.get(key)
         if job is None:
@@ -216,6 +226,8 @@ def _start(key: str, fn: Callable[[], Any]) -> dict[str, Any]:
                 finally:
                     with _JOBS_LOCK:
                         _JOBS.pop(key, None)
+                        if job["result"][0] == "ok" and keep(job["result"][1]):
+                            _LAST[key] = (datetime.now(timezone.utc), job["result"][1])
                     job["done"].set()
 
             threading.Thread(target=run, name="desk-shared-folder", daemon=True).start()
@@ -367,7 +379,8 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
     role, me, team = proposals.role_of(root)
     team_known = team if team.state == "present" else None
     # The shared folder first, on its own thread: the map never waits on it longer than `timeout`.
-    job = _start(f"{root.resolve()}|{role}|{me}", lambda: _read_shared(root, role, seen)) \
+    key = f"{root.resolve()}|{role}|{me}"
+    job = _start(key, lambda: _read_shared(root, role, seen), keep=lambda got: "listing" in got) \
         if role in ("pi", "member") else None
     started = datetime.now(timezone.utc)
 
@@ -420,9 +433,14 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
         left = (timeout if timeout is not None else SHARED_TIMEOUT) - (datetime.now(timezone.utc) - started).total_seconds()
         job["done"].wait(max(0.0, left))
         state, shared = job["result"] if job["done"].is_set() else ("slow", None)
+        last = _LAST.get(key) if state == "slow" else None
+        if last is not None:  # still reading: what it last read, said as such (a decided proposal refuses its act)
+            state, shared = "ok", last[1]
         errors = (shared or {}).get("errors", {}) if state == "ok" else {"listing": shared}
         listing = (shared or {}).get("listing") if state == "ok" else None
-        if state == "slow":
+        if last is not None:
+            column["shared"].update(state="stale", at=_iso(last[0].astimezone()))
+        elif state == "slow":
             column["shared"]["state"] = "slow"
         elif listing is None:
             column["shared"]["state"] = "not_configured" \

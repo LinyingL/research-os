@@ -253,3 +253,74 @@ def test_13_5_a_lines_date_is_said_as_the_screen_says_dates(tz):
     assert _day_words(cases, "en", tz) == ["Today", "Yesterday", "4 Mar", "4 Oct 2025", "07-26", ""]
     rm = (WEBAPP / "routemap.js").read_text(encoding="utf-8")
     assert "window.RODesk.dayWords(l.date, new Date())" in rm  # the map's line card says it the same way
+
+
+# -- 24: a shared folder that hangs never holds up the desk ---------------------------------------------------
+
+
+@needs_node
+def test_14_4_the_desk_is_drawn_while_the_shared_folder_hangs_and_its_context_is_read_once():
+    """/api/proposals and /api/share hang (a stalled mount); /api/desk
+    answers (it waits SHARED_TIMEOUT at most). The desk -- map and column --
+    is drawn at once; two more loads, the sidebar and the panel's wait for
+    the context share ONE pair of requests; once the folder answers, the
+    sidebar is drawn and the context waiting for it is there."""
+    from test_v9_language import _DESK_DOM, _desk_cases
+
+    case = json.dumps(_desk_cases("zh")[0], ensure_ascii=False)
+    script = (
+        "global.window = {};\n" + _DESK_DOM + "const calls = [];\n"
+        "window.RORouteMap = { create() { return { mount() {}, update(d) { calls.push('map'); }, highlight() {}, visible() { return true; } }; } };\n"
+        + (WEBAPP / "desk.js").read_text(encoding="utf-8")
+        + f"\n(async () => {{ const c = {case}; const gets = []; const hold = [];\n"
+        "  global.apiGet = (path) => { gets.push(path);\n"
+        "    if (path === '/api/proposals' || path === '/api/share') return new Promise((ok) => hold.push(() => ok(path === '/api/proposals' ? c.proposals : c.share)));\n"
+        "    return Promise.resolve(path.startsWith('/api/desk') ? c.desk : path === '/api/me' ? c.me : null); };\n"
+        "  const host = { kids: [], parentNode: null, dataset: {}, set innerHTML(v) { this.kids = []; }, set textContent(v) { this.kids = []; },"
+        " appendChild(k) { k.parentNode = this; this.kids.push(k); return k; } };\n"
+        "  views.desk = host;\n"
+        "  await window.RODesk.loadDesk(host, false);\n"
+        "  const drawn = calls.slice();\n"
+        "  await window.RODesk.loadDesk(host, true); await window.RODesk.loadDesk(host, true);\n"
+        "  const sidebar = window.RODesk.refreshSidebar(); const waited = window.RODesk.ensureContext();\n"
+        "  await new Promise((r) => setTimeout(r, 0));\n"
+        "  const before = { proposals: gets.filter((g) => g === '/api/proposals').length, mode: window.RODesk.context().mode };\n"
+        "  hold.splice(0).forEach((f) => f()); await new Promise((r) => setTimeout(r, 0));\n"
+        "  hold.splice(0).forEach((f) => f()); await sidebar; const ctx = await waited;\n"
+        "  process.stdout.write(JSON.stringify({ drawn, column: host.kids[0].kids.map((k) => k.className), before,"
+        " after: ctx.mode, share: gets.filter((g) => g === '/api/share').length })); })();\n")
+    out = _node(script)
+    assert out["drawn"] == ["map"] and out["column"] == ["desk-map", "desk-column"]
+    assert out["before"] == {"proposals": 1, "mode": None}  # one request for every caller, nothing known yet
+    assert out["after"] == "pi" and out["share"] == 1
+
+
+@needs_node
+def test_14_4_a_desk_drawn_while_the_folder_was_slow_reads_itself_again():
+    """The column came back slow (or with the last read, stale): on the
+    desk, it is read again a little later -- joining the read in flight --
+    a bounded number of times; once the folder answers, nothing more."""
+    from test_v9_language import _DESK_DOM, _desk_cases
+
+    case = _desk_cases("zh")[0]
+    case["desk"]["column"]["shared"] = {"state": "stale", "message": "M", "at": "2026-10-13T10:00:00+02:00"}
+    script = (
+        "global.window = {};\n" + _DESK_DOM
+        + "window.RORouteMap = { create() { return { mount() {}, update() {}, highlight() {}, visible() { return true; } }; } };\n"
+        + (WEBAPP / "desk.js").read_text(encoding="utf-8")
+        + f"\n(async () => {{ const c = {json.dumps(case, ensure_ascii=False)}; let desks = 0; const later = [];\n"
+        "  global.currentView = 'desk'; global.setTimeout = (fn, ms) => { later.push(ms); global.next = fn; return later.length; };\n"
+        "  global.apiGet = async (path) => { if (path.startsWith('/api/desk')) { desks += 1; return c.desk; }"
+        " return { '/api/me': c.me, '/api/proposals': c.proposals, '/api/share': c.share }[path]; };\n"
+        "  const host = { kids: [], parentNode: null, dataset: {}, set innerHTML(v) { this.kids = []; }, set textContent(v) { this.kids = []; },"
+        " appendChild(k) { k.parentNode = this; this.kids.push(k); return k; } };\n"
+        "  views.desk = host;\n"
+        "  await window.RODesk.loadDesk(host, false);\n"
+        "  for (let i = 0; i < 5; i++) { const fn = global.next; global.next = null; if (fn) await fn(); await Promise.resolve(); }\n"
+        "  const slow = desks;\n"
+        "  c.desk.column.shared = { state: 'ok', message: null };\n"
+        "  await window.RODesk.loadDesk(host, true);\n"
+        "  process.stdout.write(JSON.stringify({ slow, later, after: desks, waiting: !!global.next })); })();\n")
+    out = _node(script)
+    assert out["later"] == [5000, 5000, 5000] and out["slow"] == 4  # the first read, then three more at most
+    assert out["after"] == 5 and out["waiting"] is False

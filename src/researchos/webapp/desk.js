@@ -321,6 +321,20 @@
     return true;
   }
 
+  // The context, read once per project at a time (14.4): /api/proposals and
+  // /api/share read the shared folder and are not bounded in time, so a
+  // folder that hangs holds one pair of requests, never one per load --
+  // the desk's, the sidebar's and the panel's wait share it.
+  let contextLoad = null;
+  function loadContext() {
+    if (!contextLoad || contextLoad.epoch !== state.dataEpoch) {
+      const p = fetchContext().finally(() => { if (contextLoad === p) contextLoad = null; });
+      p.epoch = state.dataEpoch;
+      contextLoad = p;
+    }
+    return contextLoad;
+  }
+
   // The sidebar's live parts: the quiet count beside 提议 when something
   // waits for me, the shared drive's line, who I am.
   async function refreshSidebar() {
@@ -331,7 +345,7 @@
       return;
     }
     try {
-      await fetchContext();
+      await loadContext();
     } catch (err) {
       /* the lines keep what they last said */
     }
@@ -762,10 +776,14 @@
     }
     let data, since;
     try {
-      // Who I am first (it keys "last seen"), then the rest side by side.
+      // Who I am first (it keys "last seen"); then the desk, drawn from
+      // /api/desk alone -- it waits on the shared folder SHARED_TIMEOUT at
+      // most --, the context (the sidebar's count, the shared folder's
+      // line) coming in on its own.
       if (!ctx.me || ctx.project !== projectKey()) ctx.me = await apiGet("/api/me").catch(() => null);
       since = deskSince();
-      [, data] = await Promise.all([fetchContext(), apiGet("/api/desk")]);
+      loadContext().then((ok) => { if (ok && epoch === state.dataEpoch) renderSidebar(); }, () => {});
+      data = await apiGet("/api/desk");
     } catch (err) {
       if (epoch !== state.dataEpoch) return;
       renderViewFailure(drawn ? columnEl : host, err); // a desk drawn keeps its map
@@ -773,7 +791,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     if (drawnEpoch !== epoch) picked = null;
-    renderSidebar();
+    if (ctx.epoch === epoch) renderSidebar();
     lastData = data;
     lastChanged = changedSince(since);
     lastFrom = sinceTime(since);
@@ -781,6 +799,27 @@
     if (routeMap) routeMap.update(data, { changed: lastChanged });
     drawnEpoch = epoch;
     host.dataset.loaded = "1";
+    catchUp(data, epoch);
+  }
+
+  // A shared folder too slow for the desk's wait (14.4: slow, or stale --
+  // what it last read): the desk reads itself again a little later, which
+  // joins the read still in flight, so the column catches up with the
+  // folder rather than saying 「稍后再看」 until something else moves.
+  const CATCH_UP_MS = 5000;
+  const CATCH_UP_TRIES = 3;
+  let catchUpTimer = null;
+  let catchUpTries = 0;
+  function catchUp(data, epoch) {
+    const shared = ((data && data.column) || {}).shared || {};
+    if (shared.state !== "slow" && shared.state !== "stale") { catchUpTries = 0; return; }
+    const onDesk = () => typeof currentView !== "undefined" && currentView === "desk";
+    if (catchUpTimer || catchUpTries >= CATCH_UP_TRIES || !onDesk()) return;
+    catchUpTries += 1;
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null;
+      if (epoch === state.dataEpoch && onDesk()) loadDesk(views.desk, true);
+    }, CATCH_UP_MS);
   }
 
   // -- the side panel (DESIGN.md 14.3) ----------------------------------------------------
@@ -887,6 +926,7 @@
   // in it is typed.
   async function drawProposal(subject) {
     if (subject.hold || halfTyped()) return;
+    await ensureContext(); // 「批准以后会怎样」 names the team and what members sent (team.js reads the context)
     const host = mk("div", "dp-proposal");
     await ROTeam.renderProposalInto(host, subject.id, subject.by, (said) => answered(subject, "p:" + subject.id, said),
       { panel: true, open: leaveTo });
@@ -914,6 +954,7 @@
     const host = mk("div", "dp-proposal");
     inner.textContent = "";
     inner.appendChild(mk("p", "empty-note", t("载入中…")));
+    await ensureContext();
     await ROTeam.renderProposalInto(host, p.id, p.by, (said) => answered(subject, subject.id, said), { panel: true, open: leaveTo });
     inner.textContent = "";
     inner.appendChild(host);
@@ -1282,6 +1323,7 @@
         const composeStatus = mk("div", "notice-status");
         const composeHost = mk("div", "compose-result");
         shown.append(composeStatus, composeHost);
+        await ensureContext(); // the draft says where it is written: the member's own area, from the context
         if (!(await ROTeam.composeInto(composeHost, draft, composeStatus))) {
           composeStatus.appendChild(mk("div", "team-help", t("这一行已经在你的工作副本里，可以稍后在「提议」一栏里提交。")));
         }
@@ -1439,7 +1481,7 @@
   // The context's freshness: fetched again once the project (epoch) moved.
   async function ensureContext() {
     if (ctx.epoch !== state.dataEpoch || ctx.project !== projectKey() || ctx.mode === null) {
-      try { await fetchContext(); } catch (err) { /* the callers say what they cannot read */ }
+      try { await loadContext(); } catch (err) { /* the callers say what they cannot read */ }
     }
     return ctx;
   }
