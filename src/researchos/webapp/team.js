@@ -710,7 +710,7 @@
     const epoch = state.dataEpoch;
     if (refresh && !acted && keepsTyping(host)) return;
     if (!refresh) flash.proposals = [];
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
     let ctx;
     try {
       ctx = await RODesk.ensureContext();
@@ -728,11 +728,11 @@
     const page = mk("div", "team");
     const m = ctx && ctx.mode;
     if (m === "single" || !m) {
-      page.appendChild(block("提议", "plain"));
-      page.lastChild.appendChild(line("这是单人项目：你的改动直接生效，不需要提议和批准。要和别人一起做，在「成员」一栏里开始协作。", "quiet"));
-      page.lastChild.appendChild(mkButton("去成员一栏", "btn btn-small", () => activateView("members")));
+      page.appendChild(block(t("提议"), "plain"));
+      page.lastChild.appendChild(line(t("这是单人项目：你的改动直接生效，不需要提议和批准。要和别人一起做，在「成员」一栏里开始协作。"), "quiet"));
+      page.lastChild.appendChild(mkButton(t("去成员一栏"), "btn btn-small", () => activateView("members")));
     } else if (m === "none") {
-      page.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
+      page.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
     } else if (m === "pi") {
       renderInbox(page, ctx);
     } else {
@@ -749,7 +749,7 @@
     const li = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
-    head.appendChild(label(RODesk.kindWord(p.kind) || "提议", "plain"));
+    head.appendChild(label(RODesk.kindWord(p.kind) || t("提议"), "plain"));
     head.appendChild(mkButton(p.sentence || RODesk.proposalWhat(p) || p.id, "desk-link strong", () => openProposal(p.id, p.by)));
     const st = stateLabel(p);
     head.appendChild(label(st.label, st.tone));
@@ -758,14 +758,14 @@
     if (what && p.sentence) main.appendChild(mk("p", "desk-note plain", what));
     const meta = [];
     if (forPi) meta.push(RODesk.nameOf(p.by, team));
-    if (p.verification && p.verification.state !== "verified") meta.push("签名未验证");
+    if (p.verification && p.verification.state !== "verified") meta.push(t("签名未验证"));
     main.appendChild(mk("div", "desk-meta", meta.join(" · ")));
     if (p.state === "returned") {
       const o = lastOutcome(p, "returned");
-      if (o && o.text) main.appendChild(mk("p", "desk-note", "退回的理由：" + o.text));
+      if (o && o.text) main.appendChild(mk("p", "desk-note", t("退回的理由：{reason}", { reason: o.text })));
     } else if (p.state === "pending") {
       const talk = lastOutcome(p, "discussed");
-      if (talk && talk.text) main.appendChild(mk("p", "desk-note", "PI 说：" + talk.text));
+      if (talk && talk.text) main.appendChild(mk("p", "desk-note", t("PI 说：{text}", { text: talk.text })));
     }
     li.append(mk("span", "desk-when", when(p.at)), main);
     return li;
@@ -773,14 +773,14 @@
 
   function problemsBlock(page, problems) {
     if (!problems || !problems.length) return;
-    const sec = block("公盘上读不了的东西", "warn");
-    sec.appendChild(line("这些内容没有读取，也没有当作提议：多半是同步服务留下的冲突副本，或者还没写完。", "quiet"));
+    const sec = block(t("公盘上读不了的东西"), "warn");
+    sec.appendChild(line(t("这些内容没有读取，也没有当作提议：多半是同步服务留下的冲突副本，或者还没写完。"), "quiet"));
     const ul = mk("ul", "desk-files");
     problems.slice(0, 20).forEach((p) => {
       const li = mk("li");
       li.appendChild(mk("span", "mono", p.path || ""));
       const s = mk("span", "team-help");
-      renderBlockingError(s, "无法读取", p.detail || p.kind || "");
+      renderBlockingError(s, t("无法读取"), p.detail || p.kind || "");
       li.appendChild(s);
       ul.appendChild(li);
     });
@@ -793,8 +793,8 @@
     const list = (ctx.proposals && ctx.proposals.proposals) || [];
     const open = list.filter((p) => p.state === "pending" || p.state === "conflict");
     const done = list.filter((p) => !(p.state === "pending" || p.state === "conflict"));
-    const sec = block("收件箱");
-    if (!open.length) sec.appendChild(line("没有等你批准的提议。", "quiet"));
+    const sec = block(t("收件箱"));
+    if (!open.length) sec.appendChild(line(t("没有等你批准的提议。"), "quiet"));
     else {
       const ul = mk("ul", "desk-list");
       open.forEach((p) => ul.appendChild(proposalRow(p, team, true)));
@@ -802,7 +802,7 @@
     }
     page.appendChild(sec);
     if (done.length) {
-      const old = block("已经答复的");
+      const old = block(t("已经答复的"));
       const ul = mk("ul", "desk-list");
       done.slice().reverse().slice(0, 30).forEach((p) => ul.appendChild(proposalRow(p, team, true)));
       old.appendChild(ul);
@@ -814,8 +814,8 @@
   function renderMine(page, ctx) {
     const team = (ctx.share && ctx.share.team) || [];
     const list = (ctx.proposals && ctx.proposals.proposals) || [];
-    const sec = block("我的提议");
-    if (!list.length) sec.appendChild(line("你还没有提交过提议。", "quiet"));
+    const sec = block(t("我的提议"));
+    if (!list.length) sec.appendChild(line(t("你还没有提交过提议。"), "quiet"));
     else {
       const ul = mk("ul", "desk-list");
       list.forEach((p) => ul.appendChild(proposalRow(p, team, false)));
@@ -914,7 +914,7 @@
 
   function backBar() {
     const bar = mk("div", "node-back");
-    bar.appendChild(mkButton("返回提议列表", "node-link", backToList));
+    bar.appendChild(mkButton(t("返回提议列表"), "node-link", backToList));
     return bar;
   }
 
