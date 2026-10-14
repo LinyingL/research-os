@@ -192,8 +192,8 @@ person when they join.
    the reason. Sync again when it says **Approved, awaiting sync**.
 
 Proposals and replies arrive after OneDrive syncs. Notes, judgments on
-machine links, and changes made with **关联文件** (Link files) or
-**补上来源** (Add source) travel with sync without individual approval.
+machine links, and changes made with **Link files** or **Add a source**
+travel with sync without individual approval.
 Lines between research attempts require the PI's approval.
 
 ### PI: review proposals

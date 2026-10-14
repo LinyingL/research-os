@@ -58,6 +58,9 @@ T_LINE = 'function t(s, v) { var I = typeof window !== "undefined" && window.ROI
 #: first argument of t() (or listed in ALLOWED_CHINESE), and every such key
 #: has an English entry. T2, T3 and later increments add theirs here.
 CONVERTED: list[tuple[str, str | None, str | None]] = [
+    ("node.js", None, None),
+    ("team.js", "async function loadProposals(", "// One proposal drawn into"),
+    ("team.js", "function backBar() {", "\n  }\n"),
     ("app.html", "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state"),
     ("app.html", "// -- The language switch (DESIGN.md 13.2, 13.3)", "// -- Native shell bridge"),
     # T2, the frame (13.7): the page titles, the stopped page and its question; in desk.js the
@@ -895,11 +898,11 @@ def test_13_6_every_module_that_calls_t_carries_the_one_helper():
 @needs_node
 def test_13_6_a_block_run_alone_is_chinese_and_follows_roi18n_when_present():
     helpers = _app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
-    expr = "[t('切换界面语言'), t('第 {n} 版', {n: 2}), uiLang()]"
+    expr = "[t('切换界面语言'), t('第 {n} 版', {n: 2}), t('未翻译的 {n}', {n: 2}), uiLang()]"
     alone = _node("global.window = {};\n" + helpers + f"\nprocess.stdout.write(JSON.stringify({expr}));\n")
-    assert alone == ["切换界面语言", "第 2 版", "zh"]
+    assert alone == ["切换界面语言", "第 2 版", "未翻译的 2", "zh"]
     with_en = _with_i18n(f"(function () {{ {helpers} return {expr}; }})()", saved="en")
-    assert with_en == ["Switch the interface language", "第 2 版", "en"]
+    assert with_en == ["Switch the interface language", "Version 2", "未翻译的 2", "en"]
 
 
 # -- 13.6, 13.8 #6: completeness and the rules for English strings ---------------------------------------------
@@ -2247,7 +2250,7 @@ GUIDE_EN_ENGLISH_LABELS = (
     "English", "Members", "Proposals", "Add project…", "Join a project from the shared folder…",
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
-    "Return with reason", "Discuss", "Changed on both sides",
+    "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
 GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)

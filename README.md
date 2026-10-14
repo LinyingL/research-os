@@ -25,6 +25,26 @@ data, and research attempt. Open that attempt to see its result, notes, and
 decision history. If a relationship could not be extracted, you can add an
 attributed link yourself.
 
+## Screenshots
+
+Captured from the running **0.1.0 Demo**, using a sample project with
+synthetic data.
+
+**Research routes.** See how attempts branch, which routes were abandoned,
+and what is waiting for review.
+
+![Research route map with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
+
+**Result provenance.** Follow a figure's links to data, scripts, research
+attempts, and a paper draft, with its change history and notes below.
+
+![A figure's provenance chain linking source data, scripts, an intermediate dataset, and a paper draft](docs/images/result-provenance.png)
+
+**PI review.** Compare proposed result and code changes before approving
+them or returning them with a reason.
+
+![PI review of a verdict change, with the earlier and proposed rows, a code diff, and approval controls](docs/images/proposal-review.png)
+
 ## What is in the demo
 
 | Area | What you can do |

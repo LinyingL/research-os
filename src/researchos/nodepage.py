@@ -390,7 +390,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
             "variables": []}
 
 
-def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str) -> dict[str, Any]:
+def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str, lang: str = "zh") -> dict[str, Any]:
     """A variable's page: the inputs its definition names, the script that
     builds it and the file it is written to (9.11's [implementation]), as
     数据 | 脚本 | 输出 | 本页 -- from the version in use, else the newest."""
@@ -413,7 +413,8 @@ def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str) -> di
         item = file_item(entry.get("dataset"))
         if item is None and isinstance(entry.get("variable"), str):
             item = {"id": f"variable:{entry['variable']}", "type": "variable", "type_label": "变量",
-                    "label": str(entry["variable"]) + (f" 第 {entry.get('version')} 版" if entry.get("version") else ""),
+                    "label": str(entry["variable"]) + (settings.say(" 第 {n} 版", " version {n}", lang,
+                                                                    n=entry["version"]) if entry.get("version") else ""),
                     "path": None, "exists": True}
         if item is not None:
             inputs.append(item)
@@ -426,7 +427,7 @@ def _variable_trace(conn: Connection, root: Path, card: Any, node_id: str) -> di
                           "status": "card", "review": False})
     if output is not None:
         if impl.get("field"):
-            output["note"] = "列 " + str(impl["field"])
+            output["note"] = settings.say("列 {field}", "Column {field}", lang, field=impl["field"])
         columns.append({"key": "output", "title": "输出", "items": [output]})
         if script is not None:
             lines.append({"from": script["id"], "to": output["id"], "type": "writes", "relation": "写出", "human": False,
@@ -520,7 +521,7 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
         out.update(name=_card_name(card), exists=True, card=card.id)
         out["details"] = {"card_state": card.state, "in_use": card.in_use,
                           "versions": sorted(card.versions, reverse=True)}
-        out["trace"] = _variable_trace(conn, root, card, node_id)
+        out["trace"] = _variable_trace(conn, root, card, node_id, lang)
     elif record is None and not (path is not None and out["exists"]):
         raise NotFound(f"no such node or file: {node_id}")
     elif prefix == "attempt":

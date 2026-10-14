@@ -41,9 +41,9 @@
   "use strict";
 
   // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
-  // at call time; without it (this file evaluated alone) the Chinese. So far
-  // diffBlock, which a member's desk shows under 同步 (13.7), and 来龙去脉,
-  // which the desk's side panel draws (14.6).
+  // at call time; without it (this file evaluated alone) the Chinese. This covers
+  // the node page, Outputs and Data & code, including the trace the desk's
+  // side panel draws. Only interface words are translated; research text stays as written.
   function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
   function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
 
@@ -52,10 +52,10 @@
   const DIFFS_AUTO = 5;
   const LINKS_SHOWN = 40;
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
-  const STATUS_WORDS = { pending: "待确认", confirmed: "已确认", rejected: "已否决", auto: "机器提取" };
-  const JUDGE_WORDS = { confirmed: "确认了", rejected: "否决了", withdrawn: "撤回了对它的判断", undone: "撤销了上一次判断" };
+  const STATUS_WORDS = { pending: t("待确认"), confirmed: t("已确认"), rejected: t("已否决"), auto: t("机器提取") };
+  const JUDGE_WORDS = { confirmed: t("确认了"), rejected: t("否决了"), withdrawn: t("撤回了对它的判断"), undone: t("撤销了上一次判断") };
   const FILTERS = [
-    ["all", "全部"], ["orphans", "无来源输入"], ["chains", "血缘链"], ["broken", "断链"], ["duplicates", "同名拷贝"],
+    ["all", t("全部")], ["orphans", t("无来源输入")], ["chains", t("血缘链")], ["broken", t("断链")], ["duplicates", t("同名拷贝")],
   ];
   // Monochrome line icons for file types (12.11: where they help recognition).
   const ICONS = {
@@ -96,15 +96,15 @@
 
   // A link said in words: 「17-定价检验.py 写出 fig_vol.png」.
   function linkSentence(link) {
-    return (link.src_label || link.src) + " " + (link.relation || "关联") + " " + (link.dst_label || link.dst);
+    return (link.src_label || link.src) + " " + (t(link.relation || t("关联"))) + " " + (link.dst_label || link.dst);
   }
 
   // Where a link stands, in words: who drew it and what has been decided.
   function linkStateWords(link) {
-    if (link.human) return "人工标注";
-    if (link.conflict) return "记录冲突，待处理";
-    if (link.review) return "待复核";
-    return STATUS_WORDS[link.status] || "机器提取";
+    if (link.human) return t("人工标注");
+    if (link.conflict) return t("记录冲突，待处理");
+    if (link.review) return t("待复核");
+    return STATUS_WORDS[link.status] || t("机器提取");
   }
 
   // The judgment actions a machine link offers -- the canvas's own rule
@@ -184,11 +184,11 @@
   function tableWords(summary) {
     if (!summary || typeof summary !== "object") return "";
     const parts = [];
-    if (summary.rows != null) parts.push(summary.rows + (summary.rows_complete === false ? " 行以上" : " 行"));
-    else if (summary.sheet_rows != null) parts.push(summary.sheet_rows + " 行");
-    if (Array.isArray(summary.columns)) parts.push("列 " + summary.columns.join("、"));
-    else if (summary.sheet_columns != null) parts.push(summary.sheet_columns + " 列");
-    return parts.join("，");
+    if (summary.rows != null) parts.push(summary.rows_complete === false ? t("{n} 行以上", { n: summary.rows }) : t("{n} 行", { n: summary.rows }));
+    else if (summary.sheet_rows != null) parts.push(t("{n} 行", { n: summary.sheet_rows }));
+    if (Array.isArray(summary.columns)) parts.push(t("列 {columns}", { columns: summary.columns.join(t("、")) }));
+    else if (summary.sheet_columns != null) parts.push(t("{n} 列", { n: summary.sheet_columns }));
+    return parts.join(t("，"));
   }
 
   // The page's timeline: versions, verdict movements, card entries, notes
@@ -239,11 +239,14 @@
     if (!at) return "";
     const m = DAY_ONLY.exec(String(at));
     if (!m) return RODesk._whenWords(at, now()) || String(at);
-    const t = now();
-    const days = Math.round((new Date(t.getFullYear(), t.getMonth(), t.getDate()) - new Date(+m[1], +m[2] - 1, +m[3])) / 86400000);
-    if (days === 0) return "今天";
-    if (days === 1) return "昨天";
-    return (+m[1] === t.getFullYear() ? "" : +m[1] + "年") + +m[2] + "月" + +m[3] + "日";
+    const today = now();
+    const days = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(+m[1], +m[2] - 1, +m[3])) / 86400000);
+    if (days === 0) return t("今天");
+    if (days === 1) return t("昨天");
+    const month = [t("1月"), t("2月"), t("3月"), t("4月"), t("5月"), t("6月"),
+      t("7月"), t("8月"), t("9月"), t("10月"), t("11月"), t("12月")][+m[2] - 1];
+    const words = { year: +m[1], month, day: +m[3] };
+    return +m[1] === today.getFullYear() ? t("{month}{day}日", words) : t("{year}年{month}{day}日", words);
   }
 
   function icon(type) {
@@ -325,7 +328,7 @@
     const epoch = state.dataEpoch;
     const id = nav.id;
     if (!id) { activateView("desk"); return; }
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
     let page, history, notes, me;
     try {
       page = await apiGet("/api/node?node=" + encodeURIComponent(id));
@@ -340,7 +343,7 @@
       host.innerHTML = "";
       host.appendChild(backBar());
       const box = mk("div", "node-failed");
-      renderBlockingError(box, "没能打开这一页", err);
+      renderBlockingError(box, t("没能打开这一页"), err);
       host.appendChild(box);
       host.dataset.loaded = "1";
       return;
@@ -369,7 +372,7 @@
 
   function backBar() {
     const bar = mk("div", "node-back");
-    const prev = nav.trail.length ? "返回上一页" : "返回" + (SECTION_TITLES[SECTION_OF_VIEW[nav.fromView]] || "");
+    const prev = nav.trail.length ? t("返回上一页") : t("返回{section}", { section: t(SECTION_TITLES[SECTION_OF_VIEW[nav.fromView]] || "") });
     bar.appendChild(link(prev, "", back));
     return bar;
   }
@@ -377,7 +380,7 @@
   function renderHead(host, page) {
     const head = mk("header", "node-head");
     const kind = mk("div", "node-kind");
-    kind.append(icon(page.type), mk("span", null, page.type_label));
+    kind.append(icon(page.type), mk("span", null, t(page.type_label)));
     head.appendChild(kind);
     head.appendChild(mk("h2", "node-name", page.name || page.id));
     if (page.path) head.appendChild(mk("div", "node-path mono", page.path));
@@ -385,32 +388,32 @@
     const marks = mk("div", "node-marks");
     const d = page.details || {};
     if (page.type === "attempt") marks.appendChild(RODesk.verdictInline(d.verdict_status));
-    if (page.path && page.exists === false) marks.appendChild(mk("span", "status-label tone-clay", "文件不存在"));
-    if (page.review) marks.appendChild(mk("span", "status-label tone-ochre", page.review + " 条关联待复核"));
+    if (page.path && page.exists === false) marks.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
+    if (page.review) marks.appendChild(mk("span", "status-label tone-ochre", t("{n} 条关联待复核", { n: page.review })));
     const own = ownMark(page);
     if (own) marks.appendChild(own);
     if (marks.childElementCount) head.appendChild(marks);
     const actions = mk("div", "node-actions");
     const status = mk("div", "notice-status");
     if (page.path && page.exists) {
-      actions.appendChild(mkButton("查看内容", "btn btn-small", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
-      actions.appendChild(mkButton("打开", "btn btn-small", () => openFile(page.path, false, status)));
-      actions.appendChild(mkButton("在 Finder 中显示", "btn btn-small", () => openFile(page.path, true, status)));
+      actions.appendChild(mkButton(t("查看内容"), "btn btn-small", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
+      actions.appendChild(mkButton(t("打开"), "btn btn-small", () => openFile(page.path, false, status)));
+      actions.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => openFile(page.path, true, status)));
     }
     if (page.type === "attempt") {
       // U4: a member proposes a verdict instead of editing the official
       // table; someone not in the team yet cannot change it at all.
       const role = ROTeam.mode();
-      const edit = role === "member" ? "提议改判" : "编辑这一行";
+      const edit = role === "member" ? t("提议改判") : t("编辑这一行");
       if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
-      if (d.basis) actions.appendChild(mkButton("当时的依据", "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
+      if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
-    if (page.type === "variable") actions.appendChild(mkButton("打开定义卡", "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
+    if (page.type === "variable") actions.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
     if (page.paper) {
       // 12.13: a draft's own page marks it as the paper, or no longer.
       actions.appendChild(paperButton(page.paper.draft, page.paper.marked, status, () => loadNode(views.node, true)));
       marks.appendChild(mk("span", "status-label tone-" + (page.paper.marked ? "olive" : "plain"),
-        page.paper.marked ? "论文正文" : "不是论文正文"));
+        page.paper.marked ? t("论文正文") : t("不是论文正文")));
       if (!head.contains(marks)) head.insertBefore(marks, actions.parentNode === head ? actions : null);
     }
     if (actions.childElementCount) head.append(actions, status);
@@ -419,12 +422,12 @@
   }
 
   async function openFile(path, reveal, status) {
-    setStatus(status, "", "处理中…");
+    setStatus(status, "", t("处理中…"));
     try {
       const r = await apiPost("/api/open", { path: path, reveal: reveal });
-      setStatus(status, "ok", (reveal ? "已在 Finder 中显示：" : "已打开：") + r.opened);
+      setStatus(status, "ok", reveal ? t("已在 Finder 中显示：{path}", { path: r.opened }) : t("已打开：{path}", { path: r.opened }));
     } catch (err) {
-      setStatus(status, "err", reveal ? "无法在 Finder 中显示" : "无法打开", err);
+      setStatus(status, "err", reveal ? t("无法在 Finder 中显示") : t("无法打开"), err);
     }
   }
 
@@ -443,30 +446,30 @@
     const d = page.details || {};
     const dl = mk("dl", "node-details");
     if (page.type === "attempt") {
-      detailRow(dl, "日期", d.date || "");
-      detailRow(dl, "途径", d.description || "");
-      detailRow(dl, "变量", d.variables || "");
-      detailRow(dl, "结果", d.result || "（无）");
-      detailRow(dl, "判决", RODesk.verdictInline(d.verdict_status));
+      detailRow(dl, t("日期"), d.date || "");
+      detailRow(dl, t("途径"), d.description || "");
+      detailRow(dl, t("变量"), d.variables || "");
+      detailRow(dl, t("结果"), d.result || t("（无）"));
+      detailRow(dl, t("判决"), RODesk.verdictInline(d.verdict_status));
       if (d.source_file) {
         // 12.11: the mono for the path only; 「第 N 行」 is words.
         const where = mk("span", "node-where");
         where.appendChild(link(d.source_file, "mono", () => openFilePanel(d.source_file)));
-        if (d.source_line) where.append(" 第 " + d.source_line + " 行");
-        detailRow(dl, "出处", where);
+        if (d.source_line) where.append(t(" 第 {n} 行", { n: d.source_line }));
+        detailRow(dl, t("出处"), where);
       }
-      if (d.step_files_broken && d.step_files_broken.length) detailRow(dl, "找不到的步骤脚本", d.step_files_broken.join("、"));
+      if (d.step_files_broken && d.step_files_broken.length) detailRow(dl, t("找不到的步骤脚本"), d.step_files_broken.join(t("、")));
     } else if (page.type === "claim") {
-      detailRow(dl, "原文", d.sentence || "");
-      if (d.line) detailRow(dl, "位置", "第 " + d.line + " 行");
+      detailRow(dl, t("原文"), d.sentence || "");
+      if (d.line) detailRow(dl, t("位置"), t("第 {n} 行", { n: d.line }));
     } else if (page.type === "reference" || page.type === "ref") {
       detailRow(dl, "DOI", d.doi || "");
-      detailRow(dl, "作者", Array.isArray(d.authors) ? d.authors.join("、") : (d.authors || ""));
-      detailRow(dl, "年份", d.year ? String(d.year) : "");
-      detailRow(dl, "刊物", d.venue || "");
+      detailRow(dl, t("作者"), Array.isArray(d.authors) ? d.authors.join(t("、")) : (d.authors || ""));
+      detailRow(dl, t("年份"), d.year ? String(d.year) : "");
+      detailRow(dl, t("刊物"), d.venue || "");
     } else if (page.type === "variable") {
-      if (d.in_use != null) detailRow(dl, "使用中", "第 " + d.in_use + " 版");
-      if (d.card_state && d.card_state !== "ok") detailRow(dl, "状态", "定义卡的记录现在无法读取");
+      if (d.in_use != null) detailRow(dl, t("使用中"), t("第 {n} 版", { n: d.in_use }));
+      if (d.card_state && d.card_state !== "ok") detailRow(dl, t("状态"), t("定义卡的记录现在无法读取"));
     }
     if (dl.childElementCount) host.appendChild(dl);
   }
@@ -487,7 +490,7 @@
     tr.columns.forEach((col, ci) => {
       const c = mk("div", "trace-col" + (col.key === "self" ? " is-self" : ""));
       c.dataset.col = String(ci);
-      c.appendChild(mk("div", "trace-col-title", col.title));
+      c.appendChild(mk("div", "trace-col-title", t(col.title)));
       col.items.forEach((item) => c.appendChild(traceItem(item, ci, o.open)));
       if (col.gap) c.appendChild(gapBox(page, col.gap, o.panel));
       if (!col.items.length && !col.gap) c.appendChild(mk("div", "trace-empty", t("没有")));
@@ -504,7 +507,7 @@
     s.appendChild(scroller);
     if (!o.panel) renderBelongs(s, page);
     const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
-    other.forEach((b) => s.appendChild(mk("p", "trace-break", b.path ? t("{label}：{path}", { label: b.label, path: b.path }) : b.label)));
+    other.forEach((b) => s.appendChild(mk("p", "trace-break", b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
     host.appendChild(s);
     return s;
   }
@@ -561,7 +564,7 @@
   // in the desk's panel: `bare`).
   function gapBox(page, gap, bare) {
     const box = mk("div", "trace-gap");
-    box.appendChild(mk("div", "trace-gap-label", gap.label));
+    box.appendChild(mk("div", "trace-gap-label", t(gap.label)));
     if (gap.repair && !bare) box.appendChild(repairControl(page, gap.repair.type));
     return box;
   }
@@ -576,13 +579,13 @@
     let options = [];
     let label = "";
     if (type === "generates" || type === "writes") {
-      label = "补上来源";
+      label = t("补上来源");
       options = (choices.scripts || []).map((s) => ({ value: s.path, text: s.path }));
     } else if (page.type === "attempt") {
-      label = "关联文件";
-      options = (choices.files || []).map((f) => ({ value: f.path, text: f.type_label + "  " + f.path }));
+      label = t("关联文件");
+      options = (choices.files || []).map((f) => ({ value: f.path, text: t(f.type_label) + "  " + f.path }));
     } else {
-      label = "关联文件";
+      label = t("关联文件");
       options = (choices.attempts || []).map((a) => ({
         value: a.id,
         text: (a.verdict_status && a.verdict_status.label ? a.verdict_status.label + " · " : "") + "#" +
@@ -605,8 +608,8 @@
     if (blocked) { trigger.disabled = true; trigger.title = blocked; }
     const form = mk("div", "repair-form hidden");
     const select = mk("select", "form-input repair-select");
-    select.setAttribute("aria-label", type === "generates" || type === "writes" ? "生成它的脚本" : (page.type === "attempt" ? "要关联的文件" : "它属于的尝试"));
-    const first = mk("option", null, type === "generates" || type === "writes" ? "选择生成它的脚本" : (page.type === "attempt" ? "选择要关联的文件" : "选择它属于的尝试"));
+    select.setAttribute("aria-label", type === "generates" || type === "writes" ? t("生成它的脚本") : (page.type === "attempt" ? t("要关联的文件") : t("它属于的尝试")));
+    const first = mk("option", null, type === "generates" || type === "writes" ? t("选择生成它的脚本") : (page.type === "attempt" ? t("选择要关联的文件") : t("选择它属于的尝试")));
     first.value = "";
     select.appendChild(first);
     options.forEach((o) => {
@@ -617,10 +620,10 @@
     const sentence = mk("p", "repair-sentence");
     const note = mk("input", "form-input repair-note");
     note.type = "text";
-    note.placeholder = "备注（可不填）";
+    note.placeholder = t("备注（可不填）");
     const status = mk("div", "notice-status");
-    const go = mkButton("确认", "btn btn-small btn-primary", () => writeRepair(page, type, select.value, note.value, status, [go, cancel]));
-    const cancel = mkButton("取消", "btn btn-small", () => {
+    const go = mkButton(t("确认"), "btn btn-small btn-primary", () => writeRepair(page, type, select.value, note.value, status, [go, cancel]));
+    const cancel = mkButton(t("取消"), "btn btn-small", () => {
       form.classList.add("hidden");
       trigger.classList.remove("hidden");
       widen(false);
@@ -641,7 +644,7 @@
     if (travels) form.appendChild(mk("p", "node-sub writes", travels));
     if (!options.length) {
       form.innerHTML = "";
-      form.appendChild(mk("p", "node-sub", type === "generates" || type === "writes" ? "项目里还没有脚本可选。" : "没有可以选择的项目。"));
+      form.appendChild(mk("p", "node-sub", type === "generates" || type === "writes" ? t("项目里还没有脚本可选。") : t("没有可以选择的项目。")));
     }
     wrap.append(trigger, form);
     return wrap;
@@ -649,10 +652,10 @@
 
   function repairSentence(page, type, chosen) {
     const me = page.path || page.name;
-    if (type === "generates") return "将记下：" + chosen.value + " 生成 " + me;
-    if (type === "writes") return "将记下：" + chosen.value + " 写出 " + me;
-    if (page.type === "attempt") return "将记下：" + chosen.value + " 属于 " + page.name;
-    return "将记下：" + me + " 属于 " + chosen.text.replace(/^[^·]*·\s*/, "");
+    if (type === "generates") return t("将记下：{script} 生成 {file}", { script: chosen.value, file: me });
+    if (type === "writes") return t("将记下：{script} 写出 {file}", { script: chosen.value, file: me });
+    if (page.type === "attempt") return t("将记下：{file} 属于 {attempt}", { file: chosen.value, attempt: page.name });
+    return t("将记下：{file} 属于 {attempt}", { file: me, attempt: chosen.text.replace(/^[^·]*·\s*/, "") });
   }
 
   async function writeRepair(page, type, value, note, status, buttons) {
@@ -663,68 +666,68 @@
     else body = { from: page.path, to: value, type: "belongs_to" };
     if (note && note.trim()) body.note = note.trim();
     buttons.forEach((b) => { b.disabled = true; });
-    setStatus(status, "", "正在记下…");
+    setStatus(status, "", t("正在记下…"));
     let r;
     try {
       r = await apiPost("/api/mappings/add", body);
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", type === "belongs_to" ? "没能关联文件" : "没能补上来源", err);
+      setStatus(status, "err", type === "belongs_to" ? t("没能关联文件") : t("没能补上来源"), err);
       return;
     }
     if (r.ingest_error) {
-      setStatus(status, "err", "已经写进 mappings.toml，但图谱还没有更新；稍后会自动重试", r.ingest_error);
+      setStatus(status, "err", t("已经写进 mappings.toml，但图谱还没有更新；稍后会自动重试"), r.ingest_error);
       return;
     }
-    setStatus(status, "ok", "已记下。");
+    setStatus(status, "ok", t("已记下。"));
     loadNode(views.node, true);
   }
 
   // The attempt(s) it belongs to and the variable versions it uses, as a
   // line under the trace; no attempt is a gap with 「关联文件」.
   function renderBelongs(host, page) {
-    const t = page.trace || {};
+    const trace = page.trace || {};
     if (page.type === "attempt") {
       // 12.7: 「关联文件」 attaches more scripts, data and figures to it.
-      if (!(t.breaks || []).some((b) => b.kind === "no_files")) {
+      if (!(trace.breaks || []).some((b) => b.kind === "no_files")) {
         const more = mk("div", "trace-belongs");
-        more.appendChild(mk("span", "trace-belongs-word", "还有文件属于这条尝试？"));
+        more.appendChild(mk("span", "trace-belongs-word", t("还有文件属于这条尝试？")));
         more.appendChild(repairControl(page, "belongs_to"));
         host.appendChild(more);
       }
       return;
     }
     if (page.type === "variable") return;
-    const attempts = t.attempts || [];
-    const brk = (t.breaks || []).find((b) => b.kind === "no_attempt");
+    const attempts = trace.attempts || [];
+    const brk = (trace.breaks || []).find((b) => b.kind === "no_attempt");
     const line = mk("div", "trace-belongs");
     if (attempts.length) {
-      line.appendChild(mk("span", "trace-belongs-word", "属于"));
+      line.appendChild(mk("span", "trace-belongs-word", t("属于")));
       attempts.forEach((a) => {
         const one = mk("span", "trace-attempt");
         one.appendChild(RODesk.statusLabel(a.verdict_status));
         one.appendChild(link("#" + String(a.number || "").replace(/^#/, "") + " " + (a.title || ""), "", () => openNode(a.id)));
         const via = (a.via || []).map((v) => viaWord(v.via)).filter((x, i, all) => all.indexOf(x) === i);
-        if (via.length) one.appendChild(mk("span", "node-sub-inline", "（" + via.join("、") + "）"));
+        if (via.length) one.appendChild(mk("span", "node-sub-inline", t("（{text}）", { text: via.join(t("、")) })));
         line.appendChild(one);
       });
       host.appendChild(line);
     } else if (brk && (page.type === "script" || page.type === "dataset" || page.type === "figure")) {
       const gap = mk("div", "trace-gap wide");
-      gap.appendChild(mk("div", "trace-gap-label", brk.label));
+      gap.appendChild(mk("div", "trace-gap-label", t(brk.label)));
       gap.appendChild(repairControl(page, "belongs_to"));
       host.appendChild(gap);
     }
-    const vars = t.variables || [];
+    const vars = trace.variables || [];
     if (vars.length) {
       const v = mk("div", "trace-belongs");
-      v.appendChild(mk("span", "trace-belongs-word", "使用变量"));
+      v.appendChild(mk("span", "trace-belongs-word", t("使用变量")));
       vars.forEach((x) => {
         const one = mk("span", "trace-attempt");
-        const name = link(x.variable + " 第 " + x.version + " 版", "", () => openNode("variable:" + x.variable));
+        const name = link(t("{variable} 第 {n} 版", { variable: x.variable, n: x.version }), "", () => openNode("variable:" + x.variable));
         if (x.reference && x.reference.label) name.title = x.reference.label;
         one.appendChild(name);
-        one.appendChild(mk("span", "node-sub-inline", x.matched_by === "output" ? "（定义卡写明输出到这里）" : "（按列名 " + (x.field || "") + " 对上）"));
+        one.appendChild(mk("span", "node-sub-inline", x.matched_by === "output" ? t("（定义卡写明输出到这里）") : t("（按列名 {field} 对上）", { field: x.field || "" })));
         v.appendChild(one);
       });
       host.appendChild(v);
@@ -797,28 +800,28 @@
   // -- 改动与备注 (12.6) ---------------------------------------------------------------
 
   function renderTimelineSection(host, page, history, notes, me) {
-    const s = sec("改动与备注");
+    const s = sec(t("改动与备注"));
     const hist = history && !history.failed ? history : null;
     const noteList = notes && !notes.failed ? (notes.notes || []) : [];
     if (history && history.failed) {
       const box = mk("p", "trace-break");
-      renderBlockingError(box, "这里的历史现在读不到", history.failed);
+      renderBlockingError(box, t("这里的历史现在读不到"), history.failed);
       s.appendChild(box);
     } else if (hist && hist.reason && !(hist.versions || []).length) {
-      s.appendChild(mk("p", "node-sub", hist.reason));
+      s.appendChild(mk("p", "node-sub", t(hist.reason)));
     }
     if (hist && (page.type === "section" || page.type === "claim") && hist.path) {
-      s.appendChild(mk("p", "node-sub", "下面的版本是它所在的文稿 " + hist.path + " 的版本。"));
+      s.appendChild(mk("p", "node-sub", t("下面的版本是它所在的文稿 {path} 的版本。", { path: hist.path })));
     }
     if (notes && notes.failed) {
       const box = mk("p", "trace-break");
-      renderBlockingError(box, "这里的笔记现在读不到", notes.failed);
+      renderBlockingError(box, t("这里的笔记现在读不到"), notes.failed);
       s.appendChild(box);
     } else if (notes && notes.stale) {
-      s.appendChild(mk("p", "trace-break", (notes.message || "笔记记录文件现在无法读取") + "；下面是图谱上次读到的笔记。"));
+      s.appendChild(mk("p", "trace-break", t("{reason}；下面是图谱上次读到的笔记。", { reason: notes.message || t("笔记记录文件现在无法读取") })));
     }
     const entries = timeline(hist, noteList, page.links);
-    if (!entries.length) s.appendChild(mk("p", "node-empty", "还没有记录到改动或笔记。"));
+    if (!entries.length) s.appendChild(mk("p", "node-empty", t("还没有记录到改动或笔记。")));
     else {
       const ul = mk("ul", "node-timeline");
       let diffs = 0;
@@ -832,21 +835,21 @@
         } else if (e.kind === "verdict") {
           main.appendChild(mk("div", "tl-what", e.words));
           main.appendChild(mk("div", "tl-meta", [e.v.who_label, sourceWords(e.v)].filter(Boolean).join(" · ")));
-          if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", "经 " + (e.v.approved_by_label || e.v.approved_by) + " 批准"));
+          if (e.v.approved_by) main.appendChild(mk("div", "tl-meta", t("经 {who} 批准", { who: e.v.approved_by_label || e.v.approved_by })));
           if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
         } else if (e.kind === "card") {
-          const act = (typeof ACT_WORDS !== "undefined" && ACT_WORDS[e.v.act]) || e.v.act || "记录";
-          main.appendChild(mk("div", "tl-what", act + (e.v.number ? "第 " + e.v.number + " 版" : "")));
+          const act = t((typeof ACT_WORDS !== "undefined" && ACT_WORDS[e.v.act]) || e.v.act || t("记录"));
+          main.appendChild(mk("div", "tl-what", act + (e.v.number ? t("第 {n} 版", { n: e.v.number }) : "")));
           main.appendChild(mk("div", "tl-meta", e.v.who_label || ""));
           if (e.v.note) main.appendChild(mk("p", "tl-note", e.v.note));
         } else if (e.kind === "note") {
           renderNote(main, page, e.note, me);
         } else if (e.kind === "link") {
-          main.appendChild(mk("div", "tl-what", "连线：" + linkSentence(e.link)));
-          main.appendChild(mk("div", "tl-meta", [e.m.by_label || "", "人工标注"].filter(Boolean).join(" · ")));
+          main.appendChild(mk("div", "tl-what", t("连线：{link}", { link: linkSentence(e.link) })));
+          main.appendChild(mk("div", "tl-meta", [e.m.by_label || "", t("人工标注")].filter(Boolean).join(" · ")));
           if (e.m.note) main.appendChild(mk("p", "tl-note", e.m.note));
         } else if (e.kind === "judgment") {
-          main.appendChild(mk("div", "tl-what", (JUDGE_WORDS[e.j.verdict] || "判断了") + "这条关联：" + linkSentence(e.link)));
+          main.appendChild(mk("div", "tl-what", t("{action}这条关联：{link}", { action: JUDGE_WORDS[e.j.verdict] || t("判断了"), link: linkSentence(e.link) })));
           if (e.j.at_label) main.appendChild(mk("div", "tl-meta", e.j.at_label));
           if (e.j.note) main.appendChild(mk("p", "tl-note", e.j.note));
         }
@@ -862,11 +865,11 @@
   function renderVersion(host, page, hist, e, auto) {
     const v = e.v;
     const head = mk("div", "tl-what");
-    if (!e.prev) head.textContent = v.version === "worktree" ? "工作区里还没有提交的改动" : "最早记下的版本";
-    else head.textContent = v.version === "worktree" ? "工作区里还没有提交的改动" : (v.kind === "data" ? "数据有改动" : "内容有改动");
+    if (!e.prev) head.textContent = v.version === "worktree" ? t("工作区里还没有提交的改动") : t("最早记下的版本");
+    else head.textContent = v.version === "worktree" ? t("工作区里还没有提交的改动") : (v.kind === "data" ? t("数据有改动") : t("内容有改动"));
     host.appendChild(head);
     const meta = [v.who_label, sourceWords(v)];
-    if (v.approved_by) meta.push("经 " + (v.approved_by_label || v.approved_by) + " 批准");
+    if (v.approved_by) meta.push(t("经 {who} 批准", { who: v.approved_by_label || v.approved_by }));
     host.appendChild(mk("div", "tl-meta", meta.filter(Boolean).join(" · ")));
     if (v.note && v.version !== "worktree") host.appendChild(mk("p", "tl-note", v.note));
     if (!e.prev) {
@@ -879,12 +882,12 @@
     const key = String(e.prev.version) + ".." + String(v.version);
     const load = () => loadDiff(slot, page, hist, e.prev, v);
     if (auto || nav.shownDiffs.has(key)) load();
-    else slot.appendChild(mkButton("查看这一版的改动", "btn btn-small", () => { nav.shownDiffs.add(key); load(); }));
+    else slot.appendChild(mkButton(t("查看这一版的改动"), "btn btn-small", () => { nav.shownDiffs.add(key); load(); }));
   }
 
   async function loadDiff(slot, page, hist, a, b) {
     slot.innerHTML = "";
-    slot.appendChild(mk("span", "node-sub", "载入中…"));
+    slot.appendChild(mk("span", "node-sub", t("载入中…")));
     let d;
     try {
       d = await apiGet("/api/history/diff?node=" + encodeURIComponent(hist.node || page.id) + "&a=" +
@@ -892,7 +895,7 @@
     } catch (err) {
       slot.innerHTML = "";
       const box = mk("p", "trace-break");
-      renderBlockingError(box, "没能比较这两个版本", err);
+      renderBlockingError(box, t("没能比较这两个版本"), err);
       slot.appendChild(box);
       return;
     }
@@ -902,8 +905,8 @@
     const words = d.summary_words || "";
     if (words) slot.appendChild(mk("p", "tl-summary", words));
     if (d.diff) slot.appendChild(diffBlock(diffRows(d.diff), d.truncated));
-    else if (d.diff_left_out) slot.appendChild(mk("p", "node-sub", "表格较大：只比较行和列，不逐行对比。"));
-    else if (!words && d.same) slot.appendChild(mk("p", "tl-summary", "内容相同"));
+    else if (d.diff_left_out) slot.appendChild(mk("p", "node-sub", t("表格较大：只比较行和列，不逐行对比。")));
+    else if (!words && d.same) slot.appendChild(mk("p", "tl-summary", t("内容相同")));
   }
 
   function diffBlock(rows, truncated) {
@@ -923,25 +926,25 @@
   }
 
   function renderNote(host, page, note, me) {
-    const head = mk("div", "tl-what", "笔记");
+    const head = mk("div", "tl-what", t("笔记"));
     host.appendChild(head);
     host.appendChild(mk("div", "tl-meta", note.label || note.name || note.by || t("最初的研究者")));
     const text = mk("p", "tl-note" + (note.withdrawn ? " withdrawn" : ""), note.text || "");
     host.appendChild(text);
     if (note.withdrawn) {
-      host.appendChild(mk("div", "tl-meta", "已撤回" + (note.withdrawn_at ? "（" + when(note.withdrawn_at) + "）" : "")));
+      host.appendChild(mk("div", "tl-meta", note.withdrawn_at ? t("已撤回（{when}）", { when: when(note.withdrawn_at) }) : t("已撤回")));
       return;
     }
     if (noteIsMine(note, me)) {
       const status = mk("div", "notice-status");
-      const b = mkButton("撤回", "btn btn-small", async () => {
+      const b = mkButton(t("撤回"), "btn btn-small", async () => {
         b.disabled = true;
-        setStatus(status, "", "正在撤回…");
+        setStatus(status, "", t("正在撤回…"));
         try {
           await apiPost("/api/notes", { action: "withdraw", id: note.id });
         } catch (err) {
           b.disabled = false;
-          setStatus(status, "err", "没能撤回这条笔记", err);
+          setStatus(status, "err", t("没能撤回这条笔记"), err);
           return;
         }
         loadNode(views.node, true);
@@ -959,42 +962,41 @@
   function travelsWords(kind, ctx) {
     const c = ctx || (typeof RODesk !== "undefined" ? RODesk.context() : null);
     if (!c || c.mode !== "member") return "";
-    const me = c.me && c.me.me ? c.me.me.id : "你的邮箱";
-    const what = { note: "这条笔记", link: "这条连线", judgment: "你的确认和否决", unlink: "这次删除",
-      paper: "「设为论文正文」的标记" }[kind] || "这条记录";
-    const then = kind === "unlink" ? "PI 下次发布时从正式的 mappings.toml 里删去这条连线"
-      : "PI 下次发布时加入" + (kind === "link" ? "正式的 mappings.toml" : kind === "paper" ? "正式的 papers.toml" : "正式记录");
-    // 12.13: a member's own proposals folder may be a folder of its own.
+    const me = c.me && c.me.me ? c.me.me.id : t("你的邮箱");
+    const what = { note: t("这条笔记"), link: t("这条连线"), judgment: t("你的确认和否决"),
+      unlink: t("这次删除"), paper: t("「设为论文正文」的标记") }[kind] || t("这条记录");
+    const record = kind === "link" ? t("正式的 mappings.toml") : kind === "paper" ? t("正式的 papers.toml") : t("正式记录");
+    const then = kind === "unlink" ? t("PI 下次发布时从正式的 mappings.toml 里删去这条连线")
+      : t("PI 下次发布时加入{record}", { record });
     const mine = c.share && c.share.mine && c.share.mine.path;
-    const where = mine ? "你自己的提议文件夹" : "公盘的「提议/" + me + "/」";
-    return what + "先记在你的工作副本里；下次同步时写入" + where + "，" + then + "，署你的名字，不需要批准。";
+    const where = mine ? t("你自己的提议文件夹") : t("公盘的「{folder}」", { folder: "提议/" + me + "/" });
+    return t("{what}先记在你的工作副本里；下次同步时写入{where}，{then}，署你的名字，不需要批准。", { what, where, then });
   }
-
   function noteForm(page, notes) {
     const form = mk("div", "node-note");
     const input = mk("textarea", "form-input node-note-input");
     input.rows = 3;
-    input.placeholder = "写一条笔记：为什么这样做、要注意什么";
-    input.setAttribute("aria-label", "笔记");
+    input.placeholder = t("写一条笔记：为什么这样做、要注意什么");
+    input.setAttribute("aria-label", t("笔记"));
     input.value = nav.notesDraft.get(page.id) || "";
     input.addEventListener("input", () => nav.notesDraft.set(page.id, input.value));
     const status = mk("div", "notice-status");
-    const add = mkButton("添加笔记", "btn btn-small", async () => {
+    const add = mkButton(t("添加笔记"), "btn btn-small", async () => {
       const text = input.value.trim();
-      if (!text) { setStatus(status, "err", "笔记是空的"); return; }
+      if (!text) { setStatus(status, "err", t("笔记是空的")); return; }
       add.disabled = true;
-      setStatus(status, "", "正在保存…");
+      setStatus(status, "", t("正在保存…"));
       try {
         await apiPost("/api/notes", { action: "add", node: page.id, text: text });
       } catch (err) {
         add.disabled = false;
-        setStatus(status, "err", "笔记没有保存", err);
+        setStatus(status, "err", t("笔记没有保存"), err);
         return;
       }
       nav.notesDraft.delete(page.id);
       loadNode(views.node, true);
     });
-    const blocked = humanRecordsBlocked() || (notes && notes.trusted === false ? (notes.message || "笔记记录文件现在无法写入") : null);
+    const blocked = humanRecordsBlocked() || (notes && notes.trusted === false ? (notes.message || t("笔记记录文件现在无法写入")) : null);
     if (blocked) { add.disabled = true; add.title = blocked; }
     const row = mk("div", "tl-actions");
     row.appendChild(add);
@@ -1007,14 +1009,14 @@
   // -- 判断 ----------------------------------------------------------------------------
 
   function renderJudgments(host, page) {
-    const s = sec("判断");
+    const s = sec(t("判断"));
     const links = page.links || [];
     if (!links.length) {
-      s.appendChild(mk("p", "node-empty", "还没有和它关联的连线。"));
+      s.appendChild(mk("p", "node-empty", t("还没有和它关联的连线。")));
       host.appendChild(s);
       return;
     }
-    s.appendChild(mk("p", "node-sub", "机器提取的关联由你确认或否决；人工标注的关联来自 mappings.toml。"));
+    s.appendChild(mk("p", "node-sub", t("机器提取的关联由你确认或否决；人工标注的关联来自 mappings.toml。")));
     const travels = travelsWords("judgment");
     if (travels) s.appendChild(mk("p", "node-sub writes", travels));
     const ul = mk("ul", "node-links");
@@ -1023,7 +1025,7 @@
       (all ? links : links.slice(0, LINKS_SHOWN)).forEach((l) => ul.appendChild(linkRow(page, l)));
       if (links.length > LINKS_SHOWN) {
         const li = mk("li", "node-links-more");
-        li.appendChild(mkButton(all ? "收起" : "显示全部 " + links.length + " 条", "btn btn-small", () => render(!all)));
+        li.appendChild(mkButton(all ? t("收起") : t("显示全部 {n} 条", { n: links.length }), "btn btn-small", () => render(!all)));
         ul.appendChild(li);
       }
     };
@@ -1038,7 +1040,7 @@
     const other = l.other || {};
     const srcEl = l.src === page.id ? mk("span", "link-self", l.src_label) : link(l.src_label, "", () => openNode(l.src));
     const dstEl = l.dst === page.id ? mk("span", "link-self", l.dst_label) : link(l.dst_label, "", () => openNode(l.dst));
-    head.append(srcEl, mk("span", "link-rel", l.relation), dstEl);
+    head.append(srcEl, mk("span", "link-rel", t(l.relation)), dstEl);
     const tone = l.human ? "clay" : (l.review || l.conflict) ? "ochre" : l.status === "confirmed" ? "olive" : l.status === "rejected" ? "gray" : "plain";
     head.appendChild(mk("span", "status-label tone-" + tone, linkStateWords(l)));
     const own = ownMark(l);
@@ -1047,10 +1049,10 @@
     // 12.11: a path in the mono, 「第 N 行」 in the sans.
     const where = mk("div", "tl-meta");
     (l.evidence || []).forEach((e, i) => {
-      if (i) where.append("；");
+      if (i) where.append(t("；"));
       if (e.file && e.file !== l.other.path && e.file !== (page.path || "")) where.append(mk("span", "mono", e.file), " ");
-      where.append("第 " + e.line + " 行");
-      if (e.callee) where.append("（", mk("span", "mono", e.callee), "）");
+      where.append(t("第 {n} 行", { n: e.line }));
+      if (e.callee) where.append(t("（"), mk("span", "mono", e.callee), t("）"));
     });
     if ((l.evidence || []).length) li.appendChild(where);
     if (l.judgement && (l.review || l.conflict) && l.judgement.label) li.appendChild(mk("div", "tl-meta", l.judgement.label));
@@ -1061,8 +1063,8 @@
     const blocked = humanRecordsBlocked();
     const buttons = [];
     judgeActions(l).forEach((a) => {
-      const text = a === "propose_remove" ? t("提议删除这条连线") : a === "delete" ? "删除标注" : a === "confirmed" ? "确认"
-        : a === "rejected" ? "否决" : "撤回";
+      const text = a === "propose_remove" ? t("提议删除这条连线") : a === "delete" ? t("删除标注") : a === "confirmed" ? t("确认")
+        : a === "rejected" ? t("否决") : t("撤回");
       const b = mkButton(text, "btn btn-small", () => judge(l, a, status, buttons));
       if (blocked) { b.disabled = true; b.title = blocked; }
       buttons.push(b);
@@ -1076,15 +1078,15 @@
     // A 「源自」 line never travels in a packet (14.2): the no-approval sentence is never said of it.
     const travels = l.type === "derives_from" ? "" : travelsWords("unlink");
     if (verdict === "propose_remove") { await proposeRemoval(l, status, buttons); return; }
-    if (verdict === "delete" && !window.confirm("删除这条人工标注？\n\n" + linkSentence(l) + "\n\n它会从 .researchos/mappings.toml 里移除。" +
+    if (verdict === "delete" && !window.confirm(t("删除这条人工标注？\n\n{link}\n\n它会从 .researchos/mappings.toml 里移除。", { link: linkSentence(l) }) +
       (travels ? "\n\n" + travels : ""))) return;
     buttons.forEach((b) => { b.disabled = true; });
-    setStatus(status, "", "正在记下…");
+    setStatus(status, "", t("正在记下…"));
     try {
       if (verdict === "delete") {
         const r = await apiPost("/api/mappings/delete", mappingEnds(l));
         if (r.ingest_error) {
-          setStatus(status, "err", "已经从 mappings.toml 删除，但图谱还没有更新；稍后会自动重试", r.ingest_error);
+          setStatus(status, "err", t("已经从 mappings.toml 删除，但图谱还没有更新；稍后会自动重试"), r.ingest_error);
           return;
         }
       } else {
@@ -1092,7 +1094,7 @@
       }
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", (verdict === "delete" && lineRefusal(err)) || (verdict === "delete" ? "没能删除这条标注" : "没能记下这个判断"), err);
+      setStatus(status, "err", (verdict === "delete" && lineRefusal(err)) || (verdict === "delete" ? t("没能删除这条标注") : t("没能记下这个判断")), err);
       return;
     }
     loadNode(views.node, true);
@@ -1123,17 +1125,17 @@
   // -- 关系图 (the canvas, scoped to this node's neighbourhood) ----------------------------
 
   function renderGraphSection(host, page) {
-    const s = sec("关系图");
+    const s = sec(t("关系图"));
     const canvasable = ["script", "dataset", "figure"].indexOf(page.type) >= 0 && page.in_index;
     if (!canvasable) {
-      s.appendChild(mk("p", "node-empty", "关系图只画脚本、数据和图表；它的关联见上面的来龙去脉。"));
+      s.appendChild(mk("p", "node-empty", t("关系图只画脚本、数据和图表；它的关联见上面的来龙去脉。")));
       host.appendChild(s);
       return;
     }
     const holder = mk("div", "node-graph" + (nav.graphOpen ? "" : " hidden"));
-    const toggle = mkButton(nav.graphOpen ? "收起关系图" : "打开关系图", "btn btn-small", () => {
+    const toggle = mkButton(nav.graphOpen ? t("收起关系图") : t("打开关系图"), "btn btn-small", () => {
       nav.graphOpen = !nav.graphOpen;
-      toggle.textContent = nav.graphOpen ? "收起关系图" : "打开关系图";
+      toggle.textContent = nav.graphOpen ? t("收起关系图") : t("打开关系图");
       holder.classList.toggle("hidden", !nav.graphOpen);
       if (nav.graphOpen) RCECanvas.load(holder, "near:" + page.id);
     });
@@ -1146,20 +1148,20 @@
   // -- 成果 (12.9) ---------------------------------------------------------------------
 
   function stateLabel(trace) {
-    const t = trace || {};
-    const el = mk("span", "status-label tone-" + traceTone(t.state), t.label || "");
-    if (t.breaks && t.breaks.length) el.title = t.breaks.join("；");
+    const value = trace || {};
+    const el = mk("span", "status-label tone-" + traceTone(value.state), t(value.label || ""));
+    if (value.breaks && value.breaks.length) el.title = value.breaks.map((text) => t(text)).join(t("；"));
     return el;
   }
 
   function resultRow(item) {
     const li = mk("li", "res-row");
-    li.appendChild(mk("span", "res-kind", item.kind || item.type_label || ""));
+    li.appendChild(mk("span", "res-kind", t(item.kind || item.type_label || "")));
     const main = mk("div", "res-main");
-    const name = link(item.label, "", () => openNode(item.id), "打开它的来龙去脉");
+    const name = link(item.label, "", () => openNode(item.id), t("打开它的来龙去脉"));
     main.appendChild(name);
     if (item.path) main.appendChild(mk("span", "res-path mono", item.path));
-    if (item.exists === false) main.appendChild(mk("span", "status-label tone-clay", "文件不存在"));
+    if (item.exists === false) main.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
     const own = ownMark(item);
     if (own) main.appendChild(own);
     li.append(main, stateLabel(item.trace));
@@ -1168,7 +1170,7 @@
 
   async function loadResults(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
     let data;
     try {
       data = await apiGet("/api/results");
@@ -1182,10 +1184,10 @@
     const top = window.scrollY;
     host.innerHTML = "";
     const page = mk("div", "results");
-    page.appendChild(mk("p", "node-sub", "文稿里的图、表和论断。每一项都能打开它的来龙去脉：完整，或者缺来源、缺尝试。"));
+    page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉：完整，或者缺来源、缺尝试。")));
     const figs = mk("section", "res-block");
-    figs.appendChild(mk("h2", "desk-title", "图与表"));
-    if (!data.sections.length && !data.loose.length) figs.appendChild(mk("p", "node-empty", "文稿里还没有引用图或表。"));
+    figs.appendChild(mk("h2", "desk-title", t("图与表")));
+    if (!data.sections.length && !data.loose.length) figs.appendChild(mk("p", "node-empty", t("文稿里还没有引用图或表。")));
     data.sections.forEach((g) => {
       const group = mk("div", "res-group");
       const title = mk("div", "res-group-title");
@@ -1198,7 +1200,7 @@
     });
     if (data.loose.length) {
       const group = mk("div", "res-group");
-      group.appendChild(mk("div", "res-group-title", "没有被文稿引用的图"));
+      group.appendChild(mk("div", "res-group-title", t("没有被文稿引用的图")));
       const ul = mk("ul", "res-list");
       data.loose.forEach((item) => ul.appendChild(resultRow(item)));
       group.appendChild(ul);
@@ -1206,7 +1208,7 @@
     }
     page.appendChild(figs);
     const claims = mk("section", "res-block");
-    claims.appendChild(mk("h2", "desk-title", "论断"));
+    claims.appendChild(mk("h2", "desk-title", t("论断")));
     renderPapers(claims, data);
     page.appendChild(claims);
     host.appendChild(page);
@@ -1217,17 +1219,17 @@
   // 12.13: 「设为论文正文」 / 「不再作为论文正文」 -- one entry appended to
   // .researchos/papers.toml; in a member's copy it travels with the next sync.
   function paperButton(draft, marked, status, done) {
-    const b = mkButton(marked ? "不再作为论文正文" : "设为论文正文", "btn btn-small", async () => {
+    const b = mkButton(marked ? t("不再作为论文正文") : t("设为论文正文"), "btn btn-small", async () => {
       b.disabled = true;
-      setStatus(status, "", "正在记下…");
+      setStatus(status, "", t("正在记下…"));
       try {
         await apiPost("/api/papers", { draft: draft, marked: !marked });
       } catch (err) {
         b.disabled = false;
-        setStatus(status, "err", "没能记下", err);
+        setStatus(status, "err", t("没能记下"), err);
         return;
       }
-      setStatus(status, "ok", marked ? "已不再作为论文正文。" : "已设为论文正文：成果会列出它的论断。");
+      setStatus(status, "ok", marked ? t("已不再作为论文正文。") : t("已设为论文正文：成果会列出它的论断。"));
       if (done) done();
     });
     const blocked = humanRecordsBlocked();
@@ -1263,14 +1265,14 @@
       section.appendChild(p);
     }
     if (!drafts.length) {
-      section.appendChild(mk("p", "node-empty", "还没有读到文稿。"));
+      section.appendChild(mk("p", "node-empty", t("还没有读到文稿。")));
       return;
     }
     if (!marked.length) {
-      section.appendChild(mk("p", "node-sub", "成果只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——" +
-        "在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。"));
+      section.appendChild(mk("p", "node-sub", t("成果只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
+        t("在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。")));
     } else {
-      section.appendChild(mk("p", "node-sub", "只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。"));
+      section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));
     }
     const status = mk("div", "notice-status");
     const list = mk("div", "res-drafts");
@@ -1283,8 +1285,8 @@
   function draftLine(d, status) {
     const row = mk("div", "res-draft res-draft-plain");
     const head = mk("div", "res-draft-summary");
-    head.append(link(d.file, "mono", () => openNode(d.node), "打开这份文稿的页面"),
-      mk("span", "node-sub-inline", d.claims ? d.claims + " 处带数字的句子，不列出" : "没有带数字的句子"));
+    head.append(link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
+      mk("span", "node-sub-inline", d.claims ? t("{n} 处带数字的句子，不列出", { n: d.claims }) : t("没有带数字的句子")));
     head.appendChild(paperButton(d.file, false, status, () => loadResults(views.results, true)));
     row.appendChild(head);
     return row;
@@ -1293,7 +1295,7 @@
   function draftClaims(c, status) {
     const box = mk("details", "res-draft");
     const summary = mk("summary", "res-draft-summary");
-    summary.append(chevron(), mk("span", "mono", c.file), mk("span", "node-sub-inline", (c.claims != null ? c.claims : c.count) + " 条论断"));
+    summary.append(chevron(), mk("span", "mono", c.file), mk("span", "node-sub-inline", t("{n} 条论断", { n: c.claims != null ? c.claims : c.count })));
     if (status) {
       const off = paperButton(c.file, true, status, () => loadResults(views.results, true));
       off.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); }); // not a toggle
@@ -1303,33 +1305,33 @@
     const body = mk("div", "res-draft-body");
     box.appendChild(body);
     const fill = async () => {
-      body.innerHTML = '<p class="empty-note">载入中…</p>';
+      body.replaceChildren(mk("p", "empty-note", t("载入中…")));
       let d;
       try {
         d = await apiGet("/api/results?draft=" + encodeURIComponent(c.file));
       } catch (err) {
         body.innerHTML = "";
         const p = mk("p", "trace-break");
-        renderBlockingError(p, "没能载入这份文稿的论断", err);
+        renderBlockingError(p, t("没能载入这份文稿的论断"), err);
         body.appendChild(p);
         return;
       }
       body.innerHTML = "";
       d.sections.forEach((g) => {
-        body.appendChild(mk("div", "res-group-title", g.title || ""));
+        body.appendChild(mk("div", "res-group-title", g.section ? g.title || "" : t("（不在任何章节下）")));
         const ul = mk("ul", "res-list");
         g.claims.forEach((cl) => {
           const li = mk("li", "res-row");
           const main = mk("div", "res-main");
-          main.appendChild(link(cl.sentence || cl.id, "claim", () => openNode(cl.id), "打开它的来龙去脉"));
-          const where = [cl.number ? "数字 " + cl.number : "", cl.line ? "第 " + cl.line + " 行" : ""].filter(Boolean).join(" · ");
+          main.appendChild(link(cl.sentence || cl.id, "claim", () => openNode(cl.id), t("打开它的来龙去脉")));
+          const where = [cl.number ? t("数字 {number}", { number: cl.number }) : "", cl.line ? t("第 {n} 行", { n: cl.line }) : ""].filter(Boolean).join(" · ");
           if (where) main.appendChild(mk("span", "node-sub-inline", where));
           li.append(main, stateLabel(cl.trace));
           ul.appendChild(li);
         });
         body.appendChild(ul);
       });
-      if (d.total > d.shown) body.appendChild(mk("p", "node-sub", "这份文稿共有 " + d.total + " 条，只列出了前 " + d.shown + " 条。"));
+      if (d.total > d.shown) body.appendChild(mk("p", "node-sub", t("这份文稿共有 {total} 条，只列出了前 {shown} 条。", { total: d.total, shown: d.shown })));
     };
     if (res.open.has(c.file)) { box.open = true; fill(); }
     box.addEventListener("toggle", () => {
@@ -1350,15 +1352,15 @@
 
   function fileRelations(f) {
     const lines = [];
-    const few = (list) => list.slice(0, 3).map((p) => p.split("/").pop()).join("、") + (list.length > 3 ? " 等 " + list.length + " 个" : "");
+    const few = (list) => list.slice(0, 3).map((p) => p.split("/").pop()).join(t("、")) + (list.length > 3 ? t(" 等 {n} 个", { n: list.length }) : "");
     if (f.type === "script") {
-      if (f.reads && f.reads.length) lines.push("读取 " + few(f.reads));
-      if (f.writes && f.writes.length) lines.push("写出 " + few(f.writes));
-      if (!lines.length) lines.push("没有读到读写记录。");
+      if (f.reads && f.reads.length) lines.push(t("读取 {files}", { files: few(f.reads) }));
+      if (f.writes && f.writes.length) lines.push(t("写出 {files}", { files: few(f.writes) }));
+      if (!lines.length) lines.push(t("没有读到读写记录。"));
     } else {
-      if (f.written_by && f.written_by.length) lines.push("由这些脚本写出：" + few(f.written_by));
-      if (f.read_by && f.read_by.length) lines.push("被这些脚本读取：" + few(f.read_by));
-      if (!lines.length) lines.push("没有脚本读取或写出它");
+      if (f.written_by && f.written_by.length) lines.push(t("由这些脚本写出：{files}", { files: few(f.written_by) }));
+      if (f.read_by && f.read_by.length) lines.push(t("被这些脚本读取：{files}", { files: few(f.read_by) }));
+      if (!lines.length) lines.push(t("没有脚本读取或写出它"));
     }
     return lines;
   }
@@ -1366,16 +1368,16 @@
   function fileRow(f) {
     const li = mk("li", "dc-row");
     const kind = mk("span", "dc-kind");
-    kind.append(icon(f.type), mk("span", null, f.type_label));
+    kind.append(icon(f.type), mk("span", null, t(f.type_label)));
     const main = mk("div", "dc-main");
     const head = mk("div", "dc-head");
-    head.appendChild(link(f.path, "mono", () => openNode(f.id), "打开它的来龙去脉"));
-    if (f.exists === false) head.appendChild(mk("span", "status-label tone-clay", "文件不存在"));
-    if (f.unreadable) head.appendChild(mk("span", "status-label tone-clay", "暂时无法读取"));
-    if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", "无来源输入"));
+    head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
+    if (f.exists === false) head.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
+    if (f.unreadable) head.appendChild(mk("span", "status-label tone-clay", t("暂时无法读取")));
+    if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", t("无来源输入")));
     if (f.review) {
-      const tag = mkButton(f.review + " 条关联待复核", "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
-      tag.title = "打开待复核的判断";
+      const tag = mkButton(t("{n} 条关联待复核", { n: f.review }), "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
+      tag.title = t("打开待复核的判断");
       head.appendChild(tag);
     }
     const own = ownMark(f);
@@ -1383,17 +1385,16 @@
     main.appendChild(head);
     fileRelations(f).forEach((t) => main.appendChild(mk("div", "dc-rel", t)));
     (f.broken || []).forEach((b) => {
-      main.appendChild(mk("div", "dc-rel bad", "断链：" + (b.script || "") + " " + b.relation + " " + (b.target || "") +
-        (b.relation === "写出" ? "（写出，文件不存在）" : "（读取，文件不存在）")));
+      main.appendChild(mk("div", "dc-rel bad", t("断链：{script} {relation} {target}（文件不存在）", { script: b.script || "", relation: t(b.relation), target: b.target || "" })));
     });
-    if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", "其它拷贝：" + f.other_copies.join("、")));
+    if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", t("其它拷贝：{files}", { files: f.other_copies.join(t("、")) })));
     li.append(kind, main);
     return li;
   }
 
   async function loadDataCode(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
     let data;
     try {
       data = await apiGet("/api/data-code");
@@ -1409,14 +1410,14 @@
     host.innerHTML = "";
     const bar = mk("div", "dc-filters");
     bar.setAttribute("role", "group");
-    bar.setAttribute("aria-label", "筛选");
+    bar.setAttribute("aria-label", t("筛选"));
     const counts = Object.assign({}, data.counts || {});
     counts.chains = (data.files || []).filter((f) => inFilter(f, "chains")).length;
     const list = mk("ul", "dc-list");
     const draw = () => {
       list.innerHTML = "";
       const shown = (data.files || []).filter((f) => inFilter(f, dc.filter));
-      if (!shown.length) list.appendChild(mk("li", "node-empty", dc.filter === "all" ? "还没有扫描到脚本或数据文件。" : "没有。"));
+      if (!shown.length) list.appendChild(mk("li", "node-empty", dc.filter === "all" ? t("还没有扫描到脚本或数据文件。") : t("没有。")));
       shown.forEach((f) => list.appendChild(fileRow(f)));
       bar.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === dc.filter)));
     };

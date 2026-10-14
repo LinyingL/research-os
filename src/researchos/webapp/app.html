@@ -1323,9 +1323,9 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       </section>
       <!-- 数据与代码 (12.9): the lineage report as a list, and 关系图 (the
            canvas, no longer a destination of its own). -->
-      <div id="data-switch" class="subnav hidden" role="tablist" aria-label="数据与代码">
-        <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true">清单</button>
-        <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false">关系图</button>
+      <div id="data-switch" class="subnav hidden" role="tablist" aria-label="数据与代码" data-i18n-attr="aria-label">
+        <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>清单</button>
+        <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
       <section id="view-desk" class="view"></section>
       <section id="view-tree" class="view hidden"></section>
@@ -1337,7 +1337,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <section id="view-proposals" class="view hidden"></section>
       <section id="view-members" class="view hidden"></section>
       <!-- 12.9: every object opens the same node page (node.js). -->
-      <section id="view-node" class="view hidden" aria-label="详情"></section>
+      <section id="view-node" class="view hidden" aria-label="详情" data-i18n-attr="aria-label"></section>
     </main>
   </div>
 </div>
