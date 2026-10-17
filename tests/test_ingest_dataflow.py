@@ -509,6 +509,36 @@ def test_ingest_skips_absolute_and_escaping_paths_and_unrecognized_extensions(tm
     assert any("neither a tracked" in r.message for r in caplog.records)
 
 
+def test_windows_drive_and_network_paths_are_absolute_for_python_and_r(tmp_path, conn, caplog):
+    """DESIGN.md 15.3: `C:\\...`, `C:/...` and `\\\\server\\...` are absolute
+    in every language -- skipped and logged, never a node named after a
+    drive letter, and counted as reaching outside the project. Before, they
+    were "relative" literals and became fabricated missing nodes."""
+    (tmp_path / "gen.py").write_text(
+        "import pandas as pd\n"
+        "pd.read_csv('C:\\\\Users\\\\me\\\\data.csv')\n"
+        "pd.read_csv('D:/project/data.csv')\n"
+        "pd.read_csv(r'\\\\server\\share\\data.csv')\n"
+    )
+    (tmp_path / "an.R").write_text(
+        'd <- read.csv("C:/Users/me/data.csv")\n'
+        'write.csv(d, "E:\\\\out\\\\data.csv")\n'
+    )
+    (tmp_path / "ok.py").write_text("import pandas as pd\npd.read_csv('data/in.csv')\n")
+    literals = [c.literal for c in dataflow.parse_py_file(tmp_path, "gen.py")]
+    assert literals == ["C:\\Users\\me\\data.csv", "D:/project/data.csv", "\\\\server\\share\\data.csv"]
+    with caplog.at_level("WARNING", logger="researchos.ingest.dataflow"):
+        counts = dataflow.ingest_dataflow_repo(conn, tmp_path, ["gen.py", "ok.py"], ["an.R"], [])
+    assert counts == {"reads": 1, "writes": 0}
+    assert [r["id"] for r in conn.execute("SELECT id FROM nodes WHERE type='dataset'")] == ["dataset:data/in.csv"]
+    assert sum("cannot be safely mapped into the repo" in r.message for r in caplog.records) == 5
+    assert dataflow.reaches_outside(tmp_path, ["an.R", "gen.py", "ok.py"]) == ["an.R", "gen.py"]
+    for literal in ("C:\\x.dta", "c:/x", "C:x.csv", "\\\\srv\\x", "//srv/x"):
+        assert dataflow.is_windows_absolute(literal)
+    for literal in ("data/x.csv", "./C:/x", "https://example.org/x.csv", "/abs/x.csv"):
+        assert not dataflow.is_windows_absolute(literal)
+
+
 def test_ingest_needs_no_git_repository(tmp_path, conn):
     """W2's whole point: unlike researchos.ingest.pyfig, this extractor's edges
     never reference a Commit node, so it must work in a plain, never-`git

@@ -100,7 +100,9 @@ stripped and ingestion proceeds exactly as if the literal had been written
 relative all along -- `evidence.remapped_from_absolute = true` marks the
 occurrence. An absolute path that does not resolve under the project root is
 unchanged from before this feature existed: skipped and logged, never
-guessed at.
+guessed at. A Windows drive-letter or network path (`C:/...`, the same
+with backslashes, `//server/...`) is absolute in every language and never
+remapped (15.3).
 
 **Python default-parameter folding.** `def f(out=DATA + "x.csv"): ...
 open(out, "w")` -- a call's own literal argument, `out`, is a parameter, not
@@ -972,6 +974,19 @@ def scan_rmd_file(repo_root: str | Path, rmd_rel_path: str) -> ParseOutcome:
 # ---------------------------------------------------------------------------
 
 
+# DESIGN.md 15.3: a Windows drive-letter path (`C:\...`, `C:/...`, and the
+# drive-relative `C:...`) or a network path (`\\server\...`, `//server/...`)
+# is absolute for every language -- never mapped into the project, skipped
+# and logged. `posixpath.isabs` says False for all but the last, which made
+# them "relative" literals and fabricated a missing node named after a drive.
+_WINDOWS_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:|\\\\|//)")
+
+
+def is_windows_absolute(literal: str) -> bool:
+    """True for a drive-letter or network (UNC) path (15.3)."""
+    return bool(_WINDOWS_ABSOLUTE_RE.match(literal))
+
+
 def _normalize_candidate(base_dir: str, raw_path: str) -> str | None:
     """Join+normalize a literal against `base_dir`, rejecting an absolute
     filesystem path (not something we can safely remap into the repo) or
@@ -1034,7 +1049,10 @@ def _resolve_target(
 
     Returns None only when the literal cannot be safely mapped into the repo
     at all (an absolute path outside the project root, or a `..` escape) --
-    there is then no repo-relative path to report even as "missing"."""
+    there is then no repo-relative path to report even as "missing". A
+    Windows drive or network path is never remapped (15.3)."""
+    if is_windows_absolute(literal):
+        return None
     remapped_from_absolute = False
     if posixpath.isabs(literal):
         remapped = _remap_absolute_path(literal, repo_root)
@@ -1149,9 +1167,15 @@ def reaches_outside(repo_root: Path, script_paths: Iterable[str]) -> list[str]:
             outcome = scan_r_file(repo_root, path)
         else:
             continue
-        if any(posixpath.isabs(c.literal) and _remap_absolute_path(c.literal, repo_root) is None for c in outcome.calls):
+        if any(_reaches_outside(c.literal, repo_root) for c in outcome.calls):
             found.append(path)
     return found
+
+
+def _reaches_outside(literal: str, repo_root: Path) -> bool:
+    if is_windows_absolute(literal):
+        return True
+    return posixpath.isabs(literal) and _remap_absolute_path(literal, repo_root) is None
 
 
 def _ingest_call(
@@ -1162,7 +1186,8 @@ def _ingest_call(
     if resolved is None:
         logger.warning(
             "%s:%d: %s(%r) cannot be safely mapped into the repo (absolute path, "
-            "or escapes the project root); skipping, not guessing",
+            "a Windows drive or network path included, or escapes the project "
+            "root); skipping, not guessing",
             call.script_path, call.line, call.callee, call.literal,
         )
         return ""
