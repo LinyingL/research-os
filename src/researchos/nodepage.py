@@ -715,7 +715,9 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     for b in report["broken_links"]:
         for who in (b.get("script"), b.get("target")):
             if who:
+                # `type` is the code the page compares (13.6); `relation` its words.
                 broken.setdefault(who, []).append({"script": b.get("script"), "target": b.get("target"),
+                                                   "type": b.get("kind") or "reads",
                                                    "relation": RELATION_WORDS.get(b.get("kind") or "", "读取"),
                                                    "line": b.get("line")})
     copies: dict[str, list[str]] = {}

@@ -209,6 +209,7 @@ def test_12_9_data_code_marks_orphans_chains_broken_links_and_copies(tmp_path):
     assert by["data/panel.csv"]["written_by"] == ["steps/16-build.py"] and by["data/panel.csv"]["read_by"] == ["steps/17-plot.py"]
     assert by["steps/17-plot.py"]["reads"] == ["data/panel.csv"] and by["steps/17-plot.py"]["writes"] == ["figs/fig2.png"]
     assert by["steps/18-gone.py"]["broken"][0]["target"] == "data/gone.csv"
+    assert (by["steps/18-gone.py"]["broken"][0]["type"], by["steps/18-gone.py"]["broken"][0]["relation"]) == ("reads", "读取")
     assert out["counts"]["orphans"] >= 1 and out["counts"]["duplicates"] == 1 and out["counts"]["broken"] >= 1
 
 

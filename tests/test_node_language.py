@@ -102,3 +102,40 @@ global.apiGet = async path => {
     else:
         for label in ("返回成果", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "判断"):
             assert label in words
+
+
+@needs_node
+@pytest.mark.parametrize("language", ["en", "zh", None])
+def test_data_code_broken_links_read_as_the_8_8_glossary_in_chinese(language):
+    """数据与代码's broken links: in Chinese exactly the 8.8 glossary's
+    「（写出，文件不存在）」/「（读取，文件不存在）」, chosen by the link's code,
+    not its words (13.6); in English one sentence; node.js alone is Chinese."""
+    data = {"files": [{"id": "script:steps/17.py", "type": "script", "type_label": "脚本", "path": "steps/17.py",
+                       "exists": True, "reads": [], "writes": [], "orphan_input": False, "review": 0, "broken": [
+                           {"script": "steps/17.py", "target": "figs/a.png", "type": "writes", "relation": "写出"},
+                           {"script": "steps/17.py", "target": "data/gone.csv", "type": "reads", "relation": "读取"}]}],
+            "counts": {"all": 1, "broken": 1}}
+    i18n = "" if language is None else f"window.ROI18N_SAVED = {json.dumps(language)};\n" + _i18n_source()
+    script = ("global.window = {addEventListener(){}, scrollTo(){}, scrollY: 0};\n" + i18n + _DESK_DOM + r"""
+const baseMk = mk;
+global.mk = (tag, cls, text) => { const e = baseMk(tag, cls, text); e.attrs = {};
+  e.setAttribute = (name, value) => { e.attrs[name] = String(value); };
+  e.replaceChildren = (...kids) => { e.innerHTML = ''; e.append(...kids); }; e.querySelectorAll = () => []; return e; };
+global.mkButton = (label, cls, onClick) => Object.assign(mk('button', cls, label), {onClick});
+document.createElementNS = (_ns, tag) => mk(tag);
+global.currentView = 'data';
+""" + f"global.apiGet = async () => ({json.dumps(data, ensure_ascii=False)});\n"
+              + (WEBAPP / "node.js").read_text(encoding="utf-8") + r"""
+(async () => {
+  const host = mk('div', 'host'); await window.RONode.loadDataCode(host);
+  const bad = []; const walk = (e) => e.kids.forEach((k) => { if (typeof k === 'string') return;
+    if (k.className === 'dc-rel bad') bad.push(k.kids.join('')); walk(k); });
+  walk(host); process.stdout.write(JSON.stringify(bad));
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+    if language == "en":
+        assert _node(script) == ["Broken link: steps/17.py writes figs/a.png (file not found)",
+                                 "Broken link: steps/17.py reads data/gone.csv (file not found)"]
+    else:
+        assert _node(script) == ["断链：steps/17.py 写出 figs/a.png（写出，文件不存在）",
+                                 "断链：steps/17.py 读取 data/gone.csv（读取，文件不存在）"]
