@@ -3522,3 +3522,133 @@ describes the old desk), and acceptance.
 7. English mode: no Chinese on the map, column or panel except the
    researcher's text. No emoji, no arrows, no 节点 or 画布 anywhere.
 8. Every existing test passes, with the desk pins re-baselined on purpose.
+
+## Section 15 — Stata (task V11)
+
+The researcher, 2026-10-17: "添加对 stata 的支持". Decided the same day: this
+increment covers **do-file lineage** and **.dta files themselves**; Stata's
+tables and logs as outputs, and variable cards reading gen/egen, come later.
+Acceptance runs on three public replication packages (reifjulian/my-project,
+simonmongey/Mongey_Pilossoph_Weinberg, worldbank/rio-safe-space), read only,
+never run. Stata comes before the evidence work. **A global that stands for a
+project folder is proposed by Research OS and confirmed once by a person**
+(15.3).
+
+A survey of the three packages (107 do-files, 21 .dta files) found: paths are
+almost always built from globals; the root global is either left for each
+user to set (my-project comments it out) or hard-coded as one author's
+Windows path (rio); 21 of 77 Mongey paths omit `.dta`; tempfiles are common;
+nothing in Stata's syntax is safe to match with a word-anywhere pattern.
+
+### 15.1 What Stata files are
+
+- `.do` is a **script**: scanned for lineage, versioned, an endpoint for
+  hand-drawn links, a step file when numbered (attempts' `steps_dir`). `.ado`
+  is a script too, versioned and shown, but not scanned for files in this
+  increment; the program names it defines are registered so a call to a
+  project program is never read as a Stata command. Vendored libraries
+  (folders holding `stata.trk`, `ado/plus`, `ado/personal`,
+  `libraries/stata`) are listed as skipped, never scanned.
+- `.dta` stays a **dataset** (it already is) and gains its own reader (15.4).
+- The word on screen stays 「脚本」 / "Scripts"; lists of script kinds name
+  `.do` (adding a project, the command line, the README).
+- A human record keyed `file:x.do` before this increment is not carried over
+  to `script:x.do`; no researcher's project held do-files then.
+
+### 15.2 Reading a do-file
+
+- **A lexer before any matching**: `*` comments at a command's start, `//`
+  after whitespace, `///` continuation, nested `/* */`, `#delimit ;`, double
+  and compound quotes; evidence keeps the file's own line numbers.
+- **Commands only at a command's start**, after the prefixes `capture`,
+  `quietly`, `noisily` (and their abbreviations), `by … :`, `bysort … :`,
+  `version # :`, and inside the `{ }` blocks of `if`, `else`, `foreach`,
+  `forvalues`, `while`. Abbreviations are normalised to one name taken from
+  Stata's manual (never guessed), so a re-spelling does not put judgments
+  under 「待复核」 (9.6).
+- **Reads**: `use` (also `use varlist using`), `merge`, `joinby`, `cross`
+  `… using`, `append using` (several files), `import delimited`, `import
+  excel`, `insheet using`, `infile`/`infix … using`. **Writes**: `save`,
+  `saveold`, `graph export`, `export delimited`, `export excel`, `outsheet`.
+  Tables written by `esttab`, `texsave`, `outreg2` and the like are skipped
+  and logged as belonging to the outputs layer, which has no table node yet.
+- **Default extension**: `.dta` for `use`, `save`, `saveold`, `merge`,
+  `append`, `joinby`, `cross`, as Stata's manual states; nowhere else.
+- **Which do-file runs which** (`do`, `run`, `include`) is read to carry
+  globals and the working folder along a run; it is not stored as a link in
+  this increment.
+- **Skipped and logged, never guessed**: tempfiles, names built in loops,
+  any path with a macro that does not resolve, `sysuse`/`webuse`, anything
+  outside the project.
+
+### 15.3 Paths, macros and the project folder
+
+- `$name`, `${name}` and `` `name' `` are expanded. A **global** is used only
+  when every assignment to it in the project gives the same literal; a
+  second, different value leaves it unresolved. A **local** is the file's
+  own and used only when assigned once. An undefined macro is unresolved —
+  never the empty string Stata would silently use.
+- In a do-file a backslash is a path separator (packages written on
+  Windows), except where Stata reads it as an escape (before `$` and `` ` ``).
+- **Windows paths are absolute** — `C:\…`, `C:/…`, `\\server\…` — for every
+  language: never mapped into the project, skipped and logged. (Python and R
+  shared this latent bug.)
+- **The working folder**: a relative path resolves against the folder of the
+  do-file that started the run, followed along `do`/`run` chains and changed
+  by a literal `cd`; a do-file nobody runs keeps today's rule (the project
+  root, then its own folder).
+- **The project folder behind a global** (the researcher's decision): when a
+  global used at the head of paths is undefined, or holds an absolute path
+  from someone's computer, Research OS **proposes** which folder of the
+  project it stands for, with its evidence — 「$MyProject 很可能指
+  analysis/：以它开头的 23 条路径里，21 条在 analysis/ 下存在」, or an
+  absolute path whose last folders name a project folder. The proposal is
+  shown in 数据与代码 with 「是」 and 「不是」. A confirmed answer is a human
+  record, `.researchos/stata.toml` (one entry per answer: global, folder,
+  `by`, date; the newest answer for a global holds), written by Research OS,
+  snapshotted and listed like the other records; in a project with members
+  only the PI (or a single researcher) answers, members see the proposal.
+  Until answered, those paths are listed as 「展开不了」 with the reason, and
+  no link is made from them. A link made through a confirmed answer carries
+  it in its evidence.
+
+### 15.4 .dta files
+
+- **A header reader**, standard library only, releases 113–121 in both byte
+  orders: rows, variables (name, storage type, display format, label,
+  value-label name), the dataset label and its timestamp. It never reads the
+  data section, so its cost does not grow with rows; a truncated or corrupt
+  file is refused with a sentence saying what is wrong, never a hang. Names
+  and labels are untrusted text.
+- **Shown**: the file panel shows rows × variables and the variable table
+  (name, label, type) instead of refusing a binary file; a version change
+  reads like a table's (12.13): rows from X to Y, variables added or
+  removed.
+- **Python and R** learn `.dta` writers and readers they lacked
+  (`to_stata`, `write_dta`, `pyreadstat`'s `read_dta`), so a pipeline mixing
+  languages connects.
+
+### 15.5 Language
+
+New words in both languages (13.6); 13.4 gains: 全局变量 "global";
+展开不了 "Not resolved"; 项目里的文件夹 "project folder".
+
+### 15.6 Acceptance
+
+1. **my-project**: after confirming `$MyProject` = `analysis/`, the links
+   equal the hand-made gold standard of the survey — every resolvable path,
+   and not one link that is not in it. Tempfiles and the timestamped log are
+   skipped and logged.
+2. **Mongey**: the paths relative to each task's `src/` resolve, the 20
+   without `.dta` included; tempfiles skipped; no invented link; its 17 .dta
+   files show rows and variables equal to pandas' reading of their headers.
+3. **rio**: MASTER's globals fold; the doubly assigned global is left
+   unresolved; the hard-coded Windows root is proposed as its project folder
+   and, once confirmed, the paths built on it resolve; uses of undefined
+   globals are listed as 「展开不了」; no node anywhere names a drive letter.
+4. Every skip is logged with its reason; the counts are reported.
+5. Corrupt and truncated .dta files are refused clearly.
+6. The researcher's own project (Python, R, Rmd) yields the same links as
+   before.
+7. English mode shows no Chinese on the new surfaces except the researcher's
+   text; no dependency is added; every test passes.
