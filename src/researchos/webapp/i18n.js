@@ -977,6 +977,52 @@
     "（不在任何章节下）": "(outside any section)",
     "第 {n} 版的定义": "Definition version {n}",
 
+    // 新增尝试's 生成草稿 (16): the chosen files, where a draft goes, the draft and what became of
+    // each cell, the refusals, the model server.
+    "项目里的文件路径，例如 code/run.py": "A file path in the project, e.g. code/run.py",
+    "{path} 去掉": "Remove {path}",
+    "一次最多选 5 个文件": "Choose at most 5 files at a time",
+    "加入": "Add",
+    "根据所选文件生成草稿（可选）": "Draft from chosen files (optional)",
+    "模型只起草「{description}」和「{result}」，只填还空着的格子；文件里看不出来、或说不出依据的格子留空。判决和其它内容由你自己写。":
+      "The model drafts only the “{description}” and the “{result}”, and only into cells that are still empty; a cell the files do not show, or whose basis the model cannot name, stays empty. The verdict and everything else are yours to write.",
+    "描述": "Description",
+    "生成草稿": "Generate draft",
+    "先选至少一个文件": "Choose at least one file first",
+    "起草用这台 Mac 上的模型 {model}": "Drafts use the model {model} on this Mac",
+    "起草会把所选文件的内容发到 {host}，它不在这台 Mac 上；模型 {model}":
+      "Drafting sends the chosen files’ contents to {host}, which is not this Mac; model {model}",
+    "没能读到模型设置，先不能起草": "Could not read the model setting, so drafting is not available yet",
+    "正在请模型起草…可能要等一两分钟": "Asking the model for a draft… this can take a minute or two",
+    "草稿（{model}）。模型说它依据：{files}。发出前请核对。": "Draft ({model}). The model says it used: {files}. Check it before you send it.",
+    "草稿（{model}）。模型说它依据：{files}。写入前请核对。": "Draft ({model}). The model says it used: {files}. Check it before you write it.",
+    "已填入「{cell}」。": "Filled in “{cell}”.",
+    "「{cell}」原本有内容，没有改。": "“{cell}” already had text and was left as it was.",
+    "文件里看不出「{cell}」，留空。": "“{cell}” is left empty: the files do not show it.",
+    "「{cell}」留空：模型没有指出依据的文件。": "“{cell}” is left empty: the model named no file it rests on.",
+    "「{cell}」留空：模型引了没有选的文件。": "“{cell}” is left empty: the model cited a file you did not choose.",
+    "「{cell}」留空：草稿里有所选文件中找不到的数字。": "“{cell}” is left empty: the draft had a number that is not in the chosen files.",
+    "较长的文件只读了开头。": "Only the beginning of longer files was read.",
+    "预览已经生成，草稿没有填入：先返回修改，再生成草稿":
+      "The preview was already made, so the draft was not filled in: go back to edit, then generate the draft again",
+    "这一行已经写进工作副本，草稿没有用上": "This row is already in your working copy, so the draft was not used",
+    "没能从模型得到草稿：请确认 LM Studio 的本地服务已启动、模型已载入": "Could not get a draft from the model: check that the LM Studio local server is running and a model is loaded",
+    "所选文件超出了模型一次能读的长度：在 LM Studio 里用更大的上下文长度重新载入模型，或少选几个文件":
+      "The chosen files are longer than the model can read at once: reload the model in LM Studio with a larger context length, or choose fewer files",
+    "项目里找不到 {file}": "{file} cannot be found in the project",
+    "{file} 不是文本文件，模型读不了": "{file} is not a text file, so the model cannot read it",
+    "{file} 还在云端，没有下载到这台 Mac": "{file} is still in the cloud and not downloaded to this Mac",
+    "{file} 不在这个项目里": "{file} is not in this project",
+    "没能读取 {file}": "Could not read {file}",
+    "没能生成草稿": "Could not generate a draft",
+    "模型服务": "Model server",
+    "保存": "Save",
+    "已保存": "Saved",
+    "设置没有保存": "The setting was not saved",
+    "服务地址要用 http 或 https，写明主机，不带用户名和密码": "The server address must use http or https, name a host and carry no user name or password",
+    "服务地址": "Server address",
+    "模型": "Model",
+
   };
 
   // Each language's own name, written in itself: the switch's label (13.3).

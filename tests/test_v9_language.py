@@ -125,6 +125,9 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", "function sourceWords(v) {", "\n  }\n"),
     # V11 (15.4, 15.5): a Stata .dta file in the panel -- rows by variables, its label, the table.
     ("app.html", "function dtaPreview(info) {", "\n}\n"),
+    # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock, llmSettingBox (「模型服务」) and their helpers
+    # (the language, what became of each cell, the refusals in words, the chevron).
+    ("app.html", "// -- 「根据所选文件生成草稿」 (DESIGN.md 16)", "// Builds the form from the (now current) records and config."),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
@@ -2347,3 +2350,324 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     for label, where in _GUIDE_EN_SAME_WORDS.items():
         meanings = set(re.findall(r"\*\*" + re.escape(label) + r"\*\* \(([^)]*)\)", text))
         assert meanings == {source[where][label]}, (label, meanings)
+
+
+# -- 16: 生成草稿 on 新增尝试, run under node (DESIGN.md 16) -----------------------------------------------------
+
+_DRAFT_BLOCK = ("// -- 「根据所选文件生成草稿」 (DESIGN.md 16)", "// Builds the form from the (now current) records and config.")
+
+
+def _draft_run(saved: str | None, body: str) -> Any:
+    """`body` (a script that ends by writing JSON) after the draft block's
+    functions, in the screen's language `saved` (None: no /i18n.js)."""
+    i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
+    return _node("global.window = {};\n" + i18n
+                 + _app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
+                 + _app_block(*_DRAFT_BLOCK) + "\n" + body)
+
+
+def _rows(*cells: tuple[str, str]) -> list[dict[str, Any]]:
+    return [{"attrs": {"description": d}, "result": r} for d, r in cells]
+
+
+@needs_node
+def test_16_2_the_draft_language_is_read_from_the_tables_last_five_rows():
+    """Ruled 2026-10-17: of the last 5 rows, those with a description or a
+    result; at least half with Chinese asks for Chinese, none for English;
+    a mix below half, or no such row, says nothing (the model follows the
+    files)."""
+    cases = {
+        "no rows": [],
+        "only empty rows": _rows(("", ""), ("", "")),
+        "half Chinese": _rows(("OLS on the panel", "beta 0.3"), ("面板固定效应", ""), ("", "系数为正"), ("IV", "F = 12")),
+        "a third Chinese": _rows(("OLS", "beta 0.3"), ("", "系数为正"), ("IV", "F = 12")),
+        "no Chinese": _rows(("OLS", "beta 0.3"), ("", "")),
+        "older Chinese rows do not count": _rows(("面板", "系数"), *[("OLS", "beta")] * 5),
+        "the result alone counts": _rows(("IV", "第一阶段 F = 12")),
+    }
+    got = _draft_run(None, f"const cases = {json.dumps(cases, ensure_ascii=False)};\n"
+                     "const out = {}; for (const k in cases) out[k] = draftLanguage(cases[k]);\n"
+                     "process.stdout.write(JSON.stringify(out));\n")
+    assert got == {"no rows": None, "only empty rows": None, "half Chinese": "zh", "a third Chinese": None,
+                   "no Chinese": "en", "older Chinese rows do not count": "en", "the result alone counts": "zh"}
+
+
+_OUTCOMES = [
+    ({"description": "filled", "result": "unsupported_number"}, True),
+    ({"description": "kept", "result": "kept"}, False),
+    ({"description": "no_source", "result": "unknown_source"}, False),
+    ({"description": "empty", "result": "filled"}, False),
+]
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "en"])
+def test_16_1_the_status_says_what_became_of_each_cell_in_whole_sentences(saved):
+    """Each cell's outcome is one whole sentence (13.6), named by the form's
+    own column label, joined with a space: filled, kept (the researcher's
+    text, untouched -- never 'the files show nothing'), or the engine's
+    reason for leaving it empty; then the cut."""
+    names = {"description": "做了什么", "result": "结果"} if saved is None else {"description": "What", "result": "Result"}
+    got = _draft_run(saved, f"const cases = {json.dumps(_OUTCOMES, ensure_ascii=False)};\n"
+                     f"const names = {json.dumps(names, ensure_ascii=False)};\n"
+                     "process.stdout.write(JSON.stringify(cases.map(([o, cut]) => draftOutcomeText(o, names, cut))));\n")
+    if saved is None:
+        assert got == [
+            "已填入「做了什么」。 「结果」留空：草稿里有所选文件中找不到的数字。 较长的文件只读了开头。",
+            "「做了什么」原本有内容，没有改。 「结果」原本有内容，没有改。",
+            "「做了什么」留空：模型没有指出依据的文件。 「结果」留空：模型引了没有选的文件。",
+            "文件里看不出「做了什么」，留空。 已填入「结果」。",
+        ]
+    else:
+        assert got == [
+            "Filled in “What”. “Result” is left empty: the draft had a number that is not in the chosen files. "
+            "Only the beginning of longer files was read.",
+            "“What” already had text and was left as it was. “Result” already had text and was left as it was.",
+            "“What” is left empty: the model named no file it rests on. “Result” is left empty: the model cited a file you did not choose.",
+            "“What” is left empty: the files do not show it. Filled in “Result”.",
+        ]
+        assert not CJK.search(json.dumps(got, ensure_ascii=False))
+
+
+@needs_node
+@pytest.mark.parametrize("saved", [None, "en"])
+def test_16_2_a_refused_draft_names_the_file_or_the_remedy(saved):
+    """The LM Studio remedy only when the model failed; the context remedy
+    for an overflow; each file refusal names the file as typed; anything
+    else is the plain sentence (project_blocked keeps its own through
+    renderBlockingError)."""
+    states = ["draft_model_failed", "draft_too_long", "draft_file_missing", "draft_file_not_text",
+              "draft_file_cloud_only", "draft_file_outside", "draft_too_many_files", "draft_no_files", "draft_whatever", None]
+    got = _draft_run(saved, f"const states = {json.dumps(states)};\n"
+                     "process.stdout.write(JSON.stringify(states.map((s) => draftErrorText(Object.assign(new Error('x'),"
+                     " s ? { state: s, file: 'data/panel.dta' } : {})))));\n")
+    if saved is None:
+        assert got == [
+            "没能从模型得到草稿：请确认 LM Studio 的本地服务已启动、模型已载入",
+            "所选文件超出了模型一次能读的长度：在 LM Studio 里用更大的上下文长度重新载入模型，或少选几个文件",
+            "项目里找不到 data/panel.dta", "data/panel.dta 不是文本文件，模型读不了",
+            "data/panel.dta 还在云端，没有下载到这台 Mac", "data/panel.dta 不在这个项目里",
+            "一次最多选 5 个文件", "先选至少一个文件", "没能生成草稿", "没能生成草稿",
+        ]
+    else:
+        assert got[2:6] == ["data/panel.dta cannot be found in the project", "data/panel.dta is not a text file, so the model cannot read it",
+                            "data/panel.dta is still in the cloud and not downloaded to this Mac", "data/panel.dta is not in this project"]
+        assert got[1].startswith("The chosen files are longer than the model can read at once")
+        assert "LM Studio" in got[0] and all("LM Studio" not in s for s in got[2:])
+        assert not CJK.search(json.dumps(got, ensure_ascii=False))
+
+
+#: Just enough DOM for attemptDraftBlock and llmSettingBox: elements with children, values, datasets,
+#: listeners one can fire, `after` and `remove`; the page's mk/mkButton/formFieldEl/setFormStatus stood in.
+_DRAFT_DOM = r"""
+function el(tag, cls, text) {
+  return { tag, className: cls || "", _text: text == null ? "" : String(text), children: [], dataset: {}, listeners: {},
+    disabled: false, value: "", placeholder: "", title: "", parent: null, open: false,
+    get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); },
+    set textContent(v) { this._text = String(v); this.children = []; },
+    set innerHTML(v) { this._text = ""; this.children = []; },
+    get childElementCount() { return this.children.length; },
+    append(...cs) { cs.forEach((c) => { c.parent = this; this.children.push(c); }); },
+    appendChild(c) { this.append(c); return c; },
+    setAttribute(k, v) { this[k] = String(v); },
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    fire(type, ev) { return Promise.all((this.listeners[type] || []).map((fn) => fn(ev || {}))); },
+    after(n) { const p = this.parent; p.children.splice(p.children.indexOf(this) + 1, 0, n); n.parent = p; },
+    remove() { const p = this.parent; if (p) p.children.splice(p.children.indexOf(this), 1); this.parent = null; },
+  };
+}
+global.document = { createElement: (tag) => tag === "template"
+  ? { set innerHTML(v) { this.content = { firstChild: el("svg", "res-chevron") }; } } : el(tag) };
+global.mk = el;
+global.mkButton = (label, cls, onClick) => { const b = el("button", cls || "btn btn-small", label); if (onClick) b.addEventListener("click", onClick); return b; };
+global.formFieldEl = (label, input) => { const w = el("div", "form-field"); w.append(el("label", "", label), input); return w; };
+global.setFormStatus = (s, cls, text, err) => { s.className = "panel-status " + cls; s.textContent = text; s.err = err ? err.state || err.message : null; };
+const all = (root, pred, out = []) => { if (pred(root)) out.push(root); root.children.forEach((c) => all(c, pred, out)); return out; };
+const find = (root, pred) => all(root, pred)[0];
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const key = (k, composing) => ({ key: k, isComposing: !!composing, keyCode: composing ? 229 : 13, prevented: false,
+  preventDefault() { this.prevented = true; } });
+"""
+
+_DRAFT_FORM = r"""
+const calls = [];
+let answer = null, release = null, settingFails = false, canvasFailures = 1;
+const elsewhere = { base_url: "http://studio.local:1234/v1", model: "qwen", saved: { base_url: "http://studio.local:1234/v1", model: null },
+  where: "elsewhere", host: "studio.local" };
+global.apiGet = async (path) => {
+  calls.push(["GET", path]);
+  if (path === "/api/settings/llm") { if (settingFails) throw new Error("HTTP 500"); return elsewhere; }
+  if (canvasFailures-- > 0) throw new Error("HTTP 409");
+  return { nodes: [{ path: "out/t.csv" }, { path: "code/run.py" }, { path: "code/run.py" }, { path: "figs/f.png", type: "figure" },
+    { path: "data/auto.dta", type: "dataset" }, { path: "gone.py", missing: true }, { path: "maybe.py", ghost: true }] };
+};
+global.apiPost = async (path, body) => {
+  calls.push(["POST", path, body]);
+  if (path === "/api/settings/llm") return { base_url: "http://localhost:1234/v1", model: body.model || "dflt",
+    saved: { base_url: body.base_url || null, model: body.model || null }, where: "this_mac", host: "localhost" };
+  return new Promise((r) => { release = () => r(answer); });
+};
+(async () => {
+  const out = {};
+  const form = el("form"), desc = el("textarea"), result = el("textarea");
+  form.append(desc, result);
+  const block = attemptDraftBlock({ description: desc, result: result }, [{ attrs: { description: "面板回归" }, result: "系数 0.3" }],
+    false, { description: "做了什么" });
+  const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
+  const where = block.el.children[1], status = block.el.children[3];
+  const details = find(block.el, (n) => n.tag === "details");
+  const [url, model] = all(details, (n) => n.tag === "input");
+  const save = find(details, (n) => n.tag === "button" && n.textContent === "保存");
+  const path = all(block.el, (n) => n.tag === "input")[0];
+  const addBtn = find(block.el, (n) => n.tag === "button" && n.textContent === "加入");
+  out.goBeforeTheSetting = go.disabled;
+  await tick();
+  out.where = [where.className, where.textContent, go.disabled];
+  out.summary = details.children[0].className + " " + details.children[0].children.map((c) => c.className || c.textContent).join("|");
+  out.setting = [url.value, url.placeholder, model.value, model.placeholder, url.dataset.initial, model.dataset.initial];
+  const datalist = find(block.el, (n) => n.tag === "datalist");
+  const asked = () => [datalist.children.map((o) => o.value), calls.filter((c) => c[1] === "/api/canvas?scope=all").length];
+  out.suggestions = [];
+  for (let i = 0; i < 3; i++) { await path.fire("focus"); out.suggestions.push(asked()); }
+  out.help = find(block.el, (n) => n.className === "team-help").textContent;
+  path.value = "./code/run.py";
+  let e = key("Enter", true);
+  await path.fire("keydown", e);
+  out.composing = [path.value, e.prevented];
+  e = key("Enter");
+  await path.fire("keydown", e);
+  const chips = find(block.el, (n) => n.className === "verdict-chips");
+  out.added = [path.value, e.prevented, chips.children.map((c) => c.textContent)];
+  // The researcher's own description stays; the result is drafted and counts as typed.
+  desc.value = "我自己写的";
+  answer = { fields: { description: { text: "OLS", sources: ["code/run.py"] },
+    result: { text: "beta = 0.12", sources: ["code/run.py", "out/t.csv"] } }, dropped: {}, model: "qwen-27b", cut: ["code/run.py"] };
+  path.value = "out/t.csv"; // picked from the suggestions, never 加入'd: chosen all the same
+  let pending = go.fire("click");
+  await tick();
+  out.busy = [go.disabled, status.textContent];
+  release();
+  await pending;
+  out.sent = calls.filter((c) => c[1] === "/api/attempts/draft").map((c) => c[2]);
+  out.cells = [desc.value, result.value, desc.dataset.typed || null, result.dataset.typed || null];
+  out.form = form.children.map((c) => c.tag === "div" ? c.textContent : c.tag);
+  out.status = [status.className, status.textContent, go.disabled];
+  await result.fire("input");
+  out.afterAnEdit = form.children.map((c) => c.tag);
+  // A draft that arrives once the form froze the block (its preview being made or standing) fills nothing.
+  desc.value = "";
+  result.value = "";
+  answer = { fields: { description: { text: "late", sources: ["code/run.py"] }, result: { text: "", sources: [] } },
+    dropped: { result: "empty" }, model: "qwen-27b", cut: [] };
+  pending = go.fire("click");
+  await tick();
+  block.setFrozen(true);
+  out.frozen = [go.disabled, path.disabled, addBtn.disabled, chips.children.map((c) => c.disabled), url.disabled, model.disabled, save.disabled];
+  release();
+  await pending;
+  out.late = [desc.value, status.className, status.textContent, go.disabled];
+  block.setFrozen(false);
+  out.unfrozen = [go.disabled, path.disabled, save.disabled];
+  // Enter in 模型 saves both fields (never previews the row); the line above 生成草稿 follows.
+  model.value = "m2";
+  model.dataset.typed = "1";
+  e = key("Enter");
+  await model.fire("keydown", e);
+  await tick();
+  out.saved = [e.prevented, calls.filter((c) => c[0] === "POST" && c[1] === "/api/settings/llm").map((c) => c[2]),
+    model.dataset.typed || null, model.dataset.initial, where.className, where.textContent];
+  // A refusal names the file (apiError carries it from the body); the engine's text goes behind 「详情」.
+  global.apiPost = async (path) => { throw apiError(path, { status: 404 },
+    { error: "no such file: code/rnu.py", state: "draft_file_missing", file: "code/rnu.py" }); };
+  await go.fire("click");
+  out.refused = [status.textContent, status.err, go.disabled];
+  // A member's row written while a draft runs: the late draft fills nothing and says the row is written.
+  global.apiPost = async () => new Promise((r) => { release = () => r(answer); });
+  desc.value = "";
+  answer = { fields: { description: { text: "late", sources: ["code/run.py"] }, result: { text: "", sources: [] } },
+    dropped: { result: "empty" }, model: "qwen-27b", cut: [] };
+  pending = go.fire("click");
+  await tick();
+  block.markWritten();
+  release();
+  await pending;
+  out.written = [desc.value, status.className, status.textContent, go.disabled, path.disabled];
+  // The setting cannot be read: 生成草稿 stays off; opening 模型服务 asks again.
+  settingFails = true;
+  const other = attemptDraftBlock({ description: el("textarea"), result: el("textarea") }, [], true, {});
+  const go2 = find(other.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
+  const details2 = find(other.el, (n) => n.tag === "details");
+  await tick();
+  out.unread = [other.el.children[1].textContent, go2.disabled];
+  settingFails = false;
+  details2.open = true;
+  await details2.fire("toggle");
+  await tick();
+  out.reread = [other.el.children[1].textContent, go2.disabled];
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+@needs_node
+def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
+    """attemptDraftBlock and 「模型服务」 under node: where a draft goes is said
+    before anything is sent (and 生成草稿 waits for it); suggestions are asked
+    until one answer; Enter while composing adds nothing; the request carries
+    the files and the table's language, never example rows; a typed cell is
+    kept, an empty one filled, marked typed for the leave guard, with the
+    model's own claim beside it until edited; a draft that lands while the
+    preview stands fills nothing; the frozen form freezes the block; Enter in
+    the setting saves both fields; a refusal names the file; an unread
+    setting keeps 生成草稿 off until 模型服务 reads it."""
+    out = _draft_run(None, _DRAFT_DOM + _app_function("function apiError(") + _DRAFT_FORM)
+    assert out["goBeforeTheSetting"] is True
+    assert out["where"] == ["attempt-draft-where warn", "起草会把所选文件的内容发到 studio.local，它不在这台 Mac 上；模型 qwen", False]
+    assert out["summary"] == "res-draft-summary res-chevron|模型服务"
+    assert out["setting"] == ["http://studio.local:1234/v1", "http://studio.local:1234/v1", "", "qwen",
+                              "http://studio.local:1234/v1", ""]
+    # Asked again after a failed answer, never after a good one; only files a draft can read.
+    assert out["suggestions"] == [[[], 1], [["code/run.py", "out/t.csv"], 2], [["code/run.py", "out/t.csv"], 2]]
+    assert out["help"].startswith("模型只起草「做了什么」和「结果」，")
+    assert out["composing"] == ["./code/run.py", False]
+    assert out["added"] == ["", True, ["code/run.py 去掉"]]
+    assert out["busy"] == [True, "正在请模型起草…可能要等一两分钟"]
+    assert out["sent"] == [{"files": ["code/run.py", "out/t.csv"], "language": "zh"}]
+    assert out["cells"] == ["我自己写的", "beta = 0.12", None, "1"]
+    assert out["form"] == ["textarea", "textarea", "草稿（qwen-27b）。模型说它依据：code/run.py、out/t.csv。写入前请核对。"]
+    assert out["status"] == ["panel-status ok", "「做了什么」原本有内容，没有改。 已填入「结果」。 较长的文件只读了开头。", False]
+    assert out["afterAnEdit"] == ["textarea", "textarea"]
+    assert out["frozen"] == [True, True, True, [True, True], True, True, True]
+    assert out["late"] == ["", "panel-status err", "预览已经生成，草稿没有填入：先返回修改，再生成草稿", True]
+    assert out["unfrozen"] == [False, False, False]
+    assert out["saved"] == [True, [{"base_url": "http://studio.local:1234/v1", "model": "m2"}], None, "m2",
+                            "attempt-draft-where", "起草用这台 Mac 上的模型 m2"]
+    assert out["refused"] == ["项目里找不到 code/rnu.py", "draft_file_missing", False]
+    assert out["written"] == ["", "panel-status ", "这一行已经写进工作副本，草稿没有用上", True, True]
+    assert out["unread"] == ["没能读到模型设置，先不能起草", True]
+    assert out["reread"] == ["起草会把所选文件的内容发到 studio.local，它不在这台 Mac 上；模型 qwen", False]
+
+
+def test_16_1_the_form_freezes_the_draft_block_and_builds_it_for_new_rows_only():
+    """The wiring the node run above cannot reach: setFormDisabled freezes
+    the block; the block is frozen before the preview is asked for (and
+    thawed on each way back without one); a member's written row marks it;
+    a row being updated has no block."""
+    form = _app_function("function renderAttemptForm(")
+    assert 'const draftBlock = mode === "append" ? attemptDraftBlock(' in form
+    disable = form[form.index("function setFormDisabled("):]
+    assert "if (draftBlock) draftBlock.setFrozen(disabled);" in disable[: disable.index("\n  }\n")]
+    submit = form[form.index('form.addEventListener("submit"'):]
+    frozen = submit[submit.index("if (draftBlock) draftBlock.setFrozen(true);"):]
+    assert frozen.index("setFrozen(true)") < frozen.index('apiPost("/api/attempts/preview"')
+    assert frozen.count("return;") == frozen.count("unfreezeDraft();") == 3  # every way back before renderPreview
+    assert "if (draftBlock) draftBlock.markWritten();" in form
+
+
+def test_16_the_served_draft_block_sends_no_example_rows_and_names_no_address():
+    """The page sends no `examples` (16.2: they leaked into drafts) and holds
+    no address literal (the placeholder comes from the setting at run time)."""
+    block = _app_block(*_DRAFT_BLOCK)
+    assert "examples" not in block and "slice(-3)" not in block
+    assert re.search(r"https?://", block) is None
+    assert ".local" not in block and "LM Studio" in block  # the remedy names LM Studio; nothing decides locality here

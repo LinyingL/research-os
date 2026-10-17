@@ -3681,3 +3681,135 @@ New words in both languages (13.6); 13.4 gains: 全局变量 "global";
   change.)
 - **Default extensions** follow Stata's help pages command by command
   (15.2), cited in the code.
+
+## Section 16 — Drafting a new attempt with a local model (task V12)
+
+The researcher, 2026-10-17: connect LM Studio and help fill in forms. Decided
+the same day: **the smallest version** — a button on 新增尝试 / 提议新的尝试
+that drafts two cells from files the researcher picks; the semantic layer's
+client (`researchos.semantic.backend`, already speaking LM Studio's
+OpenAI-compatible surface) changed only to tell a context overflow (or a
+reply cut off at the length limit) apart, keep the server's error text,
+remember which model answered, count a connection the server breaks off as
+a failure like any other, send a request to this Mac past any proxy, and
+leave out the judge's remote warning on request; no change to approval.
+
+### 16.1 What the model may draft
+
+- **Only the description and the result** of a new row. Never the verdict,
+  never a reason for abandoning a route, never a proposal's one-sentence
+  explanation, never 源自: those are judgements, and Section 0's "Humans
+  own judgment" holds for a fluent draft as for an edge.
+- **Only from the chosen files.** A cell the files do not support stays
+  empty: an empty cell is a normal outcome, a filled guess a defect. What
+  the engine checks, deterministically, after the model answers (the
+  `better_match` rule of "Machine annotation vs. human judgement", applied
+  to paths and numbers): for each cell the model names the files it rests
+  on; a cell with text and no named file is dropped (`no_source`), a cell
+  naming any file it was not given is dropped (`unknown_source`), and a
+  cell with a number that occurs nowhere in the text of its named files as
+  sent to the model, nor, as written, in their paths (which the model is
+  shown: "(16-17)" for the cited steps is no guess), is dropped
+  (`unsupported_number`; numbers compared as written, thousands
+  separators, U+2212 and % aside, and as values, so "0.1" is "0.10"; an
+  exponent belongs to its number, so 1.23e-05 is never 1.23; digits inside
+  a name such as `log10` are no number; full-width digits read as digits;
+  a comma in the files is read both as a thousands separator and as a
+  field separator, so a CSV row "120,450,10" holds 120, 450 and 10). An
+  empty answer is `empty`. A dropped cell is left empty, its reason goes
+  back to the form and is logged, never silently. What is only asked of
+  the model in the prompt: no judgement of the attempt, no rounded or
+  estimated number, every number in digits as the files show it, no guess.
+- **Only into an empty cell.** A cell the researcher already typed in is
+  never overwritten; the form says so. After a draft the form says what
+  became of each cell, one whole sentence each, by the form's own column
+  label: filled, kept (it already had text), or left empty with the
+  engine's reason; and that longer files were read only in part.
+- **Never into a frozen form.** While the form's preview is being made or
+  stands, the draft controls (生成草稿, the file path, 加入, the chosen
+  files, 「模型服务」) are frozen with the rest of the form; a draft that
+  arrives then is not filled in, and the form says so. Once a member's row
+  is written to the working copy they stay frozen, and a draft that
+  arrives then says the row is written and the draft was not used.
+- **A draft is not a record.** It goes back to the form and nowhere else.
+  The row reaches the attempt table only through the form's own preview
+  and write (or, for a member, the proposal the PI approves), exactly as a
+  row typed by hand; nothing in the table marks that a model drafted it.
+  Beside each drafted cell the form names the model and the files the
+  model says it used, as the model's claim, until the researcher edits the
+  cell. A drafted cell counts as typed for the panel's leave guard (14.3).
+
+### 16.2 Files and the model server
+
+- A file is chosen by its path in the project (suggested from the files
+  the canvas knows that a draft can read: no figure, no missing file, no
+  binary data file such as a .dta; a path left in the field without 加入
+  counts as chosen), resolved inside the project and named, to the model
+  and in the answer, by its path from the project folder (`./a.py`, `a.py`
+  and `x/../a.py` are one file, and so are two spellings of one file on a
+  disk that ignores case). It is read as `GET /api/file` reads it: inside
+  the project only, text only, a cloud-only file refused. One file that
+  cannot be read refuses the whole draft, naming the file as typed:
+  `draft_file_missing` (a path no file can have, too),
+  `draft_file_not_text` (a Stata .dta too: its header is not text),
+  `draft_file_unreadable` (no permission, a read error),
+  `draft_file_cloud_only`, `draft_file_outside`; no partial draft.
+- At most 5 files, sharing 12,000 characters: equal shares, a short file's
+  unused share going to the others; a file cut is cut between words, never
+  inside a number, marked to the model and listed for the screen. 12,000
+  characters fit LM Studio's usual 4,096-token context for English or
+  code; Chinese text takes about a token a character, so a long Chinese
+  file needs the model loaded with a larger context. (These numbers are
+  the researcher's to change.)
+- Nothing else from the table is sent: no example rows (a small model
+  copied an example's wording into the draft, 2026-10-17). The form says
+  which language to write in, read from the table: of its last 5 rows,
+  those with a description or a result; at least half holding Chinese is
+  `zh`, none is `en`; otherwise it says nothing and the model writes in the
+  language of the files' own comments and text.
+- The server's address and the model are this Mac's setting
+  (`settings.json`: `llm_base_url`, `llm_model`), under 「模型服务」 in the
+  form: each field shows the value saved on this Mac (empty when none),
+  with the value in effect as its placeholder; 保存 (or Enter in either
+  field) sends both. An empty value returns to the `RCE_LLM_*` environment
+  variables, then to the defaults (LM Studio's `http://localhost:1234/v1`).
+  Only the keys sent change. An address must be http or https, name a
+  host and carry no user:password (urllib cannot use one; a key is
+  `RCE_LLM_API_KEY`) and no control character; a saved one that is not
+  reads as not saved. `RCE_LLM_API_KEY` goes only to the address it was
+  set beside (`RCE_LLM_BASE_URL`, else the default), never to a different
+  address saved here. "On this Mac" is
+  `localhost`, 127.0.0.0/8 and `::1` only: a `*.local` name is another
+  machine on the network. The draft block always says, above 生成草稿,
+  where a draft goes: the model on this Mac, or, warning-styled, the host
+  the chosen files' contents are sent to (Section 7: local by default, not
+  local by construction); it is read when the form opens and again after
+  保存, and until it has been read 生成草稿 stays off. A request to this
+  Mac goes past any proxy (`http_proxy`, the macOS system proxy), so a
+  draft the form calls local stays on the Mac; each draft sent off it is
+  logged with its host. The address is shown, and logged, without any
+  user:password.
+- The model may take minutes: each request to it waits up to 300 seconds
+  for the server to answer (`RCE_LLM_TIMEOUT` when set); a reply in the
+  wrong shape gets one repair request, and a server that refuses
+  `response_format` one plain request, so a draft can take a few times
+  that. It holds no project lock while it waits.
+- Refusals, never a partial guess: input longer than the model's loaded
+  context (LM Studio's own sentence, told apart from every other error
+  before the `response_format` fallback) is `draft_too_long`, with the
+  remedy in words (reload the model with a larger context, or choose fewer
+  files), and so is a reply the server cut off at its length limit; a
+  model that cannot be reached, that breaks off its answer (unloaded, the
+  server stopped), or that does not answer in the schema after one
+  repair, is `draft_model_failed` with LM Studio's remedy in words. The
+  server's own words are the detail behind 「详情」.
+- The form names the model the server says answered (its reply's `model`),
+  else the one asked for.
+
+### 16.3 Endpoints
+
+`GET/POST /api/settings/llm`, `POST /api/attempts/draft` (server module
+docstring). Both POSTs are origin-checked like every POST; the setting
+answers with no project served (it is this Mac's, as the language switch
+is); the draft is refused for a blocked project or with none, and writes
+nothing.

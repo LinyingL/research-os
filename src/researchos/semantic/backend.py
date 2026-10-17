@@ -11,7 +11,9 @@ are reached through this same class.
 `complete_json` prefers constrained decoding via `response_format`
 (`{"type": "json_schema", ...}`); if the endpoint rejects that field (HTTP
 400/422 -- older or minimal servers don't implement it), it falls back to a
-plain prompt that states the schema in the system message. Either way, the
+plain prompt that states the schema in the system message -- unless the
+error's body says the input overflows the model's context, which is
+`LlmContextError` and never a fallback. Either way, the
 model's JSON is validated against a minimal local schema checker (below --
 no `jsonschema` dependency) before being returned; a validation failure gets
 one repair retry, then a raised LlmError rather than a guess.
@@ -25,9 +27,12 @@ db.set_edge_status (human-only path), never db.upsert_edge with a
 
 from __future__ import annotations
 
+import http.client
+import ipaddress
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -57,9 +62,33 @@ class LlmError(RuntimeError):
     actionable, specific message -- never a bare stack trace."""
 
 
+class LlmContextError(LlmError):
+    """The server refused the request because the input is longer than the
+    model's loaded context (LM Studio answers HTTP 400 with "...greater than
+    the context length..."). Told apart from every other HTTP error by the
+    server's own words, before the `response_format` fallback, so an
+    overflow is never misread as "response_format unsupported"."""
+
+
 class _UnsupportedResponseFormat(Exception):
     """Internal signal only (never escapes this module): the endpoint
     returned 400/422 for a request that included `response_format`."""
+
+
+_ERROR_BODY_BYTES = 2_000
+_CONTEXT_OVERFLOW = re.compile(
+    r"context (length|size|window)|maximum context|too many tokens|exceeds the available context", re.IGNORECASE
+)
+
+
+def _error_body(exc: urllib.error.HTTPError) -> str:
+    """The first `_ERROR_BODY_BYTES` of an HTTP error's body, as text; empty
+    when there is none or it cannot be read."""
+    try:
+        raw = exc.read(_ERROR_BODY_BYTES) if exc.fp is not None else b""
+    except (OSError, ValueError, AttributeError):
+        raw = b""
+    return raw.decode("utf-8", errors="ignore").strip()
 
 
 def _check_type(value: Any, type_name: str) -> bool:
@@ -125,9 +154,33 @@ def _is_local_host(hostname: str | None) -> bool:
     return hostname in _LOCAL_HOSTNAMES or hostname.endswith(".local")
 
 
+def on_this_mac(hostname: str | None) -> bool:
+    """`localhost`, 127.0.0.0/8 or ::1 only: a `*.local` name is another
+    machine on the network (DESIGN.md 16.2), unlike `_is_local_host` (the
+    judge's warning). The page's "this Mac" and the proxy bypass below
+    both ask this one question."""
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+# A request to this Mac never goes through a proxy (DESIGN.md 16.2):
+# urlopen follows http_proxy and the macOS system proxy, whose exceptions
+# never match "localhost:1234", so a draft the page calls local could
+# otherwise leave the Mac through one.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 class LlmBackend:
     """One client per (base_url, model). Constructor args win over the
-    RCE_LLM_* env vars, which win over the hard-coded defaults above."""
+    RCE_LLM_* env vars, which win over the hard-coded defaults above.
+    `warn_remote=False` leaves out the judge's warning below (the draft
+    logs its own, DESIGN.md 16.2)."""
 
     def __init__(
         self,
@@ -135,6 +188,8 @@ class LlmBackend:
         model: str | None = None,
         timeout: float | None = None,
         api_key: str | None = None,
+        *,
+        warn_remote: bool = True,
     ) -> None:
         self.base_url = (base_url if base_url is not None else os.environ.get("RCE_LLM_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         self.model = model if model is not None else (os.environ.get("RCE_LLM_MODEL") or DEFAULT_MODEL)
@@ -142,6 +197,8 @@ class LlmBackend:
         # Local servers usually need no key; a compatible endpoint that does
         # require one still gets it, from RCE_LLM_API_KEY, never hard-coded.
         self.api_key = api_key if api_key is not None else os.environ.get("RCE_LLM_API_KEY", "")
+        # The model id the server named in its last chat answer (`_chat`).
+        self.last_model: str | None = None
 
         # Privacy note (DESIGN.md section 7): the semantic layer is local by
         # *default*, not local by construction -- RCE_LLM_BASE_URL/base_url
@@ -153,7 +210,7 @@ class LlmBackend:
         # machine" promise once that is user-configurable, so this warns on
         # every construction (not just once per process) rather than
         # silently trusting a non-default value.
-        if not _is_local_host(urlparse(self.base_url).hostname):
+        if warn_remote and not _is_local_host(urlparse(self.base_url).hostname):
             logger.warning(
                 "RCE_LLM_BASE_URL/base_url is set to a NON-LOCAL endpoint (%s) -- every 'researchos "
                 "judge' run will send this project's experiment params and metric names to that "
@@ -177,16 +234,29 @@ class LlmBackend:
         `_UnsupportedResponseFormat` signal instead."""
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(
-            url, data=data, headers=self._headers(), method="POST" if body is not None else "GET"
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            request = urllib.request.Request(
+                url, data=data, headers=self._headers(), method="POST" if body is not None else "GET"
+            )
+            direct = on_this_mac(urlparse(self.base_url).hostname)
+        except ValueError as exc:
+            raise LlmError(f"the LLM server address {self.base_url} cannot be used: {exc}") from exc
+        try:
+            with (_DIRECT.open if direct else urllib.request.urlopen)(request, timeout=self.timeout) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as exc:
+            detail = _error_body(exc)
+            if _CONTEXT_OVERFLOW.search(detail):
+                raise LlmContextError(
+                    f"LLM server at {self.base_url} returned HTTP {exc.code} for {path}: the input is longer "
+                    f"than the model's loaded context: {detail}"
+                ) from exc
             if body is not None and body.get("response_format") is not None and exc.code in (400, 422):
                 raise _UnsupportedResponseFormat() from exc
-            raise LlmError(f"LLM server at {self.base_url} returned HTTP {exc.code} for {path}: {exc.reason}") from exc
+            raise LlmError(
+                f"LLM server at {self.base_url} returned HTTP {exc.code} for {path}: {exc.reason}"
+                + (f": {detail}" if detail else "")
+            ) from exc
         except TimeoutError as exc:
             raise LlmError(f"LLM request to {self.base_url}{path} timed out after {self.timeout}s") from exc
         except urllib.error.URLError as exc:
@@ -194,6 +264,16 @@ class LlmBackend:
                 f"could not reach an LLM server at {self.base_url} ({exc.reason}) -- start LM "
                 "Studio's local server (Developer tab), start llama.cpp server / vLLM / Ollama's "
                 "OpenAI-compatible endpoint, or set RCE_LLM_BASE_URL to point at the right one"
+            ) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # After the clauses above (all OSErrors): urllib wraps only the
+            # sending in URLError; a server that drops the connection or
+            # breaks off its answer (RemoteDisconnected, a reset,
+            # IncompleteRead) arrives here.
+            raise LlmError(
+                f"the LLM server at {self.base_url} broke off the connection for {path} ({exc!r}) -- the "
+                "model may have been unloaded or the server stopped: check that LM Studio's local server "
+                "is running and a model is loaded"
             ) from exc
         except (TypeError, ValueError) as exc:
             raise LlmError(f"LLM server at {self.base_url} returned unparseable JSON for {path}: {exc}") from exc
@@ -216,9 +296,20 @@ class LlmBackend:
             }
         payload = self._request("/chat/completions", body)
         try:
-            return payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LlmError(f"unexpected /chat/completions response shape from {self.base_url}: {payload!r}") from exc
+        if choice.get("finish_reason") == "length":  # a cut-off reply: no repair retry can fit either
+            raise LlmContextError(
+                f"LLM server at {self.base_url} cut the model's reply off at its length limit: the input and "
+                "the reply do not fit the model's loaded context"
+            )
+        # The model the server says answered (llama.cpp server answers with
+        # whatever model it was started with, whatever was asked for).
+        answered = payload.get("model")
+        self.last_model = answered if isinstance(answered, str) and answered else self.model
+        return content
 
     def complete_json(self, system: str, user: str, json_schema: dict[str, Any], name: str = "response") -> dict[str, Any]:
         """POST /chat/completions and return a dict that passes `json_schema`.

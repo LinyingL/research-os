@@ -1029,6 +1029,13 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   border: 1px solid var(--line); border-radius: 4px; background: var(--paper); }
 .parent-pick { display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; color: var(--ink); }
 .parent-pick .mono { color: var(--ink-soft); }
+/* 新增尝试's 生成草稿 (16): the chosen files, then the model's draft. */
+.attempt-draft { padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); }
+.attempt-draft .form-actions { margin-top: 0.4rem; }
+.attempt-draft .form-actions > .btn { flex: none; white-space: nowrap; } /* 加入 never wraps letter by letter */
+.attempt-draft-where { font-size: 0.82rem; color: var(--ink-soft); margin: 0.4rem 0 0; overflow-wrap: anywhere; }
+.attempt-draft-where.warn { color: var(--ink); border-left: 2px solid var(--ochre); padding-left: 0.6rem; }
+.attempt-draft-setting[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .rm-pop-sub { margin: -0.3rem 0 0.55rem; font-size: 0.78rem; color: var(--ink-soft); }
 
 /* -- V5: the human record's surfaces (DESIGN.md 9.3-9.6, task V5 phase 7) --
@@ -1485,6 +1492,7 @@ function apiError(path, res, body) {
   // an add refusal carries the fresh look at the folder (`inspection`).
   if (body && typeof body.message === "string" && body.message) err.engineMessage = body.message;
   if (body && typeof body.detail === "string" && body.detail) err.detail = body.detail;
+  if (body && typeof body.file === "string" && body.file) err.file = body.file; // 16.2: the file a draft refused, as typed
   if (body && body.inspection && typeof body.inspection === "object") err.inspection = body.inspection;
   // 11.2: a file panel refused (a binary file) still carries its GitHub link.
   if (body && body.github && typeof body.github === "object") err.github = body.github;
@@ -3642,6 +3650,274 @@ async function openAttemptForm(mode, attemptId) {
   renderAttemptForm(mode, attemptId);
 }
 
+// -- 「根据所选文件生成草稿」 (DESIGN.md 16) ------------------------------------
+// The model drafts the description and the result of a new row from the
+// files the researcher picks, into the cells still empty; nothing else, and
+// nothing is written until the form's own preview. Every word goes through
+// t() (13.6).
+
+// 16.2: the language a draft is written in, read from the table itself: of
+// the last 5 rows, those with a description or a result; at least half of
+// them holding Chinese is "zh", none is "en"; otherwise (or with no such
+// row) null, and the model writes in the files' own language.
+function draftLanguage(attempts) {
+  const rows = attempts.slice(-5)
+    .map((a) => ((a.attrs || {}).description || "") + " " + (a.result || ""))
+    .filter((s) => s.trim());
+  if (!rows.length) return null;
+  const chinese = rows.filter((s) => /[㐀-䶿一-鿿豈-﫿]/.test(s)).length;
+  if (chinese * 2 >= rows.length) return "zh";
+  return chinese === 0 ? "en" : null;
+}
+
+// What became of each cell (16.1), in the form's order, one whole sentence
+// each (13.6: never pieces glued into one): `outcome[cell]` is "filled",
+// "kept" (the researcher's own text, untouched) or the engine's reason for
+// dropping the draft's cell ("empty", "no_source", "unknown_source",
+// "unsupported_number"). `names` are the form's own column labels.
+function draftOutcomeText(outcome, names, cut) {
+  const said = ["description", "result"].map((k) => {
+    const v = { cell: names[k] };
+    switch (outcome[k]) {
+      case "filled": return t("已填入「{cell}」。", v);
+      case "kept": return t("「{cell}」原本有内容，没有改。", v);
+      case "no_source": return t("「{cell}」留空：模型没有指出依据的文件。", v);
+      case "unknown_source": return t("「{cell}」留空：模型引了没有选的文件。", v);
+      case "unsupported_number": return t("「{cell}」留空：草稿里有所选文件中找不到的数字。", v);
+      default: return t("文件里看不出「{cell}」，留空。", v);
+    }
+  });
+  if (cut) said.push(t("较长的文件只读了开头。"));
+  return said.join(" ");
+}
+
+// A refused draft in words (16.2, 8.8): the file it names as typed, or the
+// remedy; the server's own text stays behind 「详情」.
+function draftErrorText(err) {
+  const v = { file: (err && err.file) || "" };
+  switch (err && err.state) {
+    case "draft_model_failed": return t("没能从模型得到草稿：请确认 LM Studio 的本地服务已启动、模型已载入");
+    case "draft_too_long": return t("所选文件超出了模型一次能读的长度：在 LM Studio 里用更大的上下文长度重新载入模型，或少选几个文件");
+    case "draft_file_missing": return t("项目里找不到 {file}", v);
+    case "draft_file_not_text": return t("{file} 不是文本文件，模型读不了", v);
+    case "draft_file_cloud_only": return t("{file} 还在云端，没有下载到这台 Mac", v);
+    case "draft_file_outside": return t("{file} 不在这个项目里", v);
+    case "draft_file_unreadable": return t("没能读取 {file}", v);
+    case "draft_too_many_files": return t("一次最多选 5 个文件");
+    case "draft_no_files": return t("先选至少一个文件");
+    default: return t("没能生成草稿");
+  }
+}
+
+// 12.13: a disclosure's quiet line chevron, the one node.js draws -- parsed
+// from markup, so the page names no namespace address.
+function chevronIcon() {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = '<svg class="res-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 4l4 4-4 4"></path></svg>';
+  return tpl.content.firstChild;
+}
+
+// The block on 新增尝试 / 提议新的尝试. Returns { el, setFrozen, markWritten }:
+// the form freezes it with everything else while a preview is made or
+// stands, and for good once a member's row is written (16.1).
+function attemptDraftBlock(inputs, attempts, proposing, columns) {
+  const box = mk("div", "attempt-draft");
+  const chosen = [];
+  let frozen = false, busy = false, ready = false, written = false;
+  const names = { description: columns.description || t("描述"), result: columns.result || t("结果") };
+  const list = mk("div", "verdict-chips");
+  const pathInput = mk("input", "form-input form-mono");
+  pathInput.placeholder = t("项目里的文件路径，例如 code/run.py");
+  const options = mk("datalist");
+  options.id = "attempt-draft-files";
+  pathInput.setAttribute("list", options.id);
+  // The canvas's file paths as suggestions, asked on focus until one answer arrives.
+  let suggested = false, asking = false;
+  pathInput.addEventListener("focus", async () => {
+    if (suggested || asking) return;
+    asking = true;
+    try {
+      const c = await apiGet("/api/canvas?scope=all");
+      // Only files a draft can read (16.2): no figure, no missing file, no binary data file.
+      const readable = (n) => n.path && n.type !== "figure" && !n.missing && !n.ghost && !/\.(dta|xlsx?|parquet|rds)$/i.test(n.path);
+      Array.from(new Set((c.nodes || []).filter(readable).map((n) => n.path))).sort().forEach((p) => {
+        const o = mk("option");
+        o.value = p;
+        options.appendChild(o);
+      });
+      suggested = true;
+    } catch (err) { /* no suggestions this time; a typed path still works */ }
+    asking = false;
+  });
+  const status = mk("div", "panel-status");
+  // 16.2: where a draft goes, always in view beside 生成草稿.
+  const where = mk("div", "attempt-draft-where");
+  const addBtn = mkButton(t("加入"), "btn btn-small", add);
+  const go = mkButton(t("生成草稿"), "btn btn-small", draft);
+  const setting = llmSettingBox((s, err) => {
+    ready = !!s;
+    if (!s) {
+      setFormStatus(where, "err", t("没能读到模型设置，先不能起草"), err);
+    } else {
+      where.className = "attempt-draft-where" + (s.where === "this_mac" ? "" : " warn");
+      where.title = "";
+      where.textContent = s.where === "this_mac"
+        ? t("起草用这台 Mac 上的模型 {model}", { model: s.model })
+        : t("起草会把所选文件的内容发到 {host}，它不在这台 Mac 上；模型 {model}", { host: s.host, model: s.model });
+    }
+    sync();
+  });
+  function sync() {
+    go.disabled = frozen || busy || !ready;
+    pathInput.disabled = frozen;
+    addBtn.disabled = frozen;
+    Array.from(list.children).forEach((chip) => { chip.disabled = frozen; });
+    setting.setFrozen(frozen);
+  }
+  function drawChosen() {
+    list.innerHTML = "";
+    chosen.forEach((p, i) => list.appendChild(mkButton(t("{path} 去掉", { path: p }), "chip", () => { chosen.splice(i, 1); drawChosen(); })));
+    sync();
+  }
+  // The path in the field joins the chosen files; false when it was refused (a sixth file).
+  function add() {
+    const p = pathInput.value.trim().replace(/^\.\//, "");
+    if (!p) return true;
+    if (chosen.indexOf(p) < 0) {
+      if (chosen.length >= 5) { setFormStatus(status, "err", t("一次最多选 5 个文件")); return false; }
+      chosen.push(p);
+    }
+    pathInput.value = "";
+    drawChosen();
+    return true;
+  }
+  // Enter adds the path, except the Enter that ends an input method's composition.
+  pathInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); add(); }
+  });
+  async function draft() {
+    if (!add()) return; // a path picked from the suggestions, or typed, without 加入 is chosen too
+    if (!chosen.length) { setFormStatus(status, "err", t("先选至少一个文件")); return; }
+    busy = true;
+    sync();
+    setFormStatus(status, "", t("正在请模型起草…可能要等一两分钟"));
+    const body = { files: chosen.slice() };
+    const language = draftLanguage(attempts);
+    if (language) body.language = language;
+    try {
+      fill(await apiPost("/api/attempts/draft", body));
+    } catch (err) {
+      setFormStatus(status, "err", draftErrorText(err), err);
+    }
+    busy = false;
+    sync();
+  }
+  function fill(d) {
+    // 16.1: a draft that arrives while the preview is made or stands is not put into the frozen form.
+    if (written) { setFormStatus(status, "", t("这一行已经写进工作副本，草稿没有用上")); return; }
+    if (frozen || inputs.description.disabled) {
+      setFormStatus(status, "err", t("预览已经生成，草稿没有填入：先返回修改，再生成草稿"));
+      return;
+    }
+    const outcome = {};
+    ["description", "result"].forEach((k) => {
+      const cell = (d.fields || {})[k] || {}, input = inputs[k];
+      if (input.value.trim()) { outcome[k] = "kept"; return; }
+      if (!cell.text) { outcome[k] = (d.dropped || {})[k] || "empty"; return; }
+      input.value = cell.text;
+      input.dataset.typed = "1"; // the leave guard (14.3) asks before a draft is dropped, as for typed words
+      const v = { model: d.model, files: (cell.sources || []).join(t("、")) };
+      const note = mk("div", "team-help", proposing
+        ? t("草稿（{model}）。模型说它依据：{files}。发出前请核对。", v)
+        : t("草稿（{model}）。模型说它依据：{files}。写入前请核对。", v));
+      input.after(note);
+      input.addEventListener("input", () => note.remove(), { once: true });
+      outcome[k] = "filled";
+    });
+    setFormStatus(status, Object.values(outcome).indexOf("filled") >= 0 ? "ok" : "",
+      draftOutcomeText(outcome, names, (d.cut || []).length > 0));
+  }
+  const pick = mk("div", "form-actions");
+  pick.append(pathInput, options, addBtn);
+  const field = formFieldEl(t("根据所选文件生成草稿（可选）"), pick);
+  field.append(list, mk("div", "team-help",
+    t("模型只起草「{description}」和「{result}」，只填还空着的格子；文件里看不出来、或说不出依据的格子留空。判决和其它内容由你自己写。", names)));
+  const actions = mk("div", "form-actions");
+  actions.appendChild(go);
+  box.append(field, where, actions, status, setting.el);
+  sync();
+  setting.load();
+  return { el: box, setFrozen(f) { frozen = f; sync(); }, markWritten() { written = frozen = true; sync(); } };
+}
+
+// 「模型服务」 (16.2): this Mac's model server. Each field shows the value
+// saved here (empty: none saved) with the one in effect as its placeholder;
+// 保存 sends both, an empty one returning to the default. `onSetting(s, err)`
+// hears every reading: the setting, or null and the error. Returns
+// { el, load, setFrozen }.
+function llmSettingBox(onSetting) {
+  const box = mk("details", "attempt-draft-setting");
+  const summary = mk("summary", "res-draft-summary"); // 12.13: the quiet chevron, not the browser's triangle
+  summary.append(chevronIcon(), mk("span", null, t("模型服务")));
+  box.appendChild(summary);
+  const url = mk("input", "form-input form-mono");
+  const model = mk("input", "form-input form-mono");
+  const status = mk("div", "panel-status");
+  const save = mkButton(t("保存"), "btn btn-small", doSave);
+  let loaded = false, saving = false, frozen = false;
+  function sync() {
+    url.disabled = frozen;
+    model.disabled = frozen;
+    save.disabled = frozen || saving || !loaded;
+  }
+  function show(s) {
+    const saved = s.saved || {};
+    url.value = saved.base_url || "";
+    model.value = saved.model || "";
+    url.placeholder = s.base_url || "";
+    model.placeholder = s.model || "";
+    // The leave guard (14.3) counts only words not saved yet.
+    [url, model].forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+    loaded = true;
+    sync();
+  }
+  async function load() {
+    let s;
+    try {
+      s = await apiGet("/api/settings/llm");
+    } catch (err) {
+      onSetting(null, err);
+      return;
+    }
+    show(s);
+    onSetting(s, null);
+  }
+  async function doSave() {
+    if (save.disabled) return;
+    saving = true;
+    sync();
+    try {
+      const s = await apiPost("/api/settings/llm", { base_url: url.value.trim(), model: model.value.trim() });
+      show(s);
+      onSetting(s, null);
+      setFormStatus(status, "ok", t("已保存"));
+    } catch (err) {
+      setFormStatus(status, "err", err && err.state === "draft_bad_setting"
+        ? t("服务地址要用 http 或 https，写明主机，不带用户名和密码") : t("设置没有保存"), err);
+    }
+    saving = false;
+    sync();
+  }
+  // Inside the attempt form, Enter saves the setting; it never previews the row.
+  [url, model].forEach((f) => f.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSave(); }
+  }));
+  box.addEventListener("toggle", () => { if (box.open && !loaded) load(); });
+  box.append(formFieldEl(t("服务地址"), url), formFieldEl(t("模型"), model), save, status);
+  sync();
+  return { el: box, load, setFrozen(f) { frozen = f; sync(); } };
+}
+
 // Builds the form from the (now current) records and config.
 function renderAttemptForm(mode, attemptId) {
   panelTitle.title = "";
@@ -3711,6 +3987,9 @@ function renderAttemptForm(mode, attemptId) {
     sentenceInput.placeholder = "用你自己的话说明这份提议：PI 会先看到这句话";
     form.appendChild(formFieldEl("一句话说明（必填）", sentenceInput));
   }
+  // 16: a new row may start from a draft of its description and result.
+  const draftBlock = mode === "append" ? attemptDraftBlock(inputs, attempts, proposing, config.columns) : null;
+  if (draftBlock) form.appendChild(draftBlock.el);
 
   // Field labels come from the project's OWN [columns] header text -- the
   // researcher's words, not this tool's.
@@ -3883,6 +4162,7 @@ function renderAttemptForm(mode, attemptId) {
     if (sentenceInput) sentenceInput.disabled = disabled;
     if (reasonInput) reasonInput.disabled = disabled;
     (parentPicks || []).forEach((cb) => { cb.disabled = disabled; });
+    if (draftBlock) draftBlock.setFrozen(disabled); // 16.1: no draft into a frozen form
     submitBtn.disabled = disabled;
   }
 
@@ -3952,6 +4232,7 @@ function renderAttemptForm(mode, attemptId) {
         // engine's dry run of it, sent only on 发送提议 (team.js).
         pollGeneration();
         previewHost.innerHTML = "";
+        if (draftBlock) draftBlock.markWritten(); // 16.1: no 返回修改 now; a late draft says the row is written
         setFormStatus(statusEl, "", "这一行已写进你的工作副本。");
         const propose = { kind: mode === "append" ? "attempt_new" : "verdict_change", sentence: sentenceInput.value.trim(),
           number: body.number };
@@ -3989,11 +4270,15 @@ function renderAttemptForm(mode, attemptId) {
     }
     const body = collectBody();
     if (!body) return;
+    // 16.1: a draft landing while the preview is made would show text the snapshot lacks.
+    const unfreezeDraft = () => { if (draftBlock) draftBlock.setFrozen(false); };
+    if (draftBlock) draftBlock.setFrozen(true);
     setFormStatus(statusEl, "", "正在生成预览…");
     let preview;
     try {
       preview = await apiPost("/api/attempts/preview", body);
     } catch (err) {
+      unfreezeDraft();
       setFormStatus(statusEl, "err", "无法生成预览", err);
       return;
     }
@@ -4003,6 +4288,7 @@ function renderAttemptForm(mode, attemptId) {
     if (memberReason) memberReason.classList.toggle("hidden", !preview.abandons);
     if (proposing && preview.abandons &&
         (!inputs.result.value.trim() || !(reasonInput && reasonInput.value.trim()))) {
+      unfreezeDraft();
       setFormStatus(statusEl, "err", t("放弃一条路线时，结果和理由都必须填写"));
       (inputs.result.value.trim() ? reasonInput : inputs.result).focus();
       return;
@@ -4010,6 +4296,7 @@ function renderAttemptForm(mode, attemptId) {
     if (directReason) {
       directReason.classList.toggle("hidden", !preview.reason_required);
       if (preview.reason_required && !body.reason) {
+        unfreezeDraft();
         setFormStatus(statusEl, "err", t("放弃一条路线时必须写明理由"));
         reasonInput.focus();
         return;

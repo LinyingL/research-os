@@ -221,6 +221,39 @@ Endpoints (all GET unless noted):
                             (`researchos.settings`), that one key of
                             `settings.json`; anything else is a 400 and
                             writes nothing. Allowed with no project served.
+    GET  /api/settings/llm, POST /api/settings/llm -- `{"base_url"?, "model"?}`:
+                            the model server 「生成草稿」 uses (16), this
+                            Mac's setting. GET: `{base_url, model}` in
+                            effect (saved, else RCE_LLM_*, else the
+                            defaults; no user:password@), `saved` (each
+                            saved value or null), `where` ("this_mac" for
+                            localhost, 127.0.0.0/8, ::1 only -- a `*.local`
+                            name is another machine, "elsewhere") and
+                            `host`. POST: only the keys sent change, ""
+                            returns one to its default; an address that is
+                            not http(s) with a host is a 400
+                            `draft_bad_setting`, nothing written; answers
+                            as GET. Both allowed with no project served.
+    POST /api/attempts/draft -- `{"files": [REL], "language"?: "zh"|"en"}`:
+                            a draft of a new attempt's description and
+                            result from at most 5 chosen files (16,
+                            `researchos.semantic.draft`); writes nothing,
+                            takes no project lock while the model runs.
+                            Each path is resolved inside the project and
+                            sent, deduplicated (one file under two
+                            spellings is one), as its root-relative POSIX
+                            path; one file that cannot be read refuses the
+                            whole draft, the body naming it under `file`
+                            as typed: `draft_file_missing` (404, or 400
+                            for a folder or an unusable path),
+                            `draft_file_not_text` (400; a .dta too),
+                            `draft_file_unreadable` (400: no permission,
+                            a read error), `draft_file_cloud_only` (503),
+                            `draft_file_outside` (403). Also
+                            `draft_no_files`, `draft_too_many_files` (400),
+                            `draft_too_long` (413: the model's context
+                            overflowed) and `draft_model_failed` (502).
+                            Answers `{fields, dropped, model, cut}`.
     POST /api/zotero/open-attachment -- `{"item_key", "attachment_key"?}`:
                             「打开 PDF」, only the file the Zotero database
                             names for that item, inside its storage
@@ -574,6 +607,8 @@ from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import dataflow as dataflow_ingest
 from researchos.ingest import git as git_ingest
 from researchos.ingest import mappings as mappings_ingest
+from researchos.semantic import backend as llm_backend
+from researchos.semantic import draft as draft_mod
 from researchos.webapp import canvas, literature_api, mapedit, node_api, variables_api
 from researchos.records import implementation as card_implementation
 from researchos.webapp import registry as project_registry
@@ -898,6 +933,18 @@ class LanguageSettingError(ApiError):
         super().__init__(detail)
         self.status = status
         self.state = "language_" + code
+
+
+class DraftError(ApiError):
+    """「生成草稿」 or its model setting refused (DESIGN.md 16): `state`
+    is `draft_<code>`; nothing is written to the project."""
+
+    def __init__(self, code: str, status: int, detail: str, file: str | None = None) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.state = "draft_" + code
+        if file is not None:
+            self.extra = {"file": file}
 
 
 class ReadOnlyError(ApiError):
@@ -1723,6 +1770,136 @@ def language_setting_payload(body: dict[str, Any]) -> dict[str, Any]:
     except OSError as exc:
         raise LanguageSettingError("setting_failed", 500, f"{settings_mod.settings_path()}: {exc}") from exc
     return {"ok": True, "language": lang}
+
+
+# -- 「生成草稿」 for a new attempt (DESIGN.md 16) -----------------------------
+
+
+def _origin(url: str) -> tuple[str, str, int | None] | None:
+    try:
+        parts = urllib.parse.urlsplit(url.strip())
+        scheme = parts.scheme.lower()
+        return scheme, parts.hostname or "", parts.port or {"http": 80, "https": 443}.get(scheme)
+    except ValueError:
+        return None
+
+
+def _llm_client() -> llm_backend.LlmBackend:
+    """The client for a draft: this Mac's saved setting, else RCE_LLM_*,
+    else the defaults; RCE_LLM_TIMEOUT when set, else
+    `draft_mod.TIMEOUT_SECONDS` (the model may take minutes). RCE_LLM_API_KEY
+    goes only to the address it was set beside (RCE_LLM_BASE_URL, else the
+    default), never to a different one saved here (16.2). Without the
+    judge's remote warning: the draft logs its own."""
+    saved = settings_mod.llm_settings()
+    timeout = None if os.environ.get("RCE_LLM_TIMEOUT") else draft_mod.TIMEOUT_SECONDS
+    key_for = os.environ.get("RCE_LLM_BASE_URL") or llm_backend.DEFAULT_BASE_URL
+    api_key = None if saved["base_url"] is None or _origin(saved["base_url"]) == _origin(key_for) else ""
+    return llm_backend.LlmBackend(base_url=saved["base_url"], model=saved["model"], timeout=timeout,
+                                  api_key=api_key, warn_remote=False)
+
+
+def _llm_host(url: str) -> str:
+    try:
+        return urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def llm_setting_payload() -> dict[str, Any]:
+    """`GET /api/settings/llm`: the address and model 「生成草稿」 uses,
+    each value saved here (or null), and where the address is. Reads the
+    setting without building a client (whose remote warning is the
+    judge's)."""
+    saved = settings_mod.llm_settings()
+    base_url = (saved["base_url"] or os.environ.get("RCE_LLM_BASE_URL") or llm_backend.DEFAULT_BASE_URL).rstrip("/")
+    model = saved["model"] or os.environ.get("RCE_LLM_MODEL") or llm_backend.DEFAULT_MODEL
+    host = _llm_host(base_url)
+    return {"base_url": settings_mod.without_userinfo(base_url), "model": model,
+            "saved": {"base_url": saved["base_url"], "model": saved["model"]},  # never with a password: refused
+            "where": "this_mac" if llm_backend.on_this_mac(host) else "elsewhere", "host": host}
+
+
+def llm_setting_set_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """`POST /api/settings/llm` {base_url?, model?}: this Mac's setting;
+    only the keys sent change, an empty value returns that one to its
+    default."""
+    given = {key: body[key] for key in ("base_url", "model") if key in body}
+    if not all(isinstance(v, str) for v in given.values()):
+        raise DraftError("bad_setting", 400, "request body 'base_url' and 'model' must be strings")
+    try:
+        settings_mod.set_llm_settings(**given)
+    except ValueError as exc:
+        raise DraftError("bad_setting", 400, str(exc)) from exc
+    except OSError as exc:
+        raise DraftError("setting_failed", 500, f"{settings_mod.settings_path()}: {exc}") from exc
+    return llm_setting_payload()
+
+
+def _draft_file(project_root: Path, rel: str, typed: str) -> dict[str, Any]:
+    """One chosen file read as `GET /api/file` reads it; any refusal is a
+    DraftError naming the file as the researcher typed it."""
+    try:
+        read = file_payload(project_root, rel)
+    except (NotFoundError, NotAFileError) as exc:
+        raise DraftError("file_missing", exc.status, str(exc), typed) from exc
+    except (BinaryFileError, DtaApiError) as exc:
+        raise DraftError("file_not_text", 400, str(exc), typed) from exc
+    except CloudOnlyApiError as exc:
+        raise DraftError("file_cloud_only", exc.status, str(exc), typed) from exc
+    except PathTraversalError as exc:
+        raise DraftError("file_outside", exc.status, str(exc), typed) from exc
+    except OSError as exc:  # no permission to read it, a name too long, a read error
+        raise DraftError("file_unreadable", 400, f"{typed}: {exc}", typed) from exc
+    if "content" not in read:  # a .dta: its header, not text
+        raise DraftError("file_not_text", 400, f"{typed} is not a text file", typed)
+    return read
+
+
+def attempt_draft_payload(project_root: Path, body: dict[str, Any]) -> dict[str, Any]:
+    """`POST /api/attempts/draft` {files: [project-relative path], language?:
+    "zh"|"en"}: each path resolved inside the project and deduplicated as
+    its root-relative POSIX path, each file read as `GET /api/file` reads it
+    (one refusal refuses the whole draft), then `draft_mod.draft_attempt`.
+    Reads only and holds no lock while the model runs; the draft goes back
+    to the form and nowhere else."""
+    files = body.get("files")
+    if not isinstance(files, list) or not files or not all(isinstance(f, str) and f for f in files):
+        raise DraftError("no_files", 400, "request body 'files' must be a non-empty list of paths")
+    root = project_root.resolve()
+    chosen: dict[Any, tuple[str, str]] = {}  # the file -> (its normalized path, the path as typed)
+    for typed in files:
+        try:
+            target = _resolve_within_root(project_root, typed)
+        except PathTraversalError as exc:
+            raise DraftError("file_outside", exc.status, str(exc), typed) from exc
+        except (OSError, ValueError) as exc:  # a NUL in the path
+            raise DraftError("file_missing", 400, f"{typed!r} is not a usable path: {exc}", typed) from exc
+        rel = target.relative_to(root).as_posix()
+        try:  # one file under two spellings (APFS ignores case), or hard-linked, is one file
+            st = target.stat()
+            key: Any = (st.st_dev, st.st_ino)
+        except (OSError, ValueError):
+            key = rel  # not there: refused below as draft_file_missing
+        chosen.setdefault(key, (rel, typed))
+    if len(chosen) > draft_mod.MAX_FILES:
+        raise DraftError("too_many_files", 400, f"at most {draft_mod.MAX_FILES} files per draft, not {len(chosen)}")
+    read = [_draft_file(project_root, rel, typed) for rel, typed in chosen.values()]
+    language = body.get("language") if body.get("language") in ("zh", "en") else None
+    try:
+        client = _llm_client()
+    except ValueError as exc:  # the constructor reads RCE_LLM_TIMEOUT as seconds
+        raise DraftError("model_failed", 502, f"RCE_LLM_TIMEOUT is not a number of seconds: {exc}") from exc
+    host = _llm_host(client.base_url)
+    if not llm_backend.on_this_mac(host):  # 16.2: never silent (Section 7)
+        logger.warning("draft: sending the contents of %d chosen file(s) to %s, which is not this Mac (model %s)",
+                       len(read), host or settings_mod.without_userinfo(client.base_url), client.model)
+    try:
+        return draft_mod.draft_attempt(draft_mod.prepare_files(read), client, language)
+    except llm_backend.LlmContextError as exc:
+        raise DraftError("too_long", 413, settings_mod.without_userinfo(str(exc))) from exc
+    except llm_backend.LlmError as exc:
+        raise DraftError("model_failed", 502, settings_mod.without_userinfo(str(exc))) from exc
 
 
 # -- /api/projects + POST /api/projects/switch (task V3 phase 1) --------------
@@ -3233,6 +3410,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
+            elif path == "/api/settings/llm":
+                self._send_json(200, llm_setting_payload())
             elif path == "/api/attempts":
                 self._json_from_conn(lambda conn: self._official(attempts_payload(conn, self._project_root())))
             elif path == "/api/tree":
@@ -3518,6 +3697,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/settings/language":
                 # 13.3: the language switch -- this Mac's setting, no project needed.
                 self._send_json(200, language_setting_payload(self._read_json_object()))
+            elif parsed.path == "/api/settings/llm":
+                # 16: the model 「生成草稿」 uses -- this Mac's setting.
+                self._send_json(200, llm_setting_set_payload(self._read_json_object()))
+            elif parsed.path == "/api/attempts/draft":
+                # 16: reads the chosen files and asks the model; writes nothing, and
+                # not inside write_guard: the model may take minutes (16.2).
+                body = self._read_json_object()
+                self._require_unblocked()
+                self._send_json(200, attempt_draft_payload(self._project_root(), body))
             elif parsed.path == "/api/projects/rename":
                 # 10.4: the registry label only, never the folder.
                 self._send_json(200, rename_payload(self._read_json_object()))
@@ -3805,11 +3993,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 # engine's own state, and what changes the served project.
 _NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js",
                              "/api/projects",
-                             "/api/engine", "/api/generation", "/api/me", "/api/me/key"})
+                             "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",
     "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
+    "/api/settings/llm",
 })
 
 
