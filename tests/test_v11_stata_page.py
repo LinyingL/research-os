@@ -224,6 +224,7 @@ def _rendered(language: str | None, payload: dict) -> list[str]:
     i18n = "" if language is None else f"window.ROI18N_SAVED = {json.dumps(language)};\n" + _i18n_source()
     script = (
         "global.window = {addEventListener(){}, scrollTo(){}, scrollY: 0};\n" + i18n + _DESK_DOM
+        + "global.document.createElementNS = (ns, tag) => Object.assign(el(tag), { setAttribute() {} });\n"
         + "global.humanRecordsBlocked = () => null;\n"
         + "const baseMk = mk;\n"
         + "global.mk = (tag, cls, text) => Object.assign(baseMk(tag, cls, text), "

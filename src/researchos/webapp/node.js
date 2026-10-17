@@ -1524,7 +1524,9 @@
     if (groups.length) {
       const total = groups.reduce((n, g) => n + (g.items || []).length, 0);
       const details = mk("details", "dc-stata-unresolved");
-      details.appendChild(mk("summary", null, t("展开不了（{n}）", { n: total })));
+      const summary = mk("summary", "res-draft-summary"); // 12.13: the quiet chevron, not the browser's triangle
+      summary.append(chevron(), mk("span", null, t("展开不了（{n}）", { n: total })));
+      details.appendChild(summary);
       groups.forEach((g) => {
         details.appendChild(mk("div", "dc-stata-reason", t("{reason}（{n}）", { reason: stataReasonWords(g.reason), n: (g.items || []).length })));
         const ul = mk("ul", "dc-stata-list");
