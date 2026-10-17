@@ -13,8 +13,10 @@ call and a `<name>.attr(...)` attribute-chain call (`pd.read_csv` and
 only the trailing call name:
 
     read:  read_csv, read_excel, read_parquet, read_stata, read_json,
-           loadtxt, open(...) with mode omitted or the literal 'r'
-    write: to_csv, to_excel, to_parquet, savefig, open(...) with mode 'w'
+           loadtxt, read_dta (pyreadstat's), open(...) with mode omitted
+           or the literal 'r'
+    write: to_csv, to_excel, to_parquet, to_stata, savefig, open(...) with
+           mode 'w'
 
 `open(...)` with any other explicit mode (`'a'`, `'rb'`, `'x'`, ...) -- or a
 non-literal mode expression -- is outside the two documented forms and is
@@ -31,7 +33,7 @@ the stdlib, so this is a conservative regex + hand-rolled paren/quote scanner
 
     read:  read.csv, read_csv, read_excel, read_xlsx, fread, readRDS,
            read_dta (bare or `haven::`-qualified)
-    write: write.csv, write_csv, fwrite, saveRDS, ggsave, pdf(, png(
+    write: write.csv, write_csv, fwrite, saveRDS, write_dta, ggsave, pdf(, png(
            (the last two are graphics-device opens, not exactly "writing a
            dataset", but their target is a Figure the same way savefig's is)
 
@@ -202,9 +204,9 @@ class ParseOutcome:
 # ---------------------------------------------------------------------------
 
 _READ_CALL_NAMES = frozenset(
-    {"read_csv", "read_excel", "read_parquet", "read_stata", "read_json", "loadtxt"}
+    {"read_csv", "read_excel", "read_parquet", "read_stata", "read_json", "loadtxt", "read_dta"}
 )
-_WRITE_CALL_NAMES = frozenset({"to_csv", "to_excel", "to_parquet", "savefig"})
+_WRITE_CALL_NAMES = frozenset({"to_csv", "to_excel", "to_parquet", "to_stata", "savefig"})
 _PATH_KEYWORDS = ("path", "filepath", "fname")
 
 
@@ -514,7 +516,7 @@ def scan_py_file(repo_root: str | Path, py_rel_path: str) -> ParseOutcome:
 # ---------------------------------------------------------------------------
 
 _R_READ_NAMES = ("read.csv", "read_csv", "read_excel", "read_xlsx", "fread", "readRDS", "read_dta")
-_R_WRITE_NAMES = ("write.csv", "write_csv", "fwrite", "saveRDS", "ggsave", "pdf", "png")
+_R_WRITE_NAMES = ("write.csv", "write_csv", "fwrite", "saveRDS", "write_dta", "ggsave", "pdf", "png")
 
 # Which positional argument (0-based, counting only the call's *positional*
 # args) is the path, for a call that gives it positionally rather than via a
@@ -524,7 +526,7 @@ _R_WRITE_NAMES = ("write.csv", "write_csv", "fwrite", "saveRDS", "ggsave", "pdf"
 _R_PATH_ARG_INDEX: dict[str, int] = {
     "read.csv": 0, "read_csv": 0, "read_excel": 0, "read_xlsx": 0, "fread": 0,
     "readRDS": 0, "read_dta": 0, "ggsave": 0, "pdf": 0, "png": 0,
-    "write.csv": 1, "write_csv": 1, "fwrite": 1, "saveRDS": 1,
+    "write.csv": 1, "write_csv": 1, "fwrite": 1, "saveRDS": 1, "write_dta": 1,  # haven: write_dta(data, path)
 }
 _R_PATH_KEYWORDS = ("file", "path", "filename")
 

@@ -663,3 +663,59 @@ def test_ingest_default_param_fold_creates_edge_and_is_idempotent(tmp_path, conn
     edge = db.query_edges(conn, type="writes")[0]
     assert edge["dst"] == "dataset:data/foreign_flows_ccdc.csv"
     assert edge["evidence"]["occurrences"][0]["folded_from"] == "out"
+
+
+# ---------------------------------------------------------------------------
+# .dta writers and readers Python and R lacked (DESIGN.md 15.4)
+# ---------------------------------------------------------------------------
+
+
+def test_python_to_stata_and_pyreadstat_read_dta_and_r_write_dta_are_recognized(tmp_path):
+    """15.4: pandas' `to_stata` (path first, or the `path` keyword),
+    pyreadstat's `read_dta`, and haven's `write_dta(data, path)` (the path
+    second, or the `path` keyword); `read_stata` and haven's `read_dta`
+    as before."""
+    (tmp_path / "fit.py").write_text(
+        "import pandas as pd\nimport pyreadstat\n"
+        "df, meta = pyreadstat.read_dta('data/panel.dta')\n"
+        "old = pd.read_stata('data/old.dta')\n"
+        "df.to_stata('data/fit.dta', write_index=False)\n"
+        "df.to_stata(path='data/fit2.dta')\n"
+    )
+    assert [(c.callee, c.kind, c.literal) for c in dataflow.parse_py_file(tmp_path, "fit.py")] == [
+        ("pyreadstat.read_dta", "read", "data/panel.dta"),
+        ("pd.read_stata", "read", "data/old.dta"),
+        ("df.to_stata", "write", "data/fit.dta"),
+        ("df.to_stata", "write", "data/fit2.dta"),
+    ]
+    (tmp_path / "build.R").write_text(
+        'd <- haven::read_dta("data/raw.dta")\nhaven::write_dta(d, "data/panel.dta")\n'
+        'write_dta(d, path = "data/panel2.dta", version = 14)\n'
+    )
+    assert [(c.callee, c.kind, c.literal) for c in dataflow.parse_r_file(tmp_path, "build.R")] == [
+        ("haven::read_dta", "read", "data/raw.dta"),
+        ("haven::write_dta", "write", "data/panel.dta"),
+        ("write_dta", "write", "data/panel2.dta"),
+    ]
+
+
+def test_a_pipeline_mixing_r_python_and_stata_connects_through_dta_files(tmp_path, conn):
+    """15.4: R writes a .dta, Python reads it and writes another, a do-file
+    uses that one (without its extension) -- one chain of links, each with
+    its canonical call as its basis."""
+    from researchos.ingest import scan as scan_mod
+
+    (tmp_path / "build.R").write_text('haven::write_dta(d, "data/panel.dta")\n')
+    (tmp_path / "fit.py").write_text("import pandas as pd\ndf = pd.read_stata('data/panel.dta')\ndf.to_stata('data/fit.dta')\n")
+    (tmp_path / "plot.do").write_text('use "data/fit", clear\n')
+    with scan_mod.scan(conn, "test") as sc:
+        counts = dataflow.ingest_dataflow_repo(conn, tmp_path, ["fit.py"], ["build.R"], [], scan=sc,
+                                               do_paths=["plot.do"])
+    assert counts == {"reads": 2, "writes": 2}
+    links = {(e["src"], e["type"], e["dst"]): scan_mod.current_basis(conn, e) for e in db.query_edges(conn)}
+    assert links == {
+        ("script:build.R", "writes", "dataset:data/panel.dta"): {"calls": ["write_dta"]},
+        ("script:fit.py", "reads", "dataset:data/panel.dta"): {"calls": ["read_stata"]},
+        ("script:fit.py", "writes", "dataset:data/fit.dta"): {"calls": ["to_stata"]},
+        ("script:plot.do", "reads", "dataset:data/fit.dta"): {"calls": ["use"]},
+    }
