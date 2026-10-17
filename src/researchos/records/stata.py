@@ -175,13 +175,18 @@ def expected(project_root: str | Path) -> bool:
     return bool(record_files.snapshots(project_root, stata_path(project_root)))
 
 
-def assess(project_root: str | Path, identity: ProjectIdentity | None = None) -> tuple[LedgerLoad, TrustDecision]:
+def assess(
+    project_root: str | Path, identity: ProjectIdentity | None = None, *, for_migration: bool = False,
+) -> tuple[LedgerLoad, TrustDecision]:
+    """The file and whether it may be written and built upon (9.3).
+    `for_migration`: read past an unfinished migration's lock, as only a
+    read may (`anchors`); a write never passes it."""
     root = Path(project_root)
     loaded = load(root)
     if identity is None:
         got = read_identity(root)
         identity = got.identity if got.state is IdentityState.PRESENT else None
-    return loaded, assess_ledger(identity, loaded, {}, expected=expected(root))
+    return loaded, assess_ledger(identity, loaded, {}, for_migration=for_migration, expected=expected(root))
 
 
 def message_of(decision: TrustDecision) -> tuple[str, str] | None:
@@ -207,11 +212,15 @@ def anchors(project_root: str | Path) -> tuple[dict[str, str] | None, str | None
     """What a scan expands globals with: ({global: folder} for every `yes`,
     None) -- or (None, the trust reason) when the file cannot be trusted
     now, and then nothing may be built on it (module docstring). A file
-    that does not exist (and is not expected) holds no answer."""
+    that does not exist (and is not expected) holds no answer.
+
+    The read passes an unfinished migration's lock (9.5): the migration's
+    fresh scan is the one reader then, and the answers it reads are the
+    same before and after; only writes wait for the migration to end."""
     root = Path(project_root)
     if not stata_path(root).exists() and not stata_path(root).is_symlink() and not expected(root):
         return {}, None
-    loaded, decision = assess(root)
+    loaded, decision = assess(root, for_migration=True)
     if not decision.may_apply:
         return None, decision.reason or "unreadable"
     return {name: e["folder"] for name, e in answers_from(loaded).items() if e.get("answer") == YES}, None

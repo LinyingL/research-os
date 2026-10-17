@@ -83,6 +83,32 @@ def test_scenario_5_an_unreadable_source_blocks_the_swap(tmp_path, capsys):
     assert _records(root) == EXPECTED
 
 
+def test_an_untrusted_stata_record_is_named_as_the_cause(tmp_path, capsys):
+    """9.3 with 15.3: a sync conflict copy beside `.researchos/stata.toml`
+    keeps the do-files unscanned (their links keep their state) and the
+    rebuild refuses the swap -- and says why: the record, its trust reason
+    and the conflict copy, not only that a do-file was not readable."""
+    from researchos.records import stata as stata_record
+
+    root = tmp_path / "p"
+    pid = _make(root)
+    (root / "data").mkdir()
+    (root / "clean.do").write_text('use "$Root/data/panel"\n')
+    assert stata_record.answer(root, "Root", "data", via="cli")["changed"]
+    assert cli.main(["ingest", str(root)]) == 0
+    shutil.copy(stata_record.stata_path(root), root / ".researchos" / "stata (1).toml")
+    target = paths.index_dir(pid) / "graph.db"
+    before = target.read_bytes()
+    capsys.readouterr()
+    assert cli.main(["rebuild", str(root)]) == 1
+    out = capsys.readouterr().out
+    assert ".researchos/stata.toml" in out and "conflict_copy" in out and "stata (1).toml" in out
+    assert "Not swapped" in out and target.read_bytes() == before
+    result = rebuild_mod.rebuild(root)
+    assert not result.swapped
+    assert any("stata.toml" in line and "stata (1).toml" in line for line in result.blocked)
+
+
 def test_a_judgment_lost_on_an_unchanged_source_is_a_failure(tmp_path, monkeypatch):
     """9.8: on unchanged sources, a judgment applied before and not applied
     after is a failure -- and nothing is swapped."""

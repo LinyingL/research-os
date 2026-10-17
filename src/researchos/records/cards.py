@@ -85,6 +85,11 @@ R_SCRIPT_UNREADABLE = "脚本无法读取"
 R_UNREADABLE = "文件无法读取"
 R_SCRIPT_UNPARSEABLE = "脚本无法解析"
 R_SCRIPT_KIND = "这种脚本无法解析"
+# A do-file is read for 数据与代码 (15.2), but a card's link check would need
+# that project-wide scan (confirmed globals, the do/run chain): until it is
+# wired, Stata scripts are said to be not checked yet, never 不符 and never
+# 「无法解析」 (DESIGN.md 15, variable cards come later).
+R_STATA_NOT_CHECKED = "暂不核对 Stata 脚本"
 R_OUTSIDE = "路径不在项目文件夹内"
 R_MAPPING_ONLY = "这条关联只存在于你手画的连线中"
 R_NOT_CSV = "输出文件不是 CSV"
@@ -615,6 +620,8 @@ def _parse_script(root: Path, rel: str) -> tuple[str | None, list[Any]]:
     from researchos.ingest import scan as scan_mod  # noqa: PLC0415
 
     suffix = posixpath.splitext(rel)[1].lower()
+    if suffix in (".do", ".ado"):
+        return R_STATA_NOT_CHECKED, []
     scanner = {".py": dataflow.scan_py_file, ".r": dataflow.scan_r_file, ".rmd": dataflow.scan_rmd_file}.get(suffix)
     if scanner is None:
         return R_SCRIPT_KIND, []

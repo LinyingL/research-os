@@ -351,6 +351,35 @@ def _ledger_question(old: sqlite3.Connection, root: Path, identity: ProjectIdent
     return [f"the judgment ledger cannot be applied now ({decision.reason}: {decision.detail or ''}); repair it first"]
 
 
+def _stata_question(root: Path, identity: ProjectIdentity) -> list[str]:
+    """Why the project's do-files cannot be scanned now (15.3, 9.3): the
+    record of Stata globals cannot be trusted, so the scan builds nothing
+    on it and reports every do-file unreadable (their links keep their
+    state). The do-files are readable; the record is what to repair, and
+    this says so. Asked only of a project holding a do-file, the one case
+    where the record is read."""
+    from researchos.ingest import files as files_ingest  # noqa: PLC0415 -- leaf use
+    from researchos.ingest import git as git_ingest  # noqa: PLC0415
+    from researchos.records import stata as stata_record  # noqa: PLC0415
+
+    path = stata_record.stata_path(root)
+    if not os.path.lexists(path) and not stata_record.expected(root):
+        return []
+    _loaded, decision = stata_record.assess(root, identity)
+    if decision.may_apply:
+        return []
+    try:
+        inventory = git_ingest.list_source_files(root)
+    except git_ingest.NotAGitRepositoryError:
+        inventory = files_ingest.list_source_files(root)
+    if not inventory.get("do"):
+        return []
+    shown = f"{paths.PROJECT_DIRNAME}/{stata_record.STATA_FILENAME}"
+    detail = f": {decision.detail}" if decision.detail else ""
+    return [f"the record of Stata globals ({shown}) cannot be trusted now ({decision.reason}{detail}); "
+            "repair it first -- until then the do-files are not scanned"]
+
+
 def _identity_for_rebuild(root: Path) -> ProjectIdentity:
     got = read_identity(root)
     if got.state is IdentityState.ABSENT:
@@ -395,6 +424,7 @@ def rebuild(
             if old is not None:
                 blocked += [f"source not readable: {s}" for s in evicted_sources(old, root)]
                 blocked += _ledger_question(old, root, identity)
+                blocked += _stata_question(root, identity)
                 from researchos.records import cards as cards_mod  # noqa: PLC0415 -- leaf use
 
                 if db.has_variable_tables(old):

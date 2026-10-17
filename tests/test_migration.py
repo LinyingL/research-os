@@ -437,6 +437,28 @@ def test_scenario_9_a_second_old_index_merges_and_its_contradiction_is_a_record_
     assert item["outcome"] == "applied" and status == "confirmed"
 
 
+def test_a_second_old_index_merges_into_a_project_with_stata_answers(tmp_path):
+    """9.5 with 15.3: a V5+ project holding do-files and a stata.toml (here a
+    「是」) merges another machine's pre-V5 index. The fresh scan reads the
+    answers while the migration holds `migrating_from` -- the one writer
+    allowed then -- so no do-file is reported unreadable, the tally
+    balances and the old index retires."""
+    from researchos.records import stata as stata_record
+
+    root, _old = _pre_v5(tmp_path)
+    [first] = migration.migrate(root, yes=True)
+    assert first.ok
+    (root / "x.do").write_text('use "$Proj/in.csv"\n')
+    assert stata_record.answer(root, "Proj", "data", via="cli")["changed"]
+    other = paths.researchos_home() / "graphs" / "0123456789abcdef"
+    build_pre_v5_index(root, key_dir=other, contradict=True)
+    [merged] = migration.migrate(root, yes=True, from_dir=other)
+    assert merged.ok, merged.stopped
+    assert not any("x.do" in s for s in merged.tally.unreadable_sources)
+    assert identity.read_identity(root).identity.migrating_from is None
+    assert not other.joinpath("graph.db").exists()
+
+
 # -- the pre-V5 read-only rule, end to end --------------------------------------------------
 
 

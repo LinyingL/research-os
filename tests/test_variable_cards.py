@@ -289,6 +289,21 @@ def test_checks_name_why_they_could_not_be_made(tmp_path):
     assert checked["reads"][0]["result"] == "不符"
 
 
+def test_a_stata_script_is_not_checked_yet_rather_than_unparseable(tmp_path):
+    """15 (variable cards and Stata come later): a card whose script is a
+    do-file -- which 数据与代码 reads -- records its link checks as 未核对
+    with 「暂不核对 Stata 脚本」, never 「这种脚本无法解析」 and never 不符."""
+    root = tmp_path / "p"
+    _project(root)
+    (root / "build.do").write_text('import delimited "Data/theme.csv", clear\nexport delimited "Data/ts.csv"\n')
+    _new_confirmed(root, "a", _text(script="build.do"))
+    checked = _card(root, "a").versions[1].entry.get("checked")
+    assert checked["writes"] == {"result": "未核对", "reason": cards.R_STATA_NOT_CHECKED}
+    assert [r["result"] for r in checked["reads"]] == ["未核对"]
+    assert checked["reads"][0]["reason"] == cards.R_STATA_NOT_CHECKED
+    assert checked["script"]["result"] == "已核对"  # copied and fingerprinted all the same
+
+
 _KILLER = r"""
 import os, sys
 from pathlib import Path
