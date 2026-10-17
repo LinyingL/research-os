@@ -748,7 +748,7 @@
     "列 {columns}": "Columns: {columns}",
     // A Stata .dta file (DESIGN.md 15.4): its columns are its variables.
     "变量 {columns}": "Variables: {columns}",
-    "{n} 个变量": {"one": "{n} variable", "other": "{n} variables"},
+    "{rows} × {n} 个变量": {"one": "{rows} × {n} variable", "other": "{rows} × {n} variables"},
     "数据集标签：{label}": "Dataset label: {label}",
     "变量名": "Name",
     "标签": "Label",

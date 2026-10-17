@@ -3366,8 +3366,7 @@ function dtaPreview(info) {
   const vars = Array.isArray(info.variables) ? info.variables : [];
   const en = uiLang() === "en";
   const rows = t("{n} 行", { n: en ? groupedNumber(info.rows) : info.rows });
-  const count = t("{n} 个变量", { n: en ? groupedNumber(vars.length) : vars.length });
-  wrap.appendChild(mk("p", "dta-shape", rows + " × " + count));
+  wrap.appendChild(mk("p", "dta-shape", t("{rows} × {n} 个变量", { rows: rows, n: en ? groupedNumber(vars.length) : vars.length })));
   if (info.label) wrap.appendChild(mk("p", "dta-label", t("数据集标签：{label}", { label: info.label })));
   const table = mk("table", "dta-table");
   const head = mk("tr");
