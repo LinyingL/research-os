@@ -135,12 +135,12 @@ REFUSAL_MESSAGES = {
 
 # The preview's groups (10.2) over the inventory's categories.
 GROUPS = {
-    "scripts": ("py", "r", "rmd"),
+    "scripts": ("py", "r", "rmd", "do", "ado"),
     "data": ("data",),
     "drafts": ("md", "tex", "bib"),
     "images": ("image",),
 }
-CATEGORIES = ("tex", "bib", "image", "py", "md", "r", "rmd", "data")
+CATEGORIES = ("tex", "bib", "image", "py", "md", "r", "rmd", "do", "ado", "data")
 
 
 # -- the inspection ----------------------------------------------------------------

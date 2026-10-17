@@ -296,8 +296,8 @@ def _ingest_commits(conn: Connection, commits: list[GitCommit], sc: scan_mod.Sca
     return ingested
 
 def list_source_files(repo_path: str | Path) -> dict[str, list[str]]:
-    """Inventory git-tracked .tex/.bib/image/.py/.md/.r/.rmd/data files,
-    grouped by category.
+    """Inventory git-tracked .tex/.bib/image/.py/.md/.r/.rmd/.do/.ado/data
+    files, grouped by category.
 
     Uses `git ls-files` (tracked files only, .gitignore respected for free)
     instead of a filesystem walk -- no ignore-matching logic to maintain.
@@ -321,7 +321,8 @@ def list_source_files(repo_path: str | Path) -> dict[str, list[str]]:
     definition above).
     """
     inventory: dict[str, list[str]] = {
-        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [], "data": [],
+        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [],
+        "do": [], "ado": [], "data": [],
     }
     for path, category in iter_tracked(repo_path):
         if category is not None:
@@ -331,8 +332,9 @@ def list_source_files(repo_path: str | Path) -> dict[str, list[str]]:
 
 def category_for(suffix: str) -> str | None:
     """The inventory category of a lowercased file suffix, or None for a
-    file no extractor reads -- one rule for both inventories."""
-    if suffix in (".tex", ".bib", ".py", ".md", ".r", ".rmd"):
+    file no extractor reads -- one rule for both inventories (Stata's .do
+    and .ado are scripts, DESIGN.md 15.1)."""
+    if suffix in (".tex", ".bib", ".py", ".md", ".r", ".rmd", ".do", ".ado"):
         return suffix[1:]
     if suffix in IMAGE_EXTENSIONS:
         return "image"

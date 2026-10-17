@@ -247,6 +247,22 @@ def test_first_launch_adds_a_folder_scans_it_with_progress_and_fills_the_views(n
 # -- 10.8 scenario 2: a new folder, not a git repository --------------------------------
 
 
+def test_preview_counts_stata_do_and_ado_files_as_scripts(tmp_path):
+    """DESIGN.md 15.1: .do and .ado are scripts in the preview's inventory
+    (a category the preview did not know would raise KeyError), and every
+    classifier types them as scripts."""
+    from researchos.ingest import dataflow
+
+    folder = _research_folder(tmp_path / "study")
+    (folder / "code" / "clean.do").write_text('use "data/raw.dta", clear\n')
+    (folder / "code" / "tools.ado").write_text("program define tools\nend\n")
+    pv = addproject.inspect(folder).preview
+    assert pv.counts["scripts"] == 4 and pv.counts["other"] == 1
+    assert pv.inventory["do"] == 1 and pv.inventory["ado"] == 1
+    for path in ("code/clean.do", "code/tools.ado", "X.DO"):
+        assert dataflow.node_type_for_path(path) == "script"
+
+
 def test_new_folder_preview_counts_equal_what_the_first_scan_reads(tmp_path):
     """10.8 scenario 2: the preview's counts come from the scan's own
     inventory (the walk); they equal what the first scan in fact reads."""

@@ -221,7 +221,7 @@ def test_preview_words_the_engines_counts_for_a_plain_folder():
     (out,) = _wording(("addPreviewText", [_preview()]))
     assert out["head"] == "Research OS 会读取这个文件夹里的这些文件："
     assert out["items"] == [
-        ["脚本（.py、.R、.Rmd）", "3"], ["数据文件", "1"], ["文稿（.md、.tex、.bib）", "2"], ["图片", "1"], ["共计要扫描", "7"],
+        ["脚本（.py、.R、.Rmd、.do）", "3"], ["数据文件", "1"], ["文稿（.md、.tex、.bib）", "2"], ["图片", "1"], ["共计要扫描", "7"],
     ]
     assert out["notes"] == [{"text": "另有 1 个文件不属于这几类，Research OS 不读它们。", "tone": ""}]
 

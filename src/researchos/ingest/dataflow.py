@@ -1088,8 +1088,10 @@ def _node_type_for_extension(path: str) -> str | None:
 # this module parses (.py/.R/.Rmd, see parse_py_file/parse_r_file/
 # parse_rmd_file) plus .jl, which DESIGN.md section 8.1 lists among the
 # canvas's 脚本 extensions even though no extractor parses Julia yet -- a
-# human mapping or a ghost node may still name one.
-SCRIPT_EXTENSIONS = frozenset({".py", ".r", ".rmd", ".jl"})
+# human mapping or a ghost node may still name one -- plus Stata's .do and
+# .ado (DESIGN.md 15.1: both are scripts; a do-file is scanned, an .ado is
+# versioned and shown).
+SCRIPT_EXTENSIONS = frozenset({".py", ".r", ".rmd", ".jl", ".do", ".ado"})
 
 
 def node_type_for_path(path: str) -> str | None:

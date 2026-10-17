@@ -21,6 +21,8 @@ def test_categorizes_every_tracked_extension(tmp_path: Path):
     (tmp_path / "notes.md").write_text("# Notes\n")
     (tmp_path / "analysis.R").write_text("x <- 1\n")
     (tmp_path / "report.Rmd").write_text("---\ntitle: x\n---\n")
+    (tmp_path / "clean.do").write_text("use data5\n")
+    (tmp_path / "tools.ado").write_text("program define tools\nend\n")
     (tmp_path / "data1.csv").write_text("a,b\n1,2\n")
     (tmp_path / "data2.xlsx").write_bytes(b"PK\x03\x04")
     (tmp_path / "data3.parquet").write_bytes(b"PAR1")
@@ -38,6 +40,8 @@ def test_categorizes_every_tracked_extension(tmp_path: Path):
     assert inventory["md"] == ["notes.md"]
     assert inventory["r"] == ["analysis.R"]
     assert inventory["rmd"] == ["report.Rmd"]
+    assert inventory["do"] == ["clean.do"]
+    assert inventory["ado"] == ["tools.ado"]
     assert sorted(inventory["data"]) == sorted(
         ["data1.csv", "data2.xlsx", "data3.parquet", "data4.rds", "data5.dta", "data6.json"]
     )
@@ -122,5 +126,6 @@ def test_does_not_follow_symlinked_file(tmp_path: Path):
 def test_empty_directory_returns_all_empty_categories(tmp_path: Path):
     inventory = files_ingest.list_source_files(tmp_path)
     assert inventory == {
-        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [], "data": [],
+        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [],
+        "do": [], "ado": [], "data": [],
     }

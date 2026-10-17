@@ -130,15 +130,19 @@ def test_list_source_files_categorizes_md_r_rmd_and_data(repo, conn):
     (repo / "notes.md").write_text("# Notes\n")
     (repo / "analysis.R").write_text("x <- 1\n")
     (repo / "report.Rmd").write_text("---\ntitle: x\n---\n")
+    (repo / "clean.do").write_text("use data\n")
+    (repo / "tools.ado").write_text("program define tools\nend\n")
     (repo / "data.csv").write_text("a,b\n1,2\n")
     (repo / "data.json").write_text("{}")
-    _git(repo, "add", "notes.md", "analysis.R", "report.Rmd", "data.csv", "data.json")
+    _git(repo, "add", "notes.md", "analysis.R", "report.Rmd", "clean.do", "tools.ado", "data.csv", "data.json")
     _git(repo, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-m", "add sources")
 
     inventory = git_ingest.list_source_files(repo)
     assert inventory["md"] == ["notes.md"]
     assert inventory["r"] == ["analysis.R"]
     assert inventory["rmd"] == ["report.Rmd"]
+    assert inventory["do"] == ["clean.do"]  # DESIGN.md 15.1: Stata scripts
+    assert inventory["ado"] == ["tools.ado"]
     assert sorted(inventory["data"]) == ["data.csv", "data.json"]
 
 

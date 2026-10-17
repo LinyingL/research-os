@@ -2444,7 +2444,7 @@ def _print_add_preview(insp: addproject.Inspection) -> None:
         else:
             print("Not a git repository: Research OS reads the folder's files (hidden folders and caches skipped).")
         print(
-            f"  To scan: {pv.to_scan} file(s) -- scripts (.py/.R/.Rmd) {counts['scripts']}, data {counts['data']}, "
+            f"  To scan: {pv.to_scan} file(s) -- scripts (.py/.R/.Rmd/.do) {counts['scripts']}, data {counts['data']}, "
             f"drafts (.md/.tex/.bib) {counts['drafts']}, images {counts['images']}; other files (not read) {counts['other']}"
         )
         if pv.cloud and pv.cloud.get("blocked"):

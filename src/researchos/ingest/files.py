@@ -3,7 +3,7 @@
 yet) a git repository at all.
 
 `list_source_files(root)` returns the same category shape as its git
-sibling (tex/bib/image/py/md/r/rmd/data), built by walking the filesystem
+sibling (tex/bib/image/py/md/r/rmd/do/ado/data), built by walking the filesystem
 directly with stdlib `os.walk` (Occam rule 1: no third-party ignore-file
 parser) instead of `git ls-files`. Creates no graph nodes, exactly like the
 git version.
@@ -54,6 +54,8 @@ _CATEGORY_BY_SUFFIX: dict[str, str] = {
     ".md": "md",
     ".r": "r",
     ".rmd": "rmd",
+    ".do": "do",
+    ".ado": "ado",
 }
 
 
@@ -95,8 +97,8 @@ def iter_files(root: str | Path) -> Iterator[tuple[str, str | None]]:
 
 
 def list_source_files(root: str | Path) -> dict[str, list[str]]:
-    """Inventory .tex/.bib/image/.py/.md/.r/.rmd/data files under `root` by
-    walking the filesystem, grouped by category -- same shape as
+    """Inventory .tex/.bib/image/.py/.md/.r/.rmd/.do/.ado/data files under
+    `root` by walking the filesystem, grouped by category -- same shape as
     `researchos.ingest.git.list_source_files`, for a project root that has no git
     repository to ask instead. Creates no graph nodes.
 
@@ -105,7 +107,8 @@ def list_source_files(root: str | Path) -> dict[str, list[str]]:
     extractors (latex/pyfig/claims) can treat either inventory identically.
     """
     inventory: dict[str, list[str]] = {
-        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [], "data": [],
+        "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [],
+        "do": [], "ado": [], "data": [],
     }
     for rel, category in iter_files(root):
         if category is not None:

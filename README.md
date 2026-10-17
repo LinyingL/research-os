@@ -56,7 +56,7 @@ them or returning them with a reason.
 | Variable definitions | Keep versioned definitions, construction rules, implementation references, and the reasons for adopting a definition. |
 | Projects and literature | Switch between projects and connect draft citations to bibliography entries and a local Zotero library. |
 
-The engine reads existing Python and R scripts, Markdown and LaTeX drafts,
+The engine reads existing Python, R and Stata scripts, Markdown and LaTeX drafts,
 bibliographies, and optionally git history and MLflow/W&B run logs. A git
 repository and an AI assistant are **not required** for the core workflow.
 

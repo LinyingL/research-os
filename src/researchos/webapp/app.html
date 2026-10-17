@@ -3283,7 +3283,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 const FILE_TYPE_RULES = [
-  [/\.(py|r|rmd|jl|ipynb|sh)$/i, "脚本"],
+  [/\.(py|r|rmd|jl|ipynb|sh|do|ado)$/i, "脚本"],
   [/\.(csv|tsv|json|parquet|dta|rds|rda|pkl|feather|h5|hdf5)$/i, "数据集"],
   [/\.(png|jpe?g|pdf|svg|eps|gif|tiff?)$/i, "图表"],
   [/\.(md|txt|tex|bib|rst)$/i, "文本 / 文档"],
@@ -6123,7 +6123,7 @@ function folderChosen(request, path) {
 // preview's numbers are the engine's (the scan's own inventory); this only
 // words them.
 const ADD_GROUP_WORDS = [
-  ["scripts", "脚本（.py、.R、.Rmd）"],
+  ["scripts", "脚本（.py、.R、.Rmd、.do）"],
   ["data", "数据文件"],
   ["drafts", "文稿（.md、.tex、.bib）"],
   ["images", "图片"],
