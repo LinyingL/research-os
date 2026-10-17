@@ -52,9 +52,10 @@
   const DIFFS_AUTO = 5;
   const LINKS_SHOWN = 40;
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
-  const STATUS_WORDS = { pending: t("待确认"), confirmed: t("已确认"), rejected: t("已否决"), auto: t("机器提取") };
-  const JUDGE_WORDS = { confirmed: t("确认了"), rejected: t("否决了"), withdrawn: t("撤回了对它的判断"), undone: t("撤销了上一次判断") };
-  const FILTERS = [
+  // Words for the screen are looked up when drawn, never as this file loads (13.6).
+  const statusWords = () => ({ pending: t("待确认"), confirmed: t("已确认"), rejected: t("已否决"), auto: t("机器提取") });
+  const judgeWords = () => ({ confirmed: t("确认了"), rejected: t("否决了"), withdrawn: t("撤回了对它的判断"), undone: t("撤销了上一次判断") });
+  const filters = () => [
     ["all", t("全部")], ["orphans", t("无来源输入")], ["chains", t("血缘链")], ["broken", t("断链")], ["duplicates", t("同名拷贝")],
   ];
   // Monochrome line icons for file types (12.11: where they help recognition).
@@ -104,7 +105,7 @@
     if (link.human) return t("人工标注");
     if (link.conflict) return t("记录冲突，待处理");
     if (link.review) return t("待复核");
-    return STATUS_WORDS[link.status] || t("机器提取");
+    return statusWords()[link.status] || t("机器提取");
   }
 
   // The judgment actions a machine link offers -- the canvas's own rule
@@ -851,7 +852,7 @@
           main.appendChild(mk("div", "tl-meta", [e.m.by_label || "", t("人工标注")].filter(Boolean).join(" · ")));
           if (e.m.note) main.appendChild(mk("p", "tl-note", e.m.note));
         } else if (e.kind === "judgment") {
-          main.appendChild(mk("div", "tl-what", t("{action}这条关联：{link}", { action: JUDGE_WORDS[e.j.verdict] || t("判断了"), link: linkSentence(e.link) })));
+          main.appendChild(mk("div", "tl-what", t("{action}这条关联：{link}", { action: judgeWords()[e.j.verdict] || t("判断了"), link: linkSentence(e.link) })));
           if (e.j.at_label) main.appendChild(mk("div", "tl-meta", e.j.at_label));
           if (e.j.note) main.appendChild(mk("p", "tl-note", e.j.note));
         }
@@ -1389,7 +1390,11 @@
     main.appendChild(head);
     fileRelations(f).forEach((t) => main.appendChild(mk("div", "dc-rel", t)));
     (f.broken || []).forEach((b) => {
-      main.appendChild(mk("div", "dc-rel bad", t("断链：{script} {relation} {target}（文件不存在）", { script: b.script || "", relation: t(b.relation), target: b.target || "" })));
+      // 8.8's glossary: the brackets read 「（写出，文件不存在）」 or 「（读取，文件不存在）」, by the code (13.6).
+      const words = { script: b.script || "", relation: t(b.relation), target: b.target || "" };
+      main.appendChild(mk("div", "dc-rel bad", b.type === "writes"
+        ? t("断链：{script} {relation} {target}（写出，文件不存在）", words)
+        : t("断链：{script} {relation} {target}（读取，文件不存在）", words)));
     });
     if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", t("其它拷贝：{files}", { files: f.other_copies.join(t("、")) })));
     li.append(kind, main);
@@ -1425,7 +1430,7 @@
       shown.forEach((f) => list.appendChild(fileRow(f)));
       bar.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === dc.filter)));
     };
-    FILTERS.forEach(([key, text]) => {
+    filters().forEach(([key, text]) => {
       const n = key === "all" ? counts.all : counts[key];
       const b = mkButton(text + " " + (n || 0), "dc-filter", () => { dc.filter = key; draw(); });
       b.dataset.filter = key;

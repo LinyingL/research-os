@@ -928,7 +928,9 @@
     "被这些脚本读取：{files}": "Read by: {files}",
     "没有脚本读取或写出它": "No script reads or writes this file",
     "打开待复核的判断": "Open judgments needing review",
-    "断链：{script} {relation} {target}（文件不存在）": "Broken link: {script} {relation} {target} (file not found)",
+    // 8.8: the Chinese brackets name the relation again; the English says it once.
+    "断链：{script} {relation} {target}（写出，文件不存在）": "Broken link: {script} {relation} {target} (file not found)",
+    "断链：{script} {relation} {target}（读取，文件不存在）": "Broken link: {script} {relation} {target} (file not found)",
     "其它拷贝：{files}": "Other copies: {files}",
     "筛选": "Filter",
     "还没有扫描到脚本或数据文件。": "No scripts or datasets have been scanned yet.",

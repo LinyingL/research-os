@@ -40,6 +40,7 @@ function el(tag, cls, text) {
     set innerHTML(v) { this.kids = v ? ["<html>" + v.replace(/<[^>]+>/g, "")] : []; },
     appendChild(c) { if (c && typeof c === "object") c.parentNode = this; this.kids.push(c); return c; },
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
+    replaceChildren(...cs) { this.kids.forEach((k) => { if (k && typeof k === "object") k.parentNode = null; }); this.kids = []; this.append(...cs); },
     addEventListener(type, fn) { (this.on[type] = this.on[type] || []).push(fn); },
     setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
     focus() { global.focused = this; },
