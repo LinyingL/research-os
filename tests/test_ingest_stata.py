@@ -347,14 +347,15 @@ def test_default_extensions_into_the_index(tmp_path, conn, caplog):
         'insheet using "data/a"\noutsheet using "out/b"\ninfix using "data/c", using(data/d)\n'
     )
     with caplog.at_level("WARNING", logger="researchos.ingest"):
-        assert _scan(conn, root) == {"reads": 1, "writes": 2}
+        assert _scan(conn, root) == {"reads": 2, "writes": 2}
     assert sorted((e["type"], e["dst"]) for e in db.query_edges(conn)) == [
-        ("reads", "dataset:data/table.csv"), ("writes", "dataset:out/book.xlsx"), ("writes", "dataset:out/table.csv"),
+        ("reads", "dataset:data/sheet.xls"), ("reads", "dataset:data/table.csv"),
+        ("writes", "dataset:out/book.xlsx"), ("writes", "dataset:out/table.csv"),
     ]
-    # .raw, .out and .dct are not data files; nor, today, is .xls (git.DATA_EXTENSIONS)
+    # .raw, .out and .dct are not data files (git.DATA_EXTENSIONS); .xls is
     unknown = sorted(r.message.split(" resolves to ")[1].split(",")[0] for r in caplog.records
                      if "neither a tracked data nor image extension" in r.message)
-    assert unknown == ["'data/a.raw'", "'data/c.dct'", "'data/d.raw'", "'data/sheet.xls'", "'out/b.out'"]
+    assert unknown == ["'data/a.raw'", "'data/c.dct'", "'data/d.raw'", "'out/b.out'"]
     assert any("data/gone" in r.message and stata.NO_EXCEL in r.message for r in caplog.records)
 
 

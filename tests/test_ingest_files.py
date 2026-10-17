@@ -25,6 +25,7 @@ def test_categorizes_every_tracked_extension(tmp_path: Path):
     (tmp_path / "tools.ado").write_text("program define tools\nend\n")
     (tmp_path / "data1.csv").write_text("a,b\n1,2\n")
     (tmp_path / "data2.xlsx").write_bytes(b"PK\x03\x04")
+    (tmp_path / "data7.xls").write_bytes(b"\xd0\xcf\x11\xe0")
     (tmp_path / "data3.parquet").write_bytes(b"PAR1")
     (tmp_path / "data4.rds").write_bytes(b"\x1f\x8b")
     (tmp_path / "data5.dta").write_bytes(b"<stata_dta>")
@@ -43,7 +44,7 @@ def test_categorizes_every_tracked_extension(tmp_path: Path):
     assert inventory["do"] == ["clean.do"]
     assert inventory["ado"] == ["tools.ado"]
     assert sorted(inventory["data"]) == sorted(
-        ["data1.csv", "data2.xlsx", "data3.parquet", "data4.rds", "data5.dta", "data6.json"]
+        ["data1.csv", "data2.xlsx", "data3.parquet", "data4.rds", "data5.dta", "data6.json", "data7.xls"]
     )
     all_listed = [p for paths in inventory.values() for p in paths]
     assert "readme.txt" not in all_listed

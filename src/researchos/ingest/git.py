@@ -84,7 +84,7 @@ IMAGE_EXTENSIONS = frozenset(
 # alongside its code/paper -- shared with researchos.ingest.files (the non-git
 # filesystem-walk counterpart) so both inventories categorize identically,
 # one source of truth rather than two extension lists that could drift.
-DATA_EXTENSIONS = frozenset({".csv", ".xlsx", ".parquet", ".rds", ".dta", ".json"})
+DATA_EXTENSIONS = frozenset({".csv", ".xlsx", ".xls", ".parquet", ".rds", ".dta", ".json"})
 
 @dataclass(frozen=True)
 class GitCommit:
