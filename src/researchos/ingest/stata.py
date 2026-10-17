@@ -45,16 +45,46 @@ that uses it; it may fold from a global. A name a loop, `tempname`,
 name may also set never folds, nor does any local of a program with
 `syntax` or of a file part with `include`. An undefined macro is
 unresolved, never the empty string Stata would use. The assignments used
-are recorded (`StataCall.folded_from`). A relative path keeps today's rule
-(the project root, then the do-file's own folder: dataflow's
-`_resolve_target`); the working folder along a `do`/`run` chain is not
-followed yet.
+are recorded (`StataCall.folded_from`).
+
+**The working folder** (15.3; `_Project.scan`). A relative path is
+relative to Stata's working folder, which a run carries along:
+
+- `do`, `run` (`ru`) and `include` -- at a command's start, `.do` assumed
+  as the manual states -- run another project do-file in the same
+  working folder. A target is used only when it is literal or folded (the
+  macro rules above), and it resolves in the caller's working folder.
+- A **root** is a do-file no resolved run reaches (every do-file read as
+  if nobody ran it, and what its runs reach). A root keeps today's rule
+  for its own relative paths (the project root, then its own folder:
+  dataflow's `_resolve_target`); the do-files it runs start in its own
+  folder. A do-file reached by runs reads its relative paths in that one
+  working folder, made project-relative (`StataCall.working`), with no
+  fallback. One reached with two different working folders, or by a run
+  of its own runs (a cycle), has its relative paths skipped; one no run
+  from a root reaches keeps today's rule. Unresolved targets are never
+  matched by name.
+- A literal `cd` (`chdir`) changes the working folder from that command
+  on, and into the runs after it; a `cd` in a run holds in its caller
+  afterwards (Stata's working folder is global). Its folder is a confirmed
+  project folder, an absolute path inside the project, or a path relative
+  to the working folder -- in a root before any cd, the project folder or
+  its own, whichever exactly one existing folder answers. A bare `cd` (the
+  home folder on a Mac), one under `capture` or `else` or after an inline
+  `if`, one inside a block, one whose folder does not resolve or lies
+  outside the project, and a call to a project program whose body has a
+  `cd`, leave the working folder unknown: every relative path after it is
+  skipped (`WORKING_FOLDER`), carrying the global that headed the cd, when
+  one did, so it counts toward that global's proposal. A `cd` inside a
+  program's body holds in the body only. Absolute paths and paths built on
+  a confirmed folder are not affected.
 
 **Skipped and logged, never guessed** (each with a reason, `Skip.reason`,
 and the macro at fault, `Skip.macro`): tempfiles, names built in a loop,
 macros that are undefined, assigned more than once or not a literal, a
 path built on a global that lies outside the project (a root on someone's
-computer), `sysuse`/`webuse` (Stata's own example data), tables and logs
+computer), the relative paths whose working folder cannot be told (above),
+`sysuse`/`webuse` (Stata's own example data), tables and logs
 (`esttab`, `estout`, `outreg2`, `texsave`, `log using`: the outputs layer
 has no node for them yet), `save` with no file name (it writes to
 wherever the data last came from), a command whose words do not fit its
@@ -105,7 +135,9 @@ ANCHOR_SOURCE = f"{names.PROJECT_DIRNAME}/stata.toml"
 # diagrams of Stata's manual (read 2026-10-17 at stata.com/help.cgi?<cmd>
 # for use, save, merge, append, joinby, cross, import delimited, import
 # excel, insheet, outsheet, infile1, infile2, infix, graph export, capture,
-# quietly, by, version, program, do, delimit). A name whose diagram
+# quietly, by, version, program, do, delimit; and cd, do and include on
+# 2026-10-17 for the working folder: `ru` is run's minimum, cd, chdir (cd's
+# synonym), do and include underline nothing). A name whose diagram
 # underlines nothing has no abbreviation: it maps to itself only. User-
 # written commands (esttab, estout, outreg2, texsave) are matched in full.
 _MINIMUM = {
@@ -116,6 +148,8 @@ _MINIMUM = {
     "infix": "infix", "import": "import", "export": "export", "graph": "gr",
     "sysuse": "sysuse", "webuse": "webuse", "tempfile": "tempfile",
     "program": "pr", "log": "log", "if": "if", "mata": "mata", "python": "python",
+    # the working folder (help cd, help do, help include)
+    "cd": "cd", "chdir": "chdir", "do": "do", "run": "ru",
     "esttab": "esttab", "estout": "estout", "outreg2": "outreg2", "texsave": "texsave",
     # macros and loops (help macro, foreach, forvalues, args, gettoken,
     # syntax, include; c_local has no help page and no abbreviation)
@@ -149,6 +183,10 @@ _NAMES = _spellings(_MINIMUM)
 _SUBNAMES = {head: _spellings(table) for head, table in _SUBCOMMANDS.items()}
 
 _PREFIXES = frozenset({"capture", "quietly", "noisily"})
+#: `cd` and its synonym, which change the working folder (help cd).
+_CD = frozenset({"cd", "chdir"})
+#: The commands that run another do-file in the same working folder.
+RUNS = frozenset({"do", "run", "include"})
 _COLON_PREFIXES = frozenset({"by", "bysort", "version"})
 
 # canonical command -> (kind, where its file names are)
@@ -177,6 +215,10 @@ _FORMS = {
 }
 #: The commands whose file name gets `.dta` when it has no extension.
 DTA_DEFAULT = frozenset({"use", "save", "saveold", "merge", "append", "joinby", "cross"})
+#: A do-file named without an extension is `.do` for do, run and include
+#: ("If filename is specified without an extension, .do is assumed": help do,
+#: help include).
+_DO_DEFAULT = RUNS
 # Commands whose syntax lets `if`/`in` follow the file name.
 _QUALIFIED = frozenset({"export delimited", "export excel", "outsheet", "infile", "infix"})
 _OUTPUTS = frozenset({"esttab", "estout", "outreg2", "texsave", "log"})
@@ -197,6 +239,21 @@ WEB = "web address"
 ENCODING = "encoding"
 PROGRAM = "project program"
 UNCLOSED = "string not closed"
+# The working folder (15.3): a `cd` that cannot be followed -- bare (the home
+# folder on a Mac), under `capture` or an inline `if`, inside a block or a
+# program, or a call to a project program that changes it -- and what it
+# leaves unresolved.
+CD_NOT_FOLLOWED = "cd not followed"
+WORKING_FOLDER = "working folder unknown"  # a relative path after such a cd
+TWO_FOLDERS = "run from two working folders"  # a do-file reached from two
+CYCLE = "do-files run each other"
+NOT_RUN = "no such do-file in the project"  # a do/run/include target
+TOO_DEEP = "runs nested too deeply"
+#: How deep a chain of do-files running do-files is followed: far deeper than
+#: any package nests (the three acceptance packages nest two deep at most),
+#: and well inside Python's recursion limit; a deeper run is reported, not
+#: followed.
+RUN_DEPTH = 100
 
 _VENDORED_FOLDERS = (("ado", "plus"), ("ado", "personal"), ("libraries", "stata"))
 
@@ -227,6 +284,11 @@ class StataCall:
     # (global, project folder) when the path is built on a confirmed answer
     # (15.3): it is relative to the project folder.
     anchor: tuple[str, str] | None = None
+    # (working folder, the command that set it, with its file and line) when
+    # a relative path was made project-relative against a working folder that
+    # a `cd` or a `do`/`run`/`include` set (15.3): `literal` is then relative
+    # to the project folder.
+    working: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -238,6 +300,10 @@ class Skip:
     macro: str = ""  # the macro at fault, as `$name` or `` `name' ``
     rest: str = ""  # the path after that macro, when the macro heads it
     value: str = ""  # for OUTSIDE, that global's own value (the absolute path)
+    # For WORKING_FOLDER: the reason of the global heading the `cd` that could
+    # not be followed (UNDEFINED or OUTSIDE), `macro` naming it and `rest` the
+    # path after it -- a path built on that global through the working folder.
+    macro_reason: str = ""
 
 
 @dataclass
@@ -515,12 +581,18 @@ def _top_level_colon(text: str) -> int | None:
 def _strip_prefixes(text: str) -> str:
     """The command after its prefixes (module docstring) and after a
     leading `}` (`} else {`)."""
+    return _split_prefixes(text)[1]
+
+
+def _split_prefixes(text: str) -> tuple[tuple[str, ...], str]:
+    """(the prefixes, by their canonical names, the command after them)."""
     rest = text.strip()
+    found: list[str] = []
     while True:
         rest = rest.lstrip("}").lstrip()
         match = _WORD_RE.match(rest)
         if not match:
-            return rest
+            return tuple(found), rest
         name = _NAMES.get(match.group(0))
         after = rest[match.end():].lstrip()
         if name in _PREFIXES:
@@ -530,10 +602,11 @@ def _strip_prefixes(text: str) -> str:
         elif name in _COLON_PREFIXES:
             colon = _top_level_colon(after)
             if colon is None:
-                return rest
+                return tuple(found), rest
             rest = after[colon + 1:]
         else:
-            return rest
+            return tuple(found), rest
+        found.append(name)
 
 
 def _head(body: str) -> tuple[str, str, str]:
@@ -680,9 +753,11 @@ def _assignment(rest: str) -> tuple[str, str | None, bool] | None:
 
 def _default(command: str, path: str) -> str:
     """`path` with `.dta` when its name has no extension, for exactly the
-    `DTA_DEFAULT` commands."""
+    `DTA_DEFAULT` commands -- and `.do` for do, run and include."""
     base = path.rsplit("/", 1)[-1]
-    return path + ".dta" if command in DTA_DEFAULT and base and "." not in base else path
+    if not base or "." in base:
+        return path
+    return path + ".dta" if command in DTA_DEFAULT else path + ".do" if command in _DO_DEFAULT else path
 
 
 def _file_words(form: str, command: str, tokens: list[_Token]) -> tuple[list[_Token], str]:
@@ -745,6 +820,7 @@ class _Line:
     rest: str
     scope: str  # "" for the file itself, else the program it is in
     opens: bool  # it opens a { } block
+    depth: int = 0  # how many { } blocks it sits in
 
 
 class _File:
@@ -782,10 +858,11 @@ class _File:
         for cmd, body, written, name, rest in _blocks(cmds):
             text = cmd.text.rstrip()
             opens = text.endswith("{") and not text.endswith("${")
-            out.append(_Line(cmd, body, written, name, rest, scope, opens))
+            closes = len(cmd.text) - len(cmd.text.lstrip("}"))
+            out.append(_Line(cmd, body, written, name, rest, scope, opens, max(braces - closes, 0)))
             if cmd.unclosed:
                 continue
-            braces -= len(cmd.text) - len(cmd.text.lstrip("}"))
+            braces -= closes
             if braces < 0:
                 self._lost(f"line {cmd.line}: a }} closes no block")
                 braces = 0
@@ -833,6 +910,10 @@ class _Project:
         for f in self.files.values():
             self.programs |= f.programs
             self._collect(f)
+        # Project programs whose body changes the working folder: a call to
+        # one leaves it unknown (15.3).
+        self.cd_programs = {ln.scope for f in self.files.values() for ln in f.lines if ln.scope and ln.name in _CD}
+        self.dos = {rel for rel in self.files if not rel.lower().endswith(".ado")}
 
     # -- assignments -------------------------------------------------------------------
 
@@ -969,7 +1050,13 @@ class _Project:
         undefined = own.text is None and own.reason == UNDEFINED and own.macro == tag
         if not undefined and (own.text is None or not self._away(own.text)):
             return own
-        return _Value(folder, head=tag, rest="", chain=(f'global {name} "{folder}" ({ANCHOR_SOURCE})',),
+        # The folder stands in for the value, keeping the separator the value
+        # would have had: `${root}data/x` was proposed as data/x under the
+        # folder (an undefined global has no value to go by), and a root
+        # written with a trailing separator joins the same way; one without
+        # keeps `${out}_v2` a sibling (results_v2).
+        text = folder.rstrip("/") + "/" if undefined or (own.text or "").endswith("/") else folder
+        return _Value(text, head=tag, rest="", chain=(f'global {name} "{folder}" ({ANCHOR_SOURCE})',),
                       anchor=(name, folder))
 
     def _assigned(self, name: str) -> _Value:
@@ -1044,10 +1131,428 @@ class _Project:
             return None, why
         if v.chain and self._away(path):  # a root on someone's computer (15.3)
             heads = v.head.startswith("$") and v.rest is not None
-            own = self._memo(("$", v.head[1:]), lambda: self._global(v.head[1:])).text if heads else None
-            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if heads else "", own or "")
+            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if heads else "", self._own(v) if heads else "")
+        if v.anchor is not None and _sibling(v.anchor, path):
+            return None, (OUTSIDE, v.head, "", "")
         folded = "; ".join([raw, *dict.fromkeys(v.chain)]) if v.chain else None
         return StataCall(ln.cmd.line, ln.name, kind, path, folded, v.anchor), ()
+
+    def _own(self, v: _Value) -> str:
+        """The own value of the global heading `v`."""
+        return self._memo(("$", v.head[1:]), lambda: self._global(v.head[1:])).text or ""
+
+    def _place(self, f: _File, ln: _Line, raw: str) -> tuple:
+        """Where a cd's folder or a run's do-file as written lies:
+        ("fixed", project-relative path, anchor) -- built on a confirmed
+        folder, or absolute inside the project -- ("rel", path), relative to
+        the working folder, or ("bad", reason, macro, rest, value)."""
+        path, v, why = self._word(f, ln, raw, ln.name)
+        if path is None:
+            return ("bad", *why[:3], "")
+        heads = v.head.startswith("$") and v.rest is not None
+        if v.anchor is not None:
+            rel = posixpath.normpath(path)
+            if _sibling(v.anchor, path) or rel == ".." or rel.startswith("../"):
+                return ("bad", OUTSIDE, v.head, "", "")
+            return ("fixed", rel, v.anchor)
+        windows = bool(_WINDOWS_ABSOLUTE_RE.match(path))
+        if windows or posixpath.isabs(path):
+            inside = None if windows or self.root is None else _inside(self.root, path)
+            if inside is None:
+                return ("bad", OUTSIDE, v.head if heads else "", v.rest.lstrip("/") if heads else "",
+                        self._own(v) if heads else "")
+            return ("fixed", inside, None)
+        return ("rel", path)
+
+    # -- one do-file's commands, in order (15.2) ---------------------------------------
+
+    def _items(self, rel_path: str) -> tuple[list, bool]:
+        """The do-file's commands that matter to lineage, in order, and
+        whether it was parsed: a call or a skip that holds wherever the file
+        runs (`_Final`), a relative path whose place depends on the working
+        folder (`_Relative`), a `cd`, a run of another do-file (`_Run`), and
+        a point after which the working folder is unknown (`_Lost`). Every
+        skip found here is logged here, once."""
+        f = self.files[rel_path]
+        items: list = []
+        parsed = f.parsed
+        scope = ""
+
+        def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "",
+                 value: str = "") -> None:
+            items.append(_Final(_skip(rel_path, Skip(line, command, reason, raw, macro, rest, value))))
+
+        for ln in f.lines:
+            cmd, written, name, rest = ln.cmd, ln.written, ln.name, ln.rest
+            if ln.scope != scope:  # a program's body runs when it is called, not where it is written
+                scope = ln.scope
+                items.append(_Scope(scope))
+            if cmd.unclosed:
+                skip(cmd.line, written or "?", UNCLOSED, cmd.text)
+                parsed = False
+                continue
+            if written and written.split()[0] in self.cd_programs and written.split()[0] in self.programs:
+                skip(cmd.line, written.split()[0], CD_NOT_FOLLOWED, cmd.text)  # a project program that cds
+                items.append(_Lost(cmd.line))
+                continue
+            if not name:
+                continue
+            if written.split()[0] in self.programs and (name in _FORMS or name in _OUTPUTS or name in _CD
+                                                        or name in RUNS):
+                skip(cmd.line, written, PROGRAM)
+                continue
+            if name == "if" and not cmd.text.rstrip().endswith("{"):
+                hit = next((t.text for t in _tokens(rest) or [] if t.bare and (
+                    _NAMES.get(t.text) in _FORMS or _NAMES.get(t.text) in ("import", "export", "graph")
+                    or t.text in _OUTPUTS or _NAMES.get(t.text) in _CD or _NAMES.get(t.text) in RUNS)), None)
+                if hit:
+                    skip(cmd.line, hit, INLINE_IF, cmd.text)
+                    if _NAMES.get(hit) in _CD:
+                        items.append(_Lost(cmd.line))
+                continue
+            if name in _CD:
+                items.extend(self._cd_items(f, ln, skip))
+                continue
+            if name in RUNS:
+                items.extend(self._run_items(f, ln, skip))
+                continue
+            if name in ("sysuse", "webuse"):
+                skip(cmd.line, name, BUILTIN_DATA, rest.strip())
+                continue
+            if name in _OUTPUTS:
+                tokens = _tokens(rest) or []
+                if any(t.bare and t.text == "using" for t in tokens):
+                    skip(cmd.line, f"{name} using" if name == "log" else name, OUTPUTS, rest.strip())
+                continue
+            if name not in _FORMS:
+                continue
+            kind, form = _FORMS[name]
+            tokens = _tokens(rest)
+            if tokens is None:
+                skip(cmd.line, name, UNCLOSED, rest.strip())
+                parsed = False
+                continue
+            words, reason = _file_words(form, name, tokens)
+            if reason:
+                skip(cmd.line, name, reason, rest.strip())
+                continue
+            for word in words:
+                call, why = self.call(f, ln, kind, word.text)
+                if call is None:
+                    skip(cmd.line, name, why[0], word.text, *why[1:])
+                elif call.anchor is None and not posixpath.isabs(call.literal) \
+                        and not _WINDOWS_ABSOLUTE_RE.match(call.literal):
+                    items.append(_Relative(call, word.text))
+                else:
+                    items.append(_Final(call))
+        return items, parsed
+
+    def _cd_items(self, f: _File, ln: _Line, skip) -> list:
+        """A `cd`: the folder it changes to, or the point after which the
+        working folder is unknown (module docstring)."""
+        prefixes, _body = _split_prefixes(ln.cmd.text)
+        tokens = _tokens(ln.rest)
+        line, text = ln.cmd.line, ln.cmd.text
+        if tokens is None:
+            skip(line, ln.name, UNCLOSED, ln.rest.strip())
+            return [_Lost(line)]
+        conditional = "capture" in prefixes or "else" in prefixes or any(p in _COLON_PREFIXES for p in prefixes)
+        if conditional or ln.depth or ln.scope or len(tokens) != 1:
+            skip(line, ln.name, CD_NOT_FOLLOWED, text)  # under capture, in a block or a program, bare (home)
+            return [_Lost(line)]
+        where = self._place(f, ln, tokens[0].text)
+        if where[0] == "bad":
+            _kind, reason, macro, rest, value = where
+            skip(line, ln.name, reason, tokens[0].text, macro)
+            if macro.startswith("$") and reason in (UNDEFINED, OUTSIDE):
+                return [_Lost(line, macro, rest, value, reason)]
+            return [_Lost(line)]
+        return [_Cd(line, text, where)]
+
+    def _run_items(self, f: _File, ln: _Line, skip) -> list:
+        """A `do`, `run` or `include`: the do-file it runs, as written."""
+        tokens = _tokens(ln.rest)
+        line = ln.cmd.line
+        if tokens is None:
+            skip(line, ln.name, UNCLOSED, ln.rest.strip())
+            return []
+        if not tokens:
+            skip(line, ln.name, NO_FILE, ln.rest.strip())
+            return []
+        if ln.name == "include" and len(tokens) > 1:  # do and run take arguments; include does not
+            skip(line, ln.name, SHAPE, ln.rest.strip())
+            return []
+        raw = tokens[0].text
+        where = self._place(f, ln, raw)
+        if where[0] == "bad":
+            skip(line, ln.name, where[1], raw, where[2])
+            return []
+        prefixes, _body = _split_prefixes(ln.cmd.text)
+        nested = bool(ln.depth or ln.scope or "capture" in prefixes or "else" in prefixes)
+        return [_Run(line, ln.name, ln.cmd.text, raw, where, nested)]
+
+    # -- the working folder along a run (15.3) ------------------------------------------
+
+    def _cd(self, item: _Cd, wf: _Wf, rel_path: str) -> tuple[_Wf, Skip | None]:
+        """The working folder after `item` from `wf`, and the skip when the
+        cd cannot be followed."""
+        set_by = f"{item.text} ({rel_path}:{item.line})"
+        kind = item.target[0]
+        if kind == "fixed":
+            return _Wf(KNOWN, item.target[1], set_by, item.target[2]), None
+        path = item.target[1]
+        if wf.kind == UNKNOWN:
+            if wf.macro:  # still built on that global: follow its rest
+                return replace(wf, rest=posixpath.normpath(posixpath.join(wf.rest, path))), None
+            return wf, None
+        if wf.kind == KNOWN:
+            new = _join(wf.folder, path)
+            if new is None:
+                return _Wf(UNKNOWN, reason=WORKING_FOLDER), Skip(item.line, "cd", OUTSIDE, path)
+            return _Wf(KNOWN, new, set_by, wf.anchor), None
+        # A do-file nobody runs: the project folder or its own, whichever
+        # exactly one existing folder answers.
+        found = {c for c in (_join(".", path), _join(wf.folder, path)) if c is not None
+                 and self.root is not None and (self.root / c).is_dir()}
+        if len(found) == 1:
+            return _Wf(KNOWN, found.pop(), set_by), None
+        return _Wf(UNKNOWN, reason=WORKING_FOLDER), Skip(item.line, "cd", CD_NOT_FOLLOWED, path)
+
+    def _target(self, item: _Run, wf: _Wf, rel_path: str) -> tuple[str | None, Skip | None]:
+        """The project do-file `item` runs from `wf`, or (None, why)."""
+        if item.target[0] == "fixed":
+            path = item.target[1]
+        elif wf.kind == UNKNOWN:
+            return None, Skip(item.line, item.command, wf.reason, item.raw)
+        else:
+            path = _join(wf.folder, item.target[1])
+            if path is None:
+                return None, Skip(item.line, item.command, OUTSIDE, item.raw)
+        if path in self.dos:
+            return path, None
+        if path in self.files:  # a project .ado: its programs are read already
+            return None, None
+        return None, Skip(item.line, item.command, NOT_RUN, item.raw)
+
+    def _walk(self, rel_path: str, entry: _Wf, *, depth: int, stack: tuple[str, ...], memo: dict,
+              record=None, cycles: set[str] | None = None, out: list | None = None) -> _Wf | None:
+        """Read `rel_path` from the working folder `entry`: its working
+        folder at the end, None when it never changes it. `record(caller,
+        item, callee, context)` hears every do-file a run reaches; `out`
+        collects the file's calls and skips, the ones depending on the
+        working folder logged here."""
+        wf, changed = entry, False
+        outside = (wf, changed)
+        for item in self.items[rel_path]:
+            if isinstance(item, _Scope):  # a cd in a program's body holds in the body only
+                if item.name:
+                    outside = (wf, changed)
+                else:
+                    wf, changed = outside
+            elif isinstance(item, _Final):
+                if out is not None:
+                    out.append(item.thing)
+            elif isinstance(item, _Relative):
+                if out is not None:
+                    out.append(self._relative(item, wf, rel_path))
+            elif isinstance(item, _Lost):
+                wf = _Wf(UNKNOWN, reason=WORKING_FOLDER, macro=item.macro, rest=item.rest, value=item.value,
+                         macro_reason=item.macro_reason)
+                changed = True
+            elif isinstance(item, _Cd):
+                wf, why = self._cd(item, wf, rel_path)
+                changed = True
+                if why is not None and out is not None:
+                    out.append(_skip(rel_path, why))
+            elif isinstance(item, _Run):
+                callee, why = self._target(item, wf, rel_path)
+                if callee is None:
+                    if why is not None and out is not None:
+                        _skip(rel_path, why)  # logged; a run is not a link (15.2), no path of the file is lost
+                    continue
+                if wf.kind == UNKNOWN:
+                    context = wf
+                else:
+                    carried = f"{wf.set_by}; " if wf.kind == KNOWN and wf.set_by else ""
+                    context = _Wf(KNOWN, wf.folder, f"{carried}{item.text} ({rel_path}:{item.line})", wf.anchor)
+                if record is not None:
+                    record(rel_path, item, callee, context)
+                if callee == rel_path or callee in stack:
+                    if cycles is not None:
+                        cycles.update((*stack[stack.index(callee):], rel_path) if callee in stack else (rel_path,))
+                    final: _Wf | None = _Wf(UNKNOWN, reason=CYCLE)
+                elif depth + 1 >= RUN_DEPTH:
+                    if out is not None:
+                        _skip(rel_path, Skip(item.line, item.command, TOO_DEEP, item.raw))  # logged, as above
+                    final = _Wf(UNKNOWN, reason=WORKING_FOLDER)
+                else:
+                    key = (callee, context.key)
+                    if key not in memo:
+                        memo[key] = self._walk(callee, context, depth=depth + 1, stack=(*stack, rel_path), memo=memo,
+                                               record=record, cycles=cycles)
+                    final = memo[key]
+                if final is not None:  # Stata's working folder is global: a callee's cd holds after it
+                    wf = _Wf(UNKNOWN, reason=WORKING_FOLDER) if item.nested else final
+                    changed = True
+        return wf if changed else None
+
+    def _relative(self, item: _Relative, wf: _Wf, rel_path: str) -> StataCall | Skip:
+        """A relative path in the working folder `wf`."""
+        call = item.call
+        if wf.kind == RULE:
+            return call  # today's rule: the project folder, then the do-file's own (dataflow)
+        if wf.kind == KNOWN:
+            joined = _join(wf.folder, call.literal)
+            if joined is None:
+                return _skip(rel_path, Skip(call.line, call.command, OUTSIDE, item.raw))
+            return replace(call, literal=joined, working=(wf.folder, wf.set_by), anchor=wf.anchor)
+        rest = posixpath.normpath(posixpath.join(wf.rest, call.literal)) if wf.macro else ""
+        return _skip(rel_path, Skip(call.line, call.command, wf.reason, item.raw, wf.macro, rest, wf.value,
+                                    wf.macro_reason))
+
+    def scan(self) -> dict[str, DoScan]:
+        """Every do-file's calls and skips, each read from the working folder
+        its runs give it (module docstring)."""
+        self.items, parsed = {}, {}
+        for rel in sorted(self.dos):
+            self.items[rel], parsed[rel] = self._items(rel)
+
+        def rule(rel: str) -> _Wf:
+            return _Wf(RULE, posixpath.dirname(rel) or ".")
+
+        # Every do-file as if nobody ran it: what its runs reach. A root is a
+        # do-file none of them reaches.
+        targeted: set[str] = set()
+        loops: set[str] = set()
+        memo: dict = {}
+        for rel in sorted(self.dos):
+            self._walk(rel, rule(rel), depth=0, stack=(), memo=memo, cycles=loops,
+                       record=lambda _caller, _item, callee, _ctx: targeted.add(callee))
+        roots = sorted(self.dos - targeted)
+        # The runs that start from the roots: the working folder each do-file
+        # is reached with.
+        reached: dict[str, list[tuple[str, int, _Wf]]] = {}
+        cycles: set[str] = set()
+        memo = {}
+        for rel in roots:
+            self._walk(rel, rule(rel), depth=0, stack=(), memo=memo, cycles=cycles,
+                       record=lambda caller, item, callee, ctx: reached.setdefault(callee, []).append(
+                           (caller, item.line, ctx)))
+        entries: dict[str, _Wf] = {}
+        for rel in sorted(self.dos):
+            contexts = sorted(reached.get(rel, ()), key=lambda c: (c[0], c[1]))
+            keys = list(dict.fromkeys(c[2].key for c in contexts))
+            if rel in cycles or (not contexts and rel not in roots and rel in loops):
+                entries[rel] = _Wf(UNKNOWN, reason=CYCLE)
+                logger.warning("%s: run by a do-file it runs itself; its relative paths are skipped, not guessing", rel)
+            elif len(keys) > 1:
+                entries[rel] = _Wf(UNKNOWN, reason=TWO_FOLDERS)
+                logger.warning("%s: run from %d working folders (%s); its relative paths are skipped, not guessing",
+                               rel, len(keys), "; ".join(f"{c}:{line}" for c, line, _ctx in contexts))
+            elif contexts:
+                entries[rel] = contexts[0][2]
+            else:  # a root, or reached by no run that starts anywhere: today's rule
+                entries[rel] = rule(rel)
+        out: dict[str, DoScan] = {}
+        memo = {}
+        for rel in self.files:
+            if rel not in self.dos:
+                continue
+            things: list = []
+            self._walk(rel, entries[rel], depth=0, stack=(), memo=memo, out=things)
+            out[rel] = DoScan(parsed=parsed[rel], calls=[t for t in things if isinstance(t, StataCall)],
+                              skipped=[t for t in things if isinstance(t, Skip)])
+        return out
+
+
+RULE, KNOWN, UNKNOWN = "rule", "known", "unknown"
+
+
+@dataclass(frozen=True)
+class _Wf:
+    """A working folder (15.3). RULE: a do-file nobody runs, before any
+    cd -- its relative paths keep today's rule, the do-files it runs start
+    in `folder`, its own. KNOWN: `folder` (project-relative, "." the
+    project folder), set by `set_by`, built on `anchor` when a confirmed
+    answer gave it. UNKNOWN: `reason`; when a cd headed by a global left it
+    unknown, that global (`macro`, with its own `macro_reason` and `value`)
+    and the path after it (`rest`)."""
+
+    kind: str
+    folder: str = ""
+    set_by: str = ""
+    anchor: tuple[str, str] | None = None
+    reason: str = ""
+    macro: str = ""
+    rest: str = ""
+    value: str = ""
+    macro_reason: str = ""
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        return (self.kind, self.folder) if self.kind == KNOWN else (self.kind,)
+
+
+@dataclass(frozen=True)
+class _Final:
+    thing: StataCall | Skip
+
+
+@dataclass(frozen=True)
+class _Scope:
+    name: str  # the program whose body starts here; "" where the file itself resumes
+
+
+@dataclass(frozen=True)
+class _Relative:
+    call: StataCall
+    raw: str
+
+
+@dataclass(frozen=True)
+class _Lost:
+    line: int
+    macro: str = ""
+    rest: str = ""
+    value: str = ""
+    macro_reason: str = ""
+
+
+@dataclass(frozen=True)
+class _Cd:
+    line: int
+    text: str
+    target: tuple
+
+
+@dataclass(frozen=True)
+class _Run:
+    line: int
+    command: str
+    text: str
+    raw: str
+    target: tuple
+    nested: bool  # in a block or a program, or under capture: it may not run to its end
+
+
+def _join(folder: str, path: str) -> str | None:
+    """`path` relative to the project folder from `folder`; None when it
+    leaves the project."""
+    joined = posixpath.normpath(posixpath.join(folder, path))
+    return None if joined == ".." or joined.startswith("../") or joined.startswith("/") else joined
+
+
+def _sibling(anchor: tuple[str, str], path: str) -> bool:
+    """A path built on the project folder itself (".") that names a sibling
+    of the project: the global's value had no trailing separator and the
+    rest does not start with one (`${out}_v2`)."""
+    return anchor[1] == "." and path != "." and not path.startswith("./")
+
+
+def _skip(rel_path: str, s: Skip) -> Skip:
+    why = f"{s.reason}: {s.macro}" if s.macro else s.reason
+    logger.warning("%s:%d: %s %r: skipped (%s), not guessing", rel_path, s.line, s.command, s.text, why)
+    return s
 
 
 def scan_project(
@@ -1057,76 +1562,16 @@ def scan_project(
     """The read/write commands of a project's do-files (the keys of `texts`
     not ending in .ado), read together with its .ado files for macros and
     program names (module docstring). `root` tells which absolute paths
-    lie inside the project; without it (None) none is known to, and no
-    anchor is used. `anchors`: global -> confirmed project folder."""
-    project = _Project(root, texts, programs, anchors)
-    return {rel: _scan(project, rel) for rel in texts if not rel.lower().endswith(".ado")}
+    lie inside the project and which folders exist; without it (None) none
+    is known to, and no anchor is used. `anchors`: global -> confirmed
+    project folder."""
+    return _Project(root, texts, programs, anchors).scan()
 
 
 def scan_text(text: str, rel_path: str, *, programs: frozenset[str] | set[str] = frozenset()) -> DoScan:
     """One do-file read as a project of its own (`scan_project` without a
     file system): its own macros only."""
     return scan_project(None, {rel_path: text}, programs=programs)[rel_path]
-
-
-def _scan(project: _Project, rel_path: str) -> DoScan:
-    """The read/write commands of one do-file of `project` (module
-    docstring); every skip is logged with its reason and listed in
-    `DoScan.skipped`."""
-    f = project.files[rel_path]
-    scan = DoScan(parsed=f.parsed)
-
-    def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "",
-             value: str = "") -> None:
-        scan.skipped.append(Skip(line, command, reason, raw, macro, rest, value))
-        why = f"{reason}: {macro}" if macro else reason
-        logger.warning("%s:%d: %s %r: skipped (%s), not guessing", rel_path, line, command, raw, why)
-
-    for ln in f.lines:
-        cmd, written, name, rest = ln.cmd, ln.written, ln.name, ln.rest
-        if cmd.unclosed:
-            skip(cmd.line, written or "?", UNCLOSED, cmd.text)
-            scan.parsed = False
-            continue
-        if not name:
-            continue
-        if written.split()[0] in project.programs and (name in _FORMS or name in _OUTPUTS):
-            skip(cmd.line, written, PROGRAM)
-            continue
-        if name == "if" and not cmd.text.rstrip().endswith("{"):
-            hit = next((t.text for t in _tokens(rest) or [] if t.bare and (
-                _NAMES.get(t.text) in _FORMS or _NAMES.get(t.text) in ("import", "export", "graph")
-                or t.text in _OUTPUTS)), None)
-            if hit:
-                skip(cmd.line, hit, INLINE_IF, cmd.text)
-            continue
-        if name in ("sysuse", "webuse"):
-            skip(cmd.line, name, BUILTIN_DATA, rest.strip())
-            continue
-        if name in _OUTPUTS:
-            tokens = _tokens(rest) or []
-            if any(t.bare and t.text == "using" for t in tokens):
-                skip(cmd.line, f"{name} using" if name == "log" else name, OUTPUTS, rest.strip())
-            continue
-        if name not in _FORMS:
-            continue
-        kind, form = _FORMS[name]
-        tokens = _tokens(rest)
-        if tokens is None:
-            skip(cmd.line, name, UNCLOSED, rest.strip())
-            scan.parsed = False
-            continue
-        words, reason = _file_words(form, name, tokens)
-        if reason:
-            skip(cmd.line, name, reason, rest.strip())
-            continue
-        for word in words:
-            call, why = project.call(f, ln, kind, word.text)
-            if call is None:
-                skip(cmd.line, name, why[0], word.text, *why[1:])
-            else:
-                scan.calls.append(call)
-    return scan
 
 
 def vendored(repo_root: str | Path, rel_path: str) -> str | None:

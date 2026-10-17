@@ -57,7 +57,8 @@ from researchos.ingest import stata as stata_ingest
 #: not resolve. Command-level skips (a tempfile, an inline if, a table for
 #: the outputs layer) are not unresolved paths.
 UNRESOLVED_REASONS = (stata_ingest.UNDEFINED, stata_ingest.OUTSIDE, stata_ingest.REASSIGNED, stata_ingest.MACRO,
-                      stata_ingest.LOOP)
+                      stata_ingest.LOOP, stata_ingest.CD_NOT_FOLLOWED, stata_ingest.WORKING_FOLDER,
+                      stata_ingest.TWO_FOLDERS, stata_ingest.CYCLE)
 _HEAD_REASONS = frozenset({stata_ingest.UNDEFINED, stata_ingest.OUTSIDE})
 _DRIVE_RE = re.compile(r"^(?:[A-Za-z]:|//[^/]*)")
 
@@ -86,13 +87,16 @@ class Proposal:
 
 def head_globals(scans: Mapping[str, stata_ingest.DoScan | None]) -> dict[str, HeadGlobal]:
     """Every global that heads a path a do-file could not resolve because
-    the global itself is undefined or outside the project."""
+    the global itself is undefined or outside the project -- written out
+    (`"$root/data/x"`) or through the working folder (`cd "$root"`, then
+    `"data/x"`)."""
     found: dict[str, dict] = {}
     for scan in scans.values():
         for s in (scan.skipped if scan is not None else ()):
-            if s.reason not in _HEAD_REASONS or not s.macro.startswith("$") or not s.rest:
+            reason = s.macro_reason or s.reason
+            if reason not in _HEAD_REASONS or not s.macro.startswith("$") or not s.rest:
                 continue
-            g = found.setdefault(s.macro[1:], {"reason": s.reason, "value": s.value, "paths": set(), "uses": 0})
+            g = found.setdefault(s.macro[1:], {"reason": reason, "value": s.value, "paths": set(), "uses": 0})
             g["paths"].add(s.rest)
             g["uses"] += 1
     return {name: HeadGlobal(name, g["reason"], g["value"], tuple(sorted(g["paths"])), g["uses"])

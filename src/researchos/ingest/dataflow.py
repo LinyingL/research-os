@@ -133,7 +133,10 @@ does not exist on disk, `"remapped_from_absolute": true` when the
 literal was an absolute path remapped under the project root (above), and
 `"anchor": {"global", "folder"}` when a Stata path was built on a global
 whose project folder a person confirmed (15.3; resolved against the
-project folder only). `extractor="dataflow"`, `confidence=1.0`,
+project folder only), and `"working_folder": {"folder", "set_by"}` when a
+relative Stata path was read in the working folder a literal `cd` or a
+`do`/`run`/`include` chain set (15.3; also resolved against the project
+folder only, `set_by` naming the commands, files and lines). `extractor="dataflow"`, `confidence=1.0`,
 `status="auto"` (machine-owned, per `db.upsert_edge`). Idempotent via `db.upsert_node`/`db.upsert_edge`.
 """
 
@@ -179,6 +182,10 @@ class DataflowCall:
     # Stata (15.3): (global, project folder) when the path is built on a
     # confirmed answer; the path is then relative to the project folder.
     anchor: tuple[str, str] | None = None
+    # Stata (15.3): (working folder, the command that set it) when a relative
+    # path was made project-relative against the working folder a `cd` or a
+    # `do`/`run`/`include` set; the path is then relative to the project folder.
+    working: tuple[str, str] | None = None
 
     @property
     def bare_name(self) -> str:
@@ -994,7 +1001,7 @@ def _do_outcome(do_rel_path: str, found: stata_ingest.DoScan) -> ParseOutcome:
     """A do-file's calls, each named by its canonical command -- its callee
     and its basis (`graph export`, never the `gr export` it was spelled)."""
     calls = [
-        DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, c.folded_from, c.command, c.anchor)
+        DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, c.folded_from, c.command, c.anchor, c.working)
         for c in found.calls
     ]
     return ParseOutcome(scan_mod.READ_AND_PARSED if found.parsed else scan_mod.UNPARSEABLE, calls)
@@ -1148,8 +1155,14 @@ def _resolve_target(
     at all (an absolute path outside the project root, or a `..` escape) --
     there is then no repo-relative path to report even as "missing". A
     Windows drive or network path is never remapped (15.3). An `anchored`
-    path (built on a project folder a person confirmed, 15.3) is relative
-    to the project folder only."""
+    path is relative to the project folder only: a Stata path built on a
+    project folder a person confirmed, or a relative Stata path already
+    made project-relative against the working folder of its run -- a
+    literal `cd`, or the folder of the do-file that started a `do`/`run`/
+    `include` chain (15.3). For those there is no fallback to the script's
+    own folder: in a do-file that another runs, that fallback is what
+    invents nodes. Only a do-file nobody runs, before any `cd`, keeps the
+    root-then-own-folder rule above."""
     if is_windows_absolute(literal):
         return None
     remapped_from_absolute = False
@@ -1298,7 +1311,9 @@ def _ingest_call(
     conn: Connection, repo_root: Path, call: DataflowCall, status: str, sc: scan_mod.Scan,
 ) -> str:
     """Write one call's link; returns its edge type, or "" when skipped."""
-    resolved = _resolve_target(call.script_path, call.literal, repo_root, anchored=call.anchor is not None)
+    resolved = _resolve_target(
+        call.script_path, call.literal, repo_root, anchored=call.anchor is not None or call.working is not None,
+    )
     if resolved is None:
         logger.warning(
             "%s:%d: %s(%r) cannot be safely mapped into the repo (absolute path, "
@@ -1330,6 +1345,8 @@ def _ingest_call(
         evidence["remapped_from_absolute"] = True
     if call.anchor is not None:  # the confirmed answer the path was built on (15.3)
         evidence["anchor"] = {"global": call.anchor[0], "folder": call.anchor[1]}
+    if call.working is not None:  # the working folder the relative path was read in (15.3)
+        evidence["working_folder"] = {"folder": call.working[0], "set_by": call.working[1]}
     db.upsert_node(conn, script_id, "script", title=call.script_path)
     db.upsert_node(conn, target_id, node_type, title=target_path)
     mark: dict[str, Any] = {}

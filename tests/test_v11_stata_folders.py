@@ -263,3 +263,84 @@ def test_an_answer_replaces_an_absolute_root_and_a_no_leaves_it_unresolved(tmp_p
     assert not conn.execute("SELECT 1 FROM nodes WHERE id LIKE '%C:%'").fetchall()
     # a project folder inside a path names nothing: never resolved
     assert [s.reason for s in _scans(root)["Package/dofiles/clean.do"].skipped] == [stata.MACRO]
+
+
+# -- a confirmed folder keeps the separator its global's value had (15.3) ---------------------------
+
+
+def _answered(tmp_path, name: str, files: dict[str, str], answers: dict[str, str]) -> tuple[Path, list]:
+    people.write_me(*PI)
+    root = _files(tmp_path / name, files)
+    project_identity.init_project(root)
+    for global_name, folder in answers.items():
+        stata_record.answer(root, global_name, folder, via="app")
+    conn = db.connect(":memory:")
+    db.migrate(conn)
+    _ingest(conn, root)
+    edges = sorted((e["type"], e["dst"]) for e in db.query_edges(conn) if e["extractor"] == "dataflow")
+    nodes = [r[0] for r in conn.execute("SELECT id FROM nodes")]
+    conn.close()
+    return root, edges, nodes
+
+
+def test_an_undefined_root_pasted_onto_its_rest_resolves_under_the_folder(tmp_path):
+    """`${root}data/panel` with the root left for each user to set (its
+    commented value ends in a slash): proposed as analysis/ from data/...
+    under it, and after 「是」 the paths join with a separator --
+    analysis/data/panel.dta, never analysisdata/panel.dta."""
+    files = {
+        "analysis/code/master.do": ('* global root "C:/Users/me/s5/analysis/"\n'
+                                    'use "${root}data/panel"\nimport delimited "${root}data/raw.csv"\n'
+                                    'save "${root}data/clean"\n'),
+        "analysis/data/panel.dta": "x", "analysis/data/raw.csv": "a\n",
+    }
+    root = _files(tmp_path / "s5", dict(files))
+    heads = stata_folders.head_globals(_scans(root))
+    assert stata_folders.propose(root, heads)["root"].folder == "analysis"
+    _root, edges, nodes = _answered(tmp_path, "s5b", files, {"root": "analysis"})
+    assert edges == [("reads", "dataset:analysis/data/panel.dta"), ("reads", "dataset:analysis/data/raw.csv"),
+                     ("writes", "dataset:analysis/data/clean.dta")]
+    assert not [n for n in nodes if "analysisdata" in n]
+
+
+def test_an_absolute_root_with_a_trailing_backslash_joins_with_a_separator(tmp_path):
+    files = {
+        "pkg/code/x.do": 'global proj "C:\\Users\\me\\s6\\pkg\\"\nuse "${proj}data\\a.dta"\nuse "${proj}data\\b"\n',
+        "pkg/data/a.dta": "x", "pkg/data/b.dta": "x",
+    }
+    root = _files(tmp_path / "s6", dict(files))
+    proposal = stata_folders.propose(root, stata_folders.head_globals(_scans(root)))["proj"]
+    assert (proposal.folder, proposal.found) == ("pkg", 2)
+    _root, edges, nodes = _answered(tmp_path, "s6", {}, {"proj": "pkg"})
+    assert edges == [("reads", "dataset:pkg/data/a.dta"), ("reads", "dataset:pkg/data/b.dta")]
+    assert not [n for n in nodes if "pkgdata" in n]
+
+
+def test_the_project_folder_itself_joins_and_never_names_a_sibling(tmp_path):
+    """Folder "." (the project folder itself): `${root}data/p` is data/p.dta;
+    `${out}_v2/t`, whose global's value had no trailing separator, would
+    name a sibling of the project -- unresolved, never `._v2`."""
+    files = {"code/x.do": ('use "${root}data/p"\nglobal out "C:/Users/me/proj"\nuse "${out}/data/q"\n'
+                           'use "${out}_v2/t"\n'),
+             "data/p.dta": "x", "data/q.dta": "x"}
+    root, edges, nodes = _answered(tmp_path, "proj", files, {"root": ".", "out": "."})
+    assert edges == [("reads", "dataset:data/p.dta"), ("reads", "dataset:data/q.dta")]
+    assert not [n for n in nodes if "_v2" in n]
+    assert [(s.line, s.reason) for s in _scans(root)["code/x.do"].skipped] == [(4, stata.OUTSIDE)]
+
+
+def test_a_root_without_a_trailing_separator_still_names_its_sibling_folder(tmp_path):
+    """Regression guard: `global out "C:/.../pkg/results"` with
+    `${out}_v2/t` is pkg/results_v2/t.dta once out = pkg/results."""
+    files = {"pkg/code/x.do": 'global out "C:/Users/me/pkg/results"\nsave "${out}_v2/t"\nsave "${out}/u"\n',
+             "pkg/results/keep.txt": "", "pkg/results_v2/t.dta": "x"}
+    _root, edges, _nodes = _answered(tmp_path, "r", files, {"out": "pkg/results"})
+    assert edges == [("writes", "dataset:pkg/results/u.dta"), ("writes", "dataset:pkg/results_v2/t.dta")]
+
+
+def test_a_global_defined_through_an_anchored_one_joins_correctly(tmp_path):
+    files = {"analysis/master.do": 'global data "${root}data"\nuse "${data}/x"\nuse "$data/y.dta"\n',
+             "analysis/data/x.dta": "x"}
+    _root, edges, nodes = _answered(tmp_path, "g", files, {"root": "analysis"})
+    assert edges == [("reads", "dataset:analysis/data/x.dta"), ("reads", "dataset:analysis/data/y.dta")]
+    assert not [n for n in nodes if "analysisdata" in n]
