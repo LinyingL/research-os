@@ -473,6 +473,31 @@ def _decisions_row(root: Path) -> Row:
                code="decisions", facts=facts)
 
 
+def _stata_row(root: Path) -> Row | None:
+    """15.3's answers: which project folder a Stata global stands for -- how
+    many globals are answered, how many with a folder, and what stands
+    between Research OS and trusting the file. None for a project that has
+    never had the file (one with no Stata globals to answer)."""
+    from researchos.records import stata as stata_record  # noqa: PLC0415 -- leaf use
+
+    path = stata_record.stata_path(root)
+    if not os.path.lexists(path) and not stata_record.expected(root):
+        return None
+    loaded, decision = stata_record.assess(root)
+    facts: dict[str, Any] = {"file_state": loaded.state.value, "exists": path.exists()}
+    if loaded.ledger is not None:
+        found = stata_record.answers_from(loaded)
+        folders = sum(1 for e in found.values() if e.get("answer") == stata_record.YES)
+        count = f"{len(found)} global(s) answered, {folders} with a project folder"
+        facts.update(globals=len(found), folders=folders)
+    else:
+        count = loaded.state.value
+    problems = () if decision.reason is None else (f"{decision.reason}: {decision.detail or loaded.error or ''}".rstrip(": "),)
+    facts["issues"] = [decision.reason] if decision.reason else []
+    return Row("Project folders of Stata globals", _shown(path, root), count, _snapshot(root, path), problems,
+               code="stata", facts=facts)
+
+
 def history_size(project_id: str) -> dict[str, Any]:
     """The version store's folder, whether it exists, how many versions of
     how many nodes it keeps and how many bytes it takes (12.12 History).
@@ -549,6 +574,7 @@ def record_file_paths(root: Path) -> list[Path]:
         notes_mod.notes_path(root),
         record_dir / "decisions.toml",  # 12.3/12.4: approved decisions (researchos.records.decisions)
         record_dir / "papers.toml",  # 12.13: the drafts marked 「设为论文正文」 (researchos.records.papers)
+        record_dir / "stata.toml",  # 15.3: the project folder behind a Stata global (researchos.records.stata)
     ]
     try:
         config = attempts_ingest.load_config(root)
@@ -598,6 +624,9 @@ def inventory(conn: Connection | None, root: Path) -> list[Row]:
         _judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root),
         _variables_row(conn, root), _notes_row(conn, root), _decisions_row(root),
     ]
+    stata_row = _stata_row(root)
+    if stata_row is not None:
+        rows.append(stata_row)
     history_row = _history_row(root)
     if history_row is not None:
         rows.append(history_row)

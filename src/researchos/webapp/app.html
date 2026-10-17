@@ -4280,6 +4280,7 @@ const RECORD_KIND_WORDS = {
   legacy: "旧版本索引里的判断",
   notes: "笔记",
   decisions: "经 PI 批准的决定",
+  stata: "Stata 全局变量指向的项目里的文件夹",
   history: "版本历史（保存的材料，不是记录）",
 };
 
@@ -4319,6 +4320,9 @@ function recordCountText(row) {
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "decisions":
       if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
+      return f.file_state === "absent" ? "还没有" : "无法读取";
+    case "stata":
+      if (typeof f.globals === "number") return f.globals + " 个全局变量已回答，其中 " + f.folders + " 个指向项目里的文件夹";
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "history":
       if (!f.exists) return "还没有";

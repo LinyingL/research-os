@@ -180,7 +180,7 @@ APPROVED_BACKUPS = "approved"
 ROW_FIELDS = ("date", "description", "variables", "result", "verdict")
 #: The record files a working copy starts with (besides `variables/`).
 _RECORD_FILES = ("project.toml", "attempts.toml", "mappings.toml", "team.toml", "judgements.toml", "notes.toml",
-                 "decisions.toml", "canvas.json", "papers.toml")
+                 "decisions.toml", "canvas.json", "papers.toml", "stata.toml")
 
 _PROPOSAL_HEADER = "# 一份提议：成员工作副本里的改动，PI 批准后才进入正式版本。由 Research OS 写入，写成后不再改动。\n"
 _OUTCOME_HEADER = "# PI 对一份提议的答复。由 Research OS 写入，写成后不再改动。\n"

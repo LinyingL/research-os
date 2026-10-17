@@ -556,6 +556,7 @@ README_RECORDS = (
     ("variables/", "变量定义卡"),
     ("notes.toml", "笔记"),
     ("papers.toml", "设为论文正文的文稿"),
+    ("stata.toml", "Stata 全局变量指向的项目里的文件夹"),
     ("team.toml", "项目成员"),
     ("backups/", "以上记录的快照"),
 )

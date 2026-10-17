@@ -60,8 +60,17 @@ has no node for them yet), `save` with no file name (it writes to
 wherever the data last came from), a command whose words do not fit its
 syntax, a command after an inline `if` condition (the condition's end
 cannot be told), web addresses. Where the macro at fault heads the path,
-`Skip.rest` holds the path after it, for a project-folder proposal.
+`Skip.rest` holds the path after it, for a project-folder proposal (and,
+for a global outside the project, `Skip.value` its own value).
 Vendored libraries (`vendored`) are listed as skipped and never read.
+
+**The project folder behind a global** (15.3): `anchors` maps a global to
+the project folder a person confirmed it stands for
+(`researchos.records.stata`; "." is the project folder itself). It is used
+only where the global would not resolve -- undefined, or holding a path
+outside the project -- and a path built on it carries it
+(`StataCall.anchor`): that path is relative to the project folder, never to
+the do-file's.
 
 A file whose structure the lexer could not follow -- a `/*` never closed, a
 string never closed, unbalanced `{ }`, a command left open under `#delimit
@@ -80,7 +89,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
+from researchos import names
+
 logger = logging.getLogger(__name__)
+
+#: Where a confirmed project folder comes from, as a fold chain names it.
+ANCHOR_SOURCE = f"{names.PROJECT_DIRNAME}/stata.toml"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +224,9 @@ class StataCall:
     # The word as written and the assignments that expanded it; None for a
     # path written out in full.
     folded_from: str | None = None
+    # (global, project folder) when the path is built on a confirmed answer
+    # (15.3): it is relative to the project folder.
+    anchor: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +237,7 @@ class Skip:
     text: str = ""
     macro: str = ""  # the macro at fault, as `$name` or `` `name' ``
     rest: str = ""  # the path after that macro, when the macro heads it
+    value: str = ""  # for OUTSIDE, that global's own value (the absolute path)
 
 
 @dataclass
@@ -611,7 +629,8 @@ class _Value:
     resolve: `reason` says why and `macro` names the macro at fault. `head`
     is the global whose own value starts the text and `rest` what follows
     that value, which a project-folder proposal needs (15.3). `chain` holds
-    the assignments used, in the order they were used."""
+    the assignments used, in the order they were used; `anchor` the
+    confirmed answer used, if one was."""
 
     text: str | None
     reason: str = ""
@@ -619,6 +638,7 @@ class _Value:
     head: str = ""
     rest: str | None = None
     chain: tuple[str, ...] = ()
+    anchor: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -797,8 +817,11 @@ class _Project:
     """The project's do-files and .ado files read together (15.3): the
     macros they assign and the program names they define."""
 
-    def __init__(self, root: str | Path | None, texts: Mapping[str, str], programs) -> None:
+    def __init__(
+        self, root: str | Path | None, texts: Mapping[str, str], programs, anchors: Mapping[str, str] | None = None,
+    ) -> None:
         self.root = Path(root) if root is not None else None
+        self.anchors = dict(anchors or {}) if root is not None else {}
         self.files = {rel: _File(rel, text) for rel, text in texts.items()}
         self.programs = set(programs)
         self.globals: dict[str, list[_Def]] = {}
@@ -882,6 +905,7 @@ class _Project:
         out: list[str] = []
         chain: list[str] = []
         head, rest = "", None
+        anchor = None
         for k, piece in enumerate(pieces):
             if isinstance(piece, str):
                 out.append(piece)
@@ -893,12 +917,17 @@ class _Project:
                 tail = self._expand(pieces[1:], ctx) if k == 0 and v.head else _Value(None)
                 more = None if tail.text is None or v.rest is None else v.rest + tail.text
                 return _Value(None, v.reason, v.macro, v.head if k == 0 else "", more, tuple(chain))
+            if v.anchor and k:  # a project folder inside a path names nothing
+                return _Value(None, MACRO, piece.source, chain=tuple(chain))
+            if k and _WINDOWS_ABSOLUTE_RE.match(v.text):  # nor does a drive or network root (15.3)
+                return _Value(None, OUTSIDE, piece.source, chain=tuple(chain))
             out.append(v.text)
+            anchor = anchor or v.anchor
             if k == 0 and v.head:
                 head, rest = v.head, v.rest or ""
             elif rest is not None:
                 rest += v.text
-        return _Value("".join(out), head=head, rest=rest, chain=tuple(chain))
+        return _Value("".join(out), head=head, rest=rest, chain=tuple(chain), anchor=anchor)
 
     def _ref(self, piece: _Ref, ctx: tuple[str, str, int]) -> _Value:
         if not piece.closed or (piece.kind == "`" and piece.raw[:1] in ("=", ":", "+", "-")):
@@ -929,6 +958,21 @@ class _Project:
         return value
 
     def _global(self, name: str) -> _Value:
+        """A global's value: its assignments' (`_assigned`), or the project
+        folder a person confirmed it stands for where those leave it
+        undefined or outside the project (15.3)."""
+        own = self._assigned(name)
+        folder = self.anchors.get(name)
+        tag = f"${name}"
+        if folder is None:
+            return own
+        undefined = own.text is None and own.reason == UNDEFINED and own.macro == tag
+        if not undefined and (own.text is None or not self._away(own.text)):
+            return own
+        return _Value(folder, head=tag, rest="", chain=(f'global {name} "{folder}" ({ANCHOR_SOURCE})',),
+                      anchor=(name, folder))
+
+    def _assigned(self, name: str) -> _Value:
         tag = f"${name}"
         defs = self.globals.get(name, [])
         if any(name.startswith(prefix) for prefix in self.built_globals):
@@ -946,7 +990,7 @@ class _Project:
         if dropped or None in texts or len(texts) > 1:
             return _Value(None, REASSIGNED if len(defs) + dropped > 1 else MACRO, tag, head=tag, rest="")
         head, rest = (first.head, first.rest) if first.head else (tag, "")
-        return _Value(first.text, head=head, rest=rest, chain=(defs[0].describe(),) + first.chain)
+        return _Value(first.text, head=head, rest=rest, chain=(defs[0].describe(),) + first.chain, anchor=first.anchor)
 
     def _local(self, f: _File, scope: str, name: str, line: int) -> _Value:
         tag = f"`{name}'"
@@ -992,26 +1036,30 @@ class _Project:
             return True
         return posixpath.isabs(path) and self.root is not None and _inside(self.root, path) is None
 
-    def call(self, f: _File, ln: _Line, kind: str, raw: str) -> tuple[StataCall | None, tuple[str, str, str]]:
+    def call(self, f: _File, ln: _Line, kind: str, raw: str) -> tuple[StataCall | None, tuple[str, ...]]:
         """A file name as written, expanded: (the call, ()) or (None,
-        (reason, macro, rest))."""
+        (reason, macro, rest[, the head global's own value]))."""
         path, v, why = self._word(f, ln, raw, ln.name)
         if path is None:
             return None, why
         if v.chain and self._away(path):  # a root on someone's computer (15.3)
-            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if v.head and v.rest is not None else "")
+            heads = v.head.startswith("$") and v.rest is not None
+            own = self._memo(("$", v.head[1:]), lambda: self._global(v.head[1:])).text if heads else None
+            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if heads else "", own or "")
         folded = "; ".join([raw, *dict.fromkeys(v.chain)]) if v.chain else None
-        return StataCall(ln.cmd.line, ln.name, kind, path, folded), ("", "", "")
+        return StataCall(ln.cmd.line, ln.name, kind, path, folded, v.anchor), ()
 
 
 def scan_project(
     root: str | Path | None, texts: Mapping[str, str], *, programs: frozenset[str] | set[str] = frozenset(),
+    anchors: Mapping[str, str] | None = None,
 ) -> dict[str, DoScan]:
     """The read/write commands of a project's do-files (the keys of `texts`
     not ending in .ado), read together with its .ado files for macros and
     program names (module docstring). `root` tells which absolute paths
-    lie inside the project; without it (None) none is known to."""
-    project = _Project(root, texts, programs)
+    lie inside the project; without it (None) none is known to, and no
+    anchor is used. `anchors`: global -> confirmed project folder."""
+    project = _Project(root, texts, programs, anchors)
     return {rel: _scan(project, rel) for rel in texts if not rel.lower().endswith(".ado")}
 
 
@@ -1028,8 +1076,9 @@ def _scan(project: _Project, rel_path: str) -> DoScan:
     f = project.files[rel_path]
     scan = DoScan(parsed=f.parsed)
 
-    def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "") -> None:
-        scan.skipped.append(Skip(line, command, reason, raw, macro, rest))
+    def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "",
+             value: str = "") -> None:
+        scan.skipped.append(Skip(line, command, reason, raw, macro, rest, value))
         why = f"{reason}: {macro}" if macro else reason
         logger.warning("%s:%d: %s %r: skipped (%s), not guessing", rel_path, line, command, raw, why)
 

@@ -127,10 +127,12 @@ ineligible, logged, never guessed at.
 
 Evidence on every edge: `{"file", "line", "callee"}`, plus `"folded_from"`
 (Python T9, R constant folding, Stata macros), `"missing": true` when the target
-does not exist on disk, and `"remapped_from_absolute": true` when the
-literal was an absolute path remapped under the project root (above).
-`extractor="dataflow"`, `confidence=1.0`, `status="auto"` (machine-owned,
-per `db.upsert_edge`). Idempotent via `db.upsert_node`/`db.upsert_edge`.
+does not exist on disk, `"remapped_from_absolute": true` when the
+literal was an absolute path remapped under the project root (above), and
+`"anchor": {"global", "folder"}` when a Stata path was built on a global
+whose project folder a person confirmed (15.3; resolved against the
+project folder only). `extractor="dataflow"`, `confidence=1.0`,
+`status="auto"` (machine-owned, per `db.upsert_edge`). Idempotent via `db.upsert_node`/`db.upsert_edge`.
 """
 
 from __future__ import annotations
@@ -172,6 +174,9 @@ class DataflowCall:
     # its receiver (`read_csv`, `open`), R's function without `pkg::`
     # (`read.csv`, `read_dta`). Empty only for a hand-built call in a test.
     name: str = ""
+    # Stata (15.3): (global, project folder) when the path is built on a
+    # confirmed answer; the path is then relative to the project folder.
+    anchor: tuple[str, str] | None = None
 
     @property
     def bare_name(self) -> str:
@@ -987,7 +992,7 @@ def _do_outcome(do_rel_path: str, found: stata_ingest.DoScan) -> ParseOutcome:
     """A do-file's calls, each named by its canonical command -- its callee
     and its basis (`graph export`, never the `gr export` it was spelled)."""
     calls = [
-        DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, c.folded_from, c.command)
+        DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, c.folded_from, c.command, c.anchor)
         for c in found.calls
     ]
     return ParseOutcome(scan_mod.READ_AND_PARSED if found.parsed else scan_mod.UNPARSEABLE, calls)
@@ -1021,7 +1026,14 @@ def _stata_scans(
     listed as skipped and never read (its source is not reported, so the
     scan does not speak for it); a project .ado is read only for the macros
     it assigns and the program names it defines, which no do-file call is
-    then read as (15.1)."""
+    then read as (15.1).
+
+    Globals expand with the project folders a person confirmed
+    (`researchos.records.stata.anchors`, 15.3). While that record cannot
+    be trusted, nothing is built on it: every do-file is None (reported
+    unreadable), so its links keep the state they had (9.3)."""
+    from researchos.records import stata as stata_record  # noqa: PLC0415 -- leaf use
+
     texts: dict[str, str | None] = {}
     for rel in dict.fromkeys([*do_paths, *ado_paths]):
         marker = stata_ingest.vendored(repo_root, rel)
@@ -1033,7 +1045,14 @@ def _stata_scans(
         except OSError as exc:
             logger.warning("cannot read %s: %s", rel, exc)
             texts[rel] = None
-    scans = stata_ingest.scan_project(repo_root, {rel: text for rel, text in texts.items() if text is not None})
+    anchors, untrusted = stata_record.anchors(repo_root) if any(r in texts for r in do_paths) else ({}, None)
+    if anchors is None:
+        logger.warning("%s cannot be trusted now (%s): the do-files are not scanned, their links keep their state",
+                       stata_record.STATA_FILENAME, untrusted)
+        return {rel: None for rel in do_paths if rel in texts}
+    scans = stata_ingest.scan_project(
+        repo_root, {rel: text for rel, text in texts.items() if text is not None}, anchors=anchors,
+    )
     return {rel: scans.get(rel) for rel in do_paths if rel in texts}
 
 
@@ -1099,7 +1118,7 @@ def _remap_absolute_path(literal: str, repo_root: Path) -> str | None:
 
 
 def _resolve_target(
-    script_rel_path: str, literal: str, repo_root: Path
+    script_rel_path: str, literal: str, repo_root: Path, *, anchored: bool = False,
 ) -> tuple[str, bool, bool] | None:
     """Resolve a read/write literal to a repo-relative path plus whether the
     target currently exists on disk, plus whether it was remapped from an
@@ -1126,7 +1145,9 @@ def _resolve_target(
     Returns None only when the literal cannot be safely mapped into the repo
     at all (an absolute path outside the project root, or a `..` escape) --
     there is then no repo-relative path to report even as "missing". A
-    Windows drive or network path is never remapped (15.3)."""
+    Windows drive or network path is never remapped (15.3). An `anchored`
+    path (built on a project folder a person confirmed, 15.3) is relative
+    to the project folder only."""
     if is_windows_absolute(literal):
         return None
     remapped_from_absolute = False
@@ -1138,7 +1159,7 @@ def _resolve_target(
         remapped_from_absolute = True
     root_candidate = _normalize_candidate(".", literal)
     script_dir = posixpath.dirname(script_rel_path) or "."
-    script_candidate = _normalize_candidate(script_dir, literal)
+    script_candidate = None if anchored else _normalize_candidate(script_dir, literal)
     for candidate in (root_candidate, script_candidate):
         if candidate is not None and (repo_root / candidate).is_file():
             return candidate, False, remapped_from_absolute
@@ -1275,7 +1296,7 @@ def _ingest_call(
     conn: Connection, repo_root: Path, call: DataflowCall, status: str, sc: scan_mod.Scan,
 ) -> str:
     """Write one call's link; returns its edge type, or "" when skipped."""
-    resolved = _resolve_target(call.script_path, call.literal, repo_root)
+    resolved = _resolve_target(call.script_path, call.literal, repo_root, anchored=call.anchor is not None)
     if resolved is None:
         logger.warning(
             "%s:%d: %s(%r) cannot be safely mapped into the repo (absolute path, "
@@ -1305,6 +1326,8 @@ def _ingest_call(
         evidence["missing"] = True
     if remapped_from_absolute:
         evidence["remapped_from_absolute"] = True
+    if call.anchor is not None:  # the confirmed answer the path was built on (15.3)
+        evidence["anchor"] = {"global": call.anchor[0], "folder": call.anchor[1]}
     db.upsert_node(conn, script_id, "script", title=call.script_path)
     db.upsert_node(conn, target_id, node_type, title=target_path)
     mark: dict[str, Any] = {}
