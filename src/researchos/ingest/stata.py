@@ -31,18 +31,37 @@ gets `.dta` for exactly `use`, `save`, `saveold`, `merge`, `append`,
 `joinby` and `cross`, as the manual states; nowhere else.
 
 **Paths.** A backslash is a path separator, except before `$` and `` ` ``
-where Stata reads it as an escape (15.3). Only literal paths are read in
-this increment: a path holding any macro (`$name`, `${name}`, `` `name' ``)
-is skipped and logged, a tempfile's name with its own reason.
+where Stata reads it as an escape (15.3).
 
-**Skipped and logged, never guessed** (each with a reason, `Skip.reason`):
-tempfiles, paths with macros, `sysuse`/`webuse` (Stata's own example
-data), tables and logs (`esttab`, `estout`, `outreg2`, `texsave`, `log
-using`: the outputs layer has no node for them yet), `save` with no file
-name (it writes to wherever the data last came from), a command whose
-words do not fit its syntax, a command after an inline `if` condition (the
-condition's end cannot be told), web addresses. Vendored libraries
-(`vendored`) are listed as skipped and never read.
+**Macros** (15.3; `scan_project` reads the project's do-files and .ado
+files together). `$name`, `${name}` and `` `name' `` are expanded, inner
+references first. A **global** is used only when every assignment to it in
+the project gives the same literal, after its own macros are expanded
+(`global data "${root}/data"`); assignments are not ordered, since they may
+sit in any file. A **local** belongs to its file (to its program, inside
+`program ... end`) and is used only when assigned once, before the line
+that uses it; it may fold from a global. A name a loop, `tempname`,
+`args`, `gettoken`, a `local()` option, `c_local`, `st_local` or a built
+name may also set never folds, nor does any local of a program with
+`syntax` or of a file part with `include`. An undefined macro is
+unresolved, never the empty string Stata would use. The assignments used
+are recorded (`StataCall.folded_from`). A relative path keeps today's rule
+(the project root, then the do-file's own folder: dataflow's
+`_resolve_target`); the working folder along a `do`/`run` chain is not
+followed yet.
+
+**Skipped and logged, never guessed** (each with a reason, `Skip.reason`,
+and the macro at fault, `Skip.macro`): tempfiles, names built in a loop,
+macros that are undefined, assigned more than once or not a literal, a
+path built on a global that lies outside the project (a root on someone's
+computer), `sysuse`/`webuse` (Stata's own example data), tables and logs
+(`esttab`, `estout`, `outreg2`, `texsave`, `log using`: the outputs layer
+has no node for them yet), `save` with no file name (it writes to
+wherever the data last came from), a command whose words do not fit its
+syntax, a command after an inline `if` condition (the condition's end
+cannot be told), web addresses. Where the macro at fault heads the path,
+`Skip.rest` holds the path after it, for a project-folder proposal.
+Vendored libraries (`vendored`) are listed as skipped and never read.
 
 A file whose structure the lexer could not follow -- a `/*` never closed, a
 string never closed, unbalanced `{ }`, a command left open under `#delimit
@@ -53,10 +72,13 @@ returned, as for R.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
+import posixpath
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +103,11 @@ _MINIMUM = {
     "sysuse": "sysuse", "webuse": "webuse", "tempfile": "tempfile",
     "program": "pr", "log": "log", "if": "if", "mata": "mata", "python": "python",
     "esttab": "esttab", "estout": "estout", "outreg2": "outreg2", "texsave": "texsave",
+    # macros and loops (help macro, foreach, forvalues, args, gettoken,
+    # syntax, include; c_local has no help page and no abbreviation)
+    "global": "gl", "local": "loc", "macro": "ma", "tempname": "tempname",
+    "tempvar": "tempvar", "args": "args", "gettoken": "gettoken", "syntax": "syntax",
+    "c_local": "c_local", "foreach": "foreach", "forvalues": "forv", "include": "include",
     # prefixes
     "capture": "cap", "quietly": "qui", "noisily": "n", "by": "by",
     "bysort": "bys", "version": "vers", "else": "else",
@@ -90,6 +117,7 @@ _SUBCOMMANDS = {
     "export": {"delimited": "delim", "excel": "exc"},
     "graph": {"export": "export"},
     "program": {"define": "de", "drop": "drop", "list": "l", "dir": "di"},
+    "macro": {"drop": "drop"},
 }
 
 
@@ -141,7 +169,11 @@ _OUTPUTS = frozenset({"esttab", "estout", "outreg2", "texsave", "log"})
 
 # Reasons a path or command is skipped (`Skip.reason`).
 TEMPFILE = "tempfile"
-MACRO = "macro"
+LOOP = "built in a loop"
+UNDEFINED = "macro not defined"
+REASSIGNED = "macro assigned more than once"  # a global: with different values
+MACRO = "macro not a literal"  # an expression, an extended function, a program argument
+OUTSIDE = "outside the project"
 BUILTIN_DATA = "sysuse/webuse"
 OUTPUTS = "outputs layer"
 NO_FILE = "no file name"
@@ -174,7 +206,10 @@ class StataCall:
     line: int
     command: str  # the canonical name, e.g. "graph export"
     kind: str  # "read" | "write"
-    literal: str  # the path, separators and default extension applied
+    literal: str  # the path, macros expanded, separators and default extension applied
+    # The word as written and the assignments that expanded it; None for a
+    # path written out in full.
+    folded_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +218,8 @@ class Skip:
     command: str
     reason: str
     text: str = ""
+    macro: str = ""  # the macro at fault, as `$name` or `` `name' ``
+    rest: str = ""  # the path after that macro, when the macro heads it
 
 
 @dataclass
@@ -504,56 +541,128 @@ def _head(body: str) -> tuple[str, str, str]:
 # Paths
 # ---------------------------------------------------------------------------
 
-_GLOBAL_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 _LOCAL_NAME_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)'")
 _URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# A drive-letter or network path once backslashes are slashes: the rule of
+# `researchos.ingest.dataflow.is_windows_absolute` (15.3).
+_WINDOWS_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:|//)")
+# Locals and globals a command or Mata sets by name, never folded.
+_OPTION_LOCAL_RE = re.compile(r"\b(?:local|qed|match)\(\s*([A-Za-z_][A-Za-z0-9_]*)")
+_OPTION_GLOBAL_RE = re.compile(r"\bglobal\(\s*([A-Za-z_][A-Za-z0-9_]*)")
+_ST_LOCAL_RE = re.compile(r"\bst_local\(\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
+_ST_GLOBAL_RE = re.compile(r"\bst_global\(\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
+_GETTOKEN_RE = re.compile(r"(?:\(\s*(local|global)\s*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def _literal(raw: str, command: str, tempfiles: set[str]) -> tuple[str | None, str]:
-    """(the path, "") for a literal file name, else (None, reason). A
-    backslash is a separator except before `$` and `` ` `` (15.3)."""
-    out: list[str] = []
-    macros: list[str] = []
-    i, n = 0, len(raw)
+@dataclass(frozen=True)
+class _Ref:
+    """A macro reference in a word: `$name`, `${...}` or `` `...' ``."""
+
+    kind: str  # "$" or "`"
+    inner: tuple  # the pieces of its name, which may hold macros itself
+    raw: str  # its name as written
+    source: str  # the whole reference as written
+    closed: bool
+
+
+def _pieces(raw: str, i: int = 0, close: str = "") -> tuple[list, int, bool]:
+    """`raw` from `i` cut into literal text and `_Ref`s, up to `close` (the
+    end of a reference's name): (pieces, the index after them, whether
+    `close` was found). A backslash is a path separator, except before `$`
+    and `` ` ``, where it makes the next character literal (15.3)."""
+    out: list = []
+    buf: list[str] = []
+    n = len(raw)
+
+    def flush() -> None:
+        if buf:
+            out.append("".join(buf))
+            buf.clear()
+
     while i < n:
         ch = raw[i]
-        if ch == "\\" and i + 1 < n and raw[i + 1] in "$`":
-            out.append(raw[i + 1])
-            i += 2
-        elif ch == "\\":
-            out.append("/")
-            i += 1
-        elif ch == "$" and _GLOBAL_RE.match(raw, i):
-            match = _GLOBAL_RE.match(raw, i)
-            macros.append(match.group(0))
-            i = match.end()
-        elif ch == "`":
-            end, depth = i, 0
-            while end < n:
-                depth += raw[end] == "`"
-                depth -= raw[end] == "'"
-                end += 1
-                if depth <= 0:
-                    break
-            macros.append(raw[i:end])
-            i = end
+        if close and ch == close:
+            flush()
+            return out, i + 1, True
+        name = _WORD_RE.match(raw, i + 1) if ch == "$" else None
+        if ch == "\\":
+            escaped = i + 1 < n and raw[i + 1] in "$`"
+            buf.append(raw[i + 1] if escaped else "/")
+            i += 2 if escaped else 1
+        elif (ch == "$" and raw.startswith("${", i)) or (ch == "`" and not raw.startswith('`"', i)):
+            start, skip = i, 2 if ch == "$" else 1
+            inner, i, closed = _pieces(raw, i + skip, "}" if ch == "$" else "'")
+            flush()
+            out.append(_Ref(ch, tuple(inner), raw[start + skip:i - 1 if closed else i], raw[start:i], closed))
+        elif name:
+            flush()
+            out.append(_Ref("$", (name.group(0),), name.group(0), raw[i:name.end()], True))
+            i = name.end()
         else:
-            out.append(ch)
+            buf.append(ch)
             i += 1
-    if macros:
-        locals_ = {m.group(1) for macro in macros for m in _LOCAL_NAME_RE.finditer(macro)}
-        return None, TEMPFILE if locals_ & tempfiles else MACRO
-    literal = "".join(out)
-    if not literal.strip():
-        return None, NO_FILE
-    if "\ufffd" in literal:
-        return None, ENCODING
-    if _URL_RE.match(literal):
-        return None, WEB
-    base = literal.rsplit("/", 1)[-1]
-    if command in DTA_DEFAULT and base and "." not in base:
-        literal += ".dta"
-    return literal, ""
+    flush()
+    return out, i, not close
+
+
+@dataclass(frozen=True)
+class _Value:
+    """A word or a macro after expansion. `text` is None when it does not
+    resolve: `reason` says why and `macro` names the macro at fault. `head`
+    is the global whose own value starts the text and `rest` what follows
+    that value, which a project-folder proposal needs (15.3). `chain` holds
+    the assignments used, in the order they were used."""
+
+    text: str | None
+    reason: str = ""
+    macro: str = ""
+    head: str = ""
+    rest: str | None = None
+    chain: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Def:
+    """One assignment to a macro; `value` as written, None when it is not a
+    literal (`=`, `:`, a loop, `args` ...)."""
+
+    rel: str
+    line: int
+    scope: str
+    kind: str  # "global" | "local"
+    name: str
+    value: str | None
+
+    def describe(self) -> str:
+        return f'{self.kind} {self.name} "{self.value}" ({self.rel}:{self.line})'
+
+
+def _assignment(rest: str) -> tuple[str, str | None, bool] | None:
+    """(name, value as written or None, whether the name is built from a
+    macro) for the arguments of `global`/`local`; None without a name."""
+    rest = rest.lstrip()
+    bump = rest[:2] in ("++", "--")
+    rest = rest[2:] if bump else rest
+    match = _WORD_RE.match(rest)
+    if not match:
+        return ("", None, True) if rest[:1] in ("`", "$") and rest else None
+    name, after = match.group(0), rest[match.end():]
+    if after[:1] in ("`", "$"):
+        return name, None, True
+    value = after.strip()
+    if bump or value[:1] in ("=", ":") or after[:2] in ("++", "--"):
+        return name, None, False
+    if value[:1] == '"' or value.startswith('`"'):
+        if _string_end(value, 0) == len(value):
+            value = value[1:-1] if value[0] == '"' else value[2:-2]
+    return name, value, False
+
+
+def _default(command: str, path: str) -> str:
+    """`path` with `.dta` when its name has no extension, for exactly the
+    `DTA_DEFAULT` commands."""
+    base = path.rsplit("/", 1)[-1]
+    return path + ".dta" if command in DTA_DEFAULT and base and "." not in base else path
 
 
 def _file_words(form: str, command: str, tokens: list[_Token]) -> tuple[list[_Token], str]:
@@ -607,38 +716,332 @@ def program_names(text: str) -> set[str]:
     return names
 
 
+@dataclass(frozen=True)
+class _Line:
+    cmd: Command
+    body: str
+    written: str
+    name: str
+    rest: str
+    scope: str  # "" for the file itself, else the program it is in
+    opens: bool  # it opens a { } block
+
+
+class _File:
+    """One do-file or .ado: its commands with their scope and blocks, and
+    the macros it assigns."""
+
+    def __init__(self, rel: str, text: str) -> None:
+        self.rel, self.text = rel, text
+        cmds, problem = commands(text)
+        self.parsed = True
+        if problem:
+            self._lost(problem)
+        self.lines = self._lines(cmds)
+        self.tempfiles: set[str] = set()
+        self.locals: dict[tuple[str, str], list[_Def]] = {}
+        self.loops: set[tuple[str, str]] = set()
+        self.frozen: set[str] = set()  # scopes whose locals never fold
+        self.built: set[tuple[str, str]] = set()  # (scope, prefix) of names built from macros
+        self.st_locals = set(_ST_LOCAL_RE.findall(text))
+
+    def _lost(self, where: str) -> None:
+        """The lexer lost its place; said only of a do-file (an .ado is read
+        for its macros and program names, it is not a source)."""
+        self.parsed = False
+        if not self.rel.lower().endswith(".ado"):
+            logger.warning("%s: %s; the scan does not speak for this file", self.rel, where)
+
+    @property
+    def programs(self) -> set[str]:
+        return {ln.scope for ln in self.lines if ln.scope}
+
+    def _lines(self, cmds: list[Command]) -> list[_Line]:
+        out: list[_Line] = []
+        braces, scope = 0, ""
+        for cmd, body, written, name, rest in _blocks(cmds):
+            text = cmd.text.rstrip()
+            opens = text.endswith("{") and not text.endswith("${")
+            out.append(_Line(cmd, body, written, name, rest, scope, opens))
+            if cmd.unclosed:
+                continue
+            braces -= len(cmd.text) - len(cmd.text.lstrip("}"))
+            if braces < 0:
+                self._lost(f"line {cmd.line}: a }} closes no block")
+                braces = 0
+            braces += opens
+            if name in ("program define", "program") and not scope:
+                tokens = _tokens(rest) or []
+                if tokens and tokens[0].bare and _WORD_RE.fullmatch(tokens[0].text):
+                    scope = tokens[0].text
+            elif scope and body.split()[:1] == ["end"]:
+                scope = ""
+        if braces:
+            self._lost("unbalanced { } blocks")
+        return out
+
+    def add_local(self, d: _Def) -> None:
+        self.locals.setdefault((d.scope, d.name), []).append(d)
+
+
+def _inside(root: Path, path: str) -> str | None:
+    """An absolute POSIX `path` under `root`, project-relative (symlinks
+    resolved, as dataflow's `_remap_absolute_path` does), else None."""
+    try:
+        return Path(path).resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
+class _Project:
+    """The project's do-files and .ado files read together (15.3): the
+    macros they assign and the program names they define."""
+
+    def __init__(self, root: str | Path | None, texts: Mapping[str, str], programs) -> None:
+        self.root = Path(root) if root is not None else None
+        self.files = {rel: _File(rel, text) for rel, text in texts.items()}
+        self.programs = set(programs)
+        self.globals: dict[str, list[_Def]] = {}
+        self.built_globals: set[str] = set()  # prefixes of global names built from macros
+        self.drops: list[tuple[str, int, str]] = []  # `macro drop` patterns
+        self.c_locals: set[str] = set()
+        self._cache: dict[tuple, _Value] = {}
+        self._busy: set[tuple] = set()
+        for f in self.files.values():
+            self.programs |= f.programs
+            self._collect(f)
+
+    # -- assignments -------------------------------------------------------------------
+
+    def _global_def(self, d: _Def) -> None:
+        self.globals.setdefault(d.name, []).append(d)
+
+    def _assign(self, f: _File, ln: _Line, kind: str, rest: str, *, literal: bool = True) -> None:
+        parsed = _assignment(rest)
+        if parsed is None:
+            return
+        name, value, built = parsed
+        if built:
+            if kind == "global":
+                self.built_globals.add(name)
+            else:
+                f.built.add((ln.scope, name))
+            return
+        d = _Def(f.rel, ln.cmd.line, ln.scope, kind, name, value if literal else None)
+        self._global_def(d) if kind == "global" else f.add_local(d)
+
+    def _collect(self, f: _File) -> None:
+        for ln in f.lines:
+            name, rest, line, scope = ln.name, ln.rest, ln.cmd.line, ln.scope
+            for target in _OPTION_LOCAL_RE.findall(ln.cmd.text):
+                f.add_local(_Def(f.rel, line, scope, "local", target, None))
+            for target in _OPTION_GLOBAL_RE.findall(ln.cmd.text):
+                self._global_def(_Def(f.rel, line, scope, "global", target, None))
+            words = [t.text for t in _tokens(rest) or [] if t.bare]
+            if name in ("global", "local"):
+                self._assign(f, ln, name, rest)
+            elif name == "if" and not ln.opens:
+                # its condition's end cannot be told, so it never folds
+                for k, word in enumerate(words[:-1]):
+                    if _NAMES.get(word) in ("global", "local"):
+                        self._assign(f, ln, _NAMES[word], words[k + 1], literal=False)
+            elif name == "tempfile":
+                f.tempfiles.update(words)
+            elif name in ("tempname", "tempvar", "args"):
+                for word in words:
+                    f.add_local(_Def(f.rel, line, scope, "local", word, None))
+            elif name in ("foreach", "forvalues"):
+                match = _WORD_RE.match(rest.lstrip())
+                if match:
+                    f.loops.add((scope, match.group(0)))
+            elif name == "gettoken":
+                for kind, target in _GETTOKEN_RE.findall(rest[:_top_level_colon(rest) or 0]):
+                    d = _Def(f.rel, line, scope, kind or "local", target, None)
+                    self._global_def(d) if kind == "global" else f.add_local(d)
+            elif name in ("syntax", "include"):
+                f.frozen.add(scope)
+            elif name == "macro drop":
+                for word in words:
+                    if word == "_all" or "*" in word or "?" in word:
+                        self.drops.append((f.rel, line, "*" if word == "_all" else word))
+                    elif word.startswith("_"):
+                        f.add_local(_Def(f.rel, line, scope, "local", word[1:], None))
+                    else:
+                        self._global_def(_Def(f.rel, line, scope, "global", word, None))
+            elif name == "c_local" and words:
+                self.c_locals.add(words[0])
+        for target in _ST_GLOBAL_RE.findall(f.text):
+            self._global_def(_Def(f.rel, 0, "", "global", target, None))
+
+    # -- expansion ---------------------------------------------------------------------
+
+    def _expand_raw(self, raw: str, rel: str, scope: str, line: int) -> _Value:
+        return self._expand(_pieces(raw)[0], (rel, scope, line))
+
+    def _expand(self, pieces: list, ctx: tuple[str, str, int]) -> _Value:
+        out: list[str] = []
+        chain: list[str] = []
+        head, rest = "", None
+        for k, piece in enumerate(pieces):
+            if isinstance(piece, str):
+                out.append(piece)
+                rest = None if rest is None else rest + piece
+                continue
+            v = self._ref(piece, ctx)
+            chain.extend(v.chain)
+            if v.text is None:
+                tail = self._expand(pieces[1:], ctx) if k == 0 and v.head else _Value(None)
+                more = None if tail.text is None or v.rest is None else v.rest + tail.text
+                return _Value(None, v.reason, v.macro, v.head if k == 0 else "", more, tuple(chain))
+            out.append(v.text)
+            if k == 0 and v.head:
+                head, rest = v.head, v.rest or ""
+            elif rest is not None:
+                rest += v.text
+        return _Value("".join(out), head=head, rest=rest, chain=tuple(chain))
+
+    def _ref(self, piece: _Ref, ctx: tuple[str, str, int]) -> _Value:
+        if not piece.closed or (piece.kind == "`" and piece.raw[:1] in ("=", ":", "+", "-")):
+            return _Value(None, MACRO, piece.source)
+        name = self._expand(list(piece.inner), ctx)
+        if name.text is None:
+            return _Value(None, name.reason, name.macro, chain=name.chain)
+        if not _WORD_RE.fullmatch(name.text):  # `1', `c(pwd)', `x++'
+            return _Value(None, MACRO, piece.source)
+        rel, scope, line = ctx
+        if piece.kind == "$":
+            v = self._memo(("$", name.text), lambda: self._global(name.text))
+        else:
+            v = self._local(self.files[rel], scope, name.text, line)
+        return replace(v, chain=name.chain + v.chain) if name.chain else v
+
+    def _memo(self, key: tuple, compute) -> _Value:
+        if key in self._cache:
+            return self._cache[key]
+        if key in self._busy:  # a macro defined through itself
+            return _Value(None, MACRO, f"${key[1]}" if key[0] == "$" else f"`{key[-1]}'")
+        self._busy.add(key)
+        try:
+            value = compute()
+        finally:
+            self._busy.discard(key)
+        self._cache[key] = value
+        return value
+
+    def _global(self, name: str) -> _Value:
+        tag = f"${name}"
+        defs = self.globals.get(name, [])
+        if any(name.startswith(prefix) for prefix in self.built_globals):
+            return _Value(None, MACRO, tag, head=tag, rest="")
+        if not defs:
+            return _Value(None, UNDEFINED, tag, head=tag, rest="")
+        dropped = any(  # a drop the same file does not follow with an assignment
+            fnmatch.fnmatchcase(name, pattern) and not any(d.rel == rel and d.line > line for d in defs)
+            for rel, line, pattern in self.drops)
+        values = [None if d.value is None else self._expand_raw(d.value, d.rel, d.scope, d.line) for d in defs]
+        texts = {v.text if v is not None else None for v in values}
+        first = values[0]
+        if len(defs) == 1 and not dropped and first is not None and first.text is None:
+            return replace(first, chain=(defs[0].describe(),) + first.chain)
+        if dropped or None in texts or len(texts) > 1:
+            return _Value(None, REASSIGNED if len(defs) + dropped > 1 else MACRO, tag, head=tag, rest="")
+        head, rest = (first.head, first.rest) if first.head else (tag, "")
+        return _Value(first.text, head=head, rest=rest, chain=(defs[0].describe(),) + first.chain)
+
+    def _local(self, f: _File, scope: str, name: str, line: int) -> _Value:
+        tag = f"`{name}'"
+        if name in f.tempfiles:
+            return _Value(None, TEMPFILE, tag)
+        if (scope, name) in f.loops:
+            return _Value(None, LOOP, tag)
+        if (name in self.c_locals or name in f.st_locals or scope in f.frozen
+                or any(s == scope and name.startswith(p) for s, p in f.built)):
+            return _Value(None, MACRO, tag)
+        defs = f.locals.get((scope, name), [])
+        if not defs:  # in a program, its arguments
+            return _Value(None, MACRO if scope else UNDEFINED, tag)
+        if len(defs) > 1:
+            return _Value(None, REASSIGNED, tag)
+        d = defs[0]
+        if d.value is None:
+            return _Value(None, MACRO, tag)
+        if d.line >= line:  # used before it is assigned
+            return _Value(None, UNDEFINED, tag)
+        v = self._memo(("`", f.rel, scope, name), lambda: self._expand_raw(d.value, f.rel, scope, d.line))
+        return replace(v, chain=(d.describe(),) + v.chain)
+
+    def _word(self, f: _File, ln: _Line, raw: str, command: str) -> tuple[str | None, _Value, tuple[str, str, str]]:
+        """(path, its expansion, ()) for a file name as written, or (None,
+        _, (reason, macro, rest))."""
+        tempfiles = sorted({m.group(1) for m in _LOCAL_NAME_RE.finditer(raw)} & f.tempfiles)
+        if tempfiles:
+            return None, _Value(None), (TEMPFILE, f"`{tempfiles[0]}'", "")
+        v = self._expand_raw(raw, f.rel, ln.scope, ln.cmd.line)
+        if v.text is None:
+            heads = v.head and v.head == v.macro and v.rest is not None
+            return None, v, (v.reason, v.macro, _default(command, v.rest.lstrip("/")) if heads else "")
+        path = v.text
+        reason = NO_FILE if not path.strip() else ENCODING if "\ufffd" in path else WEB if _URL_RE.match(path) else ""
+        if reason:
+            return None, v, (reason, "", "")
+        return _default(command, path), v, ("", "", "")
+
+    def _away(self, path: str) -> bool:
+        """A path that is absolute and outside the project."""
+        if _WINDOWS_ABSOLUTE_RE.match(path):
+            return True
+        return posixpath.isabs(path) and self.root is not None and _inside(self.root, path) is None
+
+    def call(self, f: _File, ln: _Line, kind: str, raw: str) -> tuple[StataCall | None, tuple[str, str, str]]:
+        """A file name as written, expanded: (the call, ()) or (None,
+        (reason, macro, rest))."""
+        path, v, why = self._word(f, ln, raw, ln.name)
+        if path is None:
+            return None, why
+        if v.chain and self._away(path):  # a root on someone's computer (15.3)
+            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if v.head and v.rest is not None else "")
+        folded = "; ".join([raw, *dict.fromkeys(v.chain)]) if v.chain else None
+        return StataCall(ln.cmd.line, ln.name, kind, path, folded), ("", "", "")
+
+
+def scan_project(
+    root: str | Path | None, texts: Mapping[str, str], *, programs: frozenset[str] | set[str] = frozenset(),
+) -> dict[str, DoScan]:
+    """The read/write commands of a project's do-files (the keys of `texts`
+    not ending in .ado), read together with its .ado files for macros and
+    program names (module docstring). `root` tells which absolute paths
+    lie inside the project; without it (None) none is known to."""
+    project = _Project(root, texts, programs)
+    return {rel: _scan(project, rel) for rel in texts if not rel.lower().endswith(".ado")}
+
+
 def scan_text(text: str, rel_path: str, *, programs: frozenset[str] | set[str] = frozenset()) -> DoScan:
-    """The read/write commands of one do-file's text (module docstring);
-    every skip is logged with its reason and listed in `DoScan.skipped`."""
-    cmds, problem = commands(text)
-    scan = DoScan()
-    if problem:
-        logger.warning("%s: %s; the scan does not speak for this file", rel_path, problem)
-        scan.parsed = False
+    """One do-file read as a project of its own (`scan_project` without a
+    file system): its own macros only."""
+    return scan_project(None, {rel_path: text}, programs=programs)[rel_path]
 
-    def skip(line: int, command: str, reason: str, raw: str = "") -> None:
-        scan.skipped.append(Skip(line, command, reason, raw))
-        logger.warning("%s:%d: %s %r: skipped (%s), not guessing", rel_path, line, command, raw, reason)
 
-    tempfiles: set[str] = set()
-    for _cmd, _body, _written, name, rest in _blocks(cmds):
-        if name == "tempfile":
-            tempfiles.update(t.text for t in _tokens(rest) or [] if t.bare)
-    braces = 0
-    for cmd, body, written, name, rest in _blocks(cmds):
+def _scan(project: _Project, rel_path: str) -> DoScan:
+    """The read/write commands of one do-file of `project` (module
+    docstring); every skip is logged with its reason and listed in
+    `DoScan.skipped`."""
+    f = project.files[rel_path]
+    scan = DoScan(parsed=f.parsed)
+
+    def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "") -> None:
+        scan.skipped.append(Skip(line, command, reason, raw, macro, rest))
+        why = f"{reason}: {macro}" if macro else reason
+        logger.warning("%s:%d: %s %r: skipped (%s), not guessing", rel_path, line, command, raw, why)
+
+    for ln in f.lines:
+        cmd, written, name, rest = ln.cmd, ln.written, ln.name, ln.rest
         if cmd.unclosed:
             skip(cmd.line, written or "?", UNCLOSED, cmd.text)
             scan.parsed = False
             continue
-        braces -= len(cmd.text) - len(cmd.text.lstrip("}"))
-        if braces < 0:
-            logger.warning("%s:%d: a } closes no block; the scan does not speak for this file", rel_path, cmd.line)
-            scan.parsed, braces = False, 0
-        if cmd.text.rstrip().endswith("{") and not cmd.text.rstrip().endswith("${"):
-            braces += 1
         if not name:
             continue
-        if written.split()[0] in programs and (name in _FORMS or name in _OUTPUTS):
+        if written.split()[0] in project.programs and (name in _FORMS or name in _OUTPUTS):
             skip(cmd.line, written, PROGRAM)
             continue
         if name == "if" and not cmd.text.rstrip().endswith("{"):
@@ -669,14 +1072,11 @@ def scan_text(text: str, rel_path: str, *, programs: frozenset[str] | set[str] =
             skip(cmd.line, name, reason, rest.strip())
             continue
         for word in words:
-            literal, reason = _literal(word.text, name, tempfiles)
-            if literal is None:
-                skip(cmd.line, name, reason, word.text)
+            call, why = project.call(f, ln, kind, word.text)
+            if call is None:
+                skip(cmd.line, name, why[0], word.text, *why[1:])
             else:
-                scan.calls.append(StataCall(cmd.line, name, kind, literal))
-    if braces:
-        logger.warning("%s: unbalanced { } blocks; the scan does not speak for this file", rel_path)
-        scan.parsed = False
+                scan.calls.append(call)
     return scan
 
 

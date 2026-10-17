@@ -49,9 +49,10 @@ the original file either way.
 **Stata** (`parse_do_file`): `researchos.ingest.stata` reads a do-file -- a
 lexer first, then commands only at a command's start (DESIGN.md 15.2) --
 and each call is named by its canonical command (`graph export`, however
-it was abbreviated): that name is its `callee` and its basis. Literal paths
-only for now; vendored libraries and project .ado files are not scanned for
-files (15.1).
+it was abbreviated): that name is its `callee` and its basis. The project's
+do-files and .ado files are read together (`stata.scan_project`, 15.3):
+macros are expanded, the assignments used becoming `folded_from`. Vendored
+libraries and project .ado files are not scanned for files (15.1).
 
 **Path resolution and the `missing` flag.** A resolved literal is tried both
 relative to the script's own directory and relative to the project root,
@@ -125,7 +126,7 @@ function never called at all in this file -- makes that parameter
 ineligible, logged, never guessed at.
 
 Evidence on every edge: `{"file", "line", "callee"}`, plus `"folded_from"`
-(Python T9 / R constant folding only), `"missing": true` when the target
+(Python T9, R constant folding, Stata macros), `"missing": true` when the target
 does not exist on disk, and `"remapped_from_absolute": true` when the
 literal was an absolute path remapped under the project root (above).
 `extractor="dataflow"`, `confidence=1.0`, `status="auto"` (machine-owned,
@@ -982,11 +983,13 @@ def scan_rmd_file(repo_root: str | Path, rmd_rel_path: str) -> ParseOutcome:
 # ---------------------------------------------------------------------------
 
 
-def _do_outcome(do_rel_path: str, text: str, programs: frozenset[str] | set[str]) -> ParseOutcome:
+def _do_outcome(do_rel_path: str, found: stata_ingest.DoScan) -> ParseOutcome:
     """A do-file's calls, each named by its canonical command -- its callee
     and its basis (`graph export`, never the `gr export` it was spelled)."""
-    found = stata_ingest.scan_text(text, do_rel_path, programs=programs)
-    calls = [DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, None, c.command) for c in found.calls]
+    calls = [
+        DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, c.folded_from, c.command)
+        for c in found.calls
+    ]
     return ParseOutcome(scan_mod.READ_AND_PARSED if found.parsed else scan_mod.UNPARSEABLE, calls)
 
 
@@ -998,22 +1001,27 @@ def parse_do_file(repo_root: str | Path, do_rel_path: str) -> list[DataflowCall]
 def scan_do_file(
     repo_root: str | Path, do_rel_path: str, *, programs: frozenset[str] | set[str] = frozenset(),
 ) -> ParseOutcome:
-    """Scan one Stata do-file for read/write commands; `programs` are the
-    project's own program names, never read as Stata commands (15.1)."""
+    """Scan one Stata do-file alone for read/write commands (its own macros
+    only); `programs` are the project's own program names, never read as
+    Stata commands (15.1)."""
     path = Path(repo_root) / do_rel_path
     try:
         text = cloud.read_text(path)
     except OSError as exc:
         logger.warning("cannot read %s: %s", do_rel_path, exc)
         return ParseOutcome(scan_mod.UNREADABLE, [])
-    return _do_outcome(do_rel_path, text, programs)
+    return _do_outcome(do_rel_path, stata_ingest.scan_text(text, do_rel_path, programs=programs))
 
 
-def _scan_stata(repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str]) -> dict[str, ParseOutcome]:
-    """The project's do-files' outcomes. A file in a vendored library is
+def _stata_scans(
+    repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str],
+) -> dict[str, stata_ingest.DoScan | None]:
+    """The project's do-files read together (`stata.scan_project`, 15.3),
+    None for one that could not be read. A file in a vendored library is
     listed as skipped and never read (its source is not reported, so the
-    scan does not speak for it); a project .ado is read only for the program
-    names it defines, which no do-file call is then read as (15.1)."""
+    scan does not speak for it); a project .ado is read only for the macros
+    it assigns and the program names it defines, which no do-file call is
+    then read as (15.1)."""
     texts: dict[str, str | None] = {}
     for rel in dict.fromkeys([*do_paths, *ado_paths]):
         marker = stata_ingest.vendored(repo_root, rel)
@@ -1025,16 +1033,16 @@ def _scan_stata(repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[st
         except OSError as exc:
             logger.warning("cannot read %s: %s", rel, exc)
             texts[rel] = None
-    programs: set[str] = set()
-    for text in texts.values():
-        if text is not None:
-            programs |= stata_ingest.program_names(text)
-    outcomes: dict[str, ParseOutcome] = {}
-    for rel in do_paths:
-        if rel in texts:
-            text = texts[rel]
-            outcomes[rel] = ParseOutcome(scan_mod.UNREADABLE, []) if text is None else _do_outcome(rel, text, programs)
-    return outcomes
+    scans = stata_ingest.scan_project(repo_root, {rel: text for rel, text in texts.items() if text is not None})
+    return {rel: scans.get(rel) for rel in do_paths if rel in texts}
+
+
+def _scan_stata(repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str]) -> dict[str, ParseOutcome]:
+    """The project's do-files' outcomes (`_stata_scans`)."""
+    return {
+        rel: ParseOutcome(scan_mod.UNREADABLE, []) if found is None else _do_outcome(rel, found)
+        for rel, found in _stata_scans(repo_root, do_paths, ado_paths).items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1240,8 @@ def reaches_outside(repo_root: Path, script_paths: Iterable[str]) -> list[str]:
     point has many such scripts, which is why its pre-V5 judgments match
     poorly (9.12, acceptance 2026-10-05). Reads only."""
     found: list[str] = []
+    dos = [path for path in sorted(set(script_paths)) if path.lower().endswith(".do")]
+    stata_scans = _stata_scans(repo_root, dos, ()) if dos else {}
     for path in sorted(set(script_paths)):
         lower = path.lower()
         if lower.endswith(".py"):
@@ -1240,8 +1250,14 @@ def reaches_outside(repo_root: Path, script_paths: Iterable[str]) -> list[str]:
             outcome = scan_rmd_file(repo_root, path)
         elif lower.endswith(".r"):
             outcome = scan_r_file(repo_root, path)
-        elif lower.endswith(".do"):
-            outcome = scan_do_file(repo_root, path)
+        elif lower.endswith(".do"):  # a global holding a root on someone's computer too
+            stata_scan = stata_scans.get(path)
+            if stata_scan is None:
+                continue
+            if any(s.reason == stata_ingest.OUTSIDE for s in stata_scan.skipped):
+                found.append(path)
+                continue
+            outcome = _do_outcome(path, stata_scan)
         else:
             continue
         if any(_reaches_outside(c.literal, repo_root) for c in outcome.calls):

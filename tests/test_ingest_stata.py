@@ -195,7 +195,7 @@ def test_every_skip_is_logged_with_its_reason(caplog):
         skips = _skips(text)
     assert skips == [
         (2, "save", stata.TEMPFILE), (3, "use", stata.TEMPFILE),
-        (4, "use", stata.MACRO), (5, "save", stata.MACRO), (7, "save", stata.MACRO),
+        (4, "use", stata.UNDEFINED), (5, "save", stata.UNDEFINED), (7, "save", stata.LOOP),
         (9, "sysuse", stata.BUILTIN_DATA), (10, "webuse", stata.BUILTIN_DATA),
         (11, "esttab", stata.OUTPUTS), (12, "texsave", stata.OUTPUTS), (13, "outreg2", stata.OUTPUTS),
         (14, "log using", stata.OUTPUTS),
@@ -313,4 +313,155 @@ def test_unparseable_and_vendored_do_files_in_the_scan_report(tmp_path, conn, ca
     assert sorted(r["source"] for r in rows) == [  # listed all the same
         "ado/plus/t/t.do", "code/broken.do", "code/libraries/stata/helper.do",
         "code/libraries/stata/tool.ado", "code/own.ado", "vendor/x.do",
+    ]
+
+
+# -- macros (DESIGN.md 15.3, task V11 S2) ----------------------------------------------------
+
+
+def _read(texts, root=None):
+    found = stata.scan_project(root, texts)
+    calls = {rel: [(c.line, c.command, c.literal, c.folded_from) for c in s.calls] for rel, s in found.items()}
+    skips = {rel: [(k.line, k.command, k.reason, k.macro, k.rest) for k in s.skipped] for rel, s in found.items()}
+    return calls, skips
+
+
+def test_a_global_folds_across_files_only_when_every_assignment_agrees(caplog):
+    texts = {
+        "config.do": (
+            'gl data "data"\n'
+            'global raw "${data}/raw"\n'
+            'global out "out"\n'
+            'global out out\n'  # the same literal again
+            'global twice "a"\n'
+            'global twice "b"\n'
+            'global calc = "x"\n'
+            'global win "C:\\Users\\me\\proj"\n'
+        ),
+        "clean.do": (
+            'use "$raw/a"\n'  # 1
+            'save "${out}/b", replace\n'  # 2
+            'use "$twice/c"\n'  # 3
+            'use "$calc/d"\n'  # 4
+            'use "$nobody/e"\n'  # 5: never the empty string
+            'use "${win}\\f"\n'  # 6: a root on someone's computer
+            'use "data\\$raw"\n'  # 7: an escaped $ is text
+        ),
+    }
+    with caplog.at_level("WARNING", logger="researchos.ingest.stata"):
+        calls, skips = _read(texts)
+    assert calls["clean.do"] == [
+        (1, "use", "data/raw/a.dta",
+         '$raw/a; global raw "${data}/raw" (config.do:2); global data "data" (config.do:1)'),
+        (2, "save", "out/b.dta", '${out}/b; global out "out" (config.do:3)'),
+        (7, "use", "data$raw.dta", None),
+    ]
+    assert skips["clean.do"] == [
+        (3, "use", stata.REASSIGNED, "$twice", "c.dta"),
+        (4, "use", stata.MACRO, "$calc", "d.dta"),
+        (5, "use", stata.UNDEFINED, "$nobody", "e.dta"),
+        (6, "use", stata.OUTSIDE, "$win", "f.dta"),
+    ]
+    assert "clean.do:6: use '${win}\\\\f': skipped (outside the project: $win), not guessing" in caplog.text
+
+
+def test_a_local_is_its_files_and_folds_only_when_assigned_once_before_use():
+    text = (
+        'global base "data"\n'  # 1
+        'local dir "$base/raw"\n'  # 2
+        "use \"`dir'/a\"\n"  # 3
+        "use \"`later'/b\"\n"  # 4: used before it is assigned
+        'local later "x"\n'  # 5
+        'local two "a"\n'  # 6
+        'loc two "b"\n'  # 7
+        "use \"`two'/c\"\n"  # 8
+        "levelsof v, local(lv)\n"  # 9: an option assigns it too
+        'local lv "y"\n'  # 10
+        "use \"`lv'/d\"\n"  # 11
+        "use \"`=c(pwd)'/e\"\n"  # 12
+        "use \"`1'/f\"\n"  # 13
+        "program define p\n"  # 14
+        "  use \"`dir'/g\"\n"  # 15: a program has its own locals
+        "end\n"  # 16
+        "forvalues j = 1/3 {\n"  # 17
+        "  append using \"`dir'/h`j'\"\n"  # 18
+        "}\n"  # 19
+        "tempname n\n"  # 20
+        "use \"`n'\"\n"  # 21
+    )
+    calls, skips = _read({"t.do": text})
+    assert calls["t.do"] == [
+        (3, "use", "data/raw/a.dta",
+         "`dir'/a; local dir \"$base/raw\" (t.do:2); global base \"data\" (t.do:1)"),
+    ]
+    assert [(line, reason, macro) for line, _c, reason, macro, _r in skips["t.do"]] == [
+        (4, stata.UNDEFINED, "`later'"), (8, stata.REASSIGNED, "`two'"), (11, stata.REASSIGNED, "`lv'"),
+        (12, stata.MACRO, "`=c(pwd)'"), (13, stata.MACRO, "`1'"), (15, stata.MACRO, "`dir'"),
+        (18, stata.LOOP, "`j'"), (21, stata.MACRO, "`n'"),
+    ]
+
+
+def test_what_else_may_set_a_macro_keeps_it_from_folding():
+    texts = {
+        "lib.ado": 'program define setter\n  c_local made "q"\nend\n',
+        "a.do": (
+            "macro drop _all\n"  # 1: followed by its own assignment of keep
+            'global keep "k"\n'  # 2
+            'local made "m"\n'  # 3
+            "use \"`made'/a\"\n"  # 4: c_local in a project program may set it
+            'use "$keep/b"\n'  # 5
+            'use "$other/c"\n'  # 6: dropped here, assigned in b.do
+            "foreach v in x y {\n"  # 7
+            "  global dyn_`v' \"d\"\n"  # 8: a name built from a macro
+            "}\n"  # 9
+            'use "$dyn_x/d"\n'  # 10
+            'if "`c(username)\'" == "me" global who "w"\n'  # 11: under an inline if
+            'global who "w"\n'  # 12
+            'use "$who/e"\n'  # 13
+        ),
+        "b.do": 'global other "o"\ninclude "c.do"\nlocal set "f"\nuse "`set\'/g"\n',  # include may set it
+    }
+    calls, skips = _read(texts)
+    assert calls["a.do"] == [(5, "use", "k/b.dta", '$keep/b; global keep "k" (a.do:2)')]
+    assert [(line, reason, macro) for line, _c, reason, macro, _r in skips["a.do"]] == [
+        (4, stata.MACRO, "`made'"), (6, stata.REASSIGNED, "$other"), (10, stata.MACRO, "$dyn_x"),
+        (13, stata.REASSIGNED, "$who"),
+    ]
+    assert [(line, reason) for line, _c, reason, _m, _r in skips["b.do"]] == [(4, stata.MACRO)]
+    assert "lib.ado" not in calls  # an .ado is read for its macros and programs only
+
+
+def test_globals_into_the_index_with_their_fold_chain(tmp_path, conn, caplog):
+    root = _project(tmp_path)
+    (root / "code" / "master.do").write_text(
+        f'global data "{root}/data"\n'  # inside the project: remapped
+        'global out "results"\n'
+        'global ext "C:\\Users\\someone\\proj"\n'
+    )
+    (root / "code" / "clean.do").write_text('use "$data/raw"\nsave "$out/clean"\nsave "${ext}/x"\n')
+    with caplog.at_level("WARNING", logger="researchos.ingest"):
+        assert _scan(conn, root) == {"reads": 1, "writes": 1}
+    read = {"src": "script:code/clean.do", "dst": "dataset:data/raw.dta", "type": "reads", "extractor": "dataflow"}
+    (edge,) = db.query_edges(conn, type="reads")
+    assert edge["evidence"]["occurrences"] == [{
+        "file": "code/clean.do", "line": 1, "callee": "use", "remapped_from_absolute": True,
+        "folded_from": f'$data/raw; global data "{root}/data" (code/master.do:1)',
+    }]
+    assert scan_mod.current_basis(conn, read) == {"calls": ["use"]}  # the expansion is not a fact (9.6)
+    (write,) = db.query_edges(conn, type="writes")
+    assert write["dst"] == "dataset:results/clean.dta"
+    assert not conn.execute("SELECT 1 FROM nodes WHERE id LIKE '%C:%'").fetchall()
+    assert "skipped (outside the project: $ext), not guessing" in caplog.text
+    assert dataflow.reaches_outside(root, ["code/clean.do", "code/master.do"]) == ["code/clean.do"]
+
+
+def test_an_approval_reads_a_placed_do_file_with_the_projects_globals(tmp_path, conn):
+    from researchos import proposals
+
+    root = _project(tmp_path)
+    (root / "code" / "master.do").write_text('global data "data"\n')
+    (root / "code" / "new.do").write_text('use "$data/raw"\n')
+    proposals._scan_placed(conn, root, [{"path": "code/new.do", "action": "added"}])
+    assert [(e["src"], e["dst"]) for e in db.query_edges(conn, type="reads")] == [
+        ("script:code/new.do", "dataset:data/raw.dta"),
     ]

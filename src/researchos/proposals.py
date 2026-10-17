@@ -2514,6 +2514,16 @@ def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_l
     if not any(kinds.values()):
         return
     try:
+        if kinds[".do"] or kinds[".ado"]:  # a do-file's globals may be set in any other (15.3): read them together
+            from researchos.ingest import files as files_ingest  # noqa: PLC0415
+            from researchos.ingest import git as git_ingest  # noqa: PLC0415
+
+            try:
+                inventory = git_ingest.list_source_files(root)
+            except git_ingest.NotAGitRepositoryError:
+                inventory = files_ingest.list_source_files(root)
+            kinds[".do"] = sorted({*kinds[".do"], *inventory["do"]})
+            kinds[".ado"] = sorted({*kinds[".ado"], *inventory["ado"]})
         with ingest_lock if ingest_lock is not None else contextlib.nullcontext():
             dataflow_ingest.ingest_dataflow_repo(
                 conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"], do_paths=kinds[".do"], ado_paths=kinds[".ado"],
