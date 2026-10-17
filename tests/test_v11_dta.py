@@ -272,3 +272,78 @@ def test_names_and_labels_are_untrusted_text(tmp_path):
                  ("v3", "byte", "%8.0g", b"caf\xe9", "")]
     header = dta.read_header(_write(tmp_path / "t.dta", _dta(118, "LSF", variables)))
     assert [v.label for v in header.variables] == ["red�[31mtext", "a�b", "caf�"]
+
+
+def test_every_bidi_control_becomes_a_replacement_character(tmp_path):
+    """15.4: all nine Bidi_Control code points -- the marks U+061C, U+200E,
+    U+200F as well as the embeddings and isolates -- become U+FFFD in a
+    variable's name and in its label, so "in‏come" can never show as a
+    second "income" beside the real one. Joiners, which Persian and Indic
+    spellings need, are left alone."""
+    bidi = ["؜", "‎", "‏", "‪", "‫", "‬", "‭", "‮",
+            "⁦", "⁧", "⁨", "⁩"]
+    variables = [("income", "byte", "%8.0g", "Income", ""), ("in‏come", "byte", "%8.0g", "Income", "")]
+    variables += [(f"v{i}", "byte", "%8.0g", f"a{ch}b", "") for i, ch in enumerate(bidi)]
+    variables += [(f"n{ch}", "byte", "%8.0g", "x", "") for ch in bidi]
+    variables += [("zw", "byte", "%8.0g", "می‌خواهم", "")]
+    header = dta.read_header(_write(tmp_path / "t.dta", _dta(118, "LSF", variables)))
+    names = [v.name for v in header.variables]
+    assert names[:2] == ["income", "in�come"]
+    assert [v.label for v in header.variables[2:2 + len(bidi)]] == ["a�b"] * len(bidi)
+    assert names[2 + len(bidi):2 + 2 * len(bidi)] == ["n�"] * len(bidi)
+    assert header.variables[-1].label == "می‌خواهم"
+
+
+def _old_with_fields(fields: bytes, release: int = 115) -> bytes:
+    """A release-`release` file whose expansion fields are `fields` (the
+    terminator is added), with two zero rows and no value labels."""
+    whole = _dta(release, "LSF", VARS)
+    k, row = len(VARS), 4 + 8 + 1 + 12
+    descriptors = 10 + 81 + 18 + k * (1 + 33 + 2 + 49 + 33 + 81) + 2
+    note = _pad("_dta", 33, "latin-1") + _pad("note0", 33, "latin-1") + b"1\0"
+    start = descriptors
+    assert whole[start:start + 5 + len(note)] == b"\x01" + struct.pack("<I", len(note)) + note
+    return whole[:start] + fields + b"\0" * 5 + b"\0" * (2 * row)
+
+
+@pytest.mark.parametrize("kind", [1, 2, 0x7F])
+def test_old_expansion_fields_outside_the_format_pages_are_corrupt(tmp_path, kind):
+    """15.4: in releases 113-115 an expansion field is type 0 (with length 0,
+    the end) or type 1 (a characteristic, at least its two 33-byte names);
+    millions of 5-byte fields of type 1 or of any other type are refused as
+    corrupt at the first one, not walked for seconds and accepted."""
+    fields = (bytes([kind]) + struct.pack("<I", 0)) * 1_000_000
+    with _deadline(10):
+        with pytest.raises(dta.DtaError) as caught:
+            dta.read_header(_write(tmp_path / "f.dta", _old_with_fields(fields)))
+    assert caught.value.code == dta.CORRUPT
+
+
+def test_a_type_zero_field_with_a_length_is_corrupt(tmp_path):
+    """15.4: type 0 is only ever the end, written with length 0."""
+    with pytest.raises(dta.DtaError) as caught:
+        dta.read_header(_write(tmp_path / "f.dta", _old_with_fields(b"\x00" + struct.pack("<I", 3) + b"abc")))
+    assert caught.value.code == dta.CORRUPT
+
+
+def test_many_minimal_characteristics_are_read_within_the_deadline(tmp_path):
+    """15.4: a file of several MB of the smallest characteristics the format
+    allows (71 bytes each) is still answered quickly, and a legitimate set
+    of characteristics reads as before."""
+    one = b"\x01" + struct.pack("<I", 66) + _pad("_dta", 33, "latin-1") + _pad("note1", 33, "latin-1")
+    path = _write(tmp_path / "f.dta", _old_with_fields(one * 80_000))
+    with _deadline(10):
+        header = dta.read_header(path)
+    assert header.rows == 2 and [v.name for v in header.variables] == [v[0] for v in VARS]
+
+
+def test_a_value_label_table_too_short_to_hold_its_counts_is_corrupt(tmp_path):
+    """15.4: a value-label table always holds n and txtlen (8 bytes); a
+    shorter one is refused, so every pass of the walk takes 48 bytes."""
+    whole = _dta(115, "LSF", VARS)
+    tail = len(whole) - (40 + len(TABLE))
+    short = struct.pack("<I", 0) + _pad("grp", 33, "latin-1") + b"\0\0\0"
+    with _deadline(10):
+        with pytest.raises(dta.DtaError) as caught:
+            dta.read_header(_write(tmp_path / "v.dta", whole[:tail] + short * 400_000))
+    assert caught.value.code == dta.CORRUPT

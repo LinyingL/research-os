@@ -9,7 +9,8 @@ orders, standard library only, written from StataCorp's format pages
 (`help dta`, dta_113 to dta_121).
 
 The data section is never read, so the cost grows with the number of
-variables, not of rows. In the tagged layout every section is found
+variables, not of rows (small reads come from one cached window of at most
+`WINDOW` bytes, which may reach into the data; those bytes are never used). In the tagged layout every section is found
 through the file's map and its length checked against the number of
 variables before it is read; the data section's length is checked by
 arithmetic alone (rows times the row width). A truncated, corrupt or
@@ -18,10 +19,14 @@ whose text says what was expected and what was found -- never a partial
 guess, never a hang: a FIFO, a device or a folder is refused before any
 read, every read is capped by the file's size, every loop by the number
 of variables or the file's size, and a header claiming more variables
-than `MAX_VARIABLES` is refused before any large read.
+than `MAX_VARIABLES` is refused before any large read. The walks of an old
+file follow the format pages exactly (an expansion field is type 0 with
+length 0, or type 1 holding its two 33-byte names; a value-label table
+holds its two counts), so each pass consumes at least 48 bytes.
 
-Names and labels come from the file: untrusted text. Control and bidi
-characters become U+FFFD; release 118 and later are UTF-8 (invalid bytes
+Names and labels come from the file: untrusted text. Control characters
+and every bidi control (the marks U+061C, U+200E, U+200F, the embeddings,
+overrides and isolates) become U+FFFD; release 118 and later are UTF-8 (invalid bytes
 replaced), 117 and older are read as Latin-1, which maps every byte.
 
 `read_header_stream(stream, size)` reads the same header from a stream (a
@@ -56,7 +61,15 @@ _OLD_NUMERIC = {255: ("double", 8), 254: ("float", 4), 253: ("long", 4), 252: ("
 _STRL, _ALIAS = 32768, 65525
 _SECTIONS = ("variable_types", "varnames", "sortlist", "formats", "value_label_names", "variable_labels")
 _PROBES = ((8, b"<characteristics>"), (9, b"<data>"), (10, b"<strls>"), (11, b"<value_labels>"), (12, b"</stata_dta>"))
-_UNSAFE = {c: "�" for c in (*range(0x20), *range(0x7F, 0xA0), *range(0x202A, 0x202F), *range(0x2066, 0x206A))}
+# Control characters and the whole Bidi_Control set (the marks U+061C,
+# U+200E, U+200F; the embeddings and overrides; the isolates). Joiners
+# (U+200C, U+200D) stay: Persian and Indic spellings need them.
+_UNSAFE = {c: "�" for c in (*range(0x20), *range(0x7F, 0xA0), 0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F),
+                                 *range(0x2066, 0x206A))}
+#: Reads of at most this many bytes are served from one cached window of the
+#: file, so a walk over many small fields costs one system call per window,
+#: not two per field.
+WINDOW = 64 * 1024
 
 
 class DtaError(ValueError):
@@ -264,10 +277,18 @@ def _old(r: _Reader, max_variables: int, tail: bool) -> Header:
     formats = r.read(fmt_w * k, "the display formats")
     value_labels = r.read(33 * k, "the value-label names")
     labels = r.read(81 * k, "the variable labels")
-    while True:  # the characteristics: each pass reads 5 bytes or stops
+    while True:  # the expansion fields: each pass reads at least 71 bytes or stops
+        at = r.pos
         kind, length = r.number("B", "a characteristic's type"), r.number("I", "a characteristic's length")
-        if kind == 0 and length == 0:
+        if kind == 0:  # the end, always written with length 0
+            if length:
+                raise DtaError(CORRUPT, f"the end of the characteristics at byte {at} has length {length}, not 0")
             break
+        if kind != 1:  # dta_113 to dta_115 define types 0 and 1 only
+            raise DtaError(CORRUPT, f"a characteristic at byte {at} has the unknown type {kind}")
+        if length < 66:  # a variable's name and the characteristic's name, 33 bytes each
+            raise DtaError(CORRUPT, f"a characteristic at byte {at} takes {length} bytes, fewer than its two "
+                                    "names need (66)")
         r.seek(r.pos + length, "a characteristic's end")
     end = r.pos + n * row
     if end > r.size:
@@ -275,8 +296,12 @@ def _old(r: _Reader, max_variables: int, tail: bool) -> Header:
                                   f"only {r.size - r.pos} are left")
     if tail:  # the value labels run to the end of the file; a walk that misses it is a cut or a corruption
         r.seek(end, "the value labels")
-        while r.pos < r.size:  # each pass reads 40 bytes or stops
+        while r.pos < r.size:  # each pass reads at least 48 bytes or stops
+            at = r.pos
             length = r.number("I", "a value label's length")
+            if length < 8:  # a table always holds n and txtlen
+                raise DtaError(CORRUPT, f"a value label at byte {at} takes {length} bytes, fewer than its two "
+                                        "counts need (8)")
             r.read(36, "a value label's name")
             if r.pos + length > r.size:
                 raise DtaError(TRUNCATED, f"a value label needs {length} bytes; only {r.size - r.pos} are left")
@@ -313,7 +338,7 @@ def read_header(path: str | os.PathLike[str], *, max_variables: int = MAX_VARIAB
         os.close(fd)
         raise
     with handle:
-        def fetch(offset: int, n: int) -> bytes:
+        def direct(offset: int, n: int) -> bytes:
             handle.seek(offset)
             chunks, got = [], 0
             while got < n:  # each pass reads something or stops
@@ -323,6 +348,17 @@ def read_header(path: str | os.PathLike[str], *, max_variables: int = MAX_VARIAB
                 chunks.append(chunk)
                 got += len(chunk)
             return b"".join(chunks)
+
+        window = [0, b""]  # where the cached bytes start, and the bytes
+
+        def fetch(offset: int, n: int) -> bytes:
+            if n > WINDOW:
+                return direct(offset, n)
+            start, data = window
+            if not (start <= offset and offset + n <= start + len(data)):
+                start, data = offset, direct(offset, WINDOW)
+                window[:] = [start, data]
+            return data[offset - start:offset - start + n]
 
         try:
             return _read(_Reader(fetch, st.st_size), max_variables, tail=True)
