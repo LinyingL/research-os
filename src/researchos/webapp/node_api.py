@@ -718,3 +718,136 @@ def share_join_payload(body: dict[str, Any]) -> dict[str, Any]:
     mine = _mine(body)
     return {"ok": True, **_share_call(lambda: share.join(shared_path, folder_path, project=project, expect_pi=expect,
                                                          mine=mine))}
+
+
+# -- Stata globals and the project folders they stand for (DESIGN.md 15.3) -------------------------
+
+#: The page's codes for the reasons a Stata path is 「展开不了」, and for a
+#: proposal's kind (13.6: the page never compares the engine's words).
+def _stata_codes() -> dict[str, str]:
+    from researchos.ingest import stata as stata_ingest  # noqa: PLC0415
+    from researchos.ingest import stata_folders  # noqa: PLC0415
+
+    return {
+        stata_ingest.UNDEFINED: "undefined", stata_ingest.OUTSIDE: "outside", stata_ingest.REASSIGNED: "reassigned",
+        stata_ingest.MACRO: "not_literal", stata_ingest.LOOP: "loop", stata_ingest.CD_NOT_FOLLOWED: "cd",
+        stata_ingest.WORKING_FOLDER: "working_folder", stata_ingest.TWO_FOLDERS: "two_folders",
+        stata_ingest.CYCLE: "cycle", stata_folders.LOCAL_ROOT: "local_root",
+    }
+
+
+def _folder_words(folder: str, lang: str) -> tuple[str, str]:
+    """(the folder as named in a sentence, where its files are): 「项目里的
+    文件夹 analysis/」 and 「在 analysis/ 下」; for "." the project folder
+    itself."""
+    from researchos import settings  # noqa: PLC0415
+
+    if folder == ".":
+        return (settings.say("项目文件夹本身", "the project folder itself", lang),
+                settings.say("在项目文件夹里", "in the project folder", lang))
+    shown = folder + "/"
+    return (settings.say("项目里的文件夹 {f}", "the project folder {f}", lang, f=shown),
+            settings.say("在 {f} 下", "under {f}", lang, f=shown))
+
+
+def _proposal_sentence(p: Any, lang: str) -> str:
+    """15.3's proposal with its evidence, in the request's language."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.ingest import stata as stata_ingest  # noqa: PLC0415
+
+    where, under = _folder_words(p.folder, lang)
+    fields = {"g": "$" + p.name, "where": where, "under": under, "n": history.number_text(p.paths, lang),
+              "k": history.number_text(p.found, lang), "value": p.value, "named": p.named,
+              "exist": "exists" if p.found == 1 else "exist", "path_s": "path" if p.paths == 1 else "paths"}
+    if p.reason == stata_ingest.UNDEFINED:
+        return settings.say("{g} 很可能指{where}：以它开头的 {n} 条路径里，{k} 条{under}存在",
+                            "{g} probably stands for {where}: of the {n} {path_s} that start with it, {k} {exist} "
+                            "{under}", lang, **fields)
+    if p.reason == stata_ingest.OUTSIDE:
+        return settings.say("{g} 写的是某台电脑上的路径 {value}，它最后的文件夹 {named} 对应{where}；"
+                            "以它开头的 {n} 条路径里，{k} 条{under}存在",
+                            "{g} holds a path on someone’s computer, {value}; its last folders, {named}, name "
+                            "{where}. Of the {n} {path_s} that start with it, {k} {exist} {under}", lang, **fields)
+    return settings.say("{g} 写的是这台电脑上的项目路径 {value}，所以在这里以它开头的路径都能找到；成员的工作副本在别的"
+                        "位置，需要知道它指项目里的哪个文件夹。按这里的位置，它指{where}（以它开头的 {n} 条路径里，"
+                        "{k} 条{under}存在）",
+                        "{g} holds this computer’s project path, {value}, so the paths that start with it are found "
+                        "here. Members’ working copies sit elsewhere and need to know which project folder it stands "
+                        "for: from here, it is {where} (of the {n} {path_s} that start with it, {k} {exist} {under})",
+                        lang, **fields)
+
+
+def stata_payload(root: Path, lang: str = "zh") -> dict[str, Any]:
+    """GET /api/stata: for 数据与代码 (15.3) -- the project folder Research OS
+    proposes for each global heading paths that do not resolve, with its
+    evidence in the request's language; the answers given; who may answer
+    (the PI or a single researcher; a member sees the proposals); and the
+    paths 「展开不了」, by reason code. Read from the same scan the dataflow
+    ingest makes (`dataflow._stata_scans`). Reads only."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.ingest import dataflow  # noqa: PLC0415
+    from researchos.ingest import files as files_ingest  # noqa: PLC0415
+    from researchos.ingest import git as git_ingest  # noqa: PLC0415
+    from researchos.ingest import stata_folders  # noqa: PLC0415
+    from researchos.records import stata as stata_record  # noqa: PLC0415
+
+    try:
+        inventory = git_ingest.list_source_files(root)
+    except git_ingest.NotAGitRepositoryError:
+        inventory = files_ingest.list_source_files(root)
+    if not inventory["do"]:
+        return {"has_do": False}
+    codes = _stata_codes()
+    loaded, decision = stata_record.assess(root)
+    record: dict[str, Any] = {"state": "ok"}
+    if not decision.may_apply:
+        words = stata_record.message_of(decision) or stata_record.MESSAGES["missing"]
+        record = {"state": "untrusted", "reason": decision.reason, "detail": decision.detail or loaded.error or "",
+                  "message": settings.say(*words, lang)}
+    scans = dataflow._stata_scans(root, inventory["do"], inventory["ado"])
+    role = stata_record.role(root)
+    answers = stata_record.answers_from(loaded)
+    heads = stata_folders.head_globals(scans, team=role != "single")
+    proposals = []
+    for name, p in sorted(stata_folders.propose(root, heads).items()):
+        given = answers.get(name)
+        if given is not None and given.get("answer") == stata_record.YES:
+            continue  # answered 「是」: listed with the answers
+        proposals.append({
+            "global": name, "folder": p.folder, "reason": codes.get(p.reason, "undefined"), "value": p.value,
+            "paths": p.paths, "found": p.found, "sentence": _proposal_sentence(p, lang),
+            "answer": None if given is None else {k: given.get(k) for k in ("answer", "folder", "by", "at")},
+        })
+    confirmed = [{"global": name, "folder": e.get("folder"), "by": e.get("by"), "at": e.get("at")}
+                 for name, e in sorted(answers.items()) if e.get("answer") == stata_record.YES]
+    groups = [{"reason": codes.get(reason, "not_literal"), "items": items}
+              for reason, items in stata_folders.unresolved(scans).items()]
+    refused = stata_record.refusal_for(role)
+    return {
+        "has_do": True, "role": role, "may_answer": refused is None,
+        "refusal": None if refused is None else settings.say(*stata_record.MESSAGES[refused], lang),
+        "record": record, "proposals": proposals, "confirmed": confirmed, "unresolved": groups,
+    }
+
+
+def stata_answer_payload(root: Path, project_id: str | None, body: dict[str, Any], lang: str = "zh", *,
+                         timeout: float) -> dict[str, Any]:
+    """POST /api/stata/answer {global, folder}: 「是」 (folder names it) or
+    「不是」 (folder null) -- one entry appended to .researchos/stata.toml by
+    `researchos.records.stata.answer` (via "app"), under the project lock
+    with the identity re-checked. A refusal is worded in the request's
+    language."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.records import stata as stata_record  # noqa: PLC0415
+
+    name, folder = body.get("global"), body.get("folder")
+    if not isinstance(name, str) or not (folder is None or isinstance(folder, str)):
+        raise NodeApiRefused(400, "stata_invalid_answer", "the body must carry string 'global' and 'folder' (or null)",
+                             settings.say(*stata_record.MESSAGES["invalid_answer"], lang))
+    try:
+        done = stata_record.answer(root, name, folder, via="app", expected_id=project_id, timeout=timeout)
+    except stata_record.StataRefused as exc:
+        status = {"not_pi": 403, "not_in_team": 403, "team_unreadable": 409, "untrusted": 409,
+                  "not_written": 409}.get(exc.code, 400)
+        raise NodeApiRefused(status, "stata_" + exc.code, str(exc), exc.say(lang)) from exc
+    return {"ok": True, **done}

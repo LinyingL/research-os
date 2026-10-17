@@ -289,6 +289,9 @@ class StataCall:
     # a `cd` or a `do`/`run`/`include` set (15.3): `literal` is then relative
     # to the project folder.
     working: tuple[str, str] | None = None
+    # (global, its value, the path after it) when the path is built on a
+    # global holding this computer's project path (`DoScan.local_roots`).
+    local_root: tuple[str, str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -311,6 +314,12 @@ class DoScan:
     parsed: bool = True
     calls: list[StataCall] = field(default_factory=list)
     skipped: list[Skip] = field(default_factory=list)
+    # (global, its own value, the path after it) for each path built on a
+    # global holding this computer's absolute path inside the project: it
+    # resolves here, and the folder it stands for is what a member's copy
+    # needs (15.3; `researchos.ingest.stata_folders`, LOCAL_ROOT). Never a
+    # skip.
+    local_roots: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -896,8 +905,10 @@ class _Project:
 
     def __init__(
         self, root: str | Path | None, texts: Mapping[str, str], programs, anchors: Mapping[str, str] | None = None,
+        only: str | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else None
+        self.only = only  # the one do-file scanned for its calls (and logged), None for all
         self.anchors = dict(anchors or {}) if root is not None else {}
         self.files = {rel: _File(rel, text) for rel, text in texts.items()}
         self.programs = set(programs)
@@ -1135,7 +1146,23 @@ class _Project:
         if v.anchor is not None and _sibling(v.anchor, path):
             return None, (OUTSIDE, v.head, "", "")
         folded = "; ".join([raw, *dict.fromkeys(v.chain)]) if v.chain else None
-        return StataCall(ln.cmd.line, ln.name, kind, path, folded, v.anchor), ()
+        local = self._local_root(v, path, ln.name) if v.chain and posixpath.isabs(path) else None
+        return StataCall(ln.cmd.line, ln.name, kind, path, folded, v.anchor, local_root=local), ()
+
+    def _log(self, rel_path: str, s: Skip) -> Skip:
+        """`s`, logged when `rel_path` is a file this scan speaks for."""
+        return _skip(rel_path, s) if self.only is None or rel_path == self.only else s
+
+    def _local_root(self, v: _Value, path: str, command: str) -> tuple[str, str, str] | None:
+        """(global, its value, the path after it) when `path` is built on a
+        global whose own value is this computer's absolute path inside the
+        project (`DoScan.local_roots`)."""
+        if not v.head.startswith("$") or v.rest is None or v.anchor is not None or self.root is None:
+            return None
+        own = self._own(v)
+        if not posixpath.isabs(own) or _inside(self.root, own) is None or _inside(self.root, path) is None:
+            return None
+        return (v.head[1:], own, _default(command, v.rest.lstrip("/")))
 
     def _own(self, v: _Value) -> str:
         """The own value of the global heading `v`."""
@@ -1180,7 +1207,7 @@ class _Project:
 
         def skip(line: int, command: str, reason: str, raw: str = "", macro: str = "", rest: str = "",
                  value: str = "") -> None:
-            items.append(_Final(_skip(rel_path, Skip(line, command, reason, raw, macro, rest, value))))
+            items.append(_Final(self._log(rel_path, Skip(line, command, reason, raw, macro, rest, value))))
 
         for ln in f.lines:
             cmd, written, name, rest = ln.cmd, ln.written, ln.name, ln.rest
@@ -1363,12 +1390,12 @@ class _Project:
                 wf, why = self._cd(item, wf, rel_path)
                 changed = True
                 if why is not None and out is not None:
-                    out.append(_skip(rel_path, why))
+                    out.append(self._log(rel_path, why))
             elif isinstance(item, _Run):
                 callee, why = self._target(item, wf, rel_path)
                 if callee is None:
                     if why is not None and out is not None:
-                        _skip(rel_path, why)  # logged; a run is not a link (15.2), no path of the file is lost
+                        self._log(rel_path, why)  # logged; a run is not a link (15.2), no path of the file is lost
                     continue
                 if wf.kind == UNKNOWN:
                     context = wf
@@ -1383,7 +1410,7 @@ class _Project:
                     final: _Wf | None = _Wf(UNKNOWN, reason=CYCLE)
                 elif depth + 1 >= RUN_DEPTH:
                     if out is not None:
-                        _skip(rel_path, Skip(item.line, item.command, TOO_DEEP, item.raw))  # logged, as above
+                        self._log(rel_path, Skip(item.line, item.command, TOO_DEEP, item.raw))  # logged, as above
                     final = _Wf(UNKNOWN, reason=WORKING_FOLDER)
                 else:
                     key = (callee, context.key)
@@ -1404,10 +1431,10 @@ class _Project:
         if wf.kind == KNOWN:
             joined = _join(wf.folder, call.literal)
             if joined is None:
-                return _skip(rel_path, Skip(call.line, call.command, OUTSIDE, item.raw))
+                return self._log(rel_path, Skip(call.line, call.command, OUTSIDE, item.raw))
             return replace(call, literal=joined, working=(wf.folder, wf.set_by), anchor=wf.anchor)
         rest = posixpath.normpath(posixpath.join(wf.rest, call.literal)) if wf.macro else ""
-        return _skip(rel_path, Skip(call.line, call.command, wf.reason, item.raw, wf.macro, rest, wf.value,
+        return self._log(rel_path, Skip(call.line, call.command, wf.reason, item.raw, wf.macro, rest, wf.value,
                                     wf.macro_reason))
 
     def scan(self) -> dict[str, DoScan]:
@@ -1456,12 +1483,13 @@ class _Project:
         out: dict[str, DoScan] = {}
         memo = {}
         for rel in self.files:
-            if rel not in self.dos:
+            if rel not in self.dos or (self.only is not None and rel != self.only):
                 continue
             things: list = []
             self._walk(rel, entries[rel], depth=0, stack=(), memo=memo, out=things)
-            out[rel] = DoScan(parsed=parsed[rel], calls=[t for t in things if isinstance(t, StataCall)],
-                              skipped=[t for t in things if isinstance(t, Skip)])
+            calls = [t for t in things if isinstance(t, StataCall)]
+            out[rel] = DoScan(parsed=parsed[rel], calls=calls, skipped=[t for t in things if isinstance(t, Skip)],
+                              local_roots=[c.local_root for c in calls if c.local_root is not None])
         return out
 
 
@@ -1557,15 +1585,17 @@ def _skip(rel_path: str, s: Skip) -> Skip:
 
 def scan_project(
     root: str | Path | None, texts: Mapping[str, str], *, programs: frozenset[str] | set[str] = frozenset(),
-    anchors: Mapping[str, str] | None = None,
+    anchors: Mapping[str, str] | None = None, only: str | None = None,
 ) -> dict[str, DoScan]:
     """The read/write commands of a project's do-files (the keys of `texts`
     not ending in .ado), read together with its .ado files for macros and
     program names (module docstring). `root` tells which absolute paths
     lie inside the project and which folders exist; without it (None) none
     is known to, and no anchor is used. `anchors`: global -> confirmed
-    project folder."""
-    return _Project(root, texts, programs, anchors).scan()
+    project folder. `only`: the one do-file whose calls are wanted (the
+    others are read for their macros and runs, and their skips are not
+    logged)."""
+    return _Project(root, texts, programs, anchors, only).scan()
 
 
 def scan_text(text: str, rel_path: str, *, programs: frozenset[str] | set[str] = frozenset()) -> DoScan:

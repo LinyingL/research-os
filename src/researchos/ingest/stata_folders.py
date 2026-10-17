@@ -40,6 +40,17 @@ The evidence, all of it deterministic and shown with the proposal:
 Nothing is proposed for a global a person has answered with 「是」: its
 paths resolve. One answered 「不是」 is proposed again, with its answer
 shown, so the answer can be changed.
+
+**This computer's project path** (`LOCAL_ROOT`, a project with members
+only): a global whose own value is an absolute path inside this project
+-- the PI's do-file hard-codes their own folder -- resolves here, so it is
+never unresolved on this computer; but in a member's working copy, which
+sits elsewhere, the same value lies outside the project. Its folder is
+what a member's copy needs, and only the PI may answer, so the PI is
+asked: the folder is the value relative to this project folder (a
+deterministic fact of the file system, "." for the project folder
+itself), proposed when no other folder holds more of its paths. A single
+researcher is never asked (nothing would change for them).
 """
 
 from __future__ import annotations
@@ -60,6 +71,8 @@ UNRESOLVED_REASONS = (stata_ingest.UNDEFINED, stata_ingest.OUTSIDE, stata_ingest
                       stata_ingest.LOOP, stata_ingest.CD_NOT_FOLLOWED, stata_ingest.WORKING_FOLDER,
                       stata_ingest.TWO_FOLDERS, stata_ingest.CYCLE)
 _HEAD_REASONS = frozenset({stata_ingest.UNDEFINED, stata_ingest.OUTSIDE})
+#: A global holding this computer's project path (module docstring).
+LOCAL_ROOT = "this computer's project path"
 _DRIVE_RE = re.compile(r"^(?:[A-Za-z]:|//[^/]*)")
 
 
@@ -85,18 +98,27 @@ class Proposal:
     found: int  # how many of them are files under `folder`
 
 
-def head_globals(scans: Mapping[str, stata_ingest.DoScan | None]) -> dict[str, HeadGlobal]:
+def head_globals(scans: Mapping[str, stata_ingest.DoScan | None], *, team: bool = False) -> dict[str, HeadGlobal]:
     """Every global that heads a path a do-file could not resolve because
     the global itself is undefined or outside the project -- written out
     (`"$root/data/x"`) or through the working folder (`cd "$root"`, then
-    `"data/x"`)."""
+    `"data/x"`) -- and, in a project with members (`team`), every global
+    holding this computer's project path (`LOCAL_ROOT`)."""
     found: dict[str, dict] = {}
+    for scan in scans.values():
+        for name, value, rest in (scan.local_roots if team and scan is not None else ()):
+            g = found.setdefault(name, {"reason": LOCAL_ROOT, "value": value, "paths": set(), "uses": 0})
+            if g["reason"] == LOCAL_ROOT and rest:
+                g["paths"].add(rest)
+                g["uses"] += 1
     for scan in scans.values():
         for s in (scan.skipped if scan is not None else ()):
             reason = s.macro_reason or s.reason
             if reason not in _HEAD_REASONS or not s.macro.startswith("$") or not s.rest:
                 continue
             g = found.setdefault(s.macro[1:], {"reason": reason, "value": s.value, "paths": set(), "uses": 0})
+            if g["reason"] == LOCAL_ROOT:
+                continue
             g["paths"].add(s.rest)
             g["uses"] += 1
     return {name: HeadGlobal(name, g["reason"], g["value"], tuple(sorted(g["paths"])), g["uses"])
@@ -164,6 +186,13 @@ def propose(root: str | Path, heads: Mapping[str, HeadGlobal], files: set[str] |
     for name, g in heads.items():
         counts = _counts(g.paths, files)
         n = len(g.paths)
+        if g.reason == LOCAL_ROOT:
+            folder = stata_ingest._inside(root, g.value)
+            here = counts.get(folder or "", 0)
+            if folder is None or any(c > here for f, c in counts.items() if f != folder):
+                continue
+            out[name] = Proposal(name, folder or ".", g.reason, g.value, "", n, here)
+            continue
         if g.reason == stata_ingest.UNDEFINED:
             if not counts:
                 continue

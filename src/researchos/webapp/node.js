@@ -1055,6 +1055,8 @@
       if (e.file && e.file !== l.other.path && e.file !== (page.path || "")) where.append(mk("span", "mono", e.file), " ");
       where.append(t("第 {n} 行", { n: e.line }));
       if (e.callee) where.append(t("（"), mk("span", "mono", e.callee), t("）"));
+      // 15.3: a link made through a confirmed answer carries it.
+      if (e.anchor) where.append(" ", t("{global} 已确认指{folder}", { global: "$" + e.anchor.global, folder: stataFolder(e.anchor.folder) }));
     });
     if ((l.evidence || []).length) li.appendChild(where);
     if (l.judgement && (l.review || l.conflict) && l.judgement.label) li.appendChild(mk("div", "tl-meta", l.judgement.label));
@@ -1429,10 +1431,125 @@
       b.dataset.filter = key;
       bar.appendChild(b);
     });
-    host.append(bar, list);
+    const stata = mk("div", "dc-stata-slot");
+    host.append(stata, bar, list);
     draw();
     host.dataset.loaded = "1";
     if (refresh) window.scrollTo(0, top);
+    loadStata(stata, host);
+  }
+
+  // -- Stata globals and the project folders they stand for (DESIGN.md 15.3) --
+  // Research OS proposes, with its evidence (the engine's sentence, in the
+  // page's language); the PI or a single researcher answers 「是」 or 「不是」,
+  // a member sees the proposal; the paths 展开不了 are listed by reason.
+
+  function stataFolder(folder) {
+    return folder === "." ? t("项目文件夹本身") : t("项目里的文件夹 {folder}", { folder: String(folder || "") + "/" });
+  }
+
+  function stataReasonWords(code) {
+    if (code === "undefined") return t("全局变量没有定义");
+    if (code === "outside") return t("指向项目以外的位置");
+    if (code === "reassigned") return t("被赋了不同的值");
+    if (code === "not_literal") return t("不是写定的值");
+    if (code === "loop") return t("在循环里拼出");
+    if (code === "cd") return t("改变工作文件夹的 cd 无法跟随");
+    if (code === "working_folder") return t("工作文件夹无法确定");
+    if (code === "two_folders") return t("从两个工作文件夹运行");
+    if (code === "cycle") return t("do 文件相互运行");
+    return t("展开不了");
+  }
+
+  async function stataAnswer(host, name, folder, status, buttons) {
+    buttons.forEach((b) => { b.disabled = true; });
+    setStatus(status, "", t("正在记下回答…"));
+    try {
+      await apiPost("/api/stata/answer", { global: name, folder: folder });
+    } catch (err) {
+      buttons.forEach((b) => { b.disabled = false; });
+      setStatus(status, "err", (err && err.engineMessage) || t("没能记下这个回答"), err);
+      return;
+    }
+    loadDataCode(host, true);
+  }
+
+  function stataAnswerButtons(host, s, name, folder, item) {
+    const status = mk("div", "notice-status");
+    if (!s.may_answer) {
+      if (s.refusal) item.appendChild(mk("div", "tl-meta", s.refusal));
+      return;
+    }
+    const row = mk("div", "tl-actions");
+    const buttons = [];
+    if (folder != null) buttons.push(mkButton(t("是"), "btn btn-small", () => stataAnswer(host, name, folder, status, buttons)));
+    buttons.push(mkButton(t("不是"), "btn btn-small", () => stataAnswer(host, name, null, status, buttons)));
+    const blocked = humanRecordsBlocked();
+    buttons.forEach((b) => { if (blocked) { b.disabled = true; b.title = blocked; } row.appendChild(b); });
+    item.append(row, status);
+  }
+
+  function renderStata(slot, host, s) {
+    slot.replaceChildren();
+    if (!s || !s.has_do) return;
+    const proposals = s.proposals || [], confirmed = s.confirmed || [], groups = s.unresolved || [];
+    const untrusted = s.record && s.record.state !== "ok";
+    if (!proposals.length && !confirmed.length && !groups.length && !untrusted) return;
+    const box = mk("section", "dc-stata");
+    box.appendChild(mk("h3", "dc-stata-title", t("Stata 全局变量")));
+    if (untrusted) {
+      const line = mk("p", "dc-rel bad");
+      renderBlockingError(line, s.record.message || t("全局变量记录文件当前无法读取"), s.record.detail || "");
+      box.appendChild(line);
+    }
+    proposals.forEach((p) => {
+      const item = mk("div", "dc-stata-item");
+      item.appendChild(mk("p", "dc-stata-sentence", p.sentence || ""));
+      if (p.answer && p.answer.answer === "no") item.appendChild(mk("div", "tl-meta", t("上次的回答是「不是」（{who}）", { who: p.answer.by || "" })));
+      stataAnswerButtons(host, s, p.global, p.folder, item);
+      box.appendChild(item);
+    });
+    confirmed.forEach((c) => {
+      const item = mk("div", "dc-stata-item");
+      item.appendChild(mk("p", "dc-stata-sentence", t("{global} 已确认指{folder}", { global: "$" + c.global, folder: stataFolder(c.folder) })));
+      if (c.by) item.appendChild(mk("div", "tl-meta", t("回答的人：{who}", { who: c.by })));
+      stataAnswerButtons(host, s, c.global, null, item);
+      box.appendChild(item);
+    });
+    if (groups.length) {
+      const total = groups.reduce((n, g) => n + (g.items || []).length, 0);
+      const details = mk("details", "dc-stata-unresolved");
+      details.appendChild(mk("summary", null, t("展开不了（{n}）", { n: total })));
+      groups.forEach((g) => {
+        details.appendChild(mk("div", "dc-stata-reason", t("{reason}（{n}）", { reason: stataReasonWords(g.reason), n: (g.items || []).length })));
+        const ul = mk("ul", "dc-stata-list");
+        (g.items || []).forEach((i) => {
+          const li = mk("li", "tl-meta");
+          li.append(mk("span", "mono", String(i.file || "")), " ", t("第 {n} 行", { n: i.line }), " ",
+            mk("span", "mono", (String(i.command || "") + " " + String(i.text || "")).trim()));
+          ul.appendChild(li);
+        });
+        details.appendChild(ul);
+      });
+      box.appendChild(details);
+    }
+    slot.appendChild(box);
+  }
+
+  async function loadStata(slot, host) {
+    const epoch = state.dataEpoch;
+    let s;
+    try {
+      s = await apiGet("/api/stata");
+    } catch (err) {
+      if (epoch !== state.dataEpoch) return;
+      const line = mk("p", "dc-rel bad");
+      renderBlockingError(line, t("没能读取 Stata 全局变量"), err);
+      slot.replaceChildren(line);
+      return;
+    }
+    if (epoch !== state.dataEpoch) return;
+    renderStata(slot, host, s);
   }
 
   window.RONode = Object.freeze({
@@ -1445,5 +1562,6 @@
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _linkRow: linkRow, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
     _tableWords: tableWords, _timeline: timeline, _when: when, _timeKey: timeKey, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
+    _renderStata: renderStata, _stataReasonWords: stataReasonWords,
   });
 })();

@@ -337,3 +337,54 @@ def test_14_6_a_proposals_pure_words_in_english():
     assert out["unsigned"] == {"label": "Unverified", "tone": "ochre", "reason": "This proposal carries no signature to check"}
     assert out["unpublished"] == ("Approved: the change is written into the official version, but it was not published to the "
                                   "shared folder this time: Publishing did not finish. You can publish again in “Members”.")
+
+
+# -- V11 (15.1, 15.3): a proposed Stata do-file is read for the variable versions it uses ----------------
+
+_PANEL_CARD = {"data/panel.dta": [{"card": "panel", "name": "Panel", "version": 2, "role": "input"}]}
+
+
+def _do_uses(root, rel: str, text: str, tmp_path, lang: str) -> list[str]:
+    copy = tmp_path / "proposal-copy" / rel
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_text(text, encoding="utf-8")
+    with mock.patch.object(nodepage, "_card_paths", return_value=_PANEL_CARD):
+        return [u["how"] for u in nodepage.variables_used(root, [{"path": rel, "action": "added", "content": str(copy)}], lang)]
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_15_a_proposed_do_file_that_reads_a_variables_input_is_listed(tmp_path, lang):
+    """12.3's 用到的变量版本 for a do-file (15.1: .do is a script in every
+    classifier): `use "data/panel.dta"`, `use data/panel` (the default
+    extension) and a path folded from a local are listed, as for Python."""
+    root = tmp_path / "p"
+    root.mkdir()
+    said = {"zh": "{rel} 读取 data/panel.dta，这是这个变量的输入数据",
+            "en": "{rel} reads data/panel.dta, which is this variable's input data"}[lang]
+    for rel, text in (("clean.do", 'use "data/panel.dta", clear\n'), ("bare.do", "use data/panel\n"),
+                      ("local.do", 'local d "data"\nuse "`d\'/panel"\n')):
+        assert _do_uses(root, rel, text, tmp_path, lang) == [said.format(rel=rel)], rel
+    assert not CJK.search(json.dumps(_do_uses(root, "clean.do", 'use "data/panel"\n', tmp_path, "en")))
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_15_a_proposed_do_file_on_a_confirmed_folder_is_listed_and_unconfirmed_it_is_not(tmp_path, lang):
+    """15.3: `$Root/data/panel.dta` names the variable's input only once a
+    person confirmed $Root stands for the project folder; until then its
+    path does not resolve and nothing is listed."""
+    from researchos import people
+    from researchos import project as project_identity
+    from researchos.records import stata as stata_record
+
+    people.write_me("李", "li@example.com")
+    root = tmp_path / "p"
+    (root / "analysis").mkdir(parents=True)
+    project_identity.init_project(root)
+    text = 'use "$Root/data/panel.dta"\n'
+    assert _do_uses(root, "analysis/clean.do", text, tmp_path, lang) == []
+    stata_record.answer(root, "Root", ".", via="app")
+    said = {"zh": "analysis/clean.do 读取 data/panel.dta，这是这个变量的输入数据",
+            "en": "analysis/clean.do reads data/panel.dta, which is this variable's input data"}[lang]
+    assert _do_uses(root, "analysis/clean.do", text, tmp_path, lang) == [said]
+    stata_record.stata_path(root).write_text("[[global]\nbroken\n", encoding="utf-8")  # cannot be trusted now
+    assert _do_uses(root, "analysis/clean.do", text, tmp_path, lang) == []

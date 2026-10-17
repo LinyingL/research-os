@@ -3335,6 +3335,11 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/data-code":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._official(node_api.data_code_payload(conn, served.root)))
+            elif path == "/api/stata":
+                # 15.3: the project folders Research OS proposes for Stata
+                # globals, the answers given and the paths 展开不了 -- reads only.
+                served = self._require_unblocked()
+                self._send_json(200, node_api.stata_payload(served.root, self._lang()))
             elif path == "/api/proposals" or path.startswith("/api/proposals/"):
                 # 12.3: the PI's inbox or a member's own proposals; one
                 # proposal with what approving would do. Never in any
@@ -3583,6 +3588,29 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         served.root, served.project_id, body, timeout=WRITE_LOCK_TIMEOUT_S,
                     ))
                 payload["generation"] = self.server.watcher.record_write({str(notes_mod.notes_path(served.root))})
+                self._send_json(200, payload)
+            elif parsed.path == "/api/stata/answer":
+                # 15.3: 「是」/「不是」 for the project folder behind a Stata
+                # global -- one entry appended to .researchos/stata.toml
+                # (`researchos.records.stata.answer`: the PI or a single
+                # researcher, under the project lock), then the do-files
+                # rescanned here, not left to the watcher.
+                from researchos.records import stata as stata_record  # noqa: PLC0415
+
+                body = self._read_json_object()
+                served = self._require_unblocked()
+                with self.server.write_guard(human=True):
+                    payload = self._node_api(lambda: node_api.stata_answer_payload(
+                        served.root, served.project_id, body, self._lang(), timeout=WRITE_LOCK_TIMEOUT_S,
+                    ))
+                    if payload.get("changed"):
+                        with self.server.watcher.ingest_lock:
+                            try:
+                                self.server.watcher.reingest_dataflow(served.root)
+                            except Exception as exc:  # noqa: BLE001 -- the answer is written whatever this says
+                                logger.exception("rescanning the do-files of %s after a Stata answer failed", served.root)
+                                payload["ingest_error"] = str(exc)
+                payload["generation"] = self.server.watcher.record_write({str(stata_record.stata_path(served.root))})
                 self._send_json(200, payload)
             elif parsed.path == "/api/papers":
                 # 12.13: 「设为论文正文」 -- one entry appended to

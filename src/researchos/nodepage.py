@@ -32,6 +32,7 @@ The page's copy is Chinese (8.8) and says relations in words (12.11): 读取,
 
 from __future__ import annotations
 
+import logging
 import posixpath
 import re
 from pathlib import Path
@@ -42,6 +43,8 @@ from researchos import db, lineage, settings
 from researchos import trace as trace_mod
 from researchos.records import judgements
 from researchos.records import notes as notes_mod
+
+logger = logging.getLogger(__name__)
 
 TYPE_WORDS = {
     "script": "脚本", "dataset": "数据", "figure": "图表", "file": "文件", "attempt": "尝试",
@@ -217,14 +220,24 @@ def _links(conn: Connection, node_id: str, flags: judgements.LinkFlags,
                 if drawn.get("by"):
                     item["mapping"]["by_label"] = _person(root_people, drawn["by"])
         occurrences = trace_mod._occurrences(edge["evidence"])
-        item["evidence"] = [{"file": o.get("file"), "line": o.get("line"), "callee": o.get("callee")}
-                            for o in occurrences[:5] if o.get("line") is not None]
+        item["evidence"] = [_evidence_of(o) for o in occurrences[:5] if o.get("line") is not None]
         seen[key] = item
         if len(seen) >= LINK_LIMIT:
             break
     order = {"pending": 0, "auto": 1, "confirmed": 2, "rejected": 3}
     return sorted(seen.values(), key=lambda i: (not (i.get("review") or i.get("conflict")), i["human"],
                                                 order.get(i["status"], 1), i["type"], i["src"], i["dst"]))
+
+
+def _evidence_of(o: dict[str, Any]) -> dict[str, Any]:
+    """One occurrence as the page shows it: the file, the line, the call --
+    and the confirmed answer a Stata path was built on (15.3: a link made
+    through it carries it), when it was."""
+    out = {"file": o.get("file"), "line": o.get("line"), "callee": o.get("callee")}
+    anchor = o.get("anchor")
+    if isinstance(anchor, dict) and isinstance(anchor.get("global"), str) and isinstance(anchor.get("folder"), str):
+        out["anchor"] = {"global": anchor["global"], "folder": anchor["folder"]}
+    return out
 
 
 # -- the trace as columns (12.7) ---------------------------------------------------------------
@@ -1086,10 +1099,11 @@ def _card_paths(root: Path) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def _script_reads(rel: str, content: str | None) -> list[str]:
+def _script_reads(rel: str, content: str | None, project_root: str | Path | None = None) -> list[str]:
     """The paths a proposed script reads, from its own text (the scanner's
     reading, on the proposal's copy of the file) -- empty when it is not a
-    script or its text is not at hand."""
+    script or its text is not at hand. A do-file is read the way the main
+    scan reads the project (15.3, `_do_calls`)."""
     from researchos.ingest import dataflow  # noqa: PLC0415
 
     if not content:
@@ -1098,27 +1112,68 @@ def _script_reads(rel: str, content: str | None) -> list[str]:
     suffix = path.suffix.lower()
     try:
         if suffix == ".py":
-            outcome = dataflow.scan_py_file(path.parent, path.name)
+            calls = dataflow.scan_py_file(path.parent, path.name).calls
         elif suffix == ".r":
-            outcome = dataflow.scan_r_file(path.parent, path.name)
+            calls = dataflow.scan_r_file(path.parent, path.name).calls
         elif suffix == ".rmd":
-            outcome = dataflow.scan_rmd_file(path.parent, path.name)
+            calls = dataflow.scan_rmd_file(path.parent, path.name).calls
+        elif suffix == ".do" and project_root is not None:
+            calls = _do_calls(Path(project_root), rel, path)
         else:
             return []
     except Exception:  # noqa: BLE001
         return []
     found = []
     folder = posixpath.dirname(rel)
-    for call in outcome.calls:
+    for call in calls:
         if call.kind != "read" or not call.literal:
             continue
         literal = call.literal.strip()
-        if literal.startswith("/"):
+        if literal.startswith("/") or dataflow.is_windows_absolute(literal):
+            continue
+        if getattr(call, "anchor", None) is not None or getattr(call, "working", None) is not None:
+            found.append(posixpath.normpath(literal))  # already relative to the project folder (15.3)
             continue
         found.append(posixpath.normpath(literal))
         if folder:
             found.append(posixpath.normpath(posixpath.join(folder, literal)))
     return found
+
+
+def _do_calls(root: Path, rel: str, copy: Path) -> list[Any]:
+    """A proposed do-file's calls, read with the official project's other
+    do-files and .ado files and its confirmed project folders (15.3) -- the
+    proposal's copy in place of `rel`. Nothing when the record of those
+    answers cannot be trusted now (say nothing rather than something wrong,
+    9.3); its own macros only when the project cannot be read."""
+    from researchos import cloud  # noqa: PLC0415
+    from researchos.ingest import dataflow  # noqa: PLC0415
+    from researchos.ingest import files as files_ingest  # noqa: PLC0415
+    from researchos.ingest import git as git_ingest  # noqa: PLC0415
+    from researchos.ingest import stata as stata_ingest  # noqa: PLC0415
+    from researchos.records import stata as stata_record  # noqa: PLC0415
+
+    anchors, _why = stata_record.anchors(root)
+    if anchors is None:
+        return []
+    try:
+        try:
+            inventory = git_ingest.list_source_files(root)
+        except git_ingest.NotAGitRepositoryError:
+            inventory = files_ingest.list_source_files(root)
+        texts: dict[str, str] = {}
+        for other in dict.fromkeys([*inventory["do"], *inventory["ado"]]):
+            if other == rel or stata_ingest.vendored(root, other):
+                continue
+            try:
+                texts[other] = cloud.read_text(root / other)
+            except OSError:
+                continue
+        texts[rel] = copy.read_text(errors="replace")
+        return list(stata_ingest.scan_project(root, texts, anchors=anchors, only=rel)[rel].calls)
+    except Exception:  # noqa: BLE001 -- the project could not be read: the file's own macros
+        logger.warning("reading %s with the project's do-files failed; its own macros only", rel, exc_info=True)
+        return list(dataflow.scan_do_file(copy.parent, copy.name).calls)
 
 
 def variables_used(project_root: str | Path, files: list[dict[str, Any]], lang: str = "zh") -> list[dict[str, Any]]:
@@ -1141,7 +1196,7 @@ def variables_used(project_root: str | Path, files: list[dict[str, Any]], lang: 
                 seen.add(key)
                 out.append({**use, "path": rel, "how": settings.say("{rel} 是这个变量的{role}", "{rel} is this variable's {role}",
                                                                      lang, rel=rel, role=roles[use["role"]])})
-        for read in _script_reads(rel, f.get("content")):
+        for read in _script_reads(rel, f.get("content"), root):
             for use in named.get(read, []):
                 if use["role"] == "script":
                     continue

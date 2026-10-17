@@ -200,7 +200,8 @@ def take_snapshot(project_root: Path) -> WatchSnapshot:
     files: dict[str, tuple[int, int]] = {}
     steps: set[str] = set()
 
-    for record in (*record_paths(project_root), notes_record_path(project_root), papers_record_path(project_root)):
+    for record in (*record_paths(project_root), notes_record_path(project_root), papers_record_path(project_root),
+                   stata_record_path(project_root)):
         record_entry = _stat_entry(record)
         if record_entry is not None:
             files[str(record)] = record_entry
@@ -273,6 +274,16 @@ def papers_record_path(project_root: Path) -> Path:
     from researchos.records import papers  # noqa: PLC0415 -- leaf use
 
     return papers.papers_path(project_root)
+
+
+def stata_record_path(project_root: Path) -> Path:
+    """The project folders behind Stata globals (15.3): a change -- an
+    answer from the command line, a share sync, a hand edit -- reruns the
+    dataflow scan, which builds Stata paths on it, whatever the attempts
+    config says."""
+    from researchos.records import stata  # noqa: PLC0415 -- leaf use
+
+    return stata.stata_path(project_root)
 
 
 def card_record_paths(project_root: Path) -> list[Path]:
@@ -678,18 +689,21 @@ class ProjectWatcher:
         mappings_file, ledger_file, canvas_file = (str(p) for p in record_paths(root))
         notes_file = str(notes_record_path(root))
         papers_file = str(papers_record_path(root))
+        stata_file = str(stata_record_path(root))
+        stata_changed = stata_file in changed
         mappings_changed = mappings_file in changed
         ledger_changed = ledger_file in changed or notes_file in changed
         impl_paths = (baseline.impl_paths | snapshot.impl_paths) - (baseline.steps_paths | snapshot.steps_paths)
         cards_changed = {path for path in changed if _is_card_file(path, root) or path in impl_paths}
-        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file, papers_file}
+        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file, papers_file, stata_file}
                                 - cards_changed)
         error: str | None = None
         try:
-            if attempts_changed or mappings_changed or ledger_changed or cards_changed:
+            if attempts_changed or mappings_changed or ledger_changed or cards_changed or stata_changed:
                 with self._guarded_ingest_lock:
                     self._reingest(
                         root, steps_changed, attempts=attempts_changed, mappings=mappings_changed,
+                        stata=stata_changed,
                     )
         except Exception as exc:  # noqa: BLE001 -- containment is the whole point
             # A half-saved table or a mid-edit script must never kill the
@@ -858,7 +872,7 @@ class ProjectWatcher:
         logger.info("graph for %s is back -- auto re-ingest resumed", recovered)
 
     def _reingest(
-        self, root: Path, steps_changed: bool, *, attempts: bool = True, mappings: bool = False,
+        self, root: Path, steps_changed: bool, *, attempts: bool = True, mappings: bool = False, stata: bool = False,
     ) -> None:
         """Re-run the ingests the changed files feed (module docstring):
         the attempts ingest -- exactly `researchos.cli.cmd_attempts`'s own calls --
@@ -902,6 +916,13 @@ class ProjectWatcher:
                     history.record_after_scan(conn, root)
                 except Exception as exc:  # noqa: BLE001 -- re-raised below, after the other half
                     errors.append(exc)
+            if stata and not (attempts and steps_changed):
+                # 15.3: the answers changed what the do-files' paths resolve
+                # to; the attempts half did not already rescan them.
+                try:
+                    self._reingest_dataflow(conn, root)
+                except Exception as exc:  # noqa: BLE001 -- re-raised below
+                    errors.append(exc)
             if mappings:
                 try:
                     report = mappings_ingest.ingest_mappings(conn, root)
@@ -925,6 +946,20 @@ class ProjectWatcher:
             raise errors[0]
         if errors:
             raise RuntimeError("; ".join(str(e) for e in errors))
+
+    def reingest_dataflow(self, root: Path) -> None:
+        """The dataflow slice and the judgment ledger, now: for a write that
+        changes what the do-files' paths resolve to (a Stata answer from
+        the page, 15.3). The caller holds `ingest_lock`."""
+        db_path = paths.graph_db_path(root)
+        if not db_path.exists():
+            raise RuntimeError(f"no Research OS project at {root} (missing its graph at {db_path})")
+        conn = db.connect(db_path)
+        try:
+            self._reingest_dataflow(conn, root)
+            self._apply_ledger(conn, root)
+        finally:
+            conn.close()
 
     def _reingest_dataflow(self, conn, root: Path) -> None:
         """The dataflow slice of `researchos.cli.cmd_ingest`, reused not
