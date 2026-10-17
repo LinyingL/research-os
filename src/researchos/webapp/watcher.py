@@ -930,8 +930,8 @@ class ProjectWatcher:
         """The dataflow slice of `researchos.cli.cmd_ingest`, reused not
         re-implemented: the git-tracked inventory with the same
         `NotAGitRepositoryError` -> filesystem-walk degradation `cmd_ingest`
-        applies (W1), then `ingest_dataflow_repo` over the .py/.R/.Rmd
-        lists. Any other `GitIngestError` propagates to `poll_once`'s
+        applies (W1), then `ingest_dataflow_repo` over the .py/.R/.Rmd/.do
+        lists (and the .ado files, for their program names). Any other `GitIngestError` propagates to `poll_once`'s
         containment, mirroring `cmd_ingest` treating it as fatal for the
         run rather than guessing at an inventory.
 
@@ -946,6 +946,7 @@ class ProjectWatcher:
             sc.inventory(inventory)
             counts = dataflow_ingest.ingest_dataflow_repo(
                 conn, root, inventory["py"], inventory["r"], inventory["rmd"], scan=sc,
+                do_paths=inventory["do"], ado_paths=inventory["ado"],
             )
         logger.info("watcher re-ingested dataflow for %s: %s", root, counts)
 

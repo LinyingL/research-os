@@ -193,7 +193,7 @@ def test_ingest_reports_dataflow_summary_and_creates_lineage_nodes(tmp_path, cap
 
     assert cli.main(["ingest", str(project)]) == 0
     out = capsys.readouterr().out
-    assert "dataflow: 1 .py, 0 .R, 0 .Rmd scanned -> reads=1 writes=1" in out
+    assert "dataflow: 1 .py, 0 .R, 0 .Rmd, 0 .do scanned -> reads=1 writes=1" in out
 
     conn = db.connect(paths.graph_db_path(project))
     try:

@@ -2505,7 +2505,7 @@ def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_l
     frozen with what the index holds, never the approval half done."""
     from researchos.ingest import dataflow as dataflow_ingest  # noqa: PLC0415
 
-    kinds: dict[str, list[str]] = {".py": [], ".r": [], ".rmd": []}
+    kinds: dict[str, list[str]] = {".py": [], ".r": [], ".rmd": [], ".do": [], ".ado": []}
     for item in placed:
         rel = str(item.get("path") or "")
         suffix = Path(rel).suffix.lower()
@@ -2515,7 +2515,9 @@ def _scan_placed(conn, root: Path, placed: Iterable[Mapping[str, Any]], ingest_l
         return
     try:
         with ingest_lock if ingest_lock is not None else contextlib.nullcontext():
-            dataflow_ingest.ingest_dataflow_repo(conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"])
+            dataflow_ingest.ingest_dataflow_repo(
+                conn, root, kinds[".py"], kinds[".r"], kinds[".rmd"], do_paths=kinds[".do"], ado_paths=kinds[".ado"],
+            )
     except Exception:  # noqa: BLE001 -- contained: the basis is frozen with what the index holds
         logger.exception("scanning the scripts an approval placed in %s failed", root)
 

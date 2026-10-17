@@ -361,7 +361,7 @@ def _scripts_of(root: Path) -> list[str]:
     except Exception:  # noqa: BLE001 -- an explanation line is never worth failing the preview
         logger.exception("could not list the scripts of %s", root)
         return []
-    return [*inventory.get("py", []), *inventory.get("r", []), *inventory.get("rmd", [])]
+    return [*inventory.get("py", []), *inventory.get("r", []), *inventory.get("rmd", []), *inventory.get("do", [])]
 
 
 def preview(root: str | Path, *, from_dir: str | Path | None = None, echo: Echo = lambda _l: None) -> list[Preview]:

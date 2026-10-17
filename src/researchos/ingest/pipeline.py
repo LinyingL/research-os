@@ -166,10 +166,11 @@ def _scan_sources(
         # W2: data lineage; needs no git at all.
         dataflow_counts = dataflow_ingest.ingest_dataflow_repo(
             conn, project_root, inventory["py"], inventory["r"], inventory["rmd"], scan=sc,
+            do_paths=inventory["do"], ado_paths=inventory["ado"],
         )
         echo(
             f"  dataflow: {len(inventory['py'])} .py, {len(inventory['r'])} .R, "
-            f"{len(inventory['rmd'])} .Rmd scanned -> {_format_counts(dataflow_counts)}"
+            f"{len(inventory['rmd'])} .Rmd, {len(inventory['do'])} .do scanned -> {_format_counts(dataflow_counts)}"
         )
         # T6: static savefig() analysis; each edge's src commit is resolved
         # internally via git blame, not HEAD.

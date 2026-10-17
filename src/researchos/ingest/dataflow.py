@@ -46,6 +46,13 @@ code chunks before this same scanner runs over it (`_extract_r_chunks`) --
 prose and non-R chunks are never scanned, and line numbers stay aligned with
 the original file either way.
 
+**Stata** (`parse_do_file`): `researchos.ingest.stata` reads a do-file -- a
+lexer first, then commands only at a command's start (DESIGN.md 15.2) --
+and each call is named by its canonical command (`graph export`, however
+it was abbreviated): that name is its `callee` and its basis. Literal paths
+only for now; vendored libraries and project .ado files are not scanned for
+files (15.1).
+
 **Path resolution and the `missing` flag.** A resolved literal is tried both
 relative to the script's own directory and relative to the project root,
 preferring whichever is an actually-existing file (`_resolve_target`). When
@@ -141,6 +148,7 @@ from researchos import db
 from researchos.ingest import git as git_ingest
 from researchos.ingest import pyconst
 from researchos.ingest import scan as scan_mod
+from researchos.ingest import stata as stata_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -970,6 +978,66 @@ def scan_rmd_file(repo_root: str | Path, rmd_rel_path: str) -> ParseOutcome:
 
 
 # ---------------------------------------------------------------------------
+# Stata (`researchos.ingest.stata` reads the do-file; DESIGN.md 15.2)
+# ---------------------------------------------------------------------------
+
+
+def _do_outcome(do_rel_path: str, text: str, programs: frozenset[str] | set[str]) -> ParseOutcome:
+    """A do-file's calls, each named by its canonical command -- its callee
+    and its basis (`graph export`, never the `gr export` it was spelled)."""
+    found = stata_ingest.scan_text(text, do_rel_path, programs=programs)
+    calls = [DataflowCall(do_rel_path, c.line, c.command, c.kind, c.literal, None, c.command) for c in found.calls]
+    return ParseOutcome(scan_mod.READ_AND_PARSED if found.parsed else scan_mod.UNPARSEABLE, calls)
+
+
+def parse_do_file(repo_root: str | Path, do_rel_path: str) -> list[DataflowCall]:
+    """The calls of `scan_do_file` alone."""
+    return scan_do_file(repo_root, do_rel_path).calls
+
+
+def scan_do_file(
+    repo_root: str | Path, do_rel_path: str, *, programs: frozenset[str] | set[str] = frozenset(),
+) -> ParseOutcome:
+    """Scan one Stata do-file for read/write commands; `programs` are the
+    project's own program names, never read as Stata commands (15.1)."""
+    path = Path(repo_root) / do_rel_path
+    try:
+        text = cloud.read_text(path)
+    except OSError as exc:
+        logger.warning("cannot read %s: %s", do_rel_path, exc)
+        return ParseOutcome(scan_mod.UNREADABLE, [])
+    return _do_outcome(do_rel_path, text, programs)
+
+
+def _scan_stata(repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str]) -> dict[str, ParseOutcome]:
+    """The project's do-files' outcomes. A file in a vendored library is
+    listed as skipped and never read (its source is not reported, so the
+    scan does not speak for it); a project .ado is read only for the program
+    names it defines, which no do-file call is then read as (15.1)."""
+    texts: dict[str, str | None] = {}
+    for rel in dict.fromkeys([*do_paths, *ado_paths]):
+        marker = stata_ingest.vendored(repo_root, rel)
+        if marker:
+            logger.warning("%s: in a vendored Stata library (%s); listed, not scanned", rel, marker)
+            continue
+        try:
+            texts[rel] = cloud.read_text(repo_root / rel)
+        except OSError as exc:
+            logger.warning("cannot read %s: %s", rel, exc)
+            texts[rel] = None
+    programs: set[str] = set()
+    for text in texts.values():
+        if text is not None:
+            programs |= stata_ingest.program_names(text)
+    outcomes: dict[str, ParseOutcome] = {}
+    for rel in do_paths:
+        if rel in texts:
+            text = texts[rel]
+            outcomes[rel] = ParseOutcome(scan_mod.UNREADABLE, []) if text is None else _do_outcome(rel, text, programs)
+    return outcomes
+
+
+# ---------------------------------------------------------------------------
 # Path resolution + ingest
 # ---------------------------------------------------------------------------
 
@@ -1115,8 +1183,10 @@ def ingest_dataflow_repo(
     rmd_paths: list[str],
     *,
     scan: scan_mod.Scan | None = None,
+    do_paths: Iterable[str] = (),
+    ado_paths: Iterable[str] = (),
 ) -> dict[str, int]:
-    """Ingest read/write call sites from .py/.R/.Rmd files into
+    """Ingest read/write call sites from .py/.R/.Rmd/.do files into
     `Script --reads/writes--> Dataset` (or `--writes--> Figure` for an image
     target) edges (task W2). Needs no git repository at all -- see module
     docstring; runs identically on a git repo or a plain filesystem-scanned
@@ -1128,7 +1198,9 @@ def ingest_dataflow_repo(
     call names that produced it, nothing positional (not the line, the
     receiver, the folded expression or the path, which IS the `dst`). The
     calls an unparseable R file still yields are written as before but not
-    stamped: that scan does not speak for the file.
+    stamped: that scan does not speak for the file. The same holds for a
+    do-file; a vendored .do or .ado and a project .ado are not sources
+    (`_scan_stata`).
     """
     repo_root = Path(repo_root)
     counts = {"reads": 0, "writes": 0}
@@ -1141,6 +1213,7 @@ def ingest_dataflow_repo(
             outcomes[r_path] = scan_r_file(repo_root, r_path)
         for rmd_path in rmd_paths:
             outcomes[rmd_path] = scan_rmd_file(repo_root, rmd_path)
+        outcomes.update(_scan_stata(repo_root, do_paths, ado_paths))
         for outcome in outcomes.values():
             for call in outcome.calls:
                 edge_type = _ingest_call(conn, repo_root, call, outcome.status, sc)
@@ -1167,6 +1240,8 @@ def reaches_outside(repo_root: Path, script_paths: Iterable[str]) -> list[str]:
             outcome = scan_rmd_file(repo_root, path)
         elif lower.endswith(".r"):
             outcome = scan_r_file(repo_root, path)
+        elif lower.endswith(".do"):
+            outcome = scan_do_file(repo_root, path)
         else:
             continue
         if any(_reaches_outside(c.literal, repo_root) for c in outcome.calls):
