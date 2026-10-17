@@ -123,6 +123,8 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # desk's panel says in its timeline of what changed since the last visit.
     ("node.js", "function verdictMove(prev, cur) {", "\n  }\n"),
     ("node.js", "function sourceWords(v) {", "\n  }\n"),
+    # V11 (15.4, 15.5): a Stata .dta file in the panel -- rows by variables, its label, the table.
+    ("app.html", "function dtaPreview(info) {", "\n}\n"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own

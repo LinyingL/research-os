@@ -186,7 +186,9 @@
     const parts = [];
     if (summary.rows != null) parts.push(summary.rows_complete === false ? t("{n} 行以上", { n: summary.rows }) : t("{n} 行", { n: summary.rows }));
     else if (summary.sheet_rows != null) parts.push(t("{n} 行", { n: summary.sheet_rows }));
-    if (Array.isArray(summary.columns)) parts.push(t("列 {columns}", { columns: summary.columns.join(t("、")) }));
+    // 15.4: a Stata .dta's columns are its variables.
+    if (Array.isArray(summary.columns) && summary.format === "dta") parts.push(t("变量 {columns}", { columns: summary.columns.join(t("、")) }));
+    else if (Array.isArray(summary.columns)) parts.push(t("列 {columns}", { columns: summary.columns.join(t("、")) }));
     else if (summary.sheet_columns != null) parts.push(t("{n} 列", { n: summary.sheet_columns }));
     return parts.join(t("，"));
   }

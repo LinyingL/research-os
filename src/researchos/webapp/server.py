@@ -560,7 +560,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, github, githubpush, inventory, lineage, migration, names, officialness, paths
+from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, officialness, paths
 from researchos import settings as settings_mod
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
@@ -639,6 +639,20 @@ class NotAFileError(ApiError):
 
 class BinaryFileError(ApiError):
     status = 415
+
+
+class DtaApiError(ApiError):
+    """A Stata .dta file the header reader refused (DESIGN.md 15.4):
+    truncated, corrupt, not a .dta file at all. `state` "dta_refused",
+    `code` the reader's code; `message` the page's sentence in the
+    request's language, `detail` the reader's own account."""
+
+    status = 422
+    state = "dta_refused"
+
+    def __init__(self, exc: dta.DtaError, lang: str, extra: dict[str, Any] | None = None) -> None:
+        super().__init__(str(exc))
+        self.extra = {"code": exc.code, "message": exc.say(lang), "detail": str(exc), **(extra or {})}
 
 
 class UnsupportedPlatformError(ApiError):
@@ -1505,13 +1519,15 @@ def github_link_payload(project_root: Path, target: Path) -> dict[str, Any] | No
         return None
 
 
-def file_payload(project_root: Path, rel_path: str) -> dict[str, Any]:
+def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[str, Any]:
     target = _resolve_within_root(project_root, rel_path)
     if not target.is_file():
         if not target.exists():
             raise NotFoundError(f"no such file: {rel_path}")
         raise NotAFileError(f"not a regular file: {rel_path}")
     link = github_link_payload(project_root, target)
+    if target.suffix.lower() == ".dta":
+        return _dta_payload(target, rel_path, link, lang)
     try:
         raw = cloud.read_bytes(target)
     except cloud.CloudOnlyError as exc:
@@ -1533,6 +1549,29 @@ def file_payload(project_root: Path, rel_path: str) -> dict[str, Any]:
         # truncation artifact, not evidence the file is binary.
         content = content_bytes.decode("utf-8", errors="ignore")
     return {"path": rel_path, "content": content, "truncated": truncated, "size": len(raw), "github": link}
+
+
+def _dta_payload(target: Path, rel_path: str, link: Any, lang: str) -> dict[str, Any]:
+    """A Stata .dta file in the panel (DESIGN.md 15.4): rows, the dataset
+    label and the variables (name, label, type, format) from its header --
+    the data is never read. A file only in the cloud is refused before any
+    read, as a text file is; a file the reader refuses gets its sentence in
+    the request's language. Names and labels are the file's text, for the
+    page to set as text."""
+    try:
+        cloud.check_readable(target)
+    except cloud.CloudOnlyError as exc:
+        raise CloudOnlyApiError(exc, {"github": link}) from exc
+    try:
+        header = dta.read_header(target)
+    except dta.DtaError as exc:
+        raise DtaApiError(exc, lang, {"github": link}) from exc
+    return {
+        "path": rel_path, "kind": "dta", "size": target.stat().st_size, "github": link,
+        "dta": {"release": header.release, "rows": header.rows, "label": header.label, "timestamp": header.timestamp,
+                "variables": [{"name": v.name, "label": v.label, "type": v.type, "format": v.format}
+                              for v in header.variables]},
+    }
 
 
 # -- GitHub (DESIGN.md 11.2) ----------------------------------------------------
@@ -3266,7 +3305,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._node_api(lambda: node_api.version_payload(served.root, query)))
             elif path == "/api/history/diff":
                 served = self._require_unblocked()
-                self._send_json(200, self._node_api(lambda: node_api.diff_payload(served.root, query)))
+                self._send_json(200, self._node_api(lambda: node_api.diff_payload(served.root, query, self._lang())))
             elif path == "/api/notes":
                 served = self._require_unblocked()
                 self._json_from_conn(lambda conn: self._node_api(
@@ -3339,7 +3378,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 values = query.get("path")
                 if not values:
                     raise MissingParamError("missing required query parameter 'path'")
-                self._send_json(200, self._official(file_payload(self._project_root(), values[0])))
+                self._send_json(200, self._official(file_payload(self._project_root(), values[0], self._lang())))
             elif path.startswith("/api/"):
                 raise NotFoundError(f"no such endpoint: {path}")
             else:

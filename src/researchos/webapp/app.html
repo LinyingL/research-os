@@ -729,6 +729,12 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .kv-table td { padding: 0.3rem 0; word-break: break-word; }
 
 .code-preview { border: 1px solid var(--line); overflow-x: auto; background: var(--paper-alt); }
+.dta-shape { font-size: 0.86rem; margin: 0 0 0.4rem; }
+.dta-label { font-size: 0.82rem; color: var(--ink-soft); margin: 0 0 0.7rem; overflow-wrap: anywhere; }
+.dta-table { border-collapse: collapse; font-size: 0.82rem; width: 100%; }
+.dta-table th { text-align: left; font-weight: normal; color: var(--ink-soft); font-size: 0.76rem; padding: 0.3rem 0.8rem 0.3rem 0; border-bottom: 1px solid var(--line-strong); }
+.dta-table td { padding: 0.3rem 0.8rem 0.3rem 0; border-bottom: 1px solid var(--line); vertical-align: baseline; overflow-wrap: anywhere; }
+.dta-table td.dta-name, .dta-table td.dta-type { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
 .code-table { border-collapse: collapse; font-family: var(--font-mono); font-size: 0.78rem; width: 100%; }
 .code-table td.ln { color: var(--ink-soft); text-align: right; padding: 0 0.7em; user-select: none; border-right: 1px solid var(--line); white-space: nowrap; }
 .code-table td.src { padding: 0 0.7em; white-space: pre; }
@@ -3330,15 +3336,47 @@ function buildFileActions(path, statusEl) {
   const openBtn = document.createElement("button");
   openBtn.className = "btn";
   openBtn.type = "button";
-  openBtn.textContent = "打开";
+  openBtn.textContent = t("打开");
   const revealBtn = document.createElement("button");
   revealBtn.className = "btn";
   revealBtn.type = "button";
-  revealBtn.textContent = "在 Finder 中显示";
+  revealBtn.textContent = t("在 Finder 中显示");
   openBtn.addEventListener("click", () => runOpenAction(path, false, statusEl));
   revealBtn.addEventListener("click", () => runOpenAction(path, true, statusEl));
   actions.append(openBtn, revealBtn);
   return actions;
+}
+
+// -- A Stata .dta file in the panel (DESIGN.md 15.4) --
+// Rows by variables and the variable table (name, label, type), from the
+// file's header. Names and labels are the file's own, untrusted text: set
+// with textContent only, never markup.
+const DTA_SHOWN = 2000;
+
+function dtaPreview(info) {
+  const wrap = mk("div", "dta-preview");
+  const vars = Array.isArray(info.variables) ? info.variables : [];
+  const en = uiLang() === "en";
+  const rows = t("{n} 行", { n: en ? groupedNumber(info.rows) : info.rows });
+  const count = t("{n} 个变量", { n: en ? groupedNumber(vars.length) : vars.length });
+  wrap.appendChild(mk("p", "dta-shape", rows + " × " + count));
+  if (info.label) wrap.appendChild(mk("p", "dta-label", t("数据集标签：{label}", { label: info.label })));
+  const table = mk("table", "dta-table");
+  const head = mk("tr");
+  [t("变量名"), t("标签"), t("类型")].forEach((word) => head.appendChild(mk("th", null, word)));
+  table.appendChild(head);
+  vars.slice(0, DTA_SHOWN).forEach((v) => {
+    const tr = mk("tr");
+    tr.appendChild(mk("td", "dta-name", String(v.name == null ? "" : v.name)));
+    tr.appendChild(mk("td", "dta-label-cell", String(v.label == null ? "" : v.label)));
+    tr.appendChild(mk("td", "dta-type", String(v.type == null ? "" : v.type)));
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  if (vars.length > DTA_SHOWN) {
+    wrap.appendChild(mk("p", "truncated-note", t("只列出了前 {n} 个变量", { n: en ? groupedNumber(DTA_SHOWN) : DTA_SHOWN })));
+  }
+  return wrap;
 }
 
 function isCurrentFilePanel(path) {
@@ -3350,7 +3388,7 @@ async function openFilePanel(path, hint) {
   state.panelSubject = { kind: "file", path: path };
   panelTitle.textContent = path;
   panelTitle.title = "";
-  panelSubtitle.textContent = classifyFileType(path, hint);
+  panelSubtitle.textContent = t(classifyFileType(path, hint));
   panelBody.innerHTML = "";
   const status = document.createElement("div");
   status.className = "panel-status";
@@ -3369,6 +3407,15 @@ async function openFilePanel(path, hint) {
   } catch (err) {
     if (!isCurrentFilePanel(path)) return;
     renderGitHubLink(githubHost, err && err.github);
+    if (err && err.state === "dta_refused") {
+      // 15.4: a .dta file the header reader refused -- the engine's sentence
+      // in the page's language, the reader's account behind 「详情」.
+      contentHost.innerHTML = "";
+      const box = mk("div", "panel-status err");
+      renderBlockingError(box, err.engineMessage || t("无法读取这个 .dta 文件"), err);
+      contentHost.appendChild(box);
+      return;
+    }
     if (err && err.messageZh) {
       // 11.1: a file only in the cloud -- the sentence, the engine's text behind 「详情」.
       contentHost.innerHTML = "";
@@ -3383,6 +3430,10 @@ async function openFilePanel(path, hint) {
   if (!isCurrentFilePanel(path)) return;
   renderGitHubLink(githubHost, data.github);
   contentHost.innerHTML = "";
+  if (data.kind === "dta") {
+    contentHost.appendChild(dtaPreview(data.dta || {}));
+    return;
+  }
   if (data.truncated) {
     const note = document.createElement("div");
     note.className = "truncated-note";

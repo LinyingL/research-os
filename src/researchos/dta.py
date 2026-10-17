@@ -72,6 +72,21 @@ _UNSAFE = {c: "�" for c in (*range(0x20), *range(0x7F, 0xA0), 0x061C, 0x200E, 
 WINDOW = 64 * 1024
 
 
+#: The page's sentence for each `DtaError.code` (Chinese, English: 13.6);
+#: the engine's own account stays behind 「详情」.
+MESSAGES = {
+    NOT_A_FILE: ("这不是一个普通文件，无法读取", "This is not a regular file, so it cannot be read"),
+    UNREADABLE: ("这个文件现在无法读取", "This file cannot be read right now"),
+    NOT_DTA: ("这不是 Stata 的 .dta 文件", "This is not a Stata .dta file"),
+    UNSUPPORTED: ("这个 .dta 文件的版本读不了（能读 Stata 8 及以后的版本）",
+                  "This .dta file's release cannot be read (Stata 8 and later can)"),
+    TRUNCATED: ("这个 .dta 文件不完整，像是被截断了", "This .dta file is incomplete; it looks cut short"),
+    CORRUPT: ("这个 .dta 文件已损坏", "This .dta file is damaged"),
+    TOO_WIDE: ("这个 .dta 文件声称的变量数多得不合理，没有读取",
+               "This .dta file claims far too many variables, so it was not read"),
+}
+
+
 class DtaError(ValueError):
     """The file is not a .dta file this reader can read; `code` is one of
     the module's codes, the text the engine's own account."""
@@ -79,6 +94,13 @@ class DtaError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+    def say(self, lang: str = "zh") -> str:
+        """The page's sentence for this refusal, in `lang` (13.6)."""
+        from researchos import settings  # noqa: PLC0415 -- the reader itself stays standard library only
+
+        zh, en = MESSAGES.get(self.code, MESSAGES[CORRUPT])
+        return settings.say(zh, en, lang)
 
 
 @dataclass(frozen=True)

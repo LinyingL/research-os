@@ -165,16 +165,18 @@ def history_payload(root: Path, query: dict[str, list[str]], lang: str = "zh") -
 SMALL_TABLE_BYTES = 64 * 1024  # `researchos.proposals.SMALL_TABLE_BYTES`
 
 
-def diff_payload(root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
+def diff_payload(root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
     """What changed, in the screen's words (12.13: 「行数从 96 增至 97」,
     「判决从「待定」改为「现行」」 -- the engine's word form, never an
     arrow; the command line keeps its own sentences). `summary_words` is
     the sentence the page shows. A table (CSV, TSV) leads with its rows
     and columns; its line diff is kept only when both versions are small
-    (`table_small`), otherwise it is left out (`diff_left_out`)."""
+    (`table_small`), otherwise it is left out (`diff_left_out`). A Stata
+    .dta leads with its rows and variables (15.4). Every sentence in the
+    request's language (13.6)."""
     try:
         out = history.diff(root, _arg(query, "node", required=True) or "", _arg(query, "a"), _arg(query, "b"),
-                           words=True)
+                           words=True, lang=lang)
     except history.HistoryError as exc:
         raise _history_refused(exc) from exc
     out["summary_words"] = out.get("summary")

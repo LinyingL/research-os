@@ -22,7 +22,9 @@ Where the versions come from
   content-addressed (`blobs/<sha256>`); larger and binary files by
   fingerprint and size, and tables also by row count and column names
   (CSV/TSV read with the csv module, bounded; an .xlsx's sheet dimension
-  read from the zip without parsing its XML). A file whose content is only
+  read from the zip without parsing its XML; a Stata .dta's rows and
+  variable names from its header alone, `researchos.dta` -- never its
+  labels, never its data, DESIGN.md 15.4). A file whose content is only
   in the cloud is never read. Nothing is pruned automatically. The store is
   not the index: deleting or rebuilding `graph.db` leaves it alone,
   because what it holds -- content a file no longer has -- cannot be
@@ -58,7 +60,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import IO, Any, Iterable
 
-from researchos import db, paths, settings
+from researchos import db, dta, paths, settings
 from researchos.records import notes as notes_mod
 from researchos.records.identity import IdentityState, read_identity
 
@@ -443,7 +445,19 @@ def data_summary(path: Path, rel: str) -> dict[str, Any] | None:
             return table_summary_stream(stream, rel)
     if suffix == ".xlsx":
         return xlsx_summary(path)
+    if suffix == ".dta":
+        try:
+            return dta.read_header(path).summary()
+        except dta.DtaError as exc:
+            return _dta_refused(exc)
     return None
+
+
+def _dta_refused(exc: dta.DtaError) -> dict[str, Any]:
+    """A .dta file whose header the reader refused (15.4): its rows and
+    variables not compared, the refusal's code kept -- a corrupt file never
+    stops a scan, a page or a proposal, which catch only OSError."""
+    return {"format": "dta", "columns": None, "rows": None, "rows_complete": False, "error": exc.code}
 
 
 def _hash_file(path: Path) -> tuple[str, bytes | None, int]:
@@ -802,6 +816,25 @@ def _git_table_summary(root: Path, version: dict[str, Any]) -> dict[str, Any] | 
         finally:
             proc.stdout.close()
             proc.wait(timeout=GIT_TIMEOUT_S)
+    if suffix == ".dta":  # the header only, streamed: the data is never read (15.4)
+        size = version.get("size")
+        if size is None:
+            out = _git(root, ["cat-file", "-s", f"{version['commit']}:{rel}"])
+            size = int(str(out).strip()) if out is not None and str(out).strip().isdigit() else None
+        if size is None:
+            return None
+        proc = _git_stream(root, ["cat-file", "blob", f"{version['commit']}:{rel}"])
+        if proc is None or proc.stdout is None:
+            return None
+        try:
+            return dta.read_header_stream(proc.stdout, int(size)).summary()
+        except dta.DtaError as exc:
+            return _dta_refused(exc)
+        finally:
+            proc.stdout.close()  # the rest is not wanted: git stops on the closed pipe
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=GIT_TIMEOUT_S)
     if suffix == ".xlsx":
         data = _git_blob(root, version, limit=200 * 1024 * 1024)
         if data is None:
@@ -1122,6 +1155,8 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words:
         return None
     a, b = a or {}, b or {}
     sep = settings.say("、", ", ", lang)
+    # A Stata .dta's columns are its variables (15.4): said so.
+    var = a.get("format") == "dta" or b.get("format") == "dta"
     if (a.get("format") == "xlsx" or b.get("format") == "xlsx") and not (a.get("columns") is not None
                                                                          and b.get("columns") is not None):
         ra, rb = a.get("sheet_rows"), b.get("sheet_rows")
@@ -1143,20 +1178,32 @@ def table_sentence(a: dict[str, Any] | None, b: dict[str, Any] | None, *, words:
     rows_said = bool(parts)
     cols_a, cols_b = a.get("columns"), b.get("columns")
     if cols_a is None or cols_b is None:
-        parts.append(settings.say("列未比对", "columns not compared", lang))
+        parts.append(settings.say("变量未比对", "variables not compared", lang) if var
+                     else settings.say("列未比对", "columns not compared", lang))
     else:
         added = [c for c in cols_b if c not in cols_a]
         removed = [c for c in cols_a if c not in cols_b]
-        if added:
+        if added and var:
+            parts.append(settings.say("新增变量 {cols}", "variable added: {cols}" if len(added) == 1
+                                      else "variables added: {cols}", lang, cols=sep.join(added)))
+        elif added:
             parts.append(settings.say("新增列 {cols}", "column added: {cols}" if len(added) == 1
                                       else "columns added: {cols}", lang, cols=sep.join(added)))
-        if removed:
+        if removed and var:
+            parts.append(settings.say("删除变量 {cols}", "variable removed: {cols}" if len(removed) == 1
+                                      else "variables removed: {cols}", lang, cols=sep.join(removed)))
+        elif removed:
             parts.append(settings.say("删除列 {cols}", "column removed: {cols}" if len(removed) == 1
                                       else "columns removed: {cols}", lang, cols=sep.join(removed)))
-        if not added and not removed:
+        if not added and not removed and var:
+            parts.append(settings.say("变量不变", "variables unchanged", lang) if cols_a == cols_b
+                         else settings.say("变量的顺序变了", "variable order changed", lang))
+        elif not added and not removed:
             parts.append(settings.say("列不变", "columns unchanged", lang) if cols_a == cols_b
                          else settings.say("列的顺序变了", "column order changed", lang))
     if not rows_said and cols_a is not None and cols_a == cols_b:  # nothing but 「列不变」
+        if var:
+            return settings.say("行数与变量都没变（内容有改动）", "Rows and variables unchanged (content changed)", lang)
         return settings.say("行数与列都没变（内容有改动）", "Rows and columns unchanged (content changed)", lang)
     return _sentence(parts, lang)
 
@@ -1182,19 +1229,22 @@ def table_shape(summary: dict[str, Any] | None, lang: str = "zh") -> str | None:
     rows = summary.get("rows")
     complete = summary.get("rows_complete", True)
     cols = [str(c) for c in summary.get("columns") or []]
+    var = summary.get("format") == "dta"  # a .dta's columns are its variables (15.4)
     if lang == "en":
+        one, other = ("variable", "variables") if var else ("column", "columns")
         parts = []
         if rows is not None:
             parts.append(_counted(rows, "row", "rows") if complete else f"{number_text(rows, 'en')} or more rows")
         if cols:
             listed = ", ".join(cols[:12]) + (f" and {number_text(len(cols) - 12, 'en')} more" if len(cols) > 12 else "")
-            parts.append(("column " if len(cols) == 1 else "columns ") + listed)
+            parts.append((f"{one} " if len(cols) == 1 else f"{other} ") + listed)
         else:
-            parts.append("no columns")
+            parts.append(f"no {other}")
         return "; ".join(parts)
+    word = "变量" if var else "列"
     more = "" if complete else " 以上"
-    shown = "、".join(cols[:12]) + ("等 " + str(len(cols)) + " 列" if len(cols) > 12 else "")
-    return (f"{rows}{more} 行，" if rows is not None else "") + (f"列 {shown}" if cols else "没有列")
+    shown = "、".join(cols[:12]) + ("等 " + str(len(cols)) + " " + ("个变量" if var else "列") if len(cols) > 12 else "")
+    return (f"{rows}{more} 行，" if rows is not None else "") + (f"{word} {shown}" if cols else f"没有{word}")
 
 
 def _decode(data: bytes | None) -> str | None:
@@ -1204,10 +1254,12 @@ def _decode(data: bytes | None) -> str | None:
 
 
 def diff(project_root: str | Path, node: str, a: str | None = None, b: str | None = None, *,
-         words: bool = False) -> dict[str, Any]:
+         words: bool = False, lang: str = "zh") -> dict[str, Any]:
     """Compare two versions of `node` (module docstring). `words`: every
     sentence in the screen's form, a relation said in words and never an
-    arrow (12.13) -- the page's; the command line keeps its arrows."""
+    arrow (12.13) -- the page's; the command line keeps its arrows. `lang`:
+    the page's language for a file's sentences (13.6); Chinese by default,
+    as the command line has it."""
     root = Path(project_root)
     listed = versions(root, node)
     found = listed["versions"]
@@ -1223,8 +1275,9 @@ def diff(project_root: str | Path, node: str, a: str | None = None, b: str | Non
     path = listed["path"]
     if listed["origin"] == "git":
         old_bytes, new_bytes = _git_blob(root, va), _git_blob(root, vb)
-        sum_a = _git_table_summary(root, va) if Path(va["path"]).suffix.lower() in (*_TABLE_DELIMITERS, ".xlsx") else None
-        sum_b = _git_table_summary(root, vb) if Path(vb["path"]).suffix.lower() in (*_TABLE_DELIMITERS, ".xlsx") else None
+        summarised = (*_TABLE_DELIMITERS, ".xlsx", ".dta")
+        sum_a = _git_table_summary(root, va) if Path(va["path"]).suffix.lower() in summarised else None
+        sum_b = _git_table_summary(root, vb) if Path(vb["path"]).suffix.lower() in summarised else None
         out["same"] = va.get("blob") is not None and va.get("blob") == vb.get("blob")
     else:
         pid = _identity_id(root)
@@ -1238,10 +1291,11 @@ def diff(project_root: str | Path, node: str, a: str | None = None, b: str | Non
         out["diff"], out["truncated"] = unified(
             old_text, new_text, f"{path} ({_label(va)})", f"{path} ({_label(vb)})",
         )
-    out["summary"] = table_sentence(sum_a, sum_b, words=words)
+    out["summary"] = table_sentence(sum_a, sum_b, words=words, lang=lang)
     out["table"] = bool(sum_a or sum_b) and Path(path or "").suffix.lower() in _TABLE_DELIMITERS
     if out["summary"] is None and out["diff"] is None:
-        out["summary"] = "内容相同" if out["same"] else _size_sentence(va, vb, words=words)
+        out["summary"] = (settings.say("内容相同", "Identical content", lang) if out["same"]
+                          else _size_sentence(va, vb, words=words, lang=lang))
     return out
 
 
@@ -1253,14 +1307,15 @@ def _label(v: dict[str, Any]) -> str:
     return f"版本 {v.get('version')} · {v.get('at')}"
 
 
-def _size_sentence(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> str:
+def _size_sentence(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False, lang: str = "zh") -> str:
     sa, sb = va.get("size"), vb.get("size")
     if sa is None or sb is None:
-        return "内容不同（未比对内容）"
+        return settings.say("内容不同（未比对内容）", "Content differs (not compared)", lang)
     if sa == sb:
-        return "内容不同（大小不变，指纹不同）"
-    if words:
-        return f"内容不同（大小从 {sa} 变为 {sb} 字节）"
+        return settings.say("内容不同（大小不变，指纹不同）", "Content differs (same size, different fingerprint)", lang)
+    if words or lang == "en":
+        return settings.say("内容不同（大小从 {a} 变为 {b} 字节）", "Content differs (size from {a} to {b} bytes)", lang,
+                            a=number_text(sa, lang), b=number_text(sb, lang))
     return f"内容不同（大小 {sa} → {sb} 字节）"
 
 
