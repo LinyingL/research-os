@@ -25,10 +25,14 @@ command (15.1).
 
 **Reads**: `use` (also `use varlist using`), `merge`, `joinby`, `cross`,
 `append` (several files), `import delimited`, `import excel`, `insheet`,
-`infile`, `infix`. **Writes**: `save`, `saveold`, `graph export`, `export
-delimited`, `export excel`, `outsheet`. A file name without an extension
-gets `.dta` for exactly `use`, `save`, `saveold`, `merge`, `append`,
-`joinby` and `cross`, as the manual states; nowhere else.
+`infile`, `infix` (the dictionary, and the data a `using()` option names).
+**Writes**: `save`, `saveold`, `graph export`, `export delimited`, `export
+excel`, `outsheet`. A file name without an extension gets the default
+extension Stata's help pages state for its command (`DEFAULT_EXTENSIONS`;
+`.dct` for a dictionary), and none where they state none; `import excel`
+reads `.xls`, else `.xlsx`, whichever exists first where the path resolves,
+and is skipped when neither does (`NO_EXCEL`). `.raw`, `.out` and `.dct`
+are not data files: dataflow skips them as it does any unknown file type.
 
 **Paths.** A backslash is a path separator, except before `$` and `` ` ``
 where Stata reads it as an escape (15.3).
@@ -213,8 +217,31 @@ _FORMS = {
     "export excel": ("write", "optional_using"),
     "outsheet": ("write", "using"),
 }
-#: The commands whose file name gets `.dta` when it has no extension.
-DTA_DEFAULT = frozenset({"use", "save", "saveold", "merge", "append", "joinby", "cross"})
+# Default extensions (15.2), as Stata's help pages state (read 2026-10-17 at
+# stata.com/help.cgi?<cmd> for use, save, saveold, merge, append, joinby,
+# cross, import delimited ("If filename is specified without an extension,
+# .csv is assumed for both import delimited and export delimited"), import
+# excel, export excel ("The default file extension for export excel is .xlsx
+# if a file extension is not specified"), insheet and infile1 ("If filename
+# is specified without an extension, .raw is assumed"), outsheet ("If
+# filename is specified without a suffix, .out is assumed"), infile2 and
+# infix ("If dfilename is specified without an extension, .dct is assumed";
+# using(filename2) and infix's data file: .raw). A name that has an
+# extension keeps it; a command not here gets none.
+#: command -> the extension a file name without one gets; for infile and
+#: infix, of the data file (the `using` file, or the `using()` option).
+DEFAULT_EXTENSIONS = {
+    **dict.fromkeys(("use", "save", "saveold", "merge", "append", "joinby", "cross"), ".dta"),
+    "import delimited": ".csv", "export delimited": ".csv", "export excel": ".xlsx",
+    "insheet": ".raw", "infile": ".raw", "infix": ".raw", "outsheet": ".out",
+}
+#: The dictionary of `infile using` and `infix using` (help infile2, infix).
+DICTIONARY = ".dct"
+_DICTIONARY_COMMANDS = frozenset({"infile", "infix"})
+#: `import excel` names no one default: "import excel auto first looks for
+#: auto.xls and then looks for auto.xlsx if auto.xls is not found in the
+#: current directory" (help import excel). The first that exists wins.
+EXCEL_LOOKUP = (".xls", ".xlsx")
 #: A do-file named without an extension is `.do` for do, run and include
 #: ("If filename is specified without an extension, .do is assumed": help do,
 #: help include).
@@ -239,6 +266,7 @@ WEB = "web address"
 ENCODING = "encoding"
 PROGRAM = "project program"
 UNCLOSED = "string not closed"
+NO_EXCEL = "neither .xls nor .xlsx exists"  # import excel, a name without an extension
 # The working folder (15.3): a `cd` that cannot be followed -- bare (the home
 # folder on a Mac), under `capture` or an inline `if`, inside a block or a
 # program, or a call to a project program that changes it -- and what it
@@ -760,13 +788,51 @@ def _assignment(rest: str) -> tuple[str, str | None, bool] | None:
     return name, value, False
 
 
-def _default(command: str, path: str) -> str:
-    """`path` with `.dta` when its name has no extension, for exactly the
-    `DTA_DEFAULT` commands -- and `.do` for do, run and include."""
+def _default(command: str, path: str, dictionary: bool = False) -> str:
+    """`path` with its command's default extension when its name has none
+    (`DEFAULT_EXTENSIONS`, `DICTIONARY` for the dictionary of infile and
+    infix) -- and `.do` for do, run and include. `import excel` gets none
+    here: which file it reads depends on which exists (`EXCEL_LOOKUP`)."""
     base = path.rsplit("/", 1)[-1]
     if not base or "." in base:
         return path
-    return path + ".dta" if command in DTA_DEFAULT else path + ".do" if command in _DO_DEFAULT else path
+    if dictionary:
+        return path + DICTIONARY
+    return path + DEFAULT_EXTENSIONS.get(command, ".do" if command in _DO_DEFAULT else "")
+
+
+def _options(text: str) -> str:
+    """A command's options: the text after its first top-level comma."""
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == ",":
+            return text[i + 1:]
+        if ch in " \t":
+            i += 1
+        elif ch == '"' or text.startswith('`"', i):
+            i = _string_end(text, i) or n
+        else:
+            i = _bare_end(text, i)
+    return ""
+
+
+_USING_OPTION_RE = re.compile(r"using\((.*)\)", re.S)
+
+
+def _using_option(text: str) -> _Token | None:
+    """The file a `using(filename2)` option names -- the data of infile and
+    infix read with a dictionary -- or None."""
+    for token in _tokens(_options(text)) or []:
+        match = _USING_OPTION_RE.fullmatch(token.text) if token.bare else None
+        if not match:
+            continue
+        inner = match.group(1).strip()
+        quoted = 1 if inner[:1] == '"' else 2 if inner.startswith('`"') else 0
+        if quoted and _string_end(inner, 0) == len(inner):
+            return _Token(inner[quoted:-quoted], False)
+        return _Token(inner, True) if inner else None
+    return None
 
 
 def _file_words(form: str, command: str, tokens: list[_Token]) -> tuple[list[_Token], str]:
@@ -1112,7 +1178,8 @@ class _Project:
         v = self._memo(("`", f.rel, scope, name), lambda: self._expand_raw(d.value, f.rel, scope, d.line))
         return replace(v, chain=(d.describe(),) + v.chain)
 
-    def _word(self, f: _File, ln: _Line, raw: str, command: str) -> tuple[str | None, _Value, tuple[str, str, str]]:
+    def _word(self, f: _File, ln: _Line, raw: str, command: str,
+              dictionary: bool = False) -> tuple[str | None, _Value, tuple[str, str, str]]:
         """(path, its expansion, ()) for a file name as written, or (None,
         _, (reason, macro, rest))."""
         tempfiles = sorted({m.group(1) for m in _LOCAL_NAME_RE.finditer(raw)} & f.tempfiles)
@@ -1121,12 +1188,12 @@ class _Project:
         v = self._expand_raw(raw, f.rel, ln.scope, ln.cmd.line)
         if v.text is None:
             heads = v.head and v.head == v.macro and v.rest is not None
-            return None, v, (v.reason, v.macro, _default(command, v.rest.lstrip("/")) if heads else "")
+            return None, v, (v.reason, v.macro, _default(command, v.rest.lstrip("/"), dictionary) if heads else "")
         path = v.text
         reason = NO_FILE if not path.strip() else ENCODING if "\ufffd" in path else WEB if _URL_RE.match(path) else ""
         if reason:
             return None, v, (reason, "", "")
-        return _default(command, path), v, ("", "", "")
+        return _default(command, path, dictionary), v, ("", "", "")
 
     def _away(self, path: str) -> bool:
         """A path that is absolute and outside the project."""
@@ -1134,26 +1201,29 @@ class _Project:
             return True
         return posixpath.isabs(path) and self.root is not None and _inside(self.root, path) is None
 
-    def call(self, f: _File, ln: _Line, kind: str, raw: str) -> tuple[StataCall | None, tuple[str, ...]]:
+    def call(self, f: _File, ln: _Line, kind: str, raw: str,
+             dictionary: bool = False) -> tuple[StataCall | None, tuple[str, ...]]:
         """A file name as written, expanded: (the call, ()) or (None,
-        (reason, macro, rest[, the head global's own value]))."""
-        path, v, why = self._word(f, ln, raw, ln.name)
+        (reason, macro, rest[, the head global's own value])). `dictionary`:
+        it names the dictionary of infile or infix (`DICTIONARY`)."""
+        path, v, why = self._word(f, ln, raw, ln.name, dictionary)
         if path is None:
             return None, why
         if v.chain and self._away(path):  # a root on someone's computer (15.3)
             heads = v.head.startswith("$") and v.rest is not None
-            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/")) if heads else "", self._own(v) if heads else "")
+            return None, (OUTSIDE, v.head, _default(ln.name, v.rest.lstrip("/"), dictionary) if heads else "",
+                          self._own(v) if heads else "")
         if v.anchor is not None and _sibling(v.anchor, path):
             return None, (OUTSIDE, v.head, "", "")
         folded = "; ".join([raw, *dict.fromkeys(v.chain)]) if v.chain else None
-        local = self._local_root(v, path, ln.name) if v.chain and posixpath.isabs(path) else None
+        local = self._local_root(v, path, ln.name, dictionary) if v.chain and posixpath.isabs(path) else None
         return StataCall(ln.cmd.line, ln.name, kind, path, folded, v.anchor, local_root=local), ()
 
     def _log(self, rel_path: str, s: Skip) -> Skip:
         """`s`, logged when `rel_path` is a file this scan speaks for."""
         return _skip(rel_path, s) if self.only is None or rel_path == self.only else s
 
-    def _local_root(self, v: _Value, path: str, command: str) -> tuple[str, str, str] | None:
+    def _local_root(self, v: _Value, path: str, command: str, dictionary: bool) -> tuple[str, str, str] | None:
         """(global, its value, the path after it) when `path` is built on a
         global whose own value is this computer's absolute path inside the
         project (`DoScan.local_roots`)."""
@@ -1162,7 +1232,7 @@ class _Project:
         own = self._own(v)
         if not posixpath.isabs(own) or _inside(self.root, own) is None or _inside(self.root, path) is None:
             return None
-        return (v.head[1:], own, _default(command, v.rest.lstrip("/")))
+        return (v.head[1:], own, _default(command, v.rest.lstrip("/"), dictionary))
 
     def _own(self, v: _Value) -> str:
         """The own value of the global heading `v`."""
@@ -1263,8 +1333,12 @@ class _Project:
             if reason:
                 skip(cmd.line, name, reason, rest.strip())
                 continue
-            for word in words:
-                call, why = self.call(f, ln, kind, word.text)
+            roles = [(word, False) for word in words]
+            if name in _DICTIONARY_COMMANDS and tokens[0].bare and tokens[0].text == "using":
+                data = _using_option(rest)  # `infile using dfilename, using(filename2)`
+                roles = [(words[0], True)] + ([(data, False)] if data is not None else [])
+            for word, dictionary in roles:
+                call, why = self.call(f, ln, kind, word.text, dictionary)
                 if call is None:
                     skip(cmd.line, name, why[0], word.text, *why[1:])
                 elif call.anchor is None and not posixpath.isabs(call.literal) \
@@ -1378,10 +1452,10 @@ class _Project:
                     wf, changed = outside
             elif isinstance(item, _Final):
                 if out is not None:
-                    out.append(item.thing)
+                    out.append(self._excel(item.thing, rel_path))
             elif isinstance(item, _Relative):
                 if out is not None:
-                    out.append(self._relative(item, wf, rel_path))
+                    out.append(self._excel(self._relative(item, wf, rel_path), rel_path))
             elif isinstance(item, _Lost):
                 wf = _Wf(UNKNOWN, reason=WORKING_FOLDER, macro=item.macro, rest=item.rest, value=item.value,
                          macro_reason=item.macro_reason)
@@ -1436,6 +1510,35 @@ class _Project:
         rest = posixpath.normpath(posixpath.join(wf.rest, call.literal)) if wf.macro else ""
         return self._log(rel_path, Skip(call.line, call.command, wf.reason, item.raw, wf.macro, rest, wf.value,
                                     wf.macro_reason))
+
+    def _excel(self, thing: StataCall | Skip, rel_path: str) -> StataCall | Skip:
+        """An `import excel` file named without an extension: `.xls`, then
+        `.xlsx` (`EXCEL_LOOKUP`), the first that exists where its path
+        resolves -- for a do-file nobody runs, before any cd, dataflow's
+        order: the project folder, then the do-file's own -- or a skip when
+        neither does (none is known to without a file system). A path that
+        cannot be mapped into the project is left to dataflow to skip."""
+        if not isinstance(thing, StataCall) or thing.command != "import excel":
+            return thing
+        path = thing.literal
+        base = path.rsplit("/", 1)[-1]
+        if not base or "." in base or _WINDOWS_ABSOLUTE_RE.match(path):
+            return thing
+        if self.root is None:
+            places: list[str | None] = []
+        elif posixpath.isabs(path):
+            places = [_inside(self.root, path)]
+        elif thing.anchor is not None or thing.working is not None:
+            places = [_join(".", path)]  # already relative to the project folder
+        else:
+            places = [_join(".", path), _join(posixpath.dirname(rel_path) or ".", path)]
+        if self.root is not None and all(p is None for p in places):
+            return thing  # outside the project
+        for place in places:
+            for ext in EXCEL_LOOKUP:
+                if place is not None and (self.root / (place + ext)).is_file():
+                    return replace(thing, literal=path + ext)
+        return self._log(rel_path, Skip(thing.line, thing.command, NO_EXCEL, path))
 
     def scan(self) -> dict[str, DoScan]:
         """Every do-file's calls and skips, each read from the working folder

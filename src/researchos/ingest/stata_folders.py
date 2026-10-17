@@ -13,8 +13,8 @@ The evidence, all of it deterministic and shown with the proposal:
 
 - **The files.** For every folder D of the project (the project folder
   itself included, written "."), how many of the distinct paths built on
-  the global are files under D (the paths after the global, `.dta` default
-  applied, as `researchos.ingest.stata` reads them; files as the inventory
+  the global are files under D (the paths after the global, default
+  extension applied, as `researchos.ingest.stata` reads them; files as the inventory
   walk lists them, `researchos.ingest.files.iter_files`).
 - **The value** (an absolute path only): its last folders name a project
   folder when they equal that folder's path in the project -- or the

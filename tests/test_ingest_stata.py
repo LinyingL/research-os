@@ -150,14 +150,71 @@ def test_use_varlist_using_and_append_of_several_files():
     ]
 
 
-def test_default_extension_only_for_the_dta_commands():
+def test_default_extension_command_by_command():
     text = (
-        'import delimited "raw/a"\n'  # not a .dta command: kept as written
-        'graph export "fig/b"\n'
-        'save "out/v1.2/c"\n'  # a dot in a folder is not an extension
-        'use "data/d.csv"\n'  # an extension is kept
+        'use "d/a"\nsave "d/b"\nsaveold "d/c"\nmerge 1:1 id using "d/e"\n'  # 1-4
+        'append using "d/f"\njoinby id using "d/g"\ncross using "d/h"\n'  # 5-7
+        'import delimited "raw/i"\nexport delimited using "out/j"\n'  # 8-9
+        'export excel using "out/k"\n'  # 10
+        'insheet using "raw/l"\noutsheet using "out/m"\n'  # 11-12
+        'infile x y using "raw/n"\ninfix x 1-2 using "raw/o", clear\n'  # 13-14: the data file
+        'infile using "dict/p", using("raw/q")\n'  # 15: a dictionary, and the data it reads
+        "infix using dict/r if x > 1, using(raw/s) clear\n"  # 16
+        'infile using "dict/t", clear\n'  # 17: the data follow the dictionary
+        'graph export "fig/u"\n'  # 18: no default stated
+        'save "out/v1.2/w"\n'  # 19: a dot in a folder is not an extension
+        'use "data/x.csv"\nimport delimited "raw/y.txt"\ninfix using "dict/z.txt", using(raw/z.dat)\n'  # kept
     )
-    assert [c[3] for c in _calls(text)] == ["raw/a", "fig/b", "out/v1.2/c.dta", "data/d.csv"]
+    assert [(c[0], c[3]) for c in _calls(text)] == [
+        (1, "d/a.dta"), (2, "d/b.dta"), (3, "d/c.dta"), (4, "d/e.dta"),
+        (5, "d/f.dta"), (6, "d/g.dta"), (7, "d/h.dta"),
+        (8, "raw/i.csv"), (9, "out/j.csv"), (10, "out/k.xlsx"), (11, "raw/l.raw"), (12, "out/m.out"),
+        (13, "raw/n.raw"), (14, "raw/o.raw"), (15, "dict/p.dct"), (15, "raw/q.raw"),
+        (16, "dict/r.dct"), (16, "raw/s.raw"), (17, "dict/t.dct"), (18, "fig/u"), (19, "out/v1.2/w.dta"),
+        (20, "data/x.csv"), (21, "raw/y.txt"), (22, "dict/z.txt"), (22, "raw/z.dat"),
+    ]
+
+
+def test_default_extension_of_a_path_that_does_not_resolve():
+    text = 'import delimited "$nobody/raw/a"\ninfix using "$nobody/d", using($nobody/e)\noutsheet using "$nobody/f"\n'
+    found = stata.scan_text(text, "t.do")
+    assert [(s.line, s.command, s.rest) for s in found.skipped] == [
+        (1, "import delimited", "raw/a.csv"), (2, "infix", "d.dct"), (2, "infix", "e.raw"), (3, "outsheet", "f.out"),
+    ]
+
+
+def test_import_excel_reads_xls_then_xlsx_whichever_exists(tmp_path, caplog):
+    for rel in ("raw/only_xlsx.xlsx", "raw/only_xls.xls", "raw/both.xls", "raw/both.xlsx", "code/own.xlsx"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(b"")
+    text = (
+        'import excel "raw/only_xlsx", firstrow\n'
+        'import excel using "raw/only_xls"\n'
+        'import excel "raw/both", sheet("a")\n'  # both: .xls wins
+        'import excel "raw/neither"\n'
+        'import excel "own"\n'  # in the do-file's own folder (dataflow's order: the project folder first)
+        'import excel "raw/named.xlsx"\n'  # an extension is kept, existing or not
+    )
+    with caplog.at_level("WARNING", logger="researchos.ingest"):
+        found = stata.scan_project(tmp_path, {"code/t.do": text})["code/t.do"]
+    assert [(c.line, c.literal) for c in found.calls] == [
+        (1, "raw/only_xlsx.xlsx"), (2, "raw/only_xls.xls"), (3, "raw/both.xls"), (5, "own.xlsx"),
+        (6, "raw/named.xlsx"),
+    ]
+    assert [(s.line, s.command, s.reason, s.text) for s in found.skipped] == [
+        (4, "import excel", stata.NO_EXCEL, "raw/neither"),
+    ]
+    assert any("raw/neither" in r.message and "neither .xls nor .xlsx exists" in r.message for r in caplog.records)
+    # without a file system no file is known to exist
+    assert _skips('import excel "raw/both"\n') == [(1, "import excel", stata.NO_EXCEL)]
+
+
+def test_import_excel_looks_in_the_working_folder_only(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "a.xlsx").write_bytes(b"")
+    (tmp_path / "a.xls").write_bytes(b"")  # not where the cd points
+    found = stata.scan_project(tmp_path, {"t.do": 'cd "data"\nimport excel "a"\n'})["t.do"]
+    assert [(c.literal, c.working[0]) for c in found.calls] == [("data/a.xlsx", "data")]
 
 
 def test_backslashes_are_separators_except_before_dollar_and_backtick():
@@ -279,6 +336,26 @@ def test_do_file_links_carry_evidence_and_the_canonical_command_as_basis(tmp_pat
     (root / "code" / "clean.do").write_text('use "data/raw.dta"\n')
     _scan(conn, root)
     assert scan_mod.current_basis(conn, read) == {"calls": ["use"]}
+
+
+def test_default_extensions_into_the_index(tmp_path, conn, caplog):
+    root = _project(tmp_path)
+    (root / "data" / "sheet.xls").write_bytes(b"")
+    (root / "code" / "read.do").write_text(
+        'import delimited "data/table"\nimport excel "data/sheet"\nimport excel "data/gone"\n'
+        'export delimited "out/table"\nexport excel "out/book"\n'
+        'insheet using "data/a"\noutsheet using "out/b"\ninfix using "data/c", using(data/d)\n'
+    )
+    with caplog.at_level("WARNING", logger="researchos.ingest"):
+        assert _scan(conn, root) == {"reads": 1, "writes": 2}
+    assert sorted((e["type"], e["dst"]) for e in db.query_edges(conn)) == [
+        ("reads", "dataset:data/table.csv"), ("writes", "dataset:out/book.xlsx"), ("writes", "dataset:out/table.csv"),
+    ]
+    # .raw, .out and .dct are not data files; nor, today, is .xls (git.DATA_EXTENSIONS)
+    unknown = sorted(r.message.split(" resolves to ")[1].split(",")[0] for r in caplog.records
+                     if "neither a tracked data nor image extension" in r.message)
+    assert unknown == ["'data/a.raw'", "'data/c.dct'", "'data/d.raw'", "'data/sheet.xls'", "'out/b.out'"]
+    assert any("data/gone" in r.message and stata.NO_EXCEL in r.message for r in caplog.records)
 
 
 def test_unparseable_and_vendored_do_files_in_the_scan_report(tmp_path, conn, caplog):
