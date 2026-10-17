@@ -3652,3 +3652,26 @@ New words in both languages (13.6); 13.4 gains: 全局变量 "global";
    before.
 7. English mode shows no Chinese on the new surfaces except the researcher's
    text; no dependency is added; every test passes.
+
+### 15.7 Rulings made while building V11
+
+- **A global holding a relative value** (`global data "data"`) is relative
+  to the run's working folder, as Stata reads it; only globals holding
+  absolute paths, or a confirmed project folder, anchor a path.
+- **The run.** A do-file that no other do-file runs starts a run; its
+  folder is the run's working folder, followed through `do`, `run` and
+  `include` and changed by a literal `cd`. A `cd` inside a program's body
+  holds only in that body; after a call to a project program whose body
+  changes folder, the working folder is unknown and relative paths are
+  skipped. A target that cannot be followed (not a project do-file, a
+  circle, a chain deeper than 100) is logged, not linked.
+- **A proposal for a project folder** is shown only when the evidence is
+  unambiguous. An undefined global: the folder holding the most of its
+  distinct paths, at least 2 of them and at least half, with no other folder
+  holding as many. A global holding someone's absolute path: the project
+  folder named by the longest run of its last folders, with no other folder
+  named as long and none holding more of its paths. A global assigned two
+  different values is never proposed. (The counts are the researcher's to
+  change.)
+- **Default extensions** follow Stata's manual command by command, cited in
+  the code; a command whose manual names no default gets none.
