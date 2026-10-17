@@ -3572,8 +3572,14 @@ nothing in Stata's syntax is safe to match with a word-anywhere pattern.
   `saveold`, `graph export`, `export delimited`, `export excel`, `outsheet`.
   Tables written by `esttab`, `texsave`, `outreg2` and the like are skipped
   and logged as belonging to the outputs layer, which has no table node yet.
-- **Default extension**: `.dta` for `use`, `save`, `saveold`, `merge`,
-  `append`, `joinby`, `cross`, as Stata's manual states; nowhere else.
+- **Default extension**, as Stata's help pages state (read 2026-10-17):
+  `.dta` for `use`, `save`, `saveold`, `merge`, `append`, `joinby`, `cross`;
+  `.csv` for `import delimited` and `export delimited`; `.xlsx` for `export
+  excel`; `import excel` looks for `.xls`, then `.xlsx` (the first that
+  exists; neither, no link); `.raw` for `insheet` and for the data of
+  `infile` and `infix`, `.dct` for their dictionaries; `.out` for
+  `outsheet`. Extensions that are not data files (`.raw`, `.out`, `.dct`)
+  are skipped and logged, as any unknown file type is.
 - **Which do-file runs which** (`do`, `run`, `include`) is read to carry
   globals and the working folder along a run; it is not stored as a link in
   this increment.
@@ -3673,5 +3679,5 @@ New words in both languages (13.6); 13.4 gains: 全局变量 "global";
   named as long and none holding more of its paths. A global assigned two
   different values is never proposed. (The counts are the researcher's to
   change.)
-- **Default extensions** follow Stata's manual command by command, cited in
-  the code; a command whose manual names no default gets none.
+- **Default extensions** follow Stata's help pages command by command
+  (15.2), cited in the code.
