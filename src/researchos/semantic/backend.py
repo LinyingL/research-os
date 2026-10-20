@@ -104,8 +104,8 @@ def _check_type(value: Any, type_name: str) -> bool:
 
 
 def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> list[str]:
-    """Minimal JSON-Schema checker: required fields present, types correct,
-    enum values legal. No external `jsonschema` dependency (Occam rule 1)."""
+    """Minimal JSON-Schema checker: required fields, types, enum values and
+    closed objects. No external `jsonschema` dependency (Occam rule 1)."""
     type_name = schema.get("type")
     if type_name and not _check_type(instance, type_name):
         return [f"{path}: expected type {type_name!r}, got {type(instance).__name__}"]
@@ -114,6 +114,10 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> list[st
     if enum is not None and instance not in enum:
         errors.append(f"{path}: value {instance!r} not in enum {enum!r}")
     if type_name == "object" and isinstance(instance, dict):
+        if schema.get("additionalProperties") is False:
+            for key in instance:
+                if key not in (schema.get("properties") or {}):
+                    errors.append(f"{path}.{key}: additional property not allowed")
         for key in schema.get("required", []):
             if key not in instance:
                 errors.append(f"{path}.{key}: required field missing")
@@ -291,7 +295,7 @@ class LlmBackend:
         return [item["id"] for item in data if isinstance(item, dict) and item.get("id")]
 
     def _chat(self, messages: list[dict[str, str]], json_schema: dict[str, Any] | None, name: str) -> str:
-        body: dict[str, Any] = {"model": self.model, "messages": messages}
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0}
         if json_schema is not None:
             body["response_format"] = {
                 "type": "json_schema",

@@ -3754,6 +3754,12 @@ leave out the judge's remote warning on request; no change to approval.
   `draft_file_not_text` (a Stata .dta too: its header is not text),
   `draft_file_unreadable` (no permission, a read error),
   `draft_file_cloud_only`, `draft_file_outside`; no partial draft.
+- The response schema limits source paths to the selected files and
+  allows only the two expected cells and their `text`/`sources` fields.
+  This lets constrained decoding reproduce long or Chinese paths exactly.
+  A server that ignores these constraints gets the ordinary schema repair
+  request; a second invalid answer is `draft_model_failed`. The per-cell
+  source check remains a safeguard after schema validation.
 - At most 5 files, sharing 12,000 characters: equal shares, a short file's
   unused share going to the others; a file cut is cut between words, never
   inside a number, marked to the model and listed for the screen. 12,000
@@ -3812,7 +3818,10 @@ leave out the judge's remote warning on request; no change to approval.
   Prose and truncated answers are refused; a nonempty `content` takes
   precedence. The draft's source and number checks still apply. The prompt
   repeats the selected source paths after the file contents, so a path
-  mentioned inside a script is not mistaken for a supplied source.
+  mentioned inside a script is not mistaken for a supplied source. It
+  distinguishes reading code from running it: print templates, decision
+  thresholds and conditional messages do not establish observed results.
+  Structured requests use temperature 0 to reduce sampling variation.
 - The form names the model the server says answered (its reply's `model`),
   else the one asked for.
 

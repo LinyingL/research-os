@@ -21,6 +21,7 @@ from researchos.semantic import backend
 
 _SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "required": ["decision", "confidence"],
     "properties": {
         "decision": {"type": "string", "enum": ["confirm", "reject", "uncertain"]},
@@ -117,6 +118,7 @@ def test_lm_studio_structured_json_in_reasoning_content_is_validated(monkeypatch
     '{"decision":"confirm"}',
     '{"decision":"unknown","confidence":0.9}',
     '{"decision":"confirm","confidence":"0.9"}',
+    '{"decision":"confirm","confidence":0.9,"made_up":true}',
     None,
 ])
 def test_reasoning_prose_and_invalid_structured_payloads_are_never_accepted(monkeypatch, alternate):
@@ -152,6 +154,7 @@ def test_complete_json_uses_constrained_output_when_supported(monkeypatch):
 
     assert result == {"decision": "confirm", "confidence": 0.9}
     sent_body = json.loads(requests_log[0].data)
+    assert sent_body["temperature"] == 0
     assert sent_body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "response", "strict": True, "schema": _SCHEMA},

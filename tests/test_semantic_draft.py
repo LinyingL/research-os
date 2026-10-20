@@ -157,6 +157,9 @@ def test_the_prompt_carries_the_files_the_cut_and_the_language_and_no_example_ro
     assert "=== file: out/table.csv (cut: only the beginning is shown) ===" in user
     assert "example" not in (system + user).lower()
     assert set(schema["required"]) == {"description", "result"} and "verdict" not in schema["properties"]
+    for cell in schema["properties"].values():
+        assert cell["properties"]["sources"]["items"]["enum"] == [f["path"] for f in FILES]
+    assert "enum" not in draft.SCHEMA["properties"]["description"]["properties"]["sources"]["items"]
     assert name == "attempt_draft"
 
 
@@ -479,19 +482,21 @@ def fake_model(no_llm_env):
         fake.close()
 
 
-def test_http_root_address_and_lm_studio_misrouted_json_produce_a_draft(live, fake_model):
+@pytest.mark.parametrize("rel", ["run.py", "分析/确认性检验.py"])
+def test_http_root_address_and_lm_studio_misrouted_json_produce_a_draft(live, fake_model, rel):
     base, root = live
-    (root / "run.py").write_text("# Fixed effects regression.\n# beta = 0.12\n", encoding="utf-8")
-    cells = {"description": _cell("Fixed effects regression", ["run.py"]),
-             "result": _cell("beta = 0.12", ["run.py"])}
+    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (root / rel).write_text("# Fixed effects regression.\n# beta = 0.12\n", encoding="utf-8")
+    cells = {"description": _cell("Fixed effects regression", [rel]),
+             "result": _cell("beta = 0.12", [rel])}
     fake_model.reply = {"model": "prism-ml/bonsai-27b", "choices": [{"message": {
         "content": "", "reasoning_content": json.dumps(cells)}, "finish_reason": "stop"}]}
     assert _call(base, "POST", "/api/settings/llm", {"base_url": fake_model.base_url.removesuffix("/v1")})[0] == 200
-    before = (root / "run.py").read_bytes()
-    status, body = _call(base, "POST", "/api/attempts/draft", {"files": ["run.py"]})
+    before = (root / rel).read_bytes()
+    status, body = _call(base, "POST", "/api/attempts/draft", {"files": [rel]})
     assert status == 200 and body["fields"] == cells and body["dropped"] == {}
     assert body["model"] == "prism-ml/bonsai-27b" and fake_model.paths == ["/v1/chat/completions"]
-    assert (root / "run.py").read_bytes() == before
+    assert (root / rel).read_bytes() == before
 
 
 def _serve(root=None, served=None):
@@ -541,17 +546,26 @@ def test_http_a_good_draft(live, fake_model):
     assert "OLS" not in system + user and "example" not in (system + user).lower()
 
 
-def test_http_an_invented_number_and_an_unknown_source_are_dropped(live, fake_model):
+def test_http_an_invented_number_is_dropped_without_losing_a_valid_description(live, fake_model):
     base, root = live
     (root / "run.do").write_text("xtreg y x, fe\n* beta 0.120\n", encoding="utf-8")
-    fake_model.answer({"description": _cell("Fixed effects", ["run.do", "other.do"]),
+    fake_model.answer({"description": _cell("Fixed effects", ["run.do"]),
                        "result": _cell("beta = 0.48", ["run.do"])})
     status, body = _call(base, "POST", "/api/attempts/draft", {"files": ["run.do"]})
     assert status == 200
-    assert body["fields"] == {"description": EMPTY, "result": EMPTY}
-    assert body["dropped"] == {"description": "unknown_source", "result": "unsupported_number"}
+    assert body["fields"] == {"description": _cell("Fixed effects", ["run.do"]), "result": EMPTY}
+    assert body["dropped"] == {"result": "unsupported_number"}
     assert fake_model.bodies[0]["messages"][0]["content"].endswith(
         "Write in the language of the files' own comments and text.")
+
+
+def test_http_unknown_sources_are_refused_after_the_schema_repair_retry(live, fake_model):
+    base, root = live
+    (root / "run.py").write_text("# Fixed effects regression.\n", encoding="utf-8")
+    fake_model.answer({"description": _cell("Fixed effects", ["other.py"]), "result": EMPTY})
+    status, body = _call(base, "POST", "/api/attempts/draft", {"files": ["run.py"]})
+    assert (status, body["state"]) == (502, "draft_model_failed")
+    assert len(fake_model.bodies) == 2 and "failed schema validation twice" in body["error"]
 
 
 def test_http_lm_studios_context_overflow_is_draft_too_long(live, fake_model):

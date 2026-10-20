@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import unicodedata
+from copy import deepcopy
 from typing import Any
 
 from researchos.semantic.backend import LlmBackend
@@ -42,15 +43,21 @@ FIELDS = ("description", "result")
 
 _CELL = {
     "type": "object",
+    "additionalProperties": False,
     "required": ["text", "sources"],
     "properties": {"text": {"type": "string"}, "sources": {"type": "array", "items": {"type": "string"}}},
 }
-SCHEMA = {"type": "object", "required": list(FIELDS), "properties": {f: _CELL for f in FIELDS}}
+SCHEMA = {"type": "object", "additionalProperties": False,
+          "required": list(FIELDS), "properties": {f: _CELL for f in FIELDS}}
 
 SYSTEM = (
     "You help a researcher draft one new row of their research log. Each row records an attempt: "
     "'description' is what was done (the method, data, specification), 'result' is what came out "
     "(numbers and findings exactly as the files state them). Use only what the given files show. "
+    "Reading a script is not running it: describe its method without claiming it has run. "
+    "A print format, decision threshold or conditional message in code is not an observed result. "
+    "Never infer sample sizes, coefficients, p-values or conclusions from code. If only scripts "
+    "are supplied, leave 'result' empty unless actual results are written out in comments or text. "
     "If the files do not show what was done, return an empty description; if they show no outcome, "
     "return an empty result. Never invent, round or estimate a number. Do not judge whether the "
     "attempt succeeded. In 'sources', list the paths (exactly as given) of the files each text rests "
@@ -163,8 +170,13 @@ def draft_attempt(files: list[dict[str, Any]], client: LlmBackend, language: str
     the server says answered, else the one asked for. Raises LlmError when
     the model cannot be reached or does not answer in the schema."""
     system = SYSTEM + _LANGUAGE.get(language, _LANGUAGE[None])
-    reply = client.complete_json(system, _user_message(files), SCHEMA, name="attempt_draft")
     sent = {f["path"]: f["content"] for f in files}
+    # Constrained decoding must choose a supplied path, rather than reproduce
+    # a long/Chinese name from memory. Keep the shared schema unchanged.
+    schema = deepcopy(SCHEMA)
+    for cell in schema["properties"].values():
+        cell["properties"]["sources"]["items"]["enum"] = list(sent)
+    reply = client.complete_json(system, _user_message(files), schema, name="attempt_draft")
     fields, dropped = {}, {}
     for name in FIELDS:
         reason = _check(name, reply[name], sent)
