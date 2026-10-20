@@ -21,6 +21,7 @@ into the draft.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
@@ -53,7 +54,8 @@ SYSTEM = (
     "If the files do not show what was done, return an empty description; if they show no outcome, "
     "return an empty result. Never invent, round or estimate a number. Do not judge whether the "
     "attempt succeeded. In 'sources', list the paths (exactly as given) of the files each text rests "
-    "on. Write every number in Arabic digits exactly as the files show it. Keep each text to one or two "
+    "on. Cite only supplied files, never input or output paths mentioned inside their contents. "
+    "Write every number in Arabic digits exactly as the files show it. Keep each text to one or two "
     "sentences. "
 )
 _LANGUAGE = {
@@ -118,6 +120,8 @@ def _user_message(files: list[dict[str, Any]]) -> str:
     for f in files:
         cut = " (cut: only the beginning is shown)" if f["cut"] else ""
         parts.append(f"=== file: {f['path']}{cut} ===\n{f['content']}")
+    parts.append("Allowed source paths for each 'sources' array (copy exactly, including directories; "
+                 "do not translate or shorten):\n" + json.dumps([f["path"] for f in files], ensure_ascii=False))
     return "\n\n".join(parts)
 
 

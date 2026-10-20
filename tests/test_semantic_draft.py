@@ -241,6 +241,21 @@ def test_the_saved_setting_wins_over_the_environment_which_wins_over_the_default
     assert (client.base_url, client.model) == ("http://127.0.0.1:7777/v1", "saved-model")
 
 
+def test_root_addresses_are_normalized_for_saved_existing_and_environment_settings(no_llm_env, monkeypatch):
+    root_url = "http://127.0.0.1:1234"
+    got = server.llm_setting_set_payload({"base_url": root_url, "model": "prism-ml/bonsai-27b"})
+    assert got["base_url"] == got["saved"]["base_url"] == root_url + "/v1"
+    assert settings.read_settings()["llm_base_url"] == root_url + "/v1"
+    # An address saved by the old app also works, without a migration write.
+    settings.write_json(settings.settings_path(), {"llm_base_url": root_url, "llm_model": "old-model"})
+    before = settings.settings_path().read_bytes()
+    assert server.llm_setting_payload()["base_url"] == server._llm_client().base_url == root_url + "/v1"
+    assert settings.settings_path().read_bytes() == before
+    server.llm_setting_set_payload({"base_url": ""})
+    monkeypatch.setenv("RCE_LLM_BASE_URL", root_url)
+    assert server.llm_setting_payload()["base_url"] == server._llm_client().base_url == root_url + "/v1"
+
+
 def test_a_partial_post_keeps_the_other_key(no_llm_env):
     server.llm_setting_set_payload({"base_url": "http://localhost:9999/v1", "model": "qwen"})
     server.llm_setting_set_payload({"model": "other"})
@@ -421,11 +436,12 @@ class _FakeModel:
     and `reply`, and keeps each request body it received."""
 
     def __init__(self):
-        self.status, self.reply, self.bodies, self.keys = 200, {}, [], []
+        self.status, self.reply, self.bodies, self.keys, self.paths = 200, {}, [], [], []
         fake = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
+                fake.paths.append(self.path)
                 fake.bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
                 fake.keys.append(self.headers.get("Authorization"))
                 raw = (fake.reply if isinstance(fake.reply, str) else json.dumps(fake.reply)).encode("utf-8")
@@ -461,6 +477,21 @@ def fake_model(no_llm_env):
         yield fake
     finally:
         fake.close()
+
+
+def test_http_root_address_and_lm_studio_misrouted_json_produce_a_draft(live, fake_model):
+    base, root = live
+    (root / "run.py").write_text("# Fixed effects regression.\n# beta = 0.12\n", encoding="utf-8")
+    cells = {"description": _cell("Fixed effects regression", ["run.py"]),
+             "result": _cell("beta = 0.12", ["run.py"])}
+    fake_model.reply = {"model": "prism-ml/bonsai-27b", "choices": [{"message": {
+        "content": "", "reasoning_content": json.dumps(cells)}, "finish_reason": "stop"}]}
+    assert _call(base, "POST", "/api/settings/llm", {"base_url": fake_model.base_url.removesuffix("/v1")})[0] == 200
+    before = (root / "run.py").read_bytes()
+    status, body = _call(base, "POST", "/api/attempts/draft", {"files": ["run.py"]})
+    assert status == 200 and body["fields"] == cells and body["dropped"] == {}
+    assert body["model"] == "prism-ml/bonsai-27b" and fake_model.paths == ["/v1/chat/completions"]
+    assert (root / "run.py").read_bytes() == before
 
 
 def _serve(root=None, served=None):
