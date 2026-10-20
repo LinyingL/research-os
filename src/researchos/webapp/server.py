@@ -1812,7 +1812,8 @@ def llm_setting_payload() -> dict[str, Any]:
     setting without building a client (whose remote warning is the
     judge's)."""
     saved = settings_mod.llm_settings()
-    base_url = (saved["base_url"] or os.environ.get("RCE_LLM_BASE_URL") or llm_backend.DEFAULT_BASE_URL).rstrip("/")
+    base_url = settings_mod.normalize_llm_base_url(
+        saved["base_url"] or os.environ.get("RCE_LLM_BASE_URL") or llm_backend.DEFAULT_BASE_URL)
     model = saved["model"] or os.environ.get("RCE_LLM_MODEL") or llm_backend.DEFAULT_MODEL
     host = _llm_host(base_url)
     return {"base_url": settings_mod.without_userinfo(base_url), "model": model,

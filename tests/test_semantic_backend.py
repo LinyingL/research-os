@@ -21,6 +21,7 @@ from researchos.semantic import backend
 
 _SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "required": ["decision", "confidence"],
     "properties": {
         "decision": {"type": "string", "enum": ["confirm", "reject", "uncertain"]},
@@ -80,6 +81,70 @@ def test_env_vars_override_all_defaults(monkeypatch):
     assert client.api_key == "env-key"
 
 
+@pytest.mark.parametrize("url, expected", [
+    ("http://127.0.0.1:1234", "http://127.0.0.1:1234/v1"),
+    ("http://localhost:1234/", "http://localhost:1234/v1"),
+    ("http://[::1]:1234", "http://[::1]:1234/v1"),
+    ("https://models.example.com", "https://models.example.com/v1"),
+    ("http://localhost:1234/v1/", "http://localhost:1234/v1"),
+    ("https://models.example.com/gateway/openai/v1/", "https://models.example.com/gateway/openai/v1"),
+    ("https://models.example.com/custom", "https://models.example.com/custom"),
+    ("https://models.example.com/?key=value", "https://models.example.com/?key=value"),
+])
+def test_server_roots_use_v1_and_explicit_api_paths_are_preserved(monkeypatch, url, expected):
+    requests = []
+    _queue_urlopen(monkeypatch, [{"data": [{"id": "loaded-model"}]},
+                               _chat_payload({"decision": "confirm", "confidence": 0.9})], requests)
+    client = backend.LlmBackend(base_url=url, warn_remote=False)
+    assert client.probe() == ["loaded-model"]
+    assert client.complete_json("sys", "user", _SCHEMA)["decision"] == "confirm"
+    assert [request.full_url for request in requests] == [expected + "/models", expected + "/chat/completions"]
+
+
+@pytest.mark.parametrize("content", ["", "   ", None])
+def test_lm_studio_structured_json_in_reasoning_content_is_validated(monkeypatch, content):
+    expected = {"decision": "confirm", "confidence": 0.9}
+    requests = []
+    reply = {"model": "prism-ml/bonsai-27b", "choices": [{"message": {
+        "content": content, "reasoning_content": json.dumps(expected)}, "finish_reason": "stop"}]}
+    _queue_urlopen(monkeypatch, [reply], requests)
+    client = backend.LlmBackend()
+    assert client.complete_json("sys", "user", _SCHEMA) == expected
+    assert client.last_model == "prism-ml/bonsai-27b" and len(requests) == 1
+
+
+@pytest.mark.parametrize("alternate", [
+    'Thinking about the answer: {"decision":"confirm","confidence":0.9}',
+    '{"decision":"confirm"}',
+    '{"decision":"unknown","confidence":0.9}',
+    '{"decision":"confirm","confidence":"0.9"}',
+    '{"decision":"confirm","confidence":0.9,"made_up":true}',
+    None,
+])
+def test_reasoning_prose_and_invalid_structured_payloads_are_never_accepted(monkeypatch, alternate):
+    reply = {"choices": [{"message": {"content": "", "reasoning_content": alternate}, "finish_reason": "stop"}]}
+    _queue_urlopen(monkeypatch, [reply, reply])
+    with pytest.raises(backend.LlmError, match="failed schema validation twice"):
+        backend.LlmBackend().complete_json("sys", "user", _SCHEMA)
+
+
+def test_nonempty_answer_takes_precedence_over_reasoning_content(monkeypatch):
+    reply = {"choices": [{"message": {
+        "content": json.dumps({"decision": "reject", "confidence": 0.8}),
+        "reasoning_content": json.dumps({"decision": "confirm", "confidence": 0.9}),
+    }, "finish_reason": "stop"}]}
+    _queue_urlopen(monkeypatch, [reply])
+    assert backend.LlmBackend().complete_json("sys", "user", _SCHEMA)["decision"] == "reject"
+
+
+def test_truncated_reasoning_json_is_not_accepted(monkeypatch):
+    reply = {"choices": [{"message": {"content": "", "reasoning_content":
+        json.dumps({"decision": "confirm", "confidence": 0.9})}, "finish_reason": "length"}]}
+    _queue_urlopen(monkeypatch, [reply])
+    with pytest.raises(backend.LlmContextError):
+        backend.LlmBackend().complete_json("sys", "user", _SCHEMA)
+
+
 def test_complete_json_uses_constrained_output_when_supported(monkeypatch):
     requests_log: list = []
     _queue_urlopen(monkeypatch, [_chat_payload({"decision": "confirm", "confidence": 0.9})], requests_log)
@@ -89,6 +154,7 @@ def test_complete_json_uses_constrained_output_when_supported(monkeypatch):
 
     assert result == {"decision": "confirm", "confidence": 0.9}
     sent_body = json.loads(requests_log[0].data)
+    assert sent_body["temperature"] == 0
     assert sent_body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "response", "strict": True, "schema": _SCHEMA},

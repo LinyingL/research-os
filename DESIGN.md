@@ -3754,6 +3754,12 @@ leave out the judge's remote warning on request; no change to approval.
   `draft_file_not_text` (a Stata .dta too: its header is not text),
   `draft_file_unreadable` (no permission, a read error),
   `draft_file_cloud_only`, `draft_file_outside`; no partial draft.
+- The response schema limits source paths to the selected files and
+  allows only the two expected cells and their `text`/`sources` fields.
+  This lets constrained decoding reproduce long or Chinese paths exactly.
+  A server that ignores these constraints gets the ordinary schema repair
+  request; a second invalid answer is `draft_model_failed`. The per-cell
+  source check remains a safeguard after schema validation.
 - At most 5 files, sharing 12,000 characters: equal shares, a short file's
   unused share going to the others; a file cut is cut between words, never
   inside a number, marked to the model and listed for the screen. 12,000
@@ -3776,7 +3782,10 @@ leave out the judge's remote warning on request; no change to approval.
   Only the keys sent change. An address must be http or https, name a
   host and carry no user:password (urllib cannot use one; a key is
   `RCE_LLM_API_KEY`) and no control character; a saved one that is not
-  reads as not saved. `RCE_LLM_API_KEY` goes only to the address it was
+  reads as not saved. A server root such as `http://127.0.0.1:1234` is
+  treated as `http://127.0.0.1:1234/v1`, including an existing saved value
+  or an environment variable. Explicit API paths are preserved.
+  `RCE_LLM_API_KEY` goes only to the address it was
   set beside (`RCE_LLM_BASE_URL`, else the default), never to a different
   address saved here. "On this Mac" is
   `localhost`, 127.0.0.0/8 and `::1` only: a `*.local` name is another
@@ -3803,6 +3812,16 @@ leave out the judge's remote warning on request; no change to approval.
   server stopped), or that does not answer in the schema after one
   repair, is `draft_model_failed` with LM Studio's remedy in words. The
   server's own words are the detail behind 「详情」.
+- LM Studio sometimes returns constrained JSON in `reasoning_content`
+  with an empty `content`. Only a reply finished with `stop`, whose whole
+  alternate field parses and passes the requested schema, is accepted.
+  Prose and truncated answers are refused; a nonempty `content` takes
+  precedence. The draft's source and number checks still apply. The prompt
+  repeats the selected source paths after the file contents, so a path
+  mentioned inside a script is not mistaken for a supplied source. It
+  distinguishes reading code from running it: print templates, decision
+  thresholds and conditional messages do not establish observed results.
+  Structured requests use temperature 0 to reduce sampling variation.
 - The form names the model the server says answered (its reply's `model`),
   else the one asked for.
 

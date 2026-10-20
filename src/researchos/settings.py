@@ -131,6 +131,23 @@ LLM_BASE_URL_SETTING = "llm_base_url"
 LLM_MODEL_SETTING = "llm_model"
 
 
+def normalize_llm_base_url(url: str) -> str:
+    """An HTTP server root means its OpenAI-compatible `/v1` API.
+
+    Keep explicit API paths, queries and fragments as configured. Reading
+    a malformed environment value must still reach the existing error path.
+    """
+    url = url.strip().rstrip("/")
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if (parts.scheme in ("http", "https") and parts.netloc and not parts.path
+            and not parts.query and not parts.fragment):
+        return url + "/v1"
+    return url
+
+
 def without_userinfo(text: str) -> str:
     """`text` (an address, or a message naming one) with any user:password@
     after a `://` left out (16.2: never shown, never logged)."""
@@ -168,6 +185,8 @@ def llm_settings() -> dict[str, str | None]:
             check_llm_base_url(out["base_url"])
         except ValueError:
             out["base_url"] = None
+        else:
+            out["base_url"] = normalize_llm_base_url(out["base_url"])
     return out
 
 
@@ -180,6 +199,7 @@ def set_llm_settings(base_url: str | None = None, model: str | None = None) -> N
         changes[LLM_BASE_URL_SETTING] = base_url.strip()
         if changes[LLM_BASE_URL_SETTING]:
             check_llm_base_url(changes[LLM_BASE_URL_SETTING])
+            changes[LLM_BASE_URL_SETTING] = normalize_llm_base_url(changes[LLM_BASE_URL_SETTING])
     if model is not None:
         changes[LLM_MODEL_SETTING] = model.strip()
     if not changes:

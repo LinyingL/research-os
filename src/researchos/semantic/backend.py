@@ -38,6 +38,8 @@ import urllib.request
 from typing import Any
 from urllib.parse import urlparse
 
+from researchos.settings import normalize_llm_base_url
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
@@ -102,8 +104,8 @@ def _check_type(value: Any, type_name: str) -> bool:
 
 
 def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> list[str]:
-    """Minimal JSON-Schema checker: required fields present, types correct,
-    enum values legal. No external `jsonschema` dependency (Occam rule 1)."""
+    """Minimal JSON-Schema checker: required fields, types, enum values and
+    closed objects. No external `jsonschema` dependency (Occam rule 1)."""
     type_name = schema.get("type")
     if type_name and not _check_type(instance, type_name):
         return [f"{path}: expected type {type_name!r}, got {type(instance).__name__}"]
@@ -112,6 +114,10 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> list[st
     if enum is not None and instance not in enum:
         errors.append(f"{path}: value {instance!r} not in enum {enum!r}")
     if type_name == "object" and isinstance(instance, dict):
+        if schema.get("additionalProperties") is False:
+            for key in instance:
+                if key not in (schema.get("properties") or {}):
+                    errors.append(f"{path}.{key}: additional property not allowed")
         for key in schema.get("required", []):
             if key not in instance:
                 errors.append(f"{path}.{key}: required field missing")
@@ -191,7 +197,8 @@ class LlmBackend:
         *,
         warn_remote: bool = True,
     ) -> None:
-        self.base_url = (base_url if base_url is not None else os.environ.get("RCE_LLM_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self.base_url = normalize_llm_base_url(
+            base_url if base_url is not None else os.environ.get("RCE_LLM_BASE_URL") or DEFAULT_BASE_URL)
         self.model = model if model is not None else (os.environ.get("RCE_LLM_MODEL") or DEFAULT_MODEL)
         self.timeout = float(timeout if timeout is not None else os.environ.get("RCE_LLM_TIMEOUT", DEFAULT_TIMEOUT_SECONDS))
         # Local servers usually need no key; a compatible endpoint that does
@@ -288,7 +295,7 @@ class LlmBackend:
         return [item["id"] for item in data if isinstance(item, dict) and item.get("id")]
 
     def _chat(self, messages: list[dict[str, str]], json_schema: dict[str, Any] | None, name: str) -> str:
-        body: dict[str, Any] = {"model": self.model, "messages": messages}
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0}
         if json_schema is not None:
             body["response_format"] = {
                 "type": "json_schema",
@@ -309,6 +316,18 @@ class LlmBackend:
         # whatever model it was started with, whatever was asked for).
         answered = payload.get("model")
         self.last_model = answered if isinstance(answered, str) and answered else self.model
+        # LM Studio can put constrained JSON in reasoning_content and leave
+        # content empty (lmstudio-ai/lmstudio-bug-tracker#1698, #1971).
+        # Accept only a completed, structured response whose ENTIRE alternate
+        # field parses and validates. Never extract JSON from reasoning prose,
+        # replace a nonempty answer, or use a truncated/tool-call response.
+        if (json_schema is not None and choice.get("finish_reason") == "stop"
+                and (content is None or isinstance(content, str) and not content.strip())):
+            alternate = choice["message"].get("reasoning_content")
+            if isinstance(alternate, str) and _parse_and_validate(alternate, json_schema)[1] is None:
+                logger.info("LM Studio compatibility: using schema-valid structured JSON from reasoning_content (model %s)",
+                            self.last_model)
+                content = alternate
         return content
 
     def complete_json(self, system: str, user: str, json_schema: dict[str, Any], name: str = "response") -> dict[str, Any]:
