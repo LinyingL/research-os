@@ -597,9 +597,11 @@ GUIDE_APP_LABELS = (
 def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_app_shows():
     text = GUIDE.read_text(encoding="utf-8")
     assert not FORBIDDEN.search(text), FORBIDDEN.search(text)  # 12.11: no emoji, no arrows
+    package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    source = f"git+https://github.com/LinyingL/research-os@v{package['version']}"
     for command in ("xcode-select --install", "curl -LsSf https://astral.sh/uv/install.sh | sh",
-                    "uv tool install git+https://github.com/LinyingL/research-os\n",
-                    "researchos app\n", "uv tool upgrade researchos", "uv tool uninstall rce\n"):
+                    f"uv tool install {source}\n", "researchos app\n",
+                    f"uv tool install --force {source}\n", "uv tool uninstall rce\n"):
         assert command in text, command
     # Verifier round 3: no fallback to the old address (it installs the V7 `rce` package, which has no
     # `researchos`); a failed install is told by the words uv really prints, and the reader stops.
@@ -612,7 +614,7 @@ def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_
     missing = [label for label in GUIDE_APP_LABELS if label not in screens]
     assert missing == [] and all(label in text for label in GUIDE_APP_LABELS)
     # the command the guide installs, and the folder it says the app goes to
-    assert "researchos" in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
+    assert "researchos" in package["scripts"]
     assert "~/Applications" in (cli.cmd_app.__doc__ or "")
     assert "docs/安装与加入团队.md" in (ROOT / "README.md").read_text(encoding="utf-8")
 
