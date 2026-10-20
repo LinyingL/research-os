@@ -1,8 +1,8 @@
 # Command-line reference
 
-Research OS **0.1.0 Demo**.
+Research OS **0.2.0**.
 
-For installation, see the [README](../README.md#try-the-demo). Replace the
+For installation, see the [README](../README.md#install). Replace the
 sample paths and file names below with your own. `researchos --help` lists
 commands; `researchos <command> --help` lists their options.
 
@@ -23,6 +23,19 @@ To open the browser interface:
 ```bash
 researchos serve /path/to/project
 ```
+
+### Stata projects
+
+The same scan reads `.do` files for data inputs, data outputs and exported
+figures. It follows literal paths, resolvable macros and working-folder
+changes. Paths that cannot be resolved are listed with a reason. When a
+global appears to name a project folder, confirm the suggested folder in
+the app before links depending on it are created.
+
+Open a `.dta` file in the app to see its row count, variables, labels and
+storage types. This reads the header, not the data rows. `.ado` files are
+listed as scripts but are not scanned for file relationships in this version.
+Research OS does not execute do-files or require Stata to scan them.
 
 ## Trace a result
 
@@ -180,6 +193,24 @@ researchos ingest /path/to/project --wandb entity/project
 MLflow records are read from the local directory. W&B access requires an
 API key in `WANDB_API_KEY`. These commands import existing records;
 they do not run your scripts.
+
+## Optional: model-assisted drafts
+
+This feature is in the app's New attempt form; it has no separate CLI
+command. Start LM Studio's local server, load a model, then open Model
+server in the form. Save the server address and model ID, choose up to five
+text files from the project and click Generate draft. A server root such as
+`http://127.0.0.1:1234` is accepted and expanded to `/v1` automatically.
+
+Only empty description and result fields are filled. Each drafted field
+names its source files, and unsupported numbers are rejected. Include
+actual text logs or results to draft findings; a script alone does not
+show that it ran. You review the draft before saving or proposing it.
+Verdicts, reasons and approval decisions are not drafted.
+
+The form shows where selected files will be sent. The default is this Mac;
+another configured server receives those files. The CLI and other app
+features work without a model.
 
 ## Optional: model annotations
 

@@ -1,6 +1,6 @@
 # Research OS
 
-[![Version: 0.1.0 Demo](https://img.shields.io/badge/version-0.1.0%20Demo-956b4b)](pyproject.toml)
+[![Version: 0.2.0](https://img.shields.io/badge/version-0.2.0-956b4b)](https://github.com/LinyingL/research-os/releases/tag/v0.2.0)
 [![tests](https://github.com/LinyingL/research-os/actions/workflows/tests.yml/badge.svg)](https://github.com/LinyingL/research-os/actions/workflows/tests.yml)
 
 **A workspace for managing research projects, reviewing team changes, and tracing results back to their evidence.**
@@ -9,9 +9,21 @@ Research OS connects research attempts, data, code, figures, drafts, and the
 decisions behind them. Use it to keep several projects in view on your own,
 or work with a PI and collaborators through a shared folder.
 
-> **Current version: 0.1.0 Demo.** This is an early preview for trying the
-> research and collaboration workflows. Features and interfaces are still
-> evolving. Start with a backed-up copy of a project.
+> **Current version: 0.2.0.** This release adds Stata support and local-model
+> assistance for new research attempts. Research OS is still an early version;
+> start with a backed-up copy of a project.
+
+## New in 0.2.0
+
+- **Stata:** trace the data and figures read or written by `.do` files,
+  confirm project folders used by globals, and inspect `.dta` row counts,
+  variables, labels and storage types. Scanning reads files; it does not run Stata.
+- **Local-model assistance:** choose project files and ask LM Studio, or
+  another OpenAI-compatible server, to draft an attempt's description and
+  result. Review and edit the draft before saving; verdicts and approval
+  decisions remain yours.
+
+See the [release notes](CHANGELOG.md) for details.
 
 ## What it helps you answer
 
@@ -45,7 +57,7 @@ them or returning them with a reason.
 
 ![PI review of a verdict change, with the earlier and proposed rows, a code diff, and approval controls](docs/images/proposal-review.png)
 
-## What is in the demo
+## Features
 
 | Area | What you can do |
 | --- | --- |
@@ -55,6 +67,8 @@ them or returning them with a reason.
 | Team review | Propose attempts, verdict changes, variable definitions, files, and route links; approve, return with a reason, or discuss. |
 | Variable definitions | Keep versioned definitions, construction rules, implementation references, and the reasons for adopting a definition. |
 | Projects and literature | Switch between projects and connect draft citations to bibliography entries and a local Zotero library. |
+| Stata projects | Trace do-file inputs and outputs, resolve macro-based paths, and inspect `.dta` structure without loading its data rows. |
+| Model-assisted drafts | Fill empty description and result fields from chosen files, with source and number checks before the draft reaches the form. |
 
 The engine reads existing Python, R and Stata scripts, Markdown and LaTeX drafts,
 bibliographies, and optionally git history and MLflow/W&B run logs. A git
@@ -93,11 +107,11 @@ It does not operate a hosted collaboration service or connect to the PI's
 computer. Team members need their own shared-folder accounts and the
 appropriate folder permissions; no Research OS account is required.
 
-## Try the demo
+## Install
 
 ### macOS app
 
-The desktop demo targets **macOS 12 or later**. It is currently installed
+The desktop app targets **macOS 12 or later**. It is currently installed
 from source and built on your Mac, using Apple's command line tools and
 `uv`. The installation guides cover these prerequisites and team setup:
 
@@ -107,7 +121,7 @@ from source and built on your Mac, using Apple's command line tools and
 Once the prerequisites are installed:
 
 ```bash
-uv tool install git+https://github.com/LinyingL/research-os
+uv tool install git+https://github.com/LinyingL/research-os@v0.2.0
 researchos app
 ```
 
@@ -120,7 +134,7 @@ team project. The app previews a project's contents before adding it.
 Requires **Python 3.11 or later**. Install from a checkout:
 
 ```bash
-git clone https://github.com/LinyingL/research-os.git
+git clone --branch v0.2.0 https://github.com/LinyingL/research-os.git
 cd research-os
 python3 -m venv .venv
 source .venv/bin/activate
@@ -141,6 +155,23 @@ For a browser view, run `researchos serve /path/to/project`. For more
 commands, attempt-table configuration, team setup, and optional MCP/model
 features, see the [command-line guide](docs/cli-reference.md).
 
+### Optional: local-model assistance
+
+Start LM Studio's local server and load a model. In **New attempt**, open
+**Model server**, set the server address (usually `http://127.0.0.1:1234/v1`)
+and the model ID shown by LM Studio, then save. Choose up to five text
+files from the project and click **Generate draft**.
+
+The draft fills only empty description and result fields. Unsupported
+cells stay empty; reading a script is not evidence that it ran. To draft
+results, include a text log or results file containing the actual findings.
+The form shows which model and files each drafted field used. Nothing is
+written until you review and save through the usual workflow.
+
+The default server is on your Mac. If you set an address on another
+computer, the selected file contents are sent there; the form shows the
+destination before generation. No model is needed for the rest of the app.
+
 ## Records and storage
 
 - **Your project** holds its research files and `.researchos/` records:
@@ -158,11 +189,11 @@ features, see the [command-line guide](docs/cli-reference.md).
 `researchos records /path/to/project` lists the records and retained
 material. `RESEARCHOS_HOME` changes the location of machine-local state.
 
-## Demo boundaries
+## Current limits
 
 - **A code relationship is not proof of execution.** Extracted links,
   imported run logs, and author-added relationships have different bases.
-  The demo does not guarantee a complete, version-pinned record of every
+  This version does not guarantee a complete, version-pinned record of every
   execution that produced a result.
 - **History has limits.** The local history store retains text up to 5 MB;
   larger and binary files are generally represented by fingerprints,
@@ -182,7 +213,7 @@ material. `RESEARCHOS_HOME` changes the location of machine-local state.
 - [Product and architecture design](DESIGN.md)
 - [Report a bug or suggest a change](https://github.com/LinyingL/research-os/issues)
 
-When reporting a demo issue, include your operating system, the steps to
+When reporting an issue, include your operating system, the steps to
 reproduce it, and what you expected to happen.
 
 ## License
