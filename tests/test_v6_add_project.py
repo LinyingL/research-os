@@ -203,6 +203,30 @@ def project_server(tmp_path: Path):
 # -- 10.8 scenario 1 and the no-project state ------------------------------------------
 
 
+def test_inspection_does_not_open_unselected_top_level_folders(fake_home, tmp_path, monkeypatch):
+    """Opening a project must not prompt for unrelated home/cloud folders."""
+    selected = tmp_path / "study"
+    selected.mkdir()
+    cloud = fake_home / "Library/CloudStorage"
+    cloud.mkdir()
+    unrelated = {
+        fake_home / name for name in ("Documents", "Desktop", "Downloads", "Library",
+                                      "Library/Mobile Documents", "Library/Mobile Documents/com~apple~CloudDocs",
+                                      "Library/CloudStorage")
+    }
+    real_open = os.open
+
+    def selected_only(path, *args, **kwargs):
+        if isinstance(path, (str, Path)) and Path(path) in unrelated:
+            raise AssertionError(f"Opening an unselected folder can trigger a permission prompt: {path}")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", selected_only)
+    inspected = addproject.inspect(selected)
+    assert inspected.kind == addproject.NEW_FOLDER
+    assert inspected.preview.to_scan == 0
+
+
 def test_no_project_state_answers_every_project_endpoint_with_409(no_project_server):
     """10.8 scenario 1 (first launch) / 10.1: with no project the engine
     serves anyway; the project list is empty with current null, and every

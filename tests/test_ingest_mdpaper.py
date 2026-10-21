@@ -7,6 +7,9 @@ test_ingest_latex.py / test_ingest_claims.py).
 
 import logging
 from pathlib import Path
+from urllib.parse import quote
+
+import pytest
 
 from researchos import db
 from researchos.ingest import latex, mdpaper
@@ -212,6 +215,52 @@ def test_remote_image_url_is_skipped_not_a_repo_file(tmp_path):
     repo = _repo(tmp_path, "# Overview\n\n![badge](https://example.com/badge.svg)\n")
     result = mdpaper.parse_md_file(repo, "paper.md")
     assert result.figure_links == []
+
+
+@pytest.mark.parametrize("filename", ["中文图.png", "sample comparison.png", "result(robust).png", "结果 对照(一).png"])
+def test_workspace_result_encoded_image_reference_uses_actual_file_node(tmp_path, filename):
+    figure = f"figures/{filename}"
+    (tmp_path / "figures").mkdir()
+    (tmp_path / figure).write_bytes(b"\x89PNG")
+    (tmp_path / "research/results").mkdir(parents=True)
+    document = "research/results/" + "a" * 32 + ".md"
+    reference = quote("../../" + figure, safe="/.")
+    assert "%" in reference
+    _repo(tmp_path, f"# Results\n\n![Result]({reference})\n", path=document)
+    conn = _seeded_conn()
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, [document], image_paths=[figure])
+    assert counts["figures"] == 1
+    assert db.get_node(conn, f"figure:{figure}")["type"] == "figure"
+    edge = db.query_edges(conn, type="includes")[0]
+    assert edge["src"] == f"section:{document}#results"
+    assert edge["dst"] == f"figure:{figure}"
+    assert edge["evidence"]["occurrences"] == [{"file": document, "line": 3}]
+
+
+@pytest.mark.parametrize("reference,actual", [("figures/100%.png", "figures/100%.png"),
+                                               ("figures/100%25.png", "figures/100%.png"),
+                                               ("figures/literal%2520.png", "figures/literal%20.png")])
+def test_image_uri_decoding_preserves_literal_percent_and_decodes_only_once(reference, actual):
+    assert mdpaper._resolve_image_path("paper.md", reference) == actual
+
+
+@pytest.mark.parametrize("reference", [
+    "%2Ftmp/outside.png", "%2F%2Fevil.example/image.png", "https%3A%2F%2Fevil.example/image.png",
+    "file%3A%2F%2F%2Ftmp/image.png", "data%3Aimage/png;base64,ignored", "C%3A%5Coutside.png",
+    "%2e%2e/%2e%2e/%2e%2e/outside.png", "..%2F..%2F..%2Foutside.png", "..%5C..%5Coutside.png",
+    "figures/a%00.png", "%09https%3A%2F%2Fevil.example/image.png", "figures/%FF.png",
+])
+def test_encoded_nonlocal_image_references_do_not_create_graph_links(tmp_path, reference):
+    (tmp_path / "research/results").mkdir(parents=True)
+    document = "research/results/note.md"
+    _repo(tmp_path, f"# Results\n\n![Unsafe]({reference})\n", path=document)
+    conn = _seeded_conn()
+    # Even without an inventory, URI decoding must not introduce a figure
+    # outside the project or treat a remote scheme as a local filename.
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, [document])
+    assert counts["figures"] == 0
+    assert db.get_nodes_by_type(conn, "figure") == []
+    assert db.query_edges(conn, type="includes") == []
 
 
 def test_image_reference_inside_table_cell_is_still_captured(tmp_path):

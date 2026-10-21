@@ -593,7 +593,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, officialness, paths
+from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, workspace
 from researchos import settings as settings_mod
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
@@ -674,6 +674,16 @@ class NotAFileError(ApiError):
 
 class BinaryFileError(ApiError):
     status = 415
+
+
+class WorkspaceApiError(ApiError):
+    """An authoring refusal with a localized sentence and a stable code."""
+
+    def __init__(self, exc: Exception, lang: str) -> None:
+        super().__init__(str(exc))
+        self.status = exc.status
+        self.state = "workspace_" + exc.code
+        self.extra = {"message": exc.message_zh if lang == "zh" else str(exc), "detail": str(exc)}
 
 
 class DtaApiError(ApiError):
@@ -3011,6 +3021,8 @@ _NODE_JS_PATH = Path(__file__).parent / "node.js"
 _TEAM_JS_PATH = Path(__file__).parent / "team.js"
 _ROUTEMAP_JS_PATH = Path(__file__).parent / "routemap.js"
 _I18N_JS_PATH = Path(__file__).parent / "i18n.js"
+_WORKSPACE_JS_PATH = Path(__file__).parent / "workspace.js"
+_WORKSPACE_CSS_PATH = Path(__file__).parent / "workspace.css"
 
 
 def _canvas_js() -> str:
@@ -3339,6 +3351,22 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         except node_api.NodeApiRefused as exc:
             raise NodeRefusedApiError(exc) from exc
 
+    def _workspace_api(self, fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except (workspace.WorkspaceError, newproject.NewProjectError) as exc:
+            raise WorkspaceApiError(exc, self._lang()) from exc
+
+    def _workspace_target(self, body: dict[str, Any]) -> ServedProject:
+        served = self._require_unblocked()
+        if body.get("project") != str(served.root):
+            error = ApiError("the open project changed; reopen this document before saving")
+            error.status = 409
+            error.state = "workspace_project_changed"
+            error.extra = {"message": "项目已切换，请重新打开文档再保存" if self._lang() == "zh" else str(error)}
+            raise error
+        return served
+
     def _check_local_origin(self) -> None:
         """Reject a request whose `Host` does not name this exact loopback
         server, and one whose `Origin` (when a browser sends one at all)
@@ -3408,6 +3436,51 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _team_js(), "text/javascript; charset=utf-8")
             elif path == "/routemap.js":
                 self._send_text(200, _routemap_js(), "text/javascript; charset=utf-8")
+            elif path == "/workspace.js":
+                self._send_text(200, _WORKSPACE_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
+            elif path == "/workspace.css":
+                self._send_text(200, _WORKSPACE_CSS_PATH.read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            elif path == "/api/workspace":
+                served = self._require_unblocked()
+                payload = self._workspace_api(lambda: workspace.overview(served.root, self._lang()))
+                payload.update(project=str(served.root), id=served.project_id,
+                               read_only=served.read_only or served.needs_migration or not payload.get("can_write", payload.get("mode") in {"single", "pi", "member"}))
+                self._send_json(200, payload)
+            elif path == "/api/workspace/document":
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or ["research/overview.md"])[0]
+                payload = self._workspace_api(lambda: workspace.document(served.root, rel, self._lang()))
+                marks = workspace.local_annotations(served.root, {rel: payload["revision"]}, self._lang())
+                payload["officialness"] = marks["files"][rel]
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/asset":
+                served = self._require_unblocked()
+                rel = (query.get("path") or [""])[0]
+                target = _resolve_within_root(served.root, rel)
+                media = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                         ".gif": "image/gif", ".webp": "image/webp"}
+                content_type = media.get(target.suffix.lower())
+                if not content_type:
+                    raise BinaryFileError("only PNG, JPEG, GIF and WebP images can be displayed here")
+                if not target.is_file():
+                    raise NotFoundError("the image does not exist")
+                if target.stat().st_size > 8 * 1024 * 1024:
+                    raise BinaryFileError("the image exceeds the 8 MB preview limit; open it externally")
+                try:
+                    raw = cloud.read_bytes(target)
+                except cloud.CloudOnlyError as exc:
+                    raise CloudOnlyApiError(exc) from exc
+                if len(raw) > 8 * 1024 * 1024:
+                    raise BinaryFileError("the image exceeds the 8 MB preview limit")
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(raw)
             elif path == "/api/summary":
                 served = self._served()
                 self._json_from_conn(lambda conn: summary_payload(conn, served.root, served))
@@ -3610,6 +3683,38 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/open":
                 body = self._read_json_body_with_path()
                 payload = open_payload(self._project_root(), body["path"], bool(body.get("reveal", False)))
+                self._send_json(200, payload)
+            elif parsed.path == "/api/projects/create":
+                body = self._read_json_object()
+                payload = self._workspace_api(lambda: newproject.create(body))
+                served = served_for(Path(payload["path"]))
+                self._switch_to(served)
+                payload["opened"] = True
+                try:
+                    self.server.start_scan(served)
+                    payload["scanning"] = True
+                except ApiError as exc:
+                    payload["scanning"] = False
+                    payload["scan_error"] = str(exc)
+                self._send_json(200, payload)
+            elif parsed.path in ("/api/workspace/document", "/api/workspace/tasks"):
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    writer = workspace.save_tasks if parsed.path.endswith("/tasks") else workspace.save_document
+                    payload = self._workspace_api(lambda: writer(served.root, {k: v for k, v in body.items() if k != "project"}))
+                    task_save = parsed.path.endswith("/tasks")
+                    rel = workspace.TASKS_PATH if task_save else payload["path"]
+                    revision = payload["tasks_revision"] if task_save else payload["revision"]
+                    marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())
+                    payload["tasks_officialness" if task_save else "officialness"] = marks["files"][rel]
+                payload["generation"] = self.server.watcher.record_write(set())
+                if parsed.path.endswith("/document"):
+                    try:
+                        self.server.start_scan(served)
+                    except ApiError as exc:
+                        logger.info("no immediate scan after writing a research document: %s", exc)
                 self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":
                 body = self._read_json_body_with_path()
@@ -3992,12 +4097,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
-_NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js",
+_NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js", "/workspace.js", "/workspace.css",
                              "/api/projects",
                              "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
-    "/api/projects/add", "/api/projects/rename", "/api/shutdown", "/api/me",
+    "/api/projects/add", "/api/projects/create", "/api/projects/rename", "/api/shutdown", "/api/me",
     "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
     "/api/settings/llm",
 })

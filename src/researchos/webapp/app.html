@@ -151,6 +151,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Research OS</title>
+<link rel="stylesheet" href="/workspace.css">
 <style>
 :root {
   --paper: #F7F2E9;
@@ -1300,6 +1301,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       </span>
     </div>
     <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
+      <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
       <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label" data-i18n>工作台</span></button>
       <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
       <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>成果</span></button>
@@ -1321,7 +1323,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
   </aside>
   <div class="workspace">
     <header class="topbar">
-      <h1 class="page-title" id="page-title" data-i18n>工作台</h1>
+      <h1 class="page-title" id="page-title" data-i18n>项目首页</h1>
       <span id="project-line-msg" class="project-line-msg"></span>
       <span id="project-state" class="project-state hidden" role="status"></span>
       <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
@@ -1335,9 +1337,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <div id="notices" class="notices" aria-live="polite"></div>
       <!-- DESIGN.md 10.1: no project yet -- every section shows only this. -->
       <section id="welcome" class="welcome" aria-label="还没有项目" data-i18n-attr="aria-label">
-        <p data-i18n>Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。</p>
-        <p data-i18n>你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。</p>
+        <p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>
+        <p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到研究记录。</p>
         <div class="welcome-actions">
+          <button id="welcome-create-btn" class="btn btn-primary" type="button" data-i18n>新建项目…</button>
           <button id="welcome-add-btn" class="btn" type="button" data-i18n>添加项目…</button>
           <button id="welcome-join-btn" class="btn" type="button" data-i18n>从公盘加入项目…</button>
         </div>
@@ -1349,7 +1352,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>清单</button>
         <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
-      <section id="view-desk" class="view"></section>
+      <section id="view-workspace" class="view"></section>
+      <section id="view-desk" class="view hidden"></section>
       <section id="view-tree" class="view hidden"></section>
       <section id="view-results" class="view hidden"></section>
       <section id="view-lineage" class="view hidden"></section>
@@ -1392,6 +1396,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <script src="/node.js"></script>
 <!-- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4, 12.9): window.ROTeam. -->
 <script src="/team.js"></script>
+<script src="/workspace.js"></script>
 <script>
 "use strict";
 
@@ -1925,6 +1930,7 @@ function renderViewFailure(container, err) {
 // the lineage report with 关系图 (the canvas) beside it, and 成果 / 提议 /
 // 成员 say plainly that they are still being made.
 const views = {
+  workspace: document.getElementById("view-workspace"),
   desk: document.getElementById("view-desk"),
   tree: document.getElementById("view-tree"),
   results: document.getElementById("view-results"),
@@ -1939,11 +1945,13 @@ const views = {
 let currentView = null;
 
 const SECTION_OF_VIEW = {
+  workspace: "workspace",
   desk: "desk", tree: "routes", results: "results", lineage: "data", canvas: "data",
   variables: "variables", literature: "literature", proposals: "proposals", members: "members",
   node: null, // the section it was opened from (RONode.section)
 };
 const SECTION_TITLES = {
+  workspace: "项目首页",
   desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
@@ -1952,6 +1960,7 @@ const SECTION_TITLES = {
 // 「返回…」 link still reads until the node page's increment (13.7).
 function sectionTitle(section) {
   const titles = {
+    workspace: t("项目首页"),
     desk: t("工作台"), routes: t("研究路线"), results: t("成果"), variables: t("变量"), literature: t("文献"),
     data: t("数据与代码"), proposals: t("提议"), members: t("成员"),
   };
@@ -1980,8 +1989,9 @@ const FULL_WINDOW_VIEWS = ["canvas", "desk"];
 // Returns the canvas's load when this call started one, so a command that
 // acts on the canvas (适应全部 from the menu) can wait for it.
 function activateView(name) {
-  if (!Object.prototype.hasOwnProperty.call(views, name)) name = "desk";
+  if (!Object.prototype.hasOwnProperty.call(views, name)) name = "workspace";
   if (currentView === name) return null;
+  if (currentView === "workspace" && window.ROWorkspace && !ROWorkspace.mayLeave()) return null;
   // 14.3: the desk's panel (no backdrop) belongs to the desk -- leaving it
   // closes it, after asking when something in it is half typed; declined,
   // the desk stays. Every way to another view comes through here.
@@ -2008,6 +2018,7 @@ function activateView(name) {
   // the header, not the reading column the text views use.
   document.body.classList.toggle("canvas-mode", FULL_WINDOW_VIEWS.includes(name) && !state.noProject);
   if (state.noProject) return null; // 10.1: every section shows only the welcome
+  if (name === "workspace" && !views.workspace.dataset.loaded) return ROWorkspace.load(views.workspace);
   if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);
@@ -2190,6 +2201,10 @@ async function loadProjects() {
   const noProject = !!data.no_project || data.current == null;
   const current = noProject ? "" : String(data.current);
   const currentId = noProject ? null : (data.current_id || null);
+  if (state.currentPath && current !== state.currentPath && window.ROWorkspace && ROWorkspace.isDirty()) {
+    ROWorkspace.projectChangedElsewhere();
+    return false;
+  }
   state.projects = projects;
   state.currentPath = current;
   state.currentId = currentId;
@@ -2324,6 +2339,7 @@ function renderProjectMenu() {
   // 11.3: for every served project -- linked, without a remote (a private
   // repository is offered), or not a git repository (the panel explains).
   projectMenu.appendChild(pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
+  projectMenu.appendChild(pmItem(t("新建项目…"), () => { closeProjectMenu(false); ROWorkspace.openCreateProject(); }));
   projectMenu.appendChild(pmItem(t("添加项目…"), () => { closeProjectMenu(false); openAddDialog(); }));
   projectMenu.appendChild(pmItem(t("从公盘加入项目…"), () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));
   const status = mk("div", "pm-status");
@@ -2695,6 +2711,7 @@ async function chooseProject(p) {
 }
 
 async function switchToProject(p) {
+  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return false;
   try {
     await apiPost("/api/projects/switch", { path: p.path, id: p.id || undefined });
   } catch (err) {
@@ -2712,6 +2729,7 @@ async function switchToProject(p) {
 // entry is opened instead, and its view shows the same question with a
 // path field (renderSituation).
 async function relocateFromMenu(p) {
+  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
   closeProjectMenu(true);
   if (!shellCan("choose-folder")) {
     await switchToProject(p);
@@ -2819,6 +2837,7 @@ function renderRemoveStep() {
 }
 
 async function removeFromMenu(p, statusEl, controls) {
+  if (isCurrentEntry(p) && window.ROWorkspace && !ROWorkspace.mayLeave()) return;
   controls.forEach((c) => { c.disabled = true; });
   let res;
   try {
@@ -2882,6 +2901,7 @@ document.addEventListener("mousedown", (e) => {
 });
 
 document.getElementById("welcome-add-btn").addEventListener("click", () => openAddDialog());
+document.getElementById("welcome-create-btn").addEventListener("click", () => ROWorkspace.openCreateProject());
 document.getElementById("welcome-join-btn").addEventListener("click", () => ROTeam.openJoinDialog());
 
 // `opts.scanStarted`: a scan of the project being opened has just begun, so
@@ -2893,6 +2913,7 @@ async function reloadAllViews(opts) {
   // records and the map config are dropped, and the epoch moves so a fetch
   // still in flight for the previous project is discarded.
   state.dataEpoch += 1;
+  ROWorkspace.reset();
   state.attemptsById = new Map();
   state.attemptsConfig = null;
   state.summary = null;
@@ -2920,7 +2941,8 @@ async function reloadAllViews(opts) {
   loadProjectSummary(true); // the switch succeeded: the line is the new project's
   RODesk.refreshSidebar();
   if (state.noProject) return; // 10.1: the welcome is all there is to show
-  if (currentView === "node") activateView("desk"); // the node belonged to the previous project
+  if (currentView === "node") activateView("workspace"); // the node belonged to the previous project
+  else if (currentView === "workspace") ROWorkspace.load(views.workspace);
   else if (currentView === "desk") RODesk.loadDesk(views.desk);
   else if (currentView === "results") RONode.loadResults(views.results);
   else if (currentView === "tree") loadTreeView();
@@ -3020,7 +3042,9 @@ async function refreshCurrentView() {
   // Every view's data may have moved on disk; only the visible one
   // re-fetches now, the others are marked stale for their next showing.
   markViewsStale();
-  if (currentView === "desk") {
+  if (currentView === "workspace") {
+    await ROWorkspace.load(views.workspace, true);
+  } else if (currentView === "desk") {
     await RODesk.loadDesk(views.desk, true);
   } else if (currentView === "node") {
     await RONode.loadNode(views.node, true);
@@ -3085,7 +3109,7 @@ async function pollGeneration() {
     // or switched from another window): the menu's label and the
     // no-project page follow it.
     const wasNoProject = state.noProject;
-    await loadProjects();
+    if (await loadProjects() === false) return;
     if (wasNoProject !== state.noProject) await reloadAllViews();
     else await refreshCurrentView();
   } finally {
@@ -6418,7 +6442,7 @@ function shellCan(feature) {
   }
 }
 
-const FOLDER_PURPOSES = ["add", "locate"];
+const FOLDER_PURPOSES = ["add", "locate", "create"];
 // V8 U4: the shared folder and a member's new working copy -- sent only to
 // a shell that says it takes them ("choose-folder-share").
 const SHARE_FOLDER_PURPOSES = ["shared", "working"];
@@ -6617,6 +6641,7 @@ const ADD_REASK_MS = 2000;
 let addDialog = null; // {subject, path, inspection, labelEdited, label, confirmLarge, busy, timer}
 
 function openAddDialog() {
+  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
   closeProjectMenu(false);
   if (addDialog && addDialog.timer !== null) clearTimeout(addDialog.timer);
   const subject = { kind: "add-project" };
@@ -6983,6 +7008,7 @@ function renderStoppedState() {
 }
 
 document.getElementById("shutdown-btn").addEventListener("click", async () => {
+  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
   if (!window.confirm(t("确定要停止本地服务吗？停止后这个页面将无法继续使用。"))) return;
   const btn = document.getElementById("shutdown-btn");
   btn.disabled = true;
@@ -7002,6 +7028,7 @@ document.getElementById("shutdown-btn").addEventListener("click", async () => {
 // re-reads settings.json itself -- and reloads on the same section (the
 // remembered view). A refusal leaves everything as it was and says so.
 document.getElementById("lang-btn").addEventListener("click", async () => {
+  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
   const btn = document.getElementById("lang-btn");
   btn.disabled = true;
   try {
@@ -7112,7 +7139,41 @@ function revealShellAnchor(view, anchor) {
   look();
 }
 
+ROWorkspace.onProjectCreated = async (result) => {
+  ROWorkspace.reset();
+  closePanel();
+  state.sessionNotes = [];
+  await reloadAllViews({ scanStarted: !!result.scanning });
+  if (currentView === "workspace") await ROWorkspace.load(views.workspace);
+  else activateView("workspace");
+};
+
+ROWorkspace.onPropose = (paths) => {
+  if (!mayReplacePanel()) return;
+  state.panelSubject = { kind: "workspace-proposal" };
+  panelTitle.textContent = t("提交修改");
+  panelSubtitle.textContent = t("PI 批准后进入正式版本");
+  panelBody.replaceChildren();
+  const reason = mk("textarea", "form-textarea");
+  reason.placeholder = t("说明这次修改");
+  reason.setAttribute("aria-label", t("说明这次修改"));
+  reason.dataset.initial = "";
+  const status = mk("div", "notice-status");
+  const preview = mk("div");
+  const compare = mkButton(t("查看修改"), "btn", async () => {
+    if (!reason.value.trim()) { setStatus(status, "err", t("请先写一句修改说明")); return; }
+    compare.disabled = true;
+    try { await ROTeam.composeInto(preview, { kind: "files", sentence: reason.value.trim(), only: paths }, status); }
+    finally { compare.disabled = false; }
+  });
+  panelBody.append(reason, compare, status, preview);
+  openPanel();
+  reason.focus();
+};
+
 const SHELL_COMMANDS = {
+  "workspace": () => activateView("workspace"),
+  "create-project": () => ROWorkspace.openCreateProject(),
   // 视图 ⌘1-8 (12.9): one command per sidebar section.
   "desk": () => activateView("desk"),
   "routes": () => activateView("tree"),
@@ -7127,7 +7188,7 @@ const SHELL_COMMANDS = {
   "add-project": () => openAddDialog(),
   "propose": () => revealShellAnchor("proposals", "compose"),
   "publish": () => revealShellAnchor("members", "publish"),
-  "reload": () => window.location.reload(),
+  "reload": () => { if (!window.ROWorkspace || ROWorkspace.mayLeave()) window.location.reload(); },
   "zoom-in": () => shellZoom(1),
   "zoom-out": () => shellZoom(-1),
   "zoom-reset": () => shellZoom(0),
@@ -7225,7 +7286,7 @@ function postShellLanguage() {
   await loadProjects();
   loadProjectSummary();
   RODesk.refreshSidebar();
-  activateView(storedView() || "desk"); // 12.0: the desk is the home page
+  activateView(storedView() || "workspace");
   syncGeneration();
   pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
 })();
