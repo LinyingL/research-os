@@ -858,6 +858,7 @@
     "发布时记下": "Recorded at a publish",
     "git 提交": "Git commit",
     "定义卡记录": "Recorded on the card",
+    "AI 执行": "By an agent",
 
     // Node details, Outputs, Data & code, and proposal navigation.
     "清单": "List",

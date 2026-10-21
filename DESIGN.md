@@ -4027,8 +4027,9 @@ notes and a result, and marks the task done. Decided the same day:
   the guard, and its settings say so.
 - **Research OS refuses itself.** The agent's processes carry
   `RESEARCHOS_AGENT_RUN`. With it set, the `researchos` command refuses
-  everything but its own agent tools, and every human write path
-  (`write_guard(human=True)`) refuses unless the agent tools opened it. A
+  everything but its own agent tools, and every write under the project
+  lock (`write_guard`: a person's record, a publication, an index write)
+  refuses unless the agent tools opened it. A
   script that imports Research OS to approve a proposal gets a refusal, not
   an approval.
 - **The engine's address is not handed to the agent**, and the hook refuses
@@ -4137,5 +4138,5 @@ report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 已撤�
    the same; a run left `running` by a crash reads `interrupted`.
 7. In a member's working copy, the agent's changes are local changes and no
    proposal is made.
-8. With `RESEARCHOS_AGENT_RUN` set, `researchos` commands and human write
-   paths refuse.
+8. With `RESEARCHOS_AGENT_RUN` set, `researchos` commands and every write
+   under the project lock refuse.

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from researchos import history, paths, proposals
+from researchos.agents import labels as agent_labels
 from researchos.ingest import files as ingest_files
 from researchos.records import files as record_files
 from researchos.records import situation
@@ -36,6 +37,8 @@ TASKS_PATH = "research/tasks.json"
 _DOCUMENT_RE = re.compile(r"research/(notes|results)/[0-9a-f]{32}\.md\Z")
 _REVISION_RE = re.compile(r"[0-9a-f]{64}\Z")
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
+# The result record an agent task points to (DESIGN.md 17.2): a result document, never a note or a free path.
+_REPORT_RE = re.compile(r"research/results/[0-9a-f]{32}\.md\Z")
 logger = logging.getLogger(__name__)
 
 
@@ -193,12 +196,33 @@ def _require_write(root: Path) -> str:
     return pid
 
 
-def _history(store: history.Store, root: Path, rel: str) -> None:
-    if history.record_file(store, root, rel, who=history.scan_who(root)) not in {"recorded", "unchanged"}:
+def _author(author: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The attribution of a save made by an AI agent's tool (DESIGN.md 17.5):
+    `{"source": "agent", "who": "agent:<runner>:<model>[#<person>]", "note":
+    <run id> | None}`. Anything else is refused: a save is a person's unless
+    it says exactly whose agent it is."""
+    if author is None:
+        return None
+    if (not isinstance(author, Mapping) or author.get("source") != "agent"
+            or agent_labels.parse_who(author.get("who")) is None
+            or not (author.get("note") is None or isinstance(author.get("note"), str))):
+        raise WorkspaceError("invalid", "A save by an agent must name its source, the agent and the run")
+    return {"source": "agent", "who": author["who"], "note": author.get("note")}
+
+
+def _history(store: history.Store, root: Path, rel: str, author: dict[str, Any] | None = None) -> None:
+    """Record `rel`'s current content. The pre-image of a save is always the
+    scan's (whoever last wrote it outside Research OS); only the post-image
+    carries `author`."""
+    got = (history.record_file(store, root, rel, who=history.scan_who(root)) if author is None
+           else history.record_file(store, root, rel, source=author["source"], who=author["who"],
+                                    note=author["note"]))
+    if got not in {"recorded", "unchanged"}:
         raise WorkspaceError("history", f"Cannot preserve the history of {rel}", 409)
 
 
-def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str) -> tuple[str | None, str | None]:
+def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
+           author: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     """The caller holds write_guard and has checked the current revision."""
     if before == after:
         return None, None
@@ -226,12 +250,13 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str) -
                 record_files._fsync_dir(target.parent)
             finally:
                 tmp.unlink(missing_ok=True)
+            record_files.notify_write(target)  # linked into place, not written under its own name
         else:
             record_files.durable_write(target, after)
         # Record explicitly, including in git projects, so uncommitted saves
         # have their own history and do not depend on a future scan/commit.
         try:
-            _history(store, root, rel)
+            _history(store, root, rel, author)
         except (WorkspaceError, OSError, sqlite3.Error) as exc:
             # The source save already happened. A retry with the old revision
             # would now conflict, so report success plus a history warning.
@@ -240,15 +265,21 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str) -
     return backup, None
 
 
-def _save(root: Path, rel: str, before: bytes | None, after: bytes, pid: str) -> tuple[str | None, str | None]:
+def _save(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
+          author: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     try:
-        return _write(root, rel, before, after, pid)
+        return _write(root, rel, before, after, pid, author)
     except (OSError, sqlite3.Error, record_files.RecordFileError, mapedit.MapEditError) as exc:
         raise WorkspaceError("write_failed", f"Could not save {rel}: {exc}", 409) from exc
 
 
-def save_document(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+def save_document(root: str | Path, body: dict[str, Any], *,
+                  author: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Save a document. `author` (the agent tools only, DESIGN.md 17.4) is
+    `{"source": "agent", "who": ..., "note": ...}`: it attributes the new
+    version in the change history; without it nothing differs."""
     root = _root(root)
+    author = _author(author)
     if not isinstance(body, dict):
         raise WorkspaceError("invalid", "A document save must be an object")
     rel = body.get("path")
@@ -285,7 +316,7 @@ def save_document(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
             else:
                 text = f"# {title}\n\n{text}"
         after = _content(text)
-        backup, history_error = _save(root, rel, before, after, pid)
+        backup, history_error = _save(root, rel, before, after, pid, author)
         return {**_document(root, rel, after), "created": before is None, "backup": backup,
                 "history_error": history_error}
 
@@ -296,8 +327,8 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
     result = []
     seen = set()
     for task in value:
-        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due"}:
-            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner and due")
+        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due", "report"}:
+            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner, due and report")
         tid, text = task.get("id"), task.get("text")
         if not isinstance(tid, str) or not _TASK_ID_RE.fullmatch(tid) or tid in seen:
             raise WorkspaceError("invalid", "Each task needs a unique plain id")
@@ -307,6 +338,13 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
         done, owner, due = task.get("done", False), task.get("owner", ""), task.get("due", "")
         if not isinstance(done, bool) or not isinstance(owner, str) or len(owner) > 200 or any(c in owner for c in "\r\n\0"):
             raise WorkspaceError("invalid", "Task completion must be true/false and owner a single line")
+        try:
+            agent_labels.parse_owner(owner)
+        except ValueError as exc:  # starts with "agent:" but names no runner or no valid model (17.2)
+            raise WorkspaceError("invalid", str(exc)) from exc
+        report = task.get("report", "")
+        if not isinstance(report, str) or (report and not _REPORT_RE.fullmatch(report)):
+            raise WorkspaceError("invalid", "A task report must be empty or a research/results/ document path")
         if not isinstance(due, str) or (due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", due)):
             raise WorkspaceError("invalid", "A due date must be empty or YYYY-MM-DD")
         if due:
@@ -314,7 +352,10 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
                 date.fromisoformat(due)
             except ValueError as exc:
                 raise WorkspaceError("invalid", "The due date is not a calendar date") from exc
-        result.append({"id": tid, "text": text, "done": done, "owner": owner, "due": due})
+        entry = {"id": tid, "text": text, "done": done, "owner": owner, "due": due}
+        if report:  # written only when set: a task without one stays as it was on disk
+            entry["report"] = report
+        result.append(entry)
     return result
 
 
@@ -328,8 +369,20 @@ def _read_tasks(root: Path) -> tuple[list[dict[str, Any]], bytes | None]:
         raise WorkspaceError("unreadable", "research/tasks.json has invalid task data", 409) from exc
 
 
-def save_tasks(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+def read_tasks(root: str | Path) -> tuple[list[dict[str, Any]], str | None]:
+    """The project's tasks and the revision of `research/tasks.json` (its
+    SHA-256, None when the file does not exist); `WorkspaceError` like the
+    overview's read. Writes nothing."""
     root = _root(root)
+    tasks, raw = _read_tasks(root)
+    return tasks, _revision(raw)
+
+
+def save_tasks(root: str | Path, body: dict[str, Any], *,
+               author: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Save the task list; `author` as in `save_document`."""
+    root = _root(root)
+    author = _author(author)
     if not isinstance(body, dict) or set(body) - {"tasks", "revision"}:
         raise WorkspaceError("invalid", "A task save contains tasks and revision only")
     tasks = _tasks(body.get("tasks"))
@@ -338,7 +391,7 @@ def save_tasks(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
         pid = _require_write(root)
         _old_tasks, before = _read_tasks(root)
         _check_revision(body, before)
-        backup, history_error = _save(root, TASKS_PATH, before, after, pid)
+        backup, history_error = _save(root, TASKS_PATH, before, after, pid, author)
         return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error}
 
 

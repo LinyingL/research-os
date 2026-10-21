@@ -73,6 +73,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -92,6 +93,50 @@ _TMP_MARK = ".researchos-tmp"
 LEGACY_TMP_MARK = paths.LEGACY_PROJECT_DIRNAME + "-tmp"
 
 Clock = Callable[[], datetime]
+
+# -- write listeners -----------------------------------------------------------
+#
+# The run manager of an AI agent (DESIGN.md 17.5, "Files the person saved
+# through Research OS while the run went on are not counted as the agent's")
+# must tell the engine's own writes -- the person's -- from the agent's,
+# which are made by another process. Every write that lands through this
+# module is announced to the registered listeners with the path written. A
+# listener is a plain callable taking a `Path`; one that raises is logged
+# and never breaks the write (the write has happened by then).
+
+_listeners: list[Callable[[Path], None]] = []
+_listeners_lock = threading.Lock()
+
+
+def add_write_listener(fn: Callable[[Path], None]) -> None:
+    """Call `fn(path)` after every successful write made through this module."""
+    with _listeners_lock:
+        _listeners.append(fn)
+
+
+def remove_write_listener(fn: Callable[[Path], None]) -> None:
+    """Stop calling `fn`; a listener that is not registered is ignored."""
+    with _listeners_lock:
+        try:
+            _listeners.remove(fn)
+        except ValueError:
+            pass
+
+
+def notify_write(path: str | Path) -> None:
+    """Announce that `path` was written. Also for writers that put a file in
+    place by other means (`os.link` of a temp file, `os.replace`). Listener
+    exceptions are swallowed and logged."""
+    with _listeners_lock:
+        current = list(_listeners)
+    if not current:
+        return
+    target = Path(path)
+    for fn in current:
+        try:
+            fn(target)
+        except Exception:  # noqa: BLE001 -- a listener must never break a write
+            logger.warning("write listener %r failed for %s", fn, target, exc_info=True)
 
 
 class RecordFileError(Exception):
@@ -142,10 +187,7 @@ def temp_path_for(path: Path) -> Path:
     return path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(6)}{_TMP_MARK}"
 
 
-def write_new_file(path: Path, data: bytes) -> None:
-    """Write `data` to a temp file and fsync it; the caller renames or
-    links it into place. Exposed for `durable_write` and for the
-    create-exclusively path in `researchos.records.identity`."""
+def _write_new_file(path: Path, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         view = memoryview(data)
@@ -157,6 +199,16 @@ def write_new_file(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
+def write_new_file(path: Path, data: bytes) -> None:
+    """Write `data` to a temp file and fsync it; the caller renames or
+    links it into place. Exposed for `durable_write` and for the
+    create-exclusively path in `researchos.records.identity`. The path
+    written is announced to the write listeners (a caller that renames the
+    file announces the final path itself with `notify_write`)."""
+    _write_new_file(path, data)
+    notify_write(path)
+
+
 def durable_write(path: str | Path, data: bytes) -> None:
     """Replace `path`'s content with `data`, atomically and durably. The
     parent directory must already exist: a record writer never re-creates
@@ -166,7 +218,7 @@ def durable_write(path: str | Path, data: bytes) -> None:
         raise RecordFileError(f"{path.parent} does not exist; not creating it")
     tmp = temp_path_for(path)
     try:
-        write_new_file(tmp, data)
+        _write_new_file(tmp, data)  # the temp name is not announced, the final path is
         os.replace(tmp, path)
         _fsync_dir(path.parent)
     finally:
@@ -176,6 +228,7 @@ def durable_write(path: str | Path, data: bytes) -> None:
             pass
         except OSError as exc:  # pragma: no cover -- leftover is harmless
             logger.warning("could not remove temp file %s (%s)", tmp, exc)
+    notify_write(path)
 
 
 def append_bytes(

@@ -177,6 +177,7 @@
       case "publish": return t("发布时记下");
       case "git": return t("git 提交");
       case "card": return t("定义卡记录");
+      case "agent": return t("AI 执行");
       default: return "";
     }
   }
