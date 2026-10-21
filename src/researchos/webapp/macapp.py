@@ -269,6 +269,7 @@ def _info_plist(port: int) -> dict:
         "CFBundleExecutable": EXECUTABLE_NAME,
         "CFBundlePackageType": "APPL",
         "CFBundleInfoDictionaryVersion": "6.0",
+        "NSHumanReadableCopyright": "Copyright © 2026 Linying Li.",
         "LSUIElement": True,
         "ResearchOSServerPort": port,
     }
@@ -375,6 +376,7 @@ def _native_info_plist(port: int, with_icon: bool) -> dict:
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleShortVersionString": _package_version(),
         "CFBundleVersion": _package_version(),
+        "NSHumanReadableCopyright": "Copyright © 2026 Linying Li.",
         "LSUIElement": False,
         "LSMinimumSystemVersion": MIN_MACOS,
         "NSHighResolutionCapable": True,

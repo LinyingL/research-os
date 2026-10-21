@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.
 - Write research questions, plans, notes and result interpretations on the
