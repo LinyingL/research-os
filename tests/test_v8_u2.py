@@ -244,7 +244,7 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     # the team (not a project of one). Re-baselined for V10: the desk is the route map with the
     # column beside it, and 14.5 folds the first desk's lists of changes, outputs whose basis
     # changed and abandoned routes into the map's cards (and 成果).
-    for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "官方版本有更新", "连线的一端找不到了",
+    for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "正式版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
     for gone in ("依据变了的成果", "已放弃的路线"):
@@ -320,7 +320,7 @@ def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
     assert "+df = df.dropna()" in history.diff(root, "steps/16-build.py", words=True)["diff"]
     table = history.diff(root, "data/panel.csv", words=True)["summary"]
     assert "行数从 96 增至 97" in table and "新增列 log_ret" in table and "→" not in table
-    assert history.diff(root, "attempt:map.md#16", words=True)["summary"] == "判决从「待定」改为「已放弃」"
+    assert history.diff(root, "attempt:map.md#16", words=True)["summary"] == "研究判断从「待定」改为「已放弃」"
     for node in ("steps/16-build.py", "data/panel.csv", "attempt:map.md#16"):  # 12.12
         assert history.versions(root, node)["versions"][0]["who_label"] == "最初的研究者"
 
@@ -451,7 +451,7 @@ def test_desk_wording_when_share_line_and_proposals():
     member = {"shared": "/x", "reachable": True, "role": "member", "joined": {"synced": "2026-10-11T08:00:00"},
               "verification": "verified", "refused": [], "behind": False}
     assert _desk_call("_shareLineText", member, now) == "已同步 今天 08:00"
-    assert _desk_call("_shareLineText", {**member, "behind": True}, now) == "有新的官方版本"
+    assert _desk_call("_shareLineText", {**member, "behind": True}, now) == "有新的正式版本"
     assert _desk_call("_shareLineText", {**member, "verification": "no_tool"}, now) == "未验证 · 已同步 今天 08:00"
     assert _desk_call("_shareLineText", {**member, "reachable": False}, now) == "公盘现在打不开"
     pi = {"shared": "/x", "reachable": True, "role": "pi", "last_snapshot": {"at": "2026-10-10T18:00:00"},
@@ -459,7 +459,7 @@ def test_desk_wording_when_share_line_and_proposals():
     assert _desk_call("_shareLineText", pi, now) == "有改动尚未发布 · 已发布 昨天 18:00"
     change = {"kind": "verdict_change", "files": [], "verdict": {
         "number": "16", "old_status": {"label": "待定"}, "new_status": {"label": "已放弃"}, "abandons": "yes"}}
-    assert _desk_call("_proposalWhat", change) == "#16 的判决从「待定」改为「已放弃」，放弃这条路线"
+    assert _desk_call("_proposalWhat", change) == "#16 的研究判断从「待定」改为「已放弃」，放弃这条路线"
     new = {"kind": "attempt_new", "files": [{"path": "steps/18.py"}], "attempt": {"number": "18", "description": "新路线"}}
     assert _desk_call("_proposalWhat", new) == "新增尝试 #18：新路线，附带 1 个文件"
     returned = {"state": "returned", "outcomes": [{"act": "returned", "text": "先补稳健性"}]}

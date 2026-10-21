@@ -23,7 +23,7 @@
 //
 // The desk is the route map with what waits for me beside it (14.1, 14.4):
 // the PI's 等你批准, a member's 我的提议, 待复核 under the attempt it
-// belongs to, a member's 官方版本有更新 with 同步, the lines with a missing
+// belongs to, a member's 正式版本有更新 with 同步, the lines with a missing
 // end -- or one quiet line. What changed since I last looked is 「有改动」
 // on the cards, abandoned routes are the quieter cards (14.5). No
 // statistics, no charts, no counters for their own sake. Nothing typed on
@@ -47,7 +47,7 @@
   function kindWord(kind) {
     switch (kind) {
       case "attempt_new": return t("新尝试");
-      case "verdict_change": return t("判决变更");
+      case "verdict_change": return t("研究判断变更");
       case "variable_version": return t("变量定义");
       case "files": return t("文件");
       case "route_link": return t("连线");
@@ -192,7 +192,7 @@
     }
     if (share.joined) {
       if (share.refused && share.refused.length) return t("公盘上有未通过验证的版本");
-      if (share.behind) return t("有新的官方版本");
+      if (share.behind) return t("有新的正式版本");
       const synced = share.joined.synced;
       return (unverified ? [t("未验证")] : [])
         .concat(synced ? t("已同步 {when}", { when: when(synced) }) : t("已同步")).join(" · ");
@@ -211,7 +211,7 @@
     }
     if (p.kind === "verdict_change" && p.verdict) {
       const v = p.verdict;
-      return t("#{number} 的判决从「{was}」改为「{became}」", { number: String(v.number || "").replace(/^#/, ""),
+      return t("#{number} 的研究判断从「{was}」改为「{became}」", { number: String(v.number || "").replace(/^#/, ""),
         was: v.old_status ? verdictWord(v.old_status) : "", became: v.new_status ? verdictWord(v.new_status) : "" }) +
         (v.abandons ? t("，放弃这条路线") : "") + filesPart;
     }
@@ -637,7 +637,7 @@
     sec.appendChild(done);
   }
 
-  // 官方版本有更新 and 同步 (14.4, a member), as the desk had them: what 同步
+  // 正式版本有更新 and 同步 (14.4, a member), as the desk had them: what 同步
   // will write is said first (the engine's sync-preview), and the button
   // waits for it; after a sync, what it did. A shared folder not set or not
   // open is the column's notice instead.
@@ -645,7 +645,7 @@
     const last = sync && sync.last_snapshot;
     const behind = !!(sync && sync.shared && sync.reachable && sync.behind && last);
     if (!behind && !syncShown) return false;
-    const sec = block(behind ? t("官方版本有更新") : t("官方版本"));
+    const sec = block(behind ? t("正式版本有更新") : t("正式版本"));
     if (behind) {
       const when = whenInLine(last.at, now());
       sec.appendChild(mk("p", "desk-sub", publishedWords(last, when)));
@@ -664,7 +664,7 @@
         btn.disabled = false;
       });
     } else if (last) {
-      sec.appendChild(emptyLine(t("你的工作副本已经是最新的官方版本（第 {seq} 版）。", { seq: numberText(last.seq) })));
+      sec.appendChild(emptyLine(t("你的工作副本已经是最新的正式版本（第 {seq} 版）。", { seq: numberText(last.seq) })));
     }
     renderSyncShown(sec);
     host.appendChild(sec);
@@ -710,7 +710,7 @@
   // The column (14.4), newest first in each part: who I am not yet (or a
   // team file that cannot be read) and a shared folder that cannot be read,
   // said first; the PI's 等你批准 or a member's 我的提议; 待复核; a member's
-  // 官方版本有更新; the lines with a missing end -- or one quiet line.
+  // 正式版本有更新; the lines with a missing end -- or one quiet line.
   function renderColumn(col, data) {
     const c = data.column || {};
     const byId = new Map((data.attempts || []).map((a) => [a.id, a]));
@@ -1255,12 +1255,12 @@
   function editPart(subject, a, page) {
     const d = page.details || {};
     const role = deskRole();
-    const s = part(t("判决与结果"));
+    const s = part(t("研究判断与结果"));
     if (role !== "single" && role !== "pi" && role !== "member") {
       if (d.result) s.appendChild(mk("p", "desk-note", d.result));
       const c = (lastData && lastData.column) || {};
       s.appendChild(mk("p", "desk-alone", role === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")
-        : c.notice || t("现在说不清你在这个项目里的角色，判决先不能改。")));
+        : c.notice || t("现在说不清你在这个项目里的角色，研究判断先不能改。")));
       return s;
     }
     const proposing = role === "member";
@@ -1277,7 +1277,7 @@
     const number = String(d.number || a.number || ""); // the row's identity, as the table writes it
     const verdict = typedField("input", d.verdict || "");
     const result = typedField("textarea", d.result || "");
-    const verdictField = formFieldEl(t("判决"), verdict);
+    const verdictField = formFieldEl(t("研究判断"), verdict);
     const chips = verdictChips(verdict);
     if (chips) verdictField.appendChild(chips);
     s.append(verdictField, formFieldEl(t("结果"), result));
@@ -1343,8 +1343,8 @@
       if (p.old_row != null) shown.append(mk("div", "diff-label", t("原行")), mk("div", "diff-row old", p.old_row));
       shown.append(mk("div", "diff-label", t("新行")), mk("div", "diff-row new", p.new_row));
       shown.appendChild(mk("div", "confirm-note", proposing
-        ? t("将写入你的工作副本里的 {file}（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。", { file: p.file })
-        : t("将写入 {file}（已自动备份）", { file: p.file })));
+        ? t("保存到工作副本：{file}。保存前自动备份。", { file: p.file })
+        : t("保存到 {file}，保存前自动备份。", { file: p.file })));
       if (newRow) {
         shown.appendChild(mk("div", "confirm-note", own.state === "proposed" && own.proposal
           ? t("这一行还不在正式版本里：它会整行作为新的尝试再提议一次，替换你还在等待的那份提议。")
@@ -1352,7 +1352,7 @@
       }
       if (!proposing && p.reason_required) shown.appendChild(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
       const actions = mk("div", "form-actions");
-      const ok = mkButton(proposing ? t("写入工作副本，查看提议") : t("确认写入"), "btn btn-primary", () => write(b, ok, back));
+      const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary", () => write(b, ok, back));
       const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); setStatus(status, "", ""); });
       actions.append(ok, back);
       shown.appendChild(actions);

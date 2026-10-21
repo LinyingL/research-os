@@ -18,7 +18,7 @@
   }
   function field(words, input) {
     const label = el("label", "ws-field");
-    label.append(el("span", "ws-field-label", t(words)), input);
+    label.append(el("span", "ws-field-label", t(words, { n: 1 })), input);
     return label;
   }
   function input(type, placeholder) {
@@ -40,7 +40,7 @@
   let host = null, data = null, draft = null, saved = null, ui = null;
   let taskDraft = { id: null, text: "", owner: "", due: "" }, taskBusy = false, taskConflict = false;
   let createSubject = null, foreignBlocked = false;
-  const kindWords = { overview: "研究问题与计划", note: "笔记", result: "结果整理" };
+  const kindWords = { overview: "研究问题与计划", note: "笔记", result: "结果记录" };
   function project() { return typeof state !== "undefined" ? state.currentPath || "" : ""; }
   function appEpoch() { return typeof state !== "undefined" ? state.dataEpoch : 0; }
   function stamp() { return { epoch: epoch, app: appEpoch(), project: project() }; }
@@ -63,7 +63,7 @@
     taskDraft = { id: null, text: "", owner: "", due: "" }; taskBusy = false; taskConflict = false;
   }
 
-  function kindLabel(kind) { return t(kindWords[kind] || "笔记"); }
+  function kindLabel(kind) { return t(kindWords[kind] || "笔记", { n: 1 }); }
   function fallbackPath(kind) { return kind === "overview" ? "research/overview.md" : "research/" + (kind === "result" ? "results" : "notes") + "/draft.md"; }
   function relativePath(from, to) {
     const a = String(from).split("/").slice(0, -1), b = String(to).split("/");
@@ -215,11 +215,10 @@
     const page = el("div", "ws-page"), top = el("div", "ws-heading"), rail = el("nav", "ws-documents");
     rail.setAttribute("aria-label", t("方案、笔记与结果"));
     const heading = el("div");
-    heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")),
-      el("p", "ws-intro", t("从研究问题写起，随时记下想法和结果。")));
+    heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")));
     const actions = el("div", "ws-actions");
-    const note = button("写笔记", () => newDocument("note"));
-    const result = button("整理结果", () => newDocument("result"));
+    const note = button("新建笔记", () => newDocument("note"));
+    const result = button("记录结果", () => newDocument("result"));
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
     const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
@@ -233,7 +232,7 @@
     ui.rail.replaceChildren();
     ["overview", "note", "result"].forEach((kind) => {
       const group = el("div", "ws-document-group");
-      group.append(el("h3", "ws-group-title", kindLabel(kind)));
+      group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : kindLabel(kind)));
       const documents = (data.documents || []).filter((d) => d.kind === kind);
       documents.forEach((doc) => {
         const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
@@ -244,7 +243,7 @@
         if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
         group.append(b);
       });
-      if (!documents.length) group.append(el("p", "ws-empty", t(kind === "overview" ? "还没有研究方案。" : kind === "note" ? "随时记下一个想法。" : "图表、发现和判断放在这里。")));
+      if (!documents.length) group.append(el("p", "ws-empty", t(kind === "overview" ? "还没有研究方案。" : kind === "note" ? "还没有笔记。" : "还没有结果记录。")));
       ui.rail.append(group);
     });
   }
@@ -281,6 +280,15 @@
     setDraft({ kind: kind, title: "", content: "", revision: null });
     ui.title.focus();
   }
+  function previewContent() {
+    const title = draft.title.trim(), text = draft.content;
+    if (!title) return text;
+    // Show the same heading that saving will keep, including edits made in the body.
+    if (draft.revision == null) return text.split(/\r?\n/)[0] === "# " + title ? text : "# " + title + "\n\n" + text;
+    if (title === saved.title) return text;
+    const heading = /^#{1,6}[ \t]+.+$/m;
+    return heading.test(text) ? text.replace(heading, () => "# " + title) : "# " + title + "\n\n" + text;
+  }
   function renderEditor() {
     const box = ui.editor; box.replaceChildren();
     const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", kindLabel(draft.kind));
@@ -288,10 +296,11 @@
     save.disabled = !editable();
     const previewToggle = button("预览", () => {
       ui.previewing = !ui.previewing;
+      ui.title.classList.toggle("hidden", ui.previewing);
       ui.text.classList.toggle("hidden", ui.previewing); ui.preview.classList.toggle("hidden", !ui.previewing);
       previewToggle.textContent = t(ui.previewing ? "继续编辑" : "预览");
       previewToggle.setAttribute("aria-pressed", String(ui.previewing));
-      if (ui.previewing) renderMarkdown(ui.preview, draft.content, draft.path || fallbackPath(draft.kind));
+      if (ui.previewing) renderMarkdown(ui.preview, previewContent(), draft.path || fallbackPath(draft.kind));
       else ui.text.focus();
     });
     previewToggle.setAttribute("aria-pressed", "false");
@@ -300,7 +309,7 @@
     const title = input("text", "标题"); title.value = draft.title; title.disabled = !editable();
     title.className = "ws-title-input"; title.setAttribute("aria-label", t("标题"));
     const text = el("textarea", "ws-writing"); text.value = draft.content; text.disabled = !editable(); text.spellcheck = false;
-    text.placeholder = t(draft.kind === "overview" ? "你想研究什么？为什么值得研究？准备怎样探索？可以边做边改。" : draft.kind === "result" ? "放入图表，写下发现、解释和仍不确定的地方。" : "记下想法、讨论或一个还没想清楚的问题。");
+    text.placeholder = t(draft.kind === "overview" ? "研究问题、思路与计划" : draft.kind === "result" ? "结果、解释与待确认的问题" : "写笔记…");
     text.setAttribute("aria-label", kindLabel(draft.kind));
     const preview = el("div", "ws-preview hidden"), docStatus = el("div", "ws-status"); docStatus.setAttribute("role", "status");
     ui.title = title; ui.text = text; ui.preview = preview; ui.save = save; ui.docStatus = docStatus; ui.previewing = false;
@@ -309,7 +318,6 @@
     text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!save.disabled) saveDocument(); } });
     box.append(header, title, attachmentTools(), text, preview, docStatus);
     const footer = el("div", "ws-document-footer");
-    footer.append(el("span", "ws-path", draft.path || t("保存后写入项目文件夹")));
     if (draft.path) footer.append(button("查看文件", () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
     if (draft.path) footer.append(button("修改历史", () => { if (window.RONode) window.RONode.openNode(draft.path); }));
     if (data.mode === "member") {
@@ -329,17 +337,17 @@
     draft.content = text.value;
     if (text.setSelectionRange) text.setSelectionRange(start + words.length, start + words.length);
     status(ui.docStatus, t("尚未保存"));
-    if (ui.previewing) renderMarkdown(ui.preview, draft.content, draft.path || fallbackPath(draft.kind));
+    if (ui.previewing) renderMarkdown(ui.preview, previewContent(), draft.path || fallbackPath(draft.kind));
     else text.focus();
   }
   function attachmentTools() {
-    const tools = el("details", "ws-attachments"); tools.append(el("summary", null, t("关联文件与尝试")));
+    const tools = el("details", "ws-attachments"); tools.append(el("summary", null, t("引用文件或尝试")));
     ui.attachments = tools;
     const row = el("div", "ws-attachment-row"), select = el("select", "form-input");
     select.setAttribute("aria-label", t("选择项目文件"));
     const blank = el("option", null, t("选择项目文件")); blank.value = ""; select.append(blank);
     (data.files || []).forEach((file) => { const option = el("option", null, file.path); option.value = file.path; select.append(option); });
-    const attach = button("插入文件", () => {
+    const attach = button("插入引用", () => {
       if (!select.value) return;
       const image = /\.(png|jpe?g|gif|webp)$/i.test(select.value);
       insertText("\n" + markdownLink(draft.path || fallbackPath(draft.kind), select.value, image) + "\n");
@@ -349,7 +357,7 @@
       attempts.setAttribute("aria-label", t("选择研究尝试"));
       const empty = el("option", null, t("选择研究尝试")); empty.value = ""; attempts.append(empty);
       data.attempts.forEach((attempt) => { const option = el("option", null, attempt.label || attempt.id); option.value = attempt.id; attempts.append(option); });
-      const insert = button("插入尝试", () => {
+      const insert = button("引用尝试", () => {
         const attempt = data.attempts.find((a) => a.id === attempts.value); if (!attempt) return;
         insertText("\n[" + String(attempt.label || attempt.id).replace(/[[\]\\]/g, "\\$&") + "](researchos:attempt/" + encodeURIComponent(attempt.id).replace(/[()]/g, (c) => c === "(" ? "%28" : "%29") + ")\n");
       }); insert.disabled = !editable(); attemptRow.append(attempts, insert); tools.append(attemptRow);
@@ -369,7 +377,7 @@
       }
     });
     refreshStatus.className += " ws-reference-status";
-    tools.append(refresh, refreshStatus, el("p", "ws-empty", t("引用保留在文档中。脚本仍用 Stata 等工具编辑和运行。")));
+    tools.append(refresh, refreshStatus);
     return tools;
   }
   function redrawAttachments() {
@@ -409,7 +417,7 @@
       const index = (data.documents || []).findIndex((d) => d.path === draft.path);
       if (index < 0) data.documents.push(summary); else data.documents[index] = summary;
       renderNav();
-      status(ui.docStatus, documentDirty() ? t("已保存；之后输入的内容尚未保存。") : response.history_error ? t("文件已保存，但修改历史暂时未能记录。") : response.backup ? t("已保存，修改前的版本已保留。") : t("已保存"), documentDirty() || response.history_error ? "" : "ok");
+      status(ui.docStatus, documentDirty() ? t("已保存；之后输入的内容尚未保存。") : response.history_error ? t("文件已保存，但修改历史暂时未能记录。") : t("已保存"), documentDirty() || response.history_error ? "" : "ok");
       if (typeof pollGeneration === "function") pollGeneration();
     } catch (err) {
       if (!live(mark) || draft !== target) return;
@@ -421,7 +429,7 @@
 
   function renderTasks() {
     const box = ui.tasks; box.replaceChildren();
-    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("接下来想做的事")), el("p", "ws-empty", t("按需记任务、负责人和日期，也可以暂时不安排。"))); box.append(header);
+    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
     const list = el("div", "ws-task-list");
     (data.tasks || []).forEach((task) => {
@@ -448,7 +456,7 @@
     [text, owner, due].forEach((node) => node.addEventListener("input", changed));
     form.addEventListener("submit", (event) => { event.preventDefault(); addTask(); });
     form.append(field("任务", text), field("负责人", owner), field("日期", due), submit);
-    form.append(button("取消填写", () => { taskDraft = { id: null, text: "", owner: "", due: "" }; renderTasks(); }));
+    form.append(button("清空", () => { taskDraft = { id: null, text: "", owner: "", due: "" }; renderTasks(); }));
     if (data.tasks_error) box.append(el("p", "ws-status err", data.tasks_error.message || t("任务文件暂时无法读取，其他文档仍可编辑。")));
     const taskStatus = el("div", "ws-status"); taskStatus.setAttribute("role", "status");
     box.append(form, taskStatus); ui.taskText = text; ui.taskStatus = taskStatus;
@@ -547,14 +555,13 @@
     const subject = { kind: "workspace-create", name: name, parent: parent };
     createSubject = subject; state.panelSubject = subject;
     [name, parent].forEach((node) => node.addEventListener("input", () => { node.dataset.typed = "1"; }));
-    panelTitle.textContent = t("新建项目"); panelSubtitle.textContent = t("选一个位置，开始写研究问题与计划。"); panelBody.replaceChildren();
-    form.append(field("项目名称", name), field("保存到哪个文件夹", parent));
+    panelTitle.textContent = t("新建项目"); panelSubtitle.textContent = ""; panelBody.replaceChildren();
+    form.append(field("项目名称", name), field("保存位置", parent));
     const choose = button("选择文件夹…", async () => {
       const mark = stamp();
       const selected = await chooseFolder("create");
       if (selected && createLive(subject, mark)) { parent.value = selected; parent.dataset.typed = "1"; }
     });
-    const note = el("p", "ws-empty", t("会在所选位置建立项目文件夹。已有研究可以用「添加已有项目」加入。"));
     const feedback = el("div", "ws-status"); feedback.setAttribute("role", "status");
     const create = button("创建项目", async () => {
       if (!name.value.trim() || !parent.value.trim()) { status(feedback, t("请填写项目名称和保存位置。"), "err"); (!name.value.trim() ? name : parent).focus(); return; }
@@ -578,7 +585,7 @@
       }
     }, "btn btn-primary");
     form.addEventListener("submit", (event) => { event.preventDefault(); if (!create.disabled) create.click(); });
-    form.append(choose, note, create, feedback); panelBody.append(form); openPanel(); name.focus();
+    form.append(choose, create, feedback); panelBody.append(form); openPanel(); name.focus();
   }
 
   window.ROWorkspace = { load: load, mayLeave: mayLeave, reset: reset, openCreateProject: openCreateProject, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere };

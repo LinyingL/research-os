@@ -371,7 +371,7 @@ def test_13_6_a_tables_shape_and_a_files_size_in_english(tmp_path):
 def test_14_6_a_publish_made_by_an_approval_is_said_in_the_screens_words(drive, lang):
     """The PI approves the member's new attempt, which publishes with
     Research OS's own note 「批准提议 pr-…」 (written as ever). The member's
-    desk gets it by its code and the proposal, and 「官方版本有更新」 says the
+    desk gets it by its code and the proposal, and 「正式版本有更新」 says the
     PI published on approving their proposal -- its sentence, never the
     Chinese note or the bare id -- in either language."""
     import re

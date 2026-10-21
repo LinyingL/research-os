@@ -2,7 +2,6 @@
 .ws-page { max-width: 1120px; margin: 0 auto; padding-bottom: 3rem; }
 .ws-heading { display: flex; gap: 1.5rem; justify-content: space-between; align-items: flex-start; margin-bottom: 1.8rem; }
 .ws-project-name { font-family: var(--font-serif); font-size: 1.65rem; font-weight: normal; line-height: 1.4; margin: 0 0 .45rem; overflow-wrap: anywhere; }
-.ws-intro { color: var(--ink-soft); font-size: .85rem; margin: 0; }
 .ws-actions { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
 .ws-heading > .ws-actions { flex-shrink: 0; padding-top: .2rem; }
 .ws-columns { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 1.65rem; }
@@ -46,7 +45,6 @@
 .ws-conflict-actions { display: flex; gap: .5rem; margin-top: .5rem; }
 .ws-document-footer { padding-top: .6rem; display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
 .ws-document-footer p { width: 100%; }
-.ws-path { font: .72rem/1.6 var(--font-mono); color: var(--ink-soft); overflow-wrap: anywhere; margin-right: auto; }
 .ws-readonly { color: var(--ochre); border: 1px solid var(--line); padding: .7rem; font-size: .84rem; }
 .ws-tasks { border-top: 1px solid var(--line-strong); margin-top: 2.1rem; padding-top: 1rem; }
 .ws-task-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0; }

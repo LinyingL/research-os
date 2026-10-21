@@ -224,7 +224,7 @@ def test_14_5_the_panel_says_what_changed_since_the_last_visit():
     at = lines.index("node-sec-title: 你上次查看以来的改动")
     shown = [line for line in lines[at + 1:at + 7] if not line.startswith("tl-when")]
     assert shown == ["desk-link mono: steps/fit.py (title: 打开它的详情页)", "tl-meta: 文件有改动",
-                     "tl-what: 判决从「待定」改为「已放弃」，结果改为：t=3.10", "tl-meta: 最初的研究者 · 扫描时记下"]
+                     "tl-what: 研究判断从「待定」改为「已放弃」，结果改为：t=3.10", "tl-meta: 最初的研究者 · 扫描时记下"]
     assert sum(line.startswith("tl-when: ") for line in lines) == 2 and not any("old.csv" in line for line in lines)
     assert lines.index("dp-mark: 有改动") < at < lines.index("node-sec-title: 写备注")
     assert out["opened"] == ["script:steps/fit.py"]
@@ -240,7 +240,7 @@ def test_14_6_what_changed_reads_in_english_and_says_what_is_left_out():
     out = _run(case, "await window.RODesk.openAttempt(%s);" % json.dumps(A16), lang="en")
     lines = out["lines"]
     for line in ["node-sec-title: Changes since you last looked", "desk-link mono: steps/fit.py (title: Open its details page)",
-                 "tl-meta: File changed", "tl-what: Verdict changed from “Pending” to “Abandoned”; new result: t=3.10",
+                 "tl-meta: File changed", "tl-what: Research assessment changed from “Pending” to “Abandoned”; new result: t=3.10",
                  "tl-meta: Original researcher · Recorded at a scan", "desk-empty: 3 files changed earlier are not listed here."]:
         assert line in lines, line
     assert _chinese(lines) == [] and not any(FORBIDDEN.search(line) for line in lines)

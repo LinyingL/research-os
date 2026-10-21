@@ -1327,9 +1327,9 @@ def _verdict_word(v: dict[str, Any]) -> str:
 def _attempt_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> dict[str, Any]:
     old_v, new_v = va.get("verdict") or "（空）", vb.get("verdict") or "（空）"
     if words:
-        # 12.13: 「判决从「待定」改为「现行」」 -- the status words, never the markers.
+        # 12.13: 「研究判断从「待定」改为「现行」」 -- the status words, never the markers.
         la, lb = _verdict_word(va), _verdict_word(vb)
-        parts = [f"判决从「{la}」改为「{lb}」" if old_v != new_v else f"判决不变（「{lb}」）"]
+        parts = [f"研究判断从「{la}」改为「{lb}」" if old_v != new_v else f"研究判断不变（「{lb}」）"]
     else:
         parts = [f"{old_v} → {new_v}" if old_v != new_v else f"结论不变（{new_v}）"]
     if (va.get("result") or "") != (vb.get("result") or ""):

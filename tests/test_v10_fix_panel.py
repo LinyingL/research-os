@@ -187,7 +187,7 @@ _CHANGE = """
   type(field("为什么放弃这条路线"), "残差不平稳");
   find("预览这一行").click(); await settle(); await settle();
   extra.preview = panelLines().filter((l) => l.startsWith("confirm-note"));
-  find("写入工作副本，查看提议").click(); await settle(); await settle(); await settle();
+  find("保存后查看提议").click(); await settle(); await settle(); await settle();
 """
 
 

@@ -152,7 +152,7 @@ def test_u4_a_proposal_page_says_its_variable_versions_and_not_carried_changes_i
         draft = node_api.proposal_create_payload(drive.work, {"kind": "attempt_new", "sentence": "大面板", "number": "18",
                                                               "only": chosen})
         reasons = [n["reason_zh"] for n in draft["proposal"]["not_carried"]]
-        assert "尝试表第 19 行（新增）不在这份提议里" in reasons
+        assert "尝试 #19（新增）不在这份提议里" in reasons
         assert draft["proposal"]["attempt"]["verdict_status"]["label"] == "待定"
         written = node_api.proposal_create_payload(drive.work, {"kind": "attempt_new", "sentence": "大面板", "number": "18",
                                                                 "only": chosen, "write": True,
@@ -162,7 +162,7 @@ def test_u4_a_proposal_page_says_its_variable_versions_and_not_carried_changes_i
         uses = {(u["card"], u["path"]) for u in page["uses"]}
         assert ("panelx", "steps/18-big.py") in uses  # it reads data/panel.csv, the card's output
         assert ("panelx", "data/raw.csv") in uses  # the card's input, changed
-        assert any(n["reason_zh"] == "尝试表第 19 行（新增）不在这份提议里" for n in page["changes"]["not_carried"])
+        assert any(n["reason_zh"] == "尝试 #19（新增）不在这份提议里" for n in page["changes"]["not_carried"])
         files = {f["path"]: f for f in page["changes"]["files"]}
         assert "+1,2" in files["data/raw.csv"]["diff"]  # a small table is text: its lines
         big = files["data/big.bin"]  # a large file: where it lives on the shared folder
@@ -171,7 +171,7 @@ def test_u4_a_proposal_page_says_its_variable_versions_and_not_carried_changes_i
 
 
 def test_u4_the_attempt_preview_says_whether_a_verdict_abandons(tmp_path):
-    """A member's 提议改判 asks for the result and the reason before anything
+    """A member's 提议修改判断 asks for the result and the reason before anything
     is written: the dry run of a row says whether its verdict abandons the
     route (☠, or a marker the project declares)."""
     root = _project(tmp_path / "proj")

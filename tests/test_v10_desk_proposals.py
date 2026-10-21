@@ -173,12 +173,12 @@ def test_14_3_the_pi_decides_a_proposal_in_the_attempts_panel():
     out = _run_team(case, steps)
     before, opened, after = out["extra"]["before"], out["extra"]["opened"], out["lines"]
     urgent = before[before.index("node-sec-title: 待办"):]
-    for line in ["status-label tone-plain: 判决变更", "desk-what: 放弃 16", "desk-note plain: #16 的判决从「待定」改为「已放弃」，放弃这条路线",
+    for line in ["status-label tone-plain: 研究判断变更", "desk-what: 放弃 16", "desk-note plain: #16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
                  "desk-meta: 王 · 2024年3月1日", "status-label tone-plain: 连线", "desk-what: 加上连线：#18 源自 #16"]:
         assert line in urgent, line
     assert urgent.count("btn btn-small: 查看") == 2 and not any("加上数据" in line for line in before)
     assert f"/api/proposals/p1{FROM}" in out["gets"]
-    for line in ["node-kind: 判决变更提议", "desk-meta: 王 · 2024年3月1日", "status-label tone-ochre: 提议中",
+    for line in ["node-kind: 研究判断变更提议", "desk-meta: 王 · 2024年3月1日", "status-label tone-ochre: 提议中",
                  "node-sec-title: 批准以后会怎样", "diff-row old: | 16 | 待定 先看 |", "diff-row new: | 16 | ☠ 方向反了 |",
                  "desk-note: 放弃理由：残差不平稳", "btn btn-primary: 批准并加入", "btn: 退回并说明", "btn: 讨论"]:
         assert line in opened, line
@@ -256,9 +256,9 @@ def test_14_3_a_members_own_proposal_waits_under_its_attempt_and_opens_in_place(
     before = out["extra"]["before"]
     urgent = before[before.index("node-sec-title: " + ("To handle" if lang == "en" else "待办")):]
     w = (lambda zh, en: en if lang == "en" else zh)
-    assert urgent == ["node-sec-title: " + w("待办", "To handle"), "status-label tone-plain: " + w("判决变更", "Verdict change"),
-                      "desk-what: 放弃 16", "desk-note plain: " + w("#16 的判决从「待定」改为「已放弃」，放弃这条路线",
-                                                                "#16: change the verdict from “Pending” to “Abandoned”, abandoning the route"),
+    assert urgent == ["node-sec-title: " + w("待办", "To handle"), "status-label tone-plain: " + w("研究判断变更", "Research assessment change"),
+                      "desk-what: 放弃 16", "desk-note plain: " + w("#16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
+                                                                "#16: change the research assessment from “Pending” to “Abandoned”, abandoning the route"),
                       "desk-meta: " + w("提议中 · 2024年3月1日", "Proposed · 1 Mar 2024"), "btn btn-small: " + w("查看", "View")]
     if lang == "en":  # the member's own sentence aside
         assert [line for line in urgent if CJK.search(re.sub("放弃 16", "", line))] == []
@@ -266,7 +266,7 @@ def test_14_3_a_members_own_proposal_waits_under_its_attempt_and_opens_in_place(
     assert f"/api/proposals/p1{FROM}" in out["gets"] and out["posted"] == []
     lines = out["lines"]
     if lang == "zh":
-        for line in ["node-kind: 判决变更提议", "status-label tone-ochre: 提议中", "node-sec-title: 提议带来的改动",
+        for line in ["node-kind: 研究判断变更提议", "status-label tone-ochre: 提议中", "node-sec-title: 提议带来的改动",
                      "desk-note: 结果：t=0", "desk-note: 理由：残差不平稳"]:
             assert line in lines, line
     assert not any("批准并加入" in line or "退回并说明" in line for line in lines)
@@ -296,11 +296,11 @@ def test_12_3_the_proposals_page_is_its_way_back_and_the_same_renderer():
     out = _run_team(_team_case("pi"), steps)
     extra = out["extra"]
     for line in ["team-title: 收件箱", "status-label tone-plain: 连线", "desk-link strong: 加上连线：#18 源自 #16",
-                 "status-label tone-plain: 判决变更", "desk-link strong: 放弃 16"]:
+                 "status-label tone-plain: 研究判断变更", "desk-link strong: 放弃 16"]:
         assert line in extra["list"], line
     assert f"/api/proposals/p1{FROM}" in out["gets"]
-    assert extra["page"][:3] == ["node-link: 返回提议列表", "node-kind: 判决变更提议", "node-name: 放弃 16"]
+    assert extra["page"][:3] == ["node-link: 返回提议列表", "node-kind: 研究判断变更提议", "node-name: 放弃 16"]
     for line in ["node-sec-title: 批准以后会怎样", "diff-row new: | 16 | ☠ 方向反了 |", "btn btn-primary: 批准并加入", "btn: 讨论"]:
         assert line in extra["page"], line
     assert out["posted"] == [["/api/proposals/p1/discuss", {"from": WANG, "text": "数据从哪来？"}]]
-    assert extra["after"][:3] == ["node-link: 返回提议列表", "team-done: 已写下：提议保持打开。", "node-kind: 判决变更提议"]
+    assert extra["after"][:3] == ["node-link: 返回提议列表", "team-done: 已写下：提议保持打开。", "node-kind: 研究判断变更提议"]

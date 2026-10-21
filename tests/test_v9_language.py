@@ -76,7 +76,7 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # steps, which are flows of their own (a later increment).
     ("app.html", "// -- The project menu (DESIGN.md 10.1, 10.4; task V6)", "// -- 「推送到 GitHub…」 (DESIGN.md 11.3, task V7)"),
     ("app.html", "function backToMenuList() {", "// 10.4: 「重命名显示名称…」 changes the registry label only"),
-    # The desk's 「官方版本有更新」 block (13.7: the desk entirely): what 同步 will write and what it
+    # The desk's 「正式版本有更新」 block (13.7: the desk entirely): what 同步 will write and what it
     # did, the difference beside an .official copy -- helpers 成员 shares (13.7: one helper, every page).
     ("team.js", "function packetWords(c) {", "\n  }\n"),
     ("team.js", "function syncWrites(p) {", "\n  }\n"),
@@ -1208,7 +1208,7 @@ def _desk_lines(saved: str | None) -> list:
 
 _DESK_LINES_ZH = [
     ["今天 09:05", "昨天 23:30", "10月4日", "2025年3月1日", "1月31日", ""],
-    ["已同步 今天 08:00", "有新的官方版本", "未验证 · 已同步 今天 08:00", "公盘现在打不开", "公盘上有未通过验证的版本",
+    ["已同步 今天 08:00", "有新的正式版本", "未验证 · 已同步 今天 08:00", "公盘现在打不开", "公盘上有未通过验证的版本",
      "未验证 · 已同步", "有改动尚未发布 · 已发布 昨天 18:00", "已发布 10月4日", "还没有发布过", ""],
 ]
 
@@ -1225,7 +1225,7 @@ def test_13_5_the_sidebar_lines_in_english_dates_and_the_shared_folder():
     shared folder's line per 13.4, its date lower case inside the line."""
     assert _desk_lines("en") == [
         ["Today 09:05", "Yesterday 23:30", "4 Oct", "1 Mar 2025", "31 Jan", ""],
-        ["Synced today 08:00", "A new official version is available", "Unverified · Synced today 08:00",
+        ["Synced today 08:00", "A new published version is available", "Unverified · Synced today 08:00",
          "The shared folder cannot be opened right now", "The shared folder holds a version that failed verification",
          "Unverified · Synced", "Changes not yet published · Published yesterday 18:00", "Published 4 Oct",
          "Not published yet", ""],
@@ -1368,7 +1368,7 @@ async function renderDesk(c) {
 }
 """
 
-#: The real team.js and node.js after desk.js (13.7: the desk's 「官方版本有更新」 block draws with
+#: The real team.js and node.js after desk.js (13.7: the desk's 「正式版本有更新」 block draws with
 #: their syncWrites, syncFlash, differenceBlock and diffBlock), instead of _DESK_DOM's stand-ins.
 _TEAM_AND_NODE = (
     "\nwindow.addEventListener = () => {};\n" + (WEBAPP / "node.js").read_text(encoding="utf-8")
@@ -1384,7 +1384,7 @@ _THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了",
 
 def _desk_cases(lang: str) -> list[dict]:
     """Every part of the desk's column (DESIGN.md 14.4) and every role -- the
-    PI busy and with nothing to do; a member behind the official version,
+    PI busy and with nothing to do; a member behind the published version,
     up to date, before any publish, with a shared folder that cannot be read
     or is not set; someone not in the team; a team file that cannot be read;
     one person -- with /api/desk's column and words as the engine sends them
@@ -1500,7 +1500,8 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 我的提议 until 「知道了」, so the member's two returned rows gain that button -- nothing else moved.
 #: Moved by the V10 review (finding 22): a 待复核 row is the attempt itself, so its hover reads
 #: 「在路线图上标出这条尝试」 (three rows) -- nothing else moved.
-_DESK_ZH_SHA256 = "22a04173a0ca4fdae5cb8c5678315cca32470f259f6be2d1c3aa2b3b0e7115dc"
+# UX copy: research assessment and published-version labels; behavior unchanged.
+_DESK_ZH_SHA256 = "ff0ae8c868953b2021d4ffbb18c07c7dc2d5cd82feae9d2036a96b37a31985cb"
 
 
 @needs_node
@@ -1521,7 +1522,7 @@ def test_13_7_the_desk_in_english():
     13.5's dates, numbers and plurals); the researcher's own words, a
     [verdict_labels] word among them, as written; the engine's sentences
     as it composed them for the request. Drawn with the real team.js and
-    node.js: a member's 「官方版本有更新」 says what 同步 will write in
+    node.js: a member's 「正式版本有更新」 says what 同步 will write in
     English too."""
     desks = _desks("en", team=True)
     lines = [line for desk in desks for line in desk]
@@ -1530,7 +1531,7 @@ def test_13_7_the_desk_in_english():
     for line in [
         "desk-column-title: To handle", "desk-title: Awaiting your approval", "status-label tone-plain: New attempt",
         "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · 1 Mar 2024", "btn btn-small: View",
-        "desk-link strong: #16: change the verdict from “Pending” to “Abandoned”, abandoning the route, with 2 files "
+        "desk-link strong: #16: change the research assessment from “Pending” to “Abandoned”, abandoning the route, with 2 files "
         "(title: Mark the attempts it touches on the route map)",
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
@@ -1551,16 +1552,16 @@ def test_13_7_the_desk_in_english():
     for line in ["desk-title: My proposals", "desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
                  "desk-note plain: Variable log_ret: definition version 2", "desk-meta: Returned: redo it · 1 Mar 2024",
                  "desk-link strong: 3 files: 1.py, 2.py and others", "desk-meta: Approved, awaiting sync · 1 Mar 2024",
-                 "desk-link strong: #17: change the verdict from “Current” to “成立” "
+                 "desk-link strong: #17: change the research assessment from “Current” to “成立” "
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
-                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
+                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Published version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 linked judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
-                 "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
+                 "shared folder: no approval is needed, and the PI adds it to the published record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
-                 "the official version deleted; keep your version of 1 file changed on both sides and put the official "
-                 "copy beside it (.official); replace each record file of notes, judgments and links with the official "
+                 "the published version deleted; keep your version of 1 file changed on both sides and put the published "
+                 "copy beside it (.official); replace each record file of notes, judgments and links with the published "
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
@@ -1607,10 +1608,10 @@ def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
                  + f"\n(async () => process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case)}))))();\n")
     meta = [line for line in desk if line.startswith(("desk-meta", "desk-link strong", ": log_ret"))]
     if zh:
-        assert meta == ["desk-link strong: #16 的判决从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
+        assert meta == ["desk-link strong: #16 的研究判断从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
                         "desk-meta: Wang · 2024年3月1日", ": log_ret、vol、ret", "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
     else:
-        assert meta == ["desk-link strong: #16: change the verdict from “Pending” to “Current” "
+        assert meta == ["desk-link strong: #16: change the research assessment from “Pending” to “Current” "
                         "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · 1 Mar 2024",
                         ": log_ret, vol, ret",
                         "desk-meta: #20 is not in the table · #16 is not in the table · Original researcher"]
@@ -1673,19 +1674,19 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
     if saved == "en":
         assert shown == [
             "team-done: Synced to version 1,497; sent your 3 changes to notes, judgments or links to the shared folder; "
-            "updated 2 files; removed 1 file the official version deleted; kept your versions of 2 files changed on both "
-            "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relation "
+            "updated 2 files; removed 1 file the published version deleted; kept your versions of 2 files changed on both "
+            "sides, with the published copies beside them; kept your version of 1 file (the arrangement on the relation "
             "map is each person’s own and does not change with a sync); your notes and links still wait for the PI to "
             "publish, so the record files stay yours for now.",
-            "team-done: The official data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
-            ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
+            "team-done: The published data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
+            ": How yours differs from the published one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
             *[line for line in shown if line.startswith("dl-row")],
             "btn btn-small diff-more: Show the remaining 5 lines",
             "node-sub: The change is too long; only its beginning was compared.",
-            "team-done: The official figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
-            ": How yours differs from the official one", "desk-note plain: S",
+            "team-done: The published figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
+            ": How yours differs from the published one", "desk-note plain: S",
             "desk-note plain: A large table: only its rows and columns are compared, not line by line.",
-            ": How yours differs from the official one",
+            ": How yours differs from the published one",
             "desk-note plain: The two files differ (not text, so not compared line by line)",
         ]
         assert len([line for line in shown if line.startswith("dl-row")]) == 20
@@ -1708,7 +1709,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
 @needs_node
 @pytest.mark.parametrize("saved", [None, "zh"])
 def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
-    """13.8 #1: the desk's 「官方版本有更新」, drawn with the real team.js,
+    """13.8 #1: the desk's 「正式版本有更新」, drawn with the real team.js,
     says what 同步 will write in the words 成员 always used."""
     desks = _desks(saved, team=True)
     assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条关联判断、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
@@ -2259,7 +2260,7 @@ GUIDE_EN_ENGLISH_LABELS = (
     "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
-GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
+GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest published version",)
 #: The officialness marks the guide quotes in English: the engine's words on an English screen
 #: (13.7: shared words follow the interface language on every page).
 GUIDE_EN_OFFICIALNESS_LABELS = ("Approved, awaiting sync",)
@@ -2623,30 +2624,30 @@ def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
     setting keeps 生成草稿 off until 模型服务 reads it."""
     out = _draft_run(None, _DRAFT_DOM + _app_function("function apiError(") + _DRAFT_FORM)
     assert out["goBeforeTheSetting"] is True
-    assert out["where"] == ["attempt-draft-where warn", "起草会把所选文件的内容发到 studio.local，它不在这台 Mac 上；模型 qwen", False]
+    assert out["where"] == ["attempt-draft-where warn", "所选文件将发送至 studio.local · 模型：qwen", False]
     assert out["summary"] == "res-draft-summary res-chevron|模型服务"
     assert out["setting"] == ["http://studio.local:1234/v1", "http://studio.local:1234/v1", "", "qwen",
                               "http://studio.local:1234/v1", ""]
     # Asked again after a failed answer, never after a good one; only files a draft can read.
     assert out["suggestions"] == [[[], 1], [["code/run.py", "out/t.csv"], 2], [["code/run.py", "out/t.csv"], 2]]
-    assert out["help"].startswith("模型只起草「做了什么」和「结果」，")
+    assert out["help"] == "仅填写空白的「做了什么」和「结果」。"
     assert out["composing"] == ["./code/run.py", False]
     assert out["added"] == ["", True, ["code/run.py 去掉"]]
     assert out["busy"] == [True, "正在请模型起草…可能要等一两分钟"]
     assert out["sent"] == [{"files": ["code/run.py", "out/t.csv"], "language": "zh"}]
     assert out["cells"] == ["我自己写的", "beta = 0.12", None, "1"]
-    assert out["form"] == ["textarea", "textarea", "草稿（qwen-27b）。模型说它依据：code/run.py、out/t.csv。写入前请核对。"]
+    assert out["form"] == ["textarea", "textarea", "模型：qwen-27b · 参考文件：code/run.py、out/t.csv"]
     assert out["status"] == ["panel-status ok", "「做了什么」原本有内容，没有改。 已填入「结果」。 较长的文件只读了开头。", False]
     assert out["afterAnEdit"] == ["textarea", "textarea"]
     assert out["frozen"] == [True, True, True, [True, True], True, True, True]
     assert out["late"] == ["", "panel-status err", "预览已经生成，草稿没有填入：先返回修改，再生成草稿", True]
     assert out["unfrozen"] == [False, False, False]
     assert out["saved"] == [True, [{"base_url": "http://studio.local:1234/v1", "model": "m2"}], None, "m2",
-                            "attempt-draft-where", "起草用这台 Mac 上的模型 m2"]
+                            "attempt-draft-where", "本地模型：m2"]
     assert out["refused"] == ["项目里找不到 code/rnu.py", "draft_file_missing", False]
     assert out["written"] == ["", "panel-status ", "这一行已经写进工作副本，草稿没有用上", True, True]
     assert out["unread"] == ["没能读到模型设置，先不能起草", True]
-    assert out["reread"] == ["起草会把所选文件的内容发到 studio.local，它不在这台 Mac 上；模型 qwen", False]
+    assert out["reread"] == ["所选文件将发送至 studio.local · 模型：qwen", False]
 
 
 def test_16_1_the_form_freezes_the_draft_block_and_builds_it_for_new_rows_only():

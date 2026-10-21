@@ -12,6 +12,8 @@
 - Preserve unsaved drafts during refreshes, detect conflicting file edits, and
   retain saved versions. Team drafts use the existing PI proposal workflow.
 - Avoid opening unrelated protected and cloud folders while adding a project.
+- Shorten interface copy and distinguish saving, proposing, approval and publication.
+  Correct file-name matching, research-assessment labels and backup timing in previews.
 
 
 ## 0.2.0 — 2026-10-20

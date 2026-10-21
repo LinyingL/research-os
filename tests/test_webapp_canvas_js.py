@@ -1260,9 +1260,9 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert 'addEventListener("click", () => { if (mayReplacePanel()) openAttemptForm("append"); })' in _APP_SRC
     assert '"new-attempt": () => { if (mayReplacePanel()) openAttemptForm("append"); },' in _APP_SRC
     node_js = (CANVAS_JS.parent / "node.js").read_text(encoding="utf-8")
-    # V8 U4: the node page's button reads 「提议改判」 for a member (the form
+    # V8 U4: the node page's button reads 「提议修改判断」 for a member (the form
     # then proposes); it opens the same form either way. The words go through t() (13.6).
-    assert 'const edit = role === "member" ? t("提议改判") : t("编辑这一行");' in node_js
+    assert 'const edit = role === "member" ? t("提议修改判断") : t("编辑这一行");' in node_js
     assert 'mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); })' in node_js
     assert node_js.count("openAttemptForm(") == 1
     assert _APP_SRC.count("openAttemptForm(") == 3  # definition + the two entry points in the page
