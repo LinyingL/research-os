@@ -65,7 +65,7 @@
 
   const KIND_CHOICES = [
     ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
-    ["verdict_change", "改判", "只有尝试表里这一行的判决和结果"],
+    ["verdict_change", "修改判断", "只有尝试表里这一行的研究判断和结果"],
     ["variable_version", "变量定义", "一张变量定义卡的新版本"],
     ["files", "只有文件", "你选的脚本、数据和文稿"],
   ];
@@ -165,7 +165,7 @@
   // What a proposal of this kind carries unless the member adds or unticks (12.13).
   function carryWords(kind) {
     switch (kind) {
-      case "verdict_change": return t("改判只带尝试表里的这一行；要一起发送文件，在下面勾选。");
+      case "verdict_change": return t("修改判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
       case "attempt_new":
         return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
       case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
@@ -235,8 +235,8 @@
     const send = sending ? t("同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。",
       { sending: sending, area: p.area || "提议/你的邮箱/" }) : "";
     if (p.up_to_date) {
-      return send ? t("{send}你的工作副本已经是最新的官方版本。", { send: send })
-        : t("你的工作副本已经是最新的官方版本，没有要发送的备注、判断或连线。");
+      return send ? t("{send}你的工作副本已经是最新的正式版本。", { send: send })
+        : t("你的工作副本已经是最新的正式版本，没有要发送的备注、判断或连线。");
     }
     const parts = [];
     if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
@@ -476,7 +476,8 @@
       if (shown.length) page.appendChild(routeProposalBlock(shown, ctx));
     }
     if (!data.groups || !data.groups.length) {
-      page.appendChild(line("尝试表里还没有尝试。在 .researchos/attempts.toml 里配置尝试表，Research OS 就会读出每一条路线。", "quiet"));
+      page.appendChild(line(state.attemptsConfig ? t("还没有研究尝试。")
+        : t("尚未设置尝试表。请在 .researchos/attempts.toml 中配置。"), "quiet"));
       host.appendChild(page);
       host.dataset.loaded = "1";
       return;
@@ -534,7 +535,7 @@
         act.appendChild(mkButton("当时的依据", "btn btn-small", () => openEvidence(item.id, item)));
         const d = item.decision;
         act.appendChild(mk("span", "route-src", "放弃于 " + when(d.at) + "，" +
-          (d.evidence_count ? "冻结了 " + d.evidence_count + " 个文件" : "当时这条路线没有关联的文件")));
+          (d.evidence_count ? t("记录了 {n} 个文件的状态", { n: d.evidence_count }) : "当时这条路线没有关联的文件")));
         body.appendChild(act);
       }
       li.appendChild(body);
@@ -547,7 +548,7 @@
     const sec = mk("section", "route-group route-proposals");
     sec.appendChild(mk("h2", "route-group-title serif", pi ? "提议中" : "我的提议"));
     sec.appendChild(line(pi ? "这些路线还不是正式记录：批准以后才会进入尝试表和每一条来龙去脉。"
-      : "你提出的路线和改判：PI 批准以后才进入正式版本。", "quiet"));
+      : "你提出的路线和修改判断：PI 批准以后才进入正式版本。", "quiet"));
     const team = (ctx.share && ctx.share.team) || [];
     const ul = mk("ul", "route-list");
     shown.forEach((p) => {
@@ -562,10 +563,10 @@
         if (a.verdict_status) head.appendChild(RODesk.verdictInline(a.verdict_status));
       } else if (v) {
         head.appendChild(mk("span", "route-num mono", "#" + String(v.number || "").replace(/^#/, "")));
-        const t = mkButton(p.sentence || "改判", "route-title", () => openProposal(p.id, p.by));
+        const t = mkButton(p.sentence || "修改判断", "route-title", () => openProposal(p.id, p.by));
         head.appendChild(t);
         const move = mk("span", "desk-what");
-        move.append("判决 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
+        move.append("研究判断 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
         head.appendChild(move);
       }
       const st = stateLabel(p);
@@ -627,7 +628,7 @@
       if (d.reason) sec.appendChild(mk("p", "desk-note", "理由：" + d.reason));
       if (d.note) sec.appendChild(mk("p", "desk-note", "PI 的附言：" + d.note));
       if (d.missing_from_file) sec.appendChild(line("这条记录已经不在 decisions.toml 里了（这台电脑记得它）。", "warn"));
-      sec.appendChild(mk("h3", "panel-h3", direct ? t("放弃时冻结的文件") : "批准时冻结的文件"));
+      sec.appendChild(mk("h3", "panel-h3", direct ? t("放弃时的文件状态") : t("批准时的文件状态")));
       const ul = mk("ul", "evidence-files");
       (d.files || []).forEach((f) => ul.appendChild(evidenceFile(f)));
       if (!(d.files || []).length) ul.appendChild(mk("li", "node-empty", "当时没有找到属于这条路线的文件。"));
@@ -869,7 +870,7 @@
     head.appendChild(mk("div", "node-kind", kind ? t("{kind}提议", { kind: kind }) : t("提议", { n: 1 })));
     if (!options.panel) head.appendChild(mk("h2", "node-name", full.sentence || id));
     const meta = [RODesk.nameOf(full.by, team), when(full.at)]; // 12.13: the name, never the raw id
-    if (full.base_seq != null) meta.push(t("基于官方版本第 {seq} 版", { seq: numberText(full.base_seq) }));
+    if (full.base_seq != null) meta.push(t("基于正式版本第 {seq} 版", { seq: numberText(full.base_seq) }));
     head.appendChild(mk("div", "desk-meta", meta.join(" · ")));
     const marks = mk("div", "node-marks");
     const st = stateLabel(full);
@@ -934,7 +935,7 @@
     if (full.attempt) {
       const a = full.attempt;
       const p = mk("p", "desk-head");
-      p.append(t("尝试表新增第 {number} 行：{description}", { number: a.number, description: a.description || "" }), " ");
+      p.append(t("尝试 #{number}：{description}", { number: a.number, description: a.description || "" }), " ");
       if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
       s.appendChild(p);
       if (a.abandons === "yes") {
@@ -945,7 +946,7 @@
     }
     if (full.verdict) {
       const v = full.verdict;
-      s.appendChild(phrase(mk("p", "desk-head"), t("第 {number} 行的判决 {old} 改为 {new}", { number: v.number }),
+      s.appendChild(phrase(mk("p", "desk-head"), t("尝试 #{number} 的研究判断 {old} 改为 {new}", { number: v.number }),
         { old: RODesk.verdictInline(v.old_status), new: RODesk.verdictInline(v.new_status) }));
       if (v.result) s.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result })));
       if (v.reason) s.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: v.reason })));
@@ -1021,14 +1022,14 @@
     if (a) {
       const part = mk("div", "proposal-part");
       if (a.op === "append") {
-        const p = phrase(mk("p", "desk-head"), t("在尝试表 {file} 里新增第 {number} 行", { number: a.number }),
+        const p = phrase(mk("p", "desk-head"), t("在 {file} 中新增尝试 #{number}", { number: a.number }),
           { file: mk("span", "mono", a.file || "") });
         if (a.verdict_status) p.appendChild(RODesk.verdictInline(a.verdict_status));
         part.appendChild(p);
         if (a.abandons) abandonsLines(part, full.attempt || {}, a);
         (a.parent_words || []).forEach((w) => part.appendChild(mk("p", "desk-note plain", w))); // 14.2, in the engine's words
       } else {
-        part.appendChild(phrase(mk("p", "desk-head"), t("尝试表第 {number} 行的判决 {old} 改为 {new}", { number: a.number }),
+        part.appendChild(phrase(mk("p", "desk-head"), t("尝试 #{number} 的研究判断 {old} 改为 {new}", { number: a.number }),
           { old: RODesk.verdictInline(a.old_status), new: RODesk.verdictInline(a.new_status) }));
         const v = full.verdict || {};
         if (a.abandons) {
@@ -1075,11 +1076,10 @@
     const ctxNow = RODesk.context();
     const coming = ctxNow && ctxNow.share && ctxNow.share.incoming;
     const carried = packetWords(coming);
-    const who = RODesk.nameOf(full.by, (ctxNow && ctxNow.share && ctxNow.share.team) || []);
     s.appendChild(line(carried
-      ? t("批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。发布前会先把成员同步来的 {carried}加进正式记录（不需要批准）。",
-        { who: who, carried: carried })
-      : t("批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。", { who: who }),
+      ? t("批准后发布到公盘，同时加入成员同步的{carried}。",
+        { carried: carried })
+      : t("批准后发布到公盘。"),
     carried ? "writes" : "quiet"));
     if (carried) s.appendChild(removalList(coming));
     page.appendChild(s);
@@ -1105,7 +1105,7 @@
         k.appendChild(p);
       });
       if ((c.conflicts || []).length) {
-        k.appendChild(line(t("Research OS 不会替两个人合并同一个文件。请成员先同步到最新的官方版本，在那上面重新提议；这份可以退回并说明。"), ""));
+        k.appendChild(line(t("Research OS 不会替两个人合并同一个文件。请成员先同步到最新的正式版本，在那上面重新提议；这份可以退回并说明。"), ""));
       }
       (c.problems || []).forEach((x) => k.appendChild(mk("p", "desk-break", x)));
       page.appendChild(k);
@@ -1200,7 +1200,6 @@
   function renderComposer(page) {
     const s = block("提交提议");
     s.dataset.anchor = "compose"; // the shell's 文件 > 提交提议…
-    s.appendChild(line("先看清楚要发送什么，再发送。Research OS 会把你的工作副本和你上次同步的官方版本比较，找出这份提议要带的改动。", "quiet"));
     const form = mk("div", "compose");
     const kinds = mk("div", "compose-kinds");
     kinds.setAttribute("role", "radiogroup");
@@ -1235,7 +1234,7 @@
         inputs.result = textArea(2, "不填：用尝试表里这一行现在的结果");
         extra.appendChild(field("结果", inputs.result));
         inputs.reason = textArea(2, "放弃一条路线时必须写明");
-        extra.appendChild(field("理由", inputs.reason, "放弃（判决标为已放弃）时，结果和理由都必须填写"));
+        extra.appendChild(field("理由", inputs.reason, "放弃（研究判断标为已放弃）时，结果和理由都必须填写"));
       }
       if (kind === "variable_version") {
         inputs.card = textInput("变量卡的编号，例如 topicshift", true);
@@ -1281,9 +1280,9 @@
   }
 
   // The engine's dry run of a proposal, shown exactly, then 发送提议. Used
-  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议改判.
+  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议修改判断.
   async function composeInto(host, body, status) {
-    setStatus(status, "", t("正在比较你的工作副本和官方版本…"));
+    setStatus(status, "", t("正在比较你的工作副本和正式版本…"));
     host.innerHTML = "";
     let draft;
     try {
@@ -1305,7 +1304,7 @@
     box.appendChild(mk("p", "proposal-sentence", d.sentence || ""));
     if (d.attempt) {
       const p = mk("p", "desk-head");
-      p.append(t("尝试表新增第 {number} 行：{description}", { number: d.attempt.number, description: d.attempt.description || "" }), " ");
+      p.append(t("尝试 #{number}：{description}", { number: d.attempt.number, description: d.attempt.description || "" }), " ");
       if (d.attempt.verdict_status) p.appendChild(RODesk.verdictInline(d.attempt.verdict_status));
       box.appendChild(p);
       if (d.attempt.abandons === "yes") {
@@ -1316,7 +1315,7 @@
     }
     if (d.verdict) {
       const v = d.verdict;
-      box.appendChild(phrase(mk("p", "desk-head"), t("第 {number} 行的判决 {old} 改为 {new}", { number: v.number }),
+      box.appendChild(phrase(mk("p", "desk-head"), t("尝试 #{number} 的研究判断 {old} 改为 {new}", { number: v.number }),
         { old: RODesk.verdictInline(v.old_status), new: RODesk.verdictInline(v.new_status) }));
       box.appendChild(mk("p", "desk-note", t("结果：{result}", { result: v.result || t("（空）") })));
       if (v.reason) box.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: v.reason })));
@@ -1335,7 +1334,7 @@
       Object.keys(carried).map((p) => Object.assign({ chosen: true }, carried[p]));
     box.appendChild(mk("h4", "proposal-h4", t("带上的文件")));
     box.appendChild(line(carryWords(d.kind), "quiet"));
-    if (!candidates.length) box.appendChild(line(t("工作副本里没有和官方版本不同的文件。"), "quiet"));
+    if (!candidates.length) box.appendChild(line(t("工作副本里没有和正式版本不同的文件。"), "quiet"));
     const picks = [];
     candidates.forEach((c) => {
       const f = carried[c.path] || c;
@@ -1549,7 +1548,6 @@
   // A project of one person: how collaboration starts (12.1).
   function renderStart(page, share, me) {
     const s = block("开始协作");
-    s.appendChild(line("现在这是单人项目：你就是自己的 PI，改动直接生效。要请别人一起做，按顺序做三件事：建立成员名单、选好公盘文件夹、发布第一版。", "quiet"));
     if (!(me && me.me)) {
       s.appendChild(line("先在上面填好「我是谁」。", "warn"));
       page.appendChild(s);
@@ -1558,7 +1556,7 @@
     const status = mk("div", "notice-status");
     const hasTeam = (share.team || []).length > 0;
     if (!hasTeam) {
-      s.appendChild(line("将在项目里写入 .researchos/team.toml，你是 PI；如果这台电脑还没有签名密钥，会先生成一对（私钥不离开这台电脑）。", "writes"));
+      s.appendChild(line(t("创建团队后，你是 PI。签名私钥仅保存在这台电脑上。"), "writes"));
       const btn = mkButton("建立成员名单", "btn btn-primary", async () => {
         btn.disabled = true;
         setStatus(status, "", "正在写入…");
@@ -1591,7 +1589,7 @@
       s.appendChild(line("选一个和团队共享的 OneDrive 文件夹（或别的同步文件夹）。它不能在项目文件夹里面。", "quiet"));
       const pf = pathField("公盘文件夹", "shared", "公盘文件夹的完整路径");
       s.appendChild(pf.wrap);
-      s.appendChild(line("只会记在这台电脑的 Research OS 设置里（projects.json）；项目里和公盘里都不写入任何东西。", "writes"));
+      s.appendChild(line(t("此设置仅保存在本机。"), "writes"));
       const status = mk("div", "notice-status");
       const btn = mkButton("设为公盘", "btn btn-primary", async () => {
         const path = pf.input.value.trim();
@@ -1686,7 +1684,7 @@
     say();
     s.appendChild(writes);
     const status = mk("div", "notice-status");
-    const btn = mkButton("加入团队", "btn btn-primary", async () => {
+    const btn = mkButton("添加成员", "btn btn-primary", async () => {
       if (!email.value.trim() || !name.value.trim()) { setStatus(status, "err", "请填写成员的邮箱和名字"); return; }
       const body = { id: email.value.trim(), name: name.value.trim() };
       if (paste.value.trim()) body.key = paste.value.trim();
@@ -1766,7 +1764,7 @@
     (share.warnings || []).forEach((w) => s.appendChild(line(w, "warn")));
     if ((share.refused || []).length) s.appendChild(line("公盘上有 " + share.refused.length + " 个版本没有通过签名验证，没有采用；采用的是最后一个通过验证的版本。", "warn"));
     if ((j.official_copies || []).length) {
-      s.appendChild(mk("h3", "panel-h3", "放在旁边的官方版本"));
+      s.appendChild(mk("h3", "panel-h3", "放在旁边的正式版本"));
       s.appendChild(line("你的文件没有动；官方的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
       const ul = mk("ul", "desk-files");
       const beside = j.beside || j.official_copies.map((c) => ({ copy: c }));
@@ -1908,7 +1906,7 @@
   // reached the official version yet.
   function syncDone(res) {
     const sent = res.entries_sent ? t("已把你的 {n} 条备注、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
-    if (res.up_to_date) return sent ? t("已经是最新的官方版本；{sent}。", { sent: sent }) : t("已经是最新的官方版本。");
+    if (res.up_to_date) return sent ? t("已经是最新的正式版本；{sent}。", { sent: sent }) : t("已经是最新的正式版本。");
     const parts = [t("已同步到第 {seq} 版", { seq: numberText(res.seq) })];
     if (sent) parts.push(sent);
     if ((res.updated || []).length) parts.push(t("更新了 {n} 个文件", { n: numberText(res.updated.length) }));
@@ -1989,7 +1987,7 @@
     state.panelSubject = subject;
     panelTitle.textContent = "从公盘加入项目";
     panelTitle.title = "";
-    panelSubtitle.textContent = "先看一看；你确认之前，什么都不会写入";
+    panelSubtitle.textContent = t("选择公盘和本地保存位置");
     panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
     openPanel();
     await drawJoin(subject);

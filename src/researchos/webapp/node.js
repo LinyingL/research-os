@@ -56,7 +56,7 @@
   const statusWords = () => ({ pending: t("待确认"), confirmed: t("已确认"), rejected: t("已否决"), auto: t("机器提取") });
   const judgeWords = () => ({ confirmed: t("确认了"), rejected: t("否决了"), withdrawn: t("撤回了对它的判断"), undone: t("撤销了上一次判断") });
   const filters = () => [
-    ["all", t("全部")], ["orphans", t("无来源输入")], ["chains", t("血缘链")], ["broken", t("断链")], ["duplicates", t("同名拷贝")],
+    ["all", t("全部")], ["orphans", t("未识别生成脚本")], ["chains", t("中间数据")], ["broken", t("断链")], ["duplicates", t("同名文件")],
   ];
   // Monochrome line icons for file types (12.11: where they help recognition).
   const ICONS = {
@@ -158,13 +158,13 @@
       const D = typeof window !== "undefined" && window.RODesk;
       return D && D.verdictWord ? D.verdictWord(s) : s.label;
     };
-    if (!prev) return t("记下这条尝试，判决为「{verdict}」", { verdict: word(cur) });
+    if (!prev) return t("记下这条尝试，研究判断为「{verdict}」", { verdict: word(cur) });
     const moved = (prev.verdict || "") !== (cur.verdict || "");
     const result = (prev.result || "") !== (cur.result || "") ? cur.result || t("（空）") : null;
     const words = { was: word(prev), became: word(cur), result: result };
-    if (moved && result !== null) return t("判决从「{was}」改为「{became}」，结果改为：{result}", words);
-    if (moved) return t("判决从「{was}」改为「{became}」", words);
-    return result !== null ? t("结果改为：{result}", words) : t("判决不变（{verdict}）", { verdict: word(cur) });
+    if (moved && result !== null) return t("研究判断从「{was}」改为「{became}」，结果改为：{result}", words);
+    if (moved) return t("研究判断从「{was}」改为「{became}」", words);
+    return result !== null ? t("结果改为：{result}", words) : t("研究判断不变（{verdict}）", { verdict: word(cur) });
   }
 
   // Where a version came from, in words; one 同步 installed names the
@@ -407,7 +407,7 @@
       // U4: a member proposes a verdict instead of editing the official
       // table; someone not in the team yet cannot change it at all.
       const role = ROTeam.mode();
-      const edit = role === "member" ? t("提议改判") : t("编辑这一行");
+      const edit = role === "member" ? t("提议修改判断") : t("编辑这一行");
       if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
       if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
@@ -453,7 +453,7 @@
       detailRow(dl, t("途径"), d.description || "");
       detailRow(dl, t("变量"), d.variables || "");
       detailRow(dl, t("结果"), d.result || t("（无）"));
-      detailRow(dl, t("判决"), RODesk.verdictInline(d.verdict_status));
+      detailRow(dl, t("研究判断"), RODesk.verdictInline(d.verdict_status));
       if (d.source_file) {
         // 12.11: the mono for the path only; 「第 N 行」 is words.
         const where = mk("span", "node-where");
@@ -929,7 +929,7 @@
   }
 
   function renderNote(host, page, note, me) {
-    const head = mk("div", "tl-what", t("笔记"));
+    const head = mk("div", "tl-what", t("笔记", { n: 1 }));
     host.appendChild(head);
     host.appendChild(mk("div", "tl-meta", note.label || note.name || note.by || t("最初的研究者")));
     const text = mk("p", "tl-note" + (note.withdrawn ? " withdrawn" : ""), note.text || "");
@@ -980,7 +980,7 @@
     const input = mk("textarea", "form-input node-note-input");
     input.rows = 3;
     input.placeholder = t("写一条笔记：为什么这样做、要注意什么");
-    input.setAttribute("aria-label", t("笔记"));
+    input.setAttribute("aria-label", t("笔记", { n: 1 }));
     input.value = nav.notesDraft.get(page.id) || "";
     input.addEventListener("input", () => nav.notesDraft.set(page.id, input.value));
     const status = mk("div", "notice-status");
@@ -1361,11 +1361,11 @@
     if (f.type === "script") {
       if (f.reads && f.reads.length) lines.push(t("读取 {files}", { files: few(f.reads) }));
       if (f.writes && f.writes.length) lines.push(t("写出 {files}", { files: few(f.writes) }));
-      if (!lines.length) lines.push(t("没有读到读写记录。"));
+      if (!lines.length) lines.push(t("未识别到读写关联"));
     } else {
       if (f.written_by && f.written_by.length) lines.push(t("由这些脚本写出：{files}", { files: few(f.written_by) }));
       if (f.read_by && f.read_by.length) lines.push(t("被这些脚本读取：{files}", { files: few(f.read_by) }));
-      if (!lines.length) lines.push(t("没有脚本读取或写出它"));
+      if (!lines.length) lines.push(t("未识别到读写关联"));
     }
     return lines;
   }
@@ -1379,7 +1379,7 @@
     head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
     if (f.exists === false) head.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
     if (f.unreadable) head.appendChild(mk("span", "status-label tone-clay", t("暂时无法读取")));
-    if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", t("无来源输入")));
+    if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", t("未识别生成脚本")));
     if (f.review) {
       const tag = mkButton(t("{n} 条关联待复核", { n: f.review }), "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
       tag.title = t("打开待复核的判断");
@@ -1396,7 +1396,7 @@
         ? t("断链：{script} {relation} {target}（写出，文件不存在）", words)
         : t("断链：{script} {relation} {target}（读取，文件不存在）", words)));
     });
-    if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", t("其它拷贝：{files}", { files: f.other_copies.join(t("、")) })));
+    if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", t("其他同名文件：{files}", { files: f.other_copies.join(t("、")) })));
     li.append(kind, main);
     return li;
   }

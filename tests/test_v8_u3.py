@@ -369,8 +369,8 @@ def test_node_page_wording_diff_rows_judgments_and_the_timeline():
     old = {"verdict": "🕒 待拍板", "verdict_status": {"label": "待定"}, "result": ""}
     new = {"verdict": "✅ 现行", "verdict_status": {"label": "现行"}, "result": "t=2.91"}
     moved = _node_call("_verdictMove", old, new)
-    assert moved == "判决从「待定」改为「现行」，结果改为：t=2.91" and not FORBIDDEN.search(moved)
-    assert _node_call("_verdictMove", None, new) == "记下这条尝试，判决为「现行」"
+    assert moved == "研究判断从「待定」改为「现行」，结果改为：t=2.91" and not FORBIDDEN.search(moved)
+    assert _node_call("_verdictMove", None, new) == "记下这条尝试，研究判断为「现行」"
     assert _node_call("_tableWords", {"rows": 3, "columns": ["a", "b"]}) == "3 行，列 a、b"
     history = {"kind": "file", "versions": [{"at": "2026-10-11T10:00:00", "version": "2"}, {"at": "2026-10-10T10:00:00", "version": "1"}]}
     notes = [{"at": "2026-10-10T12:00:00", "text": "x"}]
@@ -379,7 +379,7 @@ def test_node_page_wording_diff_rows_judgments_and_the_timeline():
     assert kinds == ["judgment", "version", "note", "version"]
     assert _node_call("_inFilter", {"type": "dataset", "written_by": ["a"], "read_by": ["b"]}, "chains") is True
     assert _node_call("_inFilter", {"type": "script", "exists": False}, "broken") is True
-    assert _node_call("_fileRelations", {"type": "script", "reads": [], "writes": []}) == ["没有读到读写记录。"]
+    assert _node_call("_fileRelations", {"type": "script", "reads": [], "writes": []}) == ["未识别到读写关联"]
     for text in _node_call("_fileRelations", {"type": "dataset", "written_by": ["s/a.py"], "read_by": ["s/b.py"]}):
         assert not FORBIDDEN.search(text)
 

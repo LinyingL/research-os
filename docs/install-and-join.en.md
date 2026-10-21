@@ -72,8 +72,7 @@ The app is saved to `~/Applications/Research OS.app`. Press Command + Space
 and search for Research OS to open it, or open it from your home folder's
 Applications folder in the Finder.
 
-Allow access when macOS asks to read Documents or OneDrive. The welcome
-page offers **Add project…** and **Join a project from the shared folder…**.
+Allow access when macOS asks to read Documents or OneDrive.
 
 ## Part 2: Join as a member
 
@@ -96,7 +95,7 @@ The PI will share two OneDrive folders with you:
 
 | Folder | Purpose | Your permission |
 | --- | --- | --- |
-| `已发布` | The team's official version | Can view |
+| `已发布` | The team's published version | Can view |
 | A folder named after your e-mail address | Your proposals | Can edit |
 
 Open each invitation and choose Add shortcut to My files in OneDrive on
@@ -126,7 +125,7 @@ Compare it with the PI by phone or in person. If it matches, click
 ### 4. Sync the team version
 
 On **Members**, under **公盘与同步** (Shared folder and sync), click
-**同步** (Sync). You can start work when it says **Already the latest official version**
+**同步** (Sync). You can start work when it says **Already the latest published version**
 and your name appears under **团队** (Team). If your name is
 missing, ask the PI to add you and publish, then sync again.
 
@@ -158,7 +157,7 @@ requires a new key and a new fingerprint check for every member.
    **添加成员** (Add member). Paste the key into **公钥文字** (Public key
    text), or use **选择…** (Choose…) beside **公钥文件** (Public key file)
    if they sent a file.
-2. Click **加入团队** (Add to team), then **发布** (Publish). Their folder
+2. Click **添加成员** (Add member), then **发布** (Publish). Their folder
    is created inside `提议`, named after their e-mail address.
 3. Open [OneDrive on the web](https://onedrive.live.com). Select each folder,
    click Share, set the permissions below, and send the invitation.
@@ -183,7 +182,7 @@ person when they join.
 
 1. Click **同步** (Sync) on **Members**, then edit your local working copy.
 2. Open **Proposals**. Under **提交提议** (Submit a proposal), choose
-   **新的尝试** (New attempt), **改判** (Change verdict),
+   **新的尝试** (New attempt), **修改判断** (Change research assessment),
    **变量定义** (Variable definition), or **只有文件** (Files only). Add an explanation
    and click **查看将要发送的内容** (Review what will be sent).
 3. Check the file list. If you change the selection, click
@@ -202,11 +201,11 @@ Open **Proposals**, inspect the changes, and choose:
 
 | Action | Result |
 | --- | --- |
-| **Approve** | Applies the change to the official project and publishes a version |
+| **Approve** | Applies the change to the project and publishes a version |
 | **Return with reason** | Sends it back to the member with your explanation |
 | **Discuss** | Leaves a comment and keeps the proposal open |
 
-After editing the official project directly, click **发布** (Publish) on
+After editing the project files directly, click **发布** (Publish) on
 **Members**. Members receive the update on their next sync.
 
 ## When both sides changed the same file
@@ -215,9 +214,9 @@ A proposal marked **Changed on both sides** cannot yet be approved. Ask the
 member to sync, compare the two copies, and submit again. The attempt table
 is compared by row; edits to other rows do not block this proposal.
 
-On a member's sync, the local file is kept and the official version is
+On a member's sync, the local file is kept and the published version is
 placed beside it, for example `16-build.official.py`. Compare them under
-**放在旁边的官方版本** (Official versions set aside) on **Members**. Keep
+**放在旁边的正式版本** (Published versions set aside) on **Members**. Keep
 the content you need in the original file, delete the `.official` copy,
 and submit a new proposal.
 

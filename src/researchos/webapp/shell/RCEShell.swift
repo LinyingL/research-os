@@ -730,8 +730,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func buildMainMenu() -> NSMenu {
         let main = NSMenu()
+        let about = item("关于 Research OS", #selector(showAbout(_:)))
+        about.target = self
         main.addItem(submenu("Research OS", [
-            item("关于 Research OS", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            about,
             .separator(),
             item("退出", #selector(NSApplication.terminate(_:)), "q"),
         ]))
@@ -808,6 +810,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         proposeItem.isHidden = teamMode != "member"
         publishItem.isHidden = teamMode != "pi"
         teamSeparator.isHidden = teamMode != "member" && teamMode != "pi"
+    }
+
+    @objc func showAbout(_ sender: Any?) {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .paragraphStyle: style,
+        ]
+        let credits = NSMutableAttributedString(string: "https://github.com/LinyingL", attributes: attributes)
+        credits.addAttribute(.link, value: URL(string: "https://github.com/LinyingL")!,
+                             range: NSRange(location: 0, length: credits.length))
+        credits.append(NSAttributedString(string: "\n", attributes: attributes))
+        var licenseAttributes = attributes
+        licenseAttributes[.link] = URL(string: "https://opensource.org/license/mit")!
+        credits.append(NSAttributedString(string: "MIT License", attributes: licenseAttributes))
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
     @objc func sendCommand(_ sender: NSMenuItem) {

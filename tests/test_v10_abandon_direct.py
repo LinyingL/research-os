@@ -255,7 +255,7 @@ Object.assign(global, { mk: el, mkButton: (text, cls) => el("button", cls, text)
 def test_14_3_a_direct_abandonment_reads_abandoned_by_never_proposer(lang):
     """Ruled 2026-10-13: an abandonment with no proposal reads 「由 {who}
     放弃」 ("Abandoned by {who}") wherever a decision is shown -- 研究路线's
-    reason line and 「当时的依据」, whose file list is 「放弃时冻结的文件」;
+    reason line and 「当时的依据」, whose file list is 「放弃时的文件状态」;
     an approved one still names who proposed and who approved it."""
     direct = {"act": "abandoned", "proposal": None, "at": "2026-10-13T10:00:00+02:00", "by": {"label": "李"},
               "approved_by": None, "files": []}
@@ -272,8 +272,8 @@ def test_14_3_a_direct_abandonment_reads_abandoned_by_never_proposer(lang):
               "  process.stdout.write(JSON.stringify(out)); })();\n")
     got = _node(script)
     by = "Abandoned by 李" if lang == "en" else "由 李 放弃"
-    frozen = "Files frozen when it was abandoned" if lang == "en" else "放弃时冻结的文件"
+    frozen = "File state when abandoned" if lang == "en" else "放弃时的文件状态"
     assert got == [f"desk-meta: W · {by}", f"panel-h3: {frozen}",
-                   "desk-meta: W · 提议人 王 · 批准人 李", "panel-h3: 批准时冻结的文件",
+                   "desk-meta: W · 提议人 王 · 批准人 李", ("panel-h3: File state at approval" if lang == "en" else "panel-h3: 批准时的文件状态"),
                    by, "提议人 王，批准人 李"]
     assert not any("提议人" in line for line in got[:2])

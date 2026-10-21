@@ -8,8 +8,9 @@ version = "0.2.0"
 description = "Research OS -- a local record of how a research project came to be: provenance over git/LaTeX/W&B, human judgments, and the files they rest on."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 license-files = ["LICENSE"]
+authors = [{name = "Linying Li"}]
 keywords = ["research", "provenance", "reproducibility", "latex", "mlflow", "graph"]
 classifiers = [
     "Development Status :: 3 - Alpha",

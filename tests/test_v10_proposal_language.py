@@ -100,7 +100,7 @@ def test_14_6_what_a_proposal_does_not_carry_is_worded_in_the_requests_language(
     assert all(n["words"] == n["reason_zh"] for n in zh["proposal"]["not_carried"])
     assert [n["reason_zh"] for n in en["proposal"]["not_carried"]] == [n["reason_zh"] for n in zh["proposal"]["not_carried"]]
     said = words(en["proposal"]["not_carried"])
-    assert said["row map.md"] == "Row 19 of the attempt table (added) is not part of this proposal"
+    assert said["row map.md"] == "Attempt #19 (added) is not part of this proposal"
     assert said["not data/big.bin"] == "Not chosen for this proposal"
     assert not any(CJK.search(n["words"]) for n in en["proposal"]["not_carried"])
     with drive.pi():
@@ -114,7 +114,7 @@ def test_14_6_what_a_proposal_does_not_carry_is_worded_in_the_requests_language(
 
 def _pi_case() -> dict:
     """The PI's English desk: p1 (abandon #16) as everything 批准以后会怎样
-    can say -- an answer so far, the official version moved and an approval
+    can say -- an answer so far, the published version moved and an approval
     to resume, a variable version, a data file, a large file changed on both
     sides, a file removed, a change not carried, the variable version its
     script uses, a member's packets and a link removal to publish first --
@@ -176,28 +176,26 @@ def test_14_6_an_english_pi_decides_a_proposal_in_the_panel_with_no_chinese_but_
     seen = extra["p1"] + extra["returned"] + extra["p2"] + extra["refused"] + out["lines"]
     assert _chinese(seen) == [] and not any(FORBIDDEN.search(line) or "节点" in line or "画布" in line for line in _ours(seen))
     for line in [
-        "panel-subtitle: Verdict change · 王", "node-kind: Verdict change proposal", "desk-meta: 王 · 1 Mar 2024 · Based on official version 4",
+        "panel-subtitle: Research assessment change · 王", "node-kind: Research assessment change proposal", "desk-meta: 王 · 1 Mar 2024 · Based on published version 4",
         "status-label tone-ochre: Proposed", "status-label tone-ochre: Unverified",
         "node-sub-inline: The members list has no public key for this person: the signature cannot be verified, so only the shared "
         "folder's permissions vouch for it", "node-sec-title: Answers", "desk-head: 王 said", "desk-note: 数据从哪来？",
         "node-sec-title: What approving does",
-        "team-line quiet: The official version changed after this proposal; approval is blocked only where both sides changed the same place.",
+        "team-line quiet: The published version changed after this proposal; approval is blocked only where both sides changed the same place.",
         "team-line warn: Approving this proposal did not finish last time: approving again completes the rest.",
-        "desk-head: Row 16 of the attempt table: the verdict changes from  to ", "desk-note: Result: t=0",
+        "desk-head: Attempt #16: research assessment changes from  to ", "desk-note: Result: t=0",
         "desk-note: Reason for abandoning: 残差不平稳", "diff-label: Earlier row", "diff-label: New row",
         "desk-head: New variable card topicshift: definition version 3",
         "desk-note plain: Were the existing output files made by this definition? The member answers: Not sure",
         "proposal-h4: Files", "evidence-role: Added", "desk-meta: 1 byte", "status-label tone-olive: Written on approval",
         f"desk-meta: Fingerprint  (title: {'cd' * 32})", ": Show the change", "evidence-role: Changed", "desk-meta: 2.0 MB",
         "status-label tone-clay: Changed on both sides", "desk-meta: A large file, stored in the shared folder by its content:",
-        "evidence-role: Removed", "status-label tone-plain: Already so in the official version",
-        "team-line writes: Approving also records an entry in decisions.toml, proposed by 王 and approved by you, then publishes the "
-        "official version to the shared folder. Before publishing, it first adds what members synced (2 notes and 1 link removed) to "
-        "the official record, with no approval needed.",
+        "evidence-role: Removed", "status-label tone-plain: Already so in the published version",
+        "team-line writes: Approval publishes to the shared folder, including members’ synced changes (2 notes and 1 link removed).",
         ": The link to be removed (1)", "team-help: Removed by 王", "node-sec-title: Changes not sent with the proposal",
-        "team-help: Row 19 of the attempt table (added) is not part of this proposal",
+        "team-help: Attempt #19 (added) is not part of this proposal",
         "node-sec-title: Cannot be approved yet", "desk-break: : Changed on both sides",
-        "team-line: Research OS never merges one file for two people. Ask the member to sync to the latest official version and propose "
+        "team-line: Research OS never merges one file for two people. Ask the member to sync to the latest published version and propose "
         "again on it; this one can be returned with a reason.",
         "node-sec-title: Variable versions it uses", "desk-link: TopicShift, version 3",
         "team-help: steps/16-build.py is this variable's implementation script",
@@ -213,8 +211,8 @@ def test_14_6_an_english_pi_decides_a_proposal_in_the_panel_with_no_chinese_but_
     assert "status-label tone-clay: The approval and return records contradict each other" in extra["p2"]
     assert ("team-line warn: This proposal's answer records contradict each other (it is both approved and returned): check its "
             "answers in 已发布/outcomes/ (the published answers) in the shared folder.") in extra["p2"]
-    assert extra["refused"] == ["notice-status err: Could not approve; the official version is unchanged"]
-    assert ("notice-status ok: Approved: the change is written into the official version and published as version 1,497; members "
+    assert extra["refused"] == ["notice-status err: Could not approve; the published version is unchanged"]
+    assert ("notice-status ok: Approved: the change is written into the published version and published as version 1,497; members "
             "see it once they sync.") in out["lines"]
 
 
@@ -269,20 +267,20 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
                                     "Say what this proposal does in your own words: the PI reads this first")),
            "why": json.dumps(w("为什么放弃这条路线", "Why this route is abandoned")),
            "look": json.dumps(w("预览这一行", "Preview this row")),
-           "write": json.dumps(w("写入工作副本，查看提议", "Write the working copy and see the proposal")),
+           "write": json.dumps(w("保存后查看提议", "Save and review proposal")),
            "send": json.dumps(w("发送提议", "Send proposal"))}
     out = _run_team(case, steps, lang=None if lang == "zh" else lang)
     carried, draft, after = out["extra"]["carried"], out["extra"]["draft"], out["lines"]
     for line in [w("node-sec-title: 提议带来的改动", "node-sec-title: Changes the proposal brings"),
-                 w("desk-head: 第 16 行的判决  改为 ", "desk-head: Row 16: the verdict changes from  to "),
+                 w("desk-head: 尝试 #16 的研究判断  改为 ", "desk-head: Attempt #16: research assessment changes from  to "),
                  w("desk-note: 结果：t=0", "desk-note: Result: t=0"), w("desk-note: 理由：残差不平稳", "desk-note: Reason: 残差不平稳")]:
         assert line in carried, line
     for line in [w("node-sec-title: 将要发送的提议", "node-sec-title: The proposal to send"), "proposal-sentence: 放弃 16",
-                 w("desk-head: 第 16 行的判决  改为 ", "desk-head: Row 16: the verdict changes from  to "),
+                 w("desk-head: 尝试 #16 的研究判断  改为 ", "desk-head: Attempt #16: research assessment changes from  to "),
                  w("desk-note: 结果：t=2.91", "desk-note: Result: t=2.91"),
                  w("proposal-h4: 带上的文件", "proposal-h4: Files it carries"),
-                 w("team-line quiet: 改判只带尝试表里的这一行；要一起发送文件，在下面勾选。",
-                   "team-line quiet: A verdict change carries only its row of the attempt table; to send files with it, tick them below."),
+                 w("team-line quiet: 修改判断只带尝试表里的这一行；要一起发送文件，在下面勾选。",
+                   "team-line quiet: A research assessment change carries only its row of the attempt table; to send files with it, tick them below."),
                  w("evidence-role: 改动", "evidence-role: Changed"), w("desk-meta: 512 字节", "desk-meta: 512 bytes"),
                  w("desk-meta: 与这条尝试关联", "desk-meta: Linked to this attempt"),
                  w("desk-meta: 3.0 MB，大文件", "desk-meta: 3.0 MB, a large file"), w("own-mark: 提议中", "own-mark: Proposed"),
@@ -292,8 +290,8 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
                  w(": 查看改动", ": Show the change"),
                  w("btn btn-small: 按勾选的文件重新查看", "btn btn-small: Review again with the ticked files"),
                  w("proposal-h4: 不会发送的改动", "proposal-h4: Changes that will not be sent"),
-                 w("team-help: 第 16 行其它格子的改动不属于改判，不会发送",
-                   "team-help: Changes to the other cells of row 16 are not part of a verdict change and are not sent"),
+                 w("team-help: 尝试 #16 的其他字段修改不属于修改判断，不会发送",
+                   "team-help: Changes to the other fields of attempt #16 are not part of a research assessment change and are not sent"),
                  w("team-help: 关系图上的摆放不随提议发送：每个人保留自己的",
                    "team-help: Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
                  w("team-line writes: 发送会在公盘的「提议/li@example.com/」里写入一份新的提议，带上 2 个文件（其中 1 个大文件按内容只存一份）；"
@@ -304,7 +302,7 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
                  w("btn btn-primary: 发送提议", "btn btn-primary: Send proposal")]:
         assert line in draft, line
     sent = w("notice-status ok: 已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。",
-             "notice-status ok: Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the official record.")
+             "notice-status ok: Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the published record.")
     assert sent in after and w("btn btn-primary: 已发送", "btn btn-primary: Sent") in after
     assert out["posted"][-2][1] == {"kind": "verdict_change", "sentence": "放弃 16", "number": "16", "reason": "残差不平稳"}
     assert out["posted"][-1][1] == {**out["posted"][-2][1], "write": True, "expected": "f1"}
@@ -335,7 +333,7 @@ def test_14_6_a_proposals_pure_words_in_english():
                              "Replaced by a later proposal"]
     assert not any(CJK.search(reason) for reason in out["checks"]) and len(out["checks"]) == len(signing.CHECK_MESSAGES)
     assert out["unsigned"] == {"label": "Unverified", "tone": "ochre", "reason": "This proposal carries no signature to check"}
-    assert out["unpublished"] == ("Approved: the change is written into the official version, but it was not published to the "
+    assert out["unpublished"] == ("Approved: the change is written into the published version, but it was not published to the "
                                   "shared folder this time: Publishing did not finish. You can publish again in “Members”.")
 
 

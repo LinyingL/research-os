@@ -124,11 +124,13 @@ window.ROWorkspace.openCreateProject();
 typed(field('项目名称',panelBody),'Study');
 await find('选择文件夹…',panelBody).click();
 await find('创建项目',panelBody).click();
-console.log(JSON.stringify({posted,created,chosenPurpose,words:panelBody.textContent,dirty:window.ROWorkspace.isDirty()}));
+console.log(JSON.stringify({posted,created,chosenPurpose,words:panelBody.textContent,subtitle:panelSubtitle.textContent,location:field('保存位置',panelBody).value,dirty:window.ROWorkspace.isDirty()}));
 """)
     assert out["posted"] == [["/api/projects/create", {"name": "Study", "parent": "/work", "language": "zh"}]]
     assert out["created"]["opened"]
     assert out["chosenPurpose"] == "create"
+    assert out["location"] == "/work"
+    assert out["subtitle"] == ""
     assert "历史表" not in out["words"]
     assert not out["dirty"]
 
@@ -138,10 +140,10 @@ def test_write_plan_note_and_result_as_project_files_without_importing_history()
 await window.ROWorkspace.load(root);
 typed(byClass('ws-writing'),'# A flexible plan\nTry several explanations.');
 await find('保存').click();
-await find('写笔记').click();
+await find('新建笔记').click();
 typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'An idea worth revisiting.');
 await find('保存').click();
-await find('整理结果').click();
+await find('记录结果').click();
 typed(byClass('ws-title-input'),'Exploratory result'); typed(byClass('ws-writing'),'This is still uncertain.');
 await find('保存').click();
 console.log(JSON.stringify({posted,words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
@@ -154,16 +156,104 @@ console.log(JSON.stringify({posted,words:root.textContent,dirty:window.ROWorkspa
     assert not out["dirty"]
 
 
+def test_writing_surface_uses_document_actions_and_short_empty_states():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+const initial={words:root.textContent,plan:byClass('ws-writing').placeholder,intro:!!byClass('ws-intro'),path:!!byClass('ws-path')};
+await find('新建笔记').click();
+const note=byClass('ws-writing').placeholder;
+await find('记录结果').click();
+console.log(JSON.stringify({initial,note,result:byClass('ws-writing').placeholder,summary:byClass('ws-attachments').children[0].textContent,taskHeading:byClass('ws-task-title').textContent}));
+""")
+    assert out["initial"]["plan"] == "研究问题、思路与计划"
+    assert "还没有笔记。" in out["initial"]["words"]
+    assert "还没有结果记录。" in out["initial"]["words"]
+    assert not out["initial"]["intro"] and not out["initial"]["path"]
+    assert "查看文件" in out["initial"]["words"] and "修改历史" in out["initial"]["words"]
+    assert out["note"] == "写笔记…"
+    assert out["result"] == "结果、解释与待确认的问题"
+    assert out["summary"] == "引用文件或尝试"
+    assert out["taskHeading"] == "任务"
+
+
+def test_preview_hides_editable_title_and_returns_to_unchanged_writing():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+typed(byClass('ws-title-input'),'Updated research question');
+typed(byClass('ws-writing'),'# Updated research question\nAn unfinished plan.');
+await find('预览').click();
+const preview={titleHidden:byClass('ws-title-input').classList.contains('hidden'),writingHidden:byClass('ws-writing').classList.contains('hidden'),words:byClass('ws-preview').textContent};
+await find('继续编辑').click();
+console.log(JSON.stringify({preview,titleHidden:byClass('ws-title-input').classList.contains('hidden'),writingHidden:byClass('ws-writing').classList.contains('hidden'),title:byClass('ws-title-input').value,content:byClass('ws-writing').value,dirty:window.ROWorkspace.isDirty(),posted}));
+""")
+    assert out["preview"]["titleHidden"] and out["preview"]["writingHidden"]
+    assert out["preview"]["words"].count("Updated research question") == 1
+    assert not out["titleHidden"] and not out["writingHidden"]
+    assert out["title"] == "Updated research question"
+    assert out["content"] == "# Updated research question\nAn unfinished plan."
+    assert out["dirty"] and not out["posted"]
+    note = run(r"""
+await window.ROWorkspace.load(root);await find('新建笔记').click();
+typed(byClass('ws-title-input'),'A separate title');typed(byClass('ws-writing'),'## Finding\nAn observation.');
+await find('预览').click();
+console.log(JSON.stringify({words:byClass('ws-preview').textContent,titleHidden:byClass('ws-title-input').classList.contains('hidden')}));
+""")
+    assert note["titleHidden"]
+    assert note["words"].startswith("A separate titleFinding")
+
+
+@pytest.mark.parametrize("body, expected", [
+    ("## Research question\nAn unfinished plan.", "Research questionAn unfinished plan."),
+    ("# Revised in the body\nAn unfinished plan.", "Revised in the bodyAn unfinished plan."),
+])
+def test_preview_keeps_body_headings_without_inserting_the_old_title(body, expected):
+    out = run(r"""
+await window.ROWorkspace.load(root);
+typed(byClass('ws-writing'),BODY);
+await find('预览').click();
+console.log(JSON.stringify({words:byClass('ws-preview').textContent,posted,content:byClass('ws-writing').value}));
+""".replace("BODY", json.dumps(body)))
+    assert out["words"] == expected
+    assert out["content"] == body and not out["posted"]
+
+
+def test_clear_task_form_leaves_the_saved_task_unchanged():
+    out = run(r"""
+listed.tasks=[{id:'one',text:'Existing task',owner:'Lin',due:'2026-11-02',done:false}];
+await window.ROWorkspace.load(root);
+await find('编辑').click();typed(field('任务'),'Unsaved task edit');
+await find('清空').click();
+console.log(JSON.stringify({text:field('任务').value,owner:field('负责人').value,due:field('日期').value,tasks:listed.tasks,posted,adding:!!find('添加任务'),dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out["text"] == out["owner"] == out["due"] == ""
+    assert out["tasks"] == [{"id": "one", "text": "Existing task", "owner": "Lin", "due": "2026-11-02", "done": False}]
+    assert out["adding"] and not out["dirty"] and not out["posted"]
+
+
+def test_saved_document_keeps_file_actions_and_uses_short_success_message():
+    out = run(r"""
+await window.ROWorkspace.load(root);typed(byClass('ws-writing'),'Saved words');
+customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:body.title,content:body.content,revision:'new',backup:'backup/previous.md'}:undefined;
+await find('保存').click();
+const saved=root.all().find(e=>e.getAttribute('role')==='status').textContent;
+await find('查看文件').click();await find('修改历史').click();
+console.log(JSON.stringify({saved,openedFiles,openedAttempts,dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out["saved"] == "已保存"
+    assert out["openedFiles"] == out["openedAttempts"] == ["research/overview.md"]
+    assert not out["dirty"]
+
+
 def test_project_references_are_relative_images_are_local_and_html_is_text():
     out = run(r"""
-await window.ROWorkspace.load(root); await find('整理结果').click();
+await window.ROWorkspace.load(root); await find('记录结果').click();
 typed(byClass('ws-title-input'),'A figure');
 typed(byClass('ws-writing'),'<script>alert(1)</script>\n[bad](javascript:alert)\n[escape](../../../../outside.png)');
 const files=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择项目文件');
-files.value='figures/图 (1).png'; await find('插入文件').click();
-files.value='code/model.do'; await find('插入文件').click();
+files.value='figures/图 (1).png'; await find('插入引用').click();
+files.value='code/model.do'; await find('插入引用').click();
 const attempt=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择研究尝试');
-attempt.value=listed.attempts[0].id; await find('插入尝试').click();
+attempt.value=listed.attempts[0].id; await find('引用尝试').click();
 const content=byClass('ws-writing').value;
 await find('预览').click();
 const preview=byClass('ws-preview');
@@ -280,7 +370,7 @@ console.log(JSON.stringify({content:byClass('ws-writing').value,words:root.textC
 def test_readonly_project_can_preview_but_cannot_create_or_save():
     out = run(r"""
 listed.read_only=true;await window.ROWorkspace.load(root);
-await find('保存').click();await find('写笔记').click();await find('预览').click();
+await find('保存').click();await find('新建笔记').click();await find('预览').click();
 console.log(JSON.stringify({posted,disabled:byClass('ws-writing').disabled,preview:byClass('ws-preview').textContent,words:root.textContent}));
 """)
     assert out["posted"] == []
@@ -292,7 +382,7 @@ def test_english_writing_ui_and_create_dialog_have_no_chinese_labels():
     out = run(r"""
 listed.files=listed.files.filter(f=>!/[\u4e00-\u9fff]/.test(f.path));
 await window.ROWorkspace.load(root);
-await find('Write a note').click();
+await find('New note').click();
 const screen=root.textContent+root.all().map(e=>e.placeholder||'').join('');
 window.ROWorkspace.openCreateProject();
 const dialog=panelTitle.textContent+panelSubtitle.textContent+panelBody.textContent+panelBody.all().map(e=>e.placeholder||'').join('');
@@ -303,12 +393,12 @@ console.log(JSON.stringify({screen,dialog}));
 
 def test_refresh_files_finds_external_stata_outputs_without_losing_writing():
     out = run(r"""
-await window.ROWorkspace.load(root);await find('整理结果').click();
+await window.ROWorkspace.load(root);await find('记录结果').click();
 typed(byClass('ws-title-input'),'Current finding');typed(byClass('ws-writing'),'An unfinished interpretation.');
 listed.files.push({path:'analysis/stata-new.csv',type:'dataset'});
 await find('刷新文件').click();
 const files=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择项目文件');
-files.value='analysis/stata-new.csv';await find('插入文件').click();
+files.value='analysis/stata-new.csv';await find('插入引用').click();
 console.log(JSON.stringify({title:byClass('ws-title-input').value,content:byClass('ws-writing').value,files:files.children.map(e=>e.value),dirty:window.ROWorkspace.isDirty()}));
 """)
     assert out["title"] == "Current finding"
@@ -357,7 +447,7 @@ listed.tasks_error={code:'workspace_invalid',message:'Invalid task JSON'};
 listed.documents.push({path:'research/notes/bad.md',kind:'note',title:'Bad note',error:{code:'cloud',message:'Not downloaded'}});
 await window.ROWorkspace.load(root);
 const blocked=field('任务').disabled;
-await find('写笔记').click();typed(byClass('ws-title-input'),'Working note');typed(byClass('ws-writing'),'Still able to write');await find('保存').click();
+await find('新建笔记').click();typed(byClass('ws-title-input'),'Working note');typed(byClass('ws-writing'),'Still able to write');await find('保存').click();
 console.log(JSON.stringify({blocked,posted,words:root.textContent}));
 """)
     assert out["blocked"]

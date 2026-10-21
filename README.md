@@ -237,4 +237,4 @@ reproduce it, and what you expected to happen.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE).
+[MIT](LICENSE). Copyright © 2026 [Linying Li](https://github.com/LinyingL).

@@ -202,7 +202,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
     lines = out["lines"]
     assert out["subject"] == A16 and out["backdrop"] == "hidden"
     for line in ["panel-title plain-title: #16 TopicShift 波动", "panel-subtitle: 07-26", "status-label tone-ochre: 待定",
-                 "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 判决与结果",
+                 "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 研究判断与结果",
                  "form-input:  = 待定 先看", "chip: 已放弃", "form-textarea:  = t=2.91",
                  "btn btn-primary: 预览改动", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
                  "form-textarea:  =  (写一条备注：为什么这样做、要注意什么)", "btn btn-small: 添加备注",
@@ -230,7 +230,7 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
-                 "btn btn-small: Open the details page", "node-sec-title: Verdict and result", "chip: Abandoned",
+                 "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "chip: Abandoned",
                  "btn btn-primary: Preview the change", "node-sec-title: Write a note", "desk-meta: Li · 1 Mar 2024",
                  "btn btn-small: Add note", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
@@ -284,13 +284,13 @@ def test_14_3_a_change_previews_then_writes_only_the_cells_changed_and_abandonin
         : post(path, body))(global.apiPost);
       type(fields().find((f) => f.tag === "TEXTAREA" && f.value === "t=2.91"), "t=3.10");
       find("预览改动").click(); await settle(); await settle();
-      find("确认写入").click(); await settle(); await settle(); await settle();
+      find("保存修改").click(); await settle(); await settle(); await settle();
       find("已放弃", "BUTTON").click();
       find("预览改动").click(); await settle(); await settle();
       global.extra = panelLines().filter((l) => l.startsWith("notice-status") || l.includes("放弃的理由"));
       type(field("为什么放弃这条路线"), "残差不平稳");
       find("预览改动").click(); await settle(); await settle();
-      find("确认写入").click(); await settle(); await settle(); await settle();
+      find("保存修改").click(); await settle(); await settle(); await settle();
     """ % {"id": json.dumps(A16), "row": json.dumps(row, ensure_ascii=False)}
     out = _run(case, steps)
     posted = out["posted"]
@@ -327,7 +327,7 @@ def test_14_3_a_members_change_becomes_a_verdict_change_proposal():
       type(field("用你自己的话说明这份提议：PI 会先看到这句话"), "放弃 16");
       type(field("为什么放弃这条路线"), "残差不平稳");
       find("预览这一行").click(); await settle(); await settle();
-      find("写入工作副本，查看提议").click(); await settle(); await settle(); await settle();
+      find("保存后查看提议").click(); await settle(); await settle(); await settle();
       answers.push(true);
       find("提议删除这条连线").click(); await settle(); await settle(); await settle();
       global.extra = { noSentence, before };

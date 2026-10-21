@@ -3786,8 +3786,8 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
       where.className = "attempt-draft-where" + (s.where === "this_mac" ? "" : " warn");
       where.title = "";
       where.textContent = s.where === "this_mac"
-        ? t("起草用这台 Mac 上的模型 {model}", { model: s.model })
-        : t("起草会把所选文件的内容发到 {host}，它不在这台 Mac 上；模型 {model}", { host: s.host, model: s.model });
+        ? t("本地模型：{model}", { model: s.model })
+        : t("所选文件将发送至 {host} · 模型：{model}", { host: s.host, model: s.model });
     }
     sync();
   });
@@ -3851,9 +3851,7 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
       input.value = cell.text;
       input.dataset.typed = "1"; // the leave guard (14.3) asks before a draft is dropped, as for typed words
       const v = { model: d.model, files: (cell.sources || []).join(t("、")) };
-      const note = mk("div", "team-help", proposing
-        ? t("草稿（{model}）。模型说它依据：{files}。发出前请核对。", v)
-        : t("草稿（{model}）。模型说它依据：{files}。写入前请核对。", v));
+      const note = mk("div", "team-help", t("模型：{model} · 参考文件：{files}", v));
       input.after(note);
       input.addEventListener("input", () => note.remove(), { once: true });
       outcome[k] = "filled";
@@ -3863,9 +3861,9 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
   }
   const pick = mk("div", "form-actions");
   pick.append(pathInput, options, addBtn);
-  const field = formFieldEl(t("根据所选文件生成草稿（可选）"), pick);
+  const field = formFieldEl(t("辅助填写"), pick);
   field.append(list, mk("div", "team-help",
-    t("模型只起草「{description}」和「{result}」，只填还空着的格子；文件里看不出来、或说不出依据的格子留空。判决和其它内容由你自己写。", names)));
+    t("仅填写空白的「{description}」和「{result}」。", names)));
   const actions = mk("div", "form-actions");
   actions.appendChild(go);
   box.append(field, where, actions, status, setting.el);
@@ -3975,13 +3973,13 @@ function renderAttemptForm(mode, attemptId) {
   const role = ROTeam.mode();
   const proposing = role === "member";
   if (role === "none") {
-    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议改判";
+    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议修改判断";
     panelSubtitle.textContent = "";
     panelBody.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
     openPanel();
     return;
   }
-  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议改判 #" + number)
+  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改判断 #" + number)
     : (mode === "append" ? "新增尝试" : "编辑尝试 #" + number);
   panelSubtitle.textContent = proposing
     ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
@@ -4043,11 +4041,11 @@ function renderAttemptForm(mode, attemptId) {
     }
     inputs[def.key] = input;
     initial[def.key] = input.value;
-    // 提议改判 carries the verdict and the result only (12.4).
+    // 提议修改判断 carries the verdict and the result only (12.4).
     if (proposing && mode === "update" && def.key !== "verdict" && def.key !== "result") {
       input.disabled = true;
       input.dataset.fixed = "1";
-      input.title = "改判只包括判决和结果；其它格子的改动不会随提议发送";
+      input.title = "修改判断只包括研究判断和结果；其它格子的改动不会随提议发送";
     }
     const fieldEl = formFieldEl(def.label, input);
     if (def.key === "verdict") {
@@ -4078,7 +4076,7 @@ function renderAttemptForm(mode, attemptId) {
     reasonInput.rows = 2;
     reasonInput.placeholder = "放弃这条路线时必须写明为什么";
     const reasonField = formFieldEl("理由（放弃一条路线时必填）", reasonInput);
-    reasonField.appendChild(mk("div", "team-help", "判决标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
+    reasonField.appendChild(mk("div", "team-help", "研究判断标为已放弃时，结果和理由都必须填写：批准后它们会写进尝试表，这条路线当时的依据也会冻结下来。"));
     form.appendChild(reasonField);
   }
   // 14.2: a member's new attempt may name what it grew out of -- official
@@ -4213,14 +4211,14 @@ function renderAttemptForm(mode, attemptId) {
     const note = document.createElement("div");
     note.className = "confirm-note";
     note.textContent = proposing
-      ? "将写入你的工作副本里的 " + preview.file + "（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。"
-      : "将写入 " + preview.file + "（已自动备份）";
+      ? t("保存到工作副本：{file}。保存前自动备份。", { file: preview.file })
+      : t("保存到 {file}，保存前自动备份。", { file: preview.file });
     const confirmActions = document.createElement("div");
     confirmActions.className = "form-actions";
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.className = "btn btn-primary";
-    confirmBtn.textContent = proposing ? "写入工作副本，查看提议" : "确认写入";
+    confirmBtn.textContent = proposing ? t("保存后查看提议") : t("保存修改");
     const backBtn = document.createElement("button");
     backBtn.type = "button";
     backBtn.className = "btn";
@@ -4725,7 +4723,7 @@ async function openRecordsPanel() {
   state.panelSubject = subject;
   panelTitle.textContent = "人工记录";
   panelTitle.title = "";
-  panelSubtitle.textContent = "你的劳动成果，保存在项目自己的 .researchos/ 里；删掉索引也不会丢";
+  panelSubtitle.textContent = t("项目记录与备份");
   panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
   openPanel();
   await renderRecordsPanel(subject);
@@ -6652,7 +6650,7 @@ function openAddDialog() {
   };
   panelTitle.textContent = "添加项目";
   panelTitle.title = "";
-  panelSubtitle.textContent = "先看一看这个文件夹；你确认之前，什么都不会写入";
+  panelSubtitle.textContent = t("选择已有的项目文件夹");
   panelBody.innerHTML = "";
   const choose = mk("div", "add-choose");
   const row = mk("div", "locate-row");

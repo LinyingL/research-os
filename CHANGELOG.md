@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.
 - Write research questions, plans, notes and result interpretations on the
@@ -12,6 +13,8 @@
 - Preserve unsaved drafts during refreshes, detect conflicting file edits, and
   retain saved versions. Team drafts use the existing PI proposal workflow.
 - Avoid opening unrelated protected and cloud folders while adding a project.
+- Shorten interface copy and distinguish saving, proposing, approval and publication.
+  Correct file-name matching, research-assessment labels and backup timing in previews.
 
 
 ## 0.2.0 — 2026-10-20
