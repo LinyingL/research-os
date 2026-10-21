@@ -102,6 +102,7 @@ import AppKit
 // V8 U5 (DESIGN.md 12.9): one command per sidebar section, plus 提交提议
 // (a member) and 发布 (the PI).
 let shellCommands: Set<String> = [
+    "workspace", "create-project",
     "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
     "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
 ]
@@ -128,6 +129,7 @@ let folderRequestLimit = 80
 // anything else, and such a message is ignored.
 func folderPanelMessage(_ purpose: String) -> String? {
     switch purpose {
+    case "create": return "选择新项目的保存位置"
     case "add": return "选择要加入 Research OS 的项目文件夹"
     case "locate": return "选择项目文件夹的新位置"
     case "shared": return "选择公盘文件夹（和团队共享的 OneDrive 文件夹）"
@@ -161,10 +163,16 @@ let englishText: [String: String] = [
     "退出": "Quit Research OS",
     // 文件
     "文件": "File",
+    "新建项目…": "New Project…",
+    "项目首页": "Project Home",
+    "选择新项目的保存位置": "Choose where to save the new project",
     "添加项目…": "Add Project…",
     "提交提议…": "Submit Proposal…",
     "发布": "Publish",
     "关闭": "Close",
+    "有未保存的内容，仍要关闭吗？": "There are unsaved changes. Close anyway?",
+    "继续编辑": "Keep Editing",
+    "放弃修改": "Discard Changes",
     // 编辑
     "编辑": "Edit",
     "撤销": "Undo",
@@ -396,7 +404,7 @@ func placeholderPage(headline: String, detail: String?, logText: String?, htmlLa
 
 // -- The application ------------------------------------------------------------
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate,
     WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 
     let port = configuredPort()
@@ -409,6 +417,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     var showingLog = false
     var hintShown = false
     var quitting = false
+    var checkingUnsaved = false
+    var discardConfirmed = false
     var signalSources: [DispatchSourceSignal] = []
     var choosingFolder = false
     var teamMode = "single"
@@ -450,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         window.title = "Research OS"
         window.contentMinSize = NSSize(width: 900, height: 600)
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.backgroundColor = paperColor
         window.center()
         window.setFrameAutosaveName("RCEMain")
@@ -621,6 +632,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
     // MARK: quit
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if discardConfirmed || !appLoaded { return stopEngineForQuit() }
+        if checkingUnsaved || quitting { return .terminateLater }
+        checkingUnsaved = true
+        confirmUnsaved { [weak self] allowed in
+            guard let self = self else { return }
+            self.checkingUnsaved = false
+            if !allowed { NSApp.reply(toApplicationShouldTerminate: false); return }
+            self.discardConfirmed = true
+            if self.stopEngineForQuit() == .terminateNow { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if discardConfirmed || !appLoaded { return true }
+        if checkingUnsaved { return false }
+        checkingUnsaved = true
+        confirmUnsaved { [weak self] allowed in
+            guard let self = self else { return }
+            self.checkingUnsaved = false
+            if allowed { self.discardConfirmed = true; self.window.performClose(nil) }
+        }
+        return false
+    }
+
+    func confirmUnsaved(_ completion: @escaping (Bool) -> Void) {
+        webView.evaluateJavaScript("!!(window.ROWorkspace && ROWorkspace.isDirty && ROWorkspace.isDirty())") { [weak self] value, _ in
+            guard let self = self else { completion(false); return }
+            guard (value as? Bool) == true else { completion(true); return }
+            let alert = NSAlert()
+            alert.messageText = self.tr("有未保存的内容，仍要关闭吗？")
+            alert.addButton(withTitle: self.tr("继续编辑"))
+            alert.addButton(withTitle: self.tr("放弃修改"))
+            completion(alert.runModal() == .alertSecondButtonReturn)
+        }
+    }
+
+    func stopEngineForQuit() -> NSApplication.TerminateReply {
         guard let process = child, process.isRunning else { return .terminateNow }
         if quitting { return .terminateLater }
         quitting = true
@@ -692,6 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         publishItem = cmd("发布", "publish")
         teamSeparator = .separator()
         main.addItem(submenu("文件", [
+            cmd("新建项目…", "create-project", "n"),
             cmd("添加项目…", "add-project", "o"),
             teamSeparator,
             proposeItem,
@@ -715,6 +765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         zoomInAlt.isHidden = true
         zoomInAlt.allowsKeyEquivalentWhenHidden = true
         let viewMenu = submenu("视图", [
+            cmd("项目首页", "workspace"),
             cmd("工作台", "desk", "1"),
             cmd("研究路线", "routes", "2"),
             cmd("成果", "results", "3"),
@@ -910,7 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation,
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = purpose == "working"
+        panel.canCreateDirectories = purpose == "working" || purpose == "create"
         panel.prompt = tr("选择")
         panel.message = tr(panelMessage)
         panel.beginSheetModal(for: window) { [weak self] response in

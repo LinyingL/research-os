@@ -180,7 +180,7 @@ def test_12_11_verdicts_are_shown_as_words_never_as_markers():
 # -- 12.9: the sidebar ---------------------------------------------------------------------------------------
 
 
-SECTIONS = [("desk", "工作台"), ("routes", "研究路线"), ("results", "成果"), ("variables", "变量"),
+SECTIONS = [("workspace", "项目首页"), ("desk", "工作台"), ("routes", "研究路线"), ("results", "成果"), ("variables", "变量"),
             ("literature", "文献"), ("data", "数据与代码"), ("proposals", "提议"), ("members", "成员")]
 
 
@@ -214,7 +214,7 @@ def test_12_9_every_old_view_stays_reachable_and_the_shell_commands_still_work()
                     '"canvas": () => activateView("canvas")', '"variables": () => activateView("variables")',
                     '"add-project": () => openAddDialog(),'):
         assert command in html
-    assert 'activateView(storedView() || "desk")' in html
+    assert 'activateView(storedView() || "workspace")' in html
 
 
 # -- the served desk script ----------------------------------------------------------------------------------

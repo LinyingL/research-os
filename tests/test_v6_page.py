@@ -131,7 +131,8 @@ def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothin
     welcome = html[html.index('<section id="welcome"'):html.index("</section>", html.index('<section id="welcome"'))]
     paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", welcome)
     assert len(paragraphs) == 3
-    assert "脚本、数据和文稿" in paragraphs[0] and "判断" in paragraphs[1]
+    assert "研究问题和计划" in paragraphs[0] and "熟悉的工具" in paragraphs[1]
+    assert 'id="welcome-create-btn"' in welcome
     assert paragraphs[2] == "项目就是存放一项研究的那个文件夹。"
     assert '<button id="welcome-add-btn" class="btn" type="button" data-i18n>添加项目…</button>' in welcome
     assert "error" not in welcome

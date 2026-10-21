@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Create a project from its name and save location. The app prepares an empty
+  attempt record; no historical table or configuration file is needed first.
+- Write research questions, plans, notes and result interpretations on the
+  project home page. Save as Markdown, preview figures and tables, and reference
+  files already produced by Stata or other research tools.
+- Keep optional tasks with an owner, date and completion checkbox. Tasks have
+  no required order and do not gate writing or research attempts.
+- Preserve unsaved drafts during refreshes, detect conflicting file edits, and
+  retain saved versions. Team drafts use the existing PI proposal workflow.
+- Avoid opening unrelated protected and cloud folders while adding a project.
+
+
 ## 0.2.0 — 2026-10-20
 
 ### Stata support

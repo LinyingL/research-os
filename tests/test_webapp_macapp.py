@@ -369,6 +369,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     whitelist = _SHELL[_SHELL.index("let shellCommands"):]
     whitelist = set(re.findall(r'"([a-z-]+)"', whitelist[: whitelist.index("]")]))
     assert whitelist == {
+        "workspace", "create-project",
         "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
         "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
     }
@@ -379,7 +380,9 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     table = table[: table.index("\n};\n")]
     accepted = set(re.findall(r'^  "([a-z-]+)":', table, re.M))
     assert whitelist <= accepted
-    for name, target in (("desk", 'activateView("desk")'), ("routes", 'activateView("tree")'),
+    for name, target in (("workspace", 'activateView("workspace")'),
+                         ("create-project", "ROWorkspace.openCreateProject()"),
+                         ("desk", 'activateView("desk")'), ("routes", 'activateView("tree")'),
                          ("results", 'activateView("results")'), ("variables", 'activateView("variables")'),
                          ("literature", 'activateView("literature")'), ("data", "activateView(lastDataView)"),
                          ("proposals", 'activateView("proposals")'), ("members", 'activateView("members")'),
@@ -461,16 +464,16 @@ def test_shell_file_menu_adds_a_project_on_cmd_o():
     assert '"add-project": () => openAddDialog(),' in page
 
 
-def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
+def test_shell_folder_panel_recognizes_create_add_and_locate_purposes():
     """DESIGN.md 10.7 (and 10.8 #1): the bridge takes `{type, request,
-    purpose}` with purpose exactly "add" or "locate" -- the panel's message
-    is 「选择要加入 Research OS 的项目文件夹」 or 「选择项目文件夹的新位置」 and nothing
-    else changes; the two-key shape stays the locate panel (a page from
-    before V6); a third key that is anything else is ignored."""
+    purpose}`; a new project chooses its parent save folder separately
+    from adding an existing project. The two-key shape remains the locate
+    panel for older pages; an unknown purpose is still ignored."""
     helper = _SHELL[_SHELL.index("func folderPanelMessage"):]
     helper = helper[: helper.index("\n}\n")]
     assert 'case "add": return "选择要加入 Research OS 的项目文件夹"' in helper
     assert 'case "locate": return "选择项目文件夹的新位置"' in helper
+    assert 'case "create": return "选择新项目的保存位置"' in helper
     assert "default: return nil" in helper
     handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
     handler = handler[: handler.index("\n    }\n")]
@@ -483,12 +486,12 @@ def test_shell_folder_panel_takes_exactly_add_or_locate_as_its_purpose():
     choose = choose[: choose.index("\n    }\n")]
     assert "let panelMessage = folderPanelMessage(purpose)" in choose
     assert "panel.message = tr(panelMessage)" in choose  # V9 13.3: in the shell's language
-    # V8 U4: only the panel for a member's new working copy may make a folder
-    assert 'panel.canCreateDirectories = purpose == "working"' in choose
+    # Both a working copy and a new project's parent may need a new folder.
+    assert 'panel.canCreateDirectories = purpose == "working" || purpose == "create"' in choose
     # the page sends the purpose only to a shell that says it takes it
     page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
     assert 'shellCan("choose-folder-purpose")) message.purpose = purpose;' in page
-    assert 'const FOLDER_PURPOSES = ["add", "locate"];' in page
+    assert 'const FOLDER_PURPOSES = ["add", "locate", "create"];' in page
 
 
 def test_u4_shell_takes_the_shared_and_working_folders_and_a_key_file():
@@ -559,7 +562,8 @@ def test_shell_bridge_uses_only_fixed_shapes():
     assert "shellCommands.contains(name)" in send
     assert "evaluateJavaScript(\"window.RCE && RCE.command('\\(name)')\"" in send
     assert send.index("shellCommands.contains(name)") < send.index("evaluateJavaScript")
-    assert _SHELL.count("evaluateJavaScript(") == 2  # sendCommand + the fixed 'reload'
+    assert _SHELL.count("evaluateJavaScript(") == 3  # command + reload + a fixed dirty-state probe
+    assert 'evaluateJavaScript("!!(window.ROWorkspace && ROWorkspace.isDirty && ROWorkspace.isDirty())")' in _SHELL
     assert 'add(self, name: "rce")' in _SHELL
     handler = _SHELL[_SHELL.index("didReceive message: WKScriptMessage"):]
     assert 'body["type"] as? String == "title"' in handler
@@ -579,11 +583,29 @@ def test_shell_quit_names_its_own_child_in_the_shutdown_request():
     alone": the shutdown carries the spawned child's pid, so an engine
     that holds the port but is NOT our child refuses it (server side:
     `_check_shutdown_target`). Adversarial review of the V4 work."""
-    quit_path = _SHELL[_SHELL.index("func applicationShouldTerminate(_ sender"):]
+    quit_path = _SHELL[_SHELL.index("func stopEngineForQuit()"):]
     quit_path = quit_path[: quit_path.index("\n    }\n")]
     assert 'guard let process = child, process.isRunning' in quit_path
     assert '\\"pid\\": \\(process.processIdentifier)' in quit_path
     assert 'Data("{}".utf8)' not in quit_path
+
+
+def test_shell_checks_for_unsaved_writing_before_quit_or_window_close():
+    quit_path = _SHELL[_SHELL.index("func applicationShouldTerminate(_ sender"):]
+    quit_path = quit_path[:quit_path.index("\n    }\n")]
+    assert "confirmUnsaved {" in quit_path
+    assert "if !allowed { NSApp.reply(toApplicationShouldTerminate: false); return }" in quit_path
+    assert quit_path.index("if !allowed") < quit_path.index("self.stopEngineForQuit()")
+    close = _SHELL[_SHELL.index("func windowShouldClose"):]
+    close = close[:close.index("\n    }\n")]
+    assert "confirmUnsaved {" in close
+    assert "if allowed { self.discardConfirmed = true; self.window.performClose(nil) }" in close
+    assert "return false" in close
+    confirmation = _SHELL[_SHELL.index("func confirmUnsaved"):]
+    confirmation = confirmation[:confirmation.index("\n    }\n")]
+    assert "completion(alert.runModal() == .alertSecondButtonReturn)" in confirmation
+    assert 'alert.addButton(withTitle: self.tr("继续编辑"))' in confirmation
+    assert 'alert.addButton(withTitle: self.tr("放弃修改"))' in confirmation
 
 
 def test_shell_placeholder_shows_the_log_only_as_escaped_text():
@@ -784,6 +806,7 @@ _TABLE_START = "let englishText: [String: String] = ["
 _ENGLISH_MENUS = {
     "关于 Research OS": "About Research OS", "退出": "Quit Research OS",
     "文件": "File", "添加项目…": "Add Project…", "提交提议…": "Submit Proposal…", "发布": "Publish",
+    "新建项目…": "New Project…", "项目首页": "Project Home",
     "关闭": "Close",
     "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
     "全选": "Select All",

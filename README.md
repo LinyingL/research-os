@@ -25,6 +25,25 @@ or work with a PI and collaborators through a shared folder.
 
 See the [release notes](CHANGELOG.md) for details.
 
+## Project writing workspace — in development
+
+The current development branch adds **New project…** and **Project home**.
+Start with a name and save location, then write your research question and
+plan directly in the app. Add notes, result interpretations and optional
+tasks whenever they help; there is no required sequence.
+
+Reference figures, tables and scripts already in the project folder. Code
+and analysis stay in Stata or your usual tools. Documents save as Markdown,
+with version history and the existing team review workflow.
+
+See [Using project home](docs/project-workspace.md) or
+[项目首页使用说明](docs/项目首页.md). These features are not in the published
+0.2.0 release yet.
+
+Project home in the development build, using a sample project:
+
+![Research question, plan, notes, results and optional tasks on project home](docs/images/project-home.png)
+
 ## What it helps you answer
 
 - Where did this figure come from, and which data and scripts are linked to it?

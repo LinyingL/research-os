@@ -1067,10 +1067,10 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                     if CJK.search(el["attrs"].get(name, ""))]
     assert chinese == []
     assert _words(after, "brand-sub") == ["Research provenance"]
-    assert _words(after, "side-label") == ["Desk", "Research routes", "Outputs", "Variables", "Literature",
+    assert _words(after, "side-label") == ["Project home", "Desk", "Research routes", "Outputs", "Variables", "Literature",
                                            "Data & code", "Proposals", "Members"]
     assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
-    assert _words(after, "page-title") == ["Desk"]
+    assert _words(after, "page-title") == ["Project home"]
     assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
     labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
               for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn",
@@ -1083,9 +1083,9 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                and el["attrs"].get("id") not in ("project-menu-btn", "lang-btn", "new-attempt-btn")
                and "shutdown-btn" not in el["attrs"].get("class", "") and "side-item" not in el["attrs"].get("class", "")]
     assert welcome == [
-        "Research OS reads the scripts, data and drafts in a research folder and works out how they connect, step by step.",
-        "Research OS records the judgments you make about these links and keeps them with the study’s files.",
-        "Add project…", "Join a project from the shared folder…", "A project is the folder that holds one study."]
+        "Start with a research question and a plan, then write notes and bring results together here.",
+        "Keep using your own tools for code and analysis. Link their files to your research records whenever you need them.",
+        "New project…", "Add project…", "Join a project from the shared folder…", "A project is the folder that holds one study."]
 
 
 @needs_node
@@ -1093,16 +1093,16 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
 def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     """13.8 #1: a Chinese screen -- chosen, or the Mac's with nothing
     saved -- shows the frame's markup exactly as written: every word and
-    attribute as before, the eight sections as 12.9 names them."""
+    attribute as before, the project home and the eight research sections."""
     page, i18n_js = _served_page_and_i18n(live, saved)
     before, after = _frame_on_screen(page, i18n_js, languages)
     assert after == before
-    assert _words(after, "side-label") == ["工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"]
-    assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["工作台"]
+    assert _words(after, "side-label") == ["项目首页", "工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
     assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
-    assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-add-btn", "welcome-join-btn")] == [
-        "添加项目…", "从公盘加入项目…"]
+    assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-create-btn", "welcome-add-btn", "welcome-join-btn")] == [
+        "新建项目…", "添加项目…", "从公盘加入项目…"]
 
 
 def test_13_3_the_frame_wraps_and_never_cuts_a_word():
@@ -1127,19 +1127,19 @@ def test_13_7_page_titles_follow_the_language(saved):
     language; SECTION_TITLES stays the Chinese node.js's 「返回…」 reads."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'document.getElementById("page-title").textContent = sectionTitle(section);' in html
-    assert ('const SECTION_TITLES = {\n  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", '
+    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", '
             'literature: "文献",\n  data: "数据与代码", proposals: "提议", members: "成员",\n};') in html
     code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
             + _app_function("function sectionTitle("))
-    sections = ["desk", "routes", "results", "variables", "literature", "data", "proposals", "members", "node", None]
+    sections = ["workspace", "desk", "routes", "results", "variables", "literature", "data", "proposals", "members", "node", None]
     expr = f"(function () {{ {code} return {json.dumps(sections)}.map(sectionTitle); }})()"
     got = _node("global.window = {};\n" + f"process.stdout.write(JSON.stringify({expr}));\n") if saved is None \
         else _with_i18n(expr, saved=saved)
     if saved == "en":
-        assert got == ["Desk", "Research routes", "Outputs", "Variables", "Literature", "Data & code", "Proposals",
+        assert got == ["Project home", "Desk", "Research routes", "Outputs", "Variables", "Literature", "Data & code", "Proposals",
                        "Members", "", ""]
     else:
-        assert got == ["工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
+        assert got == ["项目首页", "工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
 
 
 _STOPPED_ZH = ('<main id="main"><div class="stopped-note"><h2>服务已停止</h2><p>本地服务已经关闭，可以关闭此页。</p>'
@@ -2067,7 +2067,8 @@ def _menu_expected(w: dict[str, str]) -> list:
     def x(key: str) -> str:
         return w.get(key, key)
 
-    tail = [["pm-item", x("推送到 GitHub…"), "", "", False], ["pm-item", x("添加项目…"), "", "", False],
+    tail = [["pm-item", x("推送到 GitHub…"), "", "", False], ["pm-item", x("新建项目…"), "", "", False],
+            ["pm-item", x("添加项目…"), "", "", False],
             ["pm-item", x("从公盘加入项目…"), "", "", False]]
     listed = [["pm-item", "旧项目", x("找不到文件夹"), "/r/b", True], ["pm-item pm-sub", x("选择新位置…"), "", "", False],
               ["pm-item", "old", x("未初始化"), "/r/c", True]]
@@ -2111,7 +2112,7 @@ def test_13_7_the_switcher_and_its_menu_in_english():
         "还没有项目": "No project yet", "添加项目": "Add project", "切换项目或管理列表": "Switch project or manage the list",
         "列表里还没有项目": "No projects in the list yet", "不在列表里": "Not in the list", "找不到文件夹": "Folder not found",
         "未初始化": "Not initialized", "选择新位置…": "Choose a new location…", "推送到 GitHub…": "Push to GitHub…",
-        "添加项目…": "Add project…", "从公盘加入项目…": "Join a project from the shared folder…",
+        "新建项目…": "New project…", "添加项目…": "Add project…", "从公盘加入项目…": "Join a project from the shared folder…",
         "重新扫描这个项目": "Rescan this project", "重命名显示名称…": "Change display name…",
         "从列表中移除…": "Remove from the list…", "GitHub：": "GitHub: ", "正在从 GitHub 获取…": "Fetching from GitHub…",
         "从 GitHub 获取最新状态": "Fetch the latest state from GitHub",

@@ -1982,6 +1982,7 @@
   // button that says so.
 
   async function openJoinDialog() {
+    if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
     if (typeof closeProjectMenu === "function") closeProjectMenu(false);
     const subject = { kind: "join" };
     view.joinSubject = subject;

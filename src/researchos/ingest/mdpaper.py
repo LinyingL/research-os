@@ -65,6 +65,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
+from urllib.parse import unquote
 
 from researchos import cloud
 from researchos import db
@@ -85,10 +86,9 @@ _MD_HEADING_RE = re.compile(r"^ {0,3}(#{1,3})\s+(.*?)\s*#*\s*$")
 
 # ![alt](path "optional title") -- the path group stops at the first
 # whitespace or ')', so a path containing a literal space or parenthesis
-# (the CommonMark <path> / escaped-paren forms) is not handled; a real
-# research repo's image filenames are not expected to need those forms, and
-# under-matching here only means a figure link is skipped + logged, never a
-# wrong one fabricated.
+# (the CommonMark <path> / escaped-paren forms) is not handled. The writing
+# desk encodes spaces and parentheses in URI paths; those are decoded after
+# this match, so its file references retain the real on-disk filenames.
 _MD_IMAGE_RE = re.compile(r'!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
 
 # A fenced code block opens with a line of 3+ backticks or tildes (optional
@@ -191,15 +191,22 @@ def _resolve_image_path(md_rel_path: str, raw_path: str) -> str | None:
     """Resolve an image reference's path relative to the .md file's own
     directory (Markdown has no `\\graphicspath`-equivalent, so there is no
     second directory to try). None (caller skips + logs) for: an empty
-    path, a remote URL (http(s):// or protocol-relative "//" -- not a
-    repo-tracked file, nothing to validate against the image inventory), or
-    a path that normalizes outside the repo root."""
+    path, a URI scheme or absolute path (not a repo-tracked file), or a
+    path that normalizes outside the repo root. Decode URI escapes once,
+    before checking those boundaries; a literal percent sign which is not
+    a valid escape stays a percent sign."""
     raw_path = raw_path.strip()
     if not raw_path:
         return None
     if raw_path.startswith("<") and raw_path.endswith(">") and len(raw_path) >= 2:
         raw_path = raw_path[1:-1].strip()  # CommonMark's <path with spaces> form
-    if raw_path.startswith(("http://", "https://", "//")):
+    try:
+        raw_path = unquote(raw_path, errors="strict")
+    except UnicodeError:
+        return None
+    if (not raw_path or re.match(r"^[a-z][a-z0-9+.-]*:", raw_path, re.IGNORECASE)
+            or posixpath.isabs(raw_path) or "\\" in raw_path
+            or any(ord(char) < 32 or ord(char) == 127 for char in raw_path)):
         return None
     md_dir = posixpath.dirname(md_rel_path) or "."
     normalized = posixpath.normpath(posixpath.join(md_dir, raw_path))

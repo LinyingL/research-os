@@ -363,7 +363,10 @@ def _top_level_folders() -> set[str]:
         Path("/Users"), Path("/private"), Path("/tmp"), Path("/var"), Path("/private/tmp"),
         Path("/private/var"), Path("/Volumes"), Path("/home"),
     ]
-    found = {_canonical_if_exists(p) for p in candidates}
+    # Protected locations only need metadata here. Opening every candidate
+    # to ask macOS for its spelling can request access to unrelated folders
+    # (or wait for iCloud) while adding an ordinary local research folder.
+    found = {str(p.resolve()) for p in candidates if p.is_dir()}
     found.add("/")
     return {f for f in found if f}
 
@@ -375,7 +378,7 @@ def _system_folders() -> list[str]:
     """Folders refused by containment (10.2): anything inside them."""
     found = set(_SYSTEM_FOLDERS)
     for name in _SYSTEM_FOLDERS:
-        canonical = _canonical_if_exists(Path(name))
+        canonical = str(Path(name).resolve()) if Path(name).is_dir() else None
         if canonical:
             found.add(canonical)
     return sorted(found)
@@ -392,7 +395,30 @@ def _volume_root(canonical: str) -> bool:
 
 
 def _location_refusal(requested: str, canonical: str) -> Inspection | None:
-    if canonical in _top_level_folders() or _volume_root(canonical) or cloud.is_top_level(canonical):
+    protected = _top_level_folders()
+    same_top_level = canonical in protected
+    if not same_top_level:
+        for candidate in protected:
+            try:
+                if os.path.samefile(canonical, candidate):
+                    same_top_level = True
+                    break
+            except OSError:
+                continue
+    # Matching the CloudStorage container or one provider's root needs only
+    # metadata. cloud.is_top_level() canonicalizes by opening the container,
+    # which can ask for permission even when the selected project is elsewhere.
+    cloud_top_level = False
+    cloud_root = cloud.cloudstorage_root()
+    try:
+        if cloud_root.is_dir():
+            for candidate in (Path(canonical), Path(canonical).parent):
+                if os.path.samefile(candidate, cloud_root):
+                    cloud_top_level = True
+                    break
+    except OSError:
+        pass
+    if same_top_level or _volume_root(canonical) or cloud_top_level:
         return _refused(requested, "top_level", root=canonical, detail=f"{canonical} is a top-level folder, not a project")
     for system in _system_folders():
         if _inside(canonical, system):
@@ -468,6 +494,21 @@ def _cloud_state(root: Path, dataless: int) -> dict[str, Any] | None:
     """11.1: which provider holds the folder, whether its client runs, and
     -- files only in the cloud, the client not running -- that those files
     are not read, in 11.1's sentence. None outside a synced folder."""
+    # Most selected projects are not in CloudStorage. Establish containment
+    # from directory metadata before asking the provider code to open its root
+    # for canonical spelling; an unrelated library permission must not block
+    # adding a local project. samefile also handles case/normalization aliases.
+    cloud_root = cloud.cloudstorage_root()
+    inside_cloud = False
+    for ancestor in (root, *root.parents):
+        try:
+            if os.path.samefile(ancestor, cloud_root):
+                inside_cloud = True
+                break
+        except OSError:
+            continue
+    if not inside_cloud:
+        return None
     prov = cloud.provider(root)
     if prov is None:
         return None
