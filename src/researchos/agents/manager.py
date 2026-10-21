@@ -1163,6 +1163,13 @@ class AgentManager:
         for line in raw.splitlines():
             stream.feed(line)
         steps = list(stream.steps)
+        # Paths inside the project read as the project names them (`analysis/vol.py`), not from `/`.
+        prefixes = sorted({os.path.join(str(p), "") for p in (run.get("root"), os.path.realpath(str(run.get("root"))))
+                           if p and p != "None"}, key=len, reverse=True)
+        if prefixes:
+            for step in steps:
+                for prefix in prefixes:
+                    step["text"] = step["text"].replace(prefix, "")
         state = run.get("state")
         if state not in run_store.ACTIVE_STATES and not (steps and steps[-1]["kind"] == "end"):
             en = _lang(run.get("lang")) == "en"

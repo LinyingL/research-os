@@ -386,10 +386,10 @@ def test_claude_stream_full_run():
                        CLAUDE_WRITE, CLAUDE_WRITE_OK, CLAUDE_RATE, CLAUDE_TASK_SUMMARY, CLAUDE_TEXT, CLAUDE_RESULT])
     assert [(s["kind"], s["tool"]) for s in steps] == [
         ("start", None), ("tool", "Write"), ("say", None), ("end", None)]
-    assert steps[0]["text"] == "model claude-haiku-5-5"
+    assert steps[0]["text"] == "claude-haiku-5-5"  # the model's own name, no words of ours
     assert steps[1]["text"] == "Write: /tmp/proj/hello.txt"
     assert steps[2]["text"] == "I created `hello.txt` with the text hi."  # single line
-    assert steps[3]["text"] == "I created `hello.txt` with the text hi."
+    assert steps[3]["text"] == ""  # the final answer was just shown as what it said: not repeated
     assert st.steps == steps
     assert st.session_id == SID and st.model == "claude-haiku-5-5"
     assert st.cost_usd == pytest.approx(0.00460972) and st.is_error is False
@@ -524,7 +524,7 @@ def test_opencode_stream_full_run():
                        OC_TEXT, OC_STEP_FINISH_STOP, OC_STEP_START])
     assert [(s["kind"], s["tool"]) for s in steps] == [
         ("start", None), ("tool", "Write"), ("tool", "Bash"), ("tool", "researchos_complete_task"), ("say", None)]
-    assert steps[0]["text"] == f"session {OSID}"
+    assert steps[0]["text"] == ""
     assert steps[1]["text"] == "Write: /abs/hello.txt"
     assert steps[2]["text"] == "Bash: echo hi python run.py"
     assert steps[3]["text"] == "researchos_complete_task"
@@ -769,3 +769,17 @@ def test_all_brief_texts_are_clean_in_both_languages():
         for lang in ("zh", "en"):
             _clean(brief.rules(lang=lang, runner=runner, prot=PROT))
     assert EMOJI_OR_ARROW.search("done \u2192 next") and EMOJI_OR_ARROW.search("ok \U0001f600")  # the guard itself works
+
+
+def test_claude_stream_leaves_out_tool_loading_and_keeps_a_different_ending():
+    """ToolSearch is Claude Code loading its own tools, not a step of the work;
+    an ending that differs from the last thing said is kept."""
+    st = runners.ClaudeStream()
+    search = ('{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t9","name":"ToolSearch",'
+              '"input":{"query":"select:mcp__researchos__researchos_complete_task"}}]},"session_id":"%s"}' % SID)
+    said = '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on it."}]},"session_id":"%s"}' % SID
+    end = ('{"type":"result","subtype":"success","is_error":false,"result":"All done.","session_id":"%s",'
+           '"total_cost_usd":0.01}' % SID)
+    steps = _feed(st, [CLAUDE_INIT, search, said, end])
+    assert [(s["kind"], s["text"]) for s in steps] == [
+        ("start", "claude-haiku-5-5"), ("say", "Working on it."), ("end", "All done.")]

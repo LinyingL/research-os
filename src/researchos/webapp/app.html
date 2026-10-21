@@ -2019,6 +2019,9 @@ function activateView(name) {
   document.body.classList.toggle("canvas-mode", FULL_WINDOW_VIEWS.includes(name) && !state.noProject);
   if (state.noProject) return null; // 10.1: every section shows only the welcome
   if (name === "workspace" && !views.workspace.dataset.loaded) return ROWorkspace.load(views.workspace);
+  // 17.3: an agent run may have moved on while another section was shown; the
+  // project home follows it again (its own poll stops when it is not on screen).
+  if (name === "workspace" && typeof ROWorkspace.resume === "function") ROWorkspace.resume();
   if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);

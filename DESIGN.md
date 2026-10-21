@@ -4115,8 +4115,8 @@ Added to 13.4: AI 执行者 "AI agent"; 运行 (a run, and the button) "Run";
 打回 "Send back"; 撤回本次运行 "Undo this run"; 越界改动 "Out-of-bounds
 change"; AI 执行 (history source) "By an agent". States: 准备中
 "Preparing", 运行中 "Running", 已完成 "Done", 未报告 "Ended without a
-report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 已撤回
-"Undone".
+report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 已撤回本次运行
+"Undone" (not 已撤回, which is a withdrawn proposal's word).
 
 ### 17.10 Acceptance
 

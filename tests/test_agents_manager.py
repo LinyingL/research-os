@@ -1291,3 +1291,18 @@ def test_ps_table_and_descendants():
     finally:
         child.kill()
         child.wait()
+
+
+def test_steps_name_project_files_by_their_path_in_the_project(tmp_path):
+    """The run log reads `Write: analysis/vol.py`, not the whole path from `/` (17.4)."""
+    from researchos.agents import manager as manager_mod
+
+    root = tmp_path / "Quant"
+    root.mkdir()
+    events = tmp_path / "events.jsonl"
+    write = {"type": "assistant", "session_id": "s", "message": {"content": [
+        {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": f"{root}/analysis/vol.py"}}]}}
+    events.write_text(json.dumps(write) + "\n", encoding="utf-8")
+    steps, total = manager_mod.AgentManager._steps(events, {"runner": "claude-code", "root": str(root),
+                                                            "state": "done", "lang": "en"})
+    assert steps[0]["text"] == "Write: analysis/vol.py" and total == 2

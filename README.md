@@ -36,6 +36,11 @@ Reference figures, tables and scripts already in the project folder. Code
 and analysis stay in Stata or your usual tools. Documents save as Markdown,
 with version history and the existing team review workflow.
 
+A task can also be given to an **AI agent** on your Mac, Claude Code or a
+model reached through OpenCode. It does the task in the project folder and
+reports back; every change it makes is attributed to it and the run can be
+undone. See [Optional: AI agents](#optional-ai-agents).
+
 See [Using project home](docs/project-workspace.md) or
 [项目首页使用说明](docs/项目首页.md). These features are not in the published
 0.2.0 release yet.
@@ -88,6 +93,7 @@ them or returning them with a reason.
 | Projects and literature | Switch between projects and connect draft citations to bibliography entries and a local Zotero library. |
 | Stata projects | Trace do-file inputs and outputs, resolve macro-based paths, and inspect `.dta` structure without loading its data rows. |
 | Model-assisted drafts | Fill empty description and result fields from chosen files, with source and number checks before the draft reaches the form. |
+| AI agents | Assign a task to Claude Code or an OpenCode model. It works in the project folder and writes a result record; you read the run log, answer its questions, send work back or undo the run. Judgments stay with people. |
 
 The engine reads existing Python, R and Stata scripts, Markdown and LaTeX drafts,
 bibliographies, and optionally git history and MLflow/W&B run logs. A git
@@ -191,6 +197,49 @@ The default server is on your Mac. If you set an address on another
 computer, the selected file contents are sent there; the form shows the
 destination before generation. No model is needed for the rest of the app.
 
+### Optional: AI agents
+
+A task's owner can be an AI agent installed on your Mac: Claude Code, or
+a model reached through OpenCode (including a local model served by LM
+Studio or Ollama). The agent does the task. In the project folder it can
+write code, run Python, R or Stata, install packages, download data and
+write notes, then finish with a result record that marks the task done.
+Research OS does not install or ship an agent.
+
+1. Install Claude Code or OpenCode and sign in to it, as you would to use
+   it in a terminal.
+2. Install Research OS with the optional MCP extra, which the agent uses to
+   report back:
+
+   ```bash
+   uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os
+   ```
+
+   From a checkout, use `python -m pip install -e ".[mcp]"` instead. Without
+   the extra everything else works, and **Run** tells you what to install.
+3. On a project's home page, open **AI agent** in the task area. Research OS
+   shows whether it found each program; if not, enter its full path. Add an
+   agent by choosing the program and a model name, such as `sonnet` for
+   Claude Code or `provider/model` as `opencode models` lists it.
+4. Set a task's **Owner** to the agent and click **Run**. The task shows
+   what the agent is doing, with a **Run log** of what it said, ran and
+   changed.
+
+An agent never decides an attempt's verdict or result, confirms a link,
+edits `.researchos/`, proposes or approves anything for the team,
+publishes, syncs, changes git's state, or changes a data file that existed
+before the run. If it asks a question, the task shows **Waiting for your
+answer**. **Send back** reopens finished work with your instructions, and
+**Undo this run** restores what the run changed.
+
+This is a barrier, not a sandbox. Research OS checks the agent's commands
+and compares the folder after each run, but an agent set on getting around
+the checks with shell commands could, and OpenCode is checked only after the
+run. Claude Code sends the project content it reads to Anthropic. OpenCode
+sends it to the model provider you configured in OpenCode. Use a copy of the
+project until you trust the result. Details are in
+[Using project home](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task).
+
 ## Records and storage
 
 - **Your project** holds its research files and `.researchos/` records:
@@ -218,6 +267,10 @@ material. `RESEARCHOS_HOME` changes the location of machine-local state.
   larger and binary files are generally represented by fingerprints,
   sizes, and available table summaries. Published team snapshots retain
   file contents separately. A fingerprint alone cannot restore a file.
+- **An agent's work is attributed, not pre-approved.** An AI agent changes
+  project files directly; the safeguard is the record of what it did and
+  the option to undo the run, not approval beforehand. Its guard is a
+  barrier, not a sandbox.
 - **Conflicts need a person.** Research OS does not automatically merge
   two people's edits to the same file. On sync it preserves the local file
   and places the official version beside it for comparison.

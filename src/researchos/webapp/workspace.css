@@ -59,8 +59,9 @@
 .ws-field { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
 .ws-field-label { color: var(--ink-soft); font-size: .76rem; }
 .ws-task-form > .ws-field:first-child { flex: 1 1 250px; }
-.ws-task-form > .ws-field:nth-child(2) { flex: 0 1 130px; }
-.ws-task-form > .ws-field:nth-child(3) { flex: 0 1 145px; }
+.ws-task-form > .ws-field-owner { flex: 0 1 190px; }
+.ws-task-form > .ws-field-name { flex: 0 1 130px; }
+.ws-task-form > .ws-field-date { flex: 0 1 145px; }
 .ws-task-form .form-input { width: 100%; box-sizing: border-box; }
 .ws-task-form > .btn { margin-bottom: .1rem; }
 .ws-create { display: flex; flex-direction: column; gap: .9rem; }
@@ -81,3 +82,53 @@
 .ws-unavailable { display: block; color: var(--clay); font-size: .7rem; margin-top: .2rem; }
 
 .ws-officialness { font-size: .72rem; color: var(--ink-soft); border: 1px solid var(--line); padding: .12rem .4rem; margin-left: .65rem; }
+
+/* AI agents carry out tasks (DESIGN.md Section 17; 12.11): the same quiet tinted words as the verdicts
+   (.status-label in app.html), plain buttons, no badges and no icons; the warning colour is the clay. */
+.ws-task-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .65rem; }
+.ws-task-header .ws-officialness { margin-left: 0; }
+.ws-task-header > .btn { margin-left: auto; }
+.ws-agent { margin-top: .5rem; display: flex; flex-direction: column; gap: .4rem; }
+.ws-agent-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; }
+.ws-agent-meta { color: var(--ink-soft); font-size: .75rem; }
+.ws-agent-meta.bad { color: var(--clay); }
+.ws-agent-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.ws-agent-question { margin: 0; padding-left: .8rem; border-left: 2px solid var(--clay); font-size: .84rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-agent-oob { margin: 0; color: var(--clay); font-size: .8rem; }
+.ws-agent-quiet { margin: .3rem 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.7; }
+.ws-agent-note .ws-status, .ws-agent-error .ws-status { margin: .1rem 0; }
+.ws-agent-reply { display: flex; flex-direction: column; gap: .45rem; max-width: 560px; }
+.ws-agent-reply .form-textarea { min-height: 4.5em; box-sizing: border-box; }
+.ws-agent-more { font-size: .76rem; color: var(--ink-soft); }
+.ws-agent-more summary { cursor: pointer; }
+.ws-agent-more .ws-code { margin: .4rem 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .74rem; }
+.ws-run-details { border-left: 1px solid var(--line-strong); padding-left: .8rem; margin-top: .2rem; display: flex; flex-direction: column; gap: .7rem; font-size: .8rem; }
+.ws-run-heading { margin: 0 0 .25rem; font-size: .76rem; font-weight: 500; color: var(--ink-soft); }
+.ws-run-group.ws-oob .ws-run-heading, .ws-run-group.ws-oob li { color: var(--clay); }
+.ws-agent-files { list-style: none; margin: 0; padding: 0; }
+.ws-agent-files li { padding: .08rem 0; overflow-wrap: anywhere; }
+.ws-agent-files code, .ws-step-text.mono, .ws-runner-where code, .ws-install-cmd { font-family: var(--font-mono); font-size: .76rem; }
+.ws-steps { list-style: none; margin: 0; padding: 0; }
+.ws-step { display: flex; gap: .7rem; padding: .12rem 0; align-items: baseline; }
+.ws-step-kind { flex: 0 0 3.2rem; color: var(--ink-soft); font-size: .72rem; }
+.ws-step-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ws-step.bad .ws-step-kind, .ws-step.bad .ws-step-text { color: var(--clay); }
+.ws-agent-settings { margin: .8rem 0 1.2rem; padding: .9rem 1rem; background: var(--paper-alt); display: flex; flex-direction: column; gap: .8rem; }
+.ws-agent-heading { margin: 0; font-family: var(--font-serif); font-size: 1rem; font-weight: normal; }
+.ws-runner, .ws-agent-list { display: flex; flex-direction: column; gap: .35rem; }
+.ws-runner-name { margin: 0; font-size: .82rem; font-weight: 500; }
+.ws-runner-where { margin: 0; display: flex; flex-wrap: wrap; gap: .3rem .7rem; align-items: baseline; font-size: .8rem; overflow-wrap: anywhere; }
+.ws-agent-add { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+.ws-agent-add > .form-input { flex: 1 1 14rem; width: auto; min-width: 0; box-sizing: border-box; }
+/* Inside a labelled field (a column) a flex basis would set the height: keep the input its own height. */
+.ws-agent-add .ws-field .form-input { flex: 0 0 auto; width: 100%; min-width: 0; box-sizing: border-box; }
+.ws-agent-add .ws-field { flex: 1 1 12rem; }
+.ws-agent-add .btn { margin-bottom: .1rem; }
+.ws-agent-item { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; padding: .2rem 0; border-bottom: 1px solid var(--line); font-size: .84rem; }
+.ws-agent-item .btn { margin-left: auto; }
+.ws-install { display: flex; flex-direction: column; gap: .25rem; margin: .3rem 0; }
+.ws-install-cmd { display: block; padding: .35rem .6rem; background: var(--paper); border: 1px solid var(--line); overflow-x: auto; white-space: pre; }
+@media (max-width: 700px) {
+  .ws-step { flex-direction: column; gap: 0; }
+  .ws-task-header > .btn { margin-left: 0; }
+}

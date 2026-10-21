@@ -355,7 +355,7 @@ class ClaudeStream:
             model = event.get("model")
             if isinstance(model, str) and model:
                 self.model = model
-            steps = [_step("start", f"model {model}" if model else "started")]
+            steps = [_step("start", model if isinstance(model, str) else "")]  # the model's own name, no words of ours
             for server in event.get("mcp_servers") or ():
                 if isinstance(server, dict) and server.get("name") == MCP_KEY and server.get("status") == "failed":
                     steps.append(_step("error", "The Research OS tools did not start (status: failed)."))
@@ -375,6 +375,8 @@ class ClaudeStream:
             if block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"].strip():
                 steps.append(_step("say", block["text"]))
             elif block.get("type") == "tool_use" and isinstance(block.get("name"), str):
+                if block["name"] in _INTERNAL_TOOLS:  # Claude Code loading its own tools: not a step of the work
+                    continue
                 steps.append(_step("tool", summarize_tool(block["name"], block.get("input")),
                                    _tool_label(block["name"])))
         return steps
@@ -405,9 +407,15 @@ class ClaudeStream:
         self.result_text = text if isinstance(text, str) else None
         errors = [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
                   for e in event.get("errors") or () if e]
-        shown = (self.result_text or "").strip() or "; ".join(errors) or str(event.get("subtype") or "ended")
+        shown = (self.result_text or "").strip() or "; ".join(errors) or str(event.get("subtype") or "")
+        said = next((st["text"] for st in reversed(self.steps) if st["kind"] == "say"), None)
+        if said is not None and _flat(shown, STEP_TEXT_LIMIT) == said:
+            shown = ""  # the final answer was just shown as what it said: the end needs no second copy
         return [_step("end", shown)]
 
+
+#: Claude Code's own bookkeeping calls (loading deferred tools), left out of the steps.
+_INTERNAL_TOOLS = frozenset({"ToolSearch"})
 
 #: OpenCode's error text when a permission rule, or the person's rejection, stopped a tool call.
 _REFUSED_RE = re.compile(r"specified a rule which prevents|rejected permission|unavailable tool", re.I)
@@ -441,7 +449,7 @@ class OpenCodeStream:
         try:
             if kind == "step_start" and not self._started:
                 self._started = True
-                steps = [_step("start", f"session {self.session_id}" if self.session_id else "started")]
+                steps = [_step("start", "")]
             elif kind == "tool_use":
                 steps = self._tool(event.get("part") or {})
             elif kind == "text":

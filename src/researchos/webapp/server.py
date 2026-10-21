@@ -128,6 +128,40 @@ Endpoints (all GET unless noted):
                             blocked project's question -- only one its
                             `situation.answers` lists (V5, DESIGN.md 9.4,
                             9.12; see `resolve_payload`).
+    GET  /api/agents    -- 17.1/17.8: the AI agents of this Mac: both runners
+                            found or not (path, version, why not), the saved
+                            agents (each with `available`, `mcp`), whether
+                            the optional `mcp` package is installed, the
+                            suggested Claude Code models, the time limit and
+                            spending cap. Works with no project served.
+    GET  /api/agents/models?runner=opencode -- `opencode models` (Claude Code:
+                            its suggestions); a runner that is not found:
+                            409 `agent_runner_missing`.
+    POST /api/settings/agents -- body `{agents?, commands?, timeout_minutes?,
+                            max_budget_usd?}`: this Mac's agent settings
+                            (`researchos.agents.profiles`; keys not sent are
+                            kept, a refusal saves none of them); answers like
+                            GET /api/agents. Works with no project served.
+    GET  /api/agents/runs -- the served project's agent runs, newest first,
+                            and which is active (`AgentManager.runs`).
+    GET  /api/agents/runs/<id> -- one run: steps, changes, out-of-bounds
+                            changes, question, report, error, the instruction
+                            sent (`AgentManager.detail`).
+    POST /api/agents/runs -- body `{project, task}`: start the agent that owns
+                            the task; answers the run's summary at once.
+    POST /api/agents/runs/<id>/reply -- `{project, message}`: answer a
+                            question or send the task back.
+    POST /api/agents/runs/<id>/stop, /revert -- `{project}`: stop the run and
+                            everything it started; undo it (17.6).
+                            Every run endpoint needs an unblocked served
+                            project, a POST carries `project` (409
+                            `agent_project_changed` when it is no longer the
+                            served one), and every refusal is `agent_<code>`
+                            with `message` in the request's language and the
+                            English `detail` (DESIGN.md 17.8). Starting,
+                            answering and undoing run under the write guard;
+                            when a run ends the page is told (generation) and
+                            the project rescanned.
     GET  /api/engine    -- which project this engine serves: `{"engine":
                             "researchos", "version": 5, "pid", "project_root",
                             "project_id", "graph_path", "researchos_home",
@@ -579,6 +613,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -593,8 +628,11 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, workspace
+from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
 from researchos import settings as settings_mod
+from researchos.agents import labels as agent_labels
+from researchos.agents import manager as agent_manager
+from researchos.agents import profiles as agent_profiles
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
 from researchos import desk as desk_mod
@@ -683,6 +721,30 @@ class WorkspaceApiError(ApiError):
         super().__init__(str(exc))
         self.status = exc.status
         self.state = "workspace_" + exc.code
+        self.extra = {"message": exc.message_zh if lang == "zh" else str(exc), "detail": str(exc)}
+
+
+class _AgentRefusal(Exception):
+    """A refusal of the agent endpoints that is not the run manager's
+    (`AgentError`): same shape -- `code`, `status`, English text,
+    `message_zh` -- so `AgentApiError` renders both alike."""
+
+    def __init__(self, code: str, status: int, message: str, message_zh: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.message_zh = message_zh
+
+
+class AgentApiError(ApiError):
+    """A refusal of the AI-agent endpoints (DESIGN.md 17.8): `state`
+    `agent_<code>`, `message` the page's sentence in the request's
+    language, `detail` the English one."""
+
+    def __init__(self, exc: agent_manager.AgentError | _AgentRefusal, lang: str) -> None:
+        super().__init__(str(exc))
+        self.status = exc.status
+        self.state = "agent_" + exc.code
         self.extra = {"message": exc.message_zh if lang == "zh" else str(exc), "detail": str(exc)}
 
 
@@ -1766,6 +1828,84 @@ def literature_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
         return literature_api.open_item_payload(body, open_external)
     except literature_api.LiteratureRefused as exc:
         raise LiteratureApiError(exc) from exc
+
+
+# -- AI agents (DESIGN.md 17.1, 17.8) -----------------------------------------------------
+
+#: The `settings.json` keys `POST /api/settings/agents` writes, so a refusal can put them back as they were.
+_AGENT_SETTING_KEYS = (
+    agent_profiles.AGENTS_SETTING, agent_profiles.COMMANDS_SETTING,
+    agent_profiles.TIMEOUT_SETTING, agent_profiles.BUDGET_SETTING,
+)
+_agent_settings_lock = threading.Lock()
+
+
+def agents_payload() -> dict[str, Any]:
+    """`GET /api/agents`: the runners found (or why not), this Mac's agents
+    (each with `available`: its runner was found, and `mcp`), whether the
+    optional `mcp` package is installed, the suggested Claude Code models and
+    the limits. Needs no project: it describes this Mac."""
+    found = {runner: agent_profiles.find(runner) for runner in agent_labels.RUNNERS}
+    mcp = agent_profiles.mcp_available()
+    return {
+        "runners": [found[runner].payload() for runner in agent_labels.RUNNERS],
+        "agents": [dict(agent.payload(), available=found[agent.runner].found, mcp=mcp)
+                   for agent in agent_profiles.agents()],
+        "mcp": mcp,
+        "claude_models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
+        "timeout_minutes": agent_profiles.timeout_minutes(),
+        "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
+        "max_budget_usd": agent_profiles.max_budget_usd(),
+        "max_agents": agent_profiles.MAX_AGENTS,
+    }
+
+
+def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
+    """`GET /api/agents/models?runner=`: the models to offer for a runner --
+    Claude Code's suggestions, or what `opencode models` lists (the program
+    must be found; the listing may take seconds)."""
+    runner = (query.get("runner") or [""])[0]
+    if runner not in agent_labels.RUNNERS:
+        raise _AgentRefusal(
+            "invalid", 400, f"runner must be one of {', '.join(agent_labels.RUNNERS)}", "没有指明是哪一种 AI 执行者",
+        )
+    if runner == "claude-code":
+        return {"runner": runner, "models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS)}
+    found = agent_profiles.find(runner, check_version=False)
+    if not found.found or found.path is None:
+        raise agent_manager.AgentError("runner_missing")
+    try:
+        return {"runner": runner, "models": agent_profiles.opencode_models(found.path)}
+    except RuntimeError as exc:
+        raise _AgentRefusal("models_failed", 502, str(exc), "读取不到 OpenCode 的模型列表") from exc
+
+
+def agents_settings_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """`POST /api/settings/agents`: save the keys the body carries (`agents`,
+    `commands`, `timeout_minutes`, `max_budget_usd`; the others stay), then
+    answer like `GET /api/agents`. A value the setters refuse (ValueError)
+    saves none of the keys: what was written before the refusal is put back."""
+    with _agent_settings_lock:
+        before = {k: v for k, v in settings_mod.read_settings().items() if k in _AGENT_SETTING_KEYS}
+        wrote = False
+        try:
+            if "agents" in body:
+                agent_profiles.set_agents(body["agents"])
+                wrote = True
+            if "commands" in body:
+                agent_profiles.set_commands(body["commands"])
+                wrote = True
+            if "timeout_minutes" in body:
+                agent_profiles.set_timeout_minutes(body["timeout_minutes"])
+                wrote = True
+            if "max_budget_usd" in body:
+                agent_profiles.set_max_budget_usd(body["max_budget_usd"])
+        except ValueError as exc:
+            if wrote:
+                data = {k: v for k, v in settings_mod.read_settings().items() if k not in _AGENT_SETTING_KEYS}
+                settings_mod.write_json(settings_mod.settings_path(), {**data, **before})
+            raise _AgentRefusal("invalid", 400, str(exc), "AI 执行者的设置内容不对，没有保存") from exc
+    return agents_payload()
 
 
 def language_setting_payload(body: dict[str, Any]) -> dict[str, Any]:
@@ -3120,6 +3260,11 @@ class RceHTTPServer(ThreadingHTTPServer):
             active=self._watcher_active,
         )
         super().__init__(server_address, handler_cls)
+        # 17.3: the agent runs of the projects this engine serves. Created
+        # after the socket is bound (the hook's guard names the engine's own
+        # port); no thread starts until a run does. `server_close` stops them.
+        self._closing = False
+        self.agents = agent_manager.AgentManager(on_finish=self._agent_finished, engine_port=self.server_address[1])
 
     def get_served(self) -> ServedProject:
         with self.__served_lock:
@@ -3246,7 +3391,36 @@ class RceHTTPServer(ThreadingHTTPServer):
         except records_lock.ProjectLockTimeout as exc:
             raise ProjectBusyError(f"another Research OS process is writing this project; try again ({exc})") from exc
 
+    def _agent_finished(self, root: Path, run: dict[str, Any]) -> None:
+        """A run ended (any way): when it was in the project being served,
+        every open page re-fetches (the generation moves) and the project is
+        rescanned, so the files the agent made become nodes (17.3). Called
+        from the run's thread; nothing happens while the server is closing
+        (the runs `server_close` interrupts are not worth a scan)."""
+        if self._closing:
+            return
+        served = self.get_served()
+        if served.no_project or served.blocked is not None:
+            return
+        try:
+            same = os.path.realpath(root) == os.path.realpath(served.root)
+        except (OSError, ValueError):
+            return
+        if not same:
+            return
+        self.watcher.record_external_change(None)
+        try:
+            self.start_scan(served)
+        except ApiError as exc:
+            logger.info("no scan after the agent run %s: %s", run.get("id"), exc)
+
     def server_close(self) -> None:
+        # 17.3: quitting stops every running agent (state `interrupted`)
+        # before anything else is torn down -- their run threads still call
+        # back into this server, and `_closing` keeps those callbacks from
+        # starting scans. Idempotent, like the rest.
+        self._closing = True
+        self.agents.shutdown()
         # The watcher thread must never outlive its server (it would keep
         # statting -- and on a change, re-ingesting -- a project nothing is
         # serving anymore). stop() is safe when the thread was never
@@ -3366,6 +3540,84 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             error.extra = {"message": "项目已切换，请重新打开文档再保存" if self._lang() == "zh" else str(error)}
             raise error
         return served
+
+    def _agent_api(self, fn: Callable[[], Any]) -> Any:
+        """The agent endpoints' refusals (the run manager's, and the few of
+        this module) as `agent_<code>` errors in the request's language."""
+        try:
+            return fn()
+        except (agent_manager.AgentError, _AgentRefusal) as exc:
+            raise AgentApiError(exc, self._lang()) from exc
+
+    def _agent_target(self, body: dict[str, Any]) -> ServedProject:
+        """Like `_workspace_target`: an unblocked served project that is the
+        one the page named (a POST of an older window must not act on the
+        project served now) and has an identity to keep runs under."""
+        served = self._require_unblocked()
+        if body.get("project") != str(served.root):
+            raise AgentApiError(_AgentRefusal(
+                "project_changed", 409, "the open project changed; reload the page before running an agent",
+                "项目已切换，请刷新页面后再操作"), self._lang())
+        if served.project_id is None:
+            raise NeedsMigrationApiError("this project has no identity yet; nothing is run")
+        return served
+
+    @staticmethod
+    def _agent_person() -> tuple[str | None, str | None]:
+        """Who presses 运行: the member id and name from `me.toml`, each None
+        when this Mac has no usable one (the run then names nobody)."""
+        try:
+            by = people.current_member_id()
+        except people.PeopleError:
+            return None, None
+        try:
+            me = people.read_me().me
+        except Exception:  # noqa: BLE001 -- a name is a courtesy, never a reason to refuse
+            me = None
+        return by, (me.name if me is not None else None)
+
+    def _agent_runs_post(self, path: str) -> Any:
+        """`POST /api/agents/runs` (start) and `/api/agents/runs/<id>/reply|stop|revert`
+        (17.8). Start, reply and revert run under the write guard (a blocked,
+        read-only or frozen project refuses; the person's lock and the 9.4
+        re-check); stop does not -- it only ends processes and may take seconds."""
+        rest = path[len("/api/agents/runs"):].strip("/")
+        parts = rest.split("/") if rest else []
+        if len(parts) > 2 or (len(parts) == 2 and parts[1] not in ("reply", "stop", "revert")) or len(parts) == 1:
+            raise NotFoundError(f"no such endpoint: {path}")
+        body = self._read_json_object()
+        served = self._agent_target(body)
+        agents, lang = self.server.agents, self._lang()
+        by, by_name = self._agent_person()
+        if not parts:
+            task = body.get("task")
+            if not isinstance(task, str) or not task:
+                raise AgentApiError(_AgentRefusal(
+                    "invalid", 400, "the request must name a task", "请求里没有指明任务"), lang)
+            with self.server.write_guard(human=True):
+                self._agent_target(body)  # a concurrent window may have switched projects
+                return self._agent_api(lambda: agents.start(
+                    served.root, served.project_id, task, by=by, by_name=by_name, lang=lang))
+        run_id, action = parts
+        if action == "stop":
+            return self._agent_api(lambda: agents.stop(served.project_id, run_id))
+        if action == "reply":
+            with self.server.write_guard(human=True):
+                self._agent_target(body)
+                payload = self._agent_api(lambda: agents.reply(
+                    served.root, served.project_id, run_id, body.get("message"), by=by, by_name=by_name, lang=lang))
+            if payload.get("kind") == "send_back":  # the task's done mark may have been cleared
+                payload["generation"] = self.server.watcher.record_write(set())
+            return payload
+        with self.server.write_guard(human=True):
+            self._agent_target(body)
+            payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by))
+        payload["generation"] = self.server.watcher.record_external_change(None)
+        try:
+            self.server.start_scan(served)
+        except ApiError as exc:
+            logger.info("no scan after undoing the agent run %s: %s", run_id, exc)
+        return payload
 
     def _check_local_origin(self) -> None:
         """Reject a request whose `Host` does not name this exact loopback
@@ -3628,6 +3880,17 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # U4: what 「同步」 would write -- reads only.
                 served = self._require_unblocked()
                 self._send_json(200, self._node_api(lambda: node_api.sync_preview_payload(served.root, self._lang())))
+            elif path == "/api/agents":
+                self._send_json(200, agents_payload())
+            elif path == "/api/agents/models":
+                self._send_json(200, self._agent_api(lambda: agents_models_payload(query)))
+            elif path == "/api/agents/runs":
+                served = self._require_unblocked()
+                self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id)))
+            elif path.startswith("/api/agents/runs/") and "/" not in path[len("/api/agents/runs/"):]:
+                served = self._require_unblocked()
+                run_id = path[len("/api/agents/runs/"):]
+                self._send_json(200, self._agent_api(lambda: self.server.agents.detail(served.project_id, run_id)))
             elif path == "/api/records":
                 # The 「记录」 panel (9.2): read even for a blocked project --
                 # it lists the folder's own files and writes nothing.
@@ -4074,6 +4337,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # watcher does not take this page's own drag for a change.
                 self.server.watcher.record_write({str(canvas.canvas_record_path(self._project_root()))}, bump=False)
                 self._send_json(200, payload)
+            elif parsed.path == "/api/settings/agents":
+                # 17.1: this Mac's agents, program locations and limits
+                # (settings.json); no project involved.
+                body = self._read_json_object()
+                self._send_json(200, self._agent_api(lambda: agents_settings_payload(body)))
+            elif parsed.path == "/api/agents/runs" or parsed.path.startswith("/api/agents/runs/"):
+                self._send_json(200, self._agent_runs_post(parsed.path))
             elif parsed.path == "/api/shutdown":
                 # Stops this whole server (task V3 phase 4). Respond first,
                 # then stop the serve loop from a separate thread -- see
@@ -4099,12 +4369,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 # engine's own state, and what changes the served project.
 _NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js", "/workspace.js", "/workspace.css",
                              "/api/projects",
-                             "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm"})
+                             "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm",
+                             "/api/agents", "/api/agents/models"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/create", "/api/projects/rename", "/api/shutdown", "/api/me",
     "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
-    "/api/settings/llm",
+    "/api/settings/llm", "/api/settings/agents",
 })
 
 
@@ -4130,6 +4401,37 @@ def build_server(
     )
 
 
+def _install_sigterm_handler() -> Callable[[], None]:
+    """17.3: a SIGTERM to the engine takes the Ctrl+C path -- `serve_forever`
+    ends and `serve`'s `finally: server_close()` stops every running agent
+    (state `interrupted`) instead of the process dying with them orphaned.
+    Only the first SIGTERM acts; later ones are ignored so the shutdown, which
+    may take seconds, is not cut short. Installed from the main thread only
+    (`signal.signal` refuses any other, and tests run `serve` in threads);
+    returns the function that puts the previous handler back (a no-op when
+    nothing was installed)."""
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    fired = threading.Event()
+
+    def on_sigterm(signum: int, frame: Any) -> None:
+        if fired.is_set():
+            return
+        fired.set()
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGTERM, on_sigterm)
+    except (ValueError, OSError):  # not the main interpreter thread after all, or no signals here
+        return lambda: None
+
+    def restore() -> None:
+        with contextlib.suppress(ValueError, OSError, TypeError):
+            signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+
+    return restore
+
+
 def serve(project_root: Path | None, port: int, open_browser: bool = True, served: ServedProject | None = None) -> None:
     """`researchos serve`'s entry point: validate the project, print the one
     startup line the task spec requires verbatim, optionally open a browser
@@ -4147,7 +4449,10 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     V5: `served` is the identity check's result (`served_for`; computed
     here when not given). A blocked project -- or a registry entry whose
     folder is gone -- does not stop the server: it serves the question
-    (module docstring, "Project identity") and writes nothing."""
+    (module docstring, "Project identity") and writes nothing.
+
+    17.3: from the main thread a SIGTERM ends the serve loop like Ctrl+C, so
+    the `finally` below stops every running agent before the process exits."""
     if served is None:
         served = no_project_served() if project_root is None else served_for(Path(project_root))
     try:
@@ -4176,9 +4481,13 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     httpd.watcher.start()
     if open_browser:
         webbrowser.open(url)
+    restore = _install_sigterm_handler()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        httpd.server_close()
+        try:
+            httpd.server_close()
+        finally:
+            restore()
