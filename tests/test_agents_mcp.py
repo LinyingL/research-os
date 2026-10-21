@@ -670,3 +670,13 @@ def test_command_refuses_a_mismatched_environment(setup):
     got = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     assert got.returncode == 1 and "does not match" in got.stderr
     assert got.stdout == ""  # stdout is the protocol's: nothing else is ever printed there
+
+
+def test_a_result_heading_from_a_long_task_is_cut_at_a_word():
+    """A task can be a paragraph; the heading made from it is a few words (17.4)."""
+    long_task = "Write a Python script analysis/mean.py that reads data.csv and prints the mean of column x; run it"
+    heading = mcp_server._result_title(None, long_task)
+    assert len(heading) <= mcp_server.DEFAULT_TITLE_LIMIT + 1 and heading.endswith("…")
+    assert long_task.startswith(heading[:-1])
+    assert mcp_server._result_title("  ## Mean of x ", long_task) == "Mean of x"
+    assert mcp_server._result_title(None, "Short task") == "Short task"

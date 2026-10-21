@@ -148,7 +148,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "How to finish:",
             f"- When the task is done, call `{complete}` with a Markdown report: what you did, the commands "
             "you ran, the files you produced, and the key numbers exactly as your actual runs produced them. "
-            "Never invent or estimate a number, a file or a result. This call also marks the task done.",
+            "Never invent or estimate a number, a file or a result. Give it a short title naming the result "
+            "(a few words). This call also marks the task done.",
             f"- If you are blocked, or a decision belongs to the person, call `{ask}` with one clear "
             "question and then stop. Their answer continues this conversation.",
             f"- To keep a note for the project, call `{note}` with a title and the content.",
@@ -182,7 +183,7 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "怎样收尾：",
         f"- 任务完成后，调用 `{complete}`，参数 report 是一份 Markdown 报告：做了什么、运行过的命令、"
         "产出的文件，以及关键数字，数字必须原样取自你真实运行的结果。绝不编造或估算数字、文件或结论。"
-        "这一次调用同时把任务标为完成。",
+        "再给一个几个词的简短标题，说明这是什么结果。这一次调用同时把任务标为完成。",
         f"- 如果做不下去，或需要这个人来决定，调用 `{ask}`，提出一个清楚的问题，然后停下。"
         "他们的回答会接上这段对话。",
         f"- 想给项目留一条笔记，调用 `{note}`，给出标题和内容。",

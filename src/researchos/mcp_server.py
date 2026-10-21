@@ -330,12 +330,23 @@ def _attribution_line(run: dict[str, Any], agent: agent_labels.Agent) -> str:
     return "> " + " · ".join(parts)
 
 
+#: A heading made from the task's own words is cut here, at a word boundary where there is one.
+DEFAULT_TITLE_LIMIT = 80
+
+
 def _result_title(title: str | None, task_text: str) -> str:
-    for candidate in (title, next((line for line in task_text.splitlines() if line.strip()), "")):
-        line = re.sub(r"^#+\s*", "", _one_line(candidate, TITLE_LIMIT))
-        if line:
-            return line
-    return "Task result"
+    """The result record's heading: the agent's title, else the task's
+    first line cut to `DEFAULT_TITLE_LIMIT` characters (a task can be a
+    paragraph; a heading is a few words)."""
+    given = re.sub(r"^#+\s*", "", _one_line(title, TITLE_LIMIT))
+    if given:
+        return given
+    first = re.sub(r"^#+\s*", "", _one_line(next((line for line in task_text.splitlines() if line.strip()), "")))
+    if len(first) > DEFAULT_TITLE_LIMIT:
+        cut = first[:DEFAULT_TITLE_LIMIT]
+        space = cut.rfind(" ")
+        first = (cut[:space] if space > DEFAULT_TITLE_LIMIT // 2 else cut).rstrip(" ,;:，；：") + "…"
+    return first or "Task result"
 
 
 def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None) -> str:
@@ -470,7 +481,8 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
         is the result record, in Markdown: what you did, the commands you
         ran, the files you produced (paths), and the key numbers exactly as
         your actual runs gave them -- never invented or rounded from memory.
-        `title` is an optional short heading (default: the task). This saves
+        `title` is a short heading naming the result, a few words (default:
+        the start of the task). This saves
         the report as a result record in the project, marks the task done
         and links the record to it. After it answers, stop: do nothing
         more. If you cannot finish or a decision belongs to the person, call
