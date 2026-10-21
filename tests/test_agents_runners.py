@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from researchos import names
-from researchos.agents import brief, runners
+from researchos.agents import brief, guard, runners, snapshot
 
 
 @pytest.fixture
@@ -212,7 +213,9 @@ def test_claude_env_and_files(tmp_path, profiles_mod):
     assert group["matcher"] == "Edit|Write|MultiEdit|NotebookEdit|Bash"
     (hook,) = group["hooks"]
     assert hook["type"] == "command"
-    assert shlex.split(hook["command"]) == [sys.executable, "-m", "researchos.agents.hook", str(a["run_dir"])]
+    assert shlex.split(hook["command"]) == ["sh", "-c", runners.HOOK_SHELL, sys.executable, str(a["run_dir"])]
+    assert hook["command"] == runners.hook_command(a["run_dir"])
+    assert settings["disableAllHooks"] is False
 
     mcp = json.loads(launch.files["mcp.json"])
     server = mcp["mcpServers"]["researchos"]
@@ -224,12 +227,14 @@ def test_claude_env_and_files(tmp_path, profiles_mod):
 
 def test_hook_command_survives_spaces_and_quotes(tmp_path):
     run_dir = tmp_path / "my runs" / "it's here"
-    assert shlex.split(runners.hook_command(run_dir)) == [sys.executable, "-m", "researchos.agents.hook", str(run_dir)]
+    assert shlex.split(runners.hook_command(run_dir)) == ["sh", "-c", runners.HOOK_SHELL, sys.executable, str(run_dir)]
+    assert shlex.split(runners.hook_command(run_dir, python="/my py/python")) == [
+        "sh", "-c", runners.HOOK_SHELL, "/my py/python", str(run_dir)]
 
 
 def test_mcp_command(tmp_path):
     assert runners.mcp_command(tmp_path, RUN_ID) == [
-        sys.executable, "-m", "researchos.cli", "mcp", "--agent-run", RUN_ID, "--path", str(tmp_path)]
+        sys.executable, "-I", "-m", "researchos.cli", "mcp", "--agent-run", RUN_ID, "--path", str(tmp_path)]
 
 
 # -- OpenCode launch ------------------------------------------------------------
@@ -267,6 +272,10 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
         assert bash[f"git {command}*"] == "deny"
     assert bash["researchos*"] == bash["rce *"] == bash["rce"] == "deny"
     assert "ask" not in json.dumps(config)  # an unattended run rejects what would ask and stops
+    for command in runners.GIT_DENIED:  # git's own options may come first
+        assert bash[f"git * {command}"] == bash[f"git * {command} *"] == "deny"
+    assert perm["doom_loop"] == "deny"
+    assert perm["read"] == {"*": "allow", "*.env": "deny", "*.env.*": "deny"}
 
 
 def test_opencode_session_and_validation(tmp_path, profiles_mod):
@@ -783,3 +792,182 @@ def test_claude_stream_leaves_out_tool_loading_and_keeps_a_different_ending():
     steps = _feed(st, [CLAUDE_INIT, search, said, end])
     assert [(s["kind"], s["text"]) for s in steps] == [
         ("start", "claude-haiku-5-5"), ("say", "Working on it."), ("end", "All done.")]
+
+
+# -- the hook fails closed (review finding 0) -------------------------------------------------------------------
+
+
+@pytest.fixture
+def shadowed(tmp_path):
+    """A project whose root holds files named like standard-library modules (what Claude Code makes the hook's
+    working folder), with a protected data file and a run folder holding the guard."""
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "raw.csv").write_text("a\n1\n", encoding="utf-8")
+    for name in ("random.py", "types.py", "io.py", "re.py", "tempfile.py"):
+        (root / name).write_text("raise SystemExit('the project\\'s own module was imported')\n", encoding="utf-8")
+    run_dir = tmp_path / "run dir"
+    run_dir.mkdir()
+    guard.write_guard_file(run_dir, root=root, prot=snapshot.protected(root, snapshot.take(root)), engine_port=None)
+    return types.SimpleNamespace(root=root, run_dir=run_dir)
+
+
+def _run_hook_shell(command: str, root: Path, payload: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(["/bin/sh", "-c", command], input=json.dumps(payload).encode("utf-8"), cwd=root,
+                          capture_output=True, timeout=60)
+
+
+def test_hook_command_refuses_with_exit_2_in_a_project_that_shadows_the_standard_library(shadowed):
+    bad = {"tool_name": "Write", "tool_input": {"file_path": str(shadowed.root / "data" / "raw.csv")},
+           "cwd": str(shadowed.root)}
+    good = {"tool_name": "Write", "tool_input": {"file_path": str(shadowed.root / "new.py")}, "cwd": str(shadowed.root)}
+    command = runners.hook_command(shadowed.run_dir)
+    refused = _run_hook_shell(command, shadowed.root, bad)
+    assert refused.returncode == 2 and refused.stderr.startswith(b"Research OS: ")
+    allowed = _run_hook_shell(command, shadowed.root, good)
+    assert (allowed.returncode, allowed.stderr) == (0, b"")
+    # the former command line: the hook dies at import time with exit code 1, which Claude Code lets through
+    old = shlex.join([sys.executable, "-m", "researchos.agents.hook", str(shadowed.run_dir)])
+    assert _run_hook_shell(old, shadowed.root, bad).returncode == 1
+
+
+def test_hook_command_ignores_python_environment_variables(shadowed, tmp_path):
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    (evil / "json.py").write_text("raise SystemExit(0)\n", encoding="utf-8")  # PYTHONPATH would let this decide
+    bad = {"tool_name": "Write", "tool_input": {"file_path": str(shadowed.root / "data" / "raw.csv")}}
+    done = subprocess.run(["/bin/sh", "-c", runners.hook_command(shadowed.run_dir)], input=json.dumps(bad).encode("utf-8"),
+                          cwd=shadowed.root, capture_output=True, timeout=60, env={**os.environ, "PYTHONPATH": str(evil)})
+    assert done.returncode == 2 and done.stderr.startswith(b"Research OS: ")
+
+
+@pytest.mark.parametrize("python", ["/nonexistent/python3", "/bin/false", "/bin/true"])
+def test_hook_command_fails_closed_whatever_the_interpreter_does(shadowed, python):
+    """Only the hook's own exit code 0 allows: a missing interpreter (127) or one that fails (1) is a refusal,
+    and one that does nothing and exits 0 is the only thing that gets through (the canary catches that)."""
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    done = _run_hook_shell(runners.hook_command(shadowed.run_dir, python=python), shadowed.root, call)
+    assert done.returncode == (0 if python == "/bin/true" else 2)
+
+
+def test_hook_command_survives_a_run_folder_with_spaces_and_quotes(shadowed, tmp_path):
+    odd = tmp_path / "it's a \"run\" $HOME"
+    odd.mkdir()
+    (odd / "guard.json").write_bytes((shadowed.run_dir / "guard.json").read_bytes())
+    bad = {"tool_name": "Write", "tool_input": {"file_path": str(shadowed.root / "data" / "raw.csv")}}
+    done = _run_hook_shell(runners.hook_command(odd), shadowed.root, bad)
+    assert done.returncode == 2 and done.stderr.startswith(b"Research OS: ")
+
+
+def test_hook_canary_passes_in_a_shadowed_project_and_leaves_no_refusal_behind(shadowed):
+    assert runners.hook_canary(shadowed.run_dir) is None
+    assert not (shadowed.run_dir / "refusals.jsonl").exists()  # the probe's own refusal is not the agent's
+    (shadowed.run_dir / "refusals.jsonl").write_text('{"tool": "Bash"}\n', encoding="utf-8")
+    assert runners.hook_canary(shadowed.run_dir) is None
+    assert (shadowed.run_dir / "refusals.jsonl").read_text(encoding="utf-8") == '{"tool": "Bash"}\n'
+
+
+def test_hook_canary_without_protected_files_probes_the_researchos_folder(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    guard.write_guard_file(run_dir, root=root, prot={"dirs": [".researchos"], "files": []}, engine_port=None)
+    assert runners.hook_canary(run_dir) is None
+
+
+def test_hook_canary_reports_a_hook_that_does_not_refuse(shadowed, monkeypatch):
+    for fake, wanted in (("exit 0", "exit code 0"), ("exit 1", "exit code 1"), ("exit 127", "exit code 127"),
+                         ("echo nope >&2; exit 2", "not by the Research OS hook")):
+        monkeypatch.setattr(runners, "hook_command", lambda run_dir, python=None, _f=fake: _f)
+        reason = runners.hook_canary(shadowed.run_dir)
+        assert isinstance(reason, str) and wanted in reason, (fake, reason)
+    monkeypatch.undo()
+    assert runners.hook_canary(shadowed.run_dir) is None
+
+
+def test_hook_canary_reports_trouble_instead_of_raising(tmp_path):
+    reason = runners.hook_canary(tmp_path / "no-such-run")
+    assert isinstance(reason, str) and "guard.json" in reason
+    (tmp_path / "guard.json").write_text("{broken", encoding="utf-8")
+    assert isinstance(runners.hook_canary(tmp_path), str)
+    (tmp_path / "guard.json").write_text(json.dumps({"root": str(tmp_path / "gone"), "dirs": [], "files": []}), encoding="utf-8")
+    assert isinstance(runners.hook_canary(tmp_path), str)  # the project folder cannot be entered
+
+
+def test_hook_canary_reports_a_moved_interpreter(shadowed, monkeypatch):
+    original = runners.hook_command
+    monkeypatch.setattr(runners, "hook_command", lambda run_dir, python=None: original(run_dir, python="/nonexistent/python3"))
+    reason = runners.hook_canary(shadowed.run_dir)
+    assert isinstance(reason, str) and "not by the Research OS hook" in reason  # exit 2, but not from our hook
+
+
+def test_mcp_server_command_is_isolated_from_the_project_folder(shadowed):
+    argv = runners.mcp_command(shadowed.root, "r-" + "0" * 32)
+    assert argv[:3] == [sys.executable, "-I", "-m"]
+    done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd=shadowed.root, timeout=60)
+    assert "Traceback" not in done.stderr and "random.py" not in done.stderr and "types.py" not in done.stderr
+    launch = runners.claude_launch(program="/opt/bin/claude", model="sonnet", root=shadowed.root, run_dir=shadowed.run_dir,
+                                   run_id="r-" + "0" * 32, session_id="sid", resume=False, prompt="p", rules="r",
+                                   max_budget_usd=None, home="/h", base_env={"PATH": "/usr/bin"})
+    server = json.loads(launch.files["mcp.json"])["mcpServers"]["researchos"]
+    assert server["args"][:3] == ["-I", "-m", "researchos.cli"]
+
+
+def _all_values(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _all_values(value)
+    else:
+        yield node
+
+
+def test_opencode_config_never_asks(tmp_path):
+    config = runners.opencode_config(tmp_path / "proj", "r-" + "0" * 32, str(tmp_path / "home"))
+    perm = config["permission"]
+    assert perm["doom_loop"] == "deny"
+    assert perm["read"] == {"*": "allow", "*.env": "deny", "*.env.*": "deny"}
+    values = list(_all_values(perm))
+    assert values and set(values) <= {"allow", "deny"}  # nowhere an "ask": an unattended run would stop on it
+    assert "ask" not in set(_all_values(config["permission"]))
+
+
+def test_opencode_denies_git_with_options_in_front(tmp_path):
+    bash = runners.opencode_config(tmp_path / "proj", "r-" + "0" * 32, "/h")["permission"]["bash"]
+    import fnmatch
+
+    def decide(command):  # the later matching rule wins, as OpenCode evaluates them
+        verdict = None
+        for pattern, value in bash.items():
+            if fnmatch.fnmatchcase(command, pattern):
+                verdict = value
+        return verdict
+
+    for command in ("git push", "git push origin main", "git -C /p push", "git -c user.name=a -c user.email=b commit -m x",
+                    "git --no-pager tag v1", "git --git-dir=.git push origin", "git -C /p stash", "git commit"):
+        assert decide(command) == "deny", command
+    for command in ("git status", "git -C /p status", "git diff --stat", "git log -1", "ls", "python x.py"):
+        assert decide(command) == "allow", command
+
+
+# -- the brief says what is true of each runner (review finding 35) -----------------------------------------------
+
+
+@pytest.mark.parametrize("lang", ["en", "zh"])
+def test_rules_tell_the_truth_about_enforcement_per_runner(lang):
+    claude = brief.rules(lang=lang, runner="claude-code", prot=PROT)
+    opencode = brief.rules(lang=lang, runner="opencode", prot=PROT)
+    assert claude != opencode
+    if lang == "en":
+        assert "refuses these and records the attempt" in claude
+        assert "records the attempt" not in opencode and "refuses these" not in opencode
+        for word in ("blocks git", "after the run", "out of bounds", "can be undone", "do not do any of these things at all"):
+            assert word in opencode, word
+    else:
+        assert "拒绝它们并记下这次尝试" in claude
+        assert "记下" not in opencode and "拒绝它们" not in opencode
+        for word in ("拦下", "运行结束后", "越界", "撤回", "根本不要做"):
+            assert word in opencode, word
+    for text in (claude, opencode):
+        _clean(text)
+        assert "data/raw.csv" in text and brief.tool_name("claude-code" if text is claude else "opencode", "ask") in text

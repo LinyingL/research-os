@@ -159,9 +159,17 @@ Endpoints (all GET unless noted):
                             served one), and every refusal is `agent_<code>`
                             with `message` in the request's language and the
                             English `detail` (DESIGN.md 17.8). Starting,
-                            answering and undoing run under the write guard;
-                            when a run ends the page is told (generation) and
-                            the project rescanned.
+                            answering and undoing are refused up front, with no
+                            lock held, as the write guard would refuse them
+                            (`agent_read_only`, `agent_needs_migration`); the
+                            run manager takes the project lock itself where it
+                            writes. A project with no identity lists no runs.
+                            Start and answer also refuse with 409
+                            `agent_person_unreadable` when `me.toml` exists but
+                            cannot be read. When a run ends the page is told
+                            (generation) and the project rescanned -- one that
+                            ended while another project was served, when the
+                            page switches back to it.
     GET  /api/engine    -- which project this engine serves: `{"engine":
                             "researchos", "version": 5, "pid", "project_root",
                             "project_id", "graph_path", "researchos_home",
@@ -734,6 +742,13 @@ class _AgentRefusal(Exception):
         self.code = code
         self.status = status
         self.message_zh = message_zh
+
+
+def _needs_migration_refusal(message: str) -> _AgentRefusal:
+    """`agent_needs_migration`: the project has no identity yet or is frozen
+    until `researchos migrate` (9.12) -- what the write guard refuses as
+    `needs_migration`, in the agent endpoints' shape."""
+    return _AgentRefusal("needs_migration", 409, message, "这个项目还需要先迁移到新版本，迁移前不会写入任何内容")
 
 
 class AgentApiError(ApiError):
@@ -3259,11 +3274,19 @@ class RceHTTPServer(ThreadingHTTPServer):
             write_guard=lambda: self.write_guard(human=False, timeout=None),
             active=self._watcher_active,
         )
+        # 17.3: set BEFORE the socket is bound -- `TCPServer.__init__` calls
+        # `server_close()` when the bind fails, which reads both; a busy port
+        # must surface as the bind's own `OSError`, not an AttributeError.
+        self._closing = False
+        self.agents: agent_manager.AgentManager | None = None
+        # 17.3: roots whose agent run ended while another project was served
+        # (realpaths); the next switch to one of them scans it once.
+        self.__pending_scans: set[str] = set()
+        self.__pending_scans_lock = threading.Lock()
         super().__init__(server_address, handler_cls)
         # 17.3: the agent runs of the projects this engine serves. Created
         # after the socket is bound (the hook's guard names the engine's own
         # port); no thread starts until a run does. `server_close` stops them.
-        self._closing = False
         self.agents = agent_manager.AgentManager(on_finish=self._agent_finished, engine_port=self.server_address[1])
 
     def get_served(self) -> ServedProject:
@@ -3400,13 +3423,17 @@ class RceHTTPServer(ThreadingHTTPServer):
         if self._closing:
             return
         served = self.get_served()
-        if served.no_project or served.blocked is not None:
-            return
         try:
-            same = os.path.realpath(root) == os.path.realpath(served.root)
+            key = os.path.realpath(root)
+            same = key == os.path.realpath(served.root)
         except (OSError, ValueError):
             return
-        if not same:
+        if served.no_project or served.blocked is not None or not same:
+            # Not scannable now: remember the project, and scan it once when
+            # the page is switched to it (a switch drops the watcher's
+            # baseline, so the agent's files would never become nodes).
+            with self.__pending_scans_lock:
+                self.__pending_scans.add(key)
             return
         self.watcher.record_external_change(None)
         try:
@@ -3414,13 +3441,39 @@ class RceHTTPServer(ThreadingHTTPServer):
         except ApiError as exc:
             logger.info("no scan after the agent run %s: %s", run.get("id"), exc)
 
+    def scan_pending_agent_project(self, served: ServedProject) -> bool:
+        """The page was switched to `served`: when an agent run of it ended
+        while another project was served, scan it now, once (17.3). A project
+        that cannot be scanned right now (blocked, read-only, frozen) keeps its
+        mark for the next switch. True when a scan was asked for."""
+        if served.no_project or served.blocked is not None or served.read_only or served.needs_migration:
+            return False
+        try:
+            key = os.path.realpath(served.root)
+        except (OSError, ValueError):
+            return False
+        with self.__pending_scans_lock:
+            if key not in self.__pending_scans:
+                return False
+            self.__pending_scans.discard(key)
+        self.watcher.record_external_change(None)
+        try:
+            self.start_scan(served)
+        except ApiError as exc:
+            logger.info("no scan of %s after its agent run ended: %s", served.root, exc)
+            return False
+        return True
+
     def server_close(self) -> None:
         # 17.3: quitting stops every running agent (state `interrupted`)
         # before anything else is torn down -- their run threads still call
         # back into this server, and `_closing` keeps those callbacks from
-        # starting scans. Idempotent, like the rest.
+        # starting scans (and `serve`'s SIGTERM handler from interrupting
+        # this very shutdown). `agents` is None when the bind failed.
+        # Idempotent, like the rest.
         self._closing = True
-        self.agents.shutdown()
+        if self.agents is not None:
+            self.agents.shutdown()
         # The watcher thread must never outlive its server (it would keep
         # statting -- and on a change, re-ingesting -- a project nothing is
         # serving anymore). stop() is safe when the thread was never
@@ -3460,6 +3513,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         # old root's baseline/error and bumps the generation, so every open
         # page's next poll re-fetches.
         self.server.watcher.retarget()
+        # 17.3: an agent run of this project ended while it was not served
+        self.server.scan_pending_agent_project(served)
 
     def _send_api_error(self, exc: ApiError) -> None:
         """`{"error": msg}` plus `"state"` when the error names one -- the
@@ -3548,6 +3603,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             return fn()
         except (agent_manager.AgentError, _AgentRefusal) as exc:
             raise AgentApiError(exc, self._lang()) from exc
+        except records_lock.ProjectLockError as exc:
+            # The manager takes the project lock itself where it writes; a
+            # refusal it did not map still keeps the `agent_<code>` contract.
+            raise AgentApiError(agent_manager.AgentError(
+                "busy", f"The project is being written by something else: {exc}"), self._lang()) from exc
+        except records_situation.NeedsMigrationError as exc:
+            raise AgentApiError(_needs_migration_refusal(str(exc)), self._lang()) from exc
+        except records_situation.WriteRefused as exc:
+            raise AgentApiError(agent_manager.AgentError("read_only", str(exc)), self._lang()) from exc
 
     def _agent_target(self, body: dict[str, Any]) -> ServedProject:
         """Like `_workspace_target`: an unblocked served project that is the
@@ -3559,17 +3623,41 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 "project_changed", 409, "the open project changed; reload the page before running an agent",
                 "项目已切换，请刷新页面后再操作"), self._lang())
         if served.project_id is None:
-            raise NeedsMigrationApiError("this project has no identity yet; nothing is run")
+            raise AgentApiError(_needs_migration_refusal("this project has no identity yet; nothing is run"),
+                                self._lang())
         return served
 
-    @staticmethod
-    def _agent_person() -> tuple[str | None, str | None]:
-        """Who presses 运行: the member id and name from `me.toml`, each None
-        when this Mac has no usable one (the run then names nobody)."""
+    def _agent_writable(self, served: ServedProject) -> None:
+        """What `RceHTTPServer.write_guard` would refuse for the served
+        project (blocked -- `_agent_target` did that --, read-only, frozen
+        until migrated), as `agent_<code>` errors in the request's language
+        and WITHOUT the project lock: holding it around the run manager's
+        slow work (`<program> --version`, a recovery snapshot) stalled every
+        other save and the watcher (17.8). The manager takes the lock itself
+        where it writes (undo, clearing a done mark, the agent's tools)."""
+        if served.read_only:
+            raise AgentApiError(_AgentRefusal(
+                "read_only", 409, "this project was opened read-only; nothing is written",
+                "这个项目是以只读方式打开的，不会写入任何内容"), self._lang())
+        if served.needs_migration:
+            raise AgentApiError(_needs_migration_refusal(
+                "this project is frozen until it is migrated (researchos migrate); nothing is written"), self._lang())
+
+    def _agent_person(self, *, strict: bool = True) -> tuple[str | None, str | None]:
+        """Who presses 运行: the member id and name from `me.toml`. None for
+        both only when there is no `me.toml` (the run then names nobody). A
+        `me.toml` that exists but cannot be read is a refusal
+        (`agent_person_unreadable`, 17.7: the agent is named with the person,
+        and Research OS writes no entry without saying who made it) -- with
+        `strict=False` (stop, undo: they start nothing) it is only "nobody"."""
         try:
             by = people.current_member_id()
-        except people.PeopleError:
-            return None, None
+        except people.PeopleError as exc:
+            if not strict:
+                return None, None
+            raise AgentApiError(_AgentRefusal(
+                "person_unreadable", 409, str(exc),
+                "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它，或在设置里重新填写你的名字"), self._lang()) from exc
         try:
             me = people.read_me().me
         except Exception:  # noqa: BLE001 -- a name is a courtesy, never a reason to refuse
@@ -3578,9 +3666,11 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
     def _agent_runs_post(self, path: str) -> Any:
         """`POST /api/agents/runs` (start) and `/api/agents/runs/<id>/reply|stop|revert`
-        (17.8). Start, reply and revert run under the write guard (a blocked,
-        read-only or frozen project refuses; the person's lock and the 9.4
-        re-check); stop does not -- it only ends processes and may take seconds."""
+        (17.8). Start, reply and revert are refused up front as the write guard
+        would refuse them (blocked, read-only, frozen) but do NOT hold the
+        project lock -- the run manager takes it itself where it writes; stop
+        is not refused for any of that -- it only ends processes and may take
+        seconds."""
         rest = path[len("/api/agents/runs"):].strip("/")
         parts = rest.split("/") if rest else []
         if len(parts) > 2 or (len(parts) == 2 and parts[1] not in ("reply", "stop", "revert")) or len(parts) == 1:
@@ -3588,30 +3678,29 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         body = self._read_json_object()
         served = self._agent_target(body)
         agents, lang = self.server.agents, self._lang()
-        by, by_name = self._agent_person()
         if not parts:
             task = body.get("task")
             if not isinstance(task, str) or not task:
                 raise AgentApiError(_AgentRefusal(
                     "invalid", 400, "the request must name a task", "请求里没有指明任务"), lang)
-            with self.server.write_guard(human=True):
-                self._agent_target(body)  # a concurrent window may have switched projects
-                return self._agent_api(lambda: agents.start(
-                    served.root, served.project_id, task, by=by, by_name=by_name, lang=lang))
+            self._agent_writable(served)
+            by, by_name = self._agent_person()
+            return self._agent_api(lambda: agents.start(
+                served.root, served.project_id, task, by=by, by_name=by_name, lang=lang))
         run_id, action = parts
         if action == "stop":
             return self._agent_api(lambda: agents.stop(served.project_id, run_id))
         if action == "reply":
-            with self.server.write_guard(human=True):
-                self._agent_target(body)
-                payload = self._agent_api(lambda: agents.reply(
-                    served.root, served.project_id, run_id, body.get("message"), by=by, by_name=by_name, lang=lang))
+            self._agent_writable(served)
+            by, by_name = self._agent_person()
+            payload = self._agent_api(lambda: agents.reply(
+                served.root, served.project_id, run_id, body.get("message"), by=by, by_name=by_name, lang=lang))
             if payload.get("kind") == "send_back":  # the task's done mark may have been cleared
                 payload["generation"] = self.server.watcher.record_write(set())
             return payload
-        with self.server.write_guard(human=True):
-            self._agent_target(body)
-            payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by))
+        self._agent_writable(served)
+        by, _name = self._agent_person(strict=False)
+        payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by))
         payload["generation"] = self.server.watcher.record_external_change(None)
         try:
             self.server.start_scan(served)
@@ -3886,10 +3975,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._agent_api(lambda: agents_models_payload(query)))
             elif path == "/api/agents/runs":
                 served = self._require_unblocked()
-                self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id)))
+                if served.project_id is None:  # no identity yet: nothing could have run
+                    self._send_json(200, {"runs": [], "active": None})
+                else:
+                    self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id)))
             elif path.startswith("/api/agents/runs/") and "/" not in path[len("/api/agents/runs/"):]:
                 served = self._require_unblocked()
                 run_id = path[len("/api/agents/runs/"):]
+                if served.project_id is None:
+                    raise AgentApiError(agent_manager.AgentError("run_missing"), self._lang())
                 self._send_json(200, self._agent_api(lambda: self.server.agents.detail(served.project_id, run_id)))
             elif path == "/api/records":
                 # The 「记录」 panel (9.2): read even for a blocked project --
@@ -4401,12 +4495,15 @@ def build_server(
     )
 
 
-def _install_sigterm_handler() -> Callable[[], None]:
+def _install_sigterm_handler(httpd: RceHTTPServer | None = None) -> Callable[[], None]:
     """17.3: a SIGTERM to the engine takes the Ctrl+C path -- `serve_forever`
     ends and `serve`'s `finally: server_close()` stops every running agent
     (state `interrupted`) instead of the process dying with them orphaned.
-    Only the first SIGTERM acts; later ones are ignored so the shutdown, which
-    may take seconds, is not cut short. Installed from the main thread only
+    Only the first SIGTERM acts, and none once the shutdown has begun
+    (`httpd` is closing -- say a POST /api/shutdown ended the loop and the
+    wrapper's SIGTERM comes while `server_close` waits for the agents): a
+    KeyboardInterrupt there would cut the agents' kill threads off and leave
+    their processes running. Installed from the main thread only
     (`signal.signal` refuses any other, and tests run `serve` in threads);
     returns the function that puts the previous handler back (a no-op when
     nothing was installed)."""
@@ -4415,7 +4512,7 @@ def _install_sigterm_handler() -> Callable[[], None]:
     fired = threading.Event()
 
     def on_sigterm(signum: int, frame: Any) -> None:
-        if fired.is_set():
+        if fired.is_set() or (httpd is not None and httpd._closing):  # noqa: SLF001 -- the server's own flag
             return
         fired.set()
         raise KeyboardInterrupt
@@ -4481,12 +4578,13 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     httpd.watcher.start()
     if open_browser:
         webbrowser.open(url)
-    restore = _install_sigterm_handler()
+    restore = _install_sigterm_handler(httpd)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        httpd._closing = True  # noqa: SLF001 -- from here on a SIGTERM must not interrupt the shutdown
         try:
             httpd.server_close()
         finally:

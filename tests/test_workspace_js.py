@@ -44,7 +44,8 @@ class Element {
   addEventListener(k,f) { (this.on[k] ||= []).push(f); }
   async emit(k,e={}) { for(const f of this.on[k] || []) await f(Object.assign({preventDefault(){},target:this},e)); }
   async click() { if(!this.disabled) await this.emit('click'); }
-  focus() { global.focused=this; }
+  focus() { global.focused=this; document.activeElement=this; }
+  before(...xs) { const parent=this.parentNode; xs.forEach(x => { if(x.parentNode) x.parentNode.kids=x.parentNode.kids.filter(k=>k!==x); x.parentNode=parent; }); parent.kids.splice(parent.kids.indexOf(this),0,...xs); }
   setSelectionRange(a,b) { this.selectionStart=a; this.selectionEnd=b; }
   all() { return this.children.flatMap(x => [x,...x.all()]); }
   querySelectorAll(selector) { return this.all().filter(e=>selector.startsWith('.') ? e.classList.contains(selector.slice(1)) : e.tagName.toLowerCase()===selector); }
@@ -54,7 +55,7 @@ class Element {
 global.window = { addEventListener(k,f) { (events[k] ||= []).push(f); }, crypto: { randomUUID:()=> 'task-fixture-1' } };
 const events = {}, confirmQuestions = [], answers = [];
 window.confirm = q => { confirmQuestions.push(q); return answers.length ? answers.shift() : true; };
-global.document = { createElement:tag=>new Element(tag), documentElement:new Element('html'), querySelectorAll:()=>[] };
+global.document = { createElement:tag=>new Element(tag), documentElement:new Element('html'), querySelectorAll:()=>[], activeElement:null };
 global.state = { currentPath:'/projects/study', currentId:'p-study', projectLabel:'My study', dataEpoch:0, panelSubject:null };
 global.currentView = 'workspace';
 const root = new Element('div');
@@ -127,6 +128,7 @@ global.apiPost=async(path,body)=>{
     if(body.agents) agentsInfo.agents=body.agents.map(a=>({runner:a.runner,model:a.model,owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
     if(body.commands) for(const [runner,p] of Object.entries(body.commands)) Object.assign(agentsInfo.runners.find(r=>r.runner===runner),{path:p,version:'0.9.0',problem:null,found:true});
     if(body.timeout_minutes) agentsInfo.timeout_minutes=body.timeout_minutes;
+    if('max_budget_usd' in body) agentsInfo.max_budget_usd=body.max_budget_usd;
     return clone(agentsInfo);
   }
   if(path==='/api/workspace/document') {
@@ -141,7 +143,7 @@ global.apiPost=async(path,body)=>{
 };
 // The page polls a running run every 2 s; the scenario takes those timers over and fires them by hand.
 const timers=[], realSetTimeout=global.setTimeout, realClearTimeout=global.clearTimeout;
-global.setTimeout=(f,ms,...a)=>{ if(ms===2000){const t={f,cancelled:false,fired:false};timers.push(t);return t;} return realSetTimeout(f,ms,...a); };
+global.setTimeout=(f,ms,...a)=>{ if(ms>=2000){const t={f,ms,cancelled:false,fired:false};timers.push(t);return t;} return realSetTimeout(f,ms,...a); };
 global.clearTimeout=t=>{ if(t&&typeof t==='object'&&'cancelled' in t) t.cancelled=true; else realClearTimeout(t); };
 const waiting=()=>timers.filter(t=>!t.cancelled&&!t.fired).length;
 const tick=async()=>{ for(const t of timers.filter(t=>!t.cancelled&&!t.fired)) { t.fired=true; await t.f(); } await sleepTick(); await sleepTick(); };
@@ -730,7 +732,8 @@ console.log(JSON.stringify({posted,words:byClass('ws-agent').textContent,command
     assert out["posted"] == []
     assert "mcp 组件" in out["words"]
     assert out["commands"] == ['uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os',
-                               'pip install "researchos[mcp]"']
+                               'python -m pip install -e ".[mcp]"']
+    assert not any("researchos[mcp]" in c for c in out["commands"])
 
 
 def test_a_refused_start_shows_the_engines_sentence_and_leaves_the_task_runnable():
@@ -792,7 +795,7 @@ console.log(JSON.stringify({words:byClass('ws-agent-note').textContent}));
 """)
     assert "撤回了 1 个文件的改动。" in out["words"]
     assert "这些文件没有动：" in out["words"]
-    assert "data/new.csv 运行之后又被改动过" in out["words"] and "big.bin 没有运行前的备份" in out["words"]
+    assert "data/new.csv 运行之后又改动过" in out["words"] and "big.bin 没有运行前的副本" in out["words"]
 
 
 def test_answer_and_send_back_post_the_persons_words_to_the_run():
@@ -1037,7 +1040,7 @@ customPost=()=>Promise.reject(Object.assign(Error('bad'),{state:'agent_invalid',
 typed(field('模型',box),'bad name!');await find('添加',box).click();await sleepTick();
 console.log(JSON.stringify({commands,words:byClass('ws-agent-settings').textContent,model:field('模型',byClass('ws-agent-settings')).value}));
 """)
-    assert len(out["commands"]) == 2 and out["commands"][1] == 'pip install "researchos[mcp]"'
+    assert len(out["commands"]) == 2 and out["commands"][1] == 'python -m pip install -e ".[mcp]"'
     assert "没能保存设置。 模型名不对" in out["words"] and out["model"] == "bad name!"  # a refusal keeps what was typed
 
 
@@ -1120,3 +1123,343 @@ await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({buttons:buttonsIn(byClass('ws-agent'))}));
 """)
     assert out["buttons"] == ["运行记录", "打回", "撤回本次运行"]
+
+
+
+# -- review fixes: the page keeps up with a run without losing what the person is writing ----------------------
+
+
+def test_the_task_list_takes_the_agents_done_mark_while_the_task_form_holds_text():
+    # #29: the run ended and the engine saved the done mark and the report; the page must not offer 运行 again,
+    # tick the box or send the old revision just because a new task is being typed.
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+typed(field('任务'),'Next question for the group');
+Object.assign(runsList.runs[0],{state:'done',can_stop:false,can_reply:true,changes:1});runsList.active=null;
+listed.tasks=[agentTask({done:true,report:'research/results/run.md'})];listed.tasks_revision='tasks-agent';
+await tick();
+const row=root.all().find(e=>e.classList.contains('ws-task'));
+const check=row.all().find(e=>e.tagName==='INPUT'&&e.type==='checkbox');
+const after={buttons:buttonsIn(byClass('ws-agent')),checked:check.checked,text:field('任务').value};
+await find('添加任务').click();await sleepTick();
+const save=posted.filter(p=>p[0]==='/api/workspace/tasks').pop();
+console.log(JSON.stringify({after,revision:save&&save[1].revision,tasks:save&&save[1].tasks.map(x=>[x.text,x.done])}));
+""")
+    assert "运行" not in out["after"]["buttons"] and "打开结果" in out["after"]["buttons"]
+    assert out["after"]["checked"] is True and out["after"]["text"] == "Next question for the group"
+    assert out["revision"] == "tasks-agent"
+    assert out["tasks"] == [["Run the model", True], ["Next question for the group", False]]
+
+
+def test_the_task_list_is_redrawn_around_a_task_form_that_has_focus():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const input=field('任务');typed(input,'half a sentence');input.focus();
+Object.assign(runsList.runs[0],{state:'done',can_stop:false,can_reply:true});runsList.active=null;
+listed.tasks=[agentTask({done:true,report:'research/results/run.md'})];listed.tasks_revision='tasks-agent';
+await tick();
+console.log(JSON.stringify({same:field('任务')===input,focus:document.activeElement===input,value:input.value,buttons:buttonsIn(byClass('ws-agent'))}));
+""")
+    assert out["same"] and out["focus"] and out["value"] == "half a sentence"
+    assert "打开结果" in out["buttons"] and "运行" not in out["buttons"]
+
+
+def test_an_edit_in_progress_is_kept_but_not_saved_when_the_task_file_moved():
+    out = run(r"""
+listed.tasks=[{id:'t1',text:'Plan the survey',owner:'',due:'',done:false}];
+await window.ROWorkspace.load(root);await sleepTick();
+await find('编辑').click();typed(field('任务'),'Plan the survey, twice');
+listed.tasks=[{id:'t1',text:'Plan the survey',owner:'',due:'',done:true}];listed.tasks_revision='tasks-moved';
+await window.ROWorkspace.load(root,true);await sleepTick();
+const held={text:field('任务').value,disabled:find('保存任务').disabled,status:byClass('ws-status',root.all().find(e=>e.classList.contains('ws-task-form')).parentNode.children.slice(-1)[0]||root)};
+await find('保存任务').click();
+const posts=posted.filter(p=>p[0]==='/api/workspace/tasks').length;
+const words=root.textContent;
+await find('重新载入任务').click();await sleepTick();
+await find('保存任务').click();await sleepTick();
+const last=posted.filter(p=>p[0]==='/api/workspace/tasks').pop();
+console.log(JSON.stringify({held:{text:held.text,disabled:held.disabled},posts,words,revision:last[1].revision,saved:last[1].tasks[0]}));
+""")
+    assert out["held"] == {"text": "Plan the survey, twice", "disabled": True}
+    assert out["posts"] == 0 and "任务已在其他地方修改，当前填写已保留。" in out["words"]
+    assert out["revision"] == "tasks-moved"
+    assert out["saved"]["text"] == "Plan the survey, twice" and out["saved"]["done"] is True
+
+
+def test_a_reply_form_goes_with_the_button_that_opens_it():
+    # #28: 打回 left open, then 运行 / 撤回本次运行 / a run waiting for an answer: no stale 发送 form.
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'done',can_reply:true,can_revert:true,changes:1})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const formButtons=()=>buttonsIn(byClass('ws-agent')).filter(b=>b==='发送'||b==='取消');
+const textareas=()=>root.all().filter(e=>e.tagName==='TEXTAREA'&&e.classList.contains('form-textarea')).length;
+await find('打回').click();typed(byClass('form-textarea'),'redo this');
+const open={buttons:formButtons(),areas:textareas(),dirty:window.ROWorkspace.isDirty()};
+await find('运行').click();await sleepTick();
+const started={label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),areas:textareas(),dirty:window.ROWorkspace.isDirty()};
+// the run before comes back as a finished one that can be undone; the form must not return with the old words
+window.ROWorkspace.reset();
+setRuns([mkRun({state:'done',can_reply:true,can_revert:true,changes:1})]);listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();
+await find('打回').click();typed(byClass('form-textarea'),'redo this');
+await find('撤回本次运行').click();await sleepTick();
+const undone={label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),areas:textareas()};
+// a form for 打回 must not turn into a 要它改什么 form under a run that is waiting for an answer
+window.ROWorkspace.reset();
+setRuns([mkRun({state:'done',can_reply:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+await find('打回').click();
+Object.assign(runsList.runs[0],{state:'needs_input',question:'Which?'});
+await window.ROWorkspace.load(root,true);await sleepTick();
+const waiting_={buttons:buttonsIn(byClass('ws-agent')),areas:textareas(),expanded:find('回答').getAttribute('aria-expanded')};
+console.log(JSON.stringify({open,started,undone,waiting_}));
+""")
+    assert out["open"] == {"buttons": ["发送", "取消"], "areas": 1, "dirty": True}
+    assert out["started"]["areas"] == 0 and "发送" not in out["started"]["buttons"] and not out["started"]["dirty"]
+    assert out["started"]["label"] in ("准备中", "运行中")
+    assert out["undone"]["label"] == "已撤回本次运行" and out["undone"]["areas"] == 0 and "发送" not in out["undone"]["buttons"]
+    assert out["waiting_"]["areas"] == 0 and out["waiting_"]["expanded"] == "false"
+
+
+def test_a_reply_box_keeps_its_node_focus_and_words_while_the_page_refreshes():
+    # #30: refreshes must not rebuild a textarea that has focus; unsent words also count as unsaved.
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'needs_input',can_reply:true,question:'Which sample?'})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const clean=window.ROWorkspace.isDirty();
+await find('回答').click();
+const area=byClass('form-textarea');
+const focusedOnOpen=document.activeElement===area;
+typed(area,'Sample B, because');area.selectionStart=area.selectionEnd=7;
+const dirty=window.ROWorkspace.isDirty();
+const leave=window.ROWorkspace.mayLeave(),asked=confirmQuestions.length;
+runsList.runs[0].question='Which sample, A or B?';listed.tasks=[agentTask({text:'Run the model now'})];listed.tasks_revision='tasks-x';
+await window.ROWorkspace.load(root,true);await sleepTick();
+console.log(JSON.stringify({clean,focusedOnOpen,dirty,leave,asked,same:byClass('form-textarea')===area,focus:document.activeElement===area,
+  value:area.value,caret:area.selectionStart,question:byClass('ws-agent-question').textContent,buttons:buttonsIn(byClass('ws-agent'))}));
+""")
+    assert out["clean"] is False and out["focusedOnOpen"] is True and out["dirty"] is True and out["asked"] == 1
+    assert out["same"] and out["focus"] and out["value"] == "Sample B, because" and out["caret"] == 7
+    assert out["question"] == "Which sample, A or B?"
+    assert out["buttons"] == ["运行记录", "回答", "发送", "取消"]
+
+
+def test_a_settings_input_is_not_rebuilt_under_the_typing_when_the_agent_list_arrives():
+    out = run(r"""
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root);await sleepTick();
+const slow=deferred();let slowed=false;
+customGet=path=>{ if(path==='/api/agents'&&!slowed){slowed=true;return slow.promise;} };
+await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),model=field('模型',box());
+typed(model,'son');model.focus();
+agentsInfo.timeout_minutes=90;
+slow.resolve(clone(agentsInfo));await sleepTick();await sleepTick();
+const again=field('模型',box());
+console.log(JSON.stringify({same:again===model,focus:document.activeElement===model,value:model.value,tasksSame:true}));
+""")
+    assert out["same"] and out["focus"] and out["value"] == "son"
+
+
+def test_polling_keeps_going_with_back_off_and_says_so_quietly_while_reads_fail():
+    # #31
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+let down=true;customGet=path=>{ if(path==='/api/agents/runs'&&down) return Promise.reject(Object.assign(Error('offline'),{})); };
+const delays=[],notice=()=>{ const n=root.all().find(e=>e.classList.contains('ws-connection')); return n?n.textContent:''; };
+delays.push(timers.filter(t=>!t.cancelled&&!t.fired).map(t=>t.ms)[0]);
+for(let i=0;i<7;i+=1){ await tick(); delays.push(timers.filter(t=>!t.cancelled&&!t.fired).map(t=>t.ms)[0]); }
+const failing={notice:notice(),label:byClass('status-label').textContent,waiting:waiting()};
+down=false;await tick();
+const back={notice:notice(),waiting:waiting(),delay:timers.filter(t=>!t.cancelled&&!t.fired).map(t=>t.ms)[0]};
+console.log(JSON.stringify({delays,failing,back}));
+""")
+    assert out["delays"] == [2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000]
+    assert out["failing"] == {"notice": "暂时连不上 Research OS，正在重试。", "label": "运行中", "waiting": 1}
+    assert out["back"] == {"notice": "", "waiting": 1, "delay": 2000}
+
+
+def test_a_failed_run_log_read_is_asked_for_again_on_reopen_and_by_the_retry_button():
+    # #32
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const run1=mkRun({state:'done',can_reply:true});setRuns([run1]);
+let broken=true;const logPath='/api/agents/runs/'+encodeURIComponent(run1.id);
+runLogs[run1.id]=Object.assign(clone(run1),{steps:[{kind:'say',text:'The fit converged.'}],steps_total:1,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[]});
+customGet=path=>{ if(path===logPath&&broken) return Promise.reject(Object.assign(Error('timeout'),{})); };
+const reads=()=>gets.filter(g=>g===logPath).length;
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行记录').click();await sleepTick();
+const failed={reads:reads(),words:byClass('ws-run-details').textContent,retry:buttonsIn(byClass('ws-run-details'))};
+broken=false;
+await find('运行记录').click();await find('运行记录').click();await sleepTick();
+const reopened={reads:reads(),words:byClass('ws-run-details').textContent};
+// the button, with the read failing again once more
+broken=true;window.ROWorkspace.reset();setRuns([run1]);listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行记录').click();await sleepTick();
+broken=false;const before=reads();
+await find('重试',byClass('ws-run-details')).click();await sleepTick();
+console.log(JSON.stringify({failed,reopened,button:{reads:reads()-before,words:byClass('ws-run-details').textContent}}));
+""")
+    assert out["failed"]["reads"] == 1 and "没能读取运行记录。" in out["failed"]["words"] and out["failed"]["retry"] == ["重试"]
+    assert out["reopened"]["reads"] == 2 and "The fit converged." in out["reopened"]["words"]
+    assert out["button"]["reads"] == 1 and "The fit converged." in out["button"]["words"]
+
+
+def test_keyboard_focus_comes_back_after_a_redraw_and_buttons_say_which_task():
+    # #33
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask(),agentTask({id:'t2',text:'Other task',owner:''})];
+setRuns([mkRun({state:'needs_input',can_reply:true,question:'Which sample?'})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const box=()=>byClass('ws-agent');
+const names={log:find('运行记录',box()).getAttribute('aria-label'),answer:find('回答',box()).getAttribute('aria-label'),
+  edit:root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').map(e=>e.getAttribute('aria-label')),
+  remove:root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除').map(e=>e.getAttribute('aria-label'))};
+const logButton=find('运行记录',box());logButton.focus();await logButton.click();
+const afterLog={moved:document.activeElement!==logButton,key:document.activeElement.dataset.key,label:document.activeElement.textContent,expanded:document.activeElement.getAttribute('aria-expanded')};
+await find('回答',box()).click();
+const reply={tag:document.activeElement.tagName,label:document.activeElement.getAttribute('aria-label')};
+await find('取消',box()).click();
+const closed={label:document.activeElement.textContent,key:document.activeElement.dataset.key};
+const live=byClass('ws-agent-status',box());
+console.log(JSON.stringify({names,afterLog,reply,closed,live:{role:live.getAttribute('role'),words:live.textContent}}));
+""")
+    assert out["names"]["log"] == "运行记录：Run the model" and out["names"]["answer"] == "回答：Run the model"
+    assert out["names"]["edit"] == ["编辑：Run the model", "编辑：Other task"]
+    assert out["names"]["remove"] == ["移除：Run the model", "移除：Other task"]
+    assert out["afterLog"] == {"moved": True, "key": "agent:t1:log", "label": "运行记录", "expanded": "true"}
+    assert out["reply"] == {"tag": "TEXTAREA", "label": "你的回答"}
+    assert out["closed"] == {"label": "回答", "key": "agent:t1:answer"}
+    assert out["live"]["role"] == "status" and "等你回答" in out["live"]["words"] and "Which sample?" in out["live"]["words"]
+
+
+def test_notes_and_the_program_path_input_have_accessible_names():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([]);
+customPost=path=>path==='/api/agents/runs'?Promise.reject(Object.assign(Error('no'),{state:'agent_busy',engineMessage:'Another run is going.'})):undefined;
+await window.ROWorkspace.load(root);await sleepTick();
+const go=find('运行',byClass('ws-agent'));go.focus();await go.click();await sleepTick();
+const note=byClass('ws-agent-note');
+await find('AI 执行者').click();
+const path=root.all().find(e=>e.tagName==='INPUT'&&e.dataset.key==='set-path:opencode');
+console.log(JSON.stringify({note:{role:note.getAttribute('role'),words:note.textContent},path:path.getAttribute('aria-label'),
+  focusBack:document.activeElement&&document.activeElement.dataset.key}));
+""")
+    assert out["note"]["role"] == "status" and "Another run is going." in out["note"]["words"]
+    assert out["path"] == "OpenCode 的程序路径"
+    assert out["focusBack"] == "agent:t1:run"
+
+
+def test_buttons_carry_the_task_in_their_english_accessible_names():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'done',can_reply:true,can_revert:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const names=root.all().filter(e=>e.tagName==='BUTTON'&&e.getAttribute('aria-label')).map(e=>e.getAttribute('aria-label'));
+await find('AI agent').click();
+const path=root.all().find(e=>e.dataset&&e.dataset.key==='set-path:opencode');
+console.log(JSON.stringify({names,path:path.getAttribute('aria-label')}));
+""", lang="en")
+    for name in ("Run: Run the model", "Run log: Run the model", "Send back: Run the model", "Undo this run: Run the model",
+                 "Edit: Run the model", "Remove: Run the model"):
+        assert name in out["names"], name
+    assert out["path"] == "Program path for OpenCode"
+
+
+def test_a_partly_undone_run_says_so_and_the_log_lists_what_was_left_with_the_reason():
+    # #17
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const partly=mkRun({state:'done',reverted:true,revert_skipped:3,changes:4});
+setRuns([partly]);
+runLogs[partly.id]=Object.assign(clone(partly),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[],
+  revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'}]}});
+await window.ROWorkspace.load(root);await sleepTick();
+const partlyLabel=byClass('status-label').textContent;
+await find('运行记录').click();await sleepTick();
+const log=byClass('ws-run-details').textContent;
+window.ROWorkspace.reset();
+setRuns([mkRun({state:'done',reverted:true,revert_skipped:0})]);listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({partlyLabel,log,wholeLabel:byClass('status-label').textContent}));
+""")
+    assert out["partlyLabel"] == "部分撤回" and out["wholeLabel"] == "已撤回本次运行"
+    assert "data/new.csv 运行之后又改动过" in out["log"] and "big.bin 没有运行前的副本" in out["log"]
+    assert "Drive/x.xlsx 文件只在云端" in out["log"]
+
+
+def test_the_run_log_warns_about_a_partial_picture_and_leftover_processes_and_guard_failures():
+    # #15 / #36
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const mk=(o)=>{ const r=mkRun({state:'done',can_reply:true}); runLogs[r.id]=Object.assign(clone(r),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[]},o); setRuns([r]); };
+mk({snapshot:{files:50000,partial:true},leftovers:2});
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行记录').click();await sleepTick();
+const log=byClass('ws-run-details'),warn=log.all().find(e=>e.classList.contains('err')&&/50,000/.test(e.textContent));
+const first=log.all().filter(e=>e.tagName==='P').map(e=>e.textContent);
+window.ROWorkspace.reset();
+mk({snapshot:{files:10,partial:false},leftovers:1});listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行记录').click();await sleepTick();
+const clean=byClass('ws-run-details').textContent;
+window.ROWorkspace.reset();
+setRuns([mkRun({state:'failed',can_reply:true,error:{code:'guard_failed',detail:'hook did not start'}})]);listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({warn:!!warn,first,clean,guard:byClass('ws-agent-error').textContent}));
+""")
+    assert out["warn"] and out["first"][0].startswith("这个项目文件太多，运行前只记录了前 50,000 个文件")
+    assert "无法核对，也无法撤回。" in out["first"][0]
+    assert "程序结束后还有 2 个它启动的进程在运行，已一并结束。" in out["first"]
+    assert "50,000" not in out["clean"] and "程序结束后还有 1 个它启动的进程在运行，已一并结束。" in out["clean"]
+    assert out["guard"].startswith("Research OS 的检查程序没有正常启动，为了安全没有运行。")
+
+
+def test_the_run_log_warnings_read_in_english_without_chinese():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];listed.files=listed.files.filter(f=>!/[一-鿿]/.test(f.path));
+const r=mkRun({state:'done',reverted:true,revert_skipped:1,can_reply:true});
+runLogs[r.id]=Object.assign(clone(r),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[],snapshot:{partial:true},leftovers:1,
+  revert:{skipped:[{path:'a.csv',reason:'in_cloud'}]}});
+setRuns([r]);
+await window.ROWorkspace.load(root);await sleepTick();
+await find('Run log').click();await sleepTick();
+const one=root.textContent;
+runLogs[r.id].leftovers=3;window.ROWorkspace.reset();setRuns([r]);listed.tasks=[agentTask()];
+await window.ROWorkspace.load(root);await sleepTick();await find('Run log').click();await sleepTick();
+const many=byClass('ws-run-details').textContent;
+console.log(JSON.stringify({one,many,label:byClass('status-label').textContent}));
+""", lang="en")
+    assert re.search(r"[㐀-鿿]", out["one"]) is None
+    assert out["label"] == "Partly undone"
+    assert "After the program ended, 1 process it had started was still running. It was ended too." in out["one"]
+    assert "3 processes it had started were still running" in out["many"]
+    assert "a.csv The file is only in the cloud" in out["one"] and "cannot be checked or undone" in out["one"]
+
+
+def test_the_budget_setting_posts_max_budget_usd_and_empty_removes_it():
+    # #43
+    out = run(r"""
+agentsInfo=agentFixture();agentsInfo.max_budget_usd=5;
+await window.ROWorkspace.load(root);await sleepTick();
+await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),usd=()=>field('每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）',box());
+const shown=usd().value;
+typed(usd(),'12.5');await find('保存',usd().parentNode.parentNode).click();await sleepTick();
+const saved=posted.filter(p=>p[0]==='/api/settings/agents').pop();
+typed(usd(),'0');await find('保存',usd().parentNode.parentNode).click();await sleepTick();
+const refused={posts:posted.filter(p=>p[0]==='/api/settings/agents').length,words:box().textContent.includes('费用上限要大于 0、不超过 1000 美元。')};
+typed(usd(),'');await find('保存',usd().parentNode.parentNode).click();await sleepTick();
+const cleared=posted.filter(p=>p[0]==='/api/settings/agents').pop();
+console.log(JSON.stringify({shown,saved:saved[1],refused,cleared:cleared[1],after:usd().value}));
+""")
+    assert out["shown"] == "5"
+    assert out["saved"] == {"max_budget_usd": 12.5}
+    assert out["refused"] == {"posts": 1, "words": True}
+    assert out["cleared"] == {"max_budget_usd": None} and out["after"] == ""

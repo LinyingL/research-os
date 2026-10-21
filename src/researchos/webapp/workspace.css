@@ -132,3 +132,8 @@
   .ws-step { flex-direction: column; gap: 0; }
   .ws-task-header > .btn { margin-left: 0; }
 }
+/* The state word, question and errors of a task's run are one live region; a note is another (12.11). */
+.ws-agent-status { display: flex; flex-direction: column; gap: .4rem; }
+.ws-agent-status:empty { display: none; }
+.ws-connection { margin: .2rem 0 .5rem; }
+.ws-install-caption { display: block; margin: .2rem 0 0; }

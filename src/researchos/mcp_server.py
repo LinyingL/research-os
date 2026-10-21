@@ -367,7 +367,10 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
             raise _Refused(f"task {run.get('task_id')!r} no longer exists in research/tasks.json, so there is "
                            "nothing to complete; tell the person in your final message")
         heading = _result_title(title, task["text"])
-        content = f"# {heading}\n\n{_attribution_line(run, agent)}\n\n{report}\n"
+        # The record's one top heading is ours: a report that opens with its own
+        # `# ...` keeps it one level down, so the document has a single title.
+        body_text = re.sub(r"\A#(?=[ \t])", "##", report)
+        content = f"# {heading}\n\n{_attribution_line(run, agent)}\n\n{body_text}\n"
         body: dict[str, Any] = {"content": content}
         existing = task.get("report")
         if existing:  # a run of this task wrote it before (a task sent back): the same record, rewritten

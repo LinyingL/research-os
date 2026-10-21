@@ -3941,13 +3941,20 @@ notes and a result, and marks the task done. Decided the same day:
   each shell command in a session of its own, so its process group is not
   enough), asks the program to end (SIGTERM; Claude Code passes it on, an
   OpenCode killed this way leaves its commands running), waits 10 seconds,
-  then kills whatever of that tree is still alive. A run has a time limit, `agent_timeout_minutes` in
+  then kills whatever of that tree is still alive. A program that ends on
+  its own may leave processes running (a download started with `nohup`):
+  the tree is sampled while the run goes, and whatever of it outlives the
+  program is ended before the after-run check, which the run log notes.
+  A run has a time limit, `agent_timeout_minutes` in
   `settings.json` (default 120, 5–1440); Claude Code also takes
   `agent_max_budget_usd` when the person sets one.
 - **When the app quits** every running agent is stopped (`interrupted`); a
-  SIGTERM to the engine takes the same path. A run found `running` with no
-  engine behind it is marked `interrupted` the next time runs are listed,
-  and its program, if still alive and still that program, is stopped.
+  SIGTERM to the engine takes the same path (a second SIGTERM during that
+  shutdown is ignored). A run found `running` with no engine behind it is
+  marked `interrupted` the next time runs are listed, and its program, if
+  still alive and still that program, is stopped. "Still that process" is
+  the pid together with its start time, recorded at launch for the engine
+  and the program, so a reused pid is never taken for either.
 
 ### 17.4 What the agent is given
 
@@ -3979,7 +3986,14 @@ notes and a result, and marks the task done. Decided the same day:
   instruction on standard input (a prompt after `--allowedTools` would be
   taken as a tool name). Inherited Claude Code session variables are
   removed from its environment so a Claude Code that started Research OS
-  is never joined.
+  is never joined. The hook is `sh -c '<python> -I -m
+  researchos.agents.hook <run>'` and only its exit 0 allows a call: a
+  project file that shadows a standard module (`random.py`), a missing
+  interpreter, any failure refuses (Claude Code itself lets a call through
+  on any other non-zero exit). `disableAllHooks` is set to false, and
+  before the program starts a canary call the hook must refuse is made: if
+  it is not refused, the run does not start (`guard_failed`). The MCP
+  server runs isolated the same way (`-I`).
 - **OpenCode** runs as `opencode run --format json --model <model> --dir
   <project>` (`--session <id>` to continue) with its configuration —
   permissions and the MCP server — in `OPENCODE_CONFIG_CONTENT`, a project's
@@ -3987,7 +4001,9 @@ notes and a result, and marks the task done. Decided the same day:
   could otherwise allow what Research OS denies), and the rules and the
   instruction on standard input (a message given as an argument reaches the
   model re-quoted). Every permission is `allow` or `deny`, never `ask`: an
-  unattended run rejects what would ask and stops.
+  unattended run rejects what would ask and stops. So `doom_loop` is
+  `deny` and reading `.env` files is denied, where OpenCode's defaults
+  would ask.
 - **The run log** is the program's own event stream, kept in the run's
   folder, read back as steps: what the agent said, each tool it used with
   its command or file, what was refused, and how it ended (with cost and
@@ -4016,15 +4032,21 @@ notes and a result, and marks the task done. Decided the same day:
   folder, inside `.researchos/` or `.git/`, of the attempt table (its path
   read from `attempts.toml` at the start), of `research/tasks.json`, or of
   a data file that existed before the run; a command that names the
-  `researchos` or `rce` program, a git command of rule 4, the engine's own
-  address, `.researchos`, or a protected file together with a writing
-  operation (`>`, `rm`, `mv`, `sed -i`, `truncate`, `tee`, `dd`). A hook
-  that cannot decide refuses. The command check reads text; it is a
-  barrier, not a sandbox.
+  `researchos` or `rce` program, a git command of rule 4 (git's own
+  options in front included), the engine's address or its API on this
+  Mac, or `.researchos`; and a command that would remove, move or
+  overwrite a protected file or a folder holding one -- `rm`, `mv`, `cp`,
+  `rsync`, `ln`, `find -delete`, `git rm`/`git mv`, an archive extracted
+  over it, a `curl -o`/`wget -O` download onto it, a redirect into it,
+  `sed -i`, `truncate`, `tee`, `dd` -- or copy, move, extract or download
+  into a folder that holds a protected file of the same name. Paths are
+  resolved against the command's working folder, `~` and links followed.
+  Reading a protected file stays allowed. A hook that cannot decide
+  refuses. The command check reads text; it is a barrier, not a sandbox.
 - **Permissions**: the git and `researchos` commands are also denied in
   Claude Code's `--disallowedTools` and OpenCode's `permission.bash`.
   OpenCode has no per-call hook here: for it the after-run check below is
-  the guard, and its settings say so.
+  the guard, and its settings and the instruction it is sent say so.
 - **Research OS refuses itself.** The agent's processes carry
   `RESEARCHOS_AGENT_RUN`. With it set, the `researchos` command refuses
   everything but its own agent tools, and every write under the project
@@ -4038,23 +4060,35 @@ notes and a result, and marks the task done. Decided the same day:
   that set out to bypass all of the above with Bash could; the after-run
   check would show what it touched.
 - **The before-picture and the after-run check.** Before the program
-  starts, Research OS records every file in the project (size, modification
+  starts, Research OS records the files of the project (size, modification
   time, and a SHA-256 for files up to 64 MB), skipping `.git/`,
   `.researchos/backups/`, `__pycache__/`, `node_modules/`, `.venv/`,
-  `venv/`, `.ipynb_checkpoints/` and the like, never reading a file that
-  is only in the cloud, and copies every file up to 16 MB (1 GB per run at
-  most) into the run's folder. The git `HEAD` and branch are noted. After
-  the run the folder is compared: files created, changed and deleted (a
-  touched file with the same content is not changed). A change to a
-  protected file (rules 1, 3, 5) or to git's state is an **out-of-bounds
-  change**: the run shows it first, in the warning colour, with 撤回本次运行
-  beside it. Files the person saved through Research OS while the run went
-  on are not counted as the agent's.
+  `venv/`, `.ipynb_checkpoints/` and the like and the files the system and
+  editors leave (`.DS_Store`, `~$` lock files, `.Rhistory`), never reading
+  a file that is only in the cloud, and copies every file up to 16 MB
+  (1 GB per run at most) into the run's folder. The picture stops at
+  50,000 files; the run log then says that later files are neither checked
+  nor undoable, and in such a picture a file counts as created only if it
+  was written after the run began. Data files (rule 3) are found by a
+  separate walk that only reads their size and time, is not limited by
+  that number, and goes into every folder but `.git`, `node_modules`,
+  `.venv`, `venv` and `__pycache__`. Git's `HEAD`, branch and a fingerprint
+  of all its references and the stash are noted (so a push, a tag, a branch
+  or a stash shows; the index does not). After the run the folder is
+  compared: files created, changed and deleted (a touched file with the
+  same content is not changed). A change to a protected file (rules 1, 3,
+  5) or to git's state is an **out-of-bounds change**: the run shows it
+  first, in the warning colour, with 撤回本次运行 beside it. Files the person
+  saved through Research OS while the run went on (until the after-picture
+  is complete) are not counted as the agent's; a protected file the person
+  saved is still out of bounds if it does not end as the person left it.
 - **Attribution.** Every file the run created or changed is recorded in the
-  change history with `source = "agent"`, `who = "agent:<runner>:<model>"`
-  and the run and the person who started it in the note; the history shows
-  「Claude Code · sonnet」 and 「AI 执行」. A git-tracked file's history is
-  git's: the run log is where its agent change is named. The result record
+  change history with `source = "agent"`, `who =
+  "agent:<runner>:<model>#<person id>"` (the person who started the run;
+  without `#…` when unknown) and the run id as the note; the history shows
+  「Claude Code · sonnet（张三 指派）」 and 「AI 执行」. A git-tracked file is
+  not recorded: its history is git's, and the run log is where its agent
+  change is named. The result record
   the agent writes opens with a line saying which agent wrote it, when, and
   for whom.
 
@@ -4064,7 +4098,9 @@ notes and a result, and marks the task done. Decided the same day:
 allows, and never over a later change:
 
 - a file the run created is moved into the run's folder (`reverted/`), not
-  deleted;
+  deleted -- unless it is a file the run moved or renamed that had no copy
+  (its content is that of a deleted file), which goes back to where it was;
+  folders the moves emptied, that did not exist before, are removed;
 - a file it changed or deleted is restored from the copy taken before;
 - a file that changed again after the run (by the person or a later run),
   or that had no copy (over 16 MB, or past the 1 GB budget, or only in the
@@ -4072,11 +4108,16 @@ allows, and never over a later change:
 - the task's done mark and `report` are taken back if the run set them
   (not by restoring `tasks.json`, which the person may have changed since);
 - a run cannot be undone while a later run of the same project that is not
-  undone touched the same files: undo the later one first.
+  undone touched the same files, or while another Research OS on this Mac
+  runs an agent in the project: undo the later one first;
+- files the person saved during the run, and files only in the cloud, are
+  left as they are.
 
 Each restore is a write like any other, backed up and in the history,
-under the person's name. The copies of the last 20 runs of a project are
-kept; older runs keep their log but can no longer be undone.
+under the person's name. When something was left as it was, the run reads
+部分撤回 and its log lists those files with the reason. The copies of the
+newest 20 runs of a project are kept; the logs of the newest 200; older
+runs can no longer be undone, and runs beyond the 200 are removed.
 
 ### 17.7 In a team
 
@@ -4091,7 +4132,14 @@ kept; older runs keep their log but can no longer be undone.
 
 All `agent_<code>` errors carry `message` in the request's language and
 `detail`. Every POST is origin-checked and carries `project` (as the
-workspace's do); runs are the served project's.
+workspace's do); runs are the served project's. Starting, answering and
+undoing refuse a blocked, read-only or unmigrated project up front
+(`agent_read_only`, `agent_needs_migration`) without holding the project
+lock while the program is looked for; the manager takes the lock only for
+its own writes. A `me.toml` that exists but cannot be read refuses
+starting and answering (`agent_person_unreadable`: a run is never nobody's).
+A project without an identity lists no runs. A run that ends while another
+project is served is scanned when that project is opened again.
 
 - `GET /api/agents` — runners found (path, version, or why not), this Mac's
   agents, whether the MCP extra is installed, suggested Claude Code models.
@@ -4115,7 +4163,7 @@ Added to 13.4: AI 执行者 "AI agent"; 运行 (a run, and the button) "Run";
 打回 "Send back"; 撤回本次运行 "Undo this run"; 越界改动 "Out-of-bounds
 change"; AI 执行 (history source) "By an agent". States: 准备中
 "Preparing", 运行中 "Running", 已完成 "Done", 未报告 "Ended without a
-report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 已撤回本次运行
+report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分撤回 "Partly undone", 已撤回本次运行
 "Undone" (not 已撤回, which is a withdrawn proposal's word).
 
 ### 17.10 Acceptance

@@ -10,7 +10,11 @@ they can be read, tested and shown in the run log exactly as sent
   flag, so the manager puts it in front of the instruction on standard input.
   It is a statement of the rules, not their enforcement: the hook, the
   permission lists, the environment variable and the after-run check hold
-  them whether or not the model reads this (17.5).
+  them whether or not the model reads this (17.5). What is said about
+  enforcement depends on the runner: Claude Code's hook refuses every listed
+  action and records the attempt; OpenCode has no hook, so only git and
+  `researchos` / `rce` commands are blocked at call time and the rest is
+  compared after the run.
 - `instruction` -- the task and its date, the project, its research question
   and plan (`research/overview.md`, at most `OVERVIEW_LIMIT` characters, the
   cut marked) and the titles and paths of the notes and result records.
@@ -118,6 +122,7 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
     table = _attempt_table(prot)
     data = _protected_data(prot)
     shown, more = data[:PROTECTED_LIST_LIMIT], max(0, len(data) - PROTECTED_LIST_LIMIT)
+    hooked = runner == "claude-code"  # only Claude Code has a hook that refuses every listed action (17.5)
 
     if _is_en(lang):
         table_words = f"the attempt table (`{table}`)" if table else "the attempt table"
@@ -132,8 +137,12 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "project folder. You may write and edit code and notes, run Python, R or Stata, install "
             "packages and download data.",
             "",
-            "You must never do the following. Research OS refuses these and records the attempt; a refused "
-            "call is not a reason to try another way round.",
+            ("You must never do the following. Research OS refuses these and records the attempt; a refused "
+             "call is not a reason to try another way round." if hooked else
+             "You must never do the following. Research OS blocks git commands and `researchos` or `rce` "
+             "commands the moment you call them; everything else is compared with the project after the run, "
+             "listed as out of bounds, and can be undone. So do not do any of these things at all, whether "
+             "or not a call is blocked."),
             f"1. Make a judgment that belongs to the person: an attempt's verdict or result in {table_words}, "
             "confirming or rejecting a link, confirming a variable definition, or anything inside "
             "`.researchos/`.",
@@ -169,7 +178,9 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "（也就是项目文件夹）里把事情做完。你可以写、改代码和笔记，运行 Python、R 或 Stata，安装软件包，"
         "下载数据。",
         "",
-        "下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。",
+        ("下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。" if hooked else
+         "下面这些事绝对不能做。git 命令以及 `researchos`、`rce` 命令在你调用的那一刻就会被拦下；其余的事在运行结束后"
+         "会与项目逐一比对，列为越界，并且可以被撤回。所以这些事根本不要做，不管某次调用有没有被拦下。"),
         f"1. 不替人做判断：不要写尝试的判决或结果（{table_words}），不要确认或否定任何连接，"
         "不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
         "2. 不替团队行事：不要提议，不要批准或退回提议，不要发布、同步，也不要推送到 GitHub。",

@@ -13,6 +13,12 @@ run's folder (`--settings`, `--mcp-config --strict-mcp-config`), and the rules
 in `--append-system-prompt`. `--allowedTools` and `--disallowedTools` are
 variadic: a positional prompt after them would be swallowed as a tool name,
 so they come LAST and the instruction goes in on standard input.
+The hook's command is `sh -c` around the hook (`hook_command`) so that only
+its exit code 0 allows a call and every other outcome (a crash at start, a
+missing interpreter) is exit code 2, which Claude Code treats as a refusal;
+`hook_canary` runs that exact command on a call that must be refused, for
+the manager to do before a run. `--settings` also says `disableAllHooks:
+false`, and both Python commands run isolated (`-I`).
 
 **OpenCode** is `opencode run --format json --model <m> --dir <project>`
 (`--session <id>` to continue). A message given as an argument reaches the
@@ -46,6 +52,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -99,8 +106,11 @@ class Launch:
 def mcp_command(root: Path, run_id: str) -> list[str]:
     """The command that serves Research OS's agent tools for this run (17.4):
     the engine's own interpreter, so the `mcp` extra the engine has is the
-    one used."""
-    return [sys.executable, "-m", "researchos.cli", "mcp", "--agent-run", run_id, "--path", str(root)]
+    one used. `-I` (isolated mode) keeps the project folder, which both
+    programs make the working directory, off `sys.path` and ignores
+    `PYTHON*` variables: a project's own `random.py` or `types.py` must not
+    replace the standard library under the server."""
+    return [sys.executable, "-I", "-m", "researchos.cli", "mcp", "--agent-run", run_id, "--path", str(root)]
 
 
 def child_env(base: Mapping[str, str], *, run_id: str, home: str, program: str) -> dict[str, str]:
@@ -147,9 +157,65 @@ def _budget(value: float) -> str:
     return format(number, "f")
 
 
-def hook_command(run_dir: Path) -> str:
-    """The `PreToolUse` hook (a shell string; Claude Code runs it through a shell)."""
-    return shlex.join([sys.executable, "-m", "researchos.agents.hook", str(run_dir)])
+#: The hook runs under `sh -c` so that ONLY the hook's own exit code 0 allows a call (17.5). Claude
+#: Code blocks on exit code 2 alone and lets any other non-zero code through; a hook that cannot
+#: start (a project file shadowing a standard-library module, an interpreter that was moved, exit
+#: 1 or 127) would otherwise leave the whole guard off. `-I` keeps the project folder (the hook's
+#: working directory) off `sys.path` and ignores `PYTHON*` variables.
+HOOK_SHELL = '"$0" -I -m researchos.agents.hook "$1"; s=$?; [ "$s" -eq 0 ] && exit 0; exit 2'
+
+
+def hook_command(run_dir: Path, python: str | None = None) -> str:
+    """The `PreToolUse` hook (a shell string; Claude Code runs it through a
+    shell): `sh -c HOOK_SHELL <python> <run dir>`, so it exits 0 or 2 whatever
+    the interpreter does. `python` is the engine's own interpreter unless
+    given."""
+    return shlex.join(["sh", "-c", HOOK_SHELL, python or sys.executable, str(run_dir)])
+
+
+def hook_canary(run_dir: Path) -> str | None:
+    """Run the exact hook command string (`hook_command`) through `/bin/sh`,
+    in the project folder as Claude Code does, with a call that must be
+    refused (a Write to a protected file named in `guard.json`, else to
+    `.researchos/x`). None when the hook answers exit code 2 and its own
+    refusal text is on standard error; otherwise a sentence saying what
+    happened, and the run must not start (a hook that does not refuse
+    leaves the agent unguarded). The refusal this probe makes is taken back
+    out of `refusals.jsonl`. Never raises."""
+    run_dir = Path(run_dir)
+    log = run_dir / "refusals.jsonl"
+    try:
+        guard = json.loads((run_dir / "guard.json").read_bytes().decode("utf-8"))
+        root = guard["root"]
+        files = [f for f in guard.get("files", ()) if isinstance(f, str) and f]
+        target = os.path.join(root, *files[0].split("/")) if files else os.path.join(root, ".researchos", "x")
+        payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": target, "content": "x"},
+                              "cwd": root, "hook_event_name": "PreToolUse"}).encode("utf-8")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return f"the hook probe could not read guard.json ({type(exc).__name__}: {exc})"
+    try:
+        size = log.stat().st_size
+    except OSError:
+        size = None
+    try:
+        done = subprocess.run(["/bin/sh", "-c", hook_command(run_dir)], input=payload, capture_output=True,
+                              timeout=60, cwd=root, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"the hook probe could not run ({type(exc).__name__}: {exc})"
+    finally:
+        try:  # the probe's own refusal is not the agent's
+            if size is None:
+                log.unlink()
+            else:
+                os.truncate(log, size)
+        except OSError:
+            pass
+    if done.returncode != 2:
+        return f"the hook probe was not refused (exit code {done.returncode}, expected 2)"
+    if b"Research OS:" not in done.stderr:
+        return "the hook probe was refused, but not by the Research OS hook: " + done.stderr.decode(
+            "utf-8", "replace").strip()[:300]
+    return None
 
 
 def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str, session_id: str,
@@ -168,9 +234,10 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
     if max_budget_usd is not None:
         argv += ["--max-budget-usd", _budget(max_budget_usd)]
     argv += ["--allowedTools", *CLAUDE_ALLOWED, "--disallowedTools", *CLAUDE_DISALLOWED]
-    settings = {"hooks": {"PreToolUse": [{
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        "hooks": [{"type": "command", "command": hook_command(run_dir)}]}]}}
+    settings = {"disableAllHooks": False,  # a user-level `disableAllHooks: true` must not switch the guard off
+                "hooks": {"PreToolUse": [{
+                    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+                    "hooks": [{"type": "command", "command": hook_command(run_dir)}]}]}}
     mcp = {"mcpServers": {MCP_KEY: {
         "command": sys.executable, "args": mcp_command(root, run_id)[1:],
         "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}}}
@@ -186,6 +253,9 @@ def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
     bash: dict[str, str] = {"*": "allow"}
     for command in GIT_DENIED:
         bash[f"git {command}*"] = "deny"
+    for command in GIT_DENIED:  # git's own options may come first: `git -C dir push`, `git -c a=b commit -m x`
+        bash[f"git * {command}"] = "deny"
+        bash[f"git * {command} *"] = "deny"
     bash["researchos*"] = "deny"
     bash["rce *"] = "deny"
     bash["rce"] = "deny"
@@ -193,7 +263,10 @@ def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
         "$schema": "https://opencode.ai/config.json",
         "mcp": {MCP_KEY: {"type": "local", "command": mcp_command(root, run_id), "enabled": True,
                           "environment": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}},
-        "permission": {"edit": "allow", "webfetch": "allow", "external_directory": "deny", "bash": bash},
+        "permission": {"edit": "allow", "webfetch": "allow", "external_directory": "deny",
+                       "doom_loop": "deny",  # OpenCode's default is "ask"; an unattended run would stop on it
+                       "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny"},  # its default asks for .env files
+                       "bash": bash},
     }
 
 

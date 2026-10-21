@@ -537,7 +537,8 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
     assert (copies / "中文" / "说明.md").read_text(encoding="utf-8") == "你好"
     assert (copies / ".researchos" / "attempts.toml").is_file()
     assert not (copies / ".git").exists() and not (copies / "node_modules").exists()
-    assert picture["partial"] is False and picture["not_copied"] == 0 and picture["git"] == {"head": None, "branch": None}
+    assert picture["partial"] is False and picture["not_copied"] == 0
+    assert picture["git"]["head"] is None and picture["git"]["branch"] is None and len(picture["git"]["refs"]) == 64
     assert picture["copied_bytes"] == sum(e["size"] for e in picture["files"].values())
     json.dumps(picture)  # it is stored as before.json
 
@@ -859,7 +860,8 @@ def test_git_state(tmp_path):
     fresh = tmp_path / "fresh"
     fresh.mkdir()
     _git(fresh, "init", "-q", "-b", "trunk")
-    assert snapshot.git_state(fresh) == {"head": None, "branch": "trunk"}
+    fresh_state = snapshot.git_state(fresh)
+    assert fresh_state["head"] is None and fresh_state["branch"] == "trunk" and len(fresh_state["refs"]) == 64
 
 
 def test_git_state_ignores_repository_hooks(tmp_path):
@@ -1044,10 +1046,12 @@ def test_home_expansion_cannot_smuggle_a_path(project, monkeypatch):
     "git  checkout   main", "sudo git push", "git status\ngit commit -m x", "GIT push",
     "curl http://127.0.0.1:8765/api/status", "curl localhost:8765", "wget http://0.0.0.0:8765/x",
     "curl 'http://[::1]:8765/'", "curl http://localhost:8765/api/anything",
-    "curl -X POST http://x/api/proposals", "curl http://example.com/api/share", "curl h/api/judgements",
-    "curl h/api/attempts?x=1", "curl h/api/workspace", "curl h/api/edges", "curl h/api/mappings",
-    "curl h/api/records", "curl h/api/github", "curl h/api/shutdown", "curl h/api/settings", "curl h/api/notes",
-    "curl h/api/papers", "curl h/api/variables", "curl h/api/projects", "curl h/api/stata", "curl h/api/agents",
+    "curl -X POST http://127.0.0.1:9/api/proposals", "curl http://localhost/api/share", "curl localhost/api/judgements",
+    "curl localhost/api/attempts?x=1", "curl 127.0.0.1/api/workspace", "curl 127.0.0.1/api/edges",
+    "curl 0.0.0.0:80/api/mappings", "curl 'http://[::1]:5/api/records'", "curl localhost:1/api/github",
+    "curl LOCALHOST/api/shutdown", "curl http://localhost:3/api/settings", "curl localhost/api/notes",
+    "curl localhost/api/papers", "curl localhost/api/variables", "curl localhost/api/projects",
+    "curl localhost/api/stata", "curl localhost/api/agents", "curl http://127.0.0.1:$PORT/api/records",
     "cat .researchos/team.toml", "ls .researchos", "cat ./.researchos/judgements.toml", "cat ~/.researchos/settings.json",
     "cat '.researchos/x'", "ls .rce/", "x=.researchos", "cat .rce", "cat foo/.researchos/x", "tar c \".researchos\"",
     "echo x > data/raw.csv", "echo x >> data/raw.csv", "rm data/raw.csv", "rm -f ./data/raw.csv", "mv data/raw.csv /tmp/x",
@@ -1263,3 +1267,417 @@ def test_labels_contract_used_by_this_package():
     agent = labels.Agent("claude-code", "sonnet")
     assert agent.owner == "agent:claude-code:sonnet" and agent.label == "Claude Code · sonnet"
     assert labels.parse_owner(agent.owner) == agent
+
+
+# -- review fixes: snapshot ------------------------------------------------------------------------------------
+
+
+def test_skip_files_are_never_recorded_or_protected(tmp_path):
+    root = _project(tmp_path / "proj", {
+        "a.csv": "1", ".DS_Store": "x", "sub/.DS_Store": "x", "Thumbs.db": "x", "desktop.ini": "x", "Icon\r": "x",
+        ".Rhistory": "x", "~$report.xlsx": "x", "data/~$raw.csv": "x", ".~lock.table.ods#": "x",
+        "~WRL0001.tmp": "x", "keep.txt": "k", "~tilde.txt": "t"})
+    picture = snapshot.take(root)
+    assert set(picture["files"]) == {"a.csv", "keep.txt", "~tilde.txt"}
+    assert set(picture["data"]) == {"a.csv"}  # the data walk skips them too: `~$raw.csv` is not data
+    assert snapshot.protected(root, picture)["data"] == ["a.csv"]
+    before = snapshot.take(root)
+    (root / ".DS_Store").unlink()
+    (root / "new" / ".DS_Store").parent.mkdir()
+    (root / "new" / ".DS_Store").write_text("y", encoding="utf-8")
+    (root / "~$other.docx").write_text("y", encoding="utf-8")
+    changes = snapshot.compare(before, snapshot.take(root))
+    assert changes == {"created": [], "modified": [], "deleted": []}
+    assert snapshot.skip_file("THUMBS.DB") and snapshot.skip_file(".~lock.x.docx#") and not snapshot.skip_file("lock.csv")
+
+
+def test_data_walk_protects_files_beyond_the_file_limit_and_in_skipped_folders(tmp_path, monkeypatch):
+    files = {f"a{i}.txt": "x" for i in range(4)} | {"z/late.csv": "1", "_cache/panel.parquet": "p",
+                                                    ".cache/x.csv": "c", "data/raw.csv": "r", "venv/lib/v.csv": "v",
+                                                    "node_modules/m/n.json": "n", ".venv/c.csv": "c", ".git/g.json": "g",
+                                                    "sub/__pycache__/p.csv": "p", "deep/er/est/d.TSV": "t"}
+    root = _project(tmp_path / "proj", files)
+    monkeypatch.setattr(snapshot, "FILE_LIMIT", 3)
+    picture = snapshot.take(root)
+    assert picture["partial"] is True and len(picture["files"]) == 3
+    assert set(picture["data"]) == {"z/late.csv", "_cache/panel.parquet", ".cache/x.csv", "data/raw.csv", "deep/er/est/d.TSV"}
+    assert picture["data_partial"] is False
+    entry = picture["data"]["z/late.csv"]
+    assert entry["size"] == 1 and isinstance(entry["mtime_ns"], int) and "sha256" not in entry
+    prot = snapshot.protected(root, picture)
+    assert prot["data"] == sorted(picture["data"]) and set(prot["files"]) >= set(prot["data"])
+    # the hook now refuses what the cut picture alone would have left unprotected
+    guard_file = tmp_path / "rd"
+    guard_file.mkdir()
+    guard.write_guard_file(guard_file, root=root, prot=prot, engine_port=None)
+    g = guard.load_guard(guard_file)
+    for rel in ("z/late.csv", "_cache/panel.parquet", ".cache/x.csv"):
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}), rel
+        assert guard.check_tool(g, "Bash", {"command": f"echo x > {rel}"}), rel
+    assert guard.check_tool(g, "Write", {"file_path": str(root / "z" / "new.csv")}) is None
+
+
+def test_data_walk_never_opens_files_and_is_json(tmp_path, monkeypatch):
+    root = _project(tmp_path / "proj", {"a.csv": "1", "gone.csv": "2"})
+    os.symlink(root / "a.csv", root / "link.csv")
+    real_open = open
+    opened = []
+
+    def spy(file, *a, **k):
+        opened.append(str(file))
+        return real_open(file, *a, **k)
+
+    monkeypatch.setattr(snapshot, "_hash_and_copy", lambda *a, **k: (None, False, 0))  # the main walk reads nothing either
+    monkeypatch.setattr("builtins.open", spy)
+    monkeypatch.setattr(paths, "is_dataless", lambda p: str(p).endswith("gone.csv"))
+    picture = snapshot.take(root)
+    monkeypatch.undo()
+    assert not [o for o in opened if o.endswith(".csv")]
+    assert picture["data"]["gone.csv"]["dataless"] is True and "dataless" not in picture["data"]["a.csv"]
+    assert picture["data"]["link.csv"]["link"] == str(root / "a.csv")
+    json.dumps(picture)
+
+
+def test_data_walk_cap_marks_partial(tmp_path, monkeypatch):
+    root = _project(tmp_path / "proj", {f"d{i}.csv": "x" for i in range(5)})
+    monkeypatch.setattr(snapshot, "DATA_FILE_LIMIT", 3)
+    picture = snapshot.take(root)
+    assert picture["data_partial"] is True and len(picture["data"]) == 3
+
+
+def test_data_entries_take_the_hash_of_the_main_walk(tmp_path):
+    import hashlib
+
+    root = _project(tmp_path / "proj", {"a.csv": "abc"})
+    entry = snapshot.take(root)["data"]["a.csv"]
+    assert entry["sha256"] == hashlib.sha256(b"abc").hexdigest()
+
+
+def test_protected_without_a_data_walk_falls_back_to_files_and_leaves_out_researchos_json(tmp_path):
+    root = _project(tmp_path / "proj", {"a.csv": "1", ".researchos/s.json": "{}", "b.json": "{}"})
+    picture = snapshot.take(root)
+    assert snapshot.protected(root, picture)["data"] == ["a.csv", "b.json"]
+    old_shape = {k: v for k, v in picture.items() if k not in ("data", "data_partial")}
+    assert snapshot.protected(root, old_shape)["data"] == ["a.csv", "b.json"]
+
+
+def _data_violations(root, mutate, *, allowed=None, limit=None, monkeypatch=None):
+    if limit is not None:
+        monkeypatch.setattr(snapshot, "FILE_LIMIT", limit)
+    before = snapshot.take(root)
+    prot = snapshot.protected(root, before)
+    mutate(root)
+    after = snapshot.take(root)
+    changes = snapshot.compare(before, after)
+    return snapshot.violations(changes, prot, git_before=None, git_after=None, allowed=allowed or {}, after=after,
+                               data_before=before["data"], data_after=after["data"]), changes
+
+
+def test_violations_see_data_files_beyond_the_file_limit(tmp_path, monkeypatch):
+    files = {f"a{i}.txt": "x" for i in range(4)} | {"z/late.csv": "1", "z/gone.csv": "2", "z/touched.csv": "3",
+                                                    "_cache/p.parquet": "p"}
+    root = _project(tmp_path / "proj", files)
+
+    def mutate(r):
+        (r / "z/late.csv").write_text("changed!", encoding="utf-8")
+        (r / "z/gone.csv").unlink()
+        os.utime(r / "z/touched.csv", ns=(5, 5))                       # touched, content is the same: sha unknown, mtime differs
+        (r / "_cache/p.parquet").write_bytes(b"longer than before")
+        (r / "z/new.csv").write_text("new", encoding="utf-8")           # new data file: fine
+
+    found, changes = _data_violations(root, mutate, limit=3, monkeypatch=monkeypatch)
+    assert not {"z/late.csv", "z/gone.csv"} & set(changes["modified"] + changes["deleted"])  # the cut picture never saw them
+    reasons = {(v["path"], v["reason"]) for v in found}
+    assert ("z/late.csv", "data_changed") in reasons and ("z/gone.csv", "data_deleted") in reasons
+    assert ("_cache/p.parquet", "data_changed") in reasons
+    assert ("z/new.csv", "data_changed") not in reasons and len(found) == len({(v["path"], v["reason"]) for v in found})
+
+
+def test_violations_data_walk_untouched_and_main_hash_wins(tmp_path):
+    root = _project(tmp_path / "proj", {"a.csv": "same", "b.csv": "1"})
+    found, _ = _data_violations(root, lambda r: os.utime(r / "a.csv", ns=(5, 5)))
+    assert found == []  # both walks saw it and the hash is the same: touching is not changing
+    found, _ = _data_violations(root, lambda r: (r / "b.csv").write_text("2", encoding="utf-8"))
+    assert found == [{"path": "b.csv", "reason": "data_changed"}]  # once, though both comparisons see it
+
+
+def test_violations_deleted_data_file_with_a_cut_after_picture_needs_it_really_gone(tmp_path, monkeypatch):
+    root = _project(tmp_path / "proj", {"a.csv": "1", "b.csv": "2"})
+    before = snapshot.take(root)
+    prot = snapshot.protected(root, before)
+    monkeypatch.setattr(snapshot, "DATA_FILE_LIMIT", 1)
+    after = snapshot.take(root)
+    assert after["data_partial"] is True and len(after["data"]) == 1
+    missing = next(r for r in ("a.csv", "b.csv") if r not in after["data"])
+    found = snapshot.violations(snapshot.compare(before, after), prot, git_before=None, git_after=None, allowed={},
+                                after=after, data_before=before["data"], data_after=after["data"])
+    assert all(v["path"] != missing for v in found)  # it is still there, only the walk stopped short
+    (root / missing).unlink()
+    found = snapshot.violations({"created": [], "modified": [], "deleted": []}, prot, git_before=None, git_after=None,
+                                allowed={}, after=after, data_before=before["data"], data_after=after["data"])
+    assert {"path": missing, "reason": "data_deleted"} in found
+
+
+def test_violations_allowed_applies_to_every_protected_kind(tmp_path):
+    import hashlib
+
+    root = _attempts_project(tmp_path)
+    mine = b"a\n42\n"
+    mine_sha = hashlib.sha256(mine).hexdigest()
+    other = hashlib.sha256(b"something else").hexdigest()
+
+    def mutate(r):
+        (r / "data/raw.csv").write_bytes(mine)                            # data: the person saved this
+        (r / "map.md").write_bytes(mine)                                  # a record
+        (r / ".researchos/attempts.toml").write_bytes(mine)               # a .researchos path, modified
+        (r / ".researchos/new.toml").write_bytes(mine)                    # ... and created
+        (r / "data/clean.DTA").write_bytes(mine)
+
+    allowed = {"data/raw.csv": {mine_sha}, "map.md": {mine_sha}, ".researchos/attempts.toml": {mine_sha},
+               ".researchos/new.toml": {mine_sha}, "data/clean.DTA": {other}}
+    found, _ = _violations(root, mutate, allowed=allowed)
+    assert found == [{"path": "data/clean.DTA", "reason": "data_changed"}]  # its final content is not the allowed one
+    # an allowed hash never excuses a deletion
+    root2 = _attempts_project(tmp_path / "two")
+    found, _ = _violations(root2, lambda r: (r / "data/raw.csv").unlink(), allowed={"data/raw.csv": {mine_sha}})
+    assert found == [{"path": "data/raw.csv", "reason": "data_deleted"}]
+    root3 = _attempts_project(tmp_path / "three")
+    found, _ = _violations(root3, lambda r: (r / ".researchos/attempts.toml").unlink(),
+                           allowed={".researchos/attempts.toml": {mine_sha}})
+    assert found == [{"path": ".researchos/attempts.toml", "reason": "researchos_changed"}]
+
+
+def test_created_since(tmp_path):
+    root = _project(tmp_path / "proj", {"old.txt": "o", "new.txt": "n", "sub/new2.txt": "n"})
+    os.utime(root / "old.txt", ns=(1_000, 1_000))
+    started = 2_000_000_000_000_000_000  # far in the future for mtime; ctime of a fresh file is "now", also earlier
+    assert snapshot.created_since(root, ["old.txt", "new.txt", "sub/new2.txt", "missing.txt", "../x", "/etc/hosts", ""], 0) \
+        == ["old.txt", "new.txt", "sub/new2.txt"]
+    os.utime(root / "new.txt", ns=(started, started))
+    assert snapshot.created_since(root, ["old.txt", "new.txt", "sub/new2.txt"], started) == ["new.txt"]
+    # a file whose mtime is old but which was changed (ctime) after the start counts: touch -d / cp -p keep old mtimes
+    now = os.lstat(root / "sub/new2.txt").st_ctime_ns
+    os.utime(root / "sub/new2.txt", ns=(1_000, 1_000))
+    assert snapshot.created_since(root, ["sub/new2.txt"], now - 1_000_000_000) == ["sub/new2.txt"]
+    os.symlink(root / "nothing", root / "dangling")
+    assert snapshot.created_since(root, ["dangling"], 0) == ["dangling"]  # a link is judged by its own times
+
+
+# -- review fixes: git refs --------------------------------------------------------------------------------------
+
+
+def _dirty_then_stash(root):
+    (root / "b.py").write_text("dirty", encoding="utf-8")
+    _git(root, "stash")
+
+
+def _git_refs_project(tmp_path):
+    root = _git_project(tmp_path)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True, capture_output=True)
+    _git(root, "remote", "add", "origin", str(remote))
+    _git(root, "push", "-q", "-u", "origin", "main")
+    return root
+
+
+@pytest.mark.parametrize("name,mutate", [
+    ("push to a new remote branch", lambda r: _git(r, "push", "-q", "origin", "main:side")),
+    ("tag", lambda r: _git(r, "tag", "v1")),
+    ("annotated tag", lambda r: _git(r, "tag", "-a", "v2", "-m", "x")),
+    ("branch -f", lambda r: _git(r, "branch", "-f", "other", "HEAD")),
+    ("stash", lambda r: _dirty_then_stash(r)),
+    ("update-ref", lambda r: _git(r, "update-ref", "refs/heads/zzz", "HEAD")),
+])
+def test_git_refs_fingerprint_catches_what_head_and_branch_do_not(tmp_path, name, mutate):
+    root = _git_refs_project(tmp_path)
+    before = snapshot.git_state(root)
+    mutate(root)
+    after = snapshot.git_state(root)
+    assert (after["head"], after["branch"]) == (before["head"], before["branch"]), name
+    assert after["refs"] != before["refs"], name
+    found, _ = _violations(_git_refs_project(tmp_path / "again"), mutate)
+    assert found == [{"path": ".git", "reason": "git_changed"}], name
+
+
+def test_git_refs_fingerprint_is_stable_and_old_states_compare_without_it(tmp_path):
+    root = _git_refs_project(tmp_path)
+    assert snapshot.git_state(root) == snapshot.git_state(root)
+    (root / "b.py").write_text("edited but not committed", encoding="utf-8")
+    _git(root, "add", "-A")  # the index is not a ref
+    assert snapshot.git_state(root)["refs"] == snapshot.git_state(root)["refs"]
+    state = snapshot.git_state(root)
+    assert snapshot.git_equal(state, dict(state))
+    assert snapshot.git_equal({"head": state["head"], "branch": state["branch"]}, state)  # recorded before `refs` existed
+    assert not snapshot.git_equal(state, {**state, "branch": "x"}) and not snapshot.git_equal(state, None)
+    assert snapshot.git_equal(None, None) and not snapshot.git_equal(None, state)
+
+
+# -- review fixes: the guard, Bash read path-aware -------------------------------------------------------------------
+
+
+@pytest.fixture
+def pa(tmp_path):
+    """A project for the path-aware Bash check: protected data/raw.csv, data/clean.DTA, config.json, map.md and
+    research/tasks.json; an unprotected data/notes.txt, new/raw.csv and archives."""
+    import tarfile
+    import zipfile
+
+    root = _attempts_project(tmp_path)
+    prot = snapshot.protected(root, snapshot.take(root))  # taken before the files below exist: they are not protected
+    _project(root, {"new/raw.csv": "n", "new/other.csv": "o", "code/run.py": "1", "research/overview.md": "o",
+                    "research/notes/a.md": "a", "fresh/keep.txt": "k"})
+    (root / "link-data.txt").symlink_to(root / "data" / "raw.csv")
+    with zipfile.ZipFile(root / "clash.zip", "w") as archive:
+        archive.writestr("raw.csv", "1")
+    with zipfile.ZipFile(root / "nested.zip", "w") as archive:
+        archive.writestr("data/clean.DTA", "1")
+    with zipfile.ZipFile(root / "fine.zip", "w") as archive:
+        archive.writestr("fresh.csv", "1")
+    with tarfile.open(root / "clash.tar", "w") as archive:
+        archive.add(root / "new/raw.csv", arcname="raw.csv")
+    with tarfile.open(root / "fine.tar.gz", "w:gz") as archive:
+        archive.add(root / "new/other.csv", arcname="other.csv")
+    run_dir = tmp_path / "rundir"
+    run_dir.mkdir()
+    guard.write_guard_file(run_dir, root=root, prot=prot, engine_port=8765)
+    return SimpleNamespace(root=root, guard=guard.load_guard(run_dir), tmp=tmp_path)
+
+
+#: Commands that remove, move or overwrite a protected file or a folder holding one, or put a same-named file
+#: into such a folder (review finding 1). The working folder is the project root unless the command moves it.
+PATH_REFUSALS = [
+    # remove
+    "rm -rf data", "rm -r data/", "rm -rf ./data", "rm data/*.csv", "rm -rf data/*", "rm -rf d*", "rm -rf ./*",
+    "rm -rf .", "rm -rf ..", "rm -rf research", "rm -rf -- data", "sudo rm -rf data", "sudo -u root rm -rf data",
+    "env FOO=1 rm -rf data", "nohup rm -rf data", "time -p rm -rf data", "(cd data && rm -rf .)", "cd data && rm -rf *",
+    "cd data; rm -rf ../data", "bash -c 'rm -rf data'", "sh -c \"cd data && rm -f ./*\"", "eval 'rm -rf data'",
+    "rm -rf link-out/../data", "shred data/raw.csv", "unlink config.json", "$(rm -rf data)",
+    "find data -name '*.csv' -delete", "find . -name '*.json' -exec rm {} \\;", "find data -delete",
+    "find . -iname 'RAW.CSV' -delete", "find data ! -name '*.txt' -delete", "find . -path './data/*' -delete",
+    "find data -type f -exec rm -f {} +", "find data -name 'raw*' -execdir rm {} +",
+    "git rm -r data", "git rm data/raw.csv", "git -C data rm raw.csv", "git --no-pager rm -rf research",
+    # move
+    "mv data data_old", "mv research research_old", "mv research/tasks.json /tmp/", "mv config.json /tmp/x",
+    "mv data/ /tmp/", "mv -t /tmp data", "mv a.txt data/raw.csv", "git mv research x", "git mv data x",
+    # copy / move / download into a folder that holds a protected file of the same name
+    "mv new/raw.csv data/", "cp ~/Downloads/raw.csv data/", "cp /tmp/new/raw.csv ./data/", "cp new/raw.csv data",
+    "cd data && cp ../new/raw.csv .", "cd data; mv ../new/raw.csv .", "cp /tmp/tasks.json research/",
+    "cp -t data new/raw.csv", "cp --target-directory=data new/raw.csv", "cp -r new/. data", "cp new/*.csv data/",
+    "cp -r new data/ && cp /tmp/clean.DTA data/", "install new/raw.csv data/", "install -m 644 new/raw.csv data/",
+    "rsync -a new/ data/", "rsync -a --delete fresh/ data/", "rsync -av new/raw.csv data/", "ditto new/raw.csv data/",
+    "ln -sf /tmp/x data/raw.csv", "ln -s /tmp/raw.csv data/", "cd data && ln -s /tmp/raw.csv",
+    "cp x.csv link-data.txt", "git -C data status && rm -rf data",
+    "curl -o data/raw.csv http://x", "curl -sLo data/raw.csv http://x", "curl http://x --output data/raw.csv",
+    "curl --output=data/raw.csv http://x", "curl -O --output-dir data https://x.org/files/raw.csv",
+    "cd data && curl -sLO https://x.org/files/raw.csv", "curl -o config.json http://x",
+    "wget -O data/raw.csv http://x", "wget -qO data/raw.csv http://x", "wget --output-document=config.json http://x",
+    "wget -P data http://x/raw.csv", "wget --directory-prefix=data http://x/raw.csv?x=1",
+    # extract
+    "unzip -o clash.zip -d data", "unzip clash.zip -d data", "unzip -o nested.zip", "unzip -o notthere.zip -d data",
+    "unzip -oj nested.zip -d data", "cd data && unzip -o ../clash.zip", "tar xf clash.tar -C data",
+    "tar -xvf clash.tar --directory=data", "tar xf missing.tar -C data", "tar -x -f clash.tar -C data",
+]
+
+PATH_ALLOWED = [
+    # reading, and copies that leave the protected files alone
+    "cat data/raw.csv", "head -5 data/raw.csv", "python x.py data/raw.csv", "python x.py data/raw.csv > out.log",
+    "cp data/raw.csv new.csv", "cp data/raw.csv data/raw2.csv", "cp data/raw.csv /tmp/", "cp -r data backup",
+    "cp -r data/. backup", "rsync -a data/ backup/", "cp new/other.csv data/", "cp new/*.txt data/",
+    "install -d out", "ln -s data/raw.csv alias.csv", "ln -s ../data/raw.csv fresh/alias.csv", "mv new/other.csv data/",
+    "cd new && cp raw.csv /tmp/x", "cd code && rm run.py", "cd data && cp raw.csv new.csv", "cp -t fresh new/raw.csv",
+    # removing or moving other things
+    "rm -rf build dist", "rm code/run.py", "rm data/notes.txt", "rm data/*.txt", "rm *.pyc", "rm -rf research/notes",
+    "rm -rf fresh", "rm -rf new", "rm -rf code/*", "mv research/overview.md research/o2.md", "mv a b", "mv new fresh",
+    "rm link-data.txt", "mv link-data.txt other.csv", "rm -rf $BUILD", "rm -rf \"$(pwd)/build\"",
+    "find . -name '*.pyc' -delete", "find data -name '*.txt' -delete", "find data -type d -delete",
+    "find data -name '*.csv'", "find data -name '*.csv' -exec wc -l {} \\;", "find . -name '*.pyc' -exec rm {} +",
+    "find code -delete", "find nowhere -delete", "git rm --cached code/run.py", "git rm code/run.py",
+    "git mv code/run.py code/run2.py", "git status", "git -C data status", "git log -1",
+    # downloads and extractions that land elsewhere or under other names
+    "curl -o out.csv http://x", "curl -O https://x.org/files/fresh.csv", "curl -sL https://x.org/a -o fresh/a.csv",
+    "wget http://x/raw.csv", "wget -P /tmp http://x/raw.csv", "wget -P fresh http://x/raw.csv", "wget -O out.csv http://x",
+    "wget -O - http://x | head", "curl https://zenodo.org/api/records/12/files/data.zip -o data.zip",
+    "unzip fine.zip -d data", "unzip fine.zip", "unzip later.zip", "tar xzf later.tgz", "unzip -l clash.zip", "unzip -n clash.zip -d data", "unzip -t clash.zip",
+    "unzip clash.zip -d fresh", "unzip -p clash.zip", "tar tf clash.tar", "tar xf clash.tar -C fresh",
+    "tar xf fine.tar.gz -C data", "tar xzf fine.tar.gz", "tar czf out.tgz data", "tar -cf out.tar data/raw.csv",
+    "tar xf clash.tar -O",
+]
+
+
+@pytest.mark.parametrize("command", PATH_REFUSALS)
+def test_bash_path_aware_refusals(pa, command):
+    reason = guard.check_tool(pa.guard, "Bash", {"command": command}, str(pa.root))
+    assert reason and reason.endswith("."), command
+
+
+@pytest.mark.parametrize("command", PATH_ALLOWED)
+def test_bash_path_aware_allowed(pa, command):
+    assert guard.check_tool(pa.guard, "Bash", {"command": command}, str(pa.root)) is None, command
+
+
+def test_bash_path_aware_uses_the_calls_working_folder(pa):
+    here = {"command": "rm -rf ."}
+    assert guard.check_tool(pa.guard, "Bash", here, str(pa.root / "data"))                 # data holds protected files
+    assert guard.check_tool(pa.guard, "Bash", here, str(pa.root / "code")) is None          # code does not
+    assert guard.check_tool(pa.guard, "Bash", here, None)                                   # no cwd: the project folder
+    assert guard.check_tool(pa.guard, "Bash", {"command": "cp ../new/raw.csv ."}, str(pa.root / "data"))
+    assert guard.check_tool(pa.guard, "Bash", {"command": "cp ../new/raw.csv ."}, str(pa.root / "fresh")) is None
+    assert guard.check_tool(pa.guard, "Bash", {"command": "rm -rf data"}, str(pa.tmp)) is None  # outside the project: another data
+
+
+def test_bash_path_aware_without_protected_files_judges_nothing(project):
+    guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
+    g = guard.load_guard(project.run_dir)
+    assert guard.check_tool(g, "Bash", {"command": "rm -rf data"}, str(project.root)) is None
+
+
+def test_bash_path_aware_home_and_symlinks(pa, monkeypatch):
+    monkeypatch.setenv("HOME", str(pa.root))
+    assert guard.check_tool(pa.guard, "Bash", {"command": "rm -rf ~/data"}, str(pa.root / "code"))
+    assert guard.check_tool(pa.guard, "Bash", {"command": "cp ~/new/raw.csv ~/data/"}, str(pa.root / "code"))
+    monkeypatch.setenv("HOME", str(pa.tmp / "elsewhere"))
+    assert guard.check_tool(pa.guard, "Bash", {"command": "rm -rf ~/data"}, str(pa.root / "code")) is None
+    (pa.root / "datalink").symlink_to(pa.root / "data")
+    assert guard.check_tool(pa.guard, "Bash", {"command": "cp new/raw.csv datalink/"}, str(pa.root))   # through the link
+    assert guard.check_tool(pa.guard, "Bash", {"command": "rm -rf datalink"}, str(pa.root)) is None    # removes the link only
+
+
+def test_bash_path_aware_never_raises_on_odd_text(pa):
+    import random
+
+    words = ("rm mv cp -r -rf -t -o -O -P -C -d -x -- find -delete -name -exec unzip tar curl wget git rsync ln install "
+             "data data/ data/* raw.csv ~ . .. / ' \" ; && | ( ) $( ` $X * ? [ { } xf d.zip bash sh -c eval sudo env FOO=1 "
+             "-u > 2>&1 \\ \0").split()
+    rnd = random.Random(7)
+    for _ in range(2000):
+        command = " ".join(rnd.choice(words) for _ in range(rnd.randint(1, 12)))
+        guard.check_tool(pa.guard, "Bash", {"command": command}, rnd.choice([None, str(pa.root), str(pa.root / "data"), "rel"]))
+
+
+def test_git_mutation_reads_quoted_option_values(project):
+    for command in ('git -C "/tmp/My Project" commit -m x', "git -C '/tmp/My Project' push",
+                    'git -c "user.name=A B" -c user.email=a@b commit -m "x y"', 'git --git-dir="/a b/.git" tag v1',
+                    'git -C "/tmp/a;b" push'):
+        assert _refused(project, "Bash", {"command": command}), command
+    for command in ('git -C "/tmp/My Project" status', "git -c 'a b=c' log -1", 'git -C "/x y" diff --stat'):
+        assert _refused(project, "Bash", {"command": command}) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "curl -sL https://zenodo.org/api/records/1234567/files/data.zip -o data.zip", "curl https://zenodo.org/api/records/123",
+    "wget https://example.org/api/papers?q=x", "curl http://example.com/api/share", "curl https://x.org/api/notes/1",
+    "curl https://notlocalhost.example.com/api/records", "curl https://localhost.example.com/api/records",
+    "curl https://127.0.0.1.example.com/api/records", "curl h/api/projects", "curl -X POST http://x/api/proposals",
+])
+def test_bash_public_apis_with_research_os_looking_paths_are_allowed(project, command):
+    assert _refused(project, "Bash", {"command": command}) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "curl http://127.0.0.1/api/records", "curl http://127.0.0.1:8123/api/records/1", "curl localhost/api/papers",
+    "curl http://localhost:3000/api/notes", "curl 0.0.0.0/api/projects", "curl 'http://[::1]/api/agents'",
+    "curl http://127.1.2.3:99/api/settings", "wget http://LOCALHOST:5/api/Records",
+    "curl localhost:8765", "curl http://127.0.0.1:8765/anything",
+])
+def test_bash_research_os_api_on_a_loopback_host_or_the_engine_port_is_refused(project, command):
+    assert _refused(project, "Bash", {"command": command}), command

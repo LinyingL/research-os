@@ -680,3 +680,11 @@ def test_a_result_heading_from_a_long_task_is_cut_at_a_word():
     assert long_task.startswith(heading[:-1])
     assert mcp_server._result_title("  ## Mean of x ", long_task) == "Mean of x"
     assert mcp_server._result_title(None, "Short task") == "Short task"
+
+
+def test_a_report_opening_with_its_own_title_keeps_it_one_level_down(setup):
+    """The result record has one top heading, the record's own (17.4)."""
+    root, pid, run_id = setup
+    mcp_server.agent_complete_task(root, pid, run_id, "# Mean of x\n\nThe mean is 2.5.\n#hashtag stays", title="Mean")
+    text = (root / _task(root)["report"]).read_text("utf-8")
+    assert [line for line in text.split("\n") if line.startswith("#")] == ["# Mean", "## Mean of x", "#hashtag stays"]

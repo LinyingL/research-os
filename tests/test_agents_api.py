@@ -481,12 +481,13 @@ def test_stop_is_allowed_on_a_read_only_project_start_is_not(api):
     api.wait_state(started["id"], "running")
     api.httpd.set_served(dataclasses.replace(api.httpd.get_served(), read_only=True))
     assert api.get("/api/agents/runs")[0] == 200
-    status, error = api.post("/api/agents/runs", {"task": "t1"})
-    assert status == 409 and error["state"] == "read_only"
-    status, error = api.post(f"/api/agents/runs/{started['id']}/revert")
-    assert status == 409 and error["state"] == "read_only"
-    status, error = api.post(f"/api/agents/runs/{started['id']}/reply", {"message": "x"})
-    assert status == 409 and error["state"] == "read_only"
+    for path, body in (("/api/agents/runs", {"task": "t1"}), (f"/api/agents/runs/{started['id']}/revert", {}),
+                       (f"/api/agents/runs/{started['id']}/reply", {"message": "x"})):
+        status, error = api.post(path, body, lang="en")  # the contract: agent_<code>, in the request's language
+        assert status == 409 and error["state"] == "agent_read_only", (path, error)
+        assert not CJK.search(error["message"]) and error["detail"] == error["error"]
+        status, error = api.post(path, body, lang="zh")
+        assert status == 409 and error["state"] == "agent_read_only" and CJK.search(error["message"]), (path, error)
     status, stopped = api.post(f"/api/agents/runs/{started['id']}/stop")
     assert status == 200 and stopped["state"] == "stopped"
 
@@ -734,3 +735,244 @@ def test_build_server_alone_starts_no_threads_and_names_its_port(tmp_path):
     finally:
         httpd.server_close()
         httpd.server_close()
+
+
+def test_a_busy_port_raises_the_bind_error_not_an_attribute_error(tmp_path):
+    """`TCPServer.__init__` closes the server when the bind fails; that close must not need what is created
+    after the bind (a busy port stays an OSError for whoever reports 'port in use')."""
+    import socket
+
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    try:
+        with pytest.raises(OSError) as raised:
+            server.build_server(None, holder.getsockname()[1])
+        assert not isinstance(raised.value, AttributeError)
+    finally:
+        holder.close()
+
+
+def test_server_close_before_the_agents_exist_is_harmless(tmp_path):
+    httpd = server.build_server(None, 0)
+    httpd.agents = None
+    httpd.server_close()
+    assert httpd._closing is True
+
+
+def test_a_sigterm_during_the_shutdown_does_not_cut_it_short(tmp_path, monkeypatch):
+    """The loop ended by itself (POST /api/shutdown) and the wrapper's SIGTERM arrives while `server_close` is stopping
+    the agents: it must be ignored, so the stopping completes (no KeyboardInterrupt out of `serve`)."""
+    import os
+
+    project.init_project(tmp_path)
+    previous = signal.getsignal(signal.SIGTERM)
+    seen: dict[str, Any] = {}
+
+    def shutdown(self):
+        seen["begun"] = True
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(0.3)  # the kill threads' work: a KeyboardInterrupt here would end it
+        seen["finished"] = True
+
+    monkeypatch.setattr(server.agent_manager.AgentManager, "shutdown", shutdown)
+    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", lambda self: None)
+    server.serve(tmp_path, port=0, open_browser=False)  # raises KeyboardInterrupt before the fix
+    assert seen == {"begun": True, "finished": True}
+    assert signal.getsignal(signal.SIGTERM) == previous
+
+
+# -- no project lock around the run manager; the write guard's refusals up front ------------------
+
+
+def _lock_is_free(api: Api) -> bool:
+    """Can another thread take the project's write lock right now?"""
+    from researchos.records import situation
+
+    got: list[bool] = []
+
+    def attempt() -> None:
+        try:
+            with situation.write_guard(api.root, api.pid, human=True, timeout=0.5):
+                got.append(True)
+        except Exception:  # noqa: BLE001
+            got.append(False)
+
+    thread = threading.Thread(target=attempt)
+    thread.start()
+    thread.join(timeout=10)
+    return got == [True]
+
+
+def test_start_reply_revert_do_not_hold_the_project_lock(api, monkeypatch):
+    seen: dict[str, bool] = {}
+
+    def stub(name, result):
+        def call(*args, **kwargs):
+            seen[name] = _lock_is_free(api)
+            return result
+
+        return call
+
+    manager = api.httpd.agents
+    monkeypatch.setattr(manager, "start", stub("start", {"id": "r-x", "state": "preparing"}))
+    monkeypatch.setattr(manager, "reply", stub("reply", {"id": "r-y", "kind": "answer"}))
+    monkeypatch.setattr(manager, "revert", stub("revert", {"run": {}, "restored": [], "removed": [], "skipped": []}))
+    assert api.post("/api/agents/runs", {"task": "t1"})[0] == 200
+    assert api.post("/api/agents/runs/r-20260101T000000Z-abcdef/reply", {"message": "x"})[0] == 200
+    assert api.post("/api/agents/runs/r-20260101T000000Z-abcdef/revert")[0] == 200
+    assert seen == {"start": True, "reply": True, "revert": True}
+
+
+def test_a_slow_start_does_not_stall_other_saves(api, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(*args, **kwargs):  # what `<program> --version` does on a cold start
+        entered.set()
+        release.wait(30)
+        return {"id": "r-x", "state": "preparing"}
+
+    monkeypatch.setattr(api.httpd.agents, "start", slow)
+    result: list[Any] = []
+    thread = threading.Thread(target=lambda: result.append(api.post("/api/agents/runs", {"task": "t1"})))
+    thread.start()
+    try:
+        assert entered.wait(10)
+        status, saved = api.post("/api/workspace/tasks", {"tasks": [
+            {"id": "t1", "text": "Analyse the sample", "owner": "agent:claude-code:sonnet"}],
+            "revision": api.get("/api/workspace")[1]["tasks_revision"]})
+        assert status == 200, saved
+    finally:
+        release.set()
+        thread.join(timeout=30)
+    assert result and result[0][0] == 200
+
+
+def test_the_managers_lock_refusals_keep_the_agent_error_contract(api, monkeypatch):
+    from researchos.records import lock, situation
+
+    manager = api.httpd.agents
+    for raised, state, status in (
+        (lock.ProjectLockTimeout("held by another process"), "agent_busy", 409),
+        (situation.WriteRefused("not writable"), "agent_read_only", 403),
+        (situation.NeedsMigrationError("not migrated"), "agent_needs_migration", 409),
+    ):
+        def refuse(*args, _raised=raised, **kwargs):
+            raise _raised
+
+        monkeypatch.setattr(manager, "start", refuse)
+        monkeypatch.setattr(manager, "reply", refuse)
+        monkeypatch.setattr(manager, "revert", refuse)
+        for path, body in (("/api/agents/runs", {"task": "t1"}),
+                           ("/api/agents/runs/r-20260101T000000Z-abcdef/reply", {"message": "x"}),
+                           ("/api/agents/runs/r-20260101T000000Z-abcdef/revert", {})):
+            got, error = api.post(path, body, lang="zh")
+            assert (got, error["state"]) == (status, state), (path, error)
+            assert CJK.search(error["message"]) and error["detail"]
+
+
+def test_a_project_frozen_until_migrated_refuses_start_reply_revert_but_not_stop(api):
+    api.httpd.set_served(dataclasses.replace(api.httpd.get_served(), needs_migration=True))
+    for path, body in (("/api/agents/runs", {"task": "t1"}),
+                       ("/api/agents/runs/r-20260101T000000Z-abcdef/reply", {"message": "x"}),
+                       ("/api/agents/runs/r-20260101T000000Z-abcdef/revert", {})):
+        status, error = api.post(path, body, lang="en")
+        assert status == 409 and error["state"] == "agent_needs_migration", (path, error)
+        assert not CJK.search(error["message"])
+        status, error = api.post(path, body, lang="zh")
+        assert error["state"] == "agent_needs_migration" and CJK.search(error["message"])
+    status, error = api.post("/api/agents/runs/r-20260101T000000Z-abcdef/stop")
+    assert status == 404 and error["state"] == "agent_run_missing"  # not refused for the migration
+
+
+# -- a run that ends while another project is served ------------------------------------------------
+
+
+def test_a_run_that_ended_in_another_project_is_scanned_when_the_page_switches_back(api, monkeypatch):
+    from researchos.webapp import registry
+
+    other = api.tmp / "other-project"
+    other.mkdir()
+    project.init_project(other)
+    registry.register(api.root)
+    registry.register(other)
+    paths = {Path(e["path"]).resolve(): e["path"] for e in registry.load()}
+    mine, theirs = paths[api.root.resolve()], paths[other.resolve()]
+    scans: list[Path] = []
+    monkeypatch.setattr(api.httpd, "start_scan", lambda served: scans.append(served.root))
+    finished = threading.Event()
+    manager = api.httpd.agents
+    real = manager.on_finish
+
+    def on_finish(root, run):
+        real(root, run)
+        finished.set()
+
+    monkeypatch.setattr(manager, "on_finish", on_finish)
+    gate = api.tmp / "gate"
+    api.scenario([init_step(), {"op": "wait_file", "path": str(gate), "timeout": 60}, finish_step()])
+    started = api.start()
+    api.wait_state(started["id"], "running")
+    status, _ = api.call("POST", "/api/projects/switch", {"path": theirs})
+    assert status == 200 and api.httpd.get_served().root.resolve() == other.resolve()
+    gate.write_text("go")
+    assert finished.wait(30)
+    api.wait_state(started["id"], "ended")
+    assert scans == []  # not the served project: nothing now
+    generation = api.generation()
+    status, _ = api.call("POST", "/api/projects/switch", {"path": mine})
+    assert status == 200
+    assert scans == [api.httpd.get_served().root] and scans[0].resolve() == api.root.resolve()
+    assert api.generation() > generation
+    # once: the next switch away and back scans nothing more
+    api.call("POST", "/api/projects/switch", {"path": theirs})
+    api.call("POST", "/api/projects/switch", {"path": mine})
+    assert len(scans) == 1
+
+
+# -- a served project without identity ------------------------------------------------------------
+
+
+def test_a_project_without_identity_lists_no_runs(api):
+    api.httpd.set_served(dataclasses.replace(api.httpd.get_served(), project_id=None, needs_migration=True))
+    assert api.get("/api/agents/runs", lang="zh") == (200, {"runs": [], "active": None})
+    status, error = api.get("/api/agents/runs/r-20260101T000000Z-abcdef", lang="zh")
+    assert status == 404 and error["state"] == "agent_run_missing" and CJK.search(error["message"])
+    for path, body in (("/api/agents/runs", {"task": "t1"}),
+                       ("/api/agents/runs/r-20260101T000000Z-abcdef/reply", {"message": "x"}),
+                       ("/api/agents/runs/r-20260101T000000Z-abcdef/stop", {}),
+                       ("/api/agents/runs/r-20260101T000000Z-abcdef/revert", {})):
+        status, error = api.post(path, body, lang="en")
+        assert status == 409 and error["state"] == "agent_needs_migration", (path, error)
+        assert not CJK.search(error["message"])
+        assert api.post(path, body, lang="zh")[1]["message"] != error["message"]
+
+
+# -- an unreadable me.toml ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_me_toml_refuses_start_and_reply_only(api_me):
+    api = api_me
+    api.scenario(COMPLETE)
+    done = api.poll(api.start()["id"])
+    assert done["state"] == "done"
+    people.me_path().write_text("this is [not valid toml\n")
+    for path, body in (("/api/agents/runs", {"task": "t1"}),
+                       (f"/api/agents/runs/{done['id']}/reply", {"message": "again"})):
+        status, error = api.post(path, body, lang="en")
+        assert status == 409 and error["state"] == "agent_person_unreadable", (path, error)
+        assert "me.toml" in error["detail"] and not CJK.search(error["message"])
+        status, error = api.post(path, body, lang="zh")
+        assert status == 409 and error["state"] == "agent_person_unreadable" and CJK.search(error["message"])
+    assert len(api.get("/api/agents/runs")[1]["runs"]) == 1  # nothing started
+    status, stopped = api.post(f"/api/agents/runs/{done['id']}/stop")
+    assert status == 200
+    status, reverted = api.post(f"/api/agents/runs/{done['id']}/revert")
+    assert status == 200 and reverted["run"]["reverted"] is True
+    assert run_store.load_run(api.pid, done["id"])["reverted_by"] is None
+    people.me_path().unlink()  # absent (not broken): nobody, as before
+    api.scenario(COMPLETE)
+    run = api.start()
+    assert run["by"] is None
+    api.poll(run["id"])

@@ -35,19 +35,38 @@ since reused is never signalled -- and finally the program's own process
 group. The tree comes from `ps -A -o pid=,ppid=,stat=,lstart=` (portable
 between macOS and Linux).
 
+**Leftovers.** While the program runs the pump samples its descendant tree
+(`ps`, every ~2 s, denser at first) and keeps `pid -> start time` stamps. A
+run that ends by itself would otherwise leave what the agent started (a
+`nohup` download, a training job) running with nobody able to find it by tree;
+so once the program has exited -- and reading its output has stopped after
+`EXIT_DRAIN_S` however chatty a descendant is -- every recorded descendant
+still alive (start time checked) and the program's process group are ended
+*before* the after-picture, and the number is kept as `run["leftovers"]`.
+
 **Who changed what.** The program's own writes happen in another process;
 the engine's writes happen in this one and are announced by
 `records.files.add_write_listener`. A file the engine wrote while the run
 went on is the person's (they saved it through Research OS) and is left out
-of the run's changes (`human_paths` / `changes.by_person`, 17.5). Files
+of the run's changes (`human_paths` / `changes.by_person`, 17.5); the set is
+read *after* the after-picture is taken, with the listener still registered.
+The listener also records the hash of what the engine wrote, so a protected
+path the person saved is out of bounds only when it ends with other bytes
+(`allowed`), not exempt for the whole run. Files
 written by the agent *tools* (the result record, `research/tasks.json`) are
 read from `signals.jsonl` (`tool_paths`, `tasks_sha`): they already carry
 their own attribution, and `research/tasks.json` ending with a hash the tools
 produced is not a violation.
 
 **Undo** (17.6) restores from the before-picture's copies, never over a later
-change, and takes the task's done mark back logically rather than restoring
-`research/tasks.json`.
+change (nor over a path the person saved during the run), and takes the task's
+done mark back logically rather than restoring `research/tasks.json`. A
+created file whose content is a deleted file with no copy is that file renamed:
+it is moved back, not away. Directories the move emptied are removed.
+
+**Who is who after a crash.** `run.json` carries the start time of the
+engine process (`engine_started`) and of the program (`program_started`), so
+a recycled pid is neither "another live engine" nor "the program" (`_recover`).
 """
 
 from __future__ import annotations
@@ -105,6 +124,12 @@ HISTORY_FILE_SIZE_LIMIT = 1024 * 1024 * 1024
 #: A run that has been "active" for longer than the longest time limit plus a margin is stale whoever claims it.
 STALE_AFTER = timedelta(minutes=profiles.TIMEOUT_RANGE[1] + 30)
 PS_TIMEOUT_S = 10
+#: While the program runs, its descendants are sampled at most this far apart (the first samples are denser).
+SAMPLE_INTERVAL_S = 2.0
+#: Leftover processes get this long after SIGTERM before SIGKILL.
+SWEEP_GRACE_S = 1.0
+#: At most this many descendants are remembered (those still alive are kept first).
+TREE_LIMIT = 10000
 
 REPLY_STATES = frozenset({"needs_input", "done", "ended", "failed", "stopped", "interrupted"})
 TASKS_PATH = snapshot.TASKS_PATH
@@ -244,6 +269,19 @@ def _command_of(pid: int) -> str:
     return out.stdout.decode("utf-8", "replace").strip()
 
 
+def _start_of(pid: object) -> str | None:
+    """The start time of process `pid` as `ps` prints it (the same form `_ps_table` has), None when it is
+    not running or `ps` cannot be run."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], stdin=subprocess.DEVNULL,
+                             capture_output=True, timeout=PS_TIMEOUT_S, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return " ".join(out.stdout.decode("utf-8", "replace").split()) or None
+
+
 def _signal(pid: int, sig: int) -> None:
     try:
         os.kill(pid, sig)
@@ -288,9 +326,10 @@ def kill_tree(pid: int, *, proc: subprocess.Popen | None = None, grace: float | 
         _signal(p, signal.SIGKILL)
     if not exited() and (proc is not None or leader_start is None or _same_alive(table, pid, leader_start)):
         _signal(pid, signal.SIGKILL)
-    if proc is not None or not exited():
+    if proc is not None or (leader_start is not None and _same_alive(table, pid, leader_start)):
         # the program's own group (it was started with start_new_session): what it forked without
-        # leaving the group; a group id cannot be reused while a member lives
+        # leaving the group; a group id cannot be reused while a member lives. Without our own Popen
+        # the leader must be the process noted at the start -- never a group of a reused pid.
         try:
             os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
@@ -304,6 +343,34 @@ def kill_tree(pid: int, *, proc: subprocess.Popen | None = None, grace: float | 
     return victims
 
 
+def sweep_tree(stamps: dict[int, str], *, group: int | None = None, grace: float | None = None) -> int:
+    """End what a program that has exited left running (17.3): every process of `stamps`
+    (`{pid: start time}`) that is still alive with that start time gets SIGTERM, then SIGKILL after
+    `grace` seconds (children before parents); then the program's process group `group` gets SIGKILL.
+    Returns the number of processes that were alive when this started."""
+    grace = SWEEP_GRACE_S if grace is None else grace
+    table = _ps_table()
+    alive = [p for p, start in stamps.items() if _same_alive(table, p, start)]
+    for p in reversed(alive):
+        _signal(p, signal.SIGTERM)
+    deadline = time.monotonic() + max(0.0, grace)
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.05)
+        table = _ps_table()
+        if not any(_same_alive(table, p, stamps[p]) for p in alive):
+            break
+    table = _ps_table()
+    for p in reversed(alive):
+        if _same_alive(table, p, stamps[p]):
+            _signal(p, signal.SIGKILL)
+    if group is not None:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    return len(alive)
+
+
 # -- the summary the page reads --------------------------------------------------------------------
 
 
@@ -315,13 +382,14 @@ def _change_count(changes: object) -> int:
 
 def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
     """What the page shows of a run: the identifying and state fields, counts
-    for `violations` and `changes`, and the three things the person may do
-    with it (`can_stop`, `can_reply`, `can_revert`)."""
+    for `violations` and `changes`, the number of files an undo left alone
+    (`revert_skipped`, present once an undo was tried) and the three things the
+    person may do with it (`can_stop`, `can_reply`, `can_revert`)."""
     state = run.get("state")
     finished = state not in run_store.ACTIVE_STATES
     reverted = bool(run.get("reverted"))
     changed = _change_count(run.get("changes"))
-    return {
+    out = {
         "id": run.get("id"), "task_id": run.get("task_id"), "task_text": run.get("task_text"),
         "owner": run.get("owner"), "label": run.get("label"), "runner": run.get("runner"),
         "model": run.get("model"), "state": state, "reverted": reverted, "kind": run.get("kind"),
@@ -336,6 +404,10 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
         "can_revert": bool(finished and not active and not reverted and run.get("revertible")
                            and (changed > 0 or run.get("report"))),
     }
+    revert = run.get("revert")
+    if isinstance(revert, dict) and isinstance(revert.get("skipped"), list):
+        out["revert_skipped"] = len(revert["skipped"])  # a partial undo: the page says so and lists them
+    return out
 
 
 # -- one active run ----------------------------------------------------------------------------------
@@ -363,8 +435,16 @@ class _Active:
         self.timer: threading.Timer | None = None
         self.done = threading.Event()
         self.human: set[str] = set()
+        #: path -> sha256 of what the engine last wrote there (files up to `snapshot.COPY_LIMIT`)
+        self.human_sha: dict[str, str] = {}
+        self.human_version = 0
         self.human_lock = threading.Lock()
         self.listener: Callable[[Path], None] | None = None
+        #: the program's descendants seen while it ran: pid -> start time; and what `sweep_tree` ended
+        self.tree: dict[int, str] = {}
+        self.tree_lock = threading.Lock()
+        self.drained = False  # the program's output is read to its end (or given up on)
+        self.leftovers = 0
         self.timeout_minutes: float = float(profiles.DEFAULT_TIMEOUT_MINUTES)
 
     @property
@@ -374,6 +454,10 @@ class _Active:
     def human_paths(self) -> list[str]:
         with self.human_lock:
             return sorted(self.human)
+
+    def human_hashes(self) -> dict[str, str]:
+        with self.human_lock:
+            return dict(self.human_sha)
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -415,6 +499,20 @@ def _sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def _started_ns(run: dict) -> int:
+    """When the run's program started (else when the run was created), in ns since the epoch; 0 when neither
+    is a time: then nothing is judged older than the run."""
+    for key in ("started", "created"):
+        try:
+            stamp = datetime.fromisoformat(str(run.get(key)).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            return int(stamp.timestamp() * 1_000_000_000)
+        except (ValueError, TypeError, OverflowError, OSError):
+            continue
+    return 0
+
+
 def _inside(real_root: str, path: str) -> bool:
     return path == real_root or path.startswith(real_root.rstrip(os.sep) + os.sep)
 
@@ -436,6 +534,13 @@ class AgentManager:
         self._active: dict[str, _Active] = {}
         self._reverting: set[str] = set()
         self._closing = False
+        self._engine_stamp: str | None = None
+
+    def _engine_started(self) -> str | None:
+        """The start time of this very process, read once (`engine_started` in `run.json`)."""
+        if self._engine_stamp is None:
+            self._engine_stamp = _start_of(os.getpid())
+        return self._engine_stamp
 
     # -- validation helpers ---------------------------------------------------------------------
 
@@ -570,6 +675,10 @@ class AgentManager:
                 workspace.save_tasks(root, {"tasks": reopened, "revision": revision})
             except workspace.WorkspaceError as exc:
                 raise AgentError("start_failed", f"The task's done mark could not be cleared: {exc}") from exc
+            except ProjectLockError as exc:  # the project is being written by something else: try again shortly
+                raise AgentError("busy", f"The project is being written by something else: {exc}") from exc
+            except situation.WriteRefused as exc:  # read-only, moved, waiting for migration: nothing written
+                raise AgentError("read_only", str(exc)) from exc
             task = dict(task, done=False)
             cleared = True
         try:
@@ -588,6 +697,7 @@ class AgentManager:
                 message: str | None, session: str | None) -> dict:
         assert found.path is not None
         self._recover(project_id)
+        engine_started = self._engine_started()
         run: dict[str, Any] = {
             "id": None, "project_id": project_id, "root": str(root), "task_id": task["id"],
             "task_text": task["text"], "task_due": task.get("due") or None,
@@ -597,12 +707,13 @@ class AgentManager:
             "lang": lang, "kind": kind, "parent": parent, "message": message,
             "state": "preparing", "reverted": False, "reverted_at": None, "reverted_by": None,
             "created": _now(), "started": None, "ended": None, "session_id": session, "pid": None,
-            "engine_pid": os.getpid(), "exit_code": None, "error": None, "question": None, "report": None,
+            "engine_pid": os.getpid(), "engine_started": engine_started, "program_started": None,
+            "leftovers": 0, "exit_code": None, "error": None, "question": None, "report": None,
             "summary": None, "cost_usd": None, "model_answered": None,
             "changes": {"created": [], "modified": [], "deleted": [], "by_person": []},
             "violations": [], "snapshot": None, "revertible": False,
             "task_done_before": bool(task.get("done")), "task_report_before": task.get("report") or None,
-            "tool_paths": [], "human_paths": [], "program": found.path,
+            "tool_paths": [], "human_paths": [], "human_sha": {}, "program": found.path,
         }
         with self._lock:
             if self._closing:
@@ -650,11 +761,8 @@ class AgentManager:
     def _fail_record(project_id: str, run_id: str, code: str, detail: str) -> None:
         """Mark a run failed unless it already reached a terminal state."""
         try:
-            current = run_store.load_run(project_id, run_id)
-            if current is None or current.get("state") not in run_store.ACTIVE_STATES:
-                return
-            run_store.update_run(project_id, run_id, state="failed", ended=_now(),
-                                 error={"code": code, "detail": detail[:2000]})
+            run_store.update_run_if_active(project_id, run_id, state="failed", ended=_now(),
+                                           error={"code": code, "detail": detail[:2000]})
         except Exception:  # noqa: BLE001 -- nothing more can be done; the next listing marks it interrupted
             logger.exception("could not record the failure of agent run %s", run_id)
 
@@ -697,9 +805,20 @@ class AgentManager:
             if not _inside(real_root, full) or full == real_root:
                 return
             rel = os.path.relpath(full, real_root).replace(os.sep, "/")
+            sha = None
+            try:  # what the engine wrote: a protected path the person saved may end with exactly this
+                if os.path.getsize(full) <= snapshot.COPY_LIMIT and os.path.isfile(full):
+                    sha = _sha256(Path(full))
+            except OSError:
+                sha = None
             with act.human_lock:
-                if len(act.human) < HUMAN_PATHS_LIMIT:
+                if len(act.human) < HUMAN_PATHS_LIMIT or rel in act.human:
                     act.human.add(rel)
+                    if sha is not None:
+                        act.human_sha[rel] = sha
+                    else:
+                        act.human_sha.pop(rel, None)
+                    act.human_version += 1
 
         act.listener = on_write
         record_files.add_write_listener(on_write)
@@ -735,6 +854,15 @@ class AgentManager:
         before["protected"] = prot
         _write_json(rd / "before.json", before)
         guard.write_guard_file(rd, root=root, prot=prot, engine_port=self.engine_port)
+        if runner == "claude-code":
+            # 17.5: Claude Code lets a call through when its hook cannot run; the hook is tried on a call
+            # it must refuse first, and the program is not started when it does not
+            refused = runners.hook_canary(rd)
+            if refused is not None:
+                logger.warning("the hook of agent run %s did not refuse its probe: %s", act.run_id, refused)
+                self._finish(act, before=before, stream=None, exit_code=None,
+                             launch_error={"code": "guard_failed", "detail": refused[:2000]})
+                return
 
         rules = brief.rules(lang=lang, runner=runner, prot=prot)
         if run["kind"] == "start":
@@ -767,6 +895,7 @@ class AgentManager:
 
         launch_error: dict | None = None
         proc: subprocess.Popen | None = None
+        started_at = _now()  # before the program exists: a partial picture judges "created" by this time
         with act.lock:
             if act.stop_reason is None:
                 try:
@@ -780,7 +909,8 @@ class AgentManager:
                     act.proc = proc
         exit_code: int | None = None
         if proc is not None:
-            self._update(act, state="running", pid=proc.pid, started=_now())
+            self._update(act, state="running", pid=proc.pid, started=started_at,
+                         program_started=_start_of(proc.pid))
             threading.Thread(target=self._feed_stdin, args=(proc, launch.stdin.encode("utf-8")), daemon=True,
                              name=f"researchos-agent-stdin-{act.run_id}").start()
             act.timer = threading.Timer(max(0.1, timeout_minutes * 60.0), self._terminate, args=(act, "timeout"))
@@ -795,6 +925,12 @@ class AgentManager:
                     kill_tree(proc.pid, proc=proc)
             finally:
                 exit_code = proc.wait()
+                with act.lock:
+                    act.drained = True
+                # what the program left running goes before the after-picture (17.3): nothing it still
+                # writes can then pass for someone else's change
+                with contextlib.suppress(Exception), act.kill_lock:
+                    act.leftovers += self._sweep(act, proc)
                 with contextlib.suppress(OSError):
                     if proc.stdout is not None:
                         proc.stdout.close()
@@ -816,6 +952,29 @@ class AgentManager:
         finally:
             with contextlib.suppress(OSError, ValueError):
                 stdin.close()
+
+    @staticmethod
+    def _sample(act: _Active, proc: subprocess.Popen) -> None:
+        """Note the program's descendants (pid and start time) for `_sweep`: those still alive from earlier
+        samples stay even when their parent has gone since (they are orphans of the program then)."""
+        table = _ps_table()
+        if not table:
+            return
+        current = {p: table[p][2] for p in _descendants(table, proc.pid) if not table[p][1].startswith("Z")}
+        with act.tree_lock:
+            kept = {p: start for p, start in act.tree.items() if _same_alive(table, p, start)}
+            kept.update(current)
+            if len(kept) > TREE_LIMIT:
+                kept = dict(list(kept.items())[-TREE_LIMIT:])
+            act.tree = kept
+
+    @staticmethod
+    def _sweep(act: _Active, proc: subprocess.Popen) -> int:
+        """End the noted descendants of the (exited) program that are still alive, and its process group.
+        Returns how many were alive. The caller holds `act.kill_lock`."""
+        with act.tree_lock:
+            stamps = dict(act.tree)
+        return sweep_tree(stamps, group=proc.pid)
 
     def _pump(self, act: _Active, proc: subprocess.Popen, stream: Any, events_path: Path) -> None:
         """Read the program's standard output until it ends: lines go to `events.jsonl` (while
@@ -858,7 +1017,7 @@ class AgentManager:
         def persist(force: bool = False) -> None:
             nonlocal sent, last_persist
             with act.human_lock:
-                count = len(act.human)
+                count = act.human_version
             now = (stream.session_id or sent[0], stream.model, stream.cost_usd, count)
             if now == sent:
                 return
@@ -866,13 +1025,26 @@ class AgentManager:
             if not (force or fresh_session or time.monotonic() - last_persist >= PERSIST_INTERVAL_S):
                 return
             self._update(act, session_id=now[0], model_answered=now[1], cost_usd=now[2],
-                         human_paths=act.human_paths())
+                         human_paths=act.human_paths(), human_sha=act.human_hashes())
             sent, last_persist = now, time.monotonic()
 
         selector = selectors.DefaultSelector()  # not select(): the engine may hold descriptors above 1023
         selector.register(fd, selectors.EVENT_READ)
+        began = time.monotonic()
+        next_sample = began
         try:
             while True:
+                now = time.monotonic()
+                # whether the program has exited is looked at on EVERY turn, however much arrives: a
+                # descendant that holds the pipe and writes often must not keep the run going (17.3)
+                if exited_at is None and proc.poll() is not None:
+                    exited_at = now
+                if exited_at is not None and now - exited_at > EXIT_DRAIN_S:
+                    break
+                if exited_at is None and now >= next_sample:
+                    with contextlib.suppress(Exception):
+                        self._sample(act, proc)
+                    next_sample = time.monotonic() + min(SAMPLE_INTERVAL_S, 0.25 + (now - began) / 4)
                 if selector.select(0.25):
                     try:
                         chunk = os.read(fd, 65536)
@@ -892,11 +1064,6 @@ class AgentManager:
                             handle(line)
                     if len(buffer) > MAX_LINE_BYTES:  # a line without an end: drop it, keep reading
                         buffer, discarding = b"", True
-                else:
-                    if proc.poll() is not None:
-                        exited_at = exited_at or time.monotonic()
-                        if time.monotonic() - exited_at > EXIT_DRAIN_S:
-                            break
                 persist()
             if buffer and not discarding and len(buffer) <= MAX_LINE_BYTES:
                 handle(buffer)
@@ -910,18 +1077,24 @@ class AgentManager:
 
     def _terminate(self, act: _Active, reason: str) -> bool:
         """Stop the program of `act` for `reason` (`stop`, `timeout`, `shutdown`): the reason is
-        marked first, then the program and everything it started are ended (`kill_tree`).
-        False when there was nothing to stop (it had already ended on its own). Idempotent."""
+        marked first, then the program and everything it started are ended (`kill_tree`). A program
+        that has exited while its output is still being read (a descendant holds the pipe) is
+        stopped the same way: the reason is marked and the noted tree is swept. False when there
+        was nothing to stop (the program ended on its own and its output was read to the end).
+        Idempotent."""
         with act.lock:
             proc = act.proc
-            if proc is not None and proc.poll() is not None:
+            if proc is not None and proc.poll() is not None and act.drained:
                 return False
             if act.stop_reason is None:
                 act.stop_reason = reason
         if proc is None:
             return True  # not started yet; the thread sees the reason before it would launch
         with act.kill_lock:
-            kill_tree(proc.pid, proc=proc)
+            if proc.poll() is None:
+                kill_tree(proc.pid, proc=proc)
+            else:
+                act.leftovers += self._sweep(act, proc)
         return True
 
     # -- the end of a run -----------------------------------------------------------------------
@@ -950,37 +1123,54 @@ class AgentManager:
         }
 
     def _assess(self, root: Path, project_id: str, run_id: str, run: dict, before: dict,
-                human: Iterable[str]) -> dict[str, Any]:
+                human: Callable[[], Iterable[str]], human_sha: Callable[[], dict[str, str]] | None = None
+                ) -> dict[str, Any]:
         """The after-picture and what it shows against `before` (17.5): the run's changes (the
-        person's own saves left out), the out-of-bounds ones, and the paths the agent tools wrote."""
+        person's own saves left out), the out-of-bounds ones, and the paths the agent tools wrote.
+        `human` (and `human_sha`, the hashes of what the engine wrote) are read once the after-picture
+        is taken, so a save made while the project was being walked is the person's too. The
+        out-of-bounds check does not leave the person's paths out: a protected path is allowed to end
+        with the bytes the engine wrote there, and with nothing else."""
         rd = run_store.run_dir(project_id, run_id)
         after = snapshot.take(root)
         _write_json(rd / "after.json", after)
+        human_list = sorted(human())
+        shas = {_key(p): s for p, s in (human_sha() if human_sha is not None else {}).items()}
         old, new = before.get("files") or {}, after["files"]
-        human_keys = {_key(p) for p in human}
+        human_keys = {_key(p) for p in human_list}
         exclude = {p for p in (*old, *new) if _key(p) in human_keys}
         everything = snapshot.compare(before, after)
         changes = snapshot.compare(before, after, exclude=exclude)
         partial = bool(before.get("partial") or after.get("partial"))
-        if partial:  # a cut picture lists files it never saw as deleted: only a file that is really gone is
+        if partial:  # a cut picture lists files it never saw: a deletion only when the file is really gone,
+            # a creation only when the file is newer than the run (17.5)
+            started_ns = _started_ns(run)
             gone = lambda p: not os.path.lexists(os.path.join(root, *p.split("/")))  # noqa: E731
-            changes["deleted"] = [p for p in changes["deleted"] if gone(p)]
-            everything["deleted"] = [p for p in everything["deleted"] if gone(p)]
+            for found in (changes, everything):
+                found["deleted"] = [p for p in found["deleted"] if gone(p)]
+                found["created"] = snapshot.created_since(root, found["created"], started_ns)
         by_person = sorted({p for kind in everything.values() for p in kind if p in exclude})
         _signals, info = self._signals(project_id, run_id)
         before_task = old.get(TASKS_PATH) or {}
         tasks_ok = set(info["tasks_shas"])
         if before_task.get("sha256"):
             tasks_ok.add(before_task["sha256"])
-        allowed = {TASKS_PATH: tasks_ok}
+        allowed: dict[str, set[str]] = {TASKS_PATH: tasks_ok}
+        for kind in everything.values():
+            for rel in kind:
+                if _key(rel) in shas:
+                    allowed.setdefault(rel, set()).add(shas[_key(rel)])
         prot = before.get("protected") or snapshot.protected(root, before)
-        violations = snapshot.violations(changes, prot, git_before=before.get("git"), git_after=after.get("git"),
-                                         allowed=allowed, after=after)
+        data_before, data_after = before.get("data"), after.get("data")
+        violations = snapshot.violations(
+            everything, prot, git_before=before.get("git"), git_after=after.get("git"), allowed=allowed,
+            after=after, data_before=data_before if isinstance(data_before, dict) else None,
+            data_after=data_after if isinstance(data_after, dict) else None)
         return {
             "changes": {**changes, "by_person": by_person}, "violations": violations,
             "snapshot": {"files": len(old), "partial": partial,
                          "copied_bytes": before.get("copied_bytes", 0), "not_copied": before.get("not_copied", 0)},
-            "tool_paths": info["tool_paths"], "revertible": True,
+            "tool_paths": info["tool_paths"], "revertible": True, "human_paths": human_list,
             "signal_info": info,
         }
 
@@ -994,12 +1184,15 @@ class AgentManager:
             return
         who = labels.who_value(agent, run.get("by"))
         skip = set(tool_paths) | {TASKS_PATH}
-        wanted = []
-        for rel in [*changes.get("created", ()), *changes.get("modified", ())]:
-            first = rel.split("/", 1)[0].casefold()
-            if rel in skip or first in _RECORD_DIRS:
-                continue
-            wanted.append(rel)
+        candidates = [rel for rel in [*changes.get("created", ()), *changes.get("modified", ())]
+                      if rel not in skip and rel.split("/", 1)[0].casefold() not in _RECORD_DIRS]
+        tracked: set[str] = set()
+        if candidates:  # 17.5: a git-tracked file's history is git's; one lookup for the whole run
+            try:
+                tracked = history._tracked(act_root) or set()  # noqa: SLF001 -- the history's own list of git files
+            except Exception:  # noqa: BLE001 -- unknown means "not tracked"; the history never fails a run
+                tracked = set()
+        wanted = [rel for rel in candidates if rel not in tracked]
         if len(wanted) > HISTORY_FILES_LIMIT:
             logger.warning("agent run %s changed %d files; recording the first %d in the history", run["id"],
                            len(wanted), HISTORY_FILES_LIMIT)
@@ -1056,7 +1249,7 @@ class AgentManager:
         check_error: dict | None = None
         if before is not None:
             try:
-                assessed = self._assess(root, project_id, run_id, run, before, act.human_paths())
+                assessed = self._assess(root, project_id, run_id, run, before, act.human_paths, act.human_hashes)
                 info = assessed.pop("signal_info")
                 extra.update(assessed)
                 self._attribute(root, project_id, run, assessed["changes"], assessed["tool_paths"])
@@ -1064,6 +1257,7 @@ class AgentManager:
                 logger.exception("the after-run check of agent run %s failed", run_id)
                 check_error = {"code": "check_failed", "detail": f"{type(exc).__name__}: {exc}"}
                 _sigs, info = self._signals(project_id, run_id)
+        extra.setdefault("human_paths", act.human_paths())
         state, error = self._decide(act, stream, exit_code, launch_error, info)
         if error is None and check_error is not None:
             error = check_error
@@ -1075,7 +1269,7 @@ class AgentManager:
             else run.get("session_id"),
             model_answered=getattr(stream, "model", None) if stream is not None else None,
             cost_usd=getattr(stream, "cost_usd", None) if stream is not None else None,
-            human_paths=act.human_paths(), **extra)
+            human_sha=act.human_hashes(), leftovers=act.leftovers, **extra)
 
     # -- stopping -------------------------------------------------------------------------------
 
@@ -1152,6 +1346,7 @@ class AgentManager:
             error=run.get("error"), message=run.get("message"), summary=run.get("summary"),
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
+            leftovers=run.get("leftovers") or 0,
             events_truncated=bool(run.get("events_truncated")))
         return out
 
@@ -1194,6 +1389,11 @@ class AgentManager:
         pid = run.get("engine_pid")
         if not _pid_alive(pid) or pid == os.getpid():
             return False
+        stamp = run.get("engine_started")
+        if isinstance(stamp, str) and stamp:
+            current = _start_of(pid)
+            if current is not None and current != stamp:
+                return False  # the pid belongs to another process now: the engine of the run is gone
         try:
             created = datetime.fromisoformat(str(run.get("created")).replace("Z", "+00:00"))
             if datetime.now(timezone.utc) - created > STALE_AFTER:
@@ -1216,11 +1416,16 @@ class AgentManager:
         ids of active runs that belong to another live engine and were left alone."""
         foreign: list[str] = []
         with self._recover_lock:
-            for run in run_store.list_runs(project_id):
-                if run.get("state") not in run_store.ACTIVE_STATES:
+            for listed in run_store.list_runs(project_id):
+                if listed.get("state") not in run_store.ACTIVE_STATES:
                     continue
                 with self._lock:
+                    # the listing may be older than the run's end: read it again, with the registry held
+                    # (the run's thread leaves the registry after its final state is saved)
+                    run = run_store.load_run(project_id, listed["id"])
                     act = self._active.get(project_id)
+                    if run is None or run.get("state") not in run_store.ACTIVE_STATES:
+                        continue
                     if act is not None and act.run_id == run["id"]:
                         continue
                 if self._engine_alive(run):
@@ -1238,10 +1443,11 @@ class AgentManager:
         run_id = run["id"]
         root = Path(run.get("root") or "")
         pid = run.get("pid")
-        if _pid_alive(pid):
-            program = os.path.basename(str(run.get("program") or "")) or profiles.PROGRAMS.get(run.get("runner"), "")
-            if program and program in _command_of(pid):
-                kill_tree(pid)
+        started = run.get("program_started")
+        # only the process recorded at launch (pid AND start time) is the run's program: a recycled pid
+        # is some other process, whatever its command line says (and no process group is signalled)
+        if _pid_alive(pid) and isinstance(started, str) and started and _start_of(pid) == started:
+            kill_tree(pid)
         update: dict[str, Any] = {"state": "interrupted", "ended": _now(),
                                   "error": {"code": "engine_gone",
                                             "detail": "Research OS stopped while the run was going"}}
@@ -1251,12 +1457,15 @@ class AgentManager:
         update.update(question=info["question"], report=info["report"])
         if isinstance(before, dict) and isinstance(before.get("files"), dict) and root.is_dir():
             try:
-                assessed = self._assess(root, project_id, run_id, run, before, run.get("human_paths") or ())
+                assessed = self._assess(root, project_id, run_id, run, before,
+                                        lambda: list(run.get("human_paths") or ()),
+                                        lambda: dict(run.get("human_sha") or {}))
                 assessed.pop("signal_info")
                 update.update(assessed)
             except Exception:  # noqa: BLE001
                 logger.exception("could not check the changes of interrupted agent run %s", run_id)
-        run_store.update_run(project_id, run_id, **update)
+        # only while it is still going: a run that ended meanwhile keeps the state it reached
+        run_store.update_run_if_active(project_id, run_id, **update)
 
     # -- undoing ----------------------------------------------------------------------------------
 
@@ -1265,10 +1474,12 @@ class AgentManager:
         "skipped": [{"path", "reason"}]}`. `removed` are files the run created, moved into the
         run's `reverted/` folder; `restored` come back from the before-picture's copies. A file
         that changed after the run, or that has no copy, is left alone and listed in `skipped`
-        (`changed_since`, `no_copy`). The run is marked undone unless nothing could be."""
+        (`changed_since`, `no_copy`, `in_cloud`, `protected`). The run is marked undone unless nothing
+        could be; what was left alone is kept as `run["revert"]` and counted in the summary
+        (`revert_skipped`)."""
         self._check_ids(project_id, run_id)
         root = self._writable_root(root, project_id)
-        self._recover(project_id)
+        foreign = self._recover(project_id)
         run = self._load(project_id, run_id)
         with self._lock:
             act = self._active.get(project_id)
@@ -1278,6 +1489,8 @@ class AgentManager:
                 raise AgentError("busy")
             if run.get("state") in run_store.ACTIVE_STATES:
                 raise AgentError("run_active" if self._engine_alive(run) else "not_finished")
+            if foreign:  # a run of another Research OS process is going: its files are not ours to move
+                raise AgentError("busy")
             if run.get("reverted"):
                 raise AgentError("reverted")
             self._reverting.add(project_id)
@@ -1316,7 +1529,9 @@ class AgentManager:
         try:
             with situation.write_guard(root, project_id, human=True, timeout=10.0):
                 self._undo_files(root, real_root, rd, before["files"], after["files"], changes, run_id,
-                                 restored, removed, skipped, project_id)
+                                 restored, removed, skipped, project_id,
+                                 person={_key(p) for p in (*(run.get("human_paths") or ()),
+                                                           *(changes.get("by_person") or ()))})
                 self._undo_task(root, run, info, restored, skipped)
         except ProjectLockError as exc:
             raise AgentError("busy", f"The project is being written by something else: {exc}") from exc
@@ -1333,12 +1548,18 @@ class AgentManager:
 
     def _undo_files(self, root: Path, real_root: str, rd: Path, old: dict, new: dict, changes: dict, run_id: str,
                     restored: list[str], removed: list[str], skipped: list[dict[str, str]],
-                    project_id: str) -> None:
+                    project_id: str, person: set[str] | None = None) -> None:
         who = history.scan_who(root)
         recorded: list[str] = []
+        person = person or set()
+        handled: set[str] = set()  # deleted paths a moved-back file has restored
+        moved: list[str] = []  # files that left their folder: the folders they emptied are cleaned up
 
         def skip(rel: str, reason: str) -> None:
             skipped.append({"path": rel, "reason": reason})
+
+        def path_of(rel: str) -> str:
+            return os.path.join(root, *rel.split("/"))
 
         def copy_away(rel: str, full: str) -> bool:
             dest = rd / "reverted" / Path(*rel.split("/"))
@@ -1348,6 +1569,19 @@ class AgentManager:
                 return True
             except OSError:
                 return False
+
+        def free(rel: str) -> bool:
+            """Whether nothing stands at `rel`: an empty folder (what a replaced file leaves behind) counts as nothing."""
+            target = path_of(rel)
+            if not os.path.lexists(target):
+                return True
+            if os.path.isdir(target) and not os.path.islink(target):
+                try:
+                    os.rmdir(target)  # fails unless empty
+                except OSError:
+                    return False
+                return True
+            return False
 
         def restore(rel: str) -> bool:
             """Put the before-picture's copy of `rel` back, atomically and inside the project."""
@@ -1359,7 +1593,7 @@ class AgentManager:
             if entry.get("sha256") and _sha256(src) != entry["sha256"]:
                 skip(rel, "no_copy")  # the copy is not what was recorded: do not write it back
                 return False
-            target = os.path.join(root, *rel.split("/"))
+            target = path_of(rel)
             parent = os.path.dirname(target)
             try:
                 os.makedirs(parent, exist_ok=True)
@@ -1377,40 +1611,97 @@ class AgentManager:
             recorded.append(rel)
             return True
 
+        # A deleted file with no copy plus a created file of the same content is a rename or a move: the
+        # created file is the only holder of that content, so it goes back to the old name (never away).
+        lost: dict[str, list[str]] = {}
+        for rel in changes.get("deleted", ()):
+            entry = old.get(rel) or {}
+            if rel != TASKS_PATH and _key(rel) not in person and entry.get("sha256") and not entry.get("copied"):
+                lost.setdefault(entry["sha256"], []).append(rel)
+
+        def move_back(rel: str, current: dict) -> bool:
+            sha = current.get("sha256") or (new.get(rel) or {}).get("sha256")
+            for target_rel in lost.get(sha, ()) if sha else ():
+                target = path_of(target_rel)
+                if os.path.lexists(target) and not (os.path.exists(target) and os.path.samefile(target, path_of(rel))):
+                    if not free(target_rel):
+                        continue
+                try:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    if not _inside(real_root, os.path.realpath(os.path.dirname(target))):
+                        continue
+                    os.rename(path_of(rel), target)
+                except OSError:
+                    continue
+                lost[sha].remove(target_rel)
+                handled.add(target_rel)
+                restored.append(target_rel)
+                recorded.append(target_rel)
+                moved.append(rel)
+                return True
+            return False
+
         for rel in changes.get("created", ()):
             if rel == TASKS_PATH:
+                continue
+            if _key(rel) in person:  # saved by the person during the run: never ours to move
+                skip(rel, "changed_since")
+                continue
+            if rel.split("/", 1)[0].casefold() in _RECORD_DIRS:  # never move the project's own records
+                skip(rel, "protected")
                 continue
             current = snapshot.fingerprint(root, rel)
             if current is None or not snapshot.same(current, new.get(rel)):
                 skip(rel, "changed_since")
                 continue
+            if current.get("dataless"):  # moving it could download it, under the project lock
+                skip(rel, "in_cloud")
+                continue
+            if move_back(rel, current):
+                continue
             dest = rd / "reverted" / Path(*rel.split("/"))
             try:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(os.path.join(root, *rel.split("/")), dest)
+                shutil.move(path_of(rel), dest)
             except OSError:
                 logger.warning("could not move %s of agent run %s away", rel, run_id, exc_info=True)
                 skip(rel, "changed_since")
                 continue
             removed.append(rel)
+            moved.append(rel)
+        # the folders the moves emptied, deepest first, unless they were there before the run
+        before_dirs = {"/".join(p.split("/")[:i]) for p in old for i in range(1, p.count("/") + 1)}
+        emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
+        for folder in sorted(emptied, key=lambda f: f.count("/"), reverse=True):
+            if folder in before_dirs or folder.split("/", 1)[0].casefold() in _RECORD_DIRS:
+                continue
+            with contextlib.suppress(OSError):  # not empty: it stays
+                if not os.path.islink(path_of(folder)):
+                    os.rmdir(path_of(folder))
         for rel in changes.get("modified", ()):
             if rel == TASKS_PATH:
+                continue
+            if _key(rel) in person:
+                skip(rel, "changed_since")
                 continue
             current = snapshot.fingerprint(root, rel)
             if current is None or not snapshot.same(current, new.get(rel)):
                 skip(rel, "changed_since")
                 continue
+            if current.get("dataless"):  # copying it away would download it, under the project lock
+                skip(rel, "in_cloud")
+                continue
             if not (old.get(rel) or {}).get("copied"):
                 skip(rel, "no_copy")
                 continue
-            if not copy_away(rel, os.path.join(root, *rel.split("/"))):
+            if not copy_away(rel, path_of(rel)):
                 skip(rel, "changed_since")
                 continue
             restore(rel)
         for rel in changes.get("deleted", ()):
-            if rel == TASKS_PATH:
+            if rel == TASKS_PATH or rel in handled:
                 continue
-            if os.path.lexists(os.path.join(root, *rel.split("/"))):
+            if _key(rel) in person or not free(rel):
                 skip(rel, "changed_since")
                 continue
             restore(rel)

@@ -42,7 +42,11 @@ RUN_ID_RE = re.compile(r"r-\d{8}T\d{6}Z-[0-9a-f]{6}\Z")
 STATES = ("preparing", "running", "needs_input", "done", "ended", "failed", "stopped", "interrupted")
 ACTIVE_STATES = frozenset({"preparing", "running"})
 SIGNAL_KINDS = frozenset({"complete", "ask", "note"})
-KEEP_RUNS = 50
+#: Run folders kept per project: `run.json`, `events.jsonl` and `instruction.txt` (the run's log) stay for the
+#: newest this many runs; older folders are removed whole (17.6).
+KEEP_RUNS = 200
+#: The before-picture of the newest this many runs is kept (the `before/` copies, `before.json`, `after.json`):
+#: older runs keep their log but can no longer be undone (17.6).
 KEEP_BACKUPS = 20
 EVENTS_LIMIT = 20 * 1024 * 1024
 
@@ -182,6 +186,24 @@ def update_run(project_id: str, run_id: str, **changes: Any) -> dict[str, Any]:
         return run
 
 
+def update_run_if_active(project_id: str, run_id: str, **changes: Any) -> dict[str, Any] | None:
+    """`update_run`, but only while the run is still in an active state, checked and written under the
+    same lock (a compare-and-set): a run that reached a terminal state meanwhile is left alone and None is
+    returned. KeyError when the run is missing; ValueError when `changes` would rename it."""
+    if "id" in changes and changes["id"] != run_id:
+        raise ValueError("a run's id cannot change")
+    directory = run_dir(project_id, run_id)
+    with _LOCK:
+        run = _read_run(directory, run_id)
+        if run is None:
+            raise KeyError(run_id)
+        if run.get("state") not in ACTIVE_STATES:
+            return None
+        run.update(changes)
+        _write_run(directory, run)
+        return run
+
+
 def list_runs(project_id: str) -> list[dict[str, Any]]:
     """The project's runs, newest first; folders without a readable
     `run.json` are skipped."""
@@ -276,10 +298,11 @@ def read_lines(path: Path, *, tail_bytes: int | None = None) -> list[dict[str, A
 
 
 def prune(project_id: str) -> None:
-    """Keep the newest `KEEP_RUNS` run folders of the project (never one
-    that is active); runs beyond the newest `KEEP_BACKUPS` lose their
-    `before/` copies and become not revertible (17.6). Errors are logged,
-    never raised: a failed clean-up must not fail a finished run."""
+    """Retention (17.6): the newest `KEEP_RUNS` run folders of the project are kept (never one that is
+    active), older ones are removed whole; runs beyond the newest `KEEP_BACKUPS` lose their `before/` copies
+    and the two pictures (`before.json`, `after.json`) and become not revertible, but keep `run.json`,
+    `events.jsonl` and `instruction.txt` -- the log. Errors are logged, never raised: a failed clean-up
+    must not fail a finished run."""
     for index, run_id in enumerate(_run_ids(project_id)):
         directory = project_runs_dir(project_id) / run_id
         try:
@@ -290,8 +313,15 @@ def prune(project_id: str) -> None:
                 shutil.rmtree(directory, ignore_errors=True)
             elif index >= KEEP_BACKUPS:
                 before = directory / "before"
-                if before.exists() or (run is not None and run.get("revertible") is not False):
+                pictures = [directory / "before.json", directory / "after.json"]
+                if (before.exists() or any(p.exists() for p in pictures)
+                        or (run is not None and run.get("revertible") is not False)):
                     shutil.rmtree(before, ignore_errors=True)
+                    for picture in pictures:
+                        try:
+                            picture.unlink()
+                        except FileNotFoundError:
+                            pass
                     if run is not None:
                         update_run(project_id, run_id, revertible=False)
         except (OSError, KeyError, ValueError) as exc:
