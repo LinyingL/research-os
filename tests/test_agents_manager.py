@@ -1,0 +1,1293 @@
+"""Package E of DESIGN.md Section 17: the run manager. The agents' programs
+are fakes -- Python scripts (a `#!<python>` shebang, made executable and
+registered with `profiles.set_commands`) that answer `--version`, read the
+prompt on standard input, print the stream the real program prints
+(stream-json for Claude Code, JSON events for OpenCode: the formats recorded
+in the experiments behind `runners.py`), change files in the working folder
+and report through `runs.append_signal` / the workspace the way the MCP agent
+tools do (inside `situation.agent_writes_allowed()`, with the agent as the
+author). What each fake does is a JSON scenario next to it."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from researchos import history, project, workspace
+from researchos.agents import labels, manager, profiles, snapshot
+from researchos.agents import runs as run_store
+from researchos.records import files as record_files
+from researchos.records import notes as notes_mod
+from researchos.records.identity import read_identity
+
+FAKE = r'''#!@PYTHON@
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+args = sys.argv[1:]
+if "--version" in args:
+    print("fake 1.0")
+    sys.exit(0)
+scenario = json.loads((HERE / "scenario.json").read_text())
+flavor = scenario.get("flavor", "claude")
+stdin_text = "" if scenario.get("no_stdin") else sys.stdin.read()
+if scenario.get("ignore_sigterm"):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
+def arg_after(*names):
+    for name in names:
+        if name in args:
+            i = args.index(name)
+            if i + 1 < len(args):
+                return args[i + 1]
+    return None
+
+
+session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_after("--session") or "ses_fake_" + str(os.getpid()))
+with open(HERE / "calls.jsonl", "a") as handle:
+    handle.write(json.dumps({"argv": sys.argv, "stdin": stdin_text, "cwd": os.getcwd(),
+                             "env": {k: v for k, v in os.environ.items()
+                                     if k.startswith(("RESEARCHOS", "CLAUDE", "OPENCODE", "CCR_"))},
+                             "pid": os.getpid()}) + "\n")
+
+
+def emit(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def tool_input_key(name):
+    return "filePath" if flavor == "opencode" else "file_path"
+
+
+cost = 0.0
+for step in scenario.get("steps", []):
+    op = step["op"]
+    if op == "init":
+        if flavor == "claude":
+            emit({"type": "system", "subtype": "init", "session_id": session, "cwd": os.getcwd(),
+                  "model": scenario.get("model", "claude-fake-1"), "mcp_servers": []})
+        else:
+            emit({"type": "step_start", "timestamp": 1, "sessionID": session, "part": {"type": "step-start"}})
+    elif op == "say":
+        if flavor == "claude":
+            emit({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": step["text"]}]}})
+        else:
+            emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": step["text"]}})
+    elif op == "tool":
+        if flavor == "claude":
+            emit({"type": "assistant", "session_id": session, "message": {"content": [
+                {"type": "tool_use", "id": "toolu_1", "name": step["name"], "input": step["input"]}]}})
+        else:
+            emit({"type": "tool_use", "sessionID": session, "part": {"type": "tool", "tool": step["name"].lower(),
+                  "state": {"status": "completed", "input": step["input"], "output": "ok"}}})
+    elif op == "noise":
+        print(step.get("text", "not json"), flush=True)
+        print("x" * step.get("size", 0), flush=True)
+    elif op == "stderr":
+        sys.stderr.write(step["text"] + "\n")
+        sys.stderr.flush()
+    elif op == "write":
+        path = Path(step["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, step.get("mode", "w")) as out:
+            out.write(step["text"])
+    elif op == "delete":
+        os.unlink(step["path"])
+    elif op == "wait_file":
+        end = time.time() + step.get("timeout", 30)
+        while not os.path.exists(step["path"]) and time.time() < end:
+            time.sleep(0.05)
+    elif op == "sleep":
+        time.sleep(step["s"])
+    elif op == "spawn":
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"],
+                                 start_new_session=step.get("new_session", True),
+                                 stdout=None if step.get("inherit_stdout") else subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL)
+        Path(step["pidfile"]).write_text(str(child.pid))
+    elif op == "pidfile":
+        Path(step["pidfile"]).write_text(str(os.getpid()))
+    elif op == "ask":
+        from researchos.agents import runs
+        runs.append_signal(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"], "ask", question=step["question"])
+    elif op == "refusal":
+        from researchos.agents import guard, runs
+        guard.log_refusal(runs.run_dir(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"]), "Bash", step["target"], step["reason"])
+    elif op == "complete":
+        # what researchos_complete_task does: a result record, the task done, attributed to the agent
+        from researchos import workspace
+        from researchos.agents import labels, runs
+        from researchos.records import situation
+        run_id = os.environ["RESEARCHOS_AGENT_RUN"]
+        root = Path(os.getcwd())
+        agent = labels.Agent(*scenario["agent"])
+        author = {"source": "agent", "who": labels.who_value(agent, scenario.get("by")), "note": run_id}
+        with situation.agent_writes_allowed():
+            tasks, revision = workspace.read_tasks(root)
+            task = next(t for t in tasks if t["id"] == scenario["task_id"])
+            content = "# Result\n\n" + step.get("report", "Done.") + "\n"
+            if task.get("report"):
+                current = workspace.document(root, task["report"])
+                doc = workspace.save_document(root, {"path": task["report"], "content": content,
+                                                     "revision": current["revision"]}, author=author)
+            else:
+                doc = workspace.save_document(root, {"kind": "result", "content": content, "revision": None}, author=author)
+            task = dict(task, done=True, report=doc["path"])
+            saved = workspace.save_tasks(root, {"tasks": [task if t["id"] == task["id"] else t for t in tasks],
+                                                "revision": revision}, author=author)
+        runs.append_signal(scenario["project_id"], run_id, "complete", path=doc["path"],
+                           tasks_sha=saved["tasks_revision"], paths=[doc["path"], "research/tasks.json"])
+    elif op == "result":
+        cost = step.get("cost", 0.0123)
+        if flavor == "claude":
+            emit({"type": "result", "subtype": step.get("subtype", "success"), "is_error": step.get("is_error", False),
+                  "result": step.get("text", "All done."), "session_id": session, "total_cost_usd": cost,
+                  "errors": step.get("errors")} if step.get("errors") else
+                 {"type": "result", "subtype": step.get("subtype", "success"), "is_error": step.get("is_error", False),
+                  "result": step.get("text", "All done."), "session_id": session, "total_cost_usd": cost})
+        else:
+            if step.get("is_error"):
+                emit({"type": "error", "sessionID": session, "error": {"name": "APIError", "data": {"message": step.get("text", "boom")}}})
+            else:
+                emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": step.get("text", "All done.")}})
+                emit({"type": "step_finish", "sessionID": session, "part": {"type": "step-finish", "reason": "stop", "cost": cost}})
+    elif op == "exit":
+        sys.stdout.flush()
+        os._exit(step.get("code", 0))
+'''
+
+
+# -- the scene ---------------------------------------------------------------------------------------
+
+
+class Scene:
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.tmp = tmp_path
+        self.root = tmp_path / "project"
+        self.root.mkdir()
+        project.init_project(self.root)
+        self.pid = read_identity(self.root).identity.id
+        self.finished: list[tuple[Path, dict]] = []
+        self.manager = manager.AgentManager(on_finish=lambda r, run: self.finished.append((r, run)), engine_port=4321)
+        self.bins: dict[str, Path] = {}
+        self.pidfiles: list[Path] = []
+        monkeypatch.setattr(profiles, "mcp_available", lambda: True)
+        for runner, program in (("claude-code", "claude"), ("opencode", "opencode")):
+            folder = tmp_path / f"bin-{program}"
+            folder.mkdir()
+            script = folder / program
+            script.write_text(FAKE.replace("@PYTHON@", sys.executable))
+            script.chmod(0o755)
+            self.bins[runner] = script
+        profiles.set_commands({r: str(p) for r, p in self.bins.items()})
+        self.write_tasks([{"id": "t1", "text": "Analyse the sample", "owner": "agent:claude-code:sonnet"}])
+
+    # files and tasks
+    def write_tasks(self, tasks: list[dict]) -> None:
+        try:
+            _old, revision = workspace.read_tasks(self.root)
+        except workspace.WorkspaceError:
+            revision = None
+        workspace.save_tasks(self.root, {"tasks": tasks, "revision": revision})
+
+    def tasks(self) -> dict[str, dict]:
+        return {t["id"]: t for t in workspace.read_tasks(self.root)[0]}
+
+    def put(self, rel: str, text: str) -> Path:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def pidfile(self, name: str) -> Path:
+        path = self.tmp / name
+        self.pidfiles.append(path)
+        return path
+
+    # scenarios
+    def scenario(self, steps: list[dict], runner: str = "claude-code", task_id: str = "t1", **extra) -> None:
+        owner = next(t["owner"] for t in workspace.read_tasks(self.root)[0] if t["id"] == task_id)
+        agent = labels.parse_owner(owner)
+        body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
+                "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
+                "by": "m-1", **extra}
+        (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
+
+    def calls(self, runner: str = "claude-code") -> list[dict]:
+        path = self.bins[runner].parent / "calls.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    # running
+    def start(self, task_id: str = "t1", **kw) -> dict:
+        args = {"by": "m-1", "by_name": "Lin", "lang": "en"} | kw
+        return self.manager.start(self.root, self.pid, task_id, **args)
+
+    def run(self, run_id: str) -> dict:
+        return run_store.load_run(self.pid, run_id)
+
+    def wait(self, run_id: str, timeout: float = 40.0) -> dict:
+        """Until the run is terminal and the manager has let go of the project."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            run = self.run(run_id)
+            if run and run["state"] not in run_store.ACTIVE_STATES and self.manager.active_for(self.pid) is None:
+                return run
+            time.sleep(0.05)
+        raise AssertionError(f"run {run_id} did not finish: {self.run(run_id)}")
+
+    def wait_state(self, run_id: str, state: str, timeout: float = 30.0) -> dict:
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            run = self.run(run_id)
+            if run and run["state"] == state:
+                return run
+            time.sleep(0.03)
+        raise AssertionError(f"run {run_id} never reached {state}: {self.run(run_id)}")
+
+    def wait_file(self, path: Path, timeout: float = 30.0) -> str:
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if path.exists() and path.read_text().strip():
+                return path.read_text().strip()
+            time.sleep(0.03)
+        raise AssertionError(f"{path} never appeared")
+
+    def go(self, steps: list[dict], **kw) -> dict:
+        """Start a run of `task_id` (default t1) on `runner` (default claude-code) with `steps`, and wait for it."""
+        runner = kw.pop("runner", "claude-code")
+        self.scenario(steps, runner=runner, task_id=kw.get("task_id", "t1"))
+        return self.wait(self.start(**kw)["id"])
+
+    def versions(self, rel: str):
+        with history.Store.open(self.pid) as store:
+            return store.versions(notes_mod.normalize_node(rel))
+
+    def cleanup(self) -> None:
+        self.manager.shutdown()
+        for path in self.pidfiles:
+            try:
+                os.kill(int(path.read_text()), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
+
+
+@pytest.fixture
+def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    s = Scene(tmp_path, monkeypatch)
+    try:
+        yield s
+    finally:
+        s.cleanup()
+
+
+NOTE = "research/notes/" + "ab" * 16 + ".md"
+
+
+def init_step():
+    return {"op": "init"}
+
+
+def finish_step(text: str = "All done."):
+    return {"op": "result", "text": text}
+
+
+def alive(pid: int) -> bool:
+    return manager._pid_alive(pid)
+
+
+def wait_gone(pid: int, timeout: float = 10.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if not alive(pid):
+            return True
+        time.sleep(0.05)
+    return not alive(pid)
+
+
+COMPLETE = [init_step(), {"op": "tool", "name": "Bash", "input": {"command": "python analysis.py"}},
+            {"op": "write", "path": "analysis.py", "text": "print(1)\n"},
+            {"op": "say", "text": "Writing the report"}, {"op": "complete", "report": "Mean is 3."}, finish_step()]
+
+
+# -- the happy path ----------------------------------------------------------------------------------------
+
+
+def test_done_run_end_to_end(scene: Scene, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_REMOTE_SESSION_ID", "cse_parent")
+    scene.put(NOTE, "# old\n")
+    scene.scenario(COMPLETE)
+    started = scene.start()
+    assert started["state"] == "preparing" and started["can_stop"] is True and started["can_reply"] is False
+    assert started["owner"] == "agent:claude-code:sonnet" and started["label"] == "Claude Code · sonnet"
+    assert started["by"] == "m-1" and started["by_name"] == "Lin" and started["kind"] == "start"
+    assert scene.manager.active_for(scene.pid) == started["id"]
+    run = scene.wait(started["id"])
+
+    assert run["state"] == "done", (run["error"], run["exit_code"])
+    assert run["error"] is None and run["exit_code"] == 0 and run["pid"] > 0
+    assert run["started"] and run["ended"] and run["created"] <= run["started"] <= run["ended"]
+    assert run["engine_pid"] == os.getpid() and run["lang"] == "en"
+    assert run["cost_usd"] == pytest.approx(0.0123) and run["model_answered"] == "claude-fake-1"
+    assert run["summary"] == "All done." and run["revertible"] is True
+    assert run["session_id"] and run["session_id"] == run["session_id"].lower()
+    result = run["report"]
+    assert result.startswith("research/results/") and (scene.root / result).is_file()
+    tasks = scene.tasks()
+    assert tasks["t1"]["done"] is True and tasks["t1"]["report"] == result
+    # the change list: the script and the result record are the run's; tasks.json is the tools' own
+    assert "analysis.py" in run["changes"]["created"] and result in run["changes"]["created"]
+    assert "research/tasks.json" in run["changes"]["modified"]
+    assert run["violations"] == [], run["violations"]
+    assert run["tool_paths"] == sorted([result, "research/tasks.json"])
+    assert run["task_done_before"] is False and run["task_report_before"] is None
+    assert run["snapshot"]["partial"] is False and run["snapshot"]["files"] >= 1
+
+    # the program was started the way runners.py says
+    (call,) = scene.calls()
+    argv = call["argv"]
+    assert argv[1:4] == ["-p", "--output-format", "stream-json"] and "--session-id" in argv and "--resume" not in argv
+    assert argv[argv.index("--session-id") + 1] == run["session_id"]
+    assert argv[argv.index("--model") + 1] == "sonnet"
+    assert argv.index("--allowedTools") > argv.index("--append-system-prompt")
+    assert call["cwd"] == str(scene.root.resolve())
+    assert call["env"]["RESEARCHOS_AGENT_RUN"] == run["id"]
+    assert "CLAUDECODE" not in call["env"] and "CLAUDE_CODE_REMOTE_SESSION_ID" not in call["env"]
+    assert "Analyse the sample" in call["stdin"] and "Analyse the sample" not in " ".join(argv)
+
+    # the run folder
+    rd = run_store.run_dir(scene.pid, run["id"])
+    for name in ("run.json", "instruction.txt", "events.jsonl", "stderr.log", "signals.jsonl", "guard.json",
+                 "before.json", "after.json", "claude-settings.json", "mcp.json"):
+        assert (rd / name).exists(), name
+    assert (rd / "before" / NOTE).read_text() == "# old\n"
+    assert json.loads((rd / "guard.json").read_text())["engine_port"] == 4321
+    instruction = (rd / "instruction.txt").read_text()
+    assert instruction.endswith(call["stdin"]) and len(instruction) > len(call["stdin"])  # rules + instruction
+    assert NOTE in call["stdin"]  # the existing notes are listed
+
+    # attribution: the agent's script is in the change history as the agent's, with the person and the run
+    (version,) = scene.versions("analysis.py")
+    assert version.source == "agent" and version.who == "agent:claude-code:sonnet#m-1" and version.note == run["id"]
+    assert [v.source for v in scene.versions(result)] == ["agent"]  # written by the tool, not re-recorded
+
+    # listing and on_finish
+    listing = scene.manager.runs(scene.pid)
+    assert listing["active"] is None and [r["id"] for r in listing["runs"]] == [run["id"]]
+    only = listing["runs"][0]
+    assert only["state"] == "done" and only["can_stop"] is False and only["can_reply"] is True
+    assert only["can_revert"] is True and only["changes"] >= 3 and only["violations"] == 0
+    assert scene.finished and scene.finished[-1][1]["id"] == run["id"] and scene.finished[-1][1]["state"] == "done"
+
+
+def test_detail(scene: Scene):
+    scene.put(NOTE, "# old\n")
+    steps = [init_step(), {"op": "say", "text": "Looking around"},
+             {"op": "tool", "name": "Bash", "input": {"command": "ls -la"}},
+             {"op": "noise", "text": "this is not json", "size": 10},
+             {"op": "stderr", "text": "warning: something on stderr"},
+             {"op": "refusal", "target": "data.csv", "reason": "protected"}, finish_step("Final words")]
+    run = scene.go(steps)
+    detail = scene.manager.detail(scene.pid, run["id"])
+    kinds = [s["kind"] for s in detail["steps"]]
+    assert kinds[0] == "start" and "say" in kinds and "tool" in kinds and kinds[-1] == "end"
+    assert any(s["text"] == "Bash: ls -la" for s in detail["steps"])
+    assert detail["steps_total"] == len(detail["steps"])
+    assert "Analyse the sample" in detail["instruction"] and NOTE in detail["instruction"]
+    assert detail["stderr_tail"].strip() == "warning: something on stderr"
+    assert detail["refusals"] and detail["refusals"][0]["target"] == "data.csv"
+    assert detail["state"] == "ended" and detail["changes"] == run["changes"] and detail["error"] is None
+    assert detail["summary"] == "Final words" and detail["exit_code"] == 0
+    assert detail["can_reply"] is True and detail["id"] == run["id"]
+    with pytest.raises(manager.AgentError) as caught:
+        scene.manager.detail(scene.pid, "r-20200101T000000Z-aaaaaa")
+    assert caught.value.code == "run_missing" and caught.value.status == 404
+    with pytest.raises(manager.AgentError) as caught:
+        scene.manager.detail(scene.pid, "../etc")
+    assert caught.value.code == "invalid"
+
+
+def test_stderr_and_stdout_noise_do_not_break_the_run(scene: Scene):
+    run = scene.go([init_step(), {"op": "noise", "text": "{broken json", "size": 100000}, finish_step()])
+    assert run["state"] == "ended"
+
+
+def test_a_program_that_never_reads_its_input_is_fine(scene: Scene):
+    scene.scenario([init_step(), finish_step()], no_stdin=True)
+    run = scene.wait(scene.start()["id"])
+    assert run["state"] == "ended" and run["exit_code"] == 0
+
+
+# -- the other states --------------------------------------------------------------------------------------
+
+
+def test_needs_input_then_answer_then_send_back(scene: Scene):
+    scene.scenario([init_step(), {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
+    first = scene.wait(scene.start()["id"])
+    assert first["state"] == "needs_input" and first["question"] == "Which sample?" and first["report"] is None
+    assert first["error"] is None
+    listing = scene.manager.runs(scene.pid)["runs"][0]
+    assert listing["can_reply"] is True and listing["question"] == "Which sample?"
+
+    # 回答: resumes the same conversation
+    scene.scenario(COMPLETE)
+    second_summary = scene.manager.reply(scene.root, scene.pid, first["id"], "Use sample B", by="m-1", by_name="Lin",
+                                         lang="en")
+    assert second_summary["kind"] == "answer" and second_summary["parent"] == first["id"]
+    second = scene.wait(second_summary["id"])
+    assert second["state"] == "done" and second["message"] == "Use sample B" and second["parent"] == first["id"]
+    first_call, second_call = scene.calls()
+    assert "--resume" in second_call["argv"] and "--session-id" not in second_call["argv"]
+    assert second_call["argv"][second_call["argv"].index("--resume") + 1] == first["session_id"]
+    assert "Use sample B" in second_call["stdin"] and "Analyse the sample" not in second_call["stdin"]
+    assert second["session_id"] == first["session_id"]
+    assert scene.tasks()["t1"]["done"] is True
+    assert scene.manager.runs(scene.pid)["runs"][-1]["can_reply"] is False  # the first is no longer the latest
+
+    with pytest.raises(manager.AgentError) as caught:  # only the latest run can be continued
+        scene.manager.reply(scene.root, scene.pid, first["id"], "again", by=None, by_name=None, lang="en")
+    assert caught.value.code == "not_latest"
+
+    # 打回 on a done task: its done mark is cleared first, the report stays
+    result = scene.tasks()["t1"]["report"]
+    scene.scenario([init_step(), {"op": "write", "path": "extra.txt", "text": "more\n"}, finish_step("Sent back")])
+    third_summary = scene.manager.reply(scene.root, scene.pid, second["id"], "Please also add extra.txt", by="m-1",
+                                        by_name="Lin", lang="zh")
+    assert third_summary["kind"] == "send_back"
+    third = scene.wait(third_summary["id"])
+    assert third["state"] == "ended" and third["lang"] == "zh"
+    task = scene.tasks()["t1"]
+    assert task["done"] is False and task["report"] == result
+    third_call = scene.calls()[-1]
+    assert "Please also add extra.txt" in third_call["stdin"]
+    assert third["task_done_before"] is False  # the engine cleared the mark before the run's before-picture
+
+
+def test_ended_without_report_and_failed_variants(scene: Scene):
+    ended = scene.go([init_step(), finish_step()])
+    assert ended["state"] == "ended" and ended["error"] is None and ended["report"] is None
+    assert scene.tasks()["t1"]["done"] is False
+
+    # a non-zero exit with no result at all
+    failed = scene.go([init_step(), {"op": "say", "text": "hmm"}, {"op": "exit", "code": 3}])
+    assert failed["state"] == "failed" and failed["exit_code"] == 3
+    assert failed["error"]["code"] == "aborted" and "3" in failed["error"]["detail"]
+
+    # a result with is_error (a bad model is subtype success with is_error true)
+    errored = scene.go([init_step(), {"op": "result", "is_error": True, "text": "model not found"},
+                        {"op": "exit", "code": 1}])
+    assert errored["state"] == "failed" and errored["error"] == {"code": "error", "detail": "model not found"}
+
+    budget = scene.go([init_step(), {"op": "result", "is_error": True, "subtype": "error_max_budget_usd",
+                                     "text": "", "errors": ["Reached maximum budget"]}, {"op": "exit", "code": 1}])
+    assert budget["error"]["code"] == "error_max_budget_usd" and "budget" in budget["error"]["detail"]
+    # failed runs can be continued when they have a conversation
+    assert scene.manager.runs(scene.pid)["runs"][0]["can_reply"] is True
+
+
+def test_a_program_that_cannot_start_fails_the_run(scene: Scene, monkeypatch):
+    scene.scenario([init_step(), finish_step()])
+    broken = scene.tmp / "broken"
+    broken.write_text("#!/nonexistent/interpreter\n")
+    broken.chmod(0o755)
+    monkeypatch.setattr(profiles, "find", lambda runner, **kw: profiles.Found(runner, str(broken), "1", None))
+    run = scene.wait(scene.start()["id"])
+    assert run["state"] == "failed" and run["error"]["code"] == "start_failed" and run["pid"] is None
+    assert run["revertible"] is True and run["changes"]["created"] == []
+
+
+def test_opencode_run_and_continuation(scene: Scene):
+    scene.write_tasks([{"id": "t1", "text": "Fit the model", "owner": "agent:opencode:lmstudio/qwen3-coder"}])
+    steps = [init_step(), {"op": "tool", "name": "Write", "input": {"filePath": "x"}},
+             {"op": "write", "path": "model.py", "text": "x = 1\n"}, {"op": "ask", "question": "Which model?"},
+             finish_step("Waiting")]
+    scene.scenario(steps, runner="opencode")
+    first = scene.wait(scene.start()["id"])
+    assert first["state"] == "needs_input" and first["runner"] == "opencode"
+    assert first["session_id"].startswith("ses_fake_") and first["cost_usd"] == pytest.approx(0.0123)
+    assert first["summary"] == "Waiting"
+    (call,) = scene.calls("opencode")
+    argv = call["argv"]
+    assert argv[1:4] == ["run", "--format", "json"] and argv[argv.index("--model") + 1] == "lmstudio/qwen3-coder"
+    assert argv[argv.index("--dir") + 1] == str(scene.root.resolve()) and "--session" not in argv
+    rd = run_store.run_dir(scene.pid, first["id"])
+    assert call["stdin"] == (rd / "instruction.txt").read_text()  # the rules and the instruction, on stdin
+    assert call["env"]["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1"
+    config = json.loads(call["env"]["OPENCODE_CONFIG_CONTENT"])
+    assert config["mcp"]["researchos"]["environment"]["RESEARCHOS_AGENT_RUN"] == first["id"]
+    steps_seen = [s["kind"] for s in scene.manager.detail(scene.pid, first["id"])["steps"]]
+    assert steps_seen[0] == "start" and "tool" in steps_seen and steps_seen[-1] == "end"  # the end is added
+
+    scene.scenario([init_step(), finish_step("Resumed")], runner="opencode")
+    second = scene.wait(scene.manager.reply(scene.root, scene.pid, first["id"], "The big one", by=None,
+                                            by_name=None, lang="en")["id"])
+    assert second["state"] == "ended"
+    second_argv = scene.calls("opencode")[-1]["argv"]
+    assert second_argv[second_argv.index("--session") + 1] == first["session_id"]
+    assert "The big one" in scene.calls("opencode")[-1]["stdin"]
+
+
+def test_opencode_error_event_fails(scene: Scene):
+    scene.write_tasks([{"id": "t1", "text": "x", "owner": "agent:opencode:p/m"}])
+    run = scene.go([init_step(), {"op": "result", "is_error": True, "text": "provider said no"},
+                    {"op": "exit", "code": 1}], runner="opencode")
+    assert run["state"] == "failed" and run["error"] == {"code": "model_error", "detail": "provider said no"}
+
+
+# -- start() refusals ----------------------------------------------------------------------------------
+
+
+def codes(callable_, *args, **kw) -> str:
+    with pytest.raises(manager.AgentError) as caught:
+        callable_(*args, **kw)
+    err = caught.value
+    assert err.message and err.message_zh and err.status in (400, 403, 404, 409, 500)
+    return err.code
+
+
+def test_start_refusals(scene: Scene, monkeypatch):
+    start = scene.manager.start
+    base = {"by": None, "by_name": None, "lang": "en"}
+    assert codes(start, scene.root, "not-a-project-id!!", "t1", **base) == "invalid"
+    assert codes(start, scene.root, scene.pid, "nope", **base) == "task_missing"
+    scene.write_tasks([{"id": "t1", "text": "Analyse", "owner": "agent:claude-code:sonnet"},
+                       {"id": "t2", "text": "Human", "owner": "Zhang San"},
+                       {"id": "t3", "text": "Done", "owner": "agent:claude-code:sonnet", "done": True},
+                       {"id": "t4", "text": "None"}])
+    assert codes(start, scene.root, scene.pid, "t2", **base) == "not_agent_task"
+    assert codes(start, scene.root, scene.pid, "t4", **base) == "not_agent_task"
+    assert codes(start, scene.root, scene.pid, "t3", **base) == "task_done"
+    monkeypatch.setattr(profiles, "mcp_available", lambda: False)
+    assert codes(start, scene.root, scene.pid, "t1", **base) == "mcp_missing"
+    monkeypatch.setattr(profiles, "mcp_available", lambda: True)
+    profiles.set_commands({"claude-code": str(scene.tmp / "does-not-exist")})
+    assert codes(start, scene.root, scene.pid, "t1", **base) == "runner_missing"
+    profiles.set_commands({"claude-code": str(scene.bins["claude-code"])})
+    # a folder that is not this project's
+    other = scene.tmp / "other"
+    other.mkdir()
+    project.init_project(other)
+    assert codes(start, other, scene.pid, "t1", **base) == "invalid"
+    # the desk's own write rule
+    def refuse(root):
+        raise workspace.WorkspaceError("read_only", "read only", 403)
+    monkeypatch.setattr(workspace, "_require_write", refuse)
+    assert codes(start, scene.root, scene.pid, "t1", **base) == "read_only"
+    assert not (run_store.project_runs_dir(scene.pid)).exists() or not list(run_store.project_runs_dir(scene.pid).iterdir())
+
+
+def test_busy_and_concurrent_starts(scene: Scene):
+    scene.write_tasks([{"id": "t1", "text": "A", "owner": "agent:claude-code:sonnet"},
+                       {"id": "t2", "text": "B", "owner": "agent:claude-code:sonnet"}])
+    gate = scene.tmp / "gate"
+    scene.scenario([init_step(), {"op": "wait_file", "path": str(gate)}, finish_step()])
+    first = scene.start()
+    assert codes(scene.manager.start, scene.root, scene.pid, "t2", by=None, by_name=None, lang="en") == "busy"
+    assert codes(scene.manager.reply, scene.root, scene.pid, first["id"], "x", by=None, by_name=None,
+                 lang="en") == "run_active"
+    assert codes(scene.manager.revert, scene.root, scene.pid, first["id"], by=None) == "run_active"
+    gate.write_text("go")
+    scene.wait(first["id"])
+
+    # eight requests at once: exactly one wins
+    gate2 = scene.tmp / "gate2"
+    scene.scenario([init_step(), {"op": "wait_file", "path": str(gate2)}, finish_step()])
+    results: list = []
+
+    def attempt() -> None:
+        try:
+            results.append(scene.start("t2"))
+        except manager.AgentError as exc:
+            results.append(exc)
+
+    threads = [threading.Thread(target=attempt) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    winners = [r for r in results if isinstance(r, dict)]
+    assert len(winners) == 1 and all(isinstance(r, manager.AgentError) and r.code == "busy"
+                                     for r in results if not isinstance(r, dict))
+    gate2.write_text("go")
+    scene.wait(winners[0]["id"])
+    assert len(run_store.list_runs(scene.pid)) == 2
+
+
+# -- stopping --------------------------------------------------------------------------------------------------
+
+
+def test_stop_kills_the_program_and_a_grandchild_in_its_own_session(scene: Scene):
+    child, agent = scene.pidfile("child.pid"), scene.pidfile("agent.pid")
+    scene.scenario([init_step(), {"op": "pidfile", "pidfile": str(agent)},
+                    {"op": "spawn", "pidfile": str(child), "new_session": True}, {"op": "sleep", "s": 120}])
+    started = scene.start()
+    child_pid, agent_pid = int(scene.wait_file(child)), int(scene.wait_file(agent))
+    scene.wait_state(started["id"], "running")
+    assert alive(child_pid) and alive(agent_pid)
+    assert os.getsid(child_pid) != os.getsid(agent_pid)  # killpg could not reach it
+
+    began = time.monotonic()
+    stopped = scene.manager.stop(scene.pid, started["id"])
+    assert time.monotonic() - began < 8
+    assert stopped["state"] == "stopped" and stopped["can_stop"] is False and stopped["can_reply"] is True
+    assert wait_gone(agent_pid) and wait_gone(child_pid)
+    run = scene.run(started["id"])
+    assert run["state"] == "stopped" and run["error"] is None and run["exit_code"] in (-15, -9, 143)
+    assert scene.manager.active_for(scene.pid) is None
+    # idempotent, and a run that is not going is returned unchanged
+    again = scene.manager.stop(scene.pid, started["id"])
+    assert again["state"] == "stopped"
+    assert codes(scene.manager.stop, scene.pid, "r-20200101T000000Z-aaaaaa") == "run_missing"
+    assert [s["kind"] for s in scene.manager.detail(scene.pid, started["id"])["steps"]][-1] == "end"
+    # the project is free again
+    scene.scenario([init_step(), finish_step()])
+    assert scene.wait(scene.start()["id"])["state"] == "ended"
+
+
+def test_stop_escalates_to_sigkill_when_sigterm_is_ignored(scene: Scene, monkeypatch):
+    monkeypatch.setattr(manager, "KILL_GRACE_S", 0.6)
+    agent = scene.pidfile("agent.pid")
+    scene.scenario([init_step(), {"op": "pidfile", "pidfile": str(agent)}, {"op": "sleep", "s": 120}],
+                   ignore_sigterm=True)
+    started = scene.start()
+    pid = int(scene.wait_file(agent))
+    scene.wait_state(started["id"], "running")
+    time.sleep(0.3)  # the handler is installed before the pidfile is written
+    scene.manager.stop(scene.pid, started["id"])
+    assert wait_gone(pid)
+    run = scene.wait(started["id"])
+    assert run["state"] == "stopped" and run["exit_code"] == -9
+
+
+def test_stop_during_preparing_never_launches(scene: Scene, monkeypatch):
+    release = threading.Event()
+    real_take = snapshot.take
+
+    def slow_take(root, copy_to=None):
+        release.wait(10)
+        return real_take(root, copy_to)
+
+    monkeypatch.setattr(snapshot, "take", slow_take)
+    scene.scenario([init_step(), finish_step()])
+    started = scene.start()
+    stopper = threading.Thread(target=scene.manager.stop, args=(scene.pid, started["id"]))
+    stopper.start()
+    time.sleep(0.3)
+    assert scene.run(started["id"])["state"] == "preparing"
+    release.set()
+    stopper.join(20)
+    run = scene.wait(started["id"])
+    assert run["state"] == "stopped" and run["pid"] is None and scene.calls() == []
+
+
+def test_timeout(scene: Scene, monkeypatch):
+    monkeypatch.setattr(profiles, "timeout_minutes", lambda: 0.04)  # 2.4 s
+    agent = scene.pidfile("agent.pid")
+    scene.scenario([init_step(), {"op": "pidfile", "pidfile": str(agent)}, {"op": "sleep", "s": 120}])
+    started = scene.start()
+    run = scene.wait(started["id"])
+    assert run["state"] == "failed" and run["error"]["code"] == "timeout" and "time limit" in run["error"]["detail"]
+    assert wait_gone(int(agent.read_text()))
+    assert scene.manager.runs(scene.pid)["runs"][0]["can_reply"] is True
+
+
+def test_shutdown_interrupts_every_run_and_refuses_new_ones(scene: Scene):
+    agent = scene.pidfile("agent.pid")
+    scene.scenario([init_step(), {"op": "pidfile", "pidfile": str(agent)},
+                    {"op": "write", "path": "partial.txt", "text": "half"}, {"op": "sleep", "s": 120}])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    pid = int(scene.wait_file(agent))
+    scene.manager.shutdown()
+    scene.manager.shutdown()  # idempotent
+    run = scene.run(started["id"])
+    assert run["state"] == "interrupted" and run["error"]["code"] == "shutdown"
+    assert wait_gone(pid)
+    assert "partial.txt" in run["changes"]["created"] and run["revertible"] is True  # it can still be undone
+    assert codes(scene.manager.start, scene.root, scene.pid, "t1", by=None, by_name=None, lang="en") == "start_failed"
+    assert scene.finished and scene.finished[-1][1]["state"] == "interrupted"
+
+
+def test_the_time_limit_and_the_person_do_not_both_win(scene: Scene):
+    """stop() after the program already ended on its own changes nothing."""
+    run = scene.go([init_step(), finish_step()])
+    assert run["state"] == "ended"
+    assert scene.manager.stop(scene.pid, run["id"])["state"] == "ended"
+    assert scene.run(run["id"])["state"] == "ended"
+
+
+def test_background_process_holding_stdout_does_not_hang_the_run(scene: Scene, monkeypatch):
+    monkeypatch.setattr(manager, "EXIT_DRAIN_S", 0.5)
+    holder = scene.pidfile("holder.pid")
+    run = scene.go([init_step(), {"op": "spawn", "pidfile": str(holder), "new_session": False, "inherit_stdout": True},
+                    finish_step()])
+    assert run["state"] == "ended"
+
+
+# -- bounds and attribution -------------------------------------------------------------------------------------
+
+
+def test_overwriting_a_data_file_is_an_out_of_bounds_change(scene: Scene):
+    scene.put("data.csv", "a,b\n1,2\n")
+    scene.put("clean.txt", "keep\n")
+    run = scene.go([init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                    {"op": "write", "path": "newdata.csv", "text": "x\n1\n"}, {"op": "complete"}, finish_step()])
+    assert run["state"] == "done"
+    assert run["violations"] == [{"path": "data.csv", "reason": "data_changed"}]
+    assert "data.csv" in run["changes"]["modified"] and "newdata.csv" in run["changes"]["created"]
+    listed = scene.manager.runs(scene.pid)["runs"][0]
+    assert listed["violations"] == 1 and listed["can_revert"] is True
+    # protected files were passed to the guard
+    guard_file = json.loads((run_store.run_dir(scene.pid, run["id"]) / "guard.json").read_text())
+    assert "data.csv" in guard_file["files"] and "research/tasks.json" in guard_file["files"]
+    assert ".researchos" in guard_file["dirs"]
+    # undoing restores the data file
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert "data.csv" in result["restored"] and "newdata.csv" in result["removed"]
+    assert (scene.root / "data.csv").read_text() == "a,b\n1,2\n" and not (scene.root / "newdata.csv").exists()
+
+
+def test_a_tasks_json_edit_the_tools_did_not_make_is_a_violation(scene: Scene):
+    tasks_path = scene.root / "research" / "tasks.json"
+    sneaky = json.dumps([{"id": "t1", "text": "Analyse the sample", "done": True,
+                          "owner": "agent:claude-code:sonnet", "due": ""}])
+    run = scene.go([init_step(), {"op": "write", "path": str(tasks_path), "text": sneaky}, finish_step()])
+    assert {"path": "research/tasks.json", "reason": "record_changed"} in run["violations"]
+    # the history keeps the file's attribution out of the agent's hands
+    assert all(v.source != "agent" for v in scene.versions("research/tasks.json"))
+
+
+def test_researchos_folder_and_git_changes_are_violations(scene: Scene):
+    subprocess.run(["git", "init", "-q"], cwd=scene.root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"],
+                   cwd=scene.root, check=True)
+    team = scene.root / ".researchos" / "team.toml"
+    run = scene.go([init_step(), {"op": "write", "path": str(team), "text": "x = 1\n"}, finish_step()])
+    reasons = {(v["path"], v["reason"]) for v in run["violations"]}
+    assert (".researchos/team.toml", "researchos_changed") in reasons
+    assert (".researchos/team.toml" not in [v.who for v in scene.versions(".researchos/team.toml")])  # no attribution there
+
+
+def test_the_persons_own_saves_during_the_run_are_not_the_agents(scene: Scene):
+    scene.put("notes/mine.md", "# mine\n")
+    gate = scene.tmp / "gate"
+    scene.scenario([init_step(), {"op": "write", "path": "agent.txt", "text": "agent\n"},
+                    {"op": "wait_file", "path": str(gate)}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    # the person saves two files through Research OS while the run goes on
+    record_files.durable_write(scene.root / "notes" / "mine.md", b"# mine, edited\n")
+    record_files.write_new_file(scene.root / "person.txt", b"by hand\n")
+    # an unrelated write elsewhere on this Mac is not recorded as a project path
+    record_files.durable_write(scene.tmp / "elsewhere.txt", b"x")
+    time.sleep(0.2)
+    gate.write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "ended"
+    assert "agent.txt" in run["changes"]["created"]
+    assert "person.txt" not in run["changes"]["created"] and "notes/mine.md" not in run["changes"]["modified"]
+    assert run["changes"]["by_person"] == ["notes/mine.md", "person.txt"]
+    assert run["human_paths"] == ["notes/mine.md", "person.txt"]
+    assert [v.source for v in scene.versions("person.txt")] == []
+    assert [v.who for v in scene.versions("agent.txt")] == ["agent:claude-code:sonnet#m-1"]
+    # the listener is gone once the run ended
+    assert not record_files._listeners
+
+
+def test_history_attribution_without_a_person(scene: Scene):
+    run = scene.go([init_step(), {"op": "write", "path": "a.txt", "text": "a\n"}, finish_step()], by=None,
+                   by_name=None)
+    (version,) = scene.versions("a.txt")
+    assert version.who == "agent:claude-code:sonnet" and version.source == "agent" and version.note == run["id"]
+    assert run["by"] is None and run["by_name"] is None
+
+
+def test_a_cut_picture_does_not_report_unseen_files_as_deleted(scene: Scene, monkeypatch):
+    for i in range(5):
+        scene.put(f"f{i}.txt", str(i))
+    monkeypatch.setattr(snapshot, "FILE_LIMIT", 4)
+    run = scene.go([init_step(), finish_step()])
+    assert run["snapshot"]["partial"] is True
+    assert run["changes"]["deleted"] == []
+
+
+def test_the_person_saving_a_document_during_the_run_is_not_the_agents(scene: Scene):
+    """Through the real desk: the save, its backup and its history are the engine's own writes."""
+    doc = workspace.save_document(scene.root, {"kind": "note", "content": "# Mine\n\nfirst\n", "revision": None})
+    gate = scene.tmp / "gate"
+    scene.scenario([init_step(), {"op": "wait_file", "path": str(gate)}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    workspace.save_document(scene.root, {"path": doc["path"], "content": "# Mine\n\nsecond\n",
+                                         "revision": doc["revision"]})
+    gate.write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "ended" and run["violations"] == []
+    assert doc["path"] in run["changes"]["by_person"] and doc["path"] not in run["changes"]["modified"]
+    assert run["changes"]["created"] == [] and run["changes"]["modified"] == []
+    assert all(v.source != "agent" for v in scene.versions(doc["path"]))
+
+
+def test_two_projects_run_side_by_side(scene: Scene):
+    other = scene.tmp / "second"
+    other.mkdir()
+    project.init_project(other)
+    other_id = read_identity(other).identity.id
+    workspace.save_tasks(other, {"tasks": [{"id": "t1", "text": "Other", "owner": "agent:claude-code:sonnet"}],
+                                 "revision": None})
+    gate = scene.tmp / "gate"
+    scene.scenario([init_step(), {"op": "wait_file", "path": str(gate)}, finish_step()])
+    first = scene.start()
+    second = scene.manager.start(other, other_id, "t1", by=None, by_name=None, lang="en")
+    assert scene.manager.active_for(scene.pid) == first["id"] and scene.manager.active_for(other_id) == second["id"]
+    gate.write_text("go")
+    scene.wait(first["id"])
+    end = time.monotonic() + 30
+    while scene.manager.active_for(other_id) and time.monotonic() < end:
+        time.sleep(0.05)
+    assert run_store.load_run(other_id, second["id"])["state"] == "ended"
+    assert [r["id"] for r in scene.manager.runs(other_id)["runs"]] == [second["id"]]
+
+
+def test_a_failure_while_reading_the_output_kills_the_program_and_ends_the_run(scene: Scene, monkeypatch):
+    agent = scene.pidfile("agent.pid")
+    scene.scenario([init_step(), {"op": "pidfile", "pidfile": str(agent)}, {"op": "write", "path": "x.txt", "text": "x"},
+                    {"op": "sleep", "s": 120}])
+
+    def broken(self, act, proc, stream, events_path):
+        scene.wait_file(agent)
+        raise RuntimeError("pump bug")
+
+    monkeypatch.setattr(manager.AgentManager, "_pump", broken)
+    run = scene.wait(scene.start()["id"])
+    assert run["state"] == "failed" and run["error"]["code"] == "internal" and "pump bug" in run["error"]["detail"]
+    assert wait_gone(int(agent.read_text()))
+    assert "x.txt" in run["changes"]["created"]  # the after-run check still ran
+
+
+def test_an_oversized_output_line_is_dropped_not_fatal(scene: Scene, monkeypatch):
+    monkeypatch.setattr(manager, "MAX_LINE_BYTES", 1000)
+    run = scene.go([init_step(), {"op": "noise", "text": "short", "size": 5000}, finish_step("After the long line")])
+    assert run["state"] == "ended" and run["summary"] == "After the long line"
+    events = (run_store.run_dir(scene.pid, run["id"]) / "events.jsonl").read_text().splitlines()
+    assert events and all(len(line) <= 1000 for line in events)
+
+
+# -- robustness ------------------------------------------------------------------------------------------------------
+
+
+def test_an_exception_in_the_thread_ends_in_failed_with_the_error(scene: Scene, monkeypatch):
+    def boom(root, copy_to=None):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(snapshot, "take", boom)
+    scene.scenario([init_step(), finish_step()])
+    started = scene.start()
+    run = scene.wait(started["id"])
+    assert run["state"] == "failed" and run["error"]["code"] == "internal" and "disk on fire" in run["error"]["detail"]
+    assert run["ended"] and scene.manager.active_for(scene.pid) is None and scene.calls() == []
+    assert scene.finished and scene.finished[-1][1]["state"] == "failed"
+    assert not record_files._listeners
+
+
+def test_a_failing_after_run_check_still_ends_the_run(scene: Scene, monkeypatch):
+    real_take = snapshot.take
+    calls = {"n": 0}
+
+    def flaky(root, copy_to=None):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("cannot read the folder")
+        return real_take(root, copy_to)
+
+    monkeypatch.setattr(snapshot, "take", flaky)
+    run = scene.go([init_step(), finish_step()])
+    assert run["state"] == "ended" and run["error"]["code"] == "check_failed"
+
+
+def test_history_failure_never_fails_a_run(scene: Scene, monkeypatch):
+    monkeypatch.setattr(history.Store, "open", classmethod(lambda cls, pid: (_ for _ in ()).throw(OSError("no"))))
+    run = scene.go([init_step(), {"op": "write", "path": "a.txt", "text": "a"}, finish_step()])
+    assert run["state"] == "ended" and run["error"] is None
+
+
+def test_on_finish_exception_is_logged_not_raised(scene: Scene):
+    scene.manager.on_finish = lambda root, run: (_ for _ in ()).throw(RuntimeError("x"))
+    run = scene.go([init_step(), finish_step()])
+    assert run["state"] == "ended"
+    scene.scenario([init_step(), finish_step()])
+    assert scene.wait(scene.start()["id"])["state"] == "ended"  # the project was freed before on_finish
+
+
+def test_events_are_capped(scene: Scene, monkeypatch):
+    monkeypatch.setattr(run_store, "EVENTS_LIMIT", 600)
+    steps = [init_step()] + [{"op": "say", "text": "word " * 20} for _ in range(20)] + [finish_step()]
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "events.jsonl").stat().st_size <= 600 and run["events_truncated"] is True
+    assert run["state"] == "ended" and run["summary"] == "All done."  # the parser still saw the end
+
+
+def test_run_json_updates_are_serialised_while_the_run_goes_on(scene: Scene):
+    gate = scene.tmp / "gate"
+    scene.scenario([init_step(), {"op": "wait_file", "path": str(gate)}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    run = scene.wait_state(started["id"], "running")
+    end = time.monotonic() + 1.0
+    while time.monotonic() < end:  # hammer the readers while the thread persists
+        assert scene.manager.runs(scene.pid)["active"] == started["id"]
+        assert run_store.load_run(scene.pid, started["id"]) is not None
+    assert scene.run(started["id"])["session_id"]  # learned from the init event while running
+    gate.write_text("go")
+    scene.wait(started["id"])
+
+
+# -- undo ----------------------------------------------------------------------------------------------------------
+
+
+def revert_scene(scene: Scene) -> dict:
+    scene.put("old.txt", "v0\n")
+    scene.put("gone.txt", "bye\n")
+    scene.put("edited.txt", "e0\n")
+    scene.put("kept/inner.txt", "inner\n")
+    return scene.go([init_step(), {"op": "write", "path": "new.txt", "text": "new\n"},
+                     {"op": "write", "path": "deep/er/new2.txt", "text": "new2\n"},
+                     {"op": "write", "path": "old.txt", "text": "v1\n"},
+                     {"op": "write", "path": "edited.txt", "text": "e1\n"},
+                     {"op": "delete", "path": "gone.txt"}, {"op": "complete"}, finish_step()])
+
+
+def test_revert_matrix(scene: Scene):
+    run = revert_scene(scene)
+    assert run["state"] == "done"
+    created, modified, deleted = (set(run["changes"][k]) for k in ("created", "modified", "deleted"))
+    assert {"new.txt", "deep/er/new2.txt"} <= created and {"old.txt", "edited.txt"} <= modified
+    assert deleted == {"gone.txt"}
+    result_path = scene.tasks()["t1"]["report"]
+    assert result_path in created
+    scene.put("edited.txt", "e2 by the person\n")  # changed after the run
+    time.sleep(0.01)
+
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert sorted(result["restored"]) == sorted(["gone.txt", "old.txt", "research/tasks.json"])
+    assert sorted(result["removed"]) == sorted(["deep/er/new2.txt", "new.txt", result_path])
+    assert result["skipped"] == [{"path": "edited.txt", "reason": "changed_since"}]
+    assert (scene.root / "old.txt").read_text() == "v0\n" and (scene.root / "gone.txt").read_text() == "bye\n"
+    assert (scene.root / "edited.txt").read_text() == "e2 by the person\n"
+    assert not (scene.root / "new.txt").exists() and not (scene.root / result_path).exists()
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "reverted" / "new.txt").read_text() == "new\n"
+    assert (rd / "reverted" / "deep" / "er" / "new2.txt").read_text() == "new2\n"
+    assert (rd / "reverted" / "old.txt").read_text() == "v1\n"  # what was there is kept too
+    assert (rd / "reverted" / result_path).is_file()
+    # the task: done mark and report taken back logically
+    task = scene.tasks()["t1"]
+    assert task["done"] is False and "report" not in task
+    stored = scene.run(run["id"])
+    assert stored["reverted"] is True and stored["reverted_by"] == "m-1" and stored["reverted_at"]
+    summary = result["run"]
+    assert summary["reverted"] is True and summary["can_revert"] is False and summary["can_reply"] is False
+    assert summary["id"] == run["id"]
+    # the restore is in the history, under the person's name (the scan's), as an undo
+    versions = scene.versions("old.txt")
+    assert versions[0].note == f"undo {run['id']}" and versions[0].source == "scan"  # newest first
+    assert [v.source for v in versions].count("agent") == 1
+    # undone once
+    assert codes(scene.manager.revert, scene.root, scene.pid, run["id"], by=None) == "reverted"
+    assert codes(scene.manager.reply, scene.root, scene.pid, run["id"], "x", by=None, by_name=None,
+                 lang="en") == "reverted"
+
+
+def test_revert_keeps_a_task_edit_the_person_made_since(scene: Scene):
+    run = revert_scene(scene)
+    tasks, revision = workspace.read_tasks(scene.root)
+    edited = [dict(t, text="Analyse the sample, renamed", owner="Lin") for t in tasks]
+    workspace.save_tasks(scene.root, {"tasks": edited, "revision": revision})
+    scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    task = scene.tasks()["t1"]
+    assert task["text"] == "Analyse the sample, renamed" and task["owner"] == "Lin"
+    assert task["done"] is False and "report" not in task
+
+
+def test_revert_all_skipped_leaves_the_run_not_undone(scene: Scene):
+    run = scene.go([init_step(), {"op": "write", "path": "mine.txt", "text": "agent\n"}, finish_step()])
+    scene.put("mine.txt", "the person rewrote it\n")
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == [{"path": "mine.txt", "reason": "changed_since"}]
+    assert result["restored"] == [] and result["removed"] == []
+    assert result["run"]["reverted"] is False and result["run"]["can_revert"] is True
+    assert (scene.root / "mine.txt").read_text() == "the person rewrote it\n"
+    (scene.root / "mine.txt").write_text("agent\n")  # put it back, retry
+    again = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert again["removed"] == ["mine.txt"] and again["run"]["reverted"] is True
+
+
+def test_revert_a_file_without_a_copy_is_skipped(scene: Scene, monkeypatch):
+    scene.put("big.txt", "v0 is longer than the limit\n")
+    scene.put("small.txt", "s")
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 3)
+    run = scene.go([init_step(), {"op": "write", "path": "big.txt", "text": "v1\n"},
+                    {"op": "write", "path": "n.txt", "text": "n"}, finish_step()])
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert {"path": "big.txt", "reason": "no_copy"} in result["skipped"]
+    assert (scene.root / "big.txt").read_text() == "v1\n"
+    assert result["removed"] == ["n.txt"] and result["run"]["reverted"] is True
+
+
+def test_revert_a_corrupt_copy_is_never_written_back(scene: Scene):
+    scene.put("old.txt", "v0\n")
+    run = scene.go([init_step(), {"op": "write", "path": "old.txt", "text": "v1\n"}, finish_step()])
+    (run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt").write_text("tampered\n")
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == [{"path": "old.txt", "reason": "no_copy"}]
+    assert (scene.root / "old.txt").read_text() == "v1\n"
+
+
+def test_later_run_blocks_an_undo(scene: Scene):
+    scene.put("shared.txt", "v0\n")
+    scene.write_tasks([{"id": "t1", "text": "A", "owner": "agent:claude-code:sonnet"},
+                       {"id": "t2", "text": "B", "owner": "agent:claude-code:sonnet"}])
+    first = scene.go([init_step(), {"op": "write", "path": "shared.txt", "text": "v1\n"},
+                      {"op": "complete"}, finish_step()], task_id="t1")
+    second = scene.go([init_step(), {"op": "write", "path": "shared.txt", "text": "v2\n"},
+                       {"op": "complete"}, finish_step()], task_id="t2")
+    assert first["state"] == second["state"] == "done"
+    # the two runs both changed tasks.json, which is handled logically and is no obstacle by itself
+    assert codes(scene.manager.revert, scene.root, scene.pid, first["id"], by=None) == "later_run"
+    scene.manager.revert(scene.root, scene.pid, second["id"], by=None)
+    assert (scene.root / "shared.txt").read_text() == "v1\n"
+    scene.manager.revert(scene.root, scene.pid, first["id"], by=None)
+    assert (scene.root / "shared.txt").read_text() == "v0\n"
+    tasks = scene.tasks()
+    assert tasks["t1"]["done"] is False and tasks["t2"]["done"] is False
+
+
+def test_unrelated_later_run_does_not_block_an_undo(scene: Scene):
+    first = scene.go([init_step(), {"op": "write", "path": "one.txt", "text": "1"}, finish_step()])
+    scene.go([init_step(), {"op": "write", "path": "two.txt", "text": "2"}, finish_step()])
+    assert scene.manager.revert(scene.root, scene.pid, first["id"], by=None)["removed"] == ["one.txt"]
+
+
+def test_revert_refusals(scene: Scene):
+    empty = scene.go([init_step(), finish_step()])
+    assert codes(scene.manager.revert, scene.root, scene.pid, empty["id"], by=None) == "not_revertible"
+    assert codes(scene.manager.revert, scene.root, scene.pid, "r-20200101T000000Z-aaaaaa", by=None) == "run_missing"
+    run = scene.go([init_step(), {"op": "write", "path": "a.txt", "text": "a"}, finish_step()])
+    run_store.update_run(scene.pid, run["id"], revertible=False)  # what prune does to an old run
+    assert codes(scene.manager.revert, scene.root, scene.pid, run["id"], by=None) == "not_revertible"
+    assert scene.manager.runs(scene.pid)["runs"][0]["can_revert"] is False
+
+
+def test_reply_refusals(scene: Scene):
+    run = scene.go([init_step(), finish_step()])
+    reply = scene.manager.reply
+    assert codes(reply, scene.root, scene.pid, run["id"], "   ", by=None, by_name=None, lang="en") == "invalid"
+    assert codes(reply, scene.root, scene.pid, run["id"], "x" * 8001, by=None, by_name=None, lang="en") == "invalid"
+    assert codes(reply, scene.root, scene.pid, "r-20200101T000000Z-aaaaaa", "x", by=None, by_name=None,
+                 lang="en") == "run_missing"
+    # a run without a conversation (the program never said its session id)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    run_store.update_run(scene.pid, run["id"], session_id=None)
+    assert codes(reply, scene.root, scene.pid, run["id"], "x", by=None, by_name=None, lang="en") == "no_session"
+    run_store.update_run(scene.pid, run["id"], session_id="abc")
+    # the task moved to another agent
+    scene.write_tasks([{"id": "t1", "text": "Analyse", "owner": "agent:claude-code:opus"}])
+    assert codes(reply, scene.root, scene.pid, run["id"], "x", by=None, by_name=None, lang="en") == "not_agent_task"
+    scene.write_tasks([{"id": "t1", "text": "Analyse", "owner": "Zhang San"}])
+    assert codes(reply, scene.root, scene.pid, run["id"], "x", by=None, by_name=None, lang="en") == "not_agent_task"
+    scene.write_tasks([])
+    assert codes(reply, scene.root, scene.pid, run["id"], "x", by=None, by_name=None, lang="en") == "task_missing"
+    assert rd.is_dir()
+
+
+def test_reply_that_cannot_start_gives_the_done_mark_back(scene: Scene, monkeypatch):
+    done = scene.go(COMPLETE)
+    assert scene.tasks()["t1"]["done"] is True
+    monkeypatch.setattr(profiles, "mcp_available", lambda: False)
+    assert codes(scene.manager.reply, scene.root, scene.pid, done["id"], "x", by=None, by_name=None,
+                 lang="en") == "mcp_missing"
+    assert scene.tasks()["t1"]["done"] is True  # checked before the mark is cleared
+    monkeypatch.setattr(profiles, "mcp_available", lambda: True)
+    real = scene.manager._launch
+
+    def refuse(*a, **kw):
+        raise manager.AgentError("busy")
+
+    monkeypatch.setattr(scene.manager, "_launch", refuse)
+    assert codes(scene.manager.reply, scene.root, scene.pid, done["id"], "x", by=None, by_name=None,
+                 lang="en") == "busy"
+    assert scene.tasks()["t1"]["done"] is True and scene.tasks()["t1"]["report"] == done["report"]
+    monkeypatch.setattr(scene.manager, "_launch", real)
+
+
+# -- recovery -------------------------------------------------------------------------------------------------------
+
+
+def dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def stale_run(scene: Scene, *, state: str = "running", pid: int | None = None, engine_pid: int | None = None,
+              before: bool = True) -> dict:
+    run_id = run_store.new_run_id()
+    run = {"id": run_id, "project_id": scene.pid, "root": str(scene.root), "task_id": "t1", "task_text": "x",
+           "task_due": None, "runner": "claude-code", "model": "sonnet", "owner": "agent:claude-code:sonnet",
+           "label": "Claude Code · sonnet", "by": "m-1", "by_name": None, "lang": "en", "kind": "start",
+           "parent": None, "message": None, "state": state, "reverted": False, "created": run_store.now_iso(),
+           "started": run_store.now_iso(), "ended": None, "session_id": "s1", "pid": pid,
+           "engine_pid": engine_pid if engine_pid is not None else dead_pid(), "changes": {}, "violations": [],
+           "revertible": False}
+    run_store.create_run(scene.pid, run)
+    if before:
+        rd = run_store.run_dir(scene.pid, run_id)
+        picture = snapshot.take(scene.root, copy_to=rd / "before")
+        picture["protected"] = snapshot.protected(scene.root, picture)
+        (rd / "before.json").write_text(json.dumps(picture))
+    return run
+
+
+def test_stale_running_run_is_marked_interrupted_with_its_changes(scene: Scene):
+    scene.put("keep.txt", "k")
+    run = stale_run(scene)
+    (scene.root / "made_by_agent.txt").write_text("m")
+    listing = scene.manager.runs(scene.pid)
+    assert listing["active"] is None
+    (item,) = listing["runs"]
+    assert item["state"] == "interrupted" and item["error"]["code"] == "engine_gone" and item["can_stop"] is False
+    stored = scene.run(run["id"])
+    assert stored["ended"] and stored["changes"]["created"] == ["made_by_agent.txt"] and stored["revertible"] is True
+    assert item["can_revert"] is True
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == ["made_by_agent.txt"]
+    # a new run is possible now
+    scene.scenario([init_step(), finish_step()])
+    assert scene.wait(scene.start()["id"])["state"] == "ended"
+
+
+def test_stale_run_in_preparing_of_this_very_process_is_recovered(scene: Scene):
+    run = stale_run(scene, state="preparing", engine_pid=os.getpid(), before=False)
+    assert scene.manager.runs(scene.pid)["runs"][0]["state"] == "interrupted"
+    stored = scene.run(run["id"])
+    assert stored["revertible"] is False and stored["error"]["code"] == "engine_gone"
+
+
+def test_stale_run_ends_its_program_only_if_it_is_still_that_program(scene: Scene):
+    scene.scenario([{"op": "sleep", "s": 120}])
+    ours = subprocess.Popen([str(scene.bins["claude-code"]), "sleep"])  # `ps` shows the fake `claude`
+    other = subprocess.Popen(["sleep", "120"])
+    try:
+        stale_run(scene, pid=other.pid)
+        scene.manager.runs(scene.pid)
+        assert other.poll() is None  # a pid that is not the agent's program is left alone
+        stale_run(scene, pid=ours.pid)
+        scene.manager.runs(scene.pid)
+        assert ours.wait(timeout=15) in (-15, -9)
+    finally:
+        for proc in (ours, other):
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+
+
+def test_a_run_of_another_live_engine_is_left_alone(scene: Scene):
+    engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        run = stale_run(scene, engine_pid=engine.pid)
+        listing = scene.manager.runs(scene.pid)
+        assert listing["active"] == run["id"] and listing["runs"][0]["state"] == "running"
+        assert listing["runs"][0]["can_stop"] is False and listing["runs"][0]["can_revert"] is False
+        assert codes(scene.manager.start, scene.root, scene.pid, "t1", by=None, by_name=None, lang="en") == "busy"
+        assert codes(scene.manager.revert, scene.root, scene.pid, run["id"], by=None) == "run_active"
+        assert scene.manager.stop(scene.pid, run["id"])["state"] == "running"
+    finally:
+        engine.kill()
+        engine.wait()
+    assert scene.manager.runs(scene.pid)["runs"][0]["state"] == "interrupted"
+
+
+# -- retention ---------------------------------------------------------------------------------------------------------
+
+
+def test_prune_after_a_run(scene: Scene, monkeypatch):
+    monkeypatch.setattr(run_store, "KEEP_RUNS", 3)
+    monkeypatch.setattr(run_store, "KEEP_BACKUPS", 2)
+    ids = []
+    for i in range(5):
+        ids.append(scene.go([init_step(), {"op": "write", "path": f"f{i}.txt", "text": str(i)}, finish_step()])["id"])
+    kept = [r["id"] for r in run_store.list_runs(scene.pid)]
+    assert kept == ids[::-1][:3]
+    newest, middle, oldest = (run_store.run_dir(scene.pid, i) for i in kept)
+    assert (newest / "before").is_dir() and (middle / "before").is_dir() and not (oldest / "before").exists()
+    assert scene.run(kept[2])["revertible"] is False and scene.run(kept[0])["revertible"] is True
+    assert scene.manager.runs(scene.pid)["runs"][2]["can_revert"] is False
+    assert codes(scene.manager.revert, scene.root, scene.pid, kept[2], by=None) == "not_revertible"
+
+
+# -- the summary function ----------------------------------------------------------------------------------------------
+
+
+def test_summary_flags():
+    base = {"id": "r-1", "task_id": "t", "state": "done", "session_id": "s", "revertible": True,
+            "changes": {"created": ["a"], "modified": [], "deleted": [], "by_person": ["z"]}, "violations": [1, 2]}
+    s = manager.summary(base, latest_of_task=True, active=False)
+    assert s["can_reply"] and s["can_revert"] and not s["can_stop"] and s["changes"] == 1 and s["violations"] == 2
+    assert not manager.summary(base, latest_of_task=False, active=False)["can_reply"]
+    assert not manager.summary({**base, "reverted": True}, latest_of_task=True, active=False)["can_reply"]
+    assert not manager.summary({**base, "reverted": True}, latest_of_task=True, active=False)["can_revert"]
+    assert not manager.summary({**base, "session_id": None}, latest_of_task=True, active=False)["can_reply"]
+    assert not manager.summary({**base, "revertible": False}, latest_of_task=True, active=False)["can_revert"]
+    running = manager.summary({**base, "state": "running"}, latest_of_task=True, active=True)
+    assert running["can_stop"] and not running["can_reply"] and not running["can_revert"]
+    assert not manager.summary({**base, "state": "needs_input", "changes": {}}, latest_of_task=True,
+                               active=False)["can_revert"]
+    assert manager.summary({**base, "state": "needs_input"}, latest_of_task=True, active=False)["can_reply"]
+    assert manager.summary({**base, "state": "preparing"}, latest_of_task=True, active=False)["can_reply"] is False
+    assert manager.summary({}, latest_of_task=True, active=False)["can_stop"] is False
+
+
+def test_agent_error_table():
+    for code in ("mcp_missing", "runner_missing", "task_missing", "not_agent_task", "task_done", "busy", "read_only",
+                 "run_missing", "run_active", "not_latest", "no_session", "reverted", "later_run", "not_finished",
+                 "invalid", "start_failed"):
+        err = manager.AgentError(code)
+        assert err.code == code and err.message and err.message_zh and err.status in (400, 403, 404, 409, 500)
+        assert "→" not in err.message_zh and "->" not in err.message
+    assert manager.AgentError("busy").status == 409 and manager.AgentError("task_missing").status == 404
+    assert manager.AgentError("invalid", "custom").message == "custom"
+
+
+def test_a_reused_pid_is_not_mistaken_for_the_noted_process():
+    table = {10: (1, "S", "Wed Oct 21 10:00:00 2026"), 11: (1, "Z", "Wed Oct 21 10:00:00 2026")}
+    assert manager._same_alive(table, 10, "Wed Oct 21 10:00:00 2026")
+    assert not manager._same_alive(table, 10, "Wed Oct 21 10:00:05 2026")  # same pid, started later: another process
+    assert not manager._same_alive(table, 11, "Wed Oct 21 10:00:00 2026")  # a zombie is not alive
+    assert not manager._same_alive(table, 12, "x")
+
+
+def test_kill_tree_on_a_gone_process_is_harmless():
+    assert manager.kill_tree(dead_pid(), grace=0.1) == []
+
+
+def test_ps_table_and_descendants():
+    table = manager._ps_table()
+    assert os.getpid() in table
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        time.sleep(0.2)
+        assert child.pid in manager._descendants(manager._ps_table(), os.getpid())
+    finally:
+        child.kill()
+        child.wait()
