@@ -239,6 +239,41 @@ The stdio server provides `researchos_trace`, `researchos_find`,
 `researchos_status`, and `researchos_confirm_edge`. The app and core CLI
 commands work without this extra.
 
+## Optional: AI agents
+
+Running an AI agent from a task needs the same MCP extra. Install it with
+`uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os`
+or `python -m pip install -e ".[mcp]"`. The app starts and stops agents;
+there is no CLI command to run one. Setup and use are described in
+[Using project home](project-workspace.md#let-an-ai-agent-carry-out-a-task).
+
+```bash
+researchos mcp --agent-run <run> --path /path/to/project
+```
+
+The app starts this form of `mcp` for an agent run, as a child of Claude
+Code or OpenCode; you do not run it by hand. It requires the environment
+variable `RESEARCHOS_AGENT_RUN` to be set to the same run id, and
+refuses to start without it. Its tools are different from the plain server's:
+
+| Tool | Purpose |
+| --- | --- |
+| `researchos_complete_task` | Write the result record, mark the task done and link the record to it. |
+| `researchos_ask` | Record a question for the person. The agent stops and the task shows Waiting for your answer. |
+| `researchos_save_note` | Save a new note. |
+| `researchos_find`, `researchos_trace`, `researchos_status` | Read-only, as above. |
+
+`researchos_confirm_edge` is not offered to an agent: confirming a link is
+a human judgment. Writes made through these tools are attributed to the
+agent and the person who started the run.
+
+Inside an agent run (`RESEARCHOS_AGENT_RUN` set in the environment), every
+other `researchos` or `rce` command refuses with an error and does nothing,
+and so does any write to a project's records made through Research OS
+code. An agent therefore cannot approve a proposal, publish or confirm a
+link with the CLI. This is one of several checks; it is a barrier, not a
+sandbox.
+
 ## Projects and stored records
 
 | Command | Purpose |

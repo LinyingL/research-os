@@ -61,6 +61,7 @@ from sqlite3 import Connection
 from typing import IO, Any, Iterable
 
 from researchos import db, dta, paths, settings
+from researchos.agents import labels as agent_labels
 from researchos.records import notes as notes_mod
 from researchos.records.identity import IdentityState, read_identity
 
@@ -75,7 +76,7 @@ DIFF_CHAR_LIMIT = 200_000
 CSV_ROW_LIMIT = 20_000_000
 XLSX_HEAD_BYTES = 64 * 1024
 GIT_TIMEOUT_S = 60
-SOURCES = ("scan", "approval", "publish", "git")
+SOURCES = ("scan", "approval", "publish", "git", "agent")
 LOCAL_LABEL = "本机"
 WORKTREE = "worktree"
 
@@ -490,7 +491,9 @@ def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who
     `approved_by`; it is recorded even when the content is unchanged, so
     the approval itself is part of the file's history. A version 同步
     installed (`source = "publish"`) carries the PI as `who` and the
-    snapshot it came from (12.13), and is recorded the same way."""
+    snapshot it came from (12.13), and is recorded the same way; so is a
+    version an AI agent's run made (`source = "agent"`, `who =
+    agent:<runner>:<model>#<person>`, `note` the run id, 17.5)."""
     full = root / rel
     try:
         st = full.lstat()
@@ -911,11 +914,24 @@ def unknown_who_label(root: Path, lang: str = "zh") -> str:
     return local_label(lang) if member_copy else first_researcher_label(lang)
 
 
+def _agent_who_label(agent: agent_labels.Agent, person: str | None, team: Any, lang: str) -> str:
+    """The agent's label, with the person who assigned the run (17.5)."""
+    if not person:
+        return agent.label
+    from researchos import people  # noqa: PLC0415
+
+    name = people.attribution({"by": person}, team, lang)["label"]
+    return settings.say("{label}（{name} 指派）", "{label} (assigned by {name})", lang, label=agent.label, name=name)
+
+
 def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") -> list[dict[str, Any]]:
     """Every version's `who_label` and `approved_by_label` as the rest of
     the page says people (8.8, one term per concept): the member's name
     from the team file, not their id; a version without `who` as
-    `unknown_who_label`, in `lang` (13.7: people words on every page)."""
+    `unknown_who_label`, in `lang` (13.7: people words on every page). A
+    version an AI agent made (17.5: `who` is `agent:<runner>:<model>#<person>`)
+    reads 「Claude Code · sonnet（张三 指派）」 / "Claude Code · sonnet
+    (assigned by Zhang San)"; without a person, just the agent."""
     from researchos import people  # noqa: PLC0415
 
     team = people.read_team(root)
@@ -923,7 +939,10 @@ def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") ->
     unknown = None
     for v in versions:
         who, name = v.get("who"), v.get("who_name")
-        if name:
+        agent = agent_labels.parse_who(who)
+        if agent is not None:
+            v["who_label"] = _agent_who_label(agent[0], agent[1], team, lang)
+        elif name:
             v["who_label"] = name
         elif isinstance(who, str) and who and "@" in who:
             v["who_label"] = people.attribution({"by": who}, team, lang)["label"]

@@ -56,6 +56,7 @@ init`, carries them without ever having had an id, and treating them as
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import enum
 import json
 import logging
@@ -150,6 +151,43 @@ class ProjectMovedError(WriteRefused):
     longer its id's home. 「项目已移动或已在别处认领，请重新打开」."""
 
     state = "project_moved"
+
+
+# The environment variable that marks every process an AI agent's run starts
+# (DESIGN.md 17.5, "Research OS refuses itself"). Set, every write under the
+# project lock refuses unless the run's own tools opened it
+# (`agent_writes_allowed`).
+AGENT_RUN_ENV = "RESEARCHOS_AGENT_RUN"
+
+_agent_writes: contextvars.ContextVar[bool] = contextvars.ContextVar("researchos_agent_writes", default=False)
+
+
+class AgentRunRefused(WriteRefused):
+    """A write under the project lock (a person's record, a publication,
+    an index write) was reached from inside an AI agent's run (the
+    environment carries `RESEARCHOS_AGENT_RUN`) and not through the run's
+    own tools. A script an agent wrote that imports Research OS to approve
+    a proposal or confirm a link gets this, not an approval (DESIGN.md
+    17.5)."""
+
+    state = "agent_refused"
+
+
+@contextlib.contextmanager
+def agent_writes_allowed() -> Iterator[None]:
+    """Open human write paths for the agent tools of one run (DESIGN.md
+    17.4): `researchos_complete_task`, `researchos_save_note`. Scoped to the
+    current context (thread or task), so nothing else the agent's process
+    does is opened by it."""
+    token = _agent_writes.set(True)
+    try:
+        yield
+    finally:
+        _agent_writes.reset(token)
+
+
+def _in_agent_run() -> bool:
+    return bool(os.environ.get(AGENT_RUN_ENV))
 
 
 class NeedsMigrationError(WriteRefused):
@@ -630,6 +668,16 @@ def write_guard(
     it is read from the folder now (for writers called outside a serving
     engine, which re-check only that the folder is its id's home). An
     identity file that cannot be read refuses the write."""
+    if _in_agent_run() and not _agent_writes.get():
+        # 17.5: every write under the project lock -- a person's record, a
+        # publication (which takes the guard without `human`), an index
+        # rebuild -- is refused inside an agent's run unless the run's own
+        # tools opened it; before the lock, so a refused agent cannot even
+        # hold it.
+        raise AgentRunRefused(
+            "Research OS's own writes are not available from inside an AI agent's run "
+            f"({AGENT_RUN_ENV} is set) -- nothing written"
+        )
     root = Path(project_root)
     if expected_id is READ_NOW:
         got = read_identity(root) if root.is_dir() else None

@@ -3986,8 +3986,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+AGENT_RUN_REFUSAL = (
+    "Error: Research OS commands are not available inside an AI agent run "
+    f"({records_situation.AGENT_RUN_ENV} is set); nothing was done."
+)
+
+
+def _agent_run_allows(argv: list[str]) -> bool:
+    """Inside an AI agent's run (DESIGN.md 17.5) only the run's own tools may
+    start Research OS: `mcp --agent-run <id>` (which then checks the id
+    against the environment itself). Every other command, `--help`
+    included, is refused."""
+    return bool(argv) and argv[0] == "mcp" and any(a == "--agent-run" or a.startswith("--agent-run=") for a in argv[1:])
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    # DESIGN.md 17.5: a process an agent run started carries RESEARCHOS_AGENT_RUN
+    # and may not use the command -- before anything else, because the
+    # home rename below can write.
+    if os.environ.get(records_situation.AGENT_RUN_ENV) and not _agent_run_allows(argv):
+        print(AGENT_RUN_REFUSAL, file=sys.stderr)
+        return 1
     # DESIGN.md 12.8: the machine's `~/.researchos` becomes `~/.researchos` on the
     # first touch by any command, before anything reads or writes the home
     # (a project's `.researchos/` follows in the identity check, `researchos.project`).

@@ -15,6 +15,45 @@
 - Avoid opening unrelated protected and cloud folders while adding a project.
 - Shorten interface copy and distinguish saving, proposing, approval and publication.
   Correct file-name matching, research-assessment labels and backup timing in previews.
+- Let an AI agent carry out a task. A task's owner can now be Claude Code or a
+  model reached through OpenCode, both installed on your Mac. Add the agent
+  under AI agent in the task area, assign a task and click Run. The agent
+  works directly in the project folder: it can write code, run Python, R or
+  Stata, install packages, download data, write notes, and finish with a result
+  record that marks the task done. The app shows its progress in a run log.
+- Keep human judgments with people. An agent never decides an attempt's verdict
+  or result, confirms a link, touches `.researchos/`, proposes, approves,
+  publishes or syncs, changes git's state, edits `research/tasks.json` except
+  through its own tools, or changes a data file that existed before the run
+  (new data goes to new files). Research OS enforces this and does not rely on
+  the model: Claude Code's calls are checked before each step by a check that
+  refuses whenever it cannot decide, and every run is compared with the folder
+  as it was before. A change that gets past it is shown first in the run as an
+  out-of-bounds change.
+- Answer, send back or undo. An agent that asks a question stops and shows
+  Waiting for your answer; Answer resumes the same conversation. Send back
+  reopens a finished task with your instructions. Undo this run moves the files
+  the run created aside, restores the ones it changed from copies taken before
+  it started (files up to 16 MB, for the newest 20 runs), and leaves anything
+  you changed afterwards as it is; a run that could not be fully undone reads
+  Partly undone.
+- Attribute the agent's work. Its files appear in the change history as made
+  by an agent, with the agent and the person who started the run named, and the
+  result record opens with a line saying which agent wrote it and for whom. In
+  a team the agent works in the working copy of the person who ran it; nothing
+  is proposed automatically.
+- Running an agent needs the optional MCP extra. Install it with
+  `uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os`
+  or `python -m pip install -e ".[mcp]"`. Without it the app works as before and
+  says what to install when you click Run.
+- The guard is a barrier, not a sandbox: it reads the agent's commands as text
+  and compares the folder after the run, and an agent set on getting around it
+  with shell commands could. Claude Code sends what it reads to Anthropic;
+  OpenCode sends it to the model provider you configured, which may be a local
+  server. OpenCode has no check at each step, only the check after the run.
+- `research/tasks.json` may now carry a `report` field on a task, which
+  Research OS 0.2.0 refuses to read. Update every team member's Research OS
+  before assigning tasks to agents.
 
 
 ## 0.2.0 — 2026-10-20

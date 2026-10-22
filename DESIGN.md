@@ -37,6 +37,10 @@ protecting the one place a decision is actually recorded, not a blanket
 the one documented exception, and section 4 explains why it is not really
 an exception at all.)
 
+*Section 17 (2026-10-21) lets an AI agent a person assigns do work —
+files, code, runs — with attribution and undo instead of approval;
+judgments stay human.*
+
 **Simplest thing that works.** Prefer an existing library over new code,
 deterministic code over a model, a smaller model over a larger one, a single
 file over a service. Abstract on the third repetition, not the first.
@@ -3832,3 +3836,355 @@ docstring). Both POSTs are origin-checked like every POST; the setting
 answers with no project served (it is this Mac's, as the language switch
 is); the draft is refused for a blocked project or with none, and writes
 nothing.
+
+## Section 17 — AI agents carry out tasks (task V13)
+
+The researcher, 2026-10-21: a task's owner may be an AI agent installed on
+this Mac — a Claude Code model, or a model reached through OpenCode — and the
+agent **does the task**, not a draft of it: it reads the project, writes
+code, runs Python, R or Stata, installs packages, downloads data, writes
+notes and a result, and marks the task done. Decided the same day:
+
+- The agent is an errand-runner acting on a person's instruction. It
+  never makes a judgment that Section 0 reserves for people, and in a team
+  it never proposes on anyone's behalf (17.7).
+- What an agent may never do is a short list enforced by Research OS, not
+  asked of the model (17.5). The verdict of an attempt is on it.
+- Programs, package installs and network access are allowed.
+- Local models are reached through OpenCode; Research OS runs no agent loop
+  of its own.
+
+### 17.0 What this amends
+
+- **Section 0, "Humans own judgment"**, stands for judgments: confirming or
+  rejecting a machine link, an attempt's verdict, approving or returning a
+  proposal, publishing. What changes is *work*. Files, code, runs, notes and
+  results may now be produced by an agent a person assigned, without
+  approval beforehand; the safeguard moves from approval before to
+  **attribution and undo after**: every change an agent makes is recorded
+  as its own, with the person who started it, and a run can be undone
+  (17.6).
+- **8.0, "Research OS observes a pipeline; it does not run one"**, and 9.11's
+  "Research OS does not run scripts": Research OS itself still runs
+  nothing. It starts an agent the person chose, in the project folder, and
+  the agent may run scripts. What the agent ran is in its run log (17.4);
+  it is not yet a basis for provenance (9.11's "second kind of basis"
+  remains future work).
+- **16.1, "A draft is not a record"**, is about the attempt form's model
+  draft and stays. An agent's output is a record: it is written to the
+  project, attributed, and kept in the change history.
+
+### 17.1 Agents
+
+- **Two runners**, each an external command-line program Research OS finds
+  but never installs: `claude-code` (Claude Code, `claude`) and `opencode`
+  (OpenCode, `opencode`). An **agent** is a runner plus a model:
+  `claude-code` with `sonnet`, `opus`, `haiku` or a full model name;
+  `opencode` with `provider/model` as `opencode models` lists it (an LM
+  Studio or Ollama model configured in OpenCode is how a local model is
+  used).
+- **This Mac's list** is `settings.json` `agents`: `[{runner, model}]`, at
+  most 20, written only when the person adds or removes one. A model name is
+  1–120 characters of letters, digits and `. _ : / @ [ ] + -`, starting with
+  a letter or digit (never `-`: it is passed as a command-line value).
+  `agent_commands` maps a runner to an absolute path when the person sets
+  one; otherwise the program is looked up on `PATH` widened with
+  `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
+  `~/.claude/local`, `~/.opencode/bin`, `~/.bun/bin` and `~/.npm-global/bin`
+  — an app opened from the Finder has none of the shell's `PATH`. Found
+  means an executable file that answers `--version` within 10 seconds; the
+  version is shown.
+- **The tools need the MCP extra.** An agent reports through Research OS's
+  own MCP tools (17.4), so running one needs the optional `mcp` package in
+  the engine's Python; without it the settings and every 运行 say so and
+  name the install command. Nothing else in the app changes.
+- **Where the project's content goes.** Claude Code sends what it reads to
+  Anthropic; OpenCode sends it to the model provider configured in
+  OpenCode, which may be a local server. The settings and the first 运行 of
+  each agent on a page say this in words before anything is sent.
+
+### 17.2 Tasks
+
+- `owner` may be an agent: `agent:<runner>:<model>`, e.g.
+  `agent:claude-code:sonnet`. A value starting `agent:` that does not name a
+  runner and a valid model is refused. The file says *which* agent, never a
+  path or an address: `research/tasks.json` travels to the team, the
+  program lives on one Mac.
+- A task gains an optional `report`: the path of the result record the
+  agent wrote (`research/results/<32 hex>.md`). It is written only when
+  set; a task without one is unchanged on disk.
+- The owner field offers the people of the project (me, and the team's
+  members in a team) and this Mac's agents, shown as 「Claude Code ·
+  sonnet」 / 「OpenCode · lmstudio/qwen3-coder」, plus a name typed by hand.
+- Whoever may save tasks may run an agent task (single, PI, or a member in
+  their own working copy). Another Mac sees the owner, the outcome and the
+  history, not the run log, which stays on the Mac that ran it.
+
+### 17.3 A run
+
+- **One run at a time per project on this Mac.** 运行 starts it; the page
+  returns at once and follows the run.
+- **States**, each a code the page maps to words (13.6): `preparing` (taking
+  the before-picture, 17.5), `running`, `needs_input` (the agent asked a
+  question and stopped), `done` (the agent reported the task complete),
+  `ended` (the program finished without a report or a question: the person
+  should look), `failed` (could not start, ended in error, or ran past the
+  time limit), `stopped` (the person stopped it), `interrupted` (the app
+  quit or crashed while it ran). A run that was undone also carries
+  `reverted`.
+- **Answering and sending back.** A run waiting for an answer, or one that
+  finished, can be continued: 回答 (to a question) or 打回 (with what to
+  change) starts a new run that resumes the same agent conversation with
+  the person's words. 打回 on a done task clears its done mark first. Only
+  the latest run of a task can be continued, and not once undone.
+- **Stopping** notes every process the program started (OpenCode starts
+  each shell command in a session of its own, so its process group is not
+  enough), asks the program to end (SIGTERM; Claude Code passes it on, an
+  OpenCode killed this way leaves its commands running), waits 10 seconds,
+  then kills whatever of that tree is still alive. A program that ends on
+  its own may leave processes running (a download started with `nohup`):
+  the tree is sampled while the run goes, and whatever of it outlives the
+  program is ended before the after-run check, which the run log notes.
+  A run has a time limit, `agent_timeout_minutes` in
+  `settings.json` (default 120, 5–1440); Claude Code also takes
+  `agent_max_budget_usd` when the person sets one.
+- **When the app quits** every running agent is stopped (`interrupted`); a
+  SIGTERM to the engine takes the same path (a second SIGTERM during that
+  shutdown is ignored). A run found `running` with no engine behind it is
+  marked `interrupted` the next time runs are listed, and its program, if
+  still alive and still that program, is stopped. "Still that process" is
+  the pid together with its start time, recorded at launch for the engine
+  and the program, so a reused pid is never taken for either.
+
+### 17.4 What the agent is given
+
+- **The working folder** is the project folder.
+- **The instruction** (in the language of the person who pressed 运行): the
+  task and its date; the project's research question and plan
+  (`research/overview.md`, at most 8,000 characters, cut marked); the
+  titles and paths of the notes and result records; the rules of 17.5 in
+  plain words; and how to report. It is shown in the run log as sent.
+- **Research OS's tools**, through `researchos mcp --agent-run <run>`, a mode
+  of the existing MCP server that offers exactly these:
+  - `researchos_complete_task(report, title?)` — writes the result record
+    (a new `research/results/` document, or the one this task's runs
+    already wrote), marks the task done and links it as `report`.
+  - `researchos_ask(question)` — records a question; the agent stops and
+    the task shows 等你回答.
+  - `researchos_save_note(title, content)` — a new note.
+  - `researchos_find`, `researchos_trace`, `researchos_status` — read only.
+  `researchos_confirm_edge` is not offered. The tools write through the
+  same paths as the page (lock, backup, history) and attribute the write
+  to the agent.
+- **Claude Code** runs as `claude -p --output-format stream-json
+  --verbose --model <model> --session-id <new uuid>` (or `--resume <id>`),
+  `--permission-mode dontAsk` with the tools it may use listed in
+  `--allowedTools` (file tools, Bash, web fetch and search, and
+  `mcp__researchos`), the denials of 17.5 in `--disallowedTools`, a
+  `PreToolUse` hook and `--mcp-config … --strict-mcp-config` from files in
+  the run's folder, the rules in `--append-system-prompt`, and the
+  instruction on standard input (a prompt after `--allowedTools` would be
+  taken as a tool name). Inherited Claude Code session variables are
+  removed from its environment so a Claude Code that started Research OS
+  is never joined. The hook is `sh -c '<python> -I -m
+  researchos.agents.hook <run>'` and only its exit 0 allows a call: a
+  project file that shadows a standard module (`random.py`), a missing
+  interpreter, any failure refuses (Claude Code itself lets a call through
+  on any other non-zero exit). `disableAllHooks` is set to false, and
+  before the program starts a canary call the hook must refuse is made: if
+  it is not refused, the run does not start (`guard_failed`). The MCP
+  server runs isolated the same way (`-I`).
+- **OpenCode** runs as `opencode run --format json --model <model> --dir
+  <project>` (`--session <id>` to continue) with its configuration —
+  permissions and the MCP server — in `OPENCODE_CONFIG_CONTENT`, a project's
+  own `opencode.json` switched off (`OPENCODE_DISABLE_PROJECT_CONFIG=1`: it
+  could otherwise allow what Research OS denies), and the rules and the
+  instruction on standard input (a message given as an argument reaches the
+  model re-quoted). Every permission is `allow` or `deny`, never `ask`: an
+  unattended run rejects what would ask and stops. So `doom_loop` is
+  `deny` and reading `.env` files is denied, where OpenCode's defaults
+  would ask.
+- **The run log** is the program's own event stream, kept in the run's
+  folder, read back as steps: what the agent said, each tool it used with
+  its command or file, what was refused, and how it ended (with cost and
+  model when the program reports them).
+
+### 17.5 What an agent may never do, and how that is held
+
+**The list** (binding):
+
+1. Make a human judgment: an attempt's verdict or result in the attempt
+   table, confirming or rejecting a link, a variable definition's
+   confirmation, anything in `.researchos/`.
+2. Act for the team: approve or return a proposal, propose, publish, sync,
+   push to GitHub, change the team.
+3. Change or delete data that existed before the run (`.csv`, `.tsv`,
+   `.xlsx`, `.xls`, `.parquet`, `.feather`, `.rds`, `.rdata`, `.dta`,
+   `.sav`, `.json`, `.h5`, `.pkl`); new data goes to new files.
+4. Change git's state: commit, push, reset, checkout, rebase, merge,
+   stash, clean, tag.
+5. Write `research/tasks.json` except through its tools.
+
+**How it is held**, in layers, none of them the model's good will:
+
+- **Claude Code's hook** (`PreToolUse` on file edits and Bash) asks
+  Research OS before each call and refuses: an edit outside the project
+  folder, inside `.researchos/` or `.git/`, of the attempt table (its path
+  read from `attempts.toml` at the start), of `research/tasks.json`, or of
+  a data file that existed before the run; a command that names the
+  `researchos` or `rce` program, a git command of rule 4 (git's own
+  options in front included), the engine's address or its API on this
+  Mac, or `.researchos`; and a command that would remove, move or
+  overwrite a protected file or a folder holding one -- `rm`, `mv`, `cp`,
+  `rsync`, `ln`, `find -delete`, `git rm`/`git mv`, an archive extracted
+  over it, a `curl -o`/`wget -O` download onto it, a redirect into it,
+  `sed -i`, `truncate`, `tee`, `dd` -- or copy, move, extract or download
+  into a folder that holds a protected file of the same name. Paths are
+  resolved against the command's working folder, `~` and links followed.
+  Reading a protected file stays allowed. A hook that cannot decide
+  refuses. The command check reads text; it is a barrier, not a sandbox.
+- **Permissions**: the git and `researchos` commands are also denied in
+  Claude Code's `--disallowedTools` and OpenCode's `permission.bash`.
+  OpenCode has no per-call hook here: for it the after-run check below is
+  the guard, and its settings and the instruction it is sent say so.
+- **Research OS refuses itself.** The agent's processes carry
+  `RESEARCHOS_AGENT_RUN`. With it set, the `researchos` command refuses
+  everything but its own agent tools, and every write under the project
+  lock (`write_guard`: a person's record, a publication, an index write)
+  refuses unless the agent tools opened it. A
+  script that imports Research OS to approve a proposal gets a refusal, not
+  an approval.
+- **The engine's address is not handed to the agent**, and the hook refuses
+  commands that name it. The local web API's origin check refuses other
+  web pages, not other programs of the same user, so this is stated as a limit: an agent
+  that set out to bypass all of the above with Bash could; the after-run
+  check would show what it touched.
+- **The before-picture and the after-run check.** Before the program
+  starts, Research OS records the files of the project (size, modification
+  time, and a SHA-256 for files up to 64 MB), skipping `.git/`,
+  `.researchos/backups/`, `__pycache__/`, `node_modules/`, `.venv/`,
+  `venv/`, `.ipynb_checkpoints/` and the like and the files the system and
+  editors leave (`.DS_Store`, `~$` lock files, `.Rhistory`), never reading
+  a file that is only in the cloud, and copies every file up to 16 MB
+  (1 GB per run at most) into the run's folder. The picture stops at
+  50,000 files; the run log then says that later files are neither checked
+  nor undoable, and in such a picture a file counts as created only if it
+  was written after the run began. Data files (rule 3) are found by a
+  separate walk that only reads their size and time, is not limited by
+  that number, and goes into every folder but `.git`, `node_modules`,
+  `.venv`, `venv` and `__pycache__`. Git's `HEAD`, branch and a fingerprint
+  of all its references and the stash are noted (so a push, a tag, a branch
+  or a stash shows; the index does not). After the run the folder is
+  compared: files created, changed and deleted (a touched file with the
+  same content is not changed). A change to a protected file (rules 1, 3,
+  5) or to git's state is an **out-of-bounds change**: the run shows it
+  first, in the warning colour, with 撤回本次运行 beside it. Files the person
+  saved through Research OS while the run went on (until the after-picture
+  is complete) are not counted as the agent's; a protected file the person
+  saved is still out of bounds if it does not end as the person left it.
+- **Attribution.** Every file the run created or changed is recorded in the
+  change history with `source = "agent"`, `who =
+  "agent:<runner>:<model>#<person id>"` (the person who started the run;
+  without `#…` when unknown) and the run id as the note; the history shows
+  「Claude Code · sonnet（张三 指派）」 and 「AI 执行」. A git-tracked file is
+  not recorded: its history is git's, and the run log is where its agent
+  change is named. The result record
+  the agent writes opens with a line saying which agent wrote it, when, and
+  for whom.
+
+### 17.6 Undoing a run
+
+撤回本次运行 puts back what the run changed, as far as the before-picture
+allows, and never over a later change:
+
+- a file the run created is moved into the run's folder (`reverted/`), not
+  deleted -- unless it is a file the run moved or renamed that had no copy
+  (its content is that of a deleted file), which goes back to where it was;
+  folders the moves emptied, that did not exist before, are removed;
+- a file it changed or deleted is restored from the copy taken before;
+- a file that changed again after the run (by the person or a later run),
+  or that had no copy (over 16 MB, or past the 1 GB budget, or only in the
+  cloud) is left as it is and listed with the reason;
+- the task's done mark and `report` are taken back if the run set them
+  (not by restoring `tasks.json`, which the person may have changed since);
+- a run cannot be undone while a later run of the same project that is not
+  undone touched the same files, or while another Research OS on this Mac
+  runs an agent in the project: undo the later one first;
+- files the person saved during the run, and files only in the cloud, are
+  left as they are.
+
+Each restore is a write like any other, backed up and in the history,
+under the person's name. When something was left as it was, the run reads
+部分撤回 and its log lists those files with the reason. The copies of the
+newest 20 runs of a project are kept; the logs of the newest 200; older
+runs can no longer be undone, and runs beyond the 200 are removed.
+
+### 17.7 In a team
+
+- An agent works where the person who started it works: on the PI's Mac in
+  the official version, on a member's Mac in their working copy. What it
+  wrote is that person's local change; nothing is proposed for them, and
+  the person decides what to propose (12.3), as for their own edits.
+- In the history and in the result record the agent is named, with the
+  person; approval later records the approver as for any change.
+
+### 17.8 Endpoints
+
+All `agent_<code>` errors carry `message` in the request's language and
+`detail`. Every POST is origin-checked and carries `project` (as the
+workspace's do); runs are the served project's. Starting, answering and
+undoing refuse a blocked, read-only or unmigrated project up front
+(`agent_read_only`, `agent_needs_migration`) without holding the project
+lock while the program is looked for; the manager takes the lock only for
+its own writes. A `me.toml` that exists but cannot be read refuses
+starting and answering (`agent_person_unreadable`: a run is never nobody's).
+A project without an identity lists no runs. A run that ends while another
+project is served is scanned when that project is opened again.
+
+- `GET /api/agents` — runners found (path, version, or why not), this Mac's
+  agents, whether the MCP extra is installed, suggested Claude Code models.
+  Works with no project.
+- `GET /api/agents/models?runner=opencode` — `opencode models`.
+- `POST /api/settings/agents` — `{agents?, commands?, timeout_minutes?,
+  max_budget_usd?}`; keys not sent are kept.
+- `GET /api/agents/runs` — the project's runs, newest first, and which is
+  active.
+- `GET /api/agents/runs/<id>` — one run with its steps, changes,
+  out-of-bounds changes, question, report, error and the instruction sent.
+- `POST /api/agents/runs` `{project, task}` — start.
+- `POST /api/agents/runs/<id>/reply` `{project, message}` — answer or send
+  back.
+- `POST /api/agents/runs/<id>/stop`, `POST /api/agents/runs/<id>/revert`.
+
+### 17.9 Language
+
+Added to 13.4: AI 执行者 "AI agent"; 运行 (a run, and the button) "Run";
+运行记录 "Run log"; 等你回答 "Waiting for your answer"; 回答 "Answer";
+打回 "Send back"; 撤回本次运行 "Undo this run"; 越界改动 "Out-of-bounds
+change"; AI 执行 (history source) "By an agent". States: 准备中
+"Preparing", 运行中 "Running", 已完成 "Done", 未报告 "Ended without a
+report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分撤回 "Partly undone", 已撤回本次运行
+"Undone" (not 已撤回, which is a withdrawn proposal's word).
+
+### 17.10 Acceptance
+
+1. A task assigned to 「Claude Code · sonnet」 runs from the task row; the
+   agent writes a script, runs it, writes a result record through
+   `researchos_complete_task`; the task shows done with 打开结果, and the
+   new files show 「Claude Code · sonnet」 in their history.
+2. The agent's attempt to edit an existing `.csv`, `.researchos/team.toml`
+   or the attempt table, to `git push`, or to run `researchos`, is refused
+   and appears in the run log as refused.
+3. A protected file changed behind the hook's back (a script overwriting a
+   data file) appears as an out-of-bounds change; 撤回本次运行 restores it.
+4. 撤回本次运行 moves the run's new files away, restores changed ones,
+   clears the task's done mark, and leaves a file the person changed after
+   the run as it is, saying so.
+5. A question from the agent shows 等你回答; 回答 resumes the same
+   conversation; 打回 on a done task reopens it and resumes.
+6. 停止 ends the run and every process it started; quitting the app does
+   the same; a run left `running` by a crash reads `interrupted`.
+7. In a member's working copy, the agent's changes are local changes and no
+   proposal is made.
+8. With `RESEARCHOS_AGENT_RUN` set, `researchos` commands and every write
+   under the project lock refuse.

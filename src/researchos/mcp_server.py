@@ -19,22 +19,41 @@ and like the canvas it refuses a hand-drawn link. Its description tells
 the calling assistant to invoke it only on an explicit human ask. A link
 whose judgment is under review or in conflict is marked in every tool's
 output (9.6 "Where it shows").
+
+**Agent mode** (DESIGN.md 17.4, `researchos mcp --agent-run <run id>`): the
+same server, started by an AI agent's program for one run, offers exactly
+the agent's tools and not `researchos_confirm_edge` -- a judgment is never
+the agent's. `researchos_complete_task`, `researchos_ask` and
+`researchos_save_note` are the only writes an agent run may make through
+Research OS: the process carries `RESEARCHOS_AGENT_RUN`, so every write
+under the project lock refuses (`records.situation.write_guard`) unless a
+tool below opened it with `agent_writes_allowed()`. They write through the
+page's own paths (`workspace.save_document` / `save_tasks`: lock, backup,
+history) as the agent's, and tell the engine what they did in the run's
+`signals.jsonl`, which is how it later tells the agent's `research/tasks.json`
+from a tampered one. The tools never raise for an expected refusal: the
+answer says "Not written: <why>" and the model reads it.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from researchos import db, names, paths, query, rename
+from researchos import db, names, paths, query, rename, workspace
 from researchos import project as project_identity
+from researchos.agents import labels as agent_labels
+from researchos.agents import runs as agent_runs
 from researchos.records import judgements
 from researchos.records import lock as records_lock
 from researchos.records import situation as records_situation
@@ -67,11 +86,28 @@ def _require_db(project_root: Path) -> Path:
     return path
 
 
+class NoIndexError(McpServerError):
+    """Agent mode only: the project has no graph yet (the read-only tools
+    answer `NO_INDEX`; the agent's run does not need one)."""
+
+
+NO_INDEX = "No index for this project yet."
+
+
 @contextmanager
-def _connect(project_root: Path):
-    """Short-lived per-call connection shared by all four tools below --
-    nothing is held open across calls."""
-    conn = db.connect(_require_db(project_root))
+def _connect(project_root: Path, *, agent: bool = False):
+    """Short-lived per-call connection shared by the read tools below --
+    nothing is held open across calls. In agent mode the graph is only
+    looked for where it would be (`paths.graph_db_path`): the one-time legacy
+    migration `_require_db` may start is a write, and an agent run makes
+    none through here."""
+    if agent:
+        path = paths.graph_db_path(project_root)
+        if not path.exists():
+            raise NoIndexError(NO_INDEX)
+    else:
+        path = _require_db(project_root)
+    conn = db.connect(path)
     try:
         yield conn
     finally:
@@ -206,7 +242,322 @@ def confirm_edge(
     )
 
 
+# -- agent mode: the tools of one AI agent run (DESIGN.md 17.4) -------------------
+
+
+NOT_WRITTEN = "Not written: "
+ASK_LIMIT = 4000
+TITLE_LIMIT = 200
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+class _Refused(Exception):
+    """An expected refusal of an agent tool: its text is the tool's answer."""
+
+
+def _one_line(text: object, limit: int | None = None) -> str:
+    """`text` as one line (any run of whitespace, NUL included, becomes a space)."""
+    line = re.sub(r"[\s\0]+", " ", text if isinstance(text, str) else "").strip()
+    return line[:limit].rstrip() if limit is not None else line
+
+
+def _agent_run(project_id: str, run_id: str) -> tuple[dict[str, Any], agent_labels.Agent]:
+    """The run the tools belong to, and its agent. Only a run that is still
+    going may write: after it was stopped, timed out or finished, a program
+    it left behind cannot mark the task done or add notes. `_Refused` otherwise."""
+    try:
+        run = agent_runs.load_run(project_id, run_id)
+    except ValueError as exc:
+        raise _Refused(f"{exc}") from exc
+    if run is None:
+        raise _Refused("this run is not known to Research OS")
+    if run.get("state") not in agent_runs.ACTIVE_STATES:
+        raise _Refused(f"this run is no longer going (it is {run.get('state')})")
+    try:
+        agent = agent_labels.parse_owner(run.get("owner"))
+    except ValueError as exc:
+        raise _Refused(str(exc)) from exc
+    if agent is None:
+        raise _Refused("this run has no agent")
+    return run, agent
+
+
+def _author(run: dict[str, Any], agent: agent_labels.Agent) -> dict[str, Any]:
+    """The change history's attribution of what this run's tools write (17.5)."""
+    by = run.get("by")
+    return {"source": "agent", "who": agent_labels.who_value(agent, by if isinstance(by, str) and by else None),
+            "note": run["id"]}
+
+
+def _answering(work) -> str:
+    """Run `work()` (returns the tool's answer) turning every expected
+    refusal into the answer `Not written: <why>`; nothing raises."""
+    try:
+        return work()
+    except _Refused as exc:
+        return f"{NOT_WRITTEN}{exc}"
+    except workspace.WorkspaceError as exc:
+        if exc.code == "too_large":
+            return f"{NOT_WRITTEN}the text is larger than {workspace.TEXT_LIMIT // 1024} KB; shorten it and call the tool again."
+        if exc.code == "conflict":
+            return f"{NOT_WRITTEN}{exc}. Call the tool again."
+        return f"{NOT_WRITTEN}{exc}"
+    except records_situation.WriteRefused as exc:
+        return f"{NOT_WRITTEN}{exc}"
+    except records_lock.ProjectLockError as exc:
+        return f"{NOT_WRITTEN}could not take the project lock ({exc})"
+    except OSError as exc:  # an unwritable run folder or project folder
+        return f"{NOT_WRITTEN}{exc}"
+
+
+def _stamp(lang: str) -> str:
+    now = datetime.now().astimezone()
+    if lang == "en":
+        return f"{now.day} {_MONTHS[now.month - 1]} {now.year} {now:%H:%M}"
+    return f"{now:%Y-%m-%d %H:%M}"
+
+
+def _attribution_line(run: dict[str, Any], agent: agent_labels.Agent) -> str:
+    """The first line under the result's heading: which agent wrote it,
+    when, for whom (17.5 "Attribution")."""
+    by_name = _one_line(run.get("by_name"), 100)
+    if run.get("lang") == "en":
+        parts = [f"Done by {agent.label}", _stamp("en")] + ([f"assigned by {by_name}"] if by_name else [])
+        parts.append(f"run {run['id']}")
+    else:
+        parts = [f"由 {agent.label} 完成", _stamp("zh")] + ([f"{by_name} 指派"] if by_name else [])
+        parts.append(f"运行 {run['id']}")
+    return "> " + " · ".join(parts)
+
+
+#: A heading made from the task's own words is cut here, at a word boundary where there is one.
+DEFAULT_TITLE_LIMIT = 80
+
+
+def _result_title(title: str | None, task_text: str) -> str:
+    """The result record's heading: the agent's title, else the task's
+    first line cut to `DEFAULT_TITLE_LIMIT` characters (a task can be a
+    paragraph; a heading is a few words)."""
+    given = re.sub(r"^#+\s*", "", _one_line(title, TITLE_LIMIT))
+    if given:
+        return given
+    first = re.sub(r"^#+\s*", "", _one_line(next((line for line in task_text.splitlines() if line.strip()), "")))
+    if len(first) > DEFAULT_TITLE_LIMIT:
+        cut = first[:DEFAULT_TITLE_LIMIT]
+        space = cut.rfind(" ")
+        first = (cut[:space] if space > DEFAULT_TITLE_LIMIT // 2 else cut).rstrip(" ,;:，；：") + "…"
+    return first or "Task result"
+
+
+def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None) -> str:
+    if not isinstance(report, str) or not report.strip():
+        raise _Refused("the report is empty; write what was done, the commands run, the files produced and the "
+                       "key numbers exactly as the runs gave them, then call the tool again")
+    report = report.strip()
+    if len(report.encode("utf-8", "replace")) > workspace.TEXT_LIMIT - 4096:
+        raise _Refused(f"the report is larger than {workspace.TEXT_LIMIT // 1024} KB; shorten it and call the tool again")
+    run, agent = _agent_run(project_id, run_id)
+    author = _author(run, agent)
+    with records_situation.agent_writes_allowed(), records_situation.write_guard(
+        root, project_id, human=True, timeout=10.0,
+    ):
+        tasks, _revision = workspace.read_tasks(root)
+        task = next((t for t in tasks if t["id"] == run.get("task_id")), None)
+        if task is None:
+            raise _Refused(f"task {run.get('task_id')!r} no longer exists in research/tasks.json, so there is "
+                           "nothing to complete; tell the person in your final message")
+        heading = _result_title(title, task["text"])
+        # The record's one top heading is ours: a report that opens with its own
+        # `# ...` keeps it one level down, so the document has a single title.
+        body_text = re.sub(r"\A#(?=[ \t])", "##", report)
+        content = f"# {heading}\n\n{_attribution_line(run, agent)}\n\n{body_text}\n"
+        body: dict[str, Any] = {"content": content}
+        existing = task.get("report")
+        if existing:  # a run of this task wrote it before (a task sent back): the same record, rewritten
+            try:
+                body.update(path=existing, revision=workspace.document(root, existing)["revision"])
+            except workspace.WorkspaceError as exc:
+                if exc.code != "not_found":
+                    raise
+                existing = None
+        if not existing:
+            body.update(kind="result", revision=None)
+        saved = workspace.save_document(root, body, author=author)
+        path = saved["path"]
+        notes = [saved["history_error"]] if saved.get("history_error") else []
+        saved_tasks = None
+        for attempt in (1, 2):  # a second go only when the file moved under an external editor
+            tasks, revision = workspace.read_tasks(root)
+            if not any(t["id"] == run["task_id"] for t in tasks):
+                raise _Refused(f"the result record {path} was saved, but task {run['task_id']!r} is gone from "
+                               "research/tasks.json, so it was not marked done")
+            marked = [{**t, "done": True, "report": path} if t["id"] == run["task_id"] else t for t in tasks]
+            try:
+                saved_tasks = workspace.save_tasks(root, {"tasks": marked, "revision": revision}, author=author)
+                break
+            except workspace.WorkspaceError as exc:
+                if exc.code != "conflict" or attempt == 2:
+                    raise _Refused(f"the result record {path} was saved, but the task could not be marked done "
+                                   f"({exc}); call the tool again") from exc
+        if saved_tasks is None:  # not reachable: the loop either breaks or raises
+            raise _Refused(f"the result record {path} was saved, but the task could not be marked done")
+        if saved_tasks.get("history_error"):
+            notes.append(saved_tasks["history_error"])
+        agent_runs.append_signal(
+            project_id, run_id, "complete", path=path, tasks_sha=saved_tasks["tasks_revision"],
+            paths=[path, workspace.TASKS_PATH],
+        )
+    tail = " (The change history could not be updated; the person is told.)" if notes else ""
+    return (f"Saved the result record {path} and marked the task done. "
+            f"Your work on this task is finished; stop now.{tail}")
+
+
+def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: str, title: str | None = None) -> str:
+    """`researchos_complete_task`: write the task's result record (a new
+    `research/results/` document, or the one an earlier run of this task
+    wrote), mark the task done and link the record as its `report`, as the
+    agent (DESIGN.md 17.4). Returns the answer text; an expected refusal
+    (empty report, over 200 KB, task gone, project locked or read-only, a run
+    that is over) is `Not written: <why>`, with nothing written. The
+    `complete` signal tells the engine which `research/tasks.json` is the
+    tool's."""
+    return _answering(lambda: _complete(Path(root).resolve(), project_id, run_id, report, title))
+
+
+def _ask(project_id: str, run_id: str, question: str) -> str:
+    text = question.strip() if isinstance(question, str) else ""
+    if not text:
+        raise _Refused("the question is empty; ask one clear question")
+    if len(text) > ASK_LIMIT:
+        raise _Refused(f"the question is longer than {ASK_LIMIT} characters; shorten it")
+    _agent_run(project_id, run_id)
+    agent_runs.append_signal(project_id, run_id, "ask", question=text)
+    return ("Your question is recorded and will be shown to the person. Stop working now; their answer will "
+            "continue this conversation.")
+
+
+def agent_ask(project_id: str, run_id: str, question: str) -> str:
+    """`researchos_ask`: record one question for the person (a signal; no
+    project file is written). The engine shows the task as waiting for an
+    answer once the agent's program ends."""
+    return _answering(lambda: _ask(project_id, run_id, question))
+
+
+def _save_note(root: Path, project_id: str, run_id: str, title: str, content: str) -> str:
+    if not isinstance(title, str) or not title.strip():
+        raise _Refused("a note needs a title")
+    if len(title.strip()) > TITLE_LIMIT or any(c in title for c in "\r\n\0"):
+        raise _Refused(f"a note's title is one line of at most {TITLE_LIMIT} characters")
+    if not isinstance(content, str):
+        raise _Refused("a note needs text")
+    if len(content.encode("utf-8", "replace")) > workspace.TEXT_LIMIT - 4096:
+        raise _Refused(f"the note is larger than {workspace.TEXT_LIMIT // 1024} KB; split it")
+    run, agent = _agent_run(project_id, run_id)
+    with records_situation.agent_writes_allowed(), records_situation.write_guard(
+        root, project_id, human=True, timeout=10.0,
+    ):
+        saved = workspace.save_document(
+            root, {"kind": "note", "title": title.strip(), "content": content, "revision": None},
+            author=_author(run, agent),
+        )
+        path = saved["path"]
+        agent_runs.append_signal(project_id, run_id, "note", path=path, paths=[path])
+    return f"Saved the note {path}."
+
+
+def agent_save_note(root: str | Path, project_id: str, run_id: str, title: str, content: str) -> str:
+    """`researchos_save_note`: a new `research/notes/` document, as the agent."""
+    return _answering(lambda: _save_note(Path(root).resolve(), project_id, run_id, title, content))
+
+
+def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -> FastMCP:
+    """The server of one agent run (`researchos mcp --agent-run`): the
+    agent's three tools plus the read-only graph tools, and no
+    `researchos_confirm_edge` (DESIGN.md 17.4). The tools are bound to this
+    run, project and folder; the model cannot name another."""
+    root = Path(project_root).resolve()
+    mcp = FastMCP(names.MCP_SERVER_NAME)
+
+    @mcp.tool()
+    def researchos_complete_task(report: str, title: str | None = None) -> str:
+        """Call this ONCE, when the task you were given is finished. `report`
+        is the result record, in Markdown: what you did, the commands you
+        ran, the files you produced (paths), and the key numbers exactly as
+        your actual runs gave them -- never invented or rounded from memory.
+        `title` is a short heading naming the result, a few words (default:
+        the start of the task). This saves
+        the report as a result record in the project, marks the task done
+        and links the record to it. After it answers, stop: do nothing
+        more. If you cannot finish or a decision belongs to the person, call
+        researchos_ask instead."""
+        return agent_complete_task(root, project_id, run_id, report, title)
+
+    @mcp.tool()
+    def researchos_ask(question: str) -> str:
+        """Call this when you are blocked or a decision belongs to the person
+        (which of two data sources, a judgment about a result, a missing
+        file or credential). `question` is one clear question with what you
+        already tried and the options you see. After it answers, STOP
+        working: the person's answer will continue this conversation. Do
+        not call it for what you can find out yourself."""
+        return agent_ask(project_id, run_id, question)
+
+    @mcp.tool()
+    def researchos_save_note(title: str, content: str) -> str:
+        """Save a note in the project's notes (Markdown): something worth
+        keeping that is not the task's final report (a finding along the
+        way, a data caveat, how a dataset was obtained). `title` is one
+        line. Does not finish the task; researchos_complete_task does."""
+        return agent_save_note(root, project_id, run_id, title, content)
+
+    _register_graph_tools(mcp, root, agent=True)
+    return mcp
+
+
 # -- FastMCP server assembly --------------------------------------------------
+
+
+def _register_graph_tools(mcp: FastMCP, root: Path, *, agent: bool = False) -> None:
+    """The three read-only tools, identical in both modes. In agent mode a
+    project without a graph answers `NO_INDEX` instead of failing."""
+
+    def answer(work) -> str:
+        try:
+            with _connect(root, agent=agent) as conn:
+                return work(conn)
+        except NoIndexError:
+            return NO_INDEX
+
+    @mcp.tool()
+    def researchos_trace(node_id: str) -> str:
+        """Return the full provenance/evidence chain for a node (e.g. a
+        figure, claim, or experiment id): how it traces back to the
+        commit(s)/experiment(s) that produced it, and forward to the paper
+        section(s)/reference(s) that cite or rely on it. Each hop lists its
+        edge type, extractor, confidence, status, and evidence. Ends with a
+        structured JSON block. States explicitly when the node is unknown or
+        has no edges -- never invents a chain."""
+        def work(conn: Connection) -> str:
+            result = trace_result(conn, node_id)
+            return format_trace_text(node_id, result) + "\n\nJSON:\n" + json.dumps(result, sort_keys=True)
+        return answer(work)
+
+    @mcp.tool()
+    def researchos_find(text: str, node_type: str | None = None) -> str:
+        """Search graph nodes by case-insensitive substring match against id
+        or title. Use this BEFORE researchos_trace whenever the user gives a vague
+        description instead of an exact node id (e.g. "Figure 4",
+        "result.png") -- researchos_find locates the candidate id(s), then
+        researchos_trace explains their provenance. Optional node_type filters to
+        one of: project/experiment/commit/figure/section/claim/reference/
+        contributor. States explicitly when nothing matches."""
+        return answer(lambda conn: format_find_text(text, node_type, find_nodes(conn, text, node_type)))
+
+    @mcp.tool()
+    def researchos_status() -> str:
+        """Report whole-graph node and edge counts by type, plus the size of
+        the pending human-confirmation queue."""
+        return answer(lambda conn: format_status_text(status_summary(conn)))
 
 
 def build_server(project_root: str | Path, project_id: str | None = None) -> FastMCP:
@@ -219,40 +570,7 @@ def build_server(project_root: str | Path, project_id: str | None = None) -> Fas
         got = records_situation.read_identity(root)
         project_id = got.identity.id if got.identity is not None else None
     mcp = FastMCP(names.MCP_SERVER_NAME)
-
-    @mcp.tool()
-    def researchos_trace(node_id: str) -> str:
-        """Return the full provenance/evidence chain for a node (e.g. a
-        figure, claim, or experiment id): how it traces back to the
-        commit(s)/experiment(s) that produced it, and forward to the paper
-        section(s)/reference(s) that cite or rely on it. Each hop lists its
-        edge type, extractor, confidence, status, and evidence. Ends with a
-        structured JSON block. States explicitly when the node is unknown or
-        has no edges -- never invents a chain."""
-        with _connect(root) as conn:
-            result = trace_result(conn, node_id)
-        return format_trace_text(node_id, result) + "\n\nJSON:\n" + json.dumps(result, sort_keys=True)
-
-    @mcp.tool()
-    def researchos_find(text: str, node_type: str | None = None) -> str:
-        """Search graph nodes by case-insensitive substring match against id
-        or title. Use this BEFORE researchos_trace whenever the user gives a vague
-        description instead of an exact node id (e.g. "Figure 4",
-        "result.png") -- researchos_find locates the candidate id(s), then
-        researchos_trace explains their provenance. Optional node_type filters to
-        one of: project/experiment/commit/figure/section/claim/reference/
-        contributor. States explicitly when nothing matches."""
-        with _connect(root) as conn:
-            matches = find_nodes(conn, text, node_type)
-        return format_find_text(text, node_type, matches)
-
-    @mcp.tool()
-    def researchos_status() -> str:
-        """Report whole-graph node and edge counts by type, plus the size of
-        the pending human-confirmation queue."""
-        with _connect(root) as conn:
-            summary = status_summary(conn)
-        return format_status_text(summary)
+    _register_graph_tools(mcp, root)
 
     @mcp.tool()
     def researchos_confirm_edge(
@@ -273,6 +591,30 @@ def build_server(project_root: str | Path, project_id: str | None = None) -> Fas
     return mcp
 
 
+def _agent_mode(flag: str | None) -> str | None:
+    """The run id this server serves, or None for the plain four-tool server.
+    `--agent-run` and `RESEARCHOS_AGENT_RUN` must agree (DESIGN.md 17.4/17.5):
+    a process an agent started carries the variable and is only ever the
+    agent's server; the flag without the variable would serve the agent's
+    write tools outside the run's guard. McpServerError otherwise."""
+    env = os.environ.get(records_situation.AGENT_RUN_ENV, "")
+    if flag is None and not env:
+        return None
+    if flag is None:
+        raise McpServerError(
+            f"{records_situation.AGENT_RUN_ENV} is set (inside an AI agent run): the server runs only as "
+            "'researchos mcp --agent-run <run id>'"
+        )
+    if not agent_runs.RUN_ID_RE.match(flag):
+        raise McpServerError(f"--agent-run: not a run id: {flag!r}")
+    if env != flag:
+        raise McpServerError(
+            f"--agent-run {flag} does not match {records_situation.AGENT_RUN_ENV}="
+            f"{env or '(not set)'}; the agent tools are served only to their own run"
+        )
+    return flag
+
+
 def main(argv: list[str] | None = None) -> int:
     # The one path convention of every subcommand (DESIGN.md 9.12): the
     # project as a positional path or as --path.
@@ -283,7 +625,16 @@ def main(argv: list[str] | None = None) -> int:
         "project root of an initialized Research OS project (default: '.'), or give it as --path; the "
         "graph itself lives at ~/.researchos/graphs/<id>/graph.db, see researchos.paths"
     ))
+    parser.add_argument("--agent-run", dest="agent_run", default=None, metavar="RUN_ID", help=(
+        "serve the tools of one AI agent run (DESIGN.md 17.4): complete_task, ask, save_note and the read-only "
+        f"tools; needs {records_situation.AGENT_RUN_ENV} set to the same id. Started by the app, not by hand"
+    ))
     args = parser.parse_args(argv)
+    try:
+        run_id = _agent_mode(args.agent_run)
+    except McpServerError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     try:
         # DESIGN.md 12.8: the home's new name first (the project's follows in
         # the identity check below).
@@ -304,11 +655,27 @@ def main(argv: list[str] | None = None) -> int:
         if not project_root.is_dir():
             raise McpServerError(f"{project_root} is not a directory")
         try:
-            opened = project_identity.open_project(project_root)
-        except (project_identity.ProjectBlocked, project_identity.AnswerRefused) as exc:
+            # Adopting a moved project takes the write guard, which refuses
+            # inside an agent run unless a run's tool opened it: this is
+            # the one write the server itself makes (the person's own check).
+            with records_situation.agent_writes_allowed():
+                opened = project_identity.open_project(project_root)
+        except (project_identity.ProjectBlocked, project_identity.AnswerRefused, records_situation.WriteRefused) as exc:
             raise McpServerError(str(exc)) from exc
-        _require_db(project_root)
-        server = build_server(project_root, opened.project_id)
+        if run_id is None:
+            _require_db(project_root)
+            server = build_server(project_root, opened.project_id)
+        else:
+            # An agent's run needs no graph; it needs its own run.
+            if opened.project_id is None:
+                raise McpServerError(f"{project_root} is not an initialized Research OS project (no identity)")
+            run = agent_runs.load_run(opened.project_id, run_id)
+            if run is None:
+                raise McpServerError(f"run {run_id} does not exist for project {opened.project_id}")
+            recorded = run.get("root")
+            if not isinstance(recorded, str) or Path(recorded).resolve() != project_root:
+                raise McpServerError(f"run {run_id} belongs to another folder ({recorded}), not {project_root}")
+            server = build_agent_server(project_root, opened.project_id, run_id)
     except McpServerError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
