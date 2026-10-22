@@ -85,8 +85,10 @@ In a team, each person works in a local copy:
 
 An unapproved proposal stays separate from the published version. Approval
 covers research attempts, verdicts, variable versions, project files, and
-links between attempts. Notes, judgments on extracted links, and manually
-recorded file relationships sync without individual approval.
+links between attempts. Plans and notes saved as project documents use
+the file review workflow. Comments on files or attempts, judgments on
+extracted links, and manually recorded file relationships sync without
+individual approval.
 
 The PI's computer holds the accepted project, the shared folder carries
 published snapshots and proposals, and members keep their working copies
