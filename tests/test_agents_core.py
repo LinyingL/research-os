@@ -1344,7 +1344,7 @@ def test_reading_tools_refuse_research_os_home(project, home_files, tool, key):
     for target in (home_files / "engine" / "7357.session", home_files / "settings.json", home_files / "engine",
                    home_files, project.root / "link-home" / "engine" / "7357.session",
                    str(home_files).upper() + "/ENGINE/7357.SESSION", "~/.researchos/settings.json", "~/.ssh/id_ed25519",
-                   "~/.ssh", "~/.rce/settings.json"):
+                   "~/.ssh", f"~/{names.LEGACY_HOME_DIRNAME}/settings.json"):
         reason = _refused(project, tool, {key: str(target), "pattern": "*"}, cwd=str(project.root))
         assert reason and reason.endswith("."), (tool, target)
         assert "home" in reason or ".ssh" in reason

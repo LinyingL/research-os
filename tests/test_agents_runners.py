@@ -72,7 +72,7 @@ DIRTY_ENV = {
     "RESEARCHOS_AGENT_RUN": "r-stale",
     "CLAUDE_CODE_USE_BEDROCK": "1",  # provider selection, not session identity: kept
     "RESEARCHOS_HOME": "/real/home",  # where Research OS keeps its files: not the agent's to know (18.1 item 2)
-    "RCE_HOME": "/real/legacy",
+    names.LEGACY_HOME_ENV_VAR: "/real/legacy",
 }
 
 
@@ -86,7 +86,7 @@ def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
         assert gone not in env, gone
     assert env["ANTHROPIC_API_KEY"] == "sk-keep" and env["HTTPS_PROXY"] == "http://proxy:3128"
     assert env["HOME"] == "/home/me" and env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert "RESEARCHOS_HOME" not in env and "RCE_HOME" not in env  # only the MCP server's entry names the home
+    assert "RESEARCHOS_HOME" not in env and names.LEGACY_HOME_ENV_VAR not in env  # only the MCP server's entry names the home
     assert env["RESEARCHOS_AGENT_RUN"] == "r-20261021T101112Z-abc123"  # replaces the inherited one
     assert env["PYTHONUNBUFFERED"] == "1"
     path = env["PATH"].split(os.pathsep)
@@ -124,7 +124,7 @@ def test_child_env_with_the_real_search_path():
 def test_scrub_regex_names():
     scrubbed = ["CLAUDECODE", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
                 "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_USE_CCR_V2_REMOTE", "CLAUDE_SESSION_X", "CCR_A",
-                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "RESEARCHOS_HOME", "RCE_HOME"]
+                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "RESEARCHOS_HOME", names.LEGACY_HOME_ENV_VAR]
     kept = ["CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_BASE_URL", "OPENCODE_DISABLE_AUTOUPDATE", "PATH", "XCLAUDECODE",
             "MY_CCR_X", "OPENCODE_CONFIG_DIR", "RESEARCHOS_AGENT_RUN", "MY_RESEARCHOS_HOME", "RESEARCHOS_HOME_X"]
     assert all(runners.SCRUB_ENV_RE.match(n) for n in scrubbed)
@@ -329,7 +329,7 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
     env = launch.env
     assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert "OPENCODE_CONFIG" not in env and "OPENCODE_PERMISSION" not in env
-    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and "RESEARCHOS_HOME" not in env and "RCE_HOME" not in env
+    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and "RESEARCHOS_HOME" not in env and names.LEGACY_HOME_ENV_VAR not in env
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in env
 
     config = json.loads(env["OPENCODE_CONFIG_CONTENT"])

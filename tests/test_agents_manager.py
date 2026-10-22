@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from researchos import db, history, paths, project, workspace
+from researchos import db, history, names, paths, project, workspace
 from researchos.agents import labels, manager, profiles, snapshot
 from researchos.agents import runs as run_store
 from researchos.records import files as record_files
@@ -2458,7 +2458,7 @@ def test_the_program_is_not_given_the_home_or_credentials_and_the_run_names_what
     monkeypatch.setenv("ANTHROPIC_API_KEY", "kept-for-the-model")
     run = scene.go([init_step(), finish_step()])
     (call,) = scene.calls()
-    assert "RESEARCHOS_HOME" not in call["env"] and "RCE_HOME" not in call["env"]
+    assert "RESEARCHOS_HOME" not in call["env"] and names.LEGACY_HOME_ENV_VAR not in call["env"]
     assert "FOO_TOKEN" not in call["env"] and call["env"]["ANTHROPIC_API_KEY"] == "kept-for-the-model"
     stored = scene.run(run["id"])
     assert "FOO_TOKEN" in stored["env_removed"] and "GITHUB_PAT" in stored["env_removed"]
