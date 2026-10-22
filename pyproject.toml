@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "researchos"
 version = "0.2.0"
-description = "Research OS -- a local record of how a research project came to be: provenance over git/LaTeX/W&B, human judgments, and the files they rest on."
+description = "A workspace for research projects: write plans and notes, organize results, trace data and code, and review changes with your team."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
