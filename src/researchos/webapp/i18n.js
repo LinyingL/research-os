@@ -512,7 +512,7 @@
     "迁移后才能记录判断": "Judgments can be recorded once the old records are migrated",
     "只读打开：不会写入任何东西": "Opened read-only: nothing is written",
     // 18.1: a window opened without the engine's session (app.html's BLOCKING_ERROR_TEXT, routemap.js).
-    "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。": "This window cannot save: open it from the Research OS app.",
+    "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。": "This window cannot save: open it from the Research OS app. If you already did, the app is out of date: run researchos app to rebuild it.",
     // The desk's side panel (14.3): an attempt opened from its card.
     "这里有还没写入的内容，离开它就不保存了。继续吗？": "Something typed here is not written yet and is lost if you leave. Continue?",
     "没能打开这条尝试": "Could not open this attempt",
@@ -922,6 +922,10 @@
     "改动了 git 的钩子（git 会自动运行的程序）": "Changed a git hook (a program git runs by itself)",
     "改动了 git 的配置": "Changed git’s configuration",
     "删除了 Research OS 的备份": "Deleted a Research OS backup",
+    "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）":
+      "Changed Claude Code or OpenCode settings in the project (.claude, .opencode, opencode.json)",
+    "属于 Research OS 的记录文件夹或 git，撤回不会动它": "Belongs to Research OS’s records folder or to git; undo does not touch it",
+    "没有交给它的环境变量（名字像密钥，只列名字）": "Environment variables not given to it (their names look like credentials; names only)",
     "超出了允许的范围": "Went outside what is allowed",
     "运行之后又改动过": "Changed again after the run",
     "没有运行前的副本": "No copy from before the run",

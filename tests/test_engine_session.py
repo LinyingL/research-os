@@ -47,9 +47,12 @@ NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 SECRET = "ab" * 32
-#: 18.1's two sentences, word for word.
-SENTENCE_ZH = "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
-SENTENCE_EN = "This window cannot save: open it from the Research OS app."
+#: 18.1's two sentences, word for word: the sentence of the design, then the one for a window that is the app
+#: already (an app built before the session existed loads the plain address; only `researchos app` makes a new one).
+SENTENCE_ZH = ("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
+               "如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。")
+SENTENCE_EN = ("This window cannot save: open it from the Research OS app. "
+               "If you already did, the app is out of date: run researchos app to rebuild it.")
 
 
 # -- a running engine that asks for its session ------------------------------------------------------------------
@@ -283,6 +286,47 @@ def test_the_secret_is_never_logged_by_the_handler(engine, caplog):
         eng.call("GET", f"/boot?session={SECRET}")
         eng.post("/api/settings/language", {"language": "en"})
     assert SECRET not in caplog.text
+
+
+def test_the_secret_is_not_logged_when_the_window_goes_away_while_boot_answers(engine, caplog, monkeypatch):
+    """`GET /boot?session=...` answered into a connection the other end has dropped: the catch-all of `do_GET` used to
+    log the raw path, the secret with it, into a file any program of the user can read."""
+    eng, _root = engine
+
+    def dropped(self):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(server.RceRequestHandler, "end_headers", dropped)
+    with caplog.at_level("DEBUG"):
+        for target in (f"/boot?session={SECRET}", f"/boot?a=1&b=2&session={SECRET}&c=3"):
+            with pytest.raises(http.client.RemoteDisconnected):  # nothing was sent: that is the case
+                eng.call("GET", target)
+    assert SECRET not in caplog.text
+    assert not [r for r in caplog.records if r.levelname in ("ERROR", "CRITICAL")]  # a window that left is no error
+
+
+def test_the_secret_is_not_logged_when_anything_else_fails_while_handling_a_boot_request(engine, caplog, monkeypatch):
+    eng, _root = engine
+
+    def broken(self, query):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(server.RceRequestHandler, "_boot", broken)
+    with caplog.at_level("DEBUG"):
+        status, _headers, _raw = eng.call("GET", f"/boot?x=1&session={SECRET}&session={SECRET[::-1]}")
+    assert status == 500
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert errors and SECRET not in caplog.text and SECRET[::-1] not in caplog.text
+    assert "/boot?x=1&session=<hidden>&session=<hidden>" in errors[0].getMessage()
+
+
+def test_the_redaction_hides_every_session_value_of_a_boot_target_and_nothing_else():
+    hide = server._without_secret
+    assert hide("GET /boot?session=abc HTTP/1.1") == "GET /boot?session=<hidden> HTTP/1.1"
+    assert hide("/boot?a=1&b=2&session=abc&c=3") == "/boot?a=1&b=2&session=<hidden>&c=3"
+    assert hide("/boot?session=a&session=b") == "/boot?session=<hidden>&session=<hidden>"
+    assert hide("/boot") == "/boot" and hide("/api/settings?session=keep") == "/api/settings?session=keep"
+    assert hide("two /boot?session=a and /boot?session=b") == "two /boot?session=<hidden> and /boot?session=<hidden>"
 
 
 # -- the session file and `serve` -------------------------------------------------------------------------------

@@ -650,6 +650,7 @@
     researchos_changed: "改动了 Research OS 自己的记录文件夹", git_changed: "改变了 git 的状态",
     git_hooks_changed: "改动了 git 的钩子（git 会自动运行的程序）", git_config_changed: "改动了 git 的配置",
     backup_deleted: "删除了 Research OS 的备份",
+    agent_settings_changed: "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）",
   };
   const ERROR_WORDS = {
     timeout: "运行超过了时间限制，已被停止。", shutdown: "运行期间 Research OS 被关闭了。", engine_gone: "运行期间 Research OS 退出了。",
@@ -657,7 +658,10 @@
     check_failed: "运行结束后核对改动时出了错，改动清单可能不完整。", error_max_budget_usd: "费用达到了上限。",
     guard_failed: "Research OS 的检查程序没有正常启动，为了安全没有运行。",
   };
-  const REVERT_SKIPPED = { changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端", kept: "你选择保留" };
+  const REVERT_SKIPPED = {
+    changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端", kept: "你选择保留",
+    protected: "属于 Research OS 的记录文件夹或 git，撤回不会动它",
+  };
   const PRIVACY = {
     "claude-code": "Claude Code 会把它读到的项目内容发送给 Anthropic。",
     opencode: "OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。",
@@ -1284,6 +1288,8 @@
     if (typeof d.cost_usd === "number") {
       box.append(el("p", "ws-agent-quiet", t("费用约 {cost} 美元。", { cost: d.cost_usd.toFixed(d.cost_usd < 0.1 ? 3 : 2) })));
     }
+    // 18.1 item 2: the program is not given variables whose names look like credentials; the names, never the values.
+    if ((d.env_removed || []).length) box.append(more(st, "env", "没有交给它的环境变量（名字像密钥，只列名字）", d.env_removed.join("\n")));
     if (d.stderr_tail) box.append(more(st, "stderr", "程序的错误输出", d.stderr_tail));
     if (d.instruction) box.append(more(st, "instruction", "发给它的指示", d.instruction));
     return box;

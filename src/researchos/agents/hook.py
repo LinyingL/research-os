@@ -1,8 +1,10 @@
 """Claude Code's PreToolUse hook: `python -m researchos.agents.hook <run dir>`
 (DESIGN.md 17.5).
 
-Claude Code runs this before every Edit, Write, MultiEdit, NotebookEdit and
-Bash call of an agent run, with the call as JSON on standard input
+Claude Code runs this before every Edit, Write, MultiEdit, NotebookEdit, Bash,
+Read, Glob, Grep and LS call of an agent run (the reading tools since 18.1
+item 2: the session secret of the engine lives in Research OS's home), with
+the call as JSON on standard input
 (`tool_name`, `tool_input`, `cwd`, ...). Exit code 0 lets the call go ahead;
 exit code 2 refuses it and Claude Code hands standard error to the model, so
 the message says what to do instead. The decision is `guard.check_tool` on

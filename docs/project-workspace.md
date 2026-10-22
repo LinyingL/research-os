@@ -82,7 +82,19 @@ with **Undo this run** beside it. A run that ends with one reads **Went out
 of bounds**, never Done, whatever else happened; the task keeps the done mark
 the agent gave it. Git's hooks and configuration (`.git/hooks`, `.git/config`)
 and Research OS's backups count too: a hook planted, or a backup deleted, is
-out of bounds.
+out of bounds. So are the settings of Claude Code and OpenCode in the project
+(`.claude/`, `.opencode/`, `opencode.json`): a run cannot write them, and a
+change there is out of bounds, since a later run would otherwise load what an
+earlier one wrote. Claude Code does not load the project's own
+`.claude/settings*.json` at all.
+
+**What it cannot read, and is not given.** Claude Code's reading tools (Read,
+Glob, Grep, LS) are refused inside Research OS's own folder (`~/.researchos`)
+and `~/.ssh`. The agent program is not told where Research OS keeps its files,
+and the environment variables whose names look like credentials (`TOKEN`,
+`SECRET`, `PASSWORD`, `API_KEY`, `AUTH`, `SESSION`, `COOKIE`, `AWS_*`,
+`GITHUB_*`, and the like) are not passed on, except what the program needs to
+reach its model. The run log lists the names left out, never the values.
 
 **The run log.** **Run log** shows what the agent said, each command and file
 it used, what was refused, how the run ended, the files it created, changed

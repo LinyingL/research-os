@@ -1021,6 +1021,7 @@ class AgentManager:
             stream = runners.OpenCodeStream()
         for name, content in launch.files.items():
             (rd / name).write_text(content, encoding="utf-8")
+        self._update(act, env_removed=launch.removed_env)  # the names, never the values (18.1 item 2): the run log lists them
 
         launch_error: dict | None = None
         proc: subprocess.Popen | None = None
@@ -1490,7 +1491,7 @@ class AgentManager:
             error=run.get("error"), message=run.get("message"), summary=run.get("summary"),
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
-            leftovers=run.get("leftovers") or 0,
+            leftovers=run.get("leftovers") or 0, env_removed=run.get("env_removed") or [],
             events_truncated=bool(run.get("events_truncated")))
         return out
 
@@ -1561,7 +1562,9 @@ class AgentManager:
         ids of active runs that belong to another live engine and were left alone."""
         foreign: list[str] = []
         with self._recover_lock:
-            for listed in run_store.list_runs(project_id):
+            listing = run_store.list_runs(project_id)
+            owing = [r for r in listing if r.get("check_pending") and r.get("state") == "interrupted"]
+            for listed in listing:
                 if listed.get("state") not in run_store.ACTIVE_STATES:
                     continue
                 with self._lock:
@@ -1582,6 +1585,8 @@ class AgentManager:
                     logger.exception("could not recover agent run %s", run.get("id"))
                     self._fail_record(project_id, run["id"], "engine_gone",
                                       "Research OS stopped while the run was going")
+            if owing and not foreign:
+                self._check_pending(project_id, owing)
         return foreign
 
     def recover_all(self) -> list[str]:
@@ -1595,11 +1600,14 @@ class AgentManager:
         def going(project_id: str) -> set[str]:
             return {r["id"] for r in run_store.list_runs(project_id) if r.get("state") in run_store.ACTIVE_STATES}
 
+        def owed(project_id: str) -> bool:  # an interrupted run whose changes were never compared (folder unreadable then)
+            return any(r.get("check_pending") for r in run_store.list_runs(project_id))
+
         for project_id in run_store.project_ids():
             if self._closing:
                 break
             left = going(project_id)
-            if not left:
+            if not left and not owed(project_id):
                 continue
             try:
                 self._recover(project_id)
@@ -1625,18 +1633,47 @@ class AgentManager:
         before = _read_json(rd / "before.json")
         _signals, info = self._signals(project_id, run_id)
         update.update(question=info["question"], report=info["report"])
-        if isinstance(before, dict) and isinstance(before.get("files"), dict) and root.is_dir():
+        compared = isinstance(before, dict) and isinstance(before.get("files"), dict)
+        if compared and root.is_dir():
             try:
-                assessed = self._assess(root, project_id, run_id, run, before,
-                                        lambda: list(run.get("human_paths") or ()),
-                                        lambda: dict(run.get("human_sha") or {}))
-                assessed.pop("signal_info")
-                update.update(assessed)
-                update["state"], update["outcome"] = _warn_if_out_of_bounds("interrupted", assessed["violations"])
+                update.update(self._compare_interrupted(root, project_id, run, before))
             except Exception:  # noqa: BLE001
                 logger.exception("could not check the changes of interrupted agent run %s", run_id)
+        elif compared:
+            # The folder cannot be read now (a drive that is not attached, a folder it may not enter). The program
+            # is ended, but what it changed is not known: the run says so, and a later recovery compares it once
+            # the folder is back (`_check_pending`) -- undo is not lost for good, nor an out-of-bounds change unseen.
+            update["check_pending"] = True
         # only while it is still going: a run that ended meanwhile keeps the state it reached
         run_store.update_run_if_active(project_id, run_id, **update)
+
+    def _compare_interrupted(self, root: Path, project_id: str, run: dict, before: dict) -> dict[str, Any]:
+        """The fields a recovered run gets from comparing its folder with its before-picture (17.3, 18.1 item 4)."""
+        assessed = self._assess(root, project_id, run["id"], run, before, lambda: list(run.get("human_paths") or ()),
+                                lambda: dict(run.get("human_sha") or {}))
+        assessed.pop("signal_info")
+        state, outcome = _warn_if_out_of_bounds("interrupted", assessed["violations"])
+        return {**assessed, "state": state, "outcome": outcome}
+
+    def _check_pending(self, project_id: str, owing: list[dict]) -> None:
+        """Compare the interrupted runs `owing` (`check_pending`: their folder could not be read when they were
+        recovered) whose folder can be read now. Nothing is compared while a run of the project is going (its
+        changes would be read as theirs). A run without a usable before-picture has nothing to compare and is let
+        go; a comparison that fails stays pending for the next recovery."""
+        with self._lock:
+            if project_id in self._active:
+                return
+        for run in owing:
+            if not run.get("root") or not Path(run["root"]).is_dir():
+                continue
+            before = _read_json(run_store.run_dir(project_id, run["id"]) / "before.json")
+            try:
+                update = (self._compare_interrupted(Path(run["root"]), project_id, run, before)
+                          if isinstance(before, dict) and isinstance(before.get("files"), dict) else {})
+            except Exception:  # noqa: BLE001 -- recovery never blocks a listing; the run stays pending
+                logger.exception("could not check the changes of interrupted agent run %s", run["id"])
+                continue
+            run_store.update_run(project_id, run["id"], check_pending=False, **update)
 
     # -- undoing ----------------------------------------------------------------------------------
 
@@ -1863,22 +1900,33 @@ class AgentManager:
                 return True
             return False
 
-        def restore(rel: str) -> bool:
-            """Put the before-picture's copy of `rel` back, atomically and inside the project."""
+        def blocked(rel: str) -> str | None:
+            """Why `restore(rel)` would leave `rel` alone, found without writing anything: the file has no usable
+            copy (`no_copy`) or its folder cannot be made inside the project (`changed_since`). Asked before the
+            person's choice is read, so that a file the undo could not have put back is never listed as one they
+            chose to keep (the plan lists it as it is, 18.1 item 5)."""
             src = rd / "before" / Path(*rel.split("/"))
             entry = old.get(rel) or {}
             if not entry.get("copied") or not src.is_file():
-                skip(rel, "no_copy")
-                return False
+                return "no_copy"
             if entry.get("sha256") and _sha256(src) != entry["sha256"]:
-                skip(rel, "no_copy")  # the copy is not what was recorded: do not write it back
+                return "no_copy"  # the copy is not what was recorded: do not write it back
+            parent = os.path.dirname(path_of(rel))
+            if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
+                return "changed_since"
+            return None
+
+        def restore(rel: str, *, checked: bool = False) -> bool:
+            """Put the before-picture's copy of `rel` back, atomically and inside the project. `checked`: the
+            caller has asked `blocked` already."""
+            why = None if checked else blocked(rel)
+            if why is not None:
+                skip(rel, why)
                 return False
+            src = rd / "before" / Path(*rel.split("/"))
             target = path_of(rel)
             parent = os.path.dirname(target)
             if dry:
-                if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
-                    skip(rel, "changed_since")
-                    return False
                 restored.append(rel)
                 return True
             try:
@@ -1995,27 +2043,34 @@ class AgentManager:
             if current.get("dataless"):  # copying it away would download it, under the project lock
                 skip(rel, "in_cloud")
                 continue
-            if not (old.get(rel) or {}).get("copied"):
-                skip(rel, "no_copy")
+            why = blocked(rel)
+            if why is not None:
+                skip(rel, why)
                 continue
             if kept(rel):
                 continue
             if not dry and not copy_away(rel, path_of(rel)):
                 skip(rel, "changed_since")
                 continue
-            restore(rel)
+            restore(rel, checked=True)
         for rel in changes.get("deleted", ()):
             if rel == TASKS_PATH or rel in handled:
                 continue
             if _key(rel) in person or not free(rel, probe=True):
                 skip(rel, "changed_since")
                 continue
+            why = blocked(rel)  # before the choice: a file with no copy is not one the person kept
+            if why is not None:
+                skip(rel, why)
+                continue
             if kept(rel):
                 continue
             if not dry and not free(rel):
                 skip(rel, "changed_since")
                 continue
-            restore(rel)
+            restore(rel, checked=True)
+        # git's own files and the project's records are not the change history's business (as in `_attribute`)
+        recorded = [rel for rel in recorded if rel.split("/", 1)[0].casefold() not in _RECORD_AND_GIT_DIRS]
         if recorded:
             try:
                 with history.Store.open(project_id) as store:

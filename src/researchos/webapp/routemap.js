@@ -183,7 +183,7 @@
       case "team_unreadable": return t("成员文件（team.toml）当前无法读取，无法判断谁是 PI");
       case "pi_changes_directly": return t("你是 PI：连线直接写入正式版本；请刷新后再画");
       case "not_in_team": return t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步");
-      case "session_required": return t("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"); // 18.1
+      case "session_required": return t("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。"); // 18.1
       default: return null;
     }
   }

@@ -10,7 +10,10 @@ model, a fresh `--session-id` (or `--resume`), `--permission-mode dontAsk`
 with the tools it may use in `--allowedTools` and the denials of 17.5 in
 `--disallowedTools`, a `PreToolUse` hook and the MCP server from files in the
 run's folder (`--settings`, `--mcp-config --strict-mcp-config`), and the rules
-in `--append-system-prompt`. `--allowedTools` and `--disallowedTools` are
+in `--append-system-prompt`. `--setting-sources user` keeps the project's own
+`.claude/settings*.json` from being loaded (a run could have written one for
+the next, 18.1 item 2); the hook runs on the editing tools, Bash and the
+reading tools (Read, Glob, Grep, LS). `--allowedTools` and `--disallowedTools` are
 variadic: a positional prompt after them would be swallowed as a tool name,
 so they come LAST and the instruction goes in on standard input.
 The hook's command is `sh -c` around the hook (`hook_command`) so that only
@@ -32,7 +35,11 @@ what would ask and stops.
 **The environment** is the engine's, less everything that could join a
 Claude Code session that started Research OS (`CLAUDE_CODE_REMOTE_SESSION_ID`
 makes a child adopt its parent's session) or redirect OpenCode's
-configuration; `PATH` is widened with the usual install places, since an app
+configuration, less Research OS's home (`RESEARCHOS_HOME`, `RCE_HOME`: only the
+MCP server's own entry names it) and less every variable that looks like a
+credential, except what the runner needs to reach its model (`credential_names`,
+18.1 item 2; the names removed, never the values, come back in `Launch.removed_env`
+for the run log). `PATH` is widened with the usual install places, since an app
 opened from the Finder has none of the shell's. The agent's processes carry
 `RESEARCHOS_AGENT_RUN`, which makes every Research OS write path refuse
 (17.5).
@@ -72,9 +79,25 @@ CLAUDE_DISALLOWED = tuple(f"Bash(git {c}:*)" for c in GIT_DENIED) + ("Bash(resea
 #: replace OpenCode's configuration.
 SCRUB_ENV_RE = re.compile(
     r"^(CLAUDECODE|CLAUDE_CODE_.*(SESSION|REMOTE|ENTRYPOINT|CHILD|MESSAGING|CONTAINER|WORKER).*"
-    r"|CLAUDE_SESSION_.*|CCR_.*|RCE_ENGINE_PORT|OPENCODE_CONFIG_CONTENT|OPENCODE_CONFIG)$")
+    r"|CLAUDE_SESSION_.*|CCR_.*|RCE_ENGINE_PORT|OPENCODE_CONFIG_CONTENT|OPENCODE_CONFIG"
+    r"|RESEARCHOS_HOME|RCE_HOME)$")  # the home: the agent is not told where Research OS keeps its files (18.1 item 2)
 #: Variables that could widen what OpenCode allows beyond the configuration we pass; removed too.
 OPENCODE_OVERRIDE_ENV = ("OPENCODE_PERMISSION",)
+#: A variable whose name looks like it holds a credential is not handed to the agent program (18.1 item 2): the name
+#: contains one of these words, or is one of the exact names, or starts with one of the prefixes.
+CREDENTIAL_WORDS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE", "API_KEY", "ACCESS_KEY", "AUTH",
+                    "SESSION", "COOKIE")
+CREDENTIAL_NAMES = frozenset({"SSH_AUTH_SOCK", "GPG_AGENT_INFO", "RCE_LLM_API_KEY"})
+CREDENTIAL_PREFIXES = ("AWS_", "GITHUB_", "GH_")
+#: What each runner keeps although it looks like a credential: it needs it to reach its model. Exact names, prefixes
+#: and, for the prefixes in `_KEEP_IF`, the variable that has to be set for the prefix to count.
+_KEEP = {
+    "claude-code": {"names": frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), "prefixes": ("ANTHROPIC_",)},
+    "opencode": {"names": frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY",
+                                     "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"}),
+                 "prefixes": ("GOOGLE_",)},
+}
+_KEEP_IF = {"claude-code": (("AWS_", "CLAUDE_CODE_USE_BEDROCK"), ("GOOGLE_", "CLAUDE_CODE_USE_VERTEX"))}
 
 STEP_TEXT_LIMIT = 500
 TOOL_SUMMARY_LIMIT = 300
@@ -98,6 +121,8 @@ class Launch:
     stdin: str
     cwd: str
     files: dict[str, str] = field(default_factory=dict)
+    #: Names (never values) of the environment variables left out as credentials (18.1 item 2); the run log lists them.
+    removed_env: list[str] = field(default_factory=list)
 
 
 # -- starting ---------------------------------------------------------------
@@ -113,21 +138,38 @@ def mcp_command(root: Path, run_id: str) -> list[str]:
     return [sys.executable, "-I", "-m", "researchos.cli", "mcp", "--agent-run", run_id, "--path", str(root)]
 
 
-def child_env(base: Mapping[str, str], *, run_id: str, home: str, program: str) -> dict[str, str]:
-    """The environment of the agent program: `base` less `SCRUB_ENV_RE`;
-    `PATH` widened (`profiles.search_path`) with the program's own folder
-    first (a `#!/usr/bin/env node` launcher finds its node beside it);
-    `RESEARCHOS_HOME` and `RESEARCHOS_AGENT_RUN` set so every process the
-    agent starts is marked and finds this Mac's home."""
+def credential_like(name: str) -> bool:
+    """Whether a variable's name looks like it holds a credential (`CREDENTIAL_WORDS`, `CREDENTIAL_NAMES`,
+    `CREDENTIAL_PREFIXES`; upper or lower case)."""
+    upper = name.upper()
+    return upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_PREFIXES) or any(w in upper for w in CREDENTIAL_WORDS)
+
+
+def credential_names(base: Mapping[str, str], runner: str) -> list[str]:
+    """The names in `base` that `child_env` removes as credentials for `runner`, sorted: those that look like one
+    (`credential_like`) and are not among what the runner keeps to reach its model -- for Claude Code `ANTHROPIC_*`
+    and `CLAUDE_CODE_OAUTH_TOKEN`, `AWS_*` only when `CLAUDE_CODE_USE_BEDROCK` is set and `GOOGLE_*` only when
+    `CLAUDE_CODE_USE_VERTEX` is; for OpenCode its providers' API keys and `GOOGLE_*`."""
+    keep = _KEEP.get(runner, {"names": frozenset(), "prefixes": ()})
+    prefixes = tuple(keep["prefixes"]) + tuple(p for p, variable in _KEEP_IF.get(runner, ()) if base.get(variable))
+    return sorted(k for k in base if isinstance(k, str) and credential_like(k)
+                  and k not in keep["names"] and not k.startswith(prefixes))
+
+
+def child_env(base: Mapping[str, str], *, run_id: str, program: str, runner: str = "claude-code") -> dict[str, str]:
+    """The environment of the agent program: `base` less `SCRUB_ENV_RE` (the home among it) and less
+    `credential_names`; `PATH` widened (`profiles.search_path`) with the program's own folder first (a
+    `#!/usr/bin/env node` launcher finds its node beside it); `RESEARCHOS_AGENT_RUN` set so every process the agent
+    starts is marked. `RESEARCHOS_HOME` is not set: only the MCP server's entry names the home (18.1 item 2)."""
     from researchos.agents import profiles  # lazily: package A, and this module stays importable alone
 
-    env = {k: v for k, v in base.items() if isinstance(k, str) and not SCRUB_ENV_RE.match(k)}
+    drop = set(credential_names(base, runner))
+    env = {k: v for k, v in base.items() if isinstance(k, str) and not SCRUB_ENV_RE.match(k) and k not in drop}
     parts = [p for p in profiles.search_path(base.get("PATH")).split(os.pathsep) if p]
     first = os.path.dirname(program) if isinstance(program, str) else ""
     if first:
         parts = [first] + [p for p in parts if p != first]
     env["PATH"] = os.pathsep.join(parts)
-    env["RESEARCHOS_HOME"] = home
     env["RESEARCHOS_AGENT_RUN"] = run_id
     env["PYTHONUNBUFFERED"] = "1"
     return env
@@ -227,6 +269,7 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
             "--model", _check_model(model),
             "--resume" if resume else "--session-id", _check_session(session_id),
             "--permission-mode", "dontAsk",
+            "--setting-sources", "user",  # not the project's .claude/settings*.json (18.1 item 2)
             "--settings", str(run_dir / "claude-settings.json"),
             "--mcp-config", str(run_dir / "mcp.json"),
             "--strict-mcp-config",
@@ -236,15 +279,16 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
     argv += ["--allowedTools", *CLAUDE_ALLOWED, "--disallowedTools", *CLAUDE_DISALLOWED]
     settings = {"disableAllHooks": False,  # a user-level `disableAllHooks: true` must not switch the guard off
                 "hooks": {"PreToolUse": [{
-                    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+                    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Glob|Grep|LS",
                     "hooks": [{"type": "command", "command": hook_command(run_dir)}]}]}}
     mcp = {"mcpServers": {MCP_KEY: {
         "command": sys.executable, "args": mcp_command(root, run_id)[1:],
         "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}}}
     return Launch(argv=argv,
-                  env=child_env(base_env, run_id=run_id, home=home, program=program),
+                  env=child_env(base_env, run_id=run_id, program=program, runner="claude-code"),
                   stdin=prompt, cwd=str(root),
-                  files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)})
+                  files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)},
+                  removed_env=credential_names(base_env, "claude-code"))
 
 
 def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
@@ -278,13 +322,14 @@ def opencode_launch(*, program: str, model: str, root: Path, run_dir: Path, run_
     argv = [program, "run", "--format", "json", "--model", _check_model(model), "--dir", str(root)]
     if session_id:
         argv += ["--session", _check_session(session_id)]
-    env = child_env(base_env, run_id=run_id, home=home, program=program)
+    env = child_env(base_env, run_id=run_id, program=program, runner="opencode")
     for name in OPENCODE_OVERRIDE_ENV:
         env.pop(name, None)
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_config(root, run_id, home), ensure_ascii=True)
     env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={})
+    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={},
+                  removed_env=credential_names(base_env, "opencode"))
 
 
 # -- reading the streams ----------------------------------------------------

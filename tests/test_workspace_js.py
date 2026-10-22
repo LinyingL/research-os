@@ -1535,6 +1535,52 @@ console.log(JSON.stringify({label:label.textContent,cls:label.className,buttons:
     assert re.search(r"[㐀-鿿]", out["text"]) is None, out["text"]
 
 
+LOG_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];listed.files=listed.files.filter(f=>!/[一-鿿]/.test(f.path));
+const r=mkRun({state:'out_of_bounds',outcome:'done',can_reply:true,can_revert:true,violations:1,changes:2,reverted:true,revert_skipped:1});
+setRuns([r]);
+runLogs[r.id]=Object.assign(clone(r),{steps:[],steps_total:0,changes:{created:['.claude/settings.json'],modified:[],deleted:[]},
+  violations:[{path:'.claude/settings.json',reason:'agent_settings_changed'}],refusals:[],instruction:'',stderr_tail:'',
+  env_removed:['GITHUB_TOKEN','FOO_SECRET'],revert:{skipped:[{path:'.git/config',reason:'protected'}]}});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG).click();await sleepTick();
+const box=byClass('ws-run-details');
+const env=box.all().find(e=>e.tagName==='DETAILS'&&/GITHUB_TOKEN/.test(e.textContent));
+console.log(JSON.stringify({text:box.textContent,oob:byClass('ws-oob',box).textContent,env:env?env.textContent:null}));
+"""
+
+
+def test_the_run_log_words_the_settings_reason_the_protected_reason_and_the_withheld_variables():
+    out = run(LOG_SETUP.replace("LOG", "'运行记录'"))
+    assert "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）" in out["oob"]
+    assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["text"]
+    assert "没有改动这个文件" not in out["text"]  # that was no reason, only the outcome again
+    assert out["env"] is not None and "没有交给它的环境变量（名字像密钥，只列名字）" in out["env"]
+    assert "GITHUB_TOKEN" in out["env"] and "FOO_SECRET" in out["env"]
+    english = run(LOG_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert "Changed Claude Code or OpenCode settings in the project (.claude, .opencode, opencode.json)" in english["oob"]
+    assert ".git/config Belongs to Research OS’s records folder or to git; undo does not touch it" in english["text"]
+    assert "Left unchanged" not in english["text"]
+    assert "Environment variables not given to it (their names look like credentials; names only)" in english["env"]
+    assert re.search(r"[㐀-鿿]", english["text"]) is None, english["text"]
+
+
+def test_a_run_without_withheld_variables_shows_no_such_line():
+    out = run(LOG_SETUP.replace("LOG", "'运行记录'").replace("env_removed:['GITHUB_TOKEN','FOO_SECRET'],", "env_removed:[],"))
+    assert out["env"] is None and "没有交给它的环境变量" not in out["text"]
+
+
+def test_the_undo_list_gives_the_reason_for_a_file_that_belongs_to_research_os_or_git():
+    out = run(UNDO_SETUP.replace("{path:'Drive/y.xlsx',reason:'in_cloud'}]", "{path:'Drive/y.xlsx',reason:'in_cloud'},{path:'.git/config',reason:'protected'}]")
+              + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const groups=undoBox().all().filter(e=>e.tagName==='DETAILS');
+console.log(JSON.stringify({title:groups[2].children[0].textContent,cannot:groups[2].textContent}));
+""")
+    assert out["title"] == "撤不回的文件（4）"
+    assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["cannot"]
+
+
 # -- 撤回本次运行 lists what it will do, and asks (DESIGN 18.1 item 5) ---------------------------------------
 
 UNDO_SETUP = r"""

@@ -25,8 +25,9 @@ hook planted or a `core.hooksPath` set is a change there, and undo can put it
 back. `.researchos/backups/` (and `.rce/backups/`) is listed by name and size,
 at any depth, in `picture["backups"]` -- not in `files`, because Research OS
 itself adds backups with every save and so a new backup is never a change; a
-backup that is gone is (`backup_deleted`), except the oldest of a series that
-has since gained a newer one, which is Research OS keeping the newest 20.
+backup that is gone is (`backup_deleted`), except as many of the oldest of a
+series as Research OS's own pruning to the newest 20 can have removed since the
+picture (`_Rotation`): none from a series that never held more than 20.
 A project with more than `FILE_LIMIT` files is recorded up to that many and
 marked `partial`: a partial picture cannot show every creation, and the
 caller says so. Editor, Finder and sync-client noise (`SKIP_FILES`:
@@ -49,7 +50,9 @@ also saw the file its hash is copied in, so a data file compares by hash
 when both entries have one, else by size and modification time.
 
 **What is protected** (17.5 rules 1, 3, 5), decided from the before-picture:
-the folders `.researchos`, `.rce` and `.git`; every data file that existed
+the folders `.researchos`, `.rce` and `.git`; the agent program's own project
+settings (`.claude/` and `.opencode/` at any depth, `opencode.json`: 18.1 item 2,
+a later run must not load what an earlier one wrote); every data file that existed
 before the run; the attempt table (its path read from `attempts.toml`) and
 `research/tasks.json`. `protected` is also what the hook enforces during the
 run (`guard`), and `violations` is the after-run check that catches what the
@@ -72,10 +75,12 @@ import re
 import shutil
 import stat
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from researchos import names, paths
+from researchos.agents import guard
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +97,7 @@ DIR_LIMIT = FILE_LIMIT
 DATA_SUFFIXES = frozenset({".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".feather", ".rds", ".rdata", ".dta",
                            ".sav", ".json", ".h5", ".pkl"})
 TASKS_PATH = "research/tasks.json"
-PROTECTED_DIRS = (names.PROJECT_DIRNAME, names.LEGACY_PROJECT_DIRNAME, ".git")
+PROTECTED_DIRS = (names.PROJECT_DIRNAME, names.LEGACY_PROJECT_DIRNAME, ".git", *sorted(guard.AGENT_SETTINGS_DIRS))
 #: The data walk skips only environments (not research data); every other folder, `_cache` and
 #: `.cache` included, may hold a data file that is protected.
 DATA_SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__"})
@@ -105,6 +110,9 @@ GIT_HOOKS = f"{GIT_DIR}/hooks"
 GIT_FILES_LIMIT = 1000
 #: The backups are listed by name and size (module docstring), at most this many.
 BACKUP_FILE_LIMIT = 200_000
+#: How many backups of one series Research OS keeps (`records.files.SNAPSHOT_KEEP`, `webapp.mapedit.BACKUP_KEEP`; a test
+#: holds the three equal): a save prunes the series to its newest this many, and never removes from a shorter one.
+BACKUP_KEEP = 20
 #: What Research OS names a backup: `<name>.<UTC stamp>Z[.<n>][.write]<suffix>` (`records.files`, 9.2); the series
 #: of a backup is its folder, name, kind (daily or before-a-write) and suffix.
 _BACKUP_NAME = re.compile(r"^(?P<name>.+)\.(?P<stamp>\d{8}T\d{12})Z(?:\.(?P<n>\d+))?(?P<write>\.write)?"
@@ -592,6 +600,13 @@ def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
             "records": records, "root": str(root)}
 
 
+def is_agent_settings(rel: str) -> bool:
+    """Whether `rel` is the agent program's own project setting (18.1 item 2): below a folder named `.claude` or
+    `.opencode` at any depth, or an `opencode.json` / `opencode.jsonc` file anywhere."""
+    parts = [part.casefold() for part in rel.split("/")]
+    return any(part in guard.AGENT_SETTINGS_DIRS for part in parts) or parts[-1] in guard.AGENT_SETTINGS_FILES
+
+
 def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_before: Any, git_after: Any,
                allowed: Mapping[str, set[str]], after: Mapping[str, Any] | None = None,
                data_before: Mapping[str, Any] | None = None,
@@ -602,12 +617,13 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
     `{"path", "reason"}`: `data_changed` / `data_deleted` (a data file that
     existed before), `record_changed` / `record_deleted` (the attempt table,
     `research/tasks.json`), `researchos_changed` (anything under a folder
-    named `.researchos` or `.rce`, at any depth), `git_hooks_changed` (a file
+    named `.researchos` or `.rce`, at any depth), `agent_settings_changed` (a `.claude` or `.opencode` folder at any
+    depth, or an `opencode.json` file: `is_agent_settings`), `git_hooks_changed` (a file
     in `.git/hooks`) and `git_config_changed` (`.git/config`), `git_changed`
     (path `.git`: HEAD, branch or refs differ, or the repository is gone) and
     `backup_deleted` (a file of `.researchos/backups` that is gone, unless it
-    is the oldest of a series that has gained a newer one: Research OS's own
-    rotation, `_rotated`).
+    is among the oldest of a series that Research OS's own pruning to the
+    newest 20 can have removed since the picture: `_Rotation`).
 
     `allowed` maps a path to the hashes it may legitimately end with, for
     every kind of protected path (records, data files, `.researchos` / `.rce`
@@ -626,7 +642,7 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
     `prot["root"]` (else when the after-walk was complete, `after["data_partial"]`
     not set). `backups_before` / `backups_after` are the `backups` maps of the
     two pictures (a bare picture is accepted), compared the same way."""
-    dirs = {d.casefold() for d in prot.get("dirs", PROTECTED_DIRS) if d != ".git"}
+    dirs = {d.casefold() for d in prot.get("dirs", PROTECTED_DIRS) if d != ".git"} - guard.AGENT_SETTINGS_DIRS
     data = set(prot.get("data", ()))
     records = set(prot.get("records", ()))
     found: list[dict[str, str]] = []
@@ -659,6 +675,9 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
             elif any(part.casefold() in dirs for part in rel.split("/")):
                 if kind == "deleted" or not permitted(rel):
                     add(rel, "researchos_changed")
+            elif is_agent_settings(rel):
+                if kind == "deleted" or not permitted(rel):
+                    add(rel, "agent_settings_changed")
             elif rel in records:
                 if kind == "deleted":
                     add(rel, "record_deleted")
@@ -682,24 +701,22 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
             if now is None:
                 root = prot.get("root")
                 if not _lexists(root, rel) if root else complete:
-                    add(rel, "data_deleted")
-            elif not same(was, now) and not permitted(rel):
-                add(rel, "data_changed")
+                    add(rel, "agent_settings_changed" if is_agent_settings(rel) else "data_deleted")
+            elif not same(was, now) and not permitted(rel):  # one reason for a path: a setting is a setting first
+                add(rel, "agent_settings_changed" if is_agent_settings(rel) else "data_changed")
     if not git_equal(git_before, git_after):
         add(".git", "git_changed")
     old_backups = _backup_map(backups_before)
     new_backups = _backup_map(backups_after if backups_after is not None else after)
     if old_backups and new_backups is not None:
         complete = not (isinstance(after, Mapping) and after.get("backups_partial"))
-        gone = [rel for rel in sorted(old_backups) if rel not in new_backups]
-        rotation = _Rotation(old_backups, new_backups) if gone else None
+        root = prot.get("root")
+        gone = [rel for rel in sorted(old_backups) if rel not in new_backups
+                and (not _lexists(root, rel) if root else complete)]  # a cut after-walk that did not see it: still there
+        rotated = _Rotation(old_backups, new_backups).excused(gone) if gone else set()
         for rel in gone:
-            root = prot.get("root")
-            if not (not _lexists(root, rel) if root else complete):
-                continue  # a cut after-walk that did not see it: still there
-            if rotation is not None and rotation.explains(rel):
-                continue
-            add(rel, "backup_deleted")
+            if rel not in rotated:
+                add(rel, "backup_deleted")
     return found
 
 
@@ -715,14 +732,22 @@ def _series(rel: str) -> tuple[tuple[str, str, bool, str], tuple[str, str]] | No
 
 
 class _Rotation:
-    """Research OS keeps the newest 20 backups of each series (`records.files`, `webapp.mapedit`), so a save that
-    adds one can remove the oldest. That is not an agent's doing -- and a run's own tools save too, in another
-    process nobody here hears. A missing backup is rotation when its series has gained a backup since the picture
-    and every backup of the series that is left is newer than it."""
+    """Research OS keeps the newest `BACKUP_KEEP` backups of each series (`records.files`, `webapp.mapedit`), so a save
+    that adds one can remove the oldest -- and only when the series then holds more than that. That is not an agent's
+    doing, and a run's own tools save too, in another process nobody here hears. What a rotation can have removed from
+    a series is a stretch of its oldest backups no longer than `before + gained - BACKUP_KEEP`; a missing backup is
+    excused when it lies in that stretch (older than every backup that is left), and the rest are the agent's. A series
+    that never held more than `BACKUP_KEEP` is therefore never rotated: planting one newer name does not excuse the
+    deletion of the older ones."""
 
     def __init__(self, before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
         self.oldest_left: dict[Any, tuple[str, str]] = {}
-        self.gained: set[Any] = set()
+        self.before_count: Counter[Any] = Counter()
+        self.gained: Counter[Any] = Counter()
+        for rel in before:
+            found = _series(rel)
+            if found is not None:
+                self.before_count[found[0]] += 1
         for rel in after:
             found = _series(rel)
             if found is None:
@@ -731,14 +756,23 @@ class _Rotation:
             if series not in self.oldest_left or order < self.oldest_left[series]:
                 self.oldest_left[series] = order
             if rel not in before:
-                self.gained.add(series)
+                self.gained[series] += 1
 
-    def explains(self, rel: str) -> bool:
-        found = _series(rel)
-        if found is None:
-            return False
-        series, order = found
-        return series in self.gained and order < self.oldest_left[series]
+    def excused(self, gone: Iterable[str]) -> set[str]:
+        """The paths of `gone` (backups that are missing after the run) that Research OS's own rotation explains."""
+        candidates: dict[Any, list[tuple[tuple[str, str], str]]] = {}
+        for rel in gone:
+            found = _series(rel)
+            if found is None:
+                continue
+            series, order = found
+            if series in self.oldest_left and order < self.oldest_left[series]:
+                candidates.setdefault(series, []).append((order, rel))
+        out: set[str] = set()
+        for series, items in candidates.items():
+            allowance = self.before_count[series] + self.gained[series] - BACKUP_KEEP
+            out.update(rel for _order, rel in sorted(items)[:max(0, allowance)])
+        return out
 
 
 def _data_map(picture: Mapping[str, Any] | None) -> Mapping[str, Any] | None:

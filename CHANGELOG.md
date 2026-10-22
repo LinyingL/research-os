@@ -6,7 +6,23 @@
   running on your Mac, an AI agent's script included, can no longer save,
   approve or publish by calling Research OS's local address: the app, and the
   browser tab `researchos serve` opens, carry the session; a window opened
-  from the plain address still reads, and says it cannot save.
+  from the plain address still reads, and says it cannot save. After updating,
+  run `researchos app` again: an app built before this change opens the plain
+  address and cannot save until it is rebuilt (the window says so). The
+  launcher-script version of the app, built when Xcode's command line tools
+  are missing, opens the page with the session too.
+- Keep an AI agent from reading the engine's secret and from preparing the next
+  run. Claude Code's Read, Glob, Grep and LS are refused inside Research OS's
+  folder and `~/.ssh`, as is a Bash command that names them; the agent program
+  is not told where Research OS keeps its files and gets none of the
+  environment variables whose names look like credentials (the run log lists
+  the names it was not given). Claude Code no longer loads the project's own
+  `.claude/settings*.json`, and `.claude/`, `.opencode/` and `opencode.json`
+  can neither be written by a run nor changed without the run reading Went out
+  of bounds. Undo now says a file has no copy when it has none, instead of
+  saying you kept it; a run whose folder was not there when Research OS
+  started is compared when the folder is back; deleting backups cannot hide
+  behind one newly planted backup name.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

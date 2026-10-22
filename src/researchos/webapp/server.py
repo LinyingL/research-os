@@ -754,12 +754,24 @@ class ForbiddenOriginError(ApiError):
 SESSION_COOKIE_PREFIX = "ro_session_"
 SESSION_HEADER = "X-ResearchOS-Session"
 #: What a window without the session is told when its first write is refused (18.1), in both languages.
-SESSION_REQUIRED_ZH = "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
-SESSION_REQUIRED_EN = "This window cannot save: open it from the Research OS app."
+#: The second sentence is for the window that is the app already: an app built before the session existed loads the
+#: plain address, and only `researchos app` makes a new one.
+SESSION_REQUIRED_ZH = ("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
+                       "如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。")
+SESSION_REQUIRED_EN = ("This window cannot save: open it from the Research OS app. "
+                       "If you already did, the app is out of date: run researchos app to rebuild it.")
 
 
-#: The secret in a logged `GET /boot?session=...` request line.
-_BOOT_SECRET = re.compile(r"(/boot\?(?:[^\s\"&]*&)?session=)[^\s\"&]*")
+#: A `/boot?...` request target, and the `session=` values in it (the secret is the first one the engine reads).
+_BOOT_TARGET = re.compile(r"/boot\?[^\s\"#]*")
+_SESSION_VALUE = re.compile(r"(session=)[^&]*")
+
+
+def _without_secret(text: str) -> str:
+    """`text` (a request line, a path) with the secret of a `/boot?session=...` hidden, wherever it stands among
+    the query's other parameters: whatever the engine logs about a request goes through this, since the log is a
+    file any program of the user can read (18.1)."""
+    return _BOOT_TARGET.sub(lambda m: _SESSION_VALUE.sub(r"\1<hidden>", m.group(0)), text)
 
 
 class SessionRequiredError(ApiError):
@@ -3557,7 +3569,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (stdlib's own name)
         # 18.1: the request line of `GET /boot?session=...` holds the secret; it is never logged
-        logger.debug("%s - %s", self.address_string(), _BOOT_SECRET.sub(r"\1<hidden>", format % args))
+        logger.debug("%s - %s", self.address_string(), _without_secret(format % args))
 
     def _project_root(self) -> Path:
         """One locked read per call (RceHTTPServer.get_project_root) -- a
@@ -3880,7 +3892,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         try:
             self._check_local_origin()
             if path == "/boot":  # 18.1: answers with no project too, before anything else is looked at
-                self._boot(query)
+                try:
+                    self._boot(query)
+                except OSError:  # the window went away while it was answered: nothing to report, and nothing to log
+                    pass
                 return
             self._refuse_without_project(path, _NO_PROJECT_GET)
             if path == "/":
@@ -4136,7 +4151,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send_api_error(exc)
         except Exception:
-            logger.exception("unhandled error handling GET %s", self.path)
+            logger.exception("unhandled error handling GET %s", _without_secret(self.path))
             self._send_json(500, {"error": "internal server error"})
 
     def _read_json_object(self) -> dict[str, Any]:
@@ -4593,7 +4608,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send_api_error(exc)
         except Exception:
-            logger.exception("unhandled error handling POST %s", self.path)
+            logger.exception("unhandled error handling POST %s", _without_secret(self.path))
             self._send_json(500, {"error": "internal server error"})
 
 

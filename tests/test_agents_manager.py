@@ -59,8 +59,13 @@ session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_
 with open(HERE / "calls.jsonl", "a") as handle:
     handle.write(json.dumps({"argv": sys.argv, "stdin": stdin_text, "cwd": os.getcwd(),
                              "env": {k: v for k, v in os.environ.items()
-                                     if k.startswith(("RESEARCHOS", "CLAUDE", "OPENCODE", "CCR_"))},
+                                     if k.startswith(("RESEARCHOS", "RCE_", "CLAUDE", "OPENCODE", "CCR_", "ANTHROPIC_"))
+                                     or k.endswith(("_TOKEN", "_SECRET", "_API_KEY"))},
                              "pid": os.getpid()}) + "\n")
+if scenario.get("home"):
+    # The fake plays the MCP server's tools in its own process; the real server is given the home by its entry in
+    # the MCP configuration, the program itself is not (DESIGN 18.1 item 2). The call log above shows what it was given.
+    os.environ["RESEARCHOS_HOME"] = scenario["home"]
 
 
 def emit(obj):
@@ -227,7 +232,7 @@ class Scene:
         agent = labels.parse_owner(owner)
         body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
                 "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
-                "by": "m-1", **extra}
+                "by": "m-1", "home": str(paths.researchos_home()), **extra}
         (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
 
     def calls(self, runner: str = "claude-code") -> list[dict]:
@@ -367,6 +372,7 @@ def test_done_run_end_to_end(scene: Scene, monkeypatch):
     assert argv[argv.index("--session-id") + 1] == run["session_id"]
     assert argv[argv.index("--model") + 1] == "sonnet"
     assert argv.index("--allowedTools") > argv.index("--append-system-prompt")
+    assert argv[argv.index("--setting-sources") + 1] == "user"  # the project's own .claude/settings*.json is not loaded
     assert call["cwd"] == str(scene.root.resolve())
     assert call["env"]["RESEARCHOS_AGENT_RUN"] == run["id"]
     assert "CLAUDECODE" not in call["env"] and "CLAUDE_CODE_REMOTE_SESSION_ID" not in call["env"]
@@ -2329,3 +2335,139 @@ def test_the_plan_and_the_undo_agree_when_a_parent_of_a_deleted_file_is_now_a_fi
     assert plan["restore"] == [] and plan["cannot"] == [{"path": "sub/inner.txt", "reason": "changed_since"}]
     assert result["skipped"] == plan["cannot"] and result["restored"] == []
     assert (scene.root / "sub").read_text() == "now a file\n"
+
+
+# -- review findings of group 1 (V14) -----------------------------------------------------------------------
+
+
+def test_a_deleted_file_with_no_copy_is_listed_as_having_none_not_as_one_the_person_kept(scene: Scene, monkeypatch):
+    scene.put("big.txt", "far more than the copy limit\n")
+    scene.put("small.txt", "s\n")
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 5)
+    run = scene.go([init_step(), {"op": "delete", "path": "big.txt"},
+                    {"op": "write", "path": "small.txt", "text": "now longer than before\n"},
+                    {"op": "write", "path": "n.txt", "text": "new\n"}, finish_step()])
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan_paths(plan["restore"]) == ["small.txt"] and plan_paths(plan["remove"]) == ["n.txt"]
+    assert plan["cannot"] == [{"path": "big.txt", "reason": "no_copy"}]
+    # the page posts only what is ticked, and a file it could not offer is not among them: it still has no copy
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["small.txt", "n.txt"])
+    assert result["skipped"] == [{"path": "big.txt", "reason": "no_copy"}]
+    assert result["restored"] == ["small.txt"] and result["removed"] == ["n.txt"]
+    assert scene.manager.detail(scene.pid, run["id"])["revert"]["skipped"] == result["skipped"]
+
+
+def test_a_modified_file_whose_copy_is_no_longer_what_was_recorded_is_no_copy_even_when_not_ticked(scene: Scene):
+    scene.put("old.txt", "v1\n")
+    scene.put("other.txt", "o1\n")
+    run = scene.go([init_step(), {"op": "write", "path": "old.txt", "text": "v2\n"},
+                    {"op": "write", "path": "other.txt", "text": "o2\n"}, finish_step()])
+    (run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt").write_text("tampered\n")  # not the recorded bytes
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan["cannot"] == [{"path": "old.txt", "reason": "no_copy"}] and plan_paths(plan["restore"]) == ["other.txt"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["other.txt"])
+    assert result["skipped"] == plan["cannot"] and result["restored"] == ["other.txt"]
+    assert (scene.root / "old.txt").read_text() == "v2\n"
+    assert not (run_store.run_dir(scene.pid, run["id"]) / "reverted" / "old.txt").exists()  # nothing was set aside
+
+
+def test_undo_does_not_put_git_files_into_the_change_history(scene: Scene):
+    git_repo(scene)
+    hook = scene.root / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 0\n")
+    hook.chmod(0o755)
+    config = scene.root / ".git" / "config"
+    original = config.read_text()
+    scene.put("ordinary.txt", "before\n")
+    run = scene.go([init_step(), {"op": "delete", "path": str(hook)},
+                    {"op": "write", "path": str(config), "text": original + "[remote \"o\"]\n\turl = https://u:tok@h/x\n"},
+                    {"op": "write", "path": "ordinary.txt", "text": "after\n"}, finish_step()])
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".git/config" in result["restored"] and ".git/hooks/pre-commit" in result["restored"]
+    assert config.read_text() == original and hook.is_file() and (scene.root / "ordinary.txt").read_text() == "before\n"
+    assert scene.versions(".git/config") == [] and scene.versions(".git/hooks/pre-commit") == []
+    assert f"undo {run['id']}" in [v.note for v in scene.versions("ordinary.txt")]  # an ordinary file still is recorded
+
+
+def test_a_run_that_cannot_be_compared_because_its_folder_is_away_is_compared_when_it_is_back(scene: Scene):
+    scene.put("keep.txt", "k")
+    run = stale_run(scene)
+    (scene.root / "made_by_agent.txt").write_text("m")
+    away = scene.tmp / "project.away"
+    scene.root.rename(away)  # the drive is not attached when the engine starts
+    assert scene.manager.recover_all() == [run["id"]]
+    stored = scene.run(run["id"])
+    assert stored["state"] == "interrupted" and stored["check_pending"] is True and stored["revertible"] is False
+    assert codes(scene.manager.revert, away, scene.pid, run["id"], by=None) in ("not_revertible", "read_only", "folder_gone")
+    away.rename(scene.root)  # back
+    assert scene.manager.runs(scene.pid)["runs"][0]["state"] == "interrupted"  # the listing compares it
+    stored = scene.run(run["id"])
+    assert stored["check_pending"] is False and stored["revertible"] is True
+    assert stored["changes"]["created"] == ["made_by_agent.txt"]
+    assert scene.manager.recover_all() == []
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == ["made_by_agent.txt"] and not (scene.root / "made_by_agent.txt").exists()
+
+
+def test_a_pending_comparison_survives_a_folder_that_stays_away_and_is_made_when_a_run_starts_after_its_return(
+        scene: Scene):
+    run = stale_run(scene)
+    away = scene.tmp / "project.away"
+    scene.root.rename(away)
+    scene.manager.recover_all()
+    scene.manager.recover_all()  # the folder is still away: still pending, nothing breaks
+    assert scene.run(run["id"])["check_pending"] is True
+    away.rename(scene.root)
+    (scene.root / "made.txt").write_text("m")
+    scene.scenario([init_step(), finish_step()])
+    scene.wait(scene.start()["id"])  # starting recovers first, before the new run takes its own picture
+    stored = scene.run(run["id"])
+    assert stored["check_pending"] is False and stored["changes"]["created"] == ["made.txt"]
+
+
+def test_a_pending_comparison_waits_while_a_run_of_the_project_is_going(scene: Scene):
+    scene.scenario([init_step(), {"op": "sleep", "s": 2}, finish_step()])
+    going = scene.start()
+    scene.wait_state(going["id"], "running")
+    owing = stale_run(scene, state="interrupted", check_pending=True)
+    (scene.root / "made_by_the_going_run.txt").write_text("m")
+    scene.manager._recover(scene.pid)  # what the running one changes is not the old run's doing
+    assert scene.run(owing["id"])["check_pending"] is True
+    scene.wait(going["id"])
+    scene.manager._recover(scene.pid)
+    assert scene.run(owing["id"])["check_pending"] is False
+
+
+def test_a_run_that_changes_the_agent_programs_settings_reads_out_of_bounds_and_undo_puts_them_back(scene: Scene):
+    scene.put("opencode.json", '{"model": "x"}\n')
+    run = scene.go([init_step(),
+                    {"op": "write", "path": ".claude/settings.json", "text": '{"hooks": {"SessionStart": []}}\n'},
+                    {"op": "write", "path": "opencode.json", "text": '{"permission": {"bash": "allow"}}\n'},
+                    {"op": "complete"}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
+    assert sorted((v["path"], v["reason"]) for v in run["violations"]) == [
+        (".claude/settings.json", "agent_settings_changed"), ("opencode.json", "agent_settings_changed")]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".claude/settings.json" in result["removed"] and not (scene.root / ".claude" / "settings.json").exists()
+    assert "opencode.json" in result["restored"] and (scene.root / "opencode.json").read_text() == '{"model": "x"}\n'
+
+
+def test_the_program_is_not_given_the_home_or_credentials_and_the_run_names_what_was_left_out(scene: Scene, monkeypatch):
+    monkeypatch.setenv("FOO_TOKEN", "value-that-must-not-travel")
+    monkeypatch.setenv("GITHUB_PAT", "another-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "kept-for-the-model")
+    run = scene.go([init_step(), finish_step()])
+    (call,) = scene.calls()
+    assert "RESEARCHOS_HOME" not in call["env"] and "RCE_HOME" not in call["env"]
+    assert "FOO_TOKEN" not in call["env"] and call["env"]["ANTHROPIC_API_KEY"] == "kept-for-the-model"
+    stored = scene.run(run["id"])
+    assert "FOO_TOKEN" in stored["env_removed"] and "GITHUB_PAT" in stored["env_removed"]
+    assert "ANTHROPIC_API_KEY" not in stored["env_removed"]
+    assert "value-that-must-not-travel" not in json.dumps(stored)  # names only
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["env_removed"] == stored["env_removed"]
+    # the MCP server alone is told where the home is
+    mcp = json.loads((run_store.run_dir(scene.pid, run["id"]) / "mcp.json").read_text())["mcpServers"]["researchos"]
+    assert mcp["env"]["RESEARCHOS_HOME"] == str(paths.researchos_home())
+    guard_file = json.loads((run_store.run_dir(scene.pid, run["id"]) / "guard.json").read_text())
+    assert str(paths.researchos_home()) in guard_file["off_limits"] or os.path.realpath(paths.researchos_home()) in guard_file["off_limits"]

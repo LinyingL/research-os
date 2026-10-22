@@ -4241,8 +4241,21 @@ the check. This round closes that door and the cheaper ones beside it.
      the app's `serve.log` is readable by any program of the user.
    - A page without the session still reads. Its first refused write says
      so in place: 「这个窗口没有连上 Research OS 的写入权限：请从 Research OS
-     应用打开它。」 / "This window cannot save: open it from the Research OS
-     app."
+     应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app
+     重新生成。」 / "This window cannot save: open it from the Research OS
+     app. If you already did, the app is out of date: run researchos app to
+     rebuild it." The second sentence is for an app built before the session
+     existed: it loads the plain address, cannot be given a cookie without
+     defeating the check, and only `researchos app` replaces it (the update
+     steps already end with that command; the changelog says so too).
+   - The launcher-script bundle that `researchos app` builds when `swiftc` is
+     missing reads the same file once the probe answers and opens
+     `/boot?<secret>` (hex, so no encoding), in the already-running case too;
+     for an engine without a file it opens the plain address.
+   - The log never holds the secret: the request line, and the path the
+     catch-all of a failed request reports, are logged with the value of
+     `session=` hidden, and a window that goes away while `/boot` answers is
+     not an error to report.
    - Tests may build a server that requires no session; `serve` never does.
 2. **What the agent can read and is given.**
    - The Claude Code hook also runs on `Read`, `Glob`, `Grep` and `LS`, and
@@ -4268,6 +4281,39 @@ the check. This round closes that door and the cheaper ones beside it.
      configuration is already off for the same reason. `.claude/`,
      `opencode.json` and `.opencode/` in the project are protected: an edit
      there is refused, and a change there is out of bounds.
+
+   How it is read:
+   - *The folders.* `guard.json` lists them as `off_limits`: the home in
+     use, the default `~/.researchos` and the legacy `~/.rce` whether or not
+     the environment names another, and `~/.ssh`, each as spelled and with
+     symbolic links resolved. A path is compared resolved, by NFC-normalised,
+     case-folded names, so a link inside the project and a differently
+     cased spelling lead nowhere. `Glob` also reads the literal folder in
+     front of the first wildcard of an absolute pattern. A `Grep` that starts
+     above one of the folders (or starts nowhere in particular, in a call
+     whose folder is above one) is refused, since ripgrep would read into
+     it; `Glob` and `LS` above them only list names and are not.
+   - *Bash.* The command text is refused when it spells the absolute path
+     of one of those folders (as a whole name: `rh` is not `rhx`), names
+     `$RESEARCHOS_HOME` or `$RCE_HOME`, or names a folder `.ssh`. As before,
+     this is a text check: a program the agent writes can still look for the
+     home by itself, which 17.5's limit restates below.
+   - *The environment.* Besides the variables of 17.4, `RESEARCHOS_HOME`
+     and `RCE_HOME` are not passed on; the MCP server's entry names the home
+     for the server alone. Credential-like names are judged in upper case,
+     so `github_token` goes too. `AUTH` and `SESSION` also catch names that
+     are no credential (`GIT_AUTHOR_NAME`, `TERM_SESSION_ID`); the accepted
+     cost is a missing variable, never a leaked one. The names removed are
+     stored with the run (`env_removed`) and shown in its log under 「没有交给
+     它的环境变量」 "Environment variables not given to it".
+   - *Settings.* The folders `.claude` and `.opencode` are refused at any
+     depth by the file tools and, with a writing operation or a copy, by the
+     Bash check; so are `opencode.json` and `opencode.jsonc` anywhere.
+     The after-run check reports a change there as `agent_settings_changed`
+     (the page: 「改动了 Claude Code 或 OpenCode 在项目里的设置」 "Changed
+     Claude Code or OpenCode settings in the project"); a pre-existing
+     `opencode.json` is that, not also a changed data file. Undo puts a
+     changed one back and moves a created one away, as for any file.
 3. **What the engine sees during a run is the run's.** While a run of the
    project is active, from its before-picture to its after-picture, every
    version that a watcher scan adds to the change history is attributed as
@@ -4319,9 +4365,12 @@ the check. This round closes that door and the cheaper ones beside it.
      One that is gone is out of bounds, the run lists it among its deleted
      files, and undo says it has no copy. One exception: Research OS keeps
      the newest 20 of each series of backups, and a save, by the person or
-     by a run's own tool, prunes the oldest. A backup that is the oldest of
-     a series that has gained a newer one since the picture is that
-     rotation, not the agent.
+     by a run's own tool, prunes the oldest. As many of the oldest of a
+     series as such pruning can have removed since the picture (what the
+     series held, plus what it gained, less 20) are that rotation, not the
+     agent; a series that never held more than 20 is never pruned, so there
+     one planted newer name excuses nothing. Planting twenty names would
+     still pass: this is a barrier, not a sandbox.
 5. **Undo says what it will do, and asks.**
    - 撤回本次运行 first lists the files it will put back (changed or
      deleted) and the files it will move away (created), each with its
@@ -4345,13 +4394,20 @@ the check. This round closes that door and the cheaper ones beside it.
      modification time on this Mac, in local time, where it is there; for a
      file that is gone, and for the task's done mark, when the run ended.
      The cannot-undo files carry the reason codes of 17.6 (`changed_since`,
-     `no_copy`, `in_cloud`).
+     `no_copy`, `in_cloud`, `protected`). The last is a created file under
+     `.researchos/` and a created `.git/config`; the page words it 「属于
+     Research OS 的记录文件夹或 git，撤回不会动它」 "Belongs to Research OS’s
+     records folder or to git; undo does not touch it".
    - *The choice.* `POST …/revert` takes `files`, the paths left checked
      (absent = all that can be undone; an empty list is refused). A path
      that could have been undone and is not named is left as it is and goes
      in the run's `revert.skipped` with the reason `kept`, which the page
      words 你选择保留; the run then reads 部分撤回 like any other partial
-     undo. A path the list did not offer is never acted on, whatever
+     undo. A path the undo could not have put back (no usable copy, or its
+     folder cannot be made) keeps that reason whether it is named or not: the
+     check for it comes before the choice is read, in the loops of changed
+     and of deleted files alike, so that the note and the log never say a
+     person kept what the list told them could not be undone. A path the list did not offer is never acted on, whatever
      `files` says, and a file that changed between the list and the
      confirmation is still left as it is (17.6).
    - *What is one choice.* A created file that is a deleted file renamed is
@@ -4359,6 +4415,11 @@ the check. This round closes that door and the cheaper ones beside it.
      (unchecked, it keeps its new name). The task's done mark and result
      link are one choice, listed as `research/tasks.json`: a person who
      keeps the result record may keep the task done.
+   - *The history.* Each file the undo puts back is recorded in the change
+     history under the person's name (17.6), except those below `.git/`,
+     `.researchos/` and `.rce/`: those are put back all the same, and kept
+     out of the history as attribution (item 3) keeps them out (a
+     repository's `config` can hold a remote URL with a token).
    - *Folders.* The picture lists every folder its walk went into, empty
      ones and ones that hold only noise it does not record included. A
      picture cut at its limit cannot say which folders existed, and undo
@@ -4390,6 +4451,26 @@ the check. This round closes that door and the cheaper ones beside it.
        live engine left alone. A thread, because a project of 50,000 files
        takes seconds to compare, and the app waits for the engine's first
        answer.
+     - *A folder that cannot be read.* A run whose project folder is not
+       there at that moment (a drive that is not attached) still has its
+       program ended and reads `interrupted`, but its changes cannot be
+       compared. It is marked `check_pending`, and the comparison is made by
+       the next recovery that finds the folder again (a listing, a start, the
+       next engine start), unless a run of the project is going then. Until
+       then it cannot be undone, and no out-of-bounds change is reported;
+       afterwards it can and is. A folder that stays away keeps the mark.
+
+**The cookie's limit.** The session cookie belongs to the host `127.0.0.1`,
+not to the port: cookies are not scoped by port, and SameSite=Strict does not
+separate the ports of one host. In the browser flow (`researchos serve`), a
+server an agent starts on another port of `127.0.0.1` (to preview a figure,
+say) receives the cookie if the person opens it in the same browser while it
+runs, and could replay the secret as `X-ResearchOS-Session`. The app is not
+affected: its window refuses to leave the engine's own address. This round
+leaves it as it is: removing the ambient cookie means the page sending the
+secret itself on every request, a change of every request the page makes,
+which is for a round of its own. Until then: do not open an agent's local
+server in the browser that runs Research OS, or use the app.
 
 **17.5's limit, restated.** Research OS runs no operating-system sandbox. A
 program the agent writes and runs can still read and change anything this

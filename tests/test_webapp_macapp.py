@@ -126,6 +126,77 @@ def test_launcher_expands_baked_path_only_double_quoted(tmp_path):
     assert script.count("$ENGINE") == script.count('"$ENGINE"')  # every expansion is the quoted one
 
 
+# -- the launcher opens the page with the engine's session (DESIGN.md 18.1) ----------------------------------
+
+_HEX = "0123456789abcdef" * 4
+_FAKE_CURL = """#!/bin/sh
+# answers like a reachable engine once $FAKE_UP exists
+[ -e "$FAKE_UP" ]
+"""
+_FAKE_OPEN = """#!/bin/sh
+printf '%s\\n' "$@" >> "$OPENED"
+"""
+#: What the engine does on start (it writes its session file before it answers), as far as the launcher can tell.
+_FAKE_ENGINE = """#!/bin/sh
+if [ -n "$FAKE_SESSION" ]; then
+  mkdir -p "$RESEARCHOS_HOME/engine"
+  printf '%s\\n' "$FAKE_SESSION" > "$RESEARCHOS_HOME/engine/7357.session"
+fi
+: > "$FAKE_UP"
+"""
+
+
+def _run_launcher(tmp_path, *, running: bool, session_file: str | None, start_writes: str | None = None) -> list[str]:
+    """Run the generated launcher against stand-ins for `curl`, `open` and the engine; what `open` was asked to open."""
+    if not shutil.which("bash"):
+        pytest.skip("bash is not installed")
+    tools = tmp_path / "tools"
+    tools.mkdir(parents=True)
+    for name, body in (("curl", _FAKE_CURL), ("open", _FAKE_OPEN)):
+        (tools / name).write_text(body)
+        (tools / name).chmod(0o755)
+    engine = tmp_path / "engine bin" / "researchos"
+    engine.parent.mkdir()
+    engine.write_text(_FAKE_ENGINE)
+    engine.chmod(0o755)
+    launcher = _launcher(macapp.generate_bundle(tmp_path, executable=engine))
+    home = tmp_path / "rhome"
+    home.mkdir()
+    if session_file is not None:
+        (home / "engine").mkdir()
+        (home / "engine" / f"{macapp.DEFAULT_PORT}.session").write_text(session_file)
+    up, opened = tmp_path / "up", tmp_path / "opened"
+    if running:
+        up.write_text("")
+    env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "RESEARCHOS_HOME": str(home),
+           "HOME": str(tmp_path / "home"), "FAKE_UP": str(up), "OPENED": str(opened), "FAKE_SESSION": start_writes or ""}
+    done = subprocess.run(["bash", str(launcher)], env=env, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert _HEX not in done.stdout + done.stderr  # the secret is printed nowhere
+    return opened.read_text().split() if opened.exists() else []
+
+
+def test_launcher_opens_boot_with_the_session_of_an_engine_that_is_already_running(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "a", running=True, session_file=_HEX + "\n") == [f"{base}/boot?session={_HEX}"]
+
+
+def test_launcher_opens_boot_with_the_session_of_the_engine_it_starts(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "b", running=False, session_file=None, start_writes=_HEX) == [f"{base}/boot?session={_HEX}"]
+
+
+def test_launcher_opens_the_plain_address_for_an_engine_without_a_session_file(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "c", running=True, session_file=None) == [base]
+    assert _run_launcher(tmp_path / "d", running=False, session_file=None) == [base]
+
+
+@pytest.mark.parametrize("text", ["", "\n", "not hex!\n", _HEX + " extra\n", "../../etc/passwd\n", "ab&cd\n", "zz" * 32])
+def test_launcher_never_puts_anything_but_a_hex_secret_in_the_address(tmp_path, text):
+    assert _run_launcher(tmp_path, running=True, session_file=text) == [f"http://127.0.0.1:{macapp.DEFAULT_PORT}"]
+
+
 # -- resolve_executable ----------------------------------------------------
 
 

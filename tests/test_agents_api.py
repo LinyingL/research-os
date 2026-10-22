@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from researchos import people, project, workspace
+from researchos import paths, people, project, workspace
 from researchos.agents import labels, profiles
 from researchos.agents import runs as run_store
 from researchos.records.identity import read_identity
@@ -103,7 +103,7 @@ class Api:
         agent = labels.parse_owner(owner)
         body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
                 "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
-                "by": people.current_member_id()}
+                "by": people.current_member_id(), "home": str(paths.researchos_home())}  # the fake plays the MCP server
         (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
 
     def calls(self, runner: str = "claude-code") -> list[dict]:

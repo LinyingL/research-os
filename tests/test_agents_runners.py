@@ -71,11 +71,13 @@ DIRTY_ENV = {
     "OPENCODE_PERMISSION": "{\"bash\": \"allow\"}",
     "RESEARCHOS_AGENT_RUN": "r-stale",
     "CLAUDE_CODE_USE_BEDROCK": "1",  # provider selection, not session identity: kept
+    "RESEARCHOS_HOME": "/real/home",  # where Research OS keeps its files: not the agent's to know (18.1 item 2)
+    "RCE_HOME": "/real/legacy",
 }
 
 
 def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
-    env = runners.child_env(DIRTY_ENV, run_id="r-20261021T101112Z-abc123", home="/h", program="/opt/x/bin/claude")
+    env = runners.child_env(DIRTY_ENV, run_id="r-20261021T101112Z-abc123", program="/opt/x/bin/claude")
     for gone in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
                  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_REMOTE", "CLAUDE_CODE_MESSAGING_SOCKET",
                  "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_CONTAINER_ID", "CLAUDE_CODE_WORKER_EPOCH",
@@ -84,7 +86,7 @@ def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
         assert gone not in env, gone
     assert env["ANTHROPIC_API_KEY"] == "sk-keep" and env["HTTPS_PROXY"] == "http://proxy:3128"
     assert env["HOME"] == "/home/me" and env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert env["RESEARCHOS_HOME"] == "/h"
+    assert "RESEARCHOS_HOME" not in env and "RCE_HOME" not in env  # only the MCP server's entry names the home
     assert env["RESEARCHOS_AGENT_RUN"] == "r-20261021T101112Z-abc123"  # replaces the inherited one
     assert env["PYTHONUNBUFFERED"] == "1"
     path = env["PATH"].split(os.pathsep)
@@ -95,24 +97,24 @@ def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
 
 
 def test_child_env_program_dir_not_duplicated_and_relative_program(profiles_mod):
-    env = runners.child_env({"PATH": "/a:/usr/local/bin:/b"}, run_id="r", home="/h", program="/usr/local/bin/claude")
+    env = runners.child_env({"PATH": "/a:/usr/local/bin:/b"}, run_id="r", program="/usr/local/bin/claude")
     assert env["PATH"].split(os.pathsep)[:3] == ["/usr/local/bin", "/a", "/b"]
     assert env["PATH"].split(os.pathsep).count("/usr/local/bin") == 1
-    env = runners.child_env({"PATH": "/a"}, run_id="r", home="/h", program="claude")  # no directory part
+    env = runners.child_env({"PATH": "/a"}, run_id="r", program="claude")  # no directory part
     assert env["PATH"].split(os.pathsep)[0] == "/a"
 
 
 def test_child_env_uses_profiles_search_path(profiles_mod, monkeypatch):
     seen = []
     monkeypatch.setattr(profiles_mod, "search_path", lambda base=None: seen.append(base) or "/x:/y")
-    env = runners.child_env({"PATH": "/base"}, run_id="r", home="/h", program="/p/claude")
+    env = runners.child_env({"PATH": "/base"}, run_id="r", program="/p/claude")
     assert seen == ["/base"] and env["PATH"] == "/p:/x:/y"
 
 
 def test_child_env_with_the_real_search_path():
     """No stand-in: package A's own `search_path` widens PATH with the install places."""
     profiles = pytest.importorskip("researchos.agents.profiles")
-    env = runners.child_env({"PATH": "/usr/bin"}, run_id="r", home="/h", program="/opt/x/claude")
+    env = runners.child_env({"PATH": "/usr/bin"}, run_id="r", program="/opt/x/claude")
     parts = env["PATH"].split(os.pathsep)
     assert parts[:2] == ["/opt/x", "/usr/bin"] and "/opt/homebrew/bin" in parts and "/usr/local/bin" in parts
     assert env["PATH"].split(os.pathsep)[2:] == [p for p in profiles.search_path("/usr/bin").split(os.pathsep)
@@ -122,11 +124,81 @@ def test_child_env_with_the_real_search_path():
 def test_scrub_regex_names():
     scrubbed = ["CLAUDECODE", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
                 "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_USE_CCR_V2_REMOTE", "CLAUDE_SESSION_X", "CCR_A",
-                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG"]
+                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "RESEARCHOS_HOME", "RCE_HOME"]
     kept = ["CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_BASE_URL", "OPENCODE_DISABLE_AUTOUPDATE", "PATH", "XCLAUDECODE",
-            "MY_CCR_X", "OPENCODE_CONFIG_DIR"]
+            "MY_CCR_X", "OPENCODE_CONFIG_DIR", "RESEARCHOS_AGENT_RUN", "MY_RESEARCHOS_HOME", "RESEARCHOS_HOME_X"]
     assert all(runners.SCRUB_ENV_RE.match(n) for n in scrubbed)
     assert not any(runners.SCRUB_ENV_RE.match(n) for n in kept)
+
+
+# -- credentials are not handed over (18.1 item 2) ---------------------------------
+
+CREDENTIAL_ENV = {
+    "PATH": "/usr/bin", "HOME": "/home/me", "LANG": "en_US.UTF-8",
+    "GITHUB_TOKEN": "g", "GH_ENTERPRISE_TOKEN": "g", "GITHUB_PAT": "g", "NPM_TOKEN": "n", "FOO_SECRET": "s",
+    "DB_PASSWORD": "p", "OLD_PASSWD": "p", "MY_CREDENTIALS": "c", "PRIVATE_KEY_PATH": "k", "STRIPE_API_KEY": "k",
+    "S3_ACCESS_KEY_ID": "k", "OAUTH_THING": "o", "TERM_SESSION_ID": "t", "SOME_COOKIE": "c",
+    "SSH_AUTH_SOCK": "/tmp/agent", "GPG_AGENT_INFO": "x", "RCE_LLM_API_KEY": "k", "github_token": "lower",
+    "AWS_ACCESS_KEY_ID": "a", "AWS_PROFILE": "prod", "AWS_REGION": "eu", "GOOGLE_APPLICATION_CREDENTIALS": "/g.json",
+    "GOOGLE_CLOUD_PROJECT": "proj",
+    "ANTHROPIC_API_KEY": "sk-1", "ANTHROPIC_AUTH_TOKEN": "sk-2", "CLAUDE_CODE_OAUTH_TOKEN": "oat",
+    "OPENAI_API_KEY": "o", "OPENROUTER_API_KEY": "r", "GEMINI_API_KEY": "g", "GROQ_API_KEY": "q",
+    "MISTRAL_API_KEY": "m", "DEEPSEEK_API_KEY": "d", "ZAI_API_KEY": "z",
+}
+
+
+def test_credential_looking_variables_are_not_given_to_claude_code(profiles_mod):
+    env = runners.child_env(CREDENTIAL_ENV, run_id="r", program="/p/claude", runner="claude-code")
+    removed = runners.credential_names(CREDENTIAL_ENV, "claude-code")
+    for name in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_PAT", "NPM_TOKEN", "FOO_SECRET", "DB_PASSWORD",
+                 "OLD_PASSWD", "MY_CREDENTIALS", "PRIVATE_KEY_PATH", "STRIPE_API_KEY", "S3_ACCESS_KEY_ID",
+                 "OAUTH_THING", "TERM_SESSION_ID", "SOME_COOKIE", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "RCE_LLM_API_KEY",
+                 "github_token", "AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "GOOGLE_APPLICATION_CREDENTIALS",
+                 "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "ZAI_API_KEY"):
+        assert name not in env and name in removed, name
+    # what Claude Code needs to reach its model, and what is no credential at all
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "PATH", "HOME", "LANG",
+                 "GOOGLE_CLOUD_PROJECT"):
+        assert name in env and name not in removed, name
+    assert removed == sorted(removed)
+    assert not set(CREDENTIAL_ENV.values()) & set(removed)  # names only, never a value
+
+
+def test_bedrock_and_vertex_keep_their_cloud_variables_only_when_selected(profiles_mod):
+    bedrock = dict(CREDENTIAL_ENV, CLAUDE_CODE_USE_BEDROCK="1")
+    env = runners.child_env(bedrock, run_id="r", program="/p/claude", runner="claude-code")
+    assert env["AWS_ACCESS_KEY_ID"] == "a" and env["AWS_PROFILE"] == "prod"
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in env and "GITHUB_TOKEN" not in env
+    vertex = dict(CREDENTIAL_ENV, CLAUDE_CODE_USE_VERTEX="1")
+    env = runners.child_env(vertex, run_id="r", program="/p/claude", runner="claude-code")
+    assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/g.json" and "AWS_ACCESS_KEY_ID" not in env
+    # OpenCode: its providers' keys, and GOOGLE_*, whatever else is set
+    env = runners.child_env(CREDENTIAL_ENV, run_id="r", program="/p/opencode", runner="opencode")
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+                 "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT"):
+        assert name in env, name
+    for name in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_ACCESS_KEY_ID", "GITHUB_TOKEN", "ZAI_API_KEY"):
+        assert name not in env, name
+
+
+def test_launches_report_the_removed_names_and_never_the_values(tmp_path, profiles_mod):
+    launch, _ = _claude(tmp_path, profiles_mod, base_env=CREDENTIAL_ENV)
+    assert launch.removed_env == runners.credential_names(CREDENTIAL_ENV, "claude-code") and "GITHUB_TOKEN" in launch.removed_env
+    assert not any(v in launch.removed_env for v in CREDENTIAL_ENV.values() if len(v) > 2)
+    oc, _ = _opencode(tmp_path, profiles_mod, base_env=CREDENTIAL_ENV)
+    assert oc.removed_env == runners.credential_names(CREDENTIAL_ENV, "opencode") and "OPENAI_API_KEY" not in oc.removed_env
+    assert "ANTHROPIC_AUTH_TOKEN" in oc.removed_env
+    # the MCP server's entry is the one place that is given the home
+    mcp = json.loads(launch.files["mcp.json"])["mcpServers"]["researchos"]["env"]
+    assert mcp["RESEARCHOS_HOME"].endswith("home")
+
+
+def test_claude_does_not_load_the_projects_own_settings(tmp_path, profiles_mod):
+    launch, _ = _claude(tmp_path, profiles_mod)
+    argv = launch.argv
+    assert argv[argv.index("--setting-sources") + 1] == "user"  # a run's .claude/settings.json is not the next run's
+    assert argv.index("--setting-sources") < argv.index("--allowedTools")  # the variadic lists stay last
+    assert argv[argv.index("--settings") + 1].endswith("claude-settings.json")
 
 
 # -- Claude Code launch ---------------------------------------------------------
@@ -206,12 +278,12 @@ def test_claude_denials_cover_git_and_researchos():
 def test_claude_env_and_files(tmp_path, profiles_mod):
     launch, a = _claude(tmp_path, profiles_mod)
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in launch.env and launch.env["RESEARCHOS_AGENT_RUN"] == RUN_ID
-    assert launch.env["RESEARCHOS_HOME"] == a["home"] and launch.env["PATH"].startswith("/opt/bin" + os.pathsep)
+    assert "RESEARCHOS_HOME" not in launch.env and launch.env["PATH"].startswith("/opt/bin" + os.pathsep)
     assert set(launch.files) == {"claude-settings.json", "mcp.json"}
 
     settings = json.loads(launch.files["claude-settings.json"])
     (group,) = settings["hooks"]["PreToolUse"]
-    assert group["matcher"] == "Edit|Write|MultiEdit|NotebookEdit|Bash"
+    assert group["matcher"] == "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Glob|Grep|LS"  # 18.1 item 2
     (hook,) = group["hooks"]
     assert hook["type"] == "command"
     assert shlex.split(hook["command"]) == ["sh", "-c", runners.HOOK_SHELL, sys.executable, str(a["run_dir"])]
@@ -257,7 +329,7 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
     env = launch.env
     assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert "OPENCODE_CONFIG" not in env and "OPENCODE_PERMISSION" not in env
-    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and env["RESEARCHOS_HOME"] == a["home"]
+    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and "RESEARCHOS_HOME" not in env and "RCE_HOME" not in env
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in env
 
     config = json.loads(env["OPENCODE_CONFIG_CONTENT"])

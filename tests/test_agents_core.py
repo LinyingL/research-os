@@ -771,7 +771,7 @@ def test_protected_lists_data_records_and_dirs(tmp_path):
     root = _attempts_project(tmp_path)
     before = snapshot.take(root)
     prot = snapshot.protected(root, before)
-    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git"]
+    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"]
     assert prot["records"] == ["map.md", "research/tasks.json"]
     assert prot["data"] == ["config.json", "data/clean.DTA", "data/raw.csv"]
     assert prot["files"] == sorted(prot["data"] + prot["records"])
@@ -1067,24 +1067,39 @@ def test_a_deleted_backup_is_out_of_bounds_and_a_new_one_is_not(tmp_path):
     assert _backup_violations(_backups_project(tmp_path / "e", names_), lambda r: None) == []
 
 
+def _day(n: int) -> str:
+    return f"202601{n:02d}T000000000000Z"
+
+
+def test_the_backup_series_length_the_check_assumes_is_what_research_os_keeps():
+    from researchos.records import files as records_files
+    from researchos.webapp import mapedit
+
+    assert snapshot.BACKUP_KEEP == records_files.SNAPSHOT_KEEP == mapedit.BACKUP_KEEP == 20
+
+
 def test_research_oss_own_rotation_of_a_backup_series_is_not_a_violation(tmp_path):
-    series = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3, 4)]
+    # Research OS prunes a series to its newest 20 and removes nothing from a shorter one, so a rotation can only
+    # have happened in a series of 20: a save adds the newest and drops the oldest
+    series = [f"tasks.json.{_day(n)}.write.json" for n in range(1, 21)]
     other = [f"attempts.toml.{_stamp(n)}.toml" for n in (1, 2)]
     root = _backups_project(tmp_path / "a", series + other)
-    oldest, newest = ".researchos/backups/" + series[0], ".researchos/backups/tasks.json.20260109T000000000000Z.write.json"
+    folder = ".researchos/backups/"
+    oldest, second, newest = folder + series[0], folder + series[1], folder + f"tasks.json.{_day(25)}.write.json"
 
-    def rotate(r):  # a save adds the newest and prunes the oldest
+    def rotate(r):
         (r / newest).write_text("n")
         (r / oldest).unlink()
 
     assert _backup_violations(root, rotate) == []
-    # two pruned at once is the same
+    # two saves, two pruned, is the same
     root2 = _backups_project(tmp_path / "b", series)
 
     def rotate_two(r):
         (r / newest).write_text("n")
+        (r / (folder + f"tasks.json.{_day(26)}.write.json")).write_text("n")
         (r / oldest).unlink()
-        (r / (".researchos/backups/" + series[1])).unlink()
+        (r / second).unlink()
 
     assert _backup_violations(root2, rotate_two) == []
     # the oldest removed with nothing added, a middle one removed beside an addition, another series, or a
@@ -1092,17 +1107,57 @@ def test_research_oss_own_rotation_of_a_backup_series_is_not_a_violation(tmp_pat
     root3 = _backups_project(tmp_path / "c", series)
     assert _backup_violations(root3, lambda r: (r / oldest).unlink()) == [{"path": oldest, "reason": "backup_deleted"}]
     root4 = _backups_project(tmp_path / "d", series)
-    middle = ".researchos/backups/" + series[2]
+    middle = folder + series[2]
     found = _backup_violations(root4, lambda r: ((r / newest).write_text("n"), (r / middle).unlink()))
     assert found == [{"path": middle, "reason": "backup_deleted"}]
     root5 = _backups_project(tmp_path / "e", series + other)
-    gone_other = ".researchos/backups/" + other[0]
+    gone_other = folder + other[0]
     found = _backup_violations(root5, lambda r: ((r / newest).write_text("n"), (r / gone_other).unlink()))
     assert found == [{"path": gone_other, "reason": "backup_deleted"}]
     root6 = _project(tmp_path / "f", {".researchos/backups/notes.txt": "n", "a.txt": "a"})
     found = _backup_violations(root6, lambda r: ((r / (".researchos/backups/z.20260109T000000000000Z.txt")).write_text("x"),
                                                  (r / ".researchos/backups/notes.txt").unlink()))
     assert found == [{"path": ".researchos/backups/notes.txt", "reason": "backup_deleted"}]
+
+
+def test_a_planted_newer_backup_name_does_not_excuse_deleting_the_older_ones(tmp_path):
+    # Research OS never prunes a series of 20 or fewer: with the series short, any deletion is the agent's,
+    # however many newer names were added beside it (DESIGN 18.1 item 4)
+    folder = ".researchos/backups/"
+    series = [f"map.md.{_stamp(n)}.md" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path / "a", series)
+    planted = folder + "map.md.99991231T000000000000Z.md"
+
+    def plant_and_delete(r):
+        (r / planted).write_text("x")
+        for name in series:
+            (r / (folder + name)).unlink()
+
+    found = _backup_violations(root, plant_and_delete)
+    assert [v["path"] for v in found] == [folder + n for n in series]
+    assert {v["reason"] for v in found} == {"backup_deleted"}
+    # a save of the person's or the run's own tool into a cleared folder is no different
+    root2 = _backups_project(tmp_path / "b", series)
+    found = _backup_violations(root2, lambda r: [(r / (folder + n)).unlink() for n in series]
+                               + [(r / planted).write_text("x")])
+    assert len(found) == 3
+    # a series of 20 that gained one can have lost one, not three: the oldest is rotation, the next two are not
+    long_series = [f"map.md.{_day(n)}.md" for n in range(1, 21)]
+    root3 = _backups_project(tmp_path / "c", long_series)
+
+    def one_save_three_deleted(r):
+        (r / (folder + f"map.md.{_day(25)}.md")).write_text("n")
+        for name in long_series[:3]:
+            (r / (folder + name)).unlink()
+
+    found = _backup_violations(root3, one_save_three_deleted)
+    assert found == [{"path": folder + long_series[1], "reason": "backup_deleted"},
+                     {"path": folder + long_series[2], "reason": "backup_deleted"}]
+    # a series that never reached 20 stays out of reach however many are planted but one
+    root4 = _backups_project(tmp_path / "d", long_series[:10])
+    found = _backup_violations(root4, lambda r: ((r / (folder + f"map.md.{_day(25)}.md")).write_text("n"),
+                                                 (r / (folder + long_series[0])).unlink()))
+    assert found == [{"path": folder + long_series[0], "reason": "backup_deleted"}]
 
 
 def test_a_backup_a_cut_after_walk_did_not_see_is_not_called_deleted(tmp_path, monkeypatch):
@@ -1147,7 +1202,8 @@ def project(tmp_path):
 def test_guard_file_round_trip(project):
     g = project.guard
     assert g["root"] == os.path.realpath(project.root) and g["engine_port"] == 8765
-    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git"] and "data/raw.csv" in g["files"]
+    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"] \
+        and "data/raw.csv" in g["files"]
     guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
     assert guard.load_guard(project.run_dir)["engine_port"] is None
     assert not [p for p in project.run_dir.iterdir() if p.name != "guard.json"]  # no temp file left behind
@@ -1257,6 +1313,189 @@ def test_home_expansion_cannot_smuggle_a_path(project, monkeypatch):
     assert _refused(project, "Write", {"file_path": "~/x.py"}, cwd=str(project.root))
     monkeypatch.setenv("HOME", str(project.root / "myhome"))
     assert _refused(project, "Write", {"file_path": "~/x.py"}, cwd=str(project.root)) is None
+
+
+# -- what the agent can read, and the agent program's own settings (18.1 item 2) ---------------------------------
+
+
+@pytest.fixture
+def home_files(project):
+    """Research OS's home with a session file and a settings file in it, as the engine leaves them."""
+    home = paths.researchos_home()
+    (home / "engine").mkdir(parents=True, exist_ok=True)
+    (home / "engine" / "7357.session").write_text("ab" * 32, encoding="utf-8")
+    (home / "settings.json").write_text("{}", encoding="utf-8")
+    (project.root / "link-home").symlink_to(home)
+    return home
+
+
+def test_the_guard_file_lists_the_folders_an_agent_may_not_read(project, home_files, monkeypatch):
+    off = project.guard["off_limits"]
+    assert str(home_files) in off or os.path.realpath(home_files) in off
+    assert os.path.expanduser("~/.ssh") in off and os.path.expanduser("~/.researchos") in off
+    # also when the environment names another home: the default one is still the person's
+    monkeypatch.setenv("HOME", str(project.tmp / "someone"))
+    guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
+    assert os.path.join(str(project.tmp / "someone"), ".ssh") in guard.load_guard(project.run_dir)["off_limits"]
+
+
+@pytest.mark.parametrize("tool, key", [("Read", "file_path"), ("Glob", "path"), ("Grep", "path"), ("LS", "path")])
+def test_reading_tools_refuse_research_os_home(project, home_files, tool, key):
+    for target in (home_files / "engine" / "7357.session", home_files / "settings.json", home_files / "engine",
+                   home_files, project.root / "link-home" / "engine" / "7357.session",
+                   str(home_files).upper() + "/ENGINE/7357.SESSION", "~/.researchos/settings.json", "~/.ssh/id_ed25519",
+                   "~/.ssh", "~/.rce/settings.json"):
+        reason = _refused(project, tool, {key: str(target), "pattern": "*"}, cwd=str(project.root))
+        assert reason and reason.endswith("."), (tool, target)
+        assert "home" in reason or ".ssh" in reason
+    # a relative path resolves against the call's folder
+    assert _refused(project, tool, {key: "engine/7357.session"}, cwd=str(home_files))
+
+
+def test_reading_tools_refuse_the_secret_however_it_is_named(project, home_files):
+    session = str(home_files / "engine" / "7357.session")
+    assert _refused(project, "Glob", {"pattern": session})
+    assert _refused(project, "Glob", {"pattern": str(home_files) + "/**/*.session"})
+    assert _refused(project, "Glob", {"pattern": "~/.ssh/*"})
+    assert _refused(project, "Glob", {"pattern": "*.session", "path": str(home_files / "engine")})
+    assert _refused(project, "Read", {"file_path": session + "\0.txt"})  # an embedded NUL is not a path to trust
+    # a Grep that starts above the home would read into it; a Glob or LS above it only lists names
+    above = str(home_files.parent)
+    assert _refused(project, "Grep", {"pattern": "a", "path": above})
+    assert _refused(project, "Grep", {"pattern": "a", "path": "/"})
+    assert _refused(project, "Grep", {"pattern": "a"}, cwd=above)  # no folder given: where the call runs
+    assert _refused(project, "Grep", {"pattern": "a", "path": "~"})
+    assert _refused(project, "Glob", {"pattern": "*", "path": above}) is None
+    assert _refused(project, "LS", {"path": above}) is None
+
+
+def test_reading_tools_leave_the_project_and_everything_else_alone(project, home_files):
+    root = project.root
+    for tool, tool_input in (("Read", {"file_path": str(root / "analysis.py")}), ("Read", {"file_path": "/etc/hosts"}),
+                             ("Read", {"file_path": "sub/x.py"}), ("Read", {"file_path": "~/notes.txt"}),
+                             ("Read", {"file_path": str(home_files) + "-other/x"}),  # another folder with a longer name
+                             ("Glob", {"pattern": "**/*.py"}), ("Glob", {"pattern": str(root) + "/**/*.csv"}),
+                             ("Glob", {"pattern": "*.py", "path": str(root / "code")}),
+                             ("Grep", {"pattern": "needle"}), ("Grep", {"pattern": "x", "path": str(root)}),
+                             ("Grep", {"pattern": "x", "path": str(root / "data"), "glob": "*.csv"}),
+                             ("LS", {"path": str(root)}), ("Read", {})):
+        assert _refused(project, tool, tool_input, cwd=str(root)) is None, (tool, tool_input)
+    assert _refused(project, "Read", ["x"]) and _refused(project, "Grep", None)  # not arguments: refused as the others
+    # a guard written without the list (an older file) judges nothing here
+    bare = {k: v for k, v in project.guard.items() if k != "off_limits"}
+    assert guard.check_tool(bare, "Read", {"file_path": str(home_files / "settings.json")}) is None
+
+
+def test_the_hook_runs_on_the_reading_tools(project, home_files):
+    done = _hook(project.run_dir, {"tool_name": "Read", "tool_input": {"file_path": str(home_files / "engine" / "7357.session")},
+                                   "cwd": str(project.root)})
+    assert done.returncode == 2 and done.stderr.startswith(b"Research OS: ") and b"ab" * 32 not in done.stderr
+    logged = runs.read_lines(project.run_dir / "refusals.jsonl")
+    assert logged and logged[-1]["tool"] == "Read" and logged[-1]["target"].endswith("7357.session")
+    done = _hook(project.run_dir, {"tool_name": "Read", "tool_input": {"file_path": str(project.root / "analysis.py")},
+                                   "cwd": str(project.root)})
+    assert done.returncode == 0
+
+
+@pytest.mark.parametrize("command", [
+    "cat $RESEARCHOS_HOME/engine/7357.session", "cat ${RESEARCHOS_HOME}/engine/*.session", "ls $RESEARCHOS_HOME",
+    "echo $RCE_HOME", "env | grep RESEARCHOS_HOME", "cd \"$RESEARCHOS_HOME\" && ls",
+    "cat ~/.ssh/id_ed25519", "ls ~/.ssh", "cp ~/.ssh/id_rsa /tmp/k", "cat $HOME/.ssh/config; echo", "ls -a .ssh",
+    "tar c ~/.ssh|gzip", "cat '/Users/me/.ssh/id_rsa'", "ls (.ssh)",
+])
+def test_bash_refuses_the_home_variable_and_ssh(project, command):
+    reason = _refused(project, "Bash", {"command": command}, cwd=str(project.root))
+    assert reason and reason.endswith("."), command
+
+
+def test_bash_refuses_the_absolute_path_of_the_home(project, home_files):
+    for text in (str(home_files), os.path.realpath(home_files)):
+        assert _refused(project, "Bash", {"command": f"cat {text}/engine/7357.session"}), text
+        assert _refused(project, "Bash", {"command": f"ls '{text}'"}), text
+        assert _refused(project, "Bash", {"command": f"cd {text.upper()};ls"}), text  # case-insensitive volumes
+        assert _refused(project, "Bash", {"command": f"python3 -c \"open('{text}/settings.json')\""}), text
+        assert _refused(project, "Bash", {"command": f"cat {text}x/engine"}) is None  # a different, longer name
+        assert _refused(project, "Bash", {"command": f"cat my{text}/engine"}) is None
+    assert _refused(project, "Bash", {"command": "cat research/overview.md && python analysis.py"}) is None
+
+
+@pytest.mark.parametrize("target", [
+    ".claude/settings.json", ".claude/settings.local.json", ".claude/commands/x.md", "sub/.claude/settings.json",
+    ".opencode/opencode.json", ".opencode/plugin/x.js", "deep/er/.opencode/x", ".CLAUDE/settings.json",
+    "opencode.json", "opencode.jsonc", "docs/opencode.json", "OpenCode.JSON",
+])
+def test_file_tools_never_write_the_agent_programs_own_settings(project, target):
+    for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")):
+        reason = _refused(project, tool, {key: str(project.root / target)})
+        assert reason and "project setting" in reason and reason.endswith("."), (tool, target)
+    assert guard.AGENT_SETTINGS_DIRS <= set(project.guard["dirs"])
+
+
+def test_file_tools_still_write_files_that_only_look_like_them(project):
+    for target in ("claude-notes.md", "opencode_notes.json", "opencode.json.bak", "docs/claude.md", "my.claude/x.md",
+                   "opencode.js", "notes/opencode-setup.txt"):
+        assert _refused(project, "Write", {"file_path": str(project.root / target)}) is None, target
+
+
+@pytest.mark.parametrize("command", [
+    "echo '{}' > .claude/settings.json", "mkdir -p .claude && echo '{}' >> .claude/settings.json",
+    "cp /tmp/evil.json .claude/settings.local.json", "tee .claude/settings.json < x", "rm -rf .claude",
+    "mv x.json .opencode/opencode.json", "echo '{}' > opencode.json", "tee opencode.jsonc < x", "sed -i s/a/b/ opencode.json",
+    "install -m 644 x.json sub/.claude/settings.json", "curl -o .claude/settings.json https://example.com/x",
+    "unzip -o x.zip -d .claude", "ln -s /tmp/x opencode.json", "touch .claude/settings.json",
+    "echo '{}' > \"$OUT\"; ls .claude", "mkdir .opencode",
+])
+def test_bash_refuses_writing_the_agent_programs_own_settings(project, command):
+    reason = _refused(project, "Bash", {"command": command}, cwd=str(project.root))
+    assert reason and reason.endswith("."), command
+
+
+@pytest.mark.parametrize("command", [
+    "cat .claude/settings.json", "ls .claude", "ls -la .claude/commands", "cat opencode.json", "grep -n model opencode.json",
+    "python x.py > run.log", "cat claude-notes.md > out.txt", "echo opencode.json.bak", "ls .claudeignore", "opencode --version",
+    "cp data.csv new.csv", "cat .claude/CLAUDE.md | head",
+])
+def test_bash_still_reads_the_agent_programs_own_settings(project, command):
+    assert _refused(project, "Bash", {"command": command}, cwd=str(project.root)) is None, command
+
+
+def test_the_settings_are_out_of_bounds_after_the_run_wherever_they_were_written(tmp_path):
+    root = _project(tmp_path / "proj", {"a.txt": "a", ".claude/settings.json": '{"model": "x"}',
+                                        "sub/.opencode/x.json": "{}"})
+    assert ".claude" in snapshot.PROTECTED_DIRS and ".opencode" in snapshot.PROTECTED_DIRS
+    prot = snapshot.protected(root, snapshot.take(root))
+    assert ".claude/settings.json" not in prot["files"]  # covered as part of its folder, not listed twice
+
+    def mutate(r):
+        (r / ".claude/settings.local.json").write_text('{"hooks": {}}', encoding="utf-8")  # created
+        (r / ".claude/settings.json").write_text('{"env": {}}', encoding="utf-8")  # changed
+        (r / "sub/.opencode/x.json").unlink()  # deleted
+        (r / "opencode.json").write_text("{}", encoding="utf-8")
+        (r / "deep").mkdir()
+        (r / "deep/opencode.jsonc").write_text("{}", encoding="utf-8")
+        (r / "notes.txt").write_text("fine", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted(found, key=lambda v: v["path"]) == [
+        {"path": ".claude/settings.json", "reason": "agent_settings_changed"},
+        {"path": ".claude/settings.local.json", "reason": "agent_settings_changed"},
+        {"path": "deep/opencode.jsonc", "reason": "agent_settings_changed"},
+        {"path": "opencode.json", "reason": "agent_settings_changed"},
+        {"path": "sub/.opencode/x.json", "reason": "agent_settings_changed"}]
+    # the same without a protected list in `prot` (a run recorded before this existed) is judged the same
+    found, _ = _violations(_project(tmp_path / "again", {"a.txt": "a"}), lambda r: (r / "opencode.json").write_text("{}"))
+    assert found == [{"path": "opencode.json", "reason": "agent_settings_changed"}]
+    # and an untouched project is clean
+    assert _violations(_project(tmp_path / "clean", {".claude/settings.json": "{}"}), lambda r: None)[0] == []
+
+
+def test_a_setting_that_is_also_a_data_file_is_one_violation_not_two(tmp_path):
+    root = _project(tmp_path / "proj", {"opencode.json": "{}", "docs/.claude/x.json": "{}", "data/raw.csv": "a"})
+    found, _ = _violations(root, lambda r: ((r / "opencode.json").write_text('{"a": 1}'),
+                                            (r / "docs/.claude/x.json").unlink(), (r / "data/raw.csv").write_text("b")))
+    assert sorted((v["path"], v["reason"]) for v in found) == [
+        ("data/raw.csv", "data_changed"), ("docs/.claude/x.json", "agent_settings_changed"),
+        ("opencode.json", "agent_settings_changed")]
 
 
 @pytest.mark.parametrize("command", [
