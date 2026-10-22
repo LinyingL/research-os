@@ -664,6 +664,17 @@ STATES = [
     ({}, {"state": "interrupted", "can_reply": True, "can_revert": True, "changes": 1}, "已中断", "gray",
      ["运行", "运行记录", "打回", "撤回本次运行"]),
     ({}, {"state": "done", "reverted": True}, "已撤回本次运行", "gray", ["运行", "运行记录"]),
+    # 18.1 item 4: a run that went out of bounds never reads 已完成 -- the task keeps the mark the agent gave it
+    ({"done": True, "report": REPORT},
+     {"state": "out_of_bounds", "outcome": "done", "can_reply": True, "can_revert": True, "changes": 3, "violations": 1,
+      "report": REPORT}, "越过了限制", "clay oob", ["运行记录", "打回", "撤回本次运行", "打开结果"]),
+    ({}, {"state": "out_of_bounds", "outcome": "needs_input", "can_reply": True, "can_revert": True, "changes": 1,
+          "violations": 1, "question": "Which sample?"}, "越过了限制", "clay oob", ["运行记录", "回答", "撤回本次运行"]),
+    ({}, {"state": "out_of_bounds", "outcome": "failed", "can_reply": True, "can_revert": True, "changes": 1,
+          "violations": 1, "error": {"code": "timeout", "detail": "past the limit"}}, "越过了限制", "clay oob",
+     ["运行", "运行记录", "打回", "撤回本次运行"]),
+    ({}, {"state": "out_of_bounds", "outcome": "stopped", "reverted": True, "violations": 1}, "已撤回本次运行", "gray",
+     ["运行", "运行记录"]),
 ]
 
 
@@ -686,6 +697,10 @@ console.log(JSON.stringify(results));
     assert "Which sample?" in out[3]["words"]
     assert "改动了 3 个文件" in out[4]["words"]
     assert "运行超过了时间限制，已被停止。" in out[6]["words"] and "详情" in out[6]["words"]
+    oob_done, oob_asked, oob_failed = out[10], out[11], out[12]
+    assert "已完成" not in oob_done["words"] and "有 1 处越界改动，详见运行记录。" in oob_done["words"]
+    assert "Which sample?" in oob_asked["words"] and "等你回答" not in oob_asked["words"]
+    assert "运行超过了时间限制，已被停止。" in oob_failed["words"]
 
 
 def test_a_started_run_posts_project_and_task_and_asks_once_per_agent_where_content_goes():
@@ -1463,3 +1478,25 @@ console.log(JSON.stringify({shown,saved:saved[1],refused,cleared:cleared[1],afte
     assert out["saved"] == {"max_budget_usd": 12.5}
     assert out["refused"] == {"posts": 1, "words": True}
     assert out["cleared"] == {"max_budget_usd": None} and out["after"] == ""
+
+
+def test_an_out_of_bounds_run_reads_so_in_english_with_the_new_reasons_and_no_chinese():
+    out = run(r"""
+agentsInfo=agentFixture();listed.files=listed.files.filter(f=>!/[一-鿿]/.test(f.path));
+listed.tasks=[agentTask({done:true,report:REPORT_PATH})];
+const run=mkRun({state:'out_of_bounds',outcome:'done',can_reply:true,can_revert:true,violations:3,changes:2,report:REPORT_PATH});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[],steps_total:0,changes:{created:['.git/hooks/pre-commit'],modified:['.git/config'],deleted:['.researchos/backups/x.toml.20260101T000000000000Z.toml']},
+  violations:[{path:'.git/hooks/pre-commit',reason:'git_hooks_changed'},{path:'.git/config',reason:'git_config_changed'},
+              {path:'.researchos/backups/x.toml.20260101T000000000000Z.toml',reason:'backup_deleted'}],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find('Run log',byClass('ws-agent')).click();await sleepTick();
+const box=byClass('ws-agent'),label=byClass('status-label',box);
+console.log(JSON.stringify({label:label.textContent,cls:label.className,buttons:buttonsIn(box),text:box.textContent,oob:byClass('ws-oob',box).textContent}));
+""".replace("REPORT_PATH", json.dumps(REPORT)), lang="en")
+    assert out["label"] == "Went out of bounds" and out["cls"] == "status-label tone-clay oob"
+    assert out["buttons"] == ["Run log", "Send back", "Undo this run", "Open the result"]
+    assert "Done" not in out["text"].replace("Deleted", "")
+    assert "Changed a git hook (a program git runs by itself)" in out["oob"]
+    assert "Changed git’s configuration" in out["oob"] and "Deleted a Research OS backup" in out["oob"]
+    assert re.search(r"[㐀-鿿]", out["text"]) is None, out["text"]

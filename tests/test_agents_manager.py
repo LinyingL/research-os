@@ -21,12 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from researchos import history, project, workspace
+from researchos import db, history, paths, project, workspace
 from researchos.agents import labels, manager, profiles, snapshot
 from researchos.agents import runs as run_store
 from researchos.records import files as record_files
 from researchos.records import notes as notes_mod
 from researchos.records.identity import read_identity
+from researchos.webapp import watcher as project_watcher
 
 FAKE = r'''#!@PYTHON@
 import json, os, signal, subprocess, sys, time
@@ -749,8 +750,10 @@ def test_overwriting_a_data_file_is_an_out_of_bounds_change(scene: Scene):
     scene.put("clean.txt", "keep\n")
     run = scene.go([init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
                     {"op": "write", "path": "newdata.csv", "text": "x\n1\n"}, {"op": "complete"}, finish_step()])
-    assert run["state"] == "done"
+    # the agent reported the task done, and the run reads out of bounds all the same (18.1 item 4)
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
     assert run["violations"] == [{"path": "data.csv", "reason": "data_changed"}]
+    assert scene.tasks()["t1"]["done"] is True  # the task's done mark stays as the agent set it
     assert "data.csv" in run["changes"]["modified"] and "newdata.csv" in run["changes"]["created"]
     listed = scene.manager.runs(scene.pid)["runs"][0]
     assert listed["violations"] == 1 and listed["can_revert"] is True
@@ -770,6 +773,7 @@ def test_a_tasks_json_edit_the_tools_did_not_make_is_a_violation(scene: Scene):
                           "owner": "agent:claude-code:sonnet", "due": ""}])
     run = scene.go([init_step(), {"op": "write", "path": str(tasks_path), "text": sneaky}, finish_step()])
     assert {"path": "research/tasks.json", "reason": "record_changed"} in run["violations"]
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
     # the history keeps the file's attribution out of the agent's hands
     assert all(v.source != "agent" for v in scene.versions("research/tasks.json"))
 
@@ -782,6 +786,7 @@ def test_researchos_folder_and_git_changes_are_violations(scene: Scene):
     run = scene.go([init_step(), {"op": "write", "path": str(team), "text": "x = 1\n"}, finish_step()])
     reasons = {(v["path"], v["reason"]) for v in run["violations"]}
     assert (".researchos/team.toml", "researchos_changed") in reasons
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
     assert (".researchos/team.toml" not in [v.who for v in scene.versions(".researchos/team.toml")])  # no attribution there
 
 
@@ -809,6 +814,243 @@ def test_the_persons_own_saves_during_the_run_are_not_the_agents(scene: Scene):
     assert [v.who for v in scene.versions("agent.txt")] == ["agent:claude-code:sonnet#m-1"]
     # the listener is gone once the run ended
     assert not record_files._listeners
+
+
+def git_repo(scene: Scene) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=scene.root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"],
+                   cwd=scene.root, check=True)
+
+
+def test_a_planted_git_hook_makes_the_run_read_out_of_bounds_and_undo_takes_it_away(scene: Scene):
+    git_repo(scene)
+    hook = scene.root / ".git" / "hooks" / "pre-commit"
+    run = scene.go([init_step(), {"op": "write", "path": str(hook), "text": "#!/bin/sh\ntouch /tmp/nope\n"},
+                    {"op": "complete"}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
+    assert {"path": ".git/hooks/pre-commit", "reason": "git_hooks_changed"} in run["violations"]
+    assert ".git/hooks/pre-commit" in run["changes"]["created"]
+    assert scene.versions(".git/hooks/pre-commit") == []  # git's own files are not the history's business
+    listed = scene.manager.runs(scene.pid)["runs"][0]
+    assert listed["state"] == "out_of_bounds" and listed["outcome"] == "done" and listed["violations"] >= 1
+    assert listed["can_revert"] is True and listed["can_reply"] is True
+    # never "done" for the run, and the task keeps the mark the agent gave it
+    assert scene.tasks()["t1"]["done"] is True
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".git/hooks/pre-commit" in result["removed"] and not hook.exists()
+    assert (scene.root / ".git" / "hooks").is_dir()
+    assert scene.tasks()["t1"]["done"] is False  # undo takes the agent's own done mark back (17.6)
+    assert scene.manager.runs(scene.pid)["runs"][0]["reverted"] is True
+
+
+def test_a_changed_git_config_is_out_of_bounds_and_undo_puts_it_back(scene: Scene):
+    git_repo(scene)
+    config = scene.root / ".git" / "config"
+    original = config.read_text()
+    run = scene.go([init_step(), {"op": "write", "path": str(config), "text": original + "[core]\n\thooksPath = /tmp/h\n"},
+                    finish_step()])
+    assert run["state"] == "out_of_bounds"
+    assert {"path": ".git/config", "reason": "git_config_changed"} in run["violations"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert ".git/config" in result["restored"] and config.read_text() == original
+
+
+def test_a_repository_the_run_started_is_not_taken_apart_by_undo(scene: Scene):
+    run = scene.go([init_step(), {"op": "write", "path": str(scene.root / ".git" / "config"), "text": "[core]\n"},
+                    {"op": "write", "path": str(scene.root / ".git" / "HEAD"), "text": "ref: refs/heads/main\n"},
+                    finish_step()])
+    assert run["state"] == "out_of_bounds"
+    assert {"path": ".git/config", "reason": "git_config_changed"} in run["violations"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert {"path": ".git/config", "reason": "protected"} in result["skipped"]
+    assert (scene.root / ".git" / "config").read_text() == "[core]\n"
+
+
+def backup_name(day: int, kind: str = "toml") -> str:
+    return f"x.toml.202601{day:02d}T000000000000Z.{kind}"
+
+
+def test_a_deleted_backup_is_out_of_bounds(scene: Scene):
+    backup = scene.put(f".researchos/backups/{backup_name(1)}", "old copy\n")
+    scene.put(f".researchos/backups/{backup_name(2)}", "newer copy\n")
+    run = scene.go([init_step(), {"op": "delete", "path": str(backup)}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
+    path = f".researchos/backups/{backup_name(1)}"
+    assert run["violations"] == [{"path": path, "reason": "backup_deleted"}]
+    assert path in run["changes"]["deleted"]
+    # the picture holds no copy of a backup: undo says so instead of pretending
+    assert scene.manager.runs(scene.pid)["runs"][0]["can_revert"] is True
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == [{"path": path, "reason": "no_copy"}] and result["restored"] == []
+    before = json.loads((run_store.run_dir(scene.pid, run["id"]) / "before.json").read_text())
+    assert before["backups"][path] == {"size": len("old copy\n")}  # names and sizes, from the start
+    assert f".researchos/backups/{backup_name(2)}" in before["backups"]
+
+
+def test_new_backups_are_nothing_and_a_run_saving_through_its_tools_may_rotate_old_ones(scene: Scene):
+    """Research OS keeps the newest 20 copies of what it writes before a write; a run's own `complete` tool
+    saves tasks.json and so adds one and prunes the oldest. That is not the agent deleting a backup."""
+    series = [f".researchos/backups/tasks.json.202601{d:02d}T000000000000Z.write.json" for d in range(1, 21)]
+    for rel in series:
+        scene.put(rel, "{}")
+    run = scene.go(COMPLETE)
+    assert run["state"] == "done" and run["violations"] == [], run["violations"]
+    left = sorted(p.name for p in (scene.root / ".researchos" / "backups").glob("tasks.json.*.write.json"))
+    assert len(left) == 20 and left[0] == Path(series[1]).name  # the oldest went, a new one came
+    assert not (scene.root / series[0]).exists()
+    assert run["changes"]["deleted"] == []
+
+
+def test_an_out_of_bounds_run_that_asked_a_question_can_still_be_answered(scene: Scene):
+    scene.put("data.csv", "a,b\n1,2\n")
+    scene.scenario([init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                    {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
+    first = scene.wait(scene.start()["id"])
+    assert first["state"] == "out_of_bounds" and first["outcome"] == "needs_input"
+    assert first["question"] == "Which sample?"
+    item = scene.manager.runs(scene.pid)["runs"][0]
+    assert item["state"] == "out_of_bounds" and item["outcome"] == "needs_input" and item["can_reply"] is True
+    scene.scenario([init_step(), finish_step("Thanks")])
+    answered = scene.manager.reply(scene.root, scene.pid, first["id"], "Sample B", by="m-1", by_name="Lin", lang="en")
+    assert answered["kind"] == "answer"  # it was a question, however the run reads
+    assert scene.wait(answered["id"])["state"] == "ended"
+
+
+@pytest.mark.parametrize("how", ["stop", "failed"])
+def test_a_stopped_or_failed_run_that_went_out_of_bounds_still_says_so_first(scene: Scene, how):
+    scene.put("data.csv", "a,b\n1,2\n")
+    gate = scene.tmp / "gate"
+    steps = [init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"}, {"op": "wait_file", "path": str(gate)},
+             finish_step()]
+    if how == "failed":
+        steps = [init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                 {"op": "result", "is_error": True, "subtype": "error_during_execution", "text": "boom"}]
+    scene.scenario(steps)
+    started = scene.start()
+    if how == "stop":
+        scene.wait_state(started["id"], "running")
+        time.sleep(0.3)
+        scene.manager.stop(scene.pid, started["id"])
+    run = scene.wait(started["id"])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == ("stopped" if how == "stop" else "failed")
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["state"] == "out_of_bounds" and detail["outcome"] == run["outcome"]
+    if how == "stop":
+        assert detail["steps"][-1]["text"] == "Stopped by the person."  # the log still says how it ended
+    else:
+        assert detail["error"]
+
+
+def test_a_recovered_run_that_went_out_of_bounds_reads_so(scene: Scene):
+    scene.put("data.csv", "a,b\n1,2\n")
+    run = stale_run(scene)
+    (scene.root / "data.csv").write_text("a,b\n9,9\n")
+    item = scene.manager.runs(scene.pid)["runs"][0]
+    assert item["state"] == "out_of_bounds" and item["outcome"] == "interrupted" and item["can_stop"] is False
+    stored = scene.run(run["id"])
+    assert stored["error"]["code"] == "engine_gone" and stored["violations"] == [
+        {"path": "data.csv", "reason": "data_changed"}]
+
+
+def attempts_project(scene: Scene) -> project_watcher.ProjectWatcher:
+    """The smallest project the watcher has something to watch in (an attempt table, a steps folder)."""
+    config = ('file = "map.md"\nheading = "H"\nsteps_dir = "steps"\n\n[columns]\nid = "#"\ndate = "date"\n'
+              'description = "desc"\nvariables = "vars"\nresult = "result"\nverdict = "verdict"\n')
+    scene.put(".researchos/attempts.toml", config)
+    scene.put("map.md", "## H\n\n| # | date | desc | vars | result | verdict |\n|---|---|---|---|---|---|\n"
+                        "| 1 | 2026-01-01 | d | v | r | ✅ |\n")
+    (scene.root / "steps").mkdir()
+    watcher = project_watcher.ProjectWatcher(lambda: scene.root, interval=0.01)
+    watcher.poll_once()  # the baseline
+    return watcher
+
+
+def test_a_watcher_scan_during_the_run_records_the_agents_files_and_the_run_adds_nothing_twice(scene: Scene):
+    watcher = attempts_project(scene)
+    scene.put("existing.py", "print('there before the run')\n")  # never scanned, and not the run's
+    gate, mine = scene.tmp / "gate", scene.root / "mine.py"
+    step = scene.root / "steps" / "s1.py"
+    scene.scenario([init_step(), {"op": "write", "path": str(step), "text": "x = 1\n"},
+                    {"op": "write", "path": "analysis.py", "text": "print(1)\n"},
+                    {"op": "wait_file", "path": str(gate)},
+                    {"op": "write", "path": "analysis.py", "text": "print(2)\n"}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    scene.wait_file(step)
+    scene.wait_file(scene.root / "analysis.py")
+    assert history.run_seen(scene.root) is not None  # the history knows a run is going on
+    record_files.durable_write(mine, b"print('the person saved this through Research OS')\n")
+    assert watcher.poll_once() is True  # the scan the agent's new step script caused
+    note = f"seen during run {started['id']}"
+    who = "agent:claude-code:sonnet#m-1"
+    assert [(v.source, v.who, v.note) for v in scene.versions("steps/s1.py")] == [("agent", who, note)]
+    assert [(v.source, v.who, v.note) for v in scene.versions("analysis.py")] == [("agent", who, note)]
+    # the person's save keeps their name, and a file older than the run is not the run's
+    assert [v.source for v in scene.versions("mine.py")] == ["scan"]
+    assert [v.source for v in scene.versions("existing.py")] == ["scan"]
+    assert [v.who for v in scene.versions("mine.py")] == [history.scan_who(scene.root)]
+    gate.write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "ended"
+    assert history.run_seen(scene.root) is None  # the window closes with the run
+    # the script the scan saw is not recorded again; the one the agent changed afterwards is
+    assert [(v.source, v.note) for v in scene.versions("steps/s1.py")] == [("agent", note)]
+    assert [(v.source, v.note) for v in reversed(scene.versions("analysis.py"))] == [("agent", note),
+                                                                                     ("agent", run["id"])]
+    assert [v.source for v in scene.versions("mine.py")] == ["scan"]
+    assert run["changes"]["by_person"] == ["mine.py"]
+
+
+def test_the_history_is_told_for_exactly_as_long_as_the_run_is_going(scene: Scene, monkeypatch):
+    marks: list[tuple[str, object]] = []
+    original = manager.AgentManager._update
+
+    def spy(self, act, **changes):
+        if changes.get("state") in ("running", "ended"):
+            marks.append((changes["state"], history.run_seen(scene.root)))
+        return original(self, act, **changes)
+
+    monkeypatch.setattr(manager.AgentManager, "_update", spy)
+    assert history.run_seen(scene.root) is None
+    scene.go([init_step(), finish_step()])
+    (running, seen), (ended, after) = marks
+    assert running == "running" and seen is not None and seen.who == "agent:claude-code:sonnet#m-1"
+    assert ended == "ended" and after is None  # released when the attribution was written, before the final state
+    assert history.run_seen(scene.root) is None
+
+
+def test_a_run_that_could_not_be_checked_still_lets_the_history_go(scene: Scene, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("cannot compare")
+
+    monkeypatch.setattr(manager.AgentManager, "_assess", boom)
+    run = scene.go([init_step(), finish_step()])
+    assert run["error"]["code"] == "check_failed" and history.run_seen(scene.root) is None
+
+
+def test_the_attempt_table_the_agent_changed_gives_the_agents_verdict(scene: Scene):
+    watcher = attempts_project(scene)
+    scene.scenario([init_step(), {"op": "write", "path": "map.md", "text": "## H\n\n| # | date | desc | vars | result | verdict |\n"
+                                    "|---|---|---|---|---|---|\n| 1 | 2026-01-01 | d | v | r | ❌ |\n"},
+                    {"op": "write", "path": str(scene.root / "steps" / "s1.py"), "text": "x = 1\n"},
+                    {"op": "wait_file", "path": str(scene.tmp / "gate")}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    scene.wait_file(scene.root / "steps" / "s1.py")
+    watcher.poll_once()
+    conn = db.connect(paths.graph_db_path(scene.root))
+    try:
+        node = db.get_nodes_by_type(conn, "attempt")[0]["id"]
+    finally:
+        conn.close()
+    with history.Store.open(scene.pid) as store:
+        [version] = store.versions(node)
+    assert version.source == "agent" and version.note == f"seen during run {started['id']}"
+    assert version.who == "agent:claude-code:sonnet#m-1" and version.summary["verdict"]
+    (scene.tmp / "gate").write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "out_of_bounds"  # the table is not the agent's to change
+    assert {"path": "map.md", "reason": "record_changed"} in run["violations"]
 
 
 def test_history_attribution_without_a_person(scene: Scene):
@@ -1301,6 +1543,22 @@ def test_summary_flags():
     assert manager.summary({**base, "state": "needs_input"}, latest_of_task=True, active=False)["can_reply"]
     assert manager.summary({**base, "state": "preparing"}, latest_of_task=True, active=False)["can_reply"] is False
     assert manager.summary({}, latest_of_task=True, active=False)["can_stop"] is False
+    # an out-of-bounds run reads so; what it would have read decides what can be done with it (18.1 item 4)
+    assert s["state"] == s["outcome"] == "done"
+    oob = manager.summary({**base, "state": "out_of_bounds", "outcome": "done"}, latest_of_task=True, active=False)
+    assert oob["state"] == "out_of_bounds" and oob["outcome"] == "done" and oob["can_reply"] and oob["can_revert"]
+    assert not manager.summary({**base, "state": "out_of_bounds", "outcome": "failed", "session_id": None},
+                               latest_of_task=True, active=False)["can_reply"]
+    assert manager.summary({**base, "state": "out_of_bounds", "outcome": "stopped"}, latest_of_task=True,
+                           active=False)["can_reply"]
+    assert manager.summary({**base, "state": "out_of_bounds"}, latest_of_task=True, active=False)["outcome"] == (
+        "out_of_bounds")  # no outcome kept: nothing to continue from
+    assert run_store.outcome_of({"state": "out_of_bounds", "outcome": "ended"}) == "ended"
+    assert run_store.outcome_of({"state": "done", "outcome": "ended"}) == "done"
+    assert "out_of_bounds" in run_store.STATES and "out_of_bounds" not in run_store.ACTIVE_STATES
+    assert manager._warn_if_out_of_bounds("done", [{"path": "a", "reason": "x"}]) == ("out_of_bounds", "done")
+    assert manager._warn_if_out_of_bounds("done", []) == ("done", None)
+    assert manager._warn_if_out_of_bounds("failed", None) == ("failed", None)
 
 
 def test_agent_error_table():

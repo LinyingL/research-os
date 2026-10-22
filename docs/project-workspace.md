@@ -51,7 +51,7 @@ lists it. A model served locally through OpenCode works the same way.
 time you run each agent after opening the page, the app tells you where
 project content goes and that the agent changes files directly. The task shows its state: Preparing,
 Running, Waiting for your answer, Done, Ended without a report, Failed,
-Stopped or Interrupted. One run goes at a time in a project; **Stop** ends it
+Stopped, Interrupted, or Went out of bounds (below). One run goes at a time in a project; **Stop** ends it
 and everything it started. A run is stopped after the time limit (two hours
 by default; you can change it in the same area, together with a spending
 limit for Claude Code), and when you quit the app.
@@ -74,7 +74,11 @@ a folder holding one; it writes new files instead. It does not edit
 this with checks before each step where the program allows, and by
 comparing the folder before and after every run. A change that still gets
 through is shown first, in the warning colour, as an **Out-of-bounds change**,
-with **Undo this run** beside it.
+with **Undo this run** beside it. A run that ends with one reads **Went out
+of bounds**, never Done, whatever else happened; the task keeps the done mark
+the agent gave it. Git's hooks and configuration (`.git/hooks`, `.git/config`)
+and Research OS's backups count too: a hook planted, or a backup deleted, is
+out of bounds.
 
 **The run log.** **Run log** shows what the agent said, each command and file
 it used, what was refused, how the run ended, the files it created, changed

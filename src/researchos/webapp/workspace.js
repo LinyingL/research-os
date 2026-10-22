@@ -641,12 +641,15 @@
   const STATE_LABELS = {
     preparing: ["准备中", "ochre"], running: ["运行中", "ochre"], needs_input: ["等你回答", "clay"], done: ["已完成", "olive"],
     ended: ["未报告", "gray"], failed: ["失败", "clay"], stopped: ["已停止", "gray"], interrupted: ["已中断", "gray"],
+    out_of_bounds: ["越过了限制", "clay"],
   };
   const STEP_KINDS = { start: "开始", say: "它说", tool: "操作", refused: "被拒绝", error: "出错", end: "结束" };
   const VIOLATION_WORDS = {
     data_changed: "改动了运行前就有的数据文件", data_deleted: "删除了运行前就有的数据文件",
     record_changed: "改动了研究记录", record_deleted: "删除了研究记录",
     researchos_changed: "改动了 Research OS 自己的记录文件夹", git_changed: "改变了 git 的状态",
+    git_hooks_changed: "改动了 git 的钩子（git 会自动运行的程序）", git_config_changed: "改动了 git 的配置",
+    backup_deleted: "删除了 Research OS 的备份",
   };
   const ERROR_WORDS = {
     timeout: "运行超过了时间限制，已被停止。", shutdown: "运行期间 Research OS 被关闭了。", engine_gone: "运行期间 Research OS 退出了。",
@@ -678,6 +681,9 @@
     node.textContent = words; node.classList.toggle("hidden", !words);
   }
   function isActiveState(value) { return value === "preparing" || value === "running"; }
+  // How a run ended apart from the warning (17.9): an out-of-bounds run reads 越过了限制, and what it would have read
+  // (outcome) is what decides whether it can be answered or sent back.
+  function outcomeOf(run) { return run && run.state === "out_of_bounds" && run.outcome ? run.outcome : run && run.state; }
   function activeIds() { return runsInfo.runs.filter((r) => isActiveState(r.state)).map((r) => r.id); }
   function anyActive() { return activeIds().length > 0 || !!runsInfo.active; }
   function latestRun(taskId) { return runsInfo.runs.find((r) => r.task_id === taskId) || null; }
@@ -841,8 +847,8 @@
   // answer, 打回 on a finished one. After that it is gone, with what was typed in it.
   function replyKind(run, st) {
     if (!st.reply || !run || !run.can_reply) return null;
-    if (st.reply === "answer") return run.state === "needs_input" ? "answer" : null;
-    return REPLY_FROM.includes(run.state) ? "send_back" : null;
+    if (st.reply === "answer") return outcomeOf(run) === "needs_input" ? "answer" : null;
+    return REPLY_FROM.includes(outcomeOf(run)) ? "send_back" : null;
   }
   function agentSig(task) {
     const run = latestRun(task.id), st = agentState(task.id), d = run && details[run.id];
@@ -892,7 +898,7 @@
   function runLabel(run) {
     const partly = run.reverted && run.revert_skipped > 0;
     const [words, tone] = partly ? ["部分撤回", "gray"] : run.reverted ? ["已撤回本次运行", "gray"] : STATE_LABELS[run.state] || ["", "plain"];
-    return el("span", "status-label tone-" + tone, words ? t(words) : String(run.state || ""));
+    return el("span", "status-label tone-" + tone + (run.state === "out_of_bounds" && !run.reverted ? " oob" : ""), words ? t(words) : String(run.state || ""));
   }
   // The state word, the question and what went wrong are one polite live region (role=status), and so is a note,
   // so a screen reader hears a run end or a request be refused without the person looking for it (12.11).
@@ -910,12 +916,12 @@
       if (run.changes && !active) line.append(el("span", "ws-agent-meta", t("改动了 {n} 个文件", { n: run.changes })));
     }
     if (line.childElementCount) live.append(line);
-    if (run && run.state === "needs_input" && run.question) live.append(el("p", "ws-agent-question", run.question));
+    if (run && outcomeOf(run) === "needs_input" && run.question) live.append(el("p", "ws-agent-question", run.question));
     if (run && run.violations > 0) live.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动，详见运行记录。", { n: run.violations })));
     if (run && run.error) live.append(errorBlock(run, st));
     box.append(live);
     const actions = el("div", "ws-agent-actions");
-    if (agent && !task.done && (!run || (!active && !(run.state === "needs_input" && run.can_reply)))) {
+    if (agent && !task.done && (!run || (!active && !(outcomeOf(run) === "needs_input" && run.can_reply)))) {
       const go = keyed(named(button("运行", () => startRun(task, agent)), "运行：{task}", who), k("run"));
       go.disabled = !allowed || anyActive();
       if (allowed && anyActive()) go.title = t("这个项目里还有一次运行没有结束。");
@@ -925,11 +931,11 @@
     if (run) {
       const log = keyed(named(button("运行记录", () => toggleLog(task)), "运行记录：{task}", who), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
-    if (run && run.state === "needs_input" && run.can_reply) {
+    if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
       const answer = keyed(named(button("回答", () => toggleReply(task, "answer")), "回答：{task}", who), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
       answer.disabled = !allowed; actions.append(answer);
     }
-    if (run && REPLY_FROM.includes(run.state) && run.can_reply) {
+    if (run && REPLY_FROM.includes(outcomeOf(run)) && run.can_reply) {
       const back = keyed(named(button("打回", () => toggleReply(task, "send_back")), "打回：{task}", who), k("send_back")); back.setAttribute("aria-expanded", String(reply === "send_back"));
       back.disabled = !allowed; actions.append(back);
     }
@@ -1089,7 +1095,7 @@
     const d = loaded.data;
     // A folder with more files than the picture holds: what happened beyond them cannot be checked or undone (17.5).
     if (d.snapshot && d.snapshot.partial) box.append(el("p", "ws-status err", t("这个项目文件太多，运行前只记录了前 50,000 个文件：之后的文件（数据文件除外）改动无法核对，也无法撤回。")));
-    if (run.state !== "needs_input" && run.question) box.append(el("p", "ws-agent-question", run.question));
+    if (outcomeOf(run) !== "needs_input" && run.question) box.append(el("p", "ws-agent-question", run.question));
     if ((d.violations || []).length) {
       const group = el("div", "ws-run-group ws-oob");
       group.append(el("h4", "ws-run-heading", t("越界改动")));

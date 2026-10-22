@@ -13,9 +13,20 @@ modification times). The copies are what 撤回本次运行 restores from (17.6)
 What `take` never does: follow a symbolic link (a link is recorded by its
 target and compared by it), open a file that is only in the cloud (marked
 `dataless`; reading it would download it), open anything but a regular file
-(a FIFO would block), or walk into `.git/`, `.researchos/backups/` and the
-usual caches. Hidden files and folders are otherwise included on purpose:
-`.researchos/*.toml` is exactly what an agent must not touch (17.5 rule 1).
+(a FIFO would block), or walk into `.git/` (but see below),
+`.researchos/backups/` (but see below) and the usual caches. Hidden files and
+folders are otherwise included on purpose: `.researchos/*.toml` is exactly
+what an agent must not touch (17.5 rule 1).
+
+**Two places the main walk skips are still recorded** (18.1 item 4). Git's
+`config` and every hook in `.git/hooks/` (the `*.sample` templates, which git
+never runs, aside) are entries of `files` like any other, copies included: a
+hook planted or a `core.hooksPath` set is a change there, and undo can put it
+back. `.researchos/backups/` (and `.rce/backups/`) is listed by name and size,
+at any depth, in `picture["backups"]` -- not in `files`, because Research OS
+itself adds backups with every save and so a new backup is never a change; a
+backup that is gone is (`backup_deleted`), except the oldest of a series that
+has since gained a newer one, which is Research OS keeping the newest 20.
 A project with more than `FILE_LIMIT` files is recorded up to that many and
 marked `partial`: a partial picture cannot show every creation, and the
 caller says so. Editor, Finder and sync-client noise (`SKIP_FILES`:
@@ -38,9 +49,11 @@ before the run; the attempt table (its path read from `attempts.toml`) and
 `research/tasks.json`. `protected` is also what the hook enforces during the
 run (`guard`), and `violations` is the after-run check that catches what the
 hook cannot see (OpenCode has no hook; a script can overwrite a file behind
-Claude Code's back). Git's state is its `HEAD` and branch; `.git/` itself is
-not walked; its refs (branches, tags, remote-tracking refs, the stash) are
-fingerprinted, so a push or a tag shows although `HEAD` did not move.
+Claude Code's back). The folders are protected at any depth, as the hook
+reads them: `docs/.researchos/x` is as much out of bounds as `.researchos/x`.
+Git's state is its `HEAD` and branch; `.git/` itself is not walked (but for the
+two places above); its refs (branches, tags, remote-tracking refs, the stash)
+are fingerprinted, so a push or a tag shows although `HEAD` did not move.
 """
 
 from __future__ import annotations
@@ -50,6 +63,7 @@ import logging
 import os
 import fnmatch
 import posixpath
+import re
 import shutil
 import stat
 import subprocess
@@ -76,6 +90,18 @@ PROTECTED_DIRS = (names.PROJECT_DIRNAME, names.LEGACY_PROJECT_DIRNAME, ".git")
 #: `.cache` included, may hold a data file that is protected.
 DATA_SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__"})
 DATA_FILE_LIMIT = 500_000
+#: Git's own files the picture records although `.git/` is not walked (module docstring): `config`, and the
+#: files below `hooks/` (at most `GIT_FILES_LIMIT`).
+GIT_DIR = ".git"
+GIT_CONFIG = f"{GIT_DIR}/config"
+GIT_HOOKS = f"{GIT_DIR}/hooks"
+GIT_FILES_LIMIT = 1000
+#: The backups are listed by name and size (module docstring), at most this many.
+BACKUP_FILE_LIMIT = 200_000
+#: What Research OS names a backup: `<name>.<UTC stamp>Z[.<n>][.write]<suffix>` (`records.files`, 9.2); the series
+#: of a backup is its folder, name, kind (daily or before-a-write) and suffix.
+_BACKUP_NAME = re.compile(r"^(?P<name>.+)\.(?P<stamp>\d{8}T\d{12})Z(?:\.(?P<n>\d+))?(?P<write>\.write)?"
+                          r"(?P<suffix>\.[^./]*)?$")
 #: Names of files that editors, file managers and sync clients create and remove on their own
 #: (case-insensitive): never recorded, never a change of the agent's.
 SKIP_FILES = frozenset({".ds_store", "thumbs.db", "desktop.ini", "icon\r", ".rhistory"})
@@ -283,13 +309,63 @@ def _walk_data(base: str) -> tuple[dict[str, dict[str, Any]], bool]:
     return data, False
 
 
+def _git_files(base: str) -> list[tuple[str, str]]:
+    """`(rel, full path)` of git's `config` and of every hook in `base/.git/hooks` (the `*.sample` templates
+    git never runs left out), sorted, at most `GIT_FILES_LIMIT`; nothing when `.git` is not a real folder (a
+    worktree's `.git` is a file that points elsewhere, outside the project)."""
+    git = os.path.join(base, GIT_DIR)
+    if os.path.islink(git) or not os.path.isdir(git):
+        return []
+    found: list[tuple[str, str]] = []
+    config = os.path.join(git, "config")
+    if os.path.lexists(config):
+        found.append((GIT_CONFIG, config))
+    for dirpath, dirnames, filenames in os.walk(os.path.join(git, "hooks"), followlinks=False):
+        reldir = os.path.relpath(dirpath, base).replace(os.sep, "/")
+        links = [n for n in dirnames if os.path.islink(os.path.join(dirpath, n))]
+        dirnames[:] = sorted(n for n in dirnames if n not in links)
+        for name in sorted(filenames + links):
+            if name.endswith(".sample") or skip_file(name):
+                continue
+            if len(found) >= GIT_FILES_LIMIT:
+                return found
+            found.append((f"{reldir}/{name}", os.path.join(dirpath, name)))
+    return found
+
+
+def _walk_backups(base: str) -> tuple[dict[str, dict[str, int]], bool]:
+    """Every file in `.researchos/backups` and `.rce/backups`, at any depth, as `({rel: {"size"}}, partial)`.
+    Stat only; links are never followed (a backup folder that is a link is empty as far as the picture goes)."""
+    found: dict[str, dict[str, int]] = {}
+    for top in (names.PROJECT_DIRNAME, names.LEGACY_PROJECT_DIRNAME):
+        folder = os.path.join(base, top, "backups")
+        if os.path.islink(folder) or not os.path.isdir(folder):
+            continue
+        for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+            reldir = os.path.relpath(dirpath, base).replace(os.sep, "/")
+            linked = [n for n in dirnames if os.path.islink(os.path.join(dirpath, n))]
+            dirnames[:] = [n for n in dirnames if n not in linked]
+            for name in filenames + linked:
+                if skip_file(name):
+                    continue
+                try:
+                    st = os.lstat(os.path.join(dirpath, name))
+                except OSError:
+                    continue  # vanished while walking
+                if len(found) >= BACKUP_FILE_LIMIT:
+                    return found, True
+                found[f"{reldir}/{name}"] = {"size": st.st_size}
+    return found, False
+
+
 def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
     """The before- (or after-) picture of the project folder; see the module
     docstring. Returns `{"files": {rel: entry}, "partial", "copied_bytes",
-    "not_copied", "git", "data", "data_partial"}` where an entry is `{"size",
-    "mtime_ns"}` plus `sha256`, `dataless`, `link` and `copied` as they apply,
-    and `data` is the `{rel: entry}` of the separate stat-only walk of data
-    files (no `copied`; `sha256` only where `files` has it). Copies go to
+    "not_copied", "git", "data", "data_partial", "backups", "backups_partial"}`
+    where an entry is `{"size", "mtime_ns"}` plus `sha256`, `dataless`, `link`
+    and `copied` as they apply, `data` is the `{rel: entry}` of the separate
+    stat-only walk of data files (no `copied`; `sha256` only where `files` has
+    it) and `backups` the `{rel: {"size"}}` of the backups. Copies go to
     `copy_to/<rel>`."""
     root = Path(root)
     base = str(root)
@@ -317,7 +393,13 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
         return True
 
     stopped = False
+    for rel, full in _git_files(base):  # first: the walk's limit must not be able to hide a planted hook
+        if not add(rel, full):
+            partial = stopped = True
+            break
     for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        if stopped:
+            break
         reldir = os.path.relpath(dirpath, base).replace(os.sep, "/")
         reldir = "" if reldir == "." else reldir
         keep = []
@@ -345,8 +427,10 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
         seen = files.get(rel)
         if seen is not None:
             data[rel] = {k: v for k, v in seen.items() if k in ("size", "mtime_ns", "sha256", "link", "dataless")}
+    backups, backups_partial = _walk_backups(base)
     return {"files": files, "partial": partial, "copied_bytes": copied_bytes, "not_copied": not_copied,
-            "git": git_state(root), "data": data, "data_partial": data_partial}
+            "git": git_state(root), "data": data, "data_partial": data_partial,
+            "backups": backups, "backups_partial": backups_partial}
 
 
 def created_since(root: Path, rels: Iterable[str], started_ns: int) -> list[str]:
@@ -453,13 +537,19 @@ def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
 def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_before: Any, git_after: Any,
                allowed: Mapping[str, set[str]], after: Mapping[str, Any] | None = None,
                data_before: Mapping[str, Any] | None = None,
-               data_after: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
+               data_after: Mapping[str, Any] | None = None,
+               backups_before: Mapping[str, Any] | None = None,
+               backups_after: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
     """The out-of-bounds changes among `changes` (a `compare` result), each
     `{"path", "reason"}`: `data_changed` / `data_deleted` (a data file that
     existed before), `record_changed` / `record_deleted` (the attempt table,
-    `research/tasks.json`), `researchos_changed` (anything under
-    `.researchos` or `.rce`) and `git_changed` (path `.git`: HEAD, branch or
-    refs differ, or the repository is gone).
+    `research/tasks.json`), `researchos_changed` (anything under a folder
+    named `.researchos` or `.rce`, at any depth), `git_hooks_changed` (a file
+    in `.git/hooks`) and `git_config_changed` (`.git/config`), `git_changed`
+    (path `.git`: HEAD, branch or refs differ, or the repository is gone) and
+    `backup_deleted` (a file of `.researchos/backups` that is gone, unless it
+    is the oldest of a series that has gained a newer one: Research OS's own
+    rotation, `_rotated`).
 
     `allowed` maps a path to the hashes it may legitimately end with, for
     every kind of protected path (records, data files, `.researchos` / `.rce`
@@ -476,7 +566,8 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
     both entries have one, else by size and modification time; a deletion is
     reported when the file is really gone from the folder named in
     `prot["root"]` (else when the after-walk was complete, `after["data_partial"]`
-    not set)."""
+    not set). `backups_before` / `backups_after` are the `backups` maps of the
+    two pictures (a bare picture is accepted), compared the same way."""
     dirs = {d.casefold() for d in prot.get("dirs", PROTECTED_DIRS) if d != ".git"}
     data = set(prot.get("data", ()))
     records = set(prot.get("records", ()))
@@ -503,7 +594,11 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
 
     for kind in ("created", "modified", "deleted"):
         for rel in changes.get(kind, ()):
-            if rel.split("/", 1)[0].casefold() in dirs:
+            if rel == GIT_CONFIG:
+                add(rel, "git_config_changed")
+            elif rel.startswith(GIT_HOOKS + "/"):
+                add(rel, "git_hooks_changed")
+            elif any(part.casefold() in dirs for part in rel.split("/")):
                 if kind == "deleted" or not permitted(rel):
                     add(rel, "researchos_changed")
             elif rel in records:
@@ -534,7 +629,58 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
                 add(rel, "data_changed")
     if not git_equal(git_before, git_after):
         add(".git", "git_changed")
+    old_backups = _backup_map(backups_before)
+    new_backups = _backup_map(backups_after if backups_after is not None else after)
+    if old_backups and new_backups is not None:
+        complete = not (isinstance(after, Mapping) and after.get("backups_partial"))
+        gone = [rel for rel in sorted(old_backups) if rel not in new_backups]
+        rotation = _Rotation(old_backups, new_backups) if gone else None
+        for rel in gone:
+            root = prot.get("root")
+            if not (not _lexists(root, rel) if root else complete):
+                continue  # a cut after-walk that did not see it: still there
+            if rotation is not None and rotation.explains(rel):
+                continue
+            add(rel, "backup_deleted")
     return found
+
+
+def _series(rel: str) -> tuple[tuple[str, str, bool, str], tuple[str, str]] | None:
+    """`(series, order)` of a backup path: the series is its folder, file name, kind (before a write or daily) and
+    suffix; the order is its stamp and name, which sorts oldest first as `records.files` sorts. None when the name is
+    not one Research OS gives a backup."""
+    folder, _, name = rel.rpartition("/")
+    match = _BACKUP_NAME.match(name)
+    if match is None:
+        return None
+    return (folder, match["name"], bool(match["write"]), match["suffix"] or ""), (match["stamp"], name)
+
+
+class _Rotation:
+    """Research OS keeps the newest 20 backups of each series (`records.files`, `webapp.mapedit`), so a save that
+    adds one can remove the oldest. That is not an agent's doing -- and a run's own tools save too, in another
+    process nobody here hears. A missing backup is rotation when its series has gained a backup since the picture
+    and every backup of the series that is left is newer than it."""
+
+    def __init__(self, before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+        self.oldest_left: dict[Any, tuple[str, str]] = {}
+        self.gained: set[Any] = set()
+        for rel in after:
+            found = _series(rel)
+            if found is None:
+                continue
+            series, order = found
+            if series not in self.oldest_left or order < self.oldest_left[series]:
+                self.oldest_left[series] = order
+            if rel not in before:
+                self.gained.add(series)
+
+    def explains(self, rel: str) -> bool:
+        found = _series(rel)
+        if found is None:
+            return False
+        series, order = found
+        return series in self.gained and order < self.oldest_left[series]
 
 
 def _data_map(picture: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -543,6 +689,17 @@ def _data_map(picture: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
         return None
     inner = picture.get("data")
     return inner if isinstance(inner, Mapping) and "files" in picture else picture
+
+
+def _backup_map(picture: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The `{rel: {"size"}}` backups map of a `take` result (or the bare map); None when a picture has none
+    (one taken before backups were recorded)."""
+    if picture is None:
+        return None
+    if "files" in picture:
+        inner = picture.get("backups")
+        return inner if isinstance(inner, Mapping) else None
+    return picture
 
 
 def _lexists(root: Any, rel: str) -> bool:

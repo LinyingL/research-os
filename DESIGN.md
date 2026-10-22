@@ -3931,7 +3931,10 @@ notes and a result, and marks the task done. Decided the same day:
   should look), `failed` (could not start, ended in error, or ran past the
   time limit), `stopped` (the person stopped it), `interrupted` (the app
   quit or crashed while it ran). A run that was undone also carries
-  `reverted`.
+  `reverted`. A run that ends with an out-of-bounds change (17.5, 18.1
+  item 4) is `out_of_bounds`, whichever of these it would otherwise have
+  been; that state is kept as its `outcome`, and it is the outcome that
+  decides whether the run can be answered or sent back.
 - **Answering and sending back.** A run waiting for an answer, or one that
   finished, can be continued: 回答 (to a question) or 打回 (with what to
   change) starts a new run that resumes the same agent conversation with
@@ -4164,7 +4167,9 @@ Added to 13.4: AI 执行者 "AI agent"; 运行 (a run, and the button) "Run";
 change"; AI 执行 (history source) "By an agent". States: 准备中
 "Preparing", 运行中 "Running", 已完成 "Done", 未报告 "Ended without a
 report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分撤回 "Partly undone", 已撤回本次运行
-"Undone" (not 已撤回, which is a withdrawn proposal's word).
+"Undone" (not 已撤回, which is a withdrawn proposal's word), 越过了限制
+"Went out of bounds" (a run that ended with an out-of-bounds change, in the
+warning colour; never 已完成).
 
 ### 17.10 Acceptance
 
@@ -4263,6 +4268,22 @@ the check. This round closes that door and the cheaper ones beside it.
    during run <id>". Writes the person makes through Research OS keep their
    name. After the run, attribution does not add a second version of the
    same content.
+   - *How.* The run manager, in the engine that started the run, tells the
+     history so from the before-picture until the run's attribution is
+     written (`history.watch_run`); the watcher needs to know nothing of
+     runs. A scan in that engine then credits to the run a file that was
+     not in the before-picture or ends with other bytes. A file the run did
+     not change (one the person dropped in the folder before it, never
+     scanned) and a path the person saved through Research OS since the run
+     began, as long as it still has the bytes Research OS wrote, keep the
+     scan's attribution. The attempts a scan reads follow the attempt
+     table, and the judgment ledger is one of the record files: each is the
+     run's or it is not. The pre-image of a person's save (12.6) is read
+     the same way, so that the run's content is not recorded under their
+     name. The stored note is English; the page shows it in its language.
+   - *Limit.* Only scans in the engine that carries the run out know of
+     it: a `researchos` command the person runs in a terminal meanwhile is
+     an ordinary scan.
 4. **Out of bounds is a state.** A run that ends with an out-of-bounds
    change reads 越过了限制 ("Went out of bounds") in the warning colour
    wherever its state shows, with 撤回本次运行 beside it, never 已完成. The
@@ -4271,6 +4292,29 @@ the check. This round closes that door and the cheaper ones beside it.
    - `.researchos/` at any depth, `.researchos/backups/` included (a
      deleted backup is out of bounds);
    - `.git/hooks/` and `.git/config` (a planted hook is out of bounds).
+
+   How it is read:
+   - *The state.* `out_of_bounds` replaces whatever state the run would have
+     had, `done`, `ended`, `needs_input`, `failed`, `stopped` and
+     `interrupted` alike, and `outcome` keeps that state (17.3). A run
+     waiting for an answer that went out of bounds still shows its question
+     and can be answered.
+   - *Depth.* A folder named `.researchos` or `.rce` protects what is below
+     it wherever it lies in the project, as the hook already reads it.
+   - *Git.* The before-picture records `.git/config` and the files in
+     `.git/hooks/`, copies included (the `*.sample` templates, which git
+     never runs, are left out), though `.git/` is otherwise not walked.
+     A change there is out of bounds, and undo restores it or moves a
+     planted hook away; the `config` of a repository the run itself
+     started stays.
+   - *Backups.* The picture lists `.researchos/backups/` by name and size.
+     A new backup is nothing, since Research OS makes one with every save.
+     One that is gone is out of bounds, the run lists it among its deleted
+     files, and undo says it has no copy. One exception: Research OS keeps
+     the newest 20 of each series of backups, and a save, by the person or
+     by a run's own tool, prunes the oldest. A backup that is the oldest of
+     a series that has gained a newer one since the picture is that
+     rotation, not the agent.
 5. **Undo says what it will do, and asks.**
    - 撤回本次运行 first lists the files it will put back (changed or
      deleted) and the files it will move away (created), each with its

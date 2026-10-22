@@ -7,9 +7,11 @@ No test starts a real `claude` or `opencode`: programs are tiny scripts with a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -527,7 +529,12 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
         "sub/__pycache__/a.pyc": "x", "sub/.venv/pyvenv.cfg": "x", ".hidden": "h"})
     copies = tmp_path / "copies"
     picture = snapshot.take(root, copy_to=copies)
-    assert set(picture["files"]) == {"data.csv", "code/run.py", "中文/说明.md", ".researchos/attempts.toml", ".hidden"}
+    # `.git/config` is the one thing of `.git/` the picture holds (18.1 item 4); the backups are listed apart
+    assert set(picture["files"]) == {"data.csv", "code/run.py", "中文/说明.md", ".researchos/attempts.toml", ".hidden",
+                                     ".git/config"}
+    assert picture["backups"] == {".researchos/backups/old.bak": {"size": 3},
+                                  f"{names.LEGACY_PROJECT_DIRNAME}/backups/old2.bak": {"size": 3}}
+    assert picture["backups_partial"] is False
     entry = picture["files"]["data.csv"]
     import hashlib
 
@@ -536,7 +543,8 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
     assert (copies / "data.csv").read_bytes() == b"a,b\n1,2\n"
     assert (copies / "中文" / "说明.md").read_text(encoding="utf-8") == "你好"
     assert (copies / ".researchos" / "attempts.toml").is_file()
-    assert not (copies / ".git").exists() and not (copies / "node_modules").exists()
+    assert (copies / ".git" / "config").read_text() == "[core]"
+    assert not (copies / ".researchos" / "backups").exists() and not (copies / "node_modules").exists()
     assert picture["partial"] is False and picture["not_copied"] == 0
     assert picture["git"]["head"] is None and picture["git"]["branch"] is None and len(picture["git"]["refs"]) == 64
     assert picture["copied_bytes"] == sum(e["size"] for e in picture["files"].values())
@@ -894,10 +902,189 @@ def test_violations_git_changed(tmp_path):
     import shutil
 
     found, _ = _violations(root4, lambda r: shutil.rmtree(r / ".git"))
-    assert found == [{"path": ".git", "reason": "git_changed"}]
+    # the repository is gone, and its configuration with it
+    assert {"path": ".git", "reason": "git_changed"} in found
+    assert {v["reason"] for v in found} == {"git_changed", "git_config_changed"}
     # no repository before and none after: nothing to report
     found, _ = _violations(_project(tmp_path / "plain", {"a": "a"}), lambda r: None)
     assert found == []
+
+
+# -- git's hooks and config, folders at any depth, backups (18.1 item 4) -----------------------------------------
+
+
+def _plant(root: Path, name: str, body: str = "#!/bin/sh\nexit 0\n") -> Path:
+    path = root / ".git" / "hooks" / name
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_take_records_git_config_and_hooks_with_copies_but_not_the_samples(tmp_path):
+    root = _git_project(tmp_path)
+    _plant(root, "pre-commit")
+    (root / ".git" / "hooks" / "sub").mkdir()
+    (root / ".git" / "hooks" / "sub" / "helper.sh").write_text("x", encoding="utf-8")
+    picture = snapshot.take(root, copy_to=tmp_path / "copies")
+    git_files = {rel for rel in picture["files"] if rel.startswith(".git/")}
+    assert git_files == {".git/config", ".git/hooks/pre-commit", ".git/hooks/sub/helper.sh"}
+    assert (root / ".git" / "hooks" / "applypatch-msg.sample").exists()  # the templates are there, and not recorded
+    assert picture["files"][".git/hooks/pre-commit"]["copied"] is True
+    assert (tmp_path / "copies" / ".git" / "hooks" / "pre-commit").read_text() == "#!/bin/sh\nexit 0\n"
+    assert (tmp_path / "copies" / ".git" / "config").read_text() == (root / ".git" / "config").read_text()
+    assert ".git/HEAD" not in picture["files"] and not any(r.startswith(".git/objects") for r in picture["files"])
+    # not a repository, or a `.git` that is only a pointer file (a worktree): nothing to record
+    assert not any(r.startswith(".git") for r in snapshot.take(_project(tmp_path / "plain", {"a": "a"}))["files"])
+    pointer = _project(tmp_path / "pointer", {".git": "gitdir: /elsewhere/.git\n"})
+    assert set(snapshot.take(pointer)["files"]) == {".git"}  # the pointer is a file like any other
+
+
+def test_a_planted_hook_or_a_changed_config_is_out_of_bounds(tmp_path):
+    root = _git_project(tmp_path)
+    _plant(root, "post-merge", "#!/bin/sh\necho old\n")
+    found, changes = _violations(root, lambda r: (_plant(r, "pre-commit"), _plant(r, "post-merge", "#!/bin/sh\necho new\n")))
+    assert changes["created"] == [".git/hooks/pre-commit"] and changes["modified"] == [".git/hooks/post-merge"]
+    assert found == [{"path": ".git/hooks/pre-commit", "reason": "git_hooks_changed"},
+                     {"path": ".git/hooks/post-merge", "reason": "git_hooks_changed"}]
+    found, _ = _violations(_git_project(tmp_path / "b"), lambda r: _git(r, "config", "core.hooksPath", "/tmp/evil"))
+    assert found == [{"path": ".git/config", "reason": "git_config_changed"}]
+    root3 = _git_project(tmp_path / "c")
+    _plant(root3, "pre-push")
+    found, _ = _violations(root3, lambda r: (r / ".git" / "hooks" / "pre-push").unlink())
+    assert found == [{"path": ".git/hooks/pre-push", "reason": "git_hooks_changed"}]
+    # a sample the template put there, or a commit, is not a hook
+    found, _ = _violations(_git_project(tmp_path / "d"), lambda r: (r / ".git" / "hooks" / "x.sample").write_text("y"))
+    assert found == []
+    # the same project, nothing done: nothing found
+    found, _ = _violations(_git_project(tmp_path / "e"), lambda r: None)
+    assert found == []
+
+
+def test_the_researchos_folders_are_protected_at_any_depth(tmp_path):
+    root = _project(tmp_path / "proj", {"sub/.researchos/keep.toml": "a", "deep/er/.rce/x.toml": "b",
+                                        ".researchos/a/b/c/d.toml": "c", "plain.txt": "p"})
+
+    def mutate(r):
+        (r / "sub/.researchos/new.toml").write_text("n", encoding="utf-8")
+        (r / "deep/er/.rce/x.toml").write_text("changed", encoding="utf-8")
+        (r / ".researchos/a/b/c/d.toml").unlink()
+        (r / "plain.txt").write_text("ok", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted(found, key=lambda v: v["path"]) == [
+        {"path": ".researchos/a/b/c/d.toml", "reason": "researchos_changed"},
+        {"path": "deep/er/.rce/x.toml", "reason": "researchos_changed"},
+        {"path": "sub/.researchos/new.toml", "reason": "researchos_changed"}]
+    # the engine's own save of such a file, with the bytes it wrote, is allowed as before
+    sha = hashlib.sha256(b"mine").hexdigest()
+    found, _ = _violations(_project(tmp_path / "two", {"sub/.researchos/x.toml": "a"}),
+                           lambda r: (r / "sub/.researchos/x.toml").write_bytes(b"mine"),
+                           allowed={"sub/.researchos/x.toml": {sha}})
+    assert found == []
+
+
+def _backups_project(tmp_path: Path, names_: list[str]) -> Path:
+    return _project(tmp_path, {f".researchos/backups/{n}": f"backup {n}" for n in names_} | {"a.txt": "a"})
+
+
+def _backup_violations(root, mutate, **kw):
+    before = snapshot.take(root)
+    prot = snapshot.protected(root, before)
+    mutate(root)
+    after = snapshot.take(root)
+    return snapshot.violations(snapshot.compare(before, after), prot, git_before=None, git_after=None, allowed={},
+                               after=after, backups_before=before["backups"], backups_after=after["backups"], **kw)
+
+
+def _stamp(n: int) -> str:
+    return f"2026010{n}T000000000000Z"
+
+
+def test_a_deleted_backup_is_out_of_bounds_and_a_new_one_is_not(tmp_path):
+    names_ = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path / "a", names_)
+    picture = snapshot.take(root)
+    assert picture["backups"] == {f".researchos/backups/{n}": {"size": len(f"backup {n}")} for n in names_}
+    assert "map.md" not in picture["files"] and not any("/backups/" in r for r in picture["files"])
+    new = ".researchos/backups/tasks.json.20260105T000000000000Z.write.json"
+    # a backup added (Research OS saves) is nothing
+    assert _backup_violations(root, lambda r: (r / new).write_text("n")) == []
+    # one removed, with nothing newer in its series, is an out-of-bounds change, wherever it lies
+    root2 = _backups_project(tmp_path / "b", names_)
+    gone = ".researchos/backups/" + names_[0]
+    assert _backup_violations(root2, lambda r: (r / gone).unlink()) == [{"path": gone, "reason": "backup_deleted"}]
+    root3 = _backups_project(tmp_path / "c", names_)
+    assert _backup_violations(root3, lambda r: shutil.rmtree(r / ".researchos/backups")) == [
+        {"path": f".researchos/backups/{n}", "reason": "backup_deleted"} for n in names_]
+    # at any depth, and in the legacy folder
+    legacy = f"{names.LEGACY_PROJECT_DIRNAME}/backups/y.toml"
+    root4 = _project(tmp_path / "d", {".researchos/backups/approved/p1/x.toml": "x", legacy: "y"})
+    found = _backup_violations(root4, lambda r: [(r / ".researchos/backups/approved/p1/x.toml").unlink(),
+                                                 (r / legacy).unlink()])
+    assert [v["path"] for v in found] == [legacy, ".researchos/backups/approved/p1/x.toml"]
+    # a file that was not there at the start, or an unchanged project, is nothing
+    assert _backup_violations(_backups_project(tmp_path / "e", names_), lambda r: None) == []
+
+
+def test_research_oss_own_rotation_of_a_backup_series_is_not_a_violation(tmp_path):
+    series = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3, 4)]
+    other = [f"attempts.toml.{_stamp(n)}.toml" for n in (1, 2)]
+    root = _backups_project(tmp_path / "a", series + other)
+    oldest, newest = ".researchos/backups/" + series[0], ".researchos/backups/tasks.json.20260109T000000000000Z.write.json"
+
+    def rotate(r):  # a save adds the newest and prunes the oldest
+        (r / newest).write_text("n")
+        (r / oldest).unlink()
+
+    assert _backup_violations(root, rotate) == []
+    # two pruned at once is the same
+    root2 = _backups_project(tmp_path / "b", series)
+
+    def rotate_two(r):
+        (r / newest).write_text("n")
+        (r / oldest).unlink()
+        (r / (".researchos/backups/" + series[1])).unlink()
+
+    assert _backup_violations(root2, rotate_two) == []
+    # the oldest removed with nothing added, a middle one removed beside an addition, another series, or a
+    # name Research OS never gave a backup: all out of bounds
+    root3 = _backups_project(tmp_path / "c", series)
+    assert _backup_violations(root3, lambda r: (r / oldest).unlink()) == [{"path": oldest, "reason": "backup_deleted"}]
+    root4 = _backups_project(tmp_path / "d", series)
+    middle = ".researchos/backups/" + series[2]
+    found = _backup_violations(root4, lambda r: ((r / newest).write_text("n"), (r / middle).unlink()))
+    assert found == [{"path": middle, "reason": "backup_deleted"}]
+    root5 = _backups_project(tmp_path / "e", series + other)
+    gone_other = ".researchos/backups/" + other[0]
+    found = _backup_violations(root5, lambda r: ((r / newest).write_text("n"), (r / gone_other).unlink()))
+    assert found == [{"path": gone_other, "reason": "backup_deleted"}]
+    root6 = _project(tmp_path / "f", {".researchos/backups/notes.txt": "n", "a.txt": "a"})
+    found = _backup_violations(root6, lambda r: ((r / (".researchos/backups/z.20260109T000000000000Z.txt")).write_text("x"),
+                                                 (r / ".researchos/backups/notes.txt").unlink()))
+    assert found == [{"path": ".researchos/backups/notes.txt", "reason": "backup_deleted"}]
+
+
+def test_a_backup_a_cut_after_walk_did_not_see_is_not_called_deleted(tmp_path, monkeypatch):
+    names_ = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path, names_)
+    before = snapshot.take(root)
+    monkeypatch.setattr(snapshot, "BACKUP_FILE_LIMIT", 1)
+    after = snapshot.take(root)
+    assert after["backups_partial"] is True and len(after["backups"]) == 1
+    prot = snapshot.protected(root, before)
+    found = snapshot.violations(snapshot.compare(before, after), prot, git_before=None, git_after=None, allowed={},
+                                after=after, backups_before=before["backups"], backups_after=after["backups"])
+    assert found == []  # everything is still on disk
+    # without a root to look in, a cut walk proves nothing either
+    found = snapshot.violations(snapshot.compare(before, after), {"dirs": prot["dirs"], "files": [], "data": [],
+                                                                  "records": []}, git_before=None, git_after=None,
+                                allowed={}, after=after, backups_before=before["backups"],
+                                backups_after=after["backups"])
+    assert found == []
+    # a picture taken before backups were recorded says nothing about them
+    old_picture = {k: v for k, v in before.items() if k not in ("backups", "backups_partial")}
+    assert snapshot.violations(snapshot.compare(old_picture, before), prot, git_before=None, git_after=None,
+                               allowed={}, after=before, backups_before=None) == []
 
 
 # -- guard: check_tool --------------------------------------------------------------------------------------

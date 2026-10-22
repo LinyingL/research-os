@@ -210,11 +210,15 @@ def _author(author: Mapping[str, Any] | None) -> dict[str, Any] | None:
     return {"source": "agent", "who": author["who"], "note": author.get("note")}
 
 
-def _history(store: history.Store, root: Path, rel: str, author: dict[str, Any] | None = None) -> None:
+def _history(store: history.Store, root: Path, rel: str, author: dict[str, Any] | None = None,
+             pre_image: bool = False) -> None:
     """Record `rel`'s current content. The pre-image of a save is always the
-    scan's (whoever last wrote it outside Research OS); only the post-image
-    carries `author`."""
-    got = (history.record_file(store, root, rel, who=history.scan_who(root)) if author is None
+    scan's (whoever last wrote it outside Research OS): while an agent's run
+    is going in the project that includes the run, which may have changed the
+    file since the last scan (18.1 item 3), so the pre-image is read as a
+    scan during the run reads it. Only the post-image carries `author`."""
+    got = (history.record_file(store, root, rel, who=history.scan_who(root),
+                               seen=history.run_seen(root) if pre_image else None) if author is None
            else history.record_file(store, root, rel, source=author["source"], who=author["who"],
                                     note=author["note"]))
     if got not in {"recorded", "unchanged"}:
@@ -233,7 +237,7 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
     with history.Store.open(pid) as store:
         backup = None
         if before is not None:
-            _history(store, root, rel)
+            _history(store, root, rel, None, True)  # the pre-image
             record_files.snapshot_if_first_change_today(root, target)
             backup = mapedit.write_backup_bytes(root, target, before, target.suffix)
         # Catch a file edited outside Research OS while its backup was made.

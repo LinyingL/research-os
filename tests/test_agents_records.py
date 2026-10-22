@@ -374,6 +374,131 @@ def test_agent_is_a_history_source_and_shows_in_versions(root):
     assert v["who_label"].startswith("Claude Code · sonnet")
 
 
+# -- what a scan sees while a run goes on (DESIGN.md 18.1 item 3) ------------------------------------------
+
+RUN = "r-20261021T101500Z-abc123"
+WHO = labels.who_value(AGENT, "m-1")
+
+
+@pytest.fixture
+def watched(root):
+    """A run going on in `root` whose `owns` is whatever the test puts in `owned`; released afterwards."""
+    owned: set[str] = set()
+    seen = history.RunSeen(who=WHO, run=RUN, owns=lambda rel, entry: rel in owned)
+    history.watch_run(root, seen)
+    try:
+        yield owned
+    finally:
+        history.release_run(root, seen)
+
+
+def _rows(root: Path, rel: str) -> list[tuple]:
+    return [(v.source, v.who, v.note) for v in reversed(_versions(root, rel))]
+
+
+def test_the_registry_knows_one_run_per_project_and_lets_go(root, tmp_path):
+    assert history.run_seen(root) is None
+    first = history.RunSeen(who=WHO, run=RUN, owns=lambda rel, entry: True)
+    second = history.RunSeen(who=WHO, run="r-20261021T111500Z-def456", owns=lambda rel, entry: True)
+    history.watch_run(root, first)
+    assert history.run_seen(root) is first and history.run_seen(tmp_path / "elsewhere") is None
+    assert first.note == f"seen during run {RUN}" and history.seen_run_id(first.note) == RUN
+    history.watch_run(root, second)
+    history.release_run(root, first)  # the first one's release does not undo the second
+    assert history.run_seen(root) is second
+    history.release_run(root, second)
+    assert history.run_seen(root) is None
+    history.release_run(root, second)  # twice is harmless
+    assert history.seen_run_id("a note") is None and history.seen_run_id(None) is None
+    assert history.seen_run_id("seen during run ") is None
+
+
+def test_a_scan_during_a_run_credits_what_the_run_owns_and_nothing_else(root, watched):
+    (root / "agent.py").write_text("print(1)\n", encoding="utf-8")
+    (root / "person.py").write_text("print(2)\n", encoding="utf-8")
+    watched.add("agent.py")
+    history.record_scan(None, root)
+    assert _rows(root, "agent.py") == [("agent", WHO, f"seen during run {RUN}")]
+    assert [r[0] for r in _rows(root, "person.py")] == ["scan"]  # not the run's: the person's, or older than it
+    # the same scan again, and a touch without a change, add nothing
+    history.record_scan(None, root)
+    (root / "agent.py").write_text("print(1)\n", encoding="utf-8")
+    history.record_scan(None, root)
+    assert len(_rows(root, "agent.py")) == 1
+    # a change adds a version, again the run's
+    (root / "agent.py").write_text("print(3)\n", encoding="utf-8")
+    history.record_scan(None, root)
+    assert [r[0] for r in _rows(root, "agent.py")] == ["agent", "agent"]
+
+
+def test_without_a_run_a_scan_is_the_scans_as_before(root):
+    (root / "x.py").write_text("print(1)\n", encoding="utf-8")
+    history.record_scan(None, root)
+    assert [r[0] for r in _rows(root, "x.py")] == ["scan"]
+
+
+def test_a_scan_that_is_told_the_run_does_not_need_the_registry(root):
+    (root / "x.py").write_text("print(1)\n", encoding="utf-8")
+    seen = history.RunSeen(who=WHO, run=RUN, owns=lambda rel, entry: entry["sha256"] == hashlib.sha256(b"print(1)\n").hexdigest())
+    history.record_scan(None, root, seen=seen)
+    assert _rows(root, "x.py") == [("agent", WHO, f"seen during run {RUN}")]
+
+
+def test_owns_is_asked_about_the_content_it_is_given(root):
+    asked = []
+
+    def owns(rel, entry):
+        asked.append((rel, entry["size"], entry["sha256"], isinstance(entry["mtime_ns"], int)))
+        return False
+
+    (root / "x.py").write_text("print(1)\n", encoding="utf-8")
+    history.record_scan(None, root, seen=history.RunSeen(who=WHO, run=RUN, owns=owns))
+    assert asked == [("x.py", 9, hashlib.sha256(b"print(1)\n").hexdigest(), True)]
+
+
+def test_the_runs_attribution_after_it_adds_nothing_for_a_content_a_scan_holds(root, watched):
+    path = root / "made.py"
+    path.write_text("print(1)\n", encoding="utf-8")
+    watched.add("made.py")
+    history.record_scan(None, root)
+    note = f"seen during run {RUN}"
+    with history.Store.open(_pid(root)) as store:
+        assert history.record_file(store, root, "made.py", source="agent", who=WHO, note=RUN, unless_noted=note) == "unchanged"
+        # other bytes, another agent, or a version of another kind are not that very record
+        path.write_text("print(2)\n", encoding="utf-8")
+        assert history.record_file(store, root, "made.py", source="agent", who=WHO, note=RUN, unless_noted=note) == "recorded"
+        assert history.record_file(store, root, "made.py", source="agent", who=WHO, note=RUN, unless_noted=note) == "unchanged"
+        assert history.record_file(store, root, "made.py", source="agent", who="agent:opencode:x", note=RUN,
+                                   unless_noted=note) == "recorded"
+        # without `unless_noted` an agent's record is always added, as before
+        assert history.record_file(store, root, "made.py", source="agent", who=WHO, note=RUN) == "recorded"
+    assert [r[2] for r in _rows(root, "made.py")] == [note, RUN, RUN, RUN]
+
+
+def test_the_stored_note_reads_in_the_request_language(root):
+    note = f"seen during run {RUN}"
+    versions = [_version(WHO, note=note), _version(WHO, note=RUN), {"who": WHO, "source": "scan", "note": note}]
+    zh = history.name_people(root, [dict(v) for v in versions], "zh")
+    en = history.name_people(root, [dict(v) for v in versions], "en")
+    assert zh[0]["note"] == f"在运行 {RUN} 期间看到" and en[0]["note"] == f"Seen during run {RUN}"
+    assert zh[1]["note"] == RUN == en[1]["note"]  # an ordinary run id is left as it is
+    assert zh[2]["note"] == note  # only an agent's version is read that way
+
+
+def test_the_save_of_a_person_keeps_their_name_and_the_pre_image_is_the_runs(root, watched):
+    created = workspace.save_document(root, {"kind": "note", "title": "N", "content": "first", "revision": None})
+    rel = created["path"]
+    (root / rel).write_text("# N\n\nthe agent wrote this\n", encoding="utf-8")  # behind Research OS's back
+    watched.add(rel)
+    current = workspace.document(root, rel)
+    workspace.save_document(root, {"path": rel, "content": "# N\n\nthe person's words", "revision": current["revision"]})
+    rows = _rows(root, rel)
+    # oldest first: the person's first save, what the run left there, the person's second save
+    assert [r[0] for r in rows] == ["scan", "agent", "scan"]
+    assert rows[1][1:] == (WHO, f"seen during run {RUN}")
+    assert rows[2][1] == history.scan_who(root)
+
+
 # -- the command line ----------------------------------------------------------------------------------------
 
 

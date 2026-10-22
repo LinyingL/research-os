@@ -16,8 +16,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from researchos import db, paths
+from researchos import db, history, paths
 from researchos import project as project_identity
+from researchos.records import notes as notes_mod
+from researchos.records.identity import read_identity
 from researchos.webapp import watcher
 
 
@@ -847,3 +849,90 @@ def test_switching_back_resyncs_the_mappings_of_the_new_root(tmp_path):
     (b / ".researchos" / "mappings.toml").write_text(_MAPPING)
     w.poll_once()
     assert len(_mapping_edges(b)) == 1
+
+
+# -- while an agent's run goes on (DESIGN.md 18.1 item 3) ------------------------------------------------------
+
+RUN = "r-20261022T101500Z-abc123"
+WHO = "agent:claude-code:sonnet#m-1"
+
+
+def _store_rows(project_root: Path, node: str) -> list[tuple]:
+    """(source, who, note) of every version of `node`, oldest first."""
+    pid = read_identity(project_root).identity.id
+    with history.Store.open(pid) as store:
+        return [(v.source, v.who, v.note) for v in reversed(store.versions(notes_mod.normalize_node(node)))]
+
+
+def _attempt_node(project_root: Path) -> str:
+    conn = db.connect(paths.graph_db_path(project_root))
+    try:
+        return db.get_nodes_by_type(conn, "attempt")[0]["id"]
+    finally:
+        conn.close()
+
+
+def _watch_run(project_root: Path, *owned: str) -> history.RunSeen:
+    seen = history.RunSeen(who=WHO, run=RUN, owns=lambda rel, entry: rel in owned)
+    history.watch_run(project_root, seen)
+    return seen
+
+
+def test_a_scan_during_a_run_records_what_the_run_changed_under_the_agent(tmp_path):
+    _make_project(tmp_path)
+    w = _mk_watcher(tmp_path)
+    w.poll_once()  # baseline
+    seen = _watch_run(tmp_path, "steps/s1.py", "analysis.py")
+    try:
+        (tmp_path / "steps" / "s1.py").write_text("x = 1\n")  # in the watch set: the scan runs
+        (tmp_path / "analysis.py").write_text("print(1)\n")  # not watched, found by the scan's inventory
+        (tmp_path / "person.py").write_text("print(2)\n")  # the person's, or older than the run
+        assert w.poll_once() is True
+    finally:
+        history.release_run(tmp_path, seen)
+    note = f"seen during run {RUN}"
+    assert _store_rows(tmp_path, "steps/s1.py") == [("agent", WHO, note)]
+    assert _store_rows(tmp_path, "analysis.py") == [("agent", WHO, note)]
+    assert [row[0] for row in _store_rows(tmp_path, "person.py")] == ["scan"]
+
+
+def test_a_scan_after_the_run_is_the_scans_again(tmp_path):
+    _make_project(tmp_path)
+    w = _mk_watcher(tmp_path)
+    w.poll_once()
+    seen = _watch_run(tmp_path, "analysis.py")
+    (tmp_path / "analysis.py").write_text("print(1)\n")
+    (tmp_path / "steps" / "s1.py").write_text("x = 1\n")
+    w.poll_once()
+    history.release_run(tmp_path, seen)
+    (tmp_path / "analysis.py").write_text("print(2)\n")
+    (tmp_path / "steps" / "s1.py").write_text("x = 2\n")
+    w.poll_once()
+    assert [row[0] for row in _store_rows(tmp_path, "analysis.py")] == ["agent", "scan"]
+
+
+def test_the_verdicts_a_scan_reads_follow_the_attempt_table(tmp_path):
+    """The attempt table is the run's: the verdict the scan reads is the run's too. When it is the person's, it is theirs."""
+    _make_project(tmp_path)
+    w = _mk_watcher(tmp_path)
+    w.poll_once()
+    _write_map(tmp_path, [_row("1")])
+    (tmp_path / "steps" / "touch.py").write_text("x = 1\n")
+    w.poll_once()  # the first scan reads the row
+    node = _attempt_node(tmp_path)
+    assert [row[0] for row in _store_rows(tmp_path, node)] == ["scan"]
+    seen = _watch_run(tmp_path, "map.md")  # the run owns the table
+    try:
+        (tmp_path / "map.md").write_text(_MAP_HEADER + "| 1 | 2026-01-01 | d | v | r | ❌ |\n")
+        w.poll_once()
+    finally:
+        history.release_run(tmp_path, seen)
+    assert [row[0] for row in _store_rows(tmp_path, node)] == ["scan", "agent"]
+    assert _store_rows(tmp_path, node)[1][1:] == (WHO, f"seen during run {RUN}")
+    seen = _watch_run(tmp_path)  # a run that owns nothing: the person edited the table
+    try:
+        (tmp_path / "map.md").write_text(_MAP_HEADER + "| 1 | 2026-01-01 | d | v | r | 🕒 |\n")
+        w.poll_once()
+    finally:
+        history.release_run(tmp_path, seen)
+    assert [row[0] for row in _store_rows(tmp_path, node)] == ["scan", "agent", "scan"]

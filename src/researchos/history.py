@@ -32,6 +32,15 @@ Where the versions come from
 - **An attempt** (`attempt:<table>#<n>`): its verdict and result as they
   moved, recorded by every scan that read the attempt table (later phases
   add approvals, `source = "approval"`).
+- **While an AI agent's run is going** (17.5, 18.1 item 3) the engine that
+  started it tells the history (`watch_run`), and a scan in that engine
+  credits to the run what the run changed: a version of a file that was not
+  in the before-picture or ended with other bytes, and a person's save
+  through Research OS is left to the person. Such a version is
+  `source = "agent"`, `who` the run's, `note` "seen during run <id>"; the
+  attempts the scan reads count when the attempt table is the run's. The
+  run's own attribution after it ends (`unless_noted`) adds nothing for a
+  content this already holds.
 - **A variable** (`variable:<id>`): its card's versions and log (9.11).
 
 `versions(root, node)` lists them newest first; `diff(root, node, a, b)`
@@ -53,12 +62,13 @@ import os
 import re
 import sqlite3
 import subprocess
+import threading
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlite3 import Connection
-from typing import IO, Any, Iterable
+from typing import IO, Any, Callable, Iterable, Mapping
 
 from researchos import db, dta, paths, settings
 from researchos.agents import labels as agent_labels
@@ -113,6 +123,59 @@ class HistoryError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+# -- an agent's run going on (18.1 item 3) -----------------------------------------------
+
+SEEN_NOTE = "seen during run "
+
+
+@dataclass(frozen=True)
+class RunSeen:
+    """A run of an AI agent going on in a project: the history's `who` for it (`labels.who_value`), its id,
+    and `owns(rel, entry)`, whether the content now at `rel` (`entry` as `agents.snapshot` records a file: `size`,
+    `mtime_ns`, `sha256`) is the run's and not the person's -- the run's manager answers from its before-picture
+    and from what the engine wrote for the person since."""
+
+    who: str
+    run: str
+    owns: Callable[[str, Mapping[str, Any]], bool]
+
+    @property
+    def note(self) -> str:
+        return f"{SEEN_NOTE}{self.run}"
+
+
+_WATCHED: dict[str, RunSeen] = {}
+_WATCHED_LOCK = threading.Lock()
+
+
+def watch_run(root: str | Path, seen: RunSeen) -> None:
+    """From now until `release_run`, the scans in this process credit what a run changed in `root` to it. One run
+    per project (the manager allows no more); a second replaces the first."""
+    with _WATCHED_LOCK:
+        _WATCHED[os.path.realpath(root)] = seen
+
+
+def release_run(root: str | Path, seen: RunSeen) -> None:
+    """The run is over for the history. A different run registered since is left alone."""
+    key = os.path.realpath(root)
+    with _WATCHED_LOCK:
+        if _WATCHED.get(key) is seen:
+            del _WATCHED[key]
+
+
+def run_seen(root: str | Path) -> RunSeen | None:
+    """The run going on in `root`, if this process started one."""
+    with _WATCHED_LOCK:
+        return _WATCHED.get(os.path.realpath(root))
+
+
+def seen_run_id(note: object) -> str | None:
+    """The run id in a note `watch_run`'s attribution wrote ("seen during run <id>"), else None."""
+    if isinstance(note, str) and note.startswith(SEEN_NOTE):
+        return note[len(SEEN_NOTE):] or None
+    return None
 
 
 # -- the version store ----------------------------------------------------------------
@@ -482,7 +545,8 @@ def _hash_file(path: Path) -> tuple[str, bytes | None, int]:
 
 
 def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who: str | None = None,
-                note: str | None = None, approved_by: str | None = None, snapshot: int | None = None) -> str:
+                note: str | None = None, approved_by: str | None = None, snapshot: int | None = None,
+                seen: RunSeen | None = None, unless_noted: str | None = None) -> str:
     """Record `rel`'s current content as a version if it differs from the
     newest one. Returns "recorded", "unchanged", "missing", "dataless" or
     "unreadable". A file whose size, modification time and inode are what
@@ -493,7 +557,16 @@ def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who
     installed (`source = "publish"`) carries the PI as `who` and the
     snapshot it came from (12.13), and is recorded the same way; so is a
     version an AI agent's run made (`source = "agent"`, `who =
-    agent:<runner>:<model>#<person>`, `note` the run id, 17.5)."""
+    agent:<runner>:<model>#<person>`, `note` the run id, 17.5).
+
+    `seen` is the run going on in the project (`run_seen`): a scan's version
+    (`source = "scan"`) of a content the run owns is recorded as the run's
+    ("seen during run <id>"), and is skipped, as a scan's is, when the content
+    is the newest version's. `unless_noted` is the note of a version that
+    already stands for this very record: when the newest version has this
+    content, this source and `who` and that note (or this one), nothing is
+    added (the run's attribution after it ended, for what a scan saw while it
+    went on)."""
     full = root / rel
     try:
         st = full.lstat()
@@ -515,6 +588,14 @@ def record_file(store: Store, root: Path, rel: str, *, source: str = "scan", who
     if latest is not None and latest.sha256 == sha and source == "scan":
         store.note_stat(latest.seq, stat)
         return "unchanged"
+    if (unless_noted is not None and latest is not None and latest.sha256 == sha and latest.source == source
+            and latest.who == who and latest.note in (unless_noted, note)):
+        store.note_stat(latest.seq, stat)
+        return "unchanged"
+    if seen is not None and source == "scan":
+        entry = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "sha256": sha}
+        if seen.owns(rel, entry):
+            source, who, note = "agent", seen.who, seen.note
     text = data is not None and _is_text(data)
     try:
         summary = data_summary(full, rel)
@@ -615,13 +696,18 @@ def _record_paths(root: Path) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def record_scan(conn: Connection | None, project_root: str | Path, *, files: Iterable[str] | None = None) -> dict[str, int]:
+def record_scan(conn: Connection | None, project_root: str | Path, *, files: Iterable[str] | None = None,
+                seen: RunSeen | None = None) -> dict[str, int]:
     """What a scan adds to the history (module docstring): every file of the
     inventory git does not track (all of them, in a project that is not a
     git repository) and the record files, then the attempts. `files`
     limits the file half to those paths (the watcher's changed files).
-    Only for a project with an identity whose migration has finished. The
-    caller holds the project lock; a failure is the caller's to contain."""
+    While an agent's run is going in the project (`seen`, by default the one
+    `run_seen` knows) what the run changed is recorded as the run's (18.1
+    item 3): the files it owns, and the attempts when the attempt table is
+    one of them. Only for a project with an identity whose migration has
+    finished. The caller holds the project lock; a failure is the caller's to
+    contain."""
     root = Path(project_root)
     got = read_identity(root)
     if got.state is not IdentityState.PRESENT or got.identity is None or got.identity.migrating_from is not None:
@@ -639,22 +725,37 @@ def record_scan(conn: Connection | None, project_root: str | Path, *, files: Ite
     else:
         candidates = list(files)
     who = scan_who(root)
+    seen = seen if seen is not None else run_seen(root)
     with Store.open(got.identity.id) as store:
         for rel in dict.fromkeys(candidates):
             if tracked is not None and rel in tracked:
                 continue
-            outcome = record_file(store, root, rel, who=who)
+            outcome = record_file(store, root, rel, who=who, seen=seen)
             counts[outcome] = counts.get(outcome, 0) + 1
         if conn is not None:
-            counts["attempts"] = record_attempts(store, conn, who=who)
+            author = {"source": "agent", "who": seen.who, "note": seen.note} if _owns_table(root, seen) else {}
+            counts["attempts"] = record_attempts(store, conn, **({"who": who} | author))
     return counts
 
 
-def record_after_scan(conn: Connection | None, project_root: str | Path, *, files: Iterable[str] | None = None) -> dict[str, int]:
+def _owns_table(root: Path, seen: RunSeen | None) -> bool:
+    """Whether the attempt table is a file the run owns (`RunSeen.owns`): the verdicts a scan reads from it
+    during the run are then the run's."""
+    if seen is None:
+        return False
+    from researchos.agents import snapshot  # noqa: PLC0415 -- the picture's own reading of attempts.toml
+
+    rel = snapshot.attempts_table(root)
+    entry = snapshot.fingerprint(root, rel) if rel else None
+    return entry is not None and seen.owns(rel, entry)
+
+
+def record_after_scan(conn: Connection | None, project_root: str | Path, *, files: Iterable[str] | None = None,
+                      seen: RunSeen | None = None) -> dict[str, int]:
     """`record_scan`, contained: a history that could not be written never
     fails the scan it follows."""
     try:
-        return record_scan(conn, project_root, files=files)
+        return record_scan(conn, project_root, files=files, seen=seen)
     except Exception:  # noqa: BLE001 -- see docstring
         logger.exception("recording the history of %s failed", project_root)
         return {}
@@ -942,6 +1043,9 @@ def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") ->
         agent = agent_labels.parse_who(who)
         if agent is not None:
             v["who_label"] = _agent_who_label(agent[0], agent[1], team, lang)
+            run = seen_run_id(v.get("note")) if v.get("source") == "agent" else None
+            if run is not None:  # 18.1 item 3: said in the request's language, never as the stored English
+                v["note"] = settings.say("在运行 {run} 期间看到", "Seen during run {run}", lang, run=run)
         elif name:
             v["who_label"] = name
         elif isinstance(who, str) and who and "@" in who:

@@ -39,7 +39,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 RUN_ID_RE = re.compile(r"r-\d{8}T\d{6}Z-[0-9a-f]{6}\Z")
-STATES = ("preparing", "running", "needs_input", "done", "ended", "failed", "stopped", "interrupted")
+#: `out_of_bounds` (18.1 item 4) is how a run reads that ended with an out-of-bounds change, whatever else it
+#: would have read; `outcome` then keeps the state it would have had (`outcome_of`).
+STATES = ("preparing", "running", "needs_input", "done", "ended", "failed", "stopped", "interrupted",
+          "out_of_bounds")
 ACTIVE_STATES = frozenset({"preparing", "running"})
 SIGNAL_KINDS = frozenset({"complete", "ask", "note"})
 #: Run folders kept per project: `run.json`, `events.jsonl` and `instruction.txt` (the run's log) stay for the
@@ -119,6 +122,15 @@ def new_run_id(now: datetime | None = None) -> str:
 
 def run_dir(project_id: str, run_id: str) -> Path:
     return project_runs_dir(project_id) / _check_run_id(run_id)
+
+
+def outcome_of(run: dict[str, Any]) -> Any:
+    """How the run ended apart from the warning: its state, or, for a run that went out of bounds, the state
+    it would otherwise have read (`outcome`: `done`, `ended`, `needs_input`, `failed`, `stopped` or
+    `interrupted`) -- what decides whether it can be answered or sent back."""
+    if run.get("state") == "out_of_bounds" and run.get("outcome"):
+        return run["outcome"]
+    return run.get("state")
 
 
 # -- run.json -------------------------------------------------------------------------------

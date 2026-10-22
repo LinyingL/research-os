@@ -58,6 +58,19 @@ read from `signals.jsonl` (`tool_paths`, `tasks_sha`): they already carry
 their own attribution, and `research/tasks.json` ending with a hash the tools
 produced is not a violation.
 
+**What the history sees while the run goes** (18.1 item 3). From the
+before-picture until the run's attribution is written, the manager tells the
+history that the project has a run (`history.watch_run`), and any scan in this
+engine -- the watcher's above all -- credits to the run what the run changed:
+`_watch` answers for a file from the before-picture (not there, or other
+bytes) and from the engine's own writes (the person's saves keep their name).
+The attribution after the run then adds nothing for a content that is already
+there ("seen during run <id>").
+
+**An out-of-bounds run** (18.1 item 4) is `out_of_bounds`, not what it would
+have read (`outcome` keeps that: `done`, `ended`, ...). The task's done mark is
+the agent's and is left as it is; the run is what warns.
+
 **Undo** (17.6) restores from the before-picture's copies, never over a later
 change (nor over a path the person saved during the run), and takes the task's
 done mark back logically rather than restoring `research/tasks.json`. A
@@ -100,6 +113,9 @@ logger = logging.getLogger(__name__)
 
 #: The project's record folders (never the agent's to change; their writes are not attributed to it).
 _RECORD_DIRS = frozenset({names.PROJECT_DIRNAME.casefold(), names.LEGACY_PROJECT_DIRNAME.casefold()})
+#: The same and git's folder: not the change history's business (git's own history is git's), and not a folder
+#: an undo takes apart.
+_RECORD_AND_GIT_DIRS = _RECORD_DIRS | {snapshot.GIT_DIR}
 
 #: How long the program gets to end after SIGTERM before what is left of its tree is killed (17.3).
 KILL_GRACE_S = 10.0
@@ -188,6 +204,14 @@ def _lang(lang: object) -> str:
 def _key(rel: str) -> str:
     """The form paths are compared in: NFC, case-folded (macOS is case-insensitive and may store names decomposed)."""
     return unicodedata.normalize("NFC", rel).casefold()
+
+
+def _warn_if_out_of_bounds(state: str, violations: object) -> tuple[str, str | None]:
+    """`(state, outcome)` of a run that ended as `state` with these out-of-bounds changes (18.1 item 4): any
+    change makes the state `out_of_bounds`, and `outcome` keeps the state it would have read; none leaves both."""
+    if violations and state != "out_of_bounds":
+        return "out_of_bounds", state
+    return state, None
 
 
 # -- processes -------------------------------------------------------------------------------------
@@ -381,25 +405,28 @@ def _change_count(changes: object) -> int:
 
 
 def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
-    """What the page shows of a run: the identifying and state fields, counts
+    """What the page shows of a run: the identifying and state fields (`state`,
+    and `outcome`, how the run ended apart from going out of bounds), counts
     for `violations` and `changes`, the number of files an undo left alone
     (`revert_skipped`, present once an undo was tried) and the three things the
     person may do with it (`can_stop`, `can_reply`, `can_revert`)."""
     state = run.get("state")
+    outcome = run_store.outcome_of(run)
     finished = state not in run_store.ACTIVE_STATES
     reverted = bool(run.get("reverted"))
     changed = _change_count(run.get("changes"))
     out = {
         "id": run.get("id"), "task_id": run.get("task_id"), "task_text": run.get("task_text"),
         "owner": run.get("owner"), "label": run.get("label"), "runner": run.get("runner"),
-        "model": run.get("model"), "state": state, "reverted": reverted, "kind": run.get("kind"),
+        "model": run.get("model"), "state": state, "outcome": outcome, "reverted": reverted,
+        "kind": run.get("kind"),
         "parent": run.get("parent"), "created": run.get("created"), "started": run.get("started"),
         "ended": run.get("ended"), "question": run.get("question"), "report": run.get("report"),
         "error": run.get("error"), "cost_usd": run.get("cost_usd"), "by": run.get("by"),
         "by_name": run.get("by_name"),
         "violations": len(run.get("violations") or ()), "changes": changed,
         "can_stop": bool(active),
-        "can_reply": bool(latest_of_task and not active and not reverted and state in REPLY_STATES
+        "can_reply": bool(latest_of_task and not active and not reverted and outcome in REPLY_STATES
                           and run.get("session_id")),
         "can_revert": bool(finished and not active and not reverted and run.get("revertible")
                            and (changed > 0 or run.get("report"))),
@@ -437,9 +464,13 @@ class _Active:
         self.human: set[str] = set()
         #: path -> sha256 of what the engine last wrote there (files up to `snapshot.COPY_LIMIT`)
         self.human_sha: dict[str, str] = {}
+        #: the same, by `_key` of the path: key -> sha256 of what the engine last wrote there (None: not known)
+        self.human_keys: dict[str, str | None] = {}
         self.human_version = 0
         self.human_lock = threading.Lock()
         self.listener: Callable[[Path], None] | None = None
+        #: what the history was told about this run (`_watch`), until `_release`
+        self.seen: history.RunSeen | None = None
         #: the program's descendants seen while it ran: pid -> start time; and what `sweep_tree` ended
         self.tree: dict[int, str] = {}
         self.tree_lock = threading.Lock()
@@ -648,7 +679,8 @@ class AgentManager:
             raise AgentError("not_latest")
         if parent.get("reverted"):
             raise AgentError("reverted")
-        if parent.get("state") not in REPLY_STATES:
+        outcome = run_store.outcome_of(parent)
+        if outcome not in REPLY_STATES:
             raise AgentError("not_finished")
         session = parent.get("session_id")
         if not isinstance(session, str) or not session:
@@ -666,7 +698,7 @@ class AgentManager:
             raise AgentError("not_agent_task", "The task now belongs to a different agent; start a new run instead",
                              message_zh="这个任务现在由另一个 AI 执行者负责，请重新运行")
         found = self._check_runner(agent.runner)
-        kind = "answer" if parent.get("state") == "needs_input" else "send_back"
+        kind = "answer" if outcome == "needs_input" else "send_back"
         cleared = False
         if kind == "send_back" and task.get("done"):
             # 17.3: 打回 on a done task clears its done mark first (a human write through the desk; `report` stays)
@@ -705,7 +737,7 @@ class AgentManager:
             "by": by if isinstance(by, str) and by else None,
             "by_name": by_name if isinstance(by_name, str) and by_name else None,
             "lang": lang, "kind": kind, "parent": parent, "message": message,
-            "state": "preparing", "reverted": False, "reverted_at": None, "reverted_by": None,
+            "state": "preparing", "outcome": None, "reverted": False, "reverted_at": None, "reverted_by": None,
             "created": _now(), "started": None, "ended": None, "session_id": session, "pid": None,
             "engine_pid": os.getpid(), "engine_started": engine_started, "program_started": None,
             "leftovers": 0, "exit_code": None, "error": None, "question": None, "report": None,
@@ -771,6 +803,7 @@ class AgentManager:
             act.timer.cancel()
         if act.listener is not None:
             record_files.remove_write_listener(act.listener)
+        self._release(act)
         try:
             run_store.prune(act.project_id)
         except Exception:  # noqa: BLE001
@@ -814,6 +847,7 @@ class AgentManager:
             with act.human_lock:
                 if len(act.human) < HUMAN_PATHS_LIMIT or rel in act.human:
                     act.human.add(rel)
+                    act.human_keys[_key(rel)] = sha
                     if sha is not None:
                         act.human_sha[rel] = sha
                     else:
@@ -822,6 +856,42 @@ class AgentManager:
 
         act.listener = on_write
         record_files.add_write_listener(on_write)
+
+    def _watch(self, act: _Active, before: dict) -> None:
+        """Tell the history the run is going on (module docstring): from here the scans of this engine
+        credit to it what it changed. Not when the owner is no agent that can be named."""
+        try:
+            agent = labels.parse_owner(act.run.get("owner"))
+        except ValueError:
+            agent = None
+        if agent is None:
+            return
+        files = before.get("files") or {}
+        partial = bool(before.get("partial"))
+        began = time.time_ns()
+
+        def owns(rel: str, entry: Any) -> bool:
+            """Whether the content now at `rel` is the run's: not what the person last saved through Research OS
+            there, and not what the before-picture holds (a cut picture knows only what is older than the run)."""
+            with act.human_lock:
+                known = _key(rel) in act.human_keys
+                sha = act.human_keys.get(_key(rel))
+            if known and (sha is None or entry.get("sha256") == sha):
+                return False
+            was = files.get(rel)
+            if was is None:
+                return not partial or int(entry.get("mtime_ns") or 0) >= began
+            return not snapshot.same(was, entry)
+
+        act.seen = history.RunSeen(who=labels.who_value(agent, act.run.get("by")), run=act.run_id, owns=owns)
+        history.watch_run(act.root, act.seen)
+
+    @staticmethod
+    def _release(act: _Active) -> None:
+        """The history is no longer told (idempotent)."""
+        if act.seen is not None:
+            history.release_run(act.root, act.seen)
+            act.seen = None
 
     def _documents(self, root: Path, lang: str) -> list[dict]:
         try:
@@ -853,6 +923,7 @@ class AgentManager:
         prot = snapshot.protected(root, before)
         before["protected"] = prot
         _write_json(rd / "before.json", before)
+        self._watch(act, before)
         guard.write_guard_file(rd, root=root, prot=prot, engine_port=self.engine_port)
         if runner == "claude-code":
             # 17.5: Claude Code lets a call through when its hook cannot run; the hook is tried on a call
@@ -1162,10 +1233,16 @@ class AgentManager:
                     allowed.setdefault(rel, set()).add(shas[_key(rel)])
         prot = before.get("protected") or snapshot.protected(root, before)
         data_before, data_after = before.get("data"), after.get("data")
+        backups_before, backups_after = before.get("backups"), after.get("backups")
         violations = snapshot.violations(
             everything, prot, git_before=before.get("git"), git_after=after.get("git"), allowed=allowed,
             after=after, data_before=data_before if isinstance(data_before, dict) else None,
-            data_after=data_after if isinstance(data_after, dict) else None)
+            data_after=data_after if isinstance(data_after, dict) else None,
+            backups_before=backups_before if isinstance(backups_before, dict) else None,
+            backups_after=backups_after if isinstance(backups_after, dict) else None)
+        lost_backups = [v["path"] for v in violations if v["reason"] == "backup_deleted"]
+        if lost_backups:  # the picture holds no copy of a backup: the run lists it, and undo says it cannot
+            changes["deleted"] = sorted({*changes["deleted"], *lost_backups})
         return {
             "changes": {**changes, "by_person": by_person}, "violations": violations,
             "snapshot": {"files": len(old), "partial": partial,
@@ -1175,7 +1252,9 @@ class AgentManager:
         }
 
     def _attribute(self, act_root: Path, project_id: str, run: dict, changes: dict, tool_paths: list[str]) -> None:
-        """Record the files the run created or changed in the change history as the agent's (17.5)."""
+        """Record the files the run created or changed in the change history as the agent's (17.5), unless a
+        scan that ran meanwhile already holds that very content as the run's (18.1 item 3). Git's own files
+        (`.git/hooks`, `.git/config`) are the out-of-bounds list's business, not the history's."""
         try:
             agent = labels.parse_owner(run.get("owner"))
         except ValueError:
@@ -1185,7 +1264,7 @@ class AgentManager:
         who = labels.who_value(agent, run.get("by"))
         skip = set(tool_paths) | {TASKS_PATH}
         candidates = [rel for rel in [*changes.get("created", ()), *changes.get("modified", ())]
-                      if rel not in skip and rel.split("/", 1)[0].casefold() not in _RECORD_DIRS]
+                      if rel not in skip and rel.split("/", 1)[0].casefold() not in _RECORD_AND_GIT_DIRS]
         tracked: set[str] = set()
         if candidates:  # 17.5: a git-tracked file's history is git's; one lookup for the whole run
             try:
@@ -1206,7 +1285,9 @@ class AgentManager:
                     try:
                         if paths.is_dataless(full) or full.stat().st_size > HISTORY_FILE_SIZE_LIMIT:
                             continue
-                        history.record_file(store, act_root, rel, source="agent", who=who, note=run["id"])
+                        # what a scan saw while the run went on is already there under this note (18.1 item 3)
+                        history.record_file(store, act_root, rel, source="agent", who=who, note=run["id"],
+                                            unless_noted=f"{history.SEEN_NOTE}{run['id']}")
                     except Exception:  # noqa: BLE001 -- one file's trouble does not stop the others
                         logger.warning("could not record %s of agent run %s in the history", rel, run["id"],
                                        exc_info=True)
@@ -1257,13 +1338,16 @@ class AgentManager:
                 logger.exception("the after-run check of agent run %s failed", run_id)
                 check_error = {"code": "check_failed", "detail": f"{type(exc).__name__}: {exc}"}
                 _sigs, info = self._signals(project_id, run_id)
+            finally:
+                self._release(act)  # the history stops crediting scans to the run (18.1 item 3)
         extra.setdefault("human_paths", act.human_paths())
         state, error = self._decide(act, stream, exit_code, launch_error, info)
         if error is None and check_error is not None:
             error = check_error
+        state, outcome = _warn_if_out_of_bounds(state, extra.get("violations"))
         text = (getattr(stream, "result_text", None) or "").strip() if stream is not None else ""
         self._update(
-            act, state=state, ended=_now(), exit_code=exit_code, error=error,
+            act, state=state, outcome=outcome, ended=_now(), exit_code=exit_code, error=error,
             question=info["question"], report=info["report"], summary=text[:SUMMARY_LIMIT] or None,
             session_id=(getattr(stream, "session_id", None) or run.get("session_id")) if stream is not None
             else run.get("session_id"),
@@ -1368,12 +1452,13 @@ class AgentManager:
                 for prefix in prefixes:
                     step["text"] = step["text"].replace(prefix, "")
         state = run.get("state")
+        outcome = run_store.outcome_of(run)
         if state not in run_store.ACTIVE_STATES and not (steps and steps[-1]["kind"] == "end"):
             en = _lang(run.get("lang")) == "en"
             error = run.get("error") or {}
-            if state == "stopped":
+            if outcome == "stopped":
                 text = "Stopped by the person." if en else "已被你停止。"
-            elif state == "interrupted":
+            elif outcome == "interrupted":
                 text = ("Interrupted: Research OS was closed while the run was going." if en
                         else "已中断：运行期间 Research OS 被关闭了。")
             elif error:
@@ -1464,6 +1549,7 @@ class AgentManager:
                                         lambda: dict(run.get("human_sha") or {}))
                 assessed.pop("signal_info")
                 update.update(assessed)
+                update["state"], update["outcome"] = _warn_if_out_of_bounds("interrupted", assessed["violations"])
             except Exception:  # noqa: BLE001
                 logger.exception("could not check the changes of interrupted agent run %s", run_id)
         # only while it is still going: a run that ended meanwhile keeps the state it reached
@@ -1649,8 +1735,8 @@ class AgentManager:
             if _key(rel) in person:  # saved by the person during the run: never ours to move
                 skip(rel, "changed_since")
                 continue
-            if rel.split("/", 1)[0].casefold() in _RECORD_DIRS:  # never move the project's own records
-                skip(rel, "protected")
+            if rel.split("/", 1)[0].casefold() in _RECORD_DIRS or rel == snapshot.GIT_CONFIG:
+                skip(rel, "protected")  # never move the project's own records, nor the config of a repository
                 continue
             current = snapshot.fingerprint(root, rel)
             if current is None or not snapshot.same(current, new.get(rel)):
@@ -1675,7 +1761,7 @@ class AgentManager:
         before_dirs = {"/".join(p.split("/")[:i]) for p in old for i in range(1, p.count("/") + 1)}
         emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
         for folder in sorted(emptied, key=lambda f: f.count("/"), reverse=True):
-            if folder in before_dirs or folder.split("/", 1)[0].casefold() in _RECORD_DIRS:
+            if folder in before_dirs or folder.split("/", 1)[0].casefold() in _RECORD_AND_GIT_DIRS:
                 continue
             with contextlib.suppress(OSError):  # not empty: it stays
                 if not os.path.islink(path_of(folder)):

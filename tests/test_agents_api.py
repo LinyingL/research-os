@@ -374,6 +374,33 @@ def test_start_poll_detail_revert(api_me, monkeypatch):
     assert status == 409 and error["state"] == "agent_reverted" and CJK.search(error["message"])
 
 
+def test_a_run_that_went_out_of_bounds_is_listed_and_detailed_as_such(api_me, monkeypatch):
+    """18.1 item 4 through the real server: the state the page maps to 越过了限制, what it would have read, and the
+    reasons, in the list and in the detail."""
+    api = api_me
+    api.put("data.csv", "a,b\n1,2\n")
+    backup = api.put(".researchos/backups/x.toml.20260101T000000000000Z.toml", "old\n")
+    api.put(".researchos/backups/x.toml.20260102T000000000000Z.toml", "newer\n")
+    monkeypatch.setattr(api.httpd, "start_scan", lambda served: None)
+    api.scenario(COMPLETE + [{"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                             {"op": "delete", "path": str(backup)}])
+    started = api.start(lang="en")
+    done = api.poll(started["id"])
+    assert done["state"] == "out_of_bounds" and done["outcome"] == "done" and done["violations"] == 2
+    assert done["can_revert"] is True and done["can_reply"] is True and done["can_stop"] is False
+    assert api.tasks()["t1"]["done"] is True  # the agent's mark is left as it is
+    status, detail = api.get(f"/api/agents/runs/{started['id']}")
+    assert status == 200 and detail["state"] == "out_of_bounds" and detail["outcome"] == "done"
+    assert sorted((v["path"], v["reason"]) for v in detail["violations"]) == [
+        (".researchos/backups/x.toml.20260101T000000000000Z.toml", "backup_deleted"), ("data.csv", "data_changed")]
+    assert ".researchos/backups/x.toml.20260101T000000000000Z.toml" in detail["changes"]["deleted"]
+    status, reverted = api.post(f"/api/agents/runs/{started['id']}/revert", lang="en")
+    assert status == 200 and "data.csv" in reverted["restored"]
+    assert reverted["skipped"] == [{"path": ".researchos/backups/x.toml.20260101T000000000000Z.toml",
+                                    "reason": "no_copy"}]
+    assert (api.root / "data.csv").read_text() == "a,b\n1,2\n"
+
+
 def test_a_run_of_another_project_does_not_bump_the_served_one(api, monkeypatch):
     scans: list[Path] = []
     monkeypatch.setattr(api.httpd, "start_scan", lambda served: scans.append(served.root))
