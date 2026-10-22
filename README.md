@@ -45,9 +45,9 @@ See [Using project home](docs/project-workspace.md) or
 [项目首页使用说明](docs/项目首页.md). These features are not in the published
 0.2.0 release yet.
 
-Project home in the development build, using a sample project:
+Project home in English, using a fictional paper airplane study:
 
-![Research question, plan, notes, results and optional tasks on project home](docs/images/project-home.png)
+![Project home with a fictional paper airplane study in English](docs/images/project-home-demo-en.png)
 
 ## What it helps you answer
 
