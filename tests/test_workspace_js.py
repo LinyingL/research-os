@@ -110,7 +110,7 @@ def run(scenario: str, *, lang: str = "zh") -> dict:
     source += (WEBAPP / "i18n.js").read_text()
     source += "\n" + (WEBAPP / "workspace.js").read_text()
     source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
-    result = subprocess.run([NODE, "-e", source], capture_output=True, text=True, timeout=20)
+    result = subprocess.run([NODE, "-"], input=source, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
