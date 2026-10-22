@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import types
@@ -841,13 +842,15 @@ def test_hook_command_ignores_python_environment_variables(shadowed, tmp_path):
     assert done.returncode == 2 and done.stderr.startswith(b"Research OS: ")
 
 
-@pytest.mark.parametrize("python", ["/nonexistent/python3", "/bin/false", "/bin/true"])
-def test_hook_command_fails_closed_whatever_the_interpreter_does(shadowed, python):
+@pytest.mark.parametrize(("program", "expected"), [("/nonexistent/python3", 2), ("false", 2), ("true", 0)])
+def test_hook_command_fails_closed_whatever_the_interpreter_does(shadowed, program, expected):
     """Only the hook's own exit code 0 allows: a missing interpreter (127) or one that fails (1) is a refusal,
     and one that does nothing and exits 0 is the only thing that gets through (the canary catches that)."""
+    python = program if os.path.isabs(program) else shutil.which(program)
+    assert python is not None, f"test program not found: {program}"
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
     done = _run_hook_shell(runners.hook_command(shadowed.run_dir, python=python), shadowed.root, call)
-    assert done.returncode == (0 if python == "/bin/true" else 2)
+    assert done.returncode == expected
 
 
 def test_hook_command_survives_a_run_folder_with_spaces_and_quotes(shadowed, tmp_path):
