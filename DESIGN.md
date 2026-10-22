@@ -4188,3 +4188,294 @@ report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分�
    proposal is made.
 8. With `RESEARCHOS_AGENT_RUN` set, `researchos` commands and every write
    under the project lock refuse.
+
+## Section 18 — An optimization round: agent safety, terms, the sidebar, speed (task V14)
+
+The researcher, 2026-10-22: "现在由你来优化". Four read-only reviews of
+`ca00a1e` and a timing on a copy of the researcher's thesis project (every
+endpoint under 0.07 s except `/api/citations`, 0.45 s and 1.2 MB) set the
+order. Decided the same day: all four groups below; 研究判断 stays and a
+person's verdict on a machine link becomes 连线确认; 成果 becomes 图表与论断
+and keeps its place in the sidebar; changing an existing row's 研究判断 or
+结果 saves at once with 撤销, while abandoning a route and adding a row still
+confirm first. Two rule changes suggested the same day (a variable card's
+fields marked 不适用; number matching only on demand) wait for a later round.
+
+### 18.1 Agents: the side doors (amends 17.4–17.6)
+
+17.5 says an agent that bypassed the hook "would show" in the after-run
+check. It did not: a program the agent writes could POST to the engine
+(approve, publish, write the attempt table, change `agent_commands`), the
+engine wrote under the person's name, and those writes were excluded from
+the check. This round closes that door and the cheaper ones beside it.
+
+1. **The engine requires its session for every write.**
+   - At start, `serve` makes a random 32-byte session secret, kept in memory
+     and written to `<home>/engine/<port>.session` (mode 0600, replaced
+     atomically, removed at shutdown).
+   - Every request other than GET and HEAD must carry it: the cookie
+     `ro_session_<port>` (HttpOnly, SameSite=Strict, Path=/) or the header
+     `X-ResearchOS-Session`. Otherwise the answer is 403 `session_required`,
+     with a sentence in the request's language, after the origin check and
+     before routing or reading the body. A GET that writes or starts
+     something is moved under the same rule (each is listed in the commit).
+   - `GET /boot?session=<secret>` sets the cookie and redirects to `/`; a
+     wrong or missing secret redirects without it. The Mac app reads the
+     session file once the probe answers, loads `/boot?…`, and sends the
+     header on its own `POST /api/shutdown`. An engine without a session
+     file (an older one) is loaded as before.
+   - `researchos serve` opens the browser at `/boot?…`. With `--no-browser`
+     it prints only the plain address: the secret is never printed, because
+     the app's `serve.log` is readable by any program of the user.
+   - A page without the session still reads. Its first refused write says
+     so in place: 「这个窗口没有连上 Research OS 的写入权限：请从 Research OS
+     应用打开它。」 / "This window cannot save: open it from the Research OS
+     app."
+   - Tests may build a server that requires no session; `serve` never does.
+2. **What the agent can read and is given.**
+   - The Claude Code hook also runs on `Read`, `Glob`, `Grep` and `LS`, and
+     refuses paths inside Research OS's home and `~/.ssh`. The Bash check
+     refuses the home's absolute path as it refuses `.researchos`.
+   - `RESEARCHOS_HOME` is no longer in the agent program's environment;
+     only the MCP server gets it (17.4's MCP configuration already sets it).
+   - Variables that look like credentials are removed from the program's
+     environment. A name matches if it contains `TOKEN`, `SECRET`,
+     `PASSWORD`, `PASSWD`, `CREDENTIAL`, `PRIVATE`, `API_KEY`, `ACCESS_KEY`,
+     `AUTH`, `SESSION` or `COOKIE`, or is `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`,
+     `RCE_LLM_API_KEY`, or starts with `AWS_`, `GITHUB_` or `GH_`.
+   - The runner keeps what it needs to reach its model:
+     - Claude Code: `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN`; `AWS_*` only
+       when `CLAUDE_CODE_USE_BEDROCK` is set, and `GOOGLE_*` only when
+       `CLAUDE_CODE_USE_VERTEX` is.
+     - OpenCode: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+       `GEMINI_API_KEY`, `GOOGLE_*`, `GROQ_API_KEY`, `MISTRAL_API_KEY`,
+       `DEEPSEEK_API_KEY`.
+   - The names removed, never their values, are listed once in the run log.
+   - Claude Code starts with `--setting-sources user`, so a project's own
+     `.claude/settings*.json` is not loaded; OpenCode's project
+     configuration is already off for the same reason. `.claude/`,
+     `opencode.json` and `.opencode/` in the project are protected: an edit
+     there is refused, and a change there is out of bounds.
+3. **What the engine sees during a run is the run's.** While a run of the
+   project is active, from its before-picture to its after-picture, every
+   version that a watcher scan adds to the change history is attributed as
+   in 17.5. It gets `source = "agent"`, the run's `who`, and the note "seen
+   during run <id>". Writes the person makes through Research OS keep their
+   name. After the run, attribution does not add a second version of the
+   same content.
+4. **Out of bounds is a state.** A run that ends with an out-of-bounds
+   change reads 越过了限制 ("Went out of bounds") in the warning colour
+   wherever its state shows, with 撤回本次运行 beside it, never 已完成. The
+   task's done mark stays as the agent set it; the run is what warns. The
+   check also covers:
+   - `.researchos/` at any depth, `.researchos/backups/` included (a
+     deleted backup is out of bounds);
+   - `.git/hooks/` and `.git/config` (a planted hook is out of bounds).
+5. **Undo says what it will do, and asks.**
+   - 撤回本次运行 first lists the files it will put back (changed or
+     deleted) and the files it will move away (created), each with its
+     time, each with a checkbox, all checked. It also lists the files it
+     cannot undo, each with the reason. Unchecked files are left as they
+     are and listed as 你选择保留 ("You kept this").
+   - The confirmation before a person's first run no longer says that
+     everything can be undone. It says that these cannot be: installs,
+     downloads, git, and anything outside the project folder. It also names
+     the project's files over 16 MB (up to ten, then a count).
+   - Undo keeps folders that existed before the run. The before-picture
+     records folders as well as files.
+6. **Smaller.**
+   - Rule 3's suffixes add `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
+     `.sas7bdat`, `.jsonl` and `.pickle`. `package.json` and
+     `package-lock.json` are not data.
+   - OpenCode's git denials match any command containing `git` and a rule-4
+     verb as separate words, not only commands that start with `git`. The
+     accepted cost is an occasional refusal of a harmless command.
+   - Hook refusals and run errors show in the person's language.
+   - `stderr.log` is capped as the event log is.
+   - When the engine starts, runs of every registered project that were
+     left preparing or running are recovered at once, not only when that
+     project's runs are listed. A process still alive that is verifiably
+     the run's is ended, and the state is `interrupted`.
+
+**17.5's limit, restated.** Research OS runs no operating-system sandbox. A
+program the agent writes and runs can still read and change anything this
+Mac's user can, the session file and the signing key included. Such a
+program, written to dig out the session, could act through the engine
+unseen by the after-run check. Everything short of that is now refused or
+attributed to the run. Closing the rest needs a sandbox, which this round
+does not add.
+
+### 18.2 Terms (amends 13.4, 14.6, 17.9)
+
+- **研究判断** stays as an attempt's verdict: "Research assessment". 13.4's
+  row becomes 尝试 / 研究判断 / 结果, "Attempt / Research assessment /
+  Result". Where 判断 means the attempt's (修改判断, 提议修改判断), it
+  becomes 研究判断.
+- **连线确认** is a person's confirming or rejecting of a machine link,
+  formerly 判断; English stays "Link judgments". The node page's section,
+  its filters and every sentence that says 判断 for a link say 连线确认
+  (for example 待复核的连线确认).
+- **正式版本** "Official version", 12.2's word. The English "Published
+  version" is retired: 发布 "Publish" is only the act. 官方的一份 becomes
+  正式的一份, "official copy".
+- **备注 and 笔记.** 备注 is a comment on an object, on the node page and in
+  the panel alike (添加备注, 写一条备注…): "Comment", "Comments". 笔记 is a
+  document in 项目首页: "Note", "Notes". 改动与备注 becomes "Changes and
+  comments". Nothing on disk changes; `notes.toml` keeps its name.
+- **Page and output names.**
+  - **图表与论断** "Figures and claims", formerly 成果 "Outputs".
+  - **输出** "Outputs" is a script's outputs; 产出 becomes 输出.
+  - **结果记录** "Result records" are documents in 项目首页. **结果**
+    "Result" is the attempt's cell.
+  - **研究路线** "Research routes" is the merged page (18.3); 工作台 "Desk"
+    is retired.
+- **Other single words.** 本机 is "This Mac" everywhere. The experiment
+  node kind is 运行记录 "Run record"; 实验 and 实验记录 leave the interface.
+- **The five English words** follow the page, not the 2026-10-12 table:
+  - 改动与备注: "Changes and comments" (above);
+  - 连线确认: "Link judgments";
+  - 关系图: "Relationship map", and the engine's "relation map" follows;
+  - 补上来源: "Add a source";
+  - 缺尝试: "Missing attempt".
+- **13.4 gains** 项目首页 "Project home", 负责人 "Owner" and 任务 "Task". It
+  also gains the data page's filters 未识别生成脚本, 中间数据 and 同名文件,
+  with the English the page already has.
+- **Text rules.**
+  - The sentences in `team.js` that, since `6a4fa83`, join translated and
+    bare fragments become one template each (13.6).
+  - English entries that no key uses are removed.
+  - The glyph test also refuses », ⟶, ‹, ›, ⏵, ● and ○, and reads
+    `workspace.css` and the page's style block.
+  - `workspace.js` joins the converted surfaces.
+  - 项目首页's two disclosures use 12.13's chevron.
+
+### 18.3 The sidebar and saving (amends 12.9, 12.0, 14.3)
+
+- **研究路线 is one page.**
+  - It holds Section 14's route map with its 待办 column, and a switch 图 /
+    列表. 列表 is the grouped list that 12.9 called 研究路线 (by status,
+    proposals shown distinctly, abandoned routes with their reasons), with
+    the same 待办 column.
+  - An attempt opened from the list opens the same side panel as on the
+    map.
+  - The switch is remembered per project in the browser, a per-viewer
+    convenience.
+  - Anything that opened 工作台 or the old 研究路线 opens this page.
+  - In a team project, 待办's count shows beside 研究路线 in the sidebar.
+  - The Mac menu has one item for it.
+- **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
+  and, in a team project, 提议 and 成员. 项目首页 stays the first page.
+- **A one-person project** (no team file, 12.1):
+  - The sidebar shows no 提议, no 成员 and no identity reminder, and the Mac
+    menus show no 提议, 成员, 提交提议 or 发布.
+  - The project menu gains 开始协作…, which opens the existing team setup.
+  - Once a team file exists, all of these return.
+  - A team project that this Mac is not part of shows them.
+- **Changing an existing row's 研究判断 or 结果 saves at once.**
+  - It is the same write as before (only what changed, backed up, in the
+    history, conflict-checked), without the preview step.
+  - The panel then shows 已保存 and 撤销. 撤销 writes the previous values
+    back the same way: a second history entry, not an erasure. It is
+    offered until the panel closes or the row changes again.
+  - Choosing 已放弃 still asks for the reason and confirms first, because
+    it freezes the basis. A new row keeps its preview. A member's change is
+    still a proposal (12.4).
+- **项目首页.**
+  - **Order:** notes and result records by last change, newest first;
+    attempts by number.
+  - **Headings:** a document's heading is written only when the person
+    typed a title different from the one the file shows, whatever the
+    screen's language (13.1). Typing during a save keeps the title.
+  - **More than 500 files:** the page says so where files are chosen. A
+    reference to an existing file beyond the 500 is still known.
+  - **A member's 提交 of tasks** takes along the result records that the
+    changed tasks link.
+  - **Read-only notice:** on a Mac that is not a member it says 这台 Mac
+    不是这个项目的成员，只能查看.
+  - **Officialness words:** 13.4's (我的改动，尚未提交 / 提议中 / 已批准，
+    待同步), from the same module as everywhere else.
+  - **An unreadable project identity** shows the page with that said, not
+    an error.
+  - **Other files:** Markdown files with other names in `research/notes/`
+    and `research/results/` show too. `research/` is not read as a paper
+    draft.
+  - **A PI's 项目首页:** notes and result records say they go to the
+    members with the next 发布.
+  - `docs/project-workspace.md` and its Chinese twin use the labels on
+    screen.
+
+### 18.4 Speed (no change of behaviour)
+
+Every item leaves payloads as they were, adds no dependency, and keeps
+nothing new inside the project.
+
+1. **图表与论断:** one shared trace context per request. Attempt rows, the
+   configuration, link flags and variable cards are read once; file
+   checks are remembered; a figure is traced once. 设为论文正文 keeps the
+   generation it gets back.
+2. **Agent runs:**
+   - The after-picture reuses the before hash of a file whose size,
+     modification time and inode are unchanged.
+   - `GET /api/agents/runs/<id>` reads the event log from where it last
+     stopped and lists runs once per request.
+   - 项目首页's run poll stops while the window is hidden and polls once
+     when it is shown again.
+3. **The generation poll** pauses while the window is hidden and runs at
+   once when it is shown.
+4. **Teams:**
+   - A published manifest or signature is parsed and verified once per
+     content, keyed by its bytes' SHA-256, in memory. `ssh-keygen` runs once
+     per data, signature and key.
+   - The working-copy walk takes one `lstat` per file and writes its
+     fingerprint file only when an entry changed.
+   - Publishing and approving stop rebuilding the file map for each file.
+   - A proposal's snapshot id is built on the fingerprints.
+5. **File preview and drafting** read at most 200 KB and one byte, and take
+   the size from the open file.
+6. **The change history behind 研究路线** uses a time index and reads only
+   the window it shows.
+7. **Smaller:**
+   - `/api/summary` counts in SQL.
+   - `GET /api/agents` remembers a program's version while its path, size
+     and modification time are unchanged.
+   - 项目首页 takes `/api/me` and `/api/share` from the page's shared
+     context.
+   - `/api/stata` remembers each script's reading by path, size and
+     modification time.
+
+### 18.5 Acceptance
+
+1. A Python script started by a run that POSTs to the engine, without the
+   session and with `Host` and no `Origin`, gets 403 and changes nothing.
+   The app and `researchos serve` (browser) still save everything they
+   did. A page opened without the session reads, and refuses its first
+   write with 18.1's sentence.
+2. In a run:
+   - `Read` of `~/.researchos/settings.json` is refused.
+   - `env` shows no `RESEARCHOS_HOME` and none of the removed variables,
+     and the log names them.
+   - A project `.claude/settings.json` written by the agent is out of
+     bounds, and is not loaded by the next run.
+   - A watcher scan during the run records the agent's new file under the
+     agent.
+   - A planted `.git/hooks/pre-commit` makes the run read 越过了限制.
+3. Undo lists its files with checkboxes. An unchecked file is left as it
+   is and listed as kept. A folder that existed before the run survives
+   undo.
+4. Terms: no screen says 判断 for a link or 工作台; English shows no
+   "Published version" and no "Outputs" for 图表与论断; node page and
+   panel both say 备注. The language tests list no Chinese left on the
+   converted surfaces, and the glossary test (13.4) matches the page.
+5. The sidebar of a one-person project has six items and no identity
+   reminder; 开始协作… is in the project menu; after a team file exists, 提议
+   and 成员 appear. 研究路线 switches between 图 and 列表 and remembers it.
+6. Changing a 研究判断 in the panel writes at once, and 撤销 puts it back;
+   both are in the history. Choosing 已放弃 still asks for the reason.
+7. Speed:
+   - On a fixture of 400 figures and 10 variable cards, 图表与论断 answers
+     in under 0.5 s.
+   - A member's page with 30 published snapshots answers in under 1 s.
+   - Previewing a 1 GB file raises memory by less than 5 MB.
+   - The history window at 100,000 versions takes under 60 ms.
+   - On the researcher's copy, no endpoint is slower than before.
+8. The full suite passes on Python 3.11 and 3.13.
