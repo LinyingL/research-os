@@ -100,6 +100,11 @@
 .ws-agent-note .ws-status, .ws-agent-error .ws-status { margin: .1rem 0; }
 .ws-agent-reply { display: flex; flex-direction: column; gap: .45rem; max-width: 560px; }
 .ws-agent-reply .form-textarea { min-height: 4.5em; box-sizing: border-box; }
+.ws-agent-undo { border-left: 1px solid var(--line-strong); padding-left: .8rem; display: flex; flex-direction: column; gap: .5rem; font-size: .8rem; max-width: 640px; }
+.ws-agent-undo .res-draft-body { padding: 0 0 .4rem 1.4rem; }
+.ws-undo-list { max-height: 16rem; overflow: auto; }
+.ws-undo-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; padding: .08rem 0; cursor: pointer; overflow-wrap: anywhere; }
+.ws-undo-row input { flex: none; margin: 0; align-self: center; }
 .ws-agent-more { font-size: .76rem; color: var(--ink-soft); }
 .ws-agent-more summary { cursor: pointer; }
 .ws-agent-more .ws-code { margin: .4rem 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .74rem; }

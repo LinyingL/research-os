@@ -931,10 +931,33 @@
     "没有改动这个文件": "Left unchanged",
     "这些文件没有动：": "These files were left as they are:",
     "撤回了 {n} 个文件的改动。": { one: "Undid the changes to {n} file.", other: "Undid the changes to {n} files." },
-    "撤回这次运行吗？它新建的文件会被移到运行的文件夹里，改过的文件会恢复成运行前的样子；运行之后又被改动的文件不会动。":
-      "Undo this run? Files it created are moved into the run’s folder, files it changed go back as they were before the run, and files changed again since are left alone.",
-    "运行时它会直接修改项目里的文件，不会先问你；运行之后可以撤回。要继续吗？":
-      "While it runs it changes files in the project directly, without asking you first. You can undo the run afterwards. Continue?",
+    "你选择保留": "You kept this",
+    // 撤回本次运行 lists what it will do and asks (18.1 item 5); the first-run confirmation says what cannot be undone.
+    "没能读出撤回的清单。": "Could not read what the undo would do.",
+    "勾选的文件会被撤回，没勾选的保持现状。": "Checked files are undone; the others stay as they are.",
+    "全部勾选": "Check all",
+    "全部取消勾选": "Uncheck all",
+    "放回运行前的样子（{n}）": "Put back as before the run ({n})",
+    "移走（{n}）": "Move away ({n})",
+    "移到这次运行的文件夹里，不会删除。": "Moved into the run’s folder, not deleted.",
+    "撤不回的文件（{n}）": "Cannot be undone ({n})",
+    "任务的完成标记：{task}": "Done mark of the task: {task}",
+    "从 {from} 移回": "Moved back from {from}",
+    "没有可以撤回的文件。": "There are no files that can be undone.",
+    "已选 {n} 项，共 {total} 项": "{n} of {total} selected",
+    "没勾选的文件会保持现状，之后这次运行就不能再撤回它们了。": "Files you leave unchecked stay as they are, and this run can no longer undo them afterwards.",
+    "确认撤回": "Confirm undo",
+    "确认撤回：{task}": "Confirm undo: {task}",
+    "运行时它会直接修改项目里的文件，不会先问你。运行之后可以撤回它在项目里的改动，但这些撤不回：安装的软件、下载的内容、git 里的操作，以及项目文件夹以外的一切。":
+      "While it runs it changes files in the project directly, without asking you first. Afterwards you can undo its changes inside the project, but not these: software it installs, content it downloads, what it does in git, and anything outside the project folder.",
+    "项目里有 {n} 个文件超过 16 MB。运行前不会备份它们，被改动或删除后就恢复不了：{names}": {
+      one: "{n} file in the project is over 16 MB. It is not backed up before the run, so once it is changed or deleted it cannot be restored: {names}",
+      other: "{n} files in the project are over 16 MB. They are not backed up before the run, so once changed or deleted they cannot be restored: {names}",
+    },
+    "{path}（{size}）": "{path} ({size})",
+    "另有 {n} 个没有列出。": { one: "{n} more is not listed.", other: "{n} more are not listed." },
+    "项目文件太多，这份清单只查了前 50,000 个文件。": "The project has too many files. This list covers only the first 50,000.",
+    "要继续吗？": "Continue?",
     "Claude Code 会把它读到的项目内容发送给 Anthropic。": "Claude Code sends the project content it reads to Anthropic.",
     "OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。":
       "OpenCode sends the project content it reads to the model provider you configured in OpenCode, which may be a local server on this Mac.",

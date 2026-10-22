@@ -95,6 +95,22 @@ def project_runs_dir(project_id: str) -> Path:
     return runs_root() / _check_project_id(project_id)
 
 
+def project_ids() -> list[str]:
+    """The ids of the projects that have a folder of runs on this Mac, sorted; a folder whose name is not a
+    project id is not one."""
+    try:
+        found = sorted(e.name for e in os.scandir(runs_root()) if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+    out = []
+    for name in found:
+        try:
+            out.append(_check_project_id(name))
+        except ValueError:
+            continue
+    return out
+
+
 def new_run_id(now: datetime | None = None) -> str:
     """A fresh run id. Without `now` the id is also strictly greater than
     every id this process minted before, so ids sort in creation order even

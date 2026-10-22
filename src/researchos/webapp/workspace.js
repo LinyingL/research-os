@@ -657,7 +657,7 @@
     check_failed: "运行结束后核对改动时出了错，改动清单可能不完整。", error_max_budget_usd: "费用达到了上限。",
     guard_failed: "Research OS 的检查程序没有正常启动，为了安全没有运行。",
   };
-  const REVERT_SKIPPED = { changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端" };
+  const REVERT_SKIPPED = { changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端", kept: "你选择保留" };
   const PRIVACY = {
     "claude-code": "Claude Code 会把它读到的项目内容发送给 Anthropic。",
     opencode: "OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。",
@@ -687,7 +687,9 @@
   function activeIds() { return runsInfo.runs.filter((r) => isActiveState(r.state)).map((r) => r.id); }
   function anyActive() { return activeIds().length > 0 || !!runsInfo.active; }
   function latestRun(taskId) { return runsInfo.runs.find((r) => r.task_id === taskId) || null; }
-  function agentState(taskId) { return agentUiState[taskId] || (agentUiState[taskId] = { log: false, reply: null, text: "", open: {} }); }
+  // undo: the open 撤回本次运行 list of the task's latest run (18.1 item 5), { run, plan, error, off } -- off holds the
+  // paths whose box the person cleared.
+  function agentState(taskId) { return agentUiState[taskId] || (agentUiState[taskId] = { log: false, reply: null, text: "", open: {}, undo: null }); }
   // A <details> (12.11) that stays as the person left it when the row is drawn again by the next poll.
   function more(st, key, words, content) {
     const box = el("details", "ws-agent-more");
@@ -850,9 +852,13 @@
     if (st.reply === "answer") return outcomeOf(run) === "needs_input" ? "answer" : null;
     return REPLY_FROM.includes(outcomeOf(run)) ? "send_back" : null;
   }
+  // The undo list stays while the run it was opened for can still be undone (18.1 item 5); a box ticked or cleared
+  // changes the list in place and is not part of the signature (a redraw would lose the place in a long list).
+  function undoKind(run, st) { return !!st.undo && !!run && run.can_revert === true && st.undo.run === run.id; }
   function agentSig(task) {
     const run = latestRun(task.id), st = agentState(task.id), d = run && details[run.id];
-    return JSON.stringify([task.owner, task.done, task.report || "", run, st.log, replyKind(run, st), !!agentBusy[task.id], agentNotes[task.id] || null,
+    const u = undoKind(run, st) ? [st.undo.run, st.undo.plan || null, st.undo.error ? String(st.undo.error.engineMessage || st.undo.error.message || "") : null] : null;
+    return JSON.stringify([task.owner, task.done, task.report || "", run, st.log, replyKind(run, st), u, !!agentBusy[task.id], agentNotes[task.id] || null,
       d ? [d.state, d.error ? String(d.error.message || "") : null, d.data || null] : null, anyActive(), may(),
       agentInfo ? [agentInfo.mcp, (agentInfo.agents || []).map((a) => a.owner + a.label)] : null]);
   }
@@ -906,6 +912,7 @@
     const box = el("div", "ws-agent"), run = latestRun(task.id), st = agentState(task.id), agent = parseAgent(task.owner);
     const reply = replyKind(run, st);
     if (st.reply && !reply) { st.reply = null; st.text = ""; }
+    if (st.undo && !undoKind(run, st)) st.undo = null;
     box.dataset.sig = agentSig(task);
     const busy = !!agentBusy[task.id], allowed = may() && !busy, active = !!run && isActiveState(run.state);
     const k = (name) => "agent:" + task.id + ":" + name, who = { task: task.text };
@@ -939,11 +946,15 @@
       const back = keyed(named(button("打回", () => toggleReply(task, "send_back")), "打回：{task}", who), k("send_back")); back.setAttribute("aria-expanded", String(reply === "send_back"));
       back.disabled = !allowed; actions.append(back);
     }
-    if (run && run.can_revert) { const undo = keyed(named(button("撤回本次运行", () => revertRun(task, run)), "撤回本次运行：{task}", who), k("undo")); undo.disabled = !allowed; actions.append(undo); }
+    if (run && run.can_revert) {
+      const undo = keyed(named(button("撤回本次运行", () => revertRun(task, run)), "撤回本次运行：{task}", who), k("undo"));
+      undo.setAttribute("aria-expanded", String(!!st.undo)); undo.disabled = !allowed; actions.append(undo);
+    }
     if (task.report) actions.append(keyed(named(button("打开结果", () => openReport(task.report)), "打开结果：{task}", who), k("report")));
     if (actions.childElementCount) box.append(actions);
     const note = agentNotes[task.id];
     if (note) box.append(noteBlock(note));
+    if (run && st.undo) box.append(undoPanel(task, run, st));
     if (run && reply) box.append(replyForm(task, run, st, reply));
     if (run && st.log) box.append(runDetails(run, details[run.id], st, task));
     return box;
@@ -985,12 +996,44 @@
   }
 
   // -- the actions ---------------------------------------------------------------------------------
-  function confirmAgent(agent) {
+  // A size as the confirmation names it: whole megabytes, a tenth of a gigabyte from 1 GB up.
+  function sizeWords(bytes) {
+    const mb = bytes / (1024 * 1024);
+    return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
+  }
+  // The files over 16 MB the engine names (at most ten, then a count): a run cannot be undone for them (18.1 item 5).
+  function largeFilesWords(big) {
+    const named = big && Array.isArray(big.largest) ? big.largest : [];
+    if (!named.length) return "";
+    const count = Math.max(Number(big.count) || 0, named.length), more = count - named.length;
+    const names = named.map((f) => t("{path}（{size}）", { path: f.path, size: sizeWords(f.size) })).join(t("、"));
+    const lines = [t("项目里有 {n} 个文件超过 16 MB。运行前不会备份它们，被改动或删除后就恢复不了：{names}", { n: count, names: names })];
+    if (more > 0) lines.push(t("另有 {n} 个没有列出。", { n: more }));
+    if (big.partial) lines.push(t("项目文件太多，这份清单只查了前 50,000 个文件。"));
+    return lines.join("\n");
+  }
+  // 17.1 and 18.1 item 5: before a person's first run of an agent -- where the project's content goes, that the agent
+  // changes files directly, what an undo cannot bring back, and which large files of the project are among them.
+  let confirming = false;
+  async function confirmAgent(agent) {
     if (!agent || confirmedAgents.has(agent.owner)) return true;
-    // 17.1: where the project's content goes, and that the agent changes files directly, before anything is sent.
-    if (!window.confirm(t(PRIVACY[agent.runner]) + "\n\n" + t("运行时它会直接修改项目里的文件，不会先问你；运行之后可以撤回。要继续吗？"))) return false;
-    confirmedAgents.add(agent.owner);
-    return true;
+    if (confirming) return false;
+    confirming = true;
+    try {
+      const mark = stamp();
+      let big = null;
+      // The engine names the files; the confirmation is shown without them when it cannot be asked.
+      try { big = await apiGet("/api/agents/large-files"); } catch (err) { big = null; }
+      if (!live(mark)) return false;
+      const parts = [t(PRIVACY[agent.runner]),
+        t("运行时它会直接修改项目里的文件，不会先问你。运行之后可以撤回它在项目里的改动，但这些撤不回：安装的软件、下载的内容、git 里的操作，以及项目文件夹以外的一切。")];
+      const large = largeFilesWords(big);
+      if (large) parts.push(large);
+      parts.push(t("要继续吗？"));
+      if (!window.confirm(parts.join("\n\n"))) return false;
+      confirmedAgents.add(agent.owner);
+      return true;
+    } finally { confirming = false; }
   }
   // One request for one task at a time. opts: failed (the words when it is refused), after (on success),
   // reload (see syncRuns), done (the note on success, from the response).
@@ -1018,21 +1061,129 @@
     if (live(mark)) settle();
   }
   function closeReply(st) { st.reply = null; st.text = ""; }
-  function startRun(task, agent) {
+  async function startRun(task, agent) {
     if (agentInfo && agentInfo.mcp === false) {
       setNote(task.id, mcpWords(), "err", { install: true }); updateAgentSections(); return;
     }
-    if (!confirmAgent(agent)) return;
+    if (!(await confirmAgent(agent))) return;
     // A reply form left open on the run before has nothing to answer now.
     return agentAction(task, () => apiPost("/api/agents/runs", { project: project(), task: task.id }), { failed: "没能开始这次运行。", after: () => closeReply(agentState(task.id)) });
   }
   function stopRun(task, run) {
     return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/stop", { project: project() }), { failed: "没能停止这次运行。" });
   }
+  // -- 撤回本次运行: the list first, then the person's yes (18.1 item 5) ---------------------------------------------
+  // The button opens what the undo would do -- the files it puts back, the files it moves away, each with its time and
+  // a box that is ticked, and the files it cannot undo with why. Only 确认撤回 writes, and only the ticked files.
   function revertRun(task, run) {
-    if (!window.confirm(t("撤回这次运行吗？它新建的文件会被移到运行的文件夹里，改过的文件会恢复成运行前的样子；运行之后又被改动的文件不会动。"))) return;
-    return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/revert", { project: project() }), {
-      failed: "没能撤回这次运行。", reload: true, after: () => closeReply(agentState(task.id)),
+    const st = agentState(task.id);
+    if (st.undo && st.undo.run === run.id) {
+      st.undo = null; updateAgentSections(); focusKey(sections[task.id], "agent:" + task.id + ":undo");
+      return;
+    }
+    st.undo = { run: run.id, plan: null, error: null, off: {} };
+    return loadUndoPlan(task, run);
+  }
+  async function loadUndoPlan(task, run) {
+    const st = agentState(task.id), open = st.undo, mark = stamp();
+    if (!open) return;
+    open.plan = null; open.error = null; updateAgentSections();
+    try {
+      const plan = await apiGet("/api/agents/runs/" + encodeURIComponent(run.id) + "/revert-plan");
+      if (!live(mark) || st.undo !== open) return;
+      open.plan = plan;
+    } catch (err) {
+      if (!live(mark) || st.undo !== open) return;
+      open.error = err;
+    }
+    updateAgentSections();
+    // The first box is ready when the list opens; with nothing to tick, the way out is.
+    const first = undoItems(open)[0];
+    focusKey(sections[task.id], "agent:" + task.id + (first ? ":undo:" + first.path : ":undo-cancel"));
+  }
+  function undoItems(open) { return open && open.plan ? (open.plan.restore || []).concat(open.plan.remove || []) : []; }
+  function undoTicked(open) { return undoItems(open).filter((item) => !open.off[item.path]); }
+  function whenWords(iso) { return typeof iso === "string" && iso.length >= 16 ? iso.slice(0, 10) + " " + iso.slice(11, 16) : ""; }
+  // A group of the list under a disclosure with 12.13's chevron, open until the person closes it (and kept as they left it).
+  function undoGroup(st, key, title, content) {
+    const box = el("details", "res-draft"), summary = el("summary", "res-draft-summary");
+    box.open = st.open[key] !== false;
+    box.addEventListener("toggle", () => { st.open[key] = box.open; });
+    if (typeof chevronIcon === "function") summary.append(chevronIcon());
+    summary.append(el("span", null, title));
+    const body = el("div", "res-draft-body"); body.append(...content);
+    box.append(summary, body);
+    return box;
+  }
+  function undoPanel(task, run, st) {
+    const open = st.undo, k = (name) => "agent:" + task.id + ":" + name, who = { task: task.text };
+    const box = el("div", "ws-agent-undo"), actions = el("div", "ws-agent-actions");
+    box.setAttribute("role", "group"); box.setAttribute("aria-label", t("撤回本次运行：{task}", who));
+    box.append(el("h4", "ws-run-heading", t("撤回本次运行")));
+    const cancel = keyed(named(button("取消", () => { st.undo = null; updateAgentSections(); focusKey(sections[task.id], k("undo")); }), "取消：{task}", who), k("undo-cancel"));
+    if (!open.plan) {
+      if (open.error) {
+        box.append(el("p", "ws-status err", errorWords("没能读出撤回的清单。", open.error)));
+        actions.append(keyed(button("重试", () => loadUndoPlan(task, run)), k("undo-retry")), cancel);
+      } else {
+        box.append(el("p", "ws-status", t("正在读取…")));
+        actions.append(cancel);
+      }
+      box.append(actions);
+      return box;
+    }
+    const restore = open.plan.restore || [], remove = open.plan.remove || [], cannot = open.plan.cannot || [], items = undoItems(open);
+    const boxes = [];
+    const count = el("p", "ws-agent-quiet"), kept = el("p", "ws-agent-quiet");
+    const confirm = keyed(named(button("确认撤回", () => confirmUndo(task, run, st), "btn btn-primary btn-small"), "确认撤回：{task}", who), k("undo-confirm"));
+    // Ticking or clearing a box changes the buttons and the two lines here, not the list: a long list keeps its place.
+    function sync() {
+      const n = undoTicked(open).length;
+      count.textContent = t("已选 {n} 项，共 {total} 项", { n: n, total: items.length });
+      kept.classList.toggle("hidden", n === items.length);
+      confirm.disabled = !n || !!agentBusy[task.id] || !may();
+    }
+    function row(item) {
+      const li = el("li"), label = el("label", "ws-undo-row"), tick = keyed(el("input"), k("undo:" + item.path));
+      tick.type = "checkbox"; tick.checked = !open.off[item.path];
+      tick.addEventListener("change", () => { if (tick.checked) delete open.off[item.path]; else open.off[item.path] = true; sync(); });
+      boxes.push([item, tick]);
+      label.append(tick);
+      if (item.task != null) label.append(el("span", null, t("任务的完成标记：{task}", { task: item.task })));
+      else label.append(el("code", null, item.path));
+      const when = whenWords(item.time);
+      if (when) label.append(el("span", "ws-agent-meta", when));
+      if (item.from) label.append(el("span", "ws-agent-meta", t("从 {from} 移回", { from: item.from })));
+      li.append(label);
+      return li;
+    }
+    function list(entries) { const ul = el("ul", "ws-agent-files ws-undo-list"); entries.forEach((item) => ul.append(row(item))); return ul; }
+    if (!items.length) box.append(el("p", "ws-status", t("没有可以撤回的文件。")));
+    else {
+      box.append(el("p", "ws-agent-quiet", t("勾选的文件会被撤回，没勾选的保持现状。")));
+      const all = keyed(button("全部勾选", () => { boxes.forEach(([item, tick]) => { tick.checked = true; delete open.off[item.path]; }); sync(); }), k("undo-all"));
+      const none = keyed(button("全部取消勾选", () => { boxes.forEach(([item, tick]) => { tick.checked = false; open.off[item.path] = true; }); sync(); }), k("undo-none"));
+      const bulk = el("div", "ws-agent-actions"); bulk.append(all, none); box.append(bulk);
+    }
+    if (restore.length) box.append(undoGroup(st, "undo-restore", t("放回运行前的样子（{n}）", { n: restore.length }), [list(restore)]));
+    if (remove.length) box.append(undoGroup(st, "undo-remove", t("移走（{n}）", { n: remove.length }),
+      [el("p", "ws-agent-quiet", t("移到这次运行的文件夹里，不会删除。")), list(remove)]));
+    if (cannot.length) box.append(undoGroup(st, "undo-cannot", t("撤不回的文件（{n}）", { n: cannot.length }), [skippedList(cannot)]));
+    if (items.length) {
+      kept.textContent = t("没勾选的文件会保持现状，之后这次运行就不能再撤回它们了。");
+      box.append(count, kept);
+      actions.append(confirm);
+    }
+    actions.append(cancel);
+    box.append(actions);
+    sync();
+    return box;
+  }
+  function confirmUndo(task, run, st) {
+    const open = st.undo, files = undoTicked(open).map((item) => item.path);
+    if (!open || !files.length) return;
+    return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/revert", { project: project(), files: files }), {
+      failed: "没能撤回这次运行。", reload: true, after: () => { st.undo = null; closeReply(st); },
       done: (res) => {
         const n = (res && res.restored ? res.restored.length : 0) + (res && res.removed ? res.removed.length : 0), skipped = (res && res.skipped) || [];
         setNote(task.id, t("撤回了 {n} 个文件的改动。", { n: n }), skipped.length ? "" : "ok", { skipped: skipped });
@@ -1061,10 +1212,10 @@
     area.setAttribute("aria-label", t(kind === "answer" ? "你的回答" : "要它改什么"));
     area.placeholder = t(kind === "answer" ? "写下你的回答…" : "写下要它改动或补做的事…");
     area.addEventListener("input", () => { st.text = area.value; });
-    const send = button("发送", () => {
+    const send = button("发送", async () => {
       const message = st.text.trim();
       if (!message) { setNote(task.id, t("请先写下内容。"), "err"); updateAgentSections(); return; }
-      if (!confirmAgent(parseAgent(run.owner))) return;
+      if (!(await confirmAgent(parseAgent(run.owner)))) return;
       return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/reply", { project: project(), message: message }), {
         failed: "没能发送。", reload: true, after: () => closeReply(st),
       });

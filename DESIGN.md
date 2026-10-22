@@ -4103,7 +4103,8 @@ allows, and never over a later change:
 - a file the run created is moved into the run's folder (`reverted/`), not
   deleted -- unless it is a file the run moved or renamed that had no copy
   (its content is that of a deleted file), which goes back to where it was;
-  folders the moves emptied, that did not exist before, are removed;
+  folders the moves emptied, that did not exist before the run, are removed
+  (18.1 item 5: the before-picture records folders);
 - a file it changed or deleted is restored from the copy taken before;
 - a file that changed again after the run (by the person or a later run),
   or that had no copy (over 16 MB, or past the 1 GB budget, or only in the
@@ -4121,6 +4122,8 @@ under the person's name. When something was left as it was, the run reads
 部分撤回 and its log lists those files with the reason. The copies of the
 newest 20 runs of a project are kept; the logs of the newest 200; older
 runs can no longer be undone, and runs beyond the 200 are removed.
+
+What the undo will do is listed first, and the person chooses (18.1 item 5).
 
 ### 17.7 In a team
 
@@ -4157,7 +4160,11 @@ project is served is scanned when that project is opened again.
 - `POST /api/agents/runs` `{project, task}` — start.
 - `POST /api/agents/runs/<id>/reply` `{project, message}` — answer or send
   back.
-- `POST /api/agents/runs/<id>/stop`, `POST /api/agents/runs/<id>/revert`.
+- `GET /api/agents/runs/<id>/revert-plan` — what 撤回本次运行 would do now
+  (18.1 item 5), without doing it.
+- `GET /api/agents/large-files` — the project's files over 16 MB (18.1 item 5).
+- `POST /api/agents/runs/<id>/stop`, `POST /api/agents/runs/<id>/revert`
+  (which takes `files`, the paths left checked in the plan; absent = all).
 
 ### 17.9 Language
 
@@ -4327,6 +4334,40 @@ the check. This round closes that door and the cheaper ones beside it.
      the project's files over 16 MB (up to ten, then a count).
    - Undo keeps folders that existed before the run. The before-picture
      records folders as well as files.
+
+   How it is read:
+   - *The list* is `GET /api/agents/runs/<id>/revert-plan`, which runs the
+     very code of the undo without writing: the same checks in the same
+     order, so what is listed is what the undo would do at that moment, and
+     it refuses as the undo does (undone already, a later run touched the
+     same files, nothing to undo, a run going). It only reads, so a window
+     without the session may ask. Each file carries its `time`: its
+     modification time on this Mac, in local time, where it is there; for a
+     file that is gone, and for the task's done mark, when the run ended.
+     The cannot-undo files carry the reason codes of 17.6 (`changed_since`,
+     `no_copy`, `in_cloud`).
+   - *The choice.* `POST …/revert` takes `files`, the paths left checked
+     (absent = all that can be undone; an empty list is refused). A path
+     that could have been undone and is not named is left as it is and goes
+     in the run's `revert.skipped` with the reason `kept`, which the page
+     words 你选择保留; the run then reads 部分撤回 like any other partial
+     undo. A path the list did not offer is never acted on, whatever
+     `files` says, and a file that changed between the list and the
+     confirmation is still left as it is (17.6).
+   - *What is one choice.* A created file that is a deleted file renamed is
+     offered once, under the old name, and put back by moving the new file
+     (unchecked, it keeps its new name). The task's done mark and result
+     link are one choice, listed as `research/tasks.json`: a person who
+     keeps the result record may keep the task done.
+   - *Folders.* The picture lists every folder its walk went into, empty
+     ones and ones that hold only noise it does not record included. A
+     picture cut at its limit cannot say which folders existed, and undo
+     then removes none; one taken before folders were recorded falls back
+     on the folders its files stand in.
+   - *The first run's confirmation* names the files over 16 MB from
+     `GET /api/agents/large-files` (the ten biggest, then a count): a
+     stat-only walk by the rules of the before-picture. If the engine cannot
+     say, the confirmation is still shown, without the names.
 6. **Smaller.**
    - Rule 3's suffixes add `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
      `.sas7bdat`, `.jsonl` and `.pickle`. `package.json` and
@@ -4340,6 +4381,15 @@ the check. This round closes that door and the cheaper ones beside it.
      left preparing or running are recovered at once, not only when that
      project's runs are listed. A process still alive that is verifiably
      the run's is ended, and the state is `interrupted`.
+     - *How.* `serve` starts a thread (not `build_server`, so a test server
+       starts none) that goes through every project that has runs on this
+       Mac, not only the ones the registry lists now: a project removed from
+       the registry still has a program that may be alive. It is the code of
+       listing the runs (17.3): marked `interrupted`, the program ended only
+       when its pid has the start time recorded at launch, a run of another
+       live engine left alone. A thread, because a project of 50,000 files
+       takes seconds to compare, and the app waits for the engine's first
+       answer.
 
 **17.5's limit, restated.** Research OS runs no operating-system sandbox. A
 program the agent writes and runs can still read and change anything this

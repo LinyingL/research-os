@@ -510,7 +510,8 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/agents": ("probe", "/api/agents"),
     "/api/agents/models": ("probe", "/api/agents/models?runner=opencode"),
     "/api/agents/runs": ("recovers", "/api/agents/runs"),
-    "/api/agents/runs/": ("read", "/api/agents/runs/r-nothing"),
+    "/api/agents/runs/": ("read", "/api/agents/runs/r-nothing"),   # one run, and its /revert-plan (18.1 item 5)
+    "/api/agents/large-files": ("read", "/api/agents/large-files"),
     "/api/records": ("read", "/api/records"),
     "/api/file": ("probe", "/api/file?path=map.md"),
     "/api/": ("none", "/api/nope"),

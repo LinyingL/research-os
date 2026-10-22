@@ -33,6 +33,11 @@ caller says so. Editor, Finder and sync-client noise (`SKIP_FILES`:
 `.DS_Store`, `~$` and `.~lock.*#` lock files, `.Rhistory` and the like) is
 never recorded: it is not research data and nobody did it on purpose.
 
+**Folders are recorded too** (18.1 item 5): `picture["dirs"]` lists every folder the main walk went into, empty
+ones included, so that undo can tell a folder that was there before the run from one the run made -- a folder
+that only held files the picture does not record (editor noise, a cache) is as much the researcher's as any. A
+picture cut at `FILE_LIMIT` files, or past `DIR_LIMIT` folders, marks the list incomplete (`dirs_partial`).
+
 **Data files are walked separately** (`picture["data"]`, 17.5 rule 3): a
 second, stat-only walk of the whole tree records every file whose suffix is
 in `DATA_SUFFIXES` -- size, modification time, the `dataless` flag, never
@@ -82,6 +87,8 @@ COPY_BUDGET = 1024 * 1024 * 1024
 #: DESIGN 17.5: a SHA-256 for files up to 64 MB; only the first 16 MB are also copied.
 HASH_LIMIT = 64 * 1024 * 1024
 FILE_LIMIT = 50_000
+#: At most this many folders are recorded in a picture (`dirs`); more marks it `dirs_partial`.
+DIR_LIMIT = FILE_LIMIT
 DATA_SUFFIXES = frozenset({".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".feather", ".rds", ".rdata", ".dta",
                            ".sav", ".json", ".h5", ".pkl"})
 TASKS_PATH = "research/tasks.json"
@@ -361,8 +368,9 @@ def _walk_backups(base: str) -> tuple[dict[str, dict[str, int]], bool]:
 def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
     """The before- (or after-) picture of the project folder; see the module
     docstring. Returns `{"files": {rel: entry}, "partial", "copied_bytes",
-    "not_copied", "git", "data", "data_partial", "backups", "backups_partial"}`
-    where an entry is `{"size", "mtime_ns"}` plus `sha256`, `dataless`, `link`
+    "not_copied", "git", "data", "data_partial", "backups", "backups_partial",
+    "dirs", "dirs_partial"}` where `dirs` is the sorted list of the folders
+    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `dataless`, `link`
     and `copied` as they apply, `data` is the `{rel: entry}` of the separate
     stat-only walk of data files (no `copied`; `sha256` only where `files` has
     it) and `backups` the `{rel: {"size"}}` of the backups. Copies go to
@@ -371,6 +379,8 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
     base = str(root)
     copy_base = str(copy_to) if copy_to is not None else None
     files: dict[str, dict[str, Any]] = {}
+    dirs: list[str] = []
+    dirs_partial = False
     copied_bytes = 0
     not_copied = 0
     partial = False
@@ -412,6 +422,10 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
                 links.append(name)  # a link to a folder is one entry, never walked
             else:
                 keep.append(name)
+                if len(dirs) < DIR_LIMIT:
+                    dirs.append(rel)
+                else:
+                    dirs_partial = True
         dirnames[:] = keep
         for name in sorted(filenames + links):
             if skip_file(name):
@@ -430,7 +444,51 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
     backups, backups_partial = _walk_backups(base)
     return {"files": files, "partial": partial, "copied_bytes": copied_bytes, "not_copied": not_copied,
             "git": git_state(root), "data": data, "data_partial": data_partial,
-            "backups": backups, "backups_partial": backups_partial}
+            "backups": backups, "backups_partial": backups_partial,
+            "dirs": sorted(dirs), "dirs_partial": dirs_partial}
+
+
+#: How many of the biggest files `large_files` names.
+LARGE_NAMED = 10
+
+
+def large_files(root: Path, *, over: int | None = None, limit: int | None = None) -> dict[str, Any]:
+    """The files of the project bigger than `over` bytes (by default `COPY_LIMIT`, the size up to which
+    the before-picture keeps a copy): a run that changes or deletes one of them cannot be undone (17.6), which
+    the confirmation before a first run says (18.1 item 5). A stat-only walk by the main walk's rules --
+    the same folders and noise left out, no link followed, nothing opened. Returns `{"count", "largest",
+    "partial"}`: `largest` is `[{"path", "size"}]`, the biggest first (ties by path), at most `LARGE_NAMED`;
+    `partial` is True when the walk stopped after `limit` files (default `FILE_LIMIT`), so `count` is of what it saw."""
+    base = str(Path(root))
+    over = COPY_LIMIT if over is None else over
+    limit = FILE_LIMIT if limit is None else limit
+    found: list[tuple[int, str]] = []
+    seen = 0
+    partial = False
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        reldir = os.path.relpath(dirpath, base).replace(os.sep, "/")
+        reldir = "" if reldir == "." else reldir
+        dirnames[:] = sorted(n for n in dirnames
+                             if n not in SKIP_DIRS and (f"{reldir}/{n}" if reldir else n) not in SKIP_PATHS
+                             and not os.path.islink(os.path.join(dirpath, n)))
+        for name in sorted(filenames):
+            if skip_file(name):
+                continue
+            if seen >= limit:
+                partial = True
+                break
+            seen += 1
+            try:
+                st = os.lstat(os.path.join(dirpath, name))
+            except OSError:
+                continue  # vanished while walking
+            if stat.S_ISREG(st.st_mode) and st.st_size > over:
+                found.append((st.st_size, f"{reldir}/{name}" if reldir else name))
+        if partial:
+            break
+    found.sort(key=lambda item: (-item[0], item[1]))
+    return {"count": len(found), "largest": [{"path": rel, "size": size} for size, rel in found[:LARGE_NAMED]],
+            "partial": partial}
 
 
 def created_since(root: Path, rels: Iterable[str], started_ns: int) -> list[str]:

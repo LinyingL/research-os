@@ -42,6 +42,15 @@
   it started (files up to 16 MB, for the newest 20 runs), and leaves anything
   you changed afterwards as it is; a run that could not be fully undone reads
   Partly undone.
+- Undo this run now says what it will do and asks first. It lists the files it
+  will put back and the files it will move away, each with its time and a
+  checked box, and the files it cannot undo with the reason; clear a box to
+  keep that file, and the run log lists it as "You kept this". A folder that
+  existed before the run is never removed. The confirmation before your first
+  run of an agent now says what an undo cannot bring back (installed software,
+  downloads, git, anything outside the project folder) and names the project's
+  files over 16 MB, which are not backed up. When Research OS starts, runs that
+  an earlier session left going, in any project, are recovered at once.
 - Attribute the agent's work. Its files appear in the change history as made
   by an agent, with the agent and the person who started the run named, and the
   result record opens with a line saying which agent wrote it and for whom. In

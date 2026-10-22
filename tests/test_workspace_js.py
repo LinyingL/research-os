@@ -65,6 +65,7 @@ global.panelTitle = new Element('h2'); global.panelSubtitle = new Element('p'); 
 global.openPanel = ()=>panel.classList.remove('hidden');
 global.closePanel = ()=>{ panel.classList.add('hidden'); state.panelSubject=null; };
 global.mayReplacePanel = ()=>true;
+global.chevronIcon = ()=>{ const e = new Element('svg'); e.className = 'res-chevron'; return e; };
 global.uiLang = ()=>window.ROI18N ? window.ROI18N.lang : 'zh';
 let generations = 0;
 global.pollGeneration = ()=>{ generations += 1; };
@@ -84,6 +85,9 @@ const clone = value=>JSON.parse(JSON.stringify(value));
 // Every one is served only when a scenario sets it, so a page without them still has to work.
 const gets=[];
 let agentsInfo=null, meInfo=null, shareInfo=null, modelsList=null, runsList={runs:[],active:null}, runLogs={};
+// 18.1 item 5: what an undo would do (per run id; a default plan otherwise) and the project's files over 16 MB.
+let runPlans={}, bigFiles={count:0,largest:[],partial:false};
+const defaultPlan=run=>({run:clone(run),restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'}],remove:[{path:'out/new.csv',time:'2026-10-21T09:40:03+02:00'}],cannot:[]});
 const agentFixture=()=>({
   runners:[{runner:'claude-code',label:'Claude Code',path:'/usr/local/bin/claude',version:'2.1.0',problem:null,found:true},
            {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false}],
@@ -101,6 +105,9 @@ global.apiGet=async path=>{
   if(path==='/api/workspace') return clone(listed);
   if(path.startsWith('/api/workspace/document?')) return clone(docs[new URLSearchParams(path.split('?')[1]).get('path')]);
   if(path==='/api/agents'&&agentsInfo) return clone(agentsInfo);
+  if(path==='/api/agents/large-files') return clone(bigFiles);
+  let plan=/^\/api\/agents\/runs\/([^/]+)\/revert-plan$/.exec(path);
+  if(plan) { const id=decodeURIComponent(plan[1]); return clone(runPlans[id]||defaultPlan(runById(id))); }
   if(path==='/api/agents/runs'&&runsList) return clone(runsList);
   if(path.startsWith('/api/agents/runs/')&&runLogs[decodeURIComponent(path.split('/').pop())]) return clone(runLogs[decodeURIComponent(path.split('/').pop())]);
   if(path==='/api/agents/models?runner=opencode'&&modelsList) return {models:clone(modelsList)};
@@ -120,7 +127,15 @@ global.apiPost=async(path,body)=>{
   if(m) {
     const run=runById(decodeURIComponent(m[1]));
     if(m[2]==='stop') { Object.assign(run,{state:'stopped',can_stop:false,can_reply:true}); runsList.active=null; return clone(run); }
-    if(m[2]==='revert') { Object.assign(run,{reverted:true,can_revert:false,can_reply:false}); return {run:clone(run),restored:['analysis.py'],removed:['out/new.csv'],skipped:[]}; }
+    if(m[2]==='revert') {
+      // what the engine does with `files` (18.1 item 5): the checked ones are done, the other offered ones are kept
+      const plan=runPlans[run.id]||defaultPlan(run), files=body.files;
+      const offered=[...plan.restore,...plan.remove].map(i=>i.path), checked=files===undefined?offered:files;
+      const kept=offered.filter(p=>!checked.includes(p)).map(p=>({path:p,reason:'kept'}));
+      Object.assign(run,{reverted:true,can_revert:false,can_reply:false});
+      if(kept.length) run.revert_skipped=kept.length+plan.cannot.length;
+      return {run:clone(run),restored:plan.restore.map(i=>i.path).filter(p=>checked.includes(p)),removed:plan.remove.map(i=>i.path).filter(p=>checked.includes(p)),skipped:[...plan.cannot,...kept]};
+    }
     const next=mkRun({id:'r-20261021T0959'+runsList.runs.length+'0Z-cccccc',task_id:run.task_id,state:'running',can_stop:true,parent:run.id,kind:run.state==='needs_input'?'answer':'send_back',message:body.message});
     Object.assign(run,{can_reply:false}); runsList.runs.unshift(next); runsList.active=next.id; return clone(next);
   }
@@ -775,7 +790,7 @@ console.log(JSON.stringify({disabled:go.disabled,title:go.title}));
     assert out["disabled"] and "还有一次运行没有结束" in out["title"]
 
 
-def test_stop_and_revert_post_to_the_run_and_revert_asks_first():
+def test_stop_and_revert_post_to_the_run_and_revert_lists_what_it_will_do_first():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];
 setRuns([mkRun({state:'running',can_stop:true})]);
@@ -785,16 +800,28 @@ await find('停止',byClass('ws-agent')).click();await sleepTick();
 const stopped={label:byClass('status-label').textContent,posted:clone(posted),reloaded:generations>gen};
 runsList.runs[0].state='done';Object.assign(runsList.runs[0],{can_revert:true,changes:2,can_reply:true});
 await window.ROWorkspace.load(root,true);await sleepTick();
-answers.push(false);await find('撤回本次运行',byClass('ws-agent')).click();
-const declined=posted.length;
 await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
-console.log(JSON.stringify({stopped,declined,posted,question:confirmQuestions[0],words:byClass('ws-agent').textContent,label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent'))}));
+const listed_={posted:posted.length,asked:confirmQuestions.length,words:byClass('ws-agent-undo').textContent,buttons:buttonsIn(byClass('ws-agent-undo')),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded'),gets:gets.filter(p=>p.endsWith('revert-plan'))};
+await find('取消',byClass('ws-agent-undo')).click();
+const declined={posted:posted.length,panel:!!byClass('ws-agent-undo'),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded')};
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('确认撤回',byClass('ws-agent-undo')).click();await sleepTick();
+console.log(JSON.stringify({stopped,listed_,declined,posted,asked:confirmQuestions.length,words:byClass('ws-agent').textContent,label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),panel:!!byClass('ws-agent-undo')}));
 """)
     assert out["stopped"]["label"] == "已停止" and out["stopped"]["reloaded"]
     assert out["stopped"]["posted"] == [["/api/agents/runs/r-20261021T090000Z-aaaaaa/stop", {"project": "/projects/study"}]]
-    assert out["declined"] == 1
-    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert", {"project": "/projects/study"}]
-    assert "移到运行的文件夹里" in out["question"]
+    # the button only reads: it lists what the undo would do, asks nothing in a dialog and posts nothing
+    listed = out["listed_"]
+    assert listed["posted"] == 1 and listed["asked"] == 0 and listed["expanded"] == "true"
+    assert listed["gets"] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert-plan"]
+    assert "analysis.py" in listed["words"] and "out/new.csv" in listed["words"] and "2026-10-21 09:41" in listed["words"]
+    assert listed["buttons"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"]
+    # 取消 closes the list and nothing was posted
+    assert out["declined"] == {"posted": 1, "panel": False, "expanded": "false"}
+    # 确认撤回 posts the checked files, once
+    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert",
+                                 {"project": "/projects/study", "files": ["analysis.py", "out/new.csv"]}]
+    assert out["asked"] == 0 and out["panel"] is False
     assert "撤回了 2 个文件的改动。" in out["words"]
     assert out["label"] == "已撤回本次运行" and "撤回本次运行" not in out["buttons"]
 
@@ -806,6 +833,7 @@ setRuns([mkRun({state:'done',can_revert:true,changes:2})]);
 customPost=(path)=>path.endsWith('/revert')?{run:mkRun({state:'done',can_revert:true,changes:2}),restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'}]}:undefined;
 await window.ROWorkspace.load(root);await sleepTick();
 await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('确认撤回',byClass('ws-agent')).click();await sleepTick();
 console.log(JSON.stringify({words:byClass('ws-agent-note').textContent}));
 """)
     assert "撤回了 1 个文件的改动。" in out["words"]
@@ -1221,6 +1249,8 @@ setRuns([mkRun({state:'done',can_reply:true,can_revert:true,changes:1})]);listed
 await window.ROWorkspace.load(root);await sleepTick();
 await find('打回').click();typed(byClass('form-textarea'),'redo this');
 await find('撤回本次运行').click();await sleepTick();
+const listedWith={areas:textareas(),buttons:buttonsIn(byClass('ws-agent-undo'))};
+await find('确认撤回').click();await sleepTick();
 const undone={label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),areas:textareas()};
 // a form for 打回 must not turn into a 要它改什么 form under a run that is waiting for an answer
 window.ROWorkspace.reset();
@@ -1230,11 +1260,13 @@ await find('打回').click();
 Object.assign(runsList.runs[0],{state:'needs_input',question:'Which?'});
 await window.ROWorkspace.load(root,true);await sleepTick();
 const waiting_={buttons:buttonsIn(byClass('ws-agent')),areas:textareas(),expanded:find('回答').getAttribute('aria-expanded')};
-console.log(JSON.stringify({open,started,undone,waiting_}));
+console.log(JSON.stringify({open,started,listedWith,undone,waiting_}));
 """)
     assert out["open"] == {"buttons": ["发送", "取消"], "areas": 1, "dirty": True}
     assert out["started"]["areas"] == 0 and "发送" not in out["started"]["buttons"] and not out["started"]["dirty"]
     assert out["started"]["label"] in ("准备中", "运行中")
+    # the list is opened beside the form the person was typing in; the form goes when the undo is done
+    assert out["listedWith"]["areas"] == 1 and "确认撤回" in out["listedWith"]["buttons"]
     assert out["undone"]["label"] == "已撤回本次运行" and out["undone"]["areas"] == 0 and "发送" not in out["undone"]["buttons"]
     assert out["waiting_"]["areas"] == 0 and out["waiting_"]["expanded"] == "false"
 
@@ -1391,10 +1423,10 @@ def test_a_partly_undone_run_says_so_and_the_log_lists_what_was_left_with_the_re
     # #17
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];
-const partly=mkRun({state:'done',reverted:true,revert_skipped:3,changes:4});
+const partly=mkRun({state:'done',reverted:true,revert_skipped:4,changes:4});
 setRuns([partly]);
 runLogs[partly.id]=Object.assign(clone(partly),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[],
-  revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'}]}});
+  revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'},{path:'raw/old.csv',reason:'kept'}]}});
 await window.ROWorkspace.load(root);await sleepTick();
 const partlyLabel=byClass('status-label').textContent;
 await find('运行记录').click();await sleepTick();
@@ -1407,6 +1439,7 @@ console.log(JSON.stringify({partlyLabel,log,wholeLabel:byClass('status-label').t
     assert out["partlyLabel"] == "部分撤回" and out["wholeLabel"] == "已撤回本次运行"
     assert "data/new.csv 运行之后又改动过" in out["log"] and "big.bin 没有运行前的副本" in out["log"]
     assert "Drive/x.xlsx 文件只在云端" in out["log"]
+    assert "raw/old.csv 你选择保留" in out["log"]  # a file the person left unchecked (18.1 item 5)
 
 
 def test_the_run_log_warns_about_a_partial_picture_and_leftover_processes_and_guard_failures():
@@ -1500,3 +1533,228 @@ console.log(JSON.stringify({label:label.textContent,cls:label.className,buttons:
     assert "Changed a git hook (a program git runs by itself)" in out["oob"]
     assert "Changed git’s configuration" in out["oob"] and "Deleted a Research OS backup" in out["oob"]
     assert re.search(r"[㐀-鿿]", out["text"]) is None, out["text"]
+
+
+# -- 撤回本次运行 lists what it will do, and asks (DESIGN 18.1 item 5) ---------------------------------------
+
+UNDO_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const finished=mkRun({state:'done',can_revert:true,can_reply:true,changes:6});
+setRuns([finished]);
+runPlans[finished.id]={run:clone(finished),
+  restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'},{path:'raw/old.txt',time:'2026-10-21T09:40:03+02:00'}],
+  remove:[{path:'out/new.csv',time:'2026-10-21T09:42:50+02:00'}],
+  cannot:[{path:'data/later.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/y.xlsx',reason:'in_cloud'}]};
+await window.ROWorkspace.load(root);await sleepTick();
+const undoBox=()=>byClass('ws-agent-undo');
+const ticks=()=>{ const b=undoBox(); return b?b.all().filter(e=>e.tagName==='INPUT'&&e.type==='checkbox'):[]; };
+const untick=async path=>{ const t=ticks().find(e=>e.dataset.key.endsWith(':undo:'+path)); t.checked=false; await t.emit('change'); };
+"""
+
+
+def test_undo_lists_the_files_with_checked_boxes_their_times_and_the_ones_it_cannot_undo():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const box=undoBox(),groups=box.all().filter(e=>e.tagName==='DETAILS');
+console.log(JSON.stringify({posted,asked:confirmQuestions.length,
+  groups:groups.map(g=>({open:g.open,title:g.children[0].textContent,chevron:g.children[0].children.some(c=>c.classList.contains('res-chevron'))})),
+  rows:box.all().filter(e=>e.classList.contains('ws-undo-row')).map(r=>r.textContent),
+  checked:ticks().map(t=>[t.dataset.key,t.checked]),
+  restore:groups[0].all().filter(e=>e.classList.contains('ws-undo-row')).length,
+  cannot:groups[2].textContent,
+  count:box.all().filter(e=>e.classList.contains('ws-agent-quiet')).map(e=>e.textContent),
+  keptHidden:box.all().filter(e=>e.classList.contains('ws-agent-quiet')&&e.textContent.startsWith('没勾选')).map(e=>e.classList.contains('hidden')),
+  focus:document.activeElement&&document.activeElement.dataset.key,
+  buttons:buttonsIn(box),confirmOff:find('确认撤回',box).disabled,label:box.getAttribute('aria-label'),role:box.getAttribute('role')}));
+""")
+    assert out["posted"] == [] and out["asked"] == 0
+    assert [g["title"] for g in out["groups"]] == ["放回运行前的样子（2）", "移走（1）", "撤不回的文件（3）"]
+    assert all(g["open"] and g["chevron"] for g in out["groups"])  # 12.13's chevron, and open until closed
+    assert out["rows"] == ["analysis.py2026-10-21 09:41", "raw/old.txt2026-10-21 09:40", "out/new.csv2026-10-21 09:42"]
+    assert [c for _k, c in out["checked"]] == [True, True, True]
+    assert [k for k, _c in out["checked"]] == ["agent:t1:undo:analysis.py", "agent:t1:undo:raw/old.txt",
+                                               "agent:t1:undo:out/new.csv"]
+    assert "data/later.csv 运行之后又改动过" in out["cannot"] and "big.bin 没有运行前的副本" in out["cannot"]
+    assert "Drive/y.xlsx 文件只在云端" in out["cannot"]
+    assert "已选 3 项，共 3 项" in out["count"] and out["keptHidden"] == [True]
+    assert out["focus"] == "agent:t1:undo:analysis.py"  # the first box is ready; nothing writes until 确认撤回
+    assert out["buttons"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"] and out["confirmOff"] is False
+    assert out["label"] == "撤回本次运行：Run the model" and out["role"] == "group"
+
+
+def test_an_unchecked_file_is_left_out_of_the_request_and_the_log_lists_it_as_kept():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const node=undoBox();
+await untick('analysis.py');
+const quiet=()=>undoBox().all().filter(e=>e.classList.contains('ws-agent-quiet'));
+const some={count:quiet().map(e=>e.textContent),keptHidden:quiet().filter(e=>e.textContent.startsWith('没勾选')).map(e=>e.classList.contains('hidden'))};
+// nothing is redrawn by a box: the same node, still unchecked, with the focus where it was
+const same=ticks()[0].checked===false&&undoBox()===node;
+await find('确认撤回',undoBox()).click();await sleepTick();
+const note=byClass('ws-agent-note');
+console.log(JSON.stringify({some,same,posted,words:note.textContent,panel:!!undoBox(),label:byClass('status-label').textContent}));
+""")
+    assert "已选 2 项，共 3 项" in out["some"]["count"] and out["some"]["keptHidden"] == [False]
+    assert out["same"] is True
+    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert",
+                                 {"project": "/projects/study", "files": ["raw/old.txt", "out/new.csv"]}]
+    assert "撤回了 2 个文件的改动。" in out["words"] and "这些文件没有动：" in out["words"]
+    assert "analysis.py 你选择保留" in out["words"] and "data/later.csv 运行之后又改动过" in out["words"]
+    assert out["panel"] is False
+
+
+def test_nothing_checked_cannot_be_confirmed_and_all_or_none_are_one_click():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('全部取消勾选',undoBox()).click();
+const none={ticked:ticks().map(t=>t.checked),off:find('确认撤回',undoBox()).disabled,count:undoBox().textContent.includes('已选 0 项，共 3 项')};
+await find('确认撤回',undoBox()).click();await sleepTick();
+const refused=posted.length;
+await find('全部勾选',undoBox()).click();
+await untick('out/new.csv');
+const one={ticked:ticks().map(t=>t.checked),off:find('确认撤回',undoBox()).disabled};
+console.log(JSON.stringify({none,refused,one}));
+""")
+    assert out["none"] == {"ticked": [False, False, False], "off": True, "count": True}
+    assert out["refused"] == 0
+    assert out["one"] == {"ticked": [True, True, False], "off": False}
+
+
+def test_the_boxes_survive_a_redraw_and_the_list_goes_when_the_run_cannot_be_undone_any_more():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await untick('raw/old.txt');
+// the page reloads the project and the runs (a poll, a save elsewhere): the list stays as the person left it
+await window.ROWorkspace.load(root,true);await sleepTick();
+const kept={panel:!!undoBox(),ticked:ticks().map(t=>t.checked),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded')};
+// closing a group is remembered through a redraw too
+const group=undoBox().all().find(e=>e.tagName==='DETAILS');group.open=false;await group.emit('toggle');
+await window.ROWorkspace.load(root,true);await sleepTick();
+const closed=undoBox().all().filter(e=>e.tagName==='DETAILS').map(g=>g.open);
+// another run takes the task's place, or this one was undone elsewhere: the list is not kept for a run it does not describe
+runsList.runs[0].can_revert=false;
+await window.ROWorkspace.load(root,true);await sleepTick();
+console.log(JSON.stringify({kept,closed,after:!!undoBox(),buttons:buttonsIn(byClass('ws-agent'))}));
+""")
+    assert out["kept"] == {"panel": True, "ticked": [True, False, True], "expanded": "true"}
+    assert out["closed"] == [False, True, True]
+    assert out["after"] is False and "撤回本次运行" not in out["buttons"]
+
+
+def test_a_list_that_cannot_be_read_says_so_and_offers_another_try():
+    out = run(UNDO_SETUP + r"""
+let fail=true;
+customGet=path=>path.endsWith('/revert-plan')&&fail?Promise.reject(Object.assign(Error('later'),{state:'agent_later_run',engineMessage:'之后的运行改动了相同的文件，请先撤回那一次'})):undefined;
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const refused={words:undoBox().textContent,buttons:buttonsIn(undoBox()),focus:document.activeElement&&document.activeElement.dataset.key};
+fail=false;
+await find('重试',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({refused,posted,after:buttonsIn(undoBox()),rows:ticks().length}));
+""")
+    assert "没能读出撤回的清单。 之后的运行改动了相同的文件，请先撤回那一次" in out["refused"]["words"]
+    assert out["refused"]["buttons"] == ["重试", "取消"] and out["refused"]["focus"] == "agent:t1:undo-cancel"
+    assert out["posted"] == [] and out["after"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"] and out["rows"] == 3
+
+
+def test_a_list_with_nothing_to_undo_offers_no_confirmation():
+    out = run(UNDO_SETUP + r"""
+runPlans[finished.id]=Object.assign(runPlans[finished.id],{restore:[],remove:[]});
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({words:undoBox().textContent,buttons:buttonsIn(undoBox()),focus:document.activeElement&&document.activeElement.dataset.key}));
+""")
+    assert "没有可以撤回的文件。" in out["words"] and "撤不回的文件（3）" in out["words"]
+    assert out["buttons"] == ["取消"] and out["focus"] == "agent:t1:undo-cancel"
+
+
+def test_a_moved_back_file_and_the_done_mark_are_named_for_what_they_are():
+    out = run(UNDO_SETUP + r"""
+runPlans[finished.id]={run:clone(finished),
+  restore:[{path:'raw.txt',from:'sub/raw_old.txt',time:'2026-10-21T09:41:12+02:00'},{path:'research/tasks.json',task:'Run the model',time:'2026-10-21T09:45:00+02:00'}],
+  remove:[],cannot:[]};
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const rows=undoBox().all().filter(e=>e.classList.contains('ws-undo-row')).map(r=>r.textContent);
+await find('确认撤回',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({rows,posted:posted[posted.length-1][1]}));
+""")
+    assert out["rows"] == ["raw.txt2026-10-21 09:41从 sub/raw_old.txt 移回",
+                           "任务的完成标记：Run the model2026-10-21 09:45"]
+    assert out["posted"]["files"] == ["raw.txt", "research/tasks.json"]
+
+
+def test_the_undo_list_and_its_confirmation_read_in_english_with_no_chinese():
+    out = run(UNDO_SETUP + r"""
+await find('Undo this run',byClass('ws-agent')).click();await sleepTick();
+await untick('analysis.py');
+const text=undoBox().textContent,buttons=buttonsIn(undoBox());
+await find('Confirm undo',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({text,buttons,note:byClass('ws-agent-note').textContent}));
+""", lang="en")
+    for words in (out["text"], out["note"]):
+        assert re.search(r"[㐀-鿿]", words) is None, words
+    assert out["buttons"] == ["Check all", "Uncheck all", "Confirm undo", "Cancel"]
+    for expected in ("Put back as before the run (2)", "Move away (1)", "Moved into the run’s folder, not deleted.",
+                     "Cannot be undone (3)", "2 of 3 selected", "Changed again after the run", "No copy from before the run",
+                     "The file is only in the cloud", "this run can no longer undo them afterwards"):
+        assert expected in out["text"], expected
+    assert "Undid the changes to 2 files." in out["note"] and "You kept this" in out["note"]
+
+
+def test_the_first_run_says_what_an_undo_cannot_bring_back_and_names_the_large_files():
+    big = ", ".join(f"{{path:'data/big{i:02d}.csv',size:{(300 - i * 10) * 1024 * 1024}}}" for i in range(10))
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+bigFiles={count:12,partial:false,largest:[BIG]};
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行',byClass('ws-agent')).click();
+console.log(JSON.stringify({question:confirmQuestions[0],asked:confirmQuestions.length,gets:gets.filter(p=>p.includes('large-files')).length}));
+""".replace("BIG", big))
+    question = out["question"]
+    assert "运行之后可以撤回它在项目里的改动，但这些撤不回：安装的软件、下载的内容、git 里的操作，以及项目文件夹以外的一切。" in question
+    assert "运行之后可以撤回。" not in question and "Anthropic" in question and question.endswith("要继续吗？")
+    assert "项目里有 12 个文件超过 16 MB。运行前不会备份它们，被改动或删除后就恢复不了：" in question
+    assert "data/big00.csv（300 MB）、data/big01.csv（290 MB）" in question and "data/big09.csv（210 MB）" in question
+    assert "data/big10" not in question and "另有 2 个没有列出。" in question  # ten are named, the rest are a count
+    assert out["asked"] == 1 and out["gets"] == 1
+
+
+FIRST_RUN = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+SETUP
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({question:confirmQuestions[0],started:posted.filter(p=>p[0]==='/api/agents/runs').length}));
+"""
+
+
+def test_the_first_run_names_no_large_file_when_there_is_none_or_the_engine_cannot_say():
+    none = run(FIRST_RUN.replace("SETUP", ""))  # nothing over 16 MB
+    one = run(FIRST_RUN.replace("SETUP", "bigFiles={count:1,partial:true,largest:[{path:'one.bin',size:1610612736}]};"))
+    unknown = run(FIRST_RUN.replace(
+        "SETUP", "customGet=path=>path==='/api/agents/large-files'?Promise.reject(Error('engine busy')):undefined;"))
+    assert "超过 16 MB" not in none["question"] and "这些撤不回：安装的软件" in none["question"]
+    assert "项目里有 1 个文件超过 16 MB" in one["question"] and "one.bin（1.5 GB）" in one["question"]
+    assert "另有" not in one["question"] and "项目文件太多，这份清单只查了前 50,000 个文件。" in one["question"]
+    assert "超过 16 MB" not in unknown["question"] and "这些撤不回：安装的软件" in unknown["question"]
+    assert unknown["started"] == 1  # the question is still asked, and the run starts when it is accepted
+
+
+def test_the_first_run_confirmation_reads_in_english_and_is_asked_once_per_agent():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+bigFiles={count:11,partial:false,largest:[{path:'a.csv',size:52428800}]};
+await window.ROWorkspace.load(root);await sleepTick();
+await find('Run',byClass('ws-agent')).click();
+const first=confirmQuestions[0];
+runsList.runs[0].state='done';Object.assign(runsList.runs[0],{can_reply:true,can_stop:false});runsList.active=null;
+await window.ROWorkspace.load(root,true);await sleepTick();
+await find('Send back',byClass('ws-agent')).click();typed(byClass('form-textarea'),'again');
+await find('Send',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({first,asked:confirmQuestions.length,gets:gets.filter(p=>p.includes('large-files')).length,
+  posts:posted.map(p=>p[0].split('/').pop())}));
+""", lang="en")
+    assert re.search(r"[㐀-鿿]", out["first"]) is None, out["first"]
+    assert "but not these: software it installs, content it downloads, what it does in git, and anything outside the project folder." in out["first"]
+    assert "11 files in the project are over 16 MB. They are not backed up before the run" in out["first"]
+    assert "a.csv (50 MB)" in out["first"] and "10 more are not listed." in out["first"] and out["first"].endswith("Continue?")
+    assert out["asked"] == 1 and out["gets"] == 1 and out["posts"] == ["runs", "reply"]  # a reply is not a first run

@@ -75,7 +75,24 @@ the agent's and is left as it is; the run is what warns.
 change (nor over a path the person saved during the run), and takes the task's
 done mark back logically rather than restoring `research/tasks.json`. A
 created file whose content is a deleted file with no copy is that file renamed:
-it is moved back, not away. Directories the move emptied are removed.
+it is moved back, not away. Directories the move emptied are removed -- unless
+the before-picture holds them (`dirs`, 18.1 item 5): a folder that existed
+before the run survives, and a picture too cut to say removes none.
+
+**Undo says what it will do, and asks** (18.1 item 5). `revert_plan` runs the
+very code of `revert` with `dry=True` -- the same checks in the same order, no
+write -- so the list the person sees is what the undo would do at that moment:
+`restore` (changed or deleted files, and the task's done mark), `remove` (created
+files, moved away, never deleted) and `cannot`, each with the reason of 17.6.
+`revert(files=)` then acts on the paths the person left checked and leaves the
+rest as they are, listed in the run's `revert.skipped` with the reason `kept`;
+without `files` it undoes all that can be undone. A path the plan does not list is
+never acted on, whatever `files` says.
+
+**At engine start** (18.1 item 6) `recover_all` recovers the runs of every project
+this Mac keeps runs for that were left preparing or running, with the same rules as
+`_recover` (a program is ended only when its pid and start time are the recorded
+ones), so that nothing waits for someone to open the project's page.
 
 **Who is who after a crash.** `run.json` carries the start time of the
 engine process (`engine_started`) and of the program (`program_started`), so
@@ -134,6 +151,8 @@ REFUSALS_TAIL_BYTES = 64 * 1024
 SUMMARY_LIMIT = 2000
 MESSAGE_LIMIT = 8000
 HUMAN_PATHS_LIMIT = 5000
+#: The most paths an undo request may name (a picture holds at most 50,000 files, deletions included).
+UNDO_FILES_LIMIT = 200_000
 #: Attribution in the change history: at most this many files per run, none larger than this.
 HISTORY_FILES_LIMIT = 2000
 HISTORY_FILE_SIZE_LIMIT = 1024 * 1024 * 1024
@@ -546,6 +565,45 @@ def _started_ns(run: dict) -> int:
 
 def _inside(real_root: str, path: str) -> bool:
     return path == real_root or path.startswith(real_root.rstrip(os.sep) + os.sep)
+
+
+def _room_for(folder: str) -> bool:
+    """Whether a folder could be made at `folder`: it is one already, or the nearest part of it that exists is."""
+    while folder and not os.path.lexists(folder):
+        above = os.path.dirname(folder)
+        if above == folder:
+            return False
+        folder = above
+    return os.path.isdir(folder)
+
+
+def _folders_before(before: dict) -> set[str] | None:
+    """The folders that existed before the run, which undo never removes (18.1 item 5): the ones the picture
+    recorded (`dirs`, empty ones included) and the ones its files stand in (all a picture taken before `dirs`
+    existed has). None when the picture cannot say -- it was cut at the file or folder limit -- and undo then
+    removes no folder at all."""
+    if before.get("partial") or before.get("dirs_partial"):
+        return None
+    folders = {"/".join(p.split("/")[:i]) for p in (before.get("files") or ()) for i in range(1, p.count("/") + 1)}
+    folders.update(d for d in before.get("dirs") or () if isinstance(d, str))
+    return folders
+
+
+def _local_time(moment: float | str | None) -> str | None:
+    """A time as the person reads it on this Mac: ISO, in local time, to the second (`2026-10-22T10:14:05+02:00`) --
+    from a file's modification time (seconds since the epoch) or a run's stored UTC stamp. None when it is none."""
+    try:
+        if isinstance(moment, str):
+            stamp = datetime.fromisoformat(moment.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+        elif isinstance(moment, (int, float)):
+            stamp = datetime.fromtimestamp(moment, timezone.utc)
+        else:
+            return None
+        return stamp.astimezone().isoformat(timespec="seconds")
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 class AgentManager:
@@ -1526,6 +1584,31 @@ class AgentManager:
                                       "Research OS stopped while the run was going")
         return foreign
 
+    def recover_all(self) -> list[str]:
+        """At engine start (18.1 item 6): recover the runs left preparing or running of every project this Mac
+        keeps runs for, at once, instead of whenever that project's runs are next listed. Each is handled as
+        `_recover` handles it -- marked `interrupted`, its program ended only when the recorded pid has the
+        recorded start time, a run of another live engine left alone. One project's trouble does not stop the
+        others, and nothing more is begun once the manager is closing. Returns the ids of the runs recovered."""
+        recovered: list[str] = []
+
+        def going(project_id: str) -> set[str]:
+            return {r["id"] for r in run_store.list_runs(project_id) if r.get("state") in run_store.ACTIVE_STATES}
+
+        for project_id in run_store.project_ids():
+            if self._closing:
+                break
+            left = going(project_id)
+            if not left:
+                continue
+            try:
+                self._recover(project_id)
+            except Exception:  # noqa: BLE001 -- recovery of one project never blocks the others
+                logger.exception("could not recover the agent runs of project %s", project_id)
+                continue
+            recovered.extend(sorted(left - going(project_id)))
+        return recovered
+
     def _interrupt_stale(self, project_id: str, run: dict) -> None:
         run_id = run["id"]
         root = Path(run.get("root") or "")
@@ -1557,38 +1640,124 @@ class AgentManager:
 
     # -- undoing ----------------------------------------------------------------------------------
 
-    def revert(self, root: Path, project_id: str, run_id: str, *, by: str | None) -> dict:
+    @staticmethod
+    def _chosen(files: object) -> set[str] | None:
+        """The paths the person left checked in the undo list, in comparing form (`_key`); None when the
+        request names none (all that can be undone is then undone). An empty list is a mistake, not an undo."""
+        if files is None:
+            return None
+        if (not isinstance(files, (list, tuple)) or len(files) > UNDO_FILES_LIMIT
+                or not all(isinstance(f, str) and f for f in files)):
+            raise AgentError("invalid", "files must be a list of project paths",
+                             message_zh="files 必须是项目文件路径的列表")
+        if not files:
+            raise AgentError("invalid", "Choose at least one file to undo", message_zh="请至少选择一个要撤回的文件")
+        return {_key(f) for f in files}
+
+    def _check_undoable(self, project_id: str, run_id: str, run: dict, foreign: list[str]) -> None:
+        """What stops a run from being undone (or planned) right now; the registry lock is held by the caller."""
+        act = self._active.get(project_id)
+        if act is not None:
+            raise AgentError("run_active" if act.run_id == run_id else "busy")
+        if project_id in self._reverting:
+            raise AgentError("busy")
+        if run.get("state") in run_store.ACTIVE_STATES:
+            raise AgentError("run_active" if self._engine_alive(run) else "not_finished")
+        if foreign:  # a run of another Research OS process is going: its files are not ours to move
+            raise AgentError("busy")
+        if run.get("reverted"):
+            raise AgentError("reverted")
+
+    def revert(self, root: Path, project_id: str, run_id: str, *, by: str | None,
+               files: list[str] | None = None) -> dict:
         """Undo a finished run (17.6): `{"run": summary, "restored": [rel], "removed": [rel],
         "skipped": [{"path", "reason"}]}`. `removed` are files the run created, moved into the
         run's `reverted/` folder; `restored` come back from the before-picture's copies. A file
         that changed after the run, or that has no copy, is left alone and listed in `skipped`
-        (`changed_since`, `no_copy`, `in_cloud`, `protected`). The run is marked undone unless nothing
-        could be; what was left alone is kept as `run["revert"]` and counted in the summary
-        (`revert_skipped`)."""
+        (`changed_since`, `no_copy`, `in_cloud`, `protected`). With `files` only those paths are
+        undone (the checked ones of `revert_plan`, 18.1 item 5); a path that could have been
+        undone and was not named is left as it is and listed as `kept`. The run is marked undone
+        unless nothing could be; what was left alone is kept as `run["revert"]` and counted in the
+        summary (`revert_skipped`)."""
         self._check_ids(project_id, run_id)
+        chosen = self._chosen(files)
         root = self._writable_root(root, project_id)
         foreign = self._recover(project_id)
         run = self._load(project_id, run_id)
         with self._lock:
-            act = self._active.get(project_id)
-            if act is not None:
-                raise AgentError("run_active" if act.run_id == run_id else "busy")
-            if project_id in self._reverting:
-                raise AgentError("busy")
-            if run.get("state") in run_store.ACTIVE_STATES:
-                raise AgentError("run_active" if self._engine_alive(run) else "not_finished")
-            if foreign:  # a run of another Research OS process is going: its files are not ours to move
-                raise AgentError("busy")
-            if run.get("reverted"):
-                raise AgentError("reverted")
+            self._check_undoable(project_id, run_id, run, foreign)
             self._reverting.add(project_id)
         try:
-            return self._revert(root, project_id, run, by)
+            return self._revert(root, project_id, run, by, chosen)
         finally:
             with self._lock:
                 self._reverting.discard(project_id)
 
-    def _revert(self, root: Path, project_id: str, run: dict, by: str | None) -> dict:
+    def revert_plan(self, root: Path, project_id: str, run_id: str) -> dict:
+        """What 撤回本次运行 would do now, without doing it (18.1 item 5): `{"run": summary, "restore":
+        [{"path", "time"}], "remove": [{"path", "time"}], "cannot": [{"path", "reason"}]}`. `restore` is the
+        files put back from the before-picture (changed or deleted ones; a created file that is a deleted one
+        renamed is listed under the old name, with `from` the new; the task's done mark is listed as
+        `research/tasks.json` with `task`), `remove` the files moved away, `cannot` the files left alone with
+        the reason (`changed_since`, `no_copy`, `in_cloud`, `protected`). `time` is a file's modification time
+        on this Mac, in local time, where it is there; for a file that is gone, and for the done mark, when the
+        run ended. Refuses as `revert` does (`reverted`, `later_run`, `not_revertible`, `run_active`, `busy`).
+        It only reads: it does not recover the runs a gone engine left active (listing the runs does, and
+        a run is offered for undo only after that), so a window without the engine's session may ask."""
+        self._check_ids(project_id, run_id)
+        root = self._readable_root(root)
+        foreign = self._foreign_active(project_id)
+        run = self._load(project_id, run_id)
+        with self._lock:
+            self._check_undoable(project_id, run_id, run, foreign)
+        rd, before, after, changes, info = self._undo_inputs(project_id, run)
+        restored: list[str] = []
+        removed: list[str] = []
+        skipped: list[dict[str, str]] = []
+        origin: dict[str, str] = {}
+        self._undo_files(root, os.path.realpath(root), rd, before["files"], after["files"], changes, run_id,
+                         restored, removed, skipped, project_id, person=self._person_paths(run, changes),
+                         dry=True, origin=origin)
+        self._undo_task(root, run, info, restored, skipped, dry=True)
+        ended = _local_time(run.get("ended"))
+
+        def item(rel: str) -> dict[str, Any]:
+            entry: dict[str, Any] = {"path": rel}
+            source = origin.get(rel, rel)
+            moment = None
+            if rel == TASKS_PATH:
+                entry["task"] = run.get("task_text") or ""
+            else:
+                with contextlib.suppress(OSError):
+                    moment = _local_time(os.lstat(os.path.join(root, *source.split("/"))).st_mtime)
+            entry["time"] = moment or ended
+            if rel in origin:
+                entry["from"] = origin[rel]
+            return entry
+
+        return {"run": self._summary_of(project_id, run),
+                "restore": [item(rel) for rel in sorted(restored)], "remove": [item(rel) for rel in sorted(removed)],
+                "cannot": sorted(skipped, key=lambda s: s["path"])}
+
+    @staticmethod
+    def _readable_root(root: Path | str) -> Path:
+        """The resolved project folder, for a request that only reads."""
+        try:
+            resolved = Path(root).resolve()
+            if not resolved.is_dir():
+                raise AgentError("invalid", "The project folder is missing")
+        except OSError as exc:
+            raise AgentError("invalid", f"The project folder cannot be read: {exc}") from exc
+        return resolved
+
+    @staticmethod
+    def _person_paths(run: dict, changes: dict) -> set[str]:
+        """The paths the person saved through Research OS while the run went on (`_key` form)."""
+        return {_key(p) for p in (*(run.get("human_paths") or ()), *(changes.get("by_person") or ()))}
+
+    def _undo_inputs(self, project_id: str, run: dict) -> tuple[Path, dict, dict, dict, dict[str, Any]]:
+        """What undoing (or planning the undo of) `run` works from: the run's folder, its two pictures, its
+        changes and what its tools signalled. Refuses `not_revertible` and `later_run` (17.6)."""
         run_id = run["id"]
         rd = run_store.run_dir(project_id, run_id)
         before, after = _read_json(rd / "before.json"), _read_json(rd / "after.json")
@@ -1609,7 +1778,11 @@ class AgentManager:
                       for p in (other.get("changes") or {}).get(kind, ())}
             if mine & theirs:
                 raise AgentError("later_run")
+        return rd, before, after, changes, info
 
+    def _revert(self, root: Path, project_id: str, run: dict, by: str | None, chosen: set[str] | None) -> dict:
+        run_id = run["id"]
+        rd, before, after, changes, info = self._undo_inputs(project_id, run)
         restored: list[str] = []
         removed: list[str] = []
         skipped: list[dict[str, str]] = []
@@ -1617,10 +1790,9 @@ class AgentManager:
         try:
             with situation.write_guard(root, project_id, human=True, timeout=10.0):
                 self._undo_files(root, real_root, rd, before["files"], after["files"], changes, run_id,
-                                 restored, removed, skipped, project_id,
-                                 person={_key(p) for p in (*(run.get("human_paths") or ()),
-                                                           *(changes.get("by_person") or ()))})
-                self._undo_task(root, run, info, restored, skipped)
+                                 restored, removed, skipped, project_id, person=self._person_paths(run, changes),
+                                 folders=_folders_before(before), chosen=chosen)
+                self._undo_task(root, run, info, restored, skipped, chosen=chosen)
         except ProjectLockError as exc:
             raise AgentError("busy", f"The project is being written by something else: {exc}") from exc
         except situation.WriteRefused as exc:
@@ -1636,15 +1808,32 @@ class AgentManager:
 
     def _undo_files(self, root: Path, real_root: str, rd: Path, old: dict, new: dict, changes: dict, run_id: str,
                     restored: list[str], removed: list[str], skipped: list[dict[str, str]],
-                    project_id: str, person: set[str] | None = None) -> None:
+                    project_id: str, person: set[str] | None = None, *, folders: set[str] | None = None,
+                    chosen: set[str] | None = None, dry: bool = False,
+                    origin: dict[str, str] | None = None) -> None:
+        """Undo (or, with `dry`, work out the undo of) the files of a run (17.6), filling `restored`, `removed`
+        and `skipped`. `chosen` (18.1 item 5) are the paths, in `_key` form, the person left checked: a path
+        that would be undone and is not among them is left as it is and listed as `kept`; None undoes all.
+        `folders` are the folders that existed before the run, which are not removed when a move empties them
+        (`_folders_before`; None removes none). `dry` runs every check of the real thing and writes nothing:
+        no file or folder is made, moved or removed, nothing is recorded; `origin` then maps a path put back
+        by moving a created file to the created file's name."""
         who = history.scan_who(root)
         recorded: list[str] = []
         person = person or set()
+        origin = origin if origin is not None else {}
         handled: set[str] = set()  # deleted paths a moved-back file has restored
         moved: list[str] = []  # files that left their folder: the folders they emptied are cleaned up
 
         def skip(rel: str, reason: str) -> None:
             skipped.append({"path": rel, "reason": reason})
+
+        def kept(rel: str) -> bool:
+            """Whether the person left `rel` out of this undo: it stays as it is, and the run's log says so."""
+            if chosen is not None and _key(rel) not in chosen:
+                skip(rel, "kept")
+                return True
+            return False
 
         def path_of(rel: str) -> str:
             return os.path.join(root, *rel.split("/"))
@@ -1658,13 +1847,16 @@ class AgentManager:
             except OSError:
                 return False
 
-        def free(rel: str) -> bool:
-            """Whether nothing stands at `rel`: an empty folder (what a replaced file leaves behind) counts as nothing."""
+        def free(rel: str, probe: bool = False) -> bool:
+            """Whether nothing stands at `rel`: an empty folder (what a replaced file leaves behind) counts as
+            nothing, and is removed unless this only `probe`s."""
             target = path_of(rel)
             if not os.path.lexists(target):
                 return True
             if os.path.isdir(target) and not os.path.islink(target):
                 try:
+                    if probe or dry:
+                        return not os.listdir(target)
                     os.rmdir(target)  # fails unless empty
                 except OSError:
                     return False
@@ -1683,6 +1875,12 @@ class AgentManager:
                 return False
             target = path_of(rel)
             parent = os.path.dirname(target)
+            if dry:
+                if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
+                    skip(rel, "changed_since")
+                    return False
+                restored.append(rel)
+                return True
             try:
                 os.makedirs(parent, exist_ok=True)
                 if not _inside(real_root, os.path.realpath(parent)):
@@ -1708,24 +1906,38 @@ class AgentManager:
                 lost.setdefault(entry["sha256"], []).append(rel)
 
         def move_back(rel: str, current: dict) -> bool:
+            """Handle the created file `rel` that is a deleted file renamed: True when it was (moved back, or
+            left where it is because the person kept the old name's return), False when it is a plain creation."""
             sha = current.get("sha256") or (new.get(rel) or {}).get("sha256")
-            for target_rel in lost.get(sha, ()) if sha else ():
+            for target_rel in list(lost.get(sha, ())) if sha else ():
                 target = path_of(target_rel)
-                if os.path.lexists(target) and not (os.path.exists(target) and os.path.samefile(target, path_of(rel))):
-                    if not free(target_rel):
-                        continue
-                try:
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    if not _inside(real_root, os.path.realpath(os.path.dirname(target))):
-                        continue
-                    os.rename(path_of(rel), target)
-                except OSError:
+                occupied = os.path.lexists(target) and not (os.path.exists(target)
+                                                            and os.path.samefile(target, path_of(rel)))
+                if occupied and not free(target_rel, probe=True):
                     continue
+                parent = os.path.dirname(target)
+                if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
+                    continue
+                if kept(target_rel):  # the file keeps its new name; the old name stays empty
+                    lost[sha].remove(target_rel)
+                    handled.add(target_rel)
+                    return True
+                if not dry:
+                    try:
+                        if occupied and not free(target_rel):
+                            continue
+                        os.makedirs(parent, exist_ok=True)
+                        if not _inside(real_root, os.path.realpath(parent)):
+                            continue
+                        os.rename(path_of(rel), target)
+                    except OSError:
+                        continue
+                    recorded.append(target_rel)
+                    moved.append(rel)
+                origin[target_rel] = rel
                 lost[sha].remove(target_rel)
                 handled.add(target_rel)
                 restored.append(target_rel)
-                recorded.append(target_rel)
-                moved.append(rel)
                 return True
             return False
 
@@ -1747,6 +1959,11 @@ class AgentManager:
                 continue
             if move_back(rel, current):
                 continue
+            if kept(rel):
+                continue
+            if dry:
+                removed.append(rel)
+                continue
             dest = rd / "reverted" / Path(*rel.split("/"))
             try:
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1758,10 +1975,9 @@ class AgentManager:
             removed.append(rel)
             moved.append(rel)
         # the folders the moves emptied, deepest first, unless they were there before the run
-        before_dirs = {"/".join(p.split("/")[:i]) for p in old for i in range(1, p.count("/") + 1)}
         emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
         for folder in sorted(emptied, key=lambda f: f.count("/"), reverse=True):
-            if folder in before_dirs or folder.split("/", 1)[0].casefold() in _RECORD_AND_GIT_DIRS:
+            if folders is None or folder in folders or folder.split("/", 1)[0].casefold() in _RECORD_AND_GIT_DIRS:
                 continue
             with contextlib.suppress(OSError):  # not empty: it stays
                 if not os.path.islink(path_of(folder)):
@@ -1782,14 +1998,21 @@ class AgentManager:
             if not (old.get(rel) or {}).get("copied"):
                 skip(rel, "no_copy")
                 continue
-            if not copy_away(rel, path_of(rel)):
+            if kept(rel):
+                continue
+            if not dry and not copy_away(rel, path_of(rel)):
                 skip(rel, "changed_since")
                 continue
             restore(rel)
         for rel in changes.get("deleted", ()):
             if rel == TASKS_PATH or rel in handled:
                 continue
-            if _key(rel) in person or not free(rel):
+            if _key(rel) in person or not free(rel, probe=True):
+                skip(rel, "changed_since")
+                continue
+            if kept(rel):
+                continue
+            if not dry and not free(rel):
                 skip(rel, "changed_since")
                 continue
             restore(rel)
@@ -1802,9 +2025,10 @@ class AgentManager:
                 logger.warning("could not record the undo of agent run %s in the history", run_id, exc_info=True)
 
     def _undo_task(self, root: Path, run: dict, info: dict[str, Any], restored: list[str],
-                   skipped: list[dict[str, str]]) -> None:
+                   skipped: list[dict[str, str]], *, chosen: set[str] | None = None, dry: bool = False) -> None:
         """Take back the done mark and the `report` link the run's complete tool set -- logically,
-        on the tasks as they are now, never by restoring `research/tasks.json` (17.6)."""
+        on the tasks as they are now, never by restoring `research/tasks.json` (17.6). It is listed
+        (and can be left out) as `research/tasks.json`; with `dry` it only says whether it would."""
         report = info.get("report")
         if not report:
             return
@@ -1821,8 +2045,12 @@ class AgentManager:
                     changed["report"] = run["task_report_before"]
             if changed == target:
                 return
-            workspace.save_tasks(root, {"tasks": [changed if t["id"] == target["id"] else t for t in tasks],
-                                        "revision": revision})
+            if chosen is not None and _key(TASKS_PATH) not in chosen:
+                skipped.append({"path": TASKS_PATH, "reason": "kept"})
+                return
+            if not dry:
+                workspace.save_tasks(root, {"tasks": [changed if t["id"] == target["id"] else t for t in tasks],
+                                            "revision": revision})
         except workspace.WorkspaceError:
             logger.warning("could not take back the done mark of agent run %s", run.get("id"), exc_info=True)
             skipped.append({"path": TASKS_PATH, "reason": "changed_since"})

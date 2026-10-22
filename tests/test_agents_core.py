@@ -558,6 +558,47 @@ def test_take_without_copies(tmp_path):
     assert picture["not_copied"] == 1 and picture["copied_bytes"] == 0
 
 
+def test_take_records_the_folders_empty_ones_and_ones_holding_only_noise_included(tmp_path, monkeypatch):
+    """18.1 item 5: undo keeps a folder that existed before the run, so the picture says which did: every folder
+    the main walk went into, not only the ones that hold a recorded file."""
+    root = _project(tmp_path / "proj", {
+        "code/run.py": "1", "figs/.DS_Store": "noise", "deep/er/x.txt": "x", "__pycache__/a.pyc": "x",
+        "node_modules/m/x.js": "x", ".researchos/backups/old.bak": "o", ".git/config": "[core]"})
+    (root / "empty").mkdir()
+    (root / "empty" / "nested").mkdir()
+    (root / "link-to-folder").symlink_to(root / "code")
+    picture = snapshot.take(root)
+    assert picture["dirs"] == sorted([".researchos", "code", "deep", "deep/er", "empty", "empty/nested", "figs"])
+    assert picture["dirs_partial"] is False
+    assert "figs/.DS_Store" not in picture["files"]  # the noise is not a file of the picture; its folder is
+    json.dumps(picture)
+    monkeypatch.setattr(snapshot, "DIR_LIMIT", 3)
+    cut = snapshot.take(root)
+    assert cut["dirs_partial"] is True and len(cut["dirs"]) == 3 and cut["partial"] is False
+
+
+def test_large_files_names_the_ten_biggest_over_the_copy_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 10)
+    files = {f"data/big{i:02d}.bin": b"x" * (11 + i) for i in range(12)}
+    files.update({"small.txt": b"x" * 10, "node_modules/m/huge.bin": b"x" * 99, ".git/objects/pack": b"x" * 99,
+                  "sub/.DS_Store": b"x" * 99, ".researchos/backups/old.bak": b"x" * 99, "tied/a.bin": b"x" * 50,
+                  "tied/b.bin": b"x" * 50})
+    root = _project(tmp_path / "proj", files)
+    (root / "link.bin").symlink_to(root / "tied" / "a.bin")
+    found = snapshot.large_files(root)
+    assert found["count"] == 14 and found["partial"] is False
+    assert [f["path"] for f in found["largest"]] == [
+        "tied/a.bin", "tied/b.bin", "data/big11.bin", "data/big10.bin", "data/big09.bin", "data/big08.bin",
+        "data/big07.bin", "data/big06.bin", "data/big05.bin", "data/big04.bin"]
+    assert found["largest"][0]["size"] == 50 and found["largest"][2]["size"] == 22
+    assert snapshot.large_files(root, over=40)["count"] == 2
+    cut = snapshot.large_files(root, limit=3)
+    assert cut["partial"] is True and cut["count"] <= 3
+    assert snapshot.large_files(tmp_path / "missing") == {"count": 0, "largest": [], "partial": False}
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 16 * 1024 * 1024)  # the default is the copy limit, read at call time
+    assert snapshot.large_files(root)["count"] == 0
+
+
 def test_take_copy_limit_and_budget(tmp_path, monkeypatch):
     root = _project(tmp_path / "proj", {"small.txt": "1234", "big.bin": b"x" * 100, "also.txt": "12345678"})
     monkeypatch.setattr(snapshot, "COPY_LIMIT", 10)

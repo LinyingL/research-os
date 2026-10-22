@@ -49,7 +49,11 @@ lists it. A model served locally through OpenCode works the same way.
 
 **Run.** Set the task's **Owner** to the agent and click **Run**. The first
 time you run each agent after opening the page, the app tells you where
-project content goes and that the agent changes files directly. The task shows its state: Preparing,
+project content goes, that the agent changes files directly, and what an undo
+cannot bring back (software it installs, content it downloads, what it does
+in git, anything outside the project folder). It also names the project's files
+over 16 MB (the ten biggest, then a count): they are not backed up before a
+run, so a change to one cannot be undone. The task shows its state: Preparing,
 Running, Waiting for your answer, Done, Ended without a report, Failed,
 Stopped, Interrupted, or Went out of bounds (below). One run goes at a time in a project; **Stop** ends it
 and everything it started. A run is stopped after the time limit (two hours
@@ -93,12 +97,17 @@ an editor leaves, such as `.DS_Store` or `~$` lock files, are not counted.
 question and stops; the task shows **Waiting for your answer**. **Answer**
 continues the same conversation. If the work is not right, **Send back** with
 what to change; a task already marked done is reopened first. Only the
-latest run of a task can be continued. **Undo this run** moves the files the
-run created into the run's own folder, restores files it changed or deleted
-from copies taken before it started, and takes back the done mark and result
-link it set. A file you changed after the run, or one too large to copy
-beforehand (over 16 MB), is left as it is and listed with the reason; the
-run then reads **Partly undone**. A run cannot be undone while a later run
+latest run of a task can be continued. **Undo this run** first shows what it
+will do: the files it will put back (changed or deleted ones, restored from
+copies taken before the run, and the done mark and result link it set) and
+the files it will move away (the ones the run created, moved into the run's
+own folder, never deleted), each with its time and a checkbox, all checked.
+It also lists the files it cannot undo, with the reason. Clear the boxes of
+files you want to keep, then **Confirm undo**; the files you cleared are left
+as they are and the run log lists them as "You kept this". A folder that
+existed before the run is never removed. A file you changed after the run, or
+one too large to copy beforehand (over 16 MB), cannot be undone: it is left
+as it is and listed with the reason. The run then reads **Partly undone**. A run cannot be undone while a later run
 touched the same files: undo the later one first. Copies of the newest 20
 runs of a project are kept; older runs can no longer be undone.
 

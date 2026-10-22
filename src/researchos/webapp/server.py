@@ -151,8 +151,23 @@ Endpoints (all GET unless noted):
                             the task; answers the run's summary at once.
     POST /api/agents/runs/<id>/reply -- `{project, message}`: answer a
                             question or send the task back.
+    GET  /api/agents/runs/<id>/revert-plan -- what 撤回本次运行 would do now,
+                            without doing it (18.1 item 5): `restore` (files
+                            put back), `remove` (files moved away), each path
+                            with its `time`, and `cannot` (files it leaves
+                            alone, each with a reason code). Refuses as the
+                            undo does (`agent_reverted`, `agent_later_run`,
+                            `agent_not_revertible`, ...). Reads only.
+    GET  /api/agents/large-files -- the served project's files over 16 MB,
+                            which a run may change and an undo cannot restore
+                            (18.1 item 5): `{count, largest: [{path, size}],
+                            partial}`, the ten biggest, biggest first. Reads
+                            only.
     POST /api/agents/runs/<id>/stop, /revert -- `{project}`: stop the run and
-                            everything it started; undo it (17.6).
+                            everything it started; undo it (17.6). `revert`
+                            takes `files` (the paths the person left checked in
+                            the plan; absent = all): the others are left as
+                            they are and listed in the run's log as kept.
                             Every run endpoint needs an unblocked served
                             project, a POST carries `project` (409
                             `agent_project_changed` when it is no longer the
@@ -660,6 +675,7 @@ from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
+from researchos.agents import snapshot as agent_snapshot
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
 from researchos import desk as desk_mod
@@ -3754,7 +3770,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             return payload
         self._agent_writable(served)
         by, _name = self._agent_person(strict=False)
-        payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by))
+        payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by,
+                                                        files=body.get("files")))
         payload["generation"] = self.server.watcher.record_external_change(None)
         try:
             self.server.start_scan(served)
@@ -4085,6 +4102,18 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     # program): only for a request that carries the session (18.1); without it, the list is read as stored.
                     recover = self._has_session()
                     self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id, recover=recover)))
+            elif path == "/api/agents/large-files":
+                # 18.1 item 5: what the confirmation before a first run names (a stat-only walk)
+                served = self._require_unblocked()
+                self._send_json(200, agent_snapshot.large_files(served.root))
+            elif path.startswith("/api/agents/runs/") and path.endswith("/revert-plan") and path.count("/") == 5:
+                # 18.1 item 5: the undo's list, which only reads
+                served = self._require_unblocked()
+                run_id = path[len("/api/agents/runs/"):-len("/revert-plan")]
+                if served.project_id is None:
+                    raise AgentApiError(agent_manager.AgentError("run_missing"), self._lang())
+                self._send_json(200, self._agent_api(lambda: self.server.agents.revert_plan(
+                    served.root, served.project_id, run_id)))
             elif path.startswith("/api/agents/runs/") and "/" not in path[len("/api/agents/runs/"):]:
                 served = self._require_unblocked()
                 run_id = path[len("/api/agents/runs/"):]
@@ -4685,6 +4714,21 @@ def remove_session_file(path: Path, session: str) -> None:
         pass
 
 
+def _recover_agent_runs(httpd: RceHTTPServer) -> None:
+    """The body of `serve`'s recovery thread (18.1 item 6): `AgentManager.recover_all`, whose trouble is
+    logged and never ends the engine."""
+    agents = getattr(httpd, "agents", None)
+    if agents is None:
+        return
+    try:
+        recovered = agents.recover_all()
+    except Exception:  # noqa: BLE001 -- documented: recovery is a courtesy to the next page load
+        logger.exception("could not recover the agent runs an earlier engine left going")
+        return
+    if recovered:
+        logger.info("recovered %d agent run(s) left going by an earlier engine: %s", len(recovered), ", ".join(recovered))
+
+
 def serve(project_root: Path | None, port: int, open_browser: bool = True, served: ServedProject | None = None) -> None:
     """`researchos serve`'s entry point: validate the project, print the one
     startup line the task spec requires verbatim, optionally open a browser
@@ -4711,7 +4755,10 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     asks every write for it, `<home>/engine/<port>.session` holds it (mode
     0600) until shutdown, and a browser it opens is sent to
     `/boot?session=...` first. The secret is never printed, whether or not a
-    browser is opened -- the startup line is the plain address."""
+    browser is opened -- the startup line is the plain address.
+
+    18.1 item 6: a thread recovers the agent runs an earlier engine left
+    preparing or running, of every project that has runs on this Mac."""
     if served is None:
         served = no_project_served() if project_root is None else served_for(Path(project_root))
     try:
@@ -4747,6 +4794,10 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     url = f"http://127.0.0.1:{bound_port}"
     print(f"Research OS app: {url}  (Ctrl+C to stop)")
     httpd.watcher.start()
+    # 18.1 item 6: the runs an earlier engine left going are recovered now, not when their project's runs
+    # are next listed; a thread, so that a big project's after-picture does not hold up the first request.
+    threading.Thread(target=_recover_agent_runs, args=(httpd,), name="researchos-agent-recover",
+                     daemon=True).start()
     if open_browser:
         webbrowser.open(f"{url}/boot?session={session}")
     restore = _install_sigterm_handler(httpd)

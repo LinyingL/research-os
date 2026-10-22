@@ -10,6 +10,7 @@ import dataclasses
 import json
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -25,7 +26,7 @@ from researchos.agents import labels, profiles
 from researchos.agents import runs as run_store
 from researchos.records.identity import read_identity
 from researchos.webapp import server
-from test_agents_manager import COMPLETE, FAKE, NOTE, finish_step, init_step
+from test_agents_manager import COMPLETE, FAKE, NOTE, finish_step, init_step, tree_state
 from test_webapp_server import _request_with_headers
 
 CJK = re.compile(r"[一-鿿]")
@@ -1003,3 +1004,192 @@ def test_an_unreadable_me_toml_refuses_start_and_reply_only(api_me):
     run = api.start()
     assert run["by"] is None
     api.poll(run["id"])
+
+
+# -- undo says what it will do, and asks (DESIGN 18.1 item 5) -----------------------------------------------
+
+
+def _finished_run(api: Api, monkeypatch) -> dict:
+    """A run that changed old.txt, deleted gone.txt, made analysis.py and the result record, and is done."""
+    monkeypatch.setattr(api.httpd, "start_scan", lambda served: None)
+    api.put("old.txt", "v0\n")
+    api.put("gone.txt", "g\n")
+    api.scenario(COMPLETE + [{"op": "write", "path": "old.txt", "text": "v1\n"},
+                             {"op": "delete", "path": "gone.txt"}])
+    done = api.poll(api.start()["id"])
+    assert done["state"] == "done" and done["can_revert"] is True
+    return done
+
+
+def test_revert_plan_lists_what_undo_would_do_and_changes_nothing(api_me, monkeypatch):
+    api = api_me
+    done = _finished_run(api, monkeypatch)
+    (api.root / "stray.txt").write_text("a file nobody asked about\n")
+    before = tree_state(api.root)
+    status, plan = api.get(f"/api/agents/runs/{done['id']}/revert-plan", lang="en")
+    assert status == 200, plan
+    assert [i["path"] for i in plan["restore"]] == ["gone.txt", "old.txt", "research/tasks.json"]
+    assert [i["path"] for i in plan["remove"]] == sorted(["analysis.py", done["report"]])
+    assert plan["cannot"] == [] and plan["run"]["id"] == done["id"] and plan["run"]["can_revert"] is True
+    assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", i["time"])
+               for i in plan["restore"] + plan["remove"])
+    assert next(i for i in plan["restore"] if i["path"] == "research/tasks.json")["task"] == "Analyse the sample"
+    assert "stray.txt" not in [i["path"] for i in plan["restore"] + plan["remove"]]
+    assert tree_state(api.root) == before
+    assert api.get(f"/api/agents/runs/{done['id']}")[1]["revert"] is None
+    assert api.tasks()["t1"]["done"] is True
+    # the same words in either language: the plan carries codes and paths, the page makes the sentences
+    assert api.get(f"/api/agents/runs/{done['id']}/revert-plan", lang="zh")[1] == plan
+    # a file changed since is listed, with why
+    (api.root / "old.txt").write_text("v2, by the person\n")
+    status, plan = api.get(f"/api/agents/runs/{done['id']}/revert-plan")
+    assert plan["cannot"] == [{"path": "old.txt", "reason": "changed_since"}]
+    assert "old.txt" not in [i["path"] for i in plan["restore"]]
+
+
+def test_revert_plan_refuses_as_undo_does_in_the_requests_language(api_me, monkeypatch):
+    api = api_me
+    done = _finished_run(api, monkeypatch)
+    status, error = api.get("/api/agents/runs/r-20260101T000000Z-abcdef/revert-plan", lang="en")
+    assert status == 404 and error["state"] == "agent_run_missing" and not CJK.search(error["message"])
+    assert api.get("/api/agents/runs/not-a-run/revert-plan")[0] == 400
+    assert api.post(f"/api/agents/runs/{done['id']}/revert")[0] == 200
+    status, error = api.get(f"/api/agents/runs/{done['id']}/revert-plan", lang="en")
+    assert status == 409 and error["state"] == "agent_reverted" and not CJK.search(error["message"])
+    status, error = api.get(f"/api/agents/runs/{done['id']}/revert-plan", lang="zh")
+    assert status == 409 and error["state"] == "agent_reverted" and CJK.search(error["message"])
+    # a nested path is not the plan, and the plan is only read
+    assert api.get(f"/api/agents/runs/{done['id']}/revert-plan/extra")[0] == 404
+    assert api.post(f"/api/agents/runs/{done['id']}/revert-plan")[0] == 404
+
+
+def test_revert_plan_needs_a_project_with_an_identity(api):
+    api.httpd.set_served(dataclasses.replace(api.httpd.get_served(), project_id=None, needs_migration=True))
+    status, error = api.get("/api/agents/runs/r-20260101T000000Z-abcdef/revert-plan", lang="zh")
+    assert status == 404 and error["state"] == "agent_run_missing" and CJK.search(error["message"])
+
+
+def test_revert_with_files_undoes_only_those_and_says_what_was_kept(api_me, monkeypatch):
+    api = api_me
+    done = _finished_run(api, monkeypatch)
+    status, plan = api.get(f"/api/agents/runs/{done['id']}/revert-plan")
+    paths = [i["path"] for i in plan["restore"] + plan["remove"]]
+    chosen = [p for p in paths if p not in ("old.txt", "analysis.py")]
+    status, reverted = api.post(f"/api/agents/runs/{done['id']}/revert", {"files": chosen}, lang="en")
+    assert status == 200, reverted
+    assert reverted["restored"] == ["gone.txt", "research/tasks.json"] and reverted["removed"] == [done["report"]]
+    assert sorted((s["path"], s["reason"]) for s in reverted["skipped"]) == [("analysis.py", "kept"),
+                                                                            ("old.txt", "kept")]
+    assert reverted["run"]["reverted"] is True and reverted["run"]["revert_skipped"] == 2
+    assert (api.root / "old.txt").read_text() == "v1\n" and (api.root / "analysis.py").is_file()
+    assert (api.root / "gone.txt").read_text() == "g\n" and api.tasks()["t1"]["done"] is False
+    # the run's log lists them
+    status, detail = api.get(f"/api/agents/runs/{done['id']}")
+    assert detail["revert"]["skipped"] == reverted["skipped"]
+    # absent = everything, as before (nothing is left to do here, so it is refused: the run is undone)
+    status, error = api.post(f"/api/agents/runs/{done['id']}/revert", {}, lang="en")
+    assert status == 409 and error["state"] == "agent_reverted"
+
+
+def test_revert_with_a_bad_files_value_is_refused_and_changes_nothing(api_me, monkeypatch):
+    api = api_me
+    done = _finished_run(api, monkeypatch)
+    before = tree_state(api.root)
+    for bad in ([], "old.txt", [1], {"old.txt": True}):
+        status, error = api.post(f"/api/agents/runs/{done['id']}/revert", {"files": bad}, lang="en")
+        assert status == 400 and error["state"] == "agent_invalid" and not CJK.search(error["message"]), bad
+    status, error = api.post(f"/api/agents/runs/{done['id']}/revert", {"files": []}, lang="zh")
+    assert status == 400 and CJK.search(error["message"])
+    assert tree_state(api.root) == before and api.run_state(done["id"])["reverted"] is False
+    # null is "absent": everything
+    status, reverted = api.post(f"/api/agents/runs/{done['id']}/revert", {"files": None})
+    assert status == 200 and reverted["skipped"] == [] and reverted["run"]["reverted"] is True
+
+
+def test_the_plan_reads_without_the_session_and_the_choice_does_not_write_without_it(api_me, monkeypatch):
+    api = api_me
+    done = _finished_run(api, monkeypatch)
+    api.httpd.session = "s" * 64  # from here on a write must carry it (18.1)
+    before = tree_state(api.root)
+    assert api.get(f"/api/agents/runs/{done['id']}/revert-plan")[0] == 200
+    assert api.get("/api/agents/large-files")[0] == 200
+    status, error = api.post(f"/api/agents/runs/{done['id']}/revert", {"files": ["gone.txt"]})
+    assert status == 403 and error["state"] == "session_required"
+    assert tree_state(api.root) == before and api.run_state(done["id"])["reverted"] is False
+
+
+def test_large_files_names_the_ten_biggest_and_counts_the_rest(api, monkeypatch):
+    from researchos.agents import snapshot
+
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 5000)  # the project's own files are smaller
+    for i in range(12):
+        api.put(f"data/big{i:02d}.bin", "x" * (5001 + i))
+    api.put("small.txt", "x" * 5000)
+    status, found = api.get("/api/agents/large-files")
+    assert status == 200 and found["count"] == 12 and found["partial"] is False
+    assert [f["path"] for f in found["largest"]] == [f"data/big{i:02d}.bin" for i in range(11, 1, -1)]
+    assert found["largest"][0] == {"path": "data/big11.bin", "size": 5012}
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 16 * 1024 * 1024)
+    assert api.get("/api/agents/large-files") == (200, {"count": 0, "largest": [], "partial": False})
+
+
+def test_large_files_needs_a_project(tmp_path, monkeypatch):
+    a = Api(tmp_path, monkeypatch, with_project=False)
+    try:
+        status, error = a.get("/api/agents/large-files")
+        assert status == 409 and error["state"] == "no_project"
+    finally:
+        a.close()
+
+
+# -- at engine start (DESIGN 18.1 item 6) -----------------------------------------------------------------------
+
+
+def test_serve_recovers_the_runs_of_every_project_before_anyone_lists_them(tmp_path, tmp_path_factory, monkeypatch):
+    project.init_project(tmp_path)
+    other = tmp_path_factory.mktemp("other-project")
+    project.init_project(other)
+    other_pid = read_identity(other).identity.id
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    run_id = run_store.new_run_id()
+    run_store.create_run(other_pid, {"id": run_id, "project_id": other_pid, "root": str(other), "state": "running",
+                                     "created": run_store.now_iso(), "engine_pid": dead.pid})
+    seen: dict[str, Any] = {}
+
+    def serve_forever(self):
+        end = time.monotonic() + 30
+        while time.monotonic() < end and run_store.load_run(other_pid, run_id)["state"] == "running":
+            time.sleep(0.05)
+        seen["run"] = run_store.load_run(other_pid, run_id)
+
+    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", serve_forever)
+    server.serve(tmp_path, port=0, open_browser=False)
+    assert seen["run"]["state"] == "interrupted" and seen["run"]["error"]["code"] == "engine_gone"
+
+
+def test_a_failing_recovery_never_ends_the_engine(tmp_path, monkeypatch):
+    project.init_project(tmp_path)
+
+    def boom(self):
+        raise RuntimeError("the store is unreadable")
+
+    seen: dict[str, Any] = {}
+
+    def serve_forever(self):
+        for thread in threading.enumerate():
+            if thread.name == "researchos-agent-recover":
+                thread.join(timeout=10)
+        seen["served"] = True
+
+    monkeypatch.setattr(server.agent_manager.AgentManager, "recover_all", boom)
+    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", serve_forever)
+    server.serve(tmp_path, port=0, open_browser=False)
+    assert seen == {"served": True}
+    # and building a server alone recovers nothing and starts no thread (the test above of this)
+    before = {t.name for t in threading.enumerate()}
+    httpd = server.build_server(None, 0)
+    try:
+        assert {t.name for t in threading.enumerate()} == before
+    finally:
+        httpd.server_close()
