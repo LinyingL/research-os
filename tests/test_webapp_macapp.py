@@ -16,6 +16,8 @@ really opening Finder.
 
 from __future__ import annotations
 
+import contextlib
+import http.client
 import json
 import os
 import plistlib
@@ -23,12 +25,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from researchos import cli
-from researchos.webapp import macapp
+from researchos import cli, paths
+from researchos.webapp import macapp, server
 from test_v8_u2 import FORBIDDEN
 
 
@@ -627,6 +631,94 @@ def test_shell_stops_only_an_engine_it_spawned():
     assert "guard let process = child, process.isRunning else { return .terminateNow }" in quit_
 
 
+# -- The engine session (DESIGN.md 18.1 item 1, task V14 G1-2) --------------------------
+# The engine asks every write for the secret it keeps in <home>/engine/<port>.session.
+# The shell reads that file once the probe answers, loads /boot?session=... first and
+# sends the header on its one POST. Pinned in the Swift text here; the section that
+# does the reading is compiled and run against the engine's own file at the end.
+
+
+def _method(name: str) -> str:
+    """One AppDelegate method, from `func name(` to its closing brace."""
+    start = _SHELL.index(f"    func {name}(")
+    return _SHELL[start:_SHELL.index("\n    }\n", start)]
+
+
+def _session_section() -> str:
+    return _SHELL[_SHELL.index("// -- The engine session"):_SHELL.index("// -- end of the engine session")]
+
+
+def test_shell_reads_the_session_file_from_its_own_home_once_the_probe_answers():
+    section = _session_section()
+    # the file researchos.paths.engine_session_path names: <home>/engine/<port>.session
+    assert f'let sessionDirectory = "{paths.ENGINE_DIRNAME}"' in section
+    assert 'let sessionSuffix = ".session"' in section
+    assert '.appendingPathComponent("\\(port)\\(sessionSuffix)", isDirectory: false)' in section
+    # in the home the shell already computes for serve.log and settings.json
+    assert "var sessionFileURL: URL { engineSessionFile(home: rceHome(), port: port) }" in _SHELL
+    assert "engineSession(at: sessionFileURL)" in _method("engineSecret")
+    # the page is entered only after a probe has answered
+    start = _method("startEngine")
+    assert "if ok { self.loadApp(); return }" in start
+    poll = _method("pollTick")
+    assert poll.index("if ok {") < poll.index("self.loadApp()")
+    assert _SHELL.count("loadApp()") == 3  # the definition and those two
+    assert _SHELL.count("entryURL()") == 2  # the definition and loadApp
+
+
+def test_shell_loads_boot_with_the_session_and_the_plain_address_without_one():
+    entry = _method("entryURL")
+    assert ("guard let secret = engineSecret(), let boot = bootURL(base: baseURL, secret: secret) "
+            "else { return baseURL }") in entry
+    assert entry.count("return ") == 2 and entry.rstrip().endswith("return boot")
+    load = _method("loadApp")
+    assert "webView.load(URLRequest(url: entryURL()))" in load and "baseURL" not in load
+    # the secret rides in the query, percent-encoded, to the engine's /boot and nowhere else
+    section = _session_section()
+    assert _SHELL.count('"boot?session="') == 1
+    assert 'URL(string: "boot?session=" + encoded, relativeTo: base)' in section
+    assert "secret.addingPercentEncoding(withAllowedCharacters: sessionQueryAllowed)" in section
+    assert 'charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"' in section
+    # the load passes the navigation policy (same host and port; the redirect to / does too)
+    assert 'url.scheme == "http" && url.host == "127.0.0.1" && url.port == port' in _method("isEngineURL")
+
+
+def test_shell_sends_the_session_header_on_its_shutdown_and_on_every_post():
+    assert f'let sessionHeader = "{server.SESSION_HEADER}"' in _SHELL
+    quit_path = _method("stopEngineForQuit")
+    line = "if let secret = engineSecret() { request.setValue(secret, forHTTPHeaderField: sessionHeader) }"
+    assert line in quit_path
+    assert quit_path.index(line) < quit_path.index("session.dataTask(with: request)")
+    # an engine without a file (an older one) is sent the request as before: nothing else changed
+    assert 'request.httpMethod = "POST"' in quit_path
+    assert '\\"pid\\": \\(process.processIdentifier)' in quit_path
+    # the shell makes no other request with a method of its own; whichever it made would need the header
+    code = _code_without_comments(_SHELL)
+    assert code.count("httpMethod =") == 1 and code.count("forHTTPHeaderField: sessionHeader") == 1
+    # and it goes only to the engine's own address
+    assert 'baseURL.appendingPathComponent("api/shutdown")' in quit_path
+
+
+def test_shell_never_logs_prints_or_shows_the_session():
+    """The app's serve.log is readable by any program of the user (18.1), and so is a
+    waiting page's text: the secret is read where it is used and goes nowhere else."""
+    code = _code_without_comments(_SHELL)
+    for sink in ("print(", "NSLog(", "debugPrint(", "dump(", "os_log(", "Logger(", "write("):
+        assert sink not in code, sink
+    # the child's environment gets one addition, and its arguments are pinned elsewhere
+    assert re.findall(r'environment\["(\w+)"\] =', code) == ["PYTHONUNBUFFERED"]
+    # the secret is read in two places only, and mentioned in no other function
+    assert code.count("engineSecret()") == 3  # the definition, entryURL, stopEngineForQuit
+    rest = code.replace(_code_without_comments(_session_section()), "")
+    rest = rest.replace("    var sessionFileURL: URL { engineSessionFile(home: rceHome(), port: port) }\n", "")  # a path
+    for name in ("engineSecret", "entryURL", "stopEngineForQuit"):
+        rest = rest.replace(_code_without_comments(_method(name)), "")
+    for word in ("secret", "sessionHeader", "engineSession", "bootURL", "sessionFileURL"):
+        assert word not in rest, word
+    # the page is not handed it by script either: its scripts are fixed text
+    assert _SHELL.count("evaluateJavaScript(") == 3 and _SHELL.count("callAsyncJavaScript(") == 1
+
+
 # -- cli wiring: `researchos app` -----------------------------------------------------
 
 
@@ -1067,3 +1159,150 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     assert out["en hint"] == _english_table()[_swift_value(_DOCUMENTS_HINT)]
     assert out["zh is every key itself"] == "yes"
     assert out["entries"] == str(len(_english_entries()))
+
+
+# -- The engine session, compiled and run (18.1) -------------------------------------------
+# The section of RCEShell.swift that reads the session file and builds the /boot address,
+# compiled on its own with a small harness, and run against what the engine really writes
+# (`server.write_session_file`) and answers (`GET /boot` of a real server).
+
+_SESSION_HARNESS = r"""
+let arguments = CommandLine.arguments
+let home = URL(fileURLWithPath: arguments[1], isDirectory: true)
+let port = Int(arguments[2])!
+let base = URL(string: arguments[3])!
+let folder = URL(fileURLWithPath: arguments[4], isDirectory: true)
+let secrets = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: arguments[5]))) as! [String]
+var out: [String: Any] = [:]
+let file = engineSessionFile(home: home, port: port)
+out["file"] = file.path
+out["secret"] = engineSession(at: file) ?? NSNull()
+var files: [String: Any] = [:]
+for name in try! FileManager.default.contentsOfDirectory(atPath: folder.path) + ["no such file"] {
+    files[name] = engineSession(at: folder.appendingPathComponent(name)) ?? NSNull()
+}
+out["files"] = files
+var boots: [String: Any] = [:]
+for secret in secrets {
+    boots[secret] = bootURL(base: base, secret: secret)?.absoluteString ?? NSNull()
+}
+out["boots"] = boots
+FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]))
+"""
+
+_HEX = "ab" * 32
+#: Texts the shell must not take for a secret: it then loads the plain address and sends no header.
+_SESSION_FILES = {
+    "engine-form": (f"{_HEX}\n".encode(), _HEX),
+    "crlf": (f"{_HEX}\r\n".encode(), _HEX),
+    "no newline": (_HEX.encode(), _HEX),
+    "padded": (f"  {_HEX}  \n".encode(), _HEX),
+    "longest": (b"a" * 512 + b"\n", "a" * 512),
+    "empty": (b"", None),
+    "blank": (b"\n\n", None),
+    "two words": (b"ab cd\n", None),
+    "two lines": (b"ab\ncd\n", None),
+    "tab inside": (b"ab\tcd\n", None),
+    "non-ascii": ("sécret\n".encode(), None),
+    "too long": (b"a" * 513 + b"\n", None),
+    "not utf-8": (b"\xff\xfe\x00ab\n", None),
+}
+_BOOT_SECRETS = [_HEX, "a&b+c%d#e/f=g?h", "~._-AZaz09", "100%", "a+b"]
+
+
+@pytest.fixture(scope="module")
+def session_harness(tmp_path_factory):
+    if not _HAS_SWIFTC:
+        pytest.skip("needs macOS with swiftc")
+    folder = tmp_path_factory.mktemp("session-harness")
+    main = folder / "main.swift"
+    main.write_text("import Foundation\n" + _session_section() + _SESSION_HARNESS, encoding="utf-8")
+    binary = folder / "session"
+    compiled = subprocess.run(["swiftc", "-target", macapp._swift_target(), "-o", str(binary), str(main)],
+                              capture_output=True, text=True, timeout=300)
+    assert compiled.returncode == 0, compiled.stderr
+    return binary
+
+
+def _run_session_harness(binary: Path, tmp_path: Path, home: Path, port: int, base: str) -> dict:
+    files = tmp_path / "session-files"
+    files.mkdir(exist_ok=True)
+    for name, (raw, _expected) in _SESSION_FILES.items():
+        (files / name).write_bytes(raw)
+    (files / "a directory").mkdir(exist_ok=True)
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps(_BOOT_SECRETS), encoding="utf-8")
+    done = subprocess.run([str(binary), str(home), str(port), base, str(files), str(secrets)],
+                          capture_output=True, text=True, check=True, timeout=60)
+    return json.loads(done.stdout)
+
+
+@native_only
+def test_shell_reads_the_file_the_engine_writes_and_nothing_it_would_misread(session_harness, tmp_path, monkeypatch):
+    """The shell and `researchos serve` name the same file and agree on its text: what
+    `write_session_file` wrote (mode 0600, a closing newline) is read back as the secret;
+    no file, an empty one, a directory or text that is not one token is no session."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("RESEARCHOS_HOME", str(home))
+    secret = server.new_session()
+    written = server.write_session_file(7391, secret)
+    out = _run_session_harness(session_harness, tmp_path, home, 7391, "http://127.0.0.1:7391/")
+    assert Path(out["file"]) == written == paths.engine_session_path(7391)
+    assert out["secret"] == secret and len(secret) == 64
+    assert {name: out["files"][name] for name in _SESSION_FILES} == {
+        name: expected for name, (_raw, expected) in _SESSION_FILES.items()}
+    assert out["files"]["a directory"] is None and out["files"]["no such file"] is None
+    # an older engine writes no file: the other port of the same home has none
+    other = _run_session_harness(session_harness, tmp_path, home, 7392, "http://127.0.0.1:7392/")
+    assert other["secret"] is None and Path(other["file"]) == paths.engine_session_path(7392)
+
+
+@native_only
+def test_shell_boot_address_is_percent_encoded_and_reads_back_whole(session_harness, tmp_path):
+    out = _run_session_harness(session_harness, tmp_path, tmp_path / "home", 7391, "http://127.0.0.1:7391/")
+    assert out["boots"][_HEX] == f"http://127.0.0.1:7391/boot?session={_HEX}"
+    assert out["boots"]["~._-AZaz09"].endswith("?session=~._-AZaz09")
+    assert out["boots"]["a&b+c%d#e/f=g?h"].endswith("?session=a%26b%2Bc%25d%23e%2Ff%3Dg%3Fh")
+    assert out["boots"]["a+b"].endswith("?session=a%2Bb")  # a literal + would be read as a space
+    for secret, url in out["boots"].items():
+        parts = urlsplit(url)
+        assert (parts.scheme, parts.netloc, parts.path, parts.fragment) == ("http", "127.0.0.1:7391", "/boot", "")
+        assert parse_qs(parts.query, strict_parsing=True) == {"session": [secret]}
+
+
+@contextlib.contextmanager
+def _engine_asking_for(session: str):
+    httpd = server.build_server(None, 0, session=session)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield httpd.server_address[1]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+@native_only
+@pytest.mark.parametrize("secret", [_HEX, "a&b+c%d#e/f=g?h", "a+b"])
+def test_the_address_the_shell_loads_makes_the_engine_set_its_cookie(session_harness, tmp_path, secret):
+    """End to end on the wire: the /boot address the shell builds from a secret is the one a
+    real engine that asks for that secret answers with the session cookie and a redirect to /."""
+    with _engine_asking_for(secret) as port:
+        out = _run_session_harness(session_harness, tmp_path, tmp_path / "home", port, f"http://127.0.0.1:{port}/")
+        url = urlsplit(out["boots"][secret])
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            conn.request("GET", url.path + "?" + url.query)
+            response = conn.getresponse()
+            response.read()
+            headers = {k.lower(): v for k, v in response.getheaders()}
+            assert response.status == 303 and headers["location"] == "/"
+            assert headers["set-cookie"] == f"ro_session_{port}={secret}; HttpOnly; SameSite=Strict; Path=/"
+            # and a boot address with another secret sets nothing
+            conn.request("GET", "/boot?session=" + "0" * 64)
+            wrong = conn.getresponse()
+            wrong.read()
+            assert wrong.status == 303 and wrong.getheader("Set-Cookie") is None
+        finally:
+            conn.close()
