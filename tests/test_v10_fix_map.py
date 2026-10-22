@@ -330,9 +330,9 @@ def test_14_2_a_members_line_to_their_own_new_row_is_refused_before_anything_is_
     later = _run_map(approved, steps, lang=lang)
     zh = ["#19 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线",
           "#19 还不在正式版本里：PI 批准它以后才能画这条连线", "连线的一端不在你上次同步的正式版本里：请同步后再试"]
-    en = ["#19 is not in the official version yet: name what it grew out of in its proposal, or draw the line once the PI "
-          "approves it", "#19 is not in the official version yet: the line can be drawn once the PI approves it",
-          "One end of the line is not in the official version you last synced: sync, then try again"]
+    en = ["#19 is not in the published version yet: name what it grew out of in its proposal, or draw the line once the PI "
+          "approves it", "#19 is not in the published version yet: the line can be drawn once the PI approves it",
+          "One end of the line is not in the published version you last synced: sync, then try again"]
     said = zh if lang == "zh" else en
     assert [out["extra"]["child"], out["extra"]["parent"], out["extra"]["engine"]] == said
     sync = "#19 已经批准，同步以后才能画这条连线" if lang == "zh" else "#19 is approved: the line can be drawn once you sync"
