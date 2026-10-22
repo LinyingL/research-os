@@ -478,7 +478,8 @@ def test_serve_raises_before_binding_when_project_not_initialized(tmp_path):
 
 def test_serve_prints_url_and_opens_browser(tmp_path, monkeypatch, capsys):
     _init_project(tmp_path)
-    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", lambda self: None)
+    secrets_seen = []
+    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", lambda self: secrets_seen.append(self.session))
     opened = []
     monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url))
 
@@ -488,7 +489,10 @@ def test_serve_prints_url_and_opens_browser(tmp_path, monkeypatch, capsys):
     assert out.startswith("Research OS app: http://127.0.0.1:")
     assert out.rstrip("\n").endswith("(Ctrl+C to stop)")
     url = out.split("Research OS app: ")[1].split("  (Ctrl+C")[0]
-    assert opened == [url]
+    # DESIGN.md 18.1: the browser is sent to /boot first, which hands it the engine's session; the
+    # printed line stays the plain address (the secret is never printed)
+    assert opened == [f"{url}/boot?session={secrets_seen[0]}"]
+    assert secrets_seen[0] and secrets_seen[0] not in out
 
 
 def test_serve_does_not_open_browser_when_disabled(tmp_path, monkeypatch, capsys):
@@ -1905,7 +1909,7 @@ def test_serve_starts_even_while_the_graph_is_downloading(tmp_path, monkeypatch)
         def server_close(self):
             started.append("closed")
 
-    monkeypatch.setattr(server, "build_server", lambda root, port, served=None: _Stub())
+    monkeypatch.setattr(server, "build_server", lambda root, port, served=None, session=None: _Stub())
     server.serve(project, 0, open_browser=False)
     assert started == ["watcher", "serving", "closed"]
 

@@ -1315,11 +1315,13 @@ class AgentManager:
         return summary(run, latest_of_task=latest is not None and latest.get("id") == run.get("id"),
                        active=self._is_active(project_id, run["id"]))
 
-    def runs(self, project_id: str) -> dict:
+    def runs(self, project_id: str, *, recover: bool = True) -> dict:
         """`{"runs": [summary...], "active": run id | None}`, newest first. Runs left active by an
-        engine that is gone are marked `interrupted` first (17.3)."""
+        engine that is gone are marked `interrupted` first (17.3) -- unless `recover` is False
+        (a window without the engine's session may read the list but not change a run, 18.1):
+        they are then listed as they are stored."""
         self._check_ids(project_id)
-        foreign = self._recover(project_id)
+        foreign = self._recover(project_id) if recover else self._foreign_active(project_id)
         with self._lock:
             act = self._active.get(project_id)
             active_id = act.run_id if act is not None else None

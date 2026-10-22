@@ -439,6 +439,23 @@ loopback form proves the same thing the exact one does) -- missing entirely
 is accepted, since a non-browser CLI caller (`curl`, this module's own test
 suite) never sends one.
 
+Engine session (DESIGN.md 18.1, every write): the origin check says a request
+came from a page this loopback server itself served, not that the program
+sending it is the researcher's page -- a script an AI agent writes and runs
+can POST here with the right `Host` and no `Origin` at all. So every request
+other than GET and HEAD must also carry the session the engine made when it
+started (`serve`: 32 random bytes, kept in memory and in
+`<home>/engine/<port>.session`, mode 0600): the cookie `ro_session_<port>`
+(set by `GET /boot?session=...`, which `researchos serve` and the Mac app load
+first) or the header `X-ResearchOS-Session`. `RceRequestHandler._check_session`
+runs right after `_check_local_origin` and before routing or reading the body;
+without it the answer is 403 `session_required` with a sentence in the
+request's language, and nothing is changed. A page without the session still
+reads (every GET but `/boot` is open, see `do_GET`'s audit note). The secret
+is compared in constant time and is never printed or logged. `build_server`
+takes the secret as `session`; None (the default, what the tests build) means
+no session is asked for, `serve` never builds one that way.
+
 Switch-target defense (`POST /api/projects/switch`, task V3 phase 1): this
 is the one endpoint that changes what the whole server serves, so its input
 is never treated as a filesystem path at all. The requested string must be
@@ -617,10 +634,12 @@ catch in `main()`.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -712,6 +731,36 @@ class PathTraversalError(ApiError):
 
 class ForbiddenOriginError(ApiError):
     status = 403
+
+
+#: 18.1: the engine's session, as a write carries it -- the cookie `ro_session_<port>` (the port is
+#: in the name because cookies are shared across the ports of 127.0.0.1) or this header.
+SESSION_COOKIE_PREFIX = "ro_session_"
+SESSION_HEADER = "X-ResearchOS-Session"
+#: What a window without the session is told when its first write is refused (18.1), in both languages.
+SESSION_REQUIRED_ZH = "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
+SESSION_REQUIRED_EN = "This window cannot save: open it from the Research OS app."
+
+
+#: The secret in a logged `GET /boot?session=...` request line.
+_BOOT_SECRET = re.compile(r"(/boot\?(?:[^\s\"&]*&)?session=)[^\s\"&]*")
+
+
+class SessionRequiredError(ApiError):
+    """A write that carries no valid engine session (18.1): 403, `state` and `code`
+    `session_required`, `message` the sentence in the request's language, `detail`
+    what the engine looked for. The page shows `message` where the write's status
+    shows (app.html's BLOCKING_ERROR_TEXT)."""
+
+    status = 403
+    state = "session_required"
+
+    def __init__(self, port: int, lang: str) -> None:
+        super().__init__(
+            f"the request carries no engine session: send the cookie {SESSION_COOKIE_PREFIX}{port} "
+            f"or the header {SESSION_HEADER}")
+        self.extra = {"code": self.state, "detail": str(self),
+                      "message": settings_mod.say(SESSION_REQUIRED_ZH, SESSION_REQUIRED_EN, lang)}
 
 
 class NotAFileError(ApiError):
@@ -3242,7 +3291,11 @@ class RceHTTPServer(ThreadingHTTPServer):
         project_root: Path | None,
         watch_interval: float = project_watcher.DEFAULT_INTERVAL_SECONDS,
         served: ServedProject | None = None,
+        session: str | None = None,
     ) -> None:
+        # 18.1: the secret every write must carry (`RceRequestHandler._check_session`);
+        # None asks for none -- the tests' servers. `serve` never passes None.
+        self.session = session
         # Mutable since task V3 phase 1 (POST /api/projects/switch), and
         # only ever touched through the accessors below: each request runs
         # on its own thread (ThreadingHTTPServer), so a bare attribute would
@@ -3487,7 +3540,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
     server: RceHTTPServer  # set by socketserver at construction time
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (stdlib's own name)
-        logger.debug("%s - %s", self.address_string(), format % args)
+        # 18.1: the request line of `GET /boot?session=...` holds the secret; it is never logged
+        logger.debug("%s - %s", self.address_string(), _BOOT_SECRET.sub(r"\1<hidden>", format % args))
 
     def _project_root(self) -> Path:
         """One locked read per call (RceHTTPServer.get_project_root) -- a
@@ -3740,6 +3794,46 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 f"request Origin {origin!r} does not match this server; refusing"
             )
 
+    def _has_session(self) -> bool:
+        """18.1: whether this request carries the engine's session -- the cookie
+        `ro_session_<port>` or the header `X-ResearchOS-Session` -- compared in constant
+        time. A server built without a session (the tests') asks for none: every request
+        that passed the origin check has it."""
+        expected = self.server.session
+        if expected is None:
+            return True
+        wanted = expected.encode("utf-8")
+        cookie = f"{SESSION_COOKIE_PREFIX}{self.server.server_address[1]}"
+        offered = [self.headers.get(SESSION_HEADER) or ""]
+        for line in self.headers.get_all("Cookie") or []:
+            for part in line.split(";"):
+                name, sep, value = part.strip().partition("=")
+                if sep and name == cookie:
+                    offered.append(value.strip().strip('"'))
+        return any(hmac.compare_digest(value.strip().encode("utf-8"), wanted) for value in offered if value.strip())
+
+    def _check_session(self) -> None:
+        """18.1: refuse a request without the session (403 `session_required`, the
+        sentence in the request's language). Called by `do_POST` right after the origin
+        check and before routing or reading the body, so a refused write changes nothing."""
+        if not self._has_session():
+            raise SessionRequiredError(self.server.server_address[1], self._lang())
+
+    def _boot(self, query: dict[str, list[str]]) -> None:
+        """`GET /boot?session=<secret>` (18.1): the right secret sets the session cookie
+        (HttpOnly, SameSite=Strict, Path=/), a wrong or missing one does not; either way
+        the answer is a 303 to `/`, which also takes the secret out of the address bar."""
+        expected = self.server.session
+        offered = (query.get("session") or [""])[0]
+        self.send_response(303)
+        if expected is not None and hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
+            cookie = f"{SESSION_COOKIE_PREFIX}{self.server.server_address[1]}"
+            self.send_header("Set-Cookie", f"{cookie}={expected}; HttpOnly; SameSite=Strict; Path=/")
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _lang(self) -> str:
         """The language this request asks for (13.2): "en" or "zh" from
         its `X-ResearchOS-Lang` header, Chinese without one. For the
@@ -3757,11 +3851,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             raise ProjectBlockedError(served.blocked or {"situation": NO_PROJECT_SITUATION})
 
     def do_GET(self) -> None:  # noqa: N802 (stdlib's own method name)
+        # 18.1 audit (the table is tests/test_engine_session.py's GET_ROUTES, which fails for a route
+        # it does not list): no GET here writes a record, a setting or the project, opens an
+        # application or starts a scan, so none asks for the session -- a window without it
+        # still reads. The reads that run another program (read-only `git`, `<runner> --version`,
+        # `opencode models`, `mdfind`) change nothing; the one GET that writes, the run list's
+        # recovery of runs a gone engine left active, does so only with the session.
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
         try:
             self._check_local_origin()
+            if path == "/boot":  # 18.1: answers with no project too, before anything else is looked at
+                self._boot(query)
+                return
             self._refuse_without_project(path, _NO_PROJECT_GET)
             if path == "/":
                 self._send_html(200, _app_html())
@@ -3978,7 +4081,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if served.project_id is None:  # no identity yet: nothing could have run
                     self._send_json(200, {"runs": [], "active": None})
                 else:
-                    self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id)))
+                    # Listing recovers the runs a gone engine left active (a write, and it may end their
+                    # program): only for a request that carries the session (18.1); without it, the list is read as stored.
+                    recover = self._has_session()
+                    self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id, recover=recover)))
             elif path.startswith("/api/agents/runs/") and "/" not in path[len("/api/agents/runs/"):]:
                 served = self._require_unblocked()
                 run_id = path[len("/api/agents/runs/"):]
@@ -4036,6 +4142,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             # out; switch repoints the whole server), so this line is what
             # stands between them and a drive-by page's cross-origin fetch.
             self._check_local_origin()
+            # 18.1: and the session, which the origin check cannot prove -- a
+            # program on this Mac can send the right Host and no Origin at all.
+            self._check_session()
             self._refuse_without_project(parsed.path, _NO_PROJECT_POST)
             if parsed.path == "/api/open":
                 body = self._read_json_body_with_path()
@@ -4482,6 +4591,7 @@ def build_server(
     port: int,
     watch_interval: float = project_watcher.DEFAULT_INTERVAL_SECONDS,
     served: ServedProject | None = None,
+    session: str | None = None,
 ) -> RceHTTPServer:
     """Bound to 127.0.0.1 only -- see module docstring. `port=0` (used by
     the test suite) asks the OS for a free ephemeral port; the caller reads
@@ -4489,9 +4599,13 @@ def build_server(
     is the auto-refresh watcher's polling period, injectable so tests can
     run a fast real-thread loop -- the watcher itself is created either
     way but only serve() starts its thread. `project_root=None` with no
-    `served` starts in the no-project state (DESIGN.md 10.1)."""
+    `served` starts in the no-project state (DESIGN.md 10.1). `session` is
+    the secret every write must carry (18.1); None, the default, asks for
+    none -- so the tests build servers that need no session, and `serve`
+    never does."""
     return RceHTTPServer(
         ("127.0.0.1", port), RceRequestHandler, project_root, watch_interval=watch_interval, served=served,
+        session=session,
     )
 
 
@@ -4529,6 +4643,48 @@ def _install_sigterm_handler(httpd: RceHTTPServer | None = None) -> Callable[[],
     return restore
 
 
+class SessionFileError(ApiError):
+    """The engine could not write its session file (18.1): it refuses to start, because the
+    Mac app could never learn the session and every window would be read-only."""
+
+
+def new_session() -> str:
+    """18.1: a fresh engine session -- 32 random bytes, as 64 hex characters."""
+    return secrets.token_hex(32)
+
+
+def write_session_file(port: int, session: str) -> Path:
+    """18.1: `<home>/engine/<port>.session` -- the secret and a newline, mode 0600 from the first
+    byte, replaced atomically (written beside it, then renamed), so a reader sees the old file
+    or the whole new one and no other user ever sees the secret. The caller removes it at shutdown
+    (`remove_session_file`)."""
+    target = paths.engine_session_path(port)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(session + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+        raise
+    return target
+
+
+def remove_session_file(path: Path, session: str) -> None:
+    """Remove the session file written for `session` -- not one a newer engine of the same port
+    wrote since (it holds another secret). Never raises: a shutdown is not the place for it."""
+    try:
+        if path.read_text(encoding="utf-8").strip() == session:
+            path.unlink()
+    except OSError:
+        pass
+
+
 def serve(project_root: Path | None, port: int, open_browser: bool = True, served: ServedProject | None = None) -> None:
     """`researchos serve`'s entry point: validate the project, print the one
     startup line the task spec requires verbatim, optionally open a browser
@@ -4549,7 +4705,13 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     (module docstring, "Project identity") and writes nothing.
 
     17.3: from the main thread a SIGTERM ends the serve loop like Ctrl+C, so
-    the `finally` below stops every running agent before the process exits."""
+    the `finally` below stops every running agent before the process exits.
+
+    18.1: `serve` always makes an engine session (`new_session`): the server
+    asks every write for it, `<home>/engine/<port>.session` holds it (mode
+    0600) until shutdown, and a browser it opens is sent to
+    `/boot?session=...` first. The secret is never printed, whether or not a
+    browser is opened -- the startup line is the plain address."""
     if served is None:
         served = no_project_served() if project_root is None else served_for(Path(project_root))
     try:
@@ -4571,13 +4733,22 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
         # 「引擎没有在 10 秒内启动」; serving lets the page show the honest
         # header state and pick the graph up by itself once it is local.
         print(f"Research OS: {exc}", file=sys.stderr)
-    httpd = build_server(served.root, port, served=served)
+    session = new_session()
+    httpd = build_server(served.root, port, served=served, session=session)
     bound_port = httpd.server_address[1]
+    try:
+        session_file = write_session_file(bound_port, session)
+    except OSError as exc:
+        httpd.server_close()
+        raise SessionFileError(
+            f"cannot write the engine session file {paths.engine_session_path(bound_port)}: {exc}; "
+            f"not starting without it"
+        ) from exc
     url = f"http://127.0.0.1:{bound_port}"
     print(f"Research OS app: {url}  (Ctrl+C to stop)")
     httpd.watcher.start()
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(f"{url}/boot?session={session}")
     restore = _install_sigterm_handler(httpd)
     try:
         httpd.serve_forever()
@@ -4585,6 +4756,9 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
         pass
     finally:
         httpd._closing = True  # noqa: SLF001 -- from here on a SIGTERM must not interrupt the shutdown
+        # first, so the file is gone before the slow part of the shutdown (the agents stopping)
+        # and a newer engine of this port is never left without its own
+        remove_session_file(session_file, session)
         try:
             httpd.server_close()
         finally:

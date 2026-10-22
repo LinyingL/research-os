@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make the engine ask for its own session before it saves anything. A program
+  running on your Mac, an AI agent's script included, can no longer save,
+  approve or publish by calling Research OS's local address: the app, and the
+  browser tab `researchos serve` opens, carry the session; a window opened
+  from the plain address still reads, and says it cannot save.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

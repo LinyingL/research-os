@@ -511,6 +511,8 @@
     "批准人 {who}": "Approved by {who}",
     "迁移后才能记录判断": "Judgments can be recorded once the old records are migrated",
     "只读打开：不会写入任何东西": "Opened read-only: nothing is written",
+    // 18.1: a window opened without the engine's session (app.html's BLOCKING_ERROR_TEXT, routemap.js).
+    "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。": "This window cannot save: open it from the Research OS app.",
     // The desk's side panel (14.3): an attempt opened from its card.
     "这里有还没写入的内容，离开它就不保存了。继续吗？": "Something typed here is not written yet and is lost if you leave. Continue?",
     "没能打开这条尝试": "Could not open this attempt",
