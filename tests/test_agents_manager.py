@@ -134,7 +134,8 @@ for step in scenario.get("steps", []):
         runs.append_signal(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"], "ask", question=step["question"])
     elif op == "refusal":
         from researchos.agents import guard, runs
-        guard.log_refusal(runs.run_dir(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"]), "Bash", step["target"], step["reason"])
+        reason = guard.Refusal(step["reason"], step["code"]) if step.get("code") else step["reason"]
+        guard.log_refusal(runs.run_dir(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"]), "Bash", step["target"], reason)
     elif op == "complete":
         # what researchos_complete_task does: a result record, the task done, attributed to the agent
         from researchos import workspace
@@ -2471,3 +2472,92 @@ def test_the_program_is_not_given_the_home_or_credentials_and_the_run_names_what
     assert mcp["env"]["RESEARCHOS_HOME"] == str(paths.researchos_home())
     guard_file = json.loads((run_store.run_dir(scene.pid, run["id"]) / "guard.json").read_text())
     assert str(paths.researchos_home()) in guard_file["off_limits"] or os.path.realpath(paths.researchos_home()) in guard_file["off_limits"]
+
+
+# -- 18.1 item 6: refusals and errors with a code, and the cap on stderr.log ------------------------------------
+
+
+def test_the_refusals_in_a_runs_detail_carry_their_code(scene: Scene):
+    run = scene.go([init_step(), {"op": "refusal", "target": "git push", "reason": "No git.", "code": "git_state"},
+                    {"op": "refusal", "target": "data.csv", "reason": "an old-style reason, no code"}, finish_step()])
+    refusals = scene.manager.detail(scene.pid, run["id"])["refusals"]
+    assert [r["reason"] for r in refusals] == ["No git.", "an old-style reason, no code"]
+    assert refusals[0]["code"] == "git_state" and "code" not in refusals[1]
+
+
+def test_a_failed_runs_log_ends_with_the_code_of_its_error(scene: Scene):
+    # the program's own last event is the end of the log: it gets the code of the run's error
+    budget = scene.go([init_step(), {"op": "result", "is_error": True, "subtype": "error_max_budget_usd",
+                                     "text": "", "errors": ["Reached maximum budget"]}, {"op": "exit", "code": 1}])
+    steps = scene.manager.detail(scene.pid, budget["id"])["steps"]
+    assert steps[-1]["kind"] == "end" and steps[-1]["code"] == "error_max_budget_usd"
+    assert "Reached maximum budget" in steps[-1]["text"] and all("code" not in s for s in steps[:-1])
+    # a run that ended well keeps the program's own last words, without a code
+    ended = scene.go([init_step(), finish_step("All done.")])
+    assert "code" not in scene.manager.detail(scene.pid, ended["id"])["steps"][-1]
+
+
+def test_an_end_the_engine_adds_says_the_programs_words_and_the_code_never_stands_for_them(scene: Scene):
+    # a program that dies with no result: the engine writes the end, from the error's detail, with its code
+    died = scene.go([init_step(), {"op": "say", "text": "hmm"}, {"op": "exit", "code": 3}])
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end["kind"] == "end" and end["code"] == "aborted" and end["text"] == died["error"]["detail"]
+    # no detail: the text is empty, never the code
+    run_store.update_run(scene.pid, died["id"], error={"code": "error_something_new"})
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end == {"kind": "end", "text": "", "tool": None, "code": "error_something_new"}
+    # a stopped run keeps its own sentence, in the language of the run (these runs are English)
+    run_store.update_run(scene.pid, died["id"], state="stopped", error=None)
+    assert scene.manager.detail(scene.pid, died["id"])["steps"][-1] == {"kind": "end", "text": "Stopped by the person.", "tool": None}
+
+
+def test_stderr_log_is_capped_as_the_event_log_is(scene: Scene, monkeypatch):
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 600)
+    steps = [init_step()] + [{"op": "stderr", "text": "warning " * 20} for _ in range(20)] + [finish_step()]
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").stat().st_size == 600 and run["stderr_truncated"] is True
+    assert (rd / "stderr.log").read_text().startswith("warning warning")  # the beginning is what stays
+    assert run["state"] == "ended" and run["summary"] == "All done."  # the run itself is untouched
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["stderr_truncated"] is True and detail["events_truncated"] is False
+    assert len(detail["stderr_tail"].encode()) <= manager.STDERR_TAIL_BYTES
+
+
+def test_stderr_under_the_cap_is_whole_and_unmarked(scene: Scene):
+    run = scene.go([init_step(), {"op": "stderr", "text": "one"}, {"op": "stderr", "text": "two"}, finish_step()])
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").read_text() == "one\ntwo\n" and not run.get("stderr_truncated")
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_truncated"] is False
+    assert run_store.STDERR_LIMIT == run_store.EVENTS_LIMIT  # the same cap
+
+
+def test_a_program_that_writes_a_great_deal_to_stderr_is_not_held_up_by_it(scene: Scene, monkeypatch):
+    """Standard error is a pipe now: it is read to its end whatever the cap, so a program that writes far more than
+    a pipe holds (64 KB) neither blocks nor loses what fits."""
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 100_000)
+    steps = [init_step()] + [{"op": "stderr", "text": "e" * 2000} for _ in range(400)] + [finish_step()]  # 800 KB
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert run["state"] == "ended" and run["exit_code"] == 0
+    assert (rd / "stderr.log").stat().st_size == 100_000 and run["stderr_truncated"] is True
+
+
+def test_stderr_kept_up_to_a_stop_and_a_program_that_never_starts_leaves_an_empty_log(scene: Scene, monkeypatch):
+    scene.scenario([init_step(), {"op": "stderr", "text": "before the stop"}, {"op": "sleep", "s": 60}])
+    started = scene.start()
+    rd = run_store.run_dir(scene.pid, started["id"])
+    end = time.monotonic() + 20
+    while time.monotonic() < end and "before the stop" not in ((rd / "stderr.log").read_text() if (rd / "stderr.log").exists() else ""):
+        time.sleep(0.05)
+    scene.manager.stop(scene.pid, started["id"])
+    run = scene.wait(started["id"])
+    assert run["state"] == "stopped" and "before the stop" in (rd / "stderr.log").read_text()
+    # a program that cannot start: the run fails as before and no handle is left open
+    broken = scene.tmp / "broken"
+    broken.write_text("#!/nonexistent/interpreter\n")
+    broken.chmod(0o755)
+    monkeypatch.setattr(profiles, "find", lambda runner, **kw: profiles.Found(runner, str(broken), "1", None))
+    failed = scene.wait(scene.start()["id"])
+    assert failed["state"] == "failed" and failed["error"]["code"] == "start_failed"
+    assert (run_store.run_dir(scene.pid, failed["id"]) / "stderr.log").read_text() == ""  # made, as before, and empty

@@ -1026,21 +1026,30 @@ class AgentManager:
         launch_error: dict | None = None
         proc: subprocess.Popen | None = None
         started_at = _now()  # before the program exists: a partial picture judges "created" by this time
+        errlog: Any = None
         with act.lock:
             if act.stop_reason is None:
                 try:
-                    with open(rd / "stderr.log", "ab") as errlog:
-                        proc = subprocess.Popen(launch.argv, cwd=launch.cwd, env=launch.env, stdin=subprocess.PIPE,
-                                                stdout=subprocess.PIPE, stderr=errlog, bufsize=0,
-                                                start_new_session=True)
+                    errlog = open(rd / "stderr.log", "ab", buffering=0)  # noqa: SIM115 -- `_copy_stderr` closes it
+                    # standard error comes through a pipe, so that stderr.log can be capped as events.jsonl is
+                    proc = subprocess.Popen(launch.argv, cwd=launch.cwd, env=launch.env, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                                            start_new_session=True)
                 except (OSError, ValueError) as exc:
                     launch_error = {"code": "start_failed", "detail": f"{type(exc).__name__}: {exc}"[:2000]}
+                    if errlog is not None:
+                        errlog.close()
+                        errlog = None
                 else:
                     act.proc = proc
         exit_code: int | None = None
+        errcopy: threading.Thread | None = None
         if proc is not None:
             self._update(act, state="running", pid=proc.pid, started=started_at,
                          program_started=_start_of(proc.pid))
+            errcopy = threading.Thread(target=self._copy_stderr, args=(act, proc.stderr, errlog), daemon=True,
+                                       name=f"researchos-agent-stderr-{act.run_id}")
+            errcopy.start()
             threading.Thread(target=self._feed_stdin, args=(proc, launch.stdin.encode("utf-8")), daemon=True,
                              name=f"researchos-agent-stdin-{act.run_id}").start()
             act.timer = threading.Timer(max(0.1, timeout_minutes * 60.0), self._terminate, args=(act, "timeout"))
@@ -1061,10 +1070,54 @@ class AgentManager:
                 # writes can then pass for someone else's change
                 with contextlib.suppress(Exception), act.kill_lock:
                     act.leftovers += self._sweep(act, proc)
+                if errcopy is not None:  # what was left running is gone: the end of standard error is near
+                    errcopy.join(EXIT_DRAIN_S)
                 with contextlib.suppress(OSError):
                     if proc.stdout is not None:
                         proc.stdout.close()
         self._finish(act, before=before, stream=stream, exit_code=exit_code, launch_error=launch_error)
+
+    def _copy_stderr(self, act: _Active, pipe: Any, log: Any) -> None:
+        """Copy the program's standard error into `stderr.log` (`log`, open for appending) while the file stays
+        within `STDERR_LIMIT`, the cap of `events.jsonl` (18.1 item 6). What does not fit is dropped and the run is
+        marked `stderr_truncated`, as `events_truncated` marks the events. The pipe is read to its end whatever
+        happens, so that a chatty program is never stopped by a full pipe. Closes both."""
+        written = 0
+        try:
+            written = os.fstat(log.fileno()).st_size  # a log that already holds something counts
+        except (OSError, ValueError):
+            pass
+        out, truncated = log, False  # `out` becomes None when the file can no longer be written
+        try:
+            fd = pipe.fileno()
+            while True:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                if out is None or truncated:
+                    continue
+                room = max(0, run_store.STDERR_LIMIT - written)
+                part = chunk[:room]
+                try:
+                    out.write(part)
+                    written += len(part)
+                except OSError:
+                    logger.warning("cannot write stderr.log of agent run %s", act.run_id)
+                    out = None
+                    continue
+                if len(part) < len(chunk):
+                    truncated = True
+                    self._update(act, stderr_truncated=True)
+        except (OSError, ValueError):
+            pass
+        finally:
+            for handle in (log, pipe):
+                with contextlib.suppress(Exception):
+                    if handle is not None:
+                        handle.close()
 
     @staticmethod
     def _feed_stdin(proc: subprocess.Popen, data: bytes) -> None:
@@ -1492,7 +1545,7 @@ class AgentManager:
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
             leftovers=run.get("leftovers") or 0, env_removed=run.get("env_removed") or [],
-            events_truncated=bool(run.get("events_truncated")))
+            events_truncated=bool(run.get("events_truncated")), stderr_truncated=bool(run.get("stderr_truncated")))
         return out
 
     @staticmethod
@@ -1512,19 +1565,27 @@ class AgentManager:
                     step["text"] = step["text"].replace(prefix, "")
         state = run.get("state")
         outcome = run_store.outcome_of(run)
+        error = run.get("error") if isinstance(run.get("error"), dict) else {}
+        # 18.1 item 6: a run that failed or was interrupted ends its log with the code of its error, so that the page
+        # says it in the person's language and keeps the program's own words (the step's text) as the detail
+        code = error.get("code") if isinstance(error.get("code"), str) and error.get("code") else None
+        if code and outcome in ("failed", "interrupted") and steps and steps[-1]["kind"] == "end":
+            steps[-1]["code"] = code
         if state not in run_store.ACTIVE_STATES and not (steps and steps[-1]["kind"] == "end"):
             en = _lang(run.get("lang")) == "en"
-            error = run.get("error") or {}
             if outcome == "stopped":
                 text = "Stopped by the person." if en else "已被你停止。"
             elif outcome == "interrupted":
                 text = ("Interrupted: Research OS was closed while the run was going." if en
                         else "已中断：运行期间 Research OS 被关闭了。")
             elif error:
-                text = str(error.get("detail") or error.get("code") or "")
+                text = str(error.get("detail") or "")  # the code is never the text: the page words it
             else:
                 text = (run.get("summary") or "").strip() or ("Ended." if en else "已结束。")
-            steps.append({"kind": "end", "text": " ".join(text.split())[:runners.STEP_TEXT_LIMIT], "tool": None})
+            end = {"kind": "end", "text": " ".join(text.split())[:runners.STEP_TEXT_LIMIT], "tool": None}
+            if code and error and outcome not in ("stopped", "interrupted"):
+                end["code"] = code
+            steps.append(end)
         total = len(steps)
         return steps[-STEPS_LIMIT:], total
 

@@ -23,6 +23,15 @@
   saying you kept it; a run whose folder was not there when Research OS
   started is compared when the folder is back; deleting backups cannot hide
   behind one newly planted backup name.
+- Tighten the leftovers of the agent checks. An agent may not change or delete
+  existing `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`, `.sas7bdat`, `.jsonl` or
+  `.pickle` files either, while `package.json` and `package-lock.json` (which
+  `npm install` writes) are no longer counted as data. OpenCode is stopped from
+  git commands that do not start with `git` (`/usr/bin/git push`,
+  `cd x && git commit`). The run log tells a refused step, an error and a run
+  that failed in your language, with the program's own words behind
+  Details, and a run state the page does not know no longer shows its
+  raw code. A program's `stderr.log` is capped at 20 MB, as the event log is.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

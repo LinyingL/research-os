@@ -52,6 +52,9 @@ KEEP_RUNS = 200
 #: older runs keep their log but can no longer be undone (17.6).
 KEEP_BACKUPS = 20
 EVENTS_LIMIT = 20 * 1024 * 1024
+#: `stderr.log` is capped as `events.jsonl` is (18.1 item 6); a run that hit either cap is marked `events_truncated` /
+#: `stderr_truncated`.
+STDERR_LIMIT = EVENTS_LIMIT
 
 RUNS_DIRNAME = "agent-runs"
 RUN_FILENAME = "run.json"

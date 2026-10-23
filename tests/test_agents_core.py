@@ -2148,3 +2148,178 @@ def test_bash_public_apis_with_research_os_looking_paths_are_allowed(project, co
 ])
 def test_bash_research_os_api_on_a_loopback_host_or_the_engine_port_is_refused(project, command):
     assert _refused(project, "Bash", {"command": command}), command
+
+
+# -- 18.1 item 6: rule 3's suffixes ---------------------------------------------------------------------------
+
+NEW_DATA_SUFFIXES = (".sqlite", ".db", ".npy", ".npz", ".mat", ".sas7bdat", ".jsonl", ".pickle")
+
+
+def test_the_added_suffixes_are_data_for_the_walk_the_hook_and_the_after_run_check(tmp_path):
+    """One list: `snapshot.DATA_SUFFIXES` is what the data walk finds, what `protected` hands the hook through
+    `guard.json`, and what the after-run check reports."""
+    assert set(NEW_DATA_SUFFIXES) <= snapshot.DATA_SUFFIXES
+    wanted = [f"data/x{s}" for s in NEW_DATA_SUFFIXES] + ["data/Upper.SQLITE", "deep/er/panel.NPZ"]
+    root = _project(tmp_path / "proj", {rel: "1" for rel in wanted} | {"data/notes.txt": "n", "data/run.sqlite3": "3"})
+    picture = snapshot.take(root)
+    assert set(picture["data"]) == set(wanted)  # `.sqlite3` is no listed suffix
+    prot = snapshot.protected(root, picture)
+    assert set(prot["data"]) == set(wanted) and set(prot["files"]) >= set(wanted)
+    old_shape = {k: v for k, v in picture.items() if k not in ("data", "data_partial")}
+    assert set(snapshot.protected(root, old_shape)["data"]) == set(wanted)  # the fallback reads the same list
+
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    guard.write_guard_file(rd, root=root, prot=prot, engine_port=None)
+    g = guard.load_guard(rd)
+    for rel in wanted:
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}), rel
+        assert guard.check_tool(g, "Edit", {"file_path": str(root / rel)}), rel
+        assert guard.check_tool(g, "Bash", {"command": f"rm {rel}"}), rel
+        assert guard.check_tool(g, "Bash", {"command": f"echo x > {rel}"}), rel
+    for rel in ("data/new.jsonl", "data/run.sqlite3", "data/notes.txt"):
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}) is None, rel
+
+    def mutate(r):
+        for rel in wanted[:4]:
+            (r / rel).write_text("changed", encoding="utf-8")
+        for rel in wanted[4:]:
+            (r / rel).unlink()
+        (r / "data/new.pickle").write_text("fresh data is allowed", encoding="utf-8")
+        (r / "data/run.sqlite3").write_text("not listed", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted((v["path"], v["reason"]) for v in found) == sorted(
+        [(rel, "data_changed") for rel in wanted[:4]] + [(rel, "data_deleted") for rel in wanted[4:]])
+
+
+def test_package_json_and_package_lock_are_not_data_in_any_folder(tmp_path):
+    exempt = ["package.json", "package-lock.json", "web/package.json", "web/sub/package-lock.json",
+              "up/Package.JSON", "up/PACKAGE-LOCK.json"]
+    data = ["packages.json", "my-package.json", "web/package.jsonl", "web/package-lock.json.csv", "settings.json"]
+    root = _project(tmp_path / "proj", {rel: "{}" for rel in exempt + data})
+    picture = snapshot.take(root)
+    assert set(picture["data"]) == set(data)
+    assert set(snapshot.protected(root, picture)["data"]) == set(data)
+    assert not any(snapshot._is_data(rel) for rel in exempt)  # by file name, whatever the folder
+    assert all(snapshot._is_data(rel) for rel in data)
+
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    guard.write_guard_file(rd, root=root, prot=snapshot.protected(root, picture), engine_port=None)
+    g = guard.load_guard(rd)
+    for rel in exempt:  # `npm install` writes these: the hook lets it
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}) is None, rel
+        assert guard.check_tool(g, "Bash", {"command": f"rm {rel}"}) is None, rel
+    for rel in data:
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}), rel
+
+    def mutate(r):
+        for rel in exempt:
+            (r / rel).write_text('{"changed": true}', encoding="utf-8")
+        (r / "web/package.json").unlink()
+        (r / "packages.json").write_text("changed", encoding="utf-8")
+
+    found, changes = _violations(root, mutate)
+    assert [(v["path"], v["reason"]) for v in found] == [("packages.json", "data_changed")]
+    assert "web/package.json" in changes["deleted"] and "package.json" in changes["modified"]  # still in the change list
+
+
+# -- 18.1 item 6: every refusal has a code ----------------------------------------------------------------------
+
+REFUSAL_CASES = [  # (tool, input, expected code)
+    ("Write", {"file_path": "/etc/hosts"}, "outside_project"),
+    ("Edit", {"file_path": "../x.txt"}, "outside_project"),
+    ("Write", {}, "no_file"),
+    ("Write", {"file_path": "."}, "no_file"),
+    ("Write", {"file_path": ".researchos/team.toml"}, "records_folder"),
+    ("Write", {"file_path": "sub/.RCE/x"}, "records_folder"),
+    ("Write", {"file_path": ".git/config"}, "git_files"),
+    ("Write", {"file_path": "vendor/.git/hooks/pre-commit"}, "git_files"),
+    ("Write", {"file_path": ".claude/settings.json"}, "agent_settings"),
+    ("Write", {"file_path": "opencode.json"}, "agent_settings"),
+    ("Write", {"file_path": "data/raw.csv"}, "protected_file"),
+    ("Edit", {"file_path": "map.md"}, "protected_file"),
+    ("Write", {"file_path": "data/clean.DTA"}, "protected_file"),
+    ("Bash", {"command": "researchos status"}, "research_os_command"),
+    ("Bash", {"command": "git push origin main"}, "git_state"),
+    ("Bash", {"command": "cd x && git -C . commit -m y"}, "git_state"),
+    ("Bash", {"command": "curl http://127.0.0.1:8765/api/agents/runs"}, "engine_api"),
+    ("Bash", {"command": "cat .researchos/team.toml"}, "records_folder"),
+    ("Bash", {"command": "echo x > .git/config"}, "git_files"),
+    ("Bash", {"command": "echo x > .claude/settings.json"}, "agent_settings"),
+    ("Bash", {"command": "rm data/raw.csv"}, "protected_file"),
+    ("Bash", {"command": "echo x > data/raw.csv"}, "protected_file"),
+    ("Bash", {"command": "rm -rf data"}, "protected_file"),
+    ("Bash", {"command": 5}, "unchecked"),
+    ("Bash", ["git push"], "unchecked"),
+    ("Edit", "file", "unchecked"),
+    ("Read", {"file_path": "x\0y"}, "unchecked"),
+]
+
+
+@pytest.mark.parametrize("tool,tool_input,code", REFUSAL_CASES)
+def test_a_refusal_is_a_sentence_for_the_agent_that_carries_its_code(project, tool, tool_input, code):
+    reason = guard.check_tool(project.guard, tool, tool_input, str(project.root))
+    assert isinstance(reason, str) and reason and isinstance(reason, guard.Refusal)
+    assert reason.code == code and guard.refusal_code(reason) == code and code in guard.REFUSAL_CODES
+
+
+def test_the_reading_tools_refuse_with_the_off_limits_code(project, tmp_path):
+    for tool, tool_input in (("Read", {"file_path": os.path.expanduser("~/.ssh/id_ed25519")}),
+                             ("Grep", {"pattern": "x", "path": os.path.expanduser("~")}),
+                             ("Bash", {"command": "ls ~/.ssh"}), ("Bash", {"command": "echo $RESEARCHOS_HOME"})):
+        reason = guard.check_tool(project.guard, tool, tool_input, str(project.root))
+        assert reason and reason.code == "off_limits", (tool, tool_input)
+
+
+def test_every_code_is_reached_and_a_code_nobody_declared_is_refused():
+    reached = {code for _t, _i, code in REFUSAL_CASES} | {"off_limits"}
+    assert reached == set(guard.REFUSAL_CODES)  # a code in the list that no case reaches would be dead
+    with pytest.raises(ValueError):
+        guard.Refusal("x", "made_up")
+    assert guard.refusal_code("a plain sentence") is None and guard.refusal_code(None) is None
+    assert guard.refusal_code(guard.Refusal("x", "git_state")) == "git_state"
+
+
+def test_the_marker_a_code_travels_in_round_trips_and_is_taken_off_only_at_the_end():
+    sentence = "Writing inside .git is not allowed in this run; leave git's files alone."
+    said = guard.with_marker(sentence, "git_files")
+    assert said == sentence + " [refusal: git_files]"
+    assert guard.split_refusal(said) == (sentence, "git_files")
+    assert guard.split_refusal("Research OS: " + said + "\n") == ("Research OS: " + sentence, "git_files")
+    assert guard.with_marker(sentence, None) == sentence and guard.with_marker(sentence, "made_up") == sentence
+    for text in (sentence, "a [refusal: git_files] in the middle of it", "[refusal: made_up]", "ends with [refusal: ]", ""):
+        assert guard.split_refusal(text) == (text, None), text
+
+
+def test_log_refusal_records_the_code_of_a_refusal_and_none_for_a_plain_reason(tmp_path):
+    guard.log_refusal(tmp_path, "Bash", "git push", guard.Refusal("no git.", "git_state"))
+    guard.log_refusal(tmp_path, "Bash", "x", "a plain reason")
+    first, second = runs.read_lines(tmp_path / "refusals.jsonl")
+    assert first["code"] == "git_state" and first["reason"] == "no git." and "code" not in second
+    assert second["reason"] == "a plain reason"
+
+
+def test_the_hook_says_the_code_to_the_agent_and_logs_it(project):
+    done = _hook(project.run_dir, {"tool_name": "Edit", "tool_input": {"file_path": str(project.root / "data/raw.csv")}})
+    message = done.stderr.decode("utf-8")
+    assert done.returncode == 2 and message.startswith("Research OS: ") and message.endswith(" [refusal: protected_file]\n")
+    reason, code = guard.split_refusal(message)
+    assert code == "protected_file" and "protected file" in reason
+    (record,) = runs.read_lines(project.run_dir / "refusals.jsonl")
+    assert record["code"] == "protected_file" and record["reason"] == reason[len("Research OS: "):]  # the log has no marker
+    done = _hook(project.run_dir, {"tool_name": "Bash", "tool_input": {"command": "researchos status"}, "cwd": str(project.root)})
+    assert done.stderr.decode("utf-8").endswith(" [refusal: research_os_command]\n")
+
+
+def test_a_hook_that_could_not_check_refuses_with_the_unchecked_code(project, tmp_path):
+    for raw in (b"not json", b'{"tool_name": 5}'):
+        done = _hook(project.run_dir, None, raw=raw)
+        assert done.returncode == 2 and done.stderr.decode("utf-8").endswith(" [refusal: unchecked]\n")
+    assert [r["code"] for r in runs.read_lines(project.run_dir / "refusals.jsonl")] == ["unchecked", "unchecked"]
+    empty = tmp_path / "empty-run"
+    empty.mkdir()
+    done = _hook(empty, {"tool_name": "Bash", "tool_input": {"command": "python x.py"}})
+    assert done.returncode == 2 and b"could not check" in done.stderr and done.stderr.endswith(b" [refusal: unchecked]\n")
+    assert runs.read_lines(empty / "refusals.jsonl")[0]["code"] == "unchecked"

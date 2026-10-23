@@ -30,7 +30,9 @@ Its configuration -- permissions and the MCP server -- travels in
 `OPENCODE_CONFIG_CONTENT`; a project's own `opencode.json` is switched off
 (`OPENCODE_DISABLE_PROJECT_CONFIG`) because it could allow what we deny.
 Every permission is `allow` or `deny`, never `ask`: an unattended run rejects
-what would ask and stops.
+what would ask and stops. Its git denials (`opencode_git_patterns`) match any
+command that has `git` and a rule-4 verb as separate words, not only one that
+starts with `git` (18.1 item 6); only the `*` wildcard is relied on.
 
 **The environment** is the engine's, less everything that could join a
 Claude Code session that started Research OS (`CLAUDE_CODE_REMOTE_SESSION_ID`
@@ -65,6 +67,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
+
+from researchos.agents import guard
 
 MCP_KEY = "researchos"
 AGENT_TOOLS = ("researchos_complete_task", "researchos_ask", "researchos_save_note",
@@ -291,15 +295,29 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
                   removed_env=credential_names(base_env, "claude-code"))
 
 
+#: What may follow a git verb that has to be a word of its own in an OpenCode denial pattern (`*git * push<end>`):
+#: the end of the command, a space, and the characters a shell ends a word with. `|` and `)` are left out on
+#: purpose: they are special characters of a regular expression, and only `*` is relied on in a pattern. So
+#: `git add clean_data.py` is not `git clean`, and `bash -c 'git -C . push'` still is.
+GIT_VERB_ENDS = ("", " *", "\n*", ";*", "&*", "`*", "'*", '"*')
+
+
+def opencode_git_patterns(command: str) -> list[str]:
+    """The `permission.bash` patterns (`*` is the only wildcard) that deny the git verb `command`: a command that
+    has `git` and the verb as separate words, wherever the `git` is in it (18.1 item 6): `git push`,
+    `/usr/bin/git push`, `env git push`, `cd x && git commit`, and with git's own options between,
+    `git -C . push`, `git -c a=b commit -m x`. A harmless command that also has both words, such as
+    `git log --grep push`, is refused too: the accepted cost."""
+    return [f"*git {command}*"] + [f"*git * {command}{end}" for end in GIT_VERB_ENDS]
+
+
 def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
     """OpenCode's configuration for a run: the MCP server and permissions.
     In `permission.bash` the later rule wins, so `*` comes first."""
     bash: dict[str, str] = {"*": "allow"}
     for command in GIT_DENIED:
-        bash[f"git {command}*"] = "deny"
-    for command in GIT_DENIED:  # git's own options may come first: `git -C dir push`, `git -c a=b commit -m x`
-        bash[f"git * {command}"] = "deny"
-        bash[f"git * {command} *"] = "deny"
+        for pattern in opencode_git_patterns(command):
+            bash[pattern] = "deny"
     bash["researchos*"] = "deny"
     bash["rce *"] = "deny"
     bash["rce"] = "deny"
@@ -343,8 +361,14 @@ def _flat(text: object, limit: int) -> str:
     return out if len(out) <= limit else out[: max(0, limit - 3)].rstrip() + "..."
 
 
-def _step(kind: str, text: object, tool: str | None = None) -> dict[str, Any]:
-    return {"kind": kind, "text": _flat(text, STEP_TEXT_LIMIT), "tool": tool}
+def _step(kind: str, text: object, tool: str | None = None, code: str | None = None) -> dict[str, Any]:
+    """One step of the run log. `text` is the program's own words (or the engine's English sentence), kept as the
+    detail; a refused or error step may also carry a `code` (18.1 item 6): the page says what it means in the
+    person's language and shows `text` beneath. The key is absent when there is no code."""
+    step = {"kind": kind, "text": _flat(text, STEP_TEXT_LIMIT), "tool": tool}
+    if code:
+        step["code"] = code
+    return step
 
 
 #: Display name of a built-in tool (Claude Code spells them capitalised, OpenCode lowercase) and
@@ -476,12 +500,12 @@ class ClaudeStream:
             steps = [_step("start", model if isinstance(model, str) else "")]  # the model's own name, no words of ours
             for server in event.get("mcp_servers") or ():
                 if isinstance(server, dict) and server.get("name") == MCP_KEY and server.get("status") == "failed":
-                    steps.append(_step("error", "The Research OS tools did not start (status: failed)."))
+                    steps.append(_step("error", "The Research OS tools did not start (status: failed).", code="mcp_failed"))
             return steps
         if subtype == "permission_denied":
             tool = event.get("tool_name")
             return [_step("refused", event.get("message") or f"{tool} was denied",
-                          _tool_label(tool) if isinstance(tool, str) else None)]
+                          _tool_label(tool) if isinstance(tool, str) else None, "permission_rule")]
         return []
 
     def _assistant(self, event: dict) -> list[dict]:
@@ -510,7 +534,8 @@ class ClaudeStream:
                 continue
             tool = text[len("PreToolUse:"):].split(" ", 1)[0] or None
             marker = text.find("Research OS:")  # our hook's message, without Claude Code's wrapper
-            steps.append(_step("refused", text[marker:] if marker >= 0 else text, tool))
+            reason, code = guard.split_refusal(text[marker:] if marker >= 0 else text)  # and the code it ends with
+            steps.append(_step("refused", reason, tool, code))
         return steps
 
     def _result(self, event: dict) -> list[dict]:
@@ -537,6 +562,11 @@ _INTERNAL_TOOLS = frozenset({"ToolSearch"})
 
 #: OpenCode's error text when a permission rule, or the person's rejection, stopped a tool call.
 _REFUSED_RE = re.compile(r"specified a rule which prevents|rejected permission|unavailable tool", re.I)
+
+
+def _refused_code(text: str) -> str:
+    """The code of a refusal OpenCode reports in its own words: a tool that is not there, else a permission rule."""
+    return "tool_unavailable" if "unavailable tool" in text.lower() else "permission_rule"
 
 
 class OpenCodeStream:
@@ -595,15 +625,18 @@ class OpenCodeStream:
         label = _tool_label(name)
         if name == "invalid":  # a call to a tool that was removed by a deny rule, or with bad arguments
             output = state.get("output") if isinstance(state.get("output"), str) else ""
-            return [_step("refused" if "unavailable tool" in output else "error", output or "invalid tool call", label)]
+            refused = "unavailable tool" in output
+            return [_step("refused" if refused else "error", output or "invalid tool call", label,
+                          "tool_unavailable" if refused else None)]
         summary = summarize_tool(name, tool_input)
         if status == "completed":
             return [_step("tool", summary, label)]
         if status == "error":
             error = state.get("error") if isinstance(state.get("error"), str) else ""
             reason = error.split(" Here are", 1)[0]  # the rule list that follows is long and no help
-            return [_step("refused" if _REFUSED_RE.search(error) else "error",
-                          f"{summary}: {reason}" if reason else summary, label)]
+            refused = bool(_REFUSED_RE.search(error))
+            return [_step("refused" if refused else "error", f"{summary}: {reason}" if reason else summary, label,
+                          _refused_code(error) if refused else None)]
         return []
 
     def _error(self, error: dict) -> list[dict]:

@@ -148,7 +148,9 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "`.researchos/`.",
             "2. Act for the team: propose, approve or return a proposal, publish, sync, or push to GitHub.",
             "3. Change or delete a data file that existed before this run (.csv, .tsv, .xlsx, .xls, .parquet, "
-            ".feather, .rds, .rdata, .dta, .sav, .json, .h5, .pkl). Write new files instead. " + files_words,
+            ".feather, .rds, .rdata, .dta, .sav, .json, .h5, .pkl, .sqlite, .db, .npy, .npz, .mat, "
+            ".sas7bdat, .jsonl, .pickle; package.json and package-lock.json are not data). Write new "
+            "files instead. " + files_words,
             "4. Change git's state: commit, push, reset, checkout, rebase, merge, stash, clean, tag. Reading "
             "it (status, diff, log) is fine.",
             f"5. Edit `{TASKS_PATH}` directly. The tools below mark the task done.",
@@ -185,7 +187,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
         "2. 不替团队行事：不要提议，不要批准或退回提议，不要发布、同步，也不要推送到 GitHub。",
         "3. 不修改、不删除运行开始前就存在的数据文件（.csv、.tsv、.xlsx、.xls、.parquet、.feather、.rds、"
-        ".rdata、.dta、.sav、.json、.h5、.pkl）；需要新数据时写新文件。" + files_words,
+        ".rdata、.dta、.sav、.json、.h5、.pkl、.sqlite、.db、.npy、.npz、.mat、.sas7bdat、.jsonl、.pickle；"
+        "package.json 和 package-lock.json 不算数据文件）；需要新数据时写新文件。" + files_words,
         "4. 不改变 git 的状态：commit、push、reset、checkout、rebase、merge、stash、clean、tag 一概不做。"
         "只读的操作（status、diff、log）可以。",
         f"5. 不直接编辑 `{TASKS_PATH}`；任务的完成标记由下面的工具写入。",

@@ -933,9 +933,11 @@ console.log(JSON.stringify({before,words,kinds,mono,more,headings,oobGroup,close
     for text in ("out/fit.csv", "code/fit.py", "old.txt", "I will fit it."):
         assert text in out["words"]
     assert out["kinds"] == ["开始", "它说", "操作", "被拒绝", "结束"]
-    assert out["mono"] == ["Bash: python fit.py", "git push is not allowed"]
+    # a refusal without a code reads as a generic sentence; the program's own words are its detail (18.1 item 6)
+    assert out["mono"] == ["Bash: python fit.py"] and "这一步被拒绝了。" in out["words"]
     assert "只显示最近 5 步，共 12 步。" in out["words"] and "费用约 0.042 美元。" in out["words"]
-    assert out["more"] == [["程序的错误输出", "warning: slow"], ["发给它的指示", "Do the task now."]]
+    assert out["more"] == [["详情", "git push is not allowed"], ["程序的错误输出", "warning: slow"],
+                           ["发给它的指示", "Do the task now."]]
     assert out["closed"] and len(out["gets"]) == 1
 
 
@@ -1804,3 +1806,119 @@ console.log(JSON.stringify({first,asked:confirmQuestions.length,gets:gets.filter
     assert "11 files in the project are over 16 MB. They are not backed up before the run" in out["first"]
     assert "a.csv (50 MB)" in out["first"] and "10 more are not listed." in out["first"] and out["first"].endswith("Continue?")
     assert out["asked"] == 1 and out["gets"] == 1 and out["posts"] == ["runs", "reply"]  # a reply is not a first run
+
+
+# -- 18.1 item 6: refusals and run errors in the person's language ---------------------------------------------
+
+LOG_STEPS_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const run=mkRun({state:'failed',can_reply:true,error:{code:'error_max_budget_usd',detail:'Reached maximum budget ($0.001)'}});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[
+  {kind:'refused',text:'Research OS: data/raw.csv is a protected file and cannot be changed.',tool:'Write',code:'protected_file'},
+  {kind:'refused',text:'Research OS: Changing git state is not allowed.',tool:'Bash',code:'git_state'},
+  {kind:'refused',text:'Permission to use Bash with command git push has been denied.',tool:'Bash',code:'permission_rule'},
+  {kind:'refused',text:'a refusal the page has never heard of',tool:'Bash',code:'brand_new_code'},
+  {kind:'refused',text:'a refusal logged before codes existed',tool:null},
+  {kind:'error',text:'The Research OS tools did not start (status: failed).',tool:null,code:'mcp_failed'},
+  {kind:'error',text:'rate limit exceeded',tool:null},
+  {kind:'tool',text:'Bash: python fit.py',tool:'Bash'},
+  {kind:'end',text:'Reached maximum budget ($0.001)',tool:null,code:'error_max_budget_usd'}],
+  steps_total:9,changes:{created:[],modified:[],deleted:[],by_person:[]},violations:[],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG,byClass('ws-agent')).click();await sleepTick();
+const d=byClass('ws-run-details');
+const rows=d.all().filter(e=>e.classList.contains('ws-step')).map(li=>({
+  kind:li.children[0].textContent,
+  text:li.all().filter(e=>e.classList.contains('ws-step-text')).map(e=>e.textContent)[0],
+  detail:li.all().filter(e=>e.tagName==='PRE').map(e=>e.textContent)[0]||null,
+  summary:li.all().filter(e=>e.tagName==='SUMMARY').map(e=>e.textContent)[0]||null,
+  mono:li.all().some(e=>e.classList.contains('mono')),
+  bad:li.classList.contains('bad')}));
+console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error').textContent}));
+"""
+
+
+def test_a_refusal_and_an_error_in_the_log_are_a_sentence_with_the_programs_words_behind_details():
+    out = run(LOG_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    rows = out["rows"]
+    assert [r["kind"] for r in rows] == ["被拒绝", "被拒绝", "被拒绝", "被拒绝", "被拒绝", "出错", "出错", "操作", "结束"]
+    assert [r["text"] for r in rows] == [
+        "它想改动或删除运行前就有的数据文件（或尝试表、任务文件），被拦下了。",
+        "它想改变 git 的状态（提交、推送等），被拦下了。",
+        "它想做的事被运行的权限规则拒绝了，比如 git 命令。",
+        "这一步被拒绝了。", "这一步被拒绝了。",   # a code the page does not know, and no code: a generic sentence
+        "Research OS 的工具没有启动，AI 执行者无法汇报结果。",
+        "程序报告了一个错误。",
+        "Bash: python fit.py",                    # a step that was never told by a code is as it was
+        "费用达到了上限。"]
+    assert [r["detail"] for r in rows] == [
+        "Research OS: data/raw.csv is a protected file and cannot be changed.",
+        "Research OS: Changing git state is not allowed.",
+        "Permission to use Bash with command git push has been denied.",
+        "a refusal the page has never heard of", "a refusal logged before codes existed",
+        "The Research OS tools did not start (status: failed).", "rate limit exceeded", None,
+        "Reached maximum budget ($0.001)"]
+    assert [r["summary"] for r in rows if r["detail"]] == ["详情"] * 8
+    assert [r["mono"] for r in rows] == [False] * 7 + [True, False]  # only the command the agent ran is monospaced
+    assert [r["bad"] for r in rows] == [True] * 7 + [False, False]
+    for code in ("protected_file", "git_state", "permission_rule", "brand_new_code", "mcp_failed", "error_max_budget_usd"):
+        assert code not in out["words"]  # never a raw code
+    assert out["top"].startswith("费用达到了上限。")
+
+
+def test_a_refusal_and_an_error_in_the_log_read_in_english_with_no_chinese():
+    out = run(LOG_STEPS_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert [r["text"] for r in out["rows"]] == [
+        "It tried to change or delete a data file that existed before the run (or the attempt table or the task file) and was stopped.",
+        "It tried to change git’s state (commit, push and the like) and was stopped.",
+        "A permission rule of this run refused what it tried to do, for example a git command.",
+        "This step was refused.", "This step was refused.",
+        "Research OS’s tools did not start, so the agent cannot report back.",
+        "The program reported an error.", "Bash: python fit.py", "The cost reached its limit."]
+    assert [r["summary"] for r in out["rows"] if r["detail"]] == ["Details"] * 8
+    assert not re.search(r"[㐀-鿿]", out["words"] + out["top"])
+
+
+def _table_words(name: str) -> dict[str, str]:
+    script = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
+    table = re.search(r"const " + name + r" = \{(.*?)\n  \};", script, re.S).group(1)
+    return dict(re.findall(r'(\w+): "([^"]+)"', table))
+
+
+def test_every_code_the_engine_can_attach_has_a_sentence_in_both_languages():
+    """Each refusal code the guard knows, and the codes the streams add, are words on the page and English in
+    i18n.js (the scanner of test_v9_language does not read a table). A code nobody wrote words for reads as a
+    generic sentence, which is tested above."""
+    from researchos.agents import guard
+
+    steps = _table_words("STEP_WORDS")
+    assert set(steps) == set(guard.REFUSAL_CODES) | {"permission_rule", "tool_unavailable", "mcp_failed"}
+    errors = _table_words("ERROR_WORDS")
+    assert {"internal", "error_max_turns", "error_during_execution", "error_max_budget_usd", "guard_failed"} <= set(errors)
+    i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
+    for sentence in [*steps.values(), *errors.values(), "这一步被拒绝了。", "程序报告了一个错误。", "这次运行没有成功。", "状态未知"]:
+        match = re.search(r'"' + re.escape(sentence) + r'":\s*"([^"]+)"', i18n)
+        assert match, sentence
+        english = match.group(1)
+        assert not re.search(r"[㐀-鿿]|->|→", english), english
+
+
+def test_a_state_the_page_does_not_know_reads_as_a_generic_word_never_as_its_code():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'frobnicated',error:{code:'error_something_new',detail:'The thing went wrong in a new way'}})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const label=byClass('status-label');
+console.log(JSON.stringify({label:label.textContent,error:byClass('ws-agent-error').textContent,agent:byClass('ws-agent').textContent}));
+""")
+    assert out["label"] == "状态未知"
+    assert out["error"].startswith("这次运行没有成功。") and "error_something_new" not in out["error"]
+    assert "frobnicated" not in out["agent"] and "error_something_new" not in out["agent"]
+    english = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'frobnicated'})]);
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({label:byClass('status-label').textContent}));
+""", lang="en")
+    assert english["label"] == "Unknown state"

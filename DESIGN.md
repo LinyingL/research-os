@@ -4023,7 +4023,9 @@ notes and a result, and marks the task done. Decided the same day:
    push to GitHub, change the team.
 3. Change or delete data that existed before the run (`.csv`, `.tsv`,
    `.xlsx`, `.xls`, `.parquet`, `.feather`, `.rds`, `.rdata`, `.dta`,
-   `.sav`, `.json`, `.h5`, `.pkl`); new data goes to new files.
+   `.sav`, `.json`, `.h5`, `.pkl`, `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
+   `.sas7bdat`, `.jsonl`, `.pickle`; `package.json` and `package-lock.json`,
+   in any folder, are not data); new data goes to new files.
 4. Change git's state: commit, push, reset, checkout, rebase, merge,
    stash, clean, tag.
 5. Write `research/tasks.json` except through its tools.
@@ -4433,11 +4435,56 @@ the check. This round closes that door and the cheaper ones beside it.
    - Rule 3's suffixes add `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
      `.sas7bdat`, `.jsonl` and `.pickle`. `package.json` and
      `package-lock.json` are not data.
+     - *How.* One list, `snapshot.DATA_SUFFIXES`: the data walk and
+       `protected` read it, and the hook gets its files from `protected`
+       through `guard.json`. The rule the agent is sent (`brief.rules`)
+       spells it in words, and a test keeps the two together. The two names
+       are `snapshot.NOT_DATA_NAMES`, compared by file name in any folder, case
+       folded (a Mac's names are): `package.json.bak` and `my-package.json`
+       are not those names, and `package.jsonl` is data.
    - OpenCode's git denials match any command containing `git` and a rule-4
      verb as separate words, not only commands that start with `git`. The
      accepted cost is an occasional refusal of a harmless command.
+     - *How.* Each verb of `runners.GIT_DENIED` has the patterns of
+       `runners.opencode_git_patterns` in `permission.bash`: `*git <verb>*`
+       (the verb right after `git`, as before) and `*git * <verb><end>` (git's
+       own options between), where `<end>` is the end of the command, a space,
+       or one of newline, `;`, `&`, a backtick, `'` and `"`. The verb must be a
+       word of its own: `git add clean_data.py` and `git describe --tags` pass,
+       `/usr/bin/git push`, `env git push`, `cd x && git commit`, `git -C . push` and
+       `bash -c 'git -C . push'` do not. Only `*` is used: `|` and `)`, which a
+       regular expression reads as more than themselves, are not, so
+       `git -C . push|cat` and `(git -C . push)` are not caught by these.
    - Hook refusals and run errors show in the person's language.
+     - *How.* Every refusal of the guard is a `guard.Refusal`, a `str` (the
+       English sentence addressed to the agent, as before) that also carries a
+       code of `guard.REFUSAL_CODES`: `unchecked`, `no_file`, `outside_project`,
+       `records_folder`, `git_files`, `agent_settings`, `protected_file`,
+       `off_limits`, `research_os_command`, `git_state`, `engine_api`. The hook
+       logs the code in `refusals.jsonl` and ends what it says to the agent
+       with `[refusal: <code>]`, because the run log is read from the program's
+       own event stream and that is what travels in it. The streams give
+       a step `code` (only when there is one): the hook's, `permission_rule`
+       (Claude Code's deny list, OpenCode's rule or rejection),
+       `tool_unavailable` and `mcp_failed`. The end of a run that failed or was
+       interrupted gets the code of its error (`run.error.code`). A step's
+       `text` stays the program's or the engine's own words.
+     - The page tells a refused step, an error step and a failed end by their
+       code in the person's language (`t()`), and puts `text` beneath it as
+       the detail (「详情」 "Details"). A code the page does not know, a refusal
+       logged before codes, and a program's own error say it generally (「这一步被
+       拒绝了」, 「程序报告了一个错误」, 「这次运行没有成功」); the same holds for
+       a run state the page does not know (「状态未知」). A raw code is never
+       shown. `error.detail` stays under 「详情」 in the run's error, as before;
+       the engine no longer puts the code in the place of a missing detail.
    - `stderr.log` is capped as the event log is.
+     - *How.* The program's standard error reaches the engine through a pipe
+       and a thread copies it into `stderr.log` while the file stays within
+       `STDERR_LIMIT`, which is `EVENTS_LIMIT` (20 MB). What does not fit is
+       dropped, the run is marked `stderr_truncated` (and its detail says so),
+       as `events_truncated` marks the events, and the pipe is read to its end
+       all the same, so that a program that writes a great deal is never held
+       up. The page shows neither mark.
    - When the engine starts, runs of every registered project that were
      left preparing or running are recovered at once, not only when that
      project's runs are listed. A process still alive that is verifiably

@@ -657,6 +657,21 @@
     aborted: "程序在给出结果之前就结束了。", exit: "程序异常退出。", model_error: "模型返回了错误。", start_failed: "程序没能启动。",
     check_failed: "运行结束后核对改动时出了错，改动清单可能不完整。", error_max_budget_usd: "费用达到了上限。",
     guard_failed: "Research OS 的检查程序没有正常启动，为了安全没有运行。",
+    internal: "Research OS 在读取程序的输出时出了错。", error_max_turns: "达到了最多可以走的步数。",
+    error_during_execution: "程序在运行中出了错。",
+  };
+  // A step of the run log that carries a code (18.1 item 6): why the hook (or the program's own permission rules)
+  // refused a call, and an error the engine knows. The person reads the sentence; the program's own words stay
+  // beneath it as the detail.
+  const STEP_WORDS = {
+    unchecked: "Research OS 没能检查这一步，为了安全没有放行。", no_file: "这一步没有指明项目里的哪个文件，没有放行。",
+    outside_project: "它想改项目文件夹以外的文件，被拦下了。", records_folder: "它想动 Research OS 的记录文件夹（.researchos），被拦下了。",
+    git_files: "它想改 git 文件夹里的东西，被拦下了。", agent_settings: "它想改 Claude Code 或 OpenCode 在项目里的设置，被拦下了。",
+    protected_file: "它想改动或删除运行前就有的数据文件（或尝试表、任务文件），被拦下了。",
+    off_limits: "它想读 Research OS 的主文件夹或 ~/.ssh，被拦下了。", research_os_command: "它想运行 researchos 命令，被拦下了。",
+    git_state: "它想改变 git 的状态（提交、推送等），被拦下了。", engine_api: "它想直接联系 Research OS 应用的接口，被拦下了。",
+    permission_rule: "它想做的事被运行的权限规则拒绝了，比如 git 命令。", tool_unavailable: "它调用了一个不可用的工具。",
+    mcp_failed: "Research OS 的工具没有启动，AI 执行者无法汇报结果。",
   };
   const REVERT_SKIPPED = {
     changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端", kept: "你选择保留",
@@ -908,7 +923,8 @@
   function runLabel(run) {
     const partly = run.reverted && run.revert_skipped > 0;
     const [words, tone] = partly ? ["部分撤回", "gray"] : run.reverted ? ["已撤回本次运行", "gray"] : STATE_LABELS[run.state] || ["", "plain"];
-    return el("span", "status-label tone-" + tone + (run.state === "out_of_bounds" && !run.reverted ? " oob" : ""), words ? t(words) : String(run.state || ""));
+    // a state this page does not know reads as a generic word, never as the code the engine stores
+    return el("span", "status-label tone-" + tone + (run.state === "out_of_bounds" && !run.reverted ? " oob" : ""), words ? t(words) : t("状态未知"));
   }
   // The state word, the question and what went wrong are one polite live region (role=status), and so is a note,
   // so a screen reader hears a run end or a request be refused without the person looking for it (12.11).
@@ -1233,6 +1249,15 @@
   }
 
   // -- the run log: what it said and did, what it changed ---------------------------------------------
+  // The sentence for a step that is told by its code (18.1 item 6), else null (the step shows its own text). A code the
+  // page does not know reads as a generic sentence, never as the code.
+  function stepWords(step) {
+    const known = (table) => typeof step.code === "string" && Object.prototype.hasOwnProperty.call(table, step.code);
+    if (step.kind === "refused") return t(known(STEP_WORDS) ? STEP_WORDS[step.code] : "这一步被拒绝了。");
+    if (step.kind === "error") return t(known(STEP_WORDS) ? STEP_WORDS[step.code] : "程序报告了一个错误。");
+    if (step.kind === "end" && step.code) return t(known(ERROR_WORDS) ? ERROR_WORDS[step.code] : "这次运行没有成功。");
+    return null;
+  }
   function pathList(paths) {
     const list = el("ul", "ws-agent-files");
     paths.forEach((path) => { const li = el("li"); li.append(el("code", null, path)); list.append(li); });
@@ -1272,10 +1297,15 @@
       const group = el("div", "ws-run-group"), list = el("ol", "ws-steps");
       group.append(el("h4", "ws-run-heading", t("经过")));
       if (d.steps_total > d.steps.length) group.append(el("p", "ws-agent-quiet", t("只显示最近 {shown} 步，共 {n} 步。", { shown: d.steps.length, n: d.steps_total })));
-      d.steps.forEach((step) => {
-        const li = el("li", "ws-step" + (step.kind === "refused" || step.kind === "error" ? " bad" : ""));
+      d.steps.forEach((step, i) => {
+        const li = el("li", "ws-step" + (step.kind === "refused" || step.kind === "error" ? " bad" : "")), words = stepWords(step);
         li.append(el("span", "ws-step-kind", t(Object.prototype.hasOwnProperty.call(STEP_KINDS, step.kind) ? STEP_KINDS[step.kind] : "操作")));
-        li.append(el("span", "ws-step-text" + (step.kind === "tool" || step.kind === "refused" ? " mono" : ""), step.text || ""));
+        if (words) {
+          const body = el("div", "ws-step-body");
+          body.append(el("span", "ws-step-text", words));
+          if (step.text) body.append(more(st, "step:" + (d.steps_total - d.steps.length + i), "详情", String(step.text)));
+          li.append(body);
+        } else li.append(el("span", "ws-step-text" + (step.kind === "tool" ? " mono" : ""), step.text || ""));
         list.append(li);
       });
       group.append(list); box.append(group);

@@ -341,12 +341,11 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
     assert perm["edit"] == "allow" and perm["webfetch"] == "allow" and perm["external_directory"] == "deny"
     bash = perm["bash"]
     assert list(bash)[0] == "*" and bash["*"] == "allow"  # the later rule wins: the catch-all is first
-    for command in runners.GIT_DENIED:
-        assert bash[f"git {command}*"] == "deny"
+    for command in runners.GIT_DENIED:  # 18.1 item 6: `git` anywhere in the command, the verb a word of its own
+        assert bash[f"*git {command}*"] == bash[f"*git * {command}"] == bash[f"*git * {command} *"] == "deny"
+        assert all(bash[pattern] == "deny" for pattern in runners.opencode_git_patterns(command))
     assert bash["researchos*"] == bash["rce *"] == bash["rce"] == "deny"
     assert "ask" not in json.dumps(config)  # an unattended run rejects what would ask and stops
-    for command in runners.GIT_DENIED:  # git's own options may come first
-        assert bash[f"git * {command}"] == bash[f"git * {command} *"] == "deny"
     assert perm["doom_loop"] == "deny"
     assert perm["read"] == {"*": "allow", "*.env": "deny", "*.env.*": "deny"}
 
@@ -1025,6 +1024,62 @@ def test_opencode_denies_git_with_options_in_front(tmp_path):
         assert decide(command) == "allow", command
 
 
+def _opencode_decide(tmp_path):
+    """`decide(command)` as OpenCode reads `permission.bash`: the last matching pattern wins, `*` matches any text
+    (`fnmatch` is the stand-in; the patterns hold no other special character)."""
+    import fnmatch
+
+    bash = runners.opencode_config(tmp_path / "proj", "r-" + "0" * 32, "/h")["permission"]["bash"]
+
+    def decide(command):
+        verdict = None
+        for pattern, value in bash.items():
+            if fnmatch.fnmatchcase(command, pattern):
+                verdict = value
+        return verdict
+
+    return decide, bash
+
+
+def test_opencode_denies_a_command_with_git_and_a_verb_as_separate_words(tmp_path):
+    """18.1 item 6: not only a command that starts with `git`."""
+    decide, _bash = _opencode_decide(tmp_path)
+    for command in ("/usr/bin/git push", "/opt/homebrew/bin/git commit -m x", "env git push", "env GIT_DIR=.git git push origin",
+                    "cd x && git commit", "cd x && git commit -am 'msg'", "cd x; git tag v1", "(cd x && git stash)",
+                    "git -C . push", "git -C . push origin main", "/usr/bin/git -C . push", "env git -c a=b commit -m x",
+                    "cd x && git -C . reset --hard", "sudo git clean -fd", "xargs git rebase", "echo a | git merge -",
+                    "bash -c 'git push'", "bash -c 'git -C . push'", 'sh -c "cd x && git -C . commit"',
+                    "git -C . push; echo done", "git -C . push&& echo done", "git -C . push\necho done",
+                    "echo `git -C . stash`", "cd x\ngit checkout main", "git  push", "git -C . cherry-pick abc",
+                    "/usr/bin/git switch main", "git revert HEAD", "git restore .", "cd p && git --no-pager tag v2"):
+        assert decide(command) == "deny", command
+    for command in runners.GIT_DENIED:
+        assert decide(f"/usr/local/bin/git {command}") == decide(f"env git -C . {command}") == "deny", command
+
+
+def test_opencode_still_allows_what_has_no_git_verb(tmp_path):
+    decide, _bash = _opencode_decide(tmp_path)
+    for command in ("git status", "git -C /p status", "git diff --stat", "git log -1", "git add clean_data.py",
+                    "git diff merge_panels.py", "git show HEAD:tags.csv", "git log --oneline -5", "git describe --tags",
+                    "git -C . diff restore.py", "git blame commit_log.R", "git remote -v", "git ls-files",
+                    "ls", "python x.py", "python make_tag.py", "echo pushing the limits", "grep -rn merge analysis/",
+                    "cat .gitignore", "pip install gitpython", "Rscript clean.R", "make clean"):
+        assert decide(command) == "allow", command
+
+
+def test_opencode_git_patterns_use_only_the_star_wildcard(tmp_path):
+    """Nothing but `*` is relied on in a pattern: no `?`, `[`, `|`, `)` or `.` that a regular expression or a glob
+    could read as more than itself."""
+    _decide, bash = _opencode_decide(tmp_path)
+    allowed = set("abcdefghijklmnopqrstuvwxyz-* ;&`'\"\n")
+    for command in runners.GIT_DENIED:
+        patterns = runners.opencode_git_patterns(command)
+        assert len(patterns) == len(set(patterns)) and all(bash[p] == "deny" for p in patterns)
+        for pattern in patterns:
+            assert pattern.startswith("*git ") and set(pattern) <= allowed, repr(pattern)
+    assert list(bash)[0] == "*" and bash["*"] == "allow"  # the later rule wins: the catch-all stays first
+
+
 # -- the brief says what is true of each runner (review finding 35) -----------------------------------------------
 
 
@@ -1046,3 +1101,72 @@ def test_rules_tell_the_truth_about_enforcement_per_runner(lang):
     for text in (claude, opencode):
         _clean(text)
         assert "data/raw.csv" in text and brief.tool_name("claude-code" if text is claude else "opencode", "ask") in text
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_rules_name_every_data_suffix_the_check_protects(lang):
+    """The rule the agent is told is the rule the hook and the after-run check hold (18.1 item 6): three copies
+    of the list (snapshot, and this prose in two languages) must not drift apart."""
+    text = brief.rules(lang=lang, runner="claude-code", prot=PROT)
+    rule = next(line for line in text.splitlines() if line.startswith("3. "))
+    for suffix in snapshot.DATA_SUFFIXES:
+        assert re.search(rf"(?<![\w.]){re.escape(suffix)}(?![\w])", rule), suffix
+    listed = set(re.findall(r"(?<![\w.])\.[a-z0-9]+(?![\w])", rule))
+    assert listed == set(snapshot.DATA_SUFFIXES)  # nothing named that is not protected
+    assert "package.json" in rule and "package-lock.json" in rule
+
+
+# -- 18.1 item 6: the steps of the log carry the code of a refusal or an error -------------------------------------
+
+
+def _hook_blocked(reason_text: str) -> str:
+    """A Claude Code `tool_result` as the stream carries a hook's refusal: its wrapper, then what the hook said."""
+    content = "PreToolUse:Write hook error: [python3 -m researchos.agents.hook /runs/r1]: " + reason_text
+    return json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "content": content, "is_error": True, "tool_use_id": "toolu_01"}]}, "session_id": SID})
+
+
+def test_claude_stream_reads_the_code_the_hook_ended_its_refusal_with():
+    st = runners.ClaudeStream()
+    (step,) = _feed(st, [_hook_blocked("Research OS: that file is protected; write a new file instead. [refusal: protected_file]\n")])
+    assert step == {"kind": "refused", "text": "Research OS: that file is protected; write a new file instead.",
+                    "tool": "Write", "code": "protected_file"}
+    # a log written before codes existed, and a code nobody declared: no code, and the words as they were
+    (old,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: that file is protected.\n")])
+    assert "code" not in old and old["text"] == "Research OS: that file is protected."
+    (odd,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: odd. [refusal: made_up]\n")])
+    assert "code" not in odd and odd["text"].endswith("[refusal: made_up]")
+    # the code is read before the text is cut to a step's length
+    (long,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: " + "word " * 300 + "[refusal: git_state]\n")])
+    assert long["code"] == "git_state" and len(long["text"]) <= runners.STEP_TEXT_LIMIT and "[refusal" not in long["text"]
+
+
+def test_the_codes_the_streams_attach_to_other_refusals_and_errors():
+    (denied,) = _feed(runners.ClaudeStream(), [CLAUDE_DENIED])
+    assert denied["kind"] == "refused" and denied["code"] == "permission_rule" and "git push" in denied["text"]
+    failed_init = CLAUDE_INIT.replace('"status":"connected"', '"status":"failed"')
+    steps = _feed(runners.ClaudeStream(), [failed_init])
+    assert steps[1]["kind"] == "error" and steps[1]["code"] == "mcp_failed"
+    steps = _feed(runners.OpenCodeStream(), [OC_RULE_DENIED, OC_REJECTED, OC_INVALID, OC_TOOL_FAILED, OC_API_ERROR])
+    assert [(s["kind"], s.get("code")) for s in steps] == [
+        ("refused", "permission_rule"), ("refused", "permission_rule"), ("refused", "tool_unavailable"),
+        ("error", None), ("error", None)]  # the program's own errors have no code: the page says it generally
+    assert all("code" not in s for s in _feed(runners.ClaudeStream(), [CLAUDE_INIT, CLAUDE_WRITE, CLAUDE_TEXT, CLAUDE_TOOL_ERROR]))
+
+
+def test_what_the_real_hook_says_is_read_back_as_the_code_of_the_step(shadowed, tmp_path):
+    """From the hook's standard error, through the wrapper Claude Code puts around it, to the step of the log. The
+    hook runs as this source tree has it (`-m`, no `-I`: an isolated interpreter would import whatever copy of
+    Research OS is installed), from a folder that shadows nothing."""
+    command = shlex.join([sys.executable, "-m", "researchos.agents.hook", str(shadowed.run_dir)])
+    for tool_input, code in (({"file_path": str(shadowed.root / "data" / "raw.csv")}, "protected_file"),
+                             ({"file_path": str(shadowed.root.parent / "elsewhere.txt")}, "outside_project"),
+                             ({"file_path": str(shadowed.root / ".researchos" / "x")}, "records_folder")):
+        done = _run_hook_shell(command, tmp_path, {"tool_name": "Write", "tool_input": tool_input, "cwd": str(shadowed.root)})
+        assert done.returncode == 2
+        (step,) = _feed(runners.ClaudeStream(), [_hook_blocked(done.stderr.decode("utf-8"))])
+        assert step["kind"] == "refused" and step["code"] == code and step["text"].startswith("Research OS: ")
+        assert "[refusal" not in step["text"]
+    done = _run_hook_shell(command, tmp_path, {"tool_name": "Bash", "tool_input": {"command": "git push"}, "cwd": str(shadowed.root)})
+    (step,) = _feed(runners.ClaudeStream(), [_hook_blocked(done.stderr.decode("utf-8"))])
+    assert step["code"] == "git_state"

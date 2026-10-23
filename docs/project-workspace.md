@@ -72,7 +72,7 @@ colleague's.
 the attempt table, confirms or rejects a link, or touches `.researchos/`. It
 never proposes, approves, publishes or syncs, pushes to GitHub, or changes
 git's state (commit, reset, checkout, and the like). It does not change or
-delete a data file (`.csv`, `.tsv`, `.xlsx`, `.xls`, `.parquet`, `.feather`, `.rds`, `.rdata`, `.dta`, `.sav`, `.json`, `.h5`, `.pkl`) that existed before the run, or move or remove
+delete a data file (`.csv`, `.tsv`, `.xlsx`, `.xls`, `.parquet`, `.feather`, `.rds`, `.rdata`, `.dta`, `.sav`, `.json`, `.h5`, `.pkl`, `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`, `.sas7bdat`, `.jsonl`, `.pickle`; `package.json` and `package-lock.json` are not data) that existed before the run, or move or remove
 a folder holding one; it writes new files instead. It does not edit
 `research/tasks.json` except through its own tools. Research OS enforces
 this with checks before each step where the program allows, and by

@@ -41,8 +41,9 @@ picture cut at `FILE_LIMIT` files, or past `DIR_LIMIT` folders, marks the list i
 
 **Data files are walked separately** (`picture["data"]`, 17.5 rule 3): a
 second, stat-only walk of the whole tree records every file whose suffix is
-in `DATA_SUFFIXES` -- size, modification time, the `dataless` flag, never
-opening a file -- not bounded by `FILE_LIMIT` (it stops at `DATA_FILE_LIMIT`,
+in `DATA_SUFFIXES` (less `NOT_DATA_NAMES`: `package.json` and
+`package-lock.json`, in any folder, are not data) -- size, modification time,
+the `dataless` flag, never opening a file -- not bounded by `FILE_LIMIT` (it stops at `DATA_FILE_LIMIT`,
 marked `data_partial`) and descending into every folder except `.git`,
 `node_modules`, `.venv`, `venv` and `__pycache__`. A data file in `_cache/`
 or past the 50,000th file is therefore still protected. Where the main walk
@@ -94,8 +95,13 @@ HASH_LIMIT = 64 * 1024 * 1024
 FILE_LIMIT = 50_000
 #: At most this many folders are recorded in a picture (`dirs`); more marks it `dirs_partial`.
 DIR_LIMIT = FILE_LIMIT
+#: Rule 3's data suffixes (DESIGN 17.5, 18.1 item 6). This is the one list: the after-run data walk and `protected`
+#: read it through `_is_data`, and the hook gets its files from `protected` (via `guard.json`).
 DATA_SUFFIXES = frozenset({".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".feather", ".rds", ".rdata", ".dta",
-                           ".sav", ".json", ".h5", ".pkl"})
+                           ".sav", ".json", ".h5", ".pkl", ".sqlite", ".db", ".npy", ".npz", ".mat", ".sas7bdat",
+                           ".jsonl", ".pickle"})
+#: Not data by file name, in any folder: package managers write them as a matter of course (`npm install`).
+NOT_DATA_NAMES = frozenset({"package.json", "package-lock.json"})
 TASKS_PATH = "research/tasks.json"
 PROTECTED_DIRS = (names.PROJECT_DIRNAME, names.LEGACY_PROJECT_DIRNAME, ".git", *sorted(guard.AGENT_SETTINGS_DIRS))
 #: The data walk skips only environments (not research data); every other folder, `_cache` and
@@ -288,7 +294,10 @@ def _data_entry(full: str, st: os.stat_result) -> dict[str, Any]:
 
 
 def _is_data(name: str) -> bool:
-    return posixpath.splitext(name)[1].lower() in DATA_SUFFIXES
+    """Whether `name` (a bare name or a path) is a data file of rule 3: a suffix of `DATA_SUFFIXES`, unless the file
+    name is one of `NOT_DATA_NAMES`."""
+    base = posixpath.basename(name).lower()
+    return base not in NOT_DATA_NAMES and posixpath.splitext(base)[1] in DATA_SUFFIXES
 
 
 def _walk_data(base: str) -> tuple[dict[str, dict[str, Any]], bool]:

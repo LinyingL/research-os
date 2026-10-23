@@ -9,7 +9,10 @@ the call as JSON on standard input
 exit code 2 refuses it and Claude Code hands standard error to the model, so
 the message says what to do instead. The decision is `guard.check_tool` on
 the run's `guard.json`; a refusal is also appended to `refusals.jsonl`,
-where the run log shows it.
+where the run log shows it. A refusal has a code (`guard.Refusal`, 18.1 item 6):
+it is logged with the record, and the message ends with `[refusal: <code>]` so
+that the program's own event stream, which is what the run log is read from,
+carries it too (`guard.split_refusal` takes it off again).
 
 **A hook that cannot decide refuses.** Unreadable input, input over 10 MB,
 a missing or damaged `guard.json`, any exception at all: exit code 2 with a
@@ -57,7 +60,7 @@ def _target(tool_name: str, tool_input: object) -> str:
 
 def _log(run_dir: Path, tool_name: str, target: str, reason: str) -> None:
     try:
-        guard.log_refusal(run_dir, tool_name, target, reason)
+        guard.log_refusal(run_dir, tool_name, target, reason)  # with its code when `reason` is a `guard.Refusal`
     except Exception:  # noqa: BLE001 -- the refusal itself must still go out
         pass
 
@@ -85,14 +88,15 @@ def main(argv: list[str] | None = None) -> int:
         reason = guard.check_tool(guard.load_guard(run_dir), tool_name, tool_input,  # type: ignore[arg-type]
                                   cwd if isinstance(cwd, str) else None)
     except Exception as exc:  # noqa: BLE001 -- fail closed on anything
-        reason = f"this call was refused because Research OS could not check it ({type(exc).__name__}: {exc})."
+        reason = guard.Refusal(f"this call was refused because Research OS could not check it "
+                               f"({type(exc).__name__}: {exc}).", "unchecked")
         if run_dir is not None:
             _log(run_dir, tool_name, target, reason)
-        _say(reason)
+        _say(guard.with_marker(reason, guard.refusal_code(reason)))
         return 2
     if reason:
         _log(run_dir, tool_name, target, reason)  # type: ignore[arg-type]
-        _say(reason)
+        _say(guard.with_marker(reason, guard.refusal_code(reason)))
         return 2
     return 0
 
