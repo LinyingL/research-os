@@ -989,6 +989,7 @@
     "超出了允许的范围": "Went outside what is allowed",
     "运行之后又改动过": "Changed again after the run",
     "没有运行前的副本": "No copy from before the run",
+    "目录内容未完整记录，无法安全撤回": "The folder was not fully recorded and cannot be safely undone",
     "文件只在云端": "The file is only in the cloud",
     "用 uv 安装的：": "If you installed with uv:",
     "从源码目录安装的：": "If you installed from a source folder:",

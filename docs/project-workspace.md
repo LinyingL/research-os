@@ -149,8 +149,13 @@ the files it will move away (the ones the run created, moved into the run's
 own folder, never deleted), each with its time and a checkbox, all checked.
 It also lists the files it cannot undo, with the reason. Clear the boxes of
 files you want to keep, then **Confirm undo**; the files you cleared are left
-as they are and the run log lists them as "You kept this". A folder that
-existed before the run is never removed. A file you changed after the run, or
+as they are and the run log lists them as "You kept this". Python bytecode
+(`__pycache__`) and pytest caches are included. Newly created folders are
+removed once empty; folders created after the run stay. A folder that
+existed before the run is never removed. A new environment such as `.venv` or
+`node_modules` is moved away as a whole if it has not changed since the run.
+Existing environments are kept; changes inside them are not backed up.
+A file you changed after the run, or
 one too large to copy beforehand (over 16 MB), cannot be undone: it is left
 as it is and listed with the reason. The run then reads **Partly undone**. A run cannot be undone while a later run
 touched the same files: undo the later one first. Copies of the newest 20

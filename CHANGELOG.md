@@ -47,6 +47,10 @@
 - Show progress, commands, file changes, questions, and completion reports.
   Answer questions or send completed work back for revision.
 - Preview undo actions, choose files to keep, and restore supported changes.
+  Include Python bytecode and pytest caches in undo; clean up new empty folders
+  while preserving folders and files that existed before or changed afterward.
+  Track newly created environment directories and archive them whole when
+  unchanged, without scanning pre-existing dependencies.
   Copies are retained for files up to 16 MB in the newest 20 runs; the newest
   200 runs retain their logs on the Mac that ran them.
 - Attribute agent-written results and file changes to the agent and the person
