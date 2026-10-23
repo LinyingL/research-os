@@ -7,7 +7,7 @@ the files -- nothing here writes:
   name, path, whether it is on disk), its trace drawn as columns (12.7: 数据
   | 脚本 | 中间数据 | 脚本 | 本页 | 被引用) with the lines that join them,
   every break as a gap with its repair, the attempts it belongs to and the
-  variable versions it uses, and the links touching it (for 判断). The
+  variable versions it uses, and the links touching it (for 连线确认). The
   same shape for every kind of node -- a script, a data file, a figure, a
   draft section or claim, an attempt, a variable card, a reference -- so
   the page has one renderer. Choices for the two repairs come with it:
@@ -61,7 +61,7 @@ RELATION_FALLBACK = "关联"
 TRACE_STATES = {"complete": "完整", "no_source": "缺来源", "no_attempt": "缺尝试"}
 SOURCE_BREAKS = ("no_generating_script", "script_missing", "data_missing", "script_unreadable")
 MAX_COLUMNS = 6           # upstream levels drawn; deeper ones are said, not drawn
-LINK_LIMIT = 300          # links listed under 判断
+LINK_LIMIT = 300          # links listed under 连线确认
 CLAIM_LIMIT = 2000        # claims of one draft
 FILE_NODE_TYPES = ("script", "dataset", "figure", "file")
 
@@ -175,7 +175,7 @@ def _file_choices(conn: Connection, root: Path, types: tuple[str, ...]) -> list[
     return sorted(out, key=lambda f: f["path"])
 
 
-# -- the links touching a node (判断) ---------------------------------------------------------
+# -- the links touching a node (连线确认) ---------------------------------------------------------
 
 
 def _team(root: Path) -> Any:

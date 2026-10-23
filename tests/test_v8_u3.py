@@ -226,7 +226,7 @@ def live(tmp_path):
 def test_12_7_repairs_go_through_the_mapping_write_path_and_the_page_follows(live):
     """「补上来源」 and 「关联文件」 from the page: POST /api/mappings/add with
     paths the page was given; the page then shows the human line and the
-    attempt, and the links under 判断 offer 删除标注."""
+    attempt, and the links under 连线确认 offer 删除标注."""
     base, root = live
     status, body = _call(f"{base}/api/mappings/add", "POST",
                          {"from": "steps/16-build.py", "to": "figs/fig1.png", "type": "generates"})

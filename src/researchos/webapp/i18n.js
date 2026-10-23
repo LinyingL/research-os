@@ -249,8 +249,8 @@
     // The welcome, shown while there is no project (10.1).
     "Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。":
       "Research OS reads the scripts, data and drafts in a research folder and works out how they connect, step by step.",
-    "你对这些关联做出的判断，Research OS 会替你记下来，和这项研究的文件放在一起。":
-      "Research OS records the judgments you make about these links and keeps them with the study’s files.",
+    "你对这些关联做出的连线确认，Research OS 会替你记下来，和这项研究的文件放在一起。":
+      "Research OS records the link judgments you make and keeps them with the study’s files.",
     "项目就是存放一项研究的那个文件夹。": "A project is the folder that holds one study.",
 
     // Dates (13.5): Today 09:24, Yesterday 18:02, 4 Oct, 4 Oct 2025.
@@ -301,9 +301,9 @@
     "已被你后来的提议替代": "Replaced by your later proposal",
     "查看": "View",
     "复核": "Review",
-    "{n} 条判断的依据变了，等你复核。": {
-      one: "The basis of {n} judgment changed; it awaits your review.",
-      other: "The basis of {n} judgments changed; they await your review.",
+    "{n} 条连线确认的依据变了，等你复核。": {
+      one: "The basis of {n} link judgment changed; it awaits your review.",
+      other: "The basis of {n} link judgments changed; they await your review.",
     },
     // The first desk's block titles (13.4) and words of its rows that other pages show too; since
     // V10 the desk is the route map (14.5).
@@ -331,7 +331,7 @@
     // What 同步 will write and what it did (team.js, shared with 成员), and the
     // difference beside an .official copy (team.js differenceBlock, node.js diffBlock).
     "{n} 条备注": { one: "{n} note", other: "{n} notes" },
-    "{n} 条关联判断": { one: "{n} linked judgment", other: "{n} linked judgments" },
+    "{n} 条连线确认": { one: "{n} link judgment", other: "{n} link judgments" },
     "{n} 处「设为论文正文」的标记": { one: "{n} “Set as the paper” mark", other: "{n} “Set as the paper” marks" },
     "增加 {n} 条连线": { one: "{n} link added", other: "{n} links added" },
     "删除 {n} 条连线": { one: "{n} link removed", other: "{n} links removed" },
@@ -340,8 +340,8 @@
     "同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。":
       "Syncing first writes what you have not sent yet ({sending}) into “{area}” (your proposals folder) in the shared folder: no approval is needed, and the PI adds it to the published record at the next publish.",
     "{send}你的工作副本已经是最新的正式版本。": "{send} Your working copy is already the latest published version.",
-    "你的工作副本已经是最新的正式版本，没有要发送的备注、判断或连线。":
-      "Your working copy is already the latest published version, and there are no notes, judgments or links to send.",
+    "你的工作副本已经是最新的正式版本，没有要发送的备注、连线确认或手工连线。":
+      "Your working copy is already the latest published version, and there are no notes, link judgments or hand-drawn links to send.",
     "更新 {n} 个你没改过的文件": { one: "update {n} file you have not changed", other: "update {n} files you have not changed" },
     "删除 {n} 个正式版本已删除的文件": {
       one: "remove {n} file the published version deleted", other: "remove {n} files the published version deleted",
@@ -350,17 +350,17 @@
       one: "keep your version of {n} file changed on both sides and put the published copy beside it (.official)",
       other: "keep your versions of {n} files changed on both sides and put the published copies beside them (.official)",
     },
-    "备注、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
-      "replace each record file of notes, judgments and links with the published one where all your entries are in it, and keep yours where they are not yet",
+    "备注、连线确认和手工连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
+      "replace each record file of notes, link judgments and hand-drawn links with the published one where all your entries are in it, and keep yours where they are not yet",
     "：{parts}": ": {parts}",
     "；": "; ",
     "{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
       "{send} Then it brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
     "同步会把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
       "Syncing brings the working copy to version {seq}{parts}. It never merges: nothing you changed is overwritten.",
-    "已把你的 {n} 条备注、判断或连线改动发送到公盘": {
-      one: "sent your {n} change to notes, judgments or links to the shared folder",
-      other: "sent your {n} changes to notes, judgments or links to the shared folder",
+    "已把你的 {n} 条备注、连线确认或手工连线改动发送到公盘": {
+      one: "sent your {n} change to notes, link judgments or hand-drawn links to the shared folder",
+      other: "sent your {n} changes to notes, link judgments or hand-drawn links to the shared folder",
     },
     "已经是最新的正式版本。": "Already the latest published version.",
     "已经是最新的正式版本；{sent}。": "Already the latest published version; {sent}.",
@@ -509,7 +509,7 @@
     "放弃时冻结的文件": "Files frozen when it was abandoned",
     "提议人 {who}": "Proposed by {who}",
     "批准人 {who}": "Approved by {who}",
-    "迁移后才能记录判断": "Judgments can be recorded once the old records are migrated",
+    "迁移后才能记录连线确认": "Link judgments can be recorded once the old records are migrated",
     "只读打开：不会写入任何东西": "Opened read-only: nothing is written",
     // 18.1: a window opened without the engine's session (app.html's BLOCKING_ERROR_TEXT, routemap.js).
     "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。": "This window cannot save: open it from the Research OS app. If you already did, the app is out of date: run researchos app to rebuild it.",
@@ -578,8 +578,8 @@
     "{relation}（人工标注）": "{relation} (drawn by hand)",
     // 待复核 (9.6), which the desk's column opens (14.4, 14.6): a judgment, its link and its
     // basis in words (app.html's judgment wording), the acts, the variable cards' part.
-    "{n} 条判断待复核": { one: "{n} judgment needs review", other: "{n} judgments need review" },
-    "查看证据变了的旧判断": "See the earlier judgments whose evidence changed",
+    "{n} 条连线确认待复核": { one: "{n} link judgment needs review", other: "{n} link judgments need review" },
+    "查看证据变了的旧连线确认": "See the earlier link judgments whose evidence changed",
     "确认": "Confirmed",
     "否决": "Rejected",
     "撤回": "Withdraw",
@@ -593,7 +593,7 @@
     "提交": "Commit",
     "论文": "Paper",
     "尝试": "Attempt",
-    "迁移自旧索引（原判断时间未知）": "Migrated from the old index (when it was judged is not known)",
+    "迁移自旧索引（原连线确认的时间未知）": "Migrated from the old index (when the link judgment was made is not known)",
     "只凭这条关联本身": "The link itself, nothing more",
     "调用：{calls}": "Calls: {calls}",
     "产物：{artifacts}": "Artifacts: {artifacts}",
@@ -615,11 +615,11 @@
     "{draft} 的文末条目": "The reference list in {draft}",
     "Zotero 里的一篇文献": "A reference in Zotero",
     "撤销了上一步": "Undid the last step",
-    "撤回了判断": "Withdrew the judgment",
-    "{when} · 补回文件里缺少的判断：{what}": "{when} · A judgment the file was missing, put back: {what}",
+    "撤回了连线确认": "Withdrew the link judgment",
+    "{when} · 补回文件里缺少的连线确认：{what}": "{when} · A link judgment the file was missing, put back: {what}",
     "{when} · 你{via}{what}": "{when} · {what} ({via})",
     "{when} · 你{what}": "{when} · {what}",
-    "证据变了的旧判断，等你再看一眼": "Earlier judgments whose evidence changed, waiting for another look",
+    "证据变了的旧连线确认，等你再看一眼": "Earlier link judgments whose evidence changed, waiting for another look",
     "本次扫描读到了两端，但没有得出这条关联": "This scan read both ends but did not find this link",
     "关联的一端不在本次扫描结果里": "One end of the link is not in this scan",
     "本次扫描没有给出依据": "This scan gave no basis",
@@ -636,38 +636,38 @@
     "仍然成立": "Still holds",
     "已记录：仍然成立": "Recorded: still holds",
     "正在记录…": "Recording…",
-    "没能记录这条判断": "Could not record this judgment",
+    "没能记录这条连线确认": "Could not record this link judgment",
     "{done}：{link}": "{done}: {link}",
     "正在撤销…": "Undoing…",
     "无法撤销": "Could not undo",
     "（{type} · {extractor}）": "({type} · {extractor})",
-    "迁移来的旧判断和记录里已有的判断相反（两台电脑各判断过一次）。Research OS 不按迁移日期替你选，请写一条新判断定下它。":
-      "The migrated judgment contradicts the one already in the records (two computers each judged it once). Research OS does not choose for you by the migration date: record a new judgment to settle it.",
-    "两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新判断定下它。":
-      "Two copies of the records each gained different entries (perhaps two computers each changed one, and a sync merged them). Research OS does not choose for you by time: record a new judgment to settle it.",
+    "迁移来的旧连线确认和记录里已有的连线确认相反（两台电脑各做了一次）。Research OS 不按迁移日期替你选，请写一条新的连线确认来定下它。":
+      "The migrated link judgment contradicts the one already in the records (two computers each made one). Research OS does not choose for you by the migration date: record a new link judgment to settle it.",
+    "两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新的连线确认来定下它。":
+      "Two copies of the records each gained different entries (perhaps two computers each changed one, and a sync merged them). Research OS does not choose for you by time: record a new link judgment to settle it.",
     "共同的记录：{entries}": "Entries both share: {entries}",
     "记录里原有的": "Already in the records",
     "迁移来的": "Migrated",
     "第 {n} 份": "Copy {n}",
-    "原判断：{verdict} · {when}": "Earlier judgment: {verdict} · {when}",
+    "原连线确认：{verdict} · {when}": "Earlier link judgment: {verdict} · {when}",
     "备注：{note}": "Note: {note}",
     "当时的依据": "The basis then",
     "现在": "Now",
-    "可能对应的新关联（同一次扫描里新出现）：旧判断不会自己转过去，点了才会在它上面记下一条新判断，旧的这条保持原样。":
-      "Links that may correspond (new in the same scan): the earlier judgment does not move by itself; a click records a new judgment on one, and this one stays as it is.",
+    "可能对应的新关联（同一次扫描里新出现）：旧连线确认不会自己转过去，点了才会在它上面记下一条新的连线确认，旧的这条保持原样。":
+      "Links that may correspond (new in the same scan): the earlier link judgment does not move by itself; a click records a new link judgment on one, and this one stays as it is.",
     "已用到这条关联上（{verdict}）": "Applied to this link ({verdict})",
-    "把这条旧判断用到它上面": "Apply the earlier judgment to it",
+    "把这条旧连线确认用到它上面": "Apply the earlier link judgment to it",
     "已用到新关联上（{verdict}）": "Applied to the new link ({verdict})",
-    "判断记录文件当前无法读取，请先恢复它": "The judgments’ record file cannot be read right now; restore it first",
+    "连线确认的记录文件当前无法读取，请先恢复它": "The link judgments’ record file cannot be read right now; restore it first",
     "修好之前，这里的操作都不会被记录。": "Until it is fixed, nothing done here is recorded.",
-    "这些判断做出时依据的事实，这次扫描看到的不一样了。判断没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。":
-      "The facts these judgments rested on look different in this scan. The judgments are neither deleted nor applied: the links show as the machine found them until you decide.",
-    "没有待复核的旧判断。": "No earlier judgment needs review.",
+    "这些连线确认做出时依据的事实，这次扫描看到的不一样了。连线确认没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。":
+      "The facts these link judgments rested on look different in this scan. The link judgments are neither deleted nor applied: the links show as the machine found them until you decide.",
+    "没有待复核的旧连线确认。": "No earlier link judgment needs review.",
     "不计入待复核": "Not counted in Needs review",
     "来源文件暂不可读：{files}": "Source file cannot be read right now: {files}",
-    "判断照旧（{verdict}）": "Judgment kept ({verdict})",
+    "连线确认照旧（{verdict}）": "Link judgment kept ({verdict})",
     "图谱里还没有这条关联": "This link is not recorded yet",
-    "你的判断：{verdict}（{when}）": "Your judgment: {verdict} ({when})",
+    "你的连线确认：{verdict}（{when}）": "Your link judgment: {verdict} ({when})",
     "未比对": "Not compared",
     "实现脚本 {path}：{text}": "Implementing script {path}: {text}",
     "实现脚本：{text}": "Implementing script: {text}",
@@ -811,7 +811,7 @@
     "变量 {card} 的第 {version} 版定义（成员的回答：{answer}）":
       "Variable {card}: definition version {version} (the member's answer: {answer})",
     "带上的文件": "Files it carries",
-    "修改判断只带尝试表里的这一行；要一起发送文件，在下面勾选。":
+    "修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。":
       "A research assessment change carries only its row of the attempt table; to send files with it, tick them below.",
     "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。":
       "A new attempt carries its row and the files linked to it (the step scripts its description names, and files added with “Link files”); you can add or untick files.",
@@ -843,7 +843,7 @@
     // V10 D4 (14.3-14.5): an attempt's 待复核 judged in its panel; what changed on it since the
     // last visit (the node page's timeline, reduced); a member's returned proposal put away.
     "知道了": "Got it",
-    "没能读到待复核的判断": "Could not read the judgments that need review",
+    "没能读到待复核的连线确认": "Could not read the link judgments that need review",
     "这一行有改动": "This row changed",
     "文件有改动": "File changed",
     "打开它的详情页": "Open its details page",
@@ -1075,10 +1075,11 @@
     "已确认": "Confirmed",
     "已否决": "Rejected",
     "机器提取": "Extracted from code",
-    "确认了": "Confirmed",
-    "否决了": "Rejected",
-    "撤回了对它的判断": "Withdrew the judgment on",
-    "撤销了上一次判断": "Undid the previous judgment on",
+    "确认了这条关联：{link}": "Confirmed this link: {link}",
+    "否决了这条关联：{link}": "Rejected this link: {link}",
+    "撤回了连线确认：{link}": "Withdrew the link judgment: {link}",
+    "撤销了上一次连线确认：{link}": "Undid the previous link judgment: {link}",
+    "连线确认：{link}": "Link judgment: {link}",
     "全部": "All",
     "未识别生成脚本": "No generating script identified",
     "中间数据": "Intermediate data",
@@ -1135,7 +1136,7 @@
     "查看内容": "View content",
     "打开": "Open",
     "在 Finder 中显示": "Show in Finder",
-    "提议修改判断": "Propose a research assessment change",
+    "提议修改研究判断": "Propose a research assessment change",
     "编辑这一行": "Edit this row",
     "打开定义卡": "Open definition card",
     "论文正文": "Paper draft",
@@ -1194,8 +1195,6 @@
     "笔记记录文件现在无法读取": "The notes record cannot be read right now",
     "还没有记录到改动或笔记。": "No changes or notes have been recorded yet.",
     "连线：{link}": "Link: {link}",
-    "{action}这条关联：{link}": "{action} this link: {link}",
-    "判断了": "Judged",
     "工作区里还没有提交的改动": "Uncommitted changes",
     "最早记下的版本": "First recorded version",
     "数据有改动": "Data changed",
@@ -1210,7 +1209,7 @@
     "你的邮箱": "your email",
     "这条笔记": "This note",
     "这条连线": "This link",
-    "你的确认和否决": "Your link judgments",
+    "你的连线确认": "Your link judgments",
     "这次删除": "This removal",
     "「设为论文正文」的标记": "This “Set as the paper” mark",
     "这条记录": "This record",
@@ -1227,7 +1226,7 @@
     "笔记是空的": "Enter a note first",
     "笔记没有保存": "The note was not saved",
     "笔记记录文件现在无法写入": "The notes record cannot be written right now",
-    "判断": "Link judgments",
+    "连线确认": "Link judgments",
     "还没有和它关联的连线。": "No links touch this item yet.",
     "机器提取的关联由你确认或否决；人工标注的关联来自 mappings.toml。": "Confirm or reject extracted links. Author-added links are kept in mappings.toml.",
     "显示全部 {n} 条": {"one": "Show the {n} link", "other": "Show all {n} links"},
@@ -1237,7 +1236,7 @@
     "删除这条人工标注？\n\n{link}\n\n它会从 .researchos/mappings.toml 里移除。": "Remove this author-added link?\n\n{link}\n\nIt will be removed from .researchos/mappings.toml.",
     "已经从 mappings.toml 删除，但图谱还没有更新；稍后会自动重试": "Removed from mappings.toml; the index has not updated yet and will retry automatically",
     "没能删除这条标注": "Could not remove this link",
-    "没能记下这个判断": "Could not record this judgment",
+    "没能记下这条连线确认": "Could not record this link judgment",
     "关系图": "Relationship map",
     "关系图只画脚本、数据和图表；它的关联见上面的来龙去脉。": "The relationship map shows scripts, data and figures. See this item’s links in the provenance above.",
     "收起关系图": "Hide relationship map",
@@ -1270,7 +1269,7 @@
     "由这些脚本写出：{files}": "Written by: {files}",
     "被这些脚本读取：{files}": "Read by: {files}",
     "没有脚本读取或写出它": "No script reads or writes this file",
-    "打开待复核的判断": "Open judgments needing review",
+    "打开待复核的连线确认": "Open link judgments needing review",
     // 8.8: the Chinese brackets name the relation again; the English says it once.
     "断链：{script} {relation} {target}（写出，文件不存在）": "Broken link: {script} {relation} {target} (file not found)",
     "断链：{script} {relation} {target}（读取，文件不存在）": "Broken link: {script} {relation} {target} (file not found)",

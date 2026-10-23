@@ -501,7 +501,7 @@ def test_pre_v5_project_is_registered_and_opened_frozen_and_no_scan_writes_into_
     db_before = (legacy_db.read_bytes(), legacy_db.stat().st_mtime_ns)
     _, insp = live.post("/api/projects/inspect", {"path": str(old)})
     assert insp["kind"] == "pre_v5" and insp["can_add"]
-    assert insp["message"] == "这是旧版 Research OS 项目：加入后需要先迁移，才能记录判断"
+    assert insp["message"] == "这是旧版 Research OS 项目：加入后需要先迁移，才能记录连线确认"
     status, added = live.post("/api/projects/add", {"path": str(old), "label": "旧项目", "inspected": insp["inspected"]})
     assert status == 200 and added["kind"] == "pre_v5" and added["scanning"] is False
     [entry] = registry.load()

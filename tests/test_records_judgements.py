@@ -528,7 +528,7 @@ def test_scenario_11_unparseable_or_removed_ledger_keeps_the_index_and_refuses_w
         path.unlink()
     _rescan_and_expect_kept(root)
     refused = _click_writes_nothing(root)
-    assert refused.message_zh == "判断记录文件当前无法读取，请先恢复它"
+    assert refused.message_zh == "连线确认的记录文件当前无法读取，请先恢复它"
     conn = _conn(root)
     try:
         ledger_state = judgements.review_items(conn)["ledger"]
@@ -558,7 +558,7 @@ def test_scenario_11_zero_byte_or_truncated_ledger_asks_the_question(tmp_path, d
     _rescan_and_expect_kept(root)
     refused = _click_writes_nothing(root)
     assert refused.decision.verdict.value == "shrunk"
-    assert refused.message_zh == f"记录文件比图谱少了 {missing} 条判断"
+    assert refused.message_zh == f"记录文件比图谱少了 {missing} 条连线确认"
     conn = _conn(root)
     try:
         assert len(judgements.review_items(conn)["ledger"]["missing"]) == missing
@@ -606,7 +606,7 @@ def test_scenario_7_restore_a_copy_of_rce_and_take_the_file_as_truth(tmp_path):
     assert _status(root, READ) == "rejected"  # nothing changed before the answer
     conn = _conn(root)
     try:
-        assert judgements.review_items(conn)["ledger"]["message"] == "记录文件比图谱少了 2 条判断"
+        assert judgements.review_items(conn)["ledger"]["message"] == "记录文件比图谱少了 2 条连线确认"
     finally:
         conn.close()
     judgements.answer_shrunk(root, judgements.ANSWER_FILE)

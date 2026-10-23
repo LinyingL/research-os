@@ -1589,7 +1589,7 @@ function escapeHtml(value) {
 // the researcher judged (9.12): it reads MIGRATED_AT_LABEL instead. What the
 // desk's 待复核 panel shows is in the screen's language (14.6): the maps'
 // words through t() where they are read (each has an English entry).
-const MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）";
+const MIGRATED_AT_LABEL = "迁移自旧索引（原连线确认的时间未知）";
 const VERDICT_WORDS = { confirmed: "确认", rejected: "否决", withdrawn: "撤回", undone: "撤销" };
 const VIA_WORDS = { canvas: "在关系图上", cli: "在命令行里", mcp: "通过 MCP" };
 const LINK_VERBS = {
@@ -1616,7 +1616,7 @@ function verdictWord(verdict) {
 // time-zone arithmetic: `at` is for a person to read, 9.3).
 function whenText(entry) {
   if (!entry) return "";
-  if (entry.migrated) return entry.at_label || t("迁移自旧索引（原判断时间未知）");
+  if (entry.migrated) return entry.at_label || t("迁移自旧索引（原连线确认的时间未知）");
   const at = entry.at == null ? "" : String(entry.at);
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? at.slice(0, 10) + " " + at.slice(11, 16) : at;
 }
@@ -1711,10 +1711,10 @@ function linkText(key) {
 // Who did what, when, from where: 「2026-10-04 21:15 · 你在画布上否决」.
 function historyEntryText(entry) {
   const what = entry.verdict === "undone" ? t("撤销了上一步")
-    : entry.verdict === "withdrawn" ? t("撤回了判断") : verdictWord(entry.verdict);
+    : entry.verdict === "withdrawn" ? t("撤回了连线确认") : verdictWord(entry.verdict);
   const when = whenText(entry);
   if (entry.migrated) return when + " · " + what;
-  if (entry.via === "recovered") return t("{when} · 补回文件里缺少的判断：{what}", { when: when, what: what });
+  if (entry.via === "recovered") return t("{when} · 补回文件里缺少的连线确认：{what}", { when: when, what: what });
   const via = Object.prototype.hasOwnProperty.call(VIA_WORDS, entry.via) ? t(VIA_WORDS[entry.via]) : "";
   return via ? t("{when} · 你{via}{what}", { when: when, via: via, what: what }) : t("{when} · 你{what}", { when: when, what: what });
 }
@@ -1768,7 +1768,7 @@ const BLOCKING_ERROR_TEXT = {
   mapping_role_unknown: "成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线",
   // DESIGN.md 9.4 / 9.7 / 9.10: a write that was refused, nothing written
   project_moved: "项目已移动或已在别处认领，请重新打开",
-  needs_migration: "迁移后才能记录判断：这个项目来自旧版本，请先在页面上方迁移旧记录",
+  needs_migration: "迁移后才能记录连线确认：这个项目来自旧版本，请先在页面上方迁移旧记录",
   read_only: "项目当前是只读打开的，不会写入任何东西",
   project_busy: "另一个 Research OS 进程正在写入这个项目，请稍后再试",
   project_blocked: "这个项目需要你先确认，确认之前不会写入任何东西",
@@ -1776,12 +1776,12 @@ const BLOCKING_ERROR_TEXT = {
   // every write is refused with this sentence (the engine's own, word for word, in either language)
   session_required: "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。",
   // DESIGN.md 9.3 / 9.2: a record Research OS cannot trust right now, nothing written
-  record_untrusted: "判断记录文件当前无法读取，请先恢复它",
-  record_shrunk: "判断记录文件比图谱少了几条判断，需要你先确认以哪一份为准",
+  record_untrusted: "连线确认的记录文件当前无法读取，请先恢复它",
+  record_shrunk: "连线确认的记录文件比图谱少了几条连线确认，需要你先确认以哪一份为准",
   layout_unreadable: "关系图位置记录文件无法读取，请先修复它",
   // DESIGN.md 9.3's question and 9.4 / 9.5's answers, refused: nothing written
   record_question_changed: "记录文件在提问之后又变了，请重新查看问题再回答",
-  record_would_lose: "记录文件当前为空或无法使用，以文件为准会丢掉仅存的判断副本；请先恢复文件，或选择「把缺少的补回文件」",
+  record_would_lose: "记录文件当前为空或无法使用，以文件为准会丢掉仅存的连线确认副本；请先恢复文件，或选择「把缺少的补回文件」",
   no_question: "现在已经没有需要回答的问题了，记录文件可能已经恢复",
   answer_refused: "项目的情况在你选择之前又变了，没有写入任何东西；请看看现在的问题再选",
   not_this_project: "这个文件夹带着别的项目身份（或没有身份），不是要找的项目；什么都没有关联",
@@ -2136,8 +2136,8 @@ async function loadProjectSummary(force) {
       btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
       // 13.5: a plural in English, its thousands separated ("1,497"); the Chinese as it was.
-      btn.textContent = t("{n} 条判断待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
-      btn.title = t("查看证据变了的旧判断");
+      btn.textContent = t("{n} 条连线确认待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
+      btn.title = t("查看证据变了的旧连线确认");
       btn.addEventListener("click", (e) => { e.stopPropagation(); if (mayReplacePanel()) openReviewPanel(null); });
       line.append(btn);
     }
@@ -3979,13 +3979,13 @@ function renderAttemptForm(mode, attemptId) {
   const role = ROTeam.mode();
   const proposing = role === "member";
   if (role === "none") {
-    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议修改判断";
+    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议修改研究判断";
     panelSubtitle.textContent = "";
     panelBody.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
     openPanel();
     return;
   }
-  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改判断 #" + number)
+  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改研究判断 #" + number)
     : (mode === "append" ? "新增尝试" : "编辑尝试 #" + number);
   panelSubtitle.textContent = proposing
     ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
@@ -4047,11 +4047,11 @@ function renderAttemptForm(mode, attemptId) {
     }
     inputs[def.key] = input;
     initial[def.key] = input.value;
-    // 提议修改判断 carries the verdict and the result only (12.4).
+    // 提议修改研究判断 carries the verdict and the result only (12.4).
     if (proposing && mode === "update" && def.key !== "verdict" && def.key !== "result") {
       input.disabled = true;
       input.dataset.fixed = "1";
-      input.title = "修改判断只包括研究判断和结果；其它格子的改动不会随提议发送";
+      input.title = "修改研究判断的提议只带研究判断和结果；其它格子的改动不会随提议发送";
     }
     const fieldEl = formFieldEl(def.label, input);
     if (def.key === "verdict") {
@@ -4383,7 +4383,7 @@ function setStatus(el, cls, text, err) {
 function humanRecordsBlocked() {
   const s = state.summary;
   if (!s) return null;
-  if (s.needs_migration) return t("迁移后才能记录判断");
+  if (s.needs_migration) return t("迁移后才能记录连线确认");
   if (s.read_only) return t("只读打开：不会写入任何东西");
   return null;
 }
@@ -4405,7 +4405,7 @@ async function openReviewPanel(focus) {
   state.panelSubject = subject;
   panelTitle.textContent = t("待复核");
   panelTitle.title = "";
-  panelSubtitle.textContent = t("证据变了的旧判断，等你再看一眼");
+  panelSubtitle.textContent = t("证据变了的旧连线确认，等你再看一眼");
   panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderReviewPanel(subject);
@@ -4448,7 +4448,7 @@ async function judgeFromReview(target, verdict, note, statusEl, buttons, done, o
     if (res && typeof res.generation === "number") lastGeneration = res.generation;
   } catch (err) {
     buttons.forEach((b) => { b.disabled = false; });
-    setStatus(statusEl, "err", t("没能记录这条判断"), err);
+    setStatus(statusEl, "err", t("没能记录这条连线确认"), err);
     return;
   }
   reviewNotes.delete(keyId(target));
@@ -4494,8 +4494,8 @@ function renderReviewItem(item, subject) {
   if (item.outcome === "conflict") {
     const d = item.detail || {};
     box.appendChild(mk("p", "review-note", d.contradicts
-      ? t("迁移来的旧判断和记录里已有的判断相反（两台电脑各判断过一次）。Research OS 不按迁移日期替你选，请写一条新判断定下它。")
-      : t("两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新判断定下它。")));
+      ? t("迁移来的旧连线确认和记录里已有的连线确认相反（两台电脑各做了一次）。Research OS 不按迁移日期替你选，请写一条新的连线确认来定下它。")
+      : t("两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新的连线确认来定下它。")));
     if (d.common && d.common.length) {
       box.appendChild(mk("div", "review-note", t("共同的记录：{entries}", { entries: d.common.map(historyEntryText).join(t("；")) })));
     }
@@ -4508,7 +4508,7 @@ function renderReviewItem(item, subject) {
     });
     box.appendChild(branches);
   } else {
-    box.appendChild(mk("div", "review-was", t("原判断：{verdict} · {when}", { verdict: verdictWord(item.verdict), when: whenText(item) })));
+    box.appendChild(mk("div", "review-was", t("原连线确认：{verdict} · {when}", { verdict: verdictWord(item.verdict), when: whenText(item) })));
     if (item.note) box.appendChild(mk("div", "review-note", t("备注：{note}", { note: item.note })));
     const pair = mk("div", "basis-pair");
     pair.append(basisColumn(t("当时的依据"), basisLines(item.basis)), basisColumn(t("现在"), reasonNow(item)));
@@ -4525,7 +4525,7 @@ function renderReviewItem(item, subject) {
   if (candidates.length && (item.verdict === "confirmed" || item.verdict === "rejected")) {
     const cands = mk("div", "review-cands");
     cands.appendChild(mk("div", "review-cands-title",
-      t("可能对应的新关联（同一次扫描里新出现）：旧判断不会自己转过去，点了才会在它上面记下一条新判断，旧的这条保持原样。")));
+      t("可能对应的新关联（同一次扫描里新出现）：旧连线确认不会自己转过去，点了才会在它上面记下一条新的连线确认，旧的这条保持原样。")));
     candidates.forEach((c) => {
       const row = mk("div", "review-cand");
       const name = mk("span", "review-link", linkText(c));
@@ -4535,7 +4535,7 @@ function renderReviewItem(item, subject) {
         // Applied already (9.6: one click, one entry): said, not offered again.
         row.appendChild(mk("span", "review-note", t("已用到这条关联上（{verdict}）", { verdict: verdictWord(item.verdict) })));
       } else {
-        const b = mkButton(t("把这条旧判断用到它上面"), "btn btn-small", () =>
+        const b = mkButton(t("把这条旧连线确认用到它上面"), "btn btn-small", () =>
           judgeFromReview(c, item.verdict, noteInput.value, status, buttons, t("已用到新关联上（{verdict}）", { verdict: verdictWord(item.verdict) }), id));
         buttons.push(b);
         row.appendChild(b);
@@ -4581,7 +4581,7 @@ async function renderReviewPanel(subject) {
   const ledger = data.ledger || {};
   if (ledger.state && ledger.state !== "ok") {
     const warn = mk("div", "notice bad");
-    warn.appendChild(mk("div", "notice-title", ledger.message || t("判断记录文件当前无法读取，请先恢复它")));
+    warn.appendChild(mk("div", "notice-title", ledger.message || t("连线确认的记录文件当前无法读取，请先恢复它")));
     warn.appendChild(mk("p", null, t("修好之前，这里的操作都不会被记录。")));
     panelBody.appendChild(warn);
   }
@@ -4597,9 +4597,9 @@ async function renderReviewPanel(subject) {
   const cardGroups = (data.cards && data.cards.groups) || [];
   if (data.review.length || !cardGroups.length) {
     panelBody.appendChild(mk("p", "review-intro",
-      t("这些判断做出时依据的事实，这次扫描看到的不一样了。判断没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。")));
+      t("这些连线确认做出时依据的事实，这次扫描看到的不一样了。连线确认没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。")));
   }
-  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", t("没有待复核的旧判断。")));
+  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", t("没有待复核的旧连线确认。")));
   data.review.forEach((item) => panelBody.appendChild(renderReviewItem(item, subject)));
   // 9.11 stage (b): variable cards whose implementation moved, in the same list.
   if (cardGroups.length) renderCardReviewGroups(panelBody, data.cards);
@@ -4610,7 +4610,7 @@ async function renderReviewPanel(subject) {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
         " · " + t("来源文件暂不可读：{files}", { files: sourceFiles(item).join(t("、")) }) +
-        " · " + t("判断照旧（{verdict}）", { verdict: verdictWord(item.verdict) }) +
+        " · " + t("连线确认照旧（{verdict}）", { verdict: verdictWord(item.verdict) }) +
         // 11.1: only in a synced folder's cloud, its client not running
         (typeof item.cloud === "string" && item.cloud ? " · " + item.cloud : ""));
       panelBody.appendChild(row);
@@ -4618,7 +4618,7 @@ async function renderReviewPanel(subject) {
     absent.forEach((item) => {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
-        " · " + t("图谱里还没有这条关联") + " · " + t("你的判断：{verdict}（{when}）", { verdict: verdictWord(item.verdict), when: whenText(item) }));
+        " · " + t("图谱里还没有这条关联") + " · " + t("你的连线确认：{verdict}（{when}）", { verdict: verdictWord(item.verdict), when: whenText(item) }));
       panelBody.appendChild(row);
     });
   }
@@ -4651,7 +4651,7 @@ const RECORD_KIND_WORDS = {
   attempts_config: "尝试年表配置",
   canvas: "关系图位置",
   variables: "变量定义卡",
-  legacy: "旧版本索引里的判断",
+  legacy: "旧版本索引里的连线确认",
   notes: "笔记",
   decisions: "经 PI 批准的决定",
   stata: "Stata 全局变量指向的项目里的文件夹",
@@ -4669,7 +4669,7 @@ function recordCountText(row) {
   switch (row.code) {
     case "judgements":
       if (typeof f.entries === "number") {
-        return f.entries + " 条记录，其中 " + f.standing + " 条判断生效中" + (f.conflicts ? "，" + f.conflicts + " 条记录冲突" : "");
+        return f.entries + " 条记录，其中 " + f.standing + " 条连线确认生效中" + (f.conflicts ? "，" + f.conflicts + " 条记录冲突" : "");
       }
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "mappings":
@@ -6058,7 +6058,7 @@ function previewLines(p) {
     (p.mapping_links ? "；另有 " + p.mapping_links + " 条手工连线，它们本来就在 mappings.toml 里" : ""));
   if (p.judged) {
     lines.push(p.judged + " 条里有 " + p.produced + " 条的两端能在这个文件夹里扫到");
-    if (p.produced / p.judged < 0.5) lines.push("匹配很低：这些判断可能属于另一个项目。");
+    if (p.produced / p.judged < 0.5) lines.push("匹配很低：这些连线确认可能属于另一个项目。");
     if (p.produced < p.judged && p.outside) {
       lines.push("这个文件夹里有 " + p.outside + " 个脚本读写的是文件夹以外的绝对路径——项目被移动或复制过时，匹配就会这样偏低。");
     }
@@ -6071,8 +6071,8 @@ function migrationNotice(s) {
   const box = notice("warn");
   const waiting = (s.migration && s.migration.waiting) || [];
   const resuming = s.migration && s.migration.migrating_from;
-  noticeHead(box, resuming ? "上次迁移没有完成" : waiting.length ? "旧版本的判断在等待迁移" : "这个项目来自旧版本");
-  box.appendChild(mk("p", null, "迁移后才能记录判断。" + (resuming || waiting.length
+  noticeHead(box, resuming ? "上次迁移没有完成" : waiting.length ? "旧版本的连线确认在等待迁移" : "这个项目来自旧版本");
+  box.appendChild(mk("p", null, "迁移后才能记录连线确认。" + (resuming || waiting.length
     ? "迁移会把旧索引里的确认、否决和关系图位置写进项目自己的 .researchos/，核对数目对上之后才把旧索引移到一旁（不删除）。"
     : "没有找到等待迁移的旧索引；在终端运行 researchos migrate --list 可以查看本机所有旧索引。")));
   const status = mk("div", "notice-status");
@@ -6171,25 +6171,25 @@ async function runMigration(answer, statusEl, buttons) {
 // -- 9.3: a ledger Research OS cannot trust, and the shrink question -----------------------
 
 const RECORD_TROUBLE = {
-  missing: ["判断记录文件不见了", "项目身份文件记着这个项目有判断记录（.researchos/judgements.toml），但文件不在。Research OS 不会新建一个空文件来代替它；请从备份或同步服务里把它找回来。"],
-  dataless: ["判断记录文件还在云端", "系统正在下载 .researchos/judgements.toml，下载完成后会自动恢复。"],
-  unreadable: ["判断记录文件无法读取", ".researchos/judgements.toml 读不出来。"],
-  invalid: ["判断记录文件有一处无法解析", ".researchos/judgements.toml 里有一处读不懂（常见于手工编辑），请修正它。"],
-  empty_but_expected: ["判断记录文件是空的", "这个项目记录过判断，但 .researchos/judgements.toml 现在没有任何条目。"],
-  conflict_copy: ["判断记录文件旁有同步冲突副本", "同步服务在 .researchos/ 里留下了冲突副本。Research OS 不会自行合并：请留下正确的那一份，把另一份移走。"],
-  no_identity: ["项目身份文件无法读取", "没有可读的项目身份，判断无处记录。"],
-  migrating: ["项目正在迁移", "迁移完成之前不能记录判断。"],
+  missing: ["连线确认的记录文件不见了", "项目身份文件记着这个项目有连线确认的记录（.researchos/judgements.toml），但文件不在。Research OS 不会新建一个空文件来代替它；请从备份或同步服务里把它找回来。"],
+  dataless: ["连线确认的记录文件还在云端", "系统正在下载 .researchos/judgements.toml，下载完成后会自动恢复。"],
+  unreadable: ["连线确认的记录文件无法读取", ".researchos/judgements.toml 读不出来。"],
+  invalid: ["连线确认的记录文件有一处无法解析", ".researchos/judgements.toml 里有一处读不懂（常见于手工编辑），请修正它。"],
+  empty_but_expected: ["连线确认的记录文件是空的", "这个项目记录过连线确认，但 .researchos/judgements.toml 现在没有任何条目。"],
+  conflict_copy: ["连线确认的记录文件旁有同步冲突副本", "同步服务在 .researchos/ 里留下了冲突副本。Research OS 不会自行合并：请留下正确的那一份，把另一份移走。"],
+  no_identity: ["项目身份文件无法读取", "没有可读的项目身份，连线确认无处记录。"],
+  migrating: ["项目正在迁移", "迁移完成之前不能记录连线确认。"],
 };
 
 function recordsNotice(rec) {
   if (rec.state === "shrunk") return shrinkNotice(rec);
   const box = notice("bad");
-  const trouble = RECORD_TROUBLE[rec.reason] || [rec.message || "判断记录文件当前无法读取，请先恢复它", ""];
+  const trouble = RECORD_TROUBLE[rec.reason] || [rec.message || "连线确认的记录文件当前无法读取，请先恢复它", ""];
   noticeHead(box, trouble[0]);
   if (trouble[1]) box.appendChild(mk("p", null, trouble[1]));
   if (rec.reason === "invalid" && rec.line) box.appendChild(mk("div", "fact-line", "出错的位置：第 " + rec.line + " 行"));
   if (rec.conflict_copies && rec.conflict_copies.length) box.appendChild(mk("div", "fact-line", "冲突副本：" + rec.conflict_copies.join("、")));
-  box.appendChild(mk("p", null, "修好之前，确认、否决、撤回都不会被记录；图谱保留着它原来知道的判断状态，没有因此改变。"));
+  box.appendChild(mk("p", null, "修好之前，确认、否决、撤回都不会被记录；图谱保留着它原来知道的连线确认，没有因此改变。"));
   if (rec.detail) {
     const d = mk("div", "notice-status");
     renderBlockingError(d, "", rec.detail);
@@ -6202,9 +6202,9 @@ function shrinkNotice(rec) {
   const missing = rec.missing || [];
   const n = missing.length;
   const box = notice("warn");
-  noticeHead(box, "记录文件比图谱少了 " + n + " 条判断");
+  noticeHead(box, "记录文件比图谱少了 " + n + " 条连线确认");
   box.appendChild(mk("p", null,
-    "图谱记得下面这些判断，但 .researchos/judgements.toml 里没有了（可能是从备份恢复、同步服务保留了另一台电脑的文件，或文件被截断）。Research OS 什么都没改，等你决定以哪一份为准。"));
+    "图谱记得下面这些连线确认，但 .researchos/judgements.toml 里没有了（可能是从备份恢复、同步服务保留了另一台电脑的文件，或文件被截断）。Research OS 什么都没改，等你决定以哪一份为准。"));
   const list = mk("ul", "entry-list");
   missing.forEach((m) => {
     const li = mk("li", null, historyEntryText(m));
@@ -6215,8 +6215,8 @@ function shrinkNotice(rec) {
   const ids = missing.map((m) => m.id); // the answer names exactly the entries shown (9.12)
   const status = mk("div", "notice-status");
   const answers = [
-    ["file", "以文件为准", "这是有意从备份恢复时要的：图谱忘掉这 " + n + " 条判断，以文件现在的内容为准。"],
-    ["restore", "把缺少的补回文件", "把这 " + n + " 条判断按原样追加回文件末尾（标为补回），文件里已有的内容不动。"],
+    ["file", "以文件为准", "这是有意从备份恢复时要的：图谱忘掉这 " + n + " 条连线确认，以文件现在的内容为准。"],
+    ["restore", "把缺少的补回文件", "把这 " + n + " 条连线确认按原样追加回文件末尾（标为补回），文件里已有的内容不动。"],
   ];
   const buttons = [];
   answers.forEach(([answer, label, help]) => {
@@ -6231,7 +6231,7 @@ function shrinkNotice(rec) {
 }
 
 async function answerShrink(answer, ids, n, statusEl, buttons) {
-  if (answer === "file" && !window.confirm("以文件为准？\n\n图谱会忘掉这 " + n + " 条判断，以 .researchos/judgements.toml 现在的内容为准。")) return;
+  if (answer === "file" && !window.confirm("以文件为准？\n\n图谱会忘掉这 " + n + " 条连线确认，以 .researchos/judgements.toml 现在的内容为准。")) return;
   state.noticeBusy = true;
   buttons.forEach((b) => { b.disabled = true; });
   setStatus(statusEl, "", "正在处理…");
@@ -6245,8 +6245,8 @@ async function answerShrink(answer, ids, n, statusEl, buttons) {
   }
   state.noticeBusy = false;
   state.sessionNotes.push(answer === "file"
-    ? { tone: "", title: "已以文件为准", lines: ["图谱现在只按 .researchos/judgements.toml 里的判断显示。"] }
-    : { tone: "", title: "已把缺少的 " + n + " 条判断补回文件", lines: ["它们追加在 .researchos/judgements.toml 末尾，标为补回。"] });
+    ? { tone: "", title: "已以文件为准", lines: ["图谱现在只按 .researchos/judgements.toml 里的连线确认显示。"] }
+    : { tone: "", title: "已把缺少的 " + n + " 条连线确认补回文件", lines: ["它们追加在 .researchos/judgements.toml 末尾，标为补回。"] });
   await refreshCurrentView();
   renderNotices(true);
 }
@@ -6281,20 +6281,20 @@ const SITUATION_TITLES = {
 const ANSWER_HELP = {
   fork: "这个文件夹得到新的项目身份，带着现有的全部记录从这里起与原项目分开；原来的文件夹不受影响。",
   claim: "这里才是原项目：项目的索引改为跟随这个文件夹，并按它重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的判断、关系图位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
+  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的连线确认、关系图位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
   readonly: "先只浏览，不认领、不写入任何东西；原位置能访问后再来回答。",
   restore: "用 .researchos/backups/ 里的快照把项目身份文件放回去，项目恢复原来的身份。",
-  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的判断、关系图位置和变量卡全部保留，并据此重新建立索引。",
+  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的连线确认、关系图位置和变量卡全部保留，并据此重新建立索引。",
 };
 
 const ANSWER_CONFIRM = {
   claim: "这里才是原项目？\n\n项目的索引会按这个文件夹重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这是另一个项目？\n\n复制来的判断、关系图位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
+  other: "这是另一个项目？\n\n复制来的连线确认、关系图位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
 };
 
 function resolveNote(answer, res) {
   const lines = [];
-  if (answer === "fork") lines.push("新的项目身份：" + res.project_id + "。从现在起，这里的判断不会出现在原项目里。");
+  if (answer === "fork") lines.push("新的项目身份：" + res.project_id + "。从现在起，这里的连线确认不会出现在原项目里。");
   if (answer === "claim") lines.push("项目的索引已按这个文件夹重新建立。");
   if (answer === "adopt") lines.push("新的项目身份：" + res.project_id + "，原有记录都保留了。");
   if (answer === "restore" && res.restored_from) lines.push("项目身份文件已从备份恢复：" + res.restored_from);

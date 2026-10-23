@@ -291,11 +291,11 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
     for mount in ('id="notices"', 'id="records-btn"'):
         assert mount in html
     for copy in (
-        " 条判断待复核", "仍然成立", "改为确认", "改为否决", "撤回", "把这条旧判断用到它上面",
+        " 条连线确认待复核", "仍然成立", "改为确认", "改为否决", "撤回", "把这条旧连线确认用到它上面",
         "来源文件暂不可读", "图谱里还没有这条关联", "记录冲突", "不计入待复核",
         "记录文件比图谱少了 ", "以文件为准", "把缺少的补回文件",
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",
-        "迁移这些记录", "这不是这个项目的", "迁移后才能记录判断", " 条里有 ", " 条的两端能在这个文件夹里扫到",
+        "迁移这些记录", "这不是这个项目的", "迁移后才能记录连线确认", " 条里有 ", " 条的两端能在这个文件夹里扫到",
         "原位置暂时无法确认", "项目身份文件无法读取", "人工记录", "在 Finder 中显示", "最新快照：",
         "关系图位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
     ):
@@ -325,7 +325,7 @@ def test_every_new_action_failure_goes_through_the_shared_helper():
     html = APP_HTML.read_text(encoding="utf-8")
     js = CANVAS_JS.read_text(encoding="utf-8")
     # V10 (14.6): the 待复核 panel the desk opens is converted, its framing through t().
-    assert 'setStatus(statusEl, "err", t("没能记录这条判断"), err)' in html
+    assert 'setStatus(statusEl, "err", t("没能记录这条连线确认"), err)' in html
     assert 'setStatus(statusEl, "err", "没能完成这个选择", err)' in html
     assert 'setStatus(statusEl, "err", "没能使用这个位置", err)' in html
     assert 'setStatus(statusEl, "err", "没能完成这个回答", err)' in html
@@ -374,10 +374,10 @@ def test_the_hover_card_reads_as_the_design_example():
     judgment never shows the migration's time as its own (9.12); a
     conflict is 「记录冲突，待处理」."""
     j = {"outcome": "review", "verdict": "rejected", "at": "2026-10-04T21:15:03+02:00", "label": "依据已变化", "migrated": False}
-    migrated = dict(j, migrated=True, at_label="迁移自旧索引（原判断时间未知）")
+    migrated = dict(j, migrated=True, at_label="迁移自旧索引（原连线确认的时间未知）")
     out = _wording(("reviewHoverText", [j]), ("reviewHoverText", [migrated]), ("reviewHoverText", [{"outcome": "conflict"}]))
     assert out[0] == "你曾于 2026-10-04 否决 · 依据已变化，待复核"
-    assert out[1] == "你曾否决（迁移自旧索引（原判断时间未知）） · 依据已变化，待复核"
+    assert out[1] == "你曾否决（迁移自旧索引（原连线确认的时间未知）） · 依据已变化，待复核"
     assert "2026-10-04" not in out[1]
     assert out[2] == "记录冲突，待处理"
 
@@ -425,9 +425,9 @@ def test_history_lines_say_who_did_what_when_and_from_where():
     )
     assert out[0] == "2026-10-04 21:15 · 你在关系图上否决"
     assert out[1] == "2026-10-04 21:15 · 你在命令行里撤销了上一步"
-    assert out[2] == "2026-10-04 21:15 · 你通过 MCP撤回了判断"
-    assert out[3] == "迁移自旧索引（原判断时间未知） · 确认" and "2026-10-05" not in out[3]
-    assert out[4] == "2026-10-04 21:15 · 补回文件里缺少的判断：否决"
+    assert out[2] == "2026-10-04 21:15 · 你通过 MCP撤回了连线确认"
+    assert out[3] == "迁移自旧索引（原连线确认的时间未知） · 确认" and "2026-10-05" not in out[3]
+    assert out[4] == "2026-10-04 21:15 · 补回文件里缺少的连线确认：否决"
     assert out[5] == "依据 · 调用：read.csv"
     assert out[6] == "依据 · 调用：read_csv（迁移时核对过）"
     assert out[7] == "依据：当时的扫描没有得出这条关联"

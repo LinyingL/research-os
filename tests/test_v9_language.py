@@ -1501,7 +1501,9 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: Moved by the V10 review (finding 22): a 待复核 row is the attempt itself, so its hover reads
 #: 「在路线图上标出这条尝试」 (three rows) -- nothing else moved.
 # UX copy: research assessment and published-version labels; behavior unchanged.
-_DESK_ZH_SHA256 = "ff0ae8c868953b2021d4ffbb18c07c7dc2d5cd82feae9d2036a96b37a31985cb"
+#: Moved on purpose by DESIGN.md 18.2 (task V14): the 待复核 sentence says 连线确认 where it said
+#: 判断 (two rows) -- checked by putting the old word back: the old digest.
+_DESK_ZH_SHA256 = "e72502984be169ca567801f35931661f39fbdae57d681b2de87641f1cf2d7767"
 
 
 @needs_node
@@ -1512,7 +1514,7 @@ def test_13_8_the_desk_in_chinese_is_as_before(saved):
     desks = _desks(saved)
     assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
     assert desks[0][:2] == ["desk-column-title: 待办", "desk-title: 等你批准"]
-    assert "desk-sub: 1497 条判断的依据变了，等你复核。[desk-link]" in desks[0]
+    assert "desk-sub: 1497 条连线确认的依据变了，等你复核。[desk-link]" in desks[0]
     assert "desk-link strong: 加上连线：#18 源自 #17 (title: 在路线图上标出它涉及的尝试)" in desks[0]
 
 
@@ -1536,7 +1538,7 @@ def test_13_7_the_desk_in_english():
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
         "(title: Mark the attempts it touches on the route map)",
-        "desk-title: Needs review", "desk-sub: The basis of 1,497 judgments changed; they await your review.[desk-link]",
+        "desk-title: Needs review", "desk-sub: The basis of 1,497 link judgments changed; they await your review.[desk-link]",
         "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark this attempt on the route map)",
         ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
         "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
@@ -1556,12 +1558,12 @@ def test_13_7_the_desk_in_english():
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
                  "desk-meta: Proposed · 1 Mar 2024", "desk-title: Published version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
-                 "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 linked judgments, "
+                 "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 link judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
                  "shared folder: no approval is needed, and the PI adds it to the published record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
                  "the published version deleted; keep your version of 1 file changed on both sides and put the published "
-                 "copy beside it (.official); replace each record file of notes, judgments and links with the published "
+                 "copy beside it (.official); replace each record file of notes, link judgments and hand-drawn links with the published "
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
@@ -1577,7 +1579,7 @@ def test_13_7_the_desk_in_english():
     assert "desk-alone: This project is not connected to a shared folder: proposals and sync cannot be shown" in desks[6]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
     assert "desk-alone: The members file (team.toml) cannot be read right now, so who the PI is cannot be told" in desks[8]
-    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 judgment changed; it awaits your review.[desk-link]"]
+    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 link judgment changed; it awaits your review.[desk-link]"]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
 
 
@@ -1673,7 +1675,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
     shown = _desk_synced(saved)
     if saved == "en":
         assert shown == [
-            "team-done: Synced to version 1,497; sent your 3 changes to notes, judgments or links to the shared folder; "
+            "team-done: Synced to version 1,497; sent your 3 changes to notes, link judgments or hand-drawn links to the shared folder; "
             "updated 2 files; removed 1 file the published version deleted; kept your versions of 2 files changed on both "
             "sides, with the published copies beside them; kept your version of 1 file (the arrangement on the relation "
             "map is each person’s own and does not change with a sync); your notes and links still wait for the PI to "
@@ -1694,7 +1696,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
         assert left == [] and not any(FORBIDDEN.search(line) for line in shown)
     else:
         assert [line for line in shown if not line.startswith("dl-row")] == [
-            "team-done: 已同步到第 1497 版；已把你的 3 条备注、判断或连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
+            "team-done: 已同步到第 1497 版；已把你的 3 条备注、连线确认或手工连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
             "2 个两边都改过的文件留着你的，官方的一份放在旁边；1 个文件留着你的（关系图上的摆放是每个人自己的，不随同步改变）；"
             "你的备注和连线还在等 PI 发布，记录文件暂时留着你的。",
             "team-done: 官方的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
@@ -1712,9 +1714,9 @@ def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
     """13.8 #1: the desk's 「正式版本有更新」, drawn with the real team.js,
     says what 同步 will write in the words 成员 always used."""
     desks = _desks(saved, team=True)
-    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条关联判断、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
+    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
             "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
-            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；备注、判断和连线的记录文件："
+            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；备注、连线确认和手工连线的记录文件："
             "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]
 
 

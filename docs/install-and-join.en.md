@@ -182,7 +182,7 @@ person when they join.
 
 1. Click **同步** (Sync) on **Members**, then edit your local working copy.
 2. Open **Proposals**. Under **提交提议** (Submit a proposal), choose
-   **新的尝试** (New attempt), **修改判断** (Change research assessment),
+   **新的尝试** (New attempt), **修改研究判断** (Change the research assessment),
    **变量定义** (Variable definition), or **只有文件** (Files only). Add an explanation
    and click **查看将要发送的内容** (Review what will be sent).
 3. Check the file list. If you change the selection, click
@@ -190,8 +190,8 @@ person when they join.
 4. Check **Proposals** for **Proposed**, **Approved**, or **Returned**, with
    the reason. Sync again when it says **Approved, awaiting sync**.
 
-Proposals and replies arrive after OneDrive syncs. Notes, judgments on
-machine links, and changes made with **Link files** or **Add a source**
+Proposals and replies arrive after OneDrive syncs. Notes, link judgments,
+and changes made with **Link files** or **Add a source**
 travel with sync without individual approval.
 Lines between research attempts require the PI's approval.
 

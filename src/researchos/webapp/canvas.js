@@ -1990,12 +1990,12 @@ window.RCECanvas = (function () {
       box.appendChild(e);
       return box;
     }
-    if (!h.readable) { box.appendChild(htmlEl("div", "cv-linkcard-hint", "判断记录文件当前无法读取，记录暂时看不到。")); return box; }
+    if (!h.readable) { box.appendChild(htmlEl("div", "cv-linkcard-hint", "连线确认的记录文件当前无法读取，记录暂时看不到。")); return box; }
     if (!h.entries.length) {
-      // A pre-V5 project: its judgments still sit in the old index (9.5).
+      // A pre-V5 project: its link judgments (连线确认) still sit in the old index (9.5).
       const waiting = typeof state === "object" && state && state.summary && state.summary.needs_migration;
       box.appendChild(htmlEl("div", "cv-linkcard-hint", waiting
-        ? "旧版本里的判断还在旧索引中，迁移后才会出现在这里。" : "还没有你对这条连线的判断。"));
+        ? "旧版本里的连线确认还在旧索引中，迁移后才会出现在这里。" : "你还没有确认或否决过这条连线。"));
       return box;
     }
     box.appendChild(htmlEl("div", "cv-linkcard-history-title", "记录（新的在上）"));
@@ -2138,7 +2138,7 @@ window.RCECanvas = (function () {
     }
     cv.cardNote = { id: null, value: "" };
     cv.history = null;
-    showStatus(verdict === "withdrawn" ? "已撤回判断，连线按机器的结果显示" : "已确认这条连线", null, {
+    showStatus(verdict === "withdrawn" ? "已撤回连线确认，连线按机器的结果显示" : "已确认这条连线", null, {
       kind: "undo", notice: true, ms: UNDO_MS,
       action: { label: "撤销", run: () => undoJudgement(body) },
     });

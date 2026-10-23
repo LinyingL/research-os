@@ -14,7 +14,7 @@
 // Every object opens the same page: what it is, its trace (来龙去脉: the
 // columns 数据 | 脚本 | 中间数据 | 脚本 | 本节点 | 被引用 joined by drawn
 // lines, every break a gap with its repair), its changes and notes as one
-// timeline (改动与备注), the machine links that touch it (判断), and the
+// timeline (改动与备注), the machine links that touch it (连线确认), and the
 // canvas scoped to its neighbourhood behind 「打开关系图」 (关系图).
 //
 // What it reads (all GET, all origin-checked by the server):
@@ -54,7 +54,17 @@
   const TRACE_TONES = { complete: "olive", no_source: "clay", no_attempt: "ochre" };
   // Words for the screen are looked up when drawn, never as this file loads (13.6).
   const statusWords = () => ({ pending: t("待确认"), confirmed: t("已确认"), rejected: t("已否决"), auto: t("机器提取") });
-  const judgeWords = () => ({ confirmed: t("确认了"), rejected: t("否决了"), withdrawn: t("撤回了对它的判断"), undone: t("撤销了上一次判断") });
+  // One sentence per verdict (13.6): the timeline's line for a link judgment.
+  const judgmentSentence = (verdict, what) => {
+    const words = { link: what };
+    switch (verdict) {
+      case "confirmed": return t("确认了这条关联：{link}", words);
+      case "rejected": return t("否决了这条关联：{link}", words);
+      case "withdrawn": return t("撤回了连线确认：{link}", words);
+      case "undone": return t("撤销了上一次连线确认：{link}", words);
+      default: return t("连线确认：{link}", words);
+    }
+  };
   const filters = () => [
     ["all", t("全部")], ["orphans", t("未识别生成脚本")], ["chains", t("中间数据")], ["broken", t("断链")], ["duplicates", t("同名文件")],
   ];
@@ -408,7 +418,7 @@
       // U4: a member proposes a verdict instead of editing the official
       // table; someone not in the team yet cannot change it at all.
       const role = ROTeam.mode();
-      const edit = role === "member" ? t("提议修改判断") : t("编辑这一行");
+      const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");
       if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
       if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
@@ -853,7 +863,7 @@
           main.appendChild(mk("div", "tl-meta", [e.m.by_label || "", t("人工标注")].filter(Boolean).join(" · ")));
           if (e.m.note) main.appendChild(mk("p", "tl-note", e.m.note));
         } else if (e.kind === "judgment") {
-          main.appendChild(mk("div", "tl-what", t("{action}这条关联：{link}", { action: judgeWords()[e.j.verdict] || t("判断了"), link: linkSentence(e.link) })));
+          main.appendChild(mk("div", "tl-what", judgmentSentence(e.j.verdict, linkSentence(e.link))));
           if (e.j.at_label) main.appendChild(mk("div", "tl-meta", e.j.at_label));
           if (e.j.note) main.appendChild(mk("p", "tl-note", e.j.note));
         }
@@ -967,7 +977,7 @@
     const c = ctx || (typeof RODesk !== "undefined" ? RODesk.context() : null);
     if (!c || c.mode !== "member") return "";
     const me = c.me && c.me.me ? c.me.me.id : t("你的邮箱");
-    const what = { note: t("这条笔记"), link: t("这条连线"), judgment: t("你的确认和否决"),
+    const what = { note: t("这条笔记"), link: t("这条连线"), judgment: t("你的连线确认"),
       unlink: t("这次删除"), paper: t("「设为论文正文」的标记") }[kind] || t("这条记录");
     const record = kind === "link" ? t("正式的 mappings.toml") : kind === "paper" ? t("正式的 papers.toml") : t("正式记录");
     const then = kind === "unlink" ? t("PI 下次发布时从正式的 mappings.toml 里删去这条连线")
@@ -1010,10 +1020,10 @@
     return form;
   }
 
-  // -- 判断 ----------------------------------------------------------------------------
+  // -- 连线确认 ----------------------------------------------------------------------------
 
   function renderJudgments(host, page) {
-    const s = sec(t("判断"));
+    const s = sec(t("连线确认"));
     const links = page.links || [];
     if (!links.length) {
       s.appendChild(mk("p", "node-empty", t("还没有和它关联的连线。")));
@@ -1100,7 +1110,7 @@
       }
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", (verdict === "delete" && lineRefusal(err)) || (verdict === "delete" ? t("没能删除这条标注") : t("没能记下这个判断")), err);
+      setStatus(status, "err", (verdict === "delete" && lineRefusal(err)) || (verdict === "delete" ? t("没能删除这条标注") : t("没能记下这条连线确认")), err);
       return;
     }
     loadNode(views.node, true);
@@ -1383,7 +1393,7 @@
     if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", t("未识别生成脚本")));
     if (f.review) {
       const tag = mkButton(t("{n} 条关联待复核", { n: f.review }), "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
-      tag.title = t("打开待复核的判断");
+      tag.title = t("打开待复核的连线确认");
       head.appendChild(tag);
     }
     const own = ownMark(f);
@@ -1570,6 +1580,6 @@
     _diffRows: diffRows, _traceTone: traceTone, _travelsWords: travelsWords, _linkSentence: linkSentence, _linkStateWords: linkStateWords,
     _judgeActions: judgeActions, _linkRow: linkRow, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
     _tableWords: tableWords, _timeline: timeline, _when: when, _timeKey: timeKey, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
-    _renderStata: renderStata, _stataReasonWords: stataReasonWords,
+    _renderStata: renderStata, _stataReasonWords: stataReasonWords, _judgmentSentence: judgmentSentence,
   });
 })();

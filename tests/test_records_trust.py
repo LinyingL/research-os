@@ -70,7 +70,7 @@ def test_missing_though_expected_is_never_recreated(project):
     identity = _identity(project, ledger=True)
     decision = _assess(project, identity, {})
     assert decision.verdict is Trust.REFUSE_WRITES and decision.reason == "missing"
-    assert not decision.may_create and decision.message == "判断记录文件当前无法读取，请先恢复它"
+    assert not decision.may_create and decision.message == "连线确认的记录文件当前无法读取，请先恢复它"
 
 
 def test_unparseable_refuses_and_names_the_line(project):
@@ -110,7 +110,7 @@ def test_zero_bytes_with_applied_entries_asks(project):
     decision = _assess(project, identity, {entry.id: entry.data})
     assert decision.verdict is Trust.SHRUNK and not decision.may_write
     assert [e["id"] for e in decision.missing] == [entry.id]
-    assert decision.message == "记录文件比图谱少了 1 条判断"
+    assert decision.message == "记录文件比图谱少了 1 条连线确认"
 
 
 def test_zero_bytes_with_nothing_applied_still_refuses(project):
@@ -138,7 +138,7 @@ def test_truncated_at_an_entry_boundary_asks_with_the_missing_entries(project):
     decision = _assess(project, identity, applied)
     assert decision.verdict is Trust.SHRUNK
     assert [e["id"] for e in decision.missing] == [second.id, third.id]
-    assert decision.message == "记录文件比图谱少了 2 条判断"
+    assert decision.message == "记录文件比图谱少了 2 条连线确认"
 
 
 def test_absent_without_the_flag_but_with_applied_entries_asks(project):

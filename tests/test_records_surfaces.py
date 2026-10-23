@@ -71,7 +71,7 @@ def test_watcher_reports_an_untrusted_ledger_and_keeps_polling(tmp_path):
     path.write_bytes(path.read_bytes() + b"\n[[judgement]\n")
     assert w.poll_once() is True
     records = w.status_payload()["records"]
-    assert records["state"] == "refuse_writes" and records["message"] == "判断记录文件当前无法读取，请先恢复它"
+    assert records["state"] == "refuse_writes" and records["message"] == "连线确认的记录文件当前无法读取，请先恢复它"
     assert _status(root, READ) == "confirmed"
     assert w.poll_once() is False  # still polling, nothing new
 
@@ -171,7 +171,7 @@ def test_http_scenario_11_a_click_writes_nothing_and_the_page_is_told(live):
     before = path.read_bytes()
     status, payload = _call(base, "POST", "/api/edges/reject", BODY)
     assert (status, payload["state"]) == (409, "record_untrusted")
-    assert payload["message"] == "判断记录文件当前无法读取，请先恢复它"
+    assert payload["message"] == "连线确认的记录文件当前无法读取，请先恢复它"
     assert path.read_bytes() == before
     assert _status(root, READ) == "confirmed"
 
@@ -184,7 +184,7 @@ def test_http_shrunk_ledger_asks_and_the_answer_restores(live):
     ledger_mod.judgements_path(root).write_bytes(b"")
     status, payload = _call(base, "POST", "/api/edges/reject", BODY)
     assert (status, payload["state"]) == (409, "record_shrunk")
-    assert payload["message"] == "记录文件比图谱少了 1 条判断" and len(payload["records"]["missing"]) == 1
+    assert payload["message"] == "记录文件比图谱少了 1 条连线确认" and len(payload["records"]["missing"]) == 1
     shown = [m["id"] for m in payload["records"]["missing"]]
     status, payload = _call(base, "POST", "/api/records/answer", {"file": "judgements", "answer": "restore"})
     assert status == 400  # the answer must name the question it answers

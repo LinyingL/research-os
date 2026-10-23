@@ -574,7 +574,7 @@
   function renderReview(host, review, byId) {
     if (!review || !review.count) return false;
     const sec = block(t("待复核"));
-    const sub = mk("p", "desk-sub", t("{n} 条判断的依据变了，等你复核。", { n: numberText(review.count) }));
+    const sub = mk("p", "desk-sub", t("{n} 条连线确认的依据变了，等你复核。", { n: numberText(review.count) }));
     sub.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
     sec.appendChild(sub);
     const ul = mk("ul", "desk-list");
@@ -1118,10 +1118,10 @@
     s.appendChild(top);
     if (review && review.failed) {
       const box = mk("div", "notice-status");
-      setStatus(box, "err", t("没能读到待复核的判断"), review.failed);
+      setStatus(box, "err", t("没能读到待复核的连线确认"), review.failed);
       s.appendChild(box);
     } else if (review && review.ledger && review.ledger.state && review.ledger.state !== "ok") {
-      s.appendChild(mk("p", "desk-alone", t("判断记录文件当前无法读取，请先恢复它")));
+      s.appendChild(mk("p", "desk-alone", t("连线确认的记录文件当前无法读取，请先恢复它")));
     }
     const wanted = new Set(keys);
     const boxes = (review && !review.failed ? review.review || [] : []).filter((i) => wanted.has(keyId(i))).map((i) => {

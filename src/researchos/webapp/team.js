@@ -65,7 +65,7 @@
 
   const KIND_CHOICES = [
     ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
-    ["verdict_change", "修改判断", "只有尝试表里这一行的研究判断和结果"],
+    ["verdict_change", "修改研究判断", "只有尝试表里这一行的研究判断和结果"],
     ["variable_version", "变量定义", "一张变量定义卡的新版本"],
     ["files", "只有文件", "你选的脚本、数据和文稿"],
   ];
@@ -165,7 +165,7 @@
   // What a proposal of this kind carries unless the member adds or unticks (12.13).
   function carryWords(kind) {
     switch (kind) {
-      case "verdict_change": return t("修改判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
+      case "verdict_change": return t("修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
       case "attempt_new":
         return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
       case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
@@ -191,7 +191,7 @@
     if (!c) return "";
     const parts = [];
     if (c.notes) parts.push(t("{n} 条备注", { n: numberText(c.notes) }));
-    if (c.judgements) parts.push(t("{n} 条关联判断", { n: numberText(c.judgements) }));
+    if (c.judgements) parts.push(t("{n} 条连线确认", { n: numberText(c.judgements) }));
     if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
     if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
     if (c.links_removed) parts.push(t("删除 {n} 条连线", { n: numberText(c.links_removed) }));
@@ -236,7 +236,7 @@
       { sending: sending, area: p.area || "提议/你的邮箱/" }) : "";
     if (p.up_to_date) {
       return send ? t("{send}你的工作副本已经是最新的正式版本。", { send: send })
-        : t("你的工作副本已经是最新的正式版本，没有要发送的备注、判断或连线。");
+        : t("你的工作副本已经是最新的正式版本，没有要发送的备注、连线确认或手工连线。");
     }
     const parts = [];
     if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
@@ -244,7 +244,7 @@
     if (p.beside && p.beside.length) {
       parts.push(t("{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
     }
-    if (p.records && p.records.length) parts.push(t("备注、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
+    if (p.records && p.records.length) parts.push(t("备注、连线确认和手工连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
     const listed = parts.length ? t("：{parts}", { parts: parts.join(t("；")) }) : "";
     return send ? t("{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。",
       { send: send, seq: numberText(p.to), parts: listed })
@@ -548,7 +548,7 @@
     const sec = mk("section", "route-group route-proposals");
     sec.appendChild(mk("h2", "route-group-title serif", pi ? "提议中" : "我的提议"));
     sec.appendChild(line(pi ? "这些路线还不是正式记录：批准以后才会进入尝试表和每一条来龙去脉。"
-      : "你提出的路线和修改判断：PI 批准以后才进入正式版本。", "quiet"));
+      : "你提出的路线和修改研究判断：PI 批准以后才进入正式版本。", "quiet"));
     const team = (ctx.share && ctx.share.team) || [];
     const ul = mk("ul", "route-list");
     shown.forEach((p) => {
@@ -563,7 +563,7 @@
         if (a.verdict_status) head.appendChild(RODesk.verdictInline(a.verdict_status));
       } else if (v) {
         head.appendChild(mk("span", "route-num mono", "#" + String(v.number || "").replace(/^#/, "")));
-        const t = mkButton(p.sentence || "修改判断", "route-title", () => openProposal(p.id, p.by));
+        const t = mkButton(p.sentence || "修改研究判断", "route-title", () => openProposal(p.id, p.by));
         head.appendChild(t);
         const move = mk("span", "desk-what");
         move.append("研究判断 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
@@ -1280,7 +1280,7 @@
   }
 
   // The engine's dry run of a proposal, shown exactly, then 发送提议. Used
-  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议修改判断.
+  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议修改研究判断.
   async function composeInto(host, body, status) {
     setStatus(status, "", t("正在比较你的工作副本和正式版本…"));
     host.innerHTML = "";
@@ -1905,7 +1905,7 @@
   // deleted); `notes_waiting` are record files whose entries have not
   // reached the official version yet.
   function syncDone(res) {
-    const sent = res.entries_sent ? t("已把你的 {n} 条备注、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
+    const sent = res.entries_sent ? t("已把你的 {n} 条备注、连线确认或手工连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
     if (res.up_to_date) return sent ? t("已经是最新的正式版本；{sent}。", { sent: sent }) : t("已经是最新的正式版本。");
     const parts = [t("已同步到第 {seq} 版", { seq: numberText(res.seq) })];
     if (sent) parts.push(sent);

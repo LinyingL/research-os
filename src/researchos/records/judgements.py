@@ -75,7 +75,7 @@ The safety net (9.3)
 
 The index keeps a copy of every entry it applied (`applied_judgements`).
 A readable ledger lacking some of them is SHRUNK: nothing is applied, every
-write is refused, and the question 「记录文件比图谱少了 N 条判断」 has two
+write is refused, and the question 「记录文件比图谱少了 N 条连线确认」 has two
 answers (`answer_shrunk`): 「以文件为准」 drops the missing entries from the
 copy and recomputes; 「把缺少的补回文件」 appends them again, `via =
 "recovered"`, their content kept (`recovered_from` / `recovered_at` name
@@ -143,7 +143,7 @@ REASON_LABELS_EN = {
     NOT_IN_INDEX: "This link is not recorded yet",
 }
 REVIEW_LABEL = "待复核"
-CANDIDATE_HINT = "可能对应一条待复核的旧判断"
+CANDIDATE_HINT = "可能对应一条待复核的旧连线确认"
 
 
 def reason_label(reason: str | None, lang: str = "zh") -> str | None:
@@ -160,8 +160,8 @@ def reason_label(reason: str | None, lang: str = "zh") -> str | None:
 #: word the time with this label instead of showing `at` as when the
 #: researcher judged.
 MIGRATED_VIA = "migrated"
-MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）"
-MIGRATED_AT_LABEL_EN = "Migrated from the old index (when it was judged is not known)"
+MIGRATED_AT_LABEL = "迁移自旧索引（原连线确认的时间未知）"
+MIGRATED_AT_LABEL_EN = "Migrated from the old index (when the link judgment was made is not known)"
 
 #: `basis_recorded` values `judge` writes.
 AT_JUDGMENT = "at-judgment"
@@ -788,7 +788,7 @@ def answer_shrunk(
     timeout: float | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> Answered:
-    """Answer 「记录文件比图谱少了 N 条判断」 (module docstring). Refused
+    """Answer 「记录文件比图谱少了 N 条连线确认」 (module docstring). Refused
     (`no_question`) unless the ledger is SHRUNK right now.
 
     `expected_missing` -- the ids of the missing entries the researcher was

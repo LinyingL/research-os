@@ -33,6 +33,13 @@
   that failed in your language, with the program's own words behind
   Details, and a run state the page does not know no longer shows its
   raw code. A program's `stderr.log` is capped at 20 MB, as the event log is.
+- Stop calling two different things 判断. An attempt's verdict stays 研究判断
+  ("Research assessment"), so the proposal that changes it reads 修改研究判断
+  and 提议修改研究判断. A person's confirming or rejecting of a machine link is
+  now 连线确认 ("Link judgments") on the node page, the 待复核 list and its
+  count, the desk, the canvas link card and every notice about the record file.
+  Nothing on disk changes: `judgements.toml`, its header and the commands keep
+  their names.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

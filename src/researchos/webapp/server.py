@@ -327,7 +327,7 @@ Endpoints (all GET unless noted):
                             `reopen_payload`).
     POST /api/records/answer -- body `{"file": "judgements", "answer":
                             "file"|"restore"}` answers 「记录文件比图谱少了 N
-                            条判断」 (9.3); `{"file": "canvas", "answer":
+                            条连线确认」 (9.3); `{"file": "canvas", "answer":
                             "set_aside"}` moves an arrangement record Research OS
                             cannot read into `.researchos/backups/`.
     GET  /api/migration -- 9.5: the pre-V5 indexes waiting for this folder,
@@ -2914,7 +2914,7 @@ def _judgement_error(exc: judgements.JudgementRefused) -> ApiError:
 # 8.8: what the page says when an answer to 9.3's question is refused.
 RECORD_ANSWER_MESSAGES = {
     "question_changed": "记录文件在提问之后又变了，请重新查看问题再回答",
-    "would_lose": "记录文件当前为空或无法使用，以文件为准会丢掉仅存的判断副本；请先恢复文件，或选择「把缺少的补回文件」",
+    "would_lose": "记录文件当前为空或无法使用，以文件为准会丢掉仅存的连线确认副本；请先恢复文件，或选择「把缺少的补回文件」",
 }
 
 

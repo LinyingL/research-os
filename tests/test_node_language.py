@@ -100,7 +100,7 @@ global.apiGet = async path => {
         authored = {"改动与备注", "查看内容", "figures/结果.png", "结果.png", "研究标题"}
         assert [word for word in words if CJK.search(word) and word not in authored] == []
     else:
-        for label in ("返回成果", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "判断"):
+        for label in ("返回成果", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "连线确认"):
             assert label in words
 
 
@@ -139,3 +139,23 @@ global.currentView = 'data';
     else:
         assert _node(script) == ["断链：steps/17.py 写出 figs/a.png（写出，文件不存在）",
                                  "断链：steps/17.py 读取 data/gone.csv（读取，文件不存在）"]
+
+
+@needs_node
+@pytest.mark.parametrize("language, said", [
+    (None, ["确认了这条关联：a reads b", "否决了这条关联：a reads b", "撤回了连线确认：a reads b",
+            "撤销了上一次连线确认：a reads b", "连线确认：a reads b"]),
+    ("zh", ["确认了这条关联：a reads b", "否决了这条关联：a reads b", "撤回了连线确认：a reads b",
+            "撤销了上一次连线确认：a reads b", "连线确认：a reads b"]),
+    ("en", ["Confirmed this link: a reads b", "Rejected this link: a reads b", "Withdrew the link judgment: a reads b",
+            "Undid the previous link judgment: a reads b", "Link judgment: a reads b"]),
+])
+def test_18_2_a_link_judgment_in_the_timeline_is_one_sentence_per_verdict(language, said):
+    """DESIGN.md 18.2: a person's confirming or rejecting of a machine link is 连线确认 ("Link
+    judgment"); each verdict is one template (13.6), not a verb fragment joined to a shared tail."""
+    i18n = "" if language is None else f"window.ROI18N_SAVED = {json.dumps(language)};\n" + _i18n_source()
+    script = ("global.window = {addEventListener(){}}; global.document = {getElementById(){return null}};\n" + i18n
+              + (WEBAPP / "node.js").read_text(encoding="utf-8")
+              + "\nprocess.stdout.write(JSON.stringify(['confirmed', 'rejected', 'withdrawn', 'undone', 'other']"
+              ".map((v) => window.RONode._judgmentSentence(v, 'a reads b'))));\n")
+    assert _node(script) == said

@@ -214,19 +214,19 @@ def test_14_6_the_review_panel_the_desk_opens_reads_in_english():
     assert _chinese(lines) == []
     assert not [line for line in lines if FORBIDDEN.search(line)]
     for expected in (
-        "panel-title: Needs review", "panel-subtitle: Earlier judgments whose evidence changed, waiting for another look",
+        "panel-title: Needs review", "panel-subtitle: Earlier link judgments whose evidence changed, waiting for another look",
         "review-link: 17-叙事.Rmd reads panel.csv", "review-reason: The basis changed",
-        "review-was: Earlier judgment: Confirmed · 2026-10-04 21:15", "review-note: Note: 先看缺失值",
+        "review-was: Earlier link judgment: Confirmed · 2026-10-04 21:15", "review-note: Note: 先看缺失值",
         "basis-col-title: The basis then", ": Calls: read.csv, read_dta", "basis-col-title: Now",
-        ": This scan gave no basis", "btn btn-small: Apply the earlier judgment to it",
+        ": This scan gave no basis", "btn btn-small: Apply the earlier link judgment to it",
         "btn btn-small: Still holds", "btn btn-small: Change to rejected", "btn btn-small: Withdraw",
         "form-input:  =  (Note (optional))",
-        "review-was: Earlier judgment: Rejected · Migrated from the old index (when it was judged is not known)",
+        "review-was: Earlier link judgment: Rejected · Migrated from the old index (when the link judgment was made is not known)",
         ": Claim: “精度为 0.87”", ": Number: 0.87", ": Metrics: acc = 0.87",
         ": This scan read both ends but did not find this link",
         "review-reason: The records disagree; to be settled", "basis-col-title: Already in the records",
         "basis-col-title: Migrated", ": 2026-08-02 10:00 · Confirmed (in the command line) · 先看缺失值",
-        ": Migrated from the old index (when it was judged is not known) · Rejected",
+        ": Migrated from the old index (when the link judgment was made is not known) · Rejected",
         "review-link: 17-叙事.Rmd is based on Claim (paper.md) (title: script:复现包/17-叙事.Rmd\nclaim:paper.md#c1\n(backed_by · python-ast))",
         "review-note: Entries both share: 2026-08-01 10:00 · Confirmed (on the relation map)",
         "btn btn-small: Settle as confirmed", "btn btn-small: Settle as rejected",
@@ -246,8 +246,8 @@ def test_14_6_the_review_panel_the_desk_opens_reads_in_english():
     ):
         assert expected in lines, expected
     quiet = [line for line in lines if line.startswith("review-quiet: ")]
-    assert quiet == ["review-quiet:  · Source file cannot be read right now: 复现包/17-叙事.Rmd · Judgment kept (Confirmed)",
-                     "review-quiet:  · This link is not recorded yet · Your judgment: Rejected (2026-10-01 08:00)"]
+    assert quiet == ["review-quiet:  · Source file cannot be read right now: 复现包/17-叙事.Rmd · Link judgment kept (Confirmed)",
+                     "review-quiet:  · This link is not recorded yet · Your link judgment: Rejected (2026-10-01 08:00)"]
 
 
 @needs_node
@@ -269,7 +269,7 @@ def test_14_6_an_act_and_a_refusal_in_the_review_panel_read_in_english():
                + "  conflict.click();\n  await settle(); await settle();\n")
     out = _run_review("en", refused, post={"/api/judgements": {"refuse": "record_untrusted"}})
     shown = [line for line in out["lines"] if line.startswith("err-text") or line.startswith("err-detail-toggle")]
-    assert shown == ["err-text: The judgments’ record file cannot be read right now; restore it first",
+    assert shown == ["err-text: The link judgments’ record file cannot be read right now; restore it first",
                      "err-detail-toggle: Details"]
     assert _chinese(out["lines"]) == []
 
@@ -277,7 +277,10 @@ def test_14_6_an_act_and_a_refusal_in_the_review_panel_read_in_english():
 #: sha256 of the Chinese 待复核 panel of _review("zh"), drawn without /i18n.js -- the page as it
 #: was before V10 made it English-ready (checked against that source, byte for byte): 13.8 #1, a
 #: Chinese screen reads exactly as before.
-_REVIEW_ZH_SHA256 = "9b16dfbfefadc845485509677d53d833b04ce31db431afbeaa6557561ec36ae9"
+#: Moved on purpose by DESIGN.md 18.2 (task V14): a person's confirming or rejecting of a machine
+#: link is 连线确认 where the panel said 判断 (the subtitle, 原连线确认, the old-link buttons and notes,
+#: the quiet rows, the migrated label) -- checked by putting the old words back: the old digest.
+_REVIEW_ZH_SHA256 = "818b8de6f98792a1140c30734c809ea262781f65a83225fa73dc2c9925122e7f"
 
 
 @needs_node
@@ -287,7 +290,7 @@ def test_14_6_the_review_panel_in_chinese_reads_as_before():
     plain, chinese = _run_review(None, _OPEN_FROM_THE_COLUMN), _run_review("zh", _OPEN_FROM_THE_COLUMN)
     assert plain["lines"] == chinese["lines"]
     lines = chinese["lines"]
-    for expected in ("panel-title: 待复核", "review-link: 17-叙事.Rmd 读取 panel.csv", "review-was: 原判断：确认 · 2026-10-04 21:15",
+    for expected in ("panel-title: 待复核", "review-link: 17-叙事.Rmd 读取 panel.csv", "review-was: 原连线确认：确认 · 2026-10-04 21:15",
                      ": 调用：read.csv、read_dta", "btn btn-small: 仍然成立", "review-quiet-title: 不计入待复核",
                      "var-line soft: 实现脚本 build.py：有变化"):
         assert expected in lines, expected
@@ -297,11 +300,11 @@ def test_14_6_the_review_panel_in_chinese_reads_as_before():
 
 @needs_node
 @pytest.mark.parametrize("lang, said", [
-    ("en", ["1 judgment needs review", "2 judgments need review", "1,497 judgments need review"]),
-    ("zh", ["1 条判断待复核", "2 条判断待复核", "1497 条判断待复核"]),
+    ("en", ["1 link judgment needs review", "2 link judgments need review", "1,497 link judgments need review"]),
+    ("zh", ["1 条连线确认待复核", "2 条连线确认待复核", "1497 条连线确认待复核"]),
 ])
 def test_14_6_the_top_bars_review_count_has_a_singular_and_a_plural(lang, said):
-    """Ruled 2026-10-13: the header's 「N 条判断待复核」 is frame -- English in
+    """Ruled 2026-10-13: the header's 「N 条连线确认待复核」 is frame -- English in
     English mode with a singular and a plural and its thousands separated
     (13.5); the Chinese as before. app.html's own code for it, under node."""
     src = APP_HTML.read_text(encoding="utf-8")
