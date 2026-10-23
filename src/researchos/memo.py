@@ -1,4 +1,4 @@
-"""A bounded map kept in memory between requests (DESIGN.md 18.4, item 4).
+"""A bounded map kept in memory between requests (DESIGN.md 18.4, items 4 and 7).
 
 The team paths remember what they worked out about files that never change
 once written -- a published manifest, a signature -- so that a page that asks
@@ -14,6 +14,7 @@ losing an entry costs time, never correctness.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections import OrderedDict
 from typing import Any, Hashable
@@ -55,3 +56,24 @@ class Memo:
     def __len__(self) -> int:
         with self._lock:
             return len(self._held)
+
+
+# -- a file as a key ----------------------------------------------------------------------------------
+#
+# A memory kept by a file's stamp (DESIGN.md 18.4 item 7) trusts `stamp` to change whenever the file does. A file
+# system keeps a modification time only as fine as it keeps it (2 s on FAT), so a file written again within the
+# same stamp could look unchanged; `settled` says a stamp is old enough to be trusted, as `agents.snapshot.RACY_NS`
+# does for the hashes of a picture. A file that is not settled is read every time, as it was.
+
+RACY_NS = 3_000_000_000
+
+
+def stamp(st: os.stat_result) -> tuple[int, int, int, int]:
+    """The device, inode, size and modification time (ns) of a looked-at file."""
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def settled(st: os.stat_result, began_ns: int) -> bool:
+    """The file's modification time lay at least `RACY_NS` before `began_ns` (`time.time_ns()` taken before
+    the file was read), so its stamp stands for its content."""
+    return st.st_mtime_ns + RACY_NS <= began_ns

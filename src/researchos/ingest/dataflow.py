@@ -144,15 +144,17 @@ from __future__ import annotations
 
 import ast
 import logging
+import os
 import posixpath
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Iterable
 
 from researchos import cloud
-from researchos import db
+from researchos import db, memo
 from researchos.ingest import git as git_ingest
 from researchos.ingest import pyconst
 from researchos.ingest import scan as scan_mod
@@ -1027,8 +1029,36 @@ def scan_do_file(
     return _do_outcome(do_rel_path, stata_ingest.scan_text(text, do_rel_path, programs=programs))
 
 
+#: The `Reading` of each script `/api/stata` has read (18.4 item 7), by its path and stamp (device, inode, size and
+#: modification time in ns): a file that is the same file is not read and lexed again. A reading weighs its number of
+#: commands; at most 2,000 scripts and 120,000 commands are kept, least recently used first.
+_READINGS = memo.Memo(2000, 120_000)
+
+
+def _reading_of_file(path: Path) -> stata_ingest.Reading:
+    """`stata_ingest.reading_of(cloud.read_text(path))`, kept while the file's stamp is the same. The cloud check is
+    made every time (a script that went to the cloud since is not served from memory); a hit is served only while
+    the file can still be opened for reading; a stamp is trusted once the file is older than `memo.RACY_NS`, and was
+    the same before and after the read. OSError as `cloud.read_text` raises it."""
+    cloud.check_readable(path)
+    began = time.time_ns()
+    before = os.stat(path)
+    key = (str(path), memo.stamp(before))
+    kept = _READINGS.get(key)
+    if kept is not None and os.access(path, os.R_OK):
+        return kept
+    reading = stata_ingest.reading_of(cloud.read_text(path))
+    if memo.settled(before, began):
+        try:
+            if memo.stamp(os.stat(path)) == key[1]:
+                _READINGS.put(key, reading, len(reading.commands) + 1)
+        except OSError:
+            pass
+    return reading
+
+
 def _stata_scans(
-    repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str],
+    repo_root: Path, do_paths: Iterable[str], ado_paths: Iterable[str], *, remember: bool = False,
 ) -> dict[str, stata_ingest.DoScan | None]:
     """The project's do-files read together (`stata.scan_project`, 15.3),
     None for one that could not be read. A file in a vendored library is
@@ -1040,17 +1070,22 @@ def _stata_scans(
     Globals expand with the project folders a person confirmed
     (`researchos.records.stata.anchors`, 15.3). While that record cannot
     be trusted, nothing is built on it: every do-file is None (reported
-    unreadable), so its links keep the state they had (9.3)."""
+    unreadable), so its links keep the state they had (9.3).
+
+    `remember` (only `/api/stata` asks, 18.4 item 7): each script's reading, its lexed commands, is kept in memory by
+    the script's path and stamp, and the scan is made on those, so a refresh reads only the scripts that changed. The
+    scan itself, which needs every file, is made every time, and its answer is the one a reading of the text gives.
+    The ingest does not ask: what it writes into the index is built on a read of every script."""
     from researchos.records import stata as stata_record  # noqa: PLC0415 -- leaf use
 
-    texts: dict[str, str | None] = {}
+    texts: dict[str, str | stata_ingest.Reading | None] = {}
     for rel in dict.fromkeys([*do_paths, *ado_paths]):
         marker = stata_ingest.vendored(repo_root, rel)
         if marker:
             logger.warning("%s: in a vendored Stata library (%s); listed, not scanned", rel, marker)
             continue
         try:
-            texts[rel] = cloud.read_text(repo_root / rel)
+            texts[rel] = _reading_of_file(repo_root / rel) if remember else cloud.read_text(repo_root / rel)
         except OSError as exc:
             logger.warning("cannot read %s: %s", rel, exc)
             texts[rel] = None

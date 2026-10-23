@@ -256,7 +256,7 @@ def test_12_9_the_sidebar_has_the_projects_and_the_sections_in_order():
     # 18.3: 待办's count sits beside 研究路线, in the 提议 item's style.
     assert nav.count('<span class="side-count" id="side-count-routes"></span>') == 1
     assert nav.index('id="side-count-routes"') < nav.index('data-section="results"')
-    assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in html
+    assert 'projectMenuBtn.textContent = label || noProjectName();' in html
     # 数据与代码 holds the lineage list and 关系图 (the canvas, 12.9).
     assert 'data-subview="lineage"' in html and 'data-subview="canvas"' in html and ">关系图<" in html
 

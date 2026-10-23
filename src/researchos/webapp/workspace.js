@@ -911,18 +911,33 @@
     } finally { if (live(mark)) agentInfoLoading = false; }
     refreshOwnerOptions(); renderSettings(); updateAgentSections();
   }
+  // /api/me and /api/share are the page's shared context (desk.js: the sidebar, the desk and the panels read them
+  // once per project, one read in flight at a time, DESIGN.md 18.4 item 7). Asked of the desk module, which joins a
+  // read already going or answers from the one just made; the answer is copied, since the desk fills the same object
+  // again. null when there is no desk module (a page without it reads for itself, as it always did) or its context
+  // is not this project's, and when it did not ask for the shared folder (`mode` is not a team's role).
+  const TEAM_ROLES = ["pi", "member", "none"];
+  async function sharedContext() {
+    const desk = typeof window !== "undefined" ? window.RODesk : null;
+    if (!desk || typeof desk.ensureContext !== "function") return null;
+    let c = null;
+    try { c = await desk.ensureContext(); } catch (err) { return null; }
+    return c && c.mode !== null && c.epoch === appEpoch() ? { me: c.me, share: c.share, shared: TEAM_ROLES.includes(c.mode) } : null;
+  }
   // Who an owner can be: me and, in a team, its members. /api/share reads the shared folder and may be
   // slow, so it never holds the page; a failure leaves the list as it is.
   async function loadPeople(mark) {
     if (people.loaded || people.loading) return;
     people.loading = true;
     try {
-      const mine = await apiGet("/api/me").catch(() => null);
+      const context = await sharedContext();
+      if (!live(mark)) return;
+      const mine = context ? context.me : await apiGet("/api/me").catch(() => null);
       if (!live(mark)) return;
       const me = mine && mine.me && typeof mine.me.name === "string" && mine.me.name.trim() ? mine.me : null;
       people.me = me ? me.name.trim() : null; refreshOwnerOptions();
       if (["pi", "member"].includes(data && data.mode)) {
-        const share = await apiGet("/api/share").catch(() => null);
+        const share = context && context.shared ? context.share : await apiGet("/api/share").catch(() => null);
         if (!live(mark)) return;
         const seen = new Set(people.me ? [people.me] : []);
         people.team = ((share && share.team) || []).filter((member) => member && typeof member.name === "string" && member.name.trim() && !(me && member.id === me.id))

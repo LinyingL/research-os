@@ -404,7 +404,7 @@ def test_the_project_menu_replaces_the_select_and_offers_what_10_1_lists():
     assert '<div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>' in src
     # 12.11 (V8 U2): the button names the project and nothing else -- 「项目」
     # is the line above it, no ▾; the open project's mark is a drawn check.
-    assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in src
+    assert 'projectMenuBtn.textContent = label || noProjectName();' in src
     assert '<div class="side-eyebrow" id="project-eyebrow" data-i18n>项目</div>' in src
     menu = _function("renderProjectMenu")
     order = [menu.index(s) for s in (

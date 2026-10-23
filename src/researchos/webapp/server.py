@@ -1492,10 +1492,11 @@ def _attempts_config_echo(project_root: Path) -> dict[str, Any] | None:
 
 
 def summary_payload(conn: Connection, project_root: Path, served: ServedProject | None = None) -> dict[str, Any]:
-    node_counts = {t: len(db.get_nodes_by_type(conn, t)) for t in sorted(db.NODE_TYPES)}
-    edge_counts = {t: 0 for t in sorted(db.EDGE_TYPES)}
-    for edge in db.query_edges(conn):
-        edge_counts[edge["type"]] += 1
+    # Counted by SQL (18.4 item 7): no node or edge is loaded to be counted. The index's CHECK keeps a row to
+    # the known types, so the zero-filled lists are exactly the old ones.
+    node_found, edge_found = db.count_nodes_by_type(conn), db.count_edges_by_type(conn)
+    node_counts = {t: node_found.get(t, 0) for t in sorted(db.NODE_TYPES)}
+    edge_counts = {t: edge_found.get(t, 0) for t in sorted(db.EDGE_TYPES)}
     return {
         "project_root": str(project_root),
         # Section 8.10 rule 1: "`researchos status` and `/api/summary` report the

@@ -2205,14 +2205,16 @@ async function loadProjectSummary(force) {
 const projectMenuBtn = document.getElementById("project-menu-btn");
 const projectMenu = document.getElementById("project-menu");
 const projectMenuWrap = document.getElementById("project-menu-wrap");
-const NO_PROJECT_NAME = t("还没有项目");
+// The name shown for no project: looked up when it is drawn, in the language then in force (13.6), not once when the
+// page loads.
+function noProjectName() { return t("还没有项目"); }
 let projectMenuMode = "list"; // "list" | "rename" | "remove"
 
 // 12.11: the button is the project's display name and nothing else; that
 // it opens a menu is said by the control itself (aria-haspopup) and by the
 // 「项目」 line above it, never by a glyph.
 function setProjectMenuLabel(label, path) {
-  projectMenuBtn.textContent = label || NO_PROJECT_NAME;
+  projectMenuBtn.textContent = label || noProjectName();
   projectMenuBtn.title = path ? path + "\n" + t("切换项目或管理列表") : t("添加项目");
 }
 

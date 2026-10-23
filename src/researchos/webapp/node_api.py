@@ -809,7 +809,7 @@ def stata_payload(root: Path, lang: str = "zh") -> dict[str, Any]:
         words = stata_record.message_of(decision) or stata_record.MESSAGES["missing"]
         record = {"state": "untrusted", "reason": decision.reason, "detail": decision.detail or loaded.error or "",
                   "message": settings.say(*words, lang)}
-    scans = dataflow._stata_scans(root, inventory["do"], inventory["ado"])
+    scans = dataflow._stata_scans(root, inventory["do"], inventory["ado"], remember=True)  # 18.4 item 7
     role = stata_record.role(root)
     answers = stata_record.answers_from(loaded)
     heads = stata_folders.head_globals(scans, team=role != "single")

@@ -5165,6 +5165,66 @@ nothing new inside the project.
      context.
    - `/api/stata` remembers each script's reading by path, size and
      modification time.
+   - The one `t()` call made while the page loads is made when it is drawn.
+
+   How it is read:
+   - *The counts.* `db.count_nodes_by_type` and `db.count_edges_by_type` are
+     `SELECT type, COUNT(*) … GROUP BY type`; `summary_payload` takes every
+     type of `NODE_TYPES` and `EDGE_TYPES` from them, in sorted order and
+     with a zero for a type that has none, which is the payload the old
+     count of loaded rows gave (the index's CHECK keeps a row to the known
+     types). `pending` still reads the pending edges, `review` as before.
+     On 12,000 nodes and 18,000 edges the counting took 143 ms and now
+     takes 3 ms.
+   - *The versions.* `find` still reads `agent_commands` and looks at the
+     program (found on the widened `PATH`, or the saved path there and
+     executable) on every call; only the `--version` answer is remembered.
+     `profiles._VERSIONS` is a `Memo` of 32 entries, asked with the path as
+     `find` resolved it, the file's device, inode, size and modification time
+     in ns (`memo.stamp`, the key of the team memories, 4) and the `PATH` the
+     program is started with. An answer is kept only when it is a version
+     (a program that failed, said nothing or timed out gave no answer and is
+     asked again at the next request), the modification time lay at least
+     `memo.RACY_NS` (3 s, as in 2) before the program was started, and the
+     stamp was the same after it ran. `set_commands` clears the memory, so
+     saving locations asks afresh. The payload is the one every request
+     starting the programs gave. Not seen: a program rewritten in place with
+     its time set back, and a program whose answer changes with something
+     other than its file and its `PATH` (an interpreter upgraded under it).
+   - *The shared context.* `desk.js` already reads `/api/me`, `/api/proposals`
+     and, for a team, `/api/share` once per project at a time
+     (`ensureContext`, `loadContext`: one read in flight per data epoch).
+     `workspace.js` asks `RODesk.ensureContext()` for who I am and the team
+     and copies `me` and `share` out of it. It reads them itself, one after
+     the other as it always did, when there is no desk module, when that
+     fails, when the context is not this epoch's, and for `/api/share` alone
+     when the project is a PI's or a member's and the context did not ask for
+     the shared folder (its role read otherwise). A page that is the first to
+     ask starts the read the sidebar would have started, and a sidebar read
+     that comes while it goes joins it. The owner list waits for the whole
+     context, a slow shared folder included; before, the team alone waited
+     for `/api/share`, and who I am did not.
+   - *The scripts.* `dataflow._stata_scans(…, remember=True)`, which only
+     `/api/stata` asks for, keeps for each script the `stata.Reading` of its
+     text: the lexer's commands and problem and the names `st_local()` and
+     `st_global()` mention, which depend on the text alone and are never
+     changed. `dataflow._READINGS` is a `Memo` of at most 2,000 scripts and
+     120,000 commands, by the path and `memo.stamp` of the file. A request
+     checks the cloud (11.1) for every script as before, looks at the file
+     once, and takes the reading kept when the stamp is the same and the file
+     can still be opened for reading; otherwise it reads and lexes the file,
+     and keeps the reading if the file had settled (`memo.RACY_NS`) and its
+     stamp was the same after the read. `_File` is made from the text or from
+     the reading, with the same warnings; the project pass (macros, programs,
+     runs, the calls) is made on every request, since it needs every file.
+     The ingest that writes the index asks without `remember` and reads every
+     script as before. On 120 scripts of 36,000 commands the request took
+     797 ms with nothing remembered and 444 ms with it; one edited script
+     adds its own reading.
+   - *The text.* app.html's `NO_PROJECT_NAME` constant is the function
+     `noProjectName()`: the name is looked up in the language in force when
+     the project button is drawn (13.6), and no script makes a constant of a
+     `t()` call while it loads.
 
 ### 18.5 Acceptance
 
