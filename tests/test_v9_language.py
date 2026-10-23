@@ -1637,7 +1637,7 @@ def _sync_result(lang: str) -> dict[str, Any]:
                           {"path": "figs/图3.png", "official_copy": "figs/图3.official.png", "reason": "x"}],
             "kept_yours": [{"path": ".researchos/canvas.json",
                             "reason": w("关系图上的摆放是每个人自己的，不随同步改变",
-                                        "the arrangement on the relation map is each person’s own and does not change "
+                                        "the arrangement on the relationship map is each person’s own and does not change "
                                         "with a sync")}]}
 
 
@@ -1677,7 +1677,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
         assert shown == [
             "team-done: Synced to version 1,497; sent your 3 changes to comments, link judgments or hand-drawn links to the shared folder; "
             "updated 2 files; removed 1 file the official version deleted; kept your versions of 2 files changed on both "
-            "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relation "
+            "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relationship "
             "map is each person’s own and does not change with a sync); your comments and links still wait for the PI to "
             "publish, so the record files stay yours for now.",
             "team-done: The official version’s data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",

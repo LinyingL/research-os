@@ -228,7 +228,7 @@ def test_14_6_the_review_panel_the_desk_opens_reads_in_english():
         "basis-col-title: Migrated", ": 2026-08-02 10:00 · Confirmed (in the command line) · 先看缺失值",
         ": Migrated from the old index (when the link judgment was made is not known) · Rejected",
         "review-link: 17-叙事.Rmd is based on Claim (paper.md) (title: script:复现包/17-叙事.Rmd\nclaim:paper.md#c1\n(backed_by · python-ast))",
-        "review-note: Entries both share: 2026-08-01 10:00 · Confirmed (on the relation map)",
+        "review-note: Entries both share: 2026-08-01 10:00 · Confirmed (on the relationship map)",
         "btn btn-small: Settle as confirmed", "btn btn-small: Settle as rejected",
         "review-quiet-title: Not counted in Needs review",
         "review-quiet-title: Variable cards: the implementation changed",

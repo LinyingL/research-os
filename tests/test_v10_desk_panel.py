@@ -223,7 +223,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
 @needs_node
 def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     """English mode: every word Research OS writes in the panel is English
-    (13.4: Verdict, Result, Provenance, Grew out of, What grew out of it),
+    (13.4: Research assessment, Result, Provenance, Grew out of, What grew out of it),
     the researcher's text as written; no arrows or emoji, no 节点 or 画布."""
     out = _run(_case("pi", "en"), "await window.RODesk.openAttempt(" + json.dumps(A16) + ");", lang="en")
     lines = [line.split(" = ")[0] if " = " in line and "(" not in line.split(" = ")[1] else line for line in out["lines"]]

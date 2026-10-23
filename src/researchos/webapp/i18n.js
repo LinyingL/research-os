@@ -584,7 +584,7 @@
     "否决": "Rejected",
     "撤回": "Withdraw",
     "撤销": "Undo",
-    "在关系图上": "on the relation map",
+    "在关系图上": "on the relationship map",
     "在命令行里": "in the command line",
     "通过 MCP": "through MCP",
     "引用文献": "cites",

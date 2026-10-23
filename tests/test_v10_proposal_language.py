@@ -293,7 +293,7 @@ def test_14_6_a_members_draft_in_the_panel_reads_in_the_screens_language(lang):
                  w("team-help: 尝试 #16 的其他字段修改不属于修改研究判断，不会发送",
                    "team-help: Changes to the other fields of attempt #16 are not part of a research assessment change and are not sent"),
                  w("team-help: 关系图上的摆放不随提议发送：每个人保留自己的",
-                   "team-help: Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
+                   "team-help: Arrangements on the relationship map do not travel with a proposal: everyone keeps their own"),
                  w("team-line writes: 发送会在公盘的「提议/li@example.com/」里写入一份新的提议，带上 2 个文件（其中 1 个大文件按内容只存一份）；"
                    "写成以后不再改动。你的工作副本不会改变。",
                    "team-line writes: Sending writes a new proposal into “提议/li@example.com/” (your proposals folder) in the shared "

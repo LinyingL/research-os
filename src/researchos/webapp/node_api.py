@@ -346,7 +346,7 @@ _NOT_CARRIED = (
     (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、连线确认和手工连线随同步发送，不需要批准",
      lambda m: "Comments, link judgments and hand-drawn links travel with sync, with no approval needed"),
     (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
-     lambda m: "Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
+     lambda m: "Arrangements on the relationship map do not travel with a proposal: everyone keeps their own"),
     (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议",
      lambda m: "Research OS's own record files are not part of a proposal"),
     (r"^not chosen for this proposal$", lambda m: "没有选进这份提议", lambda m: "Not chosen for this proposal"),

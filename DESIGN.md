@@ -3225,6 +3225,7 @@ has 「 」.
 | 中文 | English |
 |---|---|
 | 工作台 | Desk |
+| 项目首页 | Project home |
 | 研究路线 | Research routes |
 | 图表与论断 | Figures and claims |
 | 变量 | Variables |
@@ -3241,12 +3242,12 @@ has 「 」.
 | 其它 | Other |
 | 来龙去脉 | Provenance |
 | 改动与备注 | Changes and comments |
-| 判断 | Judgments |
-| 关系图 | Relation map |
-| 尝试 / 判决 / 结果 | Attempt / Verdict / Result |
+| 连线确认 | Link judgments |
+| 关系图 | Relationship map |
+| 尝试 / 研究判断 / 结果 | Attempt / Research assessment / Result |
 | 待复核 | Needs review |
-| 缺来源 / 补上来源 | Missing source / Add source |
-| 缺尝试 / 关联文件 | No attempt / Link files |
+| 缺来源 / 补上来源 | Missing source / Add a source |
+| 缺尝试 / 关联文件 | Missing attempt / Link files |
 | 公盘 | Shared folder |
 | 正式版本 | Official version |
 | 工作副本 | Working copy |
@@ -3257,13 +3258,36 @@ has 「 」.
 | 已批准，待同步 | Approved, awaiting sync |
 | 本机 | This Mac |
 | 最初的研究者 | Original researcher |
+| 负责人 | Owner |
+| 任务 | Task |
+| 笔记 | Note |
+| 备注 | Comment |
+| 结果记录 | Result records |
+| 实验 | Experiment |
+| 输出 | Outputs |
+| 未识别生成脚本 | No generating script identified |
+| 中间数据 | Intermediate data |
+| 同名文件 | Same-name files |
 | 含义 / 输入 / 构建口径 | Meaning / Inputs / Construction |
 | 实现依据 / 人工决策 | Implementation / Human decision |
 | 草稿 / 确认这一版 | Draft / Confirm this version |
 
-Verdicts: the six default statuses and 「其它」 take the words above. A
-status the researcher named in `[verdict_labels]` shows their word as
-written (status `labelled`), in either language.
+This table is kept as the page speaks (amended by 18.2, task V14). A row
+written `A / B / C` gives three words in the order written. A counted word
+(13.5) is given in one form, and the page's entry holds both.
+`tests/test_glossary.py` reads this table and the lists of words below it
+and in 14.6, 15.5 and 17.9, and holds the English table in `i18n.js` to
+them in two ways. A Chinese word that is a key there carries exactly the
+English written here (a counted word, either of its two forms). And the names
+that sentences carry (研究判断, 连线确认, 正式版本, 关系图 and the others the
+test lists) read the same inside every sentence that has them. A word that is
+no key of its own (it lives only inside sentences, or belongs to a page not
+yet converted, as 含义 to 确认这一版 do, 13.7) is not compared. When a row
+changes here, the test shows each place the page still has the old word.
+
+Research assessments: the six default statuses and 「其它」 take the words
+above. A status the researcher named in `[verdict_labels]` shows their word
+as written (status `labelled`), in either language.
 
 Fixed for the desk and the frame (first increment): 等你批准 "Awaiting your
 approval"; 我的提议 "My proposals"; 你上次查看以来的改动 "Changes since you
@@ -3467,7 +3491,7 @@ Beside the map, newest first:
 - **待复核**: judgments whose basis changed, under the attempt they belong
   to (through the membership rule of 14.3), else under 「不属于任何尝试」
   (claims, variable cards, files no attempt holds).
-- **官方版本有更新** and 同步 (a member), as the desk had it.
+- **正式版本有更新** and 同步 (a member), as the desk had it.
 - Lines with a missing end (14.2).
 
 With nothing to do the column says so in one quiet line.

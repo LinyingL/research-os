@@ -58,6 +58,14 @@
   comments". 笔记 ("Note") is only a document in 项目首页. A proposal shows the
   备注 of a line you drew as 备注, where it said 说明. Nothing on disk changes:
   `notes.toml`, its header and the `researchos note` command keep their names.
+- Keep the glossary true. DESIGN 13.4's table now lists the words as the page
+  speaks them (项目首页, 连线确认, 研究判断, 备注, 笔记, 图表与论断, 正式版本,
+  "Relationship map", "Add a source", "Missing attempt" and the rest), and a new
+  test, `tests/test_glossary.py`, holds the English table to it: a word of the
+  glossary that is a key carries exactly the English written there, and a
+  name such as 连线确认 reads the same in every sentence that has it. The
+  English said "relation map" in a few sentences (where a confirmation was made,
+  whose arrangement stays their own); it now says "relationship map" everywhere.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

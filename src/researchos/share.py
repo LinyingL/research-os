@@ -1279,9 +1279,9 @@ def available(root: str | Path) -> dict[str, Any]:
 
 #: Why a file of the member's stays theirs in a sync, in the page's language (13.6): the reasons the
 #: preview and the sync give, Chinese for the command line.
-_CANVAS_KEPT = ("关系图上的摆放是每个人自己的", "the arrangement on the relation map is each person’s own")
+_CANVAS_KEPT = ("关系图上的摆放是每个人自己的", "the arrangement on the relationship map is each person’s own")
 _CANVAS_KEPT_SYNC = ("关系图上的摆放是每个人自己的，不随同步改变",
-                     "the arrangement on the relation map is each person’s own and does not change with a sync")
+                     "the arrangement on the relationship map is each person’s own and does not change with a sync")
 _DELETED_KEPT = ("正式版本删除了这个文件；你改过它，所以留着你的",
                  "the official version deleted this file; you changed it, so yours is kept")
 _BOTH_CHANGED = ("你和正式版本都改了这个文件：留着你的，正式版本的放在旁边",
