@@ -7,6 +7,7 @@
 // mkButton, apiGet, apiPost, setStatus, renderBlockingError,
 // renderViewFailure, clearProjectState, ownMark, openFilePanel,
 // openAttemptForm, openVariableCard, activateView, humanRecordsBlocked,
+// refreshCurrentView, lastGeneration,
 // ACT_WORDS, state, views, currentView, RODesk, RCECanvas, ROTeam -- whether
 // this person edits or proposes, 「当时的依据」, U4) only at run time, never
 // while loading.
@@ -425,7 +426,7 @@
     if (page.type === "variable") actions.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
     if (page.paper) {
       // 12.13: a draft's own page marks it as the paper, or no longer.
-      actions.appendChild(paperButton(page.paper.draft, page.paper.marked, status, () => loadNode(views.node, true)));
+      actions.appendChild(paperButton(page.paper.draft, page.paper.marked, status));
       marks.appendChild(mk("span", "status-label tone-" + (page.paper.marked ? "olive" : "plain"),
         page.paper.marked ? t("论文正文") : t("不是论文正文")));
       if (!head.contains(marks)) head.insertBefore(marks, actions.parentNode === head ? actions : null);
@@ -1234,19 +1235,25 @@
 
   // 12.13: 「设为论文正文」 / 「不再作为论文正文」 -- one entry appended to
   // .researchos/papers.toml; in a member's copy it travels with the next sync.
-  function paperButton(draft, marked, status, done) {
+  // 18.4 item 1: as every other write of the page does, it keeps the generation
+  // the POST returns (so the poll does not find a move this page has already
+  // read) and refreshes the page's views itself -- once, not once here and
+  // again when the poll sees the generation move.
+  function paperButton(draft, marked, status) {
     const b = mkButton(marked ? t("不再作为论文正文") : t("设为论文正文"), "btn btn-small", async () => {
       b.disabled = true;
       setStatus(status, "", t("正在记下…"));
+      let res;
       try {
-        await apiPost("/api/papers", { draft: draft, marked: !marked });
+        res = await apiPost("/api/papers", { draft: draft, marked: !marked });
       } catch (err) {
         b.disabled = false;
         setStatus(status, "err", t("没能记下"), err);
         return;
       }
       setStatus(status, "ok", marked ? t("已不再作为论文正文。") : t("已设为论文正文：它的论断会出现在图表与论断里。"));
-      if (done) done();
+      if (res && typeof res.generation === "number" && typeof lastGeneration !== "undefined") lastGeneration = res.generation;
+      if (typeof refreshCurrentView === "function") await refreshCurrentView();
     });
     const blocked = humanRecordsBlocked();
     if (blocked) { b.disabled = true; b.title = blocked; }
@@ -1303,7 +1310,7 @@
     const head = mk("div", "res-draft-summary");
     head.append(link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
       mk("span", "node-sub-inline", d.claims ? t("{n} 处带数字的句子，不列出", { n: d.claims }) : t("没有带数字的句子")));
-    head.appendChild(paperButton(d.file, false, status, () => loadResults(views.results, true)));
+    head.appendChild(paperButton(d.file, false, status));
     row.appendChild(head);
     return row;
   }
@@ -1313,7 +1320,7 @@
     const summary = mk("summary", "res-draft-summary");
     summary.append(chevron(), mk("span", "mono", c.file), mk("span", "node-sub-inline", t("{n} 条论断", { n: c.claims != null ? c.claims : c.count })));
     if (status) {
-      const off = paperButton(c.file, true, status, () => loadResults(views.results, true));
+      const off = paperButton(c.file, true, status);
       off.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); }); // not a toggle
       summary.appendChild(off);
     }

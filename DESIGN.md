@@ -4915,6 +4915,29 @@ nothing new inside the project.
    configuration, link flags and variable cards are read once; file
    checks are remembered; a figure is traced once. 设为论文正文 keeps the
    generation it gets back.
+
+   How it is read:
+   - *The context.* `trace.Shared(conn, root)` is made once per request by
+     `nodepage.results` (the page, and a draft's claims) and handed to each
+     `trace.chain(…, shared=)`. It is per request and per thread, and keeps
+     nothing between requests. It reads nothing until a trace first needs
+     it: the link flags; `attempts.toml` once, the verdict words taken from
+     that read; the attempt rows, with an index from a step file's path to
+     the attempts that name it (an attempt's `via` keeps its step files in
+     the order its description gives them, then the files attached by hand,
+     as before); the variable cards and a table's header; whether a path is
+     on disk. A read that fails is not kept: an `attempts.toml` that cannot be
+     read as text fails the first trace that needs it, with the same error,
+     and building the context never fails. `chain` without a context builds
+     its own, so the CLI, `/api/trace` and the node page read as they did.
+   - *What the page asks.* The states need the breaks and the attempts only,
+     so `chain(…, variables=False)` leaves the cards unread (`variables`
+     comes back empty). A figure two sections include is traced once, and
+     each item is given a copy of its state: the officialness marks are
+     written into the payload in place.
+   - *The mark.* 设为论文正文 stores the generation the POST returns in the
+     page's counter and refreshes the page's views itself, as the page's other
+     writes do, so the poll that follows finds nothing new.
 2. **Agent runs:**
    - The after-picture reuses the before hash of a file whose size,
      modification time and inode are unchanged.

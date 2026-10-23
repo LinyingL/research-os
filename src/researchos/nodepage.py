@@ -585,8 +585,16 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
 # -- 图表与论断 (12.9) ----------------------------------------------------------------------------------
 
 
-def _trace_state(conn: Connection, root: Path, node_id: str) -> dict[str, Any]:
-    chain = trace_mod.chain(conn, root, node_id)
+def _trace_state(conn: Connection, root: Path, node_id: str, shared: trace_mod.Shared | None = None,
+                 memo: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """A figure's or table's trace state (18.4 item 1). `shared`: the
+    request's trace context. `memo`: the states already worked out in this
+    request, by node id -- a figure that two sections include is traced
+    once. Every answer is a copy of its own: `officialness.annotate` writes
+    into the payload in place, and two items must not be one object."""
+    if memo is not None and node_id in memo:
+        return _copy_state(memo[node_id])
+    chain = trace_mod.chain(conn, root, node_id, shared=shared, variables=False)  # only the breaks are read
     kinds = [b["kind"] for b in chain["breaks"]]
     if any(k in SOURCE_BREAKS for k in kinds):
         state = "no_source"
@@ -594,17 +602,27 @@ def _trace_state(conn: Connection, root: Path, node_id: str) -> dict[str, Any]:
         state = "no_attempt"
     else:
         state = "complete"
-    return {"state": state, "label": TRACE_STATES[state], "breaks": [b["label"] for b in chain["breaks"]]}
+    out = {"state": state, "label": TRACE_STATES[state], "breaks": [b["label"] for b in chain["breaks"]]}
+    if memo is None:
+        return out
+    memo[node_id] = out
+    return _copy_state(out)
 
 
-def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _copy_state(state: dict[str, Any]) -> dict[str, Any]:
+    return {**state, "breaks": list(state["breaks"])}
+
+
+def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, dict[str, Any]],
+                 shared: trace_mod.Shared | None = None) -> dict[str, Any]:
     backing = [e["dst"] for e in _live(db.query_edges(conn, src=claim_id, type="backed_by"))]
     if not backing:
         return {"state": "no_source", "label": TRACE_STATES["no_source"], "breaks": ["没有找到支撑这个数字的结果"]}
     attempted = False
     for target in backing:
         if target not in cache:
-            chain = trace_mod.chain(conn, root, target) if (notes_mod.node_path(target) or db.get_node(conn, target)) else None
+            chain = (trace_mod.chain(conn, root, target, shared=shared, variables=False)  # only the attempts are read
+                     if (notes_mod.node_path(target) or db.get_node(conn, target)) else None)
             cache[target] = {"attempts": bool(chain and chain.get("attempts"))}
         attempted = attempted or cache[target]["attempts"]
     state = "complete" if attempted else "no_attempt"
@@ -619,6 +637,11 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
     root = Path(project_root)
     if draft is not None:
         return _draft_claims(conn, root, draft)
+    # One trace context for the request (18.4 item 1). It reads nothing until
+    # a trace first needs it, so what cannot be read fails where the first
+    # trace fails, as it always did.
+    shared = trace_mod.Shared(conn, root)
+    states: dict[str, dict[str, Any]] = {}
     groups: dict[str, dict[str, Any]] = {}
     included: set[str] = set()
     for edge in _live(db.query_edges(conn, type="includes")):
@@ -636,7 +659,7 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         included.add(target)
         item = _item(conn, root, target)
         item["kind"] = "图" if item["type"] == "figure" else "表"
-        item["trace"] = _trace_state(conn, root, target)
+        item["trace"] = _trace_state(conn, root, target, shared, states)
         group["items"].append(item)
     loose = []
     for figure in db.get_nodes_by_type(conn, "figure"):
@@ -644,7 +667,7 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
             continue
         item = _item(conn, root, figure["id"])
         item["kind"] = "图"
-        item["trace"] = _trace_state(conn, root, figure["id"])
+        item["trace"] = _trace_state(conn, root, figure["id"], shared, states)
         loose.append(item)
     ordered = sorted(groups.values(), key=lambda g: (g["file"] or "", g["section"]))
     for g in ordered:
@@ -695,6 +718,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
     prefix = f"claim:{rel}#"
     rows = conn.execute("SELECT id FROM nodes WHERE type = 'claim' AND substr(id, 1, ?) = ?", (len(prefix), prefix)).fetchall()
     cache: dict[str, dict[str, Any]] = {}
+    shared = trace_mod.Shared(conn, root)  # one trace context for the request (18.4 item 1)
     sections: dict[str, dict[str, Any]] = {}
     claims = [db.get_node(conn, r[0]) for r in rows[:CLAIM_LIMIT]]
     claims = [c for c in claims if c is not None]
@@ -709,7 +733,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
         group["claims"].append({
             "id": claim["id"], "sentence": claim["attrs"].get("sentence") or claim.get("title") or "",
             "number": claim["attrs"].get("printed_number"), "line": claim["attrs"].get("line"),
-            "trace": _claim_state(conn, root, claim["id"], cache),
+            "trace": _claim_state(conn, root, claim["id"], cache, shared),
         })
     return {"file": rel, "sections": list(sections.values()), "total": len(rows), "shown": len(claims),
             "states": TRACE_STATES}
