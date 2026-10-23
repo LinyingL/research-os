@@ -186,7 +186,7 @@ def test_agents_work_without_a_project_served(tmp_path, monkeypatch):
     try:
         status, data = a.get("/api/agents")
         assert status == 200, data
-        assert [r["runner"] for r in data["runners"]] == ["claude-code", "opencode", "codex"]
+        assert [r["runner"] for r in data["runners"]] == ["claude-code", "opencode", "codex", "deepseek-harness"]
         assert all(r["found"] and r["version"] == "fake 1.0" and r["problem"] is None for r in data["runners"])
         assert data["runners"][0]["path"] == str(a.bins["claude-code"])
         assert data["runners"][0]["label"] == "Claude Code"
@@ -216,6 +216,17 @@ def test_claude_model_versions_are_saved_without_aliasing(api):
     assert api.post("/api/settings/agents", {"agents": chosen}, project=False)[0] == 200
     status, data = api.get("/api/agents")
     assert status == 200 and [a["model"] for a in data["agents"]] == versions
+
+
+def test_harness_models_keep_account_and_api_routes_distinct(api):
+    status, data = api.get("/api/agents/models?runner=deepseek-harness")
+    assert status == 200 and data["models"] == list(profiles.HARNESS_MODEL_SUGGESTIONS)
+    chosen = [{"runner": "deepseek-harness", "model": m} for m in data["models"]]
+    status, saved = api.post("/api/settings/agents", {"agents": chosen}, project=False)
+    assert status == 200 and saved["harness_models"] == data["models"]
+    assert [a["model"] for a in saved["agents"]] == data["models"]
+    assert api.post("/api/settings/agents", {"agents": [{"runner": "deepseek-harness", "model": "deepseek-flash"}]},
+                    project=False)[0] == 400
 
 
 def test_agents_payload_shape_with_agents_and_a_missing_runner(api, tmp_path):
@@ -268,7 +279,7 @@ def test_settings_round_trip(api, tmp_path):
                                                       "commands": {"claude-code": ""}}, project=False)
     assert status == 200
     assert data["timeout_minutes"] == 120 and data["max_budget_usd"] is None and data["agents"] == []
-    assert profiles.commands() == {r: str(api.bins[r]) for r in ("opencode", "codex")}
+    assert profiles.commands() == {r: str(api.bins[r]) for r in ("opencode", "codex", "deepseek-harness")}
     assert api.post("/api/settings/agents", {}, project=False)[1] == data  # nothing sent, nothing changed
 
 

@@ -153,9 +153,10 @@ def programs(tmp_path, monkeypatch):
     claude = _program(tmp_path / "claude-fake", "2.0.1 (Claude Code)")
     opencode = _program(tmp_path / "opencode-fake", "0.9.0")
     codex = _program(tmp_path / "codex-fake", "codex-cli 0.162.0")
-    profiles.set_commands({"claude-code": str(claude), "opencode": str(opencode), "codex": str(codex)})
+    harness = _program(tmp_path / "dsh-fake", "0.2.1-rc.2")
+    profiles.set_commands({"claude-code": str(claude), "opencode": str(opencode), "codex": str(codex), "deepseek-harness": str(harness)})
     started.clear()
-    yield type("Programs", (), {"claude": claude, "opencode": opencode, "codex": codex, "started": started})
+    yield type("Programs", (), {"claude": claude, "opencode": opencode, "codex": codex, "harness": harness, "started": started})
     profiles._VERSIONS.clear()
 
 
@@ -163,17 +164,17 @@ def test_the_agents_payload_is_the_old_payload_and_the_programs_are_asked_once(p
     """The page asks three times: the payload is the one the old path gives (every program asked every time)
     each time, and the programs were started for their version once each, not once per request."""
     first = server.agents_payload()
-    assert programs.started == [str(programs.claude), str(programs.opencode), str(programs.codex)]
+    assert programs.started == [str(programs.claude), str(programs.opencode), str(programs.codex), str(programs.harness)]
     second, third = server.agents_payload(), server.agents_payload()
-    assert programs.started == [str(programs.claude), str(programs.opencode), str(programs.codex)]  # nothing started again
+    assert programs.started == [str(programs.claude), str(programs.opencode), str(programs.codex), str(programs.harness)]  # nothing started again
     assert _dumps(first) == _dumps(second) == _dumps(third)
-    assert [r["version"] for r in first["runners"]] == ["2.0.1 (Claude Code)", "0.9.0", "codex-cli 0.162.0"]
+    assert [r["version"] for r in first["runners"]] == ["2.0.1 (Claude Code)", "0.9.0", "codex-cli 0.162.0", "0.2.1-rc.2"]
     # the old path: `find` asks for the version every time
     with monkeypatch.context() as old:
         old.setattr(profiles, "_remembered_version", profiles._version_of)
         before = len(programs.started)
         assert _dumps(server.agents_payload()) == _dumps(first)
-        assert len(programs.started) == before + 3
+        assert len(programs.started) == before + 4
 
 
 def test_a_program_that_changed_is_asked_again(programs):

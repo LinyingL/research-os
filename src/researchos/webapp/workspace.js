@@ -742,8 +742,8 @@
   // A task whose owner is an agent on this Mac gets its run in the row: 运行, then the state in
   // words (17.9), 停止, 运行记录, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
   // engine and follows a run by polling; what an agent may not do is held there (17.5).
-  const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex" };
-  const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex" };
+  const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex", "deepseek-harness": "DeepSeek Harness" };
+  const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
   const OWNER_OTHER = "\u0000other", OWNER_SETTINGS = "\u0000settings";
   const POLL_MS = 2000, POLL_MAX_MS = 30000;
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
@@ -803,6 +803,7 @@
     kept: () => t("你选择保留"), protected: () => t("属于 Research OS 的记录文件夹或 git，撤回不会动它"),
   };
   const PRIVACY = {
+    "deepseek-harness": () => t("DeepSeek Harness 会把它读到的项目内容发送给 DeepSeek。"),
     codex: () => t("Codex 会把它读到的项目内容发送给 OpenAI。"),
     "claude-code": () => t("Claude Code 会把它读到的项目内容发送给 Anthropic。"),
     opencode: () => t("OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。"),
@@ -1561,18 +1562,21 @@
     row.append(quiet((PRIVACY[r.runner] || PRIVACY.opencode)()));
     if (r.runner === "opencode") row.append(quiet(t("OpenCode 没有逐步检查：运行结束后才核对哪些文件被改动，越界的改动会列出来，可以撤回。")));
     if (r.runner === "codex") row.append(quiet(t("Codex 使用工作目录写入沙箱；运行结束后核对改动，并提供可用的撤回。")));
+    if (r.runner === "deepseek-harness") row.append(quiet(t("支持桌面端自带的 dsh。账户选项使用 Harness 登录；API Key 选项使用 Harness 的密钥设置。")));
     return row;
   }
   function fillModelList() {
     if (!ui || !ui.modelList) return;
     const runner = settingsInputs.runner;
     const catalog = modelsState[runner] || {};
-    const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || []) : (catalog.list || []);
+    const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || [])
+      : runner === "deepseek-harness" ? ((agentInfo && agentInfo.harness_models) || []) : (catalog.list || []);
     const placeholder = el("option", null, t("选择模型版本…")); placeholder.value = "";
     const custom = el("option", null, t("手动填写完整 ID…")); custom.value = "__custom__";
     ui.modelList.replaceChildren(placeholder, ...names.map((name) => {
       const match = runner === "claude-code" && /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(name);
-      const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name : name;
+      const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name
+        : runner === "deepseek-harness" ? (name.startsWith("deepseek-account/") ? t("账户") : "API Key") + " · " + name : name;
       const option = el("option", null, label); option.value = name; return option;
     }), custom);
     const manual = settingsInputs.customModel || (!!settingsInputs.model && !names.includes(settingsInputs.model));
@@ -1585,7 +1589,7 @@
     }
   }
   async function loadModels(runner, refresh) {
-    if (runner === "claude-code") return;
+    if (runner === "claude-code" || runner === "deepseek-harness") return;
     const catalog = modelsState[runner] || {};
     if (catalog.loading || (!refresh && (catalog.list || catalog.error))) return;
     const found = agentInfo && (agentInfo.runners || []).find((r) => r.runner === runner);
@@ -1638,8 +1642,9 @@
       saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, t("已添加"), () => { settingsInputs.model = ""; settingsInputs.customModel = false; });
     }); keyed(add, "set-add"); add.disabled = runner.disabled = model.disabled = settingsBusy;
     const refresh = button(t("刷新模型列表"), () => loadModels(settingsInputs.runner, true));
-    refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", runner.value === "claude-code");
-    runner.addEventListener("change", () => refresh.classList.toggle("hidden", runner.value === "claude-code"));
+    const suggested = () => runner.value === "claude-code" || runner.value === "deepseek-harness";
+    refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", suggested());
+    runner.addEventListener("change", () => refresh.classList.toggle("hidden", suggested()));
     form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, add, refresh);
     box.append(form, ui.modelNote);
     fillModelList();

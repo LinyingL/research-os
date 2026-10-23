@@ -55,7 +55,7 @@ def arg_after(*names):
     return None
 
 
-session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_after("resume") or "codex_fake_" + str(os.getpid())) if flavor == "codex" else (arg_after("--session") or "ses_fake_" + str(os.getpid()))
+session = (arg_after("--session-id") or "session-" + str(os.getpid())) if flavor == "deepseek-harness" else arg_after("--session-id", "--resume") if flavor == "claude" else (arg_after("resume") or "codex_fake_" + str(os.getpid())) if flavor == "codex" else (arg_after("--session") or "ses_fake_" + str(os.getpid()))
 with open(HERE / "calls.jsonl", "a") as handle:
     handle.write(json.dumps({"argv": sys.argv, "stdin": stdin_text, "cwd": os.getcwd(),
                              "env": {k: v for k, v in os.environ.items()
@@ -80,7 +80,9 @@ cost = 0.0
 for step in scenario.get("steps", []):
     op = step["op"]
     if op == "init":
-        if flavor == "codex":
+        if flavor == "deepseek-harness":
+            emit({"type": "session", "sessionId": session, "cwd": os.getcwd()})
+        elif flavor == "codex":
             emit({"type": "thread.started", "thread_id": session})
             emit({"type": "turn.started"})
         elif flavor == "claude":
@@ -89,14 +91,18 @@ for step in scenario.get("steps", []):
         else:
             emit({"type": "step_start", "timestamp": 1, "sessionID": session, "part": {"type": "step-start"}})
     elif op == "say":
-        if flavor == "codex":
+        if flavor == "deepseek-harness":
+            emit({"type": "text", "text": step["text"]})
+        elif flavor == "codex":
             emit({"type": "item.completed", "item": {"id": "say", "type": "agent_message", "text": step["text"]}})
         elif flavor == "claude":
             emit({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": step["text"]}]}})
         else:
             emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": step["text"]}})
     elif op == "tool":
-        if flavor == "codex":
+        if flavor == "deepseek-harness":
+            emit({"type": "tool_call", "callId": "1", "tool": step["name"], "input": step["input"]})
+        elif flavor == "codex":
             emit({"type": "item.completed", "item": {"id": "tool", "type": "mcp_tool_call", "server": "researchos", "tool": step["name"], "arguments": step["input"]}})
         elif flavor == "claude":
             emit({"type": "assistant", "session_id": session, "message": {"content": [
@@ -169,7 +175,10 @@ for step in scenario.get("steps", []):
                            tasks_sha=saved["tasks_revision"], paths=[doc["path"], "research/tasks.json"])
     elif op == "result":
         cost = step.get("cost", 0.0123)
-        if flavor == "codex":
+        if flavor == "deepseek-harness":
+            reason = {"kind": "error", "message": step.get("text", "boom")} if step.get("is_error") else {"kind": "completed"}
+            emit({"type": "final", "sessionId": session, "reason": reason, "text": step.get("text", "All done.")})
+        elif flavor == "codex":
             if step.get("is_error"):
                 emit({"type": "turn.failed", "error": {"message": step.get("text", "boom")}})
             else:
@@ -574,18 +583,20 @@ def test_opencode_error_event_fails(scene: Scene):
     assert run["state"] == "failed" and run["error"] == {"code": "model_error", "detail": "provider said no"}
 
 
-def test_codex_question_resume_report_and_undo(scene: Scene):
-    scene.write_tasks([{"id": "t1", "text": "Compare paper planes", "owner": "agent:codex:gpt-6.1-sol"}])
-    first = scene.go([init_step(), {"op": "ask", "question": "Which design?"}, finish_step("Waiting")], runner="codex")
-    assert first["state"] == "needs_input" and first["session_id"].startswith("codex_fake_")
-    assert first["model"] == "gpt-6.1-sol" and first["cost_usd"] is None
+@pytest.mark.parametrize("runner,model,sid_prefix", [("codex", "gpt-6.1-sol", "codex_fake_"),
+                                                    ("deepseek-harness", "deepseek-account/deepseek-flash", "session-")])
+def test_agent_question_resume_report_and_undo(scene: Scene, runner, model, sid_prefix):
+    scene.write_tasks([{"id": "t1", "text": "Compare paper planes", "owner": f"agent:{runner}:{model}"}])
+    first = scene.go([init_step(), {"op": "ask", "question": "Which design?"}, finish_step("Waiting")], runner=runner)
+    assert first["state"] == "needs_input" and first["session_id"].startswith(sid_prefix)
+    assert first["model"] == model and first["cost_usd"] is None
     scene.scenario([init_step(), {"op": "write", "path": "comparison.py", "text": "design = 'A'\n"},
-                    {"op": "complete", "report": "Compared design A."}, finish_step("Done")], runner="codex")
+                    {"op": "complete", "report": "Compared design A."}, finish_step("Done")], runner=runner)
     second = scene.wait(scene.manager.reply(scene.root, scene.pid, first["id"], "Design A", by=None,
                                             by_name=None, lang="en")["id"])
     assert second["state"] == "done" and scene.tasks()["t1"]["done"]
-    call = scene.calls("codex")[-1]
-    assert call["argv"][-3:] == ["resume", first["session_id"], "-"]
+    call = scene.calls(runner)[-1]
+    assert call["argv"][-3:] == ["resume" if runner == "codex" else "--session-id", first["session_id"], "-"]
     assert "Design A" in call["stdin"]
     assert (scene.root / scene.tasks()["t1"]["report"]).exists()
     scene.manager.revert(scene.root, scene.pid, second["id"], by=None)

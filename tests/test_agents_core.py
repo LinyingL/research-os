@@ -100,6 +100,24 @@ def test_codex_prefers_working_app_cli_and_keeps_an_explicit_path(tmp_path, monk
     assert found.path is None and found.problem == "missing"
 
 
+def test_harness_bundled_cli_and_exact_authentication_route(tmp_path, monkeypatch):
+    bundled = _version_script(tmp_path / "dsh", "0.2.1-rc.2")
+    monkeypatch.setattr(profiles, "HARNESS_APP_COMMANDS", (str(bundled),))
+    monkeypatch.setattr(shutil, "which", lambda *a, **kw: pytest.fail("bundled runtime should be used"))
+    assert profiles.find("deepseek-harness").path == str(bundled)
+    models = [*profiles.HARNESS_MODEL_SUGGESTIONS, "deepseek-account/deepseek-future-1"]
+    profiles.set_agents([{"runner": "deepseek-harness", "model": m} for m in models])
+    assert [a.model for a in profiles.agents()] == models
+    assert labels.parse_owner("agent:deepseek-harness:" + models[0]).model == models[0]
+    for model in ("deepseek-flash", "other/deepseek-flash", "deepseek-account/"):
+        with pytest.raises(ValueError):
+            profiles.set_agents([{"runner": "deepseek-harness", "model": model}])
+        with pytest.raises(ValueError):
+            labels.parse_owner("agent:deepseek-harness:" + model)
+    profiles.set_commands({"deepseek-harness": str(tmp_path / "missing")})
+    assert profiles.find("deepseek-harness").problem == "missing"
+
+
 def test_set_agents_keeps_other_settings_and_empty_removes_the_key():
     settings.update_setting("interface_language", "en")
     profiles.set_agents([{"runner": "claude-code", "model": "opus"}])

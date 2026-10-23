@@ -112,7 +112,7 @@ research records, variables, and team commands.
 
 ### Optional: AI agents
 
-Research OS runs the **Codex**, **Claude Code**, or **OpenCode** program installed on
+Research OS runs **Codex**, **Claude Code**, **DeepSeek Harness**, or **OpenCode** installed on
 your Mac. Install and configure your chosen program first, and check that
 it works from your terminal. OpenCode can use a local model through LM
 Studio or Ollama when configured for that provider.
@@ -140,6 +140,18 @@ manually. **Refresh models** reloads Codex's catalog. Model access depends on
 your account and login method; GPT-5.5 is no longer available with ChatGPT
 sign-in, but remains available with API authentication. See the
 [Codex model guide](https://learn.chatgpt.com/docs/models).
+
+For [DeepSeek Harness](https://www.deepseek.com/harness/), install the official
+desktop app and sign in there. Research OS detects its bundled `dsh` in
+`/Applications` or `~/Applications`; installing a separate CLI is optional.
+Choose **DeepSeek Harness** in the agent settings, then an **Account** model
+to use that sign-in, or an **API Key** model to use the key configured in
+Harness. The suggestions include `deepseek-flash` and `deepseek-v4-pro`;
+availability depends on your Harness version and account. Custom IDs use
+`deepseek-account/<model>` or `deepseek-official/<model>`. Tasks run through
+the official headless interface, with progress, replies, reports, and undo
+in Research OS. They do not open or control a desktop chat window.
+See the [official desktop CLI documentation](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md#terminal-command).
 
 Install Research OS with the optional MCP dependency so the agent can
 report back:

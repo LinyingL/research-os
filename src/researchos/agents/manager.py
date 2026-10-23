@@ -1113,7 +1113,12 @@ class AgentManager:
                 program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,
                 session_id=session, resume=resume, prompt=text, rules=rules,
                 max_budget_usd=profiles.max_budget_usd(), home=home, base_env=os.environ)
-            stream: runners.ClaudeStream | runners.OpenCodeStream | runners.CodexStream = runners.ClaudeStream()
+            stream: runners.ClaudeStream | runners.OpenCodeStream | runners.CodexStream | runners.HarnessStream = runners.ClaudeStream()
+        elif runner == "deepseek-harness":
+            launch = runners.harness_launch(
+                program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,
+                session_id=act.resume_session, prompt=combined, home=home, base_env=os.environ)
+            stream = runners.HarnessStream()
         elif runner == "codex":
             launch = runners.codex_launch(
                 program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,

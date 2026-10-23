@@ -91,8 +91,10 @@ const defaultPlan=run=>({run:clone(run),restore:[{path:'analysis.py',time:'2026-
 const agentFixture=()=>({
   runners:[{runner:'claude-code',label:'Claude Code',path:'/usr/local/bin/claude',version:'2.1.0',problem:null,found:true},
            {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false},
-           {runner:'codex',label:'Codex',path:'/opt/codex',version:'0.162.0',problem:null,found:true}],
+           {runner:'codex',label:'Codex',path:'/opt/codex',version:'0.162.0',problem:null,found:true},
+           {runner:'deepseek-harness',label:'DeepSeek Harness',path:'/apps/dsh',version:'0.2.1-rc.2',problem:null,found:true}],
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
+  harness_models:['deepseek-account/deepseek-flash','deepseek-official/deepseek-v4-pro'],
   mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
@@ -1392,6 +1394,24 @@ console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:post
     assert "openai/gpt-6.1-sol" in [v for _, v in out["other"]]
     assert out["back"] == out["offered"]
     assert out["gets"] == ["/api/agents/models?runner=codex", "/api/agents/models?runner=opencode"]
+
+
+def test_harness_model_selection_distinguishes_authentication_and_preserves_full_id():
+    out = run(r"""
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings');
+const runner=field('程序',box());runner.value='deepseek-harness';await runner.emit('change');await sleepTick();
+const versions=field('模型版本',box()),offered=optionsOf(versions);
+versions.value='deepseek-account/deepseek-flash';await versions.emit('change');
+await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/settings/agents'),gets:gets.filter(g=>g.includes('/models?')),words:box().textContent}));
+""")
+    assert out["offered"][1] == ["账户 · deepseek-account/deepseek-flash", "deepseek-account/deepseek-flash"]
+    assert out["offered"][2] == ["API Key · deepseek-official/deepseek-v4-pro", "deepseek-official/deepseek-v4-pro"]
+    assert out["posted"][0][1]["agents"][-1] == {"runner": "deepseek-harness", "model": "deepseek-account/deepseek-flash"}
+    assert out["gets"] == []
+    assert "DeepSeek Harness" in out["words"]
 
 
 def test_settings_warn_about_the_missing_mcp_extra_and_a_failed_save_keeps_the_form():

@@ -48,10 +48,10 @@ as well. Raw HTML is shown as text in the preview.
 
 ## Let an AI agent carry out a task
 
-A task's owner can be an AI agent on your Mac: Codex, Claude Code, or a model
+A task's owner can be an AI agent on your Mac: Codex, Claude Code, DeepSeek Harness, or a model
 reached through OpenCode. The agent does the task itself, not a draft of it.
 
-**Set up.** Install Codex, Claude Code, or OpenCode and sign in to it. Install
+**Set up.** Install your chosen program and sign in to it. Install
 Research OS with the optional MCP extra (see the
 [README](../README.md#optional-ai-agents)); without it, **Run** says what is
 missing. In the task area open **AI agent**. Research OS shows whether it
@@ -69,6 +69,16 @@ bundled with the macOS desktop app. GPT-5.5 requires API authentication;
 it is no longer available with ChatGPT sign-in. See the
 [Codex model guide](https://learn.chatgpt.com/docs/models).
 A model served locally through OpenCode works the same way.
+
+For DeepSeek Harness, Research OS detects the official desktop app's bundled
+`dsh` in `/Applications` or `~/Applications`, or a standalone `dsh` on PATH.
+Choose an **Account** model to use the Harness desktop sign-in, or an **API Key**
+model for Harness's configured key. The suggested IDs are `deepseek-flash` and
+`deepseek-v4-pro`; access is checked when the task runs. A custom ID includes
+its route: `deepseek-account/<model>` or `deepseek-official/<model>`. Research OS
+starts a headless session and continues that recorded session when you reply.
+It uses a temporary task configuration, leaving the desktop profile untouched;
+desktop-only plugins and Office authoring resources are not loaded.
 
 **Run.** Set the task's **Owner** to the agent and click **Run**. The first
 time you run each agent after opening the page, the app tells you where
@@ -153,6 +163,7 @@ wrote it, when, and for whom. For a file tracked by git, the history is
 git's; the run log names the agent's change.
 
 **Privacy.** Codex sends the project content it reads to OpenAI.
+DeepSeek Harness sends it to DeepSeek.
 Claude Code sends the project content it reads to Anthropic.
 OpenCode sends it to the model provider you configured in OpenCode, which
 may be a server on your Mac. Research OS does not send it anywhere itself.

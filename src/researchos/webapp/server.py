@@ -1946,6 +1946,7 @@ def agents_payload() -> dict[str, Any]:
                    for agent in agent_profiles.agents()],
         "mcp": mcp,
         "claude_models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
+        "harness_models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS),
         "timeout_minutes": agent_profiles.timeout_minutes(),
         "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
         "max_budget_usd": agent_profiles.max_budget_usd(),
@@ -1964,6 +1965,8 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
         )
     if runner == "claude-code":
         return {"runner": runner, "models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS)}
+    if runner == "deepseek-harness":
+        return {"runner": runner, "models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS)}
     found = agent_profiles.find(runner, check_version=False)
     if not found.found or found.path is None:
         raise agent_manager.AgentError("runner_missing")

@@ -65,19 +65,30 @@ CLAUDE_MODEL_SUGGESTIONS = (
     "claude-haiku-5-5", "claude-haiku-4-5-20251001",
     "claude-fable-5-1", "claude-fable-5",
 )
+# Harness's bundled catalog and supported authentication routes (0.2.1-rc.2).
+# Suggestions, not a live account catalog. The provider is part of the saved ID.
+HARNESS_MODEL_SUGGESTIONS = tuple(
+    f"{provider}/{model}"
+    for provider in ("deepseek-account", "deepseek-official")
+    for model in ("deepseek-flash", "deepseek-v4-pro")
+)
 EXTRA_PATH_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.claude/local",
                    "~/.opencode/bin", "~/.bun/bin", "~/.npm-global/bin", "/usr/bin", "/bin")
 VERSION_TIMEOUT_S = 10
 MODELS_TIMEOUT_S = 30
 
 #: The program each runner is.
-PROGRAMS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex"}
+PROGRAMS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex", "deepseek-harness": "dsh"}
 # The desktop app's CLI can be used without installing a second copy. A saved path still wins.
 CODEX_APP_COMMANDS = (
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
+)
+HARNESS_APP_COMMANDS = (
+    "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+    "~/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
 )
 
 AGENTS_SETTING = "agents"
@@ -99,7 +110,10 @@ def _agent_of(item: object) -> labels.Agent:
     runner = item.get("runner")
     if not isinstance(runner, str) or runner not in labels.RUNNERS:
         raise ValueError(f"the runner must be one of {', '.join(labels.RUNNERS)}, not {runner!r}")
-    return labels.Agent(runner, labels.check_model(item.get("model")))
+    model = labels.check_model(item.get("model"))
+    if runner == "deepseek-harness":
+        labels.harness_route(model)
+    return labels.Agent(runner, model)
 
 
 def agents() -> list[labels.Agent]:
@@ -327,8 +341,9 @@ def find(runner: str, *, check_version: bool = True) -> Found:
             return Found(runner, saved, None, "not_executable")
         path = saved
     else:
-        if runner == "codex":
-            for candidate in CODEX_APP_COMMANDS:
+        bundled = CODEX_APP_COMMANDS if runner == "codex" else HARNESS_APP_COMMANDS if runner == "deepseek-harness" else ()
+        if bundled:
+            for candidate in bundled:
                 candidate = os.path.expanduser(candidate)
                 if _is_executable_file(candidate):
                     version = _remembered_version(candidate) if check_version else None
