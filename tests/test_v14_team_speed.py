@@ -999,6 +999,27 @@ def test_looks_from_several_threads_agree_with_a_look_alone(messy):
     assert set(expected[0]) <= set(cache) and all(len(entry) == 2 for entry in cache.values())
 
 
+def test_a_file_removed_after_the_walk_listed_it_leaves_the_look(messy, monkeypatch):
+    # The race CI met on Linux: the walk lists gone.txt, then it is removed before it is read. Both looks
+    # leave it out, as they leave out a file the walk did not find, and never fail.
+    root, pid = messy
+    (root / "gone.txt").write_text("g")
+    real = ex_mod.sha256_of
+
+    def removed_first(path):
+        if Path(path).name == "gone.txt" and Path(path).exists():
+            Path(path).unlink()
+        return real(path)
+
+    monkeypatch.setattr(ex_mod, "sha256_of", removed_first)
+    files, _dataless = share.official_files(root, pid)
+    assert "gone.txt" not in files and files
+    (root / "gone.txt").write_text("g")
+    forget()
+    listed = proposals.manifest(root)
+    assert "gone.txt" not in listed and listed
+
+
 def test_looks_while_files_change_never_fail_and_the_last_one_is_right(messy):
     root, pid = messy
     stop = threading.Event()

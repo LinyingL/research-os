@@ -498,6 +498,10 @@ def _in_the_cloud_now(path: Path) -> bool:
         return False
 
 
+class _Gone(Exception):
+    """A file the walk listed that was removed before it could be read."""
+
+
 class _Prints:
     """The fingerprints of one look at a working copy against the
     fingerprint file (`<home>/graphs/<id>/share-fingerprints.json`, {path:
@@ -519,7 +523,9 @@ class _Prints:
     def of(self, rel: str, seen: _Seen) -> tuple[str, int] | None:
         """(sha256, size) of the file `rel`, as the one `lstat` saw it; None
         when the file proves to be only in the cloud by the time it would be
-        read (it is not opened)."""
+        read (it is not opened). `_Gone` when it was removed after the walk
+        listed it: the look then leaves it out, as it leaves out a file the
+        walk did not find."""
         settled = seen.settled(self.began)
         cached = self.old.get(rel)
         if settled and isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
@@ -527,7 +533,10 @@ class _Prints:
         else:
             if _in_the_cloud_now(self.root / rel):
                 return None
-            sha, size = ex_mod.sha256_of(self.root / rel)
+            try:
+                sha, size = ex_mod.sha256_of(self.root / rel)
+            except FileNotFoundError:
+                raise _Gone(rel) from None
         if settled:
             self.fresh[rel] = [seen.stamp, sha]
         return sha, size
@@ -572,7 +581,10 @@ def official_files(root: Path, project_id: str) -> tuple[dict[str, dict[str, Any
     files: dict[str, dict[str, Any]] = {}
     dataless: list[str] = []
     for rel in _clean_rels(looked):
-        got = None if looked[rel].dataless else prints.of(rel, looked[rel])
+        try:
+            got = None if looked[rel].dataless else prints.of(rel, looked[rel])
+        except _Gone:  # removed since the walk: not a file of this look
+            continue
         if got is None:  # in the cloud, at the walk or by the time it would have been read
             dataless.append(rel)
             continue
@@ -592,7 +604,10 @@ def listed_files(root: Path, project_id: str | None) -> dict[str, dict[str, Any]
     prints = _Prints(root, project_id, began)
     out: dict[str, dict[str, Any]] = {}
     for rel, seen in listed:
-        got = None if seen.dataless else prints.of(rel, seen)
+        try:
+            got = None if seen.dataless else prints.of(rel, seen)
+        except _Gone:  # removed since the walk: not a file of this look
+            continue
         if got is None:  # in the cloud, at the walk or by the time it would have been read
             out[rel] = {"sha256": None, "size": seen.size, "dataless": True}
             continue
