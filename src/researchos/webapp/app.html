@@ -4231,6 +4231,14 @@ function renderAttemptForm(mode, attemptId) {
   // with the side panel). What the form showed is its fields' text when it was drawn or last saved.
   const shownCells = () => ({ verdict: initial.verdict, result: initial.result });
 
+  // The field holds what the file holds now (after a save, after 撤销): nothing typed in it is unwritten, so
+  // opening another panel does not ask (desk.js halfTyped, as the side panel's own save does).
+  function fieldIsWritten(key) {
+    initial[key] = inputs[key].value;
+    inputs[key].dataset.initial = inputs[key].value;
+    delete inputs[key].dataset.typed;
+  }
+
   function offerUndo(u) {
     setFormStatus(statusEl, "ok", "");
     RODesk.atOnce.line(statusEl, () => undoNow(u));
@@ -4255,7 +4263,7 @@ function renderAttemptForm(mode, attemptId) {
       return;
     }
     const undo = RODesk.atOnce.undoOf(preview, body, shownCells());
-    EDITABLE_KEYS.forEach((key) => { initial[key] = inputs[key].value; });
+    EDITABLE_KEYS.forEach((key) => fieldIsWritten(key));
     offerUndo(undo);
   }
 
@@ -4281,7 +4289,7 @@ function renderAttemptForm(mode, attemptId) {
       setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), done.res.ingest_error);
       return;
     }
-    Object.keys(undo.was).forEach((key) => { inputs[key].value = undo.text[key]; initial[key] = undo.text[key]; });
+    Object.keys(undo.was).forEach((key) => { inputs[key].value = undo.text[key]; fieldIsWritten(key); });
     setFormStatus(statusEl, "ok", t("撤销了上一步"));
   }
 

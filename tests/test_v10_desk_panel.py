@@ -653,6 +653,60 @@ def test_18_3_the_older_form_saves_a_changed_result_at_once_and_撤销_puts_it_b
 
 
 @needs_node
+def test_18_3_the_older_form_holds_nothing_unwritten_after_a_save_at_once_or_撤销():
+    """After 保存 (written at once, the form staying open) and after 撤销, the fields hold what the file holds:
+    opening another panel (RODesk.mayLeavePanel, which every opener asks) does not ask 'content not yet written'.
+    Text typed after that is still guarded."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      const leave = () => { answers.push(false); return RODesk.mayLeavePanel(); };
+      type(result, "t=3.10");
+      const typedFirst = leave();
+      await submit();
+      const saved = { may: leave(), typed: result.dataset.typed || null, initial: result.dataset.initial };
+      find("撤销", "BUTTON").click(); await flush();
+      const undone = { may: leave(), typed: result.dataset.typed || null, field: result.value, initial: result.dataset.initial };
+      type(result, "t=4");
+      const typedAgain = leave();
+      global.extra = { typedFirst, saved, undone, typedAgain, asked: asked.slice() };
+    """ % {"id": json.dumps(A16)}
+    extra = _form_run(steps)["extra"]
+    question = "这里有还没写入的内容，离开它就不保存了。继续吗？"
+    assert extra["typedFirst"] is False and extra["typedAgain"] is False  # typed and unwritten: still asked
+    assert extra["saved"] == {"may": True, "typed": None, "initial": "t=3.10"}
+    assert extra["undone"] == {"may": True, "typed": None, "field": "t=2.91", "initial": "t=2.91"}
+    assert extra["asked"] == [question, question]  # the two unwritten moments only
+
+
+@needs_node
+def test_18_3_撤销_in_the_older_form_puts_back_what_the_file_held_when_it_had_moved():
+    """The file changed after the form opened (the cell reads 't=2.95', the form showed 't=2.91'): 保存 shows the
+    row, 保存修改 writes it, and 撤销 writes the file's own cell back -- so the field says 't=2.95' too, not the
+    text the form opened with, and the next change is judged against it (saved at once, not 'moved' again)."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      file.result = "**t=2.95**";
+      result.value = "t=3.10";
+      await submit();
+      find("保存修改", "BUTTON").click(); await flush();
+      const written = file.result;
+      find("撤销", "BUTTON").click(); await flush();
+      const undone = { file: file.result, field: result.value, status: panelLines().filter((l) => l.startsWith("panel-status")) };
+      result.value = "t=4";
+      const before = posted.length;
+      await submit();
+      global.extra = { written, undone, again: { rows: panelPart("panel-body").all().filter((k) => k.cls.has("diff-row")).length,
+                       written: posted.slice(before).filter(([path]) => path === "/api/attempts/write").map(([, b]) => b.fields.result) } };
+    """ % {"id": json.dumps(A16)}
+    extra = _form_run(steps)["extra"]
+    assert extra["written"] == "t=3.10"
+    assert extra["undone"] == {"file": "**t=2.95**", "field": "t=2.95", "status": ["panel-status ok: 撤销了上一步"]}
+    assert extra["again"] == {"rows": 0, "written": ["t=4"]}
+
+
+@needs_node
 def test_18_3_the_older_form_still_previews_abandoning_a_new_row_and_a_members_change():
     """What keeps its preview in the older form: a verdict that abandons the route (the reason is asked, then the
     row is shown and written on 保存修改, the form closing as before, no 撤销), a new row (其 button still reads

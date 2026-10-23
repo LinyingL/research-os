@@ -1511,13 +1511,18 @@
 
   // What 撤销 will do: write back the cells as the file held them (`was`, from
   // the preview; the form's own text if the engine did not say), once the
-  // row still reads as this write left it (`now`).
+  // row still reads as this write left it (`now`). `text` is what a field
+  // goes back to: the text the form showed, unless the file had moved on
+  // from it before this write -- then the file's own text (`was_text`), which
+  // is what `was` puts back.
   function undoOf(p, b, shown) {
     const cells = p.cells || {};
     const u = { number: b.number, was: {}, now: {}, text: {} };
     Object.keys(b.fields).forEach((k) => {
       u.was[k] = cells[k] && typeof cells[k].was === "string" ? cells[k].was : toCellText(String(shown[k] == null ? "" : shown[k]));
-      u.text[k] = String(shown[k] == null ? "" : shown[k]);
+      const seen = String(shown[k] == null ? "" : shown[k]);
+      const filed = cells[k] && typeof cells[k].was_text === "string" ? cells[k].was_text : seen;
+      u.text[k] = squash(filed) === squash(seen) ? seen : filed;
       if (cells[k] && typeof cells[k].now_text === "string") u.now[k] = cells[k].now_text;
     });
     return u;
