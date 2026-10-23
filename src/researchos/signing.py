@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Mapping
 
 from researchos import paths
+from researchos.memo import Memo
 
 NAMESPACE = "researchos"
 KEYS_DIRNAME = "keys"
@@ -224,10 +225,23 @@ def sign(data: bytes) -> bytes:
     return done.stdout
 
 
+#: What `ssh-keygen -Y verify` said, by the program, the SHA-256 of the data, the SHA-256 of the signature
+#: and the key (DESIGN.md 18.4, item 4): the answer is a function of exactly those, so it is asked once per
+#: triple while the engine runs. A run that did not end (no program, a timeout, a signal) is not an answer
+#: and is not kept.
+_VERIFIED = Memo(1024)
+
+
 def verify(data: bytes, signature: bytes, public_key: str) -> bool:
     """Whether `signature` is a valid signature over `data` by exactly
     `public_key`, in Research OS's namespace."""
     key = parse_public_key(public_key)
+    program = tool()
+    asked = (program, hashlib.sha256(data).hexdigest(), hashlib.sha256(signature).hexdigest(), key) if program else None
+    if asked is not None:
+        known = _VERIFIED.get(asked)
+        if known is not None:
+            return known
     with tempfile.TemporaryDirectory(prefix="researchos-verify-") as private:
         home = Path(private)
         allowed, sig = home / "allowed_signers", home / "data.sig"
@@ -235,7 +249,10 @@ def verify(data: bytes, signature: bytes, public_key: str) -> bool:
         sig.write_bytes(signature)
         done = _run(["-Y", "verify", "-f", str(allowed), "-I", _PRINCIPAL, "-n", NAMESPACE, "-s", str(sig)],
                     data=data, home=home)
-    return done.returncode == 0
+    good = done.returncode == 0
+    if asked is not None and done.returncode >= 0:
+        _VERIFIED.put(asked, good)
+    return good
 
 
 @dataclass(frozen=True)

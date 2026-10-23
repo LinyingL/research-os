@@ -118,6 +118,20 @@ id>/share.json`). `sync` brings it to the latest good snapshot: a file the
 member has not touched is updated; one the member changed that the official
 version also changed is left as the member's, and the official one is put
 beside it as `<name>.official.<ext>` and listed -- never a merge.
+
+**What the engine remembers between requests** (18.4, item 4). Everything
+published is written once, so what is worked out of its bytes is kept in
+memory by their SHA-256 (`researchos.memo.Memo`: bounded, safe for the
+server's threads, lost when the engine stops): a manifest is parsed and
+validated once (`Head`: its header, the count of its files, its entry for
+`team.toml`); its whole file list is parsed on first use, for the few
+snapshots a page actually reads; `ssh-keygen` runs once per data, signature
+and key (`researchos.signing.verify`); a `team.toml` is read every time (a
+damaged one is seen) but understood once. A snapshot that is new or
+changed has a new hash and is verified again, so 12.5 still holds for every
+snapshot. The working copy's fingerprints (`official_files`) are kept per
+file by size, modification time and inode, in the file named in
+`official_files` and, while that file is unchanged, in memory.
 """
 
 from __future__ import annotations
@@ -130,15 +144,19 @@ import posixpath
 import re
 import secrets
 import shutil
+import stat
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, NamedTuple
 
 from researchos import exchange as ex_mod
 from researchos import history, paths, people, settings, signing
 from researchos.exchange import ExchangeError, Problem
+from researchos.memo import Memo
 from researchos.records import files as record_files
 from researchos.records.identity import IdentityState, read_identity
 from researchos.records.situation import READ_NOW, write_guard
@@ -316,11 +334,7 @@ def _record_rels(root: Path) -> list[str]:
     return found
 
 
-def snapshot_rels(root: Path) -> list[str]:
-    """Every path a snapshot of `root` lists (module docstring)."""
-    from researchos import proposals  # noqa: PLC0415 -- proposals imports this module lazily
-
-    rels = set(proposals.project_files(root)) | set(_record_rels(root))
+def _clean_rels(rels: Iterable[str]) -> list[str]:
     out = []
     for rel in sorted(rels):
         try:
@@ -330,70 +344,298 @@ def snapshot_rels(root: Path) -> list[str]:
     return out
 
 
+def snapshot_rels(root: Path) -> list[str]:
+    """Every path a snapshot of `root` lists (module docstring)."""
+    from researchos import proposals  # noqa: PLC0415 -- proposals imports this module lazily
+
+    return _clean_rels(set(proposals.project_files(root)) | set(_record_rels(root)))
+
+
+# -- the working copy as it is now: one walk, one lstat per file ---------------------------------------
+
+
+class _Seen(NamedTuple):
+    """What the one `lstat` of a regular file said that the look needs."""
+
+    size: int
+    mtime_ns: int
+    ino: int
+    dataless: bool  # macOS: only in the cloud, never read
+
+    @property
+    def stamp(self) -> str:
+        return f"{self.size}:{self.mtime_ns}:{self.ino}"
+
+
+def _is_dataless(st: os.stat_result) -> bool:
+    """`paths.is_dataless` for a file already stat'ed: the flag is in the same `lstat` that gave the size."""
+    return sys.platform == "darwin" and bool(getattr(st, "st_flags", 0) & paths.SF_DATALESS)
+
+
+def _seen_of(st: os.stat_result) -> _Seen:
+    return _Seen(st.st_size, st.st_mtime_ns, st.st_ino, _is_dataless(st))
+
+
+def _walk_project(root: Path) -> list[tuple[str, _Seen]]:
+    """The files of `researchos.ingest.files.iter_files` -- the same
+    folders pruned, the same files skipped, the same order -- each with its
+    `lstat`, taken as its folder is listed (`os.scandir`), so that a file
+    costs one system call to know and none to ask whether it is a link.
+    Only regular files are returned."""
+    from researchos.ingest import files as files_ingest  # noqa: PLC0415
+
+    found: list[tuple[str, _Seen]] = []
+    pending = [(str(root), "")]
+    while pending:
+        top, prefix = pending.pop()
+        try:
+            with os.scandir(top) as listing:
+                entries = list(listing)
+        except OSError:  # as `os.walk` does: a folder that cannot be listed is not walked
+            continue
+        folders, others = [], []
+        for entry in entries:
+            try:
+                is_folder = entry.is_dir()  # follows a link, as `os.walk` sorts its names
+            except OSError:
+                is_folder = False
+            (folders if is_folder else others).append(entry)
+        for entry in sorted(others, key=lambda e: e.name):
+            if entry.name.startswith(".") or entry.is_symlink():
+                continue
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                found.append((prefix + entry.name, _seen_of(st)))
+        walked = [e for e in sorted(folders, key=lambda e: e.name)
+                  if e.name not in files_ingest._NOISE_DIRS and not e.name.startswith(".") and not e.is_symlink()]
+        pending.extend((entry.path, prefix + entry.name + "/") for entry in reversed(walked))
+    return found
+
+
+def _lstat_regular(root: Path, rel: str) -> _Seen | None:
+    try:
+        st = (root / rel).lstat()
+    except OSError:
+        return None
+    return _seen_of(st) if stat.S_ISREG(st.st_mode) else None
+
+
+def _inventory(root: Path) -> tuple[list[tuple[str, _Seen]], list[tuple[str, _Seen]]]:
+    """(the files `proposals.project_files` lists, in its order; the record
+    files `snapshot_rels` adds), each with its `lstat`."""
+    from researchos import proposals  # noqa: PLC0415
+
+    listed = _walk_project(root)
+    known = {rel for rel, _seen in listed}
+    for rel in proposals._version_file_rels(root):
+        got = _lstat_regular(root, rel) if rel not in known else None
+        if got is not None:
+            listed.append((rel, got))
+            known.add(rel)
+    extra = []
+    for rel in _record_rels(root):
+        got = _lstat_regular(root, rel) if rel not in known else None
+        if got is not None:
+            extra.append((rel, got))
+            known.add(rel)
+    return listed, extra
+
+
+#: The fingerprint files this engine has read or written (DESIGN.md 18.4, item 4), by their path, with the
+#: file's size, modification time and inode as it last saw them: while the file is still that, its map is not
+#: read again. At most 8 files and 100,000 entries in all.
+_PRINTS = Memo(8, weight=100_000)
+
+
+def _file_stamp(path: Path) -> tuple[int, int, int] | None:
+    try:
+        st = path.lstat()
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns, st.st_ino
+
+
+def _read_prints(cache_path: Path) -> dict[str, Any]:
+    seen = _file_stamp(cache_path)
+    if seen is None:
+        return {}
+    known = _PRINTS.get(str(cache_path))
+    if known is not None and known[0] == seen:
+        return known[1]
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cache, dict):
+        return {}
+    if _file_stamp(cache_path) == seen:  # nobody wrote it while it was read
+        _PRINTS.put(str(cache_path), (seen, cache), weight=len(cache) + 1)
+    return cache
+
+
+class _Prints:
+    """The fingerprints of one look at a working copy against the
+    fingerprint file (`<home>/graphs/<id>/share-fingerprints.json`, {path:
+    [stamp, sha256]}): a file whose size, modification time and inode are
+    what the last look saw is not read again. The file is written only when
+    the map this look ends with is not the one it holds."""
+
+    def __init__(self, root: Path, project_id: str | None) -> None:
+        self.root = root
+        self.path = paths.index_dir(project_id) / CACHE_FILENAME if project_id else None  # a bad id raises, as it did
+        self.old = _read_prints(self.path) if self.path is not None else {}
+        self.fresh: dict[str, list[Any]] = {}
+
+    def of(self, rel: str, seen: _Seen) -> tuple[str, int]:
+        """(sha256, size) of the file `rel`, as the one `lstat` saw it."""
+        cached = self.old.get(rel)
+        if isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
+            sha, size = cached[1], seen.size
+        else:
+            sha, size = ex_mod.sha256_of(self.root / rel)
+        self.fresh[rel] = [seen.stamp, sha]
+        return sha, size
+
+    def save(self, looked: Iterable[tuple[str, _Seen]]) -> None:
+        """End the look. The file keeps every file looked at (not in the
+        cloud) whose fingerprint is known -- computed now, or in the file and
+        still at its stamp -- so that the two looks (`official_files`, the
+        proposals' `manifest`) leave the same map."""
+        if self.path is None:
+            return
+        fresh = self.fresh
+        for rel, seen in looked:
+            if rel not in fresh and not seen.dataless:
+                cached = self.old.get(rel)
+                if isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
+                    fresh[rel] = cached
+        if fresh == self.old:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            record_files.durable_write(self.path, (json.dumps(fresh, ensure_ascii=False) + "\n").encode("utf-8"))
+        except OSError as exc:  # a cache, never a reason to fail
+            logger.info("fingerprint cache not written: %s", exc)
+            return
+        written = _file_stamp(self.path)
+        if written is not None:
+            _PRINTS.put(str(self.path), (written, fresh), weight=len(fresh) + 1)
+
+
 def official_files(root: Path, project_id: str) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """({path: {sha256, size}}, [paths only in the cloud]). A file whose
     size, modification time and inode are what the last look saw is not
-    read again (`<home>/graphs/<id>/share-fingerprints.json`)."""
-    cache_path = paths.index_dir(project_id) / CACHE_FILENAME
-    try:
-        cache = json.loads(cache_path.read_text(encoding="utf-8"))
-        if not isinstance(cache, dict):
-            cache = {}
-    except (OSError, ValueError):
-        cache = {}
+    read again (`<home>/graphs/<id>/share-fingerprints.json`, kept in
+    memory while the file is unchanged and written only when the map
+    changed)."""
+    root = Path(root)
+    listed, extra = _inventory(root)
+    looked = dict(listed + extra)
+    prints = _Prints(root, project_id)
     files: dict[str, dict[str, Any]] = {}
     dataless: list[str] = []
-    fresh: dict[str, list[Any]] = {}
-    for rel in snapshot_rels(root):
-        full = root / rel
-        try:
-            st = full.lstat()
-        except OSError:
-            continue
-        if not full.is_file() or full.is_symlink():
-            continue
-        if paths.is_dataless(full):
+    for rel in _clean_rels(looked):
+        if looked[rel].dataless:
             dataless.append(rel)
             continue
-        stamp = f"{st.st_size}:{st.st_mtime_ns}:{st.st_ino}"
-        cached = cache.get(rel)
-        if isinstance(cached, list) and len(cached) == 2 and cached[0] == stamp:
-            sha, size = cached[1], st.st_size
-        else:
-            sha, size = ex_mod.sha256_of(full)
+        sha, size = prints.of(rel, looked[rel])
         files[rel] = {"sha256": sha, "size": size}
-        fresh[rel] = [stamp, sha]
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        record_files.durable_write(cache_path, (json.dumps(fresh, ensure_ascii=False) + "\n").encode("utf-8"))
-    except OSError as exc:  # a cache, never a reason to fail
-        logger.info("fingerprint cache not written: %s", exc)
+    prints.save(looked.items())
     return files, dataless
+
+
+def listed_files(root: Path, project_id: str | None) -> dict[str, dict[str, Any]]:
+    """`proposals.manifest`: {path: {sha256, size}} -- {sha256: None, size,
+    dataless: True} for a file only in the cloud -- for the files
+    `proposals.project_files` lists, in its order, built on the same
+    fingerprints as `official_files`."""
+    root = Path(root)
+    listed, extra = _inventory(root)
+    prints = _Prints(root, project_id)
+    out: dict[str, dict[str, Any]] = {}
+    for rel, seen in listed:
+        if seen.dataless:
+            out[rel] = {"sha256": None, "size": seen.size, "dataless": True}
+            continue
+        sha, size = prints.of(rel, seen)
+        out[rel] = {"sha256": sha, "size": size}
+    prints.save(listed + extra)
+    return out
 
 
 # -- reading snapshots -----------------------------------------------------------------------------
 
 
+_TEAM_REL = f"{paths.PROJECT_DIRNAME}/{people.TEAM_FILENAME}"
+
+#: In memory between requests (DESIGN.md 18.4, item 4). A published manifest is written once and never
+#: changes, so what is worked out of its bytes is kept by their SHA-256 and the number it is read as.
+_HEADS = Memo(1024)  # (SHA-256, seq) -> its `Head`, or the text saying why it is not a valid manifest
+#: The whole parsed manifests, for the snapshots that are used (the latest good one, a joined copy's base): a
+#: few of them, and at most 60,000 file entries in all. `Snapshot` hands out copies, never these.
+_PARSED = Memo(4, weight=60_000)
+_TEAMS = Memo(256)  # SHA-256 of a team.toml -> (the members it names or None,)
+
+
+@dataclass(frozen=True)
+class Head:
+    """What a validated manifest says of itself without its file list -- all
+    that a listing, the chain check and the status read of each snapshot --
+    and the manifest's entry for `.researchos/team.toml`, which the chain
+    check reads."""
+
+    seq: int
+    project: str
+    at: str
+    by: str
+    note: Any
+    prev_seq: int | None
+    prev_manifest_sha256: str | None
+    files: int
+    team: Mapping[str, Any] | None
+
+
 @dataclass(frozen=True)
 class Snapshot:
+    """One complete snapshot as the shared folder holds it. `head` is the
+    validated header; the file list is parsed on first use (`files`,
+    `data`) and is read-only for every caller: it is shared by the accesses
+    of this snapshot, one parse per content."""
+
     seq: int
     directory: Path
     raw: bytes
-    data: Mapping[str, Any]
+    head: Head
     signature: bytes | None
+    sha256: str
 
-    @property
-    def sha256(self) -> str:
-        return hashlib.sha256(self.raw).hexdigest()
+    def _whole(self) -> Mapping[str, Any]:
+        asked = (self.sha256, self.seq)
+        whole = _PARSED.get(asked)
+        if whole is None:
+            whole = tomllib.loads(self.raw.decode("utf-8"))  # valid: `head` was made from it
+            _PARSED.put(asked, whole, weight=len(whole.get("file", [])) + 1)
+        return whole
 
-    @property
+    @cached_property
+    def data(self) -> Mapping[str, Any]:
+        whole = self._whole()
+        out = dict(whole)
+        if "file" in whole:
+            out["file"] = [dict(f) for f in whole["file"]]
+        return out
+
+    @cached_property
     def files(self) -> dict[str, dict[str, Any]]:
-        return {f["path"]: dict(f) for f in self.data.get("file", [])}
+        return {f["path"]: dict(f) for f in self._whole().get("file", [])}
 
     def payload(self) -> dict[str, Any]:
-        return {"seq": self.seq, "at": self.data.get("at"), "by": self.data.get("by"), "sha256": self.sha256,
-                "files": len(self.data.get("file", [])), "signed": self.signature is not None,
-                "note": self.data.get("note")}
+        head = self.head
+        return {"seq": self.seq, "at": head.at, "by": head.by, "sha256": self.sha256, "files": head.files,
+                "signed": self.signature is not None, "note": head.note}
 
 
 def validate_manifest(data: Mapping[str, Any], seq: int) -> None:
@@ -438,6 +680,28 @@ def validate_manifest(data: Mapping[str, Any], seq: int) -> None:
             raise ValueError(f"{rel}: store must be snapshot or blob")
 
 
+def _head_of(raw: bytes, sha: str, seq: int) -> "Head | str":
+    """The `Head` of the manifest `raw` (SHA-256 `sha`) as snapshot number
+    `seq`, or the text saying why it is not valid -- parsed and validated
+    once per content, whichever it turns out to be."""
+    asked = (sha, seq)
+    known = _HEADS.get(asked)
+    if known is not None:
+        return known
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+        validate_manifest(data, seq)
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as exc:
+        known = str(exc)
+    else:
+        listed = data.get("file", [])
+        known = Head(seq=seq, project=data["project"], at=data["at"], by=data["by"], note=data.get("note"),
+                     prev_seq=data.get("prev_seq"), prev_manifest_sha256=data.get("prev_manifest_sha256"),
+                     files=len(listed), team=next((dict(f) for f in listed if f["path"] == _TEAM_REL), None))
+    _HEADS.put(asked, known)
+    return known
+
+
 def read_snapshots(shared: Path) -> tuple[list[Snapshot], list[Problem]]:
     """Every complete snapshot, by seq, and what was not read and why."""
     shared = ex_mod.as_folders(shared)
@@ -468,13 +732,12 @@ def read_snapshots(shared: Path) -> tuple[list[Snapshot], list[Problem]]:
         if problem is not None:
             problems.append(problem)
             continue
-        try:
-            data = tomllib.loads(raw.decode("utf-8"))
-            validate_manifest(data, int(name))
-        except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as exc:
-            problems.append(Problem("invalid", str(path / MANIFEST_FILE), str(exc)))
+        sha = hashlib.sha256(raw).hexdigest()
+        head = _head_of(raw, sha, int(name))
+        if isinstance(head, str):
+            problems.append(Problem("invalid", str(path / MANIFEST_FILE), head))
             continue
-        found.append(Snapshot(int(name), path, raw, data, ex_mod._read_signature(path / MANIFEST_SIG)))
+        found.append(Snapshot(int(name), path, raw, head, ex_mod._read_signature(path / MANIFEST_SIG), sha))
     found.sort(key=lambda s: s.seq)
     return found, problems
 
@@ -511,14 +774,24 @@ def _read_content(shared: Path, entry: Mapping[str, Any]) -> bytes:
 
 def snapshot_team(shared: Path, snap: Snapshot) -> tuple[people.Member, ...] | None:
     """The team a snapshot carries (its `.researchos/team.toml`), verified
-    by hash; None when it carries none or it cannot be read."""
-    entry = snap.files.get(f"{paths.PROJECT_DIRNAME}/{people.TEAM_FILENAME}")
+    by hash; None when it carries none or it cannot be read. The file is
+    read every time (a damaged or missing one is seen); what its bytes
+    mean is worked out once per content."""
+    entry = snap.head.team
     if entry is None:
         return None
     try:
-        return people.parse_team(_read_content(shared, entry).decode("utf-8"))
-    except (ShareError, UnicodeDecodeError, people.PeopleError):
+        text = _read_content(shared, entry)
+    except ShareError:
         return None
+    known = _TEAMS.get(entry["sha256"])  # `_read_content` checked that the bytes have this hash
+    if known is None:
+        try:
+            known = (people.parse_team(text.decode("utf-8")),)
+        except (UnicodeDecodeError, people.PeopleError):
+            known = (None,)
+        _TEAMS.put(entry["sha256"], known)
+    return known[0]
 
 
 @dataclass
@@ -543,18 +816,18 @@ def verify_chain(shared: Path, snaps: Iterable[Snapshot], project_id: str, pi: s
         last = chain.last_good
         reason: tuple[str, str] | None = None
         check = None
-        if snap.data.get("project") != project_id:
+        if snap.head.project != project_id:
             reason = ("wrong_project", "这个快照属于另一个项目")
-        elif snap.data.get("by") != pi:
+        elif snap.head.by != pi:
             reason = ("not_pi", f"这个快照不是 PI（{pi}）写的")
         else:
             check = signing.check(snap.raw, snap.signature, key, signer=pi)
             if not check.trusted:
                 reason = (check.state, check.message_zh)
-            elif last is None and snap.data.get("prev_seq") is not None:
+            elif last is None and snap.head.prev_seq is not None:
                 reason = ("chain", "这个快照接在一个无法验证或不存在的快照后面")
-            elif last is not None and (snap.data.get("prev_seq") != last.seq
-                                       or snap.data.get("prev_manifest_sha256") != last.sha256):
+            elif last is not None and (snap.head.prev_seq != last.seq
+                                       or snap.head.prev_manifest_sha256 != last.sha256):
                 reason = ("chain", f"这个快照没有接在上一个可信的快照（第 {last.seq} 个）后面")
             else:
                 team = snapshot_team(shared, snap)
@@ -642,7 +915,7 @@ def projects_in(shared: Path) -> set[str]:
         snaps, _problems = read_snapshots(shared)
     except ShareError:
         return set()
-    return {str(s.data.get("project")) for s in snaps}
+    return {s.head.project for s in snaps}
 
 
 def _same_files(published: Mapping[str, Mapping[str, Any]], files: Mapping[str, Mapping[str, Any]]) -> bool:
@@ -663,7 +936,8 @@ def _publish_locked(root: Path, pid: str, me: str, listed_key: str | None, share
     chain = verify_chain(shared, snaps, pid, me, listed_key)
     last = chain.last_good
     restored = _restore_blobs(root, shared, last, files)
-    if last is not None and _same_files(last.files, files):
+    last_files = last.files if last is not None else {}  # the file map of the last snapshot, built once (not for each file)
+    if last is not None and _same_files(last_files, files):
         return {"published": False, "seq": last.seq, "sha256": last.sha256, "reason": "unchanged",
                 "restored": restored, "warnings": warnings()}
     seq = _next_seq(shared)
@@ -673,7 +947,7 @@ def _publish_locked(root: Path, pid: str, me: str, listed_key: str | None, share
     new_content: list[str] = []
     for rel in sorted(files):
         fp = files[rel]
-        prev = last.files.get(rel) if last is not None else None
+        prev = last_files.get(rel)
         unchanged = prev is not None and prev["sha256"] == fp["sha256"] and prev["size"] == fp["size"]
         if unchanged and not (is_record(rel) and prev["store"] == STORE_SNAPSHOT):
             entries.append({k: prev[k] for k in ("path", "size", "sha256", "store", "in") if k in prev})
@@ -926,7 +1200,7 @@ def record_installed(root: Path, pid: str, rels: Iterable[str], snap: "Snapshot"
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     count = 0
-    note = snap.data.get("note")
+    note = snap.head.note
     note = str(note) if isinstance(note, str) and note else None
     rels = list(rels)
     try:
@@ -1034,18 +1308,18 @@ def _join_target(shared: str | Path, folder: str | Path, project: str | None,
     if not snaps:
         raise ShareError("nothing_published", f"no complete snapshot in {snapshots_dir(shared_dir)}",
                          details={"problems": [p.payload() for p in problems]})
-    named = sorted({str(s.data["project"]) for s in snaps})
+    named = sorted({s.head.project for s in snaps})
     if project is not None:
         if project not in named:
             raise ShareError("nothing_published", f"no snapshot of project {project} in {snapshots_dir(shared_dir)} "
                                                   f"(found: {', '.join(named)})", details={"projects": named})
-        snaps = [s for s in snaps if s.data["project"] == project]
+        snaps = [s for s in snaps if s.head.project == project]
     elif len(named) > 1:
         raise ShareError("ambiguous_project", f"{shared_dir} holds snapshots of {len(named)} projects "
                                               f"({', '.join(named)}); name the one to join (--project)",
                          details={"projects": named})
     first = snaps[0]
-    pid = str(first.data["project"])
+    pid = first.head.project
     founders = snapshot_team(shared_dir, first)
     lead = next((m for m in founders or () if m.role == "pi"), None)
     if lead is None:
@@ -1073,7 +1347,7 @@ def join_preview(shared: str | Path, folder: str | Path, *, project: str | None 
         "shared": str(shared_dir), "folder": str(found["dest"]), "exists": found["dest"].exists(),
         "published": str(shared_dir.published), "mine": _mine_of(shared_dir, me),
         "two_folders": shared_dir.root is None,
-        "project": found["pid"], "seq": target.seq, "at": target.data.get("at"), "note": target.data.get("note"),
+        "project": found["pid"], "seq": target.seq, "at": target.head.at, "note": target.head.note,
         "files": len(files), "size": sum(int(e.get("size") or 0) for e in files.values()),
         "pi": lead.id, "pi_name": lead.name, "pi_fingerprint": signing.fingerprint(lead.key) if lead.key else None,
         "role": next((m.role for m in team if m.id == me), "none"), "me": me,
@@ -1187,7 +1461,7 @@ def set_member_folders(working_copy: str | Path, published: str | Path, mine: st
         raise ShareError("unreachable", f"{folders.published} cannot be reached now",
                          message_zh="公盘的已发布文件夹现在打不开：请确认它已经加到这台电脑的 OneDrive 里")
     snaps, problems = read_snapshots(folders)
-    mine_snaps = [s for s in snaps if str(s.data.get("project")) == pid]
+    mine_snaps = [s for s in snaps if s.head.project == pid]
     chain = verify_chain(folders, mine_snaps, pid, state["pi"], state.get("pi_key"))
     if chain.last_good is None:
         raise ShareError("nothing_published", f"{folders.published} holds no snapshot of project {pid} signed by "
@@ -1325,7 +1599,7 @@ def sync_preview(working_copy: str | Path, *, lang: str = "zh") -> dict[str, Any
     if target is None or target.seq <= state["seq"]:
         out["up_to_date"] = True
         return out
-    out.update(to=target.seq, at=target.data.get("at"), note=target.data.get("note"), by=target.data.get("by"))
+    out.update(to=target.seq, at=target.head.at, note=target.head.note, by=target.head.by)
     tfiles = target.files
     for rel in sorted(set(base.files) | set(tfiles)):
         b = (base.files.get(rel) or {}).get("sha256")
@@ -1519,7 +1793,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None, lang: str = "zh
         else:
             new_files[rel] = dict(kept)
     proposals.write_base(pid, root.resolve(), new_files, texts=texts, official=None)
-    record_installed(root, pid, out["updated"], target, target.data.get("by") or state.get("pi"))
+    record_installed(root, pid, out["updated"], target, target.head.by or state.get("pi"))
     state.update(seq=target.seq, manifest_sha256=target.sha256, synced=_now_iso(now),
                  official_copies=sorted(c for c in copies if (root / c).exists()))
     _write_state(pid, state)
@@ -1935,7 +2209,7 @@ def prune_blobs(official_root: str | Path, before: str, *, shared: str | Path | 
     # Every complete snapshot from the cutoff on counts (verified or not):
     # a blob is removed only when nothing recent could name it.
     for snap in snaps:
-        if str(snap.data.get("at") or "")[:10] >= cutoff or snap.seq == chain.last_good.seq:
+        if str(snap.head.at or "")[:10] >= cutoff or snap.seq == chain.last_good.seq:
             keep |= {e["sha256"] for e in snap.data.get("file", []) if e.get("store") == STORE_BLOB}
     if problems:
         raise ShareError("invalid", "the shared folder holds snapshots Research OS could not read; nothing is pruned",

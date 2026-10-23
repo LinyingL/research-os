@@ -5003,6 +5003,84 @@ nothing new inside the project.
      fingerprint file only when an entry changed.
    - Publishing and approving stop rebuilding the file map for each file.
    - A proposal's snapshot id is built on the fingerprints.
+
+   How it is read:
+   - *The memories.* `researchos.memo.Memo` is a least-recently-used map in
+     memory that the server's threads may share. It holds at most the
+     entries (and, where entries are weighed, the total weight) named below,
+     keeps nothing heavier than its whole budget, is lost when the engine
+     stops, and is only asked with a key that holds everything the answer
+     depends on: a content hash, or a file's path, size, modification time
+     and inode. Losing an entry costs time, never an answer.
+   - *A manifest.* `read_snapshots` still lists the folder and reads each
+     manifest, its `ready.toml` and its signature on every call, so a
+     snapshot that appears, goes or changes shows at once. What it works out
+     of the manifest's bytes is kept by their SHA-256 and the number the
+     folder gives the snapshot (1,024 entries): that the manifest is not
+     valid, with the sentence saying why, or its `Head` (`seq`, `project`,
+     `by`, `at`, `note`, `prev_seq`, `prev_manifest_sha256`, the count of its
+     files, and its own entry for `.researchos/team.toml`). The listing, the
+     chain check, the status and the previews read only the `Head`. The file
+     list (`Snapshot.files` and `.data`) is parsed on first use, for the
+     snapshot that is used, and kept for the last 4 manifests used and at
+     most 60,000 file entries in all; a `Snapshot` builds its map once and
+     hands it to every caller (none changes it), and the memory itself is
+     never handed out. `payload()`, `files` and `data` give what they gave.
+     A manifest with other bytes has another hash and is parsed, validated
+     and verified again; so is the same text under another number.
+   - *A signature.* `signing.verify` keeps `ssh-keygen -Y verify`'s answer by
+     the program, the SHA-256 of the data, the SHA-256 of the signature and
+     the key (1,024 answers, a "no" too). A run that did not end (no
+     program, a timeout, a signal) is not an answer and is not kept;
+     `check` reads it as "bad" as before. Proposals, outcomes and packets
+     are verified through the same function.
+   - *The chain.* `verify_chain` reads a snapshot's project, author and links
+     from its `Head` and its signature from `signing.check`, and decides
+     as it did on every call, in the same order, from parts remembered by
+     content. `team.toml` is read from the folder on every call, its hash
+     checked, so a file damaged since is seen at once and the snapshot
+     refused as before; only what its bytes mean is kept, by their SHA-256
+     (256 entries). The verdict as a whole is not kept: whether a snapshot
+     links to the last good one depends on the snapshots before it, and the
+     parts that cost something (the signature, the header, the team) are
+     already kept.
+   - *The walk.* `official_files` and `proposals.manifest` share one
+     inventory (`share._inventory`): `os.scandir`, with the folders pruned
+     as `ingest.files.iter_files` prunes them (noise and dot-prefixed
+     folders, links not followed, hidden files and links left out, folders
+     that cannot be listed skipped), the same files in the same order, and
+     one `lstat` per file taken as its folder is listed (mode, size,
+     modification time in ns, inode and, on macOS, the flag that says it is
+     only in the cloud: `share._is_dataless`, where the walk's tests put the
+     cloud). The record files and the cards' version files are added as
+     before. Only regular files are looked at. `official_files` keeps the
+     files `snapshot_rels` keeps, sorted, the cloud-only ones apart;
+     `proposals.manifest` keeps the files of `project_files` in that
+     function's order, a cloud-only one as `{sha256: None, size, dataless:
+     True}`; a folder with no readable project identity is read as before,
+     every file opened.
+   - *The fingerprints.* `<home>/graphs/<id>/share-fingerprints.json` keeps
+     `{path: [stamp, sha256]}`, the stamp being `size:mtime_ns:inode`, as it
+     did. A file is read only when its stamp is not the one kept. Both looks
+     leave the same map: every file seen (not in the cloud) whose
+     fingerprint is known, computed now or kept and still at its stamp, so a
+     deleted or changed file drops out and the two looks do not take turns
+     rewriting the file. It is written, atomically, only when that map is
+     not the one the file held; nothing is written when nothing changed. The
+     map is also kept in memory by the file's own size, modification time and
+     inode (8 files, 100,000 entries in all): a file replaced, deleted or
+     rewritten by another process is read again. An entry is its own proof (a
+     stamp is what a cache trusts, here as before).
+   - *Publishing and approving.* `_publish_locked` builds the last
+     snapshot's file map once; approving publishes through it. A snapshot
+     builds its `files` once, so the other readers (`sync`, `join`, the
+     preview, the status) ask a dictionary.
+   - *The snapshot id.* `snapshot_id(manifest(root))`, which the PI's
+     reading of a proposal (`what_changes`, hence `open_for` and `approve`)
+     compares with the proposal's base, and the `manifest` a member's
+     `make_proposal` and `start_working_copy` take, no longer open every file:
+     they read the fingerprint file above and open the files whose stamp
+     moved. The ids are the ones the old reading gave.
 5. **File preview and drafting** read at most 200 KB and one byte, and take
    the size from the open file.
 6. **The change history behind 研究路线** uses a time index and reads only
