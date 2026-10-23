@@ -1425,7 +1425,7 @@
     }
     const input = typedField("textarea", "", t("写一条备注：为什么这样做、要注意什么"));
     input.rows = 3;
-    input.setAttribute("aria-label", t("备注"));
+    input.setAttribute("aria-label", t("备注", { n: 1 }));
     const status = mk("div", "notice-status");
     const add = mkButton(t("添加备注"), "btn btn-small", async () => {
       const text = input.value.trim();

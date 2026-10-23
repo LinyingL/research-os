@@ -3240,7 +3240,7 @@ has 「 」.
 | 归档 | Archived |
 | 其它 | Other |
 | 来龙去脉 | Provenance |
-| 改动与备注 | Changes & notes |
+| 改动与备注 | Changes and comments |
 | 判断 | Judgments |
 | 关系图 | Relation map |
 | 尝试 / 判决 / 结果 | Attempt / Verdict / Result |

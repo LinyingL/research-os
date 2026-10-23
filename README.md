@@ -56,7 +56,7 @@ aside, and proposals awaiting review.
 ![Research route map with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
 
 **Result context.** Open a figure to inspect its linked scripts, data,
-research attempt, and paper draft, together with its history and notes.
+research attempt, and paper draft, together with its history and comments.
 
 ![A figure linked to source data, scripts, an intermediate dataset, and a paper draft](docs/images/result-provenance.png)
 

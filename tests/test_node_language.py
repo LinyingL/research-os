@@ -95,12 +95,14 @@ global.apiGet = async path => {
         assert authored in words
     if language == "en":
         for label in ("Back to Figures and claims", "Figure", "View content", "Show in Finder", "Data", "This item",
-                      "Used in", "Changes and notes", "First recorded version", "Add note", "Link judgments"):
+                      "Used in", "Changes and comments", "First recorded version", "Add comment", "Link judgments", "Comment",
+                      "Write a comment: why it was done this way, what to watch for"):
             assert label in words
         authored = {"改动与备注", "查看内容", "figures/结果.png", "结果.png", "研究标题"}
         assert [word for word in words if CJK.search(word) and word not in authored] == []
     else:
-        for label in ("返回图表与论断", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "连线确认"):
+        for label in ("返回图表与论断", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加备注", "连线确认", "备注",
+                      "写一条备注：为什么这样做、要注意什么"):
             assert label in words
 
 

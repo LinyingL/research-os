@@ -190,7 +190,7 @@ person when they join.
 4. Check **Proposals** for **Proposed**, **Approved**, or **Returned**, with
    the reason. Sync again when it says **Approved, awaiting sync**.
 
-Proposals and replies arrive after OneDrive syncs. Notes, link judgments,
+Proposals and replies arrive after OneDrive syncs. Comments, link judgments,
 and changes made with **Link files** or **Add a source**
 travel with sync without individual approval.
 Lines between research attempts require the PI's approval.

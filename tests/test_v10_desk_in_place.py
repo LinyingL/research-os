@@ -144,12 +144,12 @@ def test_14_6_judgments_handled_in_the_panel_read_in_english():
     """The same in English: the part, the judgments, the acts, what was
     recorded and “Undo” -- no Chinese but the researcher's own."""
     steps = _JUDGE % {k: json.dumps(v) for k, v in {
-        "a16": A16, "review": "Review", "note": "Note (optional)", "holds": "Still holds", "undo": "Undo"}.items()}
+        "a16": A16, "review": "Review", "note": "Comment (optional)", "holds": "Still holds", "undo": "Undo"}.items()}
     out = _run(_reviewing("en"), steps, lang="en")
     first, after = out["extra"]["first"], out["extra"]["after"]
     assert any(line.startswith("review-link: 17-叙事.Rmd reads panel.csv (title") for line in first)
     for line in ["node-sec-title: Needs review", "review-reason: The basis changed",
-                 "btn btn-small: Still holds", "btn btn-small: Settle as confirmed", "form-input:  =  (Note (optional))"]:
+                 "btn btn-small: Still holds", "btn btn-small: Settle as confirmed", "form-input:  =  (Comment (optional))"]:
         assert line in first, line
     assert ": Recorded: still holds: 17-叙事.Rmd reads panel.csv" in after and "err-detail-toggle: Undo" in after
     assert _chinese(first + after) == [] and not any(FORBIDDEN.search(line) for line in first + after)

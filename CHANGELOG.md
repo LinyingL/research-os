@@ -50,6 +50,14 @@
   every sentence that names it. 项目首页's section for result documents is
   "Result records" in English. Nothing on disk changes: the command name is
   still `results`, and the header of `papers.toml` keeps its words.
+- Stop calling two different things 笔记. What you write on an object (a script,
+  a data file, an attempt, a figure) is 备注 ("Comment") on the node page as it
+  already was in the route map's panel, and the node page now uses the panel's
+  sentences (添加备注, 写一条备注…). The English said "Note" for these comments
+  in places; it says "Comment" and "Comments", and the section is "Changes and
+  comments". 笔记 ("Note") is only a document in 项目首页. A proposal shows the
+  备注 of a line you drew as 备注, where it said 说明. Nothing on disk changes:
+  `notes.toml`, its header and the `researchos note` command keep their names.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

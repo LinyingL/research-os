@@ -113,7 +113,7 @@ def _note_refused(exc: notes_mod.NoteRefused) -> NodeApiRefused:
             "missing": [notes_mod._public(m) for m in exc.decision.missing],
         }
     code = "record_shrunk" if exc.decision is not None and exc.decision.verdict.value == "shrunk" else exc.code
-    return NodeApiRefused(status, code, str(exc), exc.message_zh or "笔记没有保存", extra)
+    return NodeApiRefused(status, code, str(exc), exc.message_zh or "备注没有保存", extra)
 
 
 def notes_post_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -122,12 +122,12 @@ def notes_post_payload(root: Path, project_id: str | None, body: dict[str, Any],
         if action == "add":
             node, text = body.get("node"), body.get("text")
             if not isinstance(node, str) or not isinstance(text, str):
-                raise NodeApiRefused(400, "missing", "request body must carry string 'node' and 'text'", "请填写笔记")
+                raise NodeApiRefused(400, "missing", "request body must carry string 'node' and 'text'", "请填写备注")
             entry = notes_mod.add_note(root, node, text, via="app", expected_id=project_id, timeout=timeout)
         elif action == "withdraw":
             note_id = body.get("id")
             if not isinstance(note_id, str) or not note_id:
-                raise NodeApiRefused(400, "missing", "request body must carry the note's 'id'", "缺少笔记编号")
+                raise NodeApiRefused(400, "missing", "request body must carry the note's 'id'", "缺少备注编号")
             entry = notes_mod.withdraw_note(root, note_id, via="app", expected_id=project_id, timeout=timeout)
         else:
             raise NodeApiRefused(400, "bad_action", f"'action' must be add or withdraw, got {action!r}", "不支持的操作")
@@ -344,7 +344,7 @@ _NOT_CARRIED = (
     (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的正式版本，不会发送",
      lambda m: "The official copy that sync put beside yours is not sent"),
     (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、连线确认和手工连线随同步发送，不需要批准",
-     lambda m: "Notes, link judgments and hand-drawn links travel with sync, with no approval needed"),
+     lambda m: "Comments, link judgments and hand-drawn links travel with sync, with no approval needed"),
     (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
      lambda m: "Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
     (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议",

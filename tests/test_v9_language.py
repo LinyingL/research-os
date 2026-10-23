@@ -1558,12 +1558,12 @@ def test_13_7_the_desk_in_english():
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
                  "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
-                 "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 link judgments, "
+                 "team-line writes: Syncing first writes what you have not sent yet (1 comment, 2 link judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
                  "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
                  "the official version deleted; keep your version of 1 file changed on both sides and put the official "
-                 "copy beside it (.official); replace each record file of notes, link judgments and hand-drawn links with the official "
+                 "copy beside it (.official); replace each record file of comments, link judgments and hand-drawn links with the official "
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
@@ -1675,10 +1675,10 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
     shown = _desk_synced(saved)
     if saved == "en":
         assert shown == [
-            "team-done: Synced to version 1,497; sent your 3 changes to notes, link judgments or hand-drawn links to the shared folder; "
+            "team-done: Synced to version 1,497; sent your 3 changes to comments, link judgments or hand-drawn links to the shared folder; "
             "updated 2 files; removed 1 file the official version deleted; kept your versions of 2 files changed on both "
             "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relation "
-            "map is each person’s own and does not change with a sync); your notes and links still wait for the PI to "
+            "map is each person’s own and does not change with a sync); your comments and links still wait for the PI to "
             "publish, so the record files stay yours for now.",
             "team-done: The official version’s data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
             ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
@@ -2758,3 +2758,60 @@ def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     # What stays 产出 is the link word "produces" (an experiment produces a figure): 输出 is taken by the noun,
     # and one Chinese key has one English (13.6). Nothing else in the page says 产出.
     assert [key for key in table if "产出" in key] == ["产出"] and table["产出"] == "produces"
+
+
+@needs_node
+def test_18_2_a_comment_on_an_object_is_备注_and_a_note_is_only_a_document_in_项目首页():
+    """备注 "Comment"/"Comments" is what a person writes on an object -- a script, a data file, an attempt, a
+    figure -- on the node page and in the panel alike, and on a link or a link judgment; 笔记 "Note"/"Notes"
+    is a document in 项目首页 and nothing else. No English entry for a 备注 says "note", none for a 笔记
+    says "comment", and the node page says what the panel says, one key per sentence."""
+    from researchos.records import notes as notes_mod
+    from researchos.webapp import node_api
+
+    table = english_table()
+    forms = _english_forms(table)
+    assert table["备注"] == {"one": "Comment", "other": "Comments"} and table["笔记"] == {"one": "Note", "other": "Notes"}
+    assert table["改动与备注"] == "Changes and comments"
+    assert (table["添加备注"], table["写备注"], table["备注（可选）"]) == ("Add comment", "Write a comment", "Comment (optional)")
+    assert table["{n} 条备注"] == {"one": "{n} comment", "other": "{n} comments"}
+
+    def says(word: str, text: str) -> bool:  # the English word, not a {field} name
+        return bool(re.search(rf"\b{word}s?\b", re.sub(r"\{\w+\}", "", text), re.I))
+
+    assert [(key, text) for key, text in forms if "备注" in key and (says("note", text) or not says("comment", text))] == []
+    assert [(key, text) for key, text in forms if "笔记" in key and (says("comment", text) or not says("note", text))] == []
+    # (the one other "comments" is a reviewer's, 审稿意见: a different thing)
+    assert [(key, text) for key, text in forms if "备注" not in key and "审稿意见" not in key and says("comment", text)] == []
+    # The node page uses the panel's sentences: the same five keys, in both files.
+    node_js = (WEBAPP / "node.js").read_text(encoding="utf-8")
+    desk_js = (WEBAPP / "desk.js").read_text(encoding="utf-8")
+    for key in ("写一条备注：为什么这样做、要注意什么", "添加备注", "备注是空的", "备注没有保存", "备注记录文件现在无法写入"):
+        assert f't("{key}")' in node_js and f't("{key}")' in desk_js, key
+    assert 't("备注", { n: 1 })' in node_js
+    # A route line's own 备注 (typed on the map) is read back as 备注 on the proposal, not as 说明.
+    team_js = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert team_js.count('t("备注：{note}", { note: ') == 2 and "说明：{note}" not in team_js and "说明：{note}" not in table
+    assert table["备注：{note}"] == "Comment: {note}"
+    # 笔记 is left only in 项目首页's own words: nothing the page, the panel, the route map, the sync pages or the
+    # engine says about a comment uses it.
+    for relative in ("node.js", "desk.js", "routemap.js", "team.js", "canvas.js", "node_api.py", "server.py"):
+        assert "笔记" not in (WEBAPP / relative).read_text(encoding="utf-8"), relative
+    assert [line.strip() for line in APP_HTML.read_text(encoding="utf-8").splitlines() if "笔记" in line] == [
+        '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>']
+    assert 'notes: "备注",' in APP_HTML.read_text(encoding="utf-8") and ' 条备注，写在 ' in APP_HTML.read_text(encoding="utf-8")
+    workspace_js = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
+    assert 'note: "笔记"' in workspace_js and "备注" not in workspace_js
+    # The engine's sentences for the page.
+    src = Path(history.__file__).parent
+    assert all(notes_mod.MESSAGES[key].startswith("备注记录文件")
+               for key in ("missing", "unreadable", "invalid", "empty_but_expected", "conflict_copy", "shrunk"))
+    assert notes_mod.MESSAGES["shrunk"].format(n=2) == "备注记录文件比图谱少了 2 条"
+    reason = "notes, link judgments and hand-drawn links travel with sync"
+    assert node_api.not_carried_words([{"reason": reason}], "zh")[0]["words"].startswith("备注、连线确认和手工连线")
+    assert node_api.not_carried_words([{"reason": reason}], "en")[0]["words"].startswith("Comments, link judgments and hand-drawn links")
+    share_text = (src / "share.py").read_text(encoding="utf-8")
+    assert [line.split("=")[0].strip() for line in share_text.splitlines() if "笔记" in line] == ["_PACKET_HEADER"]
+    assert "备注和连线确认没有发送" in share_text
+    # Nothing on disk changes: the ledger's header and its name keep their words.
+    assert notes_mod._HEADER.startswith("# 节点上的笔记") and notes_mod.NOTES_FILENAME == "notes.toml"

@@ -955,7 +955,7 @@
       s.appendChild(line(t("变量 {card} 的第 {version} 版定义", { card: full.variable.card, version: full.variable.version }), ""));
     }
     if (full.route) s.appendChild(line(RODesk.proposalWhat(full), ""));
-    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("说明：{note}", { note: full.route.note })));
+    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("备注：{note}", { note: full.route.note })));
     s.appendChild(fileList(full.files || [], null));
     page.appendChild(s);
   }
@@ -1062,7 +1062,7 @@
     if (r) {
       const box = mk("div", "proposal-part");
       box.appendChild(mk("p", "desk-head", r.words || ""));
-      if (r.note) box.appendChild(mk("p", "desk-note", t("说明：{note}", { note: r.note })));
+      if (r.note) box.appendChild(mk("p", "desk-note", t("备注：{note}", { note: r.note })));
       if (r.state === "conflict" || r.state === "problem") box.appendChild(mk("p", "desk-break", r.reason || ""));
       else if (r.state === "same") box.appendChild(line(t("正式版本的连线记录里已经是这样了。"), "quiet"));
       s.appendChild(box);
@@ -1750,7 +1750,7 @@
       s.appendChild(where);
       const mine = mk("p", "team-line");
       if (share.mine) mine.append("你自己的提议文件夹：", mk("span", "mono", share.mine.path), share.mine.reachable ? "" : "（现在打不开）");
-      else mine.append("你自己的提议文件夹还没有选：选好以后才能发送提议、笔记和连线。");
+      else mine.append("你自己的提议文件夹还没有选：选好以后才能发送提议、备注和连线。");
       s.appendChild(mine);
     } else if (share.shared) {
       const where = mk("p", "team-line");

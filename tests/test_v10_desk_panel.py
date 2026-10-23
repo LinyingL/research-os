@@ -231,8 +231,8 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
                  "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "chip: Abandoned",
-                 "btn btn-primary: Preview the change", "node-sec-title: Write a note", "desk-meta: Li · 1 Mar 2024",
-                 "btn btn-small: Add note", "node-sec-title: Provenance", "trace-col-title: Data read",
+                 "btn btn-primary: Preview the change", "node-sec-title: Write a comment", "desk-meta: Li · 1 Mar 2024",
+                 "btn btn-small: Add comment", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
                  "node-sec-title: Grew out of", "desk-empty: Origin not marked yet", "node-sec-title: What grew out of it",
                  # 13.5 (V10 review, finding 20): a line's date in the screen's form, re-baselined from its ISO day.

@@ -4652,7 +4652,7 @@ const RECORD_KIND_WORDS = {
   canvas: "关系图位置",
   variables: "变量定义卡",
   legacy: "旧版本索引里的连线确认",
-  notes: "笔记",
+  notes: "备注",
   decisions: "经 PI 批准的决定",
   stata: "Stata 全局变量指向的项目里的文件夹",
   history: "版本历史（保存的材料，不是记录）",
@@ -4690,7 +4690,7 @@ function recordCountText(row) {
     case "legacy":
       return f.waiting + " 个旧索引等待迁移";
     case "notes":
-      if (typeof f.notes === "number") return f.notes + " 条笔记，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
+      if (typeof f.notes === "number") return f.notes + " 条备注，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "decisions":
       if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
@@ -5528,7 +5528,7 @@ function renderVariableCard(host, card) {
   host.appendChild(back);
   const head = mk("div", "var-head");
   head.append(mk("h2", "var-title", card.name), mk("span", "var-id", card.id));
-  head.appendChild(mkButton("来龙去脉与笔记", "var-back", () => RONode.openNode("variable:" + card.id)));
+  head.appendChild(mkButton("来龙去脉与备注", "var-back", () => RONode.openNode("variable:" + card.id)));
   cardChips({ state: card.state, reason: card.reason, abandoned: !!card.abandoned, in_use: card.in_use, draft: card.draft })
     .forEach(([text, cls]) => head.appendChild(mk("span", "var-chip " + cls, text)));
   host.appendChild(head);

@@ -216,11 +216,11 @@ def test_14_6_the_review_panel_the_desk_opens_reads_in_english():
     for expected in (
         "panel-title: Needs review", "panel-subtitle: Earlier link judgments whose evidence changed, waiting for another look",
         "review-link: 17-叙事.Rmd reads panel.csv", "review-reason: The basis changed",
-        "review-was: Earlier link judgment: Confirmed · 2026-10-04 21:15", "review-note: Note: 先看缺失值",
+        "review-was: Earlier link judgment: Confirmed · 2026-10-04 21:15", "review-note: Comment: 先看缺失值",
         "basis-col-title: The basis then", ": Calls: read.csv, read_dta", "basis-col-title: Now",
         ": This scan gave no basis", "btn btn-small: Apply the earlier link judgment to it",
         "btn btn-small: Still holds", "btn btn-small: Change to rejected", "btn btn-small: Withdraw",
-        "form-input:  =  (Note (optional))",
+        "form-input:  =  (Comment (optional))",
         "review-was: Earlier link judgment: Rejected · Migrated from the old index (when the link judgment was made is not known)",
         ": Claim: “精度为 0.87”", ": Number: 0.87", ": Metrics: acc = 0.87",
         ": This scan read both ends but did not find this link",

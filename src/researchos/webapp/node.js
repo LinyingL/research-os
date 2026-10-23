@@ -829,13 +829,13 @@
     }
     if (notes && notes.failed) {
       const box = mk("p", "trace-break");
-      renderBlockingError(box, t("这里的笔记现在读不到"), notes.failed);
+      renderBlockingError(box, t("这里的备注现在读不到"), notes.failed);
       s.appendChild(box);
     } else if (notes && notes.stale) {
-      s.appendChild(mk("p", "trace-break", t("{reason}；下面是图谱上次读到的笔记。", { reason: notes.message || t("笔记记录文件现在无法读取") })));
+      s.appendChild(mk("p", "trace-break", t("{reason}；下面是图谱上次读到的备注。", { reason: notes.message || t("备注记录文件现在无法读取") })));
     }
     const entries = timeline(hist, noteList, page.links);
-    if (!entries.length) s.appendChild(mk("p", "node-empty", t("还没有记录到改动或笔记。")));
+    if (!entries.length) s.appendChild(mk("p", "node-empty", t("还没有记录到改动或备注。")));
     else {
       const ul = mk("ul", "node-timeline");
       let diffs = 0;
@@ -940,7 +940,7 @@
   }
 
   function renderNote(host, page, note, me) {
-    const head = mk("div", "tl-what", t("笔记", { n: 1 }));
+    const head = mk("div", "tl-what", t("备注", { n: 1 }));
     host.appendChild(head);
     host.appendChild(mk("div", "tl-meta", note.label || note.name || note.by || t("最初的研究者")));
     const text = mk("p", "tl-note" + (note.withdrawn ? " withdrawn" : ""), note.text || "");
@@ -958,7 +958,7 @@
           await apiPost("/api/notes", { action: "withdraw", id: note.id });
         } catch (err) {
           b.disabled = false;
-          setStatus(status, "err", t("没能撤回这条笔记"), err);
+          setStatus(status, "err", t("没能撤回这条备注"), err);
           return;
         }
         loadNode(views.node, true);
@@ -977,7 +977,7 @@
     const c = ctx || (typeof RODesk !== "undefined" ? RODesk.context() : null);
     if (!c || c.mode !== "member") return "";
     const me = c.me && c.me.me ? c.me.me.id : t("你的邮箱");
-    const what = { note: t("这条笔记"), link: t("这条连线"), judgment: t("你的连线确认"),
+    const what = { note: t("这条备注"), link: t("这条连线"), judgment: t("你的连线确认"),
       unlink: t("这次删除"), paper: t("「设为论文正文」的标记") }[kind] || t("这条记录");
     const record = kind === "link" ? t("正式的 mappings.toml") : kind === "paper" ? t("正式的 papers.toml") : t("正式记录");
     const then = kind === "unlink" ? t("PI 下次发布时从正式的 mappings.toml 里删去这条连线")
@@ -990,27 +990,27 @@
     const form = mk("div", "node-note");
     const input = mk("textarea", "form-input node-note-input");
     input.rows = 3;
-    input.placeholder = t("写一条笔记：为什么这样做、要注意什么");
-    input.setAttribute("aria-label", t("笔记", { n: 1 }));
+    input.placeholder = t("写一条备注：为什么这样做、要注意什么");
+    input.setAttribute("aria-label", t("备注", { n: 1 }));
     input.value = nav.notesDraft.get(page.id) || "";
     input.addEventListener("input", () => nav.notesDraft.set(page.id, input.value));
     const status = mk("div", "notice-status");
-    const add = mkButton(t("添加笔记"), "btn btn-small", async () => {
+    const add = mkButton(t("添加备注"), "btn btn-small", async () => {
       const text = input.value.trim();
-      if (!text) { setStatus(status, "err", t("笔记是空的")); return; }
+      if (!text) { setStatus(status, "err", t("备注是空的")); return; }
       add.disabled = true;
       setStatus(status, "", t("正在保存…"));
       try {
         await apiPost("/api/notes", { action: "add", node: page.id, text: text });
       } catch (err) {
         add.disabled = false;
-        setStatus(status, "err", t("笔记没有保存"), err);
+        setStatus(status, "err", t("备注没有保存"), err);
         return;
       }
       nav.notesDraft.delete(page.id);
       loadNode(views.node, true);
     });
-    const blocked = humanRecordsBlocked() || (notes && notes.trusted === false ? (notes.message || t("笔记记录文件现在无法写入")) : null);
+    const blocked = humanRecordsBlocked() || (notes && notes.trusted === false ? (notes.message || t("备注记录文件现在无法写入")) : null);
     if (blocked) { add.disabled = true; add.title = blocked; }
     const row = mk("div", "tl-actions");
     row.appendChild(add);

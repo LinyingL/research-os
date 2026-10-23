@@ -191,7 +191,7 @@ def test_14_6_an_english_pi_decides_a_proposal_in_the_panel_with_no_chinese_but_
         f"desk-meta: Fingerprint  (title: {'cd' * 32})", ": Show the change", "evidence-role: Changed", "desk-meta: 2.0 MB",
         "status-label tone-clay: Changed on both sides", "desk-meta: A large file, stored in the shared folder by its content:",
         "evidence-role: Removed", "status-label tone-plain: Already so in the official version",
-        "team-line writes: Approval publishes to the shared folder, including members’ synced changes (2 notes and 1 link removed).",
+        "team-line writes: Approval publishes to the shared folder, including members’ synced changes (2 comments and 1 link removed).",
         ": The link to be removed (1)", "team-help: Removed by 王", "node-sec-title: Changes not sent with the proposal",
         "team-help: Attempt #19 (added) is not part of this proposal",
         "node-sec-title: Cannot be approved yet", "desk-break: : Changed on both sides",

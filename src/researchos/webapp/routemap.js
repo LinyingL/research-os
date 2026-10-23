@@ -796,7 +796,7 @@
       const input = el("input", "form-input cv-pop-note");
       input.type = "text";
       input.placeholder = t("备注（可选）");
-      input.setAttribute("aria-label", t("备注"));
+      input.setAttribute("aria-label", t("备注", { n: 1 }));
       input.maxLength = 200;
       field.appendChild(input);
       const actions = el("div", "cv-pop-actions");

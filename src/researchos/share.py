@@ -1764,7 +1764,7 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
         ex_mod.LocalExchange(shared).write_packet(me, packet_id, raw, signature)
     except (tomllib.TOMLDecodeError, signing.SigningError, ExchangeError, OSError) as exc:
         problems.append({"kind": "entries_not_sent", "path": str(shared),
-                         "detail": f"笔记和连线确认没有发送：{getattr(exc, 'message_zh', None) or exc}"})
+                         "detail": f"备注和连线确认没有发送：{getattr(exc, 'message_zh', None) or exc}"})
         return 0
     state["sent_entries"] = sorted(sent | set(ids))
     for key in link_keys:  # what a change undoes is no longer what was last sent for that link
