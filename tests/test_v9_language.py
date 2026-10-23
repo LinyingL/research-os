@@ -2301,7 +2301,7 @@ GUIDE_EN_OFFICIALNESS_LABELS = ("Approved, awaiting sync",)
 #: The streamlined guide uses page buttons, not shell menu shortcuts.
 GUIDE_EN_SHELL_ITEMS = ()
 #: Bold that is emphasis, not a label.
-GUIDE_EN_EMPHASIS = ("0.2.0",)
+GUIDE_EN_EMPHASIS = ("0.3.0",)
 #: Chinese labels quoted for the Chinese screen before the switch (its neighbours), and words a
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.

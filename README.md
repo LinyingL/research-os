@@ -1,145 +1,103 @@
 # Research OS
 
-[![Latest release: 0.2.0](https://img.shields.io/badge/latest_release-0.2.0-956b4b)](https://github.com/LinyingL/research-os/releases/tag/v0.2.0)
+[![Version: 0.3.0](https://img.shields.io/badge/version-0.3.0-956b4b)](CHANGELOG.md#030)
 [![tests](https://github.com/LinyingL/research-os/actions/workflows/tests.yml/badge.svg)](https://github.com/LinyingL/research-os/actions/workflows/tests.yml)
 
 **A workspace for research plans, notes, results, and team review.**
 
-Research OS keeps a project's written work, files, and decisions together.
-Write your research question and plan, keep notes as ideas develop, and
-organize findings alongside the data, code, and figures they refer to.
-Use it to manage several projects on your own or work with a PI and
-collaborators.
+Start with a research question. Write a plan, keep notes as ideas develop,
+and collect results alongside the data and code behind them. Research OS
+keeps this work together across your projects, including the attempts you
+set aside and the reasons you recorded.
 
-Write directly in the app and continue using Stata, R, Python, or your
-usual editor for analysis and code. Plans, notes, results, and tasks can
-develop in whatever order your research needs.
-
-> This README describes **`main`, the development version**. The latest
-> tagged release is **0.2.0**, with Stata support and model-assisted drafts.
-> Project home, writing in the app, and AI task execution are on `main`;
-> they are not included in the 0.2.0 release.
-
-Project home, using a fictional paper airplane study in English:
+Write directly in the app and continue using Stata, Python, R, or your
+usual editor for analysis. Work on your own or share a project with a PI
+and collaborators. Plans, notes, tasks, and research attempts can develop
+in whatever order your work needs.
 
 ![Project home with a fictional paper airplane study in English](docs/images/project-home-demo-en.png)
 
-## What you can do
+## Version 0.3.0
 
-| Area | In practice |
+This version brings writing and AI task execution into the research workspace:
+
+- **Project home:** write plans, notes, and result records as Markdown.
+  Reference project files and research attempts, preview figures and tables,
+  and inspect saved changes. Existing Markdown files in `research/notes/`
+  and `research/results/` can be opened and edited too.
+- **One research routes page:** switch between the route map and a grouped
+  list. Both open the same attempt panel, with its assessment, results,
+  related files, comments, and review actions.
+- **A simpler single-person view:** team menus appear when collaboration is
+  enabled. Ordinary changes to an existing attempt's assessment and result
+  can be saved directly, with undo; abandoning a route still records a reason
+  and preserves its basis.
+- **AI agents:** assign tasks to Claude Code or OpenCode, follow their work,
+  answer questions, and receive a result record. Preview the files an undo
+  would affect and choose which changes to keep.
+- **Interface and engine improvements:** clearer terms in English and Chinese,
+  session checks for writes, stronger agent checks, and less repeated file
+  hashing, parsing, and polling.
+
+See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
+
+## Everyday work
+
+| Where | What you do |
 | --- | --- |
-| Plans and notes | Start a project with a name and folder. Write the research question, plans, ideas, and discussions directly in the app. |
-| Results | Keep findings and interpretations with references to figures, tables, data, and scripts. Preview Markdown and local images. |
-| Research routes | Record what you tried, how attempts relate, and why you continued or abandoned a direction. |
-| Files and history | Follow links between results, code, and data. Inspect saved changes and the decisions recorded alongside them. |
-| Team review | Work in local copies, submit changes with an explanation, and review them as PI before publishing the accepted version. |
-| Tasks | Keep an optional list of work, with an owner, date, and completion status. Assign a task to an AI agent when useful. |
-| Variables and literature | Keep variable definitions and their revisions, follow draft citations, and connect a local Zotero library. |
+| Project home | Write the research question and plan, keep notes, organize result records, and maintain an optional task list. |
+| Research routes | Record attempts, connect directions that grew out of earlier work, and retain the reasons for continuing or abandoning them. |
+| Figures and claims | Inspect figures, tables, and quantitative claims in manuscripts, together with the relationships recorded for them. |
+| Data and code | Browse scripts and datasets, inspect their inputs and outputs, and follow file relationships. |
+| Variables and literature | Keep variable definitions and their versions, inspect citations, and connect a local Zotero library. |
+| Team review | Submit changes from a working copy, compare them as PI, and publish the accepted version. |
 
-A result note can link a figure to its script, input data, and research
-attempt. If you later set that route aside, its notes and reasons remain
-part of the project. Extracted file relationships show their source;
-relationships read from code alone do not establish that it ran.
-
-Research OS reads supported Python, R, and Stata scripts, Markdown and
-LaTeX documents, bibliographies, and optional git history and MLflow/W&B
-run logs. Stata support includes `.do` file inputs and outputs, resolvable
-macros, and `.dta` structure. Scanning reads files without running Stata.
-
-## Research routes, results, and review
-
-These three views are from the **0.1.0 Demo**, using synthetic data.
-
-**Research routes.** See the attempts made so far, the directions set
-aside, and proposals awaiting review.
-
-![Research route map with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
-
-**Result context.** Open a figure to inspect its linked scripts, data,
-research attempt, and paper draft, together with its history and comments.
-
-![A figure linked to source data, scripts, an intermediate dataset, and a paper draft](docs/images/result-provenance.png)
-
-**PI review.** Compare the proposed changes and their explanation before
-approving them or asking for revisions.
-
-![PI review with the previous and proposed rows, a code diff, and review controls](docs/images/proposal-review.png)
-
-## Work alone or with a team
-
-For your own projects, save plans and notes directly and keep track of
-results across projects. Single-person projects have no approval step.
-New projects start with an empty research record; importing a historical
-table is optional.
-
-In a team, each person works in a local copy:
-
-1. Edit documents in Research OS and work on code and analysis in your
-   usual tools.
-2. Review your changes, explain them, and submit a proposal through the
-   shared folder.
-3. The PI compares the changes and their context, then approves them or
-   returns them for revision.
-4. Approved changes are applied to the PI's project and published.
-   Members sync to receive that version.
-
-An unapproved proposal stays separate from the official version. Approval
-covers research attempts, verdicts, variable versions, project files, and
-links between attempts. Plans and notes saved as project documents use
-the file review workflow. Comments on files or attempts, link judgments,
-and manually recorded file relationships sync without
-individual approval.
-
-The PI's computer holds the accepted project, the shared folder carries
-published snapshots and proposals, and members keep their working copies
-locally. A service such as OneDrive transports the shared files. Research
-OS manages this exchange; it does not host a collaboration server.
+A **note** is an editable document. A **comment** is a short, attributed
+message attached to a file or research attempt. **Result records** hold
+findings and interpretation; **Figures and claims** shows the material
+linked from manuscripts.
 
 ## Install
 
 The native app requires **macOS 12 or later**, Apple's command line tools,
-and `uv`. The engine and command line require **Python 3.11 or later**.
+and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+The engine and command line require **Python 3.11 or later**.
 
-### Current development version
-
-To use the project writing workspace and optional AI agents described here:
+Install or update from the current source:
 
 ```bash
 uv tool install --force git+https://github.com/LinyingL/research-os@main
 researchos app
 ```
 
-Open **Research OS.app** from `~/Applications`. Choose **New project…** to
-start with a research question and plan, **Add project…** to open an
-existing folder, or **Join a project from the shared folder…** to join a
-team.
+These commands track `main`. Published tags are listed under
+[Releases](https://github.com/LinyingL/research-os/releases).
 
-### Tagged release: 0.2.0
+Open **Research OS.app** from `~/Applications`:
 
-To install the published 0.2.0 version instead:
+- **New project…** creates a folder and opens the research question and plan.
+- **Add project…** opens an existing research folder.
+- **Join a project from the shared folder…** joins a team working copy.
 
-```bash
-uv tool install --force git+https://github.com/LinyingL/research-os@v0.2.0
-researchos app
-```
+New projects start with an empty research record. Importing an old attempt
+table is optional.
 
-This release includes research routes, file relationships, team review,
-Stata support, and local-model assistance for drafting attempt fields.
-See the [release notes](CHANGELOG.md) and the 0.2.0 installation and team
-setup guides in [English](docs/install-and-join.en.md) or
-[中文](docs/安装与加入团队.md).
+When updating, close the app before installing, then run `researchos app`
+again. This rebuilds the app with the current menus and the session needed
+to save changes. A window opened through a plain server URL can read the
+project but cannot save; open it through the app or `researchos serve`.
 
 ### Command line and development
 
 ```bash
-git clone --branch main https://github.com/LinyingL/research-os.git
+git clone https://github.com/LinyingL/research-os.git
 cd research-os
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-For an existing project, replace the example path with your own:
+To scan an existing project and open its browser interface:
 
 ```bash
 researchos init /path/to/project
@@ -147,32 +105,27 @@ researchos ingest /path/to/project
 researchos serve /path/to/project
 ```
 
-See the [command-line guide](docs/cli-reference.md) for queries, file
-tracing, research records, and team commands.
+The [command-line guide](docs/cli-reference.md) covers file tracing,
+research records, variables, and team commands.
 
 ## Optional AI
 
-### Draft attempt fields with a local model
-
-Start LM Studio's local server and load a model. In **New attempt**, open
-**Model server**, enter the server address and model ID, and save. The
-usual LM Studio address is `http://127.0.0.1:1234/v1`.
-
-Choose up to five project text files and click **Generate draft**. The
-model fills empty description and result fields and identifies the source
-files used. Include a text log or results file to draft findings; a script
-alone does not show what happened when it ran. Review the draft before
-saving. Verdicts and approval decisions stay with the researcher.
-
-The model receives the selected files at the server address you configure,
-which is shown before generation.
-
 ### Optional: AI agents
 
-On `main`, a task can be assigned to **Claude Code** or an **OpenCode**
-model. Install and configure the chosen program first, and check that it
-can run from your terminal. OpenCode can use a local model through LM
+Research OS runs the **Claude Code** or **OpenCode** program installed on
+your Mac. Install and configure your chosen program first, and check that
+it works from your terminal. OpenCode can use a local model through LM
 Studio or Ollama when configured for that provider.
+
+For Claude Code, sign in through its own login flow. Pro and Max users can
+use their Claude subscription; Claude and Claude Code share the plan's
+usage limits. See the [official subscription guide](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan).
+Claude Code's configured credentials determine subscription or API billing.
+If a run reports an expired OAuth token, sign in again:
+
+```bash
+claude auth login --claudeai
+```
 
 Install Research OS with the optional MCP dependency so the agent can
 report back:
@@ -184,51 +137,123 @@ researchos app
 
 From a checkout, use `python -m pip install -e ".[mcp]"`.
 
-In **Project home**, open **AI agent** in the **Tasks** area and add the
-program and model. Assign it as a task's **Owner**, save the task, then
-click **Run**. The agent works directly in the project folder: it can write
-code, run analysis, and write notes. Its completion report becomes a
-result record linked to the task.
+In **Project home**, open **AI agent** in the task area and add the program
+and model. Select it as a task's **Owner**, save, and click **Run**. The agent
+works in the project folder: it can read files, write code, run analysis,
+and write notes. Its completion report becomes a result record linked to
+the task.
 
-The run log shows progress and file changes. You can stop a run, answer a
-question, send completed work back for revision, or undo supported changes.
-Research judgments and team approval remain with people. The checks and
-undo limits are described in the [project home guide](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task).
+The initial instruction includes the task, the saved research question
+and plan up to 8,000 characters, and the titles and paths of up to 50 notes
+and result records. The agent reads further files as needed. Conversations
+in the Claude desktop app are not included.
+
+Use **Run log** to follow progress and inspect file changes. You can stop a
+run, answer a question, send completed work back for revision, or preview
+and undo supported changes. Research assessments, link confirmation, and
+team approval stay with people.
+
+Agent checks restrict changes to existing data and project records, but
+are not an operating system sandbox. Claude Code has checks before tool
+calls; OpenCode relies on its permissions and the comparison after a run.
+Undo keeps copies of files up to 16 MB for the newest 20 runs, leaves later
+edits alone, and cannot reverse installed software or changes outside the
+project. See the [agent guide](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task)
+for the full scope and limits.
 
 Claude Code sends the content it reads to Anthropic. OpenCode uses the
-model provider you configure. The agent's checks are not an operating
-system sandbox; Claude Code has checks before tool calls, while OpenCode
-relies on its permissions and the comparison after a run. Undo retains
-copies of files up to 16 MB for the newest 20 runs and leaves later edits
-alone. Upgrade all team members before using agent tasks: 0.2.0 cannot
-read the result links they add to the task record.
+model provider you configure, which may be local.
 
-## Files, history, and limits
+### Draft attempt fields with a local model
 
-Documents are saved as Markdown in the project's `research/` folder.
-Project identity, configuration, and other research records live in
-`.researchos/`. The derived file index and retained local history live
-under `~/.researchos/`, outside the project folder. Back up both the project
-and local history; rebuilding the index does not restore old file contents.
+Start LM Studio's local server and load a model. In **New attempt**, open
+**Model server**, enter the server address and model ID, and save. A usual
+LM Studio address is `http://127.0.0.1:1234/v1`.
 
-File relationships may come from code, imported experiment logs, or a person's
-statement. Their basis stays visible, and the app does not promise a
-complete execution history for every result. Local file history retains
-text up to 5 MB; a fingerprint or summary of a larger file is not a
-restorable copy. Published team snapshots retain file contents separately.
+Choose up to five project text files and click **Generate draft**. The
+model fills empty description and result fields and identifies their
+source files. Include a text log or results file to draft findings; code
+alone does not show what happened when it ran. Review the draft before
+saving. Selected content goes to the server address shown in the form.
 
-Conflicting edits need a person to resolve them. Sync preserves the local
-file and places the official version beside it for comparison. The app
-is still in early development; use a backed-up project when trying a new
-version.
+## Work alone or with a team
+
+Single-person projects save directly. To start a team, choose **Start
+collaboration…** in the project menu. Team members work in their own local
+copies and submit changes through a shared folder:
+
+1. Write in Research OS and run analysis in your usual tools.
+2. Select the changes, explain them, and submit a proposal.
+3. The PI reviews the differences, approves them or requests revisions.
+4. Approved changes enter the official project and are published. Members
+   sync to receive them.
+
+An unapproved proposal stays separate from the official version. Research
+attempts, assessments, variable versions, project files, and links between
+attempts use PI review. Written plans, notes, and result records use the
+file review workflow. Comments, link judgments, and manually recorded file
+relationships sync without individual approval.
+
+The PI's computer holds the official project. The shared folder carries
+snapshots and proposals, transported by a service such as OneDrive.
+Research OS does not host a collaboration server.
+
+**Upgrade every team member to 0.3.0 before using agent tasks.** Version
+0.2.0 cannot read the result links an agent adds to a task record.
+
+## Files and research tools
+
+Your written work stays in the project folder:
+
+```text
+research/overview.md      Research question and plan
+research/notes/           Notes
+research/results/         Result records, including agent reports
+research/tasks.json      Optional tasks
+.researchos/              Project identity, settings, and research records
+```
+
+The file index and retained local history live under `~/.researchos/`,
+outside the project. Back up the project and local history together;
+rebuilding an index does not restore old file contents. Local history
+retains text up to 5 MB; fingerprints and summaries of larger files are
+not restorable copies. Team snapshots retain published file contents
+separately. Conflicting edits are kept for a person to resolve.
+
+Research OS reads supported Python, R, and Stata scripts, Markdown and
+LaTeX manuscripts, bibliographies, and optional git history and MLflow/W&B
+experiment records. Stata support includes `.do` inputs and outputs,
+resolvable macros, and `.dta` structure; `.ado` files are listed as scripts.
+Scanning reads files without running the analysis.
+
+Relationships show the evidence they came from. Imported run records can
+provide evidence of execution; a relationship found in code alone does
+not establish that it ran. File tracing is limited to the formats and paths
+the readers can resolve.
+
+## Earlier demo views
+
+These English screenshots use synthetic data from the 0.1.0 Demo.
+Their layouts predate 0.3.0.
+
+<details>
+<summary>Research routes, result context, and PI review</summary>
+
+![Research routes with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
+
+![A figure linked to data, scripts, a research attempt, and a manuscript](docs/images/result-provenance.png)
+
+![PI review with previous and proposed content, a code diff, and review controls](docs/images/proposal-review.png)
+
+</details>
 
 ## Documentation and feedback
 
-- [Using project home](docs/project-workspace.md) · [项目首页](docs/项目首页.md)
-- [Install and join a team — 0.2.0](docs/install-and-join.en.md) · [中文指南](docs/安装与加入团队.md)
+- [Project home](docs/project-workspace.md) · [项目首页](docs/项目首页.md)
+- [Install and join a team](docs/install-and-join.en.md) · [安装与加入团队](docs/安装与加入团队.md)
 - [Command-line guide](docs/cli-reference.md)
-- [Product and architecture design](DESIGN.md)
-- [Report a bug or suggest a change](https://github.com/LinyingL/research-os/issues)
+- [Changelog](CHANGELOG.md) · [Design](DESIGN.md)
+- [Report an issue](https://github.com/LinyingL/research-os/issues)
 
 ## License
 

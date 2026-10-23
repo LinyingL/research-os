@@ -1,6 +1,6 @@
 # Command-line reference
 
-Research OS **0.2.0**.
+Research OS **0.3.0**.
 
 For installation, see the [README](../README.md#install). Replace the
 sample paths and file names below with your own. `researchos --help` lists
