@@ -70,6 +70,9 @@
   function named(node, words) { node.setAttribute("aria-label", words); return node; }
 
   let epoch = 0, request = 0, docRequest = 0, createRequest = 0;
+  // Paths a document names that are not among the listed files (the list stops at the engine's limit), and what the
+  // engine said of each: true when it is a file the document may link to (DESIGN.md 18.3).
+  let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
   let createSubject = null, foreignBlocked = false;
@@ -106,7 +109,7 @@
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null;
-    foreignBlocked = false;
+    foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
     stopPolling(); offline = false;
     agentInfo = null; agentInfoError = null; agentInfoLoading = false;
@@ -141,15 +144,37 @@
     const name = target.split("/").pop().replace(/[[\]\\]/g, "\\$&");
     return (image ? "!" : "") + "[" + name + "](" + encodePath(relativePath(from, target)) + ")";
   }
-  function referencedFiles() {
-    const result = new Set([draft.path]);
-    const links = /!?\[(?:\\.|[^\]\\\n])*\]\(([^)\n]+)\)/g;
+  // A project file a document may link to: one of the listed files, or, when the list was cut at the engine's limit, one
+  // the engine has said exists (a link to an existing file beyond the first 500 is still a link, DESIGN.md 18.3).
+  function listedFile(path) { return !!data && (data.files || []).some((file) => file.path === path); }
+  function knownFile(path) { return listedFile(path) || knownCache.get(path) === true; }
+  // A path the render could not place, to be asked about once; only when the list is not the whole project.
+  function wantLookup(path) {
+    if (data && data.files_truncated && !knownCache.has(path) && !unchecked.includes(path)) unchecked.push(path);
+  }
+  async function lookUpFiles(paths) {
+    const mark = stamp(), asked = paths.filter((p) => p.length <= 500).slice(0, 100);   // one short request
+    if (!asked.length) return false;
+    try {
+      const got = await apiGet("/api/workspace/exists?project=" + encodeURIComponent(project()) + asked.map((p) => "&path=" + encodeURIComponent(p)).join(""));
+      if (!live(mark)) return false;
+      const found = new Set(got.exists || []);
+      asked.forEach((p) => knownCache.set(p, found.has(p)));
+      return found.size > 0;
+    } catch (err) {
+      return false;   // not an answer: nothing is remembered and the link stays text until it is asked again
+    }
+  }
+  // The project files the document links to, in the order it names them, the document itself first.
+  async function referencedFiles() {
+    const own = draft.path, named = [], links = /!?\[(?:\\.|[^\]\\\n])*\]\(([^)\n]+)\)/g;
     let match;
     while ((match = links.exec(draft.content))) {
-      const path = resolvePath(draft.path, match[1]);
-      if (path && (data.files || []).some((file) => file.path === path)) result.add(path);
+      const path = resolvePath(own, match[1]);
+      if (path && path !== own && !named.includes(path)) named.push(path);
     }
-    return Array.from(result);
+    if (data.files_truncated) await lookUpFiles(named.filter((path) => !listedFile(path) && !knownCache.has(path)));
+    return [own].concat(named.filter(knownFile));
   }
 
   function projectChangedElsewhere() {
@@ -189,7 +214,8 @@
       else {
         const image = match[1].startsWith("!"), label = match[2].replace(/\\([\[\]\\])/g, "$1"), target = match[3];
         const local = resolvePath(from, target);
-        const known = local && data && (data.files || []).some((f) => f.path === local);
+        const known = !!local && knownFile(local);
+        if (local && !known) wantLookup(local);
         if (image && known && /\.(png|jpe?g|gif|webp)$/i.test(local)) {
           const img = el("img", "ws-image");
           img.src = "/api/workspace/asset?path=" + encodeURIComponent(local);
@@ -223,7 +249,7 @@
     parent.append(text.slice(start));
   }
   function renderMarkdown(node, content, from) {
-    node.replaceChildren();
+    node.replaceChildren(); unchecked = [];
     const lines = String(content || "").replace(/\r\n?/g, "\n").split("\n");
     let code = null, list = null, table = null;
     for (let i = 0; i < lines.length; i += 1) {
@@ -275,10 +301,27 @@
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
     const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
-    columns.append(rail, editor); page.append(top, columns, tasks);
-    if ((data.errors || []).length) page.prepend(el("p", "ws-status err", t("部分文档暂时无法读取，其他内容仍可使用。")));
-    if (data.read_only) page.prepend(el("p", "ws-readonly", t("项目以只读方式打开。可以阅读，暂时不能保存。")));
-    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result };
+    const notices = el("div", "ws-notices");
+    columns.append(rail, editor); page.append(notices, top, columns, tasks);
+    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result, notices: notices };
+    renderNotices();
+  }
+  // What the page has to say about the project as a whole, drawn again with every read of it: why it cannot be
+  // written (a Mac that is not a member of a team project says so, DESIGN.md 18.3), a project identity that cannot be
+  // read right now (the engine's sentence, in the screen's language), and documents that cannot be read.
+  function renderNotices() {
+    if (!ui || !ui.notices) return;
+    const box = ui.notices; box.replaceChildren();
+    if (data.mode === "none") box.append(el("p", "ws-readonly", t("这台 Mac 不是这个项目的成员，只能查看")));
+    else if (data.read_only) box.append(el("p", "ws-readonly", t("项目以只读方式打开。可以阅读，暂时不能保存。")));
+    if (data.identity_error) box.append(el("p", "ws-status err", data.identity_error.message));
+    if ((data.errors || []).length) box.append(el("p", "ws-status err", t("部分文档暂时无法读取，其他内容仍可使用。")));
+  }
+  // Notes and result records by their last change, newest first (DESIGN.md 18.3); the engine's order stands for
+  // documents that changed together or whose time is not known.
+  function changeOrder(documents) {
+    const when = (doc) => { const n = Date.parse(doc.modified || ""); return isNaN(n) ? -Infinity : n; };
+    return documents.map((doc, index) => [doc, index]).sort((a, b) => (when(b[0]) - when(a[0])) || (a[1] - b[1])).map((pair) => pair[0]);
   }
   function renderNav() {
     if (!ui) return;
@@ -286,7 +329,7 @@
     ["overview", "note", "result"].forEach((kind) => {
       const group = el("div", "ws-document-group");
       group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : kindLabel(kind)));
-      const documents = (data.documents || []).filter((d) => d.kind === kind);
+      const documents = changeOrder((data.documents || []).filter((d) => d.kind === kind));
       documents.forEach((doc) => {
         const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
         // Authored titles are never translated as UI strings.
@@ -333,14 +376,29 @@
     setDraft({ kind: kind, title: "", content: "", revision: null });
     ui.title.focus();
   }
-  function previewContent() {
-    const title = draft.title.trim(), text = draft.content;
-    if (!title) return text;
-    // Show the same heading that saving will keep, including edits made in the body.
-    if (draft.revision == null) return text.split(/\r?\n/)[0] === "# " + title ? text : "# " + title + "\n\n" + text;
-    if (title === saved.title) return text;
+  // The text the engine keeps for a title and a writing area (workspace.save_document, DESIGN.md 18.3): the title is
+  // written into the text only when it is a title the person typed, one different from the one the file showed
+  // (`shown`; a document not written yet shows none, but for the overview's own default). A new document gets it as
+  // its first line, an existing one in place of its first heading, or above the text when it has none.
+  function headedContent(title, text, isNew, shown) {
+    title = title.trim();
+    if (!title || title === shown) return text;
+    if (isNew) return text.split(/\r?\n/)[0] === "# " + title ? text : "# " + title + "\n\n" + text;
     const heading = /^#{1,6}[ \t]+.+$/m;
     return heading.test(text) ? text.replace(heading, () => "# " + title) : "# " + title + "\n\n" + text;
+  }
+  // Show the same heading that saving will keep, including edits made in the body.
+  function previewContent() { return headedContent(draft.title, draft.content, draft.revision == null, saved.title); }
+  // The preview is drawn at once with the files the page knows; links to files it cannot place are asked about once,
+  // and it is drawn again if the engine knows some of them (a file beyond the listed ones, DESIGN.md 18.3).
+  function renderPreview() {
+    const node = ui.preview, from = draft.path || fallbackPath(draft.kind);
+    renderMarkdown(node, previewContent(), from);
+    const asked = unchecked.slice();
+    if (!asked.length) return;
+    lookUpFiles(asked).then((found) => {
+      if (found && ui && ui.preview === node && ui.previewing) renderMarkdown(node, previewContent(), draft.path || fallbackPath(draft.kind));
+    });
   }
   function renderEditor() {
     const box = ui.editor; box.replaceChildren();
@@ -353,7 +411,7 @@
       ui.text.classList.toggle("hidden", ui.previewing); ui.preview.classList.toggle("hidden", !ui.previewing);
       previewToggle.textContent = ui.previewing ? t("继续编辑") : t("预览");
       previewToggle.setAttribute("aria-pressed", String(ui.previewing));
-      if (ui.previewing) renderMarkdown(ui.preview, previewContent(), draft.path || fallbackPath(draft.kind));
+      if (ui.previewing) renderPreview();
       else ui.text.focus();
     });
     previewToggle.setAttribute("aria-pressed", "false");
@@ -366,6 +424,13 @@
     text.setAttribute("aria-label", kindLabel(draft.kind));
     const preview = el("div", "ws-preview hidden"), docStatus = el("div", "ws-status"); docStatus.setAttribute("role", "status");
     ui.title = title; ui.text = text; ui.preview = preview; ui.save = save; ui.docStatus = docStatus; ui.previewing = false;
+    ui.composing = false; ui.afterComposing = null;
+    text.addEventListener("compositionstart", () => { ui.composing = true; });
+    text.addEventListener("compositionend", () => {
+      ui.composing = false;
+      const later = ui.afterComposing; ui.afterComposing = null;
+      if (later) setTimeout(later, 0);   // after the input method's last input event has been taken
+    });
     function changed() { draft.title = title.value; draft.content = text.value; status(docStatus, documentDirty() ? t("尚未保存") : ""); }
     title.addEventListener("input", changed); text.addEventListener("input", changed);
     text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!save.disabled) saveDocument(); } });
@@ -374,13 +439,17 @@
     if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
     if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }));
     if (data.mode === "member") {
-      const propose = button(t("提交修改"), () => {
+      const propose = button(t("提交修改"), async () => {
         if (documentDirty()) { status(docStatus, t("请先保存，再提交修改。")); return; }
-        if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(referencedFiles());
+        const files = await referencedFiles();
+        if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(files);
       });
       propose.disabled = !editable() || !draft.path; footer.append(propose);
       footer.append(el("p", "ws-empty", t("保存到自己的工作副本；提交并经 PI 批准后进入正式版本。")));
     }
+    // The PI changes the official version directly, so a note or a result record is already theirs to publish: it goes
+    // to the members with the next 发布 (DESIGN.md 18.3).
+    if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和结果记录会随下一次发布交给成员。")));
     box.append(footer);
   }
   function insertText(words) {
@@ -390,7 +459,7 @@
     draft.content = text.value;
     if (text.setSelectionRange) text.setSelectionRange(start + words.length, start + words.length);
     status(ui.docStatus, t("尚未保存"));
-    if (ui.previewing) renderMarkdown(ui.preview, previewContent(), draft.path || fallbackPath(draft.kind));
+    if (ui.previewing) renderPreview();
     else text.focus();
   }
   function attachmentTools() {
@@ -405,6 +474,8 @@
       const image = /\.(png|jpe?g|gif|webp)$/i.test(select.value);
       insertText("\n" + markdownLink(draft.path || fallbackPath(draft.kind), select.value, image) + "\n");
     }); attach.disabled = !editable(); row.append(select, attach); tools.append(row);
+    // The list stops at the engine's limit; a reader who cannot find a file here is told why (DESIGN.md 18.3).
+    if (data.files_truncated) tools.append(el("p", "ws-empty ws-files-cut", t("项目里的文件多于 {n} 个，这里只列出前 {n} 个；其余的可以在正文里手写链接。", { n: data.files_limit || (data.files || []).length })));
     if ((data.attempts || []).length) {
       const attemptRow = el("div", "ws-attachment-row"), attempts = el("select", "form-input");
       attempts.setAttribute("aria-label", t("选择研究尝试"));
@@ -423,6 +494,7 @@
         const fresh = await apiGet("/api/workspace");
         if (!live(mark) || fresh.project !== project()) return;
         data.files = fresh.files || []; data.attempts = fresh.attempts || [];
+        data.files_truncated = !!fresh.files_truncated; data.files_limit = fresh.files_limit; knownCache = new Map();
         redrawAttachments();
         status(ui.attachments.querySelector(".ws-reference-status"), t("文件列表已更新。"));
       } catch (err) {
@@ -451,12 +523,32 @@
     }));
     ui.docStatus.append(row);
   }
+  // The person went on typing while a save was out, so the writing area holds the text that was sent plus their new words,
+  // and the heading the engine wrote into the sent text (a new document's title, a changed title) is not in it. It is
+  // written into the area now, around what they typed -- or the next save would take it away (DESIGN.md 18.3). Only when
+  // the engine did what headedContent says it does; while an input method is composing, after it ends.
+  function carryHeading(title, sent, answered, wasNew, shown) {
+    if (!ui || !ui.text || answered == null || answered === sent || headedContent(title, sent, wasNew, shown) !== answered) return;
+    if (ui.composing) { ui.afterComposing = () => carryHeading(title, sent, answered, wasNew, shown); return; }
+    const area = ui.text, before = area.value, next = headedContent(title, draft.content, wasNew, shown);
+    if (next === draft.content || before !== draft.content) return;
+    let head = 0, tail = 0;
+    const most = Math.min(before.length, next.length);
+    while (head < most && before.charCodeAt(head) === next.charCodeAt(head)) head += 1;
+    while (tail < most - head && before.charCodeAt(before.length - 1 - tail) === next.charCodeAt(next.length - 1 - tail)) tail += 1;
+    const where = (at) => at == null ? at : at <= head ? at : at >= before.length - tail ? at + next.length - before.length : next.length - tail;
+    const from = where(area.selectionStart), to = where(area.selectionEnd), top = area.scrollTop;
+    area.value = next; draft.content = next;
+    if (from != null && typeof area.setSelectionRange === "function") area.setSelectionRange(from, to);
+    if (top != null) area.scrollTop = top;
+    if (ui.previewing) renderPreview();
+  }
   async function saveDocument() {
     if (!draft || !editable() || ui.save.disabled) return;
     if (draft.kind !== "overview" && !draft.title.trim()) { status(ui.docStatus, t("请写一个标题。"), "err"); ui.title.focus(); return; }
     const mark = stamp(), target = draft, payload = { project: project(), kind: draft.kind, title: draft.title.trim(), content: draft.content, revision: draft.revision };
     if (draft.path) payload.path = draft.path;
-    const titleSent = draft.title, contentSent = draft.content;
+    const titleSent = draft.title, contentSent = draft.content, wasNew = draft.revision == null, shown = saved ? saved.title : "";
     ui.save.disabled = true; status(ui.docStatus, t("正在保存…"));
     try {
       const response = await apiPost("/api/workspace/document", payload);
@@ -465,8 +557,8 @@
       const unchanged = draft.title === titleSent && draft.content === contentSent;
       saved = { title: response.title == null ? payload.title : response.title, content: response.content == null ? contentSent : response.content };
       if (unchanged) { draft.title = saved.title; draft.content = saved.content; renderEditor(); }
-      else ui.save.disabled = !editable();
-      const summary = { path: draft.path, kind: draft.kind, title: saved.title, excerpt: saved.content.slice(0, 100), officialness: draft.officialness };
+      else { ui.save.disabled = !editable(); carryHeading(titleSent, contentSent, response.content, wasNew, shown); }
+      const summary = { path: draft.path, kind: draft.kind, title: saved.title, excerpt: saved.content.slice(0, 100), officialness: draft.officialness, modified: response.modified || new Date().toISOString() };
       const index = (data.documents || []).findIndex((d) => d.path === draft.path);
       if (index < 0) data.documents.push(summary); else data.documents[index] = summary;
       renderNav();
@@ -550,7 +642,9 @@
     if (data.mode === "member") {
       const propose = button(t("提交修改"), () => {
         if (taskDirty() || taskBusy) { status(ui.taskStatus, t("请先保存任务，再提交修改。")); return; }
-        if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(["research/tasks.json"]);
+        // The result records the changed tasks link go with them (DESIGN.md 18.3), or the PI's approval would leave a task
+        // pointing at a record that is not in the official project.
+        if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(["research/tasks.json"].concat(data.changed_task_reports || []));
       }); propose.disabled = !tasksEditable(); box.append(propose);
     }
     renderSettings(true);
@@ -599,7 +693,8 @@
       try {
         const fresh = await apiGet("/api/workspace");
         if (!live(mark)) return;
-        data.tasks = fresh.tasks; data.tasks_revision = fresh.tasks_revision; data.tasks_error = fresh.tasks_error; taskConflict = false; renderTasks();
+        data.tasks = fresh.tasks; data.tasks_revision = fresh.tasks_revision; data.tasks_error = fresh.tasks_error; taskConflict = false;
+        data.changed_task_reports = fresh.changed_task_reports || []; renderTasks();
         status(ui.taskStatus, t("已载入最新任务，当前填写仍保留。"));
       } catch (err) { if (live(mark)) status(ui.taskStatus, errorWords(t("没能读取任务。"), err), "err"); }
     }));
@@ -612,6 +707,7 @@
       const response = await apiPost("/api/workspace/tasks", { project: project(), tasks: tasks, revision: data.tasks_revision });
       if (!live(mark)) return;
       data.tasks = response.tasks; data.tasks_revision = response.tasks_revision; data.tasks_officialness = response.tasks_officialness || data.tasks_officialness; taskBusy = false; taskWrites += 1;
+      data.changed_task_reports = response.changed_task_reports || [];
       if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft();
       renderTasks(); status(ui.taskStatus, response.history_error ? t("任务已保存，但修改历史暂时未能记录。") : t("已保存"), response.history_error ? "" : "ok");
       if (typeof pollGeneration === "function") pollGeneration();
@@ -1537,13 +1633,13 @@
       // an agent's done mark and report arrive while the person writes. It is kept only while a save is going or a
       // conflict waits, and when this answer is older than a save made since it was asked for.
       const retainTasks = taskBusy || taskConflict || writes !== taskWrites;
-      const oldTasks = data && data.tasks, oldRevision = data && data.tasks_revision, oldTaskError = data && data.tasks_error;
-      data = fresh; data.documents = data.documents || [];
-      if (retainTasks && oldTasks) { data.tasks = oldTasks; data.tasks_revision = oldRevision; if (oldTaskError) data.tasks_error = oldTaskError; }
+      const oldTasks = data && data.tasks, oldRevision = data && data.tasks_revision, oldTaskError = data && data.tasks_error, oldReports = data && data.changed_task_reports;
+      data = fresh; data.documents = data.documents || []; knownCache = new Map();
+      if (retainTasks && oldTasks) { data.tasks = oldTasks; data.tasks_revision = oldRevision; data.changed_task_reports = oldReports || []; if (oldTaskError) data.tasks_error = oldTaskError; }
       // An existing task is being edited and the file moved under it: the edit stays, the save waits for a reload.
       else if (oldTasks && taskDraft.id && fresh.tasks_revision !== oldRevision) taskConflict = true;
       if (!ui || target !== ui.root) { buildPage(); ui.root = target; }
-      renderNav(); refreshTasks();
+      renderNav(); renderNotices(); refreshTasks();
       if (draft) redrawAttachments();
       ui.note.disabled = ui.result.disabled = !editable(); target.dataset.loaded = "1";
       loadAgentContext(current);

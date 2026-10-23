@@ -4832,6 +4832,59 @@ does not add.
     members with the next 发布.
   - `docs/project-workspace.md` and its Chinese twin use the labels on
     screen.
+  - **How it is read** (task V14, G3-4):
+    - *Order.* `overview` sorts notes and result records together by the
+      file's modification time, newest first, and only then cuts at 500, so
+      it is the oldest that are left out. A save answers with `modified` and
+      the page puts the saved document at the top; the page also sorts by
+      `modified` itself, the engine's order standing for ties. Attempts sort
+      by file, then by number as a number with `attempt_sort_key`'s rule (14a
+      right after 14), then by id.
+    - *Headings.* The engine decides, because it is the one place every writer
+      goes through (the page, the agent tools, a script) and the screen's
+      language is not always the one the file was read in. For an existing
+      file, a title is typed when it differs from the heading the file has;
+      for a file with no heading, when it is neither language's default for
+      its kind (笔记 / Note, 结果记录 / Result record, 研究问题与计划 /
+      Research question and plan). A new overview saved with its default title
+      writes none. A new note or result record is always given the title
+      typed, which the page requires. The cost is that someone who types
+      exactly the other language's default as the title of a headingless file
+      gets no heading; the file would show the same words anyway. `save_document`
+      takes the request's language for the title it answers with.
+    - *Typing during a save.* When the writing area differs from what was
+      sent, the page applies to it the same rule the engine applied (the one
+      `previewContent` already mirrors) if, and only if, that rule gives the
+      text the engine answered with for what was sent. The words go into the
+      writing area with the caret kept in place; while an input method is
+      composing they wait for it to end.
+    - *More than 500 files.* A sentence under the file chooser says that the
+      list is cut. `GET /api/workspace/exists` answers which of the paths
+      given (at most 200) are files `overview` would list if it were not cut:
+      regular, inside the project, not hidden or in a folder the scan leaves
+      out, no link on the way, not only in the cloud. The preview and 提交修改
+      ask it only for the links the list does not hold, only when the list was
+      cut, and remember the answers until the page reads the project again.
+    - *Tasks and their records.* `overview` and the task save answer
+      `changed_task_reports`: the `report` of each task that is new or differs
+      from the official version the working copy was synced to (all of them if
+      that cannot be read), for a member only. The page adds them to
+      `research/tasks.json` in 提交修改; a path that is no change is left out
+      by the proposal itself.
+    - *Officialness.* `local_annotations` builds the officialness module's own
+      view of the workspace files only (their hashes against the base) and
+      asks the module for each file's state and words, so 提议中 and 已批准，
+      待同步 show as they do on every page. It reads the member's own
+      proposals from the shared folder, as the other pages do; it does not
+      walk or hash the rest of the project. The mark has no `pending_known`;
+      `officialness_mode` is the module's mode answer, which has it.
+    - *Names.* Any visible `.md` name directly in the two folders is listed
+      and can be opened and saved; one that does not exist cannot be created
+      by naming it, and nothing is read from a deeper folder or from a link.
+      `research/tasks.json`'s `report` still names a 32-hex result record.
+    - *Not a draft.* A file under `research/` at the project root is skipped by
+      `_is_paper_markdown`, which the citation step uses too, and counts as
+      skipped in the scan report. A Markdown file elsewhere is read as before.
 
 ### 18.4 Speed (no change of behaviour)
 

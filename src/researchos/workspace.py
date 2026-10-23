@@ -4,6 +4,12 @@ Reads never initialize a desk. Saves share the project lock, backups and
 version history used by the other human writers. In a team, a member may
 save only in their recognized working copy: these files then travel through
 the existing file proposal and publication paths.
+
+The documents are `research/overview.md` and the Markdown files directly in
+`research/notes/` and `research/results/` (DESIGN.md 18.3): the ones Research
+OS writes are named by 32 hex digits, but any other `.md` name there is shown
+and can be opened and saved as well (a hand-made file, a sync service's
+conflict copy), and the engine only ever creates the first kind.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import posixpath
 import re
 import secrets
 import sqlite3
@@ -20,8 +27,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from researchos import history, paths, proposals
+from researchos import history, officialness, paths, proposals, settings
 from researchos.agents import labels as agent_labels
+from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import files as ingest_files
 from researchos.records import files as record_files
 from researchos.records import situation
@@ -32,9 +40,13 @@ TEXT_LIMIT = 200 * 1024
 FILE_LIMIT = 500
 DOCUMENT_LIMIT = 500
 TASK_LIMIT = 500
+EXISTS_LIMIT = 200
 OVERVIEW_PATH = "research/overview.md"
 TASKS_PATH = "research/tasks.json"
-_DOCUMENT_RE = re.compile(r"research/(notes|results)/[0-9a-f]{32}\.md\Z")
+# A document directly in research/notes/ or research/results/: a plain, visible `.md` name (no slash, no control
+# character, not hidden). Which of them the engine may create is `_GENERATED_RE`.
+_DOCUMENT_RE = re.compile(r"research/(notes|results)/(?!\.)[^/\\\x00-\x1f]+\.md\Z")
+_GENERATED_RE = re.compile(r"research/(notes|results)/[0-9a-f]{32}\.md\Z")
 _REVISION_RE = re.compile(r"[0-9a-f]{64}\Z")
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 # The result record an agent task points to (DESIGN.md 17.2): a result document, never a note or a free path.
@@ -61,6 +73,7 @@ class WorkspaceError(Exception):
             "read_only": "当前项目只读，团队成员请在自己的工作副本中编辑",
             "history": "无法保留修改历史，本次内容尚未保存",
             "write_failed": "无法写入文件，当前内容尚未保存，请检查磁盘空间和文件权限",
+            "identity": "项目的身份文件暂时读不出来（可能还在云端），所以研究尝试的列表先空着；其余内容可以阅读",
         }.get(code, "暂时无法保存，请重试")
 
 
@@ -74,6 +87,21 @@ def _root(value: str | Path) -> Path:
 def _title(kind: str, lang: str = "zh") -> str:
     return ({"overview": "Research question and plan", "note": "Note", "result": "Result record"}
             if lang == "en" else {"overview": "研究问题与计划", "note": "笔记", "result": "结果记录"})[kind]
+
+
+def _default_titles(kind: str) -> frozenset[str]:
+    """The title a document without a heading shows, in either language: what the page holds in its title field
+    whichever language the screen was in when it read the file (13.1: the file never depends on the screen)."""
+    return frozenset({_title(kind, "zh"), _title(kind, "en")})
+
+
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+
+
+def _heading(content: str) -> str | None:
+    """The text of a document's first Markdown heading, which is its title; None when it has none."""
+    found = _HEADING_RE.search(content)
+    return (found.group(1).strip()[:200] or None) if found else None
 
 
 def _kind(rel: Any) -> str:
@@ -165,9 +193,16 @@ def _document(root: Path, rel: str, raw: bytes | None, *, lang: str = "zh") -> d
     if raw is None and kind != "overview":
         raise WorkspaceError("not_found", f"{rel} does not exist", 404)
     content = _decode(raw) if raw is not None else ""
-    heading = re.search(r"^#{1,6}\s+(.+?)\s*#*\s*$", content, re.MULTILINE)
-    title = heading.group(1).strip()[:200] if heading else _title(kind, lang)
+    title = _heading(content) or _title(kind, lang)
     return {"path": rel, "kind": kind, "title": title, "content": content, "revision": _revision(raw)}
+
+
+def _modified(root: Path, rel: str) -> str | None:
+    """When the file last changed (UTC, ISO 8601); None when it does not exist."""
+    try:
+        return datetime.fromtimestamp((root / rel).stat().st_mtime, timezone.utc).isoformat()
+    except OSError:
+        return None
 
 
 def document(root: str | Path, path: str, lang: str = "zh") -> dict[str, Any]:
@@ -278,10 +313,12 @@ def _save(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
 
 
 def save_document(root: str | Path, body: dict[str, Any], *,
-                  author: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                  author: Mapping[str, Any] | None = None, lang: str = "zh") -> dict[str, Any]:
     """Save a document. `author` (the agent tools only, DESIGN.md 17.4) is
     `{"source": "agent", "who": ..., "note": ...}`: it attributes the new
-    version in the change history; without it nothing differs."""
+    version in the change history; without it nothing differs. `lang` is the
+    language the title of a document without a heading is given in (13.1: the
+    file is the same whichever it is)."""
     root = _root(root)
     author = _author(author)
     if not isinstance(body, dict):
@@ -307,22 +344,35 @@ def save_document(root: str | Path, body: dict[str, Any], *,
         pid = _require_write(root)
         before = _read(root, rel)
         _check_revision(body, before)
+        if before is None and kind != "overview" and not _GENERATED_RE.fullmatch(rel):
+            # A file with any other name is shown and saved once it exists; the engine only creates its own names.
+            raise WorkspaceError("path", "A new note or result record is named by Research OS")
         # A title is the first Markdown heading, not a second source of
         # document data. An unchanged title field must not undo a heading
         # the researcher changed directly in the writing area.
         if title is not None and before is None:
-            if text.splitlines()[:1] != [f"# {title}"]:
+            # A new overview is shown with its default title in the title field; saving it as it is shown is no
+            # title typed (a new note or result record is shown with none, and the person must give one).
+            if kind == "overview" and title in _default_titles(kind):
+                pass
+            elif text.splitlines()[:1] != [f"# {title}"]:
                 text = f"# {title}\n\n{text}"
-        elif title is not None and title != _document(root, rel, before)["title"]:
-            heading = re.search(r"^#{1,6}[ \t]+.+$", text, re.MULTILINE)
-            if heading:
-                text = text[:heading.start()] + "# " + title + text[heading.end():]
-            else:
-                text = f"# {title}\n\n{text}"
+        elif title is not None:
+            # Only a title the person typed is written (DESIGN.md 18.3): one different from the title the file shows.
+            # A file without a heading shows its kind's default title, which the page holds in its title field and
+            # sends back as it was; that default is in the language of the screen that read the file, so both
+            # languages' words stand for "no title typed" (13.1: what is on disk never depends on the screen).
+            shown = _heading(_decode(before))
+            if (title != shown) if shown is not None else (title not in _default_titles(kind)):
+                heading = re.search(r"^#{1,6}[ \t]+.+$", text, re.MULTILINE)
+                if heading:
+                    text = text[:heading.start()] + "# " + title + text[heading.end():]
+                else:
+                    text = f"# {title}\n\n{text}"
         after = _content(text)
         backup, history_error = _save(root, rel, before, after, pid, author)
-        return {**_document(root, rel, after), "created": before is None, "backup": backup,
-                "history_error": history_error}
+        return {**_document(root, rel, after, lang=lang), "created": before is None, "backup": backup,
+                "history_error": history_error, "modified": _modified(root, rel)}
 
 
 def _tasks(value: Any) -> list[dict[str, Any]]:
@@ -396,73 +446,106 @@ def save_tasks(root: str | Path, body: dict[str, Any], *,
         _old_tasks, before = _read_tasks(root)
         _check_revision(body, before)
         backup, history_error = _save(root, TASKS_PATH, before, after, pid, author)
-        return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error}
+        return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error,
+                "changed_task_reports": _changed_reports(root, tasks, proposals.role_of(root)[0])}
+
+
+def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list[str]:
+    """A member's submission of tasks takes the result records along (DESIGN.md 18.3): the `report` paths of the
+    tasks that are new or differ from the official version this working copy was last synced to, so that the PI's
+    approval of the task does not leave it pointing at a record that is not in the official project. Empty for
+    anyone who changes the official version directly. A proposal carries only files that differ from the base, so a
+    path that is no change (a record already official) is harmless in the list; when the base cannot be read every
+    task counts as changed."""
+    if mode != "member" or not any(task.get("report") for task in tasks):
+        return []
+    official: dict[str, dict[str, Any]] = {}
+    try:
+        got = read_identity(root)
+        base = proposals.read_base(got.identity.id) if got.identity is not None else None
+        raw = base.text(TASKS_PATH) if base is not None else None
+        if raw is not None:
+            official = {task["id"]: task for task in _tasks(json.loads(raw))}
+    except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError, WorkspaceError):
+        official = {}
+    return list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+
+
+def _attempt_order(row: sqlite3.Row) -> tuple[Any, ...]:
+    """Attempts of one table by their number as a number, so #2 comes before #10 and 14a right after 14 (the order
+    the desk and the command line use); tables by their file."""
+    table, _hash, number = str(row["id"]).removeprefix("attempt:").rpartition("#")
+    return table, attempts_ingest.attempt_sort_key(number), row["id"]
 
 
 def _attempts(root: Path) -> list[dict[str, str]]:
+    """The attempts a document can refer to, by number. An unreadable project identity is not an empty list: it
+    propagates as `paths.IdentityUnavailableError` for `overview` to say."""
     try:
         path = paths.graph_db_path(root)
         if not path.is_file() or paths.is_dataless(path):
             return []
         with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
             conn.row_factory = sqlite3.Row
-            return [{"id": row["id"], "label": row["title"] or row["id"]} for row in conn.execute(
-                "SELECT id, title FROM nodes WHERE type = 'attempt' ORDER BY id LIMIT ?", (FILE_LIMIT,),
-            )]
+            rows = sorted(conn.execute("SELECT id, title FROM nodes WHERE type = 'attempt'"), key=_attempt_order)
+            return [{"id": row["id"], "label": row["title"] or row["id"]} for row in rows[:FILE_LIMIT]]
     except (OSError, sqlite3.Error, ValueError):
         return []
 
 
-def local_annotations(root: str | Path, revisions: Mapping[str, str | None], lang: str = "zh") -> dict[str, Any]:
-    """Compare only workspace hashes to the local synced baseline.
+VERSION_UNKNOWN = ("暂时无法核对版本", "Version unavailable")
 
-    This never inventories/hashes datasets or probes the shared folder.
-    A differing file is a local draft whether it has been submitted or
-    not; proposal/approval state is deliberately not inferred here.
-    """
+
+def _working_base(root: Path) -> proposals.Base | None:
+    """The official version this working copy was last synced to, when it is a readable one made for this folder."""
+    got = read_identity(root)
+    try:
+        base = proposals.read_base(got.identity.id) if got.identity is not None else None
+        if (base is None or got.identity is None or base.project != got.identity.id
+                or not isinstance(base.working_copy, str) or not Path(base.working_copy).is_absolute()
+                or Path(base.working_copy).resolve() != root or not isinstance(base.files, Mapping)):
+            return None
+    except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError):
+        return None
+    return base
+
+
+def local_annotations(root: str | Path, revisions: Mapping[str, str | None], lang: str = "zh") -> dict[str, Any]:
+    """What 项目首页 says of each workspace file's version, in the words of `researchos.officialness` (DESIGN.md
+    18.3): the official version itself, 我的改动，尚未提交, 提议中 or 已批准，待同步 -- the module, states and
+    words every other page uses. `revisions` maps a file to its hash (None for a file that does not exist).
+
+    Only these files' hashes are compared with the working copy's base: the rest of the project (datasets above
+    all) is neither inventoried nor hashed. A member's own pending proposals are read from their own area of the
+    shared folder, as every page does; when that cannot be read, `mode.pending_known` says so."""
     root = _root(root)
     mode, _me, _team = proposals.role_of(root)
-    single = mode in {"single", "pi"}
-    base = None
-    problem = False
-    if not single:
-        got = read_identity(root)
-        try:
-            base = proposals.read_base(got.identity.id) if got.identity is not None else None
-            if (base is None or got.identity is None or base.project != got.identity.id
-                    or not isinstance(base.working_copy, str) or not Path(base.working_copy).is_absolute()
-                    or Path(base.working_copy).resolve() != root or not isinstance(base.files, Mapping)):
-                base, problem = None, True
-        except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError):
-            base, problem = None, True
-    marks = {}
-    for rel, revision in revisions.items():
-        if single:
-            mark = {"state": "official"}
-        elif problem:
-            mark = {"state": "unknown", "label": "暂时无法核对版本" if lang == "zh" else "Version unavailable"}
-        else:
-            entry = base.files.get(rel)
-            baseline = entry.get("sha256") if isinstance(entry, Mapping) else None
-            if revision == baseline:
-                mark = {"state": "official"}
-            else:
-                mark = {"state": "local", "label": "本地草稿" if lang == "zh" else "Local draft"}
-        marks[rel] = {**mark, "pending_known": False}
-    return {"files": marks, "mode": {"mode": "official" if single else "working_copy", "pending_known": False}}
+    base = None if mode in {"single", "pi"} else _working_base(root)
+    if mode in {"single", "pi"}:
+        seen = officialness.View(root=root)
+    elif base is None:
+        seen = officialness.View(mode="working_copy", root=root, problems=["这个工作副本所依据的正式版本无法读取"])
+    else:
+        seen = officialness.View(mode="working_copy", root=root, base=dict(base.files), current=dict(revisions))
+        officialness.with_pending(seen, officialness.pending_of(seen))
+    marks = {rel: ({"state": "unknown", "label": settings.say(*VERSION_UNKNOWN, lang)} if seen.problems
+                   else officialness.mark(seen.file_state(rel), lang)) for rel in revisions}
+    return {"files": marks, "mode": seen.mode_payload(lang)}
 
 
 def overview(root: str | Path, lang: str = "zh") -> dict[str, Any]:
+    """The 项目首页 payload. The documents are the overview first, then the notes and result records by last change,
+    newest first (DESIGN.md 18.3), so that when there are more than `DOCUMENT_LIMIT` it is the oldest that are left
+    out; the attempts are by number."""
     root = _root(root)
     documents = []
-    found = [OVERVIEW_PATH]
+    candidates = []
     revisions = {}
-    documents_truncated = False
     errors = []
     for directory in ("research/notes", "research/results"):
         try:
             full = _confined(root, directory)
-            entries = sorted(full.iterdir()) if full.is_dir() else []
+            entries = list(full.iterdir()) if full.is_dir() else []
         except (WorkspaceError, OSError) as exc:
             error = exc if isinstance(exc, WorkspaceError) else WorkspaceError("unreadable", str(exc), 409)
             errors.append({"path": directory, **_error(error, lang)})
@@ -471,17 +554,22 @@ def overview(root: str | Path, lang: str = "zh") -> dict[str, Any]:
             rel = entry.relative_to(root).as_posix()
             if not _DOCUMENT_RE.fullmatch(rel):
                 continue
-            if len(found) >= DOCUMENT_LIMIT:
-                documents_truncated = True
-                break
-            found.append(rel)
+            try:
+                info = entry.stat()
+            except OSError:
+                candidates.append((0, rel))  # read below, which says why it cannot be
+                continue
+            if not stat.S_ISDIR(info.st_mode):  # a folder that happens to end in .md is no document
+                candidates.append((info.st_mtime_ns, rel))
+    candidates.sort(key=lambda c: (-c[0], c[1]))
+    documents_truncated = len(candidates) > DOCUMENT_LIMIT - 1
+    found = [OVERVIEW_PATH] + [rel for _changed, rel in candidates[:DOCUMENT_LIMIT - 1]]
     for rel in found:
         try:
             raw = _read(root, rel)
             item = _document(root, rel, raw, lang=lang)
             revisions[rel] = _revision(raw)
-            full = root / rel
-            modified = datetime.fromtimestamp(full.stat().st_mtime, timezone.utc).isoformat() if raw is not None else None
+            modified = _modified(root, rel) if raw is not None else None
             documents.append({k: item[k] for k in ("path", "kind", "title")}
                              | {"excerpt": " ".join(item["content"].split())[:200], "modified": modified})
         except (WorkspaceError, OSError) as exc:
@@ -519,13 +607,47 @@ def overview(root: str | Path, lang: str = "zh") -> dict[str, Any]:
     annotations = local_annotations(root, revisions, lang)
     for item in documents:
         item["officialness"] = annotations["files"].get(item["path"], {
-            "state": "unknown", "label": "暂时无法核对版本" if lang == "zh" else "Version unavailable", "pending_known": False,
+            "state": "unknown", "label": settings.say(*VERSION_UNKNOWN, lang),
         })
+    # A project identity that cannot be read right now (a project.toml evicted to the cloud, say) has no index to
+    # list attempts from; the page is still shown, with that said (DESIGN.md 18.3), not refused.
+    identity_error = None
+    try:
+        attempts = _attempts(root)
+    except paths.IdentityUnavailableError:
+        attempts, identity_error = [], _error(WorkspaceError("identity", "The project's identity file cannot be read "
+                                              "right now (it may be only in the cloud), so the list of attempts is "
+                                              "left out; the rest can be read"), lang)
     return {"documents": documents, "tasks": tasks, "tasks_revision": _revision(raw_tasks),
-            "tasks_error": tasks_error, "files": files, "attempts": _attempts(root), "mode": mode,
-            "can_write": can_write, "errors": errors,
+            "tasks_error": tasks_error, "files": files, "attempts": attempts, "mode": mode,
+            "can_write": can_write, "errors": errors, "identity_error": identity_error,
             "tasks_officialness": annotations["files"].get(TASKS_PATH), "officialness_mode": annotations["mode"],
+            "changed_task_reports": _changed_reports(root, tasks, mode),
             "files_truncated": truncated, "files_limit": FILE_LIMIT, "documents_truncated": documents_truncated}
+
+
+def existing_files(root: str | Path, rels: Any) -> list[str]:
+    """Which of the project paths in `rels` are files a document may link to (DESIGN.md 18.3): the ones the file
+    list of `overview` would offer if it were not cut at `FILE_LIMIT` -- a regular file inside the project, not
+    hidden or in a folder the scan leaves out, no link on the way, not only in the cloud. The page asks for the
+    paths a document names that its listed files do not include, so that a link to an existing file beyond the
+    first 500 is still a link. At most `EXISTS_LIMIT` paths are looked at; reads nothing of the files."""
+    root = _root(root)
+    found = []
+    for rel in list(rels)[:EXISTS_LIMIT] if isinstance(rels, (list, tuple)) else []:
+        if (not isinstance(rel, str) or not rel or len(rel) > 1024 or "\\" in rel
+                or any(ord(char) < 32 or ord(char) == 127 for char in rel) or posixpath.isabs(rel)
+                or posixpath.normpath(rel) != rel):
+            continue
+        parts = rel.split("/")
+        if any(part.startswith(".") for part in parts) or any(part in ingest_files._NOISE_DIRS for part in parts[:-1]):  # noqa: SLF001
+            continue
+        try:
+            if _confined(root, rel).is_file():
+                found.append(rel)
+        except (WorkspaceError, OSError):
+            continue
+    return found
 
 
 def _error(error: WorkspaceError, lang: str) -> dict[str, str]:

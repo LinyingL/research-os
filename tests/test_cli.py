@@ -229,7 +229,7 @@ def test_ingest_reports_mdpaper_summary_and_creates_claim_backed_by_edge(tmp_pat
 
     assert cli.main(["ingest", str(project)]) == 0
     out = capsys.readouterr().out
-    assert "mdpaper: 2 .md scanned (1 skipped as README/CHANGELOG/LICENSE)" in out
+    assert "mdpaper: 2 .md scanned (1 skipped as README/CHANGELOG/LICENSE or in research/)" in out
     assert all(s in out for s in ("sections=1", "figures=0", "claims=1", "candidates=1"))
 
     conn = db.connect(paths.graph_db_path(project))

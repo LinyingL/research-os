@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -37,7 +38,7 @@ def test_empty_workspace_reads_do_not_create_files_or_history(root):
     assert page["revision"] is None and page["content"] == ""
     assert out["documents"] == [{"path": workspace.OVERVIEW_PATH, "kind": "overview",
                                   "title": "Research question and plan", "excerpt": "", "modified": None,
-                                  "officialness": {"state": "official", "pending_known": False}}]
+                                  "officialness": {"state": "official"}}]
     assert out["tasks"] == out["files"] == out["attempts"] == []
     assert out["tasks_revision"] is None and out["mode"] == "single"
     assert _files(root) == before
@@ -164,7 +165,7 @@ def test_backup_failure_preserves_source_and_is_a_localized_refusal(root, monkey
 
 
 @pytest.mark.parametrize("rel", ["../outside.md", "/tmp/outside.md", "research/../plan.md", "plan.md",
-                                "research/notes/handwritten.md", "research/attempts.md", "research/tasks.json",
+                                "research/notes/sub/handwritten.md", "research/notes/.hidden.md", "research/notes/note.txt", "research/attempts.md", "research/tasks.json",
                                 "research/results/a" + "0" * 31 + ".md/../../oops"])
 def test_unmanaged_paths_cannot_be_read_or_written(root, rel):
     before = _files(root)
@@ -318,7 +319,10 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
     with drive.member():
         project.open_project(drive.work)
         note = _new(drive.work, "result", "![Result](figs/fig2.png)\n[Analysis](steps/17-plot.py)")
-        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result"}], "revision": None})
+        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result", "report": note["path"]}],
+                                                 "revision": None})
+        # A member's 提交 of tasks takes the result records the changed tasks link along (18.3).
+        assert task["changed_task_reports"] == [note["path"]]
         # Homepage badges compare these small files to the local base only;
         # touching the published area or hashing a dataset is unnecessary.
         def unexpected_inventory(*args, **kwargs):
@@ -328,12 +332,20 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
             local.setattr(proposals, "manifest", unexpected_inventory)
             marked = workspace.overview(drive.work, lang="en")
         entry = next(doc for doc in marked["documents"] if doc["path"] == note["path"])
-        assert entry["officialness"] == {"state": "local", "label": "Local draft", "pending_known": False}
-        assert marked["tasks_officialness"]["state"] == "local"
-        draft = proposals.make_proposal(drive.work, "files", "Add a result note and a follow-up task", only=[note["path"], workspace.TASKS_PATH])
+        assert entry["officialness"] == {"state": "mine", "label": "My change, not yet proposed"}
+        assert marked["tasks_officialness"] == {"state": "mine", "label": "My change, not yet proposed"}
+        assert marked["officialness_mode"]["mode"] == "working_copy" and marked["officialness_mode"]["pending_known"]
+        assert workspace.overview(drive.work)["changed_task_reports"] == [note["path"]]
+        draft = proposals.make_proposal(drive.work, "files", "Add a result note and a follow-up task",
+                                        only=[workspace.TASKS_PATH, *task["changed_task_reports"]])
         carried = {item["path"] for item in draft.data["file"]}
         assert carried == {note["path"], workspace.TASKS_PATH}
         stored = proposals.write_proposal(drive.work, draft)
+        # Once proposed, the same page says so, in the same words as every other page (18.3).
+        proposed = workspace.overview(drive.work)
+        entry = next(doc for doc in proposed["documents"] if doc["path"] == note["path"])
+        assert entry["officialness"] == {"state": "proposed", "label": "提议中", "proposal": stored.id}
+        assert proposed["tasks_officialness"]["state"] == "proposed"
     assert not (drive.official / note["path"]).exists()
     assert not (drive.official / workspace.TASKS_PATH).exists()
     with drive.pi():
@@ -346,6 +358,14 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
         assert published["seq"] >= 2
         assert workspace.TASKS_PATH in proposals.manifest(drive.official)
         assert note["path"] in proposals.manifest(drive.official)
+    with drive.member():
+        approved = workspace.overview(drive.work, lang="en")
+        entry = next(doc for doc in approved["documents"] if doc["path"] == note["path"])
+        assert entry["officialness"] == {"state": "approved", "label": "Approved, awaiting sync", "proposal": stored.id}
+        share.sync(drive.work)
+        synced = workspace.overview(drive.work, lang="en")
+        assert synced["changed_task_reports"] == []  # the approved task is the official one now
+        assert {doc["officialness"]["state"] for doc in synced["documents"] if doc["path"] == note["path"]} == {"official"}
 
 
 def test_a_result_document_without_a_heading_is_titled_result_record_not_the_attempt_cells_word(root):
@@ -363,3 +383,141 @@ def test_a_result_document_without_a_heading_is_titled_result_record_not_the_att
     assert workspace.document(root, note["path"])["title"] == "笔记"
     listed = {doc["path"]: doc["title"] for doc in workspace.overview(root, lang="en")["documents"]}
     assert listed[result["path"]] == "Result record" and listed[note["path"]] == "Note"
+
+
+# -- 项目首页 (DESIGN.md 18.3) --------------------------------------------------------------------------------
+
+
+def _touch(root: Path, rel: str, text: str, when: int) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, (when, when))
+
+
+def test_notes_and_results_come_newest_change_first_and_the_oldest_are_the_ones_left_out(root, monkeypatch):
+    """The page lists them by last change; with more than the limit it is the oldest that go, not the last names."""
+    for name, when in (("a" * 32, 1_700_000_300), ("b" * 32, 1_700_000_100), ("c" * 32, 1_700_000_200)):
+        _touch(root, f"research/notes/{name}.md", f"# Note {name[0]}\n", when)
+    _touch(root, "research/results/" + "d" * 32 + ".md", "# Result d\n", 1_700_000_250)
+    listed = [doc["path"] for doc in workspace.overview(root)["documents"]]
+    assert listed == [workspace.OVERVIEW_PATH, "research/notes/" + "a" * 32 + ".md", "research/results/" + "d" * 32 + ".md",
+                      "research/notes/" + "c" * 32 + ".md", "research/notes/" + "b" * 32 + ".md"]
+    # An edit moves a document to the top, the same ordering a save makes.
+    edited = workspace.save_document(root, {"path": "research/notes/" + "b" * 32 + ".md", "content": "# Note b\nmore\n",
+                                            "revision": workspace.document(root, "research/notes/" + "b" * 32 + ".md")["revision"]})
+    assert workspace.overview(root)["documents"][1]["path"] == edited["path"]
+    assert edited["modified"] == workspace.overview(root)["documents"][1]["modified"]
+    monkeypatch.setattr(workspace, "DOCUMENT_LIMIT", 3)
+    out = workspace.overview(root)
+    assert [d["path"] for d in out["documents"]] == [workspace.OVERVIEW_PATH, edited["path"], "research/notes/" + "a" * 32 + ".md"]
+    assert out["documents_truncated"]
+
+
+def test_attempts_are_listed_by_number_as_a_number(root):
+    """#2 before #10, and 14a right after 14 (a text order would give 1, 10, 14, 14a, 15, 2)."""
+    with db.connect(paths.graph_db_path(root)) as conn:
+        for number in ("10", "2", "15", "14a", "1", "14"):
+            db.upsert_node(conn, f"attempt:research/attempts.md#{number}", "attempt", title=f"Attempt {number}")
+    assert [a["label"] for a in workspace.overview(root)["attempts"]] == [
+        "Attempt 1", "Attempt 2", "Attempt 10", "Attempt 14", "Attempt 14a", "Attempt 15"]
+
+
+def test_a_title_the_person_did_not_type_never_writes_a_heading_in_either_language(root):
+    """A file with no heading shows its kind's default title, in the language of the screen that read it; posting
+    that word back is no title typed, whichever screen it came from (13.1). A real title still writes one."""
+    result = _new(root, "result", "# Fit results\n\nIt worked.\n")
+    (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
+    for default in ("Result record", "结果记录"):
+        shown = workspace.document(root, result["path"])
+        saved = workspace.save_document(root, {"path": result["path"], "title": default,
+                                               "content": shown["content"] + "x", "revision": shown["revision"]}, lang="en")
+        assert saved["content"] == "It worked, no heading.\nx" and not saved["content"].startswith("#")
+        assert saved["title"] == "Result record"  # the answer is in the screen's language
+        (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
+    shown = workspace.document(root, result["path"])
+    typed = workspace.save_document(root, {"path": result["path"], "title": "A real title", "content": shown["content"],
+                                           "revision": shown["revision"]}, lang="en")
+    assert typed["content"] == "# A real title\n\nIt worked, no heading.\n" and typed["title"] == "A real title"
+    # A note keeps its own default, and a heading the file has is compared as before.
+    note = _new(root, "note", "# Reading list\n")
+    (root / note["path"]).write_text("Only a thought.\n", encoding="utf-8")
+    shown = workspace.document(root, note["path"], lang="en")
+    assert shown["title"] == "Note"
+    same = workspace.save_document(root, {"path": note["path"], "title": shown["title"], "content": "Only a thought.\nAnd more.\n",
+                                          "revision": shown["revision"]})
+    assert same["content"] == "Only a thought.\nAnd more.\n"
+
+
+def test_other_markdown_names_in_notes_and_results_are_shown_opened_and_saved_but_never_created(root, tmp_path):
+    """DESIGN.md 18.3: a hand-made file or a sync service's conflict copy shows too, within the same confinement."""
+    names = {"research/notes/Meeting 2.md": "note", "research/notes/" + "a" * 32 + ".official.md": "note",
+             "research/results/结果 (conflicted copy 2026-10-23).md": "result"}
+    for index, rel in enumerate(names):
+        _touch(root, rel, f"# Kept {index}\nbody\n", 1_700_000_000 + index)
+    _touch(root, "research/notes/.hidden.md", "# hidden\n", 1_700_000_000)
+    _touch(root, "research/notes/readme.txt", "not markdown\n", 1_700_000_000)
+    _touch(root, "research/notes/sub/deeper.md", "# deeper\n", 1_700_000_000)
+    (root / "research/notes/folder.md").mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("# elsewhere\n")
+    (root / "research/notes/link.md").symlink_to(outside)
+    out = workspace.overview(root, lang="en")
+    by_path = {doc["path"]: doc for doc in out["documents"]}
+    assert {rel: by_path[rel]["kind"] for rel in names} == names
+    assert not any(rel in by_path for rel in ("research/notes/.hidden.md", "research/notes/readme.txt", "research/notes/sub/deeper.md", "research/notes/folder.md"))
+    assert by_path["research/notes/link.md"]["error"]["code"] == "path"  # a link is listed as unreadable, never followed
+    assert outside.read_text() == "# elsewhere\n"
+    rel = "research/notes/Meeting 2.md"
+    opened = workspace.document(root, rel)
+    assert opened["title"] == "Kept 0" and opened["kind"] == "note"
+    saved = workspace.save_document(root, {"path": rel, "content": "# Kept 0\nedited\n", "revision": opened["revision"]})
+    assert (root / rel).read_text() == "# Kept 0\nedited\n" and saved["backup"]
+    # Reading a name that is not there is an ordinary not-found; creating one is the engine's own business.
+    with pytest.raises(workspace.WorkspaceError) as missing:
+        workspace.document(root, "research/notes/absent.md")
+    assert missing.value.code == "not_found"
+    with pytest.raises(workspace.WorkspaceError) as refused:
+        workspace.save_document(root, {"path": "research/notes/absent.md", "content": "x", "revision": None})
+    assert refused.value.code == "path" and not (root / "research/notes/absent.md").exists()
+
+
+def test_an_unreadable_project_identity_shows_the_page_with_that_said(root):
+    """A project.toml that cannot be read right now (a cloud-evicted one reads the same) is no 500."""
+    with db.connect(paths.graph_db_path(root)) as conn:
+        db.upsert_node(conn, "attempt:research/attempts.md#1", "attempt", title="Attempt 1")
+    note = _new(root)
+    (root / ".researchos" / "project.toml").write_text("not = [valid", encoding="utf-8")
+    zh, en = workspace.overview(root), workspace.overview(root, lang="en")
+    assert zh["attempts"] == en["attempts"] == [] and not zh["can_write"]
+    assert any(doc["path"] == note["path"] for doc in en["documents"])
+    assert "身份文件" in zh["identity_error"]["message"] and "identity file" in en["identity_error"]["message"]
+    assert zh["identity_error"]["code"] == "identity"
+
+
+def test_a_readable_identity_has_no_identity_error(root):
+    assert workspace.overview(root)["identity_error"] is None
+
+
+def test_existing_files_knows_a_listable_file_beyond_the_listed_ones(root, tmp_path, monkeypatch):
+    """The page's file list is cut at FILE_LIMIT; a link to a file past the cut is still checked on disk."""
+    for rel in ("data/a.csv", "data/b.csv", "deep/er/c.png", "node_modules/x/lib.js", ".secret", "data/.hidden.csv"):
+        _touch(root, rel, "x", 1_700_000_000)
+    (root / "outside.csv").symlink_to(tmp_path)
+    (root / "data/linked.csv").symlink_to(root / "data/a.csv")
+    monkeypatch.setattr(workspace, "FILE_LIMIT", 1)
+    out = workspace.overview(root)
+    assert out["files_truncated"] and len(out["files"]) == 1
+    asked = ["data/b.csv", "deep/er/c.png", "data/a.csv", "data", "missing.csv", "node_modules/x/lib.js", ".secret",
+             "data/.hidden.csv", "data/linked.csv", "outside.csv", "../outside.csv", "/etc/hosts", "data/../data/a.csv",
+             "./data/a.csv", "data//a.csv", "a\\b", "data/a.csv\0", 7, ""]
+    assert workspace.existing_files(root, asked) == ["data/b.csv", "deep/er/c.png", "data/a.csv"]
+    assert workspace.existing_files(root, "data/a.csv") == [] and workspace.existing_files(root, None) == []
+    monkeypatch.setattr(workspace, "EXISTS_LIMIT", 1)
+    assert workspace.existing_files(root, ["data/b.csv", "data/a.csv"]) == ["data/b.csv"]
+
+
+def test_a_one_person_project_has_no_report_paths_to_take_along(root):
+    note = _new(root, "result", "# Fit\n")
+    tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"]}], "revision": None})
+    assert tasks["changed_task_reports"] == [] and workspace.overview(root)["changed_task_reports"] == []

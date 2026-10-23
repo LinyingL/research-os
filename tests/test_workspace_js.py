@@ -584,11 +584,238 @@ console.log(JSON.stringify({proposals}));
 def test_task_save_uses_task_annotation_from_the_server():
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
-customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'local',label:'本地草稿'}}:undefined;
+customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'mine',label:'我的改动，尚未提交'}}:undefined;
 typed(field('任务'),'Consider another explanation');await find('添加任务').click();
 console.log(JSON.stringify({words:byClass('ws-tasks').textContent}));
 """)
-    assert "本地草稿" in out["words"]
+    assert "我的改动，尚未提交" in out["words"]
+
+
+# -- 项目首页 (DESIGN.md 18.3) ---------------------------------------------------------------------------------
+
+
+def _note(path: str, title: str, modified: str | None) -> str:
+    """A note of the fixture project: the listing entry and the document, as JavaScript statements."""
+    return (f"listed.documents.push({{path:'{path}',kind:'note',title:'{title}',excerpt:'',modified:{json.dumps(modified)}}});"
+            f"docs['{path}']={{path:'{path}',kind:'note',title:'{title}',content:'# {title}\\n\\nBody',revision:'{title}-0'}};")
+
+
+def test_notes_and_results_are_listed_by_last_change_and_a_saved_one_goes_to_the_top():
+    out = run(_note("research/notes/a.md", "Oldest", "2026-10-01T09:00:00+00:00")
+              + _note("research/notes/b.md", "Newest", "2026-10-22T09:00:00+00:00")
+              + _note("research/notes/c.md", "Middle", "2026-10-10T09:00:00+00:00")
+              + _note("research/notes/d.md", "Unknown time", None)
+              + r"""
+await window.ROWorkspace.load(root);
+const names=()=>root.all().filter(e=>e.classList.contains('ws-document')).map(e=>e.textContent);
+const before=names();
+await find('Oldest').click();
+typed(byClass('ws-writing'),'# Oldest\n\nEdited');
+await find('保存').click();
+console.log(JSON.stringify({before,after:names()}));
+""")
+    assert out["before"] == ["Research question", "Newest", "Middle", "Oldest", "Unknown time"]
+    assert out["after"] == ["Research question", "Oldest", "Newest", "Middle", "Unknown time"]
+
+
+def test_typing_during_a_save_keeps_the_title_the_engine_wrote_into_a_new_document():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+await find('新建笔记').click();
+typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'First words');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+const area=byClass('ws-writing'); typed(area,'First words and more'); area.selectionStart=area.selectionEnd=20;
+waiting.resolve({path:'research/notes/n1.md',kind:'note',title:'Discussion',content:'# Discussion\n\nFirst words',revision:'r1'});
+await saving;
+const after=area.value, caret=[area.selectionStart,area.selectionEnd], dirtyAfter=window.ROWorkspace.isDirty();
+customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:'Discussion',content:body.content,revision:'r2'}:undefined;
+await find('保存').click();
+console.log(JSON.stringify({after,caret,dirtyAfter,second:posted[posted.length-1][1],dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out["after"] == "# Discussion\n\nFirst words and more"
+    assert out["caret"] == [34, 34]  # the caret stays after the words it was after
+    assert out["dirtyAfter"] and not out["dirty"]
+    assert out["second"]["content"] == "# Discussion\n\nFirst words and more"
+    assert out["second"]["title"] == "Discussion" and out["second"]["revision"] == "r1"
+
+
+def test_typing_during_a_save_keeps_a_changed_title_in_place_of_the_old_heading():
+    out = run(_note("research/notes/n2.md", "Old", "2026-10-20T10:00:00+00:00") + r"""
+await window.ROWorkspace.load(root);
+await find('Old').click();
+typed(byClass('ws-title-input'),'New');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+typed(byClass('ws-writing'),'# Old\n\nBody, then more');
+waiting.resolve({path:'research/notes/n2.md',kind:'note',title:'New',content:'# New\n\nBody',revision:'n2-1'});
+await saving;
+const after=byClass('ws-writing').value;
+customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:body.title,content:body.content,revision:'n2-2'}:undefined;
+await find('保存').click();
+console.log(JSON.stringify({after,second:posted[posted.length-1][1],title:byClass('ws-title-input').value}));
+""")
+    assert out["after"] == "# New\n\nBody, then more"
+    assert out["second"]["content"] == "# New\n\nBody, then more" and out["second"]["title"] == "New"
+    assert out["title"] == "New"
+
+
+def test_typing_during_a_save_leaves_the_text_alone_when_no_heading_was_written_or_the_input_method_is_composing():
+    plain = run(r"""
+await window.ROWorkspace.load(root);
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+typed(byClass('ws-writing'),'First paragraph');
+const saving=find('保存').click();
+typed(byClass('ws-writing'),'First paragraph\nMore');
+waiting.resolve({path:'research/overview.md',kind:'overview',title:'Research question',content:'First paragraph',revision:'doc-1'});
+await saving;
+console.log(JSON.stringify({after:byClass('ws-writing').value}));
+""")
+    assert plain["after"] == "First paragraph\nMore"
+    composing = run(r"""
+await window.ROWorkspace.load(root);
+await find('新建笔记').click();
+typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'Words');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+const area=byClass('ws-writing'); await area.emit('compositionstart'); typed(area,'Words ni');
+waiting.resolve({path:'research/notes/n1.md',kind:'note',title:'Discussion',content:'# Discussion\n\nWords',revision:'r1'});
+await saving;
+const during=area.value;
+typed(area,'Words 你'); await area.emit('compositionend'); await sleepTick(); await sleepTick();
+console.log(JSON.stringify({during,after:area.value,draft:window.ROWorkspace.isDirty()}));
+""")
+    assert composing["during"] == "Words ni"  # the input method's text is not touched while it composes
+    assert composing["after"] == "# Discussion\n\nWords 你"
+
+
+def test_a_new_overview_saved_with_the_title_it_was_shown_with_gets_no_heading():
+    out = run(r"""
+listed.documents=[];
+await window.ROWorkspace.load(root);
+typed(byClass('ws-writing'),'Why does this happen?');
+await find('预览').click();
+const preview=byClass('ws-preview').textContent;
+await find('继续编辑').click();
+await find('保存').click();
+console.log(JSON.stringify({preview,sent:posted[0][1]}));
+""")
+    assert out["preview"] == "Why does this happen?"
+    assert out["sent"]["title"] == "研究问题与计划" and out["sent"]["content"] == "Why does this happen?"
+
+
+def test_more_than_the_listed_files_says_so_where_files_are_chosen_and_a_link_beyond_them_is_still_known():
+    out = run(r"""
+listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const sentence=byClass('ws-files-cut').textContent;
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await find('预览').click(); await sleepTick(); await sleepTick();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A').map(e=>e.textContent);
+const asked=gets.filter(p=>p.startsWith('/api/workspace/exists?'));
+await find('继续编辑').click(); await find('预览').click(); await sleepTick();
+console.log(JSON.stringify({sentence,links,words:preview.textContent,asked,askedAgain:gets.filter(p=>p.startsWith('/api/workspace/exists?')).length}));
+""")
+    assert out["sentence"] == "项目里的文件多于 500 个，这里只列出前 500 个；其余的可以在正文里手写链接。"
+    assert out["links"] == ["Beyond", "Listed"]
+    assert "[Absent](../data/absent.csv)" in out["words"]
+    assert out["asked"] == ["/api/workspace/exists?project=%2Fprojects%2Fstudy&path=data%2Fbeyond.csv&path=data%2Fabsent.csv"]
+    assert out["askedAgain"] == 1  # the answers are remembered, the engine is not asked again
+
+
+def test_a_complete_file_list_says_nothing_and_asks_nothing():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)');
+await find('预览').click(); await sleepTick();
+console.log(JSON.stringify({sentence:!!byClass('ws-files-cut'),gets:gets.filter(p=>p.includes('exists'))}));
+""")
+    assert out == {"sentence": False, "gets": []}
+
+
+def test_a_members_submission_takes_the_files_beyond_the_listed_ones_that_exist():
+    out = run(r"""
+listed.mode='member'; listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await find('保存').click(); await find('提交修改').click();
+console.log(JSON.stringify({proposals}));
+""")
+    assert out["proposals"] == [["research/overview.md", "data/beyond.csv", "code/model.do"]]  # in the order the document names them
+
+
+def test_a_members_submission_of_tasks_takes_the_result_records_the_changed_tasks_link():
+    out = run(r"""
+listed.mode='member'; listed.changed_task_reports=['research/results/'+'b'.repeat(32)+'.md'];
+await window.ROWorkspace.load(root);
+const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
+await find('提交修改',byClass('ws-tasks')).click();
+customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',changed_task_reports:[]}:undefined;
+typed(field('任务'),'Another task'); await find('添加任务').click();
+await find('提交修改',byClass('ws-tasks')).click();
+console.log(JSON.stringify({proposals}));
+""")
+    assert out["proposals"] == [["research/tasks.json", "research/results/" + "b" * 32 + ".md"], ["research/tasks.json"]]
+
+
+def test_a_mac_that_is_not_a_member_says_so_and_a_project_opened_read_only_keeps_its_own_sentence():
+    out = run(r"""
+listed.mode='none'; listed.read_only=true; listed.can_write=false;
+await window.ROWorkspace.load(root);
+const none=byClass('ws-notices').textContent;
+listed.mode='single'; await window.ROWorkspace.load(root);
+const readOnly=byClass('ws-notices').textContent;
+listed.read_only=false; listed.can_write=true; await window.ROWorkspace.load(root);
+console.log(JSON.stringify({none,readOnly,gone:byClass('ws-notices').textContent}));
+""")
+    assert out["none"] == "这台 Mac 不是这个项目的成员，只能查看"
+    assert out["readOnly"] == "项目以只读方式打开。可以阅读，暂时不能保存。"
+    assert out["gone"] == ""
+
+
+def test_an_unreadable_project_identity_is_said_on_the_page_that_still_shows_and_the_line_goes_when_it_reads_again():
+    out = run(r"""
+listed.read_only=true; listed.can_write=false;
+listed.identity_error={code:'identity',message:'项目的身份文件暂时读不出来'};
+await window.ROWorkspace.load(root);
+const said=byClass('ws-notices').textContent, shown=root.textContent.includes('Research question');
+listed.identity_error=null; listed.read_only=false; listed.can_write=true;
+await window.ROWorkspace.load(root);
+console.log(JSON.stringify({said,shown,after:byClass('ws-notices').textContent}));
+""")
+    assert "项目的身份文件暂时读不出来" in out["said"] and out["shown"] and out["after"] == ""
+
+
+def test_a_pis_notes_and_result_records_say_they_go_to_the_members_with_the_next_publish():
+    out = run(_note("research/notes/a.md", "Idea", "2026-10-20T10:00:00+00:00") + r"""
+const sentence='笔记和结果记录会随下一次发布交给成员。';
+const said=()=>byClass('ws-document-footer').textContent.includes(sentence);
+listed.mode='pi'; await window.ROWorkspace.load(root);
+const onOverview=said();
+await find('Idea').click(); const onNote=said();
+await find('记录结果').click(); const onNewResult=said();
+listed.mode='member'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const member=said();
+listed.mode='single'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const single=said();
+console.log(JSON.stringify({onOverview,onNote,onNewResult,member,single}));
+""")
+    assert out == {"onOverview": False, "onNote": True, "onNewResult": True, "member": False, "single": False}
+
+
+def test_the_new_sentences_of_the_project_home_read_in_english_with_no_chinese():
+    out = run(_note("research/notes/a.md", "Idea", "2026-10-20T10:00:00+00:00") + r"""
+listed.mode='none'; listed.read_only=true; listed.can_write=false; listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const none=byClass('ws-notices').textContent, cut=byClass('ws-files-cut').textContent;
+listed.mode='pi'; listed.read_only=false; listed.can_write=true; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click();
+console.log(JSON.stringify({none,cut,pi:byClass('ws-document-footer').textContent}));
+""", lang="en")
+    assert out["none"] == "This Mac is not a member of this project; you can only read it"
+    assert out["cut"] == "The project has more than 500 files; only the first 500 are listed here. Others can be linked by hand in the text."
+    assert "Notes and result records go to the members with the next publish." in out["pi"]
+    assert not re.search(r"[㐀-鿿]", out["none"] + out["cut"] + out["pi"])
 
 
 # -- AI agents carry out tasks (DESIGN.md Section 17) --------------------------------------------------------

@@ -49,7 +49,10 @@ ships zero required runtime dependencies, see pyproject.toml).
 Which .md files count as paper prose (task W3 point 2): every .md file
 `researchos ingest`'s file inventory finds, except the well-known non-paper
 convention names (README/CHANGELOG/LICENSE, in their customary ALL-CAPS
-form) -- see `_is_paper_markdown`. Everything else is ingested: a
+form) and the files of Research OS's own `research/` folder -- the writing
+desk's overview, notes and result records, and the attempt table
+(DESIGN.md 18.3: a note is not a paper draft, and must not create claims or
+`backed_by` candidates) -- see `_is_paper_markdown`. Everything else is ingested: a
 researcher's own map/draft/notes file is real, traceable prose too, and
 "never guess" cuts against trying to be clever about which .md files are
 "real" papers. An extra section node from a non-paper .md file is harmless;
@@ -114,9 +117,18 @@ _TABLE_DELIM_RE = re.compile(r"^\s*(?=.*\|)\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)
 _NON_PAPER_MD_PREFIXES = ("README", "CHANGELOG", "LICENSE")
 
 
+# The writing desk's own folder at the project root (DESIGN.md 18.3): its overview, notes and result records are not
+# paper drafts, whatever they say.
+_NON_PAPER_MD_FOLDER = "research"
+
+
 def _is_paper_markdown(md_rel_path: str) -> bool:
-    """False for a well-known non-paper convention filename; True (ingest
-    it) for everything else -- see module docstring, "which .md files count"."""
+    """False for a well-known non-paper convention filename and for any file in
+    Research OS's own `research/` folder; True (ingest it) for everything else
+    -- see module docstring, "which .md files count"."""
+    folder, _sep, inside = posixpath.normpath(md_rel_path).partition("/")
+    if inside and folder == _NON_PAPER_MD_FOLDER:
+        return False
     basename = posixpath.basename(md_rel_path)
     return not basename.startswith(_NON_PAPER_MD_PREFIXES)
 
@@ -363,7 +375,7 @@ def _ingest_md(
         if not _is_paper_markdown(md_rel_path):
             skipped_non_paper += 1
             logger.info(
-                "%s: convention filename (README/CHANGELOG/LICENSE), not paper prose -- skipping",
+                "%s: README/CHANGELOG/LICENSE or a file of the research/ folder, not paper prose -- skipping",
                 md_rel_path,
             )
             continue

@@ -3946,6 +3946,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 marks = workspace.local_annotations(served.root, {rel: payload["revision"]}, self._lang())
                 payload["officialness"] = marks["files"][rel]
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/exists":
+                # Which of the paths a document names are files it may link to: the page's list of files stops at
+                # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                self._send_json(200, {"exists": workspace.existing_files(served.root, query.get("path", []))})
             elif path == "/api/workspace/asset":
                 served = self._require_unblocked()
                 rel = (query.get("path") or [""])[0]
@@ -4227,9 +4234,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._workspace_target(body)
                 with self.server.write_guard(human=True):
                     self._workspace_target(body)  # a concurrent window may have switched projects
-                    writer = workspace.save_tasks if parsed.path.endswith("/tasks") else workspace.save_document
-                    payload = self._workspace_api(lambda: writer(served.root, {k: v for k, v in body.items() if k != "project"}))
                     task_save = parsed.path.endswith("/tasks")
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: workspace.save_tasks(served.root, saved) if task_save
+                                                  else workspace.save_document(served.root, saved, lang=self._lang()))
                     rel = workspace.TASKS_PATH if task_save else payload["path"]
                     revision = payload["tasks_revision"] if task_save else payload["revision"]
                     marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())

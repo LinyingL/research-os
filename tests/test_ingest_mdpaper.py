@@ -218,12 +218,14 @@ def test_remote_image_url_is_skipped_not_a_repo_file(tmp_path):
 
 
 @pytest.mark.parametrize("filename", ["中文图.png", "sample comparison.png", "result(robust).png", "结果 对照(一).png"])
-def test_workspace_result_encoded_image_reference_uses_actual_file_node(tmp_path, filename):
+def test_encoded_image_reference_in_a_nested_markdown_file_uses_actual_file_node(tmp_path, filename):
+    # The writing desk encodes spaces and parentheses in the paths it inserts; a draft written that way still names the
+    # real file. (A document of research/ itself is no draft, 18.3: it is checked in its own test below.)
     figure = f"figures/{filename}"
     (tmp_path / "figures").mkdir()
     (tmp_path / figure).write_bytes(b"\x89PNG")
-    (tmp_path / "research/results").mkdir(parents=True)
-    document = "research/results/" + "a" * 32 + ".md"
+    (tmp_path / "reports/results").mkdir(parents=True)
+    document = "reports/results/" + "a" * 32 + ".md"
     reference = quote("../../" + figure, safe="/.")
     assert "%" in reference
     _repo(tmp_path, f"# Results\n\n![Result]({reference})\n", path=document)
@@ -251,8 +253,8 @@ def test_image_uri_decoding_preserves_literal_percent_and_decodes_only_once(refe
     "figures/a%00.png", "%09https%3A%2F%2Fevil.example/image.png", "figures/%FF.png",
 ])
 def test_encoded_nonlocal_image_references_do_not_create_graph_links(tmp_path, reference):
-    (tmp_path / "research/results").mkdir(parents=True)
-    document = "research/results/note.md"
+    (tmp_path / "reports/results").mkdir(parents=True)
+    document = "reports/results/note.md"
     _repo(tmp_path, f"# Results\n\n![Unsafe]({reference})\n", path=document)
     conn = _seeded_conn()
     # Even without an inventory, URI decoding must not introduce a figure
@@ -382,6 +384,40 @@ def test_other_md_files_are_ingested_by_default(tmp_path):
     counts = mdpaper.ingest_md_repo(conn, tmp_path, ["00-project-map.md"])
     assert counts["sections"] == 1
     assert counts["md_skipped_non_paper"] == 0
+
+
+# --- research/ is Research OS's own folder, not a paper draft (DESIGN.md 18.3) ---------------------------------
+
+
+@pytest.mark.parametrize("path, paper", [
+    ("research/overview.md", False), ("research/notes/" + "a" * 32 + ".md", False),
+    ("research/results/Meeting 2 (conflicted copy).md", False), ("research/attempts.md", False),
+    ("paper.md", True), ("docs/research/notes.md", True), ("research.md", True), ("researchers/notes.md", True),
+    ("drafts/results/" + "a" * 32 + ".md", True), ("README.md", False),
+])
+def test_only_files_inside_the_research_folder_at_the_root_are_not_paper_markdown(path, paper):
+    assert mdpaper._is_paper_markdown(path) is paper
+
+
+def test_a_note_with_a_number_makes_no_section_claim_or_backed_by_candidate(tmp_path):
+    """A note that says "87.3% accuracy" next to a run that measured it used to become a claim backed by that run."""
+    (tmp_path / "research/notes").mkdir(parents=True)
+    note = "research/notes/" + "a" * 32 + ".md"
+    (tmp_path / note).write_text("# Reading\n\nWe reach 87.3% accuracy.\n\n![fig](../../figures/a.png)\n")
+    _repo(tmp_path, "# Results\n\nWe reach 87.3% accuracy.\n")
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, [note, "paper.md"], image_paths=["figures/a.png"])
+    assert counts["md_skipped_non_paper"] == 1
+    assert [n["id"] for n in db.get_nodes_by_type(conn, "section")] == ["section:paper.md#results"]
+    assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
+    assert len(db.query_edges(conn, type="backed_by")) == 1 and db.query_edges(conn, type="includes") == []
+
+
+def test_citations_do_not_read_the_research_folder_as_a_draft():
+    from researchos.ingest import citations
+
+    inventory = {"md": ["paper.md", "research/notes/" + "a" * 32 + ".md", "README.md"], "tex": ["main.tex"]}
+    assert citations.drafts_of(inventory) == ["main.tex", "paper.md"]
 
 
 # --- Claim nodes + backed_by candidates (reusing claims' core write path) --

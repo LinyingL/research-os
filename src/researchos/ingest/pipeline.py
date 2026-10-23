@@ -208,7 +208,7 @@ def _scan_sources(
         )
         echo(
             f"  mdpaper: {len(inventory['md'])} .md scanned "
-            f"({md_counts['md_skipped_non_paper']} skipped as README/CHANGELOG/LICENSE) "
+            f"({md_counts['md_skipped_non_paper']} skipped as README/CHANGELOG/LICENSE or in research/) "
             f"-> {_format_counts(md_counts)}"
         )
         claims_counts = claims_ingest.ingest_claims_repo(conn, project_root, inventory["tex"], scan=sc)

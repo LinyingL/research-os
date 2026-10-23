@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Fix several things on 项目首页. Notes and result records are listed by their
+  last change, newest first, and attempts by number (2 before 10). A document
+  gets a heading in its file only when you type a title different from the one
+  it shows, whatever language the screen is in; words typed while a save is
+  going out no longer lose the title that save wrote. When the project has more
+  than 500 files the page says the list is cut, and a link you type to a file
+  beyond them still works. A member's 提交修改 of tasks takes along the result
+  records the changed tasks link. A Mac that is not a member of the project
+  says so, and a project identity that cannot be read right now (a cloud-only
+  `project.toml`) shows the page with that said instead of an error. A team
+  member's documents carry 我的改动，尚未提交, 提议中 or 已批准，待同步, the words
+  every other page uses (not 本地草稿). Markdown files with other names in
+  `research/notes/` and `research/results/`, a sync service's conflict copies
+  among them, are listed and can be opened. The files in `research/` are no
+  longer read as a paper draft: a number in a note does not become a claim. On
+  the PI's page notes and result records say they go to the members with the
+  next 发布.
 - Save a changed 研究判断 or 结果 at once, and take it back with 撤销. In a
   one-person project or as the PI, pressing 保存 on an existing row in the side
   panel (and in the node page's edit form, when only those two cells changed)

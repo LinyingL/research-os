@@ -15,8 +15,17 @@ page without changing its existing attempt table.
 
 Write freely, then click **Save**, or press Command-S in the writing area.
 **Preview** displays headings, lists, tables and local image references.
-Use **Write a note** for ideas or discussions and **Organize results** to
-keep findings, figures and your interpretation together.
+Use **New note** for ideas or discussions and **Record results** to keep
+findings, figures and your interpretation together. Notes and result records
+are listed by their last change, newest first. A document's title is the first
+heading of its file. Research OS writes a heading only when you type a title
+different from the one the file shows, in whichever language the screen is.
+
+Markdown files you put in `research/notes/` or `research/results/` yourself
+are listed too, whatever their names, and so are the copies a sync service
+leaves beside a file; you can open and save them like the others. Research OS
+does not read the files in `research/` as a paper draft: a number in a note
+never becomes a claim.
 
 The optional task list records what you want to do, who will do it and a
 date when useful. Tasks can be completed, edited or removed independently.
@@ -25,9 +34,13 @@ There are no required stages or tasks to finish before recording research.
 ## Reference your files
 
 Continue running code in Stata or your usual tools. Save their outputs in
-the project folder, then open **Link files and attempts** and click
-**Refresh files**. Choose a file to insert a relative reference; supported
-images appear in the document preview. Files stay in place.
+the project folder, then open **Reference a file or attempt** and click
+**Refresh files**. Choose a file and click **Insert reference** to add a
+relative reference; supported images appear in the document preview. Files stay
+in place. The attempts are listed by number (2 before 10). When the project has
+more than 500 files, the list shows the first 500 and says so; a link you type
+by hand to an existing file beyond them still works in the preview and in
+**Submit changes**.
 
 References identify the files you chose. They do not assert that a script
 ran or produced a particular result. You can add links to research attempts
@@ -152,11 +165,19 @@ project until you trust the result.
 Documents are stored under `research/` as Markdown, and optional tasks as
 `research/tasks.json`. Previous saved contents are retained in local history
 and backups. If another editor changed a file, the app keeps your unsaved
-draft and asks you to reopen the file before saving again.
-**Change history** opens the document's saved versions and differences.
+draft and offers **Keep draft** or **Reload file** before you save again.
+**Change history** opens the document's saved versions and differences. If the
+project's identity file cannot be read for the moment (it may be only in the
+cloud), the page says so, lists no attempts and stays read-only.
 
-In a team, members save in their own working copies. **Submit changes**
-opens the existing proposal preview; a result document's referenced local
-files are also selected for review. Check that selection, explain the
-change and send it. Approval applies it to the official project. A
-single-person project saves directly.
+In a team, members save in their own working copies, and each document and the
+task list is marked with its state: **My change, not yet proposed**,
+**Proposed** or **Approved, awaiting sync**. **Submit changes** opens the
+existing proposal preview; a document's referenced local files are also
+selected for review, and submitting the tasks takes along the result records
+that the changed tasks link, so that an approved task never points at a record
+the official project lacks. Check that selection, explain the change and send
+it. Approval applies it to the official project. On the PI's page, a note or a
+result record says it goes to the members with the next **Publish**. A Mac that
+is not a member of the project says so, and the project can only be read there.
+A single-person project saves directly.
