@@ -93,7 +93,7 @@ const agentFixture=()=>({
            {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false},
            {runner:'codex',label:'Codex',path:'/opt/codex',version:'0.162.0',problem:null,found:true}],
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
-  mcp:true, claude_models:['sonnet','opus','haiku'], timeout_minutes:120, max_budget_usd:null });
+  mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
   created:'2026-10-21T09:00:00Z',started:null,ended:null,question:null,report:null,error:null,cost_usd:null,by:null,by_name:null,
@@ -1324,7 +1324,7 @@ const box=()=>byClass('ws-agent-settings'),add=()=>byClass('ws-agent-add',box())
 const suggestions=()=>field('模型版本',box()).children.map(o=>o.value).filter(v=>v&&v!=='__custom__');
 const claude=suggestions();
 await find('添加',box()).click();const empty=posted.length;
-const choice=field('模型版本',box());choice.value='opus';await choice.emit('change');await find('添加',box()).click();await sleepTick();
+const choice=field('模型版本',box());choice.value='claude-opus-4-6';await choice.emit('change');await find('添加',box()).click();await sleepTick();
 const afterAdd=optionsOf(field('负责人'));
 const runner2=field('程序',box());runner2.value='opencode';await runner2.emit('change');await sleepTick();
 const opencode=suggestions();
@@ -1336,16 +1336,36 @@ typed(minutes,'2');await find('保存',box()).click();const tooLow=posted.length
 typed(field('每次运行的时间限制（分钟）',box()),'90');await find('保存',box()).click();await sleepTick();
 console.log(JSON.stringify({claude,empty,afterAdd,opencode,posted:posted.map(p=>p[1]),tooLow,gets:gets.filter(g=>g.includes('models')),list:box().all().filter(e=>e.classList.contains('ws-agent-label')).map(e=>e.textContent)}));
 """)
-    assert out["claude"] == ["sonnet", "opus", "haiku"]
+    assert out["claude"] == ["claude-sonnet-5-5", "claude-sonnet-4-6", "claude-opus-5-5", "claude-opus-4-6", "claude-haiku-4-5-20251001"]
     assert out["empty"] == 0
-    assert [t for t, _ in out["afterAdd"]][-2:] == ["Claude Code · sonnet", "Claude Code · opus"]
+    assert [t for t, _ in out["afterAdd"]][-2:] == ["Claude Code · sonnet", "Claude Code · claude-opus-4-6"]
     assert out["opencode"] == ["lmstudio/qwen3-coder", "ollama/llama3"] and out["gets"] == ["/api/agents/models?runner=opencode"]
     sonnet = {"runner": "claude-code", "model": "sonnet"}
-    opus = {"runner": "claude-code", "model": "opus"}
+    opus = {"runner": "claude-code", "model": "claude-opus-4-6"}
     qwen = {"runner": "opencode", "model": "lmstudio/qwen3-coder"}
     assert out["posted"] == [{"agents": [sonnet, opus]}, {"agents": [sonnet, opus, qwen]}, {"agents": [opus, qwen]}, {"timeout_minutes": 90}]
     assert out["tooLow"] == 3
-    assert out["list"] == ["Claude Code · opus", "OpenCode · lmstudio/qwen3-coder"]
+    assert out["list"] == ["Claude Code · claude-opus-4-6", "OpenCode · lmstudio/qwen3-coder"]
+
+
+def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():
+    out = run(r"""
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),versions=()=>field('模型版本',box());
+const offered=optionsOf(versions());
+versions().value='claude-sonnet-5-5';await versions().emit('change');
+await find('添加',box()).click();await sleepTick();
+versions().value='__custom__';await versions().emit('change');
+typed(field('完整模型 ID',box()),'claude-sonnet-4-5-20250929');
+await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/settings/agents'),owners:optionsOf(field('负责人'))}));
+""")
+    assert ["Sonnet 5.5 · claude-sonnet-5-5", "claude-sonnet-5-5"] in out["offered"]
+    assert ["Opus 4.6 · claude-opus-4-6", "claude-opus-4-6"] in out["offered"]
+    assert out["posted"][0][1]["agents"][-1] == {"runner": "claude-code", "model": "claude-sonnet-5-5"}
+    assert out["posted"][1][1]["agents"][-1] == {"runner": "claude-code", "model": "claude-sonnet-4-5-20250929"}
+    assert "agent:claude-code:sonnet" in [value for _, value in out["owners"]]
 
 
 def test_codex_version_selection_custom_id_and_separate_catalogs():

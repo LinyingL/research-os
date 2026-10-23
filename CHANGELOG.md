@@ -33,6 +33,8 @@
 - Assign tasks to a locally installed Codex, Claude Code, or OpenCode program. Agents
   can write code, run analysis, and finish with a result record linked to the task.
 - Select complete model versions from the runner's catalog, or enter a full ID.
+  Claude Code offers explicit Sonnet, Opus, Haiku, and Fable versions with
+  readable version labels and exact IDs; existing alias-based tasks are kept.
   Preserve the selected ID for task ownership, execution, and continuation.
   Detect the macOS desktop app's bundled Codex CLI as well as saved paths.
 - Run Codex in a workspace-write sandbox with a dedicated Research OS MCP

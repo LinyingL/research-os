@@ -128,7 +128,7 @@ Endpoints (all GET unless noted):
                             blocked project's question -- only one its
                             `situation.answers` lists (V5, DESIGN.md 9.4,
                             9.12; see `resolve_payload`).
-    GET  /api/agents    -- 17.1/17.8: the AI agents of this Mac: both runners
+    GET  /api/agents    -- 17.1/17.8: the AI agents of this Mac: the runners
                             found or not (path, version, why not), the saved
                             agents (each with `available`, `mcp`), whether
                             the optional `mcp` package is installed, the
@@ -1955,7 +1955,7 @@ def agents_payload() -> dict[str, Any]:
 
 def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
     """`GET /api/agents/models?runner=`: the models to offer for a runner --
-    Claude Code's suggestions, or what `opencode models` lists (the program
+    Claude Code's versioned suggestions, or the program's catalog (the program
     must be found; the listing may take seconds)."""
     runner = (query.get("runner") or [""])[0]
     if runner not in agent_labels.RUNNERS:

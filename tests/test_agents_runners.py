@@ -326,6 +326,12 @@ def test_claude_argv_shape(tmp_path, profiles_mod):
     assert argv.count("-p") == 1
 
 
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-4-6", "claude-sonnet-4-5-20250929"])
+def test_claude_version_is_passed_to_the_program_unchanged(tmp_path, profiles_mod, model):
+    launch, _ = _claude(tmp_path, profiles_mod, model=model)
+    assert launch.argv[launch.argv.index("--model") + 1] == model
+
+
 def test_claude_resume_and_budget(tmp_path, profiles_mod):
     launch, a = _claude(tmp_path, profiles_mod, resume=True, max_budget_usd=5.0)
     argv = launch.argv

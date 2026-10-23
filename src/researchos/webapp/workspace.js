@@ -1570,7 +1570,11 @@
     const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || []) : (catalog.list || []);
     const placeholder = el("option", null, t("选择模型版本…")); placeholder.value = "";
     const custom = el("option", null, t("手动填写完整 ID…")); custom.value = "__custom__";
-    ui.modelList.replaceChildren(placeholder, ...names.map((name) => { const option = el("option", null, name); option.value = name; return option; }), custom);
+    ui.modelList.replaceChildren(placeholder, ...names.map((name) => {
+      const match = runner === "claude-code" && /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(name);
+      const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name : name;
+      const option = el("option", null, label); option.value = name; return option;
+    }), custom);
     const manual = settingsInputs.customModel || (!!settingsInputs.model && !names.includes(settingsInputs.model));
     ui.modelList.value = manual ? "__custom__" : settingsInputs.model;
     ui.modelCustom.classList.toggle("hidden", !manual);

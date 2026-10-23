@@ -64,6 +64,15 @@ def test_codex_versions_round_trip_without_aliasing():
     assert [labels.parse_owner(a.owner) for a in saved] == saved
 
 
+def test_claude_version_suggestions_and_legacy_aliases_round_trip():
+    assert "claude-sonnet-5-5" in profiles.CLAUDE_MODEL_SUGGESTIONS
+    assert "claude-opus-4-6" in profiles.CLAUDE_MODEL_SUGGESTIONS
+    assert all(m.startswith("claude-") for m in profiles.CLAUDE_MODEL_SUGGESTIONS)
+    models = ["claude-sonnet-5-5", "claude-sonnet-4-5-20250929", "sonnet", "opus"]
+    profiles.set_agents([{"runner": "claude-code", "model": model} for model in models])
+    assert [a.model for a in profiles.agents()] == models
+
+
 def test_codex_catalog_filters_hidden_models_and_preserves_full_ids(tmp_path):
     catalog = {"models": [{"slug": m, "visibility": v} for m, v in (
         ("gpt-6.1-sol", "list"), ("gpt-5.5", "list"), ("codex-auto-review", "hide"),

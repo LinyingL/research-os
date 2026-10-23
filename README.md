@@ -121,6 +121,11 @@ For Claude Code, sign in through its own login flow. Pro and Max users can
 use their Claude subscription; Claude and Claude Code share the plan's
 usage limits. See the [official subscription guide](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan).
 Claude Code's configured credentials determine subscription or API billing.
+Its model picker includes explicit Sonnet, Opus, Haiku, and Fable versions,
+such as `claude-sonnet-5-5` and `claude-opus-4-6`. The selected ID is passed
+unchanged. Keep Claude Code up to date with `claude update`; supported
+versions depend on your account and CLI. Full IDs and dated snapshots can
+also be entered manually. See the [Claude model guide](https://support.claude.com/en/articles/11940350-claude-code-model-configuration).
 If a run reports an expired OAuth token, sign in again:
 
 ```bash

@@ -5350,3 +5350,17 @@ flags fail visibly; no weaker execution fallback is used.
 References: [noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 [MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
 [model availability](https://learn.chatgpt.com/docs/models).
+
+
+### Claude model-version picker (2026-10-23)
+
+Claude Code's suggestions now contain documented full version IDs rather
+than rolling `sonnet` / `opus` / `haiku` / `fable` aliases. The picker labels
+them with a readable family and version, while saving and executing the
+unchanged full ID. Older 4.5 entries include their published snapshot date.
+Existing tasks and saved agents using aliases remain valid; no migration or
+automatic substitution occurs. Custom model IDs remain available. This is
+a documented suggestion list, not a live account entitlement check, and
+requires no API key or model inference to display.
+
+Source: [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration).

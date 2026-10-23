@@ -55,7 +55,16 @@ MAX_AGENTS = 20
 DEFAULT_TIMEOUT_MINUTES = 120
 TIMEOUT_RANGE = (5, 1440)
 MAX_BUDGET_LIMIT_USD = 1000
-CLAUDE_MODEL_SUGGESTIONS = ("sonnet", "opus", "haiku", "fable")
+# Versioned suggestions from Anthropic's Claude Code model guide (2026-10-23):
+# https://support.claude.com/en/articles/11940350-claude-code-model-configuration
+# These are suggestions, not an account entitlement check. Existing aliases remain valid settings.
+CLAUDE_MODEL_SUGGESTIONS = (
+    "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5-20250929",
+    "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
+    "claude-haiku-5-5", "claude-haiku-4-5-20251001",
+    "claude-fable-5-1", "claude-fable-5",
+)
 EXTRA_PATH_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.claude/local",
                    "~/.opencode/bin", "~/.bun/bin", "~/.npm-global/bin", "/usr/bin", "/bin")
 VERSION_TIMEOUT_S = 10

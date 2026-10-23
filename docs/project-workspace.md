@@ -58,7 +58,10 @@ missing. In the task area open **AI agent**. Research OS shows whether it
 found each program and its version; if not, enter the program's full path.
 Add an agent by choosing the program and **Model version**. Codex's list
 shows full IDs such as `gpt-6.1-sol`; **Refresh models** reads the current
-catalog. **Enter a full ID…** accepts an exact version or snapshot, including
+catalog. Claude Code offers named versions such as Sonnet 5.5 and Opus 4.6,
+alongside their full IDs. Keep Claude Code current with `claude update` to
+use newer models. The Claude list is a set of documented suggestions;
+account access is checked when the program runs. **Enter a full ID…** accepts an exact version or snapshot, including
 Claude Code model IDs and OpenCode's `provider/model` names. Research OS
 passes that ID unchanged; the runner decides whether your account can use it.
 Codex uses its own `codex login` authentication and can also use the CLI

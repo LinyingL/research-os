@@ -191,11 +191,12 @@ def test_agents_work_without_a_project_served(tmp_path, monkeypatch):
         assert data["runners"][0]["path"] == str(a.bins["claude-code"])
         assert data["runners"][0]["label"] == "Claude Code"
         assert data["agents"] == [] and data["mcp"] is True
-        assert data["claude_models"] == ["sonnet", "opus", "haiku", "fable"]
+        assert data["claude_models"] == list(profiles.CLAUDE_MODEL_SUGGESTIONS)
+        assert "claude-sonnet-5-5" in data["claude_models"] and "claude-opus-4-6" in data["claude_models"]
         assert data["timeout_minutes"] == 120 and data["max_budget_usd"] is None
         # the models of Claude Code need no program and no project
         assert a.get("/api/agents/models?runner=claude-code") == (
-            200, {"runner": "claude-code", "models": ["sonnet", "opus", "haiku", "fable"]})
+            200, {"runner": "claude-code", "models": list(profiles.CLAUDE_MODEL_SUGGESTIONS)})
         # settings are this Mac's, not a project's
         status, saved = a.post("/api/settings/agents", {"agents": [{"runner": "opencode", "model": "lm/qwen"}]},
                                project=False)
@@ -207,6 +208,14 @@ def test_agents_work_without_a_project_served(tmp_path, monkeypatch):
             assert status == 409 and error["state"] == "no_project", (method, path)
     finally:
         a.close()
+
+
+def test_claude_model_versions_are_saved_without_aliasing(api):
+    versions = ["claude-sonnet-5-5", "claude-sonnet-4-5-20250929"]
+    chosen = [{"runner": "claude-code", "model": model} for model in versions]
+    assert api.post("/api/settings/agents", {"agents": chosen}, project=False)[0] == 200
+    status, data = api.get("/api/agents")
+    assert status == 200 and [a["model"] for a in data["agents"]] == versions
 
 
 def test_agents_payload_shape_with_agents_and_a_missing_runner(api, tmp_path):
