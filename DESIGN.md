@@ -4776,6 +4776,39 @@ does not add.
   - Choosing 已放弃 still asks for the reason and confirms first, because
     it freezes the basis. A new row keeps its preview. A member's change is
     still a proposal (12.4).
+  - **How it is read** (task V14, G3-3):
+    - *The preview is asked, not shown.* The PI's and a single researcher's
+      save asks the engine's preview for the same body and, unless it says
+      the write turns the route abandoned, sends that body to the write at
+      once. For an update the preview also lists, per cell it would change,
+      `cells`: the cell as the file holds it (`was`: its Markdown decoration,
+      `<br>` and pipes as written, so that sending it back writes it as it
+      was), as the parser reads it (`was_text`) and as it will read after the
+      write (`now_text`).
+    - *Where.* In the side panel and in the older edit form of the node page
+      (编辑这一行). The button reads 保存. In the older form only a change of
+      研究判断 and/or 结果 saves at once: one that also changes the date, the
+      description or the variables is previewed and confirmed as before, and
+      a new row keeps 预览改动. A member's 预览这一行 is unchanged.
+    - *Conflict.* A row is written at once only while the cells the file
+      holds are still the text the form showed (`was_text`). If the file
+      changed meanwhile the row is shown instead, 原行 being the file's with a
+      note saying so, and written on 保存修改, after which 已保存 and 撤销 are
+      offered like after any save. A write the engine refuses says 写入失败，
+      文件没有被修改 with the engine's own text behind 「详情」, and what was
+      typed stays.
+    - *撤销.* It writes the previous cells (`was`) back through the preview
+      and the write: the row is what it was byte for byte, and the history
+      and the backups hold both writes. The offer stays in the panel until it
+      closes, drawn again after a refresh only while the row still reads as
+      the save left it; a second save offers back its own step only. Before
+      it writes, 撤销 asks the preview once more: a cell that no longer reads
+      as the save left it (the file changed in between), or an old verdict
+      that would abandon the route again (which needs its reason, 14.3), is
+      not written, and the panel says why in a sentence.
+    - *Abandoning* keeps its reason, its preview and 保存修改, and then says
+      已写入 as before, with no 撤销: the basis frozen in `decisions.toml` is
+      not written back by restoring the row.
 - **项目首页.**
   - **Order:** notes and result records by last change, newest first;
     attempts by number.

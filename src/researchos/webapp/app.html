@@ -4176,7 +4176,9 @@ function renderAttemptForm(mode, attemptId) {
   const submitBtn = document.createElement("button");
   submitBtn.type = "submit";
   submitBtn.className = "btn btn-primary";
-  submitBtn.textContent = proposing ? "预览这一行" : "预览改动";
+  // 18.3: an existing row of the PI or a single researcher is saved, not previewed (a route turned abandoned still is).
+  const updating = mode === "update" && !proposing;
+  submitBtn.textContent = proposing ? t("预览这一行") : updating ? t("保存") : t("预览改动");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "btn";
@@ -4224,7 +4226,66 @@ function renderAttemptForm(mode, attemptId) {
     submitBtn.disabled = disabled;
   }
 
-  function renderPreview(preview, body) {
+  // 18.3: changing only the 研究判断 or 结果 of an existing row writes at once (the preview was asked for its
+  // guards, not shown), then 已保存 and 撤销, which writes the old cells back the same way (desk.js, shared
+  // with the side panel). What the form showed is its fields' text when it was drawn or last saved.
+  const shownCells = () => ({ verdict: initial.verdict, result: initial.result });
+
+  function offerUndo(u) {
+    setFormStatus(statusEl, "ok", "");
+    RODesk.atOnce.line(statusEl, () => undoNow(u));
+  }
+
+  async function saveAtOnce(preview, body) {
+    previewHost.innerHTML = "";
+    setFormDisabled(true);
+    setFormStatus(statusEl, "", t("正在写入…"));
+    let result;
+    try {
+      result = await apiPost("/api/attempts/write", body); // the body the preview was made for, verbatim
+    } catch (err) {
+      setFormDisabled(false);
+      setFormStatus(statusEl, "err", t("写入失败，文件没有被修改"), err);
+      return;
+    }
+    pollGeneration();
+    setFormDisabled(false);
+    if (result.ingest_error) {
+      setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), result.ingest_error);
+      return;
+    }
+    const undo = RODesk.atOnce.undoOf(preview, body, shownCells());
+    EDITABLE_KEYS.forEach((key) => { initial[key] = inputs[key].value; });
+    offerUndo(undo);
+  }
+
+  async function undoNow(undo) {
+    setFormDisabled(true);
+    setFormStatus(statusEl, "", t("正在写入…"));
+    let done;
+    try {
+      done = await RODesk.atOnce.undo(undo);
+    } catch (err) {
+      setFormDisabled(false);
+      setFormStatus(statusEl, "err", t("写入失败，文件没有被修改"), err);
+      return;
+    }
+    setFormDisabled(false);
+    if (done.state !== "done") {
+      setFormStatus(statusEl, "err", done.state === "abandons"
+        ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"));
+      return;
+    }
+    pollGeneration();
+    if (done.res.ingest_error) {
+      setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), done.res.ingest_error);
+      return;
+    }
+    Object.keys(undo.was).forEach((key) => { inputs[key].value = undo.text[key]; initial[key] = undo.text[key]; });
+    setFormStatus(statusEl, "ok", t("撤销了上一步"));
+  }
+
+  function renderPreview(preview, body, moved) {
     previewHost.innerHTML = "";
     setFormDisabled(true); // frozen while the preview stands -- 返回修改 unfreezes
     if (preview.old_row !== null && preview.old_row !== undefined) {
@@ -4269,9 +4330,11 @@ function renderAttemptForm(mode, attemptId) {
     if (!proposing && preview.reason_required) {
       previewHost.append(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
     }
+    if (moved) previewHost.append(mk("div", "confirm-note", t("这一行在你打开它以后被改过：上面的原行是文件里现在的样子。")));
     previewHost.append(confirmActions);
 
     confirmBtn.addEventListener("click", async () => {
+      if (moved) { saveAtOnce(preview, body); return; } // the row was shown because the file moved: written, then 撤销
       confirmBtn.disabled = true;
       backBtn.disabled = true;
       setFormStatus(statusEl, "", "正在写入…");
@@ -4331,13 +4394,13 @@ function renderAttemptForm(mode, attemptId) {
     // 16.1: a draft landing while the preview is made would show text the snapshot lacks.
     const unfreezeDraft = () => { if (draftBlock) draftBlock.setFrozen(false); };
     if (draftBlock) draftBlock.setFrozen(true);
-    setFormStatus(statusEl, "", "正在生成预览…");
+    setFormStatus(statusEl, "", updating ? t("正在保存…") : "正在生成预览…");
     let preview;
     try {
       preview = await apiPost("/api/attempts/preview", body);
     } catch (err) {
       unfreezeDraft();
-      setFormStatus(statusEl, "err", "无法生成预览", err);
+      setFormStatus(statusEl, "err", updating ? t("写入失败，文件没有被修改") : "无法生成预览", err);
       return;
     }
     // 12.4: abandoning a route through a proposal -- a verdict changed, or a
@@ -4361,7 +4424,9 @@ function renderAttemptForm(mode, attemptId) {
       }
     }
     statusEl.textContent = "";
-    renderPreview(preview, body);
+    const how = updating && RODesk.atOnce.kind(body) ? RODesk.atOnce.verdict(preview, body, shownCells()) : "preview";
+    if (how === "once") saveAtOnce(preview, body);
+    else renderPreview(preview, body, how === "moved");
   });
 
   panelBody.append(form, statusEl, previewHost);

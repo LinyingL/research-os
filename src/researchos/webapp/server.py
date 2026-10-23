@@ -196,8 +196,8 @@ Endpoints (all GET unless noted):
                             edit against the researcher's own map file --
                             unified diff plus old/new row, NOTHING written
                             (see `attempts_preview_payload` and
-                            `researchos.webapp.mapedit`), and
-                            `reason_required` (14.3).
+                            `researchos.webapp.mapedit`), `reason_required` (14.3)
+                            and, for an update, `cells` (18.3).
     POST /api/attempts/write -- same body: actually performs the edit --
                             backup, atomic write into the source Markdown,
                             re-ingest under the watcher's own ingest lock,
@@ -2572,7 +2572,9 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     or a single researcher must say why (the body's `reason`); with one,
     the rows shown carry it in the result as the write will. Such a write
     while the team file cannot be read is refused here as it would be
-    (`attempt_role_unknown`)."""
+    (`attempt_role_unknown`). An update also says, per cell it would change,
+    what the file holds now and what it will hold (`cells`, 18.3: a row's
+    研究判断 or 结果 saves at once, and 撤销 sends the old cell back)."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     op, number, fields = _parse_attempt_edit_body(body)
@@ -2585,6 +2587,19 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError, proposals_mod.ProposalRefused) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
     out = {**out, "reason_required": turn is not None}
+    if op == "update" and isinstance(out.get("old_row"), str):
+        # 18.3: an existing row's 研究判断 or 结果 saves at once, so the page cannot show the old row first.
+        # For each cell the write would change: the cell as the file holds it now (`was`, decoration and
+        # <br> kept, so sending it back writes it as it was -- what 撤销 sends), its text as the parser
+        # reads it (`was_text`, what the page showed while the file was unchanged) and as it will read
+        # after the write (`now_text`). The page saves at once only while `was_text` is what it showed.
+        try:
+            cells = mapedit.row_cells(project_root, number) or {}
+        except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
+            raise _attempt_edit_error(exc, project_root) from exc
+        out["cells"] = {key: {"was": cells[key], "was_text": attempts_ingest._clean_cell(cells[key]),
+                              "now_text": attempts_ingest._clean_cell(value)}
+                        for key, value in fields.items() if key in cells and isinstance(value, str)}
     if isinstance(fields.get("verdict"), str):
         # U4: whether the verdict abandons the route (☠, or a marker of
         # attempts.toml's abandoned_verdicts) -- a member's 提议改判 then

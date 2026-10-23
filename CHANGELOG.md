@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Save a changed 研究判断 or 结果 at once, and take it back with 撤销. In a
+  one-person project or as the PI, pressing 保存 on an existing row in the side
+  panel (and in the node page's edit form, when only those two cells changed)
+  writes it with no preview to confirm, backed up and in the history as before,
+  and the panel says 已保存 with 撤销, which writes the old cells back exactly as
+  they were (a second history entry, nothing erased). If the file changed
+  while the panel was open, the row is shown first and written on 保存修改.
+  Turning a route abandoned still asks its reason and shows the row first, a
+  new row keeps its preview, and a member's change is still a proposal.
 - Make the engine ask for its own session before it saves anything. A program
   running on your Mac, an AI agent's script included, can no longer save,
   approve or publish by calling Research OS's local address: the app, and the

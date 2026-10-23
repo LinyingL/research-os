@@ -1062,15 +1062,15 @@
   // -- the side panel (DESIGN.md 14.3) ----------------------------------------------------
   // A card opens its attempt in app.html's side panel, on the desk, the map
   // live beside it (no backdrop): the attempt -- its verdict and result
-  // changed through the map file's preview-then-confirm write, dirty cells
+  // saved at once through the map file's write with 撤销 (18.3), dirty cells
   // only; a member's change becomes a verdict-change proposal (12.4); turning
-  // a route abandoned asks its reason --, 写备注, 来龙去脉 (the node page's
-  // trace), 源自 and 由它而来 with remove, 待办 (the proposals touching it,
-  // each opened in place and answered there), its 待复核 judged in place,
-  // what changed since the last visit (14.5), 打开详情页. The column's 查看
-  // opens a proposal there as its own subject (team.js draws it, reading
-  // /api/proposals/<id>?from=). One panel at a time: what is half typed in
-  // it is never replaced unasked.
+  // a route abandoned asks its reason and is previewed first --, 写备注,
+  // 来龙去脉 (the node page's trace), 源自 and 由它而来 with remove, 待办
+  // (the proposals touching it, each opened in place and answered there),
+  // its 待复核 judged in place, what changed since the last visit (14.5),
+  // 打开详情页. The column's 查看 opens a proposal there as its own subject
+  // (team.js draws it, reading /api/proposals/<id>?from=). One panel at a
+  // time: what is half typed in it is never replaced unasked.
 
   const NOTES_SHOWN = 5;
   let lastData = null;     // the desk payload last drawn: attempts, lines, the column
@@ -1474,8 +1474,83 @@
     return chips;
   }
 
-  // The attempt's verdict and result (14.3): preview, then confirm; only the
-  // cells changed are sent. Description, date and variables are 研究路线's.
+  // -- an existing row's 研究判断 or 结果 saves at once (18.3) ---------------------------------
+  // For the PI and a single researcher (a member's change is still a proposal,
+  // a new row keeps its preview). The engine's preview is still asked, but not
+  // shown: it says whether this write turns the route abandoned (then the
+  // reason and the confirmation stay, 14.3) and what the cells hold now
+  // (`cells`, server.attempts_preview_payload). The write is the same one --
+  // only what changed, backed up, in the history, checked against the file as
+  // it is -- and 撤销 writes the previous cells back through it: a second
+  // entry in the history, not an erasure. Shared with app.html's older form.
+  const AT_ONCE_KEYS = ["verdict", "result"];
+
+  // The table's two endpoints (the panel's save, its confirmation and 撤销 all use these).
+  const previewRow = (b) => apiPost("/api/attempts/preview", b);
+  const writeRow = (b) => apiPost("/api/attempts/write", b);
+
+  // Compared with every space and line break taken out: an <input> keeps no line break of a cell with <br>.
+  function squash(s) { return String(s == null ? "" : s).replace(/\s+/g, ""); }
+
+  // Whether the cells `b` writes are only of this kind, in an existing row.
+  function atOnceKind(b) {
+    const keys = Object.keys((b && b.fields) || {});
+    return !!b && b.op === "update" && keys.length > 0 && keys.every((k) => AT_ONCE_KEYS.indexOf(k) >= 0);
+  }
+
+  // The preview `p` of `b` against the text the form showed (`shown`: key ->
+  // text): "once" (write now), "abandons" (it turns the route abandoned: the
+  // reason and the confirmation as before) or "moved" (a cell is no longer
+  // the text the form showed -- the file changed meanwhile --: the preview is
+  // shown, with the row as it is now).
+  function atOnceVerdict(p, b, shown) {
+    if (p.reason_required) return "abandons";
+    const cells = p.cells || {};
+    return Object.keys(b.fields).some((k) => cells[k] && squash(cells[k].was_text) !== squash(shown[k])) ? "moved" : "once";
+  }
+
+  // What 撤销 will do: write back the cells as the file held them (`was`, from
+  // the preview; the form's own text if the engine did not say), once the
+  // row still reads as this write left it (`now`).
+  function undoOf(p, b, shown) {
+    const cells = p.cells || {};
+    const u = { number: b.number, was: {}, now: {}, text: {} };
+    Object.keys(b.fields).forEach((k) => {
+      u.was[k] = cells[k] && typeof cells[k].was === "string" ? cells[k].was : toCellText(String(shown[k] == null ? "" : shown[k]));
+      u.text[k] = String(shown[k] == null ? "" : shown[k]);
+      if (cells[k] && typeof cells[k].now_text === "string") u.now[k] = cells[k].now_text;
+    });
+    return u;
+  }
+
+  // Whether the row (as its page says it, `details`) still reads as the write left it.
+  function stillSo(u, details) {
+    return Object.keys(u.now).every((k) => squash((details || {})[k]) === squash(u.now[k]));
+  }
+
+  // 撤销: the same way as the write -- the preview, then the write. {state}:
+  // "abandons" (writing the old cells back would abandon the route again,
+  // which needs its reason), "moved" (the row changed again meanwhile) or
+  // "done" (with `res`, the write's answer). Throws what the engine refuses.
+  async function undoWrite(u) {
+    const b = { op: "update", number: u.number, fields: u.was };
+    const p = await previewRow(b);
+    if (p.reason_required) return { state: "abandons" };
+    const cells = p.cells || {};
+    if (Object.keys(u.now).some((k) => cells[k] && squash(cells[k].was_text) !== squash(u.now[k]))) return { state: "moved" };
+    return { state: "done", res: await writeRow(b) };
+  }
+
+  // 已保存 and 撤销 in `el`, a status line (its class set by the caller).
+  function savedLine(el, onUndo) {
+    el.textContent = "";
+    el.append(mk("span", null, t("已保存")), mkButton(t("撤销"), "err-detail-toggle", onUndo));
+  }
+
+  // The attempt's verdict and result (14.3, 18.3): the PI's and a single
+  // researcher's save at once, with 撤销; turning a route abandoned, and a
+  // member's change, are previewed and confirmed. Only the cells changed are
+  // sent. Description, date and variables are 研究路线's.
   function editPart(subject, a, page) {
     const d = page.details || {};
     const role = deskRole();
@@ -1517,12 +1592,22 @@
     s.appendChild(reasonField);
     const status = mk("div", "notice-status");
     const shown = mk("div", "dp-preview");
-    const go = mkButton(proposing ? t("预览这一行") : t("预览改动"), "btn btn-primary", () => preview());
+    const go = mkButton(proposing ? t("预览这一行") : t("保存"), "btn btn-primary", () => preview());
     const row = mk("div", "form-actions");
     row.appendChild(go);
     s.append(row, status, shown);
     const fields = [verdict, result, reason].concat(sentence ? [sentence] : []);
     const freeze = (on) => { fields.forEach((f) => { f.disabled = on; }); go.disabled = on; subject.hold = on; };
+    const shownText = () => ({ verdict: verdict.dataset.initial, result: result.dataset.initial });
+
+    // 18.3: 已保存 and 撤销 while the row still reads as the last save left it; a
+    // row that changed again (a refresh found it so) is not offered back.
+    function offer(u) {
+      setStatus(status, "ok", "");
+      savedLine(status, () => undoIt(u));
+    }
+    if (subject.undo && !proposing && !stillSo(subject.undo, d)) subject.undo = null;
+    if (subject.undo && !proposing) offer(subject.undo);
 
     function body() {
       const changed = {};
@@ -1538,12 +1623,12 @@
       if (proposing && !sentence.value.trim()) { setStatus(status, "err", t("请用一句话说明这份提议")); sentence.focus(); return; }
       const b = body();
       if (!b) { setStatus(status, "", t("没有需要写入的改动")); return; }
-      setStatus(status, "", t("正在生成预览…"));
+      setStatus(status, "", proposing ? t("正在生成预览…") : t("正在保存…"));
       let p;
       try {
-        p = await apiPost("/api/attempts/preview", b);
+        p = await previewRow(b);
       } catch (err) {
-        setStatus(status, "err", t("无法生成预览"), err);
+        setStatus(status, "err", proposing ? t("无法生成预览") : t("写入失败，文件没有被修改"), err);
         return;
       }
       // A2b: the PI and a single researcher give the reason when this write
@@ -1558,10 +1643,12 @@
         return;
       }
       setStatus(status, "", "");
-      showPreview(p, b);
+      const how = proposing ? "preview" : atOnceVerdict(p, b, shownText());
+      if (how === "once") return saveNow(p, b);
+      showPreview(p, b, how === "moved");
     }
 
-    function showPreview(p, b) {
+    function showPreview(p, b, moved) {
       freeze(true);
       shown.textContent = "";
       if (p.old_row != null) shown.append(mk("div", "diff-label", t("原行")), mk("div", "diff-row old", p.old_row));
@@ -1575,8 +1662,10 @@
           : t("这一行还不在正式版本里：它会整行作为一条新的尝试提议。")));
       }
       if (!proposing && p.reason_required) shown.appendChild(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
+      if (moved) shown.appendChild(mk("div", "confirm-note", t("这一行在你打开它以后被改过：上面的原行是文件里现在的样子。")));
       const actions = mk("div", "form-actions");
-      const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary", () => write(b, ok, back));
+      const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary",
+        () => (moved ? saveNow(p, b) : write(b, ok, back)));
       const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); setStatus(status, "", ""); });
       actions.append(ok, back);
       shown.appendChild(actions);
@@ -1588,7 +1677,7 @@
       setStatus(status, "", t("正在写入…"));
       let res;
       try {
-        res = await apiPost("/api/attempts/write", b); // the confirmed body, verbatim
+        res = await writeRow(b); // the confirmed body, verbatim
       } catch (err) {
         setStatus(status, "err", t("写入失败，文件没有被修改"), err);
         back.disabled = false;
@@ -1624,7 +1713,74 @@
       fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
       shown.textContent = "";
       freeze(false);
+      subject.undo = null; // the frozen basis is not written back by 撤销: an abandonment is not offered
       panelSaid = { id: subject.id, text: t("已写入 {file}。", { file: res.file }) };
+      setStatus(status, "ok", panelSaid.text);
+      await drawPanel(subject);
+    }
+
+    // 18.3: written at once -- the body the preview was made for, verbatim --, then 已保存 and 撤销.
+    async function saveNow(p, b) {
+      freeze(true);
+      shown.textContent = "";
+      setStatus(status, "", t("正在写入…"));
+      let res;
+      try {
+        res = await writeRow(b);
+      } catch (err) {
+        freeze(false);
+        setStatus(status, "err", t("写入失败，文件没有被修改"), err);
+        return;
+      }
+      if (typeof pollGeneration === "function") pollGeneration();
+      freeze(false);
+      if (res.ingest_error) {
+        setStatus(status, "err", t("已写入并备份，但重扫失败"), res.ingest_error);
+        return;
+      }
+      const u = undoOf(p, b, shownText());
+      reason.value = "";
+      reasonField.classList.add("hidden");
+      fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+      subject.undo = u;
+      panelSaid = null;
+      offer(u);
+      await drawPanel(subject);
+    }
+
+    // 撤销: the previous cells written back the same way; the panel then says so and offers nothing more.
+    async function undoIt(u) {
+      freeze(true);
+      setStatus(status, "", t("正在写入…"));
+      let r;
+      try {
+        r = await undoWrite(u);
+      } catch (err) {
+        freeze(false);
+        setStatus(status, "err", t("写入失败，文件没有被修改"), err);
+        return;
+      }
+      freeze(false);
+      if (r.state !== "done") {
+        subject.undo = null;
+        setStatus(status, "err", r.state === "abandons"
+          ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。")
+          : t("这一行之后又改过，不能撤销。"));
+        return;
+      }
+      if (typeof pollGeneration === "function") pollGeneration();
+      subject.undo = null;
+      if (r.res.ingest_error) {
+        setStatus(status, "err", t("已写入并备份，但重扫失败"), r.res.ingest_error);
+        return;
+      }
+      const fieldOf = { verdict: verdict, result: result };
+      Object.keys(u.was).forEach((k) => {
+        fieldOf[k].value = u.text[k];
+        fieldOf[k].dataset.initial = u.text[k];
+        delete fieldOf[k].dataset.typed;
+      });
+      panelSaid = { id: subject.id, text: t("撤销了上一步") };
       setStatus(status, "ok", panelSaid.text);
       await drawPanel(subject);
     }
@@ -1776,6 +1932,8 @@
     setMode, resume, syncSwitch, listZoom, mode: routesMode, onePerson,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
+    // an existing row's 研究判断 or 结果 saved at once with 撤销 (18.3): the panel's, and app.html's older form
+    atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _modeKey: modeKey, _toneOf: toneOf,
