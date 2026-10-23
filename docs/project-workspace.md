@@ -1,6 +1,6 @@
 # Project home
 
-This guide describes the development version after 0.2.0.
+For Research OS **0.3.0**.
 
 Choose **New project…**, enter a name and choose its save location. The app
 creates a project folder and opens **Project home**. You can start writing

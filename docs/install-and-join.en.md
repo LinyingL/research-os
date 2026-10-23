@@ -1,6 +1,9 @@
 # Install Research OS and join a team
 
-For Research OS **0.2.0**, using macOS and personal OneDrive accounts.
+For Research OS **0.3.0**, using macOS and personal OneDrive accounts.
+
+These instructions install the current source from `main`. Published tags
+are listed on the repository's [Releases page](https://github.com/LinyingL/research-os/releases).
 
 Everyone completes the installation first. Members then follow Part 2;
 project leads follow Part 3.
@@ -56,7 +59,7 @@ It should display a version number.
 ### 4. Install Research OS
 
 ```bash
-uv tool install git+https://github.com/LinyingL/research-os@v0.2.0
+uv tool install git+https://github.com/LinyingL/research-os@main
 ```
 
 A successful installation shows `Installed 2 executables: rce, researchos`.
@@ -265,11 +268,13 @@ need to click **同步** (Sync) in Research OS.
 Run these commands in Terminal, in order:
 
 ```bash
-uv tool install --force git+https://github.com/LinyingL/research-os@v0.2.0
+uv tool install --force git+https://github.com/LinyingL/research-os@main
 ```
 
 ```bash
 researchos app
 ```
 
-Reopen the app. If macOS asks for file access again, allow it.
+Run `researchos app` after installing so the app has the current menus and
+the session needed to save changes. Reopen the app. If macOS asks for file
+access again, allow it.

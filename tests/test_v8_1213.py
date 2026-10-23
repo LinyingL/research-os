@@ -598,7 +598,9 @@ def test_12_13_the_collaborator_guide_is_in_plain_words_and_names_only_what_the_
     text = GUIDE.read_text(encoding="utf-8")
     assert not FORBIDDEN.search(text), FORBIDDEN.search(text)  # 12.11: no emoji, no arrows
     package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    source = f"git+https://github.com/LinyingL/research-os@v{package['version']}"
+    # The guides install current source; a version declaration need not have a published tag yet.
+    assert f"**{package['version']}**" in text
+    source = "git+https://github.com/LinyingL/research-os@main"
     for command in ("xcode-select --install", "curl -LsSf https://astral.sh/uv/install.sh | sh",
                     f"uv tool install {source}\n", "researchos app\n",
                     f"uv tool install --force {source}\n", "uv tool uninstall rce\n"):
