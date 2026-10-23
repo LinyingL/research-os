@@ -51,6 +51,13 @@ def start_afresh() -> None:
     forget()
 
 
+@pytest.fixture(autouse=True)
+def an_hour_later(monkeypatch) -> None:
+    """Each look at a working copy begins an hour after its files were written, so every file has settled
+    (`memo.RACY_NS`) and its fingerprint may be kept. The tests of the racy window put the real clock back."""
+    monkeypatch.setattr(share, "_now_ns", lambda: time.time_ns() + 3600 * 1_000_000_000)
+
+
 @pytest.fixture
 def ssh_runs(monkeypatch) -> list[list[str]]:
     """The `ssh-keygen -Y verify` runs that really happened."""
@@ -384,6 +391,76 @@ def test_a_run_that_did_not_end_is_not_an_answer_and_is_asked_again(tmp_path, mo
 
 
 @needs_ssh
+def test_a_run_that_failed_to_judge_is_no_verdict_and_the_next_request_asks_again(tmp_path, monkeypatch):
+    """`ssh-keygen` exits 255 for every failure it has, a judgement of the signature or a failure to judge (no
+    user for the uid, no descriptor, no memory, a file it cannot read). Only the first is a function of the
+    inputs; the others must not stand as "not valid" until the engine stops."""
+    monkeypatch.setenv("RESEARCHOS_HOME", str(tmp_path / "home-a"))
+    key = signing.ensure_key()
+    data = b"a manifest"
+    signature = signing.sign(data)
+    real = signing._run
+    verdict = b"Could not verify signature.\n"
+    failures = [
+        SimpleNamespace(returncode=255, stdout=b"", stderr=b"No user exists for uid 501\r\n"),
+        SimpleNamespace(returncode=255, stdout=b"", stderr=b""),
+        SimpleNamespace(returncode=1, stdout=b"", stderr=b""),
+        SimpleNamespace(returncode=255, stdout=verdict, stderr=b"Couldn't read signature file: Too many open files in system\r\n"),
+        SimpleNamespace(returncode=255, stdout=verdict, stderr=b"sig_verify: some trouble nobody has seen\r\n"),
+        SimpleNamespace(returncode=255, stdout=b"Good-looking text", stderr=b"incorrect signature\r\n"),
+    ]
+    for failure in failures:
+        signing._VERIFIED.clear()
+        monkeypatch.setattr(signing, "_run", lambda *a, _failure=failure, **k: _failure)
+        assert signing.verify(data, signature, key) is False
+        assert signing.check(data, signature, key).state == "bad"  # as the unmemoised code read it, for that request
+        monkeypatch.setattr(signing, "_run", real)
+        assert signing.verify(data, signature, key) is True, failure  # the request after it asks again
+        assert signing.check(data, signature, key).state == "verified"
+
+
+@needs_ssh
+def test_the_judgements_of_ssh_keygen_are_kept_as_they_are_said(tmp_path, monkeypatch, ssh_runs):
+    """The "no" of a program that ran to the end -- the data is not what was signed, another key, text that is no
+    signature -- is the same on every run, so it is kept like a "yes" (the 255 and the wording are the real
+    program's, not made up)."""
+    monkeypatch.setenv("RESEARCHOS_HOME", str(tmp_path / "home-a"))
+    key = signing.ensure_key()
+    data = b"a manifest"
+    signature = signing.sign(data)
+    other_key = signing.parse_public_key(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UvlQQJdIlEz1ZYmXGPNcXbL8U1sW")
+    asks = [(b"other data", signature, key), (data, signature, other_key), (data, b"no signature at all", key),
+            (data, signature[: len(signature) // 2], key), (data, b"", key)]
+    for n, ask in enumerate(asks, 1):
+        assert signing.verify(*ask) is False and len(ssh_runs) == n
+        assert signing.verify(*ask) is False and len(ssh_runs) == n, ask  # kept: the program is not asked again
+
+
+@needs_ssh
+def test_one_failure_of_ssh_keygen_refuses_one_request_not_the_chain_until_the_engine_stops(busy, monkeypatch):
+    drive = busy
+    pi_key = people.read_team(drive.official).pi.key
+    snaps, _ = share.read_snapshots(drive.shared)
+    forget()
+    real = signing._run
+    calls = []
+
+    def fails_once(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=255, stdout=b"", stderr=b"No user exists for uid 501\r\n")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(signing, "_run", fails_once)
+    unlucky = share.verify_chain(drive.shared, snaps, drive.pid, PI[1], pi_key)
+    assert unlucky.good == [] and unlucky.refused[0]["state"] == "bad"  # that request, as the unmemoised code gave it
+    again = share.verify_chain(drive.shared, snaps, drive.pid, PI[1], pi_key)
+    old = old_verify_chain(drive.shared, old_read_snapshots(drive.shared)[0], drive.pid, PI[1], pi_key)
+    assert [s.seq for s in again.good] == [1, 2, 3, 4, 5] and summary(again) == summary(old)  # the next request recovers
+
+
+@needs_ssh
 def test_verifying_from_several_threads_agrees_with_verifying_alone(tmp_path, monkeypatch, ssh_runs):
     monkeypatch.setenv("RESEARCHOS_HOME", str(tmp_path / "home-a"))
     key = signing.ensure_key()
@@ -711,8 +788,8 @@ def test_the_walk_lists_the_files_iter_files_lists_in_the_same_order(messy):
                    for part in rel.split("/")) and "a-pipe" not in expected and "link-to-file.md" not in expected
     for rel, seen in got:
         st = (root / rel).lstat()
-        assert seen == share._Seen(st.st_size, st.st_mtime_ns, st.st_ino, False)
-        assert seen.stamp == f"{st.st_size}:{st.st_mtime_ns}:{st.st_ino}"
+        assert seen == share._Seen(st.st_size, st.st_mtime_ns, st.st_ino, False, st.st_ctime_ns)
+        assert seen.stamp == f"{st.st_size}:{st.st_mtime_ns}:{st.st_ino}:{st.st_ctime_ns}"
 
 
 def test_the_inventory_is_the_files_of_the_project_and_the_record_files(messy):
@@ -953,6 +1030,177 @@ def test_looks_while_files_change_never_fail_and_the_last_one_is_right(messy):
     forget()
     assert share.official_files(root, pid) == old_official_files(root)
     assert list(proposals.manifest(root).items()) == list(old_manifest(root).items())
+
+
+# -- a stamp is trusted only when it can be (the racy window, a time set back, a file gone to the cloud) --
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_a_file_rewritten_within_the_tick_of_the_volumes_clock_is_read_again_and_kept_once_it_settles(messy, monkeypatch,
+                                                                                                         reads):
+    """A volume that keeps one time to 2 s (FAT): a same-size rewrite after a look carries the very stamp the look
+    saw. The look read the file within `memo.RACY_NS` of its being written, so it keeps no fingerprint and the next
+    look reads the file; `proposals.manifest`, the PI's `moved` and a proposal's `work` are what a full read gives."""
+    root, pid = messy
+    grain = 2_000_000_000
+
+    def coarse(st):
+        tick = st.st_mtime_ns // grain * grain
+        return share._Seen(st.st_size, tick, st.st_ino, share._is_dataless(st), tick)
+
+    monkeypatch.setattr(share, "_seen_of", coarse)
+    base = time.time_ns() // 10_000_000_000 * 10_000_000_000
+    clock = [base + 1_000_000_000]
+    monkeypatch.setattr(share, "_now_ns", lambda: clock[0])
+    target = root / "data" / "panel.csv"
+    original = target.read_bytes()
+    changed = b"Z" + original[1:]
+
+    def write(content: bytes, at_ns: int) -> None:
+        target.write_bytes(content)
+        os.utime(target, ns=(at_ns, at_ns))
+
+    write(original, base + 200_000_000)
+    stamp = share._seen_of(target.lstat()).stamp
+    first = proposals.manifest(root)
+    assert first["data/panel.csv"]["sha256"] == _digest(original)
+    write(changed, base + 500_000_000)  # in place, the same size, the same tick
+    assert share._seen_of(target.lstat()).stamp == stamp  # the volume cannot tell the two writes apart
+    clock[0] = base + 1_500_000_000
+    got = proposals.manifest(root)
+    assert got == old_manifest(root) and got["data/panel.csv"]["sha256"] == _digest(changed)
+    assert proposals.snapshot_id(got) != proposals.snapshot_id(first)  # the PI's `moved` sees it
+    assert share.official_files(root, pid)[0]["data/panel.csv"]["sha256"] == _digest(changed)
+    cache = paths.index_dir(pid) / share.CACHE_FILENAME
+    assert "data/panel.csv" not in (json.loads(cache.read_text()) if cache.is_file() else {})  # not kept: not settled
+    clock[0] = base + 10_000_000_000  # the tick is long past
+    reads.clear()
+    assert proposals.manifest(root) == old_manifest(root)
+    assert [p.name for p in reads].count("panel.csv") == 2  # this look and the old reading above
+    assert json.loads(cache.read_text())["data/panel.csv"] == [share._seen_of(target.lstat()).stamp, _digest(changed)]
+    reads.clear()
+    proposals.manifest(root)
+    assert "panel.csv" not in [p.name for p in reads]  # settled, kept, not read again
+
+
+def test_a_file_just_written_is_read_by_every_look_and_kept_only_once_it_has_settled(messy, monkeypatch, reads):
+    root, pid = messy
+    monkeypatch.setattr(share, "_now_ns", time.time_ns)  # the real clock: the files were written moments ago
+    cache = paths.index_dir(pid) / share.CACHE_FILENAME
+    fresh = root / "figs" / "fig1.png"
+    old = time.time_ns() - 3600 * 1_000_000_000
+    for path in root.rglob("*"):
+        if path.is_file() and path != fresh and not path.is_symlink():
+            os.utime(path, ns=(old, old))
+    share.official_files(root, pid)
+    assert [p.name for p in reads].count("fig1.png") == 1
+    reads.clear()
+    share.official_files(root, pid)
+    proposals.manifest(root)
+    assert "fig1.png" in [p.name for p in reads] and "paper.md" not in [p.name for p in reads]  # only it, again
+    assert "figs/fig1.png" not in json.loads(cache.read_text()) and "paper.md" in json.loads(cache.read_text())
+    os.utime(fresh, ns=(old, old))  # it ages
+    reads.clear()
+    share.official_files(root, pid)
+    assert [p.name for p in reads] == ["fig1.png"] and "figs/fig1.png" in json.loads(cache.read_text())
+    reads.clear()
+    got = share.official_files(root, pid)
+    assert reads == []  # kept now
+    assert got == old_official_files(root)
+
+
+def test_a_file_rewritten_in_place_with_its_time_set_back_is_read_again(messy):
+    """`touch -r`, `cp -p`, `rsync -t`: size, modification time and inode are the old ones, but the status-change
+    time (`ctime`) cannot be set back and is part of the stamp."""
+    root, pid = messy
+    share.official_files(root, pid)
+    proposals.manifest(root)
+    target = root / "data" / "panel.csv"
+    before = target.stat()
+    with open(target, "r+b") as handle:
+        handle.write(b"Z")
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = target.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (before.st_ino, before.st_size, before.st_mtime_ns)
+    assert after.st_ctime_ns != before.st_ctime_ns
+    got = proposals.manifest(root)
+    assert got == old_manifest(root) and got["data/panel.csv"]["sha256"] == _digest(target.read_bytes())
+    assert share.official_files(root, pid) == old_official_files(root)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file whatever its mode")
+def test_a_fingerprinted_file_that_became_unreadable_is_refused_as_the_old_manifest_refused_it(messy):
+    root, pid = messy
+    proposals.manifest(root)
+    target = root / "data" / "panel.csv"
+    target.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            old_manifest(root)
+        with pytest.raises(PermissionError):
+            proposals.manifest(root)
+    finally:
+        target.chmod(0o644)
+    assert proposals.manifest(root) == old_manifest(root)
+
+
+def _evict_when_the_first_is_read(monkeypatch, root: Path, order: list[str]) -> tuple[set[int], list[Path]]:
+    """The last file of `order` is evicted to the cloud at the moment the first is read. Returns the inodes evicted
+    and the files that were opened while evicted (an open that would block on the download)."""
+    victim = root / order[-1]
+    evicted: set[int] = set()
+    opened: list[Path] = []
+    real_read, real_cloud = ex_mod.sha256_of, share._is_dataless
+
+    def read(path):
+        path = Path(path)
+        if path == root / order[0]:
+            evicted.add(victim.stat().st_ino)
+        if path.stat().st_ino in evicted:
+            opened.append(path)
+        return real_read(path)
+
+    monkeypatch.setattr(ex_mod, "sha256_of", read)
+    monkeypatch.setattr(share, "_is_dataless", lambda st: st.st_ino in evicted or real_cloud(st))
+    monkeypatch.setattr(paths, "is_dataless", lambda p: Path(p).stat().st_ino in evicted)
+    return evicted, opened
+
+
+def test_a_file_evicted_to_the_cloud_while_the_files_before_it_are_read_is_not_opened(messy, monkeypatch):
+    root, pid = messy
+    order = sorted(old_official_files(root)[0])
+    assert len(order) > 10
+    evicted, opened = _evict_when_the_first_is_read(monkeypatch, root, order)
+    got = share.official_files(root, pid)
+    assert opened == [] and evicted
+    assert got == old_official_files(root) and got[1] == [order[-1]] and order[-1] not in got[0] and order[0] in got[0]
+    cache = json.loads((paths.index_dir(pid) / share.CACHE_FILENAME).read_text())
+    assert order[-1] not in cache  # a file in the cloud has no fingerprint
+
+
+def test_the_manifest_reports_a_file_evicted_while_the_files_before_it_are_read_as_in_the_cloud(messy, monkeypatch):
+    root, pid = messy
+    order = [rel for rel, _seen in share._inventory(root)[0]]
+    evicted, opened = _evict_when_the_first_is_read(monkeypatch, root, order)
+    got = proposals.manifest(root)
+    assert opened == [] and evicted
+    assert list(got.items()) == list(old_manifest(root).items())
+    assert got[order[-1]] == {"sha256": None, "size": (root / order[-1]).stat().st_size, "dataless": True}
+    assert got[order[0]]["sha256"] is not None
+
+
+def test_a_file_that_is_still_at_its_stamp_is_not_asked_about_the_cloud_again(messy, monkeypatch):
+    root, pid = messy
+    share.official_files(root, pid)
+    asked: list[Path] = []
+    real = share._in_the_cloud_now
+    monkeypatch.setattr(share, "_in_the_cloud_now", lambda p: (asked.append(p), real(p))[1])
+    share.official_files(root, pid)
+    proposals.manifest(root)
+    assert [p.name for p in asked] == ["back\\slash.txt"]  # the one file the first look did not fingerprint
 
 
 # -- publishing and approving ----------------------------------------------------------------------------

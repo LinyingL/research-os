@@ -418,20 +418,20 @@ _TEAM_OPTIONS = ["不指定", "Lin Ying（我）", "Wang Wei", "其他人…", "
 def test_the_owner_list_is_the_same_from_the_shared_context_and_from_the_pages_own_reads():
     """The same project opened twice, once with no desk module (the page reads /api/me and /api/share itself)
     and once with a desk module whose context is ready: the owner control offers the same people in the same
-    order; the second makes neither read."""
+    order; the second makes neither read, and asks the desk for nothing it would have to wait for."""
     out = page_run(_TEAM + r"""
 const open=async()=>{ window.ROWorkspace.reset(); gets.length=0; await window.ROWorkspace.load(root); await sleepTick();
   return {options:OPTIONS(),reads:READS()}; };
 const own=await open();
 let asked=0;
-window.RODesk={ensureContext:async()=>{asked+=1;return context('pi');}};
+window.RODesk={ensureContext:async()=>{asked+=1;return context('pi');},context:()=>context('pi')};
 const shared=await open();
 console.log(JSON.stringify({own,shared,asked}));
 """)
     assert out["own"]["options"] == out["shared"]["options"]
     assert [text for text, _ in out["shared"]["options"]] == _TEAM_OPTIONS
     assert out["own"]["reads"] == {"me": 1, "share": 1, "proposals": 0}
-    assert out["shared"]["reads"] == {"me": 0, "share": 0, "proposals": 0} and out["asked"] == 1
+    assert out["shared"]["reads"] == {"me": 0, "share": 0, "proposals": 0} and out["asked"] == 0
 
 
 @needs_node
@@ -441,7 +441,7 @@ listed.mode='single';
 const open=async()=>{ window.ROWorkspace.reset(); gets.length=0; await window.ROWorkspace.load(root); await sleepTick();
   return {options:OPTIONS(),reads:READS()}; };
 const own=await open();
-window.RODesk={ensureContext:async()=>context('single')};
+window.RODesk={context:()=>context('single')};
 const shared=await open();
 console.log(JSON.stringify({own,shared}));
 """)
@@ -451,35 +451,41 @@ console.log(JSON.stringify({own,shared}));
 
 
 @needs_node
-def test_the_page_draws_before_the_desks_context_arrives_and_gets_its_people_when_it_does():
-    """The desk module has not loaded its context yet: the page is on screen with the owner control as it is
-    without people, nothing is read by the page itself, and when the context arrives the people are in."""
+def test_who_i_am_does_not_wait_for_a_desk_context_that_is_still_loading_on_a_shared_folder_that_hangs():
+    """The desk module is still loading its context (its /api/proposals and /api/share read the shared folder,
+    which hangs) and the page's own /api/share hangs too: the page is on screen, the owner control already offers
+    me -- read by the page itself, as it always was -- and only the team waits for the folder. The page asks
+    the desk for nothing it would have to wait for, and the team arrives when the folder answers."""
     out = page_run(_TEAM + r"""
-const later=deferred();
-window.RODesk={ensureContext:()=>later.promise};
+const stuck=deferred(), folder=deferred();
+let asked=0;
+window.RODesk={ensureContext:()=>{asked+=1;return stuck.promise;},context:()=>({me:null,share:null,proposals:null,mode:null,single:false,project:null,epoch:-1})};
+customGet=(path)=>path==='/api/share'?folder.promise.then(()=>clone(shareInfo)):undefined;
 await window.ROWorkspace.load(root); await sleepTick(); await sleepTick();
-const before={options:OPTIONS(),reads:READS(),task:!!field('任务')};
-later.resolve(context('pi'));
+const during={options:OPTIONS(),reads:READS(),task:!!field('任务'),asked};
+folder.resolve();
 await sleepTick(); await sleepTick();
-console.log(JSON.stringify({before,after:{options:OPTIONS(),reads:READS()}}));
+console.log(JSON.stringify({during,after:{options:OPTIONS(),reads:READS(),asked}}));
 """)
-    assert out["before"]["task"] and [text for text, _ in out["before"]["options"]] == ["不指定", "其他人…", "Claude Code · sonnet"]
-    assert out["before"]["reads"] == {"me": 0, "share": 0, "proposals": 0}
+    assert out["during"]["task"] and out["during"]["asked"] == 0
+    assert [text for text, _ in out["during"]["options"]] == ["不指定", "Lin Ying（我）", "其他人…", "Claude Code · sonnet"]
+    assert out["during"]["reads"] == {"me": 1, "share": 1, "proposals": 0}
     assert [text for text, _ in out["after"]["options"]] == _TEAM_OPTIONS
-    assert out["after"]["reads"] == {"me": 0, "share": 0, "proposals": 0}
+    assert out["after"]["reads"] == {"me": 1, "share": 1, "proposals": 0} and out["after"]["asked"] == 0
 
 
 @needs_node
-@pytest.mark.parametrize("ask, why", [
-    ("()=>Promise.reject(new Error('the desk failed'))", "the desk's context could not be had"),
+@pytest.mark.parametrize("ready, why", [
     ("()=>{throw new Error('no context');}", "the desk module throws at once"),
-    ("async()=>context('pi',{epoch:7})", "a context of another project's time"),
-    ("async()=>context('pi',{mode:null})", "a context never filled"),
-    ("async()=>null", "nothing at all"),
+    ("()=>context('pi',{epoch:7})", "a context of another project's time"),
+    ("()=>context('pi',{project:'p-other'})", "a context of another project"),
+    ("()=>context('pi',{mode:null})", "a context never filled"),
+    ("()=>null", "nothing at all"),
+    ("undefined", "a desk module without a way to ask what it holds"),
 ])
-def test_without_a_usable_context_the_page_reads_its_people_itself(ask, why):
+def test_without_a_usable_context_the_page_reads_its_people_itself(ready, why):
     out = page_run(_TEAM + f"""
-window.RODesk={{ensureContext:{ask}}};
+window.RODesk={{ensureContext:async()=>context('pi'),context:{ready}}};
 await window.ROWorkspace.load(root); await sleepTick();
 console.log(JSON.stringify({{options:OPTIONS(),reads:READS()}}));
 """)
@@ -488,11 +494,26 @@ console.log(JSON.stringify({{options:OPTIONS(),reads:READS()}}));
 
 
 @needs_node
+def test_a_context_that_arrives_while_who_i_am_is_read_gives_the_team_without_a_second_read():
+    """Nothing is ready when the page asks, so /api/me is read by the page; by the time it answers the desk
+    has its context, and the team is taken from it."""
+    out = page_run(_TEAM + r"""
+let ready=null;
+window.RODesk={context:()=>ready||({mode:null,epoch:-1})};
+customGet=(path)=>{ if(path==='/api/me'){ ready=context('pi'); } };
+await window.ROWorkspace.load(root); await sleepTick();
+console.log(JSON.stringify({options:OPTIONS(),reads:READS()}));
+""")
+    assert [text for text, _ in out["options"]] == _TEAM_OPTIONS
+    assert out["reads"] == {"me": 1, "share": 0, "proposals": 0}
+
+
+@needs_node
 def test_a_context_that_did_not_ask_for_the_shared_folder_leaves_that_one_read_to_the_page():
     """The page says the project is a PI's, the desk's context read it as a project of one (its /api/proposals
     failed, say): who I am comes from the context, the team is read by the page as it always was."""
     out = page_run(_TEAM + r"""
-window.RODesk={ensureContext:async()=>context('single',{share:null,proposals:null})};
+window.RODesk={context:()=>context('single',{share:null,proposals:null})};
 await window.ROWorkspace.load(root); await sleepTick();
 console.log(JSON.stringify({options:OPTIONS(),reads:READS()}));
 """)
@@ -505,7 +526,7 @@ def test_a_shared_folder_that_could_not_be_read_leaves_the_list_as_a_failed_read
     """The context was made and the /api/share inside it failed (null): the team is empty and I am in, the
     page does not read it again."""
     out = page_run(_TEAM + r"""
-window.RODesk={ensureContext:async()=>context('pi',{share:null})};
+window.RODesk={context:()=>context('pi',{share:null})};
 await window.ROWorkspace.load(root); await sleepTick();
 const shared={options:OPTIONS(),reads:READS()};
 window.RODesk=undefined; shareInfo=null;
@@ -518,31 +539,43 @@ console.log(JSON.stringify({shared,own:{options:OPTIONS(),reads:READS()}}));
 
 
 @needs_node
-def test_the_real_desk_and_the_page_read_who_i_am_and_the_shared_folder_once_between_them():
-    """desk.js as it is, beside workspace.js. The sidebar's read (refreshSidebar, as reloadAllViews starts it)
-    and the page's load are begun together: /api/me, /api/share and /api/proposals are each read once, and the
-    page has its people. Another load of the page, a refresh, reads nothing of them. A page that is the first
-    to ask (nobody has started the context) starts it, and still reads each once."""
+def test_the_real_desk_and_the_page_read_who_i_am_and_the_shared_folder_once_when_the_context_is_ready():
+    """desk.js as it is, beside workspace.js. The sidebar's read (refreshSidebar, as reloadAllViews starts it) has
+    finished when the page loads: /api/me, /api/share and /api/proposals were each read once, by the sidebar, and
+    the page has its people having read nothing. Another load of the page, a refresh, reads nothing of them. A
+    page that is the first to ask (no context yet) reads who I am and the team itself, and does not start the
+    context. A sidebar read begun together with the page's load is not waited for: the page has its people
+    whichever answers first."""
     out = page_run(DESK_JS + _TEAM + r"""
 customGet=(path)=>path==='/api/proposals'?{role:'pi',team:true}:undefined;
-const together=async()=>{ gets.length=0; window.ROWorkspace.reset();
-  const sidebar=window.RODesk.refreshSidebar().catch(()=>{});   // its drawing needs the shell; its read is what counts
-  await window.ROWorkspace.load(root); await sleepTick(); await sidebar; await sleepTick();
-  return {options:OPTIONS(),reads:READS()}; };
-const both=await together();
+gets.length=0; window.ROWorkspace.reset();
+await window.RODesk.refreshSidebar().catch(()=>{});   // its drawing needs the shell; its read is what counts
+const sidebar=READS();
+gets.length=0;
+await window.ROWorkspace.load(root); await sleepTick();
+const ready={options:OPTIONS(),reads:READS()};
 gets.length=0; await window.ROWorkspace.load(root,true); await sleepTick();
 const refreshed=READS();
-// the page first: no sidebar read has begun
+// the page first: the desk's context is of an earlier time, and nobody has started another
 gets.length=0; window.ROWorkspace.reset(); state.dataEpoch=1;
 await window.ROWorkspace.load(root); await sleepTick(); await sleepTick();
 const first={options:OPTIONS(),reads:READS()};
-console.log(JSON.stringify({both,refreshed,first}));
+// together: the sidebar's read and the page's load begin at once
+gets.length=0; window.ROWorkspace.reset(); state.dataEpoch=2;
+const begun=window.RODesk.refreshSidebar().catch(()=>{});
+await window.ROWorkspace.load(root); await sleepTick(); await begun; await sleepTick();
+const together={options:OPTIONS(),reads:READS()};
+console.log(JSON.stringify({sidebar,ready,refreshed,first,together}));
 """)
-    assert [text for text, _ in out["both"]["options"]] == _TEAM_OPTIONS
-    assert out["both"]["reads"] == {"me": 1, "share": 1, "proposals": 1}
+    assert out["sidebar"] == {"me": 1, "share": 1, "proposals": 1}
+    assert [text for text, _ in out["ready"]["options"]] == _TEAM_OPTIONS
+    assert out["ready"]["reads"] == {"me": 0, "share": 0, "proposals": 0}
     assert out["refreshed"] == {"me": 0, "share": 0, "proposals": 0}
     assert [text for text, _ in out["first"]["options"]] == _TEAM_OPTIONS
-    assert out["first"]["reads"] == {"me": 1, "share": 1, "proposals": 1}
+    assert out["first"]["reads"] == {"me": 1, "share": 1, "proposals": 0}
+    assert [text for text, _ in out["together"]["options"]] == _TEAM_OPTIONS
+    assert out["together"]["reads"]["proposals"] == 1 and 1 <= out["together"]["reads"]["me"] <= 2 \
+        and 1 <= out["together"]["reads"]["share"] <= 2
 
 
 @needs_node
@@ -570,10 +603,11 @@ console.log(JSON.stringify({options:OPTIONS(),reads:READS()}));
     assert out["reads"]["me"] == 2 and out["reads"]["share"] >= 1  # one context per project time (the old one finishes its own reads)
 
 
-def test_the_page_module_asks_the_desk_for_its_people_and_keeps_its_own_reads_only_as_the_fallback():
-    """Source check: both reads in workspace.js sit behind the shared context."""
+def test_the_page_module_takes_its_people_from_the_context_only_when_it_is_ready_and_otherwise_reads_for_itself():
+    """Source check: both reads in workspace.js sit behind a context the desk already holds; the page never
+    asks the desk to load one (`ensureContext` would wait for a shared folder that may hang)."""
     source = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
-    assert "window.RODesk" in source and "ensureContext" in source
+    assert "window.RODesk" in source and "desk.context()" in source and "ensureContext" not in source
     assert source.count('apiGet("/api/me")') == 1 and source.count('apiGet("/api/share")') == 1
     assert "context ? context.me : await apiGet" in source and "context && context.shared ? context.share : await apiGet" in source
 

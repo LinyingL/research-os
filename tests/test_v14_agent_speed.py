@@ -154,6 +154,66 @@ def test_a_file_changed_just_before_the_picture_is_never_trusted(tmp_path, reads
     assert snapshot.compare(before, after)["modified"] == ["fresh.csv"]
 
 
+PROTECTED_FILES = {"data/survey.csv": "id,val\n1,10\n2,20\n", ".researchos/attempts.toml": "file = 'attempts.csv'\n",
+                   ".claude/settings.json": '{"hooks": {"a": 1}}\n'}
+
+
+def _violations(before: dict, after: dict) -> list[dict]:
+    return snapshot.violations(snapshot.compare(before, after), before["protected"], git_before=before.get("git"),
+                               git_after=after.get("git"), allowed={}, after=after, data_before=before["data"],
+                               data_after=after["data"], backups_before=before["backups"],
+                               backups_after=after["backups"])
+
+
+def test_a_protected_file_rewritten_in_place_with_its_time_put_back_is_read_again_and_out_of_bounds(tmp_path, reads):
+    """`touch -r`, `cp -p`, `rsync -t` or a program's own `os.utime` after an in-place write of the same size leave the
+    size, the modification time and the inode as they were -- the status-change time (`ctime`) cannot be put back, so
+    the stamp differs, the file is hashed, and the check that 18.1 relies on for an agent that bypassed the hook
+    (OpenCode has none) sees the change."""
+    root = _project(tmp_path / "proj", {**PROTECTED_FILES, "notes.md": "hello"})
+    before = snapshot.take(root, copy_to=tmp_path / "copies")
+    before["protected"] = snapshot.protected(root, before)
+    assert all("ctime_ns" in e for e in before["files"].values()) and "data/survey.csv" in before["protected"]["data"]
+    for rel in PROTECTED_FILES:
+        path = root / rel
+        was = os.lstat(path)
+        with open(path, "r+b") as handle:  # in place, the same size
+            handle.write(b"X")
+        os.utime(path, ns=(was.st_atime_ns, was.st_mtime_ns))
+        now = os.lstat(path)
+        assert (now.st_ino, now.st_size, now.st_mtime_ns) == (was.st_ino, was.st_size, was.st_mtime_ns)  # the old stamp
+        assert now.st_ctime_ns != was.st_ctime_ns
+    reads.clear()
+    after = snapshot.take(root, reuse=before)
+    assert _rels(root, reads) == sorted(PROTECTED_FILES)  # the three are read; notes.md is not
+    assert after == snapshot.take(root)
+    assert snapshot.compare(before, after)["modified"] == sorted(PROTECTED_FILES)
+    assert {(v["path"], v["reason"]) for v in _violations(before, after)} == {
+        ("data/survey.csv", "data_changed"), (".researchos/attempts.toml", "researchos_changed"),
+        (".claude/settings.json", "agent_settings_changed")}
+
+
+def test_a_picture_without_status_change_times_reuses_nothing(tmp_path, reads):
+    """A before-picture stored by the version before this one has `ino` but no `ctime_ns`: read in full."""
+    root = _project(tmp_path / "proj", FILES)
+    before = snapshot.take(root, copy_to=tmp_path / "copies")
+    for entry in before["files"].values():
+        del entry["ctime_ns"]
+    reads.clear()
+    assert snapshot.take(root, reuse=before)["files"] == snapshot.take(root)["files"]
+    assert len(reads) == 2 * len(FILES)
+
+
+def test_a_file_whose_status_changed_without_its_content_is_read_again_and_stays_unchanged(tmp_path, reads):
+    root = _project(tmp_path / "proj", FILES)
+    before = snapshot.take(root, copy_to=tmp_path / "copies")
+    os.chmod(root / "notes.md", 0o600)  # the mode moves the status-change time, nothing else
+    reads.clear()
+    after = snapshot.take(root, reuse=before)
+    assert _rels(root, reads) == ["notes.md"]
+    assert snapshot.compare(before, after) == {"created": [], "modified": [], "deleted": []}
+
+
 def test_a_time_in_the_future_is_racy_too(tmp_path):
     root = _project(tmp_path / "proj", {"ahead.csv": "1\n"}, age_ns=-HOUR_NS)
     assert "ino" not in snapshot.take(root)["files"]["ahead.csv"]

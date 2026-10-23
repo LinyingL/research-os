@@ -4940,7 +4940,7 @@ nothing new inside the project.
      writes do, so the poll that follows finds nothing new.
 2. **Agent runs:**
    - The after-picture reuses the before hash of a file whose size,
-     modification time and inode are unchanged.
+     modification time, inode and status-change time are unchanged.
    - `GET /api/agents/runs/<id>` reads the event log from where it last
      stopped and lists runs once per request.
    - 项目首页's run poll stops while the window is hidden and polls once
@@ -4948,19 +4948,29 @@ nothing new inside the project.
 
    How it is read:
    - *The after-picture.* `snapshot.take(root, reuse=before)`. A file's entry
-     in a picture gains `ino` (its inode) when the file was hashed and its
+     in a picture gains `ino` (its inode) and `ctime_ns` (its status-change
+     time) when the file was hashed and its
      modification time lay at least 3 s before the picture began: a stamp is
      as fine as the file system keeps it (2 s on FAT), and a file written
      again within that could carry the same stamp. The after-picture keeps a
-     before hash for a file whose entry has `ino` and whose size,
-     modification time (ns) and inode are the same now; any other file is
-     opened and hashed as before, and a file that is copied (the
-     before-picture) is always read. A picture stored without `ino` reuses
-     nothing. The 64 MB and 50,000-file rules, the data walk and
-     `fingerprint` are as they were, and the after-picture is the one a full
-     read gives (`ino` included). A change that keeps size, modification time
-     and inode (a program that rewrites a file in place and sets its time
-     back) is not seen by this; the data walk already trusted size and time.
+     before hash for a file whose entry has `ino` and `ctime_ns` and whose
+     size, modification time (ns), inode and status-change time (ns) are the
+     same now; any other file is opened and hashed as before, and a file that
+     is copied (the before-picture) is always read. A picture stored without
+     `ino` and `ctime_ns` reuses nothing. The 64 MB and 50,000-file rules, the
+     data walk and `fingerprint` are as they were, and the after-picture is
+     the one a full read gives (`ino` and `ctime_ns` included). The
+     status-change time moves with every write, every `chmod` and every
+     `utime`, and a program cannot put it back, so a file rewritten in place
+     with its modification time set back (a program's own `os.utime`, `touch
+     -r`, `cp -p`, `rsync -t`) is hashed again and shows as changed, a
+     protected file included (the check of 18.1 depends on it). A file whose
+     status changed without its content (a `chmod`, an extended attribute a
+     sync client sets) is hashed again too and found unchanged: it costs a
+     read, never an answer. The data walk is as it was: it trusts size and
+     time for the data files the main walk did not see. Not seen: a volume
+     that keeps no status-change time apart from the modification time
+     reports the set-back time for both, and there the case stays unseen.
    - *The log.* `detail` keeps, per run and in memory, a cursor into
      `events.jsonl`: the stream parser after the last complete line, the byte
      offset there, the file's device and inode and the 64 bytes before the
@@ -5030,7 +5040,15 @@ nothing new inside the project.
      and verified again; so is the same text under another number.
    - *A signature.* `signing.verify` keeps `ssh-keygen -Y verify`'s answer by
      the program, the SHA-256 of the data, the SHA-256 of the signature and
-     the key (1,024 answers, a "no" too). A run that did not end (no
+     the key (1,024 answers). A "yes" is kept, and a "no" only when it is
+     the program's judgement of the signature: the program exited with a
+     failure, printed `Could not verify signature.`, and said either nothing
+     (the key is not the one allowed) or `incorrect signature` or `Couldn't
+     parse signature` on its standard error. `ssh-keygen` exits 255 for every
+     failure it has, so a run that failed to judge (no user for the uid, no
+     descriptor or memory, a file it could not read) is not an answer and is
+     not kept: one such failure refuses that request's snapshot, not every
+     later request until the engine stops. A run that did not end (no
      program, a timeout, a signal) is not an answer and is not kept;
      `check` reads it as "bad" as before. Proposals, outcomes and packets
      are verified through the same function.
@@ -5050,19 +5068,46 @@ nothing new inside the project.
      folders, links not followed, hidden files and links left out, folders
      that cannot be listed skipped), the same files in the same order, and
      one `lstat` per file taken as its folder is listed (mode, size,
-     modification time in ns, inode and, on macOS, the flag that says it is
-     only in the cloud: `share._is_dataless`, where the walk's tests put the
-     cloud). The record files and the cards' version files are added as
-     before. Only regular files are looked at. `official_files` keeps the
+     modification time and status-change time in ns, inode and, on macOS, the
+     flag that says it is only in the cloud: `share._is_dataless`, where the
+     walk's tests put the cloud). A file that is about to be read (its
+     fingerprint is not kept) is asked about the cloud once more, with a
+     fresh `lstat` right before it is opened: the walk's flag is as old as
+     the walk, and macOS may evict a file while the files before it are
+     hashed. A file that has gone to the cloud since is reported as a
+     cloud-only file (`official_files` lists it as `dataless`,
+     `proposals.manifest` gives `{sha256: None, size, dataless: True}`) and
+     is never opened (11.1, 12.2). A file whose fingerprint is kept costs no
+     second `lstat`. The record files and the cards' version files are added
+     as before. Only regular files are looked at. `official_files` keeps the
      files `snapshot_rels` keeps, sorted, the cloud-only ones apart;
      `proposals.manifest` keeps the files of `project_files` in that
      function's order, a cloud-only one as `{sha256: None, size, dataless:
      True}`; a folder with no readable project identity is read as before,
      every file opened.
    - *The fingerprints.* `<home>/graphs/<id>/share-fingerprints.json` keeps
-     `{path: [stamp, sha256]}`, the stamp being `size:mtime_ns:inode`, as it
-     did. A file is read only when its stamp is not the one kept. Both looks
-     leave the same map: every file seen (not in the cloud) whose
+     `{path: [stamp, sha256]}`, the stamp being
+     `size:mtime_ns:inode:ctime_ns`. A file is read only when its stamp is
+     not the one kept, or when it had not settled when the look began. The
+     status-change time (`ctime_ns`) moves with every write, `chmod` and
+     `utime` and cannot be put back, so a file rewritten in place with its
+     modification time restored (`touch -r`, `cp -p`, `rsync -t`) is read
+     again; a file made unreadable since it was fingerprinted (a `chmod`
+     moves the status-change time) is refused when it is read again, as a
+     full reading refuses it (`officialness.view` says so in its `problems`,
+     as it does of a file unreadable from the start). The stamp had three
+     parts before: a fingerprint file written by the version before has none
+     that matches, and every file is read once after the upgrade.
+     *Settled* is `memo.settled`'s rule (item 7, `memo.RACY_NS`): the file's
+     modification time lay at least 3 s before the look began, taken before
+     its first `lstat`. A stamp is as fine as the file system keeps it (2 s
+     on FAT, 1 s on HFS+, a coarse network share), and a file written again
+     within that after a look could carry the stamp the look saw. So the
+     fingerprint of a file that has not settled is neither kept (in the file
+     or in memory) nor trusted: the file is read by every look until its
+     modification time is 3 s old, then read once more and kept (a file dated
+     in the future never settles and is read by every look). Both looks
+     leave the same map: every settled file seen (not in the cloud) whose
      fingerprint is known, computed now or kept and still at its stamp, so a
      deleted or changed file drops out and the two looks do not take turns
      rewriting the file. It is written, atomically, only when that map is
@@ -5080,7 +5125,10 @@ nothing new inside the project.
      compares with the proposal's base, and the `manifest` a member's
      `make_proposal` and `start_working_copy` take, no longer open every file:
      they read the fingerprint file above and open the files whose stamp
-     moved. The ids are the ones the old reading gave.
+     moved or that had not settled. The ids are the ones the old reading
+     gave, `moved` and a proposal's `work` included: a file rewritten within
+     the tick of the volume's clock, or with its time put back, is read, not
+     taken from the file.
 5. **File preview and drafting** read at most 200 KB and one byte, and take
    the size from the open file.
 
@@ -5194,16 +5242,22 @@ nothing new inside the project.
    - *The shared context.* `desk.js` already reads `/api/me`, `/api/proposals`
      and, for a team, `/api/share` once per project at a time
      (`ensureContext`, `loadContext`: one read in flight per data epoch).
-     `workspace.js` asks `RODesk.ensureContext()` for who I am and the team
-     and copies `me` and `share` out of it. It reads them itself, one after
-     the other as it always did, when there is no desk module, when that
-     fails, when the context is not this epoch's, and for `/api/share` alone
-     when the project is a PI's or a member's and the context did not ask for
-     the shared folder (its role read otherwise). A page that is the first to
-     ask starts the read the sidebar would have started, and a sidebar read
-     that comes while it goes joins it. The owner list waits for the whole
-     context, a slow shared folder included; before, the team alone waited
-     for `/api/share`, and who I am did not.
+     `workspace.js` asks `RODesk.context()` for who I am and the team and
+     copies `me` and `share` out of it, but only when the context is already
+     there: filled (`mode` set), made in this data epoch and for this
+     project. It never waits for a load that is still going and never starts
+     one: `/api/proposals` and `/api/share` read the shared folder with no
+     time limit, and a folder that hangs must not hold who I am. Otherwise
+     it reads them itself, one after the other as it always did (who I am
+     first, so the owner list offers it at once; the team alone waits for
+     `/api/share`): when there is no desk module or `context()` fails, while
+     a load is in flight or after one failed, when the context is not this
+     epoch's, and for `/api/share` alone when the project is a PI's or a
+     member's and the context did not ask for the shared folder (its role
+     read otherwise). A context made while `/api/me` is read serves the
+     team. The cost is that a page that loads while the sidebar's context
+     read is in flight reads `/api/me` and `/api/share` once more itself;
+     once the context is made the page reads neither.
    - *The scripts.* `dataflow._stata_scans(…, remember=True)`, which only
      `/api/stata` asks for, keeps for each script the `stata.Reading` of its
      text: the lexer's commands and problem and the names `st_local()` and

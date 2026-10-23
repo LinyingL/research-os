@@ -912,31 +912,35 @@
     refreshOwnerOptions(); renderSettings(); updateAgentSections();
   }
   // /api/me and /api/share are the page's shared context (desk.js: the sidebar, the desk and the panels read them
-  // once per project, one read in flight at a time, DESIGN.md 18.4 item 7). Asked of the desk module, which joins a
-  // read already going or answers from the one just made; the answer is copied, since the desk fills the same object
-  // again. null when there is no desk module (a page without it reads for itself, as it always did) or its context
-  // is not this project's, and when it did not ask for the shared folder (`mode` is not a team's role).
+  // once per project, one read in flight at a time, DESIGN.md 18.4 item 7). The page takes from it only what it
+  // already holds: the context the desk module has made for this project's time (`RODesk.context()`: its `epoch` is
+  // this one's and its `mode` was filled). It never waits for a load that is still going, since /api/proposals and
+  // /api/share read the shared folder with no time limit and a folder that hangs would hold who I am with it.
+  // Without a context ready (no desk module, a load going or failed, another project's time) the page reads for
+  // itself, as it always did. The answer is copied, since the desk fills the same object again; `shared` is false
+  // when the context did not ask for the shared folder (`mode` is not a team's role).
   const TEAM_ROLES = ["pi", "member", "none"];
-  async function sharedContext() {
+  function readyContext() {
     const desk = typeof window !== "undefined" ? window.RODesk : null;
-    if (!desk || typeof desk.ensureContext !== "function") return null;
+    if (!desk || typeof desk.context !== "function") return null;
     let c = null;
-    try { c = await desk.ensureContext(); } catch (err) { return null; }
-    return c && c.mode !== null && c.epoch === appEpoch() ? { me: c.me, share: c.share, shared: TEAM_ROLES.includes(c.mode) } : null;
+    try { c = desk.context(); } catch (err) { return null; }
+    const project = typeof state !== "undefined" ? (state.currentId || state.currentPath || "") : "";  // desk.js's projectKey()
+    return c && c.mode !== null && c.epoch === appEpoch() && c.project === project ? { me: c.me, share: c.share, shared: TEAM_ROLES.includes(c.mode) } : null;
   }
   // Who an owner can be: me and, in a team, its members. /api/share reads the shared folder and may be
-  // slow, so it never holds the page; a failure leaves the list as it is.
+  // slow, so it never holds the page, nor who I am; a failure leaves the list as it is.
   async function loadPeople(mark) {
     if (people.loaded || people.loading) return;
     people.loading = true;
     try {
-      const context = await sharedContext();
-      if (!live(mark)) return;
+      let context = readyContext();
       const mine = context ? context.me : await apiGet("/api/me").catch(() => null);
       if (!live(mark)) return;
       const me = mine && mine.me && typeof mine.me.name === "string" && mine.me.name.trim() ? mine.me : null;
       people.me = me ? me.name.trim() : null; refreshOwnerOptions();
       if (["pi", "member"].includes(data && data.mode)) {
+        context = context || readyContext();  // it may have been made while /api/me was read
         const share = context && context.shared ? context.share : await apiGet("/api/share").catch(() => null);
         if (!live(mark)) return;
         const seen = new Set(people.me ? [people.me] : []);

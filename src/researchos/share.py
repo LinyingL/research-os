@@ -146,6 +146,7 @@ import secrets
 import shutil
 import stat
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -156,7 +157,7 @@ from typing import Any, Callable, Iterable, Mapping, NamedTuple
 from researchos import exchange as ex_mod
 from researchos import history, paths, people, settings, signing
 from researchos.exchange import ExchangeError, Problem
-from researchos.memo import Memo
+from researchos.memo import RACY_NS, Memo
 from researchos.records import files as record_files
 from researchos.records.identity import IdentityState, read_identity
 from researchos.records.situation import READ_NOW, write_guard
@@ -361,10 +362,16 @@ class _Seen(NamedTuple):
     mtime_ns: int
     ino: int
     dataless: bool  # macOS: only in the cloud, never read
+    ctime_ns: int  # moves with every write and every `utime`, which cannot set it back
 
     @property
     def stamp(self) -> str:
-        return f"{self.size}:{self.mtime_ns}:{self.ino}"
+        return f"{self.size}:{self.mtime_ns}:{self.ino}:{self.ctime_ns}"
+
+    def settled(self, began_ns: int) -> bool:
+        """The file's modification time lay at least `memo.RACY_NS` before the look began (`_now_ns`), so a stamp
+        that is still the same later stands for the content that was read (`memo.settled`)."""
+        return self.mtime_ns + RACY_NS <= began_ns
 
 
 def _is_dataless(st: os.stat_result) -> bool:
@@ -373,7 +380,7 @@ def _is_dataless(st: os.stat_result) -> bool:
 
 
 def _seen_of(st: os.stat_result) -> _Seen:
-    return _Seen(st.st_size, st.st_mtime_ns, st.st_ino, _is_dataless(st))
+    return _Seen(st.st_size, st.st_mtime_ns, st.st_ino, _is_dataless(st), st.st_ctime_ns)
 
 
 def _walk_project(root: Path) -> list[tuple[str, _Seen]]:
@@ -476,39 +483,65 @@ def _read_prints(cache_path: Path) -> dict[str, Any]:
     return cache
 
 
+def _now_ns() -> int:
+    """The moment a look at the working copy begins (taken before its first `lstat`)."""
+    return time.time_ns()
+
+
+def _in_the_cloud_now(path: Path) -> bool:
+    """Whether the file is only in the cloud at this moment: a fresh `lstat`, asked right before the file would be
+    opened (DESIGN.md 11.1, 12.2). The walk's own flag is as old as the walk, and macOS may evict a file while the
+    files before it are hashed. A file that cannot be statted is not "in the cloud": the open reports it."""
+    try:
+        return _is_dataless(path.lstat())
+    except OSError:
+        return False
+
+
 class _Prints:
     """The fingerprints of one look at a working copy against the
     fingerprint file (`<home>/graphs/<id>/share-fingerprints.json`, {path:
-    [stamp, sha256]}): a file whose size, modification time and inode are
-    what the last look saw is not read again. The file is written only when
-    the map this look ends with is not the one it holds."""
+    [stamp, sha256]}): a file whose size, modification time, inode and
+    status-change time are what the last look saw is not read again -- but
+    only a file that had settled when the look began (`_Seen.settled`): a
+    stamp is as fine as the file system keeps it, so the fingerprint of a
+    file written within `memo.RACY_NS` of being read is neither kept nor
+    trusted, and the file is read at the next look. The file is written only
+    when the map this look ends with is not the one it holds."""
 
-    def __init__(self, root: Path, project_id: str | None) -> None:
+    def __init__(self, root: Path, project_id: str | None, began_ns: int) -> None:
         self.root = root
+        self.began = began_ns
         self.path = paths.index_dir(project_id) / CACHE_FILENAME if project_id else None  # a bad id raises, as it did
         self.old = _read_prints(self.path) if self.path is not None else {}
         self.fresh: dict[str, list[Any]] = {}
 
-    def of(self, rel: str, seen: _Seen) -> tuple[str, int]:
-        """(sha256, size) of the file `rel`, as the one `lstat` saw it."""
+    def of(self, rel: str, seen: _Seen) -> tuple[str, int] | None:
+        """(sha256, size) of the file `rel`, as the one `lstat` saw it; None
+        when the file proves to be only in the cloud by the time it would be
+        read (it is not opened)."""
+        settled = seen.settled(self.began)
         cached = self.old.get(rel)
-        if isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
+        if settled and isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
             sha, size = cached[1], seen.size
         else:
+            if _in_the_cloud_now(self.root / rel):
+                return None
             sha, size = ex_mod.sha256_of(self.root / rel)
-        self.fresh[rel] = [seen.stamp, sha]
+        if settled:
+            self.fresh[rel] = [seen.stamp, sha]
         return sha, size
 
     def save(self, looked: Iterable[tuple[str, _Seen]]) -> None:
-        """End the look. The file keeps every file looked at (not in the
-        cloud) whose fingerprint is known -- computed now, or in the file and
-        still at its stamp -- so that the two looks (`official_files`, the
-        proposals' `manifest`) leave the same map."""
+        """End the look. The file keeps every settled file looked at (not
+        in the cloud) whose fingerprint is known -- computed now, or in the
+        file and still at its stamp -- so that the two looks
+        (`official_files`, the proposals' `manifest`) leave the same map."""
         if self.path is None:
             return
         fresh = self.fresh
         for rel, seen in looked:
-            if rel not in fresh and not seen.dataless:
+            if rel not in fresh and not seen.dataless and seen.settled(self.began):
                 cached = self.old.get(rel)
                 if isinstance(cached, list) and len(cached) == 2 and cached[0] == seen.stamp:
                     fresh[rel] = cached
@@ -532,17 +565,18 @@ def official_files(root: Path, project_id: str) -> tuple[dict[str, dict[str, Any
     memory while the file is unchanged and written only when the map
     changed)."""
     root = Path(root)
+    began = _now_ns()
     listed, extra = _inventory(root)
     looked = dict(listed + extra)
-    prints = _Prints(root, project_id)
+    prints = _Prints(root, project_id, began)
     files: dict[str, dict[str, Any]] = {}
     dataless: list[str] = []
     for rel in _clean_rels(looked):
-        if looked[rel].dataless:
+        got = None if looked[rel].dataless else prints.of(rel, looked[rel])
+        if got is None:  # in the cloud, at the walk or by the time it would have been read
             dataless.append(rel)
             continue
-        sha, size = prints.of(rel, looked[rel])
-        files[rel] = {"sha256": sha, "size": size}
+        files[rel] = {"sha256": got[0], "size": got[1]}
     prints.save(looked.items())
     return files, dataless
 
@@ -553,15 +587,16 @@ def listed_files(root: Path, project_id: str | None) -> dict[str, dict[str, Any]
     `proposals.project_files` lists, in its order, built on the same
     fingerprints as `official_files`."""
     root = Path(root)
+    began = _now_ns()
     listed, extra = _inventory(root)
-    prints = _Prints(root, project_id)
+    prints = _Prints(root, project_id, began)
     out: dict[str, dict[str, Any]] = {}
     for rel, seen in listed:
-        if seen.dataless:
+        got = None if seen.dataless else prints.of(rel, seen)
+        if got is None:  # in the cloud, at the walk or by the time it would have been read
             out[rel] = {"sha256": None, "size": seen.size, "dataless": True}
             continue
-        sha, size = prints.of(rel, seen)
-        out[rel] = {"sha256": sha, "size": size}
+        out[rel] = {"sha256": got[0], "size": got[1]}
     prints.save(listed + extra)
     return out
 

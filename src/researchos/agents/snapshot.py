@@ -51,12 +51,15 @@ also saw the file its hash is copied in, so a data file compares by hash
 when both entries have one, else by size and modification time.
 
 **The after-picture does not read what the before-picture already read** (18.4 item 2). A file that carries `ino`
-in the before-picture, and whose size, modification time (ns) and inode are the same now, keeps the before-picture's
-`sha256`; a file whose stamp differs (touched, replaced, grown) is read and hashed as ever. `take` writes `ino` only
-for a file it hashed and whose modification time lay at least `RACY_NS` before the picture began: a file changed
-within the timestamp's own resolution of being read (a 1 or 2 second stamp on an external drive, a time in the
-future) could be written again with the same stamp, so it is never reused. A picture without `ino` (one taken before
-this existed) reuses nothing. The result is the picture a full read gives, `ino` included.
+and `ctime_ns` in the before-picture, and whose size, modification time (ns), inode and status-change time (ns) are
+the same now, keeps the before-picture's `sha256`; a file whose stamp differs (touched, replaced, grown) is read and
+hashed as ever. The status-change time moves with every write and every `utime` (`touch -r`, `cp -p`, `rsync -t`, a
+program that writes a file in place and puts its modification time back) and cannot be put back, so a protected file
+rewritten that way does not pass for unchanged. `take` writes `ino` and `ctime_ns` only for a file it hashed and
+whose modification time lay at least `RACY_NS` before the picture began: a file changed within the timestamp's own
+resolution of being read (a 1 or 2 second stamp on an external drive, a time in the future) could be written again
+with the same stamp, so it is never reused. A picture without `ino` and `ctime_ns` (one taken before this existed)
+reuses nothing. The result is the picture a full read gives, `ino` and `ctime_ns` included.
 
 **What is protected** (17.5 rules 1, 3, 5), decided from the before-picture:
 the folders `.researchos`, `.rce` and `.git`; the agent program's own project
@@ -250,11 +253,12 @@ def _unlink_quietly(path: str | None) -> None:
 
 def _same_stamp(known: Mapping[str, Any] | None, st: os.stat_result) -> bool:
     """Whether the before-picture's entry `known` holds a hash that still describes the file `st` (from `lstat`): it
-    has a `sha256` and an `ino`, is no link and no cloud placeholder, and its size, modification time and inode are
-    the file's now."""
+    has a `sha256`, an `ino` and a `ctime_ns`, is no link and no cloud placeholder, and its size, modification time,
+    inode and status-change time are the file's now (the last cannot be put back by a program that rewrites a file in
+    place and sets its modification time to what it was)."""
     return (known is not None and bool(known.get("sha256")) and "link" not in known and "dataless" not in known
             and known.get("ino") == st.st_ino and known.get("size") == st.st_size
-            and known.get("mtime_ns") == st.st_mtime_ns)
+            and known.get("mtime_ns") == st.st_mtime_ns and known.get("ctime_ns") == st.st_ctime_ns)
 
 
 def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
@@ -413,7 +417,7 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
     docstring. Returns `{"files": {rel: entry}, "partial", "copied_bytes",
     "not_copied", "git", "data", "data_partial", "backups", "backups_partial",
     "dirs", "dirs_partial"}` where `dirs` is the sorted list of the folders
-    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `ino`, `dataless`, `link`
+    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `ino`, `ctime_ns`, `dataless`, `link`
     and `copied` as they apply, `data` is the `{rel: entry}` of the separate
     stat-only walk of data files (no `copied`; `sha256` only where `files` has
     it) and `backups` the `{rel: {"size"}}` of the backups. Copies go to
@@ -446,7 +450,8 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
         entry, nbytes = _entry(full, st, copy_dest=dest, budget_left=COPY_BUDGET - copied_bytes,
                                known=earlier.get(rel))
         if entry.get("sha256") and st.st_mtime_ns + RACY_NS <= began:
-            entry["ino"] = st.st_ino  # what a later picture's `reuse` needs to trust this hash
+            # what a later picture's `reuse` needs to trust this hash
+            entry["ino"], entry["ctime_ns"] = st.st_ino, st.st_ctime_ns
         copied_bytes += nbytes
         if stat.S_ISREG(st.st_mode) and not entry.get("copied"):
             not_copied += 1

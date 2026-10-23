@@ -383,7 +383,8 @@ def fingerprint(path: Path) -> dict[str, Any] | None:
 def manifest(root: str | Path) -> dict[str, dict[str, Any]]:
     """{path: fingerprint} for `project_files` (18.4, item 4): built on the
     fingerprints `share.official_files` keeps, so a file whose size,
-    modification time and inode did not change is not read again. A folder
+    modification time, inode and status-change time did not change, and that
+    had settled (`memo.RACY_NS`), is not read again. A folder
     with no readable project identity has no such fingerprints: every file
     is read, as `fingerprint` reads it."""
     from researchos import share  # noqa: PLC0415 -- share imports this module
