@@ -43,8 +43,8 @@
 
   // -- the English table: Chinese source text to English (13.4, 13.6) ---------
   var EN = {
-    "创建团队后，你是 PI。签名私钥仅保存在这台电脑上。": "You will be the team's PI. Your private signing key stays on this computer.",
-    "此设置仅保存在本机。": "This setting is saved on this computer only.",
+    "创建团队后，你是 PI。签名私钥仅保存在这台电脑上。": "You will be the team's PI. Your private signing key stays on this Mac.",
+    "此设置仅保存在本机。": "This setting is saved on this Mac only.",
     "记录了 {n} 个文件的状态": { one: "Recorded the state of {n} file", other: "Recorded the state of {n} files" },
     "批准后发布到公盘。": "Approval publishes to the shared folder.",
     "批准后发布到公盘，同时加入成员同步的{carried}。": "Approval publishes to the shared folder, including members’ synced changes ({carried}).",
@@ -52,14 +52,14 @@
     "尚未设置尝试表。请在 .researchos/attempts.toml 中配置。": "No attempt table is configured. Set it up in .researchos/attempts.toml.",
     "新建笔记": "New note",
     "记录结果": "Record results",
-    "结果记录": "Results",
+    "结果记录": "Result records",
     "保存位置": "Save location",
     "清空": "Clear",
     "引用文件或尝试": "Reference a file or attempt",
     "插入引用": "Insert reference",
     "引用尝试": "Reference attempt",
     "还没有笔记。": "No notes yet.",
-    "还没有结果记录。": "No results recorded yet.",
+    "还没有结果记录。": "No result records yet.",
     "研究问题、思路与计划": "Research question, approach and plan",
     "结果、解释与待确认的问题": "Results, interpretation and open questions",
     "写笔记…": "Write a note…",
@@ -99,7 +99,7 @@
     "从研究问题和计划开始，在项目里写笔记、整理结果。": "Start with a research question and a plan, then write notes and bring results together here.",
     "代码和分析继续用你熟悉的工具，相关文件可以随时关联到研究记录。": "Keep using your own tools for code and analysis. Link their files to your research records whenever you need them.",
     "提交修改": "Submit changes",
-    "PI 批准后进入正式版本": "For PI approval and publication",
+    "PI 批准后进入正式版本": "Goes into the official version once the PI approves",
     "说明这次修改": "Describe the changes",
     "查看修改": "Review changes",
     "请先写一句修改说明": "Please briefly describe the changes first",
@@ -108,7 +108,7 @@
     "任务已在其他地方修改，当前填写已保留。请重新载入后再保存。": "The tasks changed elsewhere. Your entries are still here. Reload the tasks before saving again.",
     "会在所选位置建立项目文件夹。已有研究可以用「添加已有项目」加入。": "A project folder will be created here. To open existing research, choose “Add existing project”.",
     "保存到哪个文件夹": "Save in",
-    "保存到自己的工作副本；提交并经 PI 批准后进入正式版本。": "Saves to your working copy. Submit your changes for PI approval and publication.",
+    "保存到自己的工作副本；提交并经 PI 批准后进入正式版本。": "Saves to your working copy. Once you submit and the PI approves, it goes into the official version.",
     "保存后写入项目文件夹": "Will be saved in the project folder",
     "保留草稿": "Keep draft",
     "关联文件与尝试": "Link files and attempts",
@@ -193,7 +193,7 @@
     "栏目": "Sections",
     "工作台": "Desk",
     "研究路线": "Research routes",
-    "成果": "Outputs",
+    "图表与论断": "Figures and claims",
     "变量": "Variables",
     "文献": "Literature",
     "数据与代码": "Data & code",
@@ -211,7 +211,7 @@
     "有改动尚未发布": "Changes not yet published",
     "已发布 {when}": "Published {when}",
     "公盘上有未通过验证的版本": "The shared folder holds a version that failed verification",
-    "有新的正式版本": "A new published version is available",
+    "有新的正式版本": "A new official version is available",
     "未验证": "Unverified",
     "已同步 {when}": "Synced {when}",
     "已同步": "Synced",
@@ -308,21 +308,21 @@
     // The first desk's block titles (13.4) and words of its rows that other pages show too; since
     // V10 the desk is the route map (14.5).
     "你上次查看以来的改动": "Changes since you last looked",
-    "依据变了的成果": "Outputs whose basis changed",
+    "依据变了的图表与论断": "Figures and claims whose basis changed",
     "已放弃的路线": "Abandoned routes",
     "文件不存在": "File not found",
     "（空）": "(empty)",
     "笔记，写在": "Note on",
     "一条尝试": "An attempt",
-    // A member's published version.
-    "正式版本": "Published version",
-    "正式版本有更新": "Published version updated",
+    // A member's official version.
+    "正式版本": "Official version",
+    "正式版本有更新": "Official version updated",
     "PI 于 {when} 发布了第 {seq} 版：{note}": "The PI published version {seq} ({when}): {note}",
     "PI 于 {when} 发布了第 {seq} 版。": "The PI published version {seq} ({when}).",
     "PI 于 {when} 批准提议后发布了第 {seq} 版。": "The PI published version {seq} ({when}) on approving a proposal.",
     "PI 于 {when} 批准提议「{what}」后发布了第 {seq} 版。":
       "The PI published version {seq} ({when}) on approving the proposal “{what}”.",
-    "你的工作副本已经是最新的正式版本（第 {seq} 版）。": "Your working copy is the latest published version (version {seq}).",
+    "你的工作副本已经是最新的正式版本（第 {seq} 版）。": "Your working copy is the latest official version (version {seq}).",
     "正在查看同步会写入什么…": "Checking what syncing will write…",
     "没能查看同步会写入什么": "Could not check what syncing will write",
     "同步": "Sync",
@@ -338,20 +338,20 @@
     "你的工作副本所依据的版本在公盘上已经无法验证，不能同步。":
       "The version your working copy is based on can no longer be verified in the shared folder, so it cannot sync.",
     "同步会先把你还没发送的 {sending}写进公盘的「{area}」：不需要批准，PI 下次发布时加入正式记录。":
-      "Syncing first writes what you have not sent yet ({sending}) into “{area}” (your proposals folder) in the shared folder: no approval is needed, and the PI adds it to the published record at the next publish.",
-    "{send}你的工作副本已经是最新的正式版本。": "{send} Your working copy is already the latest published version.",
+      "Syncing first writes what you have not sent yet ({sending}) into “{area}” (your proposals folder) in the shared folder: no approval is needed, and the PI adds it to the official record at the next publish.",
+    "{send}你的工作副本已经是最新的正式版本。": "{send} Your working copy is already the latest official version.",
     "你的工作副本已经是最新的正式版本，没有要发送的备注、连线确认或手工连线。":
-      "Your working copy is already the latest published version, and there are no notes, link judgments or hand-drawn links to send.",
+      "Your working copy is already the latest official version, and there are no notes, link judgments or hand-drawn links to send.",
     "更新 {n} 个你没改过的文件": { one: "update {n} file you have not changed", other: "update {n} files you have not changed" },
     "删除 {n} 个正式版本已删除的文件": {
-      one: "remove {n} file the published version deleted", other: "remove {n} files the published version deleted",
+      one: "remove {n} file the official version deleted", other: "remove {n} files the official version deleted",
     },
-    "{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）": {
-      one: "keep your version of {n} file changed on both sides and put the published copy beside it (.official)",
-      other: "keep your versions of {n} files changed on both sides and put the published copies beside them (.official)",
+    "{n} 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）": {
+      one: "keep your version of {n} file changed on both sides and put the official copy beside it (.official)",
+      other: "keep your versions of {n} files changed on both sides and put the official copies beside them (.official)",
     },
     "备注、连线确认和手工连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的":
-      "replace each record file of notes, link judgments and hand-drawn links with the published one where all your entries are in it, and keep yours where they are not yet",
+      "replace each record file of notes, link judgments and hand-drawn links with the official one where all your entries are in it, and keep yours where they are not yet",
     "：{parts}": ": {parts}",
     "；": "; ",
     "{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。":
@@ -362,23 +362,23 @@
       one: "sent your {n} change to notes, link judgments or hand-drawn links to the shared folder",
       other: "sent your {n} changes to notes, link judgments or hand-drawn links to the shared folder",
     },
-    "已经是最新的正式版本。": "Already the latest published version.",
-    "已经是最新的正式版本；{sent}。": "Already the latest published version; {sent}.",
+    "已经是最新的正式版本。": "Already the latest official version.",
+    "已经是最新的正式版本；{sent}。": "Already the latest official version; {sent}.",
     "已同步到第 {seq} 版": "Synced to version {seq}",
     "更新了 {n} 个文件": { one: "updated {n} file", other: "updated {n} files" },
     "删除了 {n} 个正式版本已删除的文件": {
-      one: "removed {n} file the published version deleted", other: "removed {n} files the published version deleted",
+      one: "removed {n} file the official version deleted", other: "removed {n} files the official version deleted",
     },
-    "{n} 个两边都改过的文件留着你的，官方的一份放在旁边": {
-      one: "kept your version of {n} file changed on both sides, with the published copy beside it",
-      other: "kept your versions of {n} files changed on both sides, with the published copies beside them",
+    "{n} 个两边都改过的文件留着你的，正式的一份放在旁边": {
+      one: "kept your version of {n} file changed on both sides, with the official copy beside it",
+      other: "kept your versions of {n} files changed on both sides, with the official copies beside them",
     },
     "{n} 个文件留着你的（{reason}）": { one: "kept your version of {n} file ({reason})", other: "kept your versions of {n} files ({reason})" },
     "你的备注和连线还在等 PI 发布，记录文件暂时留着你的":
       "your notes and links still wait for the PI to publish, so the record files stay yours for now",
     "{parts}。": "{parts}.",
-    "官方的 {path} 放在了旁边：{copy}；你的没有动。": "The published {path} is beside yours as {copy}; yours was not changed.",
-    "你的和官方的有什么不同": "How yours differs from the published one",
+    "正式版本的 {path} 放在了旁边：{copy}；你的没有动。": "The official version’s {path} is beside yours as {copy}; yours was not changed.",
+    "你的和正式的有什么不同": "How yours differs from the official one",
     "表格较大：只比较行和列，不逐行对比。": "A large table: only its rows and columns are compared, not line by line.",
     "两个文件不同（不是文本，没有逐行比较）": "The two files differ (not text, so not compared line by line)",
     "收起": "Show less",
@@ -405,7 +405,7 @@
     "#{child} 源自 #{parent}": "#{child} grew out of #{parent}",
     "从这里拖到另一条尝试上：那一条源自这一条": "Drag from here onto another attempt: that one grew out of this one",
     "新的连线": "New line",
-    "这会作为一条提议交给 PI，批准后才成为正式的连线。": "This goes to the PI as a proposal; the line is published once approved.",
+    "这会作为一条提议交给 PI，批准后才成为正式的连线。": "This goes to the PI as a proposal; the line becomes official once approved.",
     "备注": "Note",
     "备注（可选）": "Note (optional)",
     "确认连线": "Confirm line",
@@ -446,30 +446,30 @@
     "没能保存这条连线": "Could not save this line",
     "没能删除这条连线": "Could not delete this line",
     "这两条尝试之间已经有这条连线了": "These two attempts already have this line",
-    "这条连线已经在正式版本里了": "This line is already in the published version",
-    "正式版本里没有这条连线": "The published version has no such line",
+    "这条连线已经在正式版本里了": "This line is already in the official version",
+    "正式版本里没有这条连线": "The official version has no such line",
     "连线的一端不在你上次同步的正式版本里：请同步后再试":
-      "One end of the line is not in the published version you last synced: sync, then try again",
+      "One end of the line is not in the official version you last synced: sync, then try again",
     "#{n} 还不在正式版本里：PI 批准它以后才能画这条连线":
-      "#{n} is not in the published version yet: the line can be drawn once the PI approves it",
+      "#{n} is not in the official version yet: the line can be drawn once the PI approves it",
     "#{n} 还不在正式版本里：在它的提议里写明它源自哪里，或等 PI 批准以后再画这条连线":
-      "#{n} is not in the published version yet: name what it grew out of in its proposal, or draw the line once the PI approves it",
+      "#{n} is not in the official version yet: name what it grew out of in its proposal, or draw the line once the PI approves it",
     "#{n} 已经批准，同步以后才能画这条连线": "#{n} is approved: the line can be drawn once you sync",
     // A member's own new row changed in the desk's panel (14.3): proposed whole, as a new attempt.
     "这一行已经批准，正式版本里有了：先同步，再改它。":
-      "This row is approved and in the published version: sync first, then change it.",
+      "This row is approved and in the official version: sync first, then change it.",
     "这一行还不在正式版本里：它会整行作为一条新的尝试提议。":
-      "This row is not in the published version yet: it is proposed whole, as a new attempt.",
+      "This row is not in the official version yet: it is proposed whole, as a new attempt.",
     "这一行还不在正式版本里：它会整行作为新的尝试再提议一次，替换你还在等待的那份提议。":
-      "This row is not in the published version yet: it is proposed whole as a new attempt again, replacing your proposal still waiting.",
+      "This row is not in the official version yet: it is proposed whole as a new attempt again, replacing your proposal still waiting.",
     // A member's new attempt names what it grew out of (14.2): 提议新的尝试 and 提交提议.
     "源自（可选）": "Grew out of (optional)",
     "它源自的正式尝试；PI 批准后，这些连线画到路线图上":
-      "The published attempts it grew out of; once the PI approves, these lines are drawn on the route map",
+      "The official attempts it grew out of; once the PI approves, these lines are drawn on the route map",
     "例如 16, 17": "For example 16, 17",
     "你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画":
       "You are a member of this project: a line goes to the PI as a proposal; reload and draw it again",
-    "你是 PI：连线直接写入正式版本；请刷新后再画": "You are the PI: a line goes straight into the published version; reload and draw it again",
+    "你是 PI：连线直接写入正式版本；请刷新后再画": "You are the PI: a line goes straight into the official version; reload and draw it again",
     "适应全部": "Fit all",
     "适应全部（F）": "Fit all (F)",
     "实际大小": "Actual size",
@@ -558,7 +558,7 @@
     "备注已保存。": "The note is saved.",
     "备注记录文件现在无法写入": "The notes record cannot be written right now",
     "备注先记在你的工作副本里；下次同步时交到公盘，PI 下次发布时加入正式记录，署你的名字，不需要批准。":
-      "The note is kept in your working copy first; the next sync takes it to the shared folder, and the PI adds it to the published record at the next publish, under your name, with no approval needed.",
+      "The note is kept in your working copy first; the next sync takes it to the shared folder, and the PI adds it to the official record at the next publish, under your name, with no approval needed.",
     "由它而来": "What grew out of it",
     "还没有尝试源自它": "No attempt grew out of it yet",
     "提议删除这条连线": "Propose removing this line",
@@ -696,7 +696,7 @@
     // on 提议): its head and answers, what approving does, what it carries, the answers to give.
     "{kind}提议": "{kind} proposal",
     "没能打开这份提议": "Could not open this proposal",
-    "基于正式版本第 {seq} 版": "Based on published version {seq}",
+    "基于正式版本第 {seq} 版": "Based on official version {seq}",
     "已被后来的提议替代": "Replaced by a later proposal",
     "已验证": "Verified",
     "签名和成员名单里这个人的公钥相符": "The signature matches this person's public key in the members list",
@@ -720,7 +720,7 @@
       "This proposal's answer records contradict each other (it is both approved and returned): check its answers in {folder} (the published answers) in the shared folder.",
     "批准以后会怎样": "What approving does",
     "提议之后正式版本又有了改动；只有两边改了同一处时才会挡住批准。":
-      "The published version changed after this proposal; approval is blocked only where both sides changed the same place.",
+      "The official version changed after this proposal; approval is blocked only where both sides changed the same place.",
     "这份提议的批准上次没有做完：再次批准会接着把剩下的做完。":
       "Approving this proposal did not finish last time: approving again completes the rest.",
     "在尝试表 {file} 里新增第 {number} 行": "Add row {number} to the attempt table {file}",
@@ -732,7 +732,7 @@
     "放弃理由：{reason}": "Reason for abandoning: {reason}",
     "批准会把结果和理由写进尝试表，并冻结这条路线当时的依据：它的步骤脚本和它们写出的文件。":
       "Approving writes the result and the reason into the attempt table and freezes the route's basis at this moment: its step scripts and the files they write.",
-    "正式版本里这一行已经是这样了。": "The published version already has this row as it is.",
+    "正式版本里这一行已经是这样了。": "The official version already has this row as it is.",
     "新建变量卡 {card} 的第 {version} 版定义": "New variable card {card}: definition version {version}",
     "确认变量 {card} 的第 {version} 版定义": "Confirm variable {card}: definition version {version}",
     "成员的回答：现有的输出文件是按这个定义生成的吗？{answer}":
@@ -741,12 +741,12 @@
     "否": "No",
     "不确定": "Not sure",
     "说明：{note}": "Note: {note}",
-    "正式版本的连线记录里已经是这样了。": "The published version's line records already have this.",
+    "正式版本的连线记录里已经是这样了。": "The official version's line records already have this.",
     "这份提议没有带来任何改动。": "This proposal brings no change.",
     "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。":
-      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the published version to the shared folder.",
+      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder.",
     "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。发布前会先把成员同步来的 {carried}加进正式记录（不需要批准）。":
-      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the published version to the shared folder. Before publishing, it first adds what members synced ({carried}) to the published record, with no approval needed.",
+      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder. Before publishing, it first adds what members synced ({carried}) to the official record, with no approval needed.",
     "会删除的连线（{n} 条）": { one: "The link to be removed ({n})", other: "Links to be removed ({n})" },
     "删除人 {who}": "Removed by {who}",
     "没有随提议发送的改动": "Changes not sent with the proposal",
@@ -754,8 +754,8 @@
     "现在还不能批准": "Cannot be approved yet",
     "：{reason}": ": {reason}",
     "Research OS 不会替两个人合并同一个文件。请成员先同步到最新的正式版本，在那上面重新提议；这份可以退回并说明。":
-      "Research OS never merges one file for two people. Ask the member to sync to the latest published version and propose again on it; this one can be returned with a reason.",
-    "已写入正式版本的改动": "Changes written into the published version",
+      "Research OS never merges one file for two people. Ask the member to sync to the latest official version and propose again on it; this one can be returned with a reason.",
+    "已写入正式版本的改动": "Changes written into the official version",
     "提议带来的改动": "Changes the proposal brings",
     "尝试表新增第 {number} 行：{description}": "New row {number} in the attempt table: {description}",
     // A proposal's files (12.3, 12.13).
@@ -764,7 +764,7 @@
     "改动": "Changed",
     "删除": "Removed",
     "批准后写入": "Written on approval",
-    "正式版本里已经是这样": "Already so in the published version",
+    "正式版本里已经是这样": "Already so in the official version",
     "两边都改过": "Changed on both sides",
     "有问题": "Has a problem",
     "这次批准已经写入": "Written by this approval",
@@ -794,18 +794,18 @@
       "The answer is signed and written into “{folder}” (the published answers) in the shared folder; {who} sees it on their next sync. It is never changed once written.",
     "正在批准并发布…": "Approving and publishing…",
     "正在写入答复…": "Writing the answer…",
-    "没能批准，正式版本没有改动": "Could not approve; the published version is unchanged",
+    "没能批准，正式版本没有改动": "Could not approve; the official version is unchanged",
     "没能写入答复": "Could not write the answer",
-    "已批准，改动已写入正式版本。": "Approved: the change is written into the published version.",
+    "已批准，改动已写入正式版本。": "Approved: the change is written into the official version.",
     "已批准，改动已写入正式版本，并发布为第 {seq} 版：成员同步后就会看到。":
-      "Approved: the change is written into the published version and published as version {seq}; members see it once they sync.",
+      "Approved: the change is written into the official version and published as version {seq}; members see it once they sync.",
     "已批准，改动已写入正式版本；但这次没有发布到公盘：{why}。可以在「成员」一栏里再发布一次。":
-      "Approved: the change is written into the published version, but it was not published to the shared folder this time: {why}. You can publish again in “Members”.",
+      "Approved: the change is written into the official version, but it was not published to the shared folder this time: {why}. You can publish again in “Members”.",
     "发布没有完成": "Publishing did not finish",
     "已退回：{who} 会看到你的理由。": "Returned: {who} will see your reason.",
     "已写下：提议保持打开。": "Written: the proposal stays open.",
     // A member's draft (team.js composeInto, renderDraft): what it carries and what sending writes.
-    "正在比较你的工作副本和正式版本…": "Comparing your working copy with the published version…",
+    "正在比较你的工作副本和正式版本…": "Comparing your working copy with the official version…",
     "没能生成提议": "Could not prepare the proposal",
     "将要发送的提议": "The proposal to send",
     "变量 {card} 的第 {version} 版定义（成员的回答：{answer}）":
@@ -818,7 +818,7 @@
     "变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。":
       "A variable definition carries only the new version's definition file; to send files with it, tick them below.",
     "只带勾选的文件。": "Only the ticked files.",
-    "工作副本里没有和正式版本不同的文件。": "No file in the working copy differs from the published version.",
+    "工作副本里没有和正式版本不同的文件。": "No file in the working copy differs from the official version.",
     "{size}，大文件": "{size}, a large file",
     "与这条尝试关联": "Linked to this attempt",
     "这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。":
@@ -838,7 +838,7 @@
     "正在写入公盘…": "Writing to the shared folder…",
     "没能发送提议，公盘上没有写入": "Could not send the proposal; nothing was written to the shared folder",
     "已发送：PI 会在收件箱里看到它。在 PI 批准之前，它不是正式记录。":
-      "Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the published record.",
+      "Sent: the PI will see it in the inbox. Until the PI approves it, it is not part of the official record.",
     "已发送": "Sent",
     // V10 D4 (14.3-14.5): an attempt's 待复核 judged in its panel; what changed on it since the
     // last visit (the node page's timeline, reduced); a member's returned proposal put away.
@@ -855,7 +855,7 @@
     "研究判断从「{was}」改为「{became}」": "Research assessment changed from “{was}” to “{became}”",
     "研究判断从「{was}」改为「{became}」，结果改为：{result}": "Research assessment changed from “{was}” to “{became}”; new result: {result}",
     "研究判断不变（{verdict}）": "Research assessment unchanged ({verdict})",
-    "随第 {n} 版发布同步": "Synced with published version {n}",
+    "随第 {n} 版发布同步": "Synced when version {n} was published",
     "扫描时记下": "Recorded at a scan",
     "发布时记下": "Recorded at a publish",
     "git 提交": "Git commit",
@@ -1062,7 +1062,7 @@
     "保存：{name}": "Save: {name}",
     "移除：{name}": "Remove: {name}",
 
-    // Node details, Outputs, Data & code, and proposal navigation.
+    // Node details, Figures and claims, Data & code, and proposal navigation.
     "清单": "List",
     "它不是文件，没有版本": "This item is not a file and has no file versions",
     "更正": "Corrected",
@@ -1213,14 +1213,14 @@
     "这次删除": "This removal",
     "「设为论文正文」的标记": "This “Set as the paper” mark",
     "这条记录": "This record",
-    "正式记录": "the published record",
-    "PI 下次发布时从正式的 mappings.toml 里删去这条连线": "the PI removes this link from the published mappings.toml at the next publish",
+    "正式记录": "the official record",
+    "PI 下次发布时从正式的 mappings.toml 里删去这条连线": "the PI removes this link from the official mappings.toml at the next publish",
     "PI 下次发布时加入{record}": "the PI adds it to {record} at the next publish",
     "你自己的提议文件夹": "your proposals folder",
     "公盘的「{folder}」": "“{folder}” in the shared folder",
     "{what}先记在你的工作副本里；下次同步时写入{where}，{then}，署你的名字，不需要批准。": "{what} will be recorded in your working copy first. Your next sync sends it to {where}; {then}, under your name, without individual approval.",
-    "正式的 mappings.toml": "the published mappings.toml",
-    "正式的 papers.toml": "the published papers.toml",
+    "正式的 mappings.toml": "the official mappings.toml",
+    "正式的 papers.toml": "the official papers.toml",
     "写一条笔记：为什么这样做、要注意什么": "Add a note: why this was done and what to watch for",
     "添加笔记": "Add note",
     "笔记是空的": "Enter a note first",
@@ -1250,9 +1250,9 @@
     "设为论文正文": "Set as the paper",
     "没能记下": "Could not record the change",
     "已不再作为论文正文。": "No longer marked as the paper.",
-    "已设为论文正文：成果会列出它的论断。": "Set as the paper. Its claims will appear in Outputs.",
+    "已设为论文正文：它的论断会出现在图表与论断里。": "Set as the paper. Its claims will appear in Figures and claims.",
     "还没有读到文稿。": "No drafts have been found yet.",
-    "成果只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——": "Outputs lists claims from the paper itself; it excludes numbers in revision logs and review comments. No draft is marked as the paper yet. ",
+    "图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——": "Figures and claims lists claims from the paper itself; it excludes numbers in revision logs and review comments. No draft is marked as the paper yet. ",
     "在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。": "Choose “Set as the paper” beside a draft below or on its own page.",
     "只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。": "Only drafts marked as the paper contribute claims. Expand a draft to load them.",
     "打开这份文稿的页面": "Open this draft",
@@ -1292,7 +1292,6 @@
     "数据": "Data",
     "图表": "Figure",
     "文稿章节": "Draft section",
-    "实验记录": "Run record",
     "条目": "Item",
     "本页": "This item",
     "被引用": "Used in",

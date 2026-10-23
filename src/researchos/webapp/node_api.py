@@ -14,7 +14,7 @@ who I am, notes, what changed, and the trace -- the payloads only.
 - `GET /api/trace?node=…` -- the whole chain of 12.7 with its breaks.
 - `GET /api/node?node=…` -- one object's page (U3): its trace as columns,
   its breaks with their repairs, the links touching it;
-  `GET /api/results[?draft=…]` -- 成果; `GET /api/data-code` -- 数据与代码
+  `GET /api/results[?draft=…]` -- 图表与论断; `GET /api/data-code` -- 数据与代码
   (`researchos.nodepage`).
 - `POST /api/papers {draft, marked}` -- 「设为论文正文」 (12.13,
   `researchos.records.papers`).
@@ -221,7 +221,7 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
     return result
 
 
-# -- the node page, 成果, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
+# -- the node page, 图表与论断, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
 
 
 def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
@@ -239,7 +239,7 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang
 
 
 def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
-    """GET /api/results[?draft=…]: 成果, or one draft's claims."""
+    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims."""
     from researchos import nodepage  # noqa: PLC0415
 
     try:
@@ -342,7 +342,7 @@ _NOT_CARRIED = (
     (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送",
      lambda m: "A new version of a variable definition is sent in a “Variable definition” proposal"),
     (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的正式版本，不会发送",
-     lambda m: "The published copy that sync put beside yours is not sent"),
+     lambda m: "The official copy that sync put beside yours is not sent"),
     (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、连线确认和手工连线随同步发送，不需要批准",
      lambda m: "Notes, link judgments and hand-drawn links travel with sync, with no approval needed"),
     (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
@@ -771,7 +771,7 @@ def _proposal_sentence(p: Any, lang: str) -> str:
     return settings.say("{g} 写的是这台电脑上的项目路径 {value}，所以在这里以它开头的路径都能找到；成员的工作副本在别的"
                         "位置，需要知道它指项目里的哪个文件夹。按这里的位置，它指{where}（以它开头的 {n} 条路径里，"
                         "{k} 条{under}存在）",
-                        "{g} holds this computer’s project path, {value}, so the paths that start with it are found "
+                        "{g} holds this Mac’s project path, {value}, so the paths that start with it are found "
                         "here. Members’ working copies sit elsewhere and need to know which project folder it stands "
                         "for: from here, it is {where} (of the {n} {path_s} that start with it, {k} {exist} {under})",
                         lang, **fields)

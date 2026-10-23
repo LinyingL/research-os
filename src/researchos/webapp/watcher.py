@@ -280,7 +280,7 @@ def notes_record_path(project_root: Path) -> Path:
 
 def papers_record_path(project_root: Path) -> Path:
     """The drafts marked 「设为论文正文」 (12.13): a change only refreshes
-    the page (成果 reads the file); nothing is ingested."""
+    the page (图表与论断 reads the file); nothing is ingested."""
     from researchos.records import papers  # noqa: PLC0415 -- leaf use
 
     return papers.papers_path(project_root)

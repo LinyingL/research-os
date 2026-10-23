@@ -1067,7 +1067,7 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                     if CJK.search(el["attrs"].get(name, ""))]
     assert chinese == []
     assert _words(after, "brand-sub") == ["Research provenance"]
-    assert _words(after, "side-label") == ["Project home", "Desk", "Research routes", "Outputs", "Variables", "Literature",
+    assert _words(after, "side-label") == ["Project home", "Desk", "Research routes", "Figures and claims", "Variables", "Literature",
                                            "Data & code", "Proposals", "Members"]
     assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Project home"]
@@ -1097,7 +1097,7 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     page, i18n_js = _served_page_and_i18n(live, saved)
     before, after = _frame_on_screen(page, i18n_js, languages)
     assert after == before
-    assert _words(after, "side-label") == ["项目首页", "工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "side-label") == ["项目首页", "工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
     assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
@@ -1127,7 +1127,7 @@ def test_13_7_page_titles_follow_the_language(saved):
     language; SECTION_TITLES stays the Chinese node.js's 「返回…」 reads."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'document.getElementById("page-title").textContent = sectionTitle(section);' in html
-    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", '
+    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  desk: "工作台", routes: "研究路线", results: "图表与论断", variables: "变量", '
             'literature: "文献",\n  data: "数据与代码", proposals: "提议", members: "成员",\n};') in html
     code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
             + _app_function("function sectionTitle("))
@@ -1136,10 +1136,10 @@ def test_13_7_page_titles_follow_the_language(saved):
     got = _node("global.window = {};\n" + f"process.stdout.write(JSON.stringify({expr}));\n") if saved is None \
         else _with_i18n(expr, saved=saved)
     if saved == "en":
-        assert got == ["Project home", "Desk", "Research routes", "Outputs", "Variables", "Literature", "Data & code", "Proposals",
+        assert got == ["Project home", "Desk", "Research routes", "Figures and claims", "Variables", "Literature", "Data & code", "Proposals",
                        "Members", "", ""]
     else:
-        assert got == ["项目首页", "工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
+        assert got == ["项目首页", "工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
 
 
 _STOPPED_ZH = ('<main id="main"><div class="stopped-note"><h2>服务已停止</h2><p>本地服务已经关闭，可以关闭此页。</p>'
@@ -1225,7 +1225,7 @@ def test_13_5_the_sidebar_lines_in_english_dates_and_the_shared_folder():
     shared folder's line per 13.4, its date lower case inside the line."""
     assert _desk_lines("en") == [
         ["Today 09:05", "Yesterday 23:30", "4 Oct", "1 Mar 2025", "31 Jan", ""],
-        ["Synced today 08:00", "A new published version is available", "Unverified · Synced today 08:00",
+        ["Synced today 08:00", "A new official version is available", "Unverified · Synced today 08:00",
          "The shared folder cannot be opened right now", "The shared folder holds a version that failed verification",
          "Unverified · Synced", "Changes not yet published · Published yesterday 18:00", "Published 4 Oct",
          "Not published yet", ""],
@@ -1384,7 +1384,7 @@ _THEIRS = ["新路线", "TopicShift 波动", "伪协整", "成立", "放弃了",
 
 def _desk_cases(lang: str) -> list[dict]:
     """Every part of the desk's column (DESIGN.md 14.4) and every role -- the
-    PI busy and with nothing to do; a member behind the published version,
+    PI busy and with nothing to do; a member behind the official version,
     up to date, before any publish, with a shared folder that cannot be read
     or is not set; someone not in the team; a team file that cannot be read;
     one person -- with /api/desk's column and words as the engine sends them
@@ -1500,7 +1500,7 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 我的提议 until 「知道了」, so the member's two returned rows gain that button -- nothing else moved.
 #: Moved by the V10 review (finding 22): a 待复核 row is the attempt itself, so its hover reads
 #: 「在路线图上标出这条尝试」 (three rows) -- nothing else moved.
-# UX copy: research assessment and published-version labels; behavior unchanged.
+# UX copy: research assessment and official-version labels; behavior unchanged.
 #: Moved on purpose by DESIGN.md 18.2 (task V14): the 待复核 sentence says 连线确认 where it said
 #: 判断 (two rows) -- checked by putting the old word back: the old digest.
 _DESK_ZH_SHA256 = "e72502984be169ca567801f35931661f39fbdae57d681b2de87641f1cf2d7767"
@@ -1556,14 +1556,14 @@ def test_13_7_the_desk_in_english():
                  "desk-link strong: 3 files: 1.py, 2.py and others", "desk-meta: Approved, awaiting sync · 1 Mar 2024",
                  "desk-link strong: #17: change the research assessment from “Current” to “成立” "
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
-                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Published version updated",
+                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "team-line writes: Syncing first writes what you have not sent yet (1 note, 2 link judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
-                 "shared folder: no approval is needed, and the PI adds it to the published record at the next publish. "
+                 "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
-                 "the published version deleted; keep your version of 1 file changed on both sides and put the published "
-                 "copy beside it (.official); replace each record file of notes, link judgments and hand-drawn links with the published "
+                 "the official version deleted; keep your version of 1 file changed on both sides and put the official "
+                 "copy beside it (.official); replace each record file of notes, link judgments and hand-drawn links with the official "
                  "one where all your entries are in it, and keep yours where they are not yet. It never merges: nothing "
                  "you changed is overwritten."]:
         assert line in desks[2], line
@@ -1676,19 +1676,19 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
     if saved == "en":
         assert shown == [
             "team-done: Synced to version 1,497; sent your 3 changes to notes, link judgments or hand-drawn links to the shared folder; "
-            "updated 2 files; removed 1 file the published version deleted; kept your versions of 2 files changed on both "
-            "sides, with the published copies beside them; kept your version of 1 file (the arrangement on the relation "
+            "updated 2 files; removed 1 file the official version deleted; kept your versions of 2 files changed on both "
+            "sides, with the official copies beside them; kept your version of 1 file (the arrangement on the relation "
             "map is each person’s own and does not change with a sync); your notes and links still wait for the PI to "
             "publish, so the record files stay yours for now.",
-            "team-done: The published data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
-            ": How yours differs from the published one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
+            "team-done: The official version’s data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
+            ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
             *[line for line in shown if line.startswith("dl-row")],
             "btn btn-small diff-more: Show the remaining 5 lines",
             "node-sub: The change is too long; only its beginning was compared.",
-            "team-done: The published figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
-            ": How yours differs from the published one", "desk-note plain: S",
+            "team-done: The official version’s figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
+            ": How yours differs from the official one", "desk-note plain: S",
             "desk-note plain: A large table: only its rows and columns are compared, not line by line.",
-            ": How yours differs from the published one",
+            ": How yours differs from the official one",
             "desk-note plain: The two files differ (not text, so not compared line by line)",
         ]
         assert len([line for line in shown if line.startswith("dl-row")]) == 20
@@ -1697,14 +1697,14 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
     else:
         assert [line for line in shown if not line.startswith("dl-row")] == [
             "team-done: 已同步到第 1497 版；已把你的 3 条备注、连线确认或手工连线改动发送到公盘；更新了 2 个文件；删除了 1 个正式版本已删除的文件；"
-            "2 个两边都改过的文件留着你的，官方的一份放在旁边；1 个文件留着你的（关系图上的摆放是每个人自己的，不随同步改变）；"
+            "2 个两边都改过的文件留着你的，正式的一份放在旁边；1 个文件留着你的（关系图上的摆放是每个人自己的，不随同步改变）；"
             "你的备注和连线还在等 PI 发布，记录文件暂时留着你的。",
-            "team-done: 官方的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
-            ": 你的和官方的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
+            "team-done: 正式版本的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
+            ": 你的和正式的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
             "btn btn-small diff-more: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
-            "team-done: 官方的 figs/图3.png 放在了旁边：figs/图3.official.png；你的没有动。",
-            ": 你的和官方的有什么不同", "desk-note plain: S", "desk-note plain: 表格较大：只比较行和列，不逐行对比。",
-            ": 你的和官方的有什么不同", "desk-note plain: 两个文件不同（不是文本，没有逐行比较）",
+            "team-done: 正式版本的 figs/图3.png 放在了旁边：figs/图3.official.png；你的没有动。",
+            ": 你的和正式的有什么不同", "desk-note plain: S", "desk-note plain: 表格较大：只比较行和列，不逐行对比。",
+            ": 你的和正式的有什么不同", "desk-note plain: 两个文件不同（不是文本，没有逐行比较）",
         ]
 
 
@@ -1716,7 +1716,7 @@ def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
     desks = _desks(saved, team=True)
     assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
             "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
-            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）；备注、连线确认和手工连线的记录文件："
+            "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）；备注、连线确认和手工连线的记录文件："
             "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]
 
 
@@ -2262,7 +2262,7 @@ GUIDE_EN_ENGLISH_LABELS = (
     "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
-GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest published version",)
+GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
 #: The officialness marks the guide quotes in English: the engine's words on an English screen
 #: (13.7: shared words follow the interface language on every page).
 GUIDE_EN_OFFICIALNESS_LABELS = ("Approved, awaiting sync",)
@@ -2675,3 +2675,86 @@ def test_16_the_served_draft_block_sends_no_example_rows_and_names_no_address():
     assert "examples" not in block and "slice(-3)" not in block
     assert re.search(r"https?://", block) is None
     assert ".local" not in block and "LM Studio" in block  # the remedy names LM Studio; nothing decides locality here
+
+
+# -- DESIGN.md 18.2 (task V14): single words and page names -------------------------------------------------
+
+
+def _english_forms(table: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every English form of the table (a plural has two) with the Chinese key it answers."""
+    return [(key, form) for key, value in table.items()
+            for form in (value.values() if isinstance(value, dict) else [value])]
+
+
+@needs_node
+def test_18_2_the_official_version_is_never_the_published_version_in_english():
+    """正式版本 is "Official version" and 正式的一份 an "official copy"; "publish" stays the act (the PI
+    published version 3, approval publishes, not yet published), and 官方 is gone from the page."""
+    table = english_table()
+    forms = _english_forms(table)
+    assert (table["正式版本"], table["正式版本有更新"], table["有新的正式版本"]) == (
+        "Official version", "Official version updated", "A new official version is available")
+    assert table["你的和正式的有什么不同"] == "How yours differs from the official one"
+    assert "official copy beside it" in table["{n} 个两边都改过的文件留着你的，正式的一份放在旁边"]["one"]
+    assert "official copies beside them" in table["{n} 个两边都改过的文件留着你的，正式的一份放在旁边"]["other"]
+    assert table["这会作为一条提议交给 PI，批准后才成为正式的连线。"].endswith("the line becomes official once approved.")
+    # "published version" is left only where the PI is the one who published it
+    state = [(key, text) for key, text in forms
+             if re.search(r"[Pp]ublished (version|copy|copies|record|one|mappings|papers|attempts)\b",
+                          text.replace("The PI published version", ""))]
+    assert state == []
+    assert [(key, text) for key, text in forms if "正式" in key and "official" not in text.lower()] == []
+    left = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html", ".py"}
+            and "官方" in path.read_text(encoding="utf-8")]
+    assert left == []
+    assert "The official copy that sync put beside yours is not sent" in (WEBAPP / "node_api.py").read_text(encoding="utf-8")
+
+
+@needs_node
+def test_18_2_this_mac_is_never_this_computer_in_english():
+    """本机 is "This Mac" (and "this Mac" mid-sentence) wherever the English says where a thing is kept."""
+    table = english_table()
+    assert [(key, text) for key, text in _english_forms(table) if re.search(r"\bthis computer\b", text, re.I)] == []
+    assert table["此设置仅保存在本机。"] == "This setting is saved on this Mac only."
+    assert table["创建团队后，你是 PI。签名私钥仅保存在这台电脑上。"].endswith("stays on this Mac.")
+    src = Path(history.__file__).parent
+    for relative in ("collaborate.py", "webapp/node_api.py", "webapp/i18n.js"):
+        assert not re.search(r"\bthis computer\b", (src / relative).read_text(encoding="utf-8"), re.I), relative
+
+
+@needs_node
+def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
+    """The kind MLflow and W&B bring is 实验 "Experiment" on the node page, in a link's words and in
+    English; 实验记录 and "Run record" are gone (运行记录 is an agent run's log and stays)."""
+    from researchos import nodepage
+
+    table = english_table()
+    assert nodepage.TYPE_WORDS["experiment"] == "实验" and table["实验"] == "Experiment"
+    assert "实验记录" not in table
+    assert [(key, text) for key, text in _english_forms(table) if re.search(r"run record", text, re.I)] == []
+    assert 'experiment: "实验"' in APP_HTML.read_text(encoding="utf-8")
+    assert table["运行记录"] == "Run log"
+    left = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html", ".py"}
+            and "实验记录" in path.read_text(encoding="utf-8")]
+    assert left == [] and "实验记录" not in Path(nodepage.__file__).read_text(encoding="utf-8")
+
+
+@needs_node
+def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
+    """输出 "Outputs" is a script's outputs (the node page's column is built with it); 成果 "Outputs"
+    is the page 图表与论断 "Figures and claims", and no other key says "Outputs"; 项目首页's section
+    is 结果记录 "Result records", the attempt's cell 结果 stays "Result"."""
+    table = english_table()
+    assert table["输出"] == "Outputs" and table["图表与论断"] == "Figures and claims"
+    assert "成果" not in table and "依据变了的成果" not in table
+    assert [key for key, text in _english_forms(table) if text == "Outputs"] == ["输出"]
+    assert table["依据变了的图表与论断"] == "Figures and claims whose basis changed"
+    assert table["图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——"].startswith(
+        "Figures and claims lists claims")
+    assert table["已设为论文正文：它的论断会出现在图表与论断里。"] == "Set as the paper. Its claims will appear in Figures and claims."
+    assert (table["结果记录"], table["还没有结果记录。"], table["结果"]) == ("Result records", "No result records yet.", "Result")
+    names = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html"} and "成果" in path.read_text(encoding="utf-8")]
+    assert names == []
+    # What stays 产出 is the link word "produces" (an experiment produces a figure): 输出 is taken by the noun,
+    # and one Chinese key has one English (13.6). Nothing else in the page says 产出.
+    assert [key for key in table if "产出" in key] == ["产出"] and table["产出"] == "produces"

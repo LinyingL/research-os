@@ -95,7 +95,7 @@ The PI will share two OneDrive folders with you:
 
 | Folder | Purpose | Your permission |
 | --- | --- | --- |
-| `已发布` | The team's published version | Can view |
+| `已发布` | The team's official version | Can view |
 | A folder named after your e-mail address | Your proposals | Can edit |
 
 Open each invitation and choose Add shortcut to My files in OneDrive on
@@ -125,7 +125,7 @@ Compare it with the PI by phone or in person. If it matches, click
 ### 4. Sync the team version
 
 On **Members**, under **公盘与同步** (Shared folder and sync), click
-**同步** (Sync). You can start work when it says **Already the latest published version**
+**同步** (Sync). You can start work when it says **Already the latest official version**
 and your name appears under **团队** (Team). If your name is
 missing, ask the PI to add you and publish, then sync again.
 
@@ -214,9 +214,9 @@ A proposal marked **Changed on both sides** cannot yet be approved. Ask the
 member to sync, compare the two copies, and submit again. The attempt table
 is compared by row; edits to other rows do not block this proposal.
 
-On a member's sync, the local file is kept and the published version is
+On a member's sync, the local file is kept and the official version is
 placed beside it, for example `16-build.official.py`. Compare them under
-**放在旁边的正式版本** (Published versions set aside) on **Members**. Keep
+**放在旁边的正式版本** (Official versions set aside) on **Members**. Keep
 the content you need in the original file, delete the `.official` copy,
 and submit a new proposal.
 

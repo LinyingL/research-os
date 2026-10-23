@@ -1,4 +1,4 @@
-// The node page, 成果 and 数据与代码 -- DESIGN.md 12.6, 12.7, 12.9, 12.11;
+// The node page, 图表与论断 and 数据与代码 -- DESIGN.md 12.6, 12.7, 12.9, 12.11;
 // task V8 phase U3. Served verbatim at /node.js by the same process and
 // loaded by app.html with a plain same-origin <script src>, exactly as
 // /desk.js is: zero build, zero external resources, same origin check.
@@ -23,7 +23,7 @@
 //   /api/history/diff?node=&a=&b= -- what changed between two;
 //   /api/notes?node=       -- its notes;
 //   /api/me                -- who I am (my own notes can be withdrawn);
-//   /api/results[?draft=]  -- 成果; /api/data-code -- 数据与代码.
+//   /api/results[?draft=]  -- 图表与论断; /api/data-code -- 数据与代码.
 // What it writes, each through the existing write path:
 //   POST /api/mappings/add    -- 「补上来源」 (generates / writes) and
 //                                「关联文件」 (belongs_to); in a member's
@@ -42,7 +42,7 @@
 
   // The words for the screen (DESIGN.md 13.6): /i18n.js's table, looked up
   // at call time; without it (this file evaluated alone) the Chinese. This covers
-  // the node page, Outputs and Data & code, including the trace the desk's
+  // the node page, Figures and claims and Data & code, including the trace the desk's
   // side panel draws. Only interface words are translated; research text stays as written.
   function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
   function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
@@ -1161,7 +1161,7 @@
     if (nav.graphOpen) RCECanvas.load(holder, "near:" + page.id);
   }
 
-  // -- 成果 (12.9) ---------------------------------------------------------------------
+  // -- 图表与论断 (12.9) ---------------------------------------------------------------------
 
   function stateLabel(trace) {
     const value = trace || {};
@@ -1245,7 +1245,7 @@
         setStatus(status, "err", t("没能记下"), err);
         return;
       }
-      setStatus(status, "ok", marked ? t("已不再作为论文正文。") : t("已设为论文正文：成果会列出它的论断。"));
+      setStatus(status, "ok", marked ? t("已不再作为论文正文。") : t("已设为论文正文：它的论断会出现在图表与论断里。"));
       if (done) done();
     });
     const blocked = humanRecordsBlocked();
@@ -1285,7 +1285,7 @@
       return;
     }
     if (!marked.length) {
-      section.appendChild(mk("p", "node-sub", t("成果只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
+      section.appendChild(mk("p", "node-sub", t("图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
         t("在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。")));
     } else {
       section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));

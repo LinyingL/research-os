@@ -414,7 +414,7 @@ def test_shell_menus_match_the_design():
         'publishItem = cmd("发布", "publish")',
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
         'submenu("编辑"', '"undo:"', '"redo:"', "NSText.cut", "NSText.copy", "NSText.paste", "NSText.selectAll",
-        'submenu("视图"', 'cmd("工作台", "desk", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("成果", "results", "3")',
+        'submenu("视图"', 'cmd("工作台", "desk", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("图表与论断", "results", "3")',
         'cmd("变量", "variables", "4")', 'cmd("文献", "literature", "5")', 'cmd("数据与代码", "data", "6")',
         'cmd("提议", "proposals", "7")', 'cmd("成员", "members", "8")',
         'item("重新载入", #selector(reloadPage(_:)), "r")', 'cmd("放大", "zoom-in", "+")',
@@ -973,7 +973,7 @@ _ENGLISH_MENUS = {
     "关闭": "Close",
     "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
     "全选": "Select All",
-    "视图": "View", "工作台": "Desk", "研究路线": "Research Routes", "成果": "Outputs", "变量": "Variables",
+    "视图": "View", "工作台": "Desk", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "变量": "Variables",
     "文献": "Literature", "数据与代码": "Data & Code", "提议": "Proposals", "成员": "Members",
     "重新载入": "Reload", "放大": "Zoom In", "缩小": "Zoom Out", "实际大小": "Actual Size",
     "窗口": "Window", "最小化": "Minimize", "缩放": "Zoom",
@@ -1034,13 +1034,13 @@ def test_shell_english_follows_the_glossary_and_macos_names():
     table = _english_table()
     for zh, en in _ENGLISH_MENUS.items():
         assert table[zh] == en, zh
-        assert all(word[0].isupper() or word == "&" for word in en.split()), en
+        assert all(word[0].isupper() or word in ("&", "and") for word in en.split()), en  # headline style: "and" stays lower case
     titles = {t for t in re.findall(r'(?:item|cmd|submenu)\("([^"]+)"', _SHELL) if _CJK.search(t)}
     assert titles == set(_ENGLISH_MENUS)
     design = (Path(__file__).parents[1] / "DESIGN.md").read_text(encoding="utf-8")
     glossary = dict(re.findall(r"^\| (\S+) \| ([^|]+?) \|$", design[design.index("### 13.4"):], re.M))
-    for section in ("工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"):
-        title_case = " ".join(word[:1].upper() + word[1:] for word in glossary[section].split(" "))
+    for section in ("工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"):
+        title_case = " ".join(word if word == "and" else word[:1].upper() + word[1:] for word in glossary[section].split(" "))
         assert table[section] == title_case, section
     assert (table["好"], table["取消"], table["选择"]) == ("OK", "Cancel", "Choose")
     for zh, en in table.items():

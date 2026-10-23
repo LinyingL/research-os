@@ -1,7 +1,7 @@
 """DESIGN.md 12.13 -- rulings from building and accepting the V8 interface:
 words not arrows on screen; who a version came from; 「已批准，待同步」;
 what a proposal carries by kind; tables summary first; a link's note in the
-timeline; 成果 lists claims only from drafts marked 「设为论文正文」; a
+timeline; 图表与论断 lists claims only from drafts marked 「设为论文正文」; a
 member's two folders. Every test names its ruling."""
 
 from __future__ import annotations
@@ -339,7 +339,7 @@ def test_12_13_a_link_s_day_is_said_as_a_day_and_sorts_by_time_not_by_string(tz)
     assert (said_today, said_yesterday) == ("今天", "昨天")
 
 
-# -- 成果 and 设为论文正文 (12.13) ------------------------------------------------------------------
+# -- 图表与论断 and 设为论文正文 (12.13) ------------------------------------------------------------------
 
 
 def test_12_13_papers_toml_is_a_record_ledger_snapshotted_and_marked_drafts_feed_results(tmp_path, monkeypatch):

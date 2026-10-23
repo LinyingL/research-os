@@ -158,7 +158,7 @@ def _case(role: str, lang: str = "zh") -> dict:
                 {"key": "scripts", "title": w("脚本", "Scripts"), "items": [
                     {"id": "script:steps/16-build.py", "type": "script", "label": "16-build.py", "path": "steps/16-build.py",
                      "exists": True, "member": "step_files"}]},
-                {"key": "out", "title": w("产出", "Outputs"), "items": [
+                {"key": "out", "title": w("输出", "Outputs"), "items": [
                     {"id": "figure:figs/fig1.png", "type": "figure", "label": "fig1.png", "path": "figs/fig1.png", "exists": False,
                      "member": "belongs_to"}]}],
                 "lines": [{"from": "dataset:data/raw.csv", "to": "script:steps/16-build.py", "type": "reads", "relation": "读取",
@@ -388,5 +388,5 @@ def test_14_6_the_attempt_trace_speaks_the_requests_language(tmp_path):
         assert status == 200
         status, en = _call(base + url, headers={"X-ResearchOS-Lang": "en"})
         assert status == 200
-    assert [c["title"] for c in zh["trace"]["columns"]] == ["读取的数据", "脚本", "产出"]
+    assert [c["title"] for c in zh["trace"]["columns"]] == ["读取的数据", "脚本", "输出"]
     assert [c["title"] for c in en["trace"]["columns"]] == ["Data read", "Scripts", "Outputs"]

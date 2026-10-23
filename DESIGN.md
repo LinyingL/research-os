@@ -3226,7 +3226,7 @@ has 「 」.
 |---|---|
 | 工作台 | Desk |
 | 研究路线 | Research routes |
-| 成果 | Outputs |
+| 图表与论断 | Figures and claims |
 | 变量 | Variables |
 | 文献 | Literature |
 | 数据与代码 | Data & code |
@@ -3248,7 +3248,7 @@ has 「 」.
 | 缺来源 / 补上来源 | Missing source / Add source |
 | 缺尝试 / 关联文件 | No attempt / Link files |
 | 公盘 | Shared folder |
-| 官方版本 | Official version |
+| 正式版本 | Official version |
 | 工作副本 | Working copy |
 | 批准并加入 | Approve |
 | 退回并说明 | Return with reason |
@@ -3267,7 +3267,7 @@ written (status `labelled`), in either language.
 
 Fixed for the desk and the frame (first increment): 等你批准 "Awaiting your
 approval"; 我的提议 "My proposals"; 你上次查看以来的改动 "Changes since you
-last looked"; 依据变了的成果 "Outputs whose basis changed"; 已放弃的路线
+last looked"; 依据变了的图表与论断 "Figures and claims whose basis changed"; 已放弃的路线
 "Abandoned routes"; 记录 "Records"; 停止服务 "Stop service"; 研究脉络 (the
 brand's subtitle) "Research provenance"; PI stays "PI"; 成员 as a role
 "Member"; 同步 "Sync"; 发布 "Publish".

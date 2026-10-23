@@ -1,4 +1,4 @@
-"""The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9; task V8 U3).
+"""The node page, 图表与论断 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9; task V8 U3).
 
 Three read-only payloads for the page, built from the index, the record and
 the files -- nothing here writes:
@@ -14,7 +14,7 @@ the files -- nothing here writes:
   the project's scripts for 「补上来源」 (a `generates` / `writes` mapping)
   and its attempts for 「关联文件」 (a `belongs_to` mapping), or, on an
   attempt's page, its files.
-- `results(conn, root, draft=None)` -- 成果: the figures and tables the
+- `results(conn, root, draft=None)` -- 图表与论断: the figures and tables the
   drafts include, grouped by draft section, figures no draft includes, and
   the claims of the drafts marked 「设为论文正文」 only (12.13,
   `researchos.records.papers`: a draft's revision log or review notes hold
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 TYPE_WORDS = {
     "script": "脚本", "dataset": "数据", "figure": "图表", "file": "文件", "attempt": "尝试",
     "variable": "变量", "section": "文稿章节", "claim": "论断", "reference": "文献", "ref": "文献",
-    "experiment": "实验记录", "commit": "提交",
+    "experiment": "实验", "commit": "提交",
 }
 RELATION_WORDS = {
     "reads": "读取", "writes": "写出", "generates": "生成", "includes": "引用", "cites": "引用",
@@ -361,7 +361,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
                    lang: str = "zh") -> dict[str, Any]:
     """An attempt's page: its files -- the step scripts its description
     names and the files attached to it (「关联文件」) -- as 读取的数据 | 脚本
-    | 产出, with the scripts' reads and writes. Its files are 14.3's one
+    | 输出, with the scripts' reads and writes. Its files are 14.3's one
     membership rule (`trace.attempt_members`), as on the desk and in 关系图.
     Its words are in `lang` (13.6): the desk's panel draws it too (14.6)."""
     node_id = record["id"]
@@ -391,7 +391,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
     columns = [
         {"key": "in", "title": settings.say("读取的数据", "Data read", lang), "items": _dedupe(inputs)},
         {"key": "scripts", "title": settings.say("脚本", "Scripts", lang), "items": _dedupe(scripts)},
-        {"key": "out", "title": settings.say("产出", "Outputs", lang), "items": _dedupe(outputs)},
+        {"key": "out", "title": settings.say("输出", "Outputs", lang), "items": _dedupe(outputs)},
     ]
     breaks = []
     if not members:
@@ -582,7 +582,7 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
     return out
 
 
-# -- 成果 (12.9) ----------------------------------------------------------------------------------
+# -- 图表与论断 (12.9) ----------------------------------------------------------------------------------
 
 
 def _trace_state(conn: Connection, root: Path, node_id: str) -> dict[str, Any]:
@@ -612,7 +612,7 @@ def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, d
 
 
 def results(conn: Connection, project_root: str | Path, draft: str | None = None) -> dict[str, Any]:
-    """成果 (module docstring). Without `draft`: the drafts' figures and
+    """图表与论断 (module docstring). Without `draft`: the drafts' figures and
     tables by section, figures no draft includes, and per draft how many
     claims it holds. With `draft` (a project-relative file): that draft's
     claims by section."""
@@ -674,7 +674,7 @@ def _marked(root: Path) -> dict[str, Any]:
 
     try:
         return papers.marked(root)
-    except Exception as exc:  # noqa: BLE001 -- 成果 still lists figures and tables
+    except Exception as exc:  # noqa: BLE001 -- 图表与论断 still lists figures and tables
         return {"drafts": [], "trusted": False, "message": f"论文正文记录文件无法读取：{exc}",
                 "path": f".researchos/{papers.PAPERS_FILENAME}"}
 

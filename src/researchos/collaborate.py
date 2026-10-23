@@ -3,7 +3,7 @@ phase 5): what `researchos status` says about people and the shared folder,
 and the guided steps of `researchos collaborate`.
 
 Read only. Nothing here writes: `overview` gathers what the person at this
-computer needs to know about a project -- who they are, their role, the
+Mac needs to know about a project -- who they are, their role, the
 shared folder (last snapshot, whether it verified, how far a member's copy
 is behind), the proposals waiting, the notes and the history kept -- and
 `overview_lines` words it plainly, in English (the command line is a
@@ -16,7 +16,7 @@ The steps:
 
 - the PI: me (who I am) -> init (the project has an identity) -> team
   (team.toml with me as the PI and my key) -> share (the shared folder,
-  set on this computer) -> publish (the first signed snapshot) -> member
+  set on this Mac) -> publish (the first signed snapshot) -> member
   (a member added with the key they sent, and published).
 - a member: me -> key (the public key to send the PI) -> join (a working
   copy from the shared folder's latest verified snapshot) -> added (the PI
@@ -50,7 +50,7 @@ ROLES = ("pi", "member")
 VERIFICATION_WORDS = {
     "verified": "signature verified with the PI's key",
     "no_key": "not signed: the PI has no key in team.toml, so only the shared folder's permissions protect it",
-    "no_tool": "signature not checked: ssh-keygen is missing on this computer, so only the shared folder's "
+    "no_tool": "signature not checked: ssh-keygen is missing on this Mac, so only the shared folder's "
                "permissions protect it",
 }
 #: Why a snapshot was refused (`share.verify_chain`'s states), plainly.
@@ -63,7 +63,7 @@ REFUSED_WORDS = {
     "pi_changed": "its team file names another PI, or cannot be read",
     "pi_key_changed": "its team file carries another key for the PI than the one trusted when joining",
 }
-NO_TOOL_WORDS = ("ssh-keygen is missing on this computer: snapshots and proposals cannot be signed or verified "
+NO_TOOL_WORDS = ("ssh-keygen is missing on this Mac: snapshots and proposals cannot be signed or verified "
                  "here; only the shared folder's permissions protect them")
 
 
@@ -168,7 +168,7 @@ def _me_lines(ov: dict[str, Any]) -> list[str]:
     if me["state"] == "present":
         return [f"Who I am: {me['name']} <{me['email']}> (id {me['id']})"]
     if me["state"] == "absent":
-        return ["Who I am: not set on this computer -- what you record carries no name; set it with: "
+        return ["Who I am: not set on this Mac -- what you record carries no name; set it with: "
                 + command_line(["me", "set", "--name", "NAME", "--email", "EMAIL"])]
     return [f"Who I am: {me['path']} cannot be read ({me['state']}: {me['error']}) -- every record you would write "
             f"is refused until it is fixed with: " + command_line(["me", "set", "--name", "NAME", "--email", "EMAIL"])]
@@ -206,12 +206,12 @@ def _share_lines(ov: dict[str, Any]) -> list[str]:
     if not s.get("shared"):
         if role in ("single",) and not s.get("joined"):
             return []
-        return ["Shared folder: not set on this computer -- " + (
+        return ["Shared folder: not set on this Mac -- " + (
             command_line(["share", "set", "DIR", root]) if role == "pi"
             else "a member's working copy is made with: " + command_line(["share", "join", "SHARED", "FOLDER"]))]
     lines = [f"Shared folder: {s['shared']}" + ("" if s.get("reachable") else
                                                 " -- cannot be reached now (is the sync app running and the folder "
-                                                "downloaded to this computer?)")]
+                                                "downloaded to this Mac?)")]
     if not ov["ssh_keygen"]:
         lines.append(f"  Warning: {NO_TOOL_WORDS}")
     last = s.get("last_snapshot")
@@ -239,7 +239,7 @@ def _share_lines(ov: dict[str, Any]) -> list[str]:
             lines.append(f"  Official versions beside yours (both sides changed; compare, keep what is right, then "
                          f"delete the .official file): {', '.join(copies)}")
     elif role == "member":
-        lines.append("  Your copy: this folder was not made with 'researchos share join' on this computer")
+        lines.append("  Your copy: this folder was not made with 'researchos share join' on this Mac")
     pending = s.get("pending_publish")
     if pending and pending.get("count"):
         lines.append(f"  Not yet published: {_plural(pending['count'], 'file')} of the official version changed since "
@@ -354,7 +354,7 @@ class Values:
 
 def infer_role(root: Path | None) -> str | None:
     """"member" when this project's team names me as a member or this
-    folder was joined from a shared folder on this computer; "pi" when the
+    folder was joined from a shared folder on this Mac; "pi" when the
     team names me as its PI, or when this is a project that was not joined
     (a project of one's own is the official version, and its keeper is its
     PI); None when `root` is no project."""
@@ -388,11 +388,11 @@ def _me_step(v: Values) -> Step:
     argv = ["me", "set", "--name", v.name or "NAME", "--email", v.email or "EMAIL"]
     missing = [o for o, given in (("--name", v.name), ("--email", v.email)) if not given]
     if got.me is not None:
-        return Step("me", "Say who you are on this computer", True,
+        return Step("me", "Say who you are on this Mac", True,
                     f"{got.me.name} <{got.me.email}> (id {got.me.id})", argv, missing)
     detail = ("not set yet" if got.state == "absent"
               else f"{got.path} cannot be read ({got.state}); setting it again replaces it")
-    return Step("me", "Say who you are on this computer", False, detail, argv, missing)
+    return Step("me", "Say who you are on this Mac", False, detail, argv, missing)
 
 
 def plan(role: str, root: Path | None, values: Values | None = None) -> list[Step]:
@@ -431,7 +431,7 @@ def _pi_plan(root: Path | None, v: Values) -> list[Step]:
     reachable = bool(shared and shared.is_dir())
     steps.append(Step("share", "Choose the shared folder (a OneDrive folder shared with the team)",
                       reachable, (f"{shared}" if reachable else f"set to {shared}, which cannot be reached now"
-                                  if shared else "not set on this computer"),
+                                  if shared else "not set on this Mac"),
                       ["share", "set", v.shared or "SHARED_FOLDER", where], [] if v.shared else ["--shared"]))
     status: dict[str, Any] = {}
     if reachable and pid and team is not None and team.state == "present":
@@ -478,7 +478,7 @@ def _member_plan(root: Path | None, v: Values) -> list[Step]:
     out = v.out or (f"researchos-key-{me.id}.pub" if me else "KEYFILE")
     if not tool:
         steps.append(Step("key", "Make your public key and send it to the PI", True,
-                          "skipped: ssh-keygen is missing on this computer -- your proposals will not be signed",
+                          "skipped: ssh-keygen is missing on this Mac -- your proposals will not be signed",
                           None))
     else:
         steps.append(Step("key", "Make your public key and send it to the PI", local is not None,

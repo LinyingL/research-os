@@ -180,7 +180,7 @@ def test_12_11_verdicts_are_shown_as_words_never_as_markers():
 # -- 12.9: the sidebar ---------------------------------------------------------------------------------------
 
 
-SECTIONS = [("workspace", "项目首页"), ("desk", "工作台"), ("routes", "研究路线"), ("results", "成果"), ("variables", "变量"),
+SECTIONS = [("workspace", "项目首页"), ("desk", "工作台"), ("routes", "研究路线"), ("results", "图表与论断"), ("variables", "变量"),
             ("literature", "文献"), ("data", "数据与代码"), ("proposals", "提议"), ("members", "成员")]
 
 
@@ -243,11 +243,11 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     # The desk's column per 14.4 for each person, and 12.12's sentence for someone not yet in
     # the team (not a project of one). Re-baselined for V10: the desk is the route map with the
     # column beside it, and 14.5 folds the first desk's lists of changes, outputs whose basis
-    # changed and abandoned routes into the map's cards (and 成果).
+    # changed and abandoned routes into the map's cards (and 图表与论断).
     for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "正式版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
-    for gone in ("依据变了的成果", "已放弃的路线"):
+    for gone in ("依据变了的图表与论断", "已放弃的路线"):
         assert gone not in js, gone
     # 14.5: what changed since I last looked is 「有改动」 on a card and the panel's timeline, which
     # carries 13.4's fixed words for it as its title -- never a block of the column.
@@ -290,7 +290,7 @@ def _card(out: dict, number: str) -> dict:
 # Re-baselined for V10 (DESIGN.md 14.5): the desk is the route map. What changed since I last
 # looked is each card's `changed_at` (its row or one of its files; the page compares it with its
 # own last visit for 「有改动」) and the panel's timeline -- the node's history -- says what and
-# who; abandoned routes are the quieter cards; results that lost their evidence are on 成果.
+# who; abandoned routes are the quieter cards; results that lost their evidence are on 图表与论断.
 
 
 def test_12_0_a_project_just_added_reports_no_change_for_every_file(tmp_path):
@@ -328,7 +328,7 @@ def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
 def test_12_0_results_that_lost_their_evidence(tmp_path):
     """figs/fig1.png is cited by the paper but nothing makes it: 缺来源, the
     break named; figs/fig2.png, whose chain is whole, is not -- and once
-    its data file is gone it is. On 成果 (12.13), not on the desk."""
+    its data file is gone it is. On 图表与论断 (12.13), not on the desk."""
     root = _project(tmp_path / "proj")
 
     def traces() -> dict:

@@ -2,7 +2,7 @@
 12.13, task V8).
 
 A claim is any number in a sentence, and a researcher's drafts hold
-thousands -- mostly in revision logs and review notes. 成果 lists claims
+thousands -- mostly in revision logs and review notes. 图表与论断 lists claims
 only from the drafts the researcher marks as the paper itself. The marks
 are a record, written through the record-file discipline of 9.3 as an
 append-only ledger (the engine of `researchos.records.ledger`):
@@ -57,6 +57,8 @@ ACTS = frozenset({MARK, UNMARK})
 VIAS = frozenset({"cli", "app", "recovered"})
 DRAFT_SUFFIXES = (".md", ".markdown", ".tex", ".qmd", ".rmd", ".txt", ".docx")
 
+# Written to the file as it always was: the header keeps the old name of the page, 成果 (DESIGN.md 18.2 renames
+# the page 图表与论断, not what is on disk).
 _HEADER = "# 设为论文正文的文稿：成果只从这些文稿列出论断。Research OS 只追加、不改写；取消也是追加一条记录。\n"
 
 MESSAGES = {
@@ -165,7 +167,7 @@ def marked_from(loaded: LedgerLoad) -> list[str]:
 
 
 def marked(project_root: str | Path) -> dict[str, Any]:
-    """What 成果 reads: the marked drafts, and -- when the file cannot be
+    """What 图表与论断 reads: the marked drafts, and -- when the file cannot be
     trusted now -- why none is listed (`message`)."""
     loaded, decision = assess(project_root)
     out: dict[str, Any] = {"drafts": [], "state": loaded.state.value, "trusted": decision.may_apply,

@@ -15,12 +15,12 @@
 
   The page's structure (DESIGN.md 12.9, task V8 phase U2): a sidebar --
   the project switcher at the top (the 10.1 menu below), the open
-  project's sections 工作台 / 研究路线 / 成果 / 变量 / 文献 / 数据与代码 /
+  project's sections 工作台 / 研究路线 / 图表与论断 / 变量 / 文献 / 数据与代码 /
   提议 / 成员, and at the bottom the shared drive's line, who I am, 记录 and
   停止服务 -- beside a workspace whose serif title names the section. The
   desk (工作台, 12.0) and the sidebar's live lines are the third served
   file, /desk.js (window.RODesk; GET /api/desk, /api/proposals, /api/share,
-  /api/me). The node page, 成果 and 数据与代码's list are the fourth,
+  /api/me). The node page, 图表与论断 and 数据与代码's list are the fourth,
   /node.js (window.RONode, U3; GET /api/node, /api/results,
   /api/data-code): every object -- a script, data file, figure, draft
   section or claim, attempt, variable, reference -- opens the same node
@@ -631,7 +631,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .node-links-more { padding: 0.5rem 0; list-style: none; }
 .node-graph { position: relative; height: 480px; margin-top: 0.7rem; border: 1px solid var(--line-strong); }
 
-/* 成果 and 数据与代码 (12.9): lists, each row opening its node page. */
+/* 图表与论断 and 数据与代码 (12.9): lists, each row opening its node page. */
 .results { display: flex; flex-direction: column; gap: 1.6rem; max-width: 900px; }
 .res-group { margin-bottom: 1.1rem; }
 .res-group-title { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.86rem; color: var(--ink-soft); margin: 0.6rem 0 0.25rem; }
@@ -1304,7 +1304,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
       <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label" data-i18n>工作台</span></button>
       <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
-      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>成果</span></button>
+      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>图表与论断</span></button>
       <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label" data-i18n>变量</span></button>
       <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label" data-i18n>文献</span></button>
       <button type="button" class="side-item" data-section="data" data-view="lineage"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 4c0-.9 2.2-1.5 5-1.5s5 .6 5 1.5-2.2 1.5-5 1.5S3 4.9 3 4zM3 4v8c0 .9 2.2 1.5 5 1.5s5-.6 5-1.5V4M3 8c0 .9 2.2 1.5 5 1.5S13 8.9 13 8"/></svg><span class="side-label" data-i18n>数据与代码</span></button>
@@ -1392,7 +1392,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <script src="/routemap.js"></script>
 <!-- The sidebar's live lines and the desk (DESIGN.md 12.0, 12.9): window.RODesk. -->
 <script src="/desk.js"></script>
-<!-- The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
+<!-- The node page, 图表与论断 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
 <script src="/node.js"></script>
 <!-- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4, 12.9): window.ROTeam. -->
 <script src="/team.js"></script>
@@ -1930,7 +1930,7 @@ function renderViewFailure(container, err) {
 
 // DESIGN.md 12.9: the views are shown through the sidebar's sections. Until
 // the later phases rebuild them, 研究路线 is the decision tree, 数据与代码
-// the lineage report with 关系图 (the canvas) beside it, and 成果 / 提议 /
+// the lineage report with 关系图 (the canvas) beside it, and 图表与论断 / 提议 /
 // 成员 say plainly that they are still being made.
 const views = {
   workspace: document.getElementById("view-workspace"),
@@ -1955,7 +1955,7 @@ const SECTION_OF_VIEW = {
 };
 const SECTION_TITLES = {
   workspace: "项目首页",
-  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
+  desk: "工作台", routes: "研究路线", results: "图表与论断", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
 // A section's title on screen (13.4): the page title, in the screen's
@@ -1964,7 +1964,7 @@ const SECTION_TITLES = {
 function sectionTitle(section) {
   const titles = {
     workspace: t("项目首页"),
-    desk: t("工作台"), routes: t("研究路线"), results: t("成果"), variables: t("变量"), literature: t("文献"),
+    desk: t("工作台"), routes: t("研究路线"), results: t("图表与论断"), variables: t("变量"), literature: t("文献"),
     data: t("数据与代码"), proposals: t("提议"), members: t("成员"),
   };
   return Object.prototype.hasOwnProperty.call(titles, section) ? titles[section] : "";

@@ -55,7 +55,7 @@ document.activeElement = null;
 global.requestAnimationFrame = () => {}; // Layout has no bearing on label rendering.
 global.currentView = 'results';
 global.SECTION_OF_VIEW = {results: 'results'};
-global.SECTION_TITLES = {results: '成果'};
+global.SECTION_TITLES = {results: '图表与论断'};
 global.activateView = name => { currentView = name; };
 global.humanRecordsBlocked = () => null;
 global.RODesk = {ensureContext: async () => ({}), context: () => ({mode: 'single'}), _whenWords: () => '14 Oct'};
@@ -94,13 +94,13 @@ global.apiGet = async path => {
     for authored in ("改动与备注", "查看内容", "figures/结果.png", "结果.png", "研究标题"):
         assert authored in words
     if language == "en":
-        for label in ("Back to Outputs", "Figure", "View content", "Show in Finder", "Data", "This item",
+        for label in ("Back to Figures and claims", "Figure", "View content", "Show in Finder", "Data", "This item",
                       "Used in", "Changes and notes", "First recorded version", "Add note", "Link judgments"):
             assert label in words
         authored = {"改动与备注", "查看内容", "figures/结果.png", "结果.png", "研究标题"}
         assert [word for word in words if CJK.search(word) and word not in authored] == []
     else:
-        for label in ("返回成果", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "连线确认"):
+        for label in ("返回图表与论断", "图表", "在 Finder 中显示", "数据", "本页", "被引用", "最早记下的版本", "添加笔记", "连线确认"):
             assert label in words
 
 

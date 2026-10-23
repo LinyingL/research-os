@@ -697,7 +697,7 @@ def test_served_app_tabs_read_in_product_language(live_server):
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
     sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(v, label) for _s, v, label in sections] == [
-        ("workspace", "项目首页"), ("desk", "工作台"), ("tree", "研究路线"), ("results", "成果"), ("variables", "变量"), ("literature", "文献"),
+        ("workspace", "项目首页"), ("desk", "工作台"), ("tree", "研究路线"), ("results", "图表与论断"), ("variables", "变量"), ("literature", "文献"),
         ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
     ]
     assert '<span class="brand-mark">Research OS</span>' in html

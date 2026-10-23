@@ -11,7 +11,7 @@ says: *what changed since I last looked* is each card's `changed_at` (its
 row or one of its files; the page compares it with its own last visit for
 「有改动」, and the panel's timeline says what), *abandoned routes* are the
 quieter cards with their reason, *results that lost their evidence* are on
-成果 (12.13). A node's *first* version recorded with the first scan of its
+图表与论断 (12.13). A node's *first* version recorded with the first scan of its
 kind is the baseline, not a change: a project added today does not mark
 every attempt as changed.
 

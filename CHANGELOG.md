@@ -40,6 +40,16 @@
   count, the desk, the canvas link card and every notice about the record file.
   Nothing on disk changes: `judgements.toml`, its header and the commands keep
   their names.
+- Settle the single words. 正式版本 is "Official version" on every screen (the
+  English said "Published version" in places), 官方的一份 is 正式的一份, "official
+  copy", and "publish" is only the act. 本机 is "This Mac", never "this
+  computer". The experiment kind that MLflow and W&B bring is 实验
+  ("Experiment") on the node page, no longer 实验记录 ("Run record"). A script's
+  outputs are 输出 where they were 产出. The page 成果 is now 图表与论断
+  ("Figures and claims"): the sidebar, the page titles, the app's View menu and
+  every sentence that names it. 项目首页's section for result documents is
+  "Result records" in English. Nothing on disk changes: the command name is
+  still `results`, and the header of `papers.toml` keeps its words.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

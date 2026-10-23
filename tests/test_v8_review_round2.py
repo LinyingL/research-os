@@ -537,7 +537,7 @@ def test_12_3_the_sync_sentence_counts_the_copies_put_beside_not_the_canvas():
     conflict = {"seq": 2, "updated": ["a"], "kept_yours": [], "entries_sent": 1,
                 "conflicts": [{"path": "steps/17-plot.py", "official_copy": "steps/17-plot.official.py"}]}
     said = _js_call("team.js", "ROTeam", "_syncDone", conflict)
-    assert "1 个两边都改过的文件留着你的，官方的一份放在旁边" in said and "1 条" in said
+    assert "1 个两边都改过的文件留着你的，正式的一份放在旁边" in said and "1 条" in said
 
 
 def test_12_9_the_sidebar_and_views_follow_collaborative_acts():

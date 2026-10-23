@@ -370,7 +370,7 @@ Endpoints (all GET unless noted):
                             `src/researchos/webapp/desk.js` exactly as
                             /canvas.js is: read fresh, same origin check,
                             packaged as `package-data`.
-    GET  /node.js      -- the node page, 成果 and 数据与代码 (DESIGN.md
+    GET  /node.js      -- the node page, 图表与论断 and 数据与代码 (DESIGN.md
                             12.6, 12.7, 12.9; task V8 phase U3), served the
                             same way.
     GET  /routemap.js  -- the desk's route map (DESIGN.md 14.1, 14.2; task
@@ -379,7 +379,7 @@ Endpoints (all GET unless noted):
                             trace as columns with the lines between them,
                             its breaks with their repairs, the links that
                             touch it (`researchos.nodepage.node`).
-    GET  /api/results  -- 成果: the drafts' figures and tables by section
+    GET  /api/results  -- 图表与论断: the drafts' figures and tables by section
                             with their trace state; `?draft=<file>`: that
                             draft's claims.
     GET  /api/data-code -- 数据与代码: every script and data file with its
@@ -3273,7 +3273,7 @@ def _desk_js() -> str:
 
 
 def _node_js() -> str:
-    """`src/researchos/webapp/node.js` verbatim (the node page, 成果 and
+    """`src/researchos/webapp/node.js` verbatim (the node page, 图表与论断 and
     数据与代码, DESIGN.md 12.6, 12.7, 12.9), read fresh per request."""
     return _NODE_JS_PATH.read_text(encoding="utf-8")
 

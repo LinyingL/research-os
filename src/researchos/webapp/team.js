@@ -242,7 +242,7 @@
     if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
     if (p.remove && p.remove.length) parts.push(t("删除 {n} 个正式版本已删除的文件", { n: numberText(p.remove.length) }));
     if (p.beside && p.beside.length) {
-      parts.push(t("{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
+      parts.push(t("{n} 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
     }
     if (p.records && p.records.length) parts.push(t("备注、连线确认和手工连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
     const listed = parts.length ? t("：{parts}", { parts: parts.join(t("；")) }) : "";
@@ -328,7 +328,7 @@
   // put beside it -- yours first, then the official one.
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
-    d.appendChild(mk("summary", null, t("你的和官方的有什么不同")));
+    d.appendChild(mk("summary", null, t("你的和正式的有什么不同")));
     // 12.13: a table's rows and columns first (the engine's sentence, in the
     // page's language), its line diff below when small.
     if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
@@ -1765,7 +1765,7 @@
     if ((share.refused || []).length) s.appendChild(line("公盘上有 " + share.refused.length + " 个版本没有通过签名验证，没有采用；采用的是最后一个通过验证的版本。", "warn"));
     if ((j.official_copies || []).length) {
       s.appendChild(mk("h3", "panel-h3", "放在旁边的正式版本"));
-      s.appendChild(line("你的文件没有动；官方的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
+      s.appendChild(line("你的文件没有动；正式的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
       const ul = mk("ul", "desk-files");
       const beside = j.beside || j.official_copies.map((c) => ({ copy: c }));
       beside.forEach((b) => {
@@ -1811,7 +1811,7 @@
         const ul = mk("ul", "desk-files");
         p.beside.forEach((b) => {
           const li = mk("li");
-          li.append(mk("span", "mono", b.path), mk("span", "team-help", "官方的一份会放在 " + b.official_copy));
+          li.append(mk("span", "mono", b.path), mk("span", "team-help", "正式的一份会放在 " + b.official_copy));
           ul.appendChild(li);
         });
         writes.after(ul);
@@ -1912,7 +1912,7 @@
     if ((res.updated || []).length) parts.push(t("更新了 {n} 个文件", { n: numberText(res.updated.length) }));
     if ((res.removed || []).length) parts.push(t("删除了 {n} 个正式版本已删除的文件", { n: numberText(res.removed.length) }));
     if ((res.conflicts || []).length) {
-      parts.push(t("{n} 个两边都改过的文件留着你的，官方的一份放在旁边", { n: numberText(res.conflicts.length) }));
+      parts.push(t("{n} 个两边都改过的文件留着你的，正式的一份放在旁边", { n: numberText(res.conflicts.length) }));
     }
     // The engine's reason, in the page's language (13.2).
     if ((res.kept_yours || []).length) {
@@ -1928,7 +1928,7 @@
   function syncFlash(res) {
     const lists = [{ text: syncDone(res) }];
     (res.conflicts || []).forEach((c) => lists.push({
-      text: t("官方的 {path} 放在了旁边：{copy}；你的没有动。", { path: c.path, copy: c.official_copy || "" }),
+      text: t("正式版本的 {path} 放在了旁边：{copy}；你的没有动。", { path: c.path, copy: c.official_copy || "" }),
       diff: c.diff, truncated: c.truncated, summary: c.summary }));
     return lists;
   }
