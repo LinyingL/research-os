@@ -1739,8 +1739,8 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     link = github_link_payload(project_root, target)
     if target.suffix.lower() == ".dta":
         return _dta_payload(target, rel_path, link, lang)
-    try:
-        raw = cloud.read_bytes(target)
+    try:  # one byte past the limit says "truncated"; the size is the open file's (18.4 item 5)
+        raw, size = cloud.read_head(target, _FILE_SIZE_LIMIT + 1)
     except cloud.CloudOnlyError as exc:
         raise CloudOnlyApiError(exc, {"github": link}) from exc
     if b"\x00" in raw[:8192]:
@@ -1759,7 +1759,7 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
         # The 200KB cut can land mid multi-byte character; that is a
         # truncation artifact, not evidence the file is binary.
         content = content_bytes.decode("utf-8", errors="ignore")
-    return {"path": rel_path, "content": content, "truncated": truncated, "size": len(raw), "github": link}
+    return {"path": rel_path, "content": content, "truncated": truncated, "size": size, "github": link}
 
 
 def _dta_payload(target: Path, rel_path: str, link: Any, lang: str) -> dict[str, Any]:

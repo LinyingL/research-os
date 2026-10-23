@@ -5083,8 +5083,80 @@ nothing new inside the project.
      moved. The ids are the ones the old reading gave.
 5. **File preview and drafting** read at most 200 KB and one byte, and take
    the size from the open file.
+
+   How it is read:
+   - *The read.* `cloud.read_head(path, limit)` makes the cloud check of
+     `read_bytes` (11.1), opens the file once, unbuffered, takes its size
+     from the open file (`os.fstat`) and reads up to `limit` bytes, however
+     large the file is. `file_payload` asks for the 200 KB limit and one byte
+     more: that byte is what says `truncated`, and `size` is the open file's.
+     Everything else is as it was: the 8 KB window in which a NUL byte
+     refuses the file, the decoding (a cut that falls inside a multi-byte
+     character is dropped; a file over the limit that is not UTF-8 is cut and
+     decoded with its bad bytes dropped; one under it is refused), the
+     refusals, their bodies and the payload keys. A `.dta` returns before any
+     read. A draft from chosen files reads each through `file_payload`
+     (`_draft_file`), so it reads the same head.
+   - *What it costs.* For a 64 MB file, and for a 1 GB file, whose first
+     300 KB is text, Python's memory peaks at about 600 KB (the 200 KB read,
+     its cut and its decoded text); the whole read held the file.
 6. **The change history behind 研究路线** uses a time index and reads only
    the window it shows.
+
+   How it is read:
+   - *What the desk asks.* For each card, when its row or one of its files
+     last changed (`changed_at`, `changed`, `changed_more`). That needs the
+     newest version of each node the cards show, never the whole history.
+     `desk._change_times(root, id, nodes)` is given those nodes (the attempts
+     and the files they hold, 14.3's membership rule) and leaves the other
+     nodes of the store unread; a node outside `nodes` may or may not be in
+     its answer, and the desk never asks for one. The page sends no time of
+     its own (it compares `changed_at` with its last visit), so what the
+     window holds is bounded by each node's newest version, not by a date.
+   - *The indexes.* `history.Store` makes, once for a store that lacks them,
+     `idx_versions_at` on `julianday(at)` and `idx_versions_node_at` on
+     `(node, julianday(at))`, in the version store beside the index
+     (`<home>/graphs/<id>/history/`), nothing in the project. SQLite reads an
+     `at` as an instant in UTC, so versions recorded either side of a change
+     of clocks, or at different offsets, are ordered by the instant, not by
+     their text. A store that cannot be written (read only, or held by a
+     writer for more than 250 ms) is opened as it is, without them, and is
+     read in full as before. SQLite refuses to index the word `now`: a store
+     that holds one goes without the indexes, and none can be added; Research
+     OS writes real times only.
+   - *The window.* `Store.time_readable` says the indexes can answer: both
+     exist, SQLite reads every `at` as a time (no `julianday` of NULL), and
+     none lies before 1970 or after 2199 (so none is a number or a word taken
+     for a time). `Store.earliest_times` gives the `at` of every version within
+     2 days (`TIME_MARGIN_DAYS`) of the earliest of the attempts' rows and of
+     everything else, for the baseline. `Store.node_windows(nodes)` gives, per
+     node, its number of versions, its first version's time and source, the
+     kind of its newest version, the latest `julianday` it has, and the
+     versions within 2 days of that. These are plain `SELECT`s over the
+     indexes (one grouped read of the node's index entries, a join to the
+     window, and the first and last versions by key); nothing is `DISTINCT`.
+   - *The judge.* SQLite only narrows. `desk._window_times` reads each time it
+     keeps with `_parse`, as `_scan_times` (the full read, kept as it was)
+     does, applies the same baseline rule (`_first_is_baseline`: the first
+     version is no change when a scan or publish recorded it within 10
+     minutes of the earliest of its kind; the kind is the node's newest
+     version's), and takes the latest. The answer is the full read's, node for
+     node. SQLite reads a time with no offset as UTC and Python as local
+     time, up to 14 hours apart (`OFFSET_DAYS` = 0.6 day), which is why the
+     window is 2 days wide: a version outside it cannot read later than one
+     inside it. The newest taken from a window is kept only when the window
+     holds all the node's versions, or the newest is no earlier than
+     `TIME_MARGIN_DAYS - OFFSET_DAYS` before SQLite's newest; otherwise that
+     node's versions are all read (`Store.stamps`).
+   - *When it does not decide.* `_window_times` answers None, and the full read
+     (`_scan_times`) answers instead, when the indexes are missing, a time is
+     one SQLite cannot read or reads outside 1970-2199, a version in a window
+     is not a time `_parse` reads, or the newest chosen reads a day or more
+     later than SQLite's. Nothing is guessed: such a store costs what it cost.
+   - *What it costs.* 100,000 versions of 3,000 nodes over a year (this
+     machine): the full read 350 ms; the window for all 3,000 nodes 36 ms,
+     for the 300 the cards show 6 ms. The first open of a store of that size
+     builds the two indexes once (about 0.1 s).
 7. **Smaller:**
    - `/api/summary` counts in SQL.
    - `GET /api/agents` remembers a program's version while its path, size

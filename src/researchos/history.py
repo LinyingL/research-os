@@ -28,7 +28,9 @@ Where the versions come from
   in the cloud is never read. Nothing is pruned automatically. The store is
   not the index: deleting or rebuilding `graph.db` leaves it alone,
   because what it holds -- content a file no longer has -- cannot be
-  derived again.
+  derived again. Two time indexes (on `julianday(at)`, 18.4 item 6) let the
+  desk ask when a node last changed without reading every version
+  (`Store.node_windows`).
 - **An attempt** (`attempt:<table>#<n>`): its verdict and result as they
   moved, recorded by every scan that read the attempt table (later phases
   add approvals, `source = "approval"`).
@@ -65,10 +67,10 @@ import subprocess
 import threading
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from sqlite3 import Connection
-from typing import IO, Any, Callable, Iterable, Mapping
+from typing import IO, Any, Callable, Iterable, Mapping, NamedTuple
 
 from researchos import db, dta, paths, settings
 from researchos.agents import labels as agent_labels
@@ -114,6 +116,33 @@ _SCHEMA = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_versions_node ON versions(node, seq)",
 )
+
+#: The time indexes (DESIGN.md 18.4 item 6), on the time as SQLite reads an `at` (UTC, so a changed UTC offset
+#: does not reorder them): all versions by time, and one node's by time. A store that cannot be written (read
+#: only, locked) goes without them and is read by a scan.
+_TIME_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_versions_at ON versions(julianday(at))",
+    "CREATE INDEX IF NOT EXISTS idx_versions_node_at ON versions(node, julianday(at))",
+)
+#: How far from a bound a window reaches, in days. SQLite reads a time with no offset as UTC and Python as local
+#: time (up to 14 hours apart): the window is wide enough for what Python would pick from it to be what it would
+#: pick from everything.
+TIME_MARGIN_DAYS = 2.0
+_JULIAN_1970 = 2440587.5  # julianday('1970-01-01')
+_JULIAN_2200 = _JULIAN_1970 + (date(2200, 1, 1) - date(1970, 1, 1)).days
+_NODE_CHUNK = 400  # names in one IN (...)
+
+
+class NodeWindow(NamedTuple):
+    """What decides when one node last changed (`Store.node_windows`)."""
+
+    count: int  # versions the node has
+    first_seq: int
+    first_at: str
+    first_source: str
+    last_kind: str  # the kind of its newest version by seq
+    newest: float  # the latest `julianday(at)` among them
+    rows: list[tuple[int, str]]  # (seq, at) of those within TIME_MARGIN_DAYS of `newest`
 
 
 class HistoryError(Exception):
@@ -224,6 +253,21 @@ class Store:
         if "snapshot" not in columns:
             self.conn.execute("ALTER TABLE versions ADD COLUMN snapshot INTEGER")
         self.conn.commit()
+        self._index_times()
+
+    def _index_times(self) -> None:
+        """18.4 item 6: the time indexes, built once for a store that lacks them. A store that cannot be written
+        now (read only, a writer holding it) is left as it is and read by a scan (`time_readable`)."""
+        self.conn.execute("PRAGMA busy_timeout = 250")  # a request does not wait for a writer to build an index
+        try:
+            for statement in _TIME_INDEXES:
+                self.conn.execute(statement)
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            logger.info("the time indexes of %s were not built", self.directory, exc_info=True)
+            self.conn.rollback()
+        finally:
+            self.conn.execute("PRAGMA busy_timeout = 5000")
 
     @classmethod
     def open(cls, project_id: str) -> "Store":
@@ -265,6 +309,68 @@ class Store:
     def versions(self, node: str) -> list[Version]:
         rows = self.conn.execute("SELECT * FROM versions WHERE node = ? ORDER BY seq DESC", (node,)).fetchall()
         return [self._row(r) for r in rows]
+
+    # -- by time (DESIGN.md 18.4 item 6) -----------------------------------------------------------------
+    # The desk asks when each node last changed. These read the indexes of `_TIME_INDEXES` and hand back only
+    # the versions near what is asked; the judging stays with the caller, who reads each `at` as Python does.
+
+    def time_readable(self) -> bool:
+        """Whether the time indexes can answer: both exist, SQLite reads every `at` as a time, and none is
+        before 1970 or after 2199 (so none is a number or a word it took for a time). If not, read every version."""
+        names = {row[0] for row in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_versions_at', 'idx_versions_node_at')")}
+        if len(names) < 2:
+            return False
+        if self.conn.execute("SELECT 1 FROM versions INDEXED BY idx_versions_at WHERE julianday(at) IS NULL LIMIT 1").fetchone():
+            return False
+        lowest = self.conn.execute("SELECT MIN(julianday(at)) FROM versions").fetchone()[0]
+        highest = self.conn.execute("SELECT MAX(julianday(at)) FROM versions").fetchone()[0]
+        return lowest is None or _JULIAN_1970 <= lowest and highest <= _JULIAN_2200
+
+    def node_windows(self, nodes: Iterable[str] | None = None, margin: float | None = None) -> dict[str, NodeWindow]:
+        """For each of `nodes` (every node when None) that has a version: its count, its first version's time and
+        source, its newest version's kind, and the versions within `margin` days of its newest. Needs
+        `time_readable`."""
+        margin = TIME_MARGIN_DAYS if margin is None else margin
+        wanted = None if nodes is None else sorted(set(nodes))
+        found: dict[str, list[Any]] = {}
+        for start in range(0, 1 if wanted is None else len(wanted), _NODE_CHUNK):
+            chunk = () if wanted is None else wanted[start:start + _NODE_CHUNK]
+            where = f"WHERE node IN ({', '.join('?' * len(chunk))})" if chunk else ""
+            for node, count, first, last, newest, seq, at in self.conn.execute(
+                    "SELECT t.node, t.n, t.a, t.b, t.m, v.seq, v.at FROM (SELECT node, COUNT(*) AS n, MIN(seq) AS a, "
+                    "MAX(seq) AS b, MAX(julianday(at)) AS m FROM versions INDEXED BY idx_versions_node_at "
+                    f"{where} GROUP BY node) AS t CROSS JOIN versions AS v INDEXED BY idx_versions_node_at "
+                    "ON v.node = t.node AND julianday(v.at) >= t.m - ?", (*chunk, margin)):
+                found.setdefault(node, [count, first, last, newest, []])[4].append((seq, at))
+        ends: dict[int, tuple[str, str, str]] = {}
+        seqs = sorted({seq for got in found.values() for seq in got[1:3]})
+        for start in range(0, len(seqs), _NODE_CHUNK):
+            chunk = seqs[start:start + _NODE_CHUNK]
+            for seq, at, source, kind in self.conn.execute(
+                    f"SELECT seq, at, source, kind FROM versions WHERE seq IN ({', '.join('?' * len(chunk))})", chunk):
+                ends[seq] = (at, source, kind)
+        return {node: NodeWindow(count, first, ends[first][0], ends[first][1], ends[last][2], newest, rows)
+                for node, (count, first, last, newest, rows) in found.items()}
+
+    def earliest_times(self, margin: float | None = None) -> dict[str, list[str]]:
+        """The `at` of the versions within `margin` days of the earliest one, for the attempts' rows
+        (`"attempt"`) and for everything else (`"file"`); a kind with no version is left out. Needs `time_readable`."""
+        margin = TIME_MARGIN_DAYS if margin is None else margin
+        out: dict[str, list[str]] = {}
+        for group, same in (("attempt", "="), ("file", "<>")):
+            earliest = self.conn.execute(
+                f"SELECT MIN(julianday(at)) FROM versions INDEXED BY idx_versions_at WHERE kind {same} 'attempt'").fetchone()[0]
+            if earliest is not None:
+                out[group] = [row[0] for row in self.conn.execute(
+                    f"SELECT at FROM versions INDEXED BY idx_versions_at WHERE kind {same} 'attempt' AND julianday(at) <= ?",
+                    (earliest + margin,))]
+        return out
+
+    def stamps(self, node: str) -> list[tuple[int, str]]:
+        """(seq, at) of every version of `node`, oldest first."""
+        rows = self.conn.execute("SELECT seq, at FROM versions WHERE node = ? ORDER BY seq", (node,))
+        return [(row[0], row[1]) for row in rows]
 
     def add(self, node: str, *, sha256: str, size: int | None, kind: str, source: str = "scan", who: str | None = None,
             note: str | None = None, stored: bool = False, summary: dict[str, Any] | None = None,
