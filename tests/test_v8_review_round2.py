@@ -576,7 +576,7 @@ def test_12_11_typography_badges_and_icons():
         assert "--font-mono" not in rule(selector), selector
     assert "--clay" not in rule(".pm-mark")
     team = (WEBAPP / "team.js").read_text(encoding="utf-8")
-    assert 'head.appendChild(label(g.label' not in team and 'mk("h2", "route-group-title", g.label)' in team
+    assert 'head.appendChild(label(g.label' not in team and 'mk("h2", "route-group-title", RODesk.verdictWord(g))' in team
     assert '"已写入正式版本的改动"' in team and '"已写入正式版本的"' not in team
 
 

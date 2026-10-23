@@ -138,10 +138,15 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # team.js is 13.7's later increment, so only these stretches are held.
     ("team.js", "function kindChoices() {", "\n  }\n"),
     ("team.js", "function renderComposer(page) {", "\n  }\n"),
-    ("team.js", "const d = item.decision;", "body.appendChild(act);"),
-    ("team.js", 'sec.appendChild(mk("h2", "route-group-title serif", pi', "const team = (ctx.share"),
-    ("team.js", 'head.appendChild(mkButton(p.sentence || t("修改研究判断")', "const st = stateLabel(p);"),
     ("team.js", 'li.append(mk("span", "mono", b.path), mk("span", "team-help"', "ul.appendChild(li);"),
+    # 18.3 (task V14): 研究路线's list half -- the page the 列表 switch shows -- and 「当时的依据」, which a row opens:
+    # every function that draws them, down to the evidence files (their role, state and standing now from the
+    # payload's codes) and the group headings (the desk's verdict word of the group's status).
+    *(("team.js", head, "\n  }\n") for head in (
+        "function reasonSource(item) {", "async function loadRoutes(", "function routeRow(item) {",
+        "function routeProposalBlock(shown, ctx) {", "async function openEvidence(", "function evidenceRole(role) {",
+        "function evidenceState(state) {", "function evidenceNow(now) {", "function versionReason(v) {",
+        "function evidenceFile(f) {")),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own

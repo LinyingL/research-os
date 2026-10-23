@@ -1088,6 +1088,8 @@ def version_content(project_root: str | Path, given: str, version: str | None, s
             out["truncated"] = len(text) > VERSION_TEXT_LIMIT
             out["text"] = text[:VERSION_TEXT_LIMIT]
     if out["text"] is None:
+        # The code is what the page words in its language (13.6); `reason` is the same sentence in Chinese.
+        out["reason_code"] = "not_kept" if data is None else "not_text"
         out["reason"] = "这一版只记下了指纹和大小，没有保存内容" if data is None else "这一版不是文本，不在这里显示"
     return out
 

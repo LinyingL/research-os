@@ -273,9 +273,11 @@ def test_14_3_a_direct_abandonment_reads_abandoned_by_never_proposer(lang):
     got = _node(script)
     by = "Abandoned by 李" if lang == "en" else "由 李 放弃"
     frozen = "File state when abandoned" if lang == "en" else "放弃时的文件状态"
+    proposed = ["Proposed by 王", "Approved by 李"] if lang == "en" else ["提议人 王", "批准人 李"]  # 18.3: the list half is English too
     assert got == [f"desk-meta: W · {by}", f"panel-h3: {frozen}",
-                   "desk-meta: W · 提议人 王 · 批准人 李", ("panel-h3: File state at approval" if lang == "en" else "panel-h3: 批准时的文件状态"),
-                   by, "提议人 王，批准人 李"]
+                   f"desk-meta: W · {proposed[0]} · {proposed[1]}",
+                   ("panel-h3: File state at approval" if lang == "en" else "panel-h3: 批准时的文件状态"),
+                   by, "Proposed by 王, approved by 李" if lang == "en" else "提议人 王，批准人 李"]
     assert not any("提议人" in line for line in got[:2])
 
 

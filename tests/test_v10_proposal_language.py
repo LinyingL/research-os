@@ -27,7 +27,7 @@ from test_v8_u2 import FORBIDDEN
 from test_v9_language import CJK, WEBAPP, _i18n_source, _node, needs_node
 from test_v10_desk_panel import _THEIRS as _PANEL_THEIRS
 from test_v10_desk_panel import A16, _st
-from test_v10_desk_proposals import FROM, _run_team, _team_case
+from test_v10_desk_proposals import FROM, WANG, _run_team, _team_case
 
 #: The researcher's own text in these fixtures (13.1: a verdict cell as written, too -- 「☠ 待定 先看」 is
 #: 「待定 先看」 with their ☠ put before it by the 已放弃 chip), and the shared drive's fixed folder names.
@@ -477,3 +477,219 @@ def test_18_2_an_abandoned_route_and_a_proposed_change_are_one_sentence_each_and
         everything = composer + out["verdict"] + out["variable"] + out["options"] + out["noSentence"] + out["noAnswer"] + out["since"]
         assert [line for line in everything if CJK.search(line)] == []
     assert not any(FORBIDDEN.search(line) for line in composer + out["verdict"] + out["since"] + out["moves"])
+
+
+# -- 18.3: 研究路线's list half and 「当时的依据」 on an English screen ----------------------------------------------
+
+#: The researcher's own text in the fixtures below (13.1): titles, a [verdict_labels] word, results, reasons, a PI's note.
+_ROUTE_THEIRS = ["主线", "待看", "先看", "有反例", "事件轴", "方向反了", "换变量", "旧路线", "否决的", "封存的", "成立的", "成立", "无标记",
+                 "随手写的", "无信号", "样本太小", "手写的理由", "先补稳健性", "死路", "放弃 16"]
+_EVIDENCE_OF = "attempt:map.md#17"
+_NO_BASIS = "attempt:map.md#20"
+
+
+def _list_routes(abandoned: str = "已放弃") -> dict:
+    """/api/routes: every group heading (the six default statuses, a word of the researcher's own, 其它); the abandoned
+    group holds a route abandoned directly, one an approval abandoned (a PI answered), one the table alone records and
+    one with no title and no result; and the decisions.toml warning. `abandoned` is the word its group goes by."""
+
+    def item(number: int, title: str, status: str, label: str, words: str = "", **extra) -> dict:
+        return {"id": f"attempt:map.md#{number}", "number": str(number), "date": "07-08", "title": title, "result": "t=0.1",
+                "reason": None, "reason_from": None, "verdict_status": _st(status, label, words), **extra}
+
+    def group(status: str, label: str, *items: dict) -> dict:
+        return {"status": status, "label": label, "items": list(items)}
+
+    li = {"id": "li@example.com", "label": "Li"}
+    direct = {"id": "d1", "act": "abandoned", "at": "2024-03-01T10:00:00", "proposal": None, "by": li, "approved_by": None, "evidence_count": 2}
+    approved = {"id": "d2", "act": "abandoned", "at": "2024-03-02T10:00:00", "proposal": "p-1", "by": {"id": WANG, "label": "Wang"},
+                "approved_by": li, "evidence_count": 0}
+    return {"groups": [
+        group("current", "现行", item(14, "主线", "current", "现行")),
+        group("pending", "待定", item(15, "待看", "pending", "待定", "先看")),
+        group("adverse", "不利证据", item(16, "有反例", "adverse", "不利证据")),
+        group("abandoned", abandoned,
+              item(17, "事件轴", "abandoned", abandoned, "方向反了", reason="无信号", reason_from="decision", decision=direct),
+              item(18, "换变量", "abandoned", abandoned, reason="样本太小", reason_from="decision", decision=approved),
+              item(19, "旧路线", "abandoned", abandoned, reason="手写的理由", reason_from="table"),
+              item(20, "", "abandoned", abandoned, result="")),
+        group("rejected", "被否", item(21, "否决的", "rejected", "被否")),
+        group("archived", "归档", item(22, "封存的", "archived", "归档")),
+        group("labelled", "成立", item(23, "成立的", "labelled", "成立")),
+        group("other", "其它", item(24, "无标记", "other", "其它", "随手写的"))], "decisions_problem": "decisions.toml: boom"}
+
+
+def _kept_basis() -> dict:
+    """/api/evidence for the route above: a direct abandonment whose files show every role, state and standing now (the
+    engine's own Chinese labels beside the codes, as it sends them), and an approved one that has left decisions.toml."""
+
+    def file(path: str, role: str, state: str, now: str, labels: tuple[str, str, str], **extra) -> dict:
+        return {"path": path, "role": role, "state": state, "sha256": "ab" * 32, "size": 1536, "version": "3", "node": f"script:{path}",
+                "now": now, "viewable": False, "role_label": labels[0], "state_label": labels[1], "now_label": labels[2], **extra}
+
+    li, wang = {"id": "li@example.com", "label": "Li"}, {"id": WANG, "label": "Wang"}
+    files = [file("steps/a.py", "script", "kept", "same", ("步骤脚本", "内容已保存", "现在仍是这一版"), viewable=True),
+             file("steps/b.py", "script", "kept", "changed", ("步骤脚本", "内容已保存", "之后改过"), viewable=True),
+             file("steps/c.py", "script", "kept", "changed", ("步骤脚本", "内容已保存", "之后改过"), viewable=True),
+             file("out/d.csv", "output", "fingerprint", "missing", ("脚本写出的文件", "只记下了指纹", "现在已不在项目里"), sha256=None, size=20),
+             file("notes/e.md", "file", "missing", "unknown", ("关联的文件", "当时文件已不存在", ""), size=None),
+             file("data/f.csv", "file", "dataless", "unknown", ("关联的文件", "当时文件只在云端", "")),
+             file("data/g.csv", "file", "unreadable", "unknown", ("关联的文件", "当时文件无法读取", ""))]
+    return {"id": _EVIDENCE_OF, "name": "事件轴", "decisions": [
+        {"id": "d1", "act": "abandoned", "at": "2024-03-01T10:00:00", "proposal": None, "by": li, "approved_by": None, "result": "t=0.1",
+         "reason": "无信号", "note": None, "verdict_status": _st("abandoned", "已放弃", "方向反了"), "files": files},
+        {"id": "d2", "act": "abandoned", "at": "2024-03-02T10:00:00", "proposal": "p-1", "by": wang, "approved_by": li, "result": "t=0.2",
+         "reason": "样本太小", "note": "先补稳健性", "missing_from_file": True, "files": []},
+        {"id": "d3", "act": "approved", "at": "2024-03-03T10:00:00", "proposal": "p-2", "by": wang, "approved_by": li, "files": files[:1]}]}
+
+
+_ROUTES_LIST_STEPS = """
+  Object.assign(global, { panelTitle: panelPart("panel-title"), panelSubtitle: panelPart("panel-subtitle"), panelBody: panelPart("panel-body") });
+  global.state.attemptsConfig = true; global.clearProjectState = () => {};
+  views.list = el("div", "host");
+  await window.ROTeam.loadRoutes(views.list);
+  global.extra = { list: dump(views.list, []) };
+  if (%(more)s) {
+    window.ROTeam.showAbandoned();
+    await window.ROTeam.loadRoutes(views.list);
+    extra.filtered = dump(views.list, []);
+    await window.ROTeam.openEvidence(%(basis)s, { number: "17", title: "事件轴" });
+    extra.evidence = panelLines();
+    for (const b of panelPart("panel-body").all().filter((k) => k.tag === "BUTTON" && k.cls.has("btn"))) { b.click(); await settle(); await settle(); }
+    extra.opened = panelLines();
+    await window.ROTeam.openEvidence("attempt:map.md#99", null);
+    extra.unread = panelLines();
+    await window.ROTeam.openEvidence(%(none)s, null);
+    extra.bare = panelLines();
+  }
+"""
+
+
+def _routes_list(role: str, routes: dict, lang: str, more: bool = True) -> dict:
+    """The list half of 研究路线 (and, with `more`, its abandoned filter and 「当时的依据」 with each file's content opened)
+    drawn by the real team.js for `role` in `lang`, as lines of "class: words"."""
+    from urllib.parse import quote
+
+    case = _team_case(role, lang)
+    case["get"]["/api/routes"] = routes
+    case["get"]["/api/evidence?node=" + quote(_EVIDENCE_OF, safe="")] = _kept_basis()
+    case["get"]["/api/evidence?node=" + quote(_NO_BASIS, safe="")] = {"id": _NO_BASIS, "name": "x", "decisions": []}
+    node = quote("script:steps/", safe="")
+    sha = "ab" * 32
+    case["get"][f"/api/history/version?node={node}a.py&sha256={sha}"] = {"text": "alpha = 1\n", "at": "2024-03-01T09:00:00", "truncated": True}
+    case["get"][f"/api/history/version?node={node}b.py&sha256={sha}"] = {"text": None, "reason_code": "not_kept", "reason": "这一版只记下了指纹和大小，没有保存内容"}
+    case["get"][f"/api/history/version?node={node}c.py&sha256={sha}"] = {"text": None, "reason_code": "not_text", "reason": "这一版不是文本，不在这里显示"}
+    steps = _ROUTES_LIST_STEPS % {"more": "true" if more else "false", "basis": json.dumps(_EVIDENCE_OF), "none": json.dumps(_NO_BASIS)}
+    return _run_team(case, steps, lang=None if lang == "zh" else lang)["extra"]
+
+
+def _headings(lines: list[str]) -> list[str]:
+    return [line.split(": ", 1)[1] for line in lines if line.startswith("route-group-title: ")]
+
+
+def _theirs_removed(lines: list[str]) -> list[str]:
+    """What Research OS wrote on each line that still holds Chinese, the researcher's text taken out."""
+    theirs = "|".join(map(re.escape, sorted(_ROUTE_THEIRS, key=len, reverse=True)))
+    return [stripped for stripped in (re.sub(theirs, "", line) for line in lines) if CJK.search(stripped)]
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_18_3_the_routes_list_and_the_basis_of_an_abandonment_read_in_the_screens_language(lang):
+    """18.3 / 13.7: 研究路线's 列表 half -- the group headings (the desk's verdict word of each group's status code), each
+    abandoned route's result and reason (with who abandoned it, or who proposed and who approved), the filter bar, the
+    note for someone outside the team, and the decisions.toml warning -- and 「当时的依据」, whose files are worded from
+    their role, state and standing-now codes (the engine's Chinese labels beside them are not shown), draw with no Chinese
+    on an English screen but the researcher's own text and the word they named; in Chinese they read as they did."""
+    w = _w(lang)
+    out = _routes_list("none", _list_routes(), lang)
+    lines = out["list"]
+    assert _headings(lines) == w(["现行", "待定", "不利证据", "已放弃", "被否", "归档", "成立", "其它"],
+                                 ["Current", "Pending", "Adverse evidence", "Abandoned", "Rejected", "Archived", "成立", "Other"])
+    assert _headings(out["filtered"]) == w(["已放弃"], ["Abandoned"])
+    for line in [
+        "desk-alone: " + w("你还不是这个项目的成员：请 PI 把你加入团队，然后同步",
+                           "You are not a member of this project yet: ask the PI to add you to the team, then sync"),
+        "team-line warn: " + w("批准记录（decisions.toml）现在无法读取：放弃理由只显示尝试表里写着的",
+                               "The approval records (decisions.toml) cannot be read right now: abandonment reasons are "
+                               "shown only as the attempt table has them"),
+        "status-label tone-gray: " + w("已放弃", "Abandoned"), "status-label tone-olive: " + w("现行", "Current"),
+        "route-fact: " + w("结果：t=0.1", "Result: t=0.1"), "route-fact: " + w("理由：无信号", "Reason: 无信号"),
+        "route-src: " + w("由 Li 放弃", "Abandoned by Li"),
+        "route-src: " + w("放弃于 2024年3月1日，记录了 2 个文件的状态", "Abandoned 1 Mar 2024; recorded the state of 2 files"),
+        "route-src: " + w("提议人 Wang，批准人 Li", "Proposed by Wang, approved by Li"),
+        "route-src: " + w("放弃于 2024年3月2日，当时这条路线没有关联的文件", "Abandoned 2 Mar 2024; the route had no linked files then"),
+        "route-src: " + w("写在尝试表里", "Written in the attempt table"),
+        "route-title: " + w("（无描述）", "(no description)"), "route-fact: " + w("结果：（没有写）", "Result: (nothing written)"),
+        "btn btn-small: " + w("当时的依据", "The basis then"),
+    ]:
+        assert line in lines, line
+    for line in [": " + w("只显示已放弃的路线，每条附当时的结果和理由。",
+                           "Only the abandoned routes are shown, each with its result and reason at the time."),
+                 "btn btn-small: " + w("显示全部路线", "Show all routes")]:
+        assert line in out["filtered"] and line not in lines, line
+    evidence = out["evidence"]
+    assert evidence[:2] == ["panel-title: " + w("当时的依据", "The basis then") + " (title: 事件轴)", "panel-subtitle: #17 事件轴"]
+    for line in [
+        "desk-what strong: " + w("放弃这条路线", "Route abandoned"), "desk-what strong: " + w("批准", "Approved"),
+        "desk-meta: " + w("2024年3月1日 · 由 Li 放弃", "1 Mar 2024 · Abandoned by Li"),
+        "desk-meta: " + w("2024年3月2日 · 提议人 Wang · 批准人 Li", "2 Mar 2024 · Proposed by Wang · Approved by Li"),
+        "desk-note: " + w("结果：t=0.1", "Result: t=0.1"), "desk-note: " + w("理由：样本太小", "Reason: 样本太小"),
+        "desk-note: " + w("PI 的附言：先补稳健性", "PI’s note: 先补稳健性"),
+        "team-line warn: " + w("这条记录已经不在 decisions.toml 里了（这台电脑记得它）。",
+                               "This record is no longer in decisions.toml (this Mac remembers it)."),
+        "panel-h3: " + w("放弃时的文件状态", "File state when abandoned"), "panel-h3: " + w("批准时的文件状态", "File state at approval"),
+        "node-empty: " + w("当时没有找到属于这条路线的文件。", "No files belonging to this route were found then."),
+        "evidence-role: " + w("步骤脚本", "Step script"), "evidence-role: " + w("脚本写出的文件", "File written by the script"),
+        "evidence-role: " + w("关联的文件", "Linked file"),
+        "desk-meta: " + w("内容已保存 · 1.5 KB · 现在仍是这一版", "Content kept · 1.5 KB · Still this version now"),
+        "desk-meta: " + w("内容已保存 · 1.5 KB · 之后改过", "Content kept · 1.5 KB · Changed since"),
+        "desk-meta: " + w("只记下了指纹 · 20 字节 · 现在已不在项目里", "Only the fingerprint was recorded · 20 bytes · No longer in the project"),
+        "desk-meta: " + w("当时文件已不存在", "The file did not exist then"),
+        "desk-meta: " + w("当时文件只在云端 · 1.5 KB", "The file was only in the cloud then · 1.5 KB"),
+        "desk-meta: " + w("当时文件无法读取 · 1.5 KB", "The file could not be read then · 1.5 KB"),
+        "evidence-sha mono: " + w("指纹 ", "Fingerprint ") + "ab" * 8, "btn btn-small: " + w("查看当时的内容", "View the content then"),
+    ]:
+        assert line in evidence, line
+    opened = out["opened"]
+    for line in [
+        "desk-meta: " + w("当时的内容，记下于 2024年3月1日", "The content then, recorded 1 Mar 2024"),
+        "evidence-text: alpha = 1\n", "team-line quiet: " + w("内容太长，只显示了开头。", "The content is too long: only the beginning is shown."),
+        "team-line quiet: " + w("这一版只记下了指纹和大小，没有保存内容",
+                                "Only this version’s fingerprint and size were recorded; its content was not kept"),
+        "team-line quiet: " + w("这一版不是文本，不在这里显示", "This version is not text, so it is not shown here"),
+        "btn btn-small: " + w("收起", "Show less"),
+    ]:
+        assert line in opened, line
+    assert out["unread"][-1] == "notice-status err: " + w("没能读到这条路线当时的依据", "Could not read the basis this route had then")
+    assert out["bare"][-1] == "team-line quiet: " + w("这条路线没有经批准记下的依据：它是在尝试表里直接改的。",
+                                                      "This route has no approved basis on record: it was changed directly in the attempt table.")
+    if lang == "en":
+        everything = lines + out["filtered"] + evidence + opened + out["unread"] + out["bare"]
+        assert _theirs_removed(everything) == [] and not any(FORBIDDEN.search(line) for line in everything)
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_18_3_a_status_the_researcher_named_heads_its_group_in_their_word_and_a_members_returned_route_reads_in_english(lang):
+    """A group whose status is 已放弃 but whose word the researcher named in [verdict_labels] is headed by their word, as
+    written in either language (the heading is the desk's verdict word of the group's status code, like the chips on its
+    rows). A member's list says 我的提议 and, for a returned route with no description, its title and 退回的理由."""
+    w = _w(lang)
+    out = _routes_list("none", _list_routes("死路"), lang, more=False)
+    assert _headings(out["list"])[3] == "死路" and "status-label tone-gray: 死路" in out["list"]
+    member = _team_case("member", lang)
+    member["get"]["/api/routes"] = _list_routes()
+    returned = {"id": "p4", "kind": "attempt_new", "state": "returned", "by": WANG, "at": "2024-03-01T10:00:00", "sentence": "",
+                "attempt": {"number": "19", "date": "08-01", "description": "", "verdict_status": _st("pending", "待定")},
+                "outcomes": [{"act": "returned", "text": "先补稳健性"}]}
+    member["get"]["/api/proposals"]["proposals"].append(returned)
+    steps = "global.state.attemptsConfig = true; global.clearProjectState = () => {};\n" \
+            "views.list = el('div', 'host'); await window.ROTeam.loadRoutes(views.list); global.extra = dump(views.list, []);"
+    lines = _run_team(member, steps, lang=None if lang == "zh" else lang)["extra"]
+    for line in ["route-group-title serif: " + w("我的提议", "My proposals"), "route-title: " + w("（无描述）", "(no description)"),
+                 "desk-note: " + w("退回的理由：先补稳健性", "Reason for return: 先补稳健性"),
+                 "status-label tone-gray: " + w("已退回", "Returned")]:
+        assert line in lines, line
+    if lang == "en":
+        assert _theirs_removed(lines) == []
