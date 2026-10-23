@@ -259,7 +259,7 @@ def test_the_engines_sentences_call_an_attempts_cell_and_a_link_judgment_by_the_
         assert "verdict" not in reason_en.lower(), code
     prot = {"dirs": [".researchos", ".git"], "files": ["data/raw.csv", "research/attempts.md"], "data": ["data/raw.csv"],
             "records": ["research/attempts.md"]}
-    for runner in ("claude-code", "opencode"):
+    for runner in ("claude-code", "opencode", "codex"):
         text_zh, text_en = brief.rules(lang="zh", runner=runner, prot=prot), brief.rules(lang="en", runner=runner, prot=prot)
         rule_zh = next(line for line in text_zh.splitlines() if line.startswith("1. "))
         rule_en = next(line for line in text_en.splitlines() if line.startswith("1. "))
