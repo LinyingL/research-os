@@ -48,17 +48,24 @@ as well. Raw HTML is shown as text in the preview.
 
 ## Let an AI agent carry out a task
 
-A task's owner can be an AI agent on your Mac: Claude Code, or a model
+A task's owner can be an AI agent on your Mac: Codex, Claude Code, or a model
 reached through OpenCode. The agent does the task itself, not a draft of it.
 
-**Set up.** Install Claude Code or OpenCode and sign in to it. Install
+**Set up.** Install Codex, Claude Code, or OpenCode and sign in to it. Install
 Research OS with the optional MCP extra (see the
 [README](../README.md#optional-ai-agents)); without it, **Run** says what is
 missing. In the task area open **AI agent**. Research OS shows whether it
 found each program and its version; if not, enter the program's full path.
-Add an agent by choosing the program and a model name: `sonnet`, `opus` or
-a full model name for Claude Code, or `provider/model` as `opencode models`
-lists it. A model served locally through OpenCode works the same way.
+Add an agent by choosing the program and **Model version**. Codex's list
+shows full IDs such as `gpt-6.1-sol`; **Refresh models** reads the current
+catalog. **Enter a full ID…** accepts an exact version or snapshot, including
+Claude Code model IDs and OpenCode's `provider/model` names. Research OS
+passes that ID unchanged; the runner decides whether your account can use it.
+Codex uses its own `codex login` authentication and can also use the CLI
+bundled with the macOS desktop app. GPT-5.5 requires API authentication;
+it is no longer available with ChatGPT sign-in. See the
+[Codex model guide](https://learn.chatgpt.com/docs/models).
+A model served locally through OpenCode works the same way.
 
 **Run.** Set the task's **Owner** to the agent and click **Run**. The first
 time you run each agent after opening the page, the app tells you where
@@ -95,8 +102,8 @@ with **Undo this run** beside it. A run that ends with one reads **Went out
 of bounds**, never Done, whatever else happened; the task keeps the done mark
 the agent gave it. Git's hooks and configuration (`.git/hooks`, `.git/config`)
 and Research OS's backups count too: a hook planted, or a backup deleted, is
-out of bounds. So are the settings of Claude Code and OpenCode in the project
-(`.claude/`, `.opencode/`, `opencode.json`): a run cannot write them, and a
+out of bounds. So are the settings of the agent programs in the project
+(`.claude/`, `.opencode/`, `.codex/`, `opencode.json`): a run cannot write them, and a
 change there is out of bounds, since a later run would otherwise load what an
 earlier one wrote. Claude Code does not load the project's own
 `.claude/settings*.json` at all.
@@ -142,7 +149,8 @@ started the run. The result record opens with a line saying which agent
 wrote it, when, and for whom. For a file tracked by git, the history is
 git's; the run log names the agent's change.
 
-**Privacy.** Claude Code sends the project content it reads to Anthropic.
+**Privacy.** Codex sends the project content it reads to OpenAI.
+Claude Code sends the project content it reads to Anthropic.
 OpenCode sends it to the model provider you configured in OpenCode, which
 may be a server on your Mac. Research OS does not send it anywhere itself.
 
@@ -157,7 +165,11 @@ cannot read.
 
 **Limits.** The checks are a barrier, not a sandbox: they read the agent's
 commands as text, so an agent set on getting around them with shell commands
-could. OpenCode is checked only after the run. Use a backed-up copy of the
+could. OpenCode is checked only after the run. Codex uses a workspace-write
+sandbox and is checked afterward; it has no Research OS check before each
+tool call. Codex runs ignore user configuration and execution rules; the
+run supplies its own sandbox and dedicated Research OS tools without
+changing the user's Codex settings or login. Use a backed-up copy of the
 project until you trust the result.
 
 ## Save and review

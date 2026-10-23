@@ -1968,9 +1968,11 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
     if not found.found or found.path is None:
         raise agent_manager.AgentError("runner_missing")
     try:
-        return {"runner": runner, "models": agent_profiles.opencode_models(found.path)}
+        read_models = agent_profiles.codex_models if runner == "codex" else agent_profiles.opencode_models
+        return {"runner": runner, "models": read_models(found.path)}
     except RuntimeError as exc:
-        raise _AgentRefusal("models_failed", 502, str(exc), "读取不到 OpenCode 的模型列表") from exc
+        words = "读取不到 Codex 的模型列表" if runner == "codex" else "读取不到 OpenCode 的模型列表"
+        raise _AgentRefusal("models_failed", 502, str(exc), words) from exc
 
 
 def agents_settings_payload(body: dict[str, Any]) -> dict[str, Any]:

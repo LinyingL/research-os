@@ -30,8 +30,13 @@
 
 ### AI agents
 
-- Assign tasks to a locally installed Claude Code or OpenCode program. Agents
+- Assign tasks to a locally installed Codex, Claude Code, or OpenCode program. Agents
   can write code, run analysis, and finish with a result record linked to the task.
+- Select complete model versions from the runner's catalog, or enter a full ID.
+  Preserve the selected ID for task ownership, execution, and continuation.
+  Detect the macOS desktop app's bundled Codex CLI as well as saved paths.
+- Run Codex in a workspace-write sandbox with a dedicated Research OS MCP
+  server, JSON event logs, and continuation in the recorded session.
 - Show progress, commands, file changes, questions, and completion reports.
   Answer questions or send completed work back for revision.
 - Preview undo actions, choose files to keep, and restore supported changes.

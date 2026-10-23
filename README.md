@@ -32,7 +32,7 @@ This version brings writing and AI task execution into the research workspace:
   enabled. Ordinary changes to an existing attempt's assessment and result
   can be saved directly, with undo; abandoning a route still records a reason
   and preserves its basis.
-- **AI agents:** assign tasks to Claude Code or OpenCode, follow their work,
+- **AI agents:** assign tasks to Codex, Claude Code, or OpenCode, follow their work,
   answer questions, and receive a result record. Preview the files an undo
   would affect and choose which changes to keep.
 - **Interface and engine improvements:** clearer terms in English and Chinese,
@@ -112,7 +112,7 @@ research records, variables, and team commands.
 
 ### Optional: AI agents
 
-Research OS runs the **Claude Code** or **OpenCode** program installed on
+Research OS runs the **Codex**, **Claude Code**, or **OpenCode** program installed on
 your Mac. Install and configure your chosen program first, and check that
 it works from your terminal. OpenCode can use a local model through LM
 Studio or Ollama when configured for that provider.
@@ -127,6 +127,15 @@ If a run reports an expired OAuth token, sign in again:
 claude auth login --claudeai
 ```
 
+For Codex, sign in with `codex login`. Research OS also detects the CLI
+bundled with the macOS desktop app. It uses Codex's existing authentication;
+no API key is required when signing in with ChatGPT. Choose an available full
+model ID, such as `gpt-6.1-sol`, from the model version list, or enter an ID
+manually. **Refresh models** reloads Codex's catalog. Model access depends on
+your account and login method; GPT-5.5 is no longer available with ChatGPT
+sign-in, but remains available with API authentication. See the
+[Codex model guide](https://learn.chatgpt.com/docs/models).
+
 Install Research OS with the optional MCP dependency so the agent can
 report back:
 
@@ -138,7 +147,7 @@ researchos app
 From a checkout, use `python -m pip install -e ".[mcp]"`.
 
 In **Project home**, open **AI agent** in the task area and add the program
-and model. Select it as a task's **Owner**, save, and click **Run**. The agent
+and model version. Select it as a task's **Owner**, save, and click **Run**. The agent
 works in the project folder: it can read files, write code, run analysis,
 and write notes. Its completion report becomes a result record linked to
 the task.
@@ -156,6 +165,7 @@ team approval stay with people.
 Agent checks restrict changes to existing data and project records, but
 are not an operating system sandbox. Claude Code has checks before tool
 calls; OpenCode relies on its permissions and the comparison after a run.
+Codex runs in its workspace-write sandbox, with changes checked afterward.
 Undo keeps copies of files up to 16 MB for the newest 20 runs, leaves later
 edits alone, and cannot reverse installed software or changes outside the
 project. See the [agent guide](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task)

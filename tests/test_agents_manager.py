@@ -55,7 +55,7 @@ def arg_after(*names):
     return None
 
 
-session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_after("--session") or "ses_fake_" + str(os.getpid()))
+session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_after("resume") or "codex_fake_" + str(os.getpid())) if flavor == "codex" else (arg_after("--session") or "ses_fake_" + str(os.getpid()))
 with open(HERE / "calls.jsonl", "a") as handle:
     handle.write(json.dumps({"argv": sys.argv, "stdin": stdin_text, "cwd": os.getcwd(),
                              "env": {k: v for k, v in os.environ.items()
@@ -80,18 +80,25 @@ cost = 0.0
 for step in scenario.get("steps", []):
     op = step["op"]
     if op == "init":
-        if flavor == "claude":
+        if flavor == "codex":
+            emit({"type": "thread.started", "thread_id": session})
+            emit({"type": "turn.started"})
+        elif flavor == "claude":
             emit({"type": "system", "subtype": "init", "session_id": session, "cwd": os.getcwd(),
                   "model": scenario.get("model", "claude-fake-1"), "mcp_servers": []})
         else:
             emit({"type": "step_start", "timestamp": 1, "sessionID": session, "part": {"type": "step-start"}})
     elif op == "say":
-        if flavor == "claude":
+        if flavor == "codex":
+            emit({"type": "item.completed", "item": {"id": "say", "type": "agent_message", "text": step["text"]}})
+        elif flavor == "claude":
             emit({"type": "assistant", "session_id": session, "message": {"content": [{"type": "text", "text": step["text"]}]}})
         else:
             emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": step["text"]}})
     elif op == "tool":
-        if flavor == "claude":
+        if flavor == "codex":
+            emit({"type": "item.completed", "item": {"id": "tool", "type": "mcp_tool_call", "server": "researchos", "tool": step["name"], "arguments": step["input"]}})
+        elif flavor == "claude":
             emit({"type": "assistant", "session_id": session, "message": {"content": [
                 {"type": "tool_use", "id": "toolu_1", "name": step["name"], "input": step["input"]}]}})
         else:
@@ -162,7 +169,13 @@ for step in scenario.get("steps", []):
                            tasks_sha=saved["tasks_revision"], paths=[doc["path"], "research/tasks.json"])
     elif op == "result":
         cost = step.get("cost", 0.0123)
-        if flavor == "claude":
+        if flavor == "codex":
+            if step.get("is_error"):
+                emit({"type": "turn.failed", "error": {"message": step.get("text", "boom")}})
+            else:
+                emit({"type": "item.completed", "item": {"id": "final", "type": "agent_message", "text": step.get("text", "All done.")}})
+                emit({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 2}})
+        elif flavor == "claude":
             emit({"type": "result", "subtype": step.get("subtype", "success"), "is_error": step.get("is_error", False),
                   "result": step.get("text", "All done."), "session_id": session, "total_cost_usd": cost,
                   "errors": step.get("errors")} if step.get("errors") else
@@ -195,7 +208,7 @@ class Scene:
         self.bins: dict[str, Path] = {}
         self.pidfiles: list[Path] = []
         monkeypatch.setattr(profiles, "mcp_available", lambda: True)
-        for runner, program in (("claude-code", "claude"), ("opencode", "opencode")):
+        for runner, program in profiles.PROGRAMS.items():
             folder = tmp_path / f"bin-{program}"
             folder.mkdir()
             script = folder / program
@@ -231,7 +244,7 @@ class Scene:
     def scenario(self, steps: list[dict], runner: str = "claude-code", task_id: str = "t1", **extra) -> None:
         owner = next(t["owner"] for t in workspace.read_tasks(self.root)[0] if t["id"] == task_id)
         agent = labels.parse_owner(owner)
-        body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
+        body = {"flavor": "claude" if runner == "claude-code" else runner, "steps": steps,
                 "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
                 "by": "m-1", "home": str(paths.researchos_home()), **extra}
         (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
@@ -559,6 +572,35 @@ def test_opencode_error_event_fails(scene: Scene):
     run = scene.go([init_step(), {"op": "result", "is_error": True, "text": "provider said no"},
                     {"op": "exit", "code": 1}], runner="opencode")
     assert run["state"] == "failed" and run["error"] == {"code": "model_error", "detail": "provider said no"}
+
+
+def test_codex_question_resume_report_and_undo(scene: Scene):
+    scene.write_tasks([{"id": "t1", "text": "Compare paper planes", "owner": "agent:codex:gpt-6.1-sol"}])
+    first = scene.go([init_step(), {"op": "ask", "question": "Which design?"}, finish_step("Waiting")], runner="codex")
+    assert first["state"] == "needs_input" and first["session_id"].startswith("codex_fake_")
+    assert first["model"] == "gpt-6.1-sol" and first["cost_usd"] is None
+    scene.scenario([init_step(), {"op": "write", "path": "comparison.py", "text": "design = 'A'\n"},
+                    {"op": "complete", "report": "Compared design A."}, finish_step("Done")], runner="codex")
+    second = scene.wait(scene.manager.reply(scene.root, scene.pid, first["id"], "Design A", by=None,
+                                            by_name=None, lang="en")["id"])
+    assert second["state"] == "done" and scene.tasks()["t1"]["done"]
+    call = scene.calls("codex")[-1]
+    assert call["argv"][-3:] == ["resume", first["session_id"], "-"]
+    assert "Design A" in call["stdin"]
+    assert (scene.root / scene.tasks()["t1"]["report"]).exists()
+    scene.manager.revert(scene.root, scene.pid, second["id"], by=None)
+    assert not scene.tasks()["t1"]["done"] and not (scene.root / "comparison.py").exists()
+
+
+def test_codex_project_settings_change_is_detected_and_reversible(scene: Scene):
+    scene.write_tasks([{"id": "t1", "text": "Compare", "owner": "agent:codex:gpt-6.1-sol"}])
+    run = scene.go([init_step(), {"op": "write", "path": ".codex/config.toml", "text": "model = 'other'\n"},
+                    finish_step()], runner="codex")
+    assert run["state"] == "out_of_bounds"
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert any(v["reason"] == "agent_settings_changed" for v in detail["violations"])
+    scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert not (scene.root / ".codex/config.toml").exists()
 
 
 # -- start() refusals ----------------------------------------------------------------------------------

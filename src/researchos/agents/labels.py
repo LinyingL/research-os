@@ -21,8 +21,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-RUNNERS = ("claude-code", "opencode")
-RUNNER_LABELS = {"claude-code": "Claude Code", "opencode": "OpenCode"}
+RUNNERS = ("claude-code", "opencode", "codex")
+RUNNER_LABELS = {"claude-code": "Claude Code", "opencode": "OpenCode", "codex": "Codex"}
 OWNER_PREFIX = "agent:"
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,119}\Z")
 

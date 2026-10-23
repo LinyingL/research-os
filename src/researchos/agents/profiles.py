@@ -16,7 +16,7 @@ before it writes: a model name ends up on a command line, so it is checked
 by `labels.check_model` (never starts with `-`).
 
 **Finding a program.** An app opened from the Finder has none of the shell's
-`PATH`, so `search_path` widens it with the usual install folders of both
+`PATH`, so `search_path` widens it with the usual install folders of the
 programs (17.1). Found means an executable regular file that answers
 `--version` within `VERSION_TIMEOUT_S`; the version is shown. Research OS
 never installs a runner. A version that was answered is remembered in memory
@@ -36,6 +36,7 @@ the engine.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 import re
@@ -61,7 +62,14 @@ VERSION_TIMEOUT_S = 10
 MODELS_TIMEOUT_S = 30
 
 #: The program each runner is.
-PROGRAMS = {"claude-code": "claude", "opencode": "opencode"}
+PROGRAMS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex"}
+# The desktop app's CLI can be used without installing a second copy. A saved path still wins.
+CODEX_APP_COMMANDS = (
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "~/Applications/Codex.app/Contents/Resources/codex",
+)
 
 AGENTS_SETTING = "agents"
 COMMANDS_SETTING = "agent_commands"
@@ -310,6 +318,13 @@ def find(runner: str, *, check_version: bool = True) -> Found:
             return Found(runner, saved, None, "not_executable")
         path = saved
     else:
+        if runner == "codex":
+            for candidate in CODEX_APP_COMMANDS:
+                candidate = os.path.expanduser(candidate)
+                if _is_executable_file(candidate):
+                    version = _remembered_version(candidate) if check_version else None
+                    if version or not check_version:
+                        return Found(runner, candidate, version, None)
         found = shutil.which(PROGRAMS[runner], path=search_path())
         if found is None:
             return Found(runner, None, None, "missing")
@@ -439,3 +454,33 @@ def opencode_models(path: str) -> list[str]:
         if _MODEL_LINE_RE.match(line) and line not in models:
             models.append(line)
     return models
+
+
+def codex_models(path: str) -> list[str]:
+    """Read Codex's refreshed catalog, retaining complete IDs and omitting hidden models.
+
+    No inference request is made. Failure is reported rather than offering an invented catalog;
+    the user can still enter a full model ID (including one used with an API-key account).
+    """
+    try:
+        code, out, err = _run([path, "debug", "models"], env=_program_env(), timeout=MODELS_TIMEOUT_S)
+    except (TimeoutError, OSError) as exc:
+        raise RuntimeError(f"could not list Codex models: {exc}") from None
+    if code:
+        detail = next((line.strip() for line in (err or out).splitlines() if line.strip()), "")
+        raise RuntimeError(f"codex debug models failed (exit {code})" + (f": {detail[:300]}" if detail else ""))
+    try:
+        data = json.loads(out)
+        rows = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("expected a model catalog")
+        result = []
+        for item in rows:
+            if not isinstance(item, dict) or item.get("visibility") == "hide":
+                continue
+            model = item.get("slug")
+            if isinstance(model, str) and labels.MODEL_RE.fullmatch(model) and model not in result:
+                result.append(model)
+        return result
+    except (ValueError, RecursionError) as exc:
+        raise RuntimeError(f"could not read Codex's model catalog: {exc}") from None

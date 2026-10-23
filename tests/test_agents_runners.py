@@ -16,12 +16,71 @@ import shutil
 import subprocess
 import sys
 import types
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from researchos import names
 from researchos.agents import brief, guard, runners, snapshot
+
+
+def test_codex_launch_isolated_config_exact_version_and_targeted_resume(tmp_path, profiles_mod):
+    root = tmp_path / "Paper planes 🛩"
+    env = dict(CREDENTIAL_ENV, CODEX_THREAD_ID="parent", CODEX_INTERNAL_X="parent",
+               CODEX_API_KEY="codex-key", OPENAI_PROJECT_ID="project")
+    args = dict(program="/opt/bin/codex", model="gpt-6.1-sol", root=root, run_dir=tmp_path / "run",
+                run_id="r-test", session_id=None, prompt="Task and rules", home=str(tmp_path / "home"), base_env=env)
+    launch = runners.codex_launch(**args)
+    assert launch.argv[:5] == ["/opt/bin/codex", "-C", str(root), "exec", "--json"]
+    assert launch.argv[launch.argv.index("--model") + 1] == "gpt-6.1-sol"
+    assert "--ignore-user-config" in launch.argv and "--ignore-rules" in launch.argv
+    assert launch.stdin == "Task and rules" and launch.argv[-1] == "-" and "resume" not in launch.argv
+    config = tomllib.loads("\n".join(launch.argv[i+1] for i, v in enumerate(launch.argv) if v == "-c"))
+    assert config["sandbox_mode"] == "workspace-write" and config["approval_policy"] == "never"
+    assert config["sandbox_workspace_write"]["writable_roots"] == []
+    assert list(config["mcp_servers"]) == ["researchos"]
+    mcp = config["mcp_servers"]["researchos"]
+    assert mcp["required"] and mcp["args"][-1] == str(root)
+    assert mcp["enabled_tools"] == list(runners.AGENT_TOOLS)
+    assert mcp["default_tools_approval_mode"] == "approve"
+    assert mcp["env"]["RESEARCHOS_AGENT_RUN"] == "r-test"
+    for name in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "CODEX_THREAD_ID", "CODEX_INTERNAL_X", "RESEARCHOS_HOME"):
+        assert name not in launch.env
+    assert launch.env["OPENAI_API_KEY"] == "o" and launch.env["CODEX_API_KEY"] == "codex-key"
+    assert launch.env["OPENAI_PROJECT_ID"] == "project"
+    resumed = runners.codex_launch(**dict(args, session_id="019a-session", model="gpt-5.5"))
+    assert resumed.argv[-3:] == ["resume", "019a-session", "-"]
+    assert resumed.argv[resumed.argv.index("--model") + 1] == "gpt-5.5"
+
+
+def test_codex_stream_records_tools_and_requires_completed_turn():
+    stream = runners.CodexStream()
+    events = [
+        {"type": "thread.started", "thread_id": "019a-session"},
+        {"type": "item.started", "item": {"id": "t1", "type": "command_execution", "command": "python analysis.py"}},
+        {"type": "item.completed", "item": {"id": "t1", "type": "command_execution", "command": "python analysis.py"}},
+        {"type": "item.completed", "item": {"id": "t2", "type": "mcp_tool_call", "tool": "researchos_complete_task", "arguments": {}}},
+        {"type": "item.completed", "item": {"id": "msg", "type": "agent_message", "text": "Report saved"}},
+    ]
+    for event in events:
+        stream.feed(json.dumps(event))
+    assert stream.session_id == "019a-session" and stream.model is None and stream.cost_usd is None
+    assert [s["kind"] for s in stream.steps].count("tool") == 2
+    assert stream.result_text == "Report saved"
+    assert runners.outcome("codex", 0, stream)[1]["code"] == "aborted"
+    stream.feed(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 200, "output_tokens": 20}}))
+    assert runners.outcome("codex", 0, stream) == ("ok", None)
+    assert runners.outcome("codex", -15, stream)[1]["code"] == "aborted"
+
+
+def test_codex_stream_failure_is_not_a_successful_exit():
+    stream = runners.CodexStream()
+    stream.feed('{"type":"turn.failed","error":{"message":"Model is not available for this account"}}')
+    assert runners.outcome("codex", 0, stream) == (
+        "failed", {"code": "model_error", "detail": "Model is not available for this account"})
+    stream.feed("not json")
+    assert stream.is_error
 
 
 @pytest.fixture

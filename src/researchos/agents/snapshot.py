@@ -63,7 +63,7 @@ reuses nothing. The result is the picture a full read gives, `ino` and `ctime_ns
 
 **What is protected** (17.5 rules 1, 3, 5), decided from the before-picture:
 the folders `.researchos`, `.rce` and `.git`; the agent program's own project
-settings (`.claude/` and `.opencode/` at any depth, `opencode.json`: 18.1 item 2,
+settings (`.claude/`, `.opencode/` and `.codex/` at any depth, `opencode.json`: 18.1 item 2,
 a later run must not load what an earlier one wrote); every data file that existed
 before the run; the attempt table (its path read from `attempts.toml`) and
 `research/tasks.json`. `protected` is also what the hook enforces during the
@@ -650,7 +650,7 @@ def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
 
 def is_agent_settings(rel: str) -> bool:
     """Whether `rel` is the agent program's own project setting (18.1 item 2): below a folder named `.claude` or
-    `.opencode` at any depth, or an `opencode.json` / `opencode.jsonc` file anywhere."""
+    `.opencode` / `.codex` at any depth, or an `opencode.json` / `opencode.jsonc` file anywhere."""
     parts = [part.casefold() for part in rel.split("/")]
     return any(part in guard.AGENT_SETTINGS_DIRS for part in parts) or parts[-1] in guard.AGENT_SETTINGS_FILES
 
@@ -665,7 +665,7 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
     `{"path", "reason"}`: `data_changed` / `data_deleted` (a data file that
     existed before), `record_changed` / `record_deleted` (the attempt table,
     `research/tasks.json`), `researchos_changed` (anything under a folder
-    named `.researchos` or `.rce`, at any depth), `agent_settings_changed` (a `.claude` or `.opencode` folder at any
+    named `.researchos` or `.rce`, at any depth), `agent_settings_changed` (a `.claude`, `.opencode` or `.codex` folder at any
     depth, or an `opencode.json` file: `is_agent_settings`), `git_hooks_changed` (a file
     in `.git/hooks`) and `git_config_changed` (`.git/config`), `git_changed`
     (path `.git`: HEAD, branch or refs differ, or the repository is gone) and
