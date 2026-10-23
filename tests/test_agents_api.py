@@ -44,7 +44,7 @@ class Api:
         self.pid = read_identity(self.root).identity.id
         self.bins: dict[str, Path] = {}
         monkeypatch.setattr(profiles, "mcp_available", lambda: True)
-        for runner, program in (("claude-code", "claude"), ("opencode", "opencode")):
+        for runner, program in profiles.PROGRAMS.items():
             folder = tmp_path / f"bin-{program}"
             folder.mkdir()
             script = folder / program
@@ -101,7 +101,7 @@ class Api:
     def scenario(self, steps: list[dict], runner: str = "claude-code", task_id: str = "t1") -> None:
         owner = next(t["owner"] for t in workspace.read_tasks(self.root)[0] if t["id"] == task_id)
         agent = labels.parse_owner(owner)
-        body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
+        body = {"flavor": "claude" if runner == "claude-code" else runner, "steps": steps,
                 "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
                 "by": people.current_member_id(), "home": str(paths.researchos_home())}  # the fake plays the MCP server
         (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
@@ -186,16 +186,17 @@ def test_agents_work_without_a_project_served(tmp_path, monkeypatch):
     try:
         status, data = a.get("/api/agents")
         assert status == 200, data
-        assert [r["runner"] for r in data["runners"]] == ["claude-code", "opencode"]
+        assert [r["runner"] for r in data["runners"]] == ["claude-code", "opencode", "codex", "deepseek-harness"]
         assert all(r["found"] and r["version"] == "fake 1.0" and r["problem"] is None for r in data["runners"])
         assert data["runners"][0]["path"] == str(a.bins["claude-code"])
         assert data["runners"][0]["label"] == "Claude Code"
         assert data["agents"] == [] and data["mcp"] is True
-        assert data["claude_models"] == ["sonnet", "opus", "haiku", "fable"]
+        assert data["claude_models"] == list(profiles.CLAUDE_MODEL_SUGGESTIONS)
+        assert "claude-sonnet-5-5" in data["claude_models"] and "claude-opus-4-6" in data["claude_models"]
         assert data["timeout_minutes"] == 120 and data["max_budget_usd"] is None
         # the models of Claude Code need no program and no project
         assert a.get("/api/agents/models?runner=claude-code") == (
-            200, {"runner": "claude-code", "models": ["sonnet", "opus", "haiku", "fable"]})
+            200, {"runner": "claude-code", "models": list(profiles.CLAUDE_MODEL_SUGGESTIONS)})
         # settings are this Mac's, not a project's
         status, saved = a.post("/api/settings/agents", {"agents": [{"runner": "opencode", "model": "lm/qwen"}]},
                                project=False)
@@ -207,6 +208,25 @@ def test_agents_work_without_a_project_served(tmp_path, monkeypatch):
             assert status == 409 and error["state"] == "no_project", (method, path)
     finally:
         a.close()
+
+
+def test_claude_model_versions_are_saved_without_aliasing(api):
+    versions = ["claude-sonnet-5-5", "claude-sonnet-4-5-20250929"]
+    chosen = [{"runner": "claude-code", "model": model} for model in versions]
+    assert api.post("/api/settings/agents", {"agents": chosen}, project=False)[0] == 200
+    status, data = api.get("/api/agents")
+    assert status == 200 and [a["model"] for a in data["agents"]] == versions
+
+
+def test_harness_models_keep_account_and_api_routes_distinct(api):
+    status, data = api.get("/api/agents/models?runner=deepseek-harness")
+    assert status == 200 and data["models"] == list(profiles.HARNESS_MODEL_SUGGESTIONS)
+    chosen = [{"runner": "deepseek-harness", "model": m} for m in data["models"]]
+    status, saved = api.post("/api/settings/agents", {"agents": chosen}, project=False)
+    assert status == 200 and saved["harness_models"] == data["models"]
+    assert [a["model"] for a in saved["agents"]] == data["models"]
+    assert api.post("/api/settings/agents", {"agents": [{"runner": "deepseek-harness", "model": "deepseek-flash"}]},
+                    project=False)[0] == 400
 
 
 def test_agents_payload_shape_with_agents_and_a_missing_runner(api, tmp_path):
@@ -259,7 +279,7 @@ def test_settings_round_trip(api, tmp_path):
                                                       "commands": {"claude-code": ""}}, project=False)
     assert status == 200
     assert data["timeout_minutes"] == 120 and data["max_budget_usd"] is None and data["agents"] == []
-    assert profiles.commands() == {"opencode": str(api.bins["opencode"])}
+    assert profiles.commands() == {r: str(api.bins[r]) for r in ("opencode", "codex", "deepseek-harness")}
     assert api.post("/api/settings/agents", {}, project=False)[1] == data  # nothing sent, nothing changed
 
 
@@ -316,6 +336,16 @@ def test_models(api, monkeypatch, tmp_path):
     assert status == 409 and error["state"] == "agent_runner_missing" and CJK.search(error["message"])
     status, error = api.get("/api/agents/models?runner=opencode", lang="en")
     assert not CJK.search(error["message"]) and error["message"] == error["detail"]
+
+
+def test_codex_models_and_exact_version_settings(api, monkeypatch):
+    monkeypatch.setattr(profiles, "codex_models", lambda path: ["gpt-6.1-sol", "gpt-6-luna"])
+    status, data = api.get("/api/agents/models?runner=codex")
+    assert status == 200 and data == {"runner": "codex", "models": ["gpt-6.1-sol", "gpt-6-luna"]}
+    chosen = [{"runner": "codex", "model": "gpt-6.1-sol"}, {"runner": "codex", "model": "gpt-5.5"}]
+    assert api.post("/api/settings/agents", {"agents": chosen}, project=False)[0] == 200
+    _, data = api.get("/api/agents")
+    assert [a["owner"] for a in data["agents"]] == ["agent:codex:gpt-6.1-sol", "agent:codex:gpt-5.5"]
 
 
 # -- the full flow -------------------------------------------------------------------------------

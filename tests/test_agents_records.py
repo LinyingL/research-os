@@ -72,10 +72,11 @@ def test_check_model_refuses(model):
 
 def test_parse_owner():
     assert labels.parse_owner("agent:claude-code:sonnet") == AGENT
+    assert labels.parse_owner("agent:codex:gpt-6.1-sol") == labels.Agent("codex", "gpt-6.1-sol")
     assert labels.parse_owner("agent:opencode:a/b:c") == labels.Agent("opencode", "a/b:c")  # split once
     for plain in ("", "Zhang San", "me", None, 5, "Agent:claude-code:x"):
         assert labels.parse_owner(plain) is None
-    for bad in ("agent:", "agent:claude-code", "agent:claude-code:", "agent:codex:x", "agent::x",
+    for bad in ("agent:", "agent:claude-code", "agent:claude-code:", "agent:unknown:x", "agent::x",
                 "agent:claude-code:-x", "agent:claude-code: sonnet", "agent:claude-code:sonnet\n"):
         with pytest.raises(ValueError):
             labels.parse_owner(bad)
@@ -246,7 +247,7 @@ def test_bad_report_is_refused(root, report):
     assert not (root / "research/tasks.json").exists()
 
 
-@pytest.mark.parametrize("owner", ["agent:", "agent:claude-code", "agent:codex:x", "agent:claude-code:-rf",
+@pytest.mark.parametrize("owner", ["agent:", "agent:claude-code", "agent:unknown:x", "agent:claude-code:-rf",
                                    "agent:opencode:a b", "agent:claude-code:" + "m" * 121])
 def test_bad_agent_owner_is_refused(root, owner):
     with pytest.raises(workspace.WorkspaceError) as caught:

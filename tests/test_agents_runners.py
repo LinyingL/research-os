@@ -16,12 +16,149 @@ import shutil
 import subprocess
 import sys
 import types
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from researchos import names
 from researchos.agents import brief, guard, runners, snapshot
+
+
+def test_harness_launch_uses_desktop_credentials_without_rewriting_profiles(tmp_path, profiles_mod):
+    args = dict(program="/apps/dsh", model="deepseek-account/deepseek-flash", root=tmp_path / "Paper planes",
+                run_dir=tmp_path / "run", run_id="r-test", session_id=None, prompt="Task and rules",
+                home=str(tmp_path / "home"), base_env=dict(CREDENTIAL_ENV, DEEPSEEK_API_KEY="deepseek-key",
+                                                          DSH_PERMISSION_MODE="danger-full-access"))
+    launch = runners.harness_launch(**args)
+    assert launch.argv[:5] == ["/apps/dsh", "--profile", "headless", "--patch", str(tmp_path / "run/harness.patch.yml")]
+    assert launch.argv[-1] == "-" and launch.stdin == "Task and rules"
+    assert "--permission-mode" not in launch.argv and "--approval-policy" not in launch.argv
+    assert "--from-default-profile" not in launch.argv and "desktop" not in launch.argv
+    patch = json.loads(launch.files["harness.patch.yml"])
+    rows = {p["id"]: p for p in patch if "id" in p}
+    assert all(rows[n]["disabled"] is False for n in ("credentials", "authorization", "deepseek-account"))
+    assert rows["agent-default-model"]["config"] == {"provider": "deepseek-account", "model": "deepseek-flash"}
+    assert rows["sandbox-policy"]["config"]["workspaceRoot"] == str(args["root"])
+    assert rows["sandbox-policy"]["config"]["additionalWritableRoots"] == []
+    assert rows["approval"]["config"]["policy"] == "never"
+    assert rows["permission"]["config"]["presets"] == {"workspace-write": {"sandbox": "workspace-write", "approval": "never"}}
+    assert rows["session-log-deepseek"]["disabled"] and rows["session-telemetry-otel"]["disabled"]
+    mcp = patch[-1]["insert"][0]["config"]
+    assert mcp["serverName"] == "researchos" and mcp["transport"] == "stdio" and mcp["failOnStartupError"]
+    assert mcp["args"][-1] == str(args["root"]) and mcp["env"]["RESEARCHOS_AGENT_RUN"] == "r-test"
+    assert launch.env["DEEPSEEK_API_KEY"] == "deepseek-key"
+    assert not {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "RESEARCHOS_HOME", "DSH_PERMISSION_MODE"} & launch.env.keys()
+    resumed = runners.harness_launch(**dict(args, session_id="session-123", model="deepseek-official/deepseek-v4-pro"))
+    assert resumed.argv[-3:] == ["--session-id", "session-123", "-"]
+    assert '"provider": "deepseek-official"' in resumed.files["harness.patch.yml"]
+
+
+@pytest.mark.parametrize("reason,ok", [(None, False), ({"kind": "completed"}, True),
+                                       ({"kind": "aborted"}, False),
+                                       ({"kind": "error", "code": "ACCOUNT_SIGN_IN_REQUIRED", "message": "Sign in first"}, False)])
+def test_harness_stream_requires_a_completed_final_turn(reason, ok):
+    stream = runners.stream_for("deepseek-harness")
+    for event in [{"type": "session", "sessionId": "session-123", "cwd": "/project"},
+                  {"type": "thinking", "text": "reasoning"},
+                  {"type": "text", "text": "Working"},
+                  {"type": "tool_call", "callId": "1", "tool": "mcp__researchos__researchos_complete_task", "input": {}},
+                  {"type": "tool_result", "callId": "1", "status": "completed", "result": "ok"}]:
+        stream.feed(json.dumps(event))
+    assert runners.outcome("deepseek-harness", 0, stream)[1]["code"] == "aborted"
+    stream.feed(json.dumps({"type": "final", "sessionId": "session-123", "reason": reason, "text": "Report saved"}))
+    assert (runners.outcome("deepseek-harness", 0, stream) == ("ok", None)) is ok
+    assert stream.session_id == "session-123" and stream.result_text == "Report saved"
+    assert stream.model is None and stream.cost_usd is None
+    assert [s["kind"] for s in stream.steps][:3] == ["start", "say", "tool"]
+    assert runners.outcome("deepseek-harness", -15, stream)[1]["code"] == "aborted"
+
+
+def test_harness_startup_error_cannot_be_reported_as_success():
+    stream = runners.HarnessStream()
+    stream.feed("not json")
+    stream.feed('{"type":"error","message":"Unknown --session-id"}')
+    assert runners.outcome("deepseek-harness", 0, stream) == (
+        "failed", {"code": "model_error", "detail": "Unknown --session-id"})
+
+
+def test_harness_released_protocol_uses_the_last_turn_reason_and_requires_final():
+    stream = runners.HarnessStream()
+    stream.feed('{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}')
+    assert runners.outcome("deepseek-harness", 0, stream)[1]["code"] == "aborted"
+    stream.feed('{"type":"final","text":"Done"}')
+    assert runners.outcome("deepseek-harness", 0, stream) == ("ok", None)
+    assert runners.outcome("deepseek-harness", None, stream)[1]["code"] == "aborted"
+    stream = runners.HarnessStream()
+    stream.feed('{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}')
+    stream.feed('{"type":"status","phase":"turn_start"}')
+    stream.feed('{"type":"final","text":"Interrupted"}')
+    assert runners.outcome("deepseek-harness", 0, stream)[0] == "failed"
+    stream = runners.HarnessStream()
+    stream.feed('{"type":"final","text":"No turn"}')
+    assert runners.outcome("deepseek-harness", 0, stream)[0] == "failed"
+    stream = runners.HarnessStream()
+    stream.feed('{"type":"status","phase":"turn_end","reason":{"kind":"error","error":{"code":"ACCOUNT_SIGN_IN_REQUIRED","message":"Sign in to DeepSeek"}}}')
+    stream.feed('{"type":"final","text":""}')
+    assert runners.outcome("deepseek-harness", 1, stream)[1]["detail"] == "Sign in to DeepSeek"
+
+
+def test_codex_launch_isolated_config_exact_version_and_targeted_resume(tmp_path, profiles_mod):
+    root = tmp_path / "Paper planes 🛩"
+    env = dict(CREDENTIAL_ENV, CODEX_THREAD_ID="parent", CODEX_INTERNAL_X="parent",
+               CODEX_API_KEY="codex-key", OPENAI_PROJECT_ID="project")
+    args = dict(program="/opt/bin/codex", model="gpt-6.1-sol", root=root, run_dir=tmp_path / "run",
+                run_id="r-test", session_id=None, prompt="Task and rules", home=str(tmp_path / "home"), base_env=env)
+    launch = runners.codex_launch(**args)
+    assert launch.argv[:5] == ["/opt/bin/codex", "-C", str(root), "exec", "--json"]
+    assert launch.argv[launch.argv.index("--model") + 1] == "gpt-6.1-sol"
+    assert "--ignore-user-config" in launch.argv and "--ignore-rules" in launch.argv
+    assert launch.stdin == "Task and rules" and launch.argv[-1] == "-" and "resume" not in launch.argv
+    config = tomllib.loads("\n".join(launch.argv[i+1] for i, v in enumerate(launch.argv) if v == "-c"))
+    assert config["sandbox_mode"] == "workspace-write" and config["approval_policy"] == "never"
+    assert config["sandbox_workspace_write"]["writable_roots"] == []
+    assert list(config["mcp_servers"]) == ["researchos"]
+    mcp = config["mcp_servers"]["researchos"]
+    assert mcp["required"] and mcp["args"][-1] == str(root)
+    assert mcp["enabled_tools"] == list(runners.AGENT_TOOLS)
+    assert mcp["default_tools_approval_mode"] == "approve"
+    assert mcp["env"]["RESEARCHOS_AGENT_RUN"] == "r-test"
+    for name in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "CODEX_THREAD_ID", "CODEX_INTERNAL_X", "RESEARCHOS_HOME"):
+        assert name not in launch.env
+    assert launch.env["OPENAI_API_KEY"] == "o" and launch.env["CODEX_API_KEY"] == "codex-key"
+    assert launch.env["OPENAI_PROJECT_ID"] == "project"
+    resumed = runners.codex_launch(**dict(args, session_id="019a-session", model="gpt-5.5"))
+    assert resumed.argv[-3:] == ["resume", "019a-session", "-"]
+    assert resumed.argv[resumed.argv.index("--model") + 1] == "gpt-5.5"
+
+
+def test_codex_stream_records_tools_and_requires_completed_turn():
+    stream = runners.CodexStream()
+    events = [
+        {"type": "thread.started", "thread_id": "019a-session"},
+        {"type": "item.started", "item": {"id": "t1", "type": "command_execution", "command": "python analysis.py"}},
+        {"type": "item.completed", "item": {"id": "t1", "type": "command_execution", "command": "python analysis.py"}},
+        {"type": "item.completed", "item": {"id": "t2", "type": "mcp_tool_call", "tool": "researchos_complete_task", "arguments": {}}},
+        {"type": "item.completed", "item": {"id": "msg", "type": "agent_message", "text": "Report saved"}},
+    ]
+    for event in events:
+        stream.feed(json.dumps(event))
+    assert stream.session_id == "019a-session" and stream.model is None and stream.cost_usd is None
+    assert [s["kind"] for s in stream.steps].count("tool") == 2
+    assert stream.result_text == "Report saved"
+    assert runners.outcome("codex", 0, stream)[1]["code"] == "aborted"
+    stream.feed(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 200, "output_tokens": 20}}))
+    assert runners.outcome("codex", 0, stream) == ("ok", None)
+    assert runners.outcome("codex", -15, stream)[1]["code"] == "aborted"
+
+
+def test_codex_stream_failure_is_not_a_successful_exit():
+    stream = runners.CodexStream()
+    stream.feed('{"type":"turn.failed","error":{"message":"Model is not available for this account"}}')
+    assert runners.outcome("codex", 0, stream) == (
+        "failed", {"code": "model_error", "detail": "Model is not available for this account"})
+    stream.feed("not json")
+    assert stream.is_error
 
 
 @pytest.fixture
@@ -265,6 +402,12 @@ def test_claude_argv_shape(tmp_path, profiles_mod):
     assert launch.stdin == "DO THE TASK \u4efb\u52a1" and not any("DO THE TASK" in v for v in argv)
     assert launch.cwd == str(a["root"])
     assert argv.count("-p") == 1
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-4-6", "claude-sonnet-4-5-20250929"])
+def test_claude_version_is_passed_to_the_program_unchanged(tmp_path, profiles_mod, model):
+    launch, _ = _claude(tmp_path, profiles_mod, model=model)
+    assert launch.argv[launch.argv.index("--model") + 1] == model
 
 
 def test_claude_resume_and_budget(tmp_path, profiles_mod):

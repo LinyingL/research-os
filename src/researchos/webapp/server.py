@@ -128,7 +128,7 @@ Endpoints (all GET unless noted):
                             blocked project's question -- only one its
                             `situation.answers` lists (V5, DESIGN.md 9.4,
                             9.12; see `resolve_payload`).
-    GET  /api/agents    -- 17.1/17.8: the AI agents of this Mac: both runners
+    GET  /api/agents    -- 17.1/17.8: the AI agents of this Mac: the runners
                             found or not (path, version, why not), the saved
                             agents (each with `available`, `mcp`), whether
                             the optional `mcp` package is installed, the
@@ -1946,6 +1946,7 @@ def agents_payload() -> dict[str, Any]:
                    for agent in agent_profiles.agents()],
         "mcp": mcp,
         "claude_models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
+        "harness_models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS),
         "timeout_minutes": agent_profiles.timeout_minutes(),
         "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
         "max_budget_usd": agent_profiles.max_budget_usd(),
@@ -1955,7 +1956,7 @@ def agents_payload() -> dict[str, Any]:
 
 def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
     """`GET /api/agents/models?runner=`: the models to offer for a runner --
-    Claude Code's suggestions, or what `opencode models` lists (the program
+    Claude Code's versioned suggestions, or the program's catalog (the program
     must be found; the listing may take seconds)."""
     runner = (query.get("runner") or [""])[0]
     if runner not in agent_labels.RUNNERS:
@@ -1964,13 +1965,17 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
         )
     if runner == "claude-code":
         return {"runner": runner, "models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS)}
+    if runner == "deepseek-harness":
+        return {"runner": runner, "models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS)}
     found = agent_profiles.find(runner, check_version=False)
     if not found.found or found.path is None:
         raise agent_manager.AgentError("runner_missing")
     try:
-        return {"runner": runner, "models": agent_profiles.opencode_models(found.path)}
+        read_models = agent_profiles.codex_models if runner == "codex" else agent_profiles.opencode_models
+        return {"runner": runner, "models": read_models(found.path)}
     except RuntimeError as exc:
-        raise _AgentRefusal("models_failed", 502, str(exc), "读取不到 OpenCode 的模型列表") from exc
+        words = "读取不到 Codex 的模型列表" if runner == "codex" else "读取不到 OpenCode 的模型列表"
+        raise _AgentRefusal("models_failed", 502, str(exc), words) from exc
 
 
 def agents_settings_payload(body: dict[str, Any]) -> dict[str, Any]:

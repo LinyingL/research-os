@@ -30,8 +30,20 @@
 
 ### AI agents
 
-- Assign tasks to a locally installed Claude Code or OpenCode program. Agents
+- Assign tasks to a locally installed Codex, Claude Code, DeepSeek Harness, or OpenCode program. Agents
   can write code, run analysis, and finish with a result record linked to the task.
+- Select complete model versions from the runner's catalog, or enter a full ID.
+  Claude Code offers explicit Sonnet, Opus, Haiku, and Fable versions with
+  readable version labels and exact IDs; existing alias-based tasks are kept.
+  Preserve the selected ID for task ownership, execution, and continuation.
+  Detect the macOS desktop app's bundled Codex CLI as well as saved paths.
+- Run Codex in a workspace-write sandbox with a dedicated Research OS MCP
+  server, JSON event logs, and continuation in the recorded session.
+- Detect DeepSeek Harness's bundled desktop CLI and run tasks through its
+  headless interface. Choose account or API-key authentication explicitly;
+  reuse the supported credential store without changing the desktop profile.
+  Keep the workspace-write policy, MCP reports, recorded-session replies,
+  and undo. Model suggestions use official Harness IDs; custom IDs are accepted.
 - Show progress, commands, file changes, questions, and completion reports.
   Answer questions or send completed work back for revision.
 - Preview undo actions, choose files to keep, and restore supported changes.

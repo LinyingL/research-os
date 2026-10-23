@@ -90,9 +90,12 @@ let runPlans={}, bigFiles={count:0,largest:[],partial:false};
 const defaultPlan=run=>({run:clone(run),restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'}],remove:[{path:'out/new.csv',time:'2026-10-21T09:40:03+02:00'}],cannot:[]});
 const agentFixture=()=>({
   runners:[{runner:'claude-code',label:'Claude Code',path:'/usr/local/bin/claude',version:'2.1.0',problem:null,found:true},
-           {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false}],
+           {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false},
+           {runner:'codex',label:'Codex',path:'/opt/codex',version:'0.162.0',problem:null,found:true},
+           {runner:'deepseek-harness',label:'DeepSeek Harness',path:'/apps/dsh',version:'0.2.1-rc.2',problem:null,found:true}],
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
-  mcp:true, claude_models:['sonnet','opus','haiku'], timeout_minutes:120, max_budget_usd:null });
+  harness_models:['deepseek-account/deepseek-flash','deepseek-official/deepseek-v4-pro'],
+  mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
   created:'2026-10-21T09:00:00Z',started:null,ended:null,question:null,report:null,error:null,cost_usd:null,by:null,by_name:null,
@@ -110,7 +113,7 @@ global.apiGet=async path=>{
   if(plan) { const id=decodeURIComponent(plan[1]); return clone(runPlans[id]||defaultPlan(runById(id))); }
   if(path==='/api/agents/runs'&&runsList) return clone(runsList);
   if(path.startsWith('/api/agents/runs/')&&runLogs[decodeURIComponent(path.split('/').pop())]) return clone(runLogs[decodeURIComponent(path.split('/').pop())]);
-  if(path==='/api/agents/models?runner=opencode'&&modelsList) return {models:clone(modelsList)};
+  if(path.startsWith('/api/agents/models?runner=')&&modelsList) return {models:clone(modelsList)};
   if(path==='/api/me'&&meInfo) return clone(meInfo);
   if(path==='/api/share'&&shareInfo) return clone(shareInfo);
   throw Error('unexpected GET '+path);
@@ -1320,14 +1323,14 @@ Object.assign(agentsInfo.runners[1],{path:'/opt/opencode',version:'0.9.0',proble
 await window.ROWorkspace.load(root);await sleepTick();
 await find('AI 执行者').click();
 const box=()=>byClass('ws-agent-settings'),add=()=>byClass('ws-agent-add',box()).parentNode;
-const suggestions=()=>byClass('ws-agent-settings').all().filter(e=>e.tagName==='DATALIST')[0].children.map(o=>o.value);
+const suggestions=()=>field('模型版本',box()).children.map(o=>o.value).filter(v=>v&&v!=='__custom__');
 const claude=suggestions();
 await find('添加',box()).click();const empty=posted.length;
-typed(field('模型',box()),'opus');await find('添加',box()).click();await sleepTick();
+const choice=field('模型版本',box());choice.value='claude-opus-4-6';await choice.emit('change');await find('添加',box()).click();await sleepTick();
 const afterAdd=optionsOf(field('负责人'));
 const runner2=field('程序',box());runner2.value='opencode';await runner2.emit('change');await sleepTick();
 const opencode=suggestions();
-typed(field('模型',box()),'lmstudio/qwen3-coder');await find('添加',box()).click();await sleepTick();
+const choice2=field('模型版本',box());choice2.value='lmstudio/qwen3-coder';await choice2.emit('change');await find('添加',box()).click();await sleepTick();
 const removeButtons=()=>box().all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除');
 await removeButtons()[0].click();await sleepTick();
 const minutes=field('每次运行的时间限制（分钟）',box());
@@ -1335,16 +1338,80 @@ typed(minutes,'2');await find('保存',box()).click();const tooLow=posted.length
 typed(field('每次运行的时间限制（分钟）',box()),'90');await find('保存',box()).click();await sleepTick();
 console.log(JSON.stringify({claude,empty,afterAdd,opencode,posted:posted.map(p=>p[1]),tooLow,gets:gets.filter(g=>g.includes('models')),list:box().all().filter(e=>e.classList.contains('ws-agent-label')).map(e=>e.textContent)}));
 """)
-    assert out["claude"] == ["sonnet", "opus", "haiku"]
+    assert out["claude"] == ["claude-sonnet-5-5", "claude-sonnet-4-6", "claude-opus-5-5", "claude-opus-4-6", "claude-haiku-4-5-20251001"]
     assert out["empty"] == 0
-    assert [t for t, _ in out["afterAdd"]][-2:] == ["Claude Code · sonnet", "Claude Code · opus"]
+    assert [t for t, _ in out["afterAdd"]][-2:] == ["Claude Code · sonnet", "Claude Code · claude-opus-4-6"]
     assert out["opencode"] == ["lmstudio/qwen3-coder", "ollama/llama3"] and out["gets"] == ["/api/agents/models?runner=opencode"]
     sonnet = {"runner": "claude-code", "model": "sonnet"}
-    opus = {"runner": "claude-code", "model": "opus"}
+    opus = {"runner": "claude-code", "model": "claude-opus-4-6"}
     qwen = {"runner": "opencode", "model": "lmstudio/qwen3-coder"}
     assert out["posted"] == [{"agents": [sonnet, opus]}, {"agents": [sonnet, opus, qwen]}, {"agents": [opus, qwen]}, {"timeout_minutes": 90}]
     assert out["tooLow"] == 3
-    assert out["list"] == ["Claude Code · opus", "OpenCode · lmstudio/qwen3-coder"]
+    assert out["list"] == ["Claude Code · claude-opus-4-6", "OpenCode · lmstudio/qwen3-coder"]
+
+
+def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():
+    out = run(r"""
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),versions=()=>field('模型版本',box());
+const offered=optionsOf(versions());
+versions().value='claude-sonnet-5-5';await versions().emit('change');
+await find('添加',box()).click();await sleepTick();
+versions().value='__custom__';await versions().emit('change');
+typed(field('完整模型 ID',box()),'claude-sonnet-4-5-20250929');
+await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/settings/agents'),owners:optionsOf(field('负责人'))}));
+""")
+    assert ["Sonnet 5.5 · claude-sonnet-5-5", "claude-sonnet-5-5"] in out["offered"]
+    assert ["Opus 4.6 · claude-opus-4-6", "claude-opus-4-6"] in out["offered"]
+    assert out["posted"][0][1]["agents"][-1] == {"runner": "claude-code", "model": "claude-sonnet-5-5"}
+    assert out["posted"][1][1]["agents"][-1] == {"runner": "claude-code", "model": "claude-sonnet-4-5-20250929"}
+    assert "agent:claude-code:sonnet" in [value for _, value in out["owners"]]
+
+
+def test_codex_version_selection_custom_id_and_separate_catalogs():
+    out = run(r"""
+agentsInfo=agentFixture();modelsList=['gpt-6.1-sol','gpt-6-luna'];
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings');
+const runner=field('程序',box());runner.value='codex';await runner.emit('change');await sleepTick();
+const versions=()=>field('模型版本',box());
+const offered=optionsOf(versions());versions().value='gpt-6.1-sol';await versions().emit('change');
+await find('添加',box()).click();await sleepTick();
+versions().value='__custom__';await versions().emit('change');
+const custom=field('完整模型 ID',box());typed(custom,'gpt-5.5');await find('添加',box()).click();await sleepTick();
+Object.assign(agentsInfo.runners[1],{found:true,path:'/opt/opencode',problem:null});
+modelsList=['openai/gpt-6.1-sol'];
+await find('AI 执行者').click();await find('AI 执行者').click();await sleepTick();
+const provider=field('程序',box());provider.value='opencode';await provider.emit('change');await sleepTick();
+const other=optionsOf(versions());provider.value='codex';await provider.emit('change');await sleepTick();
+console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:posted.filter(p=>p[0]==='/api/settings/agents'),gets:gets.filter(g=>g.includes('/models?'))}));
+""")
+    assert [v for _, v in out["offered"]] == ["", "gpt-6.1-sol", "gpt-6-luna", "__custom__"]
+    assert out["posted"][0][1]["agents"][-1] == {"runner": "codex", "model": "gpt-6.1-sol"}
+    assert out["posted"][1][1]["agents"][-1] == {"runner": "codex", "model": "gpt-5.5"}
+    assert "openai/gpt-6.1-sol" in [v for _, v in out["other"]]
+    assert out["back"] == out["offered"]
+    assert out["gets"] == ["/api/agents/models?runner=codex", "/api/agents/models?runner=opencode"]
+
+
+def test_harness_model_selection_distinguishes_authentication_and_preserves_full_id():
+    out = run(r"""
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings');
+const runner=field('程序',box());runner.value='deepseek-harness';await runner.emit('change');await sleepTick();
+const versions=field('模型版本',box()),offered=optionsOf(versions);
+versions.value='deepseek-account/deepseek-flash';await versions.emit('change');
+await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/settings/agents'),gets:gets.filter(g=>g.includes('/models?')),words:box().textContent}));
+""")
+    assert out["offered"][1] == ["账户 · deepseek-account/deepseek-flash", "deepseek-account/deepseek-flash"]
+    assert out["offered"][2] == ["API Key · deepseek-official/deepseek-v4-pro", "deepseek-official/deepseek-v4-pro"]
+    assert out["posted"][0][1]["agents"][-1] == {"runner": "deepseek-harness", "model": "deepseek-account/deepseek-flash"}
+    assert out["gets"] == []
+    assert "DeepSeek Harness" in out["words"]
 
 
 def test_settings_warn_about_the_missing_mcp_extra_and_a_failed_save_keeps_the_form():
@@ -1355,8 +1422,8 @@ await find('AI 执行者').click();
 const box=byClass('ws-agent-settings');
 const commands=box.all().filter(e=>e.classList.contains('ws-install-cmd')).map(e=>e.textContent);
 customPost=()=>Promise.reject(Object.assign(Error('bad'),{state:'agent_invalid',engineMessage:'模型名不对'}));
-typed(field('模型',box),'bad name!');await find('添加',box).click();await sleepTick();
-console.log(JSON.stringify({commands,words:byClass('ws-agent-settings').textContent,model:field('模型',byClass('ws-agent-settings')).value}));
+typed(field('完整模型 ID',box),'bad name!');await find('添加',box).click();await sleepTick();
+console.log(JSON.stringify({commands,words:byClass('ws-agent-settings').textContent,model:field('完整模型 ID',byClass('ws-agent-settings')).value}));
 """)
     assert len(out["commands"]) == 2 and out["commands"][1] == 'python -m pip install -e ".[mcp]"'
     assert "没能保存设置。 模型名不对" in out["words"] and out["model"] == "bad name!"  # a refusal keeps what was typed
@@ -1577,11 +1644,11 @@ await window.ROWorkspace.load(root);await sleepTick();
 const slow=deferred();let slowed=false;
 customGet=path=>{ if(path==='/api/agents'&&!slowed){slowed=true;return slow.promise;} };
 await find('AI 执行者').click();
-const box=()=>byClass('ws-agent-settings'),model=field('模型',box());
+const box=()=>byClass('ws-agent-settings'),model=field('完整模型 ID',box());
 typed(model,'son');model.focus();
 agentsInfo.timeout_minutes=90;
 slow.resolve(clone(agentsInfo));await sleepTick();await sleepTick();
-const again=field('模型',box());
+const again=field('完整模型 ID',box());
 console.log(JSON.stringify({same:again===model,focus:document.activeElement===model,value:model.value,tasksSame:true}));
 """)
     assert out["same"] and out["focus"] and out["value"] == "son"
@@ -1827,13 +1894,13 @@ console.log(JSON.stringify({text:box.textContent,oob:byClass('ws-oob',box).textC
 
 def test_the_run_log_words_the_settings_reason_the_protected_reason_and_the_withheld_variables():
     out = run(LOG_SETUP.replace("LOG", "'运行记录'"))
-    assert "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）" in out["oob"]
+    assert "改动了 AI 执行程序的项目设置（.claude、.opencode、.codex、opencode.json）" in out["oob"]
     assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["text"]
     assert "没有改动这个文件" not in out["text"]  # that was no reason, only the outcome again
     assert out["env"] is not None and "没有交给它的环境变量（名字像密钥，只列名字）" in out["env"]
     assert "GITHUB_TOKEN" in out["env"] and "FOO_SECRET" in out["env"]
     english = run(LOG_SETUP.replace("LOG", "'Run log'"), lang="en")
-    assert "Changed Claude Code or OpenCode settings in the project (.claude, .opencode, opencode.json)" in english["oob"]
+    assert "Changed the agent program’s project settings (.claude, .opencode, .codex, opencode.json)" in english["oob"]
     assert ".git/config Belongs to Research OS’s records folder or to git; undo does not touch it" in english["text"]
     assert "Left unchanged" not in english["text"]
     assert "Environment variables not given to it (their names look like credentials; names only)" in english["env"]

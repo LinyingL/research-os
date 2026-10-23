@@ -50,8 +50,9 @@ PROTECTED_LIST_LIMIT = 30
 #: other. The agent never edits it directly (17.5 rule 5).
 TASKS_PATH = "research/tasks.json"
 
-_RUNNERS = ("claude-code", "opencode")
-_TOOL_PREFIX = {"claude-code": "mcp__researchos__", "opencode": "researchos_"}
+_RUNNERS = ("claude-code", "opencode", "codex", "deepseek-harness")
+_TOOL_PREFIX = {"claude-code": "mcp__researchos__", "opencode": "researchos_", "codex": "mcp__researchos__",
+                "deepseek-harness": "mcp__researchos__"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 _SPACE_RE = re.compile(r"\s+")
 
@@ -152,6 +153,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "",
             ("You must never do the following. Research OS refuses these and records the attempt; a refused "
              "call is not a reason to try another way round." if hooked else
+             f"{'Codex' if runner == 'codex' else 'DeepSeek Harness'} uses a workspace-write sandbox. Research OS also compares the project after the run, "
+             "lists out-of-bounds changes, and offers undo where a backup exists." if runner in ("codex", "deepseek-harness") else
              "You must never do the following. Research OS blocks git commands and `researchos` or `rce` "
              "commands the moment you call them; everything else is compared with the project after the run, "
              "listed as out of bounds, and can be undone. So do not do any of these things at all, whether "
@@ -194,6 +197,7 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "下载数据。",
         "",
         ("下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。" if hooked else
+         f"{'Codex' if runner == 'codex' else 'DeepSeek Harness'} 使用工作目录写入沙箱。Research OS 还会在运行结束后核对项目，列出越界改动，并在有备份时提供撤回。" if runner in ("codex", "deepseek-harness") else
          "下面这些事绝对不能做。git 命令以及 `researchos`、`rce` 命令在你调用的那一刻就会被拦下；其余的事在运行结束后"
          "会与项目逐一比对，列为越界，并且可以被撤回。所以这些事根本不要做，不管某次调用有没有被拦下。"),
         f"1. 不替人做判断：不要写尝试的研究判断或结果（{table_words}），不要做连线确认"

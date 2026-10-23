@@ -44,7 +44,7 @@ the after-run check (`snapshot.violations`) is what shows that (17.5).
 refused, symbolic links resolved; a Grep that starts above one of those folders would read into it and is refused.
 The Bash text check refuses the home's absolute path, `$RESEARCHOS_HOME` and `.ssh` as it refuses `.researchos`.
 
-**The agent program's own settings** are protected like `.researchos`: `.claude/` and `.opencode/` at any depth and
+**The agent program's own settings** are protected like `.researchos`: `.claude/`, `.opencode/` and `.codex/` at any depth and
 `opencode.json` / `opencode.jsonc` anywhere. A file tool never writes there, and a
 Bash command that names one of them together with a writing operation (or a copy) is refused.
 
@@ -72,7 +72,7 @@ FILE_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 READ_TOOLS = frozenset({"Read", "Glob", "Grep", "LS"})
 #: The agent program's own project settings (18.1 item 2): folders refused at any depth and file names refused
 #: anywhere. `snapshot.PROTECTED_DIRS` lists the folders too, so the after-run check reports a change there.
-AGENT_SETTINGS_DIRS = frozenset({".claude", ".opencode"})
+AGENT_SETTINGS_DIRS = frozenset({".claude", ".opencode", ".codex"})
 AGENT_SETTINGS_FILES = frozenset({"opencode.json", "opencode.jsonc"})
 GUARD_FILENAME = "guard.json"
 REFUSALS_FILENAME = "refusals.jsonl"
@@ -154,7 +154,7 @@ _RESEARCHOS_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.(researchos|rce)(/|\s|$
 _SSH_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.ssh(/|\s|$|['";&|)`>])""", re.I)
 #: The variable that names Research OS's home (and the one it replaced): an agent has no use for either.
 _HOME_VAR_RE = re.compile(r"\b(RESEARCHOS|RCE)_HOME\b", re.I)
-_SETTINGS_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.(claude|opencode)(/|\s|$|['";&|)`>])""", re.I)
+_SETTINGS_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.(claude|opencode|codex)(/|\s|$|['";&|)`>])""", re.I)
 #: Copying and creating programs: with one of these a command that names a protected folder may write there.
 _COPY_WORD_RE = re.compile(r"\b(cp|install|rsync|ln|ditto|mkdir|touch|unzip|tar|curl|wget)\b", re.I)
 _GIT_DIR_RE = re.compile(r"""(^|[\s'"/=])\.git(/|\s|$|['"])""", re.I)

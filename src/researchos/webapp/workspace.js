@@ -108,7 +108,7 @@
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
-  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", minutes: null, budget: null }; }
+  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", customModel: false, minutes: null, budget: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null;
@@ -742,8 +742,8 @@
   // A task whose owner is an agent on this Mac gets its run in the row: 运行, then the state in
   // words (17.9), 停止, 运行记录, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
   // engine and follows a run by polling; what an agent may not do is held there (17.5).
-  const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode" };
-  const PROGRAMS = { "claude-code": "claude", opencode: "opencode" };
+  const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex", "deepseek-harness": "DeepSeek Harness" };
+  const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
   const OWNER_OTHER = "\u0000other", OWNER_SETTINGS = "\u0000settings";
   const POLL_MS = 2000, POLL_MAX_MS = 30000;
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
@@ -769,7 +769,7 @@
     researchos_changed: () => t("改动了 Research OS 自己的记录文件夹"), git_changed: () => t("改变了 git 的状态"),
     git_hooks_changed: () => t("改动了 git 的钩子（git 会自动运行的程序）"), git_config_changed: () => t("改动了 git 的配置"),
     backup_deleted: () => t("删除了 Research OS 的备份"),
-    agent_settings_changed: () => t("改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）"),
+    agent_settings_changed: () => t("改动了 AI 执行程序的项目设置（.claude、.opencode、.codex、opencode.json）"),
   };
   // A run's error code, and the code of an end step the engine writes (`stopped` is no error: it words a stopped run).
   const ERROR_WORDS = {
@@ -803,6 +803,8 @@
     kept: () => t("你选择保留"), protected: () => t("属于 Research OS 的记录文件夹或 git，撤回不会动它"),
   };
   const PRIVACY = {
+    "deepseek-harness": () => t("DeepSeek Harness 会把它读到的项目内容发送给 DeepSeek。"),
+    codex: () => t("Codex 会把它读到的项目内容发送给 OpenAI。"),
     "claude-code": () => t("Claude Code 会把它读到的项目内容发送给 Anthropic。"),
     opencode: () => t("OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。"),
   };
@@ -1559,31 +1561,48 @@
     }
     row.append(quiet((PRIVACY[r.runner] || PRIVACY.opencode)()));
     if (r.runner === "opencode") row.append(quiet(t("OpenCode 没有逐步检查：运行结束后才核对哪些文件被改动，越界的改动会列出来，可以撤回。")));
+    if (r.runner === "codex") row.append(quiet(t("Codex 使用工作目录写入沙箱；运行结束后核对改动，并提供可用的撤回。")));
+    if (r.runner === "deepseek-harness") row.append(quiet(t("支持桌面端自带的 dsh。账户选项使用 Harness 登录；API Key 选项使用 Harness 的密钥设置。")));
     return row;
   }
   function fillModelList() {
     if (!ui || !ui.modelList) return;
     const runner = settingsInputs.runner;
-    const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || []) : (modelsState.list || []);
-    ui.modelList.replaceChildren(...names.map((name) => { const option = el("option"); option.value = name; return option; }));
+    const catalog = modelsState[runner] || {};
+    const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || [])
+      : runner === "deepseek-harness" ? ((agentInfo && agentInfo.harness_models) || []) : (catalog.list || []);
+    const placeholder = el("option", null, t("选择模型版本…")); placeholder.value = "";
+    const custom = el("option", null, t("手动填写完整 ID…")); custom.value = "__custom__";
+    ui.modelList.replaceChildren(placeholder, ...names.map((name) => {
+      const match = runner === "claude-code" && /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(name);
+      const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name
+        : runner === "deepseek-harness" ? (name.startsWith("deepseek-account/") ? t("账户") : "API Key") + " · " + name : name;
+      const option = el("option", null, label); option.value = name; return option;
+    }), custom);
+    const manual = settingsInputs.customModel || (!!settingsInputs.model && !names.includes(settingsInputs.model));
+    ui.modelList.value = manual ? "__custom__" : settingsInputs.model;
+    ui.modelCustom.classList.toggle("hidden", !manual);
+    ui.modelInput.value = settingsInputs.model;
     if (ui.modelNote) {
-      ui.modelNote.textContent = runner === "opencode" && modelsState.error ? errorWords(t("没能列出 OpenCode 的模型，可以直接写模型名。"), modelsState.error)
-        : runner === "opencode" && modelsState.loading ? t("正在读取…") : "";
+      ui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
+        : catalog.loading ? t("正在读取…") : "";
     }
   }
-  async function loadOpencodeModels() {
-    if (modelsState.loading || modelsState.list) return;
-    const found = agentInfo && (agentInfo.runners || []).find((r) => r.runner === "opencode");
+  async function loadModels(runner, refresh) {
+    if (runner === "claude-code" || runner === "deepseek-harness") return;
+    const catalog = modelsState[runner] || {};
+    if (catalog.loading || (!refresh && (catalog.list || catalog.error))) return;
+    const found = agentInfo && (agentInfo.runners || []).find((r) => r.runner === runner);
     if (!found || !found.found) return;
     const mark = stamp();
-    modelsState = { loading: true }; fillModelList();
+    modelsState[runner] = { loading: true }; fillModelList();
     try {
-      const response = await apiGet("/api/agents/models?runner=opencode");
+      const response = await apiGet("/api/agents/models?runner=" + encodeURIComponent(runner));
       if (!live(mark)) return;
-      modelsState = { list: Array.isArray(response && response.models) ? response.models : [] };
+      modelsState[runner] = { list: Array.isArray(response && response.models) ? response.models : [] };
     } catch (err) {
       if (!live(mark)) return;
-      modelsState = { error: err };
+      modelsState[runner] = { error: err };
     }
     fillModelList();
   }
@@ -1602,17 +1621,32 @@
     const form = el("div", "ws-agent-add"), runner = keyed(el("select", "form-input"), "set-runner"), model = keyed(input("text", t("模型名")), "set-model");
     (agentInfo.runners || []).forEach((r) => { const option = el("option", null, RUNNER_NAMES[r.runner] || r.label || r.runner); option.value = r.runner; runner.append(option); });
     runner.value = settingsInputs.runner; model.value = settingsInputs.model; model.className += " form-mono";
-    model.setAttribute("list", "ws-model-list");
-    ui.modelList = el("datalist"); ui.modelList.id = "ws-model-list"; ui.modelNote = el("p", "ws-agent-quiet");
-    runner.addEventListener("change", () => { settingsInputs.runner = runner.value; fillModelList(); if (runner.value === "opencode") loadOpencodeModels(); });
+    ui.modelInput = model;
+    ui.modelList = keyed(el("select", "form-input form-mono"), "set-model-version");
+    ui.modelList.id = "ws-model-list"; ui.modelList.disabled = settingsBusy;
+    ui.modelCustom = field(t("完整模型 ID"), model);
+    ui.modelNote = el("p", "ws-agent-quiet");
+    ui.modelList.addEventListener("change", () => {
+      settingsInputs.customModel = ui.modelList.value === "__custom__";
+      settingsInputs.model = settingsInputs.customModel ? "" : ui.modelList.value;
+      fillModelList(); if (settingsInputs.customModel) model.focus();
+    });
+    runner.addEventListener("change", () => {
+      settingsInputs.runner = runner.value; settingsInputs.model = ""; settingsInputs.customModel = false;
+      fillModelList(); loadModels(runner.value);
+    });
     model.addEventListener("input", () => { settingsInputs.model = model.value; });
     const add = button(t("添加"), () => {
       const name = model.value.trim();
       if (!name) { settingsNote = { words: t("请写上模型名。"), kind: "err" }; renderSettings(true); return; }
-      saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, t("已添加"), () => { settingsInputs.model = ""; });
+      saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, t("已添加"), () => { settingsInputs.model = ""; settingsInputs.customModel = false; });
     }); keyed(add, "set-add"); add.disabled = runner.disabled = model.disabled = settingsBusy;
-    form.append(field(t("程序"), runner), field(t("模型"), model), add);
-    box.append(form, ui.modelList, ui.modelNote);
+    const refresh = button(t("刷新模型列表"), () => loadModels(settingsInputs.runner, true));
+    const suggested = () => runner.value === "claude-code" || runner.value === "deepseek-harness";
+    refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", suggested());
+    runner.addEventListener("change", () => refresh.classList.toggle("hidden", suggested()));
+    form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, add, refresh);
+    box.append(form, ui.modelNote);
     fillModelList();
     return box;
   }
@@ -1668,6 +1702,7 @@
     box.append(agentsBlock(), limitBlock(), budgetBlock());
     ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
     restoreFocus(box, snap);
+    loadModels(settingsInputs.runner);
   }
   function showSettingsNote() {
     if (!ui || !ui.settingsNote) return;

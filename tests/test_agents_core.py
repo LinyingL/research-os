@@ -58,6 +58,66 @@ def test_agents_default_empty_and_round_trip():
                                      {"runner": "opencode", "model": "lmstudio/qwen3-coder"}]
 
 
+def test_codex_versions_round_trip_without_aliasing():
+    saved = profiles.set_agents([{"runner": "codex", "model": m} for m in ("gpt-6.1-sol", "gpt-5.5")])
+    assert [a.model for a in profiles.agents()] == ["gpt-6.1-sol", "gpt-5.5"]
+    assert [labels.parse_owner(a.owner) for a in saved] == saved
+
+
+def test_claude_version_suggestions_and_legacy_aliases_round_trip():
+    assert "claude-sonnet-5-5" in profiles.CLAUDE_MODEL_SUGGESTIONS
+    assert "claude-opus-4-6" in profiles.CLAUDE_MODEL_SUGGESTIONS
+    assert all(m.startswith("claude-") for m in profiles.CLAUDE_MODEL_SUGGESTIONS)
+    models = ["claude-sonnet-5-5", "claude-sonnet-4-5-20250929", "sonnet", "opus"]
+    profiles.set_agents([{"runner": "claude-code", "model": model} for model in models])
+    assert [a.model for a in profiles.agents()] == models
+
+
+def test_codex_catalog_filters_hidden_models_and_preserves_full_ids(tmp_path):
+    catalog = {"models": [{"slug": m, "visibility": v} for m, v in (
+        ("gpt-6.1-sol", "list"), ("gpt-5.5", "list"), ("codex-auto-review", "hide"),
+        ("gpt-6.1-sol", "list"), ("--invalid", "list"))]}
+    binary = _script(tmp_path / "codex", "import json, sys\nassert sys.argv[1:] == ['debug', 'models']\n"
+                     + f"print({json.dumps(catalog)!r})\n")
+    assert profiles.codex_models(str(binary)) == ["gpt-6.1-sol", "gpt-5.5"]
+
+
+@pytest.mark.parametrize("output", ["not json", "[]", '{"models": {}}'])
+def test_codex_catalog_does_not_invent_models_on_invalid_output(tmp_path, output):
+    binary = _script(tmp_path / "codex", f"print({output!r})\n")
+    with pytest.raises(RuntimeError):
+        profiles.codex_models(str(binary))
+
+
+def test_codex_prefers_working_app_cli_and_keeps_an_explicit_path(tmp_path, monkeypatch):
+    bundled = _version_script(tmp_path / "bundled-codex", "codex-cli 0.162.0")
+    monkeypatch.setattr(profiles, "CODEX_APP_COMMANDS", (str(bundled),))
+    monkeypatch.setattr(shutil, "which", lambda *a, **kw: pytest.fail("broken PATH binary should not run"))
+    assert profiles.find("codex").path == str(bundled)
+    explicit = str(tmp_path / "missing-codex")
+    profiles.set_commands({"codex": explicit})
+    found = profiles.find("codex")
+    assert found.path is None and found.problem == "missing"
+
+
+def test_harness_bundled_cli_and_exact_authentication_route(tmp_path, monkeypatch):
+    bundled = _version_script(tmp_path / "dsh", "0.2.1-rc.2")
+    monkeypatch.setattr(profiles, "HARNESS_APP_COMMANDS", (str(bundled),))
+    monkeypatch.setattr(shutil, "which", lambda *a, **kw: pytest.fail("bundled runtime should be used"))
+    assert profiles.find("deepseek-harness").path == str(bundled)
+    models = [*profiles.HARNESS_MODEL_SUGGESTIONS, "deepseek-account/deepseek-future-1"]
+    profiles.set_agents([{"runner": "deepseek-harness", "model": m} for m in models])
+    assert [a.model for a in profiles.agents()] == models
+    assert labels.parse_owner("agent:deepseek-harness:" + models[0]).model == models[0]
+    for model in ("deepseek-flash", "other/deepseek-flash", "deepseek-account/"):
+        with pytest.raises(ValueError):
+            profiles.set_agents([{"runner": "deepseek-harness", "model": model}])
+        with pytest.raises(ValueError):
+            labels.parse_owner("agent:deepseek-harness:" + model)
+    profiles.set_commands({"deepseek-harness": str(tmp_path / "missing")})
+    assert profiles.find("deepseek-harness").problem == "missing"
+
+
 def test_set_agents_keeps_other_settings_and_empty_removes_the_key():
     settings.update_setting("interface_language", "en")
     profiles.set_agents([{"runner": "claude-code", "model": "opus"}])
@@ -771,7 +831,7 @@ def test_protected_lists_data_records_and_dirs(tmp_path):
     root = _attempts_project(tmp_path)
     before = snapshot.take(root)
     prot = snapshot.protected(root, before)
-    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"]
+    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".codex", ".opencode"]
     assert prot["records"] == ["map.md", "research/tasks.json"]
     assert prot["data"] == ["config.json", "data/clean.DTA", "data/raw.csv"]
     assert prot["files"] == sorted(prot["data"] + prot["records"])
@@ -1202,7 +1262,7 @@ def project(tmp_path):
 def test_guard_file_round_trip(project):
     g = project.guard
     assert g["root"] == os.path.realpath(project.root) and g["engine_port"] == 8765
-    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"] \
+    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".codex", ".opencode"] \
         and "data/raw.csv" in g["files"]
     guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
     assert guard.load_guard(project.run_dir)["engine_port"] is None

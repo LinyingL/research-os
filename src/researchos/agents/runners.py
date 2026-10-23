@@ -1,4 +1,4 @@
-"""The two runners: how each program is started, and how its output is read
+"""Agent runners: how each program is started, and how its output is read
 (DESIGN.md 17.4). Everything here is a pure function of its arguments --
 no process is started, no file written: `Launch` is a description (argv,
 environment, standard input, working folder and the small files the run
@@ -30,6 +30,12 @@ missing interpreter) is exit code 2, which Claude Code treats as a refusal;
 `hook_canary` runs that exact command on a call that must be refused, for
 the manager to do before a run. `--settings` also says `disableAllHooks:
 false`, and both Python commands run isolated (`-I`).
+
+**Codex** uses `codex exec --json` with an explicit model and recorded-thread
+resume. A workspace-write sandbox and run-specific MCP configuration apply;
+only Research OS's agent tools are preapproved. User config and execution
+rules are ignored without rewriting the account's authentication. Codex has
+no Research OS PreToolUse hook: the manager compares changes after each run.
 
 **OpenCode** is `opencode run --format json --model <m> --dir <project>`
 (`--session <id>` to continue). A message given as an argument reaches the
@@ -102,7 +108,7 @@ ADD_DIR_CLAUDE_MD_ENV = "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"
 SCRUB_ENV_RE = re.compile(
     r"^(CLAUDECODE|CLAUDE_CODE_.*(SESSION|REMOTE|ENTRYPOINT|CHILD|MESSAGING|CONTAINER|WORKER).*"
     r"|CLAUDE_SESSION_.*|CCR_.*|RCE_ENGINE_PORT|OPENCODE_CONFIG_CONTENT|OPENCODE_CONFIG"
-    r"|RESEARCHOS_HOME|RCE_HOME)$")  # the home: the agent is not told where Research OS keeps its files (18.1 item 2)
+    r"|RESEARCHOS_HOME|RCE_HOME|CODEX_THREAD_ID|CODEX_INTERNAL_.*|CODEX_REMOTE_.*|CODEX_SANDBOX.*)$")
 #: Variables that could widen what OpenCode allows beyond the configuration we pass; removed too.
 OPENCODE_OVERRIDE_ENV = ("OPENCODE_PERMISSION",)
 #: A variable whose name looks like it holds a credential is not handed to the agent program (18.1 item 2): the name
@@ -114,6 +120,9 @@ CREDENTIAL_PREFIXES = ("AWS_", "GITHUB_", "GH_")
 #: What each runner keeps although it looks like a credential: it needs it to reach its model. Exact names, prefixes
 #: and, for the prefixes in `_KEEP_IF`, the variable that has to be set for the prefix to count.
 _KEEP = {
+    "deepseek-harness": {"names": frozenset({"DEEPSEEK_API_KEY"}), "prefixes": ()},
+    "codex": {"names": frozenset({"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"}),
+              "prefixes": ()},
     "claude-code": {"names": frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), "prefixes": ("ANTHROPIC_",)},
     "opencode": {"names": frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY",
                                      "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"}),
@@ -372,6 +381,97 @@ def opencode_launch(*, program: str, model: str, root: Path, run_dir: Path, run_
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
     return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={},
                   removed_env=credential_names(base_env, "opencode"))
+
+
+def _toml_value(value: Any) -> str:
+    """Encode the small command-line configuration, never a shell command."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(_toml_value(k) + " = " + _toml_value(v) for k, v in value.items()) + "}"
+    raise ValueError("unsupported Codex configuration value")
+
+
+def codex_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str,
+                 session_id: str | None, prompt: str, home: str,
+                 base_env: Mapping[str, str]) -> Launch:
+    """Official CLI, explicit model, workspace sandbox, and only this run's MCP server.
+
+    User configuration/rules are not loaded; authentication still uses Codex's normal account.
+    No global settings or credentials are rewritten. Resume always names the recorded session.
+    """
+    command = mcp_command(root, run_id)
+    config = {
+        "approval_policy": "never",
+        "sandbox_mode": "workspace-write",
+        "sandbox_workspace_write": {"network_access": True, "writable_roots": []},
+        "mcp_servers": {MCP_KEY: {"command": command[0], "args": command[1:], "required": True,
+                                 "enabled_tools": list(AGENT_TOOLS),
+                                 "default_tools_approval_mode": "approve",
+                                 "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}},
+        "features": {"multi_agent": False, "hooks": False},
+    }
+    argv = [program, "-C", str(root), "exec", "--json", "--skip-git-repo-check",
+            "--ignore-user-config", "--ignore-rules", "--model", _check_model(model)]
+    for key, value in config.items():
+        argv += ["-c", key + "=" + _toml_value(value)]
+    if session_id is not None:
+        argv += ["resume", _check_session(session_id)]
+    argv.append("-")
+    return Launch(argv=argv, env=child_env(base_env, run_id=run_id, program=program, runner="codex"),
+                  stdin=prompt, cwd=str(root), removed_env=credential_names(base_env, "codex"))
+
+
+def harness_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str,
+                   session_id: str | None, prompt: str, home: str,
+                   base_env: Mapping[str, str]) -> Launch:
+    """Desktop-bundled or standalone dsh; one headless task with a per-run overlay.
+
+    Reuse the official credential store via its supported plugins. Never boot or
+    rewrite the Electron-owned desktop profile. JSON is a YAML subset, avoiding a
+    YAML dependency in Research OS. Provider/model are explicit and never inferred.
+    Protocol: https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/bundle/headless
+    """
+    from researchos.agents.labels import harness_route
+
+    route = harness_route(model)
+    command = mcp_command(root, run_id)
+    patch = [
+        {"id": name, "disabled": False} for name in ("credentials", "authorization", "deepseek-account")
+    ] + [
+        {"id": "agent-default-model", "config": {"provider": route[0], "model": route[1]}},
+        {"id": "sandbox-policy", "config": {"mode": "workspace-write", "workspaceRoot": str(root),
+                                              "additionalWritableRoots": []}},
+        {"id": "approval", "config": {"policy": "never"}},
+        {"id": "permission", "config": {"presets": {"workspace-write": {"sandbox": "workspace-write", "approval": "never"}},
+                                          "defaultPreset": "workspace-write"}},
+        {"id": "tools", "config": {"mode": "native"}},
+        {"id": "hmr", "disabled": True},
+        {"id": "session-log-deepseek", "disabled": True},
+        {"id": "session-telemetry-otel", "disabled": True},
+        *({"id": name, "disabled": True} for name in ("tool-subagent", "tool-subagent-fork", "tool-subagent-control")),
+        {"insert": [{"id": "researchos-mcp", "name": "@deepseek-ai/dsh-mcp-client", "config": {
+            "serverName": MCP_KEY, "transport": "stdio", "command": command[0], "args": command[1:],
+            "cwd": str(root), "failOnStartupError": True,
+            "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id},
+        }}]},
+    ]
+    filename = "harness.patch.yml"
+    # Released 0.2.1-rc.2 lacks the newer policy flags; the supported patch surface
+    # pins the same policy without depending on unreleased CLI options.
+    argv = [program, "--profile", "headless", "--patch", str(run_dir / filename), "--json"]
+    if session_id is not None:
+        argv += ["--session-id", _check_session(session_id)]
+    argv.append("-")
+    env = child_env(base_env, run_id=run_id, program=program, runner="deepseek-harness")
+    # The parent process must not override this task's explicit permission policy.
+    env.pop("DSH_PERMISSION_MODE", None)
+    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={filename: _json_file(patch)},
+                  removed_env=credential_names(base_env, "deepseek-harness"))
 
 
 # -- reading the streams ----------------------------------------------------
@@ -675,6 +775,149 @@ class OpenCodeStream:
         return [_step("error", message)]
 
 
+class CodexStream:
+    """Official `codex exec --json` events, including explicit turn outcomes."""
+
+    def __init__(self) -> None:
+        self.session_id: str | None = None
+        self.model: str | None = None
+        self.cost_usd: float | None = None
+        self.result: dict | None = None
+        self.is_error = False
+        self.result_text: str | None = None
+        self.error_message: str | None = None
+        self.steps: list[dict] = []
+        self._tools: set[str] = set()
+
+    def feed(self, line: str) -> list[dict]:
+        event = _loads(line)
+        if event is None:
+            return []
+        steps: list[dict] = []
+        try:
+            kind = event.get("type")
+            if kind == "thread.started":
+                sid = event.get("thread_id")
+                if isinstance(sid, str) and _SESSION_RE.fullmatch(sid):
+                    self.session_id = sid
+                if isinstance(event.get("model"), str):
+                    self.model = event["model"]
+                steps = [_step("start", self.model or "")]
+            elif kind in ("item.started", "item.completed", "item.updated"):
+                item = event.get("item")
+                if isinstance(item, dict):
+                    steps = self._item(item, kind == "item.completed")
+            elif kind == "turn.completed":
+                self.result, self.is_error, self.error_message = event, False, None
+                steps = [_step("end", "")]
+            elif kind in ("turn.failed", "error"):
+                error = event.get("error")
+                message = error.get("message") if isinstance(error, dict) else event.get("message")
+                self.error_message = message if isinstance(message, str) else "Codex request failed"
+                self.is_error = True
+                if kind == "turn.failed":
+                    self.result = event
+                steps = [_step("error", self.error_message)]
+        except (TypeError, AttributeError, KeyError):
+            steps = []
+        self.steps.extend(steps)
+        return steps
+
+    def _item(self, item: dict, completed: bool) -> list[dict]:
+        kind, key = item.get("type"), item.get("id")
+        if kind == "agent_message" and completed:
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                self.result_text = text
+                return [_step("say", text)]
+            return []
+        if not isinstance(key, str) or key in self._tools:
+            return []
+        steps = []
+        if kind == "command_execution":
+            steps = [_step("tool", item.get("command") or "", "Bash")]
+        elif kind == "file_change":
+            changes = item.get("changes")
+            paths = [c["path"] for c in changes if isinstance(c, dict) and isinstance(c.get("path"), str)] \
+                if isinstance(changes, list) else []
+            steps = [_step("tool", ", ".join(paths), "Edit")]
+        elif kind == "mcp_tool_call":
+            name = item.get("tool")
+            if isinstance(name, str):
+                steps = [_step("tool", summarize_tool(name, item.get("arguments")), _tool_label(name))]
+        elif kind == "web_search":
+            steps = [_step("tool", item.get("query") or "", "WebSearch")]
+        if steps:
+            self._tools.add(key)
+        return steps
+
+
+class HarnessStream:
+    """Official dsh NDJSON; final plus a completed turn, never exit zero alone."""
+
+    def __init__(self) -> None:
+        self.session_id: str | None = None
+        self.model: str | None = None  # This protocol reports no answered model or monetary cost.
+        self.cost_usd: float | None = None
+        self.result: dict | None = None
+        self.is_error = False
+        self.result_text: str | None = None
+        self.error_message: str | None = None
+        self.steps: list[dict] = []
+        self._turn_reason: object = None
+
+    def feed(self, line: str) -> list[dict]:
+        event = _loads(line)
+        if event is None:
+            return []
+        kind = event.get("type")
+        steps = []
+        if kind == "session":
+            sid = event.get("sessionId")
+            if isinstance(sid, str) and _SESSION_RE.fullmatch(sid):
+                self.session_id = sid
+            steps = [_step("start", "")]
+        elif kind == "status":
+            if event.get("phase") == "turn_start":
+                self._turn_reason = None
+            elif event.get("phase") == "turn_end":
+                self._turn_reason = event.get("reason")
+        elif kind == "text" and isinstance(event.get("text"), str):
+            steps = [_step("say", event["text"])]
+        elif kind == "tool_call" and isinstance(event.get("tool"), str):
+            name = event["tool"]
+            steps = [_step("tool", summarize_tool(name, event.get("input")), _tool_label(name))]
+        elif kind == "error":
+            self.is_error = True
+            self.error_message = str(event.get("message") or "DeepSeek Harness request failed")
+            steps = [_step("error", self.error_message)]
+        elif kind == "final":
+            self.result = event
+            if isinstance(event.get("text"), str):
+                self.result_text = event["text"]
+            # Released dsh puts the reason on status.turn_end; newer versions
+            # also put it on final. An explicit null must not reuse an old turn.
+            reason = event.get("reason") if "reason" in event else self._turn_reason
+            completed = isinstance(reason, dict) and reason.get("kind") == "completed"
+            if not completed:
+                self.is_error = True
+                error = reason.get("error") if isinstance(reason, dict) else None
+                detail = error if isinstance(error, dict) else reason
+                self.error_message = (str(detail.get("message") or detail.get("code") or detail.get("kind"))
+                                      if isinstance(detail, dict) else "DeepSeek Harness ended without a completed turn")
+            steps = [_step("error", self.error_message or "") if self.is_error else _step("end", "")]
+        self.steps.extend(steps)
+        return steps
+
+
+def stream_for(runner: str) -> ClaudeStream | OpenCodeStream | CodexStream | HarnessStream:
+    if runner == "deepseek-harness":
+        return HarnessStream()
+    if runner == "codex":
+        return CodexStream()
+    return ClaudeStream() if runner == "claude-code" else OpenCodeStream()
+
+
 # -- how a run ended ----------------------------------------------------------
 
 
@@ -682,7 +925,7 @@ def _failed(code: str, detail: object) -> tuple[str, dict]:
     return "failed", {"code": code, "detail": _flat(detail, 2000)}
 
 
-def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeStream) -> tuple[str, dict | None]:
+def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeStream | CodexStream | HarnessStream) -> tuple[str, dict | None]:
     """`("ok", None)` or `("failed", {"code", "detail"})` from the exit code and the stream.
 
     Claude Code: ok needs exit 0 and a result that is not an error. A
@@ -709,6 +952,19 @@ def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeS
             return _failed(code, detail)
         if exit_code not in (None, 0):
             return _failed("exit", f"exit code {exit_code}")
+        return "ok", None
+    if runner in ("codex", "deepseek-harness"):
+        name = "Codex" if runner == "codex" else "DeepSeek Harness"
+        if runner == "deepseek-harness" and exit_code is None:
+            return _failed("aborted", "DeepSeek Harness has no process exit status")
+        if exit_code in ABORT_EXIT_CODES:
+            return _failed("aborted", f"the program was ended by a signal (exit code {exit_code})")
+        if stream.is_error:
+            return _failed("model_error", getattr(stream, "error_message", None) or f"{name} request failed")
+        if exit_code not in (None, 0):
+            return _failed("exit", f"exit code {exit_code}")
+        if stream.result is None:
+            return _failed("aborted", f"{name} ended without completing its turn")
         return "ok", None
     if runner == "opencode":
         if stream.is_error:

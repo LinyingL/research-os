@@ -252,7 +252,7 @@ researchos mcp --agent-run <run> --path /path/to/project
 ```
 
 The app starts this form of `mcp` for an agent run, as a child of Claude
-Code or OpenCode; you do not run it by hand. It requires the environment
+Code, Codex, DeepSeek Harness, or OpenCode; you do not run it by hand. It requires the environment
 variable `RESEARCHOS_AGENT_RUN` to be set to the same run id, and
 refuses to start without it. Its tools are different from the plain server's:
 

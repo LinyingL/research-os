@@ -3900,13 +3900,14 @@ notes and a result, and marks the task done. Decided the same day:
 
 ### 17.1 Agents
 
-- **Two runners**, each an external command-line program Research OS finds
-  but never installs: `claude-code` (Claude Code, `claude`) and `opencode`
-  (OpenCode, `opencode`). An **agent** is a runner plus a model:
+- **Three runners**, each an external command-line program Research OS finds
+  but never installs: `claude-code` (Claude Code, `claude`), `opencode`
+  (OpenCode, `opencode`), and `codex` (Codex, `codex`). An **agent** is a runner plus a model:
   `claude-code` with `sonnet`, `opus`, `haiku` or a full model name;
   `opencode` with `provider/model` as `opencode models` lists it (an LM
   Studio or Ollama model configured in OpenCode is how a local model is
-  used).
+  used). Codex uses full model IDs from its catalog; see the Codex runner
+  amendment below.
 - **This Mac's list** is `settings.json` `agents`: `[{runner, model}]`, at
   most 20, written only when the person adds or removes one. A model name is
   1–120 characters of letters, digits and `. _ : / @ [ ] + -`, starting with
@@ -5316,3 +5317,50 @@ nothing new inside the project.
    - The history window at 100,000 versions takes under 60 ms.
    - On the researcher's copy, no endpoint is slower than before.
 8. The full suite passes on Python 3.11 and 3.13.
+
+
+## Codex runner and concrete model versions (2026-10-23)
+
+Codex is a third runner under the existing task/run/report/undo contract.
+It uses `codex exec --json --model <full ID>` and resumes with the recorded
+thread ID, never the latest unrelated session. The selected model ID is
+stored unchanged. Only a model reported by the program is recorded as the
+answering model; token usage is not converted into an invented dollar cost.
+
+Use workspace-write, no interactive escalation, ignore user configuration
+and execpolicy rules, and supply a required MCP server limited to the six
+agent tools. Only those tools are preapproved. MCP writes still pass through
+the existing run-bound validation. No Research OS PreToolUse hook is claimed
+for Codex: protected changes are identified by the before/after comparison.
+The `.codex` folder joins the protected agent settings folders.
+
+Explicit executable paths win. Otherwise prefer a working CLI bundled with
+the macOS desktop app, then widened PATH. `codex debug models` supplies the
+model catalog, with hidden entries removed; failures offer manual entry,
+not a fabricated list. The UI keeps catalogs separate by runner, displays
+complete IDs in a select, and permits full IDs and snapshots as text.
+Availability is determined by the account and login method. GPT-5.5 is no
+longer available with ChatGPT authentication; it remains an API option.
+
+Verified with bundled Codex CLI 0.162.0-alpha.17.2: a fictional project
+asked a question, resumed the same thread, wrote a file, completed through
+MCP, and undid both the file and completion mark. Unsupported older CLI
+flags fail visibly; no weaker execution fallback is used.
+
+References: [noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+[MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
+[model availability](https://learn.chatgpt.com/docs/models).
+
+
+### Claude model-version picker (2026-10-23)
+
+Claude Code's suggestions now contain documented full version IDs rather
+than rolling `sonnet` / `opus` / `haiku` / `fable` aliases. The picker labels
+them with a readable family and version, while saving and executing the
+unchanged full ID. Older 4.5 entries include their published snapshot date.
+Existing tasks and saved agents using aliases remain valid; no migration or
+automatic substitution occurs. Custom model IDs remain available. This is
+a documented suggestion list, not a live account entitlement check, and
+requires no API key or model inference to display.
+
+Source: [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration).

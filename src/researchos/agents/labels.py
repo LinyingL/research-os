@@ -21,8 +21,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-RUNNERS = ("claude-code", "opencode")
-RUNNER_LABELS = {"claude-code": "Claude Code", "opencode": "OpenCode"}
+RUNNERS = ("claude-code", "opencode", "codex", "deepseek-harness")
+RUNNER_LABELS = {"claude-code": "Claude Code", "opencode": "OpenCode", "codex": "Codex",
+                 "deepseek-harness": "DeepSeek Harness"}
 OWNER_PREFIX = "agent:"
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,119}\Z")
 
@@ -52,6 +53,14 @@ def check_model(model: object) -> str:
     return model.strip()
 
 
+def harness_route(model: object) -> tuple[str, str]:
+    """The explicit official Harness authentication route and model ID."""
+    provider, _, name = check_model(model).partition("/")
+    if provider not in ("deepseek-account", "deepseek-official") or not name:
+        raise ValueError("Harness model must be deepseek-account/<model> or deepseek-official/<model>")
+    return provider, name
+
+
 def parse_owner(owner: object) -> Agent | None:
     """The agent an `owner` value names; None when it is not an agent owner
     (not text, or not starting with `agent:`); ValueError when it starts
@@ -63,6 +72,8 @@ def parse_owner(owner: object) -> Agent | None:
         raise ValueError("An agent owner must name a runner and a model")
     if not MODEL_RE.match(model):  # strict: an owner value is canonical, never stripped
         raise ValueError("An agent owner must name a runner and a model")
+    if runner == "deepseek-harness":
+        harness_route(model)
     return Agent(runner, model)
 
 
