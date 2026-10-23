@@ -732,6 +732,13 @@
     if (epoch !== state.dataEpoch) return;
     if (view.proposal) { await renderProposalPage(host, view.proposal, view.member, refresh); return; }
     if (epoch !== state.dataEpoch || view.proposal) return;
+    // 18.3: a project of one person has no 提议 page. One reached before the role was known (a view kept from
+    // another project, opened at start) goes on to 开始协作, as activateView does once it knows.
+    if (RODesk.onePerson() && currentView === "proposals") {
+      delete views.members.dataset.loaded;
+      activateView("members");
+      return;
+    }
     const top = window.scrollY;
     host.innerHTML = "";
     const page = mk("div", "team");

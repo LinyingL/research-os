@@ -2279,6 +2279,8 @@ def test_13_7_api_github_push_answers_with_the_state_in_the_requests_language(st
 #: English entry of /i18n.js (either form of a plural) or the switch's own name.
 GUIDE_EN_ENGLISH_LABELS = (
     "English", "Members", "Proposals", "Add project…", "Join a project from the shared folder…",
+    # 18.3: the project menu of a project of one person opens the team setup.
+    "Start collaborating…",
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
     "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",

@@ -153,7 +153,7 @@ def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothin
     assert "if (state.noProject) {" in _src()[_src().index("async function loadProjectSummary"):][:900]
     assert "if (state.noProject) return; // 10.1" in _function("openAttemptForm")
     reload = _function("reloadAllViews")
-    assert reload.index("if (state.noProject) return;") < reload.index("loadTreeView()")
+    assert reload.index("if (state.noProject) return;") < reload.index("RODesk.loadDesk(views.desk)")  # 18.3: the one page's load, not the old tree's
     load = _src()[_src().index("async function loadProjects()"):]
     load = load[: load.index("\n}\n")]
     assert "const noProject = !!data.no_project || data.current == null;" in load

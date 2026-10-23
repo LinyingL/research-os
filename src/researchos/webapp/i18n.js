@@ -250,6 +250,7 @@
     "未初始化": "Not initialized",
     "选择新位置…": "Choose a new location…",
     "推送到 GitHub…": "Push to GitHub…",
+    "开始协作…": "Start collaborating…",
     "添加项目…": "Add project…",
     "从公盘加入项目…": "Join a project from the shared folder…",
     "重新扫描这个项目": "Rescan this project",

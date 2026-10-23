@@ -83,9 +83,10 @@
 //   proposals folder, shared with them on its own), from "choose-folder-mine".
 //   Since V8 U5 (DESIGN.md 12.9): `{type: "mode", mode: String}`, mode
 //   exactly one of teamModes, sent by the page whenever it learns the open
-//   project's role. It only shows or hides 文件 > 提交提议… (a member) and
-//   发布 (the PI); both commands only take the page to the place that says
-//   what they would write -- nothing is written from a menu.
+//   project's role. It only shows or hides 文件 > 提交提议… (a member),
+//   发布 (the PI) and, unless the project is one person's ("single", DESIGN.md
+//   18.3), 视图 > 提议 and 成员; the commands only take the page to the place
+//   that says what they would write -- nothing is written from a menu.
 //   Since V9 (DESIGN.md 13.3): `{type: "language"}`, exactly one key, sent
 //   when the researcher switches the interface language in the page. The
 //   shell re-reads settings.json -- the message names no language and the
@@ -124,7 +125,9 @@ let shellCommands: Set<String> = [
 ]
 
 // What the page says the open project is (V8 U5): exactly one of these, or
-// the message is ignored. 提交提议… shows for "member", 发布 for "pi".
+// the message is ignored. 提交提议… shows for "member", 发布 for "pi"; 视图 >
+// 提议 and 成员 show for every mode but "single" (18.3: a project of one person
+// has neither, nor does its sidebar).
 let teamModes: Set<String> = ["single", "pi", "member", "none"]
 
 let defaultPort = 7357
@@ -483,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var proposeItem: NSMenuItem!
     var publishItem: NSMenuItem!
     var teamSeparator: NSMenuItem!
+    var teamViewItems: [NSMenuItem] = []
 
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -813,7 +817,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             item("退出", #selector(NSApplication.terminate(_:)), "q"),
         ]))
         // 提交提议… / 发布 appear only in a collaborative project, by role
-        // (applyTeamMode); a project of one person has neither.
+        // (applyTeamMode); a project of one person has neither, nor 提议 and
+        // 成员 in 视图 (18.3).
         proposeItem = cmd("提交提议…", "propose")
         publishItem = cmd("发布", "publish")
         teamSeparator = .separator()
@@ -826,7 +831,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             .separator(),
             item("关闭", #selector(NSWindow.performClose(_:)), "w"),
         ]))
-        applyTeamMode()
         main.addItem(submenu("编辑", [
             item("撤销", Selector(("undo:")), "z"),
             item("重做", Selector(("redo:")), "z", [.command, .shift]),
@@ -859,6 +863,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             cmd("实际大小", "zoom-reset", "0"),
         ])
         viewMenu.submenu?.items.first { $0.action == #selector(reloadPage(_:)) }?.target = self
+        teamViewItems = (viewMenu.submenu?.items ?? []).filter {
+            ["proposals", "members"].contains($0.representedObject as? String ?? "")
+        }
+        applyTeamMode()
         main.addItem(viewMenu)
         let windowMenu = submenu("窗口", [
             item("最小化", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -880,10 +888,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     // 文件 > 提交提议… for a member, 发布 for the PI; neither otherwise.
+    // 视图 > 提议 and 成员 (⌘7, ⌘8): in every project but one person's (18.3);
+    // a hidden item is off the menu and its shortcut does nothing.
     func applyTeamMode() {
         proposeItem.isHidden = teamMode != "member"
         publishItem.isHidden = teamMode != "pi"
         teamSeparator.isHidden = teamMode != "member" && teamMode != "pi"
+        teamViewItems.forEach { $0.isHidden = teamMode == "single" }
     }
 
     @objc func showAbout(_ sender: Any?) {

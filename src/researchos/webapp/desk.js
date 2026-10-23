@@ -262,7 +262,7 @@
 
   // -- runtime --------------------------------------------------------------------
 
-  const ctx = { me: null, share: null, proposals: null, mode: null, project: null, epoch: -1 };
+  const ctx = { me: null, share: null, proposals: null, mode: null, single: false, project: null, epoch: -1 };
   let todo = { project: null, n: 0 }; // how many rows the 待办 column lists, for the sidebar (18.3)
   const sessionSince = new Map(); // project key -> the last-seen time this page session shows from
   const gotItNow = new Map();     // gotItKey -> the returned proposals said 「知道了」 to (storage may be off)
@@ -328,6 +328,11 @@
     ctx.proposals = proposals;
     ctx.share = share;
     ctx.mode = role === "pi" || role === "member" || role === "none" ? role : "single";
+    // A project of one person (18.3) is the engine's own "single" with no team file listing anyone: a PI
+    // alone in the file is "single" to the engine (12.1) and has a team to set up, so for the sidebar the
+    // team file counts. A read that failed, or a team file that cannot be read ("unknown"), also leave
+    // `mode` at "single" for the pages that always did, and are never taken for one person.
+    ctx.single = role === "single" && !(proposals && proposals.team === true);
     ctx.project = projectKey();
     ctx.epoch = epoch;
     return true;
@@ -369,6 +374,21 @@
   // roles /api/proposals names; "single" is a project of one person).
   function teamProject() {
     return !state.noProject && (ctx.mode === "pi" || ctx.mode === "member" || ctx.mode === "none");
+  }
+
+  // A project of one person (12.1, 18.3): the engine said "single" for the open project and no team file
+  // lists anyone (ctx.single). Not known yet, not read (the request failed, a team file that cannot be
+  // read) is not that: the sidebar and the menus then show everything, as for a team.
+  function onePerson() {
+    return !state.noProject && ctx.single === true && ctx.project === projectKey() && ctx.epoch === state.dataEpoch;
+  }
+
+  // What the Mac's menus are told (the shell takes exactly these four, V8 U5): "single" hides 提议, 成员,
+  // 提交提议 and 发布 there; a project the page could not read the role of is "none" -- 提议 and 成员 show,
+  // the two that need a role do not.
+  function shellMode() {
+    if (state.noProject || onePerson()) return "single";
+    return ctx.mode === "pi" || ctx.mode === "member" ? ctx.mode : "none";
   }
 
   // 待办's count (18.3) is what the column lists: the PI's proposals waiting,
@@ -426,8 +446,14 @@
     const shareLine = document.getElementById("share-line");
     const meLine = document.getElementById("me-line");
     if (!count || !shareLine || !meLine) return;
-    // The shell's 文件 menu shows 提交提议… or 发布 by role (V8 U5).
-    if (typeof postShellMode === "function") postShellMode(state.noProject ? "single" : ctx.mode);
+    // The shell's menus show 提交提议… or 发布 by role (V8 U5), and 提议 and 成员 unless the project is one
+    // person's (18.3).
+    if (typeof postShellMode === "function") postShellMode(shellMode());
+    // 18.3: the sidebar of a project of one person has no 提议 and no 成员 (app.html's stylesheet reads this
+    // mark). With no project there is no sidebar to speak of, and the mark stays as the page starts, so a
+    // project added next does not show the two for a moment.
+    const nav = document.getElementById("side-nav");
+    if (nav && nav.dataset) nav.dataset.team = state.noProject || onePerson() ? "single" : "team";
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
     count.title = n > 0 ? t("{n} 条提议等你批准", { n: n }) : "";
@@ -458,9 +484,11 @@
         : ctx.mode === "none" ? t("尚未加入团队") : "";
       if (role && !state.noProject) meLine.append(mk("span", "me-role", role));
       meLine.title = me.id || "";
-    } else {
+    } else if (!onePerson()) {
       meLine.append(mk("span", "me-unset", t("还没有设置你是谁")));
       meLine.title = t("在「成员」一栏里设置");
+    } else {
+      meLine.title = ""; // 18.3: a project of one person does not ask who you are; 开始协作… does
     }
   }
 
@@ -1745,7 +1773,7 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
-    setMode, resume, syncSwitch, listZoom, mode: routesMode,
+    setMode, resume, syncSwitch, listZoom, mode: routesMode, onePerson,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // pure, for tests/test_v8_u2.py

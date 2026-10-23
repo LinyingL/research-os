@@ -135,9 +135,13 @@ missing, ask the PI to add you and publish, then sync again.
 
 1. Click **Add project…**, then **选择文件夹…** (Choose folder…), and select
    the project. Review the scan scope and click **加入并扫描** (Add and scan).
-2. Open **Members**. Under **我是谁** (Who I am), enter your name and
-   OneDrive e-mail address, then click **保存** (Save).
+2. Click the project name at the top of the sidebar and choose
+   **Start collaborating…** to open **Members**. Under **我是谁** (Who I am),
+   enter your name and OneDrive e-mail address, then click **保存** (Save).
 3. Under **开始协作** (Start collaborating), click **建立成员名单** (Create the member list).
+
+While you are the only person, the sidebar has no **Members** or
+**Proposals**. Once you have created the member list, both appear in it.
 
 Back up `~/.researchos/keys` to a secure location. Losing the private key
 requires a new key and a new fingerprint check for every member.

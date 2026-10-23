@@ -501,7 +501,35 @@ def test_shell_file_menu_shows_propose_or_publish_by_the_pages_mode():
     assert '["single", "pi", "member", "none"].indexOf(mode) >= 0 ? mode : "single"' in post
     assert 'postMessage({ type: "mode", mode: m })' in post
     desk = (Path(macapp.__file__).parent / "desk.js").read_text(encoding="utf-8")
-    assert 'postShellMode(state.noProject ? "single" : ctx.mode)' in desk
+    # 18.3: what the page tells the shell is the one-person reading, not the raw role (a role it could not read is "none").
+    assert "postShellMode(shellMode())" in desk
+    assert 'if (state.noProject || onePerson()) return "single";' in desk
+    assert 'return ctx.mode === "pi" || ctx.mode === "member" ? ctx.mode : "none";' in desk
+
+
+def test_shell_view_menu_has_no_proposals_or_members_for_a_project_of_one_person():
+    """18.3: 视图 > 提议 and 成员 (⌘7, ⌘8) are the two items a project of one
+    person does not have, as it has no 提交提议… or 发布 in 文件: they are
+    found among the items the menu was built with (the commands `proposals`
+    and `members`), hidden for the mode "single" and shown for every other,
+    set when the menus are built (a language change rebuilds them) and
+    whenever the page says the mode; the other six sections stay, so the
+    shortcuts ⌘1 to ⌘6 are the sidebar's six."""
+    build = _SHELL[_SHELL.index("func buildMainMenu"):]
+    build = build[: build.index("\n    }\n")]
+    assert 'cmd("提议", "proposals", "7")' in build and 'cmd("成员", "members", "8")' in build
+    assert 'var teamViewItems: [NSMenuItem] = []' in _SHELL
+    assert ('teamViewItems = (viewMenu.submenu?.items ?? []).filter {\n'
+            '            ["proposals", "members"].contains($0.representedObject as? String ?? "")\n        }') in build
+    # Made after the 视图 menu exists and before it is put in the bar, so a rebuilt menu is right from the start.
+    assert build.index('submenu("视图"') < build.index("teamViewItems = ") < build.index("applyTeamMode()") < build.index("main.addItem(viewMenu)")
+    assert build.count("applyTeamMode()") == 1
+    apply = _SHELL[_SHELL.index("func applyTeamMode"):]
+    apply = apply[: apply.index("\n    }\n")]
+    assert 'teamViewItems.forEach { $0.isHidden = teamMode == "single" }' in apply
+    # The mode "none" (a team project this Mac is not part of, or a role the page could not read) shows them.
+    assert 'let teamModes: Set<String> = ["single", "pi", "member", "none"]' in _SHELL
+    assert 'var teamMode = "single"' in _SHELL  # until the page says otherwise, as before
 
 
 def test_shell_choose_folder_answers_through_a_fixed_callback_with_arguments():

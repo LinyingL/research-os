@@ -393,10 +393,15 @@ def _worded(out: dict[str, Any], root: Path, lang: str = "zh") -> dict[str, Any]
 
 
 def proposals_payload(root: Path) -> dict[str, Any]:
-    """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议."""
+    """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议, and `team`: whether a team
+    file lists anyone."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    return _proposal_call(lambda: proposals_mod.listing(root))
+    out = _proposal_call(lambda: proposals_mod.listing(root))
+    # 18.3: the role is "single" for a PI alone in the team file (12.1), but the page shows 提议 and 成员
+    # once the file exists, and leaves them out only for a project of one person.
+    out["team"] = bool(people.read_team(root).members)
+    return out
 
 
 def proposal_payload(root: Path, proposal_id: str, lang: str = "zh", member: str | None = None) -> dict[str, Any]:

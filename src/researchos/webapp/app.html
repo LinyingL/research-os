@@ -222,6 +222,9 @@ body {
 .me-role, .me-unset { color: var(--ink-soft); }
 .side-tools { display: flex; flex-wrap: wrap; gap: 0.1rem 1rem; margin-top: 0.2rem; }
 body.no-project .side-nav, body.no-project .share-line { display: none !important; }
+/* 18.3: a project of one person has no 提议 and no 成员 in the sidebar (desk.js sets data-team). */
+.side-nav[data-team="single"] .side-item[data-section="proposals"],
+.side-nav[data-team="single"] .side-item[data-section="members"] { display: none; }
 
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .topbar {
@@ -1305,7 +1308,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>
       </span>
     </div>
-    <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
+    <nav class="side-nav" id="side-nav" data-team="single" aria-label="栏目" data-i18n-attr="aria-label">
       <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
       <button type="button" class="side-item" data-section="routes" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span><span class="side-count" id="side-count-routes"></span></button>
       <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>图表与论断</span></button>
@@ -2002,6 +2005,9 @@ const FULL_WINDOW_VIEWS = ["canvas", "desk"];
 // acts on the canvas (适应全部 from the menu) can wait for it.
 function activateView(name) {
   if (!Object.prototype.hasOwnProperty.call(views, name)) name = "workspace";
+  // 18.3: a project of one person has no 提议 page. Whatever asks for it -- a menu built before 18.3, a view
+  // kept from another project -- lands on 开始协作, the team setup, instead of on a page about nothing.
+  if (name === "proposals" && window.RODesk && RODesk.onePerson && RODesk.onePerson()) return startCollaborating();
   if (currentView === name) return null;
   if (currentView === "workspace" && window.ROWorkspace && !ROWorkspace.mayLeave()) return null;
   // 14.3: the desk's panel (no backdrop) belongs to the desk -- leaving it
@@ -2072,6 +2078,14 @@ document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
 document.querySelectorAll("#routes-switch .subnav-item").forEach((btn) => {
   btn.addEventListener("click", () => RODesk.setMode(btn.dataset.mode));
 });
+
+// 开始协作… (18.3, the project menu of a project of one person): the team setup is the 成员 page -- its 开始协作
+// block, or 建立成员名单 -- whose sidebar item such a project does not show. Read afresh, as the sidebar's own
+// click reads it.
+function startCollaborating() {
+  if (currentView !== "members") delete views.members.dataset.loaded;
+  return activateView("members");
+}
 
 // 研究路线 (18.3), the one page: opened on `mode` ("map" or "list") when the
 // caller means one of the two, else the way it is kept for the project.
@@ -2367,6 +2381,10 @@ function renderProjectMenu() {
   // 11.3: for every served project -- linked, without a remote (a private
   // repository is offered), or not a git repository (the panel explains).
   projectMenu.appendChild(pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
+  // 18.3: a project of one person has no 成员 in the sidebar; the team setup is opened from here.
+  if (window.RODesk && RODesk.onePerson && RODesk.onePerson()) {
+    projectMenu.appendChild(pmItem(t("开始协作…"), () => { closeProjectMenu(false); startCollaborating(); }));
+  }
   projectMenu.appendChild(pmItem(t("新建项目…"), () => { closeProjectMenu(false); ROWorkspace.openCreateProject(); }));
   projectMenu.appendChild(pmItem(t("添加项目…"), () => { closeProjectMenu(false); openAddDialog(); }));
   projectMenu.appendChild(pmItem(t("从公盘加入项目…"), () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));

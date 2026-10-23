@@ -94,6 +94,16 @@
   and 项目首页 is ⌘1, so the shortcuts follow the sidebar; an app built earlier
   still opens the page from both of its old menu items. After updating, run
   `researchos app` again to get the new menu. Nothing on disk changes.
+- Leave out what a project of one person does not use. With no team file, the
+  sidebar has no 提议 and no 成员 and no reminder to
+  say who you are, and the app's View menu and File menu have no 提议, 成员,
+  提交提议 or 发布. The project menu gains 开始协作…, which opens the team setup
+  (on the 成员 page). Once there is a team the items come back by themselves,
+  without reloading; a team project this Mac is not part of, or a team file
+  that cannot be read, shows them as before. An app built earlier still shows
+  the two menu items (and sends you to 开始协作 if you choose 提议 in a project
+  of one person); run `researchos app` again to get the new menu. Nothing on
+  disk changes.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

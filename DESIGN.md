@@ -4730,6 +4730,43 @@ does not add.
   - The project menu gains 开始协作…, which opens the existing team setup.
   - Once a team file exists, all of these return.
   - A team project that this Mac is not part of shows them.
+  - **How it is read** (task V14, G3-2):
+    - *Which project.* The engine's role for the open project is `single`
+      (`/api/proposals`; 12.1: no team file, an empty one, or only its PI)
+      and its answer says `team`, true when a team file lists anyone. A
+      project of one person is `single` with no `team`. Everything else shows
+      the items: a PI or a member, `none` (a team project this Mac is not
+      part of), `unknown` (a team file that cannot be read), a role the page
+      could not read at all (never taken for one person), and a PI who has
+      made the member list and added nobody -- the engine's word for them is
+      still `single`, but a team file exists, and 成员 is where they go on
+      to set the shared folder and add the first member.
+      With no project open the sidebar is hidden whole, as before.
+    - *The sidebar.* The nav starts marked one person's and the page flips
+      the mark each time it reads the role (the sidebar's other live parts
+      read at the same moments: after the page's own acts, on the desk's
+      reload when the generation moves, on a project switch), so the items
+      come back with no reload, and a one-person project never shows them
+      for a moment. The stylesheet hides exactly those two items under the
+      mark; the markup keeps 12.9's eight. The line at the foot keeps the
+      name once it is set and loses only the reminder 「还没有设置你是谁」
+      with its hover text; the form is on the page 开始协作… opens.
+    - *The Mac.* The page tells the shell `single` for such a project (and
+      with none open), and `none` for a role it could not read, so
+      the menus show 提议 and 成员 and not 提交提议 or 发布 (which need a
+      role). The shell hides 视图 > 提议 and 成员 for `single`; ⌘7 and ⌘8
+      then do nothing, and ⌘1 to ⌘6 are the sidebar's six items.
+    - *开始协作….* In the project menu, right after 推送到 GitHub…, in a
+      project of one person only. It opens the 成员 page, read afresh as the
+      sidebar's own click reads it: 我是谁 first, then the 开始协作 block
+      with 建立成员名单. The page keeps its title 成员 and no sidebar item
+      is marked, as the item is not there.
+    - *What asks for 提议 in such a project* (a Mac app built before this
+      round whose menu still has ⌘7, the compose command, a view kept from
+      another project) is routed to 开始协作, not ignored: someone who asked
+      for proposals is told how to have them. A page that asked for 提议
+      before the role was known goes on to it once it is. 成员 itself is
+      always a page of its own.
 - **Changing an existing row's 研究判断 or 结果 saves at once.**
   - It is the same write as before (only what changed, backed up, in the
     history, conflict-checked), without the preview step.
