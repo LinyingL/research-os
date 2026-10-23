@@ -94,6 +94,16 @@ this Mac keeps runs for that were left preparing or running, with the same rules
 `_recover` (a program is ended only when its pid and start time are the recorded
 ones), so that nothing waits for someone to open the project's page.
 
+**The log is read once** (18.4 item 2). The page polls `detail` every 2 s while a run goes, and a log may be 20 MB.
+`detail` keeps, per run and in memory, a cursor (`_EventsCursor`): the stream parser as it stood after the last
+complete line it read, the byte offset there, the file's identity (device and inode) and its last bytes before the
+offset. A poll reads what was appended since, feeds the parser the complete lines, and reads a half-written last
+line on a copy of the parser that is thrown away -- so the steps are the ones a read of the whole file gives. The
+cursor starts over when the file's inode changed, the file is shorter than the offset, or the bytes before the
+offset are not the ones it saw. It keeps the last `STEPS_LIMIT` steps and the newest `say` (which the end of the
+stream is compared with), the number of steps it let go, and is itself kept for the `CURSORS_KEPT` runs asked for
+last. `runs` lists the project's runs once for a request.
+
 **Who is who after a crash.** `run.json` carries the start time of the
 engine process (`engine_started`) and of the program (`program_started`), so
 a recycled pid is neither "another live engine" nor "the program" (`_recover`).
@@ -102,6 +112,7 @@ a recycled pid is neither "another live engine" nor "the program" (`_recover`).
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -114,6 +125,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -146,6 +158,11 @@ STOP_WAIT_S = 30.0
 SHUTDOWN_WAIT_S = 60.0
 MAX_LINE_BYTES = 4 * 1024 * 1024
 STEPS_LIMIT = 500
+#: How many runs' event-log cursors are kept (the one asked for longest ago goes first); a cursor holds at most
+#: `STEPS_LIMIT + CURSOR_SLACK + 1` steps. `CURSOR_ANCHOR_BYTES` of the log before the cursor's offset are remembered.
+CURSORS_KEPT = 8
+CURSOR_SLACK = 100
+CURSOR_ANCHOR_BYTES = 64
 STDERR_TAIL_BYTES = 4096
 REFUSALS_TAIL_BYTES = 64 * 1024
 SUMMARY_LIMIT = 2000
@@ -606,6 +623,88 @@ def _local_time(moment: float | str | None) -> str | None:
         return None
 
 
+class _EventsCursor:
+    """Where `detail` stopped in one run's `events.jsonl` (module docstring, "The log is read once"). `read` returns
+    what a read of the whole file would: the steps the log holds (the last `STEPS_LIMIT` of them) and how many
+    there are. Not thread-safe by itself: the caller holds `lock` around `read`."""
+
+    def __init__(self, runner: object) -> None:
+        self.lock = threading.Lock()
+        self.runner = runner
+        self._start_over()
+
+    def _start_over(self) -> None:
+        self.stream: runners.ClaudeStream | runners.OpenCodeStream = (
+            runners.ClaudeStream() if self.runner == "claude-code" else runners.OpenCodeStream())
+        self.identity: tuple[int, int] | None = None  # (device, inode) of the file the offset belongs to
+        self.offset = 0      # the log up to here (it ends with a newline) has been fed to the parser
+        self.anchor = b""    # the last bytes before `offset`
+        self.dropped = 0     # steps let go of: older than the ones kept
+
+    def _anchored(self, handle: Any) -> bool:
+        """Whether the bytes before the offset are still the ones that were read (a log rewritten in place is not)."""
+        if not self.anchor:
+            return True
+        handle.seek(self.offset - len(self.anchor))
+        return handle.read(len(self.anchor)) == self.anchor
+
+    def _trim(self) -> None:
+        """Let go of the oldest steps, keeping what a read of the end needs: the last `STEPS_LIMIT`, and the newest
+        `say` (the parser compares the run's last words with it)."""
+        steps = self.stream.steps
+        if len(steps) <= STEPS_LIMIT + CURSOR_SLACK:
+            return
+        cut = len(steps) - STEPS_LIMIT
+        said = next((s for s in reversed(steps[:cut]) if s["kind"] == "say"), None)
+        if any(s["kind"] == "say" for s in steps[cut:]):
+            said = None
+        kept = ([said] if said is not None else []) + steps[cut:]
+        self.dropped += len(steps) - len(kept)
+        self.stream.steps = kept
+
+    def read(self, path: Path) -> tuple[list[dict], int]:
+        """`(steps, total)`: copies of the last `STEPS_LIMIT` steps of the log at `path` and the number of steps in
+        all. Only the first `run_store.EVENTS_LIMIT` bytes of a log count, as ever; a log that cannot be read, is
+        missing or is in the cloud has no steps."""
+        data = b""
+        try:
+            if paths.is_dataless(path):
+                raise OSError("in the cloud")
+            with open(path, "rb") as handle:
+                st = os.fstat(handle.fileno())
+                identity = (st.st_dev, st.st_ino)
+                end = min(st.st_size, run_store.EVENTS_LIMIT)
+                if identity != self.identity or end < self.offset or not self._anchored(handle):
+                    self._start_over()
+                    self.identity = identity
+                handle.seek(self.offset)
+                data = handle.read(max(0, end - self.offset))
+        except OSError:
+            self._start_over()
+            data = b""
+        cut = data.rfind(b"\n") + 1
+        try:
+            if cut:
+                for line in data[:cut].decode("utf-8", "replace").splitlines():
+                    self.stream.feed(line)
+                self.offset += cut
+                self.anchor = (self.anchor + data[:cut])[-CURSOR_ANCHOR_BYTES:]
+                self._trim()
+            steps = self.stream.steps
+            dropped = self.dropped
+            tail = data[cut:].decode("utf-8", "replace")
+            if tail.strip():  # a line that is still being written: read on a copy of the parser, which is not kept
+                probe = copy.copy(self.stream)
+                probe.steps = list(steps)
+                for line in tail.splitlines():
+                    probe.feed(line)
+                steps = probe.steps
+        except BaseException:
+            self._start_over()  # half a batch fed is no state to continue from
+            raise
+        return [dict(s) for s in steps[-STEPS_LIMIT:]], dropped + len(steps)
+
+
 class AgentManager:
     """Carries out agent runs for the projects the engine serves. See the
     module docstring. `on_finish(root, run)` is called (from the run's
@@ -620,6 +719,8 @@ class AgentManager:
         self.engine_port = engine_port
         self._lock = threading.RLock()
         self._recover_lock = threading.Lock()
+        self._cursors: OrderedDict[tuple[str, str], _EventsCursor] = OrderedDict()
+        self._cursor_lock = threading.Lock()
         self._active: dict[str, _Active] = {}
         self._reverting: set[str] = set()
         self._closing = False
@@ -1323,7 +1424,7 @@ class AgentManager:
         out-of-bounds check does not leave the person's paths out: a protected path is allowed to end
         with the bytes the engine wrote there, and with nothing else."""
         rd = run_store.run_dir(project_id, run_id)
-        after = snapshot.take(root)
+        after = snapshot.take(root, reuse=before)  # a file with the stamp the before-picture saw is not read again (18.4)
         _write_json(rd / "after.json", after)
         human_list = sorted(human())
         shas = {_key(p): s for p, s in (human_sha() if human_sha is not None else {}).items()}
@@ -1515,7 +1616,8 @@ class AgentManager:
             return act.run_id if act is not None else None
 
     def _summary_of(self, project_id: str, run: dict) -> dict:
-        latest = next((r for r in run_store.list_runs(project_id) if r.get("task_id") == run.get("task_id")), None)
+        # the newest run of the task: the listing is read newest first and no further than that run (18.4 item 2)
+        latest = next((r for r in run_store.iter_runs(project_id) if r.get("task_id") == run.get("task_id")), None)
         return summary(run, latest_of_task=latest is not None and latest.get("id") == run.get("id"),
                        active=self._is_active(project_id, run["id"]))
 
@@ -1523,15 +1625,22 @@ class AgentManager:
         """`{"runs": [summary...], "active": run id | None}`, newest first. Runs left active by an
         engine that is gone are marked `interrupted` first (17.3) -- unless `recover` is False
         (a window without the engine's session may read the list but not change a run, 18.1):
-        they are then listed as they are stored."""
+        they are then listed as they are stored. The project's runs are listed once for the request (18.4
+        item 2): recovery hands back the listing it worked from, with the runs it looked at read again."""
         self._check_ids(project_id)
-        foreign = self._recover(project_id) if recover else self._foreign_active(project_id)
+        if recover:
+            foreign, listing = self._recovered(project_id)
+        else:
+            listing = run_store.list_runs(project_id)
+            foreign = self._foreign_active(project_id, listing)
         with self._lock:
             act = self._active.get(project_id)
             active_id = act.run_id if act is not None else None
+        if active_id is not None and all(r.get("id") != active_id for r in listing):
+            listing = run_store.list_runs(project_id)  # a run started since the listing was made: it is on disk now
         out = []
         seen: set[Any] = set()
-        for run in run_store.list_runs(project_id):
+        for run in listing:
             latest = run.get("task_id") not in seen
             seen.add(run.get("task_id"))
             out.append(summary(run, latest_of_task=latest, active=run["id"] == active_id))
@@ -1543,7 +1652,7 @@ class AgentManager:
         run = self._load(project_id, run_id)
         rd = run_store.run_dir(project_id, run_id)
         out = self._summary_of(project_id, run)
-        steps, total = self._steps(rd / "events.jsonl", run)
+        steps, total = self._steps(rd / "events.jsonl", run, self._cursor(project_id, run_id, run.get("runner")))
         out.update(
             steps=steps, steps_total=total, changes=run.get("changes") or {}, violations=run.get("violations") or [],
             instruction=_read_text(rd / "instruction.txt"),
@@ -1559,14 +1668,26 @@ class AgentManager:
             events_truncated=bool(run.get("events_truncated")), stderr_truncated=bool(run.get("stderr_truncated")))
         return out
 
+    def _cursor(self, project_id: str, run_id: str, runner: object) -> _EventsCursor:
+        """The cursor of a run's log (the most recently asked for are kept, `CURSORS_KEPT` of them)."""
+        key = (project_id, run_id)
+        with self._cursor_lock:
+            cursor = self._cursors.pop(key, None)
+            if cursor is None or cursor.runner != runner:
+                cursor = _EventsCursor(runner)
+            self._cursors[key] = cursor
+            while len(self._cursors) > CURSORS_KEPT:
+                self._cursors.popitem(last=False)
+            return cursor
+
     @staticmethod
-    def _steps(events_path: Path, run: dict) -> tuple[list[dict], int]:
-        stream: runners.ClaudeStream | runners.OpenCodeStream = (
-            runners.ClaudeStream() if run.get("runner") == "claude-code" else runners.OpenCodeStream())
-        raw = _read_text(events_path, run_store.EVENTS_LIMIT)
-        for line in raw.splitlines():
-            stream.feed(line)
-        steps = list(stream.steps)
+    def _steps(events_path: Path, run: dict, cursor: _EventsCursor | None = None) -> tuple[list[dict], int]:
+        """The steps of a run's log (the last `STEPS_LIMIT`) and how many there are, as the page shows them. `cursor`
+        is the run's own (`_cursor`): the log is read from where it stopped. Without one the whole log is read."""
+        if cursor is None:
+            cursor = _EventsCursor(run.get("runner"))
+        with cursor.lock:
+            steps, total = cursor.read(events_path)
         # Paths inside the project read as the project names them (`analysis/vol.py`), not from `/`.
         prefixes = sorted({os.path.join(str(p), "") for p in (run.get("root"), os.path.realpath(str(run.get("root"))))
                            if p and p != "None"}, key=len, reverse=True)
@@ -1599,7 +1720,7 @@ class AgentManager:
             if end_code:
                 end["code"] = end_code
             steps.append(end)
-        total = len(steps)
+            total += 1
         return steps[-STEPS_LIMIT:], total
 
     # -- recovery -------------------------------------------------------------------------------
@@ -1622,18 +1743,26 @@ class AgentManager:
             return False
         return True
 
-    def _foreign_active(self, project_id: str) -> list[str]:
-        """Runs recorded as active that a different live engine is carrying out."""
+    def _foreign_active(self, project_id: str, listing: list[dict] | None = None) -> list[str]:
+        """Runs recorded as active that a different live engine is carrying out (among `listing`, the project's
+        runs as just read, when the caller has them)."""
         with self._lock:
             act = self._active.get(project_id)
             mine = act.run_id if act is not None else None
-        return [r["id"] for r in run_store.list_runs(project_id)
+        return [r["id"] for r in (listing if listing is not None else run_store.list_runs(project_id))
                 if r.get("state") in run_store.ACTIVE_STATES and r["id"] != mine and self._engine_alive(r)]
 
     def _recover(self, project_id: str) -> list[str]:
         """Mark the runs an engine left active `interrupted` (`engine_gone`), end their program if
         it is still alive, and work out their changes so they can be undone (17.3). Returns the
         ids of active runs that belong to another live engine and were left alone."""
+        return self._recovered(project_id)[0]
+
+    def _recovered(self, project_id: str) -> tuple[list[str], list[dict]]:
+        """`_recover`, and with the ids it returns the project's runs, newest first, as they stand once recovery
+        is done: the listing recovery worked from, in which every run that recovery looked at (one recorded
+        active, one owing its comparison) is read again, since it may have changed or ended meanwhile (a
+        run whose `run.json` cannot be read any more drops out, as a listing would leave it out)."""
         foreign: list[str] = []
         with self._recover_lock:
             listing = run_store.list_runs(project_id)
@@ -1661,7 +1790,11 @@ class AgentManager:
                                       "Research OS stopped while the run was going")
             if owing and not foreign:
                 self._check_pending(project_id, owing)
-        return foreign
+            looked = {r["id"] for r in listing if r.get("state") in run_store.ACTIVE_STATES} | {r["id"] for r in owing}
+            if looked:
+                reread = (run_store.load_run(project_id, r["id"]) if r["id"] in looked else r for r in listing)
+                listing = [r for r in reread if r is not None]
+        return foreign, listing
 
     def recover_all(self) -> list[str]:
         """At engine start (18.1 item 6): recover the runs left preparing or running of every project this Mac

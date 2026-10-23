@@ -1165,11 +1165,11 @@ def test_a_failing_after_run_check_still_ends_the_run(scene: Scene, monkeypatch)
     real_take = snapshot.take
     calls = {"n": 0}
 
-    def flaky(root, copy_to=None):
+    def flaky(root, copy_to=None, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("cannot read the folder")
-        return real_take(root, copy_to)
+        return real_take(root, copy_to, **kwargs)
 
     monkeypatch.setattr(snapshot, "take", flaky)
     run = scene.go([init_step(), finish_step()])
@@ -1633,10 +1633,10 @@ def after_take_hook(monkeypatch, action) -> None:
     """Run `action()` at the start of every after-picture (`snapshot.take` without a copy folder)."""
     real_take = snapshot.take
 
-    def take(root, copy_to=None):
+    def take(root, copy_to=None, **kwargs):
         if copy_to is None:
             action()
-        return real_take(root, copy_to)
+        return real_take(root, copy_to, **kwargs)
 
     monkeypatch.setattr(snapshot, "take", take)
 

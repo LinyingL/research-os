@@ -1180,7 +1180,7 @@ def test_13_7_the_stopped_page_and_its_question(saved):
         "window.confirm = (q) => { asked.push(q); return false; };\n"
         "global.document = { getElementById: (id) => id === 'app' ? appEl : id === 'shutdown-btn'"
         " ? { addEventListener: (e, fn) => { handlers[e] = fn; } } : null };\n"
-        "let pollTimer = null; function closePanel() {}\n"
+        "let pollTimer = null, generationLive = true; function stopGenerationPoll() {} function closePanel() {}\n"
     )
     expr = f"(function () {{ {code} renderStoppedState(); handlers.click(); return [appEl.innerHTML, asked]; }})()"
     if saved is None:

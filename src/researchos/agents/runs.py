@@ -34,7 +34,7 @@ import shutil
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -235,15 +235,19 @@ def update_run_if_active(project_id: str, run_id: str, **changes: Any) -> dict[s
         return run
 
 
-def list_runs(project_id: str) -> list[dict[str, Any]]:
-    """The project's runs, newest first; folders without a readable
-    `run.json` are skipped."""
-    out = []
+def iter_runs(project_id: str) -> Iterator[dict[str, Any]]:
+    """The project's runs, newest first, each read when it is asked for (18.4 item 2): whoever stops at the first
+    run it wants reads no `run.json` after it. Folders without a readable `run.json` are skipped."""
     for run_id in _run_ids(project_id):
         run = _read_run(project_runs_dir(project_id) / run_id, run_id)
         if run is not None:
-            out.append(run)
-    return out
+            yield run
+
+
+def list_runs(project_id: str) -> list[dict[str, Any]]:
+    """The project's runs, newest first; folders without a readable
+    `run.json` are skipped."""
+    return list(iter_runs(project_id))
 
 
 def _run_ids(project_id: str) -> list[str]:

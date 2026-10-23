@@ -50,6 +50,14 @@ or past the 50,000th file is therefore still protected. Where the main walk
 also saw the file its hash is copied in, so a data file compares by hash
 when both entries have one, else by size and modification time.
 
+**The after-picture does not read what the before-picture already read** (18.4 item 2). A file that carries `ino`
+in the before-picture, and whose size, modification time (ns) and inode are the same now, keeps the before-picture's
+`sha256`; a file whose stamp differs (touched, replaced, grown) is read and hashed as ever. `take` writes `ino` only
+for a file it hashed and whose modification time lay at least `RACY_NS` before the picture began: a file changed
+within the timestamp's own resolution of being read (a 1 or 2 second stamp on an external drive, a time in the
+future) could be written again with the same stamp, so it is never reused. A picture without `ino` (one taken before
+this existed) reuses nothing. The result is the picture a full read gives, `ino` included.
+
 **What is protected** (17.5 rules 1, 3, 5), decided from the before-picture:
 the folders `.researchos`, `.rce` and `.git`; the agent program's own project
 settings (`.claude/` and `.opencode/` at any depth, `opencode.json`: 18.1 item 2,
@@ -76,6 +84,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -129,6 +138,9 @@ SKIP_FILES = frozenset({".ds_store", "thumbs.db", "desktop.ini", "icon\r", ".rhi
 _SKIP_FILE_PATTERNS = ("~$*", ".~lock.*#", "~wr?*.tmp")
 GIT_TIMEOUT_S = 10
 _CHUNK = 1024 * 1024
+#: A hash is reused (module docstring) only when the file's modification time is at least this much older than the
+#: moment the picture that holds it began: the coarsest stamp a file system keeps is 2 s (FAT), plus a margin.
+RACY_NS = 3_000_000_000
 
 
 # -- git ------------------------------------------------------------------------------------------
@@ -236,11 +248,22 @@ def _unlink_quietly(path: str | None) -> None:
             pass
 
 
+def _same_stamp(known: Mapping[str, Any] | None, st: os.stat_result) -> bool:
+    """Whether the before-picture's entry `known` holds a hash that still describes the file `st` (from `lstat`): it
+    has a `sha256` and an `ino`, is no link and no cloud placeholder, and its size, modification time and inode are
+    the file's now."""
+    return (known is not None and bool(known.get("sha256")) and "link" not in known and "dataless" not in known
+            and known.get("ino") == st.st_ino and known.get("size") == st.st_size
+            and known.get("mtime_ns") == st.st_mtime_ns)
+
+
 def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
-           budget_left: int = 0) -> tuple[dict[str, Any], int]:
+           budget_left: int = 0, known: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], int]:
     """The recorded entry for one path (from `lstat`) and the bytes copied.
     Links are recorded by target and never followed; a regular file in the
-    cloud is marked and never opened."""
+    cloud is marked and never opened. A file is not read again (and no copy
+    is made) when `known`, its entry in an earlier picture, has the same
+    stamp (`_same_stamp`)."""
     entry: dict[str, Any] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
     if stat.S_ISLNK(st.st_mode):
         try:
@@ -254,6 +277,9 @@ def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
         entry["dataless"] = True
         return entry, 0
     if st.st_size > HASH_LIMIT:
+        return entry, 0
+    if copy_dest is None and _same_stamp(known, st):
+        entry["sha256"] = known["sha256"]  # type: ignore[index]
         return entry, 0
     want_copy = copy_dest is not None and st.st_size <= COPY_LIMIT and st.st_size <= budget_left
     digest, copied, nbytes = _hash_and_copy(full, st.st_size, copy_dest if want_copy else None)
@@ -382,19 +408,24 @@ def _walk_backups(base: str) -> tuple[dict[str, dict[str, int]], bool]:
     return found, False
 
 
-def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
+def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The before- (or after-) picture of the project folder; see the module
     docstring. Returns `{"files": {rel: entry}, "partial", "copied_bytes",
     "not_copied", "git", "data", "data_partial", "backups", "backups_partial",
     "dirs", "dirs_partial"}` where `dirs` is the sorted list of the folders
-    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `dataless`, `link`
+    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `ino`, `dataless`, `link`
     and `copied` as they apply, `data` is the `{rel: entry}` of the separate
     stat-only walk of data files (no `copied`; `sha256` only where `files` has
     it) and `backups` the `{rel: {"size"}}` of the backups. Copies go to
-    `copy_to/<rel>`."""
+    `copy_to/<rel>`. `reuse` is an earlier picture of the same folder (the
+    before-picture, when this is the after-picture): a file whose entry there
+    has the same stamp keeps its hash instead of being read again; the picture
+    is the one a full read gives. It is not consulted for a file that is copied."""
+    began = time.time_ns()
     root = Path(root)
     base = str(root)
     copy_base = str(copy_to) if copy_to is not None else None
+    earlier = _file_map(reuse) if reuse is not None else {}
     files: dict[str, dict[str, Any]] = {}
     dirs: list[str] = []
     dirs_partial = False
@@ -412,7 +443,10 @@ def take(root: Path, copy_to: Path | None = None) -> dict[str, Any]:
         except OSError:
             return True  # vanished while walking
         dest = os.path.join(copy_base, *rel.split("/")) if copy_base is not None else None
-        entry, nbytes = _entry(full, st, copy_dest=dest, budget_left=COPY_BUDGET - copied_bytes)
+        entry, nbytes = _entry(full, st, copy_dest=dest, budget_left=COPY_BUDGET - copied_bytes,
+                               known=earlier.get(rel))
+        if entry.get("sha256") and st.st_mtime_ns + RACY_NS <= began:
+            entry["ino"] = st.st_ino  # what a later picture's `reuse` needs to trust this hash
         copied_bytes += nbytes
         if stat.S_ISREG(st.st_mode) and not entry.get("copied"):
             not_copied += 1

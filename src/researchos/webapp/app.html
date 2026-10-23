@@ -3031,6 +3031,34 @@ let lastGeneration = null;
 let refreshInFlight = false;
 let pollTimer = null; // held so the 停止服务 flow (task V3 phase 4) can stop polling a dead server
 
+// -- The poll rests while the window is hidden (DESIGN.md 18.4 item 3) -------
+// A hidden window asks nothing: the interval is taken away when the window
+// is hidden, and when it is shown again the poll runs at once (what moved
+// meanwhile is read then) and the interval starts anew. `generationLive` is
+// set when the page starts watching (init, below) and cleared by 停止服务,
+// after which nothing starts the poll again.
+let generationLive = false;
+
+function startGenerationPoll() {
+  if (pollTimer !== null || !generationLive || document.hidden) return;
+  pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
+}
+
+function stopGenerationPoll() {
+  if (pollTimer !== null) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!generationLive) return;
+  if (document.hidden) {
+    stopGenerationPoll();
+  } else if (pollTimer === null) {
+    pollGeneration();
+    startGenerationPoll();
+  }
+});
+
 function showRefreshingChip() {
   refreshChip.classList.remove("hidden", "err");
   refreshChip.textContent = "地图有改动，正在重扫…";
@@ -7102,7 +7130,9 @@ async function answerForAdd(subject, answer, statusEl, buttons) {
 // The stopped page in the screen's language (13.7); the command stays as
 // typed, set in <code> where the sentence names {command}.
 function renderStoppedState() {
-  if (pollTimer !== null) clearInterval(pollTimer);
+  generationLive = false;
+  stopGenerationPoll();
+  if (window.ROWorkspace && typeof ROWorkspace.stop === "function") ROWorkspace.stop(); // 项目首页's run poll too
   closePanel();
   const command = escapeHtml(t("下次要查看时，双击 Research OS.app，或在终端运行 {command}。"))
     .replace("{command}", "<code>researchos serve</code>");
@@ -7399,7 +7429,8 @@ function postShellLanguage() {
   RODesk.refreshSidebar();
   activateView(storedView() || "workspace");
   syncGeneration();
-  pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
+  generationLive = true;
+  startGenerationPoll();
 })();
 </script>
 </body>

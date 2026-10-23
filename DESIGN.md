@@ -4945,8 +4945,56 @@ nothing new inside the project.
      stopped and lists runs once per request.
    - 项目首页's run poll stops while the window is hidden and polls once
      when it is shown again.
+
+   How it is read:
+   - *The after-picture.* `snapshot.take(root, reuse=before)`. A file's entry
+     in a picture gains `ino` (its inode) when the file was hashed and its
+     modification time lay at least 3 s before the picture began: a stamp is
+     as fine as the file system keeps it (2 s on FAT), and a file written
+     again within that could carry the same stamp. The after-picture keeps a
+     before hash for a file whose entry has `ino` and whose size,
+     modification time (ns) and inode are the same now; any other file is
+     opened and hashed as before, and a file that is copied (the
+     before-picture) is always read. A picture stored without `ino` reuses
+     nothing. The 64 MB and 50,000-file rules, the data walk and
+     `fingerprint` are as they were, and the after-picture is the one a full
+     read gives (`ino` included). A change that keeps size, modification time
+     and inode (a program that rewrites a file in place and sets its time
+     back) is not seen by this; the data walk already trusted size and time.
+   - *The log.* `detail` keeps, per run and in memory, a cursor into
+     `events.jsonl`: the stream parser after the last complete line, the byte
+     offset there, the file's device and inode and the 64 bytes before the
+     offset. A poll reads what was appended, feeds the parser the complete
+     lines, and reads a half-written last line on a throw-away copy of the
+     parser, so the steps are the ones a read of the whole file gives (line
+     splitting, the 20 MB limit and the closing step included). The cursor
+     starts over when the inode differs, the file is shorter than the offset,
+     or the 64 bytes differ, and also when a parser raised midway. It keeps
+     the last 500 steps (plus up to 100 more, trimmed together) and the newest
+     `say`, which the closing step is compared with, and counts the rest;
+     the manager keeps the cursors of the 8 runs asked for last.
+   - *The listing.* `GET /api/agents/runs` lists the project's runs once:
+     `_recovered` returns the listing recovery worked from, with the runs it
+     looked at (those recorded active, those owing a comparison) read again,
+     and the page's answer is built from it; a run started since is found by
+     listing again. `_summary_of` (the run's detail, the undo list) reads the
+     runs newest first and stops at the newest run of the task.
+   - *The window.* 项目首页 keeps no run-poll timer while
+     `document.hidden`: a timer pending when the window is hidden is cleared,
+     a poll that ends while hidden sets none, and when the window is shown
+     again, if a poll was held back, one poll is made (it sets the next timer
+     if a run still goes, and reloads the page if one ended). Nothing was held
+     back, nothing is polled. 停止服务 ends it for good: the timer is cleared,
+     a poll in flight sets none, and showing the window or returning to the
+     home starts none.
 3. **The generation poll** pauses while the window is hidden and runs at
    once when it is shown.
+
+   How it is read: the page's interval is cleared when the window is
+   hidden. When it is shown, `pollGeneration` runs at once (what moved
+   meanwhile is read then) and the interval starts again; a page opened in a
+   hidden window starts its poll when it is first shown. 停止服务 clears the
+   interval and the run poll above, and nothing starts either again.
 4. **Teams:**
    - A published manifest or signature is parsed and verified once per
      content, keyed by its bytes' SHA-256, in memory. `ssh-keygen` runs once

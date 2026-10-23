@@ -87,6 +87,9 @@
   let offline = false;
   let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
   let pollTimer = null, pollFails = 0;
+  // The run poll rests while the window is hidden (DESIGN.md 18.4 item 2): a poll that was due is noted in `pollHeld`
+  // and one poll is made when the window is shown again. `pollStopped` is 停止服务: the service is gone, for good.
+  let pollHeld = false, pollStopped = false;
   function project() { return typeof state !== "undefined" ? state.currentPath || "" : ""; }
   function appEpoch() { return typeof state !== "undefined" ? state.dataEpoch : 0; }
   function stamp() { return { epoch: epoch, app: appEpoch(), project: project() }; }
@@ -963,18 +966,40 @@
     if (typeof pollGeneration === "function") pollGeneration();
   }
   function onWorkspace() { return typeof currentView === "undefined" || currentView === "workspace"; }
+  function windowHidden() { return typeof document !== "undefined" && document.hidden === true; }
   function schedulePoll() {
-    if (pollTimer !== null || !host || !anyActive() || !onWorkspace()) return;
+    if (pollStopped || pollTimer !== null || !host || !anyActive() || !onWorkspace()) return;
+    if (windowHidden()) { pollHeld = true; return; }
     const mark = stamp();
-    pollTimer = setTimeout(() => { pollTimer = null; if (live(mark) && onWorkspace()) syncRuns(mark, {}); }, pollDelay());
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      if (!live(mark) || pollStopped || !onWorkspace()) return;
+      if (windowHidden()) { pollHeld = true; return; }
+      syncRuns(mark, {});
+    }, pollDelay());
   }
   // 2 s while reads work; 4, 8, 16 and then 30 s while they fail.
   function pollDelay() { return pollFails ? Math.min(POLL_MAX_MS, POLL_MS * Math.pow(2, pollFails)) : POLL_MS; }
-  function stopPolling() { if (pollTimer !== null) clearTimeout(pollTimer); pollTimer = null; pollFails = 0; }
+  function stopPolling() { if (pollTimer !== null) clearTimeout(pollTimer); pollTimer = null; pollFails = 0; pollHeld = false; }
+  // The window is hidden: the timer of the next poll is taken away, and one poll is made once the window is shown
+  // again (it ends the poll chain by itself when no run is going any more).
+  function onVisibility() {
+    if (windowHidden()) {
+      if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; pollHeld = true; }
+      return;
+    }
+    if (!pollHeld) return;
+    pollHeld = false;
+    if (pollStopped || !host || !data || pollTimer !== null || !onWorkspace()) return;
+    syncRuns(stamp(), {});
+  }
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", onVisibility);
+  // 停止服务: the service is gone and nothing more is asked of it, not by a timer and not by a poll that was in flight.
+  function stopForGood() { pollStopped = true; stopPolling(); }
   // The page calls this when the project home is shown again after another section: polling stops
   // when the workspace is not the view on screen.
   function resumePolling() {
-    if (!host || !data || pollTimer !== null) return;
+    if (pollStopped || !host || !data || pollTimer !== null) return;
     syncRuns(stamp(), {});
   }
   function ensureDetails(mark) {
@@ -1716,6 +1741,6 @@
     form.append(choose, create, feedback); panelBody.append(form); openPanel(); name.focus();
   }
 
-  window.ROWorkspace = { load: load, mayLeave: mayLeave, reset: reset, openCreateProject: openCreateProject, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling };
+  window.ROWorkspace = { load: load, mayLeave: mayLeave, reset: reset, openCreateProject: openCreateProject, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();
