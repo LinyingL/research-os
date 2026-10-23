@@ -15,10 +15,12 @@
   member's documents carry 我的改动，尚未提交, 提议中 or 已批准，待同步, the words
   every other page uses (not 本地草稿). Markdown files with other names in
   `research/notes/` and `research/results/`, a sync service's conflict copies
-  among them, are listed and can be opened. The files in `research/` are no
-  longer read as a paper draft: a number in a note does not become a claim. On
-  the PI's page notes and result records say they go to the members with the
-  next 发布.
+  among them, are listed and can be opened. The files Research OS writes in
+  `research/` (the overview, notes, result records and the attempt table) are no
+  longer read as a paper draft: a number in a note does not become a claim, and
+  the claims an earlier scan made of a note go on the next scan. A manuscript of
+  your own in that folder is still read. On the PI's page notes and result
+  records say they go to the members with the next 发布.
 - Save a changed 研究判断 or 结果 at once, and take it back with 撤销. In a
   one-person project or as the PI, pressing 保存 on an existing row in the side
   panel (and in the node page's edit form, when only those two cells changed)

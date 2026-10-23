@@ -3288,7 +3288,7 @@ def cmd_citations(args: argparse.Namespace) -> int:
         files = files_ingest.list_source_files(root)
     except git_ingest.GitIngestError as exc:
         raise CliError(f"cannot list the project's files: {exc}") from exc
-    rep = citations_ingest.report(root, citations_ingest.drafts_of(files), statuses=_citation_statuses(root))
+    rep = citations_ingest.report(root, citations_ingest.drafts_of(files, root), statuses=_citation_statuses(root))
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

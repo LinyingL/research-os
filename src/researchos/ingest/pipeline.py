@@ -216,7 +216,7 @@ def _scan_sources(
         # 11.4: citations last -- its links start at the sections and claims
         # the extractors above wrote in this scan.
         citation_counts = citations_ingest.ingest_citations_repo(
-            conn, project_root, citations_ingest.drafts_of(inventory), scan=sc, complete=True,
+            conn, project_root, citations_ingest.drafts_of(inventory, project_root), scan=sc, complete=True,
         )
         echo(f"  citations: {_format_counts(citation_counts)}")
         return warnings.count

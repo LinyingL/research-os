@@ -394,6 +394,10 @@ def test_other_md_files_are_ingested_by_default(tmp_path):
     ("research/results/Meeting 2 (conflicted copy).md", False), ("research/attempts.md", False),
     ("paper.md", True), ("docs/research/notes.md", True), ("research.md", True), ("researchers/notes.md", True),
     ("drafts/results/" + "a" * 32 + ".md", True), ("README.md", False),
+    # The researcher's own Markdown in that folder stays a draft; only what Research OS writes there does not.
+    ("research/paper.md", True), ("research/chapters/ch1.md", True), ("./research/paper.md", True),
+    ("research/notes/older/ch1.md", True), ("research/results/notes/a.md", True), ("research/notes.md", True),
+    ("research//overview.md", False), ("./research/notes/Summary.md", False),
 ])
 def test_only_files_inside_the_research_folder_at_the_root_are_not_paper_markdown(path, paper):
     assert mdpaper._is_paper_markdown(path) is paper
@@ -418,6 +422,58 @@ def test_citations_do_not_read_the_research_folder_as_a_draft():
 
     inventory = {"md": ["paper.md", "research/notes/" + "a" * 32 + ".md", "README.md"], "tex": ["main.tex"]}
     assert citations.drafts_of(inventory) == ["main.tex", "paper.md"]
+
+
+def test_the_attempt_table_the_project_names_in_research_is_not_a_paper_draft_either(tmp_path):
+    """`research/attempts.md` is the default name; a table `attempts.toml` puts under another name in that folder is
+    just as much Research OS's, and a table outside the folder is not touched by the rule."""
+    (tmp_path / ".researchos").mkdir()
+    (tmp_path / ".researchos" / "attempts.toml").write_text(
+        'file = "research/table.md"\nheading = "Attempts"\n\n[columns]\n'
+        'id = "#"\ndate = "Date"\ndescription = "What"\nvariables = "Variables"\nresult = "Result"\nverdict = "Verdict"\n')
+    table = mdpaper.attempt_table_of(tmp_path)
+    assert table == "research/table.md" and mdpaper.attempt_table_of(tmp_path / "nowhere") is None
+    assert mdpaper._is_paper_markdown("research/table.md") is True  # (not known without the project)
+    assert mdpaper._is_paper_markdown("research/table.md", table) is False
+    assert mdpaper._is_paper_markdown("research/paper.md", table) is True and mdpaper._is_paper_markdown("table.md", table) is True
+    from researchos.ingest import citations
+
+    inventory = {"md": ["paper.md", "research/table.md", "research/paper.md", "research/overview.md"], "tex": []}
+    assert citations.drafts_of(inventory, tmp_path) == ["paper.md", "research/paper.md"]
+
+
+def test_a_manuscript_kept_in_the_research_folder_is_still_a_draft(tmp_path):
+    """Only what Research OS writes in research/ is skipped: research/paper.md has its sections, its figures and its
+    claims, and the citation step reads it."""
+    (tmp_path / "research").mkdir()
+    _repo(tmp_path, "# Results\n\nWe reach 87.3% accuracy.\n\n![fig](../figures/a.png)\n", path="research/paper.md")
+    (tmp_path / "research" / "overview.md").write_text("# Plan\n\nAim for 87.3% accuracy.\n")
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, ["research/paper.md", "research/overview.md"], image_paths=["figures/a.png"])
+    assert counts["md_skipped_non_paper"] == 1 and counts["sections"] == 1 and counts["figures"] == 1
+    assert [n["id"] for n in db.get_nodes_by_type(conn, "section")] == ["section:research/paper.md#results"]
+    assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["research/paper.md"]
+    from researchos.ingest import citations
+
+    assert citations.drafts_of({"md": ["research/paper.md", "research/overview.md"], "tex": []}) == ["research/paper.md"]
+
+
+def test_claims_an_earlier_scan_made_of_a_note_go_when_the_note_is_skipped(tmp_path, monkeypatch):
+    """A note that was ingested before research/ files stopped being drafts has its claim and the backed_by
+    candidate (unjudged) in the index. The next scan skips the note and clears them; the paper's own stay."""
+    (tmp_path / "research/notes").mkdir(parents=True)
+    note = "research/notes/" + "a" * 32 + ".md"
+    (tmp_path / note).write_text("# Reading\n\nWe reach 87.3% accuracy.\n")
+    _repo(tmp_path, "# Results\n\nWe reach 87.3% accuracy.\n")
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    with monkeypatch.context() as earlier:
+        earlier.setattr(mdpaper, "_is_research_own", lambda *args: False)  # the rule before research/ was skipped
+        before = mdpaper.ingest_md_repo(conn, tmp_path, [note, "paper.md"])
+    assert before["claims"] == 2 and before["candidates"] == 2 and len(db.query_edges(conn, type="backed_by")) == 2
+    after = mdpaper.ingest_md_repo(conn, tmp_path, [note, "paper.md"])
+    assert after["md_skipped_non_paper"] == 1 and after["claims_removed"] == 1 and after["backed_by_edges_removed"] == 1
+    assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
+    assert [e["src"].split("#")[0] for e in db.query_edges(conn, type="backed_by")] == ["claim:paper.md"]
 
 
 # --- Claim nodes + backed_by candidates (reusing claims' core write path) --

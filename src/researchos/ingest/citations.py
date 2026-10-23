@@ -723,9 +723,11 @@ def parse_draft(repo_root: str | Path, rel_path: str) -> DraftCitations:
     return parse_lines(rel_path, raw, sections, claims=claims, claim_lines=claim_lines)
 
 
-def drafts_of(inventory: Mapping[str, Iterable[str]]) -> list[str]:
-    """The drafts of an inventory: paper Markdown and LaTeX files."""
-    md = [p for p in inventory.get("md", []) if mdpaper_ingest._is_paper_markdown(p)]
+def drafts_of(inventory: Mapping[str, Iterable[str]], root: str | Path | None = None) -> list[str]:
+    """The drafts of an inventory: paper Markdown and LaTeX files. `root`: the project, whose attempt table is not
+    prose when it is in `research/` under a name of its own (without it, the table is known by its default name)."""
+    table = mdpaper_ingest.attempt_table_of(root) if root is not None else None
+    md = [p for p in inventory.get("md", []) if mdpaper_ingest._is_paper_markdown(p, table)]
     return sorted(set(md) | set(inventory.get("tex", [])))
 
 

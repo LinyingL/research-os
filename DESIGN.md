@@ -4886,9 +4886,17 @@ does not add.
       and can be opened and saved; one that does not exist cannot be created
       by naming it, and nothing is read from a deeper folder or from a link.
       `research/tasks.json`'s `report` still names a 32-hex result record.
-    - *Not a draft.* A file under `research/` at the project root is skipped by
-      `_is_paper_markdown`, which the citation step uses too, and counts as
-      skipped in the scan report. A Markdown file elsewhere is read as before.
+    - *Not a draft.* The files Research OS writes in `research/` at the project
+      root -- `overview.md`, the files directly in `notes/` and `results/`, and
+      the attempt table (`attempts.md`, or the file `attempts.toml` names in
+      that folder) -- are skipped by `_is_paper_markdown`, which the citation
+      step uses too, and count as skipped in the scan report. Any other
+      Markdown file in `research/` is the researcher's own (a manuscript kept
+      there) and is read as a draft, like one elsewhere. A skipped file is in
+      the claims step's cleanup with no claims, so the claims (and their
+      `backed_by` candidates) an earlier scan made of a note go on the next
+      scan -- a judgment already made stays in the ledger, 9.1; the sections
+      and figure links it made are left as they were.
 
 ### 18.4 Speed (no change of behaviour)
 
