@@ -952,6 +952,31 @@ console.log(JSON.stringify({words:byClass('ws-agent-error').textContent,summary:
     assert out["words"].startswith("程序异常退出。") and out["summary"] == "详情" and out["detail"] == "exit code 2"
 
 
+def test_the_two_disclosures_of_the_project_home_draw_the_quiet_chevron_not_the_browsers_triangle():
+    """DESIGN 12.13 (18.2 text rules): 引用文件或尝试 and the 详情 behind a failed run are <details> whose summary
+    draws the chevron the node page draws -- class res-draft-summary, a res-chevron before the words -- in both
+    languages, and workspace.css turns it when the disclosure is open (the browser's triangle is hidden by the
+    class)."""
+    script = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'failed',can_reply:true,error:{code:'exit',detail:'exit code 2'}})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const rows=root.all().filter(e=>e.tagName==='DETAILS'&&(e.classList.contains('ws-attachments')||e.classList.contains('ws-agent-more'))).map(d=>{
+  const s=d.children[0];
+  return {box:d.className,tag:s.tagName,cls:s.className,chevronFirst:s.children[0].classList.contains('res-chevron'),words:s.textContent};});
+console.log(JSON.stringify({rows}));
+"""
+    for lang, words in (("zh", ["引用文件或尝试", "详情"]), ("en", ["Reference a file or attempt", "Details"])):
+        rows = run(script, lang=lang)["rows"]
+        assert [r["box"] for r in rows] == ["ws-attachments", "ws-agent-more"]
+        assert all(r["tag"] == "SUMMARY" and "res-draft-summary" in r["cls"] and r["chevronFirst"] for r in rows)
+        assert [r["words"] for r in rows] == words
+    css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
+    assert ".ws-attachments[open] > .res-draft-summary .res-chevron" in css
+    assert ".ws-agent-more[open] > .res-draft-summary .res-chevron" in css
+    assert "transform: rotate(90deg)" in css
+
+
 def test_polling_follows_a_run_until_it_ends_then_reloads_the_page():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
@@ -1922,12 +1947,13 @@ def test_an_internal_error_is_worded_generally_and_a_stopped_or_interrupted_end_
 def _table_words(name: str) -> dict[str, str]:
     script = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
     table = re.search(r"const " + name + r" = \{(.*?)\n  \};", script, re.S).group(1)
-    return dict(re.findall(r'(\w+): "([^"]+)"', table))
+    # Each entry is `code: () => t("sentence")` (13.6: looked up when shown); the sentence is the key.
+    return dict(re.findall(r'(\w+): \(\) => t\("([^"]+)"\)', table))
 
 
 def test_every_code_the_engine_can_attach_has_a_sentence_in_both_languages():
     """Each refusal code the guard knows, and the codes the streams add, are words on the page and English in
-    i18n.js (the scanner of test_v9_language does not read a table). A code nobody wrote words for reads as a
+    i18n.js (the scanner of test_v9_language reads workspace.js whole, so each sentence has an entry; this holds the\n    codes to the table). A code nobody wrote words for reads as a
     generic sentence, which is tested above."""
     from researchos.agents import guard
 

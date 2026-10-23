@@ -10,6 +10,7 @@ English entry obeys 13.4 and 12.11 (no CJK, no arrows, no emoji, “ ” for
 
 from __future__ import annotations
 
+import ast
 import email.message
 import http.client
 import html as html_mod
@@ -128,6 +129,19 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock, llmSettingBox (「模型服务」) and their helpers
     # (the language, what became of each cell, the refusals in words, the chevron).
     ("app.html", "// -- 「根据所选文件生成草稿」 (DESIGN.md 16)", "// Builds the form from the (now current) records and config."),
+    # 18.2 text rules: 项目首页 joins the converted surfaces -- every Chinese literal in workspace.js that reaches
+    # the screen is the whole argument of its own t() (its helpers take words already for the screen, and its
+    # code tables hold functions of t()).
+    ("workspace.js", None, None),
+    # 18.2 text rules: the sentences team.js joined from translated and bare fragments (a date between two bare
+    # halves, a verdict between two words, a label beside its t() siblings) are one template each. The rest of
+    # team.js is 13.7's later increment, so only these stretches are held.
+    ("team.js", "function kindChoices() {", "\n  }\n"),
+    ("team.js", "function renderComposer(page) {", "\n  }\n"),
+    ("team.js", "const d = item.decision;", "body.appendChild(act);"),
+    ("team.js", 'sec.appendChild(mk("h2", "route-group-title serif", pi', "const team = (ctx.share"),
+    ("team.js", 'head.appendChild(mkButton(p.sentence || t("修改研究判断")', "const st = stateLabel(p);"),
+    ("team.js", 'li.append(mk("span", "mono", b.path), mk("span", "team-help"', "ul.appendChild(li);"),
 ]
 #: Chinese a converted surface may keep outside t(), with the reason (13.1:
 #: fixed on-disk names, the researcher's vocabulary; 13.3: a language's own
@@ -2260,6 +2274,9 @@ GUIDE_EN_ENGLISH_LABELS = (
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
     "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",
+    # 18.2 text rules: the composer under Proposals (kinds and buttons) is in English too.
+    "Submit a proposal", "New attempt", "Change a research assessment", "Variable definition", "Files only",
+    "Review what will be sent",
 )
 #: English sentences the guide quotes, in bold, by their first words: each begins an English entry.
 GUIDE_EN_ENGLISH_SENTENCE_STARTS = ("Already the latest official version",)
@@ -2739,6 +2756,36 @@ def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
     assert left == [] and "实验记录" not in Path(nodepage.__file__).read_text(encoding="utf-8")
 
 
+def used_keys() -> set[str]:
+    """Every Chinese text some key of the page or the engine can be. A key is used when it is the whole first
+    argument of a t() call or the text of a data-i18n element or attribute -- or a whole string literal in a
+    place that hands it to t() by a variable: a served script's lookup tables (t(VIA_WORDS[x])), app.html's
+    script, and the engine's Python source (the labels and sentences it sends and the page passes to t())."""
+    used: set[str] = set()
+    for path in [APP_HTML, *(p for p in _served_scripts() if p != I18N_JS)]:
+        src = _scripts_of(path)
+        used |= {key for key, _whole in t_calls(src)}
+        used |= {_unescape(raw) for _start, _quote, raw in js_literals(src)}
+    used |= set(markup_keys(APP_HTML.read_text(encoding="utf-8")))
+    for path in sorted(WEBAPP.parent.rglob("*.py")):
+        used |= {n.value for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    return used
+
+
+@needs_node
+def test_18_2_no_english_entry_is_kept_that_no_key_uses():
+    """18.2 text rules: an entry of /i18n.js lives only while a key uses it. A rename that rewords a sentence
+    takes the old sentence's entry with it; this lists any that stayed. The rule reads lookup tables and the
+    engine's own labels as keys (see used_keys), so a table's word is not reported."""
+    table = english_table()
+    used = used_keys()
+    assert [key for key in table if key not in used] == []
+    # not vacuous: words handed to t() by a table or by the engine count, and a key nobody writes is reported
+    assert {"在关系图上", "实验", "文稿章节", "没有签名：无法确认是谁写的"} <= used
+    assert [key for key in [*table, "没有谁用的句子"] if key not in used] == ["没有谁用的句子"]
+
+
 @needs_node
 def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     """输出 "Outputs" is a script's outputs (the node page's column is built with it); 成果 "Outputs"
@@ -2748,7 +2795,7 @@ def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     assert table["输出"] == "Outputs" and table["图表与论断"] == "Figures and claims"
     assert "成果" not in table and "依据变了的成果" not in table
     assert [key for key, text in _english_forms(table) if text == "Outputs"] == ["输出"]
-    assert table["依据变了的图表与论断"] == "Figures and claims whose basis changed"
+    assert "依据变了的图表与论断" not in table  # the desk's old heading is gone (12.9); no key uses its entry
     assert table["图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——"].startswith(
         "Figures and claims lists claims")
     assert table["已设为论文正文：它的论断会出现在图表与论断里。"] == "Set as the paper. Its claims will appear in Figures and claims."
@@ -2801,7 +2848,7 @@ def test_18_2_a_comment_on_an_object_is_备注_and_a_note_is_only_a_document_in_
         '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>']
     assert 'notes: "备注",' in APP_HTML.read_text(encoding="utf-8") and ' 条备注，写在 ' in APP_HTML.read_text(encoding="utf-8")
     workspace_js = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
-    assert 'note: "笔记"' in workspace_js and "备注" not in workspace_js
+    assert 't("笔记", { n: 1 })' in workspace_js and "备注" not in workspace_js
     # The engine's sentences for the page.
     src = Path(history.__file__).parent
     assert all(notes_mod.MESSAGES[key].startswith("备注记录文件")

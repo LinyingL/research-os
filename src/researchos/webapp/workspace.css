@@ -36,6 +36,10 @@
 .ws-table th { background: var(--paper-alt); font-weight: 500; }
 .ws-attachments { margin: .2rem 0 .8rem; font-size: .78rem; }
 .ws-attachments summary { cursor: pointer; color: var(--ink-soft); }
+/* DESIGN.md 12.13 (18.2): the two disclosures of 项目首页 draw the quiet line chevron, not the browser's triangle;
+   the summary keeps the size of the line it sits in, and the chevron turns when it is open. */
+.ws-attachments > .res-draft-summary, .ws-agent-more > .res-draft-summary { font-size: inherit; padding: .2rem 0; gap: .45rem; }
+.ws-attachments[open] > .res-draft-summary .res-chevron, .ws-agent-more[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .ws-attachment-row { display: flex; align-items: center; gap: .5rem; margin: .7rem 0; }
 .ws-attachment-row select { min-width: 0; flex: 1; width: 100%; }
 .ws-attachment-row .btn { flex-shrink: 0; }

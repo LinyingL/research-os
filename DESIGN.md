@@ -4655,6 +4655,39 @@ does not add.
   - `workspace.js` joins the converted surfaces.
   - 项目首页's two disclosures use 12.13's chevron.
 
+  How they are read:
+  - *Joined sentences.* A date between two bare halves (放弃于 …，记录了 n
+    个文件的状态) is `放弃于 {when}，…`, one template for each ending, the date
+    lower case inside an English line (13.5); a verdict between two words
+    (研究判断 … 改为 …) is `研究判断 {old} 改为 {new}`, its two verdicts put in
+    by `phrase`. The proposal kinds a member chooses between are
+    `kindChoices()`, looked up when the form is drawn, and 提交提议 is
+    translated whole, since its labels sit beside labels that already were
+    (源自（可选）). The rest of `team.js` waits for its own increment (13.7), so
+    the language test holds these stretches only (`CONVERTED`).
+  - *Entries that no key uses.* An entry is kept while its Chinese is the
+    whole first argument of a `t()`, the text of a `data-i18n` element or
+    attribute, or a whole string literal where a table or the engine hands
+    it to `t()` by a variable (`t(VIA_WORDS[x])`, a label `nodepage.py`
+    sends). The test reads the same three places and lists any entry left
+    over; a sentence reworded by a rename takes its old entry with it.
+  - *The glyph test.* The list gains », ⟶, ‹, ›, ⏵, ● and ○ (a mark that
+    stands in for a word). The stylesheets are read as the page loads them:
+    `workspace.css` and each `<style>` block. Only what reaches the screen
+    counts, the `content:` strings with their escapes (`"\25B8"`) read as the
+    characters they spell; a comment or a selector is not text.
+  - *项目首页.* `workspace.js` is converted whole: its helpers (`button`,
+    `field`, `input`, `errorWords`, `named`, `quiet`) take words that are
+    already for the screen, so every call passes `t("…")`, and a table that
+    maps a code to a sentence (run states, refusals, errors, why a file was
+    left alone) holds functions of `t()`, so that each sentence is looked up
+    when it is shown. A code the table does not know reads as a generic
+    sentence, never as the code.
+  - *Disclosures.* The summary of 引用文件或尝试 and of 详情 is
+    `res-draft-summary` with the chevron `chevronIcon()` draws; the browser's
+    triangle is hidden by the class and `workspace.css` turns the chevron when
+    the disclosure is open, as `.res-draft` does elsewhere.
+
 ### 18.3 The sidebar and saving (amends 12.9, 12.0, 14.3)
 
 - **研究路线 is one page.**

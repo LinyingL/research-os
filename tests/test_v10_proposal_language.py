@@ -386,3 +386,94 @@ def test_15_a_proposed_do_file_on_a_confirmed_folder_is_listed_and_unconfirmed_i
     assert _do_uses(root, "analysis/clean.do", text, tmp_path, lang) == [said]
     stata_record.stata_path(root).write_text("[[global]\nbroken\n", encoding="utf-8")  # cannot be trusted now
     assert _do_uses(root, "analysis/clean.do", text, tmp_path, lang) == []
+
+
+# -- 18.2 text rules: the sentences team.js joined from translated and bare fragments, and the composer -------
+
+
+def _abandoned_routes() -> dict:
+    """The routes page's abandoned group: three routes whose abandonment froze 4, 1 and 0 files."""
+    from test_v10_desk_panel import _st
+
+    def item(number: int, count: int) -> dict:
+        return {"id": f"attempt:map.md#{number}", "number": str(number), "date": "07-08", "title": f"路线 {number}", "result": "t=0.1",
+                "reason": "无信号", "verdict_status": _st("abandoned", "已放弃", "方向反了"),
+                "decision": {"act": "abandoned", "at": "2024-03-01T10:00:00", "evidence_count": count}}
+
+    return {"groups": [{"status": "abandoned", "label": "已放弃", "items": [item(17, 4), item(18, 1), item(19, 0)]}],
+            "decisions_problem": None}
+
+
+_ROUTES_AND_COMPOSER = """
+  global.state.attemptsConfig = true; global.clearProjectState = () => {};
+  views.tree = el("div", "host");
+  await window.ROTeam.loadRoutes(views.tree);
+  global.extra = { since: views.tree.all().filter((k) => k.cls.has("route-src")).map((k) => k.textContent),
+                   moves: views.tree.all().filter((k) => k.cls.has("desk-what")).map((k) => k.textContent),
+                   head: dump(views.tree, []).slice(0, 2) };
+  views.proposals = el("div", "host");
+  await window.ROTeam.loadProposals(views.proposals);
+  const composer = (host) => { const lines = dump(host, []); return lines.slice(lines.findIndex((l) => l.startsWith("team-title: ") && %(submit)s.includes(l.slice(12)))); };
+  extra.composer = composer(views.proposals);
+  const pick = (kind) => { const r = views.proposals.all().find((k) => k.tag === "INPUT" && k.value === kind); r.checked = true; (r.on.change || []).forEach((f) => f()); };
+  const extras = () => dump(views.proposals.all().find((k) => k.cls.has("compose-extra")), []);
+  pick("verdict_change"); extra.verdict = extras();
+  pick("variable_version"); extra.variable = extras();
+  extra.options = views.proposals.all().find((k) => k.tag === "SELECT").all().map((o) => o.textContent);
+  const look = views.proposals.all().find((k) => k.tag === "BUTTON" && k.cls.has("btn-primary"));
+  const notice = () => dump(views.proposals.all().find((k) => k.cls.has("notice-status")), []);
+  look.click(); await settle(); extra.noSentence = notice();
+  views.proposals.all().find((k) => k.tag === "TEXTAREA").value = "a sentence";
+  look.click(); await settle(); extra.noAnswer = notice();
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_18_2_an_abandoned_route_and_a_proposed_change_are_one_sentence_each_and_the_composer_is_translated(lang):
+    """18.2 text rules, run under node in both languages: 放弃于 {when}，… is one template for each ending (the
+    date lower case inside an English line, the count a plural), 研究判断 {old} 改为 {new} is one with its two
+    verdicts put in, and 提交提议 -- the kinds, the fields beside 源自（可选）, their help, their refusals --
+    has no Chinese left on an English screen. In Chinese the page reads as it did."""
+    w = _w(lang)
+    case = _team_case("member", lang)
+    case["get"]["/api/routes"] = _abandoned_routes()
+    submit = json.dumps([w("提交提议", "Submit a proposal")], ensure_ascii=False)
+    out = _run_team(case, _ROUTES_AND_COMPOSER % {"submit": submit}, lang=None if lang == "zh" else lang)["extra"]
+    assert out["since"] == [
+        w("放弃于 2024年3月1日，记录了 4 个文件的状态", "Abandoned 1 Mar 2024; recorded the state of 4 files"),
+        w("放弃于 2024年3月1日，记录了 1 个文件的状态", "Abandoned 1 Mar 2024; recorded the state of 1 file"),
+        w("放弃于 2024年3月1日，当时这条路线没有关联的文件", "Abandoned 1 Mar 2024; the route had no linked files then")]
+    assert out["moves"] == [w("研究判断 待定先看 改为 已放弃方向反了", "Research assessment changes from Pending先看 to Abandoned方向反了")]
+    assert out["head"][0] == "route-group-title serif: " + w("我的提议", "My proposals")
+    assert out["head"][1] == "team-line quiet: " + w(
+        "你提出的路线和修改研究判断：PI 批准以后才进入正式版本。",
+        "The routes and research assessment changes you proposed: they enter the official version once the PI approves.")
+    composer = out["composer"]
+    for line in [w("team-title: 提交提议", "team-title: Submit a proposal"),
+                 "compose-kind-name: " + w("新的尝试", "New attempt"), "compose-kind-name: " + w("修改研究判断", "Change a research assessment"),
+                 "compose-kind-name: " + w("变量定义", "Variable definition"), "compose-kind-name: " + w("只有文件", "Files only"),
+                 "team-help: " + w("只有尝试表里这一行的研究判断和结果", "Only this row of the attempt table: its research assessment and result"),
+                 ": " + w("一句话说明", "One sentence"), ": " + w("尝试的编号", "Attempt number"),
+                 ": " + w("源自（可选）", "Grew out of (optional)"),
+                 "btn btn-primary: " + w("查看将要发送的内容", "Review what will be sent")]:
+        assert line in composer, line
+    assert out["verdict"] == [
+        ": " + w("尝试的编号", "Attempt number"),
+        "form-input form-mono:  =  (" + w("不填：只有一行时自动找出", "Leave empty: found automatically when only one row changed") + ")",
+        "team-help: " + w("工作副本里改了不止一行时，填上要提议的那一行", "When more than one row changed in your working copy, enter the row to propose"),
+        ": " + w("结果", "Result"),
+        "form-textarea:  =  (" + w("不填：用尝试表里这一行现在的结果", "Leave empty: uses this row’s current result in the attempt table") + ")",
+        ": " + w("理由", "Reason"),
+        "form-textarea:  =  (" + w("放弃一条路线时必须写明", "Required when abandoning a route") + ")",
+        "team-help: " + w("放弃（研究判断标为已放弃）时，结果和理由都必须填写",
+                          "When abandoning (research assessment set to Abandoned), both the result and the reason are required")]
+    assert out["variable"][0] == ": " + w("变量卡", "Variable card")
+    assert out["options"] == w(["请选择", "是", "否", "不确定"], ["Choose", "Yes", "No", "Not sure"])
+    assert out["noSentence"] == ["notice-status err: " + w("请用一句话说明这份提议", "Say in one sentence what this proposal does")]
+    assert out["noAnswer"] == ["notice-status err: " + w("请回答：现有的输出文件是否按这个定义生成",
+                                                          "Answer first: were the existing output files made with this definition?")]
+    if lang == "en":
+        everything = composer + out["verdict"] + out["variable"] + out["options"] + out["noSentence"] + out["noAnswer"] + out["since"]
+        assert [line for line in everything if CJK.search(line)] == []
+    assert not any(FORBIDDEN.search(line) for line in composer + out["verdict"] + out["since"] + out["moves"])

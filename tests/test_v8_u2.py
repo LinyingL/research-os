@@ -37,9 +37,11 @@ needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 #: 12.11's forbidden marks: emoji (the pictographic planes, the dingbats and
 #: miscellaneous symbols the researcher's verdict markers come from, the
-#: variation selector that makes a symbol an emoji) and arrow characters.
+#: variation selector that makes a symbol an emoji) and arrow characters --
+#: since 18.2 also the quotation-mark arrows » ‹ ›, the long arrow ⟶, the play
+#: mark ⏵ and the dots ● ○ (a decoration that stands in for a word).
 FORBIDDEN = re.compile(
-    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿️←-⇿▲-◅＋]|->|=>"
+    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿️←-⇿▲-◅＋»⟶‹›⏵●○]|->|=>"
 )
 _REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
 _KEYWORDS_BEFORE = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
@@ -129,6 +131,29 @@ def _served_scripts() -> list[Path]:
     return [WEBAPP / name for name in names]
 
 
+def css_content_strings(css: str) -> list[str]:
+    """What a stylesheet's `content:` puts on screen (a ::before or ::after), its escapes (\\25B8) read as the
+    characters they spell. Comments, selectors and every other property are not on screen and are skipped."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = []
+    for m in re.finditer(r"(?<![\w-])content\s*:\s*([^;}]*)", css):
+        for double, single in re.findall(r'"((?:\\.|[^"\\])*)"|\'((?:\\.|[^\'\\])*)\'', m.group(1)):
+            def code(k: re.Match[str]) -> str:
+                n = int(k.group(1), 16)
+                return chr(n) if n <= 0x10FFFF else "\ufffd"
+            text = re.sub(r"\\([0-9a-fA-F]{1,6})\s?", code, double or single)
+            out.append(re.sub(r"\\(.)", r"\1", text))
+    return out
+
+
+def _served_stylesheets() -> list[tuple[str, str]]:
+    """The page's CSS, as served: each <link rel="stylesheet" href="/x.css"> file and each inline <style> block."""
+    html = APP_HTML.read_text(encoding="utf-8")
+    sheets = [(name, (WEBAPP / name).read_text(encoding="utf-8"))
+              for name in re.findall(r'<link rel="stylesheet" href="/([\w.-]+\.css)">', html)]
+    return sheets + [("app.html <style>", block) for block in re.findall(r"<style\b[^>]*>(.*?)</style>", html, re.S)]
+
+
 def _offenders() -> list[str]:
     html = APP_HTML.read_text(encoding="utf-8")
     found = [f"app.html markup: {t.strip()!r}" for t in html_screen_text(html) if FORBIDDEN.search(t)]
@@ -137,15 +162,21 @@ def _offenders() -> list[str]:
     for path in _served_scripts():
         found += [f"{path.name} line {ln}: {s!r}" for ln, s in js_strings(path.read_text(encoding="utf-8"))
                   if FORBIDDEN.search(s)]
+    for name, css in _served_stylesheets():
+        found += [f"{name} content: {s!r}" for s in css_content_strings(css) if FORBIDDEN.search(s)]
     return found
 
 
 def test_12_11_no_emoji_or_arrow_reaches_the_screen_from_the_served_page():
     """12.11 binding for every surface: app.html's markup and every string
-    in its scripts and in each served script (canvas.js, desk.js) is free
-    of emoji and of → ← ↔ ⇒ ▸ ▾ ► ◄ ＋ '->' '=>'. The researcher's own text
-    is exempt by construction: it comes from the server at run time."""
-    assert {p.name for p in _served_scripts()} >= {"canvas.js", "desk.js"}
+    in its scripts and in each served script (canvas.js, desk.js, workspace.js)
+    is free of emoji and of → ← ↔ ⇒ ▸ ▾ ► ◄ ＋ » ⟶ ‹ › ⏵ ● ○ '->' '=>', and so is
+    every `content:` of the served stylesheets (workspace.css and app.html's
+    <style> blocks: a ::before can put a glyph on screen as well as a string
+    can). The researcher's own text is exempt by construction: it comes from
+    the server at run time."""
+    assert {p.name for p in _served_scripts()} >= {"canvas.js", "desk.js", "workspace.js"}
+    assert {name for name, _css in _served_stylesheets()} == {"workspace.css", "app.html <style>"}
     assert _offenders() == []
 
 
@@ -164,6 +195,30 @@ def test_12_11_the_scanner_sees_strings_and_skips_code():
     assert flagged == ["a → b", "✅   done", "x->y"]
     assert [t for t in html_screen_text('<button title="打开 ▾">新增 ＋</button><!-- → -->') if FORBIDDEN.search(t)] == [
         "新增 ＋", "打开 ▾"]
+
+
+def test_18_2_the_glyph_test_also_refuses_quote_arrows_the_long_arrow_the_play_mark_and_the_dots():
+    """18.2: » ⟶ ‹ › ⏵ ● ○ join 12.11's list, each caught alone and inside a sentence; the plain words around
+    them (a Chinese 「」, an English “ ”, a middle dot ·) are not."""
+    for mark in "»⟶‹›⏵●○":
+        assert FORBIDDEN.search(mark) and FORBIDDEN.search(f"打开 {mark} 详情") and FORBIDDEN.search(f"Open {mark}"), mark
+    assert not FORBIDDEN.search("「打开」 “open” · 详情 – x") and not FORBIDDEN.search("")
+
+
+def test_18_2_the_css_scanner_reads_content_values_and_their_escapes_and_skips_the_rest():
+    """The check on the stylesheets is not vacuous: a `content:` string or its escape (\\25B8) is caught; a glyph
+    in a comment, a selector, justify-content, a counter or the empty string is not on screen and is not."""
+    css = (
+        "/* ● in a comment */\n"
+        ".a::before { content: \"●\"; }\n"
+        ".b::after { content: '\\25B8'; }\n"
+        ".c::after { content: \"\\203A\"; margin: 0 }\n"
+        ".d::before { content: \"\"; justify-content: space-between; }\n"
+        ".e::before { content: counter(item) \". \"; }\n"
+        ".f[data-x=\"○\"] { color: red; }\n"
+    )
+    assert css_content_strings(css) == ["●", "▸", "›", "", ". "]
+    assert [s for s in css_content_strings(css) if FORBIDDEN.search(s)] == ["●", "▸", "›"]
 
 
 def test_12_11_verdicts_are_shown_as_words_never_as_markers():

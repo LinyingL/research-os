@@ -66,6 +66,16 @@
   name such as 连线确认 reads the same in every sentence that has it. The
   English said "relation map" in a few sentences (where a confirmation was made,
   whose arrangement stays their own); it now says "relationship map" everywhere.
+- Tidy the words of the page. In English, a route abandoned by you reads
+  "Abandoned yesterday 14:02; recorded the state of 4 files" as one sentence, a
+  proposed change of a research assessment names the two assessments inside one
+  sentence, and 提交提议 (Submit a proposal) is in English with its kinds and
+  fields. 项目首页 is fully translated: its buttons, fields, run states and
+  refusals, and its two disclosures (引用文件或尝试, 详情) draw the same quiet
+  chevron as the rest of the page instead of the browser's triangle. 49
+  English sentences that no screen uses any more are gone. The check for
+  arrows and emoji now also refuses », ⟶, ‹, ›, ⏵, ● and ○, and reads the
+  stylesheets. Nothing on disk changes.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

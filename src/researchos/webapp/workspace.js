@@ -10,21 +10,22 @@
     if (words != null) node.textContent = words;
     return node;
   }
+  // The helpers below take words that are already for the screen: every call passes t("...") (13.6).
   function button(words, action, cls) {
-    const node = el("button", cls || "btn btn-small", t(words));
+    const node = el("button", cls || "btn btn-small", words);
     node.type = "button";
     node.addEventListener("click", action);
     return node;
   }
   function field(words, input) {
     const label = el("label", "ws-field");
-    label.append(el("span", "ws-field-label", t(words, { n: 1 })), input);
+    label.append(el("span", "ws-field-label", words), input);
     return label;
   }
   function input(type, placeholder) {
     const node = el("input", "form-input");
     node.type = type || "text";
-    if (placeholder) node.placeholder = t(placeholder);
+    if (placeholder) node.placeholder = placeholder;
     return node;
   }
   function status(node, words, kind) {
@@ -33,7 +34,7 @@
     node.className = "ws-status" + (kind ? " " + kind : "");
   }
   function errorWords(words, err) {
-    return t(words) + (err && (err.engineMessage || err.messageZh || err.message) ? " " + (err.engineMessage || err.messageZh || err.message) : "");
+    return words + (err && (err.engineMessage || err.messageZh || err.message) ? " " + (err.engineMessage || err.messageZh || err.message) : "");
   }
 
   // Keyboard focus survives a redraw (DESIGN.md 12.11): controls that are drawn again carry a data-key, and a text
@@ -66,7 +67,7 @@
   }
   function restoreFocus(root, snap) { return !!snap && focusKey(root, snap.key, snap); }
   // A control named by the task it belongs to: the same visible words, a longer accessible name (12.11).
-  function named(node, words, vars) { node.setAttribute("aria-label", t(words, vars)); return node; }
+  function named(node, words) { node.setAttribute("aria-label", words); return node; }
 
   let epoch = 0, request = 0, docRequest = 0, createRequest = 0;
   let host = null, data = null, draft = null, saved = null, ui = null;
@@ -83,7 +84,6 @@
   let offline = false;
   let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
   let pollTimer = null, pollFails = 0;
-  const kindWords = { overview: "研究问题与计划", note: "笔记", result: "结果记录" };
   function project() { return typeof state !== "undefined" ? state.currentPath || "" : ""; }
   function appEpoch() { return typeof state !== "undefined" ? state.dataEpoch : 0; }
   function stamp() { return { epoch: epoch, app: appEpoch(), project: project() }; }
@@ -116,7 +116,7 @@
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
   }
 
-  function kindLabel(kind) { return t(kindWords[kind] || "笔记", { n: 1 }); }
+  function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("结果记录") : t("笔记", { n: 1 }); }
   function fallbackPath(kind) { return kind === "overview" ? "research/overview.md" : "research/" + (kind === "result" ? "results" : "notes") + "/draft.md"; }
   function relativePath(from, to) {
     const a = String(from).split("/").slice(0, -1), b = String(to).split("/");
@@ -157,7 +157,7 @@
     foreignBlocked = true;
     const banner = el("div", "ws-readonly ws-retargeted");
     const feedback = el("p", "ws-status", t("项目已在其他窗口切换，当前草稿已保留。"));
-    const reopen = button("重新打开这个项目", async () => {
+    const reopen = button(t("重新打开这个项目"), async () => {
       reopen.disabled = true;
       try {
         await apiPost("/api/projects/switch", { path: data.project, id: data.id });
@@ -169,7 +169,7 @@
         await load(host, true);
       } catch (err) {
         foreignBlocked = true; reopen.disabled = false;
-        status(feedback, errorWords("没能重新打开项目，草稿仍保留在这里。", err), "err");
+        status(feedback, errorWords(t("没能重新打开项目，草稿仍保留在这里。"), err), "err");
       }
     });
     banner.append(feedback, reopen); host.prepend(banner);
@@ -270,8 +270,8 @@
     const heading = el("div");
     heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")));
     const actions = el("div", "ws-actions");
-    const note = button("新建笔记", () => newDocument("note"));
-    const result = button("记录结果", () => newDocument("result"));
+    const note = button(t("新建笔记"), () => newDocument("note"));
+    const result = button(t("记录结果"), () => newDocument("result"));
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
     const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
@@ -296,7 +296,7 @@
         if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
         group.append(b);
       });
-      if (!documents.length) group.append(el("p", "ws-empty", t(kind === "overview" ? "还没有研究方案。" : kind === "note" ? "还没有笔记。" : "还没有结果记录。")));
+      if (!documents.length) group.append(el("p", "ws-empty", kind === "overview" ? t("还没有研究方案。") : kind === "note" ? t("还没有笔记。") : t("还没有结果记录。")));
       ui.rail.append(group);
     });
   }
@@ -322,8 +322,8 @@
       setDraft(doc);
     } catch (err) {
       if (!live(mark) || token !== docRequest) return;
-      if (!draft && ui) { ui.editor.replaceChildren(el("p", "ws-status err", errorWords("没能读取文档。", err)), button("重试", () => openDocument(path))); }
-      else status(ui && ui.docStatus, errorWords("没能读取文档。", err), "err");
+      if (!draft && ui) { ui.editor.replaceChildren(el("p", "ws-status err", errorWords(t("没能读取文档。"), err)), button(t("重试"), () => openDocument(path))); }
+      else status(ui && ui.docStatus, errorWords(t("没能读取文档。"), err), "err");
     }
   }
   function newDocument(kind) {
@@ -345,13 +345,13 @@
   function renderEditor() {
     const box = ui.editor; box.replaceChildren();
     const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", kindLabel(draft.kind));
-    const tools = el("div", "ws-actions"), save = button("保存", saveDocument, "btn btn-primary btn-small");
+    const tools = el("div", "ws-actions"), save = button(t("保存"), saveDocument, "btn btn-primary btn-small");
     save.disabled = !editable();
-    const previewToggle = button("预览", () => {
+    const previewToggle = button(t("预览"), () => {
       ui.previewing = !ui.previewing;
       ui.title.classList.toggle("hidden", ui.previewing);
       ui.text.classList.toggle("hidden", ui.previewing); ui.preview.classList.toggle("hidden", !ui.previewing);
-      previewToggle.textContent = t(ui.previewing ? "继续编辑" : "预览");
+      previewToggle.textContent = ui.previewing ? t("继续编辑") : t("预览");
       previewToggle.setAttribute("aria-pressed", String(ui.previewing));
       if (ui.previewing) renderMarkdown(ui.preview, previewContent(), draft.path || fallbackPath(draft.kind));
       else ui.text.focus();
@@ -359,10 +359,10 @@
     previewToggle.setAttribute("aria-pressed", "false");
     if (draft.officialness && draft.officialness.label) label.append(el("span", "ws-officialness", draft.officialness.label));
     tools.append(previewToggle, save); header.append(label, tools);
-    const title = input("text", "标题"); title.value = draft.title; title.disabled = !editable();
+    const title = input("text", t("标题")); title.value = draft.title; title.disabled = !editable();
     title.className = "ws-title-input"; title.setAttribute("aria-label", t("标题"));
     const text = el("textarea", "ws-writing"); text.value = draft.content; text.disabled = !editable(); text.spellcheck = false;
-    text.placeholder = t(draft.kind === "overview" ? "研究问题、思路与计划" : draft.kind === "result" ? "结果、解释与待确认的问题" : "写笔记…");
+    text.placeholder = draft.kind === "overview" ? t("研究问题、思路与计划") : draft.kind === "result" ? t("结果、解释与待确认的问题") : t("写笔记…");
     text.setAttribute("aria-label", kindLabel(draft.kind));
     const preview = el("div", "ws-preview hidden"), docStatus = el("div", "ws-status"); docStatus.setAttribute("role", "status");
     ui.title = title; ui.text = text; ui.preview = preview; ui.save = save; ui.docStatus = docStatus; ui.previewing = false;
@@ -371,10 +371,10 @@
     text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!save.disabled) saveDocument(); } });
     box.append(header, title, attachmentTools(), text, preview, docStatus);
     const footer = el("div", "ws-document-footer");
-    if (draft.path) footer.append(button("查看文件", () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
-    if (draft.path) footer.append(button("修改历史", () => { if (window.RONode) window.RONode.openNode(draft.path); }));
+    if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
+    if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }));
     if (data.mode === "member") {
-      const propose = button("提交修改", () => {
+      const propose = button(t("提交修改"), () => {
         if (documentDirty()) { status(docStatus, t("请先保存，再提交修改。")); return; }
         if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(referencedFiles());
       });
@@ -394,13 +394,13 @@
     else text.focus();
   }
   function attachmentTools() {
-    const tools = el("details", "ws-attachments"); tools.append(el("summary", null, t("引用文件或尝试")));
+    const tools = el("details", "ws-attachments"); tools.append(disclosureSummary(t("引用文件或尝试")));
     ui.attachments = tools;
     const row = el("div", "ws-attachment-row"), select = el("select", "form-input");
     select.setAttribute("aria-label", t("选择项目文件"));
     const blank = el("option", null, t("选择项目文件")); blank.value = ""; select.append(blank);
     (data.files || []).forEach((file) => { const option = el("option", null, file.path); option.value = file.path; select.append(option); });
-    const attach = button("插入引用", () => {
+    const attach = button(t("插入引用"), () => {
       if (!select.value) return;
       const image = /\.(png|jpe?g|gif|webp)$/i.test(select.value);
       insertText("\n" + markdownLink(draft.path || fallbackPath(draft.kind), select.value, image) + "\n");
@@ -410,13 +410,13 @@
       attempts.setAttribute("aria-label", t("选择研究尝试"));
       const empty = el("option", null, t("选择研究尝试")); empty.value = ""; attempts.append(empty);
       data.attempts.forEach((attempt) => { const option = el("option", null, attempt.label || attempt.id); option.value = attempt.id; attempts.append(option); });
-      const insert = button("引用尝试", () => {
+      const insert = button(t("引用尝试"), () => {
         const attempt = data.attempts.find((a) => a.id === attempts.value); if (!attempt) return;
         insertText("\n[" + String(attempt.label || attempt.id).replace(/[[\]\\]/g, "\\$&") + "](researchos:attempt/" + encodeURIComponent(attempt.id).replace(/[()]/g, (c) => c === "(" ? "%28" : "%29") + ")\n");
       }); insert.disabled = !editable(); attemptRow.append(attempts, insert); tools.append(attemptRow);
     }
     const refreshStatus = el("div", "ws-status");
-    const refresh = button("刷新文件", async () => {
+    const refresh = button(t("刷新文件"), async () => {
       const mark = stamp(); refresh.disabled = true;
       status(refreshStatus, t("正在读取…"));
       try {
@@ -426,7 +426,7 @@
         redrawAttachments();
         status(ui.attachments.querySelector(".ws-reference-status"), t("文件列表已更新。"));
       } catch (err) {
-        if (live(mark)) { refresh.disabled = false; status(refreshStatus, errorWords("没能读取项目文件。", err), "err"); }
+        if (live(mark)) { refresh.disabled = false; status(refreshStatus, errorWords(t("没能读取项目文件。"), err), "err"); }
       }
     });
     refreshStatus.className += " ws-reference-status";
@@ -444,9 +444,9 @@
     old.replaceWith(replacement);
   }
   function documentConflict(err) {
-    status(ui.docStatus, errorWords("文件已在其他地方修改，当前草稿已保留。", err), "err");
+    status(ui.docStatus, errorWords(t("文件已在其他地方修改，当前草稿已保留。"), err), "err");
     const row = el("div", "ws-conflict-actions");
-    row.append(button("保留草稿", () => row.remove()), button("重新载入文件", () => {
+    row.append(button(t("保留草稿"), () => row.remove()), button(t("重新载入文件"), () => {
       if (window.confirm(t("重新载入会放弃当前文档里尚未保存的修改，继续吗？"))) openDocument(draft.path, true, true);
     }));
     ui.docStatus.append(row);
@@ -476,7 +476,7 @@
       if (!live(mark) || draft !== target) return;
       ui.save.disabled = !editable();
       if (err && /conflict|revision|changed/.test(err.state || "")) documentConflict(err);
-      else status(ui.docStatus, errorWords("没能保存，当前内容已保留。", err), "err");
+      else status(ui.docStatus, errorWords(t("没能保存，当前内容已保留。"), err), "err");
     }
   }
 
@@ -489,18 +489,18 @@
       const run = latestRun(task.id);
       const row = el("div", "ws-task" + (task.done ? " done" : ""));
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
-      check.setAttribute("aria-label", t(task.done ? "标为未完成" : "标为完成") + " " + task.text);
+      check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
       check.addEventListener("change", () => mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x)));
       const words = el("div", "ws-task-words"); words.append(el("span", "ws-task-text", task.text));
       const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
-      const edit = keyed(button("编辑", () => {
+      const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
         taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false }; renderTasks(); ui.taskText.focus();
       }), "edit:" + task.id);
-      const remove = keyed(button("移除", () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
-      named(edit, "编辑：{task}", { task: task.text }); named(remove, "移除：{task}", { task: task.text });
+      const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
+      named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
       row.append(check, words, edit, remove); list.append(row);
     });
@@ -520,35 +520,35 @@
     const box = ui.tasks, snap = focusSnapshot(box); box.replaceChildren();
     const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
-    const agents = keyed(button("AI 执行者", toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
+    const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
     ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
     ui.taskError = el("div"); box.append(ui.taskError);
     renderTaskList();
-    const form = el("form", "ws-task-form"), text = keyed(input("text", "例如：整理下一次组会要讨论的问题"), "task-text"); text.value = taskDraft.text;
+    const form = el("form", "ws-task-form"), text = keyed(input("text", t("例如：整理下一次组会要讨论的问题")), "task-text"); text.value = taskDraft.text;
     const owner = keyed(el("select", "form-input"), "task-owner"); ui.ownerSelect = owner; fillOwnerOptions(owner);
-    const name = taskDraft.custom ? keyed(input("text", "姓名（可留空）"), "task-name") : null;
+    const name = taskDraft.custom ? keyed(input("text", t("姓名（可留空）")), "task-name") : null;
     if (name) { name.value = taskDraft.owner; name.addEventListener("input", () => { taskDraft.owner = name.value; }); }
     ui.ownerName = name;
     const due = keyed(input("date"), "task-due"); due.value = taskDraft.due;
-    const submit = keyed(button(taskDraft.id ? "保存任务" : "添加任务", () => addTask(), "btn btn-small"), "task-submit");
+    const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-small"), "task-submit");
     [text, owner, name, due, submit].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });
     function changed() { taskDraft = Object.assign({}, taskDraft, { text: text.value, due: due.value }); }
     [text, due].forEach((node) => node.addEventListener("input", changed));
     owner.addEventListener("change", () => chooseOwner(owner));
     form.addEventListener("submit", (event) => { event.preventDefault(); addTask(); });
-    const ownerField = field("负责人", owner), dateField = field("日期", due);
+    const ownerField = field(t("负责人"), owner), dateField = field(t("日期"), due);
     ownerField.className += " ws-field-owner"; dateField.className += " ws-field-date";
-    form.append(field("任务", text), ownerField);
-    if (name) { const nameField = field("姓名", name); nameField.className += " ws-field-name"; form.append(nameField); }
+    form.append(field(t("任务", { n: 1 }), text), ownerField);
+    if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
     form.append(dateField, submit);
-    form.append(keyed(button("清空", () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear"));
+    form.append(keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear"));
     const taskStatus = el("div", "ws-status"); taskStatus.setAttribute("role", "status");
     box.append(form, taskStatus); ui.taskText = text; ui.taskStatus = taskStatus;
     if (taskConflict) showTaskConflict();
     if (data.mode === "member") {
-      const propose = button("提交修改", () => {
+      const propose = button(t("提交修改"), () => {
         if (taskDirty() || taskBusy) { status(ui.taskStatus, t("请先保存任务，再提交修改。")); return; }
         if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(["research/tasks.json"]);
       }); propose.disabled = !tasksEditable(); box.append(propose);
@@ -594,14 +594,14 @@
     if (ui.taskStatus.dataset.conflict) return;
     ui.taskStatus.dataset.conflict = "1";
     status(ui.taskStatus, t("任务已在其他地方修改，当前填写已保留。请重新载入后再保存。"), "err");
-    ui.taskStatus.append(button("重新载入任务", async () => {
+    ui.taskStatus.append(button(t("重新载入任务"), async () => {
       const mark = stamp();
       try {
         const fresh = await apiGet("/api/workspace");
         if (!live(mark)) return;
         data.tasks = fresh.tasks; data.tasks_revision = fresh.tasks_revision; data.tasks_error = fresh.tasks_error; taskConflict = false; renderTasks();
         status(ui.taskStatus, t("已载入最新任务，当前填写仍保留。"));
-      } catch (err) { if (live(mark)) status(ui.taskStatus, errorWords("没能读取任务。", err), "err"); }
+      } catch (err) { if (live(mark)) status(ui.taskStatus, errorWords(t("没能读取任务。"), err), "err"); }
     }));
   }
   async function mutateTasks(tasks, clearForm) {
@@ -619,7 +619,7 @@
       if (!live(mark)) return;
       taskBusy = false; taskConflict = !!(err && /conflict|revision|changed/.test(err.state || ""));
       renderTasks();
-      if (!taskConflict) status(ui.taskStatus, errorWords("没能保存任务，当前填写已保留。", err), "err");
+      if (!taskConflict) status(ui.taskStatus, errorWords(t("没能保存任务，当前填写已保留。"), err), "err");
     }
   }
 
@@ -634,54 +634,68 @@
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
   // How the mcp package is added: to the uv tool install (the documented route), or to a source checkout (README).
   const MCP_INSTALL = [
-    ["用 uv 安装的：", 'uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os'],
-    ["从源码目录安装的：", 'python -m pip install -e ".[mcp]"'],
+    [() => t("用 uv 安装的："), 'uv tool install --force --with "mcp<2" git+https://github.com/LinyingL/research-os'],
+    [() => t("从源码目录安装的："), 'python -m pip install -e ".[mcp]"'],
   ];
+  // The tables below hold functions (13.6): each sentence is looked up when it is shown, in the page's language,
+  // and each Chinese text is the whole argument of its own t().
   // state code -> [words, tone] (tone classes are app.html's .status-label.tone-*).
   const STATE_LABELS = {
-    preparing: ["准备中", "ochre"], running: ["运行中", "ochre"], needs_input: ["等你回答", "clay"], done: ["已完成", "olive"],
-    ended: ["未报告", "gray"], failed: ["失败", "clay"], stopped: ["已停止", "gray"], interrupted: ["已中断", "gray"],
-    out_of_bounds: ["越过了限制", "clay"],
+    preparing: [() => t("准备中"), "ochre"], running: [() => t("运行中"), "ochre"], needs_input: [() => t("等你回答"), "clay"],
+    done: [() => t("已完成"), "olive"], ended: [() => t("未报告"), "gray"], failed: [() => t("失败"), "clay"],
+    stopped: [() => t("已停止"), "gray"], interrupted: [() => t("已中断"), "gray"], out_of_bounds: [() => t("越过了限制"), "clay"],
   };
-  const STEP_KINDS = { start: "开始", say: "它说", tool: "操作", refused: "被拒绝", error: "出错", end: "结束" };
+  const STEP_KINDS = {
+    start: () => t("开始"), say: () => t("它说"), tool: () => t("操作"), refused: () => t("被拒绝"), error: () => t("出错"), end: () => t("结束"),
+  };
   const VIOLATION_WORDS = {
-    data_changed: "改动了运行前就有的数据文件", data_deleted: "删除了运行前就有的数据文件",
-    record_changed: "改动了研究记录", record_deleted: "删除了研究记录",
-    researchos_changed: "改动了 Research OS 自己的记录文件夹", git_changed: "改变了 git 的状态",
-    git_hooks_changed: "改动了 git 的钩子（git 会自动运行的程序）", git_config_changed: "改动了 git 的配置",
-    backup_deleted: "删除了 Research OS 的备份",
-    agent_settings_changed: "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）",
+    data_changed: () => t("改动了运行前就有的数据文件"), data_deleted: () => t("删除了运行前就有的数据文件"),
+    record_changed: () => t("改动了研究记录"), record_deleted: () => t("删除了研究记录"),
+    researchos_changed: () => t("改动了 Research OS 自己的记录文件夹"), git_changed: () => t("改变了 git 的状态"),
+    git_hooks_changed: () => t("改动了 git 的钩子（git 会自动运行的程序）"), git_config_changed: () => t("改动了 git 的配置"),
+    backup_deleted: () => t("删除了 Research OS 的备份"),
+    agent_settings_changed: () => t("改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）"),
   };
   // A run's error code, and the code of an end step the engine writes (`stopped` is no error: it words a stopped run).
   const ERROR_WORDS = {
-    timeout: "运行超过了时间限制，已被停止。", shutdown: "运行期间 Research OS 被关闭了。", engine_gone: "运行期间 Research OS 退出了。",
-    aborted: "程序在给出结果之前就结束了。", exit: "程序异常退出。", model_error: "模型返回了错误。", start_failed: "程序没能启动。",
-    check_failed: "运行结束后核对改动时出了错，改动清单可能不完整。", error_max_budget_usd: "费用达到了上限。",
-    guard_failed: "Research OS 的检查程序没有正常启动，为了安全没有运行。",
-    internal: "Research OS 在运行中出了错。", error_max_turns: "达到了最多可以走的步数。",
-    error_during_execution: "程序在运行中出了错。", stopped: "运行已被你停止。",
+    timeout: () => t("运行超过了时间限制，已被停止。"), shutdown: () => t("运行期间 Research OS 被关闭了。"),
+    engine_gone: () => t("运行期间 Research OS 退出了。"), aborted: () => t("程序在给出结果之前就结束了。"),
+    exit: () => t("程序异常退出。"), model_error: () => t("模型返回了错误。"), start_failed: () => t("程序没能启动。"),
+    check_failed: () => t("运行结束后核对改动时出了错，改动清单可能不完整。"), error_max_budget_usd: () => t("费用达到了上限。"),
+    guard_failed: () => t("Research OS 的检查程序没有正常启动，为了安全没有运行。"),
+    internal: () => t("Research OS 在运行中出了错。"), error_max_turns: () => t("达到了最多可以走的步数。"),
+    error_during_execution: () => t("程序在运行中出了错。"), stopped: () => t("运行已被你停止。"),
   };
   // A step of the run log that carries a code (18.1 item 6): why the hook (or the program's own permission rules)
   // refused a call, and an error the engine knows. The person reads the sentence; the program's own words stay
   // beneath it as the detail.
   const STEP_WORDS = {
-    unchecked: "Research OS 没能检查这一步，为了安全没有放行。", no_file: "这一步没有指明项目里的哪个文件，没有放行。",
-    outside_project: "它想改项目文件夹以外的文件，被拦下了。", records_folder: "它想动 Research OS 的记录文件夹（.researchos），被拦下了。",
-    git_files: "它想改 git 文件夹里的东西，被拦下了。", agent_settings: "它想改 Claude Code 或 OpenCode 在项目里的设置，被拦下了。",
-    protected_file: "它想改动或删除运行前就有的数据文件（或尝试表、任务文件），被拦下了。",
-    off_limits: "它想读 Research OS 的主文件夹或 ~/.ssh，被拦下了。", research_os_command: "它想运行 researchos 命令，被拦下了。",
-    git_state: "它想改变 git 的状态（提交、推送等），被拦下了。", engine_api: "它想直接联系 Research OS 应用的接口，被拦下了。",
-    permission_rule: "它想做的事被运行的权限规则拒绝了，比如 git 命令。", tool_unavailable: "它调用了一个不可用的工具。",
-    mcp_failed: "Research OS 的工具没有启动，AI 执行者无法汇报结果。",
+    unchecked: () => t("Research OS 没能检查这一步，为了安全没有放行。"), no_file: () => t("这一步没有指明项目里的哪个文件，没有放行。"),
+    outside_project: () => t("它想改项目文件夹以外的文件，被拦下了。"),
+    records_folder: () => t("它想动 Research OS 的记录文件夹（.researchos），被拦下了。"),
+    git_files: () => t("它想改 git 文件夹里的东西，被拦下了。"),
+    agent_settings: () => t("它想改 Claude Code 或 OpenCode 在项目里的设置，被拦下了。"),
+    protected_file: () => t("它想改动或删除运行前就有的数据文件（或尝试表、任务文件），被拦下了。"),
+    off_limits: () => t("它想读 Research OS 的主文件夹或 ~/.ssh，被拦下了。"),
+    research_os_command: () => t("它想运行 researchos 命令，被拦下了。"),
+    git_state: () => t("它想改变 git 的状态（提交、推送等），被拦下了。"),
+    engine_api: () => t("它想直接联系 Research OS 应用的接口，被拦下了。"),
+    permission_rule: () => t("它想做的事被运行的权限规则拒绝了，比如 git 命令。"), tool_unavailable: () => t("它调用了一个不可用的工具。"),
+    mcp_failed: () => t("Research OS 的工具没有启动，AI 执行者无法汇报结果。"),
   };
   const REVERT_SKIPPED = {
-    changed_since: "运行之后又改动过", no_copy: "没有运行前的副本", in_cloud: "文件只在云端", kept: "你选择保留",
-    protected: "属于 Research OS 的记录文件夹或 git，撤回不会动它",
+    changed_since: () => t("运行之后又改动过"), no_copy: () => t("没有运行前的副本"), in_cloud: () => t("文件只在云端"),
+    kept: () => t("你选择保留"), protected: () => t("属于 Research OS 的记录文件夹或 git，撤回不会动它"),
   };
   const PRIVACY = {
-    "claude-code": "Claude Code 会把它读到的项目内容发送给 Anthropic。",
-    opencode: "OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。",
+    "claude-code": () => t("Claude Code 会把它读到的项目内容发送给 Anthropic。"),
+    opencode: () => t("OpenCode 会把它读到的项目内容发送给你在 OpenCode 里配置的模型服务，也可能是这台电脑上的本地服务。"),
   };
+  // The sentence a table holds for a code, else other(): a code the page does not know reads as a generic
+  // sentence, never as the code.
+  function byCode(table, code, other) {
+    return typeof code === "string" && Object.prototype.hasOwnProperty.call(table, code) ? table[code]() : other();
+  }
 
   function parseAgent(owner) {
     const m = /^agent:([^:]+):(.+)$/.exec(String(owner || ""));
@@ -710,12 +724,20 @@
   // undo: the open 撤回本次运行 list of the task's latest run (18.1 item 5), { run, plan, error, off } -- off holds the
   // paths whose box the person cleared.
   function agentState(taskId) { return agentUiState[taskId] || (agentUiState[taskId] = { log: false, reply: null, text: "", open: {}, undo: null }); }
+  // The summary of a disclosure (12.13): the quiet line chevron the node page draws, turned by CSS when it is open,
+  // and the words; the browser's own triangle is hidden by .res-draft-summary.
+  function disclosureSummary(words) {
+    const summary = el("summary", "res-draft-summary");
+    if (typeof chevronIcon === "function") summary.append(chevronIcon());
+    summary.append(el("span", null, words));
+    return summary;
+  }
   // A <details> (12.11) that stays as the person left it when the row is drawn again by the next poll.
   function more(st, key, words, content) {
     const box = el("details", "ws-agent-more");
     box.open = !!st.open[key];
     box.addEventListener("toggle", () => { st.open[key] = box.open; });
-    box.append(el("summary", null, t(words)), el("pre", "ws-code", content));
+    box.append(disclosureSummary(words), el("pre", "ws-code", content));
     return box;
   }
   function may() { return tasksEditable() && !taskBusy && !taskConflict; }
@@ -923,9 +945,9 @@
   }
   function runLabel(run) {
     const partly = run.reverted && run.revert_skipped > 0;
-    const [words, tone] = partly ? ["部分撤回", "gray"] : run.reverted ? ["已撤回本次运行", "gray"] : STATE_LABELS[run.state] || ["", "plain"];
+    const [words, tone] = partly ? [() => t("部分撤回"), "gray"] : run.reverted ? [() => t("已撤回本次运行"), "gray"] : STATE_LABELS[run.state] || [null, "plain"];
     // a state this page does not know reads as a generic word, never as the code the engine stores
-    return el("span", "status-label tone-" + tone + (run.state === "out_of_bounds" && !run.reverted ? " oob" : ""), words ? t(words) : t("状态未知"));
+    return el("span", "status-label tone-" + tone + (run.state === "out_of_bounds" && !run.reverted ? " oob" : ""), words ? words() : t("状态未知"));
   }
   // The state word, the question and what went wrong are one polite live region (role=status), and so is a note,
   // so a screen reader hears a run end or a request be refused without the person looking for it (12.11).
@@ -950,28 +972,28 @@
     box.append(live);
     const actions = el("div", "ws-agent-actions");
     if (agent && !task.done && (!run || (!active && !(outcomeOf(run) === "needs_input" && run.can_reply)))) {
-      const go = keyed(named(button("运行", () => startRun(task, agent)), "运行：{task}", who), k("run"));
+      const go = keyed(named(button(t("运行"), () => startRun(task, agent)), t("运行：{task}", who)), k("run"));
       go.disabled = !allowed || anyActive();
       if (allowed && anyActive()) go.title = t("这个项目里还有一次运行没有结束。");
       actions.append(go);
     }
-    if (run && run.can_stop) { const stop = keyed(named(button("停止", () => stopRun(task, run)), "停止：{task}", who), k("stop")); stop.disabled = busy; actions.append(stop); }
+    if (run && run.can_stop) { const stop = keyed(named(button(t("停止"), () => stopRun(task, run)), t("停止：{task}", who)), k("stop")); stop.disabled = busy; actions.append(stop); }
     if (run) {
-      const log = keyed(named(button("运行记录", () => toggleLog(task)), "运行记录：{task}", who), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
+      const log = keyed(named(button(t("运行记录"), () => toggleLog(task)), t("运行记录：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
     if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
-      const answer = keyed(named(button("回答", () => toggleReply(task, "answer")), "回答：{task}", who), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
+      const answer = keyed(named(button(t("回答"), () => toggleReply(task, "answer")), t("回答：{task}", who)), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
       answer.disabled = !allowed; actions.append(answer);
     }
     if (run && REPLY_FROM.includes(outcomeOf(run)) && run.can_reply) {
-      const back = keyed(named(button("打回", () => toggleReply(task, "send_back")), "打回：{task}", who), k("send_back")); back.setAttribute("aria-expanded", String(reply === "send_back"));
+      const back = keyed(named(button(t("打回"), () => toggleReply(task, "send_back")), t("打回：{task}", who)), k("send_back")); back.setAttribute("aria-expanded", String(reply === "send_back"));
       back.disabled = !allowed; actions.append(back);
     }
     if (run && run.can_revert) {
-      const undo = keyed(named(button("撤回本次运行", () => revertRun(task, run)), "撤回本次运行：{task}", who), k("undo"));
+      const undo = keyed(named(button(t("撤回本次运行"), () => revertRun(task, run)), t("撤回本次运行：{task}", who)), k("undo"));
       undo.setAttribute("aria-expanded", String(!!st.undo)); undo.disabled = !allowed; actions.append(undo);
     }
-    if (task.report) actions.append(keyed(named(button("打开结果", () => openReport(task.report)), "打开结果：{task}", who), k("report")));
+    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openReport(task.report)), t("打开结果：{task}", who)), k("report")));
     if (actions.childElementCount) box.append(actions);
     const note = agentNotes[task.id];
     if (note) box.append(noteBlock(note));
@@ -982,13 +1004,13 @@
   }
   function errorBlock(run, st) {
     const box = el("div", "ws-agent-error"), code = run.error && run.error.code;
-    box.append(el("p", "ws-status err", t(Object.prototype.hasOwnProperty.call(ERROR_WORDS, code) ? ERROR_WORDS[code] : "这次运行没有成功。")));
-    if (run.error && run.error.detail) box.append(more(st, "error", "详情", String(run.error.detail)));
+    box.append(el("p", "ws-status err", byCode(ERROR_WORDS, code, () => t("这次运行没有成功。"))));
+    if (run.error && run.error.detail) box.append(more(st, "error", t("详情"), String(run.error.detail)));
     return box;
   }
   function installBlock() {
     const box = el("div", "ws-install");
-    MCP_INSTALL.forEach(([caption, command]) => { box.append(el("span", "ws-agent-quiet ws-install-caption", t(caption)), el("code", "ws-install-cmd", command)); });
+    MCP_INSTALL.forEach(([caption, command]) => { box.append(el("span", "ws-agent-quiet ws-install-caption", caption()), el("code", "ws-install-cmd", command)); });
     return box;
   }
   function mcpWords() { return t("运行 AI 执行者需要 mcp 组件，这个 Research OS 里还没有安装。按你安装 Research OS 的方式，运行下面其中一条命令，然后重新打开 Research OS："); }
@@ -997,7 +1019,7 @@
     const list = el("ul", "ws-agent-files");
     skipped.forEach((item) => {
       const li = el("li"); li.append(el("code", null, item.path));
-      li.append(" " + t(Object.prototype.hasOwnProperty.call(REVERT_SKIPPED, item.reason) ? REVERT_SKIPPED[item.reason] : "没有改动这个文件"));
+      li.append(" " + byCode(REVERT_SKIPPED, item.reason, () => t("没有改动这个文件")));
       list.append(li);
     });
     return list;
@@ -1046,7 +1068,7 @@
       // The engine names the files; the confirmation is shown without them when it cannot be asked.
       try { big = await apiGet("/api/agents/large-files"); } catch (err) { big = null; }
       if (!live(mark)) return false;
-      const parts = [t(PRIVACY[agent.runner]),
+      const parts = [(PRIVACY[agent.runner] || PRIVACY.opencode)(),
         t("运行时它会直接修改项目里的文件，不会先问你。运行之后可以撤回它在项目里的改动，但这些撤不回：安装的软件、下载的内容、git 里的操作，以及项目文件夹以外的一切。")];
       const large = largeFilesWords(big);
       if (large) parts.push(large);
@@ -1088,10 +1110,10 @@
     }
     if (!(await confirmAgent(agent))) return;
     // A reply form left open on the run before has nothing to answer now.
-    return agentAction(task, () => apiPost("/api/agents/runs", { project: project(), task: task.id }), { failed: "没能开始这次运行。", after: () => closeReply(agentState(task.id)) });
+    return agentAction(task, () => apiPost("/api/agents/runs", { project: project(), task: task.id }), { failed: t("没能开始这次运行。"), after: () => closeReply(agentState(task.id)) });
   }
   function stopRun(task, run) {
-    return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/stop", { project: project() }), { failed: "没能停止这次运行。" });
+    return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/stop", { project: project() }), { failed: t("没能停止这次运行。") });
   }
   // -- 撤回本次运行: the list first, then the person's yes (18.1 item 5) ---------------------------------------------
   // The button opens what the undo would do -- the files it puts back, the files it moves away, each with its time and
@@ -1141,11 +1163,11 @@
     const box = el("div", "ws-agent-undo"), actions = el("div", "ws-agent-actions");
     box.setAttribute("role", "group"); box.setAttribute("aria-label", t("撤回本次运行：{task}", who));
     box.append(el("h4", "ws-run-heading", t("撤回本次运行")));
-    const cancel = keyed(named(button("取消", () => { st.undo = null; updateAgentSections(); focusKey(sections[task.id], k("undo")); }), "取消：{task}", who), k("undo-cancel"));
+    const cancel = keyed(named(button(t("取消"), () => { st.undo = null; updateAgentSections(); focusKey(sections[task.id], k("undo")); }), t("取消：{task}", who)), k("undo-cancel"));
     if (!open.plan) {
       if (open.error) {
-        box.append(el("p", "ws-status err", errorWords("没能读出撤回的清单。", open.error)));
-        actions.append(keyed(button("重试", () => loadUndoPlan(task, run)), k("undo-retry")), cancel);
+        box.append(el("p", "ws-status err", errorWords(t("没能读出撤回的清单。"), open.error)));
+        actions.append(keyed(button(t("重试"), () => loadUndoPlan(task, run)), k("undo-retry")), cancel);
       } else {
         box.append(el("p", "ws-status", t("正在读取…")));
         actions.append(cancel);
@@ -1156,7 +1178,7 @@
     const restore = open.plan.restore || [], remove = open.plan.remove || [], cannot = open.plan.cannot || [], items = undoItems(open);
     const boxes = [];
     const count = el("p", "ws-agent-quiet"), kept = el("p", "ws-agent-quiet");
-    const confirm = keyed(named(button("确认撤回", () => confirmUndo(task, run, st), "btn btn-primary btn-small"), "确认撤回：{task}", who), k("undo-confirm"));
+    const confirm = keyed(named(button(t("确认撤回"), () => confirmUndo(task, run, st), "btn btn-primary btn-small"), t("确认撤回：{task}", who)), k("undo-confirm"));
     // Ticking or clearing a box changes the buttons and the two lines here, not the list: a long list keeps its place.
     function sync() {
       const n = undoTicked(open).length;
@@ -1182,8 +1204,8 @@
     if (!items.length) box.append(el("p", "ws-status", t("没有可以撤回的文件。")));
     else {
       box.append(el("p", "ws-agent-quiet", t("勾选的文件会被撤回，没勾选的保持现状。")));
-      const all = keyed(button("全部勾选", () => { boxes.forEach(([item, tick]) => { tick.checked = true; delete open.off[item.path]; }); sync(); }), k("undo-all"));
-      const none = keyed(button("全部取消勾选", () => { boxes.forEach(([item, tick]) => { tick.checked = false; open.off[item.path] = true; }); sync(); }), k("undo-none"));
+      const all = keyed(button(t("全部勾选"), () => { boxes.forEach(([item, tick]) => { tick.checked = true; delete open.off[item.path]; }); sync(); }), k("undo-all"));
+      const none = keyed(button(t("全部取消勾选"), () => { boxes.forEach(([item, tick]) => { tick.checked = false; open.off[item.path] = true; }); sync(); }), k("undo-none"));
       const bulk = el("div", "ws-agent-actions"); bulk.append(all, none); box.append(bulk);
     }
     if (restore.length) box.append(undoGroup(st, "undo-restore", t("放回运行前的样子（{n}）", { n: restore.length }), [list(restore)]));
@@ -1204,7 +1226,7 @@
     const open = st.undo, files = undoTicked(open).map((item) => item.path);
     if (!open || !files.length) return;
     return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/revert", { project: project(), files: files }), {
-      failed: "没能撤回这次运行。", reload: true, after: () => { st.undo = null; closeReply(st); },
+      failed: t("没能撤回这次运行。"), reload: true, after: () => { st.undo = null; closeReply(st); },
       done: (res) => {
         const n = (res && res.restored ? res.restored.length : 0) + (res && res.removed ? res.removed.length : 0), skipped = (res && res.skipped) || [];
         setNote(task.id, t("撤回了 {n} 个文件的改动。", { n: n }), skipped.length ? "" : "ok", { skipped: skipped });
@@ -1230,20 +1252,20 @@
     const form = el("div", "ws-agent-reply"), area = keyed(el("textarea", "form-textarea"), "agent:" + task.id + ":reply");
     form.dataset.kind = kind; form.dataset.run = run.id;
     area.value = st.text; area.spellcheck = false;
-    area.setAttribute("aria-label", t(kind === "answer" ? "你的回答" : "要它改什么"));
-    area.placeholder = t(kind === "answer" ? "写下你的回答…" : "写下要它改动或补做的事…");
+    area.setAttribute("aria-label", kind === "answer" ? t("你的回答") : t("要它改什么"));
+    area.placeholder = kind === "answer" ? t("写下你的回答…") : t("写下要它改动或补做的事…");
     area.addEventListener("input", () => { st.text = area.value; });
-    const send = button("发送", async () => {
+    const send = button(t("发送"), async () => {
       const message = st.text.trim();
       if (!message) { setNote(task.id, t("请先写下内容。"), "err"); updateAgentSections(); return; }
       if (!(await confirmAgent(parseAgent(run.owner)))) return;
       return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/reply", { project: project(), message: message }), {
-        failed: "没能发送。", reload: true, after: () => closeReply(st),
+        failed: t("没能发送。"), reload: true, after: () => closeReply(st),
       });
     }, "btn btn-primary btn-small");
-    const cancel = button("取消", () => { closeReply(st); updateAgentSections(); focusKey(sections[task.id], "agent:" + task.id + ":" + kind); });
+    const cancel = button(t("取消"), () => { closeReply(st); updateAgentSections(); focusKey(sections[task.id], "agent:" + task.id + ":" + kind); });
     keyed(send, "agent:" + task.id + ":send"); keyed(cancel, "agent:" + task.id + ":cancel");
-    named(send, "发送：{task}", { task: task.text }); named(cancel, "取消：{task}", { task: task.text });
+    named(send, t("发送：{task}", { task: task.text })); named(cancel, t("取消：{task}", { task: task.text }));
     const actions = el("div", "ws-agent-actions"); actions.append(send, cancel);
     form.append(area, actions);
     return form;
@@ -1253,10 +1275,9 @@
   // The sentence for a step that is told by its code (18.1 item 6), else null (the step shows its own text). A code the
   // page does not know reads as a generic sentence, never as the code.
   function stepWords(step) {
-    const known = (table) => typeof step.code === "string" && Object.prototype.hasOwnProperty.call(table, step.code);
-    if (step.kind === "refused") return t(known(STEP_WORDS) ? STEP_WORDS[step.code] : "这一步被拒绝了。");
-    if (step.kind === "error") return t(known(STEP_WORDS) ? STEP_WORDS[step.code] : "程序报告了一个错误。");
-    if (step.kind === "end" && step.code) return t(known(ERROR_WORDS) ? ERROR_WORDS[step.code] : "这次运行没有成功。");
+    if (step.kind === "refused") return byCode(STEP_WORDS, step.code, () => t("这一步被拒绝了。"));
+    if (step.kind === "error") return byCode(STEP_WORDS, step.code, () => t("程序报告了一个错误。"));
+    if (step.kind === "end" && step.code) return byCode(ERROR_WORDS, step.code, () => t("这次运行没有成功。"));
     return null;
   }
   function pathList(paths) {
@@ -1268,8 +1289,8 @@
     const box = el("div", "ws-run-details");
     if (!loaded) { box.append(el("p", "ws-status", t("正在读取…"))); return box; }
     if (loaded.error || !loaded.data) {
-      box.append(el("p", "ws-status err", errorWords("没能读取运行记录。", loaded.error)));
-      const again = keyed(button("重试", () => { delete details[run.id]; fetchDetail(run, stamp()); updateAgentSections(); }), "agent:" + (task ? task.id : run.task_id) + ":retry");
+      box.append(el("p", "ws-status err", errorWords(t("没能读取运行记录。"), loaded.error)));
+      const again = keyed(button(t("重试"), () => { delete details[run.id]; fetchDetail(run, stamp()); updateAgentSections(); }), "agent:" + (task ? task.id : run.task_id) + ":retry");
       box.append(again);
       return box;
     }
@@ -1283,16 +1304,16 @@
       const list = el("ul", "ws-agent-files");
       d.violations.forEach((v) => {
         const li = el("li"); li.append(el("code", null, v.path));
-        li.append(" " + t(Object.prototype.hasOwnProperty.call(VIOLATION_WORDS, v.reason) ? VIOLATION_WORDS[v.reason] : "超出了允许的范围"));
+        li.append(" " + byCode(VIOLATION_WORDS, v.reason, () => t("超出了允许的范围")));
         list.append(li);
       });
       group.append(list); box.append(group);
     }
     const changes = d.changes || {};
-    [["created", "新建的文件"], ["modified", "修改的文件"], ["deleted", "删除的文件"]].forEach(([key, words]) => {
+    [["created", () => t("新建的文件")], ["modified", () => t("修改的文件")], ["deleted", () => t("删除的文件")]].forEach(([key, words]) => {
       if (!(changes[key] || []).length) return;
       const group = el("div", "ws-run-group");
-      group.append(el("h4", "ws-run-heading", t(words)), pathList(changes[key])); box.append(group);
+      group.append(el("h4", "ws-run-heading", words()), pathList(changes[key])); box.append(group);
     });
     if ((d.steps || []).length) {
       const group = el("div", "ws-run-group"), list = el("ol", "ws-steps");
@@ -1300,11 +1321,11 @@
       if (d.steps_total > d.steps.length) group.append(el("p", "ws-agent-quiet", t("只显示最近 {shown} 步，共 {n} 步。", { shown: d.steps.length, n: d.steps_total })));
       d.steps.forEach((step, i) => {
         const li = el("li", "ws-step" + (step.kind === "refused" || step.kind === "error" ? " bad" : "")), words = stepWords(step);
-        li.append(el("span", "ws-step-kind", t(Object.prototype.hasOwnProperty.call(STEP_KINDS, step.kind) ? STEP_KINDS[step.kind] : "操作")));
+        li.append(el("span", "ws-step-kind", byCode(STEP_KINDS, step.kind, () => t("操作"))));
         if (words) {
           const body = el("div", "ws-step-body");
           body.append(el("span", "ws-step-text", words));
-          if (step.text) body.append(more(st, "step:" + (d.steps_total - d.steps.length + i), "详情", String(step.text)));
+          if (step.text) body.append(more(st, "step:" + (d.steps_total - d.steps.length + i), t("详情"), String(step.text)));
           li.append(body);
         } else li.append(el("span", "ws-step-text" + (step.kind === "tool" ? " mono" : ""), step.text || ""));
         list.append(li);
@@ -1320,9 +1341,9 @@
       box.append(el("p", "ws-agent-quiet", t("费用约 {cost} 美元。", { cost: d.cost_usd.toFixed(d.cost_usd < 0.1 ? 3 : 2) })));
     }
     // 18.1 item 2: the program is not given variables whose names look like credentials; the names, never the values.
-    if ((d.env_removed || []).length) box.append(more(st, "env", "没有交给它的环境变量（名字像密钥，只列名字）", d.env_removed.join("\n")));
-    if (d.stderr_tail) box.append(more(st, "stderr", "程序的错误输出", d.stderr_tail));
-    if (d.instruction) box.append(more(st, "instruction", "发给它的指示", d.instruction));
+    if ((d.env_removed || []).length) box.append(more(st, "env", t("没有交给它的环境变量（名字像密钥，只列名字）"), d.env_removed.join("\n")));
+    if (d.stderr_tail) box.append(more(st, "stderr", t("程序的错误输出"), d.stderr_tail));
+    if (d.instruction) box.append(more(st, "instruction", t("发给它的指示"), d.instruction));
     return box;
   }
 
@@ -1344,18 +1365,18 @@
     try {
       const response = await apiPost("/api/settings/agents", body);
       if (!live(mark)) return;
-      agentInfo = response; agentInfoError = null; settingsNote = { words: t(doneWords), kind: "ok" };
+      agentInfo = response; agentInfoError = null; settingsNote = { words: doneWords, kind: "ok" };
       if (body.commands) settingsInputs.paths = {};
       if (onDone) onDone();
     } catch (err) {
       if (!live(mark)) return;
-      settingsNote = { words: errorWords("没能保存设置。", err), kind: "err" };
+      settingsNote = { words: errorWords(t("没能保存设置。"), err), kind: "err" };
     }
     settingsBusy = false;
     refreshOwnerOptions(); renderSettings(); updateAgentSections();
   }
   function currentAgents() { return ((agentInfo && agentInfo.agents) || []).map((a) => ({ runner: a.runner, model: a.model })); }
-  function quiet(words, vars) { return el("p", "ws-agent-quiet", t(words, vars)); }
+  function quiet(words) { return el("p", "ws-agent-quiet", words); }
   function runnerBlock(r) {
     const row = el("div", "ws-runner"), program = PROGRAMS[r.runner] || r.runner;
     row.append(el("h4", "ws-runner-name", RUNNER_NAMES[r.runner] || r.label || r.runner));
@@ -1369,19 +1390,19 @@
     if (!r.found || r.problem) {
       const path = keyed(input("text"), "set-path:" + r.runner), runnerName = RUNNER_NAMES[r.runner] || r.label || r.runner;
       path.placeholder = t("程序的完整路径，例如 /usr/local/bin/{program}", { program: program });
-      named(path, "{name} 的程序路径", { name: runnerName });
+      named(path, t("{name} 的程序路径", { name: runnerName }));
       path.className += " form-mono"; path.value = settingsInputs.paths[r.runner] || ""; path.disabled = settingsBusy;
       path.addEventListener("input", () => { settingsInputs.paths[r.runner] = path.value; });
-      const save = button("保存", () => {
+      const save = button(t("保存"), () => {
         const value = path.value.trim();
         if (!value) { settingsNote = { words: t("请填写程序的完整路径。"), kind: "err" }; renderSettings(true); return; }
-        saveAgentSettings({ commands: { [r.runner]: value } }, "已保存");
+        saveAgentSettings({ commands: { [r.runner]: value } }, t("已保存"));
       }); save.disabled = settingsBusy;
-      keyed(save, "set-path-save:" + r.runner); named(save, "保存：{name}", { name: runnerName });
+      keyed(save, "set-path-save:" + r.runner); named(save, t("保存：{name}", { name: runnerName }));
       const line = el("div", "ws-agent-add"); line.append(path, save); row.append(line);
     }
-    row.append(quiet(PRIVACY[r.runner] || PRIVACY.opencode));
-    if (r.runner === "opencode") row.append(quiet("OpenCode 没有逐步检查：运行结束后才核对哪些文件被改动，越界的改动会列出来，可以撤回。"));
+    row.append(quiet((PRIVACY[r.runner] || PRIVACY.opencode)()));
+    if (r.runner === "opencode") row.append(quiet(t("OpenCode 没有逐步检查：运行结束后才核对哪些文件被改动，越界的改动会列出来，可以撤回。")));
     return row;
   }
   function fillModelList() {
@@ -1390,7 +1411,7 @@
     const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || []) : (modelsState.list || []);
     ui.modelList.replaceChildren(...names.map((name) => { const option = el("option"); option.value = name; return option; }));
     if (ui.modelNote) {
-      ui.modelNote.textContent = runner === "opencode" && modelsState.error ? errorWords("没能列出 OpenCode 的模型，可以直接写模型名。", modelsState.error)
+      ui.modelNote.textContent = runner === "opencode" && modelsState.error ? errorWords(t("没能列出 OpenCode 的模型，可以直接写模型名。"), modelsState.error)
         : runner === "opencode" && modelsState.loading ? t("正在读取…") : "";
     }
   }
@@ -1414,27 +1435,27 @@
     const box = el("div", "ws-agent-list");
     box.append(el("h4", "ws-runner-name", t("这台电脑上的 AI 执行者")));
     const agents = agentInfo.agents || [];
-    if (!agents.length) box.append(quiet("还没有添加。在下面选一个程序，写上模型名。"));
+    if (!agents.length) box.append(quiet(t("还没有添加。在下面选一个程序，写上模型名。")));
     agents.forEach((a) => {
       const row = el("div", "ws-agent-item");
       row.append(el("span", "ws-agent-label", a.label));
       if (a.available === false) row.append(el("span", "ws-agent-meta bad", t("找不到它的程序")));
-      const remove = keyed(named(button("移除", () => saveAgentSettings({ agents: currentAgents().filter((x) => x.runner + ":" + x.model !== a.runner + ":" + a.model) }, "已移除")), "移除：{name}", { name: a.label }), "set-remove:" + a.runner + ":" + a.model);
+      const remove = keyed(named(button(t("移除"), () => saveAgentSettings({ agents: currentAgents().filter((x) => x.runner + ":" + x.model !== a.runner + ":" + a.model) }, t("已移除"))), t("移除：{name}", { name: a.label })), "set-remove:" + a.runner + ":" + a.model);
       remove.disabled = settingsBusy; row.append(remove); box.append(row);
     });
-    const form = el("div", "ws-agent-add"), runner = keyed(el("select", "form-input"), "set-runner"), model = keyed(input("text", "模型名"), "set-model");
+    const form = el("div", "ws-agent-add"), runner = keyed(el("select", "form-input"), "set-runner"), model = keyed(input("text", t("模型名")), "set-model");
     (agentInfo.runners || []).forEach((r) => { const option = el("option", null, RUNNER_NAMES[r.runner] || r.label || r.runner); option.value = r.runner; runner.append(option); });
     runner.value = settingsInputs.runner; model.value = settingsInputs.model; model.className += " form-mono";
     model.setAttribute("list", "ws-model-list");
     ui.modelList = el("datalist"); ui.modelList.id = "ws-model-list"; ui.modelNote = el("p", "ws-agent-quiet");
     runner.addEventListener("change", () => { settingsInputs.runner = runner.value; fillModelList(); if (runner.value === "opencode") loadOpencodeModels(); });
     model.addEventListener("input", () => { settingsInputs.model = model.value; });
-    const add = button("添加", () => {
+    const add = button(t("添加"), () => {
       const name = model.value.trim();
       if (!name) { settingsNote = { words: t("请写上模型名。"), kind: "err" }; renderSettings(true); return; }
-      saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, "已添加", () => { settingsInputs.model = ""; });
+      saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, t("已添加"), () => { settingsInputs.model = ""; });
     }); keyed(add, "set-add"); add.disabled = runner.disabled = model.disabled = settingsBusy;
-    form.append(field("程序", runner), field("模型", model), add);
+    form.append(field(t("程序"), runner), field(t("模型"), model), add);
     box.append(form, ui.modelList, ui.modelNote);
     fillModelList();
     return box;
@@ -1444,13 +1465,13 @@
     minutes.min = "5"; minutes.max = "1440"; minutes.step = "1"; minutes.disabled = settingsBusy;
     minutes.value = settingsInputs.minutes == null ? String(agentInfo.timeout_minutes == null ? "" : agentInfo.timeout_minutes) : settingsInputs.minutes;
     minutes.addEventListener("input", () => { settingsInputs.minutes = minutes.value; });
-    const save = button("保存", () => {
+    const save = button(t("保存"), () => {
       const value = Number(minutes.value);
       if (!Number.isFinite(value) || value < 5 || value > 1440) { settingsNote = { words: t("时间限制要在 5 到 1440 分钟之间。"), kind: "err" }; renderSettings(true); return; }
       settingsInputs.minutes = null;
-      saveAgentSettings({ timeout_minutes: Math.round(value) }, "已保存");
-    }); keyed(save, "set-minutes-save"); named(save, "保存：{name}", { name: t("时间限制") }); save.disabled = settingsBusy;
-    row.append(field("每次运行的时间限制（分钟）", minutes), save);
+      saveAgentSettings({ timeout_minutes: Math.round(value) }, t("已保存"));
+    }); keyed(save, "set-minutes-save"); named(save, t("保存：{name}", { name: t("时间限制") })); save.disabled = settingsBusy;
+    row.append(field(t("每次运行的时间限制（分钟）"), minutes), save);
     return row;
   }
   // The spending cap of a Claude Code run (17.3), in US dollars; empty takes the cap away.
@@ -1459,13 +1480,13 @@
     usd.min = "0.01"; usd.max = "1000"; usd.step = "0.01"; usd.disabled = settingsBusy;
     usd.value = settingsInputs.budget == null ? String(agentInfo.max_budget_usd == null ? "" : agentInfo.max_budget_usd) : settingsInputs.budget;
     usd.addEventListener("input", () => { settingsInputs.budget = usd.value; });
-    const save = button("保存", () => {
+    const save = button(t("保存"), () => {
       const words = usd.value.trim(), value = Number(words);
       if (words && (!Number.isFinite(value) || value <= 0 || value > 1000)) { settingsNote = { words: t("费用上限要大于 0、不超过 1000 美元。"), kind: "err" }; renderSettings(true); return; }
       settingsInputs.budget = null;
-      saveAgentSettings({ max_budget_usd: words ? value : null }, "已保存");
-    }); keyed(save, "set-budget-save"); named(save, "保存：{name}", { name: t("费用上限") }); save.disabled = settingsBusy;
-    row.append(field("每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）", usd), save);
+      saveAgentSettings({ max_budget_usd: words ? value : null }, t("已保存"));
+    }); keyed(save, "set-budget-save"); named(save, t("保存：{name}", { name: t("费用上限") })); save.disabled = settingsBusy;
+    row.append(field(t("每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）"), usd), save);
     return row;
   }
   // `fresh`: the settings box was just made (or the person asked for the redraw). Otherwise an input the person is
@@ -1478,11 +1499,11 @@
     box.replaceChildren(); box.classList.toggle("hidden", !settingsOpen);
     if (!settingsOpen) return;
     box.append(el("h3", "ws-agent-heading", t("AI 执行者")));
-    box.append(quiet("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。"));
+    box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。")));
     if (!agentInfo) {
       if (agentInfoError) {
-        box.append(el("p", "ws-status err", errorWords("没能读取 AI 执行者的设置。", agentInfoError)));
-        box.append(button("重试", () => loadAgentInfo(stamp(), true)));
+        box.append(el("p", "ws-status err", errorWords(t("没能读取 AI 执行者的设置。"), agentInfoError)));
+        box.append(button(t("重试"), () => loadAgentInfo(stamp(), true)));
       } else box.append(el("p", "ws-status", t("正在读取…")));
       return;
     }
@@ -1533,8 +1554,8 @@
       } else if (refresh && !documentDirty() && draft.path) await openDocument(draft.path, true);
     } catch (err) {
       if (!live(current) || thisRequest !== request) return;
-      if (ui && ui.docStatus) status(ui.docStatus, errorWords("没能读取项目首页。", err), "err");
-      else host.replaceChildren(el("p", "ws-status err", errorWords("没能读取项目首页。", err)), button("重试", () => load(target, refresh)));
+      if (ui && ui.docStatus) status(ui.docStatus, errorWords(t("没能读取项目首页。"), err), "err");
+      else host.replaceChildren(el("p", "ws-status err", errorWords(t("没能读取项目首页。"), err)), button(t("重试"), () => load(target, refresh)));
     }
   }
 
@@ -1546,19 +1567,19 @@
     if (!mayLeave()) return;
     if (typeof panelBody === "undefined") return;
     createRequest += 1;
-    const form = el("form", "ws-create"), name = input("text", "项目名称"), parent = input("text", "例如 /Users/你的名字/Documents");
+    const form = el("form", "ws-create"), name = input("text", t("项目名称")), parent = input("text", t("例如 /Users/你的名字/Documents"));
     const subject = { kind: "workspace-create", name: name, parent: parent };
     createSubject = subject; state.panelSubject = subject;
     [name, parent].forEach((node) => node.addEventListener("input", () => { node.dataset.typed = "1"; }));
     panelTitle.textContent = t("新建项目"); panelSubtitle.textContent = ""; panelBody.replaceChildren();
-    form.append(field("项目名称", name), field("保存位置", parent));
-    const choose = button("选择文件夹…", async () => {
+    form.append(field(t("项目名称"), name), field(t("保存位置"), parent));
+    const choose = button(t("选择文件夹…"), async () => {
       const mark = stamp();
       const selected = await chooseFolder("create");
       if (selected && createLive(subject, mark)) { parent.value = selected; parent.dataset.typed = "1"; }
     });
     const feedback = el("div", "ws-status"); feedback.setAttribute("role", "status");
-    const create = button("创建项目", async () => {
+    const create = button(t("创建项目"), async () => {
       if (!name.value.trim() || !parent.value.trim()) { status(feedback, t("请填写项目名称和保存位置。"), "err"); (!name.value.trim() ? name : parent).focus(); return; }
       const mark = stamp(), token = ++createRequest;
       create.disabled = true; name.disabled = parent.disabled = choose.disabled = true; status(feedback, t("正在创建…"));
@@ -1576,7 +1597,7 @@
         }
       } catch (err) {
         if (token !== createRequest || !createLive(subject, mark)) return;
-        create.disabled = name.disabled = parent.disabled = choose.disabled = false; status(feedback, errorWords("没能创建项目。", err), "err");
+        create.disabled = name.disabled = parent.disabled = choose.disabled = false; status(feedback, errorWords(t("没能创建项目。"), err), "err");
       }
     }, "btn btn-primary");
     form.addEventListener("submit", (event) => { event.preventDefault(); if (!create.disabled) create.click(); });

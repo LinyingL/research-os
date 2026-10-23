@@ -37,7 +37,9 @@
 // English entries obey 13.4 (the glossary; sentence case) and 12.11: no
 // arrows, no emoji; quotation marks “ ” where the Chinese has 「 」.
 // tests/test_v9_language.py checks every key of a converted surface has an
-// entry and every entry those rules.
+// entry, every entry those rules, and that no entry is kept that no key uses
+// (a key is used when it is the whole argument of a t(), the text of a
+// data-i18n element, or a whole string a lookup table or the engine hands to t()).
 (function () {
   "use strict";
 
@@ -45,7 +47,6 @@
   var EN = {
     "创建团队后，你是 PI。签名私钥仅保存在这台电脑上。": "You will be the team's PI. Your private signing key stays on this Mac.",
     "此设置仅保存在本机。": "This setting is saved on this Mac only.",
-    "记录了 {n} 个文件的状态": { one: "Recorded the state of {n} file", other: "Recorded the state of {n} files" },
     "批准后发布到公盘。": "Approval publishes to the shared folder.",
     "批准后发布到公盘，同时加入成员同步的{carried}。": "Approval publishes to the shared folder, including members’ synced changes ({carried}).",
     "选择已有的项目文件夹": "Choose an existing project folder",
@@ -78,6 +79,43 @@
     "选择公盘和本地保存位置": "Choose the shared folder and local save location",
     "辅助填写": "Draft with a model",
     "仅填写空白的「{description}」和「{result}」。": "Fills only empty “{description}” and “{result}” fields.",
+    // team.js (18.2 text rules): the sentences that joined translated and bare fragments are one template each.
+    "放弃于 {when}，记录了 {n} 个文件的状态": {
+      one: "Abandoned {when}; recorded the state of {n} file",
+      other: "Abandoned {when}; recorded the state of {n} files",
+    },
+    "放弃于 {when}，当时这条路线没有关联的文件": "Abandoned {when}; the route had no linked files then",
+    "这些路线还不是正式记录：批准以后才会进入尝试表和每一条来龙去脉。":
+      "These routes are not official records yet: once approved, they enter the attempt table and every item’s provenance.",
+    "你提出的路线和修改研究判断：PI 批准以后才进入正式版本。":
+      "The routes and research assessment changes you proposed: they enter the official version once the PI approves.",
+    "修改研究判断": "Change a research assessment",
+    "研究判断 {old} 改为 {new}": "Research assessment changes from {old} to {new}",
+    "正式的一份会放在 {copy}": "The official copy will be placed at {copy}",
+    // 提交提议 (a member): the kinds, the fields and their help.
+    "提交提议": "Submit a proposal",
+    "提议的类型": "Kind of proposal",
+    "新的尝试": "New attempt",
+    "尝试表里新加的一行，连同与它关联的文件": "A new row in the attempt table, with the files linked to it",
+    "只有尝试表里这一行的研究判断和结果": "Only this row of the attempt table: its research assessment and result",
+    "一张变量定义卡的新版本": "A new version of a variable definition card",
+    "只有文件": "Files only",
+    "你选的脚本、数据和文稿": "The scripts, data and documents you choose",
+    "尝试的编号": "Attempt number",
+    "不填：只有一行时自动找出": "Leave empty: found automatically when only one row changed",
+    "工作副本里改了不止一行时，填上要提议的那一行": "When more than one row changed in your working copy, enter the row to propose",
+    "不填：用尝试表里这一行现在的结果": "Leave empty: uses this row’s current result in the attempt table",
+    "理由": "Reason",
+    "放弃一条路线时必须写明": "Required when abandoning a route",
+    "放弃（研究判断标为已放弃）时，结果和理由都必须填写":
+      "When abandoning (research assessment set to Abandoned), both the result and the reason are required",
+    "变量卡": "Variable card",
+    "变量卡的编号，例如 topicshift": "Variable card ID, for example topicshift",
+    "请选择": "Choose",
+    "现有的输出文件是按这个定义生成的吗": "Were the existing output files made with this definition?",
+    "请回答：现有的输出文件是否按这个定义生成": "Answer first: were the existing output files made with this definition?",
+    "一句话说明": "One sentence",
+    "查看将要发送的内容": "Review what will be sent",
     "本地模型：{model}": "Local model: {model}",
     "所选文件将发送至 {host} · 模型：{model}": "Selected files will be sent to {host} · Model: {model}",
     "模型：{model} · 参考文件：{files}": "Model: {model} · Reference files: {files}",
@@ -104,31 +142,17 @@
     "说明这次修改": "Describe the changes",
     "查看修改": "Review changes",
     "请先写一句修改说明": "Please briefly describe the changes first",
-    "从研究问题写起，随时记下想法和结果。": "Start with your research question. Add ideas and results as you go.",
     "任务": {one: "Task", other: "Tasks"},
     "任务已在其他地方修改，当前填写已保留。请重新载入后再保存。": "The tasks changed elsewhere. Your entries are still here. Reload the tasks before saving again.",
-    "会在所选位置建立项目文件夹。已有研究可以用「添加已有项目」加入。": "A project folder will be created here. To open existing research, choose “Add existing project”.",
-    "保存到哪个文件夹": "Save in",
     "保存到自己的工作副本；提交并经 PI 批准后进入正式版本。": "Saves to your working copy. Once you submit and the PI approves, it goes into the official version.",
-    "保存后写入项目文件夹": "Will be saved in the project folder",
     "保留草稿": "Keep draft",
-    "关联文件与尝试": "Link files and attempts",
-    "写笔记": "Write a note",
     "创建项目": "Create project",
-    "取消填写": "Clear form",
     "尚未保存": "Unsaved changes",
-    "已保存，修改前的版本已保留。": "Saved. The previous version has been kept.",
     "已保存；之后输入的内容尚未保存。": "Saved. Text entered since then is still unsaved.",
     "已载入最新任务，当前填写仍保留。": "Latest tasks loaded. Your entries are still here.",
-    "引用保留在文档中。脚本仍用 Stata 等工具编辑和运行。": "References stay in the document. Keep editing and running scripts in Stata or your other tools.",
     "当前文档还没有保存。放弃这些修改并打开另一份吗？": "This document has unsaved changes. Discard them and open another document?",
     "当前文档还没有保存。放弃这些修改并新建吗？": "This document has unsaved changes. Discard them and create another document?",
-    "按需记任务、负责人和日期，也可以暂时不安排。": "Add tasks, people and dates when useful. You can leave them open for now.",
-    "接下来想做的事": "What to do next",
-    "插入尝试": "Insert attempt",
-    "插入文件": "Insert file",
     "放弃当前任务里尚未保存的填写吗？": "Discard the unsaved entries in this task form?",
-    "整理结果": "Write up results",
     "文件已在其他地方修改，当前草稿已保留。": "The file changed elsewhere. Your current draft is still here.",
     "新建项目": "New project",
     "方案、笔记与结果": "Plan, notes and results",
@@ -155,7 +179,6 @@
     "负责人": "Owner",
     "这里还没有内容。": "Nothing written here yet.",
     "这项任务已被移除。可以把当前填写添加为新任务。": "This task was removed. You can add your entries as a new task.",
-    "选一个位置，开始写研究问题与计划。": "Choose a location and start writing your research question and plan.",
     "选择文件夹…": "Choose a folder…",
     "选择研究尝试": "Choose a research attempt",
     "选择项目文件": "Choose a project file",
@@ -166,14 +189,8 @@
     "项目以只读方式打开。可以阅读，暂时不能保存。": "This project is open read-only. You can read it, but cannot save changes yet.",
     "项目名称": "Project name",
     "预览": "Preview",
-    "结果整理": "Results",
     "还没有研究方案。": "No research plan yet.",
-    "随时记下一个想法。": "Leave an idea here whenever it comes.",
-    "图表、发现和判断放在这里。": "Keep figures, findings and interpretations here.",
     "继续编辑": "Continue editing",
-    "你想研究什么？为什么值得研究？准备怎样探索？可以边做边改。": "What do you want to study? Why does it matter? How might you explore it? Revise this as your work develops.",
-    "放入图表，写下发现、解释和仍不确定的地方。": "Add figures and tables. Write what you found, how you interpret it and what remains uncertain.",
-    "记下想法、讨论或一个还没想清楚的问题。": "Write down an idea, a discussion or a question you are still working through.",
     "例如：整理下一次组会要讨论的问题": "For example: gather questions for the next group meeting",
     "姓名（可留空）": "Name (optional)",
     "保存任务": "Save task",
@@ -181,8 +198,6 @@
     "标为未完成": "Mark incomplete",
     "标为完成": "Mark complete",
     "例如 /Users/你的名字/Documents": "For example /Users/your-name/Documents",
-    "添加已有项目": "Add existing project",
-    "添加已有项目…": "Add existing project…",
 
     // The switch (13.3).
     "切换界面语言": "Switch the interface language",
@@ -248,10 +263,6 @@
     "新增尝试": "New attempt",
     "提议新的尝试": "Propose a new attempt",
     // The welcome, shown while there is no project (10.1).
-    "Research OS 读取一个研究文件夹里的脚本、数据和文稿，理清它们之间是怎么一步步连起来的。":
-      "Research OS reads the scripts, data and drafts in a research folder and works out how they connect, step by step.",
-    "你对这些关联做出的连线确认，Research OS 会替你记下来，和这项研究的文件放在一起。":
-      "Research OS records the link judgments you make and keeps them with the study’s files.",
     "项目就是存放一项研究的那个文件夹。": "A project is the folder that holds one study.",
 
     // Dates (13.5): Today 09:24, Yesterday 18:02, 4 Oct, 4 Oct 2025.
@@ -309,11 +320,8 @@
     // The first desk's block titles (13.4) and words of its rows that other pages show too; since
     // V10 the desk is the route map (14.5).
     "你上次查看以来的改动": "Changes since you last looked",
-    "依据变了的图表与论断": "Figures and claims whose basis changed",
-    "已放弃的路线": "Abandoned routes",
     "文件不存在": "File not found",
     "（空）": "(empty)",
-    "一条尝试": "An attempt",
     // A member's official version.
     "正式版本": "Official version",
     "正式版本有更新": "Official version updated",
@@ -506,7 +514,6 @@
       "The members file (team.toml) cannot be read right now, so whether you may abandon this route directly cannot be told",
     // Who abandoned a route (12.4, ruled 2026-10-13): directly (no proposal), or proposed and approved.
     "由 {who} 放弃": "Abandoned by {who}",
-    "放弃时冻结的文件": "Files frozen when it was abandoned",
     "提议人 {who}": "Proposed by {who}",
     "批准人 {who}": "Approved by {who}",
     "迁移后才能记录连线确认": "Link judgments can be recorded once the old records are migrated",
@@ -535,11 +542,6 @@
     // 原行: the row before the change ("Current" is 13.4's word for 现行).
     "原行": "Earlier row",
     "新行": "New row",
-    "将写入你的工作副本里的 {file}（已自动备份）。这是你自己的改动，尚未提交；下一步给你看提议的内容，确认后才发送给 PI。":
-      "This writes {file} in your working copy (backed up first). It is your own change, not yet proposed; next you see the proposal, and it goes to the PI only once you confirm.",
-    "将写入 {file}（已自动备份）": "This writes {file} (backed up first)",
-    "写入工作副本，查看提议": "Write the working copy and see the proposal",
-    "确认写入": "Write",
     "返回修改": "Back to editing",
     "正在写入…": "Writing…",
     "写入失败，文件没有被修改": "Could not write; the file is unchanged",
@@ -723,9 +725,6 @@
       "The official version changed after this proposal; approval is blocked only where both sides changed the same place.",
     "这份提议的批准上次没有做完：再次批准会接着把剩下的做完。":
       "Approving this proposal did not finish last time: approving again completes the rest.",
-    "在尝试表 {file} 里新增第 {number} 行": "Add row {number} to the attempt table {file}",
-    "尝试表第 {number} 行的研究判断 {old} 改为 {new}": "Row {number} of the attempt table: the research assessment changes from {old} to {new}",
-    "第 {number} 行的研究判断 {old} 改为 {new}": "Row {number}: the research assessment changes from {old} to {new}",
     "结果：{result}": "Result: {result}",
     "结果改为：{result}": "New result: {result}",
     "理由：{reason}": "Reason: {reason}",
@@ -742,10 +741,6 @@
     "不确定": "Not sure",
     "正式版本的连线记录里已经是这样了。": "The official version's line records already have this.",
     "这份提议没有带来任何改动。": "This proposal brings no change.",
-    "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。":
-      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder.",
-    "批准还会在 decisions.toml 里记下一条：提议人 {who}，批准人是你；然后把正式版本发布到公盘。发布前会先把成员同步来的 {carried}加进正式记录（不需要批准）。":
-      "Approving also records an entry in decisions.toml, proposed by {who} and approved by you, then publishes the official version to the shared folder. Before publishing, it first adds what members synced ({carried}) to the official record, with no approval needed.",
     "会删除的连线（{n} 条）": { one: "The link to be removed ({n})", other: "Links to be removed ({n})" },
     "删除人 {who}": "Removed by {who}",
     "没有随提议发送的改动": "Changes not sent with the proposal",
@@ -756,7 +751,6 @@
       "Research OS never merges one file for two people. Ask the member to sync to the latest official version and propose again on it; this one can be returned with a reason.",
     "已写入正式版本的改动": "Changes written into the official version",
     "提议带来的改动": "Changes the proposal brings",
-    "尝试表新增第 {number} 行：{description}": "New row {number} in the attempt table: {description}",
     // A proposal's files (12.3, 12.13).
     "没有文件。": "No files.",
     "新增": "Added",
@@ -1258,10 +1252,8 @@
     " 等 {n} 个": " and others ({n} total)",
     "读取 {files}": "Reads {files}",
     "写出 {files}": "Writes {files}",
-    "没有读到读写记录。": "No reads or writes were found.",
     "由这些脚本写出：{files}": "Written by: {files}",
     "被这些脚本读取：{files}": "Read by: {files}",
-    "没有脚本读取或写出它": "No script reads or writes this file",
     "打开待复核的连线确认": "Open link judgments needing review",
     // 8.8: the Chinese brackets name the relation again; the English says it once.
     "断链：{script} {relation} {target}（写出，文件不存在）": "Broken link: {script} {relation} {target} (file not found)",
@@ -1308,7 +1300,6 @@
     "没有找到支撑这个数字的结果": "No result was found to support this number",
     "定义卡还没有写明实现它的脚本和输出文件": "The definition card does not name its implementation script or output yet",
     "（不在任何章节下）": "(outside any section)",
-    "第 {n} 版的定义": "Definition version {n}",
 
     // 新增尝试's 生成草稿 (16): the chosen files, where a draft goes, the draft and what became of
     // each cell, the refusals, the model server.
@@ -1316,19 +1307,11 @@
     "{path} 去掉": "Remove {path}",
     "一次最多选 5 个文件": "Choose at most 5 files at a time",
     "加入": "Add",
-    "根据所选文件生成草稿（可选）": "Draft from chosen files (optional)",
-    "模型只起草「{description}」和「{result}」，只填还空着的格子；文件里看不出来、或说不出依据的格子留空。研究判断和其它内容由你自己写。":
-      "The model drafts only the “{description}” and the “{result}”, and only into cells that are still empty; a cell the files do not show, or whose basis the model cannot name, stays empty. The research assessment and everything else are yours to write.",
     "描述": "Description",
     "生成草稿": "Generate draft",
     "先选至少一个文件": "Choose at least one file first",
-    "起草用这台 Mac 上的模型 {model}": "Drafts use the model {model} on this Mac",
-    "起草会把所选文件的内容发到 {host}，它不在这台 Mac 上；模型 {model}":
-      "Drafting sends the chosen files’ contents to {host}, which is not this Mac; model {model}",
     "没能读到模型设置，先不能起草": "Could not read the model setting, so drafting is not available yet",
     "正在请模型起草…可能要等一两分钟": "Asking the model for a draft… this can take a minute or two",
-    "草稿（{model}）。模型说它依据：{files}。发出前请核对。": "Draft ({model}). The model says it used: {files}. Check it before you send it.",
-    "草稿（{model}）。模型说它依据：{files}。写入前请核对。": "Draft ({model}). The model says it used: {files}. Check it before you write it.",
     "已填入「{cell}」。": "Filled in “{cell}”.",
     "「{cell}」原本有内容，没有改。": "“{cell}” already had text and was left as it was.",
     "文件里看不出「{cell}」，留空。": "“{cell}” is left empty: the files do not show it.",
