@@ -4240,8 +4240,10 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                                                   else workspace.save_document(served.root, saved, lang=self._lang()))
                     rel = workspace.TASKS_PATH if task_save else payload["path"]
                     revision = payload["tasks_revision"] if task_save else payload["revision"]
-                    marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())
-                    payload["tasks_officialness" if task_save else "officialness"] = marks["files"][rel]
+                # The file is written and the lock released; the marks only decorate the answer, and a member's
+                # reads the shared folder (bounded in time) -- never under the project lock (DESIGN.md 18.3).
+                marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())
+                payload["tasks_officialness" if task_save else "officialness"] = marks["files"][rel]
                 payload["generation"] = self.server.watcher.record_write(set())
                 if parsed.path.endswith("/document"):
                     try:

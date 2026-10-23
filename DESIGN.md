@@ -4875,8 +4875,12 @@ does not add.
       view of the workspace files only (their hashes against the base) and
       asks the module for each file's state and words, so 提议中 and 已批准，
       待同步 show as they do on every page. It reads the member's own
-      proposals from the shared folder, as the other pages do; it does not
-      walk or hash the rest of the project. The mark has no `pending_known`;
+      proposals from the shared folder, as the other pages do, waiting for it
+      no longer than the desk does (`SHARED_TIMEOUT`, 14.4) and never under the
+      project lock: a save writes the file, releases the lock, and only then
+      builds the mark. A folder that does not answer in time leaves the words
+      of the local comparison and `pending_known` false. It does not walk or
+      hash the rest of the project. The mark has no `pending_known`;
       `officialness_mode` is the module's mode answer, which has it.
     - *Names.* Any visible `.md` name directly in the two folders is listed
       and can be opened and saved; one that does not exist cannot be created

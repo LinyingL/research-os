@@ -234,6 +234,16 @@ def _start(key: str, fn: Callable[[], Any], keep: Callable[[Any], bool] = lambda
     return job
 
 
+def read_within(key: str, fn: Callable[[], Any], timeout: float | None = None) -> tuple[str, Any]:
+    """`fn` -- a read of the shared folder -- on the desk's job for `key` (`_start`), waited for `timeout` seconds
+    (SHARED_TIMEOUT): ("ok", what it returned), ("error", the exception) or ("slow", None) when it has not finished
+    by then. Never raises and never waits longer; a read that finishes late is dropped, the next one starts afresh.
+    For a page other than the desk (项目首页) that needs a part of the shared folder's answer (18.3)."""
+    job = _start(key, fn, keep=lambda result: False)
+    job["done"].wait(SHARED_TIMEOUT if timeout is None else timeout)
+    return job["result"] if job["done"].is_set() else ("slow", None)
+
+
 def _read_shared(root: Path, role: str, seen: Any) -> dict[str, Any]:
     """Everything the desk reads from the shared folder: the proposals (the
     PI's inbox, a member's own), and a member's sync state and the

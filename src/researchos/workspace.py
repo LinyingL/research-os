@@ -27,7 +27,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from researchos import history, officialness, paths, proposals, settings
+from researchos import desk, history, officialness, paths, proposals, settings
 from researchos.agents import labels as agent_labels
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import files as ingest_files
@@ -517,7 +517,10 @@ def local_annotations(root: str | Path, revisions: Mapping[str, str | None], lan
 
     Only these files' hashes are compared with the working copy's base: the rest of the project (datasets above
     all) is neither inventoried nor hashed. A member's own pending proposals are read from their own area of the
-    shared folder, as every page does; when that cannot be read, `mode.pending_known` says so."""
+    shared folder, as every page does -- for no longer than the desk waits for it (`desk.SHARED_TIMEOUT`, 14.4), so
+    a shared folder that hangs never holds the page or a save back; when that cannot be read in time, or at all,
+    `mode.pending_known` says so and the words are those of the local comparison. Call it outside the project
+    lock: it is only the answer's decoration."""
     root = _root(root)
     mode, _me, _team = proposals.role_of(root)
     base = None if mode in {"single", "pi"} else _working_base(root)
@@ -527,7 +530,8 @@ def local_annotations(root: str | Path, revisions: Mapping[str, str | None], lan
         seen = officialness.View(mode="working_copy", root=root, problems=["这个工作副本所依据的正式版本无法读取"])
     else:
         seen = officialness.View(mode="working_copy", root=root, base=dict(base.files), current=dict(revisions))
-        officialness.with_pending(seen, officialness.pending_of(seen))
+        state, got = desk.read_within(f"workspace|{root}|{mode}", lambda: officialness.pending_of(seen))
+        officialness.with_pending(seen, got if state == "ok" else None)
     marks = {rel: ({"state": "unknown", "label": settings.say(*VERSION_UNKNOWN, lang)} if seen.problems
                    else officialness.mark(seen.file_state(rel), lang)) for rel in revisions}
     return {"files": marks, "mode": seen.mode_payload(lang)}

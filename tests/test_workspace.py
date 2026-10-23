@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -366,6 +368,103 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
         synced = workspace.overview(drive.work, lang="en")
         assert synced["changed_task_reports"] == []  # the approved task is the official one now
         assert {doc["officialness"]["state"] for doc in synced["documents"] if doc["path"] == note["path"]} == {"official"}
+
+
+class _StalledFolder:
+    """The member's proposal area in the shared folder, read as a folder that hangs does (offline, or a file still to
+    be downloaded): `LocalExchange.list_proposals` waits for `release`, and `entered` says a read began."""
+
+    def __init__(self, monkeypatch) -> None:
+        from researchos import desk, exchange
+
+        self.entered, self.release = threading.Event(), threading.Event()
+        real = exchange.LocalExchange.list_proposals
+
+        def stalled(this, member=None):
+            self.entered.set()
+            self.release.wait(30)
+            return real(this, member)
+
+        monkeypatch.setattr(exchange.LocalExchange, "list_proposals", stalled)
+        monkeypatch.setattr(desk, "SHARED_TIMEOUT", 0.4)  # the wait the page gives it, short for the test
+        self.desk = desk
+
+    def finish(self) -> None:
+        """Let the stalled read end and its job leave the desk's table, as it does on its own."""
+        self.release.set()
+        deadline = time.monotonic() + 10
+        while self.desk._JOBS and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+
+def _member_drive(tmp_path, monkeypatch):
+    from test_v8_phase4 import Drive
+
+    monkeypatch.setattr(addproject, "_top_level_folders", lambda: set())
+    return Drive(tmp_path, monkeypatch)
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_member_s_marks_never_wait_longer_than_the_desk_for_a_shared_folder_that_hangs(tmp_path, monkeypatch):
+    """A member's 项目首页 and document read the shared folder for their own proposals (DESIGN 18.3) -- for no longer
+    than the desk waits (14.4). A folder that hangs leaves the words of the local comparison with `pending_known`
+    false; the next read, once the folder answers, knows the proposals again."""
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.member():
+        project.open_project(drive.work)
+        note = _new(drive.work, "result", "A result of mine")
+        folder = _StalledFolder(monkeypatch)
+        try:
+            started = time.monotonic()
+            hung = workspace.overview(drive.work, lang="en")
+            assert time.monotonic() - started < 5  # (the stall is 30 s)
+            assert folder.entered.is_set()
+            entry = next(doc for doc in hung["documents"] if doc["path"] == note["path"])
+            assert entry["officialness"] == {"state": "mine", "label": "My change, not yet proposed"}
+            assert hung["officialness_mode"]["mode"] == "working_copy" and hung["officialness_mode"]["pending_known"] is False
+            marks = workspace.local_annotations(drive.work, {note["path"]: note["revision"]}, "zh")
+            assert marks["mode"]["pending_known"] is False and marks["files"][note["path"]]["label"] == "我的改动，尚未提交"
+        finally:
+            folder.finish()
+        answered = workspace.overview(drive.work, lang="en")
+        assert answered["officialness_mode"]["pending_known"] is True
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_member_s_save_releases_the_project_lock_before_the_marks_read_the_shared_folder(tmp_path, monkeypatch):
+    """POST /api/workspace/document writes the file under the project lock and answers with its officialness. The
+    shared folder is read for that after the lock is released: while a hanging folder is waited for, another
+    writer (a scan, an agent, a second window) is not held back, and the save still answers -- in the local words."""
+    from researchos.records import lock as records_lock
+    from researchos.records import situation
+    from test_v8_phase2 import _call
+    from test_v8_phase3 import _serve
+
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.member():
+        project.open_project(drive.work)
+        pid = read_identity(drive.work).identity.id
+        folder = _StalledFolder(monkeypatch)
+        monkeypatch.setattr(folder.desk, "SHARED_TIMEOUT", 3.0)  # long enough to look inside the wait
+        answer: dict = {}
+        try:
+            with _serve(drive.work) as base:
+                body = {"project": str(drive.work), "kind": "note", "title": "Next steps", "content": "An open question", "revision": None}
+                caller = threading.Thread(target=lambda: answer.update(zip(("status", "body"), _call(f"{base}/api/workspace/document", "POST", body))))
+                caller.start()
+                assert folder.entered.wait(10), "the save's marks did not read the shared folder for a member"
+                try:
+                    with situation.write_guard(drive.work, pid, human=True, timeout=1.0):
+                        free = True
+                except records_lock.ProjectLockTimeout:
+                    free = False
+                assert free, "the project lock was held while the shared folder was read"
+                caller.join(15)
+        finally:
+            folder.finish()
+    assert answer["status"] == 200 and answer["body"]["created"] is True
+    assert answer["body"]["officialness"]["state"] == "mine"
+    assert "An open question" in (drive.work / answer["body"]["path"]).read_text(encoding="utf-8")
 
 
 def test_a_result_document_without_a_heading_is_titled_result_record_not_the_attempt_cells_word(root):
