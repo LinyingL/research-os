@@ -538,7 +538,7 @@ def _fsync_dir(dir_path: Path) -> None:
         os.close(fd)
 
 
-def write_backup_bytes(project_root: Path, source_path: Path, raw: bytes, ext: str) -> str:
+def write_backup_bytes(project_root: Path, source_path: Path, raw: bytes, ext: str, subdir: str | None = None) -> str:
     """`raw`, verbatim, to `.researchos/backups/<name>.<stamp>Z.write<ext>`;
     then prune the copies taken before writes of that file -- that series
     alone, never the daily snapshots (`records.files`, 9.2) -- to the
@@ -547,9 +547,11 @@ def write_backup_bytes(project_root: Path, source_path: Path, raw: bytes, ext: s
     pruning needs no mtime reads. Shared by every writer of a
     researcher-owned file (this module's map edits, and
     `researchos.ingest.mappings`' `.researchos/mappings.toml` writer, DESIGN.md section
-    8.5) -- one backup discipline, not two that could drift. Returns the
-    backup's project-relative path."""
-    backups_dir = paths.project_dir(project_root) / BACKUPS_DIRNAME
+    8.5) -- one backup discipline, not two that could drift. `subdir`: a
+    folder of `.researchos/backups/` for the series of files whose bare names
+    may repeat (as `records.files.snapshot_if_first_change_today` takes it).
+    Returns the backup's project-relative path."""
+    backups_dir = records_files._backups_dir(project_root, subdir)
     records_files.ensure_dir_within(project_root, backups_dir)  # never re-creates a moved project
     source_name = source_path.name
     infix = records_files.WRITE_INFIX

@@ -260,6 +260,17 @@ def _history(store: history.Store, root: Path, rel: str, author: dict[str, Any] 
         raise WorkspaceError("history", f"Cannot preserve the history of {rel}", 409)
 
 
+def _backup_subdir(rel: str) -> str | None:
+    """The folder of `.researchos/backups/` a document's backups go in (DESIGN.md 18.3). Backups are named by the bare
+    file name, and a series is the newest 20 copies of a name and one snapshot a day: a note and a result record both
+    named `Summary.md`, or a note named like the attempt table, would share one. The engine's own names (32 hex digits,
+    never repeated), the overview and the task list keep the shared folder as before; a hand-made name gets the folder
+    of its project folder, `research/notes` or `research/results`, to itself."""
+    if _GENERATED_RE.fullmatch(rel) or not _DOCUMENT_RE.fullmatch(rel):
+        return None
+    return posixpath.dirname(rel)
+
+
 def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
            author: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     """The caller holds write_guard and has checked the current revision."""
@@ -273,8 +284,9 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
         backup = None
         if before is not None:
             _history(store, root, rel, None, True)  # the pre-image
-            record_files.snapshot_if_first_change_today(root, target)
-            backup = mapedit.write_backup_bytes(root, target, before, target.suffix)
+            subdir = _backup_subdir(rel)
+            record_files.snapshot_if_first_change_today(root, target, subdir)
+            backup = mapedit.write_backup_bytes(root, target, before, target.suffix, subdir)
         # Catch a file edited outside Research OS while its backup was made.
         if _read(root, rel) != before:
             raise WorkspaceError("conflict", "The file changed while its history was being preserved", 409)

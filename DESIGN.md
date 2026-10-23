@@ -4886,6 +4886,14 @@ does not add.
       and can be opened and saved; one that does not exist cannot be created
       by naming it, and nothing is read from a deeper folder or from a link.
       `research/tasks.json`'s `report` still names a 32-hex result record.
+    - *Backups of a hand-made name.* A save of an existing note or result
+      record keeps the copy it replaces and the daily snapshot under
+      `.researchos/backups/`, which name a series by the bare file name (the
+      newest 20 copies, one snapshot a day). The engine's own names (32 hex
+      digits), the overview and the task list stay in that folder; a name of
+      the researcher's own is kept in `.researchos/backups/research/notes/` or
+      `.../research/results/`, so `Summary.md` in both, or a note named like
+      the attempt table, never share a series.
     - *Not a draft.* The files Research OS writes in `research/` at the project
       root -- `overview.md`, the files directly in `notes/` and `results/`, and
       the attempt table (`attempts.md`, or the file `attempts.toml` names in

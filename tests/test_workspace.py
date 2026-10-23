@@ -581,6 +581,56 @@ def test_other_markdown_names_in_notes_and_results_are_shown_opened_and_saved_bu
     assert refused.value.code == "path" and not (root / "research/notes/absent.md").exists()
 
 
+def _hand_made(root: Path, rel: str, text: str = "# Draft\n") -> None:
+    """A note or result record made by hand (a name of the researcher's own), as the folder holds it."""
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+def _resave(root: Path, rel: str, text: str) -> dict:
+    return workspace.save_document(root, {"path": rel, "content": text, "revision": workspace.document(root, rel)["revision"]})
+
+
+def test_hand_made_notes_and_results_of_one_name_keep_their_backups_apart(root):
+    """research/notes/Summary.md and research/results/Summary.md used to share one series of backups (the newest 20
+    copies of the bare name) and one snapshot a day: saved in turn, each pruned the other's. A hand-made name now has the
+    backups of its own folder; the engine's own names, the overview and the task list stay where they were."""
+    note, result = "research/notes/Summary.md", "research/results/Summary.md"
+    _hand_made(root, note, "note 0\n")
+    _hand_made(root, result, "result 0\n")
+    for index in range(1, 14):
+        _resave(root, note, f"note {index}\n")
+        _resave(root, result, f"result {index}\n")
+    backups = root / ".researchos" / "backups"
+    for rel, word in ((note, "note"), (result, "result")):
+        folder = backups / Path(rel).parent
+        written = sorted(p for p in folder.iterdir() if ".write." in p.name)
+        assert len(written) == 13 and all(p.read_text().startswith(word) for p in written)  # not 20 shared by two
+        assert len([p for p in folder.iterdir() if ".write." not in p.name]) == 1  # a snapshot a day, each
+    assert not [p for p in backups.iterdir() if p.name.startswith("Summary.md")]
+    kept = _new(root, "note", "kept")
+    again = workspace.save_document(root, {"path": kept["path"], "content": "kept again", "revision": kept["revision"]})
+    assert (root / again["backup"]).parent == backups and Path(again["backup"]).name.startswith(Path(kept["path"]).name)
+    workspace.initialize(root)
+    assert (root / _resave(root, workspace.OVERVIEW_PATH, "# Plan 2\n")["backup"]).parent == backups
+
+
+def test_a_hand_made_note_named_like_the_attempt_table_leaves_the_tables_backups_alone(root):
+    from researchos.webapp import mapedit
+
+    table = root / "research" / "attempts.md"
+    table.parent.mkdir(parents=True, exist_ok=True)
+    table.write_text("| table |\n", encoding="utf-8")
+    kept = [mapedit.write_backup_bytes(root, table, f"| table {index} |\n".encode(), ".md") for index in range(5)]
+    note = "research/notes/attempts.md"
+    _hand_made(root, note, "note 0\n")
+    for index in range(1, 24):
+        _resave(root, note, f"note {index}\n")
+    assert all((root / path).read_text().startswith("| table") for path in kept)  # all five still there, the table's own
+    assert len(list((root / ".researchos" / "backups" / "research" / "notes").glob("attempts.md.*.write.md"))) == 20  # the note's, pruned among themselves
+
+
 def test_an_unreadable_project_identity_shows_the_page_with_that_said(root):
     """A project.toml that cannot be read right now (a cloud-evicted one reads the same) is no 500."""
     with db.connect(paths.graph_db_path(root)) as conn:
