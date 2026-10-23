@@ -58,11 +58,51 @@ read from `signals.jsonl` (`tool_paths`, `tasks_sha`): they already carry
 their own attribution, and `research/tasks.json` ending with a hash the tools
 produced is not a violation.
 
+**What the history sees while the run goes** (18.1 item 3). From the
+before-picture until the run's attribution is written, the manager tells the
+history that the project has a run (`history.watch_run`), and any scan in this
+engine -- the watcher's above all -- credits to the run what the run changed:
+`_watch` answers for a file from the before-picture (not there, or other
+bytes) and from the engine's own writes (the person's saves keep their name).
+The attribution after the run then adds nothing for a content that is already
+there ("seen during run <id>").
+
+**An out-of-bounds run** (18.1 item 4) is `out_of_bounds`, not what it would
+have read (`outcome` keeps that: `done`, `ended`, ...). The task's done mark is
+the agent's and is left as it is; the run is what warns.
+
 **Undo** (17.6) restores from the before-picture's copies, never over a later
 change (nor over a path the person saved during the run), and takes the task's
 done mark back logically rather than restoring `research/tasks.json`. A
 created file whose content is a deleted file with no copy is that file renamed:
-it is moved back, not away. Directories the move emptied are removed.
+it is moved back, not away. Directories the move emptied are removed -- unless
+the before-picture holds them (`dirs`, 18.1 item 5): a folder that existed
+before the run survives, and a picture too cut to say removes none.
+
+**Undo says what it will do, and asks** (18.1 item 5). `revert_plan` runs the
+very code of `revert` with `dry=True` -- the same checks in the same order, no
+write -- so the list the person sees is what the undo would do at that moment:
+`restore` (changed or deleted files, and the task's done mark), `remove` (created
+files, moved away, never deleted) and `cannot`, each with the reason of 17.6.
+`revert(files=)` then acts on the paths the person left checked and leaves the
+rest as they are, listed in the run's `revert.skipped` with the reason `kept`;
+without `files` it undoes all that can be undone. A path the plan does not list is
+never acted on, whatever `files` says.
+
+**At engine start** (18.1 item 6) `recover_all` recovers the runs of every project
+this Mac keeps runs for that were left preparing or running, with the same rules as
+`_recover` (a program is ended only when its pid and start time are the recorded
+ones), so that nothing waits for someone to open the project's page.
+
+**The log is read once** (18.4 item 2). The page polls `detail` every 2 s while a run goes, and a log may be 20 MB.
+`detail` keeps, per run and in memory, a cursor (`_EventsCursor`): the stream parser as it stood after the last
+complete line it read, the byte offset there, the file's identity (device and inode) and its last bytes before the
+offset. A poll reads what was appended since, feeds the parser the complete lines, and reads a half-written last
+line on a copy of the parser that is thrown away -- so the steps are the ones a read of the whole file gives. The
+cursor starts over when the file's inode changed, the file is shorter than the offset, or the bytes before the
+offset are not the ones it saw. It keeps the last `STEPS_LIMIT` steps and the newest `say` (which the end of the
+stream is compared with), the number of steps it let go, and is itself kept for the `CURSORS_KEPT` runs asked for
+last. `runs` lists the project's runs once for a request.
 
 **Who is who after a crash.** `run.json` carries the start time of the
 engine process (`engine_started`) and of the program (`program_started`), so
@@ -72,6 +112,7 @@ a recycled pid is neither "another live engine" nor "the program" (`_recover`).
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -84,6 +125,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -100,6 +142,9 @@ logger = logging.getLogger(__name__)
 
 #: The project's record folders (never the agent's to change; their writes are not attributed to it).
 _RECORD_DIRS = frozenset({names.PROJECT_DIRNAME.casefold(), names.LEGACY_PROJECT_DIRNAME.casefold()})
+#: The same and git's folder: not the change history's business (git's own history is git's), and not a folder
+#: an undo takes apart.
+_RECORD_AND_GIT_DIRS = _RECORD_DIRS | {snapshot.GIT_DIR}
 
 #: How long the program gets to end after SIGTERM before what is left of its tree is killed (17.3).
 KILL_GRACE_S = 10.0
@@ -113,11 +158,18 @@ STOP_WAIT_S = 30.0
 SHUTDOWN_WAIT_S = 60.0
 MAX_LINE_BYTES = 4 * 1024 * 1024
 STEPS_LIMIT = 500
+#: How many runs' event-log cursors are kept (the one asked for longest ago goes first); a cursor holds at most
+#: `STEPS_LIMIT + CURSOR_SLACK + 1` steps. `CURSOR_ANCHOR_BYTES` of the log before the cursor's offset are remembered.
+CURSORS_KEPT = 8
+CURSOR_SLACK = 100
+CURSOR_ANCHOR_BYTES = 64
 STDERR_TAIL_BYTES = 4096
 REFUSALS_TAIL_BYTES = 64 * 1024
 SUMMARY_LIMIT = 2000
 MESSAGE_LIMIT = 8000
 HUMAN_PATHS_LIMIT = 5000
+#: The most paths an undo request may name (a picture holds at most 50,000 files, deletions included).
+UNDO_FILES_LIMIT = 200_000
 #: Attribution in the change history: at most this many files per run, none larger than this.
 HISTORY_FILES_LIMIT = 2000
 HISTORY_FILE_SIZE_LIMIT = 1024 * 1024 * 1024
@@ -188,6 +240,14 @@ def _lang(lang: object) -> str:
 def _key(rel: str) -> str:
     """The form paths are compared in: NFC, case-folded (macOS is case-insensitive and may store names decomposed)."""
     return unicodedata.normalize("NFC", rel).casefold()
+
+
+def _warn_if_out_of_bounds(state: str, violations: object) -> tuple[str, str | None]:
+    """`(state, outcome)` of a run that ended as `state` with these out-of-bounds changes (18.1 item 4): any
+    change makes the state `out_of_bounds`, and `outcome` keeps the state it would have read; none leaves both."""
+    if violations and state != "out_of_bounds":
+        return "out_of_bounds", state
+    return state, None
 
 
 # -- processes -------------------------------------------------------------------------------------
@@ -381,25 +441,28 @@ def _change_count(changes: object) -> int:
 
 
 def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
-    """What the page shows of a run: the identifying and state fields, counts
+    """What the page shows of a run: the identifying and state fields (`state`,
+    and `outcome`, how the run ended apart from going out of bounds), counts
     for `violations` and `changes`, the number of files an undo left alone
     (`revert_skipped`, present once an undo was tried) and the three things the
     person may do with it (`can_stop`, `can_reply`, `can_revert`)."""
     state = run.get("state")
+    outcome = run_store.outcome_of(run)
     finished = state not in run_store.ACTIVE_STATES
     reverted = bool(run.get("reverted"))
     changed = _change_count(run.get("changes"))
     out = {
         "id": run.get("id"), "task_id": run.get("task_id"), "task_text": run.get("task_text"),
         "owner": run.get("owner"), "label": run.get("label"), "runner": run.get("runner"),
-        "model": run.get("model"), "state": state, "reverted": reverted, "kind": run.get("kind"),
+        "model": run.get("model"), "state": state, "outcome": outcome, "reverted": reverted,
+        "kind": run.get("kind"),
         "parent": run.get("parent"), "created": run.get("created"), "started": run.get("started"),
         "ended": run.get("ended"), "question": run.get("question"), "report": run.get("report"),
         "error": run.get("error"), "cost_usd": run.get("cost_usd"), "by": run.get("by"),
         "by_name": run.get("by_name"),
         "violations": len(run.get("violations") or ()), "changes": changed,
         "can_stop": bool(active),
-        "can_reply": bool(latest_of_task and not active and not reverted and state in REPLY_STATES
+        "can_reply": bool(latest_of_task and not active and not reverted and outcome in REPLY_STATES
                           and run.get("session_id")),
         "can_revert": bool(finished and not active and not reverted and run.get("revertible")
                            and (changed > 0 or run.get("report"))),
@@ -437,9 +500,13 @@ class _Active:
         self.human: set[str] = set()
         #: path -> sha256 of what the engine last wrote there (files up to `snapshot.COPY_LIMIT`)
         self.human_sha: dict[str, str] = {}
+        #: the same, by `_key` of the path: key -> sha256 of what the engine last wrote there (None: not known)
+        self.human_keys: dict[str, str | None] = {}
         self.human_version = 0
         self.human_lock = threading.Lock()
         self.listener: Callable[[Path], None] | None = None
+        #: what the history was told about this run (`_watch`), until `_release`
+        self.seen: history.RunSeen | None = None
         #: the program's descendants seen while it ran: pid -> start time; and what `sweep_tree` ended
         self.tree: dict[int, str] = {}
         self.tree_lock = threading.Lock()
@@ -517,6 +584,127 @@ def _inside(real_root: str, path: str) -> bool:
     return path == real_root or path.startswith(real_root.rstrip(os.sep) + os.sep)
 
 
+def _room_for(folder: str) -> bool:
+    """Whether a folder could be made at `folder`: it is one already, or the nearest part of it that exists is."""
+    while folder and not os.path.lexists(folder):
+        above = os.path.dirname(folder)
+        if above == folder:
+            return False
+        folder = above
+    return os.path.isdir(folder)
+
+
+def _folders_before(before: dict) -> set[str] | None:
+    """The folders that existed before the run, which undo never removes (18.1 item 5): the ones the picture
+    recorded (`dirs`, empty ones included) and the ones its files stand in (all a picture taken before `dirs`
+    existed has). None when the picture cannot say -- it was cut at the file or folder limit -- and undo then
+    removes no folder at all."""
+    if before.get("partial") or before.get("dirs_partial"):
+        return None
+    folders = {"/".join(p.split("/")[:i]) for p in (before.get("files") or ()) for i in range(1, p.count("/") + 1)}
+    folders.update(d for d in before.get("dirs") or () if isinstance(d, str))
+    return folders
+
+
+def _local_time(moment: float | str | None) -> str | None:
+    """A time as the person reads it on this Mac: ISO, in local time, to the second (`2026-10-22T10:14:05+02:00`) --
+    from a file's modification time (seconds since the epoch) or a run's stored UTC stamp. None when it is none."""
+    try:
+        if isinstance(moment, str):
+            stamp = datetime.fromisoformat(moment.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+        elif isinstance(moment, (int, float)):
+            stamp = datetime.fromtimestamp(moment, timezone.utc)
+        else:
+            return None
+        return stamp.astimezone().isoformat(timespec="seconds")
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+class _EventsCursor:
+    """Where `detail` stopped in one run's `events.jsonl` (module docstring, "The log is read once"). `read` returns
+    what a read of the whole file would: the steps the log holds (the last `STEPS_LIMIT` of them) and how many
+    there are. Not thread-safe by itself: the caller holds `lock` around `read`."""
+
+    def __init__(self, runner: object) -> None:
+        self.lock = threading.Lock()
+        self.runner = runner
+        self._start_over()
+
+    def _start_over(self) -> None:
+        self.stream: runners.ClaudeStream | runners.OpenCodeStream = (
+            runners.ClaudeStream() if self.runner == "claude-code" else runners.OpenCodeStream())
+        self.identity: tuple[int, int] | None = None  # (device, inode) of the file the offset belongs to
+        self.offset = 0      # the log up to here (it ends with a newline) has been fed to the parser
+        self.anchor = b""    # the last bytes before `offset`
+        self.dropped = 0     # steps let go of: older than the ones kept
+
+    def _anchored(self, handle: Any) -> bool:
+        """Whether the bytes before the offset are still the ones that were read (a log rewritten in place is not)."""
+        if not self.anchor:
+            return True
+        handle.seek(self.offset - len(self.anchor))
+        return handle.read(len(self.anchor)) == self.anchor
+
+    def _trim(self) -> None:
+        """Let go of the oldest steps, keeping what a read of the end needs: the last `STEPS_LIMIT`, and the newest
+        `say` (the parser compares the run's last words with it)."""
+        steps = self.stream.steps
+        if len(steps) <= STEPS_LIMIT + CURSOR_SLACK:
+            return
+        cut = len(steps) - STEPS_LIMIT
+        said = next((s for s in reversed(steps[:cut]) if s["kind"] == "say"), None)
+        if any(s["kind"] == "say" for s in steps[cut:]):
+            said = None
+        kept = ([said] if said is not None else []) + steps[cut:]
+        self.dropped += len(steps) - len(kept)
+        self.stream.steps = kept
+
+    def read(self, path: Path) -> tuple[list[dict], int]:
+        """`(steps, total)`: copies of the last `STEPS_LIMIT` steps of the log at `path` and the number of steps in
+        all. Only the first `run_store.EVENTS_LIMIT` bytes of a log count, as ever; a log that cannot be read, is
+        missing or is in the cloud has no steps."""
+        data = b""
+        try:
+            if paths.is_dataless(path):
+                raise OSError("in the cloud")
+            with open(path, "rb") as handle:
+                st = os.fstat(handle.fileno())
+                identity = (st.st_dev, st.st_ino)
+                end = min(st.st_size, run_store.EVENTS_LIMIT)
+                if identity != self.identity or end < self.offset or not self._anchored(handle):
+                    self._start_over()
+                    self.identity = identity
+                handle.seek(self.offset)
+                data = handle.read(max(0, end - self.offset))
+        except OSError:
+            self._start_over()
+            data = b""
+        cut = data.rfind(b"\n") + 1
+        try:
+            if cut:
+                for line in data[:cut].decode("utf-8", "replace").splitlines():
+                    self.stream.feed(line)
+                self.offset += cut
+                self.anchor = (self.anchor + data[:cut])[-CURSOR_ANCHOR_BYTES:]
+                self._trim()
+            steps = self.stream.steps
+            dropped = self.dropped
+            tail = data[cut:].decode("utf-8", "replace")
+            if tail.strip():  # a line that is still being written: read on a copy of the parser, which is not kept
+                probe = copy.copy(self.stream)
+                probe.steps = list(steps)
+                for line in tail.splitlines():
+                    probe.feed(line)
+                steps = probe.steps
+        except BaseException:
+            self._start_over()  # half a batch fed is no state to continue from
+            raise
+        return [dict(s) for s in steps[-STEPS_LIMIT:]], dropped + len(steps)
+
+
 class AgentManager:
     """Carries out agent runs for the projects the engine serves. See the
     module docstring. `on_finish(root, run)` is called (from the run's
@@ -531,6 +719,8 @@ class AgentManager:
         self.engine_port = engine_port
         self._lock = threading.RLock()
         self._recover_lock = threading.Lock()
+        self._cursors: OrderedDict[tuple[str, str], _EventsCursor] = OrderedDict()
+        self._cursor_lock = threading.Lock()
         self._active: dict[str, _Active] = {}
         self._reverting: set[str] = set()
         self._closing = False
@@ -648,7 +838,8 @@ class AgentManager:
             raise AgentError("not_latest")
         if parent.get("reverted"):
             raise AgentError("reverted")
-        if parent.get("state") not in REPLY_STATES:
+        outcome = run_store.outcome_of(parent)
+        if outcome not in REPLY_STATES:
             raise AgentError("not_finished")
         session = parent.get("session_id")
         if not isinstance(session, str) or not session:
@@ -666,7 +857,7 @@ class AgentManager:
             raise AgentError("not_agent_task", "The task now belongs to a different agent; start a new run instead",
                              message_zh="这个任务现在由另一个 AI 执行者负责，请重新运行")
         found = self._check_runner(agent.runner)
-        kind = "answer" if parent.get("state") == "needs_input" else "send_back"
+        kind = "answer" if outcome == "needs_input" else "send_back"
         cleared = False
         if kind == "send_back" and task.get("done"):
             # 17.3: 打回 on a done task clears its done mark first (a human write through the desk; `report` stays)
@@ -705,7 +896,7 @@ class AgentManager:
             "by": by if isinstance(by, str) and by else None,
             "by_name": by_name if isinstance(by_name, str) and by_name else None,
             "lang": lang, "kind": kind, "parent": parent, "message": message,
-            "state": "preparing", "reverted": False, "reverted_at": None, "reverted_by": None,
+            "state": "preparing", "outcome": None, "reverted": False, "reverted_at": None, "reverted_by": None,
             "created": _now(), "started": None, "ended": None, "session_id": session, "pid": None,
             "engine_pid": os.getpid(), "engine_started": engine_started, "program_started": None,
             "leftovers": 0, "exit_code": None, "error": None, "question": None, "report": None,
@@ -771,6 +962,7 @@ class AgentManager:
             act.timer.cancel()
         if act.listener is not None:
             record_files.remove_write_listener(act.listener)
+        self._release(act)
         try:
             run_store.prune(act.project_id)
         except Exception:  # noqa: BLE001
@@ -814,6 +1006,7 @@ class AgentManager:
             with act.human_lock:
                 if len(act.human) < HUMAN_PATHS_LIMIT or rel in act.human:
                     act.human.add(rel)
+                    act.human_keys[_key(rel)] = sha
                     if sha is not None:
                         act.human_sha[rel] = sha
                     else:
@@ -822,6 +1015,42 @@ class AgentManager:
 
         act.listener = on_write
         record_files.add_write_listener(on_write)
+
+    def _watch(self, act: _Active, before: dict) -> None:
+        """Tell the history the run is going on (module docstring): from here the scans of this engine
+        credit to it what it changed. Not when the owner is no agent that can be named."""
+        try:
+            agent = labels.parse_owner(act.run.get("owner"))
+        except ValueError:
+            agent = None
+        if agent is None:
+            return
+        files = before.get("files") or {}
+        partial = bool(before.get("partial"))
+        began = time.time_ns()
+
+        def owns(rel: str, entry: Any) -> bool:
+            """Whether the content now at `rel` is the run's: not what the person last saved through Research OS
+            there, and not what the before-picture holds (a cut picture knows only what is older than the run)."""
+            with act.human_lock:
+                known = _key(rel) in act.human_keys
+                sha = act.human_keys.get(_key(rel))
+            if known and (sha is None or entry.get("sha256") == sha):
+                return False
+            was = files.get(rel)
+            if was is None:
+                return not partial or int(entry.get("mtime_ns") or 0) >= began
+            return not snapshot.same(was, entry)
+
+        act.seen = history.RunSeen(who=labels.who_value(agent, act.run.get("by")), run=act.run_id, owns=owns)
+        history.watch_run(act.root, act.seen)
+
+    @staticmethod
+    def _release(act: _Active) -> None:
+        """The history is no longer told (idempotent)."""
+        if act.seen is not None:
+            history.release_run(act.root, act.seen)
+            act.seen = None
 
     def _documents(self, root: Path, lang: str) -> list[dict]:
         try:
@@ -853,6 +1082,7 @@ class AgentManager:
         prot = snapshot.protected(root, before)
         before["protected"] = prot
         _write_json(rd / "before.json", before)
+        self._watch(act, before)
         guard.write_guard_file(rd, root=root, prot=prot, engine_port=self.engine_port)
         if runner == "claude-code":
             # 17.5: Claude Code lets a call through when its hook cannot run; the hook is tried on a call
@@ -892,25 +1122,35 @@ class AgentManager:
             stream = runners.OpenCodeStream()
         for name, content in launch.files.items():
             (rd / name).write_text(content, encoding="utf-8")
+        self._update(act, env_removed=launch.removed_env)  # the names, never the values (18.1 item 2): the run log lists them
 
         launch_error: dict | None = None
         proc: subprocess.Popen | None = None
         started_at = _now()  # before the program exists: a partial picture judges "created" by this time
+        errlog: Any = None
         with act.lock:
             if act.stop_reason is None:
                 try:
-                    with open(rd / "stderr.log", "ab") as errlog:
-                        proc = subprocess.Popen(launch.argv, cwd=launch.cwd, env=launch.env, stdin=subprocess.PIPE,
-                                                stdout=subprocess.PIPE, stderr=errlog, bufsize=0,
-                                                start_new_session=True)
+                    errlog = open(rd / "stderr.log", "ab", buffering=0)  # noqa: SIM115 -- `_copy_stderr` closes it
+                    # standard error comes through a pipe, so that stderr.log can be capped as events.jsonl is
+                    proc = subprocess.Popen(launch.argv, cwd=launch.cwd, env=launch.env, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                                            start_new_session=True)
                 except (OSError, ValueError) as exc:
                     launch_error = {"code": "start_failed", "detail": f"{type(exc).__name__}: {exc}"[:2000]}
+                    if errlog is not None:
+                        errlog.close()
+                        errlog = None
                 else:
                     act.proc = proc
         exit_code: int | None = None
+        errcopy: threading.Thread | None = None
         if proc is not None:
             self._update(act, state="running", pid=proc.pid, started=started_at,
                          program_started=_start_of(proc.pid))
+            errcopy = threading.Thread(target=self._copy_stderr, args=(act, proc.stderr, errlog), daemon=True,
+                                       name=f"researchos-agent-stderr-{act.run_id}")
+            errcopy.start()
             threading.Thread(target=self._feed_stdin, args=(proc, launch.stdin.encode("utf-8")), daemon=True,
                              name=f"researchos-agent-stdin-{act.run_id}").start()
             act.timer = threading.Timer(max(0.1, timeout_minutes * 60.0), self._terminate, args=(act, "timeout"))
@@ -931,10 +1171,62 @@ class AgentManager:
                 # writes can then pass for someone else's change
                 with contextlib.suppress(Exception), act.kill_lock:
                     act.leftovers += self._sweep(act, proc)
+                if errcopy is not None:  # what was left running is gone: the end of standard error is near
+                    errcopy.join(EXIT_DRAIN_S)
                 with contextlib.suppress(OSError):
                     if proc.stdout is not None:
                         proc.stdout.close()
         self._finish(act, before=before, stream=stream, exit_code=exit_code, launch_error=launch_error)
+
+    def _copy_stderr(self, act: _Active, pipe: Any, log: Any) -> None:
+        """Copy the program's standard error into `stderr.log` (`log`, open for appending) while the file stays
+        within `STDERR_LIMIT`, the cap of `events.jsonl` (18.1 item 6). What does not fit is dropped and the run is
+        marked `stderr_truncated`, as `events_truncated` marks the events. The last `STDERR_TAIL_BYTES` the program
+        wrote are kept in memory and, when the cap was hit, left in `stderr.tail` at the end: the cap keeps the
+        beginning, but what the person looks for is how the program died. The pipe is read to its end whatever
+        happens, so that a chatty program is never stopped by a full pipe. Closes both."""
+        written = 0
+        try:
+            written = os.fstat(log.fileno()).st_size  # a log that already holds something counts
+        except (OSError, ValueError):
+            pass
+        out, truncated = log, False  # `out` becomes None when the file can no longer be written
+        tail = bytearray()
+        try:
+            fd = pipe.fileno()
+            while True:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                tail += chunk
+                del tail[:-STDERR_TAIL_BYTES]
+                if out is None or truncated:
+                    continue
+                room = max(0, run_store.STDERR_LIMIT - written)
+                part = chunk[:room]
+                try:
+                    out.write(part)
+                    written += len(part)
+                except OSError:
+                    logger.warning("cannot write stderr.log of agent run %s", act.run_id)
+                    out = None
+                    continue
+                if len(part) < len(chunk):
+                    truncated = True
+                    self._update(act, stderr_truncated=True)
+        except (OSError, ValueError):
+            pass
+        finally:
+            if truncated:
+                with contextlib.suppress(Exception):
+                    (run_store.run_dir(act.project_id, act.run_id) / "stderr.tail").write_bytes(bytes(tail))
+            for handle in (log, pipe):
+                with contextlib.suppress(Exception):
+                    if handle is not None:
+                        handle.close()
 
     @staticmethod
     def _feed_stdin(proc: subprocess.Popen, data: bytes) -> None:
@@ -1132,7 +1424,7 @@ class AgentManager:
         out-of-bounds check does not leave the person's paths out: a protected path is allowed to end
         with the bytes the engine wrote there, and with nothing else."""
         rd = run_store.run_dir(project_id, run_id)
-        after = snapshot.take(root)
+        after = snapshot.take(root, reuse=before)  # a file with the stamp the before-picture saw is not read again (18.4)
         _write_json(rd / "after.json", after)
         human_list = sorted(human())
         shas = {_key(p): s for p, s in (human_sha() if human_sha is not None else {}).items()}
@@ -1162,10 +1454,16 @@ class AgentManager:
                     allowed.setdefault(rel, set()).add(shas[_key(rel)])
         prot = before.get("protected") or snapshot.protected(root, before)
         data_before, data_after = before.get("data"), after.get("data")
+        backups_before, backups_after = before.get("backups"), after.get("backups")
         violations = snapshot.violations(
             everything, prot, git_before=before.get("git"), git_after=after.get("git"), allowed=allowed,
             after=after, data_before=data_before if isinstance(data_before, dict) else None,
-            data_after=data_after if isinstance(data_after, dict) else None)
+            data_after=data_after if isinstance(data_after, dict) else None,
+            backups_before=backups_before if isinstance(backups_before, dict) else None,
+            backups_after=backups_after if isinstance(backups_after, dict) else None)
+        lost_backups = [v["path"] for v in violations if v["reason"] == "backup_deleted"]
+        if lost_backups:  # the picture holds no copy of a backup: the run lists it, and undo says it cannot
+            changes["deleted"] = sorted({*changes["deleted"], *lost_backups})
         return {
             "changes": {**changes, "by_person": by_person}, "violations": violations,
             "snapshot": {"files": len(old), "partial": partial,
@@ -1175,7 +1473,9 @@ class AgentManager:
         }
 
     def _attribute(self, act_root: Path, project_id: str, run: dict, changes: dict, tool_paths: list[str]) -> None:
-        """Record the files the run created or changed in the change history as the agent's (17.5)."""
+        """Record the files the run created or changed in the change history as the agent's (17.5), unless a
+        scan that ran meanwhile already holds that very content as the run's (18.1 item 3). Git's own files
+        (`.git/hooks`, `.git/config`) are the out-of-bounds list's business, not the history's."""
         try:
             agent = labels.parse_owner(run.get("owner"))
         except ValueError:
@@ -1185,7 +1485,7 @@ class AgentManager:
         who = labels.who_value(agent, run.get("by"))
         skip = set(tool_paths) | {TASKS_PATH}
         candidates = [rel for rel in [*changes.get("created", ()), *changes.get("modified", ())]
-                      if rel not in skip and rel.split("/", 1)[0].casefold() not in _RECORD_DIRS]
+                      if rel not in skip and rel.split("/", 1)[0].casefold() not in _RECORD_AND_GIT_DIRS]
         tracked: set[str] = set()
         if candidates:  # 17.5: a git-tracked file's history is git's; one lookup for the whole run
             try:
@@ -1206,7 +1506,9 @@ class AgentManager:
                     try:
                         if paths.is_dataless(full) or full.stat().st_size > HISTORY_FILE_SIZE_LIMIT:
                             continue
-                        history.record_file(store, act_root, rel, source="agent", who=who, note=run["id"])
+                        # what a scan saw while the run went on is already there under this note (18.1 item 3)
+                        history.record_file(store, act_root, rel, source="agent", who=who, note=run["id"],
+                                            unless_noted=f"{history.SEEN_NOTE}{run['id']}")
                     except Exception:  # noqa: BLE001 -- one file's trouble does not stop the others
                         logger.warning("could not record %s of agent run %s in the history", rel, run["id"],
                                        exc_info=True)
@@ -1257,13 +1559,16 @@ class AgentManager:
                 logger.exception("the after-run check of agent run %s failed", run_id)
                 check_error = {"code": "check_failed", "detail": f"{type(exc).__name__}: {exc}"}
                 _sigs, info = self._signals(project_id, run_id)
+            finally:
+                self._release(act)  # the history stops crediting scans to the run (18.1 item 3)
         extra.setdefault("human_paths", act.human_paths())
         state, error = self._decide(act, stream, exit_code, launch_error, info)
         if error is None and check_error is not None:
             error = check_error
+        state, outcome = _warn_if_out_of_bounds(state, extra.get("violations"))
         text = (getattr(stream, "result_text", None) or "").strip() if stream is not None else ""
         self._update(
-            act, state=state, ended=_now(), exit_code=exit_code, error=error,
+            act, state=state, outcome=outcome, ended=_now(), exit_code=exit_code, error=error,
             question=info["question"], report=info["report"], summary=text[:SUMMARY_LIMIT] or None,
             session_id=(getattr(stream, "session_id", None) or run.get("session_id")) if stream is not None
             else run.get("session_id"),
@@ -1311,21 +1616,31 @@ class AgentManager:
             return act.run_id if act is not None else None
 
     def _summary_of(self, project_id: str, run: dict) -> dict:
-        latest = next((r for r in run_store.list_runs(project_id) if r.get("task_id") == run.get("task_id")), None)
+        # the newest run of the task: the listing is read newest first and no further than that run (18.4 item 2)
+        latest = next((r for r in run_store.iter_runs(project_id) if r.get("task_id") == run.get("task_id")), None)
         return summary(run, latest_of_task=latest is not None and latest.get("id") == run.get("id"),
                        active=self._is_active(project_id, run["id"]))
 
-    def runs(self, project_id: str) -> dict:
+    def runs(self, project_id: str, *, recover: bool = True) -> dict:
         """`{"runs": [summary...], "active": run id | None}`, newest first. Runs left active by an
-        engine that is gone are marked `interrupted` first (17.3)."""
+        engine that is gone are marked `interrupted` first (17.3) -- unless `recover` is False
+        (a window without the engine's session may read the list but not change a run, 18.1):
+        they are then listed as they are stored. The project's runs are listed once for the request (18.4
+        item 2): recovery hands back the listing it worked from, with the runs it looked at read again."""
         self._check_ids(project_id)
-        foreign = self._recover(project_id)
+        if recover:
+            foreign, listing = self._recovered(project_id)
+        else:
+            listing = run_store.list_runs(project_id)
+            foreign = self._foreign_active(project_id, listing)
         with self._lock:
             act = self._active.get(project_id)
             active_id = act.run_id if act is not None else None
+        if active_id is not None and all(r.get("id") != active_id for r in listing):
+            listing = run_store.list_runs(project_id)  # a run started since the listing was made: it is on disk now
         out = []
         seen: set[Any] = set()
-        for run in run_store.list_runs(project_id):
+        for run in listing:
             latest = run.get("task_id") not in seen
             seen.add(run.get("task_id"))
             out.append(summary(run, latest_of_task=latest, active=run["id"] == active_id))
@@ -1337,27 +1652,42 @@ class AgentManager:
         run = self._load(project_id, run_id)
         rd = run_store.run_dir(project_id, run_id)
         out = self._summary_of(project_id, run)
-        steps, total = self._steps(rd / "events.jsonl", run)
+        steps, total = self._steps(rd / "events.jsonl", run, self._cursor(project_id, run_id, run.get("runner")))
         out.update(
             steps=steps, steps_total=total, changes=run.get("changes") or {}, violations=run.get("violations") or [],
             instruction=_read_text(rd / "instruction.txt"),
             refusals=run_store.read_lines(rd / "refusals.jsonl", tail_bytes=REFUSALS_TAIL_BYTES),
-            stderr_tail=_read_text(rd / "stderr.log", STDERR_TAIL_BYTES, tail=True),
+            # a log cut at its cap holds the program's first words; its last ones are in `stderr.tail` (18.1 item 6)
+            stderr_tail=((_read_text(rd / "stderr.tail", STDERR_TAIL_BYTES, tail=True)
+                          if run.get("stderr_truncated") else "")
+                         or _read_text(rd / "stderr.log", STDERR_TAIL_BYTES, tail=True)),
             error=run.get("error"), message=run.get("message"), summary=run.get("summary"),
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
-            leftovers=run.get("leftovers") or 0,
-            events_truncated=bool(run.get("events_truncated")))
+            leftovers=run.get("leftovers") or 0, env_removed=run.get("env_removed") or [],
+            events_truncated=bool(run.get("events_truncated")), stderr_truncated=bool(run.get("stderr_truncated")))
         return out
 
+    def _cursor(self, project_id: str, run_id: str, runner: object) -> _EventsCursor:
+        """The cursor of a run's log (the most recently asked for are kept, `CURSORS_KEPT` of them)."""
+        key = (project_id, run_id)
+        with self._cursor_lock:
+            cursor = self._cursors.pop(key, None)
+            if cursor is None or cursor.runner != runner:
+                cursor = _EventsCursor(runner)
+            self._cursors[key] = cursor
+            while len(self._cursors) > CURSORS_KEPT:
+                self._cursors.popitem(last=False)
+            return cursor
+
     @staticmethod
-    def _steps(events_path: Path, run: dict) -> tuple[list[dict], int]:
-        stream: runners.ClaudeStream | runners.OpenCodeStream = (
-            runners.ClaudeStream() if run.get("runner") == "claude-code" else runners.OpenCodeStream())
-        raw = _read_text(events_path, run_store.EVENTS_LIMIT)
-        for line in raw.splitlines():
-            stream.feed(line)
-        steps = list(stream.steps)
+    def _steps(events_path: Path, run: dict, cursor: _EventsCursor | None = None) -> tuple[list[dict], int]:
+        """The steps of a run's log (the last `STEPS_LIMIT`) and how many there are, as the page shows them. `cursor`
+        is the run's own (`_cursor`): the log is read from where it stopped. Without one the whole log is read."""
+        if cursor is None:
+            cursor = _EventsCursor(run.get("runner"))
+        with cursor.lock:
+            steps, total = cursor.read(events_path)
         # Paths inside the project read as the project names them (`analysis/vol.py`), not from `/`.
         prefixes = sorted({os.path.join(str(p), "") for p in (run.get("root"), os.path.realpath(str(run.get("root"))))
                            if p and p != "None"}, key=len, reverse=True)
@@ -1366,20 +1696,31 @@ class AgentManager:
                 for prefix in prefixes:
                     step["text"] = step["text"].replace(prefix, "")
         state = run.get("state")
+        outcome = run_store.outcome_of(run)
+        error = run.get("error") if isinstance(run.get("error"), dict) else {}
+        # 18.1 item 6: a run that failed or was interrupted ends its log with the code of its error, so that the page
+        # says it in the person's language and keeps the program's own words (the step's text) as the detail
+        code = error.get("code") if isinstance(error.get("code"), str) and error.get("code") else None
+        if code and outcome in ("failed", "interrupted") and steps and steps[-1]["kind"] == "end":
+            steps[-1]["code"] = code
         if state not in run_store.ACTIVE_STATES and not (steps and steps[-1]["kind"] == "end"):
             en = _lang(run.get("lang")) == "en"
-            error = run.get("error") or {}
-            if state == "stopped":
-                text = "Stopped by the person." if en else "已被你停止。"
-            elif state == "interrupted":
+            end_code: str | None = None
+            if outcome == "stopped":
+                # no sentence in the language the run began in: the page words the code in the person's language
+                text, end_code = "", "stopped"
+            elif error and (code or outcome != "interrupted"):
+                text, end_code = str(error.get("detail") or ""), code  # the code is never the text: the page words it
+            elif outcome == "interrupted":  # an old record with no error: the only case that keeps a sentence of ours
                 text = ("Interrupted: Research OS was closed while the run was going." if en
                         else "已中断：运行期间 Research OS 被关闭了。")
-            elif error:
-                text = str(error.get("detail") or error.get("code") or "")
             else:
                 text = (run.get("summary") or "").strip() or ("Ended." if en else "已结束。")
-            steps.append({"kind": "end", "text": " ".join(text.split())[:runners.STEP_TEXT_LIMIT], "tool": None})
-        total = len(steps)
+            end = {"kind": "end", "text": " ".join(text.split())[:runners.STEP_TEXT_LIMIT], "tool": None}
+            if end_code:
+                end["code"] = end_code
+            steps.append(end)
+            total += 1
         return steps[-STEPS_LIMIT:], total
 
     # -- recovery -------------------------------------------------------------------------------
@@ -1402,21 +1743,31 @@ class AgentManager:
             return False
         return True
 
-    def _foreign_active(self, project_id: str) -> list[str]:
-        """Runs recorded as active that a different live engine is carrying out."""
+    def _foreign_active(self, project_id: str, listing: list[dict] | None = None) -> list[str]:
+        """Runs recorded as active that a different live engine is carrying out (among `listing`, the project's
+        runs as just read, when the caller has them)."""
         with self._lock:
             act = self._active.get(project_id)
             mine = act.run_id if act is not None else None
-        return [r["id"] for r in run_store.list_runs(project_id)
+        return [r["id"] for r in (listing if listing is not None else run_store.list_runs(project_id))
                 if r.get("state") in run_store.ACTIVE_STATES and r["id"] != mine and self._engine_alive(r)]
 
     def _recover(self, project_id: str) -> list[str]:
         """Mark the runs an engine left active `interrupted` (`engine_gone`), end their program if
         it is still alive, and work out their changes so they can be undone (17.3). Returns the
         ids of active runs that belong to another live engine and were left alone."""
+        return self._recovered(project_id)[0]
+
+    def _recovered(self, project_id: str) -> tuple[list[str], list[dict]]:
+        """`_recover`, and with the ids it returns the project's runs, newest first, as they stand once recovery
+        is done: the listing recovery worked from, in which every run that recovery looked at (one recorded
+        active, one owing its comparison) is read again, since it may have changed or ended meanwhile (a
+        run whose `run.json` cannot be read any more drops out, as a listing would leave it out)."""
         foreign: list[str] = []
         with self._recover_lock:
-            for listed in run_store.list_runs(project_id):
+            listing = run_store.list_runs(project_id)
+            owing = [r for r in listing if r.get("check_pending") and r.get("state") == "interrupted"]
+            for listed in listing:
                 if listed.get("state") not in run_store.ACTIVE_STATES:
                     continue
                 with self._lock:
@@ -1437,7 +1788,41 @@ class AgentManager:
                     logger.exception("could not recover agent run %s", run.get("id"))
                     self._fail_record(project_id, run["id"], "engine_gone",
                                       "Research OS stopped while the run was going")
-        return foreign
+            if owing and not foreign:
+                self._check_pending(project_id, owing)
+            looked = {r["id"] for r in listing if r.get("state") in run_store.ACTIVE_STATES} | {r["id"] for r in owing}
+            if looked:
+                reread = (run_store.load_run(project_id, r["id"]) if r["id"] in looked else r for r in listing)
+                listing = [r for r in reread if r is not None]
+        return foreign, listing
+
+    def recover_all(self) -> list[str]:
+        """At engine start (18.1 item 6): recover the runs left preparing or running of every project this Mac
+        keeps runs for, at once, instead of whenever that project's runs are next listed. Each is handled as
+        `_recover` handles it -- marked `interrupted`, its program ended only when the recorded pid has the
+        recorded start time, a run of another live engine left alone. One project's trouble does not stop the
+        others, and nothing more is begun once the manager is closing. Returns the ids of the runs recovered."""
+        recovered: list[str] = []
+
+        def going(project_id: str) -> set[str]:
+            return {r["id"] for r in run_store.list_runs(project_id) if r.get("state") in run_store.ACTIVE_STATES}
+
+        def owed(project_id: str) -> bool:  # an interrupted run whose changes were never compared (folder unreadable then)
+            return any(r.get("check_pending") for r in run_store.list_runs(project_id))
+
+        for project_id in run_store.project_ids():
+            if self._closing:
+                break
+            left = going(project_id)
+            if not left and not owed(project_id):
+                continue
+            try:
+                self._recover(project_id)
+            except Exception:  # noqa: BLE001 -- recovery of one project never blocks the others
+                logger.exception("could not recover the agent runs of project %s", project_id)
+                continue
+            recovered.extend(sorted(left - going(project_id)))
+        return recovered
 
     def _interrupt_stale(self, project_id: str, run: dict) -> None:
         run_id = run["id"]
@@ -1455,52 +1840,168 @@ class AgentManager:
         before = _read_json(rd / "before.json")
         _signals, info = self._signals(project_id, run_id)
         update.update(question=info["question"], report=info["report"])
-        if isinstance(before, dict) and isinstance(before.get("files"), dict) and root.is_dir():
+        compared = isinstance(before, dict) and isinstance(before.get("files"), dict)
+        if compared and root.is_dir():
             try:
-                assessed = self._assess(root, project_id, run_id, run, before,
-                                        lambda: list(run.get("human_paths") or ()),
-                                        lambda: dict(run.get("human_sha") or {}))
-                assessed.pop("signal_info")
-                update.update(assessed)
+                update.update(self._compare_interrupted(root, project_id, run, before))
             except Exception:  # noqa: BLE001
                 logger.exception("could not check the changes of interrupted agent run %s", run_id)
+        elif compared:
+            # The folder cannot be read now (a drive that is not attached, a folder it may not enter). The program
+            # is ended, but what it changed is not known: the run says so, and a later recovery compares it once
+            # the folder is back (`_check_pending`) -- undo is not lost for good, nor an out-of-bounds change unseen.
+            update["check_pending"] = True
         # only while it is still going: a run that ended meanwhile keeps the state it reached
         run_store.update_run_if_active(project_id, run_id, **update)
 
+    def _compare_interrupted(self, root: Path, project_id: str, run: dict, before: dict) -> dict[str, Any]:
+        """The fields a recovered run gets from comparing its folder with its before-picture (17.3, 18.1 item 4)."""
+        assessed = self._assess(root, project_id, run["id"], run, before, lambda: list(run.get("human_paths") or ()),
+                                lambda: dict(run.get("human_sha") or {}))
+        assessed.pop("signal_info")
+        state, outcome = _warn_if_out_of_bounds("interrupted", assessed["violations"])
+        return {**assessed, "state": state, "outcome": outcome}
+
+    def _check_pending(self, project_id: str, owing: list[dict]) -> None:
+        """Compare the interrupted runs `owing` (`check_pending`: their folder could not be read when they were
+        recovered) whose folder can be read now. Nothing is compared while a run of the project is going (its
+        changes would be read as theirs). A run without a usable before-picture has nothing to compare and is let
+        go; a comparison that fails stays pending for the next recovery."""
+        with self._lock:
+            if project_id in self._active:
+                return
+        for run in owing:
+            if not run.get("root") or not Path(run["root"]).is_dir():
+                continue
+            before = _read_json(run_store.run_dir(project_id, run["id"]) / "before.json")
+            try:
+                update = (self._compare_interrupted(Path(run["root"]), project_id, run, before)
+                          if isinstance(before, dict) and isinstance(before.get("files"), dict) else {})
+            except Exception:  # noqa: BLE001 -- recovery never blocks a listing; the run stays pending
+                logger.exception("could not check the changes of interrupted agent run %s", run["id"])
+                continue
+            run_store.update_run(project_id, run["id"], check_pending=False, **update)
+
     # -- undoing ----------------------------------------------------------------------------------
 
-    def revert(self, root: Path, project_id: str, run_id: str, *, by: str | None) -> dict:
+    @staticmethod
+    def _chosen(files: object) -> set[str] | None:
+        """The paths the person left checked in the undo list, in comparing form (`_key`); None when the
+        request names none (all that can be undone is then undone). An empty list is a mistake, not an undo."""
+        if files is None:
+            return None
+        if (not isinstance(files, (list, tuple)) or len(files) > UNDO_FILES_LIMIT
+                or not all(isinstance(f, str) and f for f in files)):
+            raise AgentError("invalid", "files must be a list of project paths",
+                             message_zh="files 必须是项目文件路径的列表")
+        if not files:
+            raise AgentError("invalid", "Choose at least one file to undo", message_zh="请至少选择一个要撤回的文件")
+        return {_key(f) for f in files}
+
+    def _check_undoable(self, project_id: str, run_id: str, run: dict, foreign: list[str]) -> None:
+        """What stops a run from being undone (or planned) right now; the registry lock is held by the caller."""
+        act = self._active.get(project_id)
+        if act is not None:
+            raise AgentError("run_active" if act.run_id == run_id else "busy")
+        if project_id in self._reverting:
+            raise AgentError("busy")
+        if run.get("state") in run_store.ACTIVE_STATES:
+            raise AgentError("run_active" if self._engine_alive(run) else "not_finished")
+        if foreign:  # a run of another Research OS process is going: its files are not ours to move
+            raise AgentError("busy")
+        if run.get("reverted"):
+            raise AgentError("reverted")
+
+    def revert(self, root: Path, project_id: str, run_id: str, *, by: str | None,
+               files: list[str] | None = None) -> dict:
         """Undo a finished run (17.6): `{"run": summary, "restored": [rel], "removed": [rel],
         "skipped": [{"path", "reason"}]}`. `removed` are files the run created, moved into the
         run's `reverted/` folder; `restored` come back from the before-picture's copies. A file
         that changed after the run, or that has no copy, is left alone and listed in `skipped`
-        (`changed_since`, `no_copy`, `in_cloud`, `protected`). The run is marked undone unless nothing
-        could be; what was left alone is kept as `run["revert"]` and counted in the summary
-        (`revert_skipped`)."""
+        (`changed_since`, `no_copy`, `in_cloud`, `protected`). With `files` only those paths are
+        undone (the checked ones of `revert_plan`, 18.1 item 5); a path that could have been
+        undone and was not named is left as it is and listed as `kept`. The run is marked undone
+        unless nothing could be; what was left alone is kept as `run["revert"]` and counted in the
+        summary (`revert_skipped`)."""
         self._check_ids(project_id, run_id)
+        chosen = self._chosen(files)
         root = self._writable_root(root, project_id)
         foreign = self._recover(project_id)
         run = self._load(project_id, run_id)
         with self._lock:
-            act = self._active.get(project_id)
-            if act is not None:
-                raise AgentError("run_active" if act.run_id == run_id else "busy")
-            if project_id in self._reverting:
-                raise AgentError("busy")
-            if run.get("state") in run_store.ACTIVE_STATES:
-                raise AgentError("run_active" if self._engine_alive(run) else "not_finished")
-            if foreign:  # a run of another Research OS process is going: its files are not ours to move
-                raise AgentError("busy")
-            if run.get("reverted"):
-                raise AgentError("reverted")
+            self._check_undoable(project_id, run_id, run, foreign)
             self._reverting.add(project_id)
         try:
-            return self._revert(root, project_id, run, by)
+            return self._revert(root, project_id, run, by, chosen)
         finally:
             with self._lock:
                 self._reverting.discard(project_id)
 
-    def _revert(self, root: Path, project_id: str, run: dict, by: str | None) -> dict:
+    def revert_plan(self, root: Path, project_id: str, run_id: str) -> dict:
+        """What 撤回本次运行 would do now, without doing it (18.1 item 5): `{"run": summary, "restore":
+        [{"path", "time"}], "remove": [{"path", "time"}], "cannot": [{"path", "reason"}]}`. `restore` is the
+        files put back from the before-picture (changed or deleted ones; a created file that is a deleted one
+        renamed is listed under the old name, with `from` the new; the task's done mark is listed as
+        `research/tasks.json` with `task`), `remove` the files moved away, `cannot` the files left alone with
+        the reason (`changed_since`, `no_copy`, `in_cloud`, `protected`). `time` is a file's modification time
+        on this Mac, in local time, where it is there; for a file that is gone, and for the done mark, when the
+        run ended. Refuses as `revert` does (`reverted`, `later_run`, `not_revertible`, `run_active`, `busy`).
+        It only reads: it does not recover the runs a gone engine left active (listing the runs does, and
+        a run is offered for undo only after that), so a window without the engine's session may ask."""
+        self._check_ids(project_id, run_id)
+        root = self._readable_root(root)
+        foreign = self._foreign_active(project_id)
+        run = self._load(project_id, run_id)
+        with self._lock:
+            self._check_undoable(project_id, run_id, run, foreign)
+        rd, before, after, changes, info = self._undo_inputs(project_id, run)
+        restored: list[str] = []
+        removed: list[str] = []
+        skipped: list[dict[str, str]] = []
+        origin: dict[str, str] = {}
+        self._undo_files(root, os.path.realpath(root), rd, before["files"], after["files"], changes, run_id,
+                         restored, removed, skipped, project_id, person=self._person_paths(run, changes),
+                         dry=True, origin=origin)
+        self._undo_task(root, run, info, restored, skipped, dry=True)
+        ended = _local_time(run.get("ended"))
+
+        def item(rel: str) -> dict[str, Any]:
+            entry: dict[str, Any] = {"path": rel}
+            source = origin.get(rel, rel)
+            moment = None
+            if rel == TASKS_PATH:
+                entry["task"] = run.get("task_text") or ""
+            else:
+                with contextlib.suppress(OSError):
+                    moment = _local_time(os.lstat(os.path.join(root, *source.split("/"))).st_mtime)
+            entry["time"] = moment or ended
+            if rel in origin:
+                entry["from"] = origin[rel]
+            return entry
+
+        return {"run": self._summary_of(project_id, run),
+                "restore": [item(rel) for rel in sorted(restored)], "remove": [item(rel) for rel in sorted(removed)],
+                "cannot": sorted(skipped, key=lambda s: s["path"])}
+
+    @staticmethod
+    def _readable_root(root: Path | str) -> Path:
+        """The resolved project folder, for a request that only reads."""
+        try:
+            resolved = Path(root).resolve()
+            if not resolved.is_dir():
+                raise AgentError("invalid", "The project folder is missing")
+        except OSError as exc:
+            raise AgentError("invalid", f"The project folder cannot be read: {exc}") from exc
+        return resolved
+
+    @staticmethod
+    def _person_paths(run: dict, changes: dict) -> set[str]:
+        """The paths the person saved through Research OS while the run went on (`_key` form)."""
+        return {_key(p) for p in (*(run.get("human_paths") or ()), *(changes.get("by_person") or ()))}
+
+    def _undo_inputs(self, project_id: str, run: dict) -> tuple[Path, dict, dict, dict, dict[str, Any]]:
+        """What undoing (or planning the undo of) `run` works from: the run's folder, its two pictures, its
+        changes and what its tools signalled. Refuses `not_revertible` and `later_run` (17.6)."""
         run_id = run["id"]
         rd = run_store.run_dir(project_id, run_id)
         before, after = _read_json(rd / "before.json"), _read_json(rd / "after.json")
@@ -1521,7 +2022,11 @@ class AgentManager:
                       for p in (other.get("changes") or {}).get(kind, ())}
             if mine & theirs:
                 raise AgentError("later_run")
+        return rd, before, after, changes, info
 
+    def _revert(self, root: Path, project_id: str, run: dict, by: str | None, chosen: set[str] | None) -> dict:
+        run_id = run["id"]
+        rd, before, after, changes, info = self._undo_inputs(project_id, run)
         restored: list[str] = []
         removed: list[str] = []
         skipped: list[dict[str, str]] = []
@@ -1529,10 +2034,9 @@ class AgentManager:
         try:
             with situation.write_guard(root, project_id, human=True, timeout=10.0):
                 self._undo_files(root, real_root, rd, before["files"], after["files"], changes, run_id,
-                                 restored, removed, skipped, project_id,
-                                 person={_key(p) for p in (*(run.get("human_paths") or ()),
-                                                           *(changes.get("by_person") or ()))})
-                self._undo_task(root, run, info, restored, skipped)
+                                 restored, removed, skipped, project_id, person=self._person_paths(run, changes),
+                                 folders=_folders_before(before), chosen=chosen)
+                self._undo_task(root, run, info, restored, skipped, chosen=chosen)
         except ProjectLockError as exc:
             raise AgentError("busy", f"The project is being written by something else: {exc}") from exc
         except situation.WriteRefused as exc:
@@ -1548,15 +2052,32 @@ class AgentManager:
 
     def _undo_files(self, root: Path, real_root: str, rd: Path, old: dict, new: dict, changes: dict, run_id: str,
                     restored: list[str], removed: list[str], skipped: list[dict[str, str]],
-                    project_id: str, person: set[str] | None = None) -> None:
+                    project_id: str, person: set[str] | None = None, *, folders: set[str] | None = None,
+                    chosen: set[str] | None = None, dry: bool = False,
+                    origin: dict[str, str] | None = None) -> None:
+        """Undo (or, with `dry`, work out the undo of) the files of a run (17.6), filling `restored`, `removed`
+        and `skipped`. `chosen` (18.1 item 5) are the paths, in `_key` form, the person left checked: a path
+        that would be undone and is not among them is left as it is and listed as `kept`; None undoes all.
+        `folders` are the folders that existed before the run, which are not removed when a move empties them
+        (`_folders_before`; None removes none). `dry` runs every check of the real thing and writes nothing:
+        no file or folder is made, moved or removed, nothing is recorded; `origin` then maps a path put back
+        by moving a created file to the created file's name."""
         who = history.scan_who(root)
         recorded: list[str] = []
         person = person or set()
+        origin = origin if origin is not None else {}
         handled: set[str] = set()  # deleted paths a moved-back file has restored
         moved: list[str] = []  # files that left their folder: the folders they emptied are cleaned up
 
         def skip(rel: str, reason: str) -> None:
             skipped.append({"path": rel, "reason": reason})
+
+        def kept(rel: str) -> bool:
+            """Whether the person left `rel` out of this undo: it stays as it is, and the run's log says so."""
+            if chosen is not None and _key(rel) not in chosen:
+                skip(rel, "kept")
+                return True
+            return False
 
         def path_of(rel: str) -> str:
             return os.path.join(root, *rel.split("/"))
@@ -1570,31 +2091,51 @@ class AgentManager:
             except OSError:
                 return False
 
-        def free(rel: str) -> bool:
-            """Whether nothing stands at `rel`: an empty folder (what a replaced file leaves behind) counts as nothing."""
+        def free(rel: str, probe: bool = False) -> bool:
+            """Whether nothing stands at `rel`: an empty folder (what a replaced file leaves behind) counts as
+            nothing, and is removed unless this only `probe`s."""
             target = path_of(rel)
             if not os.path.lexists(target):
                 return True
             if os.path.isdir(target) and not os.path.islink(target):
                 try:
+                    if probe or dry:
+                        return not os.listdir(target)
                     os.rmdir(target)  # fails unless empty
                 except OSError:
                     return False
                 return True
             return False
 
-        def restore(rel: str) -> bool:
-            """Put the before-picture's copy of `rel` back, atomically and inside the project."""
+        def blocked(rel: str) -> str | None:
+            """Why `restore(rel)` would leave `rel` alone, found without writing anything: the file has no usable
+            copy (`no_copy`) or its folder cannot be made inside the project (`changed_since`). Asked before the
+            person's choice is read, so that a file the undo could not have put back is never listed as one they
+            chose to keep (the plan lists it as it is, 18.1 item 5)."""
             src = rd / "before" / Path(*rel.split("/"))
             entry = old.get(rel) or {}
             if not entry.get("copied") or not src.is_file():
-                skip(rel, "no_copy")
-                return False
+                return "no_copy"
             if entry.get("sha256") and _sha256(src) != entry["sha256"]:
-                skip(rel, "no_copy")  # the copy is not what was recorded: do not write it back
+                return "no_copy"  # the copy is not what was recorded: do not write it back
+            parent = os.path.dirname(path_of(rel))
+            if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
+                return "changed_since"
+            return None
+
+        def restore(rel: str, *, checked: bool = False) -> bool:
+            """Put the before-picture's copy of `rel` back, atomically and inside the project. `checked`: the
+            caller has asked `blocked` already."""
+            why = None if checked else blocked(rel)
+            if why is not None:
+                skip(rel, why)
                 return False
+            src = rd / "before" / Path(*rel.split("/"))
             target = path_of(rel)
             parent = os.path.dirname(target)
+            if dry:
+                restored.append(rel)
+                return True
             try:
                 os.makedirs(parent, exist_ok=True)
                 if not _inside(real_root, os.path.realpath(parent)):
@@ -1620,24 +2161,38 @@ class AgentManager:
                 lost.setdefault(entry["sha256"], []).append(rel)
 
         def move_back(rel: str, current: dict) -> bool:
+            """Handle the created file `rel` that is a deleted file renamed: True when it was (moved back, or
+            left where it is because the person kept the old name's return), False when it is a plain creation."""
             sha = current.get("sha256") or (new.get(rel) or {}).get("sha256")
-            for target_rel in lost.get(sha, ()) if sha else ():
+            for target_rel in list(lost.get(sha, ())) if sha else ():
                 target = path_of(target_rel)
-                if os.path.lexists(target) and not (os.path.exists(target) and os.path.samefile(target, path_of(rel))):
-                    if not free(target_rel):
-                        continue
-                try:
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    if not _inside(real_root, os.path.realpath(os.path.dirname(target))):
-                        continue
-                    os.rename(path_of(rel), target)
-                except OSError:
+                occupied = os.path.lexists(target) and not (os.path.exists(target)
+                                                            and os.path.samefile(target, path_of(rel)))
+                if occupied and not free(target_rel, probe=True):
                     continue
+                parent = os.path.dirname(target)
+                if not _room_for(parent) or not _inside(real_root, os.path.realpath(parent)):
+                    continue
+                if kept(target_rel):  # the file keeps its new name; the old name stays empty
+                    lost[sha].remove(target_rel)
+                    handled.add(target_rel)
+                    return True
+                if not dry:
+                    try:
+                        if occupied and not free(target_rel):
+                            continue
+                        os.makedirs(parent, exist_ok=True)
+                        if not _inside(real_root, os.path.realpath(parent)):
+                            continue
+                        os.rename(path_of(rel), target)
+                    except OSError:
+                        continue
+                    recorded.append(target_rel)
+                    moved.append(rel)
+                origin[target_rel] = rel
                 lost[sha].remove(target_rel)
                 handled.add(target_rel)
                 restored.append(target_rel)
-                recorded.append(target_rel)
-                moved.append(rel)
                 return True
             return False
 
@@ -1647,8 +2202,8 @@ class AgentManager:
             if _key(rel) in person:  # saved by the person during the run: never ours to move
                 skip(rel, "changed_since")
                 continue
-            if rel.split("/", 1)[0].casefold() in _RECORD_DIRS:  # never move the project's own records
-                skip(rel, "protected")
+            if rel.split("/", 1)[0].casefold() in _RECORD_DIRS or rel == snapshot.GIT_CONFIG:
+                skip(rel, "protected")  # never move the project's own records, nor the config of a repository
                 continue
             current = snapshot.fingerprint(root, rel)
             if current is None or not snapshot.same(current, new.get(rel)):
@@ -1658,6 +2213,11 @@ class AgentManager:
                 skip(rel, "in_cloud")
                 continue
             if move_back(rel, current):
+                continue
+            if kept(rel):
+                continue
+            if dry:
+                removed.append(rel)
                 continue
             dest = rd / "reverted" / Path(*rel.split("/"))
             try:
@@ -1670,10 +2230,9 @@ class AgentManager:
             removed.append(rel)
             moved.append(rel)
         # the folders the moves emptied, deepest first, unless they were there before the run
-        before_dirs = {"/".join(p.split("/")[:i]) for p in old for i in range(1, p.count("/") + 1)}
         emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
         for folder in sorted(emptied, key=lambda f: f.count("/"), reverse=True):
-            if folder in before_dirs or folder.split("/", 1)[0].casefold() in _RECORD_DIRS:
+            if folders is None or folder in folders or folder.split("/", 1)[0].casefold() in _RECORD_AND_GIT_DIRS:
                 continue
             with contextlib.suppress(OSError):  # not empty: it stays
                 if not os.path.islink(path_of(folder)):
@@ -1691,20 +2250,34 @@ class AgentManager:
             if current.get("dataless"):  # copying it away would download it, under the project lock
                 skip(rel, "in_cloud")
                 continue
-            if not (old.get(rel) or {}).get("copied"):
-                skip(rel, "no_copy")
+            why = blocked(rel)
+            if why is not None:
+                skip(rel, why)
                 continue
-            if not copy_away(rel, path_of(rel)):
+            if kept(rel):
+                continue
+            if not dry and not copy_away(rel, path_of(rel)):
                 skip(rel, "changed_since")
                 continue
-            restore(rel)
+            restore(rel, checked=True)
         for rel in changes.get("deleted", ()):
             if rel == TASKS_PATH or rel in handled:
                 continue
-            if _key(rel) in person or not free(rel):
+            if _key(rel) in person or not free(rel, probe=True):
                 skip(rel, "changed_since")
                 continue
-            restore(rel)
+            why = blocked(rel)  # before the choice: a file with no copy is not one the person kept
+            if why is not None:
+                skip(rel, why)
+                continue
+            if kept(rel):
+                continue
+            if not dry and not free(rel):
+                skip(rel, "changed_since")
+                continue
+            restore(rel, checked=True)
+        # git's own files and the project's records are not the change history's business (as in `_attribute`)
+        recorded = [rel for rel in recorded if rel.split("/", 1)[0].casefold() not in _RECORD_AND_GIT_DIRS]
         if recorded:
             try:
                 with history.Store.open(project_id) as store:
@@ -1714,9 +2287,10 @@ class AgentManager:
                 logger.warning("could not record the undo of agent run %s in the history", run_id, exc_info=True)
 
     def _undo_task(self, root: Path, run: dict, info: dict[str, Any], restored: list[str],
-                   skipped: list[dict[str, str]]) -> None:
+                   skipped: list[dict[str, str]], *, chosen: set[str] | None = None, dry: bool = False) -> None:
         """Take back the done mark and the `report` link the run's complete tool set -- logically,
-        on the tasks as they are now, never by restoring `research/tasks.json` (17.6)."""
+        on the tasks as they are now, never by restoring `research/tasks.json` (17.6). It is listed
+        (and can be left out) as `research/tasks.json`; with `dry` it only says whether it would."""
         report = info.get("report")
         if not report:
             return
@@ -1733,8 +2307,12 @@ class AgentManager:
                     changed["report"] = run["task_report_before"]
             if changed == target:
                 return
-            workspace.save_tasks(root, {"tasks": [changed if t["id"] == target["id"] else t for t in tasks],
-                                        "revision": revision})
+            if chosen is not None and _key(TASKS_PATH) not in chosen:
+                skipped.append({"path": TASKS_PATH, "reason": "kept"})
+                return
+            if not dry:
+                workspace.save_tasks(root, {"tasks": [changed if t["id"] == target["id"] else t for t in tasks],
+                                            "revision": revision})
         except workspace.WorkspaceError:
             logger.warning("could not take back the done mark of agent run %s", run.get("id"), exc_info=True)
             skipped.append({"path": TASKS_PATH, "reason": "changed_since"})

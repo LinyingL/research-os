@@ -273,7 +273,87 @@ def test_14_3_a_direct_abandonment_reads_abandoned_by_never_proposer(lang):
     got = _node(script)
     by = "Abandoned by 李" if lang == "en" else "由 李 放弃"
     frozen = "File state when abandoned" if lang == "en" else "放弃时的文件状态"
+    proposed = ["Proposed by 王", "Approved by 李"] if lang == "en" else ["提议人 王", "批准人 李"]  # 18.3: the list half is English too
     assert got == [f"desk-meta: W · {by}", f"panel-h3: {frozen}",
-                   "desk-meta: W · 提议人 王 · 批准人 李", ("panel-h3: File state at approval" if lang == "en" else "panel-h3: 批准时的文件状态"),
-                   by, "提议人 王，批准人 李"]
+                   f"desk-meta: W · {proposed[0]} · {proposed[1]}",
+                   ("panel-h3: File state at approval" if lang == "en" else "panel-h3: 批准时的文件状态"),
+                   by, "Proposed by 王, approved by 李" if lang == "en" else "提议人 王，批准人 李"]
     assert not any("提议人" in line for line in got[:2])
+
+
+
+# -- 18.3: an existing row's 研究判断 or 结果 saves at once, with 撤销 (the engine's part) ---------------------------
+
+
+def test_18_3_the_preview_of_an_update_says_what_each_changed_cell_holds_now_and_will_hold(tmp_path):
+    """Asked silently by the page before it saves at once, the dry run lists, for each cell an update would
+    change: the cell as the file holds it (decoration, <br> and a pipe as written, so sending it back writes it
+    as it was), as the parser reads it, and as it will read. Cells not sent are not listed; a new row has none."""
+    root = _project(tmp_path / "proj")
+    (root / "map.md").write_text((root / "map.md").read_text().replace("| t=2.91 |", "| **t=2.91**<br>p \\| q |"))
+    _scan(root)
+    before = (root / "map.md").read_bytes()
+    out = server.attempts_preview_payload(root, {"op": "update", "number": "16", "fields": {"result": "t=3.10<br>ok", "verdict": "✅ 主线"}})
+    assert out["cells"] == {"result": {"was": "**t=2.91**<br>p | q", "was_text": "t=2.91\np | q", "now_text": "t=3.10\nok"},
+                            "verdict": {"was": "🕒", "was_text": "🕒", "now_text": "✅ 主线"}}
+    assert out["reason_required"] is False and (root / "map.md").read_bytes() == before
+    out = server.attempts_preview_payload(root, {"op": "update", "number": "16", "fields": {"result": "t=3"}})
+    assert list(out["cells"]) == ["result"]
+    new = {"date": "08-01", "description": "Another (18)", "variables": "a", "verdict": "🕒"}
+    assert "cells" not in server.attempts_preview_payload(root, {"op": "append", "number": "18", "fields": new})
+
+
+def test_18_3_a_row_written_at_once_and_its_撤销_are_two_entries_and_the_row_is_back_as_it_was(tmp_path):
+    """Through the app: the write after the silent preview is the same write as before (backed up, in the
+    history, only the cell sent), and 撤销 -- the preview's `was` sent back -- is a second write: the table is
+    byte for byte what it was (decoration, <br> and the pipe included), each write has its backup and its
+    version in the history, none erased. Writing the old cell back when that is an abandoning verdict is
+    the preview's reason_required: nothing the page sends at once."""
+    root = _project(tmp_path / "proj")
+    (root / "map.md").write_text((root / "map.md").read_text().replace("| t=2.91 |", "| **t=2.91**<br>p \\| q |"))
+    _scan(root)
+    original = (root / "map.md").read_bytes()
+    node = "attempt%3Amap.md%2316"
+    save = {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}
+    with _serve(root) as base:
+        status, preview = _call(f"{base}/api/attempts/preview", "POST", save)
+        assert status == 200 and preview["reason_required"] is False
+        status, written = _call(f"{base}/api/attempts/write", "POST", save)
+        assert status == 200 and written["ingest_error"] is None and "| t=3.10 |" in _row(root)
+        undo = {"op": "update", "number": "16", "fields": {"result": preview["cells"]["result"]["was"]}}
+        status, undone_preview = _call(f"{base}/api/attempts/preview", "POST", undo)
+        assert status == 200 and undone_preview["cells"]["result"]["was_text"] == preview["cells"]["result"]["now_text"]
+        status, undone = _call(f"{base}/api/attempts/write", "POST", undo)
+        assert status == 200 and undone["backup"] != written["backup"]
+        status, history = _call(f"{base}/api/history?node={node}")
+        assert status == 200
+    assert (root / "map.md").read_bytes() == original
+    assert (root / written["backup"]).read_bytes() != (root / undone["backup"]).read_bytes()  # each write has its own backup
+    versions = history["versions"]  # newest first: the restore is a version of its own, the first two unchanged
+    assert [v["result"] for v in versions[:4]] == ["t=2.91\np | q", "t=3.10", "t=2.91\np | q", "t=2.91"]
+    assert versions[0]["sha256"] == versions[2]["sha256"] != versions[1]["sha256"]
+    # The old verdict was an abandonment: writing it back would abandon the route again, so it needs its reason.
+    _write(root, reason="残差不平稳")
+    with _serve(root) as base:
+        status, _ = _call(f"{base}/api/attempts/write", "POST", {"op": "update", "number": "16", "fields": {"verdict": "🕒 再看"}})
+        assert status == 200
+        status, again = _call(f"{base}/api/attempts/preview", "POST", {"op": "update", "number": "16", "fields": {"verdict": "☠️ 伪协整"}})
+        assert status == 200 and again["reason_required"] is True
+
+
+def test_18_3_what_the_preview_says_the_cell_will_read_as_is_what_the_node_page_reads_back(tmp_path):
+    """The page keeps 撤销 only while the row reads as the preview said it would (`now_text`), so that text must
+    be exactly what the node page's details say after the write -- decoration, a link, code, a pipe, a
+    <br> and padding included."""
+    root = _project(tmp_path / "proj")
+    tricky = {"result": "**t=3.10**<br>p | q  [a](http://x) `code` <br> end ", "verdict": "  ✅ **主线**，见 [#12](12.md) "}
+    node = "attempt%3Amap.md%2316"
+    with _serve(root) as base:
+        status, preview = _call(f"{base}/api/attempts/preview", "POST", {"op": "update", "number": "16", "fields": tricky})
+        assert status == 200
+        status, _ = _call(f"{base}/api/attempts/write", "POST", {"op": "update", "number": "16", "fields": tricky})
+        assert status == 200
+        status, page = _call(f"{base}/api/node?node={node}")
+        assert status == 200
+    for key in tricky:
+        assert page["details"][key] == preview["cells"][key]["now_text"], key

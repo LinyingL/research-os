@@ -537,7 +537,7 @@ def test_12_3_the_sync_sentence_counts_the_copies_put_beside_not_the_canvas():
     conflict = {"seq": 2, "updated": ["a"], "kept_yours": [], "entries_sent": 1,
                 "conflicts": [{"path": "steps/17-plot.py", "official_copy": "steps/17-plot.official.py"}]}
     said = _js_call("team.js", "ROTeam", "_syncDone", conflict)
-    assert "1 个两边都改过的文件留着你的，官方的一份放在旁边" in said and "1 条" in said
+    assert "1 个两边都改过的文件留着你的，正式的一份放在旁边" in said and "1 条" in said
 
 
 def test_12_9_the_sidebar_and_views_follow_collaborative_acts():
@@ -548,7 +548,7 @@ def test_12_9_the_sidebar_and_views_follow_collaborative_acts():
     assert 'if (target === "proposals") { ROTeam.showList(); return; }' in app
     assert "function showList()" in team and "view.proposal = null;" in team
     # the views showing the shared drive reload when gone to
-    assert 'const SHARED_STATE_VIEWS = ["desk", "proposals", "tree", "members"];' in app
+    assert 'const SHARED_STATE_VIEWS = ["desk", "proposals", "members"];' in app
     # every act that changes what the views show marks them stale
     assert team.count("markViewsStale();") >= 4 and "markViewsStale()" in desk_js
     # the act's sentence is brought into view
@@ -576,7 +576,7 @@ def test_12_11_typography_badges_and_icons():
         assert "--font-mono" not in rule(selector), selector
     assert "--clay" not in rule(".pm-mark")
     team = (WEBAPP / "team.js").read_text(encoding="utf-8")
-    assert 'head.appendChild(label(g.label' not in team and 'mk("h2", "route-group-title", g.label)' in team
+    assert 'head.appendChild(label(g.label' not in team and 'mk("h2", "route-group-title", RODesk.verdictWord(g))' in team
     assert '"已写入正式版本的改动"' in team and '"已写入正式版本的"' not in team
 
 

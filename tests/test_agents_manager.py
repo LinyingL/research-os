@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -21,12 +22,13 @@ from pathlib import Path
 
 import pytest
 
-from researchos import history, project, workspace
+from researchos import db, history, names, paths, project, workspace
 from researchos.agents import labels, manager, profiles, snapshot
 from researchos.agents import runs as run_store
 from researchos.records import files as record_files
 from researchos.records import notes as notes_mod
 from researchos.records.identity import read_identity
+from researchos.webapp import watcher as project_watcher
 
 FAKE = r'''#!@PYTHON@
 import json, os, signal, subprocess, sys, time
@@ -57,8 +59,13 @@ session = arg_after("--session-id", "--resume") if flavor == "claude" else (arg_
 with open(HERE / "calls.jsonl", "a") as handle:
     handle.write(json.dumps({"argv": sys.argv, "stdin": stdin_text, "cwd": os.getcwd(),
                              "env": {k: v for k, v in os.environ.items()
-                                     if k.startswith(("RESEARCHOS", "CLAUDE", "OPENCODE", "CCR_"))},
+                                     if k.startswith(("RESEARCHOS", "RCE_", "CLAUDE", "OPENCODE", "CCR_", "ANTHROPIC_"))
+                                     or k.endswith(("_TOKEN", "_SECRET", "_API_KEY"))},
                              "pid": os.getpid()}) + "\n")
+if scenario.get("home"):
+    # The fake plays the MCP server's tools in its own process; the real server is given the home by its entry in
+    # the MCP configuration, the program itself is not (DESIGN 18.1 item 2). The call log above shows what it was given.
+    os.environ["RESEARCHOS_HOME"] = scenario["home"]
 
 
 def emit(obj):
@@ -127,7 +134,8 @@ for step in scenario.get("steps", []):
         runs.append_signal(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"], "ask", question=step["question"])
     elif op == "refusal":
         from researchos.agents import guard, runs
-        guard.log_refusal(runs.run_dir(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"]), "Bash", step["target"], step["reason"])
+        reason = guard.Refusal(step["reason"], step["code"]) if step.get("code") else step["reason"]
+        guard.log_refusal(runs.run_dir(scenario["project_id"], os.environ["RESEARCHOS_AGENT_RUN"]), "Bash", step["target"], reason)
     elif op == "complete":
         # what researchos_complete_task does: a result record, the task done, attributed to the agent
         from researchos import workspace
@@ -225,7 +233,7 @@ class Scene:
         agent = labels.parse_owner(owner)
         body = {"flavor": "claude" if runner == "claude-code" else "opencode", "steps": steps,
                 "project_id": self.pid, "task_id": task_id, "agent": [agent.runner, agent.model],
-                "by": "m-1", **extra}
+                "by": "m-1", "home": str(paths.researchos_home()), **extra}
         (self.bins[runner].parent / "scenario.json").write_text(json.dumps(body))
 
     def calls(self, runner: str = "claude-code") -> list[dict]:
@@ -365,6 +373,10 @@ def test_done_run_end_to_end(scene: Scene, monkeypatch):
     assert argv[argv.index("--session-id") + 1] == run["session_id"]
     assert argv[argv.index("--model") + 1] == "sonnet"
     assert argv.index("--allowedTools") > argv.index("--append-system-prompt")
+    assert argv[argv.index("--setting-sources") + 1] == "user"  # the project's own .claude/settings*.json is not loaded
+    # ... but its CLAUDE.md is: the project folder is added, and Claude Code reads an added folder's CLAUDE.md with this
+    assert argv[argv.index("--add-dir") + 1] == str(scene.root.resolve()) == call["cwd"]
+    assert call["env"]["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] == "1"
     assert call["cwd"] == str(scene.root.resolve())
     assert call["env"]["RESEARCHOS_AGENT_RUN"] == run["id"]
     assert "CLAUDECODE" not in call["env"] and "CLAUDE_CODE_REMOTE_SESSION_ID" not in call["env"]
@@ -719,6 +731,7 @@ def test_shutdown_interrupts_every_run_and_refuses_new_ones(scene: Scene):
     scene.manager.shutdown()  # idempotent
     run = scene.run(started["id"])
     assert run["state"] == "interrupted" and run["error"]["code"] == "shutdown"
+    assert scene.manager.detail(scene.pid, started["id"])["steps"][-1]["code"] == "shutdown"  # the log ends with the code
     assert wait_gone(pid)
     assert "partial.txt" in run["changes"]["created"] and run["revertible"] is True  # it can still be undone
     assert codes(scene.manager.start, scene.root, scene.pid, "t1", by=None, by_name=None, lang="en") == "start_failed"
@@ -749,8 +762,10 @@ def test_overwriting_a_data_file_is_an_out_of_bounds_change(scene: Scene):
     scene.put("clean.txt", "keep\n")
     run = scene.go([init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
                     {"op": "write", "path": "newdata.csv", "text": "x\n1\n"}, {"op": "complete"}, finish_step()])
-    assert run["state"] == "done"
+    # the agent reported the task done, and the run reads out of bounds all the same (18.1 item 4)
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
     assert run["violations"] == [{"path": "data.csv", "reason": "data_changed"}]
+    assert scene.tasks()["t1"]["done"] is True  # the task's done mark stays as the agent set it
     assert "data.csv" in run["changes"]["modified"] and "newdata.csv" in run["changes"]["created"]
     listed = scene.manager.runs(scene.pid)["runs"][0]
     assert listed["violations"] == 1 and listed["can_revert"] is True
@@ -770,6 +785,7 @@ def test_a_tasks_json_edit_the_tools_did_not_make_is_a_violation(scene: Scene):
                           "owner": "agent:claude-code:sonnet", "due": ""}])
     run = scene.go([init_step(), {"op": "write", "path": str(tasks_path), "text": sneaky}, finish_step()])
     assert {"path": "research/tasks.json", "reason": "record_changed"} in run["violations"]
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
     # the history keeps the file's attribution out of the agent's hands
     assert all(v.source != "agent" for v in scene.versions("research/tasks.json"))
 
@@ -782,6 +798,7 @@ def test_researchos_folder_and_git_changes_are_violations(scene: Scene):
     run = scene.go([init_step(), {"op": "write", "path": str(team), "text": "x = 1\n"}, finish_step()])
     reasons = {(v["path"], v["reason"]) for v in run["violations"]}
     assert (".researchos/team.toml", "researchos_changed") in reasons
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
     assert (".researchos/team.toml" not in [v.who for v in scene.versions(".researchos/team.toml")])  # no attribution there
 
 
@@ -809,6 +826,243 @@ def test_the_persons_own_saves_during_the_run_are_not_the_agents(scene: Scene):
     assert [v.who for v in scene.versions("agent.txt")] == ["agent:claude-code:sonnet#m-1"]
     # the listener is gone once the run ended
     assert not record_files._listeners
+
+
+def git_repo(scene: Scene) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=scene.root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"],
+                   cwd=scene.root, check=True)
+
+
+def test_a_planted_git_hook_makes_the_run_read_out_of_bounds_and_undo_takes_it_away(scene: Scene):
+    git_repo(scene)
+    hook = scene.root / ".git" / "hooks" / "pre-commit"
+    run = scene.go([init_step(), {"op": "write", "path": str(hook), "text": "#!/bin/sh\ntouch /tmp/nope\n"},
+                    {"op": "complete"}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
+    assert {"path": ".git/hooks/pre-commit", "reason": "git_hooks_changed"} in run["violations"]
+    assert ".git/hooks/pre-commit" in run["changes"]["created"]
+    assert scene.versions(".git/hooks/pre-commit") == []  # git's own files are not the history's business
+    listed = scene.manager.runs(scene.pid)["runs"][0]
+    assert listed["state"] == "out_of_bounds" and listed["outcome"] == "done" and listed["violations"] >= 1
+    assert listed["can_revert"] is True and listed["can_reply"] is True
+    # never "done" for the run, and the task keeps the mark the agent gave it
+    assert scene.tasks()["t1"]["done"] is True
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".git/hooks/pre-commit" in result["removed"] and not hook.exists()
+    assert (scene.root / ".git" / "hooks").is_dir()
+    assert scene.tasks()["t1"]["done"] is False  # undo takes the agent's own done mark back (17.6)
+    assert scene.manager.runs(scene.pid)["runs"][0]["reverted"] is True
+
+
+def test_a_changed_git_config_is_out_of_bounds_and_undo_puts_it_back(scene: Scene):
+    git_repo(scene)
+    config = scene.root / ".git" / "config"
+    original = config.read_text()
+    run = scene.go([init_step(), {"op": "write", "path": str(config), "text": original + "[core]\n\thooksPath = /tmp/h\n"},
+                    finish_step()])
+    assert run["state"] == "out_of_bounds"
+    assert {"path": ".git/config", "reason": "git_config_changed"} in run["violations"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert ".git/config" in result["restored"] and config.read_text() == original
+
+
+def test_a_repository_the_run_started_is_not_taken_apart_by_undo(scene: Scene):
+    run = scene.go([init_step(), {"op": "write", "path": str(scene.root / ".git" / "config"), "text": "[core]\n"},
+                    {"op": "write", "path": str(scene.root / ".git" / "HEAD"), "text": "ref: refs/heads/main\n"},
+                    finish_step()])
+    assert run["state"] == "out_of_bounds"
+    assert {"path": ".git/config", "reason": "git_config_changed"} in run["violations"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert {"path": ".git/config", "reason": "protected"} in result["skipped"]
+    assert (scene.root / ".git" / "config").read_text() == "[core]\n"
+
+
+def backup_name(day: int, kind: str = "toml") -> str:
+    return f"x.toml.202601{day:02d}T000000000000Z.{kind}"
+
+
+def test_a_deleted_backup_is_out_of_bounds(scene: Scene):
+    backup = scene.put(f".researchos/backups/{backup_name(1)}", "old copy\n")
+    scene.put(f".researchos/backups/{backup_name(2)}", "newer copy\n")
+    run = scene.go([init_step(), {"op": "delete", "path": str(backup)}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "ended"
+    path = f".researchos/backups/{backup_name(1)}"
+    assert run["violations"] == [{"path": path, "reason": "backup_deleted"}]
+    assert path in run["changes"]["deleted"]
+    # the picture holds no copy of a backup: undo says so instead of pretending
+    assert scene.manager.runs(scene.pid)["runs"][0]["can_revert"] is True
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == [{"path": path, "reason": "no_copy"}] and result["restored"] == []
+    before = json.loads((run_store.run_dir(scene.pid, run["id"]) / "before.json").read_text())
+    assert before["backups"][path] == {"size": len("old copy\n")}  # names and sizes, from the start
+    assert f".researchos/backups/{backup_name(2)}" in before["backups"]
+
+
+def test_new_backups_are_nothing_and_a_run_saving_through_its_tools_may_rotate_old_ones(scene: Scene):
+    """Research OS keeps the newest 20 copies of what it writes before a write; a run's own `complete` tool
+    saves tasks.json and so adds one and prunes the oldest. That is not the agent deleting a backup."""
+    series = [f".researchos/backups/tasks.json.202601{d:02d}T000000000000Z.write.json" for d in range(1, 21)]
+    for rel in series:
+        scene.put(rel, "{}")
+    run = scene.go(COMPLETE)
+    assert run["state"] == "done" and run["violations"] == [], run["violations"]
+    left = sorted(p.name for p in (scene.root / ".researchos" / "backups").glob("tasks.json.*.write.json"))
+    assert len(left) == 20 and left[0] == Path(series[1]).name  # the oldest went, a new one came
+    assert not (scene.root / series[0]).exists()
+    assert run["changes"]["deleted"] == []
+
+
+def test_an_out_of_bounds_run_that_asked_a_question_can_still_be_answered(scene: Scene):
+    scene.put("data.csv", "a,b\n1,2\n")
+    scene.scenario([init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                    {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
+    first = scene.wait(scene.start()["id"])
+    assert first["state"] == "out_of_bounds" and first["outcome"] == "needs_input"
+    assert first["question"] == "Which sample?"
+    item = scene.manager.runs(scene.pid)["runs"][0]
+    assert item["state"] == "out_of_bounds" and item["outcome"] == "needs_input" and item["can_reply"] is True
+    scene.scenario([init_step(), finish_step("Thanks")])
+    answered = scene.manager.reply(scene.root, scene.pid, first["id"], "Sample B", by="m-1", by_name="Lin", lang="en")
+    assert answered["kind"] == "answer"  # it was a question, however the run reads
+    assert scene.wait(answered["id"])["state"] == "ended"
+
+
+@pytest.mark.parametrize("how", ["stop", "failed"])
+def test_a_stopped_or_failed_run_that_went_out_of_bounds_still_says_so_first(scene: Scene, how):
+    scene.put("data.csv", "a,b\n1,2\n")
+    gate = scene.tmp / "gate"
+    steps = [init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"}, {"op": "wait_file", "path": str(gate)},
+             finish_step()]
+    if how == "failed":
+        steps = [init_step(), {"op": "write", "path": "data.csv", "text": "a,b\n9,9\n"},
+                 {"op": "result", "is_error": True, "subtype": "error_during_execution", "text": "boom"}]
+    scene.scenario(steps)
+    started = scene.start()
+    if how == "stop":
+        scene.wait_state(started["id"], "running")
+        time.sleep(0.3)
+        scene.manager.stop(scene.pid, started["id"])
+    run = scene.wait(started["id"])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == ("stopped" if how == "stop" else "failed")
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["state"] == "out_of_bounds" and detail["outcome"] == run["outcome"]
+    if how == "stop":
+        assert detail["steps"][-1] == {"kind": "end", "text": "", "tool": None, "code": "stopped"}  # the log still says how it ended
+    else:
+        assert detail["error"]
+
+
+def test_a_recovered_run_that_went_out_of_bounds_reads_so(scene: Scene):
+    scene.put("data.csv", "a,b\n1,2\n")
+    run = stale_run(scene)
+    (scene.root / "data.csv").write_text("a,b\n9,9\n")
+    item = scene.manager.runs(scene.pid)["runs"][0]
+    assert item["state"] == "out_of_bounds" and item["outcome"] == "interrupted" and item["can_stop"] is False
+    stored = scene.run(run["id"])
+    assert stored["error"]["code"] == "engine_gone" and stored["violations"] == [
+        {"path": "data.csv", "reason": "data_changed"}]
+
+
+def attempts_project(scene: Scene) -> project_watcher.ProjectWatcher:
+    """The smallest project the watcher has something to watch in (an attempt table, a steps folder)."""
+    config = ('file = "map.md"\nheading = "H"\nsteps_dir = "steps"\n\n[columns]\nid = "#"\ndate = "date"\n'
+              'description = "desc"\nvariables = "vars"\nresult = "result"\nverdict = "verdict"\n')
+    scene.put(".researchos/attempts.toml", config)
+    scene.put("map.md", "## H\n\n| # | date | desc | vars | result | verdict |\n|---|---|---|---|---|---|\n"
+                        "| 1 | 2026-01-01 | d | v | r | ✅ |\n")
+    (scene.root / "steps").mkdir()
+    watcher = project_watcher.ProjectWatcher(lambda: scene.root, interval=0.01)
+    watcher.poll_once()  # the baseline
+    return watcher
+
+
+def test_a_watcher_scan_during_the_run_records_the_agents_files_and_the_run_adds_nothing_twice(scene: Scene):
+    watcher = attempts_project(scene)
+    scene.put("existing.py", "print('there before the run')\n")  # never scanned, and not the run's
+    gate, mine = scene.tmp / "gate", scene.root / "mine.py"
+    step = scene.root / "steps" / "s1.py"
+    scene.scenario([init_step(), {"op": "write", "path": str(step), "text": "x = 1\n"},
+                    {"op": "write", "path": "analysis.py", "text": "print(1)\n"},
+                    {"op": "wait_file", "path": str(gate)},
+                    {"op": "write", "path": "analysis.py", "text": "print(2)\n"}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    scene.wait_file(step)
+    scene.wait_file(scene.root / "analysis.py")
+    assert history.run_seen(scene.root) is not None  # the history knows a run is going on
+    record_files.durable_write(mine, b"print('the person saved this through Research OS')\n")
+    assert watcher.poll_once() is True  # the scan the agent's new step script caused
+    note = f"seen during run {started['id']}"
+    who = "agent:claude-code:sonnet#m-1"
+    assert [(v.source, v.who, v.note) for v in scene.versions("steps/s1.py")] == [("agent", who, note)]
+    assert [(v.source, v.who, v.note) for v in scene.versions("analysis.py")] == [("agent", who, note)]
+    # the person's save keeps their name, and a file older than the run is not the run's
+    assert [v.source for v in scene.versions("mine.py")] == ["scan"]
+    assert [v.source for v in scene.versions("existing.py")] == ["scan"]
+    assert [v.who for v in scene.versions("mine.py")] == [history.scan_who(scene.root)]
+    gate.write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "ended"
+    assert history.run_seen(scene.root) is None  # the window closes with the run
+    # the script the scan saw is not recorded again; the one the agent changed afterwards is
+    assert [(v.source, v.note) for v in scene.versions("steps/s1.py")] == [("agent", note)]
+    assert [(v.source, v.note) for v in reversed(scene.versions("analysis.py"))] == [("agent", note),
+                                                                                     ("agent", run["id"])]
+    assert [v.source for v in scene.versions("mine.py")] == ["scan"]
+    assert run["changes"]["by_person"] == ["mine.py"]
+
+
+def test_the_history_is_told_for_exactly_as_long_as_the_run_is_going(scene: Scene, monkeypatch):
+    marks: list[tuple[str, object]] = []
+    original = manager.AgentManager._update
+
+    def spy(self, act, **changes):
+        if changes.get("state") in ("running", "ended"):
+            marks.append((changes["state"], history.run_seen(scene.root)))
+        return original(self, act, **changes)
+
+    monkeypatch.setattr(manager.AgentManager, "_update", spy)
+    assert history.run_seen(scene.root) is None
+    scene.go([init_step(), finish_step()])
+    (running, seen), (ended, after) = marks
+    assert running == "running" and seen is not None and seen.who == "agent:claude-code:sonnet#m-1"
+    assert ended == "ended" and after is None  # released when the attribution was written, before the final state
+    assert history.run_seen(scene.root) is None
+
+
+def test_a_run_that_could_not_be_checked_still_lets_the_history_go(scene: Scene, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("cannot compare")
+
+    monkeypatch.setattr(manager.AgentManager, "_assess", boom)
+    run = scene.go([init_step(), finish_step()])
+    assert run["error"]["code"] == "check_failed" and history.run_seen(scene.root) is None
+
+
+def test_the_attempt_table_the_agent_changed_gives_the_agents_verdict(scene: Scene):
+    watcher = attempts_project(scene)
+    scene.scenario([init_step(), {"op": "write", "path": "map.md", "text": "## H\n\n| # | date | desc | vars | result | verdict |\n"
+                                    "|---|---|---|---|---|---|\n| 1 | 2026-01-01 | d | v | r | ❌ |\n"},
+                    {"op": "write", "path": str(scene.root / "steps" / "s1.py"), "text": "x = 1\n"},
+                    {"op": "wait_file", "path": str(scene.tmp / "gate")}, finish_step()])
+    started = scene.start()
+    scene.wait_state(started["id"], "running")
+    scene.wait_file(scene.root / "steps" / "s1.py")
+    watcher.poll_once()
+    conn = db.connect(paths.graph_db_path(scene.root))
+    try:
+        node = db.get_nodes_by_type(conn, "attempt")[0]["id"]
+    finally:
+        conn.close()
+    with history.Store.open(scene.pid) as store:
+        [version] = store.versions(node)
+    assert version.source == "agent" and version.note == f"seen during run {started['id']}"
+    assert version.who == "agent:claude-code:sonnet#m-1" and version.summary["verdict"]
+    (scene.tmp / "gate").write_text("go")
+    run = scene.wait(started["id"])
+    assert run["state"] == "out_of_bounds"  # the table is not the agent's to change
+    assert {"path": "map.md", "reason": "record_changed"} in run["violations"]
 
 
 def test_history_attribution_without_a_person(scene: Scene):
@@ -911,11 +1165,11 @@ def test_a_failing_after_run_check_still_ends_the_run(scene: Scene, monkeypatch)
     real_take = snapshot.take
     calls = {"n": 0}
 
-    def flaky(root, copy_to=None):
+    def flaky(root, copy_to=None, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("cannot read the folder")
-        return real_take(root, copy_to)
+        return real_take(root, copy_to, **kwargs)
 
     monkeypatch.setattr(snapshot, "take", flaky)
     run = scene.go([init_step(), finish_step()])
@@ -1168,20 +1422,22 @@ def dead_pid() -> int:
 
 def stale_run(scene: Scene, *, state: str = "running", pid: int | None = None, engine_pid: int | None = None,
               before: bool = True, program_started: str | None = None, engine_started: str | None = None,
+              where: tuple[str, Path] | None = None,
               **more) -> dict:
     run_id = run_store.new_run_id()
-    run = {"id": run_id, "project_id": scene.pid, "root": str(scene.root), "task_id": "t1", "task_text": "x",
+    project_id, root = where or (scene.pid, scene.root)  # another project of this Mac, when `where` names it
+    run = {"id": run_id, "project_id": project_id, "root": str(root), "task_id": "t1", "task_text": "x",
            "task_due": None, "runner": "claude-code", "model": "sonnet", "owner": "agent:claude-code:sonnet",
            "label": "Claude Code · sonnet", "by": "m-1", "by_name": None, "lang": "en", "kind": "start",
            "parent": None, "message": None, "state": state, "reverted": False, "created": run_store.now_iso(),
            "started": run_store.now_iso(), "ended": None, "session_id": "s1", "pid": pid,
            "engine_pid": engine_pid if engine_pid is not None else dead_pid(), "changes": {}, "violations": [],
            "revertible": False, "program_started": program_started, "engine_started": engine_started, **more}
-    run_store.create_run(scene.pid, run)
+    run_store.create_run(project_id, run)
     if before:
-        rd = run_store.run_dir(scene.pid, run_id)
-        picture = snapshot.take(scene.root, copy_to=rd / "before")
-        picture["protected"] = snapshot.protected(scene.root, picture)
+        rd = run_store.run_dir(project_id, run_id)
+        picture = snapshot.take(root, copy_to=rd / "before")
+        picture["protected"] = snapshot.protected(root, picture)
         (rd / "before.json").write_text(json.dumps(picture))
     return run
 
@@ -1194,6 +1450,7 @@ def test_stale_running_run_is_marked_interrupted_with_its_changes(scene: Scene):
     assert listing["active"] is None
     (item,) = listing["runs"]
     assert item["state"] == "interrupted" and item["error"]["code"] == "engine_gone" and item["can_stop"] is False
+    assert scene.manager.detail(scene.pid, run["id"])["steps"][-1]["code"] == "engine_gone"
     stored = scene.run(run["id"])
     assert stored["ended"] and stored["changes"]["created"] == ["made_by_agent.txt"] and stored["revertible"] is True
     assert item["can_revert"] is True
@@ -1301,6 +1558,22 @@ def test_summary_flags():
     assert manager.summary({**base, "state": "needs_input"}, latest_of_task=True, active=False)["can_reply"]
     assert manager.summary({**base, "state": "preparing"}, latest_of_task=True, active=False)["can_reply"] is False
     assert manager.summary({}, latest_of_task=True, active=False)["can_stop"] is False
+    # an out-of-bounds run reads so; what it would have read decides what can be done with it (18.1 item 4)
+    assert s["state"] == s["outcome"] == "done"
+    oob = manager.summary({**base, "state": "out_of_bounds", "outcome": "done"}, latest_of_task=True, active=False)
+    assert oob["state"] == "out_of_bounds" and oob["outcome"] == "done" and oob["can_reply"] and oob["can_revert"]
+    assert not manager.summary({**base, "state": "out_of_bounds", "outcome": "failed", "session_id": None},
+                               latest_of_task=True, active=False)["can_reply"]
+    assert manager.summary({**base, "state": "out_of_bounds", "outcome": "stopped"}, latest_of_task=True,
+                           active=False)["can_reply"]
+    assert manager.summary({**base, "state": "out_of_bounds"}, latest_of_task=True, active=False)["outcome"] == (
+        "out_of_bounds")  # no outcome kept: nothing to continue from
+    assert run_store.outcome_of({"state": "out_of_bounds", "outcome": "ended"}) == "ended"
+    assert run_store.outcome_of({"state": "done", "outcome": "ended"}) == "done"
+    assert "out_of_bounds" in run_store.STATES and "out_of_bounds" not in run_store.ACTIVE_STATES
+    assert manager._warn_if_out_of_bounds("done", [{"path": "a", "reason": "x"}]) == ("out_of_bounds", "done")
+    assert manager._warn_if_out_of_bounds("done", []) == ("done", None)
+    assert manager._warn_if_out_of_bounds("failed", None) == ("failed", None)
 
 
 def test_agent_error_table():
@@ -1360,10 +1633,10 @@ def after_take_hook(monkeypatch, action) -> None:
     """Run `action()` at the start of every after-picture (`snapshot.take` without a copy folder)."""
     real_take = snapshot.take
 
-    def take(root, copy_to=None):
+    def take(root, copy_to=None, **kwargs):
         if copy_to is None:
             action()
-        return real_take(root, copy_to)
+        return real_take(root, copy_to, **kwargs)
 
     monkeypatch.setattr(snapshot, "take", take)
 
@@ -1741,3 +2014,593 @@ def test_retention_keeps_the_log_of_many_runs_and_the_copies_of_a_few(scene: Sce
     assert codes(scene.manager.revert, scene.root, scene.pid, kept[3], by=None) == "not_revertible"
     detail = scene.manager.detail(scene.pid, kept[3])  # the log of an older run still reads
     assert detail["instruction"] and detail["steps"]
+
+
+# -- undo says what it will do, and asks (DESIGN 18.1 item 5) -----------------------------------------------
+
+
+def tree_state(root: Path) -> dict[str, tuple[str, str]]:
+    """Every file and folder under `root`, with the SHA-256 of each file: what a read must leave as it was."""
+    import hashlib
+
+    state: dict[str, tuple[str, str]] = {}
+    for here, dirs, files in os.walk(root):
+        for name in dirs:
+            state[os.path.relpath(os.path.join(here, name), root)] = ("dir", "")
+        for name in files:
+            full = Path(here) / name
+            state[os.path.relpath(full, root)] = ("file", hashlib.sha256(full.read_bytes()).hexdigest())
+    return state
+
+
+def undo_run(scene: Scene) -> dict:
+    """A finished run that changed one file, deleted one, made two (a script and the result record), changed a
+    fourth that the person then edited, and marked the task done."""
+    scene.put("old.txt", "v0\n")
+    scene.put("gone.txt", "g\n")
+    scene.put("later.txt", "l0\n")
+    run = scene.go(COMPLETE + [{"op": "write", "path": "old.txt", "text": "v1\n"},
+                               {"op": "delete", "path": "gone.txt"},
+                               {"op": "write", "path": "later.txt", "text": "l1\n"}])
+    assert run["state"] == "done", run["error"]
+    (scene.root / "later.txt").write_text("l2\n")  # after the run
+    return run
+
+
+def plan_paths(items: list[dict]) -> list[str]:
+    return [item["path"] for item in items]
+
+
+def test_the_undo_plan_lists_what_it_would_do_with_times_and_writes_nothing(scene: Scene):
+    run = undo_run(scene)
+    report = run["report"]
+    before_tree, before_run = tree_state(scene.root), scene.run(run["id"])
+    before_versions = {rel: len(scene.versions(rel)) for rel in ("old.txt", "gone.txt", "analysis.py")}
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan_paths(plan["restore"]) == ["gone.txt", "old.txt", "research/tasks.json"]
+    assert plan_paths(plan["remove"]) == sorted(["analysis.py", report])
+    assert plan["cannot"] == [{"path": "later.txt", "reason": "changed_since"}]
+    assert plan["run"]["id"] == run["id"] and plan["run"]["can_revert"] is True
+    # a file that is there carries its own modification time, local, to the second; one that is gone, the run's end
+    by_path = {item["path"]: item for item in plan["restore"] + plan["remove"]}
+    mtime = os.lstat(scene.root / "old.txt").st_mtime
+    assert by_path["old.txt"]["time"] == manager._local_time(mtime)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", by_path["old.txt"]["time"])
+    assert by_path["analysis.py"]["time"] == manager._local_time(os.lstat(scene.root / "analysis.py").st_mtime)
+    assert by_path["gone.txt"]["time"] == manager._local_time(run["ended"])
+    # the done mark is listed as the task file, with the task it belongs to
+    assert by_path["research/tasks.json"] == {"path": "research/tasks.json", "task": "Analyse the sample",
+                                              "time": manager._local_time(run["ended"])}
+    assert all("from" not in item for item in plan["restore"] + plan["remove"])
+    # nothing was written: not the project, not the run's folder, not the run, not the history, not the task
+    assert tree_state(scene.root) == before_tree and scene.run(run["id"]) == before_run
+    assert not (run_store.run_dir(scene.pid, run["id"]) / "reverted").exists()
+    assert {rel: len(scene.versions(rel)) for rel in before_versions} == before_versions
+    assert scene.tasks()["t1"]["done"] is True
+    # asked again, the same; and it is what the undo then does
+    assert scene.manager.revert_plan(scene.root, scene.pid, run["id"]) == plan
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert result["restored"] == plan_paths(plan["restore"]) and result["removed"] == plan_paths(plan["remove"])
+    assert result["skipped"] == plan["cannot"]
+
+
+def test_undo_with_a_choice_leaves_the_unchecked_files_alone_and_lists_them_as_kept(scene: Scene):
+    run = undo_run(scene)
+    report = run["report"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1",
+                                  files=["gone.txt", report, "research/tasks.json"])
+    assert result["restored"] == ["gone.txt", "research/tasks.json"] and result["removed"] == [report]
+    assert sorted((s["path"], s["reason"]) for s in result["skipped"]) == [
+        ("analysis.py", "kept"), ("later.txt", "changed_since"), ("old.txt", "kept")]
+    assert (scene.root / "old.txt").read_text() == "v1\n" and (scene.root / "analysis.py").is_file()
+    assert (scene.root / "gone.txt").read_text() == "g\n" and not (scene.root / report).exists()
+    assert scene.tasks()["t1"]["done"] is False
+    # something was undone, so the run reads undone, partly: the kept files are counted with the others
+    assert result["run"]["reverted"] is True and result["run"]["revert_skipped"] == 3
+    stored = scene.run(run["id"])
+    assert stored["revert"]["skipped"] == result["skipped"]
+    assert scene.manager.detail(scene.pid, run["id"])["revert"]["skipped"] == result["skipped"]
+    assert f"undo {run['id']}" in [v.note for v in scene.versions("gone.txt")]
+    assert f"undo {run['id']}" not in [v.note for v in scene.versions("old.txt")]  # it was not touched
+
+
+def test_the_done_mark_is_one_of_the_choices(scene: Scene):
+    run = undo_run(scene)
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None,
+                                  files=["gone.txt", "old.txt", "analysis.py", run["report"]])
+    assert ("research/tasks.json", "kept") in [(s["path"], s["reason"]) for s in result["skipped"]]
+    assert "research/tasks.json" not in result["restored"]
+    task = scene.tasks()["t1"]
+    assert task["done"] is True and task["report"] == run["report"]  # the task still points at the result record
+
+
+def test_the_choice_is_checked_and_a_path_the_plan_does_not_offer_is_never_acted_on(scene: Scene):
+    run = undo_run(scene)
+    before_tree = tree_state(scene.root)
+    for bad in ([], "old.txt", [1], [""], ["old.txt", None], {"old.txt": True}):
+        assert codes(scene.manager.revert, scene.root, scene.pid, run["id"], by=None, files=bad) == "invalid"
+    assert codes(scene.manager.revert, scene.root, scene.pid, run["id"], by=None,
+                 files=["a"] * (manager.UNDO_FILES_LIMIT + 1)) == "invalid"
+    assert tree_state(scene.root) == before_tree and not scene.run(run["id"])["reverted"]
+    # naming only files the plan does not offer undoes nothing: what could have been is kept, the rest keeps its reason
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["later.txt", "nothing.txt"])
+    assert result["restored"] == [] and result["removed"] == []
+    reasons = {s["path"]: s["reason"] for s in result["skipped"]}
+    assert reasons["later.txt"] == "changed_since" and reasons["old.txt"] == "kept" and reasons["gone.txt"] == "kept"
+    assert "nothing.txt" not in reasons and tree_state(scene.root) == before_tree
+    stored = scene.run(run["id"])
+    assert stored["reverted"] is False and stored["revert"]["skipped"] == result["skipped"]
+    # nothing was undone, so the run can still be: all of it, now
+    assert scene.manager.detail(scene.pid, run["id"])["revert"]["skipped"] == result["skipped"]
+    full = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert full["restored"] == ["gone.txt", "old.txt", "research/tasks.json"]
+    assert [s for s in full["skipped"] if s["reason"] == "kept"] == []
+    assert full["run"]["reverted"] is True
+
+
+def test_a_renamed_file_is_one_choice_under_its_old_name(scene: Scene, monkeypatch):
+    scene.put("raw.txt", "the only copy of the raw data\n")
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 5)  # nothing is copied
+    run = scene.go([init_step(), {"op": "rename", "from": "raw.txt", "to": "sub/raw_old.txt"}, finish_step()])
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert [(i["path"], i["from"]) for i in plan["restore"]] == [("raw.txt", "sub/raw_old.txt")]
+    assert plan["remove"] == [] and plan["cannot"] == []
+    assert plan["restore"][0]["time"] == manager._local_time(os.lstat(scene.root / "sub" / "raw_old.txt").st_mtime)
+    # left unchecked: the file keeps its new name, and nothing is made or removed
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["elsewhere.txt"])
+    assert result["skipped"] == [{"path": "raw.txt", "reason": "kept"}] and result["restored"] == []
+    assert (scene.root / "sub" / "raw_old.txt").is_file() and not (scene.root / "raw.txt").exists()
+    assert scene.run(run["id"])["reverted"] is False
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["raw.txt"])
+    assert result["restored"] == ["raw.txt"] and result["removed"] == [] and result["skipped"] == []
+    assert (scene.root / "raw.txt").read_text() == "the only copy of the raw data\n"
+    assert not (scene.root / "sub").exists()
+
+
+def test_undo_keeps_the_folders_that_existed_before_the_run(scene: Scene):
+    (scene.root / "figs").mkdir()  # empty
+    (scene.root / "quiet").mkdir()  # holds only what the picture never records
+    (scene.root / "quiet" / ".DS_Store").write_text("noise")
+    scene.put("busy/a.txt", "a")
+    run = scene.go([init_step(), {"op": "write", "path": "figs/plot.png", "text": "p"},
+                    {"op": "write", "path": "quiet/new.txt", "text": "n"},
+                    {"op": "write", "path": "busy/b.txt", "text": "b"},
+                    {"op": "write", "path": "made/by/run.txt", "text": "r"}, finish_step()])
+    before = json.loads((run_store.run_dir(scene.pid, run["id"]) / "before.json").read_text())
+    assert {"figs", "quiet", "busy"} <= set(before["dirs"]) and "made" not in before["dirs"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == ["busy/b.txt", "figs/plot.png", "made/by/run.txt", "quiet/new.txt"]
+    for folder in ("figs", "quiet", "busy"):
+        assert (scene.root / folder).is_dir(), folder  # the researcher's own folders, empty or not
+    assert (scene.root / "quiet" / ".DS_Store").is_file() and (scene.root / "busy" / "a.txt").is_file()
+    assert not (scene.root / "made").exists()  # made by the run, emptied by the undo
+
+
+def test_a_picture_without_folders_still_keeps_the_folders_its_files_stand_in(scene: Scene):
+    """A run whose picture was taken before `dirs` existed: the folders of its files are the ones it knows."""
+    scene.put("busy/a.txt", "a")
+    run = scene.go([init_step(), {"op": "write", "path": "busy/b.txt", "text": "b"},
+                    {"op": "write", "path": "made/run.txt", "text": "r"}, finish_step()])
+    path = run_store.run_dir(scene.pid, run["id"]) / "before.json"
+    picture = json.loads(path.read_text())
+    picture.pop("dirs")
+    picture.pop("dirs_partial")
+    path.write_text(json.dumps(picture))
+    scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert (scene.root / "busy").is_dir() and not (scene.root / "made").exists()
+
+
+def test_a_cut_picture_cannot_say_which_folders_existed_so_undo_removes_none(scene: Scene, monkeypatch):
+    for i in range(6):
+        scene.put(f"f{i}.txt", str(i))
+    total = len(snapshot.take(scene.root)["files"])
+    monkeypatch.setattr(snapshot, "FILE_LIMIT", total - 1)  # the walk meets `.aaa` before `.researchos`
+    run = scene.go([init_step(), {"op": "write", "path": ".aaa/x.txt", "text": "x"}, finish_step()])
+    assert run["snapshot"]["partial"] is True and run["changes"]["created"] == [".aaa/x.txt"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == [".aaa/x.txt"]
+    assert (scene.root / ".aaa").is_dir() and not (scene.root / ".aaa" / "x.txt").exists()
+    assert manager._folders_before({"partial": True, "files": {}, "dirs": ["a"]}) is None
+    assert manager._folders_before({"files": {}, "dirs": ["a"], "dirs_partial": True}) is None
+    assert manager._folders_before({"files": {"a/b/c.txt": {}}, "dirs": ["x"]}) == {"a", "a/b", "x"}
+
+
+def test_the_plan_refuses_as_the_undo_does(scene: Scene):
+    first = scene.go([init_step(), {"op": "write", "path": "shared.txt", "text": "1"}, finish_step()])
+    second = scene.go([init_step(), {"op": "write", "path": "shared.txt", "text": "2"}, finish_step()])
+    assert codes(scene.manager.revert_plan, scene.root, scene.pid, first["id"]) == "later_run"
+    assert codes(scene.manager.revert_plan, scene.root, scene.pid, "r-20200101T000000Z-aaaaaa") == "run_missing"
+    assert codes(scene.manager.revert_plan, scene.root, "not-a-project-id!!", second["id"]) == "invalid"
+    assert scene.manager.revert_plan(scene.root, scene.pid, second["id"])["remove"] == []  # 'shared.txt' is modified
+    scene.manager.revert(scene.root, scene.pid, second["id"], by=None)
+    assert codes(scene.manager.revert_plan, scene.root, scene.pid, second["id"]) == "reverted"
+    assert scene.manager.revert_plan(scene.root, scene.pid, first["id"])["remove"] == [
+        {"path": "shared.txt", "time": manager._local_time(os.lstat(scene.root / "shared.txt").st_mtime)}]
+    # nothing to undo: a run that changed nothing and reported nothing
+    empty = scene.go([init_step(), finish_step()])
+    assert codes(scene.manager.revert_plan, scene.root, scene.pid, empty["id"]) == "not_revertible"
+    # a run going elsewhere, and a run that is still going
+    engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        stale_run(scene, engine_pid=engine.pid, engine_started=manager._start_of(engine.pid), before=False)
+        assert codes(scene.manager.revert_plan, scene.root, scene.pid, first["id"]) == "busy"
+    finally:
+        engine.kill()
+        engine.wait()
+
+
+def test_the_plan_does_not_recover_a_run_a_gone_engine_left_going(scene: Scene):
+    """Listing the runs recovers them (a write); asking for a plan only reads."""
+    done = scene.go([init_step(), {"op": "write", "path": "a.txt", "text": "a"}, finish_step()])
+    stale = stale_run(scene, before=False)
+    assert codes(scene.manager.revert_plan, scene.root, scene.pid, stale["id"]) == "not_finished"
+    assert scene.run(stale["id"])["state"] == "running"  # still as it was stored
+    assert scene.manager.revert_plan(scene.root, scene.pid, done["id"])["remove"][0]["path"] == "a.txt"
+    assert scene.run(stale["id"])["state"] == "running"
+
+
+# -- at engine start (DESIGN 18.1 item 6) -------------------------------------------------------------------
+
+
+def test_recover_all_recovers_the_runs_of_every_project_at_once(scene: Scene, tmp_path: Path):
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    project.init_project(other_root)
+    other_pid = read_identity(other_root).identity.id
+    scene.put("keep.txt", "k")
+    (other_root / "keep.txt").write_text("k")
+    finished = scene.go([init_step(), finish_step()])  # a run that is over is not touched (starting one recovers)
+    here = stale_run(scene)
+    there = stale_run(scene, where=(other_pid, other_root))
+    (scene.root / "made_here.txt").write_text("m")
+    (other_root / "made_there.txt").write_text("m")
+    assert scene.run(here["id"])["state"] == "running" and run_store.load_run(other_pid, there["id"])["state"] == "running"
+    recovered = scene.manager.recover_all()  # nobody listed anything
+    assert sorted(recovered) == sorted([here["id"], there["id"]])
+    for pid, run in ((scene.pid, here), (other_pid, there)):
+        stored = run_store.load_run(pid, run["id"])
+        assert stored["state"] == "interrupted" and stored["error"]["code"] == "engine_gone" and stored["ended"]
+    assert run_store.load_run(other_pid, there["id"])["changes"]["created"] == ["made_there.txt"]
+    assert scene.run(here["id"])["changes"]["created"] == ["made_here.txt"]
+    assert scene.run(finished["id"])["state"] == "ended"
+    assert scene.manager.recover_all() == []  # nothing is left going
+
+
+def test_recover_all_ends_a_program_only_when_it_is_verifiably_the_runs_and_leaves_other_engines_alone(
+        scene: Scene, tmp_path: Path):
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    project.init_project(other_root)
+    other_pid = read_identity(other_root).identity.id
+    scene.scenario([{"op": "sleep", "s": 120}])
+    ours = subprocess.Popen([str(scene.bins["claude-code"]), "sleep"])  # `ps` shows the fake `claude`
+    bystander = subprocess.Popen(["sleep", "120"])
+    engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        stale_run(scene, pid=ours.pid, program_started=manager._start_of(ours.pid))
+        stale_run(scene, where=(other_pid, other_root), pid=bystander.pid, program_started="Mon Jan  1 00:00:00 1990")
+        live = stale_run(scene, engine_pid=engine.pid, engine_started=manager._start_of(engine.pid), before=False)
+        recovered = scene.manager.recover_all()
+        assert len(recovered) == 2 and live["id"] not in recovered
+        assert ours.wait(timeout=15) in (-15, -9)
+        time.sleep(0.3)
+        assert bystander.poll() is None  # a pid that is not that program's start time is nobody's to end
+        assert scene.run(live["id"])["state"] == "running"  # another engine carries it out
+    finally:
+        for proc in (ours, bystander, engine):
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+
+
+def test_recover_all_survives_one_projects_trouble_and_stops_when_closing(scene: Scene, monkeypatch):
+    first = stale_run(scene)
+    other = "p-" + "ab" * 16
+    stale = {"id": run_store.new_run_id(), "project_id": other, "root": str(scene.root), "state": "running",
+             "created": run_store.now_iso(), "engine_pid": dead_pid()}
+    run_store.create_run(other, stale)
+    real = scene.manager._recover
+
+    def flaky(project_id):
+        if project_id == other:
+            raise RuntimeError("boom")
+        return real(project_id)
+
+    monkeypatch.setattr(scene.manager, "_recover", flaky)
+    assert scene.manager.recover_all() == [first["id"]]
+    assert run_store.load_run(other, stale["id"])["state"] == "running"
+    monkeypatch.setattr(scene.manager, "_recover", real)
+    scene.manager._closing = True
+    assert scene.manager.recover_all() == []
+    assert run_store.load_run(other, stale["id"])["state"] == "running"
+
+
+def test_the_plan_sees_an_empty_folder_where_a_deleted_file_was_as_nothing_and_does_not_remove_it(scene: Scene):
+    scene.put("gone.txt", "g\n")
+    run = scene.go([init_step(), {"op": "delete", "path": "gone.txt"}, finish_step()])
+    (scene.root / "gone.txt").mkdir()  # what a replaced file leaves behind
+    before = tree_state(scene.root)
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan_paths(plan["restore"]) == ["gone.txt"] and plan["cannot"] == []
+    assert tree_state(scene.root) == before and (scene.root / "gone.txt").is_dir()  # the plan removed nothing
+    # with something in it the folder is not nothing: the plan says so, as the undo would
+    (scene.root / "gone.txt" / "mine.txt").write_text("the person's\n")
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan["restore"] == [] and plan["cannot"] == [{"path": "gone.txt", "reason": "changed_since"}]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == plan["cannot"] and result["restored"] == []
+
+
+def test_the_plan_and_the_undo_agree_when_a_parent_of_a_deleted_file_is_now_a_file(scene: Scene):
+    scene.put("sub/inner.txt", "inner\n")
+    run = scene.go([init_step(), {"op": "delete", "path": "sub/inner.txt"}, finish_step()])
+    (scene.root / "sub").rmdir()
+    (scene.root / "sub").write_text("now a file\n")  # a folder cannot be made there
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert plan["restore"] == [] and plan["cannot"] == [{"path": "sub/inner.txt", "reason": "changed_since"}]
+    assert result["skipped"] == plan["cannot"] and result["restored"] == []
+    assert (scene.root / "sub").read_text() == "now a file\n"
+
+
+# -- review findings of group 1 (V14) -----------------------------------------------------------------------
+
+
+def test_a_deleted_file_with_no_copy_is_listed_as_having_none_not_as_one_the_person_kept(scene: Scene, monkeypatch):
+    scene.put("big.txt", "far more than the copy limit\n")
+    scene.put("small.txt", "s\n")
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 5)
+    run = scene.go([init_step(), {"op": "delete", "path": "big.txt"},
+                    {"op": "write", "path": "small.txt", "text": "now longer than before\n"},
+                    {"op": "write", "path": "n.txt", "text": "new\n"}, finish_step()])
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan_paths(plan["restore"]) == ["small.txt"] and plan_paths(plan["remove"]) == ["n.txt"]
+    assert plan["cannot"] == [{"path": "big.txt", "reason": "no_copy"}]
+    # the page posts only what is ticked, and a file it could not offer is not among them: it still has no copy
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["small.txt", "n.txt"])
+    assert result["skipped"] == [{"path": "big.txt", "reason": "no_copy"}]
+    assert result["restored"] == ["small.txt"] and result["removed"] == ["n.txt"]
+    assert scene.manager.detail(scene.pid, run["id"])["revert"]["skipped"] == result["skipped"]
+
+
+def test_a_modified_file_whose_copy_is_no_longer_what_was_recorded_is_no_copy_even_when_not_ticked(scene: Scene):
+    scene.put("old.txt", "v1\n")
+    scene.put("other.txt", "o1\n")
+    run = scene.go([init_step(), {"op": "write", "path": "old.txt", "text": "v2\n"},
+                    {"op": "write", "path": "other.txt", "text": "o2\n"}, finish_step()])
+    (run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt").write_text("tampered\n")  # not the recorded bytes
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan["cannot"] == [{"path": "old.txt", "reason": "no_copy"}] and plan_paths(plan["restore"]) == ["other.txt"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["other.txt"])
+    assert result["skipped"] == plan["cannot"] and result["restored"] == ["other.txt"]
+    assert (scene.root / "old.txt").read_text() == "v2\n"
+    assert not (run_store.run_dir(scene.pid, run["id"]) / "reverted" / "old.txt").exists()  # nothing was set aside
+
+
+def test_undo_does_not_put_git_files_into_the_change_history(scene: Scene):
+    git_repo(scene)
+    hook = scene.root / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 0\n")
+    hook.chmod(0o755)
+    config = scene.root / ".git" / "config"
+    original = config.read_text()
+    scene.put("ordinary.txt", "before\n")
+    run = scene.go([init_step(), {"op": "delete", "path": str(hook)},
+                    {"op": "write", "path": str(config), "text": original + "[remote \"o\"]\n\turl = https://u:tok@h/x\n"},
+                    {"op": "write", "path": "ordinary.txt", "text": "after\n"}, finish_step()])
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".git/config" in result["restored"] and ".git/hooks/pre-commit" in result["restored"]
+    assert config.read_text() == original and hook.is_file() and (scene.root / "ordinary.txt").read_text() == "before\n"
+    assert scene.versions(".git/config") == [] and scene.versions(".git/hooks/pre-commit") == []
+    assert f"undo {run['id']}" in [v.note for v in scene.versions("ordinary.txt")]  # an ordinary file still is recorded
+
+
+def test_a_run_that_cannot_be_compared_because_its_folder_is_away_is_compared_when_it_is_back(scene: Scene):
+    scene.put("keep.txt", "k")
+    run = stale_run(scene)
+    (scene.root / "made_by_agent.txt").write_text("m")
+    away = scene.tmp / "project.away"
+    scene.root.rename(away)  # the drive is not attached when the engine starts
+    assert scene.manager.recover_all() == [run["id"]]
+    stored = scene.run(run["id"])
+    assert stored["state"] == "interrupted" and stored["check_pending"] is True and stored["revertible"] is False
+    assert codes(scene.manager.revert, away, scene.pid, run["id"], by=None) in ("not_revertible", "read_only", "folder_gone")
+    away.rename(scene.root)  # back
+    assert scene.manager.runs(scene.pid)["runs"][0]["state"] == "interrupted"  # the listing compares it
+    stored = scene.run(run["id"])
+    assert stored["check_pending"] is False and stored["revertible"] is True
+    assert stored["changes"]["created"] == ["made_by_agent.txt"]
+    assert scene.manager.recover_all() == []
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == ["made_by_agent.txt"] and not (scene.root / "made_by_agent.txt").exists()
+
+
+def test_a_pending_comparison_survives_a_folder_that_stays_away_and_is_made_when_a_run_starts_after_its_return(
+        scene: Scene):
+    run = stale_run(scene)
+    away = scene.tmp / "project.away"
+    scene.root.rename(away)
+    scene.manager.recover_all()
+    scene.manager.recover_all()  # the folder is still away: still pending, nothing breaks
+    assert scene.run(run["id"])["check_pending"] is True
+    away.rename(scene.root)
+    (scene.root / "made.txt").write_text("m")
+    scene.scenario([init_step(), finish_step()])
+    scene.wait(scene.start()["id"])  # starting recovers first, before the new run takes its own picture
+    stored = scene.run(run["id"])
+    assert stored["check_pending"] is False and stored["changes"]["created"] == ["made.txt"]
+
+
+def test_a_pending_comparison_waits_while_a_run_of_the_project_is_going(scene: Scene):
+    scene.scenario([init_step(), {"op": "sleep", "s": 2}, finish_step()])
+    going = scene.start()
+    scene.wait_state(going["id"], "running")
+    owing = stale_run(scene, state="interrupted", check_pending=True)
+    (scene.root / "made_by_the_going_run.txt").write_text("m")
+    scene.manager._recover(scene.pid)  # what the running one changes is not the old run's doing
+    assert scene.run(owing["id"])["check_pending"] is True
+    scene.wait(going["id"])
+    scene.manager._recover(scene.pid)
+    assert scene.run(owing["id"])["check_pending"] is False
+
+
+def test_a_run_that_changes_the_agent_programs_settings_reads_out_of_bounds_and_undo_puts_them_back(scene: Scene):
+    scene.put("opencode.json", '{"model": "x"}\n')
+    run = scene.go([init_step(),
+                    {"op": "write", "path": ".claude/settings.json", "text": '{"hooks": {"SessionStart": []}}\n'},
+                    {"op": "write", "path": "opencode.json", "text": '{"permission": {"bash": "allow"}}\n'},
+                    {"op": "complete"}, finish_step()])
+    assert run["state"] == "out_of_bounds" and run["outcome"] == "done"
+    assert sorted((v["path"], v["reason"]) for v in run["violations"]) == [
+        (".claude/settings.json", "agent_settings_changed"), ("opencode.json", "agent_settings_changed")]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by="m-1")
+    assert ".claude/settings.json" in result["removed"] and not (scene.root / ".claude" / "settings.json").exists()
+    assert "opencode.json" in result["restored"] and (scene.root / "opencode.json").read_text() == '{"model": "x"}\n'
+
+
+def test_the_program_is_not_given_the_home_or_credentials_and_the_run_names_what_was_left_out(scene: Scene, monkeypatch):
+    monkeypatch.setenv("FOO_TOKEN", "value-that-must-not-travel")
+    monkeypatch.setenv("GITHUB_PAT", "another-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "kept-for-the-model")
+    run = scene.go([init_step(), finish_step()])
+    (call,) = scene.calls()
+    assert "RESEARCHOS_HOME" not in call["env"] and names.LEGACY_HOME_ENV_VAR not in call["env"]
+    assert "FOO_TOKEN" not in call["env"] and call["env"]["ANTHROPIC_API_KEY"] == "kept-for-the-model"
+    stored = scene.run(run["id"])
+    assert "FOO_TOKEN" in stored["env_removed"] and "GITHUB_PAT" in stored["env_removed"]
+    assert "ANTHROPIC_API_KEY" not in stored["env_removed"]
+    assert "value-that-must-not-travel" not in json.dumps(stored)  # names only
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["env_removed"] == stored["env_removed"]
+    # the MCP server alone is told where the home is
+    mcp = json.loads((run_store.run_dir(scene.pid, run["id"]) / "mcp.json").read_text())["mcpServers"]["researchos"]
+    assert mcp["env"]["RESEARCHOS_HOME"] == str(paths.researchos_home())
+    guard_file = json.loads((run_store.run_dir(scene.pid, run["id"]) / "guard.json").read_text())
+    assert str(paths.researchos_home()) in guard_file["off_limits"] or os.path.realpath(paths.researchos_home()) in guard_file["off_limits"]
+
+
+# -- 18.1 item 6: refusals and errors with a code, and the cap on stderr.log ------------------------------------
+
+
+def test_the_refusals_in_a_runs_detail_carry_their_code(scene: Scene):
+    run = scene.go([init_step(), {"op": "refusal", "target": "git push", "reason": "No git.", "code": "git_state"},
+                    {"op": "refusal", "target": "data.csv", "reason": "an old-style reason, no code"}, finish_step()])
+    refusals = scene.manager.detail(scene.pid, run["id"])["refusals"]
+    assert [r["reason"] for r in refusals] == ["No git.", "an old-style reason, no code"]
+    assert refusals[0]["code"] == "git_state" and "code" not in refusals[1]
+
+
+def test_a_failed_runs_log_ends_with_the_code_of_its_error(scene: Scene):
+    # the program's own last event is the end of the log: it gets the code of the run's error
+    budget = scene.go([init_step(), {"op": "result", "is_error": True, "subtype": "error_max_budget_usd",
+                                     "text": "", "errors": ["Reached maximum budget"]}, {"op": "exit", "code": 1}])
+    steps = scene.manager.detail(scene.pid, budget["id"])["steps"]
+    assert steps[-1]["kind"] == "end" and steps[-1]["code"] == "error_max_budget_usd"
+    assert "Reached maximum budget" in steps[-1]["text"] and all("code" not in s for s in steps[:-1])
+    # a run that ended well keeps the program's own last words, without a code
+    ended = scene.go([init_step(), finish_step("All done.")])
+    assert "code" not in scene.manager.detail(scene.pid, ended["id"])["steps"][-1]
+
+
+def test_an_end_the_engine_adds_says_the_programs_words_and_the_code_never_stands_for_them(scene: Scene):
+    # a program that dies with no result: the engine writes the end, from the error's detail, with its code
+    died = scene.go([init_step(), {"op": "say", "text": "hmm"}, {"op": "exit", "code": 3}])
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end["kind"] == "end" and end["code"] == "aborted" and end["text"] == died["error"]["detail"]
+    # no detail: the text is empty, never the code
+    run_store.update_run(scene.pid, died["id"], error={"code": "error_something_new"})
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end == {"kind": "end", "text": "", "tool": None, "code": "error_something_new"}
+    # a stopped run's end has the code `stopped` and no sentence of ours: the page words it in the person's language,
+    # not in the language the run began in
+    run_store.update_run(scene.pid, died["id"], state="stopped", error=None)
+    assert scene.manager.detail(scene.pid, died["id"])["steps"][-1] == {"kind": "end", "text": "", "tool": None, "code": "stopped"}
+
+
+@pytest.mark.parametrize("lang", ["en", "zh"])
+@pytest.mark.parametrize("code", ["shutdown", "engine_gone"])
+def test_the_end_of_an_interrupted_run_has_the_code_of_its_error_in_either_language(scene: Scene, code, lang):
+    """18.1 item 6: a run that failed or was interrupted ends its log with the code of its error. An interrupted run has no
+    result event, so the engine writes the end: with the code, and the error's detail (the engine's own words) as the
+    text, whatever language the run began in."""
+    died = scene.go([init_step(), {"op": "say", "text": "hmm"}, {"op": "exit", "code": 3}])  # no result event
+    detail_text = "Research OS was closed while the run was going"
+    run_store.update_run(scene.pid, died["id"], state="interrupted", lang=lang, error={"code": code, "detail": detail_text})
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end == {"kind": "end", "text": detail_text, "tool": None, "code": code}
+    # an old record that has no error keeps the sentence in the run's language, with no code
+    run_store.update_run(scene.pid, died["id"], error=None)
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end["kind"] == "end" and "code" not in end and end["text"].startswith("Interrupted:" if lang == "en" else "已中断")
+
+
+def test_stderr_log_is_capped_as_the_event_log_is(scene: Scene, monkeypatch):
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 600)
+    steps = [init_step()] + [{"op": "stderr", "text": "warning " * 20} for _ in range(20)] + [finish_step()]
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").stat().st_size == 600 and run["stderr_truncated"] is True
+    assert (rd / "stderr.log").read_text().startswith("warning warning")  # the beginning is what stays
+    assert run["state"] == "ended" and run["summary"] == "All done."  # the run itself is untouched
+    detail = scene.manager.detail(scene.pid, run["id"])
+    assert detail["stderr_truncated"] is True and detail["events_truncated"] is False
+    assert len(detail["stderr_tail"].encode()) <= manager.STDERR_TAIL_BYTES
+
+
+def test_a_capped_stderr_shows_how_the_program_ended_not_where_the_cap_fell(scene: Scene, monkeypatch):
+    """18.1 item 6: the log keeps the beginning, but the page's `stderr_tail` is the program's last words: a program that
+    prints a great deal of warnings and then dies with `fatal: out of memory` shows that, not the cap's 4 KB."""
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 600)
+    steps = ([init_step()] + [{"op": "stderr", "text": "warning " * 20} for _ in range(40)]  # 6.6 KB, over the 600 bytes
+             + [{"op": "stderr", "text": "fatal: out of memory"}, finish_step()])
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").stat().st_size == 600 and run["stderr_truncated"] is True  # the cap itself is as before
+    assert (rd / "stderr.log").read_text().startswith("warning warning")
+    tail = scene.manager.detail(scene.pid, run["id"])["stderr_tail"]
+    assert tail.endswith("fatal: out of memory\n") and len(tail.encode()) == manager.STDERR_TAIL_BYTES
+    assert tail.encode() == (rd / "stderr.tail").read_bytes()  # the last 4096 bytes the program wrote, not a byte more
+    # if the sidecar is gone (an engine that died before it was written), the log's own end is the best there is
+    (rd / "stderr.tail").unlink()
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_tail"] == (rd / "stderr.log").read_text()[-manager.STDERR_TAIL_BYTES:]
+
+
+def test_stderr_under_the_cap_is_whole_and_unmarked(scene: Scene):
+    run = scene.go([init_step(), {"op": "stderr", "text": "one"}, {"op": "stderr", "text": "two"}, finish_step()])
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").read_text() == "one\ntwo\n" and not run.get("stderr_truncated")
+    assert not (rd / "stderr.tail").exists()  # only a log that was cut has a second file
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_tail"] == "one\ntwo\n"
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_truncated"] is False
+    assert run_store.STDERR_LIMIT == run_store.EVENTS_LIMIT  # the same cap
+
+
+def test_a_program_that_writes_a_great_deal_to_stderr_is_not_held_up_by_it(scene: Scene, monkeypatch):
+    """Standard error is a pipe now: it is read to its end whatever the cap, so a program that writes far more than
+    a pipe holds (64 KB) neither blocks nor loses what fits."""
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 100_000)
+    steps = [init_step()] + [{"op": "stderr", "text": "e" * 2000} for _ in range(400)] + [finish_step()]  # 800 KB
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert run["state"] == "ended" and run["exit_code"] == 0
+    assert (rd / "stderr.log").stat().st_size == 100_000 and run["stderr_truncated"] is True
+
+
+def test_stderr_kept_up_to_a_stop_and_a_program_that_never_starts_leaves_an_empty_log(scene: Scene, monkeypatch):
+    scene.scenario([init_step(), {"op": "stderr", "text": "before the stop"}, {"op": "sleep", "s": 60}])
+    started = scene.start()
+    rd = run_store.run_dir(scene.pid, started["id"])
+    end = time.monotonic() + 20
+    while time.monotonic() < end and "before the stop" not in ((rd / "stderr.log").read_text() if (rd / "stderr.log").exists() else ""):
+        time.sleep(0.05)
+    scene.manager.stop(scene.pid, started["id"])
+    run = scene.wait(started["id"])
+    assert run["state"] == "stopped" and "before the stop" in (rd / "stderr.log").read_text()
+    # a program that cannot start: the run fails as before and no handle is left open
+    broken = scene.tmp / "broken"
+    broken.write_text("#!/nonexistent/interpreter\n")
+    broken.chmod(0o755)
+    monkeypatch.setattr(profiles, "find", lambda runner, **kw: profiles.Found(runner, str(broken), "1", None))
+    failed = scene.wait(scene.start()["id"])
+    assert failed["state"] == "failed" and failed["error"]["code"] == "start_failed"
+    assert (run_store.run_dir(scene.pid, failed["id"]) / "stderr.log").read_text() == ""  # made, as before, and empty

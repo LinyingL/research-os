@@ -2,6 +2,144 @@
 
 ## Unreleased
 
+- Fix several things on 项目首页. Notes and result records are listed by their
+  last change, newest first, and attempts by number (2 before 10). A document
+  gets a heading in its file only when you type a title different from the one
+  it shows, whatever language the screen is in; words typed while a save is
+  going out no longer lose the title that save wrote. When the project has more
+  than 500 files the page says the list is cut, and a link you type to a file
+  beyond them still works. A member's 提交修改 of tasks takes along the result
+  records the changed tasks link. A Mac that is not a member of the project
+  says so, and a project identity that cannot be read right now (a cloud-only
+  `project.toml`) shows the page with that said instead of an error. A team
+  member's documents carry 我的改动，尚未提交, 提议中 or 已批准，待同步, the words
+  every other page uses (not 本地草稿). Markdown files with other names in
+  `research/notes/` and `research/results/`, a sync service's conflict copies
+  among them, are listed and can be opened. The files Research OS writes in
+  `research/` (the overview, notes, result records and the attempt table) are no
+  longer read as a paper draft: a number in a note does not become a claim, and
+  the claims an earlier scan made of a note go on the next scan. A manuscript of
+  your own in that folder is still read. On the PI's page notes and result
+  records say they go to the members with the next 发布. A member's page and
+  its saves wait for the shared folder no longer than the desk does, and a save
+  no longer holds the project lock while it asks; the word beside an open
+  document (提议中, 已批准，待同步) follows a proposal sent, approved or synced. A
+  note or result record with a name of your own keeps its backups in a folder
+  of its own, so two files named alike never share them.
+- Save a changed 研究判断 or 结果 at once, and take it back with 撤销. In a
+  one-person project or as the PI, pressing 保存 on an existing row in the side
+  panel (and in the node page's edit form, when only those two cells changed)
+  writes it with no preview to confirm, backed up and in the history as before,
+  and the panel says 已保存 with 撤销, which writes the old cells back exactly as
+  they were (a second history entry, nothing erased). If the file changed
+  while the panel was open, the row is shown first and written on 保存修改.
+  Turning a route abandoned still asks its reason and shows the row first, a
+  new row keeps its preview, and a member's change is still a proposal. After
+  保存 or 撤销 in the node page's edit form, opening another panel does not ask
+  about content not yet written, and 撤销 of a row that moved puts the file's
+  text back in the field.
+- Make the engine ask for its own session before it saves anything. A program
+  running on your Mac, an AI agent's script included, can no longer save,
+  approve or publish by calling Research OS's local address: the app, and the
+  browser tab `researchos serve` opens, carry the session; a window opened
+  from the plain address still reads, and says it cannot save. After updating,
+  run `researchos app` again: an app built before this change opens the plain
+  address and cannot save until it is rebuilt (the window says so). The
+  launcher-script version of the app, built when Xcode's command line tools
+  are missing, opens the page with the session too.
+- Keep an AI agent from reading the engine's secret and from preparing the next
+  run. Claude Code's Read, Glob, Grep and LS are refused inside Research OS's
+  folder and `~/.ssh`, as is a Bash command that names them; the agent program
+  is not told where Research OS keeps its files and gets none of the
+  environment variables whose names look like credentials (the run log lists
+  the names it was not given). Claude Code no longer loads the project's own
+  `.claude/settings*.json` (the project's `CLAUDE.md` is still read), and
+  `.claude/`, `.opencode/` and `opencode.json`
+  can neither be written by a run nor changed without the run reading Went out
+  of bounds. Undo now says a file has no copy when it has none, instead of
+  saying you kept it; a run whose folder was not there when Research OS
+  started is compared when the folder is back; deleting backups cannot hide
+  behind one newly planted backup name.
+- Tighten the leftovers of the agent checks. An agent may not change or delete
+  existing `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`, `.sas7bdat`, `.jsonl` or
+  `.pickle` files either, while `package.json` and `package-lock.json` (which
+  `npm install` writes) are no longer counted as data. OpenCode is stopped from
+  git commands that do not start with `git` (`/usr/bin/git push`,
+  `cd x && git commit`). The run log tells a refused step, an error and a run
+  that failed in your language, with the program's own words behind
+  Details, and a run state the page does not know no longer shows its
+  raw code. A program's `stderr.log` is capped at 20 MB, as the event log is.
+- Stop calling two different things 判断. An attempt's verdict stays 研究判断
+  ("Research assessment"), so the proposal that changes it reads 修改研究判断
+  and 提议修改研究判断. A person's confirming or rejecting of a machine link is
+  now 连线确认 ("Link judgments") on the node page, the 待复核 list and its
+  count, the desk, the canvas link card and every notice about the record file.
+  The count in the top bar and the desk's line also hold the variable cards of a
+  changed script, so they say "N 项待复核" ("N items need review") and the list's
+  subtitle names the cards beside the links. 研究判断 is also the word where the
+  proposal's conflict line, the instruction sent to an agent, the 记录 panel, the
+  attempt form and `researchos history` said 结论 or 判决 ("verdict").
+  Nothing on disk changes: `judgements.toml`, its header and the commands keep
+  their names.
+- Settle the single words. 正式版本 is "Official version" on every screen (the
+  English said "Published version" in places), 官方的一份 is 正式的一份, "official
+  copy", and "publish" is only the act. 本机 is "This Mac", never "this
+  computer". The experiment kind that MLflow and W&B bring is 实验
+  ("Experiment") on the node page, no longer 实验记录 ("Run record"). A script's
+  outputs are 输出 where they were 产出. The page 成果 is now 图表与论断
+  ("Figures and claims"): the sidebar, the page titles, the app's View menu and
+  every sentence that names it. 项目首页's section for result documents is
+  "Result records" in English. A result document with no heading is titled
+  结果记录 ("Result record"), no longer the attempt cell's 结果 ("Result").
+  Nothing on disk changes: the command name is still `results`, and the header
+  of `papers.toml` keeps its words.
+- Stop calling two different things 笔记. What you write on an object (a script,
+  a data file, an attempt, a figure) is 备注 ("Comment") on the node page as it
+  already was in the route map's panel, and the node page now uses the panel's
+  sentences (添加备注, 写一条备注…). The English said "Note" for these comments
+  in places; it says "Comment" and "Comments", and the section is "Changes and
+  comments". 笔记 ("Note") is only a document in 项目首页. A proposal shows the
+  备注 of a line you drew as 备注, where it said 说明. Nothing on disk changes:
+  `notes.toml`, its header and the `researchos note` command keep their names.
+- Keep the glossary true. DESIGN 13.4's table now lists the words as the page
+  speaks them (项目首页, 连线确认, 研究判断, 备注, 笔记, 图表与论断, 正式版本,
+  "Relationship map", "Add a source", "Missing attempt" and the rest), and a new
+  test, `tests/test_glossary.py`, holds the English table to it: a word of the
+  glossary that is a key carries exactly the English written there, and a
+  name such as 连线确认 reads the same in every sentence that has it. The
+  English said "relation map" in a few sentences (where a confirmation was made,
+  whose arrangement stays their own); it now says "relationship map" everywhere.
+- Tidy the words of the page. In English, a route abandoned by you reads
+  "Abandoned yesterday 14:02; recorded the state of 4 files" as one sentence, a
+  proposed change of a research assessment names the two assessments inside one
+  sentence, and 提交提议 (Submit a proposal) is in English with its kinds and
+  fields. 项目首页 is fully translated: its buttons, fields, run states and
+  refusals, and its two disclosures (引用文件或尝试, 详情) draw the same quiet
+  chevron as the rest of the page instead of the browser's triangle. 49
+  English sentences that no screen uses any more are gone. The check for
+  arrows and emoji now also refuses », ⟶, ‹, ›, ⏵, ● and ○, and reads the
+  stylesheets. Nothing on disk changes.
+- Make 研究路线 one page. The route map (the old 工作台) and the list of
+  attempts grouped by status are two ways of looking at the same page, switched
+  by 路线图 / 列表 ("Route map" / "List") under the title; both show the 待办
+  column beside them, and a route opened from the list opens the same side panel
+  as a card on the map. The choice is remembered for each project in this
+  browser and starts on the map. The sidebar has one item for the page, and in a
+  project with a team it shows how many things wait in 待办 when there are any
+  (a project of one person shows none). The View menu has one 研究路线 item, ⌘2,
+  and 项目首页 is ⌘1, so the shortcuts follow the sidebar; an app built earlier
+  still opens the page from both of its old menu items. After updating, run
+  `researchos app` again to get the new menu. Nothing on disk changes.
+- Leave out what a project of one person does not use. With no team file, the
+  sidebar has no 提议 and no 成员 and no reminder to
+  say who you are, and the app's View menu and File menu have no 提议, 成员,
+  提交提议 or 发布. The project menu gains 开始协作…, which opens the team setup
+  (on the 成员 page). Once there is a team the items come back by themselves,
+  without reloading; a team project this Mac is not part of, or a team file
+  that cannot be read, shows them as before. An app built earlier still shows
+  the two menu items (and sends you to 开始协作 if you choose 提议 in a project
+  of one person); run `researchos app` again to get the new menu. Nothing on
+  disk changes.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.
@@ -37,6 +175,15 @@
   it started (files up to 16 MB, for the newest 20 runs), and leaves anything
   you changed afterwards as it is; a run that could not be fully undone reads
   Partly undone.
+- Undo this run now says what it will do and asks first. It lists the files it
+  will put back and the files it will move away, each with its time and a
+  checked box, and the files it cannot undo with the reason; clear a box to
+  keep that file, and the run log lists it as "You kept this". A folder that
+  existed before the run is never removed. The confirmation before your first
+  run of an agent now says what an undo cannot bring back (installed software,
+  downloads, git, anything outside the project folder) and names the project's
+  files over 16 MB, which are not backed up. When Research OS starts, runs that
+  an earlier session left going, in any project, are recovered at once.
 - Attribute the agent's work. Its files appear in the change history as made
   by an agent, with the agent and the person who started the run named, and the
   result record opens with a line saying which agent wrote it and for whom. In

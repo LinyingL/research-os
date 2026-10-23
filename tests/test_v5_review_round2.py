@@ -618,7 +618,7 @@ global.renderBlockingError = (el, text, err) => { const s = new El("span"); s.te
 require(process.argv[1]);
 const C = window.RCECanvas;
 C._state.dom = { status: new El("div") };
-C._showStatus("判断记录文件当前无法读取，请先恢复它", new Error("ledger invalid"), { kind: "write" });
+C._showStatus("连线确认的记录文件当前无法读取，请先恢复它", new Error("ledger invalid"), { kind: "write" });
 const status = C._state.dom.status;
 const close = status.children.find((c) => String(c.className).includes("cv-status-close"));
 const shownBefore = !status.classList.contains("hidden");

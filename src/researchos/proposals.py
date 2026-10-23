@@ -381,13 +381,25 @@ def fingerprint(path: Path) -> dict[str, Any] | None:
 
 
 def manifest(root: str | Path) -> dict[str, dict[str, Any]]:
+    """{path: fingerprint} for `project_files` (18.4, item 4): built on the
+    fingerprints `share.official_files` keeps, so a file whose size,
+    modification time, inode and status-change time did not change, and that
+    had settled (`memo.RACY_NS`), is not read again. A folder
+    with no readable project identity has no such fingerprints: every file
+    is read, as `fingerprint` reads it."""
+    from researchos import share  # noqa: PLC0415 -- share imports this module
+
     root = Path(root)
-    out = {}
-    for rel in project_files(root):
-        got = fingerprint(root / rel)
-        if got is not None:
-            out[rel] = got
-    return out
+    try:
+        pid = _project_id(root)
+    except ProposalRefused:
+        out = {}
+        for rel in project_files(root):
+            got = fingerprint(root / rel)
+            if got is not None:
+                out[rel] = got
+        return out
+    return share.listed_files(root, pid)
 
 
 def snapshot_id(files: Mapping[str, Mapping[str, Any]]) -> str:
@@ -1398,7 +1410,7 @@ REASONS = {
     "table_unreadable": ("尝试表无法读取：{error}", "The attempt table cannot be read: {error}"),
     "row_taken": ("正式版本的尝试表里已经有第 {n} 行", "The official attempt table already has row {n}"),
     "row_missing": ("正式版本的尝试表里没有第 {n} 行", "The official attempt table has no row {n}"),
-    "verdict_moved": ("第 {n} 行的结论或结果在正式版本里也改了", "Row {n}'s verdict or result also changed in the official version"),
+    "verdict_moved": ("第 {n} 行的研究判断或结果在正式版本里也改了", "Row {n}'s research assessment or result also changed in the official version"),
     "row_moved": ("第 {n} 行在提议之后，正式版本里也改了", "Row {n} also changed in the official version after the proposal"),
     "reason_required": (MESSAGES["reason_required"], "Abandoning a route needs both the result and the reason"),
     "version_missing": ("提议里缺少这个版本文件", "The proposal is missing this version file"),

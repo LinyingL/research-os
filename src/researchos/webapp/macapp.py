@@ -52,11 +52,14 @@ go through `_run` (list arguments, never a shell) so tests can observe or
 replace them. The macOS-only gate for the DEFAULT install location stays
 in `researchos.cli.cmd_app`.
 
-THE LAUNCHER (`generate_bundle`, the fallback; unchanged from V3): an
+THE LAUNCHER (`generate_bundle`, the fallback; as V3 but for the session): an
 `Research OS.app` whose executable is a small generated bash script that
 (1) checks whether the local server is already up at its fixed port and
 just opens the page if so, else (2) starts `researchos serve` detached, waits for
-it to answer, and opens the page in the browser.
+it to answer, and opens the page in the browser. The page it opens is
+`/boot?session=<secret>` when the engine keeps a session file at
+`<home>/engine/<port>.session` (DESIGN.md 18.1) -- the cookie that boot sets is what lets the
+browser tab save -- and the plain address for an older engine that keeps none.
 
 Launcher notes (V3). Pure-python generation, testable anywhere (spec requirement): nothing in
 here calls `open`, checks `sys.platform`, or requires macOS -- it only
@@ -207,7 +210,8 @@ def launcher_script(executable: Path, port: int = DEFAULT_PORT) -> str:
     `/api/summary` decides between "already running -- just open the
     page" and "start `researchos serve` detached (nohup, log appended to
     ~/.researchos/serve.log), poll the same URL up to ~10s (40 x 0.25s), then
-    open it". The one deliberate addition: if the server never answers
+    open it" -- at `/boot?session=...` when the engine's session file is
+    there (`entry`), so the tab it opens can save (18.1). The one deliberate addition: if the server never answers
     within the budget, the launcher opens the *log* instead of the URL --
     a browser's connection-refused page says nothing, while the log
     carries the server's actual startup error (e.g. the empty-registry
@@ -234,9 +238,23 @@ else
 fi
 LOG="$DATA/serve.log"
 
+# What the browser opens (18.1): /boot with the engine's session, when the engine keeps one -- that is
+# what sets the cookie without which the page cannot save. An older engine keeps none: the plain address.
+# The secret is read once, hex only, and goes nowhere but the address handed to `open`.
+entry() {{
+  local file="$DATA/engine/{port}.session" secret=""
+  if [ -r "$file" ]; then
+    secret=$(head -c 256 "$file" 2>/dev/null | tr -d '[:space:]')
+  fi
+  case "$secret" in
+    ""|*[!0-9a-fA-F]*) printf '%s' "$URL" ;;
+    *) printf '%s' "$URL/boot?session=$secret" ;;
+  esac
+}}
+
 # Already running? Just open the page -- never start a second server.
 if curl -sf "$URL/api/summary" > /dev/null 2>&1; then
-  exec open "$URL"
+  exec open "$(entry)"
 fi
 
 mkdir -p "$DATA"
@@ -246,7 +264,7 @@ nohup "$ENGINE" serve --port {port} --no-browser >> "$LOG" 2>&1 &
 for _ in {{1..40}}; do
   sleep 0.25
   if curl -sf "$URL/api/summary" > /dev/null 2>&1; then
-    exec open "$URL"
+    exec open "$(entry)"
   fi
 done
 

@@ -82,6 +82,16 @@ file reappears. The baseline is deliberately left untouched while the
 graph is away, so an edit made during the outage is still a visible
 difference when the graph comes back and the ordinary cycle resumes.
 
+Whose versions a scan adds (DESIGN.md 18.1 item 3). The history a scan feeds
+(`researchos.history.record_after_scan`) is told by the engine's agent manager
+while a run of this project is going on (`history.run_seen`, set from the run's
+before-picture until its attribution is written): the manager is in this very
+process, and the history is the one module both already import, so the watcher
+needs to know nothing of runs. A version that scan adds of what the run changed
+is `source = "agent"`, the run's `who`, the note "seen during run <id>"; what the
+person saved through Research OS keeps their name. The scan is the same scan; only
+the credit differs.
+
 Failure containment: a half-saved table, a heading mid-rename, a script
 with a syntax hiccup -- the user editing their own files *will* produce
 transient ingest failures, and none of them may kill the watcher or the
@@ -270,7 +280,7 @@ def notes_record_path(project_root: Path) -> Path:
 
 def papers_record_path(project_root: Path) -> Path:
     """The drafts marked 「设为论文正文」 (12.13): a change only refreshes
-    the page (成果 reads the file); nothing is ingested."""
+    the page (图表与论断 reads the file); nothing is ingested."""
     from researchos.records import papers  # noqa: PLC0415 -- leaf use
 
     return papers.papers_path(project_root)

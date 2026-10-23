@@ -7,9 +7,11 @@ No test starts a real `claude` or `opencode`: programs are tiny scripts with a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -527,7 +529,12 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
         "sub/__pycache__/a.pyc": "x", "sub/.venv/pyvenv.cfg": "x", ".hidden": "h"})
     copies = tmp_path / "copies"
     picture = snapshot.take(root, copy_to=copies)
-    assert set(picture["files"]) == {"data.csv", "code/run.py", "中文/说明.md", ".researchos/attempts.toml", ".hidden"}
+    # `.git/config` is the one thing of `.git/` the picture holds (18.1 item 4); the backups are listed apart
+    assert set(picture["files"]) == {"data.csv", "code/run.py", "中文/说明.md", ".researchos/attempts.toml", ".hidden",
+                                     ".git/config"}
+    assert picture["backups"] == {".researchos/backups/old.bak": {"size": 3},
+                                  f"{names.LEGACY_PROJECT_DIRNAME}/backups/old2.bak": {"size": 3}}
+    assert picture["backups_partial"] is False
     entry = picture["files"]["data.csv"]
     import hashlib
 
@@ -536,7 +543,8 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
     assert (copies / "data.csv").read_bytes() == b"a,b\n1,2\n"
     assert (copies / "中文" / "说明.md").read_text(encoding="utf-8") == "你好"
     assert (copies / ".researchos" / "attempts.toml").is_file()
-    assert not (copies / ".git").exists() and not (copies / "node_modules").exists()
+    assert (copies / ".git" / "config").read_text() == "[core]"
+    assert not (copies / ".researchos" / "backups").exists() and not (copies / "node_modules").exists()
     assert picture["partial"] is False and picture["not_copied"] == 0
     assert picture["git"]["head"] is None and picture["git"]["branch"] is None and len(picture["git"]["refs"]) == 64
     assert picture["copied_bytes"] == sum(e["size"] for e in picture["files"].values())
@@ -548,6 +556,47 @@ def test_take_without_copies(tmp_path):
     picture = snapshot.take(root)
     assert "copied" not in picture["files"]["a.txt"] and picture["files"]["a.txt"]["sha256"]
     assert picture["not_copied"] == 1 and picture["copied_bytes"] == 0
+
+
+def test_take_records_the_folders_empty_ones_and_ones_holding_only_noise_included(tmp_path, monkeypatch):
+    """18.1 item 5: undo keeps a folder that existed before the run, so the picture says which did: every folder
+    the main walk went into, not only the ones that hold a recorded file."""
+    root = _project(tmp_path / "proj", {
+        "code/run.py": "1", "figs/.DS_Store": "noise", "deep/er/x.txt": "x", "__pycache__/a.pyc": "x",
+        "node_modules/m/x.js": "x", ".researchos/backups/old.bak": "o", ".git/config": "[core]"})
+    (root / "empty").mkdir()
+    (root / "empty" / "nested").mkdir()
+    (root / "link-to-folder").symlink_to(root / "code")
+    picture = snapshot.take(root)
+    assert picture["dirs"] == sorted([".researchos", "code", "deep", "deep/er", "empty", "empty/nested", "figs"])
+    assert picture["dirs_partial"] is False
+    assert "figs/.DS_Store" not in picture["files"]  # the noise is not a file of the picture; its folder is
+    json.dumps(picture)
+    monkeypatch.setattr(snapshot, "DIR_LIMIT", 3)
+    cut = snapshot.take(root)
+    assert cut["dirs_partial"] is True and len(cut["dirs"]) == 3 and cut["partial"] is False
+
+
+def test_large_files_names_the_ten_biggest_over_the_copy_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 10)
+    files = {f"data/big{i:02d}.bin": b"x" * (11 + i) for i in range(12)}
+    files.update({"small.txt": b"x" * 10, "node_modules/m/huge.bin": b"x" * 99, ".git/objects/pack": b"x" * 99,
+                  "sub/.DS_Store": b"x" * 99, ".researchos/backups/old.bak": b"x" * 99, "tied/a.bin": b"x" * 50,
+                  "tied/b.bin": b"x" * 50})
+    root = _project(tmp_path / "proj", files)
+    (root / "link.bin").symlink_to(root / "tied" / "a.bin")
+    found = snapshot.large_files(root)
+    assert found["count"] == 14 and found["partial"] is False
+    assert [f["path"] for f in found["largest"]] == [
+        "tied/a.bin", "tied/b.bin", "data/big11.bin", "data/big10.bin", "data/big09.bin", "data/big08.bin",
+        "data/big07.bin", "data/big06.bin", "data/big05.bin", "data/big04.bin"]
+    assert found["largest"][0]["size"] == 50 and found["largest"][2]["size"] == 22
+    assert snapshot.large_files(root, over=40)["count"] == 2
+    cut = snapshot.large_files(root, limit=3)
+    assert cut["partial"] is True and cut["count"] <= 3
+    assert snapshot.large_files(tmp_path / "missing") == {"count": 0, "largest": [], "partial": False}
+    monkeypatch.setattr(snapshot, "COPY_LIMIT", 16 * 1024 * 1024)  # the default is the copy limit, read at call time
+    assert snapshot.large_files(root)["count"] == 0
 
 
 def test_take_copy_limit_and_budget(tmp_path, monkeypatch):
@@ -722,7 +771,7 @@ def test_protected_lists_data_records_and_dirs(tmp_path):
     root = _attempts_project(tmp_path)
     before = snapshot.take(root)
     prot = snapshot.protected(root, before)
-    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git"]
+    assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"]
     assert prot["records"] == ["map.md", "research/tasks.json"]
     assert prot["data"] == ["config.json", "data/clean.DTA", "data/raw.csv"]
     assert prot["files"] == sorted(prot["data"] + prot["records"])
@@ -894,10 +943,244 @@ def test_violations_git_changed(tmp_path):
     import shutil
 
     found, _ = _violations(root4, lambda r: shutil.rmtree(r / ".git"))
-    assert found == [{"path": ".git", "reason": "git_changed"}]
+    # the repository is gone, and its configuration with it
+    assert {"path": ".git", "reason": "git_changed"} in found
+    assert {v["reason"] for v in found} == {"git_changed", "git_config_changed"}
     # no repository before and none after: nothing to report
     found, _ = _violations(_project(tmp_path / "plain", {"a": "a"}), lambda r: None)
     assert found == []
+
+
+# -- git's hooks and config, folders at any depth, backups (18.1 item 4) -----------------------------------------
+
+
+def _plant(root: Path, name: str, body: str = "#!/bin/sh\nexit 0\n") -> Path:
+    path = root / ".git" / "hooks" / name
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_take_records_git_config_and_hooks_with_copies_but_not_the_samples(tmp_path):
+    root = _git_project(tmp_path)
+    _plant(root, "pre-commit")
+    (root / ".git" / "hooks" / "sub").mkdir()
+    (root / ".git" / "hooks" / "sub" / "helper.sh").write_text("x", encoding="utf-8")
+    picture = snapshot.take(root, copy_to=tmp_path / "copies")
+    git_files = {rel for rel in picture["files"] if rel.startswith(".git/")}
+    assert git_files == {".git/config", ".git/hooks/pre-commit", ".git/hooks/sub/helper.sh"}
+    assert (root / ".git" / "hooks" / "applypatch-msg.sample").exists()  # the templates are there, and not recorded
+    assert picture["files"][".git/hooks/pre-commit"]["copied"] is True
+    assert (tmp_path / "copies" / ".git" / "hooks" / "pre-commit").read_text() == "#!/bin/sh\nexit 0\n"
+    assert (tmp_path / "copies" / ".git" / "config").read_text() == (root / ".git" / "config").read_text()
+    assert ".git/HEAD" not in picture["files"] and not any(r.startswith(".git/objects") for r in picture["files"])
+    # not a repository, or a `.git` that is only a pointer file (a worktree): nothing to record
+    assert not any(r.startswith(".git") for r in snapshot.take(_project(tmp_path / "plain", {"a": "a"}))["files"])
+    pointer = _project(tmp_path / "pointer", {".git": "gitdir: /elsewhere/.git\n"})
+    assert set(snapshot.take(pointer)["files"]) == {".git"}  # the pointer is a file like any other
+
+
+def test_a_planted_hook_or_a_changed_config_is_out_of_bounds(tmp_path):
+    root = _git_project(tmp_path)
+    _plant(root, "post-merge", "#!/bin/sh\necho old\n")
+    found, changes = _violations(root, lambda r: (_plant(r, "pre-commit"), _plant(r, "post-merge", "#!/bin/sh\necho new\n")))
+    assert changes["created"] == [".git/hooks/pre-commit"] and changes["modified"] == [".git/hooks/post-merge"]
+    assert found == [{"path": ".git/hooks/pre-commit", "reason": "git_hooks_changed"},
+                     {"path": ".git/hooks/post-merge", "reason": "git_hooks_changed"}]
+    found, _ = _violations(_git_project(tmp_path / "b"), lambda r: _git(r, "config", "core.hooksPath", "/tmp/evil"))
+    assert found == [{"path": ".git/config", "reason": "git_config_changed"}]
+    root3 = _git_project(tmp_path / "c")
+    _plant(root3, "pre-push")
+    found, _ = _violations(root3, lambda r: (r / ".git" / "hooks" / "pre-push").unlink())
+    assert found == [{"path": ".git/hooks/pre-push", "reason": "git_hooks_changed"}]
+    # a sample the template put there, or a commit, is not a hook
+    found, _ = _violations(_git_project(tmp_path / "d"), lambda r: (r / ".git" / "hooks" / "x.sample").write_text("y"))
+    assert found == []
+    # the same project, nothing done: nothing found
+    found, _ = _violations(_git_project(tmp_path / "e"), lambda r: None)
+    assert found == []
+
+
+def test_the_researchos_folders_are_protected_at_any_depth(tmp_path):
+    root = _project(tmp_path / "proj", {"sub/.researchos/keep.toml": "a", "deep/er/.rce/x.toml": "b",
+                                        ".researchos/a/b/c/d.toml": "c", "plain.txt": "p"})
+
+    def mutate(r):
+        (r / "sub/.researchos/new.toml").write_text("n", encoding="utf-8")
+        (r / "deep/er/.rce/x.toml").write_text("changed", encoding="utf-8")
+        (r / ".researchos/a/b/c/d.toml").unlink()
+        (r / "plain.txt").write_text("ok", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted(found, key=lambda v: v["path"]) == [
+        {"path": ".researchos/a/b/c/d.toml", "reason": "researchos_changed"},
+        {"path": "deep/er/.rce/x.toml", "reason": "researchos_changed"},
+        {"path": "sub/.researchos/new.toml", "reason": "researchos_changed"}]
+    # the engine's own save of such a file, with the bytes it wrote, is allowed as before
+    sha = hashlib.sha256(b"mine").hexdigest()
+    found, _ = _violations(_project(tmp_path / "two", {"sub/.researchos/x.toml": "a"}),
+                           lambda r: (r / "sub/.researchos/x.toml").write_bytes(b"mine"),
+                           allowed={"sub/.researchos/x.toml": {sha}})
+    assert found == []
+
+
+def _backups_project(tmp_path: Path, names_: list[str]) -> Path:
+    return _project(tmp_path, {f".researchos/backups/{n}": f"backup {n}" for n in names_} | {"a.txt": "a"})
+
+
+def _backup_violations(root, mutate, **kw):
+    before = snapshot.take(root)
+    prot = snapshot.protected(root, before)
+    mutate(root)
+    after = snapshot.take(root)
+    return snapshot.violations(snapshot.compare(before, after), prot, git_before=None, git_after=None, allowed={},
+                               after=after, backups_before=before["backups"], backups_after=after["backups"], **kw)
+
+
+def _stamp(n: int) -> str:
+    return f"2026010{n}T000000000000Z"
+
+
+def test_a_deleted_backup_is_out_of_bounds_and_a_new_one_is_not(tmp_path):
+    names_ = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path / "a", names_)
+    picture = snapshot.take(root)
+    assert picture["backups"] == {f".researchos/backups/{n}": {"size": len(f"backup {n}")} for n in names_}
+    assert "map.md" not in picture["files"] and not any("/backups/" in r for r in picture["files"])
+    new = ".researchos/backups/tasks.json.20260105T000000000000Z.write.json"
+    # a backup added (Research OS saves) is nothing
+    assert _backup_violations(root, lambda r: (r / new).write_text("n")) == []
+    # one removed, with nothing newer in its series, is an out-of-bounds change, wherever it lies
+    root2 = _backups_project(tmp_path / "b", names_)
+    gone = ".researchos/backups/" + names_[0]
+    assert _backup_violations(root2, lambda r: (r / gone).unlink()) == [{"path": gone, "reason": "backup_deleted"}]
+    root3 = _backups_project(tmp_path / "c", names_)
+    assert _backup_violations(root3, lambda r: shutil.rmtree(r / ".researchos/backups")) == [
+        {"path": f".researchos/backups/{n}", "reason": "backup_deleted"} for n in names_]
+    # at any depth, and in the legacy folder
+    legacy = f"{names.LEGACY_PROJECT_DIRNAME}/backups/y.toml"
+    root4 = _project(tmp_path / "d", {".researchos/backups/approved/p1/x.toml": "x", legacy: "y"})
+    found = _backup_violations(root4, lambda r: [(r / ".researchos/backups/approved/p1/x.toml").unlink(),
+                                                 (r / legacy).unlink()])
+    assert [v["path"] for v in found] == [legacy, ".researchos/backups/approved/p1/x.toml"]
+    # a file that was not there at the start, or an unchanged project, is nothing
+    assert _backup_violations(_backups_project(tmp_path / "e", names_), lambda r: None) == []
+
+
+def _day(n: int) -> str:
+    return f"202601{n:02d}T000000000000Z"
+
+
+def test_the_backup_series_length_the_check_assumes_is_what_research_os_keeps():
+    from researchos.records import files as records_files
+    from researchos.webapp import mapedit
+
+    assert snapshot.BACKUP_KEEP == records_files.SNAPSHOT_KEEP == mapedit.BACKUP_KEEP == 20
+
+
+def test_research_oss_own_rotation_of_a_backup_series_is_not_a_violation(tmp_path):
+    # Research OS prunes a series to its newest 20 and removes nothing from a shorter one, so a rotation can only
+    # have happened in a series of 20: a save adds the newest and drops the oldest
+    series = [f"tasks.json.{_day(n)}.write.json" for n in range(1, 21)]
+    other = [f"attempts.toml.{_stamp(n)}.toml" for n in (1, 2)]
+    root = _backups_project(tmp_path / "a", series + other)
+    folder = ".researchos/backups/"
+    oldest, second, newest = folder + series[0], folder + series[1], folder + f"tasks.json.{_day(25)}.write.json"
+
+    def rotate(r):
+        (r / newest).write_text("n")
+        (r / oldest).unlink()
+
+    assert _backup_violations(root, rotate) == []
+    # two saves, two pruned, is the same
+    root2 = _backups_project(tmp_path / "b", series)
+
+    def rotate_two(r):
+        (r / newest).write_text("n")
+        (r / (folder + f"tasks.json.{_day(26)}.write.json")).write_text("n")
+        (r / oldest).unlink()
+        (r / second).unlink()
+
+    assert _backup_violations(root2, rotate_two) == []
+    # the oldest removed with nothing added, a middle one removed beside an addition, another series, or a
+    # name Research OS never gave a backup: all out of bounds
+    root3 = _backups_project(tmp_path / "c", series)
+    assert _backup_violations(root3, lambda r: (r / oldest).unlink()) == [{"path": oldest, "reason": "backup_deleted"}]
+    root4 = _backups_project(tmp_path / "d", series)
+    middle = folder + series[2]
+    found = _backup_violations(root4, lambda r: ((r / newest).write_text("n"), (r / middle).unlink()))
+    assert found == [{"path": middle, "reason": "backup_deleted"}]
+    root5 = _backups_project(tmp_path / "e", series + other)
+    gone_other = folder + other[0]
+    found = _backup_violations(root5, lambda r: ((r / newest).write_text("n"), (r / gone_other).unlink()))
+    assert found == [{"path": gone_other, "reason": "backup_deleted"}]
+    root6 = _project(tmp_path / "f", {".researchos/backups/notes.txt": "n", "a.txt": "a"})
+    found = _backup_violations(root6, lambda r: ((r / (".researchos/backups/z.20260109T000000000000Z.txt")).write_text("x"),
+                                                 (r / ".researchos/backups/notes.txt").unlink()))
+    assert found == [{"path": ".researchos/backups/notes.txt", "reason": "backup_deleted"}]
+
+
+def test_a_planted_newer_backup_name_does_not_excuse_deleting_the_older_ones(tmp_path):
+    # Research OS never prunes a series of 20 or fewer: with the series short, any deletion is the agent's,
+    # however many newer names were added beside it (DESIGN 18.1 item 4)
+    folder = ".researchos/backups/"
+    series = [f"map.md.{_stamp(n)}.md" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path / "a", series)
+    planted = folder + "map.md.99991231T000000000000Z.md"
+
+    def plant_and_delete(r):
+        (r / planted).write_text("x")
+        for name in series:
+            (r / (folder + name)).unlink()
+
+    found = _backup_violations(root, plant_and_delete)
+    assert [v["path"] for v in found] == [folder + n for n in series]
+    assert {v["reason"] for v in found} == {"backup_deleted"}
+    # a save of the person's or the run's own tool into a cleared folder is no different
+    root2 = _backups_project(tmp_path / "b", series)
+    found = _backup_violations(root2, lambda r: [(r / (folder + n)).unlink() for n in series]
+                               + [(r / planted).write_text("x")])
+    assert len(found) == 3
+    # a series of 20 that gained one can have lost one, not three: the oldest is rotation, the next two are not
+    long_series = [f"map.md.{_day(n)}.md" for n in range(1, 21)]
+    root3 = _backups_project(tmp_path / "c", long_series)
+
+    def one_save_three_deleted(r):
+        (r / (folder + f"map.md.{_day(25)}.md")).write_text("n")
+        for name in long_series[:3]:
+            (r / (folder + name)).unlink()
+
+    found = _backup_violations(root3, one_save_three_deleted)
+    assert found == [{"path": folder + long_series[1], "reason": "backup_deleted"},
+                     {"path": folder + long_series[2], "reason": "backup_deleted"}]
+    # a series that never reached 20 stays out of reach however many are planted but one
+    root4 = _backups_project(tmp_path / "d", long_series[:10])
+    found = _backup_violations(root4, lambda r: ((r / (folder + f"map.md.{_day(25)}.md")).write_text("n"),
+                                                 (r / (folder + long_series[0])).unlink()))
+    assert found == [{"path": folder + long_series[0], "reason": "backup_deleted"}]
+
+
+def test_a_backup_a_cut_after_walk_did_not_see_is_not_called_deleted(tmp_path, monkeypatch):
+    names_ = [f"tasks.json.{_stamp(n)}.write.json" for n in (1, 2, 3)]
+    root = _backups_project(tmp_path, names_)
+    before = snapshot.take(root)
+    monkeypatch.setattr(snapshot, "BACKUP_FILE_LIMIT", 1)
+    after = snapshot.take(root)
+    assert after["backups_partial"] is True and len(after["backups"]) == 1
+    prot = snapshot.protected(root, before)
+    found = snapshot.violations(snapshot.compare(before, after), prot, git_before=None, git_after=None, allowed={},
+                                after=after, backups_before=before["backups"], backups_after=after["backups"])
+    assert found == []  # everything is still on disk
+    # without a root to look in, a cut walk proves nothing either
+    found = snapshot.violations(snapshot.compare(before, after), {"dirs": prot["dirs"], "files": [], "data": [],
+                                                                  "records": []}, git_before=None, git_after=None,
+                                allowed={}, after=after, backups_before=before["backups"],
+                                backups_after=after["backups"])
+    assert found == []
+    # a picture taken before backups were recorded says nothing about them
+    old_picture = {k: v for k, v in before.items() if k not in ("backups", "backups_partial")}
+    assert snapshot.violations(snapshot.compare(old_picture, before), prot, git_before=None, git_after=None,
+                               allowed={}, after=before, backups_before=None) == []
 
 
 # -- guard: check_tool --------------------------------------------------------------------------------------
@@ -919,7 +1202,8 @@ def project(tmp_path):
 def test_guard_file_round_trip(project):
     g = project.guard
     assert g["root"] == os.path.realpath(project.root) and g["engine_port"] == 8765
-    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git"] and "data/raw.csv" in g["files"]
+    assert g["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".opencode"] \
+        and "data/raw.csv" in g["files"]
     guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
     assert guard.load_guard(project.run_dir)["engine_port"] is None
     assert not [p for p in project.run_dir.iterdir() if p.name != "guard.json"]  # no temp file left behind
@@ -1029,6 +1313,189 @@ def test_home_expansion_cannot_smuggle_a_path(project, monkeypatch):
     assert _refused(project, "Write", {"file_path": "~/x.py"}, cwd=str(project.root))
     monkeypatch.setenv("HOME", str(project.root / "myhome"))
     assert _refused(project, "Write", {"file_path": "~/x.py"}, cwd=str(project.root)) is None
+
+
+# -- what the agent can read, and the agent program's own settings (18.1 item 2) ---------------------------------
+
+
+@pytest.fixture
+def home_files(project):
+    """Research OS's home with a session file and a settings file in it, as the engine leaves them."""
+    home = paths.researchos_home()
+    (home / "engine").mkdir(parents=True, exist_ok=True)
+    (home / "engine" / "7357.session").write_text("ab" * 32, encoding="utf-8")
+    (home / "settings.json").write_text("{}", encoding="utf-8")
+    (project.root / "link-home").symlink_to(home)
+    return home
+
+
+def test_the_guard_file_lists_the_folders_an_agent_may_not_read(project, home_files, monkeypatch):
+    off = project.guard["off_limits"]
+    assert str(home_files) in off or os.path.realpath(home_files) in off
+    assert os.path.expanduser("~/.ssh") in off and os.path.expanduser("~/.researchos") in off
+    # also when the environment names another home: the default one is still the person's
+    monkeypatch.setenv("HOME", str(project.tmp / "someone"))
+    guard.write_guard_file(project.run_dir, root=project.root, prot={"dirs": [], "files": []}, engine_port=None)
+    assert os.path.join(str(project.tmp / "someone"), ".ssh") in guard.load_guard(project.run_dir)["off_limits"]
+
+
+@pytest.mark.parametrize("tool, key", [("Read", "file_path"), ("Glob", "path"), ("Grep", "path"), ("LS", "path")])
+def test_reading_tools_refuse_research_os_home(project, home_files, tool, key):
+    for target in (home_files / "engine" / "7357.session", home_files / "settings.json", home_files / "engine",
+                   home_files, project.root / "link-home" / "engine" / "7357.session",
+                   str(home_files).upper() + "/ENGINE/7357.SESSION", "~/.researchos/settings.json", "~/.ssh/id_ed25519",
+                   "~/.ssh", f"~/{names.LEGACY_HOME_DIRNAME}/settings.json"):
+        reason = _refused(project, tool, {key: str(target), "pattern": "*"}, cwd=str(project.root))
+        assert reason and reason.endswith("."), (tool, target)
+        assert "home" in reason or ".ssh" in reason
+    # a relative path resolves against the call's folder
+    assert _refused(project, tool, {key: "engine/7357.session"}, cwd=str(home_files))
+
+
+def test_reading_tools_refuse_the_secret_however_it_is_named(project, home_files):
+    session = str(home_files / "engine" / "7357.session")
+    assert _refused(project, "Glob", {"pattern": session})
+    assert _refused(project, "Glob", {"pattern": str(home_files) + "/**/*.session"})
+    assert _refused(project, "Glob", {"pattern": "~/.ssh/*"})
+    assert _refused(project, "Glob", {"pattern": "*.session", "path": str(home_files / "engine")})
+    assert _refused(project, "Read", {"file_path": session + "\0.txt"})  # an embedded NUL is not a path to trust
+    # a Grep that starts above the home would read into it; a Glob or LS above it only lists names
+    above = str(home_files.parent)
+    assert _refused(project, "Grep", {"pattern": "a", "path": above})
+    assert _refused(project, "Grep", {"pattern": "a", "path": "/"})
+    assert _refused(project, "Grep", {"pattern": "a"}, cwd=above)  # no folder given: where the call runs
+    assert _refused(project, "Grep", {"pattern": "a", "path": "~"})
+    assert _refused(project, "Glob", {"pattern": "*", "path": above}) is None
+    assert _refused(project, "LS", {"path": above}) is None
+
+
+def test_reading_tools_leave_the_project_and_everything_else_alone(project, home_files):
+    root = project.root
+    for tool, tool_input in (("Read", {"file_path": str(root / "analysis.py")}), ("Read", {"file_path": "/etc/hosts"}),
+                             ("Read", {"file_path": "sub/x.py"}), ("Read", {"file_path": "~/notes.txt"}),
+                             ("Read", {"file_path": str(home_files) + "-other/x"}),  # another folder with a longer name
+                             ("Glob", {"pattern": "**/*.py"}), ("Glob", {"pattern": str(root) + "/**/*.csv"}),
+                             ("Glob", {"pattern": "*.py", "path": str(root / "code")}),
+                             ("Grep", {"pattern": "needle"}), ("Grep", {"pattern": "x", "path": str(root)}),
+                             ("Grep", {"pattern": "x", "path": str(root / "data"), "glob": "*.csv"}),
+                             ("LS", {"path": str(root)}), ("Read", {})):
+        assert _refused(project, tool, tool_input, cwd=str(root)) is None, (tool, tool_input)
+    assert _refused(project, "Read", ["x"]) and _refused(project, "Grep", None)  # not arguments: refused as the others
+    # a guard written without the list (an older file) judges nothing here
+    bare = {k: v for k, v in project.guard.items() if k != "off_limits"}
+    assert guard.check_tool(bare, "Read", {"file_path": str(home_files / "settings.json")}) is None
+
+
+def test_the_hook_runs_on_the_reading_tools(project, home_files):
+    done = _hook(project.run_dir, {"tool_name": "Read", "tool_input": {"file_path": str(home_files / "engine" / "7357.session")},
+                                   "cwd": str(project.root)})
+    assert done.returncode == 2 and done.stderr.startswith(b"Research OS: ") and b"ab" * 32 not in done.stderr
+    logged = runs.read_lines(project.run_dir / "refusals.jsonl")
+    assert logged and logged[-1]["tool"] == "Read" and logged[-1]["target"].endswith("7357.session")
+    done = _hook(project.run_dir, {"tool_name": "Read", "tool_input": {"file_path": str(project.root / "analysis.py")},
+                                   "cwd": str(project.root)})
+    assert done.returncode == 0
+
+
+@pytest.mark.parametrize("command", [
+    "cat $RESEARCHOS_HOME/engine/7357.session", "cat ${RESEARCHOS_HOME}/engine/*.session", "ls $RESEARCHOS_HOME",
+    "echo $RCE_HOME", "env | grep RESEARCHOS_HOME", "cd \"$RESEARCHOS_HOME\" && ls",
+    "cat ~/.ssh/id_ed25519", "ls ~/.ssh", "cp ~/.ssh/id_rsa /tmp/k", "cat $HOME/.ssh/config; echo", "ls -a .ssh",
+    "tar c ~/.ssh|gzip", "cat '/Users/me/.ssh/id_rsa'", "ls (.ssh)",
+])
+def test_bash_refuses_the_home_variable_and_ssh(project, command):
+    reason = _refused(project, "Bash", {"command": command}, cwd=str(project.root))
+    assert reason and reason.endswith("."), command
+
+
+def test_bash_refuses_the_absolute_path_of_the_home(project, home_files):
+    for text in (str(home_files), os.path.realpath(home_files)):
+        assert _refused(project, "Bash", {"command": f"cat {text}/engine/7357.session"}), text
+        assert _refused(project, "Bash", {"command": f"ls '{text}'"}), text
+        assert _refused(project, "Bash", {"command": f"cd {text.upper()};ls"}), text  # case-insensitive volumes
+        assert _refused(project, "Bash", {"command": f"python3 -c \"open('{text}/settings.json')\""}), text
+        assert _refused(project, "Bash", {"command": f"cat {text}x/engine"}) is None  # a different, longer name
+        assert _refused(project, "Bash", {"command": f"cat my{text}/engine"}) is None
+    assert _refused(project, "Bash", {"command": "cat research/overview.md && python analysis.py"}) is None
+
+
+@pytest.mark.parametrize("target", [
+    ".claude/settings.json", ".claude/settings.local.json", ".claude/commands/x.md", "sub/.claude/settings.json",
+    ".opencode/opencode.json", ".opencode/plugin/x.js", "deep/er/.opencode/x", ".CLAUDE/settings.json",
+    "opencode.json", "opencode.jsonc", "docs/opencode.json", "OpenCode.JSON",
+])
+def test_file_tools_never_write_the_agent_programs_own_settings(project, target):
+    for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")):
+        reason = _refused(project, tool, {key: str(project.root / target)})
+        assert reason and "project setting" in reason and reason.endswith("."), (tool, target)
+    assert guard.AGENT_SETTINGS_DIRS <= set(project.guard["dirs"])
+
+
+def test_file_tools_still_write_files_that_only_look_like_them(project):
+    for target in ("claude-notes.md", "opencode_notes.json", "opencode.json.bak", "docs/claude.md", "my.claude/x.md",
+                   "opencode.js", "notes/opencode-setup.txt"):
+        assert _refused(project, "Write", {"file_path": str(project.root / target)}) is None, target
+
+
+@pytest.mark.parametrize("command", [
+    "echo '{}' > .claude/settings.json", "mkdir -p .claude && echo '{}' >> .claude/settings.json",
+    "cp /tmp/evil.json .claude/settings.local.json", "tee .claude/settings.json < x", "rm -rf .claude",
+    "mv x.json .opencode/opencode.json", "echo '{}' > opencode.json", "tee opencode.jsonc < x", "sed -i s/a/b/ opencode.json",
+    "install -m 644 x.json sub/.claude/settings.json", "curl -o .claude/settings.json https://example.com/x",
+    "unzip -o x.zip -d .claude", "ln -s /tmp/x opencode.json", "touch .claude/settings.json",
+    "echo '{}' > \"$OUT\"; ls .claude", "mkdir .opencode",
+])
+def test_bash_refuses_writing_the_agent_programs_own_settings(project, command):
+    reason = _refused(project, "Bash", {"command": command}, cwd=str(project.root))
+    assert reason and reason.endswith("."), command
+
+
+@pytest.mark.parametrize("command", [
+    "cat .claude/settings.json", "ls .claude", "ls -la .claude/commands", "cat opencode.json", "grep -n model opencode.json",
+    "python x.py > run.log", "cat claude-notes.md > out.txt", "echo opencode.json.bak", "ls .claudeignore", "opencode --version",
+    "cp data.csv new.csv", "cat .claude/CLAUDE.md | head",
+])
+def test_bash_still_reads_the_agent_programs_own_settings(project, command):
+    assert _refused(project, "Bash", {"command": command}, cwd=str(project.root)) is None, command
+
+
+def test_the_settings_are_out_of_bounds_after_the_run_wherever_they_were_written(tmp_path):
+    root = _project(tmp_path / "proj", {"a.txt": "a", ".claude/settings.json": '{"model": "x"}',
+                                        "sub/.opencode/x.json": "{}"})
+    assert ".claude" in snapshot.PROTECTED_DIRS and ".opencode" in snapshot.PROTECTED_DIRS
+    prot = snapshot.protected(root, snapshot.take(root))
+    assert ".claude/settings.json" not in prot["files"]  # covered as part of its folder, not listed twice
+
+    def mutate(r):
+        (r / ".claude/settings.local.json").write_text('{"hooks": {}}', encoding="utf-8")  # created
+        (r / ".claude/settings.json").write_text('{"env": {}}', encoding="utf-8")  # changed
+        (r / "sub/.opencode/x.json").unlink()  # deleted
+        (r / "opencode.json").write_text("{}", encoding="utf-8")
+        (r / "deep").mkdir()
+        (r / "deep/opencode.jsonc").write_text("{}", encoding="utf-8")
+        (r / "notes.txt").write_text("fine", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted(found, key=lambda v: v["path"]) == [
+        {"path": ".claude/settings.json", "reason": "agent_settings_changed"},
+        {"path": ".claude/settings.local.json", "reason": "agent_settings_changed"},
+        {"path": "deep/opencode.jsonc", "reason": "agent_settings_changed"},
+        {"path": "opencode.json", "reason": "agent_settings_changed"},
+        {"path": "sub/.opencode/x.json", "reason": "agent_settings_changed"}]
+    # the same without a protected list in `prot` (a run recorded before this existed) is judged the same
+    found, _ = _violations(_project(tmp_path / "again", {"a.txt": "a"}), lambda r: (r / "opencode.json").write_text("{}"))
+    assert found == [{"path": "opencode.json", "reason": "agent_settings_changed"}]
+    # and an untouched project is clean
+    assert _violations(_project(tmp_path / "clean", {".claude/settings.json": "{}"}), lambda r: None)[0] == []
+
+
+def test_a_setting_that_is_also_a_data_file_is_one_violation_not_two(tmp_path):
+    root = _project(tmp_path / "proj", {"opencode.json": "{}", "docs/.claude/x.json": "{}", "data/raw.csv": "a"})
+    found, _ = _violations(root, lambda r: ((r / "opencode.json").write_text('{"a": 1}'),
+                                            (r / "docs/.claude/x.json").unlink(), (r / "data/raw.csv").write_text("b")))
+    assert sorted((v["path"], v["reason"]) for v in found) == [
+        ("data/raw.csv", "data_changed"), ("docs/.claude/x.json", "agent_settings_changed"),
+        ("opencode.json", "agent_settings_changed")]
 
 
 @pytest.mark.parametrize("command", [
@@ -1681,3 +2148,179 @@ def test_bash_public_apis_with_research_os_looking_paths_are_allowed(project, co
 ])
 def test_bash_research_os_api_on_a_loopback_host_or_the_engine_port_is_refused(project, command):
     assert _refused(project, "Bash", {"command": command}), command
+
+
+# -- 18.1 item 6: rule 3's suffixes ---------------------------------------------------------------------------
+
+NEW_DATA_SUFFIXES = (".sqlite", ".db", ".npy", ".npz", ".mat", ".sas7bdat", ".jsonl", ".pickle")
+
+
+def test_the_added_suffixes_are_data_for_the_walk_the_hook_and_the_after_run_check(tmp_path):
+    """One list: `snapshot.DATA_SUFFIXES` is what the data walk finds, what `protected` hands the hook through
+    `guard.json`, and what the after-run check reports."""
+    assert set(NEW_DATA_SUFFIXES) <= snapshot.DATA_SUFFIXES
+    wanted = [f"data/x{s}" for s in NEW_DATA_SUFFIXES] + ["data/Upper.SQLITE", "deep/er/panel.NPZ"]
+    root = _project(tmp_path / "proj", {rel: "1" for rel in wanted} | {"data/notes.txt": "n", "data/run.sqlite3": "3"})
+    picture = snapshot.take(root)
+    assert set(picture["data"]) == set(wanted)  # `.sqlite3` is no listed suffix
+    prot = snapshot.protected(root, picture)
+    assert set(prot["data"]) == set(wanted) and set(prot["files"]) >= set(wanted)
+    old_shape = {k: v for k, v in picture.items() if k not in ("data", "data_partial")}
+    assert set(snapshot.protected(root, old_shape)["data"]) == set(wanted)  # the fallback reads the same list
+
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    guard.write_guard_file(rd, root=root, prot=prot, engine_port=None)
+    g = guard.load_guard(rd)
+    for rel in wanted:
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}), rel
+        assert guard.check_tool(g, "Edit", {"file_path": str(root / rel)}), rel
+        assert guard.check_tool(g, "Bash", {"command": f"rm {rel}"}), rel
+        assert guard.check_tool(g, "Bash", {"command": f"echo x > {rel}"}), rel
+    for rel in ("data/new.jsonl", "data/run.sqlite3", "data/notes.txt"):
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}) is None, rel
+
+    def mutate(r):
+        for rel in wanted[:4]:
+            (r / rel).write_text("changed", encoding="utf-8")
+        for rel in wanted[4:]:
+            (r / rel).unlink()
+        (r / "data/new.pickle").write_text("fresh data is allowed", encoding="utf-8")
+        (r / "data/run.sqlite3").write_text("not listed", encoding="utf-8")
+
+    found, _ = _violations(root, mutate)
+    assert sorted((v["path"], v["reason"]) for v in found) == sorted(
+        [(rel, "data_changed") for rel in wanted[:4]] + [(rel, "data_deleted") for rel in wanted[4:]])
+
+
+def test_package_json_and_package_lock_are_not_data_in_any_folder(tmp_path):
+    exempt = ["package.json", "package-lock.json", "web/package.json", "web/sub/package-lock.json",
+              "up/Package.JSON", "up/PACKAGE-LOCK.json"]
+    data = ["packages.json", "my-package.json", "web/package.jsonl", "web/package-lock.json.csv", "settings.json",
+            "npm-shrinkwrap.json"]  # exactly the two names are exempt (18.1 item 6): a dataset of that name is not
+    root = _project(tmp_path / "proj", {rel: "{}" for rel in exempt + data})
+    picture = snapshot.take(root)
+    assert set(picture["data"]) == set(data)
+    assert set(snapshot.protected(root, picture)["data"]) == set(data)
+    assert not any(snapshot._is_data(rel) for rel in exempt)  # by file name, whatever the folder
+    assert all(snapshot._is_data(rel) for rel in data)
+
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    guard.write_guard_file(rd, root=root, prot=snapshot.protected(root, picture), engine_port=None)
+    g = guard.load_guard(rd)
+    for rel in exempt:  # `npm install` writes these: the hook lets it
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}) is None, rel
+        assert guard.check_tool(g, "Bash", {"command": f"rm {rel}"}) is None, rel
+    for rel in data:
+        assert guard.check_tool(g, "Write", {"file_path": str(root / rel)}), rel
+
+    def mutate(r):
+        for rel in exempt:
+            (r / rel).write_text('{"changed": true}', encoding="utf-8")
+        (r / "web/package.json").unlink()
+        (r / "packages.json").write_text("changed", encoding="utf-8")
+
+    found, changes = _violations(root, mutate)
+    assert [(v["path"], v["reason"]) for v in found] == [("packages.json", "data_changed")]
+    assert "web/package.json" in changes["deleted"] and "package.json" in changes["modified"]  # still in the change list
+
+
+# -- 18.1 item 6: every refusal has a code ----------------------------------------------------------------------
+
+REFUSAL_CASES = [  # (tool, input, expected code)
+    ("Write", {"file_path": "/etc/hosts"}, "outside_project"),
+    ("Edit", {"file_path": "../x.txt"}, "outside_project"),
+    ("Write", {}, "no_file"),
+    ("Write", {"file_path": "."}, "no_file"),
+    ("Write", {"file_path": ".researchos/team.toml"}, "records_folder"),
+    ("Write", {"file_path": "sub/.RCE/x"}, "records_folder"),
+    ("Write", {"file_path": ".git/config"}, "git_files"),
+    ("Write", {"file_path": "vendor/.git/hooks/pre-commit"}, "git_files"),
+    ("Write", {"file_path": ".claude/settings.json"}, "agent_settings"),
+    ("Write", {"file_path": "opencode.json"}, "agent_settings"),
+    ("Write", {"file_path": "data/raw.csv"}, "protected_file"),
+    ("Edit", {"file_path": "map.md"}, "protected_file"),
+    ("Write", {"file_path": "data/clean.DTA"}, "protected_file"),
+    ("Bash", {"command": "researchos status"}, "research_os_command"),
+    ("Bash", {"command": "git push origin main"}, "git_state"),
+    ("Bash", {"command": "cd x && git -C . commit -m y"}, "git_state"),
+    ("Bash", {"command": "curl http://127.0.0.1:8765/api/agents/runs"}, "engine_api"),
+    ("Bash", {"command": "cat .researchos/team.toml"}, "records_folder"),
+    ("Bash", {"command": "echo x > .git/config"}, "git_files"),
+    ("Bash", {"command": "echo x > .claude/settings.json"}, "agent_settings"),
+    ("Bash", {"command": "rm data/raw.csv"}, "protected_file"),
+    ("Bash", {"command": "echo x > data/raw.csv"}, "protected_file"),
+    ("Bash", {"command": "rm -rf data"}, "protected_file"),
+    ("Bash", {"command": 5}, "unchecked"),
+    ("Bash", ["git push"], "unchecked"),
+    ("Edit", "file", "unchecked"),
+    ("Read", {"file_path": "x\0y"}, "unchecked"),
+]
+
+
+@pytest.mark.parametrize("tool,tool_input,code", REFUSAL_CASES)
+def test_a_refusal_is_a_sentence_for_the_agent_that_carries_its_code(project, tool, tool_input, code):
+    reason = guard.check_tool(project.guard, tool, tool_input, str(project.root))
+    assert isinstance(reason, str) and reason and isinstance(reason, guard.Refusal)
+    assert reason.code == code and guard.refusal_code(reason) == code and code in guard.REFUSAL_CODES
+
+
+def test_the_reading_tools_refuse_with_the_off_limits_code(project, tmp_path):
+    for tool, tool_input in (("Read", {"file_path": os.path.expanduser("~/.ssh/id_ed25519")}),
+                             ("Grep", {"pattern": "x", "path": os.path.expanduser("~")}),
+                             ("Bash", {"command": "ls ~/.ssh"}), ("Bash", {"command": "echo $RESEARCHOS_HOME"})):
+        reason = guard.check_tool(project.guard, tool, tool_input, str(project.root))
+        assert reason and reason.code == "off_limits", (tool, tool_input)
+
+
+def test_every_code_is_reached_and_a_code_nobody_declared_is_refused():
+    reached = {code for _t, _i, code in REFUSAL_CASES} | {"off_limits"}
+    assert reached == set(guard.REFUSAL_CODES)  # a code in the list that no case reaches would be dead
+    with pytest.raises(ValueError):
+        guard.Refusal("x", "made_up")
+    assert guard.refusal_code("a plain sentence") is None and guard.refusal_code(None) is None
+    assert guard.refusal_code(guard.Refusal("x", "git_state")) == "git_state"
+
+
+def test_the_marker_a_code_travels_in_round_trips_and_is_taken_off_only_at_the_end():
+    sentence = "Writing inside .git is not allowed in this run; leave git's files alone."
+    said = guard.with_marker(sentence, "git_files")
+    assert said == sentence + " [refusal: git_files]"
+    assert guard.split_refusal(said) == (sentence, "git_files")
+    assert guard.split_refusal("Research OS: " + said + "\n") == ("Research OS: " + sentence, "git_files")
+    assert guard.with_marker(sentence, None) == sentence and guard.with_marker(sentence, "made_up") == sentence
+    for text in (sentence, "a [refusal: git_files] in the middle of it", "[refusal: made_up]", "ends with [refusal: ]", ""):
+        assert guard.split_refusal(text) == (text, None), text
+
+
+def test_log_refusal_records_the_code_of_a_refusal_and_none_for_a_plain_reason(tmp_path):
+    guard.log_refusal(tmp_path, "Bash", "git push", guard.Refusal("no git.", "git_state"))
+    guard.log_refusal(tmp_path, "Bash", "x", "a plain reason")
+    first, second = runs.read_lines(tmp_path / "refusals.jsonl")
+    assert first["code"] == "git_state" and first["reason"] == "no git." and "code" not in second
+    assert second["reason"] == "a plain reason"
+
+
+def test_the_hook_says_the_code_to_the_agent_and_logs_it(project):
+    done = _hook(project.run_dir, {"tool_name": "Edit", "tool_input": {"file_path": str(project.root / "data/raw.csv")}})
+    message = done.stderr.decode("utf-8")
+    assert done.returncode == 2 and message.startswith("Research OS: ") and message.endswith(" [refusal: protected_file]\n")
+    reason, code = guard.split_refusal(message)
+    assert code == "protected_file" and "protected file" in reason
+    (record,) = runs.read_lines(project.run_dir / "refusals.jsonl")
+    assert record["code"] == "protected_file" and record["reason"] == reason[len("Research OS: "):]  # the log has no marker
+    done = _hook(project.run_dir, {"tool_name": "Bash", "tool_input": {"command": "researchos status"}, "cwd": str(project.root)})
+    assert done.stderr.decode("utf-8").endswith(" [refusal: research_os_command]\n")
+
+
+def test_a_hook_that_could_not_check_refuses_with_the_unchecked_code(project, tmp_path):
+    for raw in (b"not json", b'{"tool_name": 5}'):
+        done = _hook(project.run_dir, None, raw=raw)
+        assert done.returncode == 2 and done.stderr.decode("utf-8").endswith(" [refusal: unchecked]\n")
+    assert [r["code"] for r in runs.read_lines(project.run_dir / "refusals.jsonl")] == ["unchecked", "unchecked"]
+    empty = tmp_path / "empty-run"
+    empty.mkdir()
+    done = _hook(empty, {"tool_name": "Bash", "tool_input": {"command": "python x.py"}})
+    assert done.returncode == 2 and b"could not check" in done.stderr and done.stderr.endswith(b" [refusal: unchecked]\n")
+    assert runs.read_lines(empty / "refusals.jsonl")[0]["code"] == "unchecked"

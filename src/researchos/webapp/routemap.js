@@ -183,6 +183,7 @@
       case "team_unreadable": return t("成员文件（team.toml）当前无法读取，无法判断谁是 PI");
       case "pi_changes_directly": return t("你是 PI：连线直接写入正式版本；请刷新后再画");
       case "not_in_team": return t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步");
+      case "session_required": return t("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。"); // 18.1
       default: return null;
     }
   }
@@ -704,7 +705,7 @@
         if (slot.reset) m.save.reset = true;
         Object.keys(slot.positions).forEach((id) => { if (!hasOwn(m.save.positions, id)) m.save.positions[id] = slot.positions[id]; });
         if (m.save.viewport === undefined) m.save.viewport = slot.viewport;
-        showStatus(t("位置没能保存，下次移动时会重试"), err);
+        showStatus(refusal(err && err.state) || t("位置没能保存，下次移动时会重试"), err);
       }
     }
 
@@ -795,7 +796,7 @@
       const input = el("input", "form-input cv-pop-note");
       input.type = "text";
       input.placeholder = t("备注（可选）");
-      input.setAttribute("aria-label", t("备注"));
+      input.setAttribute("aria-label", t("备注", { n: 1 }));
       input.maxLength = 200;
       field.appendChild(input);
       const actions = el("div", "cv-pop-actions");

@@ -49,7 +49,11 @@ ships zero required runtime dependencies, see pyproject.toml).
 Which .md files count as paper prose (task W3 point 2): every .md file
 `researchos ingest`'s file inventory finds, except the well-known non-paper
 convention names (README/CHANGELOG/LICENSE, in their customary ALL-CAPS
-form) -- see `_is_paper_markdown`. Everything else is ingested: a
+form) and the files Research OS itself writes in its `research/` folder --
+the writing desk's overview, notes and result records, and the attempt table
+(DESIGN.md 18.3: a note is not a paper draft, and must not create claims or
+`backed_by` candidates) -- see `_is_paper_markdown`. Any other Markdown file in
+`research/` is the researcher's own. Everything else is ingested: a
 researcher's own map/draft/notes file is real, traceable prose too, and
 "never guess" cuts against trying to be clever about which .md files are
 "real" papers. An extra section node from a non-paper .md file is harmless;
@@ -69,6 +73,7 @@ from urllib.parse import unquote
 
 from researchos import cloud
 from researchos import db
+from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import claims as claims_ingest
 from researchos.ingest import scan as scan_mod
 from researchos.ingest.latex import Link, ParsedSection, _compute_ordered_slugs, _match_known_image
@@ -114,9 +119,46 @@ _TABLE_DELIM_RE = re.compile(r"^\s*(?=.*\|)\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)
 _NON_PAPER_MD_PREFIXES = ("README", "CHANGELOG", "LICENSE")
 
 
-def _is_paper_markdown(md_rel_path: str) -> bool:
-    """False for a well-known non-paper convention filename; True (ingest
-    it) for everything else -- see module docstring, "which .md files count"."""
+# The writing desk's own folder at the project root (DESIGN.md 18.3): the files Research OS writes in it -- the
+# overview, the notes and result records, the attempt table -- are not paper drafts, whatever they say. Any other
+# Markdown file in it is the researcher's own (a manuscript kept in research/paper.md) and is read as a draft.
+_NON_PAPER_MD_FOLDER = "research"
+#: Inside that folder: the overview and the attempt table by their names (the table's default name; one that
+#: `attempts.toml` puts under another name is added by the caller, `attempt_table_of`), and the files directly in
+#: these two folders.
+_OWN_MD_FILES = ("overview.md", "attempts.md")
+_OWN_MD_SUBFOLDERS = ("notes", "results")
+
+
+def attempt_table_of(repo_root: str | Path) -> str | None:
+    """The attempt table's file as the project's `attempts.toml` names it, in the form `_is_paper_markdown` compares;
+    None where there is none (or it cannot be read: the table is then known by its default name only)."""
+    try:
+        return posixpath.normpath(attempts_ingest.load_config(Path(repo_root)).file)
+    except (attempts_ingest.AttemptsConfigError, OSError, ValueError, TypeError):
+        return None
+
+
+def _is_research_own(md_rel_path: str, table: str | None = None) -> bool:
+    """True for a file Research OS writes in the `research/` folder at the project root: the overview, the notes and
+    result records (directly in their folders, a sync service's conflict copies among them) and the attempt table --
+    `attempts.md`, or the file `table` names (`attempt_table_of`)."""
+    norm = posixpath.normpath(md_rel_path)
+    folder, _sep, inside = norm.partition("/")
+    if folder != _NON_PAPER_MD_FOLDER or not inside:
+        return False
+    if inside in _OWN_MD_FILES or (table is not None and norm == table):
+        return True
+    subfolder, _sep, name = inside.partition("/")
+    return subfolder in _OWN_MD_SUBFOLDERS and bool(name) and "/" not in name
+
+
+def _is_paper_markdown(md_rel_path: str, table: str | None = None) -> bool:
+    """False for a well-known non-paper convention filename and for a file Research OS writes in its `research/`
+    folder (`_is_research_own`; `table`: the attempt table's file, `attempt_table_of`); True (ingest it) for
+    everything else -- see module docstring, "which .md files count"."""
+    if _is_research_own(md_rel_path, table):
+        return False
     basename = posixpath.basename(md_rel_path)
     return not basename.startswith(_NON_PAPER_MD_PREFIXES)
 
@@ -319,7 +361,8 @@ def ingest_md_repo(
     candidates.
 
     `_is_paper_markdown` filters out the well-known non-paper convention
-    filenames (README/CHANGELOG/LICENSE) before anything else runs; the
+    filenames (README/CHANGELOG/LICENSE) and the files Research OS writes in
+    `research/` before anything else runs; the
     count of how many were skipped this way is returned as
     `md_skipped_non_paper` so a caller's summary line can state it plainly
     rather than a bare "0 sections" looking like a broken extractor (never
@@ -337,12 +380,17 @@ def ingest_md_repo(
     filtered out as a non-paper convention name) is excluded from that
     scope, never treated as evidence its content is gone (DESIGN.md section
     0, "never guess"; see `researchos.ingest.claims._cleanup_orphaned_claims`).
+    A file Research OS writes in `research/` is the other case: it is known
+    not to be paper prose, so it is in that scope with no claims -- the
+    claims (and their `backed_by` links) an earlier scan made of a note
+    (before the rule) are removed, as for a draft whose numbers are all gone.
 
     Scan report (DESIGN.md 9.6): each paper .md file is a source for
     `mdpaper` (and, through `ingest_parsed_claims`, for `claims`),
     `READ_AND_PARSED` or `UNREADABLE`; a README/CHANGELOG/LICENSE is not
-    read and reports nothing. `includes` links rest on their identity
-    alone (basis `{}`).
+    read and reports nothing, and a file Research OS writes in `research/`
+    is not read either (it is reported for `claims` only, as holding none).
+    `includes` links rest on their identity alone (basis `{}`).
     """
     with scan_mod.own_scan(conn, scan, "mdpaper") as sc:
         return _ingest_md(conn, Path(repo_root), md_paths, image_paths, sc)
@@ -359,13 +407,16 @@ def _ingest_md(
     parsed_claims_by_path: dict[str, list[claims_ingest.ParsedClaim]] = {}
     skipped_non_paper = 0
     unreadable: list[str] = []
+    table = attempt_table_of(repo_root)
     for md_rel_path in md_paths:
-        if not _is_paper_markdown(md_rel_path):
+        if not _is_paper_markdown(md_rel_path, table):
             skipped_non_paper += 1
             logger.info(
-                "%s: convention filename (README/CHANGELOG/LICENSE), not paper prose -- skipping",
+                "%s: README/CHANGELOG/LICENSE or a file Research OS writes in research/, not paper prose -- skipping",
                 md_rel_path,
             )
+            if _is_research_own(md_rel_path, table):
+                parsed_claims_by_path[md_rel_path] = []  # no claims, whatever an earlier scan made of it
             continue
         try:
             result = parse_md_file(repo_root, md_rel_path)

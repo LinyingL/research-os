@@ -76,7 +76,7 @@ def test_14_3_the_verdict_chips_are_one_per_status_and_put_the_tables_own_marker
       find(%(abandoned)s, "BUTTON").click();
       find(%(preview)s).click(); await settle(); await settle();
     """ % {"a16": json.dumps(A16), "abandoned": json.dumps(w("已放弃", "Abandoned")),
-           "pending": json.dumps(w("待定", "Pending")), "preview": json.dumps(w("预览改动", "Preview the change"))}
+           "pending": json.dumps(w("待定", "Pending")), "preview": json.dumps(w("保存", "Save"))}
     out = _run(case, steps, lang=None if lang == "zh" else lang)
     [chips] = out["extra"]["chips"]
     assert chips == [w("现行", "Current"), w("待定", "Pending"), w("不利证据", "Adverse evidence"), w("归档", "Archived"),
@@ -84,6 +84,7 @@ def test_14_3_the_verdict_chips_are_one_per_status_and_put_the_tables_own_marker
     assert not any(FORBIDDEN.search(c) for c in chips)
     assert (out["extra"]["abandoned"], out["extra"]["pending"]) == ("☠️ **活跃候选**", "🕒 **活跃候选**")
     assert out["posted"][0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠️ **活跃候选**"}}]
+    assert out["posted"][1] == ["/api/attempts/write", out["posted"][0][1]]  # 18.3: the preview is not shown, the write follows
 
 
 def _desk_alone(steps: str) -> object:

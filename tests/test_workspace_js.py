@@ -65,6 +65,7 @@ global.panelTitle = new Element('h2'); global.panelSubtitle = new Element('p'); 
 global.openPanel = ()=>panel.classList.remove('hidden');
 global.closePanel = ()=>{ panel.classList.add('hidden'); state.panelSubject=null; };
 global.mayReplacePanel = ()=>true;
+global.chevronIcon = ()=>{ const e = new Element('svg'); e.className = 'res-chevron'; return e; };
 global.uiLang = ()=>window.ROI18N ? window.ROI18N.lang : 'zh';
 let generations = 0;
 global.pollGeneration = ()=>{ generations += 1; };
@@ -84,6 +85,9 @@ const clone = value=>JSON.parse(JSON.stringify(value));
 // Every one is served only when a scenario sets it, so a page without them still has to work.
 const gets=[];
 let agentsInfo=null, meInfo=null, shareInfo=null, modelsList=null, runsList={runs:[],active:null}, runLogs={};
+// 18.1 item 5: what an undo would do (per run id; a default plan otherwise) and the project's files over 16 MB.
+let runPlans={}, bigFiles={count:0,largest:[],partial:false};
+const defaultPlan=run=>({run:clone(run),restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'}],remove:[{path:'out/new.csv',time:'2026-10-21T09:40:03+02:00'}],cannot:[]});
 const agentFixture=()=>({
   runners:[{runner:'claude-code',label:'Claude Code',path:'/usr/local/bin/claude',version:'2.1.0',problem:null,found:true},
            {runner:'opencode',label:'OpenCode',path:null,version:null,problem:'missing',found:false}],
@@ -101,6 +105,9 @@ global.apiGet=async path=>{
   if(path==='/api/workspace') return clone(listed);
   if(path.startsWith('/api/workspace/document?')) return clone(docs[new URLSearchParams(path.split('?')[1]).get('path')]);
   if(path==='/api/agents'&&agentsInfo) return clone(agentsInfo);
+  if(path==='/api/agents/large-files') return clone(bigFiles);
+  let plan=/^\/api\/agents\/runs\/([^/]+)\/revert-plan$/.exec(path);
+  if(plan) { const id=decodeURIComponent(plan[1]); return clone(runPlans[id]||defaultPlan(runById(id))); }
   if(path==='/api/agents/runs'&&runsList) return clone(runsList);
   if(path.startsWith('/api/agents/runs/')&&runLogs[decodeURIComponent(path.split('/').pop())]) return clone(runLogs[decodeURIComponent(path.split('/').pop())]);
   if(path==='/api/agents/models?runner=opencode'&&modelsList) return {models:clone(modelsList)};
@@ -120,7 +127,15 @@ global.apiPost=async(path,body)=>{
   if(m) {
     const run=runById(decodeURIComponent(m[1]));
     if(m[2]==='stop') { Object.assign(run,{state:'stopped',can_stop:false,can_reply:true}); runsList.active=null; return clone(run); }
-    if(m[2]==='revert') { Object.assign(run,{reverted:true,can_revert:false,can_reply:false}); return {run:clone(run),restored:['analysis.py'],removed:['out/new.csv'],skipped:[]}; }
+    if(m[2]==='revert') {
+      // what the engine does with `files` (18.1 item 5): the checked ones are done, the other offered ones are kept
+      const plan=runPlans[run.id]||defaultPlan(run), files=body.files;
+      const offered=[...plan.restore,...plan.remove].map(i=>i.path), checked=files===undefined?offered:files;
+      const kept=offered.filter(p=>!checked.includes(p)).map(p=>({path:p,reason:'kept'}));
+      Object.assign(run,{reverted:true,can_revert:false,can_reply:false});
+      if(kept.length) run.revert_skipped=kept.length+plan.cannot.length;
+      return {run:clone(run),restored:plan.restore.map(i=>i.path).filter(p=>checked.includes(p)),removed:plan.remove.map(i=>i.path).filter(p=>checked.includes(p)),skipped:[...plan.cannot,...kept]};
+    }
     const next=mkRun({id:'r-20261021T0959'+runsList.runs.length+'0Z-cccccc',task_id:run.task_id,state:'running',can_stop:true,parent:run.id,kind:run.state==='needs_input'?'answer':'send_back',message:body.message});
     Object.assign(run,{can_reply:false}); runsList.runs.unshift(next); runsList.active=next.id; return clone(next);
   }
@@ -569,11 +584,259 @@ console.log(JSON.stringify({proposals}));
 def test_task_save_uses_task_annotation_from_the_server():
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
-customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'local',label:'本地草稿'}}:undefined;
+customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'mine',label:'我的改动，尚未提交'}}:undefined;
 typed(field('任务'),'Consider another explanation');await find('添加任务').click();
 console.log(JSON.stringify({words:byClass('ws-tasks').textContent}));
 """)
-    assert "本地草稿" in out["words"]
+    assert "我的改动，尚未提交" in out["words"]
+
+
+def test_the_open_documents_officialness_word_follows_a_proposal_sent_approved_and_synced():
+    """The same text can be read again under another word (DESIGN 18.3): 提议中 once 发送提议 is done, 已批准，待同步
+    once the PI approved, nothing once the sync made it official. The refresh after 发送提议 (a quiet re-read of the
+    open document, same revision) redraws the word beside the kind -- once, not added to -- and only that: the
+    writing area is the one on the page, not a new one."""
+    out = run(r"""
+const MINE={state:'mine',label:'我的改动，尚未提交'}, PROP={state:'proposed',label:'提议中'},
+      APPROVED={state:'approved',label:'已批准，待同步'}, OFFICIAL={state:'official'};
+const set=m=>{ listed.documents[0].officialness=m; docs['research/overview.md'].officialness=m; listed.tasks_officialness=m; };
+listed.mode='member'; set(MINE);
+await window.ROWorkspace.load(root);
+const area=byClass('ws-writing');
+const words=()=>byClass('ws-kind').querySelectorAll('.ws-officialness').map(e=>e.textContent);
+const seen=[words()];
+for (const m of [PROP, APPROVED, OFFICIAL, MINE]) { set(m); await window.ROWorkspace.load(root,true); seen.push(words()); }
+console.log(JSON.stringify({seen, sameArea: byClass('ws-writing')===area, kind: byClass('ws-kind').textContent}));
+""")
+    assert out["seen"] == [["我的改动，尚未提交"], ["提议中"], ["已批准，待同步"], [], ["我的改动，尚未提交"]]
+    assert out["sameArea"] is True and out["kind"].endswith("我的改动，尚未提交")
+
+
+# -- 项目首页 (DESIGN.md 18.3) ---------------------------------------------------------------------------------
+
+
+def _note(path: str, title: str, modified: str | None) -> str:
+    """A note of the fixture project: the listing entry and the document, as JavaScript statements."""
+    return (f"listed.documents.push({{path:'{path}',kind:'note',title:'{title}',excerpt:'',modified:{json.dumps(modified)}}});"
+            f"docs['{path}']={{path:'{path}',kind:'note',title:'{title}',content:'# {title}\\n\\nBody',revision:'{title}-0'}};")
+
+
+def test_notes_and_results_are_listed_by_last_change_and_a_saved_one_goes_to_the_top():
+    out = run(_note("research/notes/a.md", "Oldest", "2026-10-01T09:00:00+00:00")
+              + _note("research/notes/b.md", "Newest", "2026-10-22T09:00:00+00:00")
+              + _note("research/notes/c.md", "Middle", "2026-10-10T09:00:00+00:00")
+              + _note("research/notes/d.md", "Unknown time", None)
+              + r"""
+await window.ROWorkspace.load(root);
+const names=()=>root.all().filter(e=>e.classList.contains('ws-document')).map(e=>e.textContent);
+const before=names();
+await find('Oldest').click();
+typed(byClass('ws-writing'),'# Oldest\n\nEdited');
+await find('保存').click();
+console.log(JSON.stringify({before,after:names()}));
+""")
+    assert out["before"] == ["Research question", "Newest", "Middle", "Oldest", "Unknown time"]
+    assert out["after"] == ["Research question", "Oldest", "Newest", "Middle", "Unknown time"]
+
+
+def test_typing_during_a_save_keeps_the_title_the_engine_wrote_into_a_new_document():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+await find('新建笔记').click();
+typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'First words');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+const area=byClass('ws-writing'); typed(area,'First words and more'); area.selectionStart=area.selectionEnd=20;
+waiting.resolve({path:'research/notes/n1.md',kind:'note',title:'Discussion',content:'# Discussion\n\nFirst words',revision:'r1'});
+await saving;
+const after=area.value, caret=[area.selectionStart,area.selectionEnd], dirtyAfter=window.ROWorkspace.isDirty();
+customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:'Discussion',content:body.content,revision:'r2'}:undefined;
+await find('保存').click();
+console.log(JSON.stringify({after,caret,dirtyAfter,second:posted[posted.length-1][1],dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out["after"] == "# Discussion\n\nFirst words and more"
+    assert out["caret"] == [34, 34]  # the caret stays after the words it was after
+    assert out["dirtyAfter"] and not out["dirty"]
+    assert out["second"]["content"] == "# Discussion\n\nFirst words and more"
+    assert out["second"]["title"] == "Discussion" and out["second"]["revision"] == "r1"
+
+
+def test_typing_during_a_save_keeps_a_changed_title_in_place_of_the_old_heading():
+    out = run(_note("research/notes/n2.md", "Old", "2026-10-20T10:00:00+00:00") + r"""
+await window.ROWorkspace.load(root);
+await find('Old').click();
+typed(byClass('ws-title-input'),'New');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+typed(byClass('ws-writing'),'# Old\n\nBody, then more');
+waiting.resolve({path:'research/notes/n2.md',kind:'note',title:'New',content:'# New\n\nBody',revision:'n2-1'});
+await saving;
+const after=byClass('ws-writing').value;
+customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:body.title,content:body.content,revision:'n2-2'}:undefined;
+await find('保存').click();
+console.log(JSON.stringify({after,second:posted[posted.length-1][1],title:byClass('ws-title-input').value}));
+""")
+    assert out["after"] == "# New\n\nBody, then more"
+    assert out["second"]["content"] == "# New\n\nBody, then more" and out["second"]["title"] == "New"
+    assert out["title"] == "New"
+
+
+def test_typing_during_a_save_leaves_the_text_alone_when_no_heading_was_written_or_the_input_method_is_composing():
+    plain = run(r"""
+await window.ROWorkspace.load(root);
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+typed(byClass('ws-writing'),'First paragraph');
+const saving=find('保存').click();
+typed(byClass('ws-writing'),'First paragraph\nMore');
+waiting.resolve({path:'research/overview.md',kind:'overview',title:'Research question',content:'First paragraph',revision:'doc-1'});
+await saving;
+console.log(JSON.stringify({after:byClass('ws-writing').value}));
+""")
+    assert plain["after"] == "First paragraph\nMore"
+    composing = run(r"""
+await window.ROWorkspace.load(root);
+await find('新建笔记').click();
+typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'Words');
+const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
+const saving=find('保存').click();
+const area=byClass('ws-writing'); await area.emit('compositionstart'); typed(area,'Words ni');
+waiting.resolve({path:'research/notes/n1.md',kind:'note',title:'Discussion',content:'# Discussion\n\nWords',revision:'r1'});
+await saving;
+const during=area.value;
+typed(area,'Words 你'); await area.emit('compositionend'); await sleepTick(); await sleepTick();
+console.log(JSON.stringify({during,after:area.value,draft:window.ROWorkspace.isDirty()}));
+""")
+    assert composing["during"] == "Words ni"  # the input method's text is not touched while it composes
+    assert composing["after"] == "# Discussion\n\nWords 你"
+
+
+def test_a_new_overview_saved_with_the_title_it_was_shown_with_gets_no_heading():
+    out = run(r"""
+listed.documents=[];
+await window.ROWorkspace.load(root);
+typed(byClass('ws-writing'),'Why does this happen?');
+await find('预览').click();
+const preview=byClass('ws-preview').textContent;
+await find('继续编辑').click();
+await find('保存').click();
+console.log(JSON.stringify({preview,sent:posted[0][1]}));
+""")
+    assert out["preview"] == "Why does this happen?"
+    assert out["sent"]["title"] == "研究问题与计划" and out["sent"]["content"] == "Why does this happen?"
+
+
+def test_more_than_the_listed_files_says_so_where_files_are_chosen_and_a_link_beyond_them_is_still_known():
+    out = run(r"""
+listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const sentence=byClass('ws-files-cut').textContent;
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await find('预览').click(); await sleepTick(); await sleepTick();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A').map(e=>e.textContent);
+const asked=gets.filter(p=>p.startsWith('/api/workspace/exists?'));
+await find('继续编辑').click(); await find('预览').click(); await sleepTick();
+console.log(JSON.stringify({sentence,links,words:preview.textContent,asked,askedAgain:gets.filter(p=>p.startsWith('/api/workspace/exists?')).length}));
+""")
+    assert out["sentence"] == "项目里的文件多于 500 个，这里只列出前 500 个；其余的可以在正文里手写链接。"
+    assert out["links"] == ["Beyond", "Listed"]
+    assert "[Absent](../data/absent.csv)" in out["words"]
+    assert out["asked"] == ["/api/workspace/exists?project=%2Fprojects%2Fstudy&path=data%2Fbeyond.csv&path=data%2Fabsent.csv"]
+    assert out["askedAgain"] == 1  # the answers are remembered, the engine is not asked again
+
+
+def test_a_complete_file_list_says_nothing_and_asks_nothing():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)');
+await find('预览').click(); await sleepTick();
+console.log(JSON.stringify({sentence:!!byClass('ws-files-cut'),gets:gets.filter(p=>p.includes('exists'))}));
+""")
+    assert out == {"sentence": False, "gets": []}
+
+
+def test_a_members_submission_takes_the_files_beyond_the_listed_ones_that_exist():
+    out = run(r"""
+listed.mode='member'; listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await find('保存').click(); await find('提交修改').click();
+console.log(JSON.stringify({proposals}));
+""")
+    assert out["proposals"] == [["research/overview.md", "data/beyond.csv", "code/model.do"]]  # in the order the document names them
+
+
+def test_a_members_submission_of_tasks_takes_the_result_records_the_changed_tasks_link():
+    out = run(r"""
+listed.mode='member'; listed.changed_task_reports=['research/results/'+'b'.repeat(32)+'.md'];
+await window.ROWorkspace.load(root);
+const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
+await find('提交修改',byClass('ws-tasks')).click();
+customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',changed_task_reports:[]}:undefined;
+typed(field('任务'),'Another task'); await find('添加任务').click();
+await find('提交修改',byClass('ws-tasks')).click();
+console.log(JSON.stringify({proposals}));
+""")
+    assert out["proposals"] == [["research/tasks.json", "research/results/" + "b" * 32 + ".md"], ["research/tasks.json"]]
+
+
+def test_a_mac_that_is_not_a_member_says_so_and_a_project_opened_read_only_keeps_its_own_sentence():
+    out = run(r"""
+listed.mode='none'; listed.read_only=true; listed.can_write=false;
+await window.ROWorkspace.load(root);
+const none=byClass('ws-notices').textContent;
+listed.mode='single'; await window.ROWorkspace.load(root);
+const readOnly=byClass('ws-notices').textContent;
+listed.read_only=false; listed.can_write=true; await window.ROWorkspace.load(root);
+console.log(JSON.stringify({none,readOnly,gone:byClass('ws-notices').textContent}));
+""")
+    assert out["none"] == "这台 Mac 不是这个项目的成员，只能查看"
+    assert out["readOnly"] == "项目以只读方式打开。可以阅读，暂时不能保存。"
+    assert out["gone"] == ""
+
+
+def test_an_unreadable_project_identity_is_said_on_the_page_that_still_shows_and_the_line_goes_when_it_reads_again():
+    out = run(r"""
+listed.read_only=true; listed.can_write=false;
+listed.identity_error={code:'identity',message:'项目的身份文件暂时读不出来'};
+await window.ROWorkspace.load(root);
+const said=byClass('ws-notices').textContent, shown=root.textContent.includes('Research question');
+listed.identity_error=null; listed.read_only=false; listed.can_write=true;
+await window.ROWorkspace.load(root);
+console.log(JSON.stringify({said,shown,after:byClass('ws-notices').textContent}));
+""")
+    assert "项目的身份文件暂时读不出来" in out["said"] and out["shown"] and out["after"] == ""
+
+
+def test_a_pis_notes_and_result_records_say_they_go_to_the_members_with_the_next_publish():
+    out = run(_note("research/notes/a.md", "Idea", "2026-10-20T10:00:00+00:00") + r"""
+const sentence='笔记和结果记录会随下一次发布交给成员。';
+const said=()=>byClass('ws-document-footer').textContent.includes(sentence);
+listed.mode='pi'; await window.ROWorkspace.load(root);
+const onOverview=said();
+await find('Idea').click(); const onNote=said();
+await find('记录结果').click(); const onNewResult=said();
+listed.mode='member'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const member=said();
+listed.mode='single'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const single=said();
+console.log(JSON.stringify({onOverview,onNote,onNewResult,member,single}));
+""")
+    assert out == {"onOverview": False, "onNote": True, "onNewResult": True, "member": False, "single": False}
+
+
+def test_the_new_sentences_of_the_project_home_read_in_english_with_no_chinese():
+    out = run(_note("research/notes/a.md", "Idea", "2026-10-20T10:00:00+00:00") + r"""
+listed.mode='none'; listed.read_only=true; listed.can_write=false; listed.files_truncated=true; listed.files_limit=500;
+await window.ROWorkspace.load(root);
+const none=byClass('ws-notices').textContent, cut=byClass('ws-files-cut').textContent;
+listed.mode='pi'; listed.read_only=false; listed.can_write=true; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click();
+console.log(JSON.stringify({none,cut,pi:byClass('ws-document-footer').textContent}));
+""", lang="en")
+    assert out["none"] == "This Mac is not a member of this project; you can only read it"
+    assert out["cut"] == "The project has more than 500 files; only the first 500 are listed here. Others can be linked by hand in the text."
+    assert "Notes and result records go to the members with the next publish." in out["pi"]
+    assert not re.search(r"[㐀-鿿]", out["none"] + out["cut"] + out["pi"])
 
 
 # -- AI agents carry out tasks (DESIGN.md Section 17) --------------------------------------------------------
@@ -664,6 +927,17 @@ STATES = [
     ({}, {"state": "interrupted", "can_reply": True, "can_revert": True, "changes": 1}, "已中断", "gray",
      ["运行", "运行记录", "打回", "撤回本次运行"]),
     ({}, {"state": "done", "reverted": True}, "已撤回本次运行", "gray", ["运行", "运行记录"]),
+    # 18.1 item 4: a run that went out of bounds never reads 已完成 -- the task keeps the mark the agent gave it
+    ({"done": True, "report": REPORT},
+     {"state": "out_of_bounds", "outcome": "done", "can_reply": True, "can_revert": True, "changes": 3, "violations": 1,
+      "report": REPORT}, "越过了限制", "clay oob", ["运行记录", "打回", "撤回本次运行", "打开结果"]),
+    ({}, {"state": "out_of_bounds", "outcome": "needs_input", "can_reply": True, "can_revert": True, "changes": 1,
+          "violations": 1, "question": "Which sample?"}, "越过了限制", "clay oob", ["运行记录", "回答", "撤回本次运行"]),
+    ({}, {"state": "out_of_bounds", "outcome": "failed", "can_reply": True, "can_revert": True, "changes": 1,
+          "violations": 1, "error": {"code": "timeout", "detail": "past the limit"}}, "越过了限制", "clay oob",
+     ["运行", "运行记录", "打回", "撤回本次运行"]),
+    ({}, {"state": "out_of_bounds", "outcome": "stopped", "reverted": True, "violations": 1}, "已撤回本次运行", "gray",
+     ["运行", "运行记录"]),
 ]
 
 
@@ -686,6 +960,10 @@ console.log(JSON.stringify(results));
     assert "Which sample?" in out[3]["words"]
     assert "改动了 3 个文件" in out[4]["words"]
     assert "运行超过了时间限制，已被停止。" in out[6]["words"] and "详情" in out[6]["words"]
+    oob_done, oob_asked, oob_failed = out[10], out[11], out[12]
+    assert "已完成" not in oob_done["words"] and "有 1 处越界改动，详见运行记录。" in oob_done["words"]
+    assert "Which sample?" in oob_asked["words"] and "等你回答" not in oob_asked["words"]
+    assert "运行超过了时间限制，已被停止。" in oob_failed["words"]
 
 
 def test_a_started_run_posts_project_and_task_and_asks_once_per_agent_where_content_goes():
@@ -760,7 +1038,7 @@ console.log(JSON.stringify({disabled:go.disabled,title:go.title}));
     assert out["disabled"] and "还有一次运行没有结束" in out["title"]
 
 
-def test_stop_and_revert_post_to_the_run_and_revert_asks_first():
+def test_stop_and_revert_post_to_the_run_and_revert_lists_what_it_will_do_first():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];
 setRuns([mkRun({state:'running',can_stop:true})]);
@@ -770,16 +1048,28 @@ await find('停止',byClass('ws-agent')).click();await sleepTick();
 const stopped={label:byClass('status-label').textContent,posted:clone(posted),reloaded:generations>gen};
 runsList.runs[0].state='done';Object.assign(runsList.runs[0],{can_revert:true,changes:2,can_reply:true});
 await window.ROWorkspace.load(root,true);await sleepTick();
-answers.push(false);await find('撤回本次运行',byClass('ws-agent')).click();
-const declined=posted.length;
 await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
-console.log(JSON.stringify({stopped,declined,posted,question:confirmQuestions[0],words:byClass('ws-agent').textContent,label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent'))}));
+const listed_={posted:posted.length,asked:confirmQuestions.length,words:byClass('ws-agent-undo').textContent,buttons:buttonsIn(byClass('ws-agent-undo')),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded'),gets:gets.filter(p=>p.endsWith('revert-plan'))};
+await find('取消',byClass('ws-agent-undo')).click();
+const declined={posted:posted.length,panel:!!byClass('ws-agent-undo'),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded')};
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('确认撤回',byClass('ws-agent-undo')).click();await sleepTick();
+console.log(JSON.stringify({stopped,listed_,declined,posted,asked:confirmQuestions.length,words:byClass('ws-agent').textContent,label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),panel:!!byClass('ws-agent-undo')}));
 """)
     assert out["stopped"]["label"] == "已停止" and out["stopped"]["reloaded"]
     assert out["stopped"]["posted"] == [["/api/agents/runs/r-20261021T090000Z-aaaaaa/stop", {"project": "/projects/study"}]]
-    assert out["declined"] == 1
-    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert", {"project": "/projects/study"}]
-    assert "移到运行的文件夹里" in out["question"]
+    # the button only reads: it lists what the undo would do, asks nothing in a dialog and posts nothing
+    listed = out["listed_"]
+    assert listed["posted"] == 1 and listed["asked"] == 0 and listed["expanded"] == "true"
+    assert listed["gets"] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert-plan"]
+    assert "analysis.py" in listed["words"] and "out/new.csv" in listed["words"] and "2026-10-21 09:41" in listed["words"]
+    assert listed["buttons"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"]
+    # 取消 closes the list and nothing was posted
+    assert out["declined"] == {"posted": 1, "panel": False, "expanded": "false"}
+    # 确认撤回 posts the checked files, once
+    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert",
+                                 {"project": "/projects/study", "files": ["analysis.py", "out/new.csv"]}]
+    assert out["asked"] == 0 and out["panel"] is False
     assert "撤回了 2 个文件的改动。" in out["words"]
     assert out["label"] == "已撤回本次运行" and "撤回本次运行" not in out["buttons"]
 
@@ -791,6 +1081,7 @@ setRuns([mkRun({state:'done',can_revert:true,changes:2})]);
 customPost=(path)=>path.endsWith('/revert')?{run:mkRun({state:'done',can_revert:true,changes:2}),restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'}]}:undefined;
 await window.ROWorkspace.load(root);await sleepTick();
 await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('确认撤回',byClass('ws-agent')).click();await sleepTick();
 console.log(JSON.stringify({words:byClass('ws-agent-note').textContent}));
 """)
     assert "撤回了 1 个文件的改动。" in out["words"]
@@ -890,9 +1181,11 @@ console.log(JSON.stringify({before,words,kinds,mono,more,headings,oobGroup,close
     for text in ("out/fit.csv", "code/fit.py", "old.txt", "I will fit it."):
         assert text in out["words"]
     assert out["kinds"] == ["开始", "它说", "操作", "被拒绝", "结束"]
-    assert out["mono"] == ["Bash: python fit.py", "git push is not allowed"]
+    # a refusal without a code reads as a generic sentence; the program's own words are its detail (18.1 item 6)
+    assert out["mono"] == ["Bash: python fit.py"] and "这一步被拒绝了。" in out["words"]
     assert "只显示最近 5 步，共 12 步。" in out["words"] and "费用约 0.042 美元。" in out["words"]
-    assert out["more"] == [["程序的错误输出", "warning: slow"], ["发给它的指示", "Do the task now."]]
+    assert out["more"] == [["详情", "git push is not allowed"], ["程序的错误输出", "warning: slow"],
+                           ["发给它的指示", "Do the task now."]]
     assert out["closed"] and len(out["gets"]) == 1
 
 
@@ -905,6 +1198,31 @@ const more=byClass('ws-agent-more');
 console.log(JSON.stringify({words:byClass('ws-agent-error').textContent,summary:more.children[0].textContent,detail:more.children[1].textContent}));
 """)
     assert out["words"].startswith("程序异常退出。") and out["summary"] == "详情" and out["detail"] == "exit code 2"
+
+
+def test_the_two_disclosures_of_the_project_home_draw_the_quiet_chevron_not_the_browsers_triangle():
+    """DESIGN 12.13 (18.2 text rules): 引用文件或尝试 and the 详情 behind a failed run are <details> whose summary
+    draws the chevron the node page draws -- class res-draft-summary, a res-chevron before the words -- in both
+    languages, and workspace.css turns it when the disclosure is open (the browser's triangle is hidden by the
+    class)."""
+    script = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'failed',can_reply:true,error:{code:'exit',detail:'exit code 2'}})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const rows=root.all().filter(e=>e.tagName==='DETAILS'&&(e.classList.contains('ws-attachments')||e.classList.contains('ws-agent-more'))).map(d=>{
+  const s=d.children[0];
+  return {box:d.className,tag:s.tagName,cls:s.className,chevronFirst:s.children[0].classList.contains('res-chevron'),words:s.textContent};});
+console.log(JSON.stringify({rows}));
+"""
+    for lang, words in (("zh", ["引用文件或尝试", "详情"]), ("en", ["Reference a file or attempt", "Details"])):
+        rows = run(script, lang=lang)["rows"]
+        assert [r["box"] for r in rows] == ["ws-attachments", "ws-agent-more"]
+        assert all(r["tag"] == "SUMMARY" and "res-draft-summary" in r["cls"] and r["chevronFirst"] for r in rows)
+        assert [r["words"] for r in rows] == words
+    css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
+    assert ".ws-attachments[open] > .res-draft-summary .res-chevron" in css
+    assert ".ws-agent-more[open] > .res-draft-summary .res-chevron" in css
+    assert "transform: rotate(90deg)" in css
 
 
 def test_polling_follows_a_run_until_it_ends_then_reloads_the_page():
@@ -1206,6 +1524,8 @@ setRuns([mkRun({state:'done',can_reply:true,can_revert:true,changes:1})]);listed
 await window.ROWorkspace.load(root);await sleepTick();
 await find('打回').click();typed(byClass('form-textarea'),'redo this');
 await find('撤回本次运行').click();await sleepTick();
+const listedWith={areas:textareas(),buttons:buttonsIn(byClass('ws-agent-undo'))};
+await find('确认撤回').click();await sleepTick();
 const undone={label:byClass('status-label').textContent,buttons:buttonsIn(byClass('ws-agent')),areas:textareas()};
 // a form for 打回 must not turn into a 要它改什么 form under a run that is waiting for an answer
 window.ROWorkspace.reset();
@@ -1215,11 +1535,13 @@ await find('打回').click();
 Object.assign(runsList.runs[0],{state:'needs_input',question:'Which?'});
 await window.ROWorkspace.load(root,true);await sleepTick();
 const waiting_={buttons:buttonsIn(byClass('ws-agent')),areas:textareas(),expanded:find('回答').getAttribute('aria-expanded')};
-console.log(JSON.stringify({open,started,undone,waiting_}));
+console.log(JSON.stringify({open,started,listedWith,undone,waiting_}));
 """)
     assert out["open"] == {"buttons": ["发送", "取消"], "areas": 1, "dirty": True}
     assert out["started"]["areas"] == 0 and "发送" not in out["started"]["buttons"] and not out["started"]["dirty"]
     assert out["started"]["label"] in ("准备中", "运行中")
+    # the list is opened beside the form the person was typing in; the form goes when the undo is done
+    assert out["listedWith"]["areas"] == 1 and "确认撤回" in out["listedWith"]["buttons"]
     assert out["undone"]["label"] == "已撤回本次运行" and out["undone"]["areas"] == 0 and "发送" not in out["undone"]["buttons"]
     assert out["waiting_"]["areas"] == 0 and out["waiting_"]["expanded"] == "false"
 
@@ -1376,10 +1698,10 @@ def test_a_partly_undone_run_says_so_and_the_log_lists_what_was_left_with_the_re
     # #17
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];
-const partly=mkRun({state:'done',reverted:true,revert_skipped:3,changes:4});
+const partly=mkRun({state:'done',reverted:true,revert_skipped:4,changes:4});
 setRuns([partly]);
 runLogs[partly.id]=Object.assign(clone(partly),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[],
-  revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'}]}});
+  revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'},{path:'raw/old.csv',reason:'kept'}]}});
 await window.ROWorkspace.load(root);await sleepTick();
 const partlyLabel=byClass('status-label').textContent;
 await find('运行记录').click();await sleepTick();
@@ -1392,6 +1714,7 @@ console.log(JSON.stringify({partlyLabel,log,wholeLabel:byClass('status-label').t
     assert out["partlyLabel"] == "部分撤回" and out["wholeLabel"] == "已撤回本次运行"
     assert "data/new.csv 运行之后又改动过" in out["log"] and "big.bin 没有运行前的副本" in out["log"]
     assert "Drive/x.xlsx 文件只在云端" in out["log"]
+    assert "raw/old.csv 你选择保留" in out["log"]  # a file the person left unchecked (18.1 item 5)
 
 
 def test_the_run_log_warns_about_a_partial_picture_and_leftover_processes_and_guard_failures():
@@ -1463,3 +1786,453 @@ console.log(JSON.stringify({shown,saved:saved[1],refused,cleared:cleared[1],afte
     assert out["saved"] == {"max_budget_usd": 12.5}
     assert out["refused"] == {"posts": 1, "words": True}
     assert out["cleared"] == {"max_budget_usd": None} and out["after"] == ""
+
+
+def test_an_out_of_bounds_run_reads_so_in_english_with_the_new_reasons_and_no_chinese():
+    out = run(r"""
+agentsInfo=agentFixture();listed.files=listed.files.filter(f=>!/[一-鿿]/.test(f.path));
+listed.tasks=[agentTask({done:true,report:REPORT_PATH})];
+const run=mkRun({state:'out_of_bounds',outcome:'done',can_reply:true,can_revert:true,violations:3,changes:2,report:REPORT_PATH});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[],steps_total:0,changes:{created:['.git/hooks/pre-commit'],modified:['.git/config'],deleted:['.researchos/backups/x.toml.20260101T000000000000Z.toml']},
+  violations:[{path:'.git/hooks/pre-commit',reason:'git_hooks_changed'},{path:'.git/config',reason:'git_config_changed'},
+              {path:'.researchos/backups/x.toml.20260101T000000000000Z.toml',reason:'backup_deleted'}],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find('Run log',byClass('ws-agent')).click();await sleepTick();
+const box=byClass('ws-agent'),label=byClass('status-label',box);
+console.log(JSON.stringify({label:label.textContent,cls:label.className,buttons:buttonsIn(box),text:box.textContent,oob:byClass('ws-oob',box).textContent}));
+""".replace("REPORT_PATH", json.dumps(REPORT)), lang="en")
+    assert out["label"] == "Went out of bounds" and out["cls"] == "status-label tone-clay oob"
+    assert out["buttons"] == ["Run log", "Send back", "Undo this run", "Open the result"]
+    assert "Done" not in out["text"].replace("Deleted", "")
+    assert "Changed a git hook (a program git runs by itself)" in out["oob"]
+    assert "Changed git’s configuration" in out["oob"] and "Deleted a Research OS backup" in out["oob"]
+    assert re.search(r"[㐀-鿿]", out["text"]) is None, out["text"]
+
+
+LOG_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];listed.files=listed.files.filter(f=>!/[一-鿿]/.test(f.path));
+const r=mkRun({state:'out_of_bounds',outcome:'done',can_reply:true,can_revert:true,violations:1,changes:2,reverted:true,revert_skipped:1});
+setRuns([r]);
+runLogs[r.id]=Object.assign(clone(r),{steps:[],steps_total:0,changes:{created:['.claude/settings.json'],modified:[],deleted:[]},
+  violations:[{path:'.claude/settings.json',reason:'agent_settings_changed'}],refusals:[],instruction:'',stderr_tail:'',
+  env_removed:['GITHUB_TOKEN','FOO_SECRET'],revert:{skipped:[{path:'.git/config',reason:'protected'}]}});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG).click();await sleepTick();
+const box=byClass('ws-run-details');
+const env=box.all().find(e=>e.tagName==='DETAILS'&&/GITHUB_TOKEN/.test(e.textContent));
+console.log(JSON.stringify({text:box.textContent,oob:byClass('ws-oob',box).textContent,env:env?env.textContent:null}));
+"""
+
+
+def test_the_run_log_words_the_settings_reason_the_protected_reason_and_the_withheld_variables():
+    out = run(LOG_SETUP.replace("LOG", "'运行记录'"))
+    assert "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）" in out["oob"]
+    assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["text"]
+    assert "没有改动这个文件" not in out["text"]  # that was no reason, only the outcome again
+    assert out["env"] is not None and "没有交给它的环境变量（名字像密钥，只列名字）" in out["env"]
+    assert "GITHUB_TOKEN" in out["env"] and "FOO_SECRET" in out["env"]
+    english = run(LOG_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert "Changed Claude Code or OpenCode settings in the project (.claude, .opencode, opencode.json)" in english["oob"]
+    assert ".git/config Belongs to Research OS’s records folder or to git; undo does not touch it" in english["text"]
+    assert "Left unchanged" not in english["text"]
+    assert "Environment variables not given to it (their names look like credentials; names only)" in english["env"]
+    assert re.search(r"[㐀-鿿]", english["text"]) is None, english["text"]
+
+
+def test_a_run_without_withheld_variables_shows_no_such_line():
+    out = run(LOG_SETUP.replace("LOG", "'运行记录'").replace("env_removed:['GITHUB_TOKEN','FOO_SECRET'],", "env_removed:[],"))
+    assert out["env"] is None and "没有交给它的环境变量" not in out["text"]
+
+
+def test_the_undo_list_gives_the_reason_for_a_file_that_belongs_to_research_os_or_git():
+    out = run(UNDO_SETUP.replace("{path:'Drive/y.xlsx',reason:'in_cloud'}]", "{path:'Drive/y.xlsx',reason:'in_cloud'},{path:'.git/config',reason:'protected'}]")
+              + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const groups=undoBox().all().filter(e=>e.tagName==='DETAILS');
+console.log(JSON.stringify({title:groups[2].children[0].textContent,cannot:groups[2].textContent}));
+""")
+    assert out["title"] == "撤不回的文件（4）"
+    assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["cannot"]
+
+
+# -- 撤回本次运行 lists what it will do, and asks (DESIGN 18.1 item 5) ---------------------------------------
+
+UNDO_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const finished=mkRun({state:'done',can_revert:true,can_reply:true,changes:6});
+setRuns([finished]);
+runPlans[finished.id]={run:clone(finished),
+  restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'},{path:'raw/old.txt',time:'2026-10-21T09:40:03+02:00'}],
+  remove:[{path:'out/new.csv',time:'2026-10-21T09:42:50+02:00'}],
+  cannot:[{path:'data/later.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/y.xlsx',reason:'in_cloud'}]};
+await window.ROWorkspace.load(root);await sleepTick();
+const undoBox=()=>byClass('ws-agent-undo');
+const ticks=()=>{ const b=undoBox(); return b?b.all().filter(e=>e.tagName==='INPUT'&&e.type==='checkbox'):[]; };
+const untick=async path=>{ const t=ticks().find(e=>e.dataset.key.endsWith(':undo:'+path)); t.checked=false; await t.emit('change'); };
+"""
+
+
+def test_undo_lists_the_files_with_checked_boxes_their_times_and_the_ones_it_cannot_undo():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const box=undoBox(),groups=box.all().filter(e=>e.tagName==='DETAILS');
+console.log(JSON.stringify({posted,asked:confirmQuestions.length,
+  groups:groups.map(g=>({open:g.open,title:g.children[0].textContent,chevron:g.children[0].children.some(c=>c.classList.contains('res-chevron'))})),
+  rows:box.all().filter(e=>e.classList.contains('ws-undo-row')).map(r=>r.textContent),
+  checked:ticks().map(t=>[t.dataset.key,t.checked]),
+  restore:groups[0].all().filter(e=>e.classList.contains('ws-undo-row')).length,
+  cannot:groups[2].textContent,
+  count:box.all().filter(e=>e.classList.contains('ws-agent-quiet')).map(e=>e.textContent),
+  keptHidden:box.all().filter(e=>e.classList.contains('ws-agent-quiet')&&e.textContent.startsWith('没勾选')).map(e=>e.classList.contains('hidden')),
+  focus:document.activeElement&&document.activeElement.dataset.key,
+  buttons:buttonsIn(box),confirmOff:find('确认撤回',box).disabled,label:box.getAttribute('aria-label'),role:box.getAttribute('role')}));
+""")
+    assert out["posted"] == [] and out["asked"] == 0
+    assert [g["title"] for g in out["groups"]] == ["放回运行前的样子（2）", "移走（1）", "撤不回的文件（3）"]
+    assert all(g["open"] and g["chevron"] for g in out["groups"])  # 12.13's chevron, and open until closed
+    assert out["rows"] == ["analysis.py2026-10-21 09:41", "raw/old.txt2026-10-21 09:40", "out/new.csv2026-10-21 09:42"]
+    assert [c for _k, c in out["checked"]] == [True, True, True]
+    assert [k for k, _c in out["checked"]] == ["agent:t1:undo:analysis.py", "agent:t1:undo:raw/old.txt",
+                                               "agent:t1:undo:out/new.csv"]
+    assert "data/later.csv 运行之后又改动过" in out["cannot"] and "big.bin 没有运行前的副本" in out["cannot"]
+    assert "Drive/y.xlsx 文件只在云端" in out["cannot"]
+    assert "已选 3 项，共 3 项" in out["count"] and out["keptHidden"] == [True]
+    assert out["focus"] == "agent:t1:undo:analysis.py"  # the first box is ready; nothing writes until 确认撤回
+    assert out["buttons"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"] and out["confirmOff"] is False
+    assert out["label"] == "撤回本次运行：Run the model" and out["role"] == "group"
+
+
+def test_an_unchecked_file_is_left_out_of_the_request_and_the_log_lists_it_as_kept():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const node=undoBox();
+await untick('analysis.py');
+const quiet=()=>undoBox().all().filter(e=>e.classList.contains('ws-agent-quiet'));
+const some={count:quiet().map(e=>e.textContent),keptHidden:quiet().filter(e=>e.textContent.startsWith('没勾选')).map(e=>e.classList.contains('hidden'))};
+// nothing is redrawn by a box: the same node, still unchecked, with the focus where it was
+const same=ticks()[0].checked===false&&undoBox()===node;
+await find('确认撤回',undoBox()).click();await sleepTick();
+const note=byClass('ws-agent-note');
+console.log(JSON.stringify({some,same,posted,words:note.textContent,panel:!!undoBox(),label:byClass('status-label').textContent}));
+""")
+    assert "已选 2 项，共 3 项" in out["some"]["count"] and out["some"]["keptHidden"] == [False]
+    assert out["same"] is True
+    assert out["posted"][-1] == ["/api/agents/runs/r-20261021T090000Z-aaaaaa/revert",
+                                 {"project": "/projects/study", "files": ["raw/old.txt", "out/new.csv"]}]
+    assert "撤回了 2 个文件的改动。" in out["words"] and "这些文件没有动：" in out["words"]
+    assert "analysis.py 你选择保留" in out["words"] and "data/later.csv 运行之后又改动过" in out["words"]
+    assert out["panel"] is False
+
+
+def test_nothing_checked_cannot_be_confirmed_and_all_or_none_are_one_click():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await find('全部取消勾选',undoBox()).click();
+const none={ticked:ticks().map(t=>t.checked),off:find('确认撤回',undoBox()).disabled,count:undoBox().textContent.includes('已选 0 项，共 3 项')};
+await find('确认撤回',undoBox()).click();await sleepTick();
+const refused=posted.length;
+await find('全部勾选',undoBox()).click();
+await untick('out/new.csv');
+const one={ticked:ticks().map(t=>t.checked),off:find('确认撤回',undoBox()).disabled};
+console.log(JSON.stringify({none,refused,one}));
+""")
+    assert out["none"] == {"ticked": [False, False, False], "off": True, "count": True}
+    assert out["refused"] == 0
+    assert out["one"] == {"ticked": [True, True, False], "off": False}
+
+
+def test_the_boxes_survive_a_redraw_and_the_list_goes_when_the_run_cannot_be_undone_any_more():
+    out = run(UNDO_SETUP + r"""
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+await untick('raw/old.txt');
+// the page reloads the project and the runs (a poll, a save elsewhere): the list stays as the person left it
+await window.ROWorkspace.load(root,true);await sleepTick();
+const kept={panel:!!undoBox(),ticked:ticks().map(t=>t.checked),expanded:find('撤回本次运行',byClass('ws-agent')).getAttribute('aria-expanded')};
+// closing a group is remembered through a redraw too
+const group=undoBox().all().find(e=>e.tagName==='DETAILS');group.open=false;await group.emit('toggle');
+await window.ROWorkspace.load(root,true);await sleepTick();
+const closed=undoBox().all().filter(e=>e.tagName==='DETAILS').map(g=>g.open);
+// another run takes the task's place, or this one was undone elsewhere: the list is not kept for a run it does not describe
+runsList.runs[0].can_revert=false;
+await window.ROWorkspace.load(root,true);await sleepTick();
+console.log(JSON.stringify({kept,closed,after:!!undoBox(),buttons:buttonsIn(byClass('ws-agent'))}));
+""")
+    assert out["kept"] == {"panel": True, "ticked": [True, False, True], "expanded": "true"}
+    assert out["closed"] == [False, True, True]
+    assert out["after"] is False and "撤回本次运行" not in out["buttons"]
+
+
+def test_a_list_that_cannot_be_read_says_so_and_offers_another_try():
+    out = run(UNDO_SETUP + r"""
+let fail=true;
+customGet=path=>path.endsWith('/revert-plan')&&fail?Promise.reject(Object.assign(Error('later'),{state:'agent_later_run',engineMessage:'之后的运行改动了相同的文件，请先撤回那一次'})):undefined;
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const refused={words:undoBox().textContent,buttons:buttonsIn(undoBox()),focus:document.activeElement&&document.activeElement.dataset.key};
+fail=false;
+await find('重试',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({refused,posted,after:buttonsIn(undoBox()),rows:ticks().length}));
+""")
+    assert "没能读出撤回的清单。 之后的运行改动了相同的文件，请先撤回那一次" in out["refused"]["words"]
+    assert out["refused"]["buttons"] == ["重试", "取消"] and out["refused"]["focus"] == "agent:t1:undo-cancel"
+    assert out["posted"] == [] and out["after"] == ["全部勾选", "全部取消勾选", "确认撤回", "取消"] and out["rows"] == 3
+
+
+def test_a_list_with_nothing_to_undo_offers_no_confirmation():
+    out = run(UNDO_SETUP + r"""
+runPlans[finished.id]=Object.assign(runPlans[finished.id],{restore:[],remove:[]});
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({words:undoBox().textContent,buttons:buttonsIn(undoBox()),focus:document.activeElement&&document.activeElement.dataset.key}));
+""")
+    assert "没有可以撤回的文件。" in out["words"] and "撤不回的文件（3）" in out["words"]
+    assert out["buttons"] == ["取消"] and out["focus"] == "agent:t1:undo-cancel"
+
+
+def test_a_moved_back_file_and_the_done_mark_are_named_for_what_they_are():
+    out = run(UNDO_SETUP + r"""
+runPlans[finished.id]={run:clone(finished),
+  restore:[{path:'raw.txt',from:'sub/raw_old.txt',time:'2026-10-21T09:41:12+02:00'},{path:'research/tasks.json',task:'Run the model',time:'2026-10-21T09:45:00+02:00'}],
+  remove:[],cannot:[]};
+await find('撤回本次运行',byClass('ws-agent')).click();await sleepTick();
+const rows=undoBox().all().filter(e=>e.classList.contains('ws-undo-row')).map(r=>r.textContent);
+await find('确认撤回',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({rows,posted:posted[posted.length-1][1]}));
+""")
+    assert out["rows"] == ["raw.txt2026-10-21 09:41从 sub/raw_old.txt 移回",
+                           "任务的完成标记：Run the model2026-10-21 09:45"]
+    assert out["posted"]["files"] == ["raw.txt", "research/tasks.json"]
+
+
+def test_the_undo_list_and_its_confirmation_read_in_english_with_no_chinese():
+    out = run(UNDO_SETUP + r"""
+await find('Undo this run',byClass('ws-agent')).click();await sleepTick();
+await untick('analysis.py');
+const text=undoBox().textContent,buttons=buttonsIn(undoBox());
+await find('Confirm undo',undoBox()).click();await sleepTick();
+console.log(JSON.stringify({text,buttons,note:byClass('ws-agent-note').textContent}));
+""", lang="en")
+    for words in (out["text"], out["note"]):
+        assert re.search(r"[㐀-鿿]", words) is None, words
+    assert out["buttons"] == ["Check all", "Uncheck all", "Confirm undo", "Cancel"]
+    for expected in ("Put back as before the run (2)", "Move away (1)", "Moved into the run’s folder, not deleted.",
+                     "Cannot be undone (3)", "2 of 3 selected", "Changed again after the run", "No copy from before the run",
+                     "The file is only in the cloud", "this run can no longer undo them afterwards"):
+        assert expected in out["text"], expected
+    assert "Undid the changes to 2 files." in out["note"] and "You kept this" in out["note"]
+
+
+def test_the_first_run_says_what_an_undo_cannot_bring_back_and_names_the_large_files():
+    big = ", ".join(f"{{path:'data/big{i:02d}.csv',size:{(300 - i * 10) * 1024 * 1024}}}" for i in range(10))
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+bigFiles={count:12,partial:false,largest:[BIG]};
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行',byClass('ws-agent')).click();
+console.log(JSON.stringify({question:confirmQuestions[0],asked:confirmQuestions.length,gets:gets.filter(p=>p.includes('large-files')).length}));
+""".replace("BIG", big))
+    question = out["question"]
+    assert "运行之后可以撤回它在项目里的改动，但这些撤不回：安装的软件、下载的内容、git 里的操作，以及项目文件夹以外的一切。" in question
+    assert "运行之后可以撤回。" not in question and "Anthropic" in question and question.endswith("要继续吗？")
+    assert "项目里有 12 个文件超过 16 MB。运行前不会备份它们，被改动或删除后就恢复不了：" in question
+    assert "data/big00.csv（300 MB）、data/big01.csv（290 MB）" in question and "data/big09.csv（210 MB）" in question
+    assert "data/big10" not in question and "另有 2 个没有列出。" in question  # ten are named, the rest are a count
+    assert out["asked"] == 1 and out["gets"] == 1
+
+
+FIRST_RUN = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+SETUP
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({question:confirmQuestions[0],started:posted.filter(p=>p[0]==='/api/agents/runs').length}));
+"""
+
+
+def test_the_first_run_names_no_large_file_when_there_is_none_or_the_engine_cannot_say():
+    none = run(FIRST_RUN.replace("SETUP", ""))  # nothing over 16 MB
+    one = run(FIRST_RUN.replace("SETUP", "bigFiles={count:1,partial:true,largest:[{path:'one.bin',size:1610612736}]};"))
+    unknown = run(FIRST_RUN.replace(
+        "SETUP", "customGet=path=>path==='/api/agents/large-files'?Promise.reject(Error('engine busy')):undefined;"))
+    assert "超过 16 MB" not in none["question"] and "这些撤不回：安装的软件" in none["question"]
+    assert "项目里有 1 个文件超过 16 MB" in one["question"] and "one.bin（1.5 GB）" in one["question"]
+    assert "另有" not in one["question"] and "项目文件太多，这份清单只查了前 50,000 个文件。" in one["question"]
+    assert "超过 16 MB" not in unknown["question"] and "这些撤不回：安装的软件" in unknown["question"]
+    assert unknown["started"] == 1  # the question is still asked, and the run starts when it is accepted
+
+
+def test_the_first_run_confirmation_reads_in_english_and_is_asked_once_per_agent():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+bigFiles={count:11,partial:false,largest:[{path:'a.csv',size:52428800}]};
+await window.ROWorkspace.load(root);await sleepTick();
+await find('Run',byClass('ws-agent')).click();
+const first=confirmQuestions[0];
+runsList.runs[0].state='done';Object.assign(runsList.runs[0],{can_reply:true,can_stop:false});runsList.active=null;
+await window.ROWorkspace.load(root,true);await sleepTick();
+await find('Send back',byClass('ws-agent')).click();typed(byClass('form-textarea'),'again');
+await find('Send',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({first,asked:confirmQuestions.length,gets:gets.filter(p=>p.includes('large-files')).length,
+  posts:posted.map(p=>p[0].split('/').pop())}));
+""", lang="en")
+    assert re.search(r"[㐀-鿿]", out["first"]) is None, out["first"]
+    assert "but not these: software it installs, content it downloads, what it does in git, and anything outside the project folder." in out["first"]
+    assert "11 files in the project are over 16 MB. They are not backed up before the run" in out["first"]
+    assert "a.csv (50 MB)" in out["first"] and "10 more are not listed." in out["first"] and out["first"].endswith("Continue?")
+    assert out["asked"] == 1 and out["gets"] == 1 and out["posts"] == ["runs", "reply"]  # a reply is not a first run
+
+
+# -- 18.1 item 6: refusals and run errors in the person's language ---------------------------------------------
+
+LOG_STEPS_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const run=mkRun({state:'failed',can_reply:true,error:{code:'error_max_budget_usd',detail:'Reached maximum budget ($0.001)'}});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[
+  {kind:'refused',text:'Research OS: data/raw.csv is a protected file and cannot be changed.',tool:'Write',code:'protected_file'},
+  {kind:'refused',text:'Research OS: Changing git state is not allowed.',tool:'Bash',code:'git_state'},
+  {kind:'refused',text:'Permission to use Bash with command git push has been denied.',tool:'Bash',code:'permission_rule'},
+  {kind:'refused',text:'a refusal the page has never heard of',tool:'Bash',code:'brand_new_code'},
+  {kind:'refused',text:'a refusal logged before codes existed',tool:null},
+  {kind:'error',text:'The Research OS tools did not start (status: failed).',tool:null,code:'mcp_failed'},
+  {kind:'error',text:'rate limit exceeded',tool:null},
+  {kind:'tool',text:'Bash: python fit.py',tool:'Bash'},
+  {kind:'end',text:'Reached maximum budget ($0.001)',tool:null,code:'error_max_budget_usd'}],
+  steps_total:9,changes:{created:[],modified:[],deleted:[],by_person:[]},violations:[],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG,byClass('ws-agent')).click();await sleepTick();
+const d=byClass('ws-run-details');
+const rows=d.all().filter(e=>e.classList.contains('ws-step')).map(li=>({
+  kind:li.children[0].textContent,
+  text:li.all().filter(e=>e.classList.contains('ws-step-text')).map(e=>e.textContent)[0],
+  detail:li.all().filter(e=>e.tagName==='PRE').map(e=>e.textContent)[0]||null,
+  summary:li.all().filter(e=>e.tagName==='SUMMARY').map(e=>e.textContent)[0]||null,
+  mono:li.all().some(e=>e.classList.contains('mono')),
+  bad:li.classList.contains('bad')}));
+console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error').textContent}));
+"""
+
+
+def test_a_refusal_and_an_error_in_the_log_are_a_sentence_with_the_programs_words_behind_details():
+    out = run(LOG_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    rows = out["rows"]
+    assert [r["kind"] for r in rows] == ["被拒绝", "被拒绝", "被拒绝", "被拒绝", "被拒绝", "出错", "出错", "操作", "结束"]
+    assert [r["text"] for r in rows] == [
+        "它想改动或删除运行前就有的数据文件（或尝试表、任务文件），被拦下了。",
+        "它想改变 git 的状态（提交、推送等），被拦下了。",
+        "它想做的事被运行的权限规则拒绝了，比如 git 命令。",
+        "这一步被拒绝了。", "这一步被拒绝了。",   # a code the page does not know, and no code: a generic sentence
+        "Research OS 的工具没有启动，AI 执行者无法汇报结果。",
+        "程序报告了一个错误。",
+        "Bash: python fit.py",                    # a step that was never told by a code is as it was
+        "费用达到了上限。"]
+    assert [r["detail"] for r in rows] == [
+        "Research OS: data/raw.csv is a protected file and cannot be changed.",
+        "Research OS: Changing git state is not allowed.",
+        "Permission to use Bash with command git push has been denied.",
+        "a refusal the page has never heard of", "a refusal logged before codes existed",
+        "The Research OS tools did not start (status: failed).", "rate limit exceeded", None,
+        "Reached maximum budget ($0.001)"]
+    assert [r["summary"] for r in rows if r["detail"]] == ["详情"] * 8
+    assert [r["mono"] for r in rows] == [False] * 7 + [True, False]  # only the command the agent ran is monospaced
+    assert [r["bad"] for r in rows] == [True] * 7 + [False, False]
+    for code in ("protected_file", "git_state", "permission_rule", "brand_new_code", "mcp_failed", "error_max_budget_usd"):
+        assert code not in out["words"]  # never a raw code
+    assert out["top"].startswith("费用达到了上限。")
+
+
+def test_a_refusal_and_an_error_in_the_log_read_in_english_with_no_chinese():
+    out = run(LOG_STEPS_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert [r["text"] for r in out["rows"]] == [
+        "It tried to change or delete a data file that existed before the run (or the attempt table or the task file) and was stopped.",
+        "It tried to change git’s state (commit, push and the like) and was stopped.",
+        "A permission rule of this run refused what it tried to do, for example a git command.",
+        "This step was refused.", "This step was refused.",
+        "Research OS’s tools did not start, so the agent cannot report back.",
+        "The program reported an error.", "Bash: python fit.py", "The cost reached its limit."]
+    assert [r["summary"] for r in out["rows"] if r["detail"]] == ["Details"] * 8
+    assert not re.search(r"[㐀-鿿]", out["words"] + out["top"])
+
+
+END_STEPS_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const run=mkRun({state:'failed',can_reply:true,error:{code:'internal',detail:'OSError: [Errno 28] No space left on device'}});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[
+  {kind:'end',text:'OSError: [Errno 28] No space left on device',tool:null,code:'internal'},
+  {kind:'end',text:'',tool:null,code:'stopped'},
+  {kind:'end',text:'Research OS was closed while the run was going',tool:null,code:'shutdown'},
+  {kind:'end',text:'Research OS stopped while the run was going',tool:null,code:'engine_gone'}],
+  steps_total:4,changes:{created:[],modified:[],deleted:[],by_person:[]},violations:[],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG,byClass('ws-agent')).click();await sleepTick();
+const d=byClass('ws-run-details');
+const rows=d.all().filter(e=>e.classList.contains('ws-step')).map(li=>({
+  text:li.all().filter(e=>e.classList.contains('ws-step-text')).map(e=>e.textContent)[0],
+  detail:li.all().filter(e=>e.tagName==='PRE').map(e=>e.textContent)[0]||null}));
+console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error').textContent}));
+"""
+
+
+def test_an_internal_error_is_worded_generally_and_a_stopped_or_interrupted_end_is_told_by_its_code():
+    """18.1 item 6: `internal` is also the code of a crash before the program started, so it does not say the output was
+    being read. The engine-written end of a stopped or interrupted run carries a code and the page words it."""
+    out = run(END_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    assert out["top"].startswith("Research OS 在运行中出了错。") and "读取程序的输出" not in out["words"] + out["top"]
+    assert [r["text"] for r in out["rows"]] == [
+        "Research OS 在运行中出了错。", "运行已被你停止。", "运行期间 Research OS 被关闭了。", "运行期间 Research OS 退出了。"]
+    assert [r["detail"] for r in out["rows"]] == [
+        "OSError: [Errno 28] No space left on device", None,  # a stopped run has no words of the engine's under it
+        "Research OS was closed while the run was going", "Research OS stopped while the run was going"]
+    english = run(END_STEPS_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert english["top"].startswith("Research OS ran into an internal error during the run.")
+    assert [r["text"] for r in english["rows"]] == [
+        "Research OS ran into an internal error during the run.", "The run was stopped by you.",
+        "Research OS was closed while the run was going.", "Research OS quit while the run was going."]
+    assert "reading" not in english["words"] + english["top"]
+    assert not re.search(r"[㐀-鿿]", english["words"] + english["top"])
+
+
+def _table_words(name: str) -> dict[str, str]:
+    script = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
+    table = re.search(r"const " + name + r" = \{(.*?)\n  \};", script, re.S).group(1)
+    # Each entry is `code: () => t("sentence")` (13.6: looked up when shown); the sentence is the key.
+    return dict(re.findall(r'(\w+): \(\) => t\("([^"]+)"\)', table))
+
+
+def test_every_code_the_engine_can_attach_has_a_sentence_in_both_languages():
+    """Each refusal code the guard knows, and the codes the streams add, are words on the page and English in
+    i18n.js (the scanner of test_v9_language reads workspace.js whole, so each sentence has an entry; this holds the\n    codes to the table). A code nobody wrote words for reads as a
+    generic sentence, which is tested above."""
+    from researchos.agents import guard
+
+    steps = _table_words("STEP_WORDS")
+    assert set(steps) == set(guard.REFUSAL_CODES) | {"permission_rule", "tool_unavailable", "mcp_failed"}
+    errors = _table_words("ERROR_WORDS")
+    assert {"internal", "error_max_turns", "error_during_execution", "error_max_budget_usd", "guard_failed",
+            "shutdown", "engine_gone", "stopped"} <= set(errors)  # the last three: the codes of an end the engine writes
+    i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
+    for sentence in [*steps.values(), *errors.values(), "这一步被拒绝了。", "程序报告了一个错误。", "这次运行没有成功。", "状态未知"]:
+        match = re.search(r'"' + re.escape(sentence) + r'":\s*"([^"]+)"', i18n)
+        assert match, sentence
+        english = match.group(1)
+        assert not re.search(r"[㐀-鿿]|->|→", english), english
+
+
+def test_a_state_the_page_does_not_know_reads_as_a_generic_word_never_as_its_code():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'frobnicated',error:{code:'error_something_new',detail:'The thing went wrong in a new way'}})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const label=byClass('status-label');
+console.log(JSON.stringify({label:label.textContent,error:byClass('ws-agent-error').textContent,agent:byClass('ws-agent').textContent}));
+""")
+    assert out["label"] == "状态未知"
+    assert out["error"].startswith("这次运行没有成功。") and "error_something_new" not in out["error"]
+    assert "frobnicated" not in out["agent"] and "error_something_new" not in out["agent"]
+    english = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'frobnicated'})]);
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({label:byClass('status-label').textContent}));
+""", lang="en")
+    assert english["label"] == "Unknown state"

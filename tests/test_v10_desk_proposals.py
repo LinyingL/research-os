@@ -224,7 +224,7 @@ def test_14_4_the_columns_view_opens_a_proposal_in_the_panel_and_marks_its_cards
                  "node-sec-title: 批准以后会怎样", "proposal-h4: 文件", "mono: data/new.csv", "btn btn-primary: 批准并加入"]:
         assert line in extra["files"], line
     for line in ["panel-title plain-title: 加上连线：#18 源自 #16", "panel-subtitle: 连线 · 王", "node-kind: 连线提议",
-                 "desk-head: 批准后加上连线：#18 源自 #16", "desk-note: 说明：同一数据", "btn btn-primary: 批准并加入"]:
+                 "desk-head: 批准后加上连线：#18 源自 #16", "desk-note: 备注：同一数据", "btn btn-primary: 批准并加入"]:
         assert line in extra["line"], line
     assert "team-line quiet: 这份提议没有带来任何改动。" not in extra["line"]
     assert out["highlighted"][:2] == [[], [A18, A16]] and extra["picked"] and out["asked"] == []

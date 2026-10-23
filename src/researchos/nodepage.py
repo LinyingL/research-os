@@ -1,4 +1,4 @@
-"""The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9; task V8 U3).
+"""The node page, 图表与论断 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9; task V8 U3).
 
 Three read-only payloads for the page, built from the index, the record and
 the files -- nothing here writes:
@@ -7,14 +7,14 @@ the files -- nothing here writes:
   name, path, whether it is on disk), its trace drawn as columns (12.7: 数据
   | 脚本 | 中间数据 | 脚本 | 本页 | 被引用) with the lines that join them,
   every break as a gap with its repair, the attempts it belongs to and the
-  variable versions it uses, and the links touching it (for 判断). The
+  variable versions it uses, and the links touching it (for 连线确认). The
   same shape for every kind of node -- a script, a data file, a figure, a
   draft section or claim, an attempt, a variable card, a reference -- so
   the page has one renderer. Choices for the two repairs come with it:
   the project's scripts for 「补上来源」 (a `generates` / `writes` mapping)
   and its attempts for 「关联文件」 (a `belongs_to` mapping), or, on an
   attempt's page, its files.
-- `results(conn, root, draft=None)` -- 成果: the figures and tables the
+- `results(conn, root, draft=None)` -- 图表与论断: the figures and tables the
   drafts include, grouped by draft section, figures no draft includes, and
   the claims of the drafts marked 「设为论文正文」 only (12.13,
   `researchos.records.papers`: a draft's revision log or review notes hold
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 TYPE_WORDS = {
     "script": "脚本", "dataset": "数据", "figure": "图表", "file": "文件", "attempt": "尝试",
     "variable": "变量", "section": "文稿章节", "claim": "论断", "reference": "文献", "ref": "文献",
-    "experiment": "实验记录", "commit": "提交",
+    "experiment": "实验", "commit": "提交",
 }
 RELATION_WORDS = {
     "reads": "读取", "writes": "写出", "generates": "生成", "includes": "引用", "cites": "引用",
@@ -61,7 +61,7 @@ RELATION_FALLBACK = "关联"
 TRACE_STATES = {"complete": "完整", "no_source": "缺来源", "no_attempt": "缺尝试"}
 SOURCE_BREAKS = ("no_generating_script", "script_missing", "data_missing", "script_unreadable")
 MAX_COLUMNS = 6           # upstream levels drawn; deeper ones are said, not drawn
-LINK_LIMIT = 300          # links listed under 判断
+LINK_LIMIT = 300          # links listed under 连线确认
 CLAIM_LIMIT = 2000        # claims of one draft
 FILE_NODE_TYPES = ("script", "dataset", "figure", "file")
 
@@ -175,7 +175,7 @@ def _file_choices(conn: Connection, root: Path, types: tuple[str, ...]) -> list[
     return sorted(out, key=lambda f: f["path"])
 
 
-# -- the links touching a node (判断) ---------------------------------------------------------
+# -- the links touching a node (连线确认) ---------------------------------------------------------
 
 
 def _team(root: Path) -> Any:
@@ -361,7 +361,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
                    lang: str = "zh") -> dict[str, Any]:
     """An attempt's page: its files -- the step scripts its description
     names and the files attached to it (「关联文件」) -- as 读取的数据 | 脚本
-    | 产出, with the scripts' reads and writes. Its files are 14.3's one
+    | 输出, with the scripts' reads and writes. Its files are 14.3's one
     membership rule (`trace.attempt_members`), as on the desk and in 关系图.
     Its words are in `lang` (13.6): the desk's panel draws it too (14.6)."""
     node_id = record["id"]
@@ -391,7 +391,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
     columns = [
         {"key": "in", "title": settings.say("读取的数据", "Data read", lang), "items": _dedupe(inputs)},
         {"key": "scripts", "title": settings.say("脚本", "Scripts", lang), "items": _dedupe(scripts)},
-        {"key": "out", "title": settings.say("产出", "Outputs", lang), "items": _dedupe(outputs)},
+        {"key": "out", "title": settings.say("输出", "Outputs", lang), "items": _dedupe(outputs)},
     ]
     breaks = []
     if not members:
@@ -582,11 +582,19 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
     return out
 
 
-# -- 成果 (12.9) ----------------------------------------------------------------------------------
+# -- 图表与论断 (12.9) ----------------------------------------------------------------------------------
 
 
-def _trace_state(conn: Connection, root: Path, node_id: str) -> dict[str, Any]:
-    chain = trace_mod.chain(conn, root, node_id)
+def _trace_state(conn: Connection, root: Path, node_id: str, shared: trace_mod.Shared | None = None,
+                 memo: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """A figure's or table's trace state (18.4 item 1). `shared`: the
+    request's trace context. `memo`: the states already worked out in this
+    request, by node id -- a figure that two sections include is traced
+    once. Every answer is a copy of its own: `officialness.annotate` writes
+    into the payload in place, and two items must not be one object."""
+    if memo is not None and node_id in memo:
+        return _copy_state(memo[node_id])
+    chain = trace_mod.chain(conn, root, node_id, shared=shared, variables=False)  # only the breaks are read
     kinds = [b["kind"] for b in chain["breaks"]]
     if any(k in SOURCE_BREAKS for k in kinds):
         state = "no_source"
@@ -594,17 +602,27 @@ def _trace_state(conn: Connection, root: Path, node_id: str) -> dict[str, Any]:
         state = "no_attempt"
     else:
         state = "complete"
-    return {"state": state, "label": TRACE_STATES[state], "breaks": [b["label"] for b in chain["breaks"]]}
+    out = {"state": state, "label": TRACE_STATES[state], "breaks": [b["label"] for b in chain["breaks"]]}
+    if memo is None:
+        return out
+    memo[node_id] = out
+    return _copy_state(out)
 
 
-def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _copy_state(state: dict[str, Any]) -> dict[str, Any]:
+    return {**state, "breaks": list(state["breaks"])}
+
+
+def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, dict[str, Any]],
+                 shared: trace_mod.Shared | None = None) -> dict[str, Any]:
     backing = [e["dst"] for e in _live(db.query_edges(conn, src=claim_id, type="backed_by"))]
     if not backing:
         return {"state": "no_source", "label": TRACE_STATES["no_source"], "breaks": ["没有找到支撑这个数字的结果"]}
     attempted = False
     for target in backing:
         if target not in cache:
-            chain = trace_mod.chain(conn, root, target) if (notes_mod.node_path(target) or db.get_node(conn, target)) else None
+            chain = (trace_mod.chain(conn, root, target, shared=shared, variables=False)  # only the attempts are read
+                     if (notes_mod.node_path(target) or db.get_node(conn, target)) else None)
             cache[target] = {"attempts": bool(chain and chain.get("attempts"))}
         attempted = attempted or cache[target]["attempts"]
     state = "complete" if attempted else "no_attempt"
@@ -612,13 +630,18 @@ def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, d
 
 
 def results(conn: Connection, project_root: str | Path, draft: str | None = None) -> dict[str, Any]:
-    """成果 (module docstring). Without `draft`: the drafts' figures and
+    """图表与论断 (module docstring). Without `draft`: the drafts' figures and
     tables by section, figures no draft includes, and per draft how many
     claims it holds. With `draft` (a project-relative file): that draft's
     claims by section."""
     root = Path(project_root)
     if draft is not None:
         return _draft_claims(conn, root, draft)
+    # One trace context for the request (18.4 item 1). It reads nothing until
+    # a trace first needs it, so what cannot be read fails where the first
+    # trace fails, as it always did.
+    shared = trace_mod.Shared(conn, root)
+    states: dict[str, dict[str, Any]] = {}
     groups: dict[str, dict[str, Any]] = {}
     included: set[str] = set()
     for edge in _live(db.query_edges(conn, type="includes")):
@@ -636,7 +659,7 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         included.add(target)
         item = _item(conn, root, target)
         item["kind"] = "图" if item["type"] == "figure" else "表"
-        item["trace"] = _trace_state(conn, root, target)
+        item["trace"] = _trace_state(conn, root, target, shared, states)
         group["items"].append(item)
     loose = []
     for figure in db.get_nodes_by_type(conn, "figure"):
@@ -644,7 +667,7 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
             continue
         item = _item(conn, root, figure["id"])
         item["kind"] = "图"
-        item["trace"] = _trace_state(conn, root, figure["id"])
+        item["trace"] = _trace_state(conn, root, figure["id"], shared, states)
         loose.append(item)
     ordered = sorted(groups.values(), key=lambda g: (g["file"] or "", g["section"]))
     for g in ordered:
@@ -674,7 +697,7 @@ def _marked(root: Path) -> dict[str, Any]:
 
     try:
         return papers.marked(root)
-    except Exception as exc:  # noqa: BLE001 -- 成果 still lists figures and tables
+    except Exception as exc:  # noqa: BLE001 -- 图表与论断 still lists figures and tables
         return {"drafts": [], "trusted": False, "message": f"论文正文记录文件无法读取：{exc}",
                 "path": f".researchos/{papers.PAPERS_FILENAME}"}
 
@@ -695,6 +718,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
     prefix = f"claim:{rel}#"
     rows = conn.execute("SELECT id FROM nodes WHERE type = 'claim' AND substr(id, 1, ?) = ?", (len(prefix), prefix)).fetchall()
     cache: dict[str, dict[str, Any]] = {}
+    shared = trace_mod.Shared(conn, root)  # one trace context for the request (18.4 item 1)
     sections: dict[str, dict[str, Any]] = {}
     claims = [db.get_node(conn, r[0]) for r in rows[:CLAIM_LIMIT]]
     claims = [c for c in claims if c is not None]
@@ -709,7 +733,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
         group["claims"].append({
             "id": claim["id"], "sentence": claim["attrs"].get("sentence") or claim.get("title") or "",
             "number": claim["attrs"].get("printed_number"), "line": claim["attrs"].get("line"),
-            "trace": _claim_state(conn, root, claim["id"], cache),
+            "trace": _claim_state(conn, root, claim["id"], cache, shared),
         })
     return {"file": rel, "sections": list(sections.values()), "total": len(rows), "shown": len(claims),
             "states": TRACE_STATES}
@@ -1064,6 +1088,8 @@ def version_content(project_root: str | Path, given: str, version: str | None, s
             out["truncated"] = len(text) > VERSION_TEXT_LIMIT
             out["text"] = text[:VERSION_TEXT_LIMIT]
     if out["text"] is None:
+        # The code is what the page words in its language (13.6); `reason` is the same sentence in Chinese.
+        out["reason_code"] = "not_kept" if data is None else "not_text"
         out["reason"] = "这一版只记下了指纹和大小，没有保存内容" if data is None else "这一版不是文本，不在这里显示"
     return out
 

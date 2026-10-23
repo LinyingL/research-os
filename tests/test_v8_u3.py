@@ -2,7 +2,7 @@
 page -- one page for every object, its trace drawn as columns with every
 break a gap and its repair, its changes and notes as one timeline, its
 judgments, the canvas scoped to its neighbourhood -- and the sections built
-on it: 成果 (figures, tables and claims with their trace state) and 数据与代码
+on it: 图表与论断 (figures, tables and claims with their trace state) and 数据与代码
 (scripts and data with the lineage report's blocks as filters). Every test
 names its scenario."""
 
@@ -119,13 +119,13 @@ def test_12_7_a_script_page_shows_what_it_read_upstream_and_what_it_writes(tmp_p
 
 
 def test_12_7_an_attempt_page_lists_its_files_and_a_variable_page_its_definition(tmp_path):
-    """An attempt: 读取的数据 | 脚本 | 产出 from its step scripts, each marked
+    """An attempt: 读取的数据 | 脚本 | 输出 from its step scripts, each marked
     步骤脚本; a variable: 输入 | 脚本 | 输出 | 本节点 from its card."""
     root = _project(tmp_path / "proj")
     _card(root)
     page = _page(root, "attempt:map.md#16")
     assert page["type_label"] == "尝试" and page["details"]["verdict_status"]["label"] == "待定"
-    assert _titles(page) == ["读取的数据", "脚本", "产出"]
+    assert _titles(page) == ["读取的数据", "脚本", "输出"]
     assert _labels(page)[1] == ["16-build.py", "17-plot.py"]
     assert {i["member"] for i in page["trace"]["columns"][1]["items"]} == {"step_files"}
     assert "figs/fig2.png" in [f["path"] for f in page["choices"]["files"]]
@@ -156,7 +156,7 @@ def test_12_7_a_claim_without_backing_and_a_section_with_its_figures(tmp_path):
     assert set(_labels(section)[0]) == {"fig1.png", "fig2.png"}
 
 
-# -- 成果 and 数据与代码 (12.9) ------------------------------------------------------------------------
+# -- 图表与论断 and 数据与代码 (12.9) ------------------------------------------------------------------------
 
 
 def test_12_9_results_lists_the_drafts_figures_by_section_with_their_trace_state(tmp_path):
@@ -226,7 +226,7 @@ def live(tmp_path):
 def test_12_7_repairs_go_through_the_mapping_write_path_and_the_page_follows(live):
     """「补上来源」 and 「关联文件」 from the page: POST /api/mappings/add with
     paths the page was given; the page then shows the human line and the
-    attempt, and the links under 判断 offer 删除标注."""
+    attempt, and the links under 连线确认 offer 删除标注."""
     base, root = live
     status, body = _call(f"{base}/api/mappings/add", "POST",
                          {"from": "steps/16-build.py", "to": "figs/fig1.png", "type": "generates"})

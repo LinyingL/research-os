@@ -3224,9 +3224,10 @@ has 「 」.
 
 | 中文 | English |
 |---|---|
-| 工作台 | Desk |
+| 项目首页 | Project home |
 | 研究路线 | Research routes |
-| 成果 | Outputs |
+| 路线图 / 列表 | Route map / List |
+| 图表与论断 | Figures and claims |
 | 变量 | Variables |
 | 文献 | Literature |
 | 数据与代码 | Data & code |
@@ -3240,15 +3241,15 @@ has 「 」.
 | 归档 | Archived |
 | 其它 | Other |
 | 来龙去脉 | Provenance |
-| 改动与备注 | Changes & notes |
-| 判断 | Judgments |
-| 关系图 | Relation map |
-| 尝试 / 判决 / 结果 | Attempt / Verdict / Result |
+| 改动与备注 | Changes and comments |
+| 连线确认 | Link judgments |
+| 关系图 | Relationship map |
+| 尝试 / 研究判断 / 结果 | Attempt / Research assessment / Result |
 | 待复核 | Needs review |
-| 缺来源 / 补上来源 | Missing source / Add source |
-| 缺尝试 / 关联文件 | No attempt / Link files |
+| 缺来源 / 补上来源 | Missing source / Add a source |
+| 缺尝试 / 关联文件 | Missing attempt / Link files |
 | 公盘 | Shared folder |
-| 官方版本 | Official version |
+| 正式版本 | Official version |
 | 工作副本 | Working copy |
 | 批准并加入 | Approve |
 | 退回并说明 | Return with reason |
@@ -3257,17 +3258,40 @@ has 「 」.
 | 已批准，待同步 | Approved, awaiting sync |
 | 本机 | This Mac |
 | 最初的研究者 | Original researcher |
+| 负责人 | Owner |
+| 任务 | Task |
+| 笔记 | Note |
+| 备注 | Comment |
+| 结果记录 | Result records |
+| 实验 | Experiment |
+| 输出 | Outputs |
+| 未识别生成脚本 | No generating script identified |
+| 中间数据 | Intermediate data |
+| 同名文件 | Same-name files |
 | 含义 / 输入 / 构建口径 | Meaning / Inputs / Construction |
 | 实现依据 / 人工决策 | Implementation / Human decision |
 | 草稿 / 确认这一版 | Draft / Confirm this version |
 
-Verdicts: the six default statuses and 「其它」 take the words above. A
-status the researcher named in `[verdict_labels]` shows their word as
-written (status `labelled`), in either language.
+This table is kept as the page speaks (amended by 18.2, task V14). A row
+written `A / B / C` gives three words in the order written. A counted word
+(13.5) is given in one form, and the page's entry holds both.
+`tests/test_glossary.py` reads this table and the lists of words below it
+and in 14.6, 15.5 and 17.9, and holds the English table in `i18n.js` to
+them in two ways. A Chinese word that is a key there carries exactly the
+English written here (a counted word, either of its two forms). And the names
+that sentences carry (研究判断, 连线确认, 正式版本, 关系图 and the others the
+test lists) read the same inside every sentence that has them. A word that is
+no key of its own (it lives only inside sentences, or belongs to a page not
+yet converted, as 含义 to 确认这一版 do, 13.7) is not compared. When a row
+changes here, the test shows each place the page still has the old word.
+
+Research assessments: the six default statuses and 「其它」 take the words
+above. A status the researcher named in `[verdict_labels]` shows their word
+as written (status `labelled`), in either language.
 
 Fixed for the desk and the frame (first increment): 等你批准 "Awaiting your
 approval"; 我的提议 "My proposals"; 你上次查看以来的改动 "Changes since you
-last looked"; 依据变了的成果 "Outputs whose basis changed"; 已放弃的路线
+last looked"; 依据变了的图表与论断 "Figures and claims whose basis changed"; 已放弃的路线
 "Abandoned routes"; 记录 "Records"; 停止服务 "Stop service"; 研究脉络 (the
 brand's subtitle) "Research provenance"; PI stays "PI"; 成员 as a role
 "Member"; 同步 "Sync"; 发布 "Publish".
@@ -3467,7 +3491,7 @@ Beside the map, newest first:
 - **待复核**: judgments whose basis changed, under the attempt they belong
   to (through the membership rule of 14.3), else under 「不属于任何尝试」
   (claims, variable cards, files no attempt holds).
-- **官方版本有更新** and 同步 (a member), as the desk had it.
+- **正式版本有更新** and 同步 (a member), as the desk had it.
 - Lines with a missing end (14.2).
 
 With nothing to do the column says so in one quiet line.
@@ -3931,7 +3955,10 @@ notes and a result, and marks the task done. Decided the same day:
   should look), `failed` (could not start, ended in error, or ran past the
   time limit), `stopped` (the person stopped it), `interrupted` (the app
   quit or crashed while it ran). A run that was undone also carries
-  `reverted`.
+  `reverted`. A run that ends with an out-of-bounds change (17.5, 18.1
+  item 4) is `out_of_bounds`, whichever of these it would otherwise have
+  been; that state is kept as its `outcome`, and it is the outcome that
+  decides whether the run can be answered or sent back.
 - **Answering and sending back.** A run waiting for an answer, or one that
   finished, can be continued: 回答 (to a question) or 打回 (with what to
   change) starts a new run that resumes the same agent conversation with
@@ -4020,7 +4047,9 @@ notes and a result, and marks the task done. Decided the same day:
    push to GitHub, change the team.
 3. Change or delete data that existed before the run (`.csv`, `.tsv`,
    `.xlsx`, `.xls`, `.parquet`, `.feather`, `.rds`, `.rdata`, `.dta`,
-   `.sav`, `.json`, `.h5`, `.pkl`); new data goes to new files.
+   `.sav`, `.json`, `.h5`, `.pkl`, `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
+   `.sas7bdat`, `.jsonl`, `.pickle`; `package.json` and `package-lock.json`,
+   in any folder, are not data); new data goes to new files.
 4. Change git's state: commit, push, reset, checkout, rebase, merge,
    stash, clean, tag.
 5. Write `research/tasks.json` except through its tools.
@@ -4100,7 +4129,8 @@ allows, and never over a later change:
 - a file the run created is moved into the run's folder (`reverted/`), not
   deleted -- unless it is a file the run moved or renamed that had no copy
   (its content is that of a deleted file), which goes back to where it was;
-  folders the moves emptied, that did not exist before, are removed;
+  folders the moves emptied, that did not exist before the run, are removed
+  (18.1 item 5: the before-picture records folders);
 - a file it changed or deleted is restored from the copy taken before;
 - a file that changed again after the run (by the person or a later run),
   or that had no copy (over 16 MB, or past the 1 GB budget, or only in the
@@ -4118,6 +4148,8 @@ under the person's name. When something was left as it was, the run reads
 部分撤回 and its log lists those files with the reason. The copies of the
 newest 20 runs of a project are kept; the logs of the newest 200; older
 runs can no longer be undone, and runs beyond the 200 are removed.
+
+What the undo will do is listed first, and the person chooses (18.1 item 5).
 
 ### 17.7 In a team
 
@@ -4154,7 +4186,11 @@ project is served is scanned when that project is opened again.
 - `POST /api/agents/runs` `{project, task}` — start.
 - `POST /api/agents/runs/<id>/reply` `{project, message}` — answer or send
   back.
-- `POST /api/agents/runs/<id>/stop`, `POST /api/agents/runs/<id>/revert`.
+- `GET /api/agents/runs/<id>/revert-plan` — what 撤回本次运行 would do now
+  (18.1 item 5), without doing it.
+- `GET /api/agents/large-files` — the project's files over 16 MB (18.1 item 5).
+- `POST /api/agents/runs/<id>/stop`, `POST /api/agents/runs/<id>/revert`
+  (which takes `files`, the paths left checked in the plan; absent = all).
 
 ### 17.9 Language
 
@@ -4164,7 +4200,9 @@ Added to 13.4: AI 执行者 "AI agent"; 运行 (a run, and the button) "Run";
 change"; AI 执行 (history source) "By an agent". States: 准备中
 "Preparing", 运行中 "Running", 已完成 "Done", 未报告 "Ended without a
 report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分撤回 "Partly undone", 已撤回本次运行
-"Undone" (not 已撤回, which is a withdrawn proposal's word).
+"Undone" (not 已撤回, which is a withdrawn proposal's word), 越过了限制
+"Went out of bounds" (a run that ended with an out-of-bounds change, in the
+warning colour; never 已完成).
 
 ### 17.10 Acceptance
 
@@ -4188,3 +4226,1093 @@ report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分�
    proposal is made.
 8. With `RESEARCHOS_AGENT_RUN` set, `researchos` commands and every write
    under the project lock refuse.
+
+## Section 18 — An optimization round: agent safety, terms, the sidebar, speed (task V14)
+
+The researcher, 2026-10-22: "现在由你来优化". Four read-only reviews of
+`ca00a1e` and a timing on a copy of the researcher's thesis project (every
+endpoint under 0.07 s except `/api/citations`, 0.45 s and 1.2 MB) set the
+order. Decided the same day: all four groups below; 研究判断 stays and a
+person's verdict on a machine link becomes 连线确认; 成果 becomes 图表与论断
+and keeps its place in the sidebar; changing an existing row's 研究判断 or
+结果 saves at once with 撤销, while abandoning a route and adding a row still
+confirm first. Two rule changes suggested the same day (a variable card's
+fields marked 不适用; number matching only on demand) wait for a later round.
+
+### 18.1 Agents: the side doors (amends 17.4–17.6)
+
+17.5 says an agent that bypassed the hook "would show" in the after-run
+check. It did not: a program the agent writes could POST to the engine
+(approve, publish, write the attempt table, change `agent_commands`), the
+engine wrote under the person's name, and those writes were excluded from
+the check. This round closes that door and the cheaper ones beside it.
+
+1. **The engine requires its session for every write.**
+   - At start, `serve` makes a random 32-byte session secret, kept in memory
+     and written to `<home>/engine/<port>.session` (mode 0600, replaced
+     atomically, removed at shutdown).
+   - Every request other than GET and HEAD must carry it: the cookie
+     `ro_session_<port>` (HttpOnly, SameSite=Strict, Path=/) or the header
+     `X-ResearchOS-Session`. Otherwise the answer is 403 `session_required`,
+     with a sentence in the request's language, after the origin check and
+     before routing or reading the body. A GET that writes or starts
+     something is moved under the same rule (each is listed in the commit).
+   - `GET /boot?session=<secret>` sets the cookie and redirects to `/`; a
+     wrong or missing secret redirects without it. The Mac app reads the
+     session file once the probe answers, loads `/boot?…`, and sends the
+     header on its own `POST /api/shutdown`. An engine without a session
+     file (an older one) is loaded as before.
+   - `researchos serve` opens the browser at `/boot?…`. With `--no-browser`
+     it prints only the plain address: the secret is never printed, because
+     the app's `serve.log` is readable by any program of the user.
+   - A page without the session still reads. Its first refused write says
+     so in place: 「这个窗口没有连上 Research OS 的写入权限：请从 Research OS
+     应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app
+     重新生成。」 / "This window cannot save: open it from the Research OS
+     app. If you already did, the app is out of date: run researchos app to
+     rebuild it." The second sentence is for an app built before the session
+     existed: it loads the plain address, cannot be given a cookie without
+     defeating the check, and only `researchos app` replaces it (the update
+     steps already end with that command; the changelog says so too).
+   - The launcher-script bundle that `researchos app` builds when `swiftc` is
+     missing reads the same file once the probe answers and opens
+     `/boot?<secret>` (hex, so no encoding), in the already-running case too;
+     for an engine without a file it opens the plain address.
+   - The log never holds the secret: the request line, and the path the
+     catch-all of a failed request reports, are logged with the value of
+     `session=` hidden, and a window that goes away while `/boot` answers is
+     not an error to report.
+   - Tests may build a server that requires no session; `serve` never does.
+2. **What the agent can read and is given.**
+   - The Claude Code hook also runs on `Read`, `Glob`, `Grep` and `LS`, and
+     refuses paths inside Research OS's home and `~/.ssh`. The Bash check
+     refuses the home's absolute path as it refuses `.researchos`.
+   - `RESEARCHOS_HOME` is no longer in the agent program's environment;
+     only the MCP server gets it (17.4's MCP configuration already sets it).
+   - Variables that look like credentials are removed from the program's
+     environment. A name matches if it contains `TOKEN`, `SECRET`,
+     `PASSWORD`, `PASSWD`, `CREDENTIAL`, `PRIVATE`, `API_KEY`, `ACCESS_KEY`,
+     `AUTH`, `SESSION` or `COOKIE`, or is `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`,
+     `RCE_LLM_API_KEY`, or starts with `AWS_`, `GITHUB_` or `GH_`.
+   - The runner keeps what it needs to reach its model:
+     - Claude Code: `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN`; `AWS_*` only
+       when `CLAUDE_CODE_USE_BEDROCK` is set, and `GOOGLE_*` only when
+       `CLAUDE_CODE_USE_VERTEX` is.
+     - OpenCode: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+       `GEMINI_API_KEY`, `GOOGLE_*`, `GROQ_API_KEY`, `MISTRAL_API_KEY`,
+       `DEEPSEEK_API_KEY`.
+   - The names removed, never their values, are listed once in the run log.
+   - Claude Code starts with `--setting-sources user`, so a project's own
+     `.claude/settings*.json` is not loaded; OpenCode's project
+     configuration is already off for the same reason. `.claude/`,
+     `opencode.json` and `.opencode/` in the project are protected: an edit
+     there is refused, and a change there is out of bounds.
+   - Why `--add-dir` and a variable go with it. `--setting-sources user` also
+     stops the project's own `CLAUDE.md` from loading, and the agent would
+     lose the project's own instructions. So Claude Code is also given the
+     project root as `--add-dir <project root>`, and its environment carries
+     `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`, which is what makes
+     Claude Code read the `CLAUDE.md` of an added folder. Checked with
+     Claude Code 2.1.87: with `--setting-sources user` alone the project's
+     `CLAUDE.md` is not read; with the two added it is, and a
+     `.claude/settings.json` planted in the project still has no effect, so
+     the settings door stays shut.
+     - The folder added is the folder the program already starts in, so the
+       agent is given no place it did not have. `--add-dir` takes any number
+       of values, so a flag always follows it in the argument list; the tool
+       lists stay last.
+     - The variable is set after the scrub, to `1` whatever the engine's own
+       environment says; it matches neither the session-identity pattern nor
+       a credential word, and the names removed (`env_removed`) never include it.
+       OpenCode is given neither.
+     - `CLAUDE.md` is instructions to the model, not configuration: it grants
+       no permission and does not touch the hook, and the rules and the hook
+       hold whatever it says. A run that edits it shows in the change list
+       like any other file.
+
+   How it is read:
+   - *The folders.* `guard.json` lists them as `off_limits`: the home in
+     use, the default `~/.researchos` and the legacy `~/.rce` whether or not
+     the environment names another, and `~/.ssh`, each as spelled and with
+     symbolic links resolved. A path is compared resolved, by NFC-normalised,
+     case-folded names, so a link inside the project and a differently
+     cased spelling lead nowhere. `Glob` also reads the literal folder in
+     front of the first wildcard of an absolute pattern. A `Grep` that starts
+     above one of the folders (or starts nowhere in particular, in a call
+     whose folder is above one) is refused, since ripgrep would read into
+     it; `Glob` and `LS` above them only list names and are not.
+   - *Bash.* The command text is refused when it spells the absolute path
+     of one of those folders (as a whole name: `rh` is not `rhx`), names
+     `$RESEARCHOS_HOME` or `$RCE_HOME`, or names a folder `.ssh`. As before,
+     this is a text check: a program the agent writes can still look for the
+     home by itself, which 17.5's limit restates below.
+   - *The environment.* Besides the variables of 17.4, `RESEARCHOS_HOME`
+     and `RCE_HOME` are not passed on; the MCP server's entry names the home
+     for the server alone. Credential-like names are judged in upper case,
+     so `github_token` goes too. `AUTH` and `SESSION` also catch names that
+     are no credential (`GIT_AUTHOR_NAME`, `TERM_SESSION_ID`); the accepted
+     cost is a missing variable, never a leaked one. The names removed are
+     stored with the run (`env_removed`) and shown in its log under 「没有交给
+     它的环境变量」 "Environment variables not given to it".
+   - *Settings.* The folders `.claude` and `.opencode` are refused at any
+     depth by the file tools and, with a writing operation or a copy, by the
+     Bash check; so are `opencode.json` and `opencode.jsonc` anywhere.
+     The after-run check reports a change there as `agent_settings_changed`
+     (the page: 「改动了 Claude Code 或 OpenCode 在项目里的设置」 "Changed
+     Claude Code or OpenCode settings in the project"); a pre-existing
+     `opencode.json` is that, not also a changed data file. Undo puts a
+     changed one back and moves a created one away, as for any file.
+3. **What the engine sees during a run is the run's.** While a run of the
+   project is active, from its before-picture to its after-picture, every
+   version that a watcher scan adds to the change history is attributed as
+   in 17.5. It gets `source = "agent"`, the run's `who`, and the note "seen
+   during run <id>". Writes the person makes through Research OS keep their
+   name. After the run, attribution does not add a second version of the
+   same content.
+   - *How.* The run manager, in the engine that started the run, tells the
+     history so from the before-picture until the run's attribution is
+     written (`history.watch_run`); the watcher needs to know nothing of
+     runs. A scan in that engine then credits to the run a file that was
+     not in the before-picture or ends with other bytes. A file the run did
+     not change (one the person dropped in the folder before it, never
+     scanned) and a path the person saved through Research OS since the run
+     began, as long as it still has the bytes Research OS wrote, keep the
+     scan's attribution. The attempts a scan reads follow the attempt
+     table, and the judgment ledger is one of the record files: each is the
+     run's or it is not. The pre-image of a person's save (12.6) is read
+     the same way, so that the run's content is not recorded under their
+     name. The stored note is English; the page shows it in its language.
+   - *Limit.* Only scans in the engine that carries the run out know of
+     it: a `researchos` command the person runs in a terminal meanwhile is
+     an ordinary scan.
+4. **Out of bounds is a state.** A run that ends with an out-of-bounds
+   change reads 越过了限制 ("Went out of bounds") in the warning colour
+   wherever its state shows, with 撤回本次运行 beside it, never 已完成. The
+   task's done mark stays as the agent set it; the run is what warns. The
+   check also covers:
+   - `.researchos/` at any depth, `.researchos/backups/` included (a
+     deleted backup is out of bounds);
+   - `.git/hooks/` and `.git/config` (a planted hook is out of bounds).
+
+   How it is read:
+   - *The state.* `out_of_bounds` replaces whatever state the run would have
+     had, `done`, `ended`, `needs_input`, `failed`, `stopped` and
+     `interrupted` alike, and `outcome` keeps that state (17.3). A run
+     waiting for an answer that went out of bounds still shows its question
+     and can be answered.
+   - *Depth.* A folder named `.researchos` or `.rce` protects what is below
+     it wherever it lies in the project, as the hook already reads it.
+   - *Git.* The before-picture records `.git/config` and the files in
+     `.git/hooks/`, copies included (the `*.sample` templates, which git
+     never runs, are left out), though `.git/` is otherwise not walked.
+     A change there is out of bounds, and undo restores it or moves a
+     planted hook away; the `config` of a repository the run itself
+     started stays.
+   - *Backups.* The picture lists `.researchos/backups/` by name and size.
+     A new backup is nothing, since Research OS makes one with every save.
+     One that is gone is out of bounds, the run lists it among its deleted
+     files, and undo says it has no copy. One exception: Research OS keeps
+     the newest 20 of each series of backups, and a save, by the person or
+     by a run's own tool, prunes the oldest. As many of the oldest of a
+     series as such pruning can have removed since the picture (what the
+     series held, plus what it gained, less 20) are that rotation, not the
+     agent; a series that never held more than 20 is never pruned, so there
+     one planted newer name excuses nothing. Planting twenty names would
+     still pass: this is a barrier, not a sandbox.
+5. **Undo says what it will do, and asks.**
+   - 撤回本次运行 first lists the files it will put back (changed or
+     deleted) and the files it will move away (created), each with its
+     time, each with a checkbox, all checked. It also lists the files it
+     cannot undo, each with the reason. Unchecked files are left as they
+     are and listed as 你选择保留 ("You kept this").
+   - The confirmation before a person's first run no longer says that
+     everything can be undone. It says that these cannot be: installs,
+     downloads, git, and anything outside the project folder. It also names
+     the project's files over 16 MB (up to ten, then a count).
+   - Undo keeps folders that existed before the run. The before-picture
+     records folders as well as files.
+
+   How it is read:
+   - *The list* is `GET /api/agents/runs/<id>/revert-plan`, which runs the
+     very code of the undo without writing: the same checks in the same
+     order, so what is listed is what the undo would do at that moment, and
+     it refuses as the undo does (undone already, a later run touched the
+     same files, nothing to undo, a run going). It only reads, so a window
+     without the session may ask. Each file carries its `time`: its
+     modification time on this Mac, in local time, where it is there; for a
+     file that is gone, and for the task's done mark, when the run ended.
+     The cannot-undo files carry the reason codes of 17.6 (`changed_since`,
+     `no_copy`, `in_cloud`, `protected`). The last is a created file under
+     `.researchos/` and a created `.git/config`; the page words it 「属于
+     Research OS 的记录文件夹或 git，撤回不会动它」 "Belongs to Research OS’s
+     records folder or to git; undo does not touch it".
+   - *The choice.* `POST …/revert` takes `files`, the paths left checked
+     (absent = all that can be undone; an empty list is refused). A path
+     that could have been undone and is not named is left as it is and goes
+     in the run's `revert.skipped` with the reason `kept`, which the page
+     words 你选择保留; the run then reads 部分撤回 like any other partial
+     undo. A path the undo could not have put back (no usable copy, or its
+     folder cannot be made) keeps that reason whether it is named or not: the
+     check for it comes before the choice is read, in the loops of changed
+     and of deleted files alike, so that the note and the log never say a
+     person kept what the list told them could not be undone. A path the list did not offer is never acted on, whatever
+     `files` says, and a file that changed between the list and the
+     confirmation is still left as it is (17.6).
+   - *What is one choice.* A created file that is a deleted file renamed is
+     offered once, under the old name, and put back by moving the new file
+     (unchecked, it keeps its new name). The task's done mark and result
+     link are one choice, listed as `research/tasks.json`: a person who
+     keeps the result record may keep the task done.
+   - *The history.* Each file the undo puts back is recorded in the change
+     history under the person's name (17.6), except those below `.git/`,
+     `.researchos/` and `.rce/`: those are put back all the same, and kept
+     out of the history as attribution (item 3) keeps them out (a
+     repository's `config` can hold a remote URL with a token).
+   - *Folders.* The picture lists every folder its walk went into, empty
+     ones and ones that hold only noise it does not record included. A
+     picture cut at its limit cannot say which folders existed, and undo
+     then removes none; one taken before folders were recorded falls back
+     on the folders its files stand in.
+   - *The first run's confirmation* names the files over 16 MB from
+     `GET /api/agents/large-files` (the ten biggest, then a count): a
+     stat-only walk by the rules of the before-picture. If the engine cannot
+     say, the confirmation is still shown, without the names.
+6. **Smaller.**
+   - Rule 3's suffixes add `.sqlite`, `.db`, `.npy`, `.npz`, `.mat`,
+     `.sas7bdat`, `.jsonl` and `.pickle`. `package.json` and
+     `package-lock.json` are not data.
+     - *How.* One list, `snapshot.DATA_SUFFIXES`: the data walk and
+       `protected` read it, and the hook gets its files from `protected`
+       through `guard.json`. The rule the agent is sent (`brief.rules`)
+       spells it in words, and a test keeps the two together. The two names
+       are `snapshot.NOT_DATA_NAMES`, compared by file name in any folder, case
+       folded (a Mac's names are): `package.json.bak` and `my-package.json`
+       are not those names, and `package.jsonl` is data.
+   - OpenCode's git denials match any command containing `git` and a rule-4
+     verb as separate words, not only commands that start with `git`. The
+     accepted cost is an occasional refusal of a harmless command.
+     - *How.* Each verb of `runners.GIT_DENIED` has the patterns of
+       `runners.opencode_git_patterns` in `permission.bash`: `*git <verb>*`
+       (the verb right after `git`, as before) and `*git * <verb><end>` (git's
+       own options between), where `<end>` is the end of the command, a space,
+       or one of tab, newline, `;`, `&`, `>`, `<`, a backtick, `'` and `"`
+       (`>` and `<`: OpenCode matches a redirected statement as a whole, so
+       `git -C . push>/dev/null` has to end its verb there). The verb must be a
+       word of its own: `git add clean_data.py` and `git describe --tags` pass,
+       `/usr/bin/git push`, `env git push`, `cd x && git commit`, `git -C . push` and
+       `bash -c 'git -C . push'` do not. Only `*` is used: `|` and `)` are left
+       out, because a matcher that does not escape them reads `|` as an
+       alternative and the pattern would match every command. The installed
+       OpenCode splits a command into its parts and matches each, so
+       `git -C . push|cat` and `(git -C . push)` are caught through the part
+       `git -C . push`.
+     - *One list.* `runners.GIT_DENIED` is `guard.GIT_MUTATING`, sorted: the
+       hook (rule 4's nine verbs, and `cherry-pick`, `revert`, `switch`,
+       `restore`, `pull`, `am`, `filter-branch`, `update-ref` and `replace`),
+       Claude Code's `--disallowedTools` and OpenCode's patterns (which are
+       all OpenCode has: it has no hook) cannot drift apart, and a test says
+       so. Before this, OpenCode could `git pull` or `git update-ref`.
+       The words the agent is sent for rule 4 (`brief.rules`) are made from
+       the same list, sorted, so that they name every command that is refused
+       (before, they named the nine of 17.5 and left the rest out), and they
+       add that deleting or renaming a branch counts too, which the hook also
+       refuses; a test reads the verbs out of the words and compares them with
+       the list, in both languages.
+   - Hook refusals and run errors show in the person's language.
+     - *How.* Every refusal of the guard is a `guard.Refusal`, a `str` (the
+       English sentence addressed to the agent, as before) that also carries a
+       code of `guard.REFUSAL_CODES`: `unchecked`, `no_file`, `outside_project`,
+       `records_folder`, `git_files`, `agent_settings`, `protected_file`,
+       `off_limits`, `research_os_command`, `git_state`, `engine_api`. The hook
+       logs the code in `refusals.jsonl` and ends what it says to the agent
+       with `[refusal: <code>]`, because the run log is read from the program's
+       own event stream and that is what travels in it. The streams give
+       a step `code` (only when there is one): the hook's, `permission_rule`
+       (Claude Code's deny list, OpenCode's rule or rejection),
+       `tool_unavailable` and `mcp_failed`. The end of a run that failed or was
+       interrupted gets the code of its error (`run.error.code`), also when
+       the engine writes that end itself (an interrupted run has no result
+       event) and then the error's detail is its text, never a sentence in the
+       language the run began in; the engine-written end of a stopped run has
+       the code `stopped` and no text. A step's `text` stays the program's or
+       the engine's own words. Claude Code's end text is the result text or
+       its errors; the result's `subtype` (`success`, `error_max_turns`) is a
+       code, never the text, so a run that stops with no closing sentence ends
+       with no text.
+     - The page tells a refused step, an error step and a failed end by their
+       code in the person's language (`t()`), and puts `text` beneath it as
+       the detail (「详情」 "Details"). A code the page does not know, a refusal
+       logged before codes, and a program's own error say it generally (「这一步被
+       拒绝了」, 「程序报告了一个错误」, 「这次运行没有成功」); the same holds for
+       a run state the page does not know (「状态未知」). A raw code is never
+       shown. `error.detail` stays under 「详情」 in the run's error, as before;
+       the engine no longer puts the code in the place of a missing detail
+       (a Claude Code result with `is_error` and neither errors nor text fails
+       with its code and an empty detail, and the page shows no 「详情」).
+   - `stderr.log` is capped as the event log is.
+     - *How.* The program's standard error reaches the engine through a pipe
+       and a thread copies it into `stderr.log` while the file stays within
+       `STDERR_LIMIT`, which is `EVENTS_LIMIT` (20 MB). What does not fit is
+       dropped, the run is marked `stderr_truncated` (and its detail says so),
+       as `events_truncated` marks the events, and the pipe is read to its end
+       all the same, so that a program that writes a great deal is never held
+       up. The page shows neither mark.
+     - *The end is kept.* The cap keeps the beginning, but what the person
+       looks for in 「程序的错误输出」 is how the program died. The thread
+       also holds the last `STDERR_TAIL_BYTES` (4096) the program wrote and,
+       when the cap was hit, leaves them in `stderr.tail` when standard error
+       ends. The detail's `stderr_tail` is that file for a run marked
+       `stderr_truncated` (else the end of `stderr.log`, which is also what
+       it falls back on if the file is not there, say after an engine that
+       died first). `stderr.log` itself stays at the cap.
+   - `internal`, the code of any crash of the run's thread (writing the run's
+     files before the program starts, taking the pictures, reading the
+     output), is worded for all of them: 「Research OS 在运行中出了错。」
+   - When the engine starts, runs of every registered project that were
+     left preparing or running are recovered at once, not only when that
+     project's runs are listed. A process still alive that is verifiably
+     the run's is ended, and the state is `interrupted`.
+     - *How.* `serve` starts a thread (not `build_server`, so a test server
+       starts none) that goes through every project that has runs on this
+       Mac, not only the ones the registry lists now: a project removed from
+       the registry still has a program that may be alive. It is the code of
+       listing the runs (17.3): marked `interrupted`, the program ended only
+       when its pid has the start time recorded at launch, a run of another
+       live engine left alone. A thread, because a project of 50,000 files
+       takes seconds to compare, and the app waits for the engine's first
+       answer.
+     - *A folder that cannot be read.* A run whose project folder is not
+       there at that moment (a drive that is not attached) still has its
+       program ended and reads `interrupted`, but its changes cannot be
+       compared. It is marked `check_pending`, and the comparison is made by
+       the next recovery that finds the folder again (a listing, a start, the
+       next engine start), unless a run of the project is going then. Until
+       then it cannot be undone, and no out-of-bounds change is reported;
+       afterwards it can and is. A folder that stays away keeps the mark.
+
+**The cookie's limit.** The session cookie belongs to the host `127.0.0.1`,
+not to the port: cookies are not scoped by port, and SameSite=Strict does not
+separate the ports of one host. In the browser flow (`researchos serve`), a
+server an agent starts on another port of `127.0.0.1` (to preview a figure,
+say) receives the cookie if the person opens it in the same browser while it
+runs, and could replay the secret as `X-ResearchOS-Session`. The app is not
+affected: its window refuses to leave the engine's own address. This round
+leaves it as it is: removing the ambient cookie means the page sending the
+secret itself on every request, a change of every request the page makes,
+which is for a round of its own. Until then: do not open an agent's local
+server in the browser that runs Research OS, or use the app.
+
+**17.5's limit, restated.** Research OS runs no operating-system sandbox. A
+program the agent writes and runs can still read and change anything this
+Mac's user can, the session file and the signing key included. Such a
+program, written to dig out the session, could act through the engine
+unseen by the after-run check. Everything short of that is now refused or
+attributed to the run. Closing the rest needs a sandbox, which this round
+does not add.
+
+### 18.2 Terms (amends 13.4, 14.6, 17.9)
+
+- **研究判断** stays as an attempt's verdict: "Research assessment". 13.4's
+  row becomes 尝试 / 研究判断 / 结果, "Attempt / Research assessment /
+  Result". Where 判断 means the attempt's (修改判断, 提议修改判断), it
+  becomes 研究判断. No other word names that cell: 结论 and 判决 (and "verdict") are
+  not used for it in the 记录 panel, the attempt form, a proposal's conflict line
+  (第 {n} 行的研究判断或结果在正式版本里也改了), the instruction an agent is sent, or
+  `researchos history`.
+- **连线确认** is a person's confirming or rejecting of a machine link,
+  formerly 判断; English stays "Link judgments". The node page's section,
+  its filters and every sentence that says 判断 for a link say 连线确认
+  (for example 待复核的连线确认).
+  Where a count or a list may also hold a variable card (a script changed under
+  it), the word is 项: the top bar's 「N 项待复核」, the desk's 「N 项的依据变了，等你复核。」
+  and the panel's subtitle 「依据变了的旧连线确认和变量卡，等你再看一眼」. 连线确认 stays
+  where every item is a link: the empty note, the ledger notices and the node
+  page's tag.
+- **正式版本** "Official version", 12.2's word. The English "Published
+  version" is retired: 发布 "Publish" is only the act. 官方的一份 becomes
+  正式的一份, "official copy".
+- **备注 and 笔记.** 备注 is a comment on an object, on the node page and in
+  the panel alike (添加备注, 写一条备注…): "Comment", "Comments". 笔记 is a
+  document in 项目首页: "Note", "Notes". 改动与备注 becomes "Changes and
+  comments". Nothing on disk changes; `notes.toml` keeps its name.
+- **Page and output names.**
+  - **图表与论断** "Figures and claims", formerly 成果 "Outputs".
+  - **输出** "Outputs" is a script's outputs; 产出 becomes 输出.
+  - **结果记录** "Result records" are documents in 项目首页. **结果**
+    "Result" is the attempt's cell.
+    A result document with no heading is titled 结果记录 ("Result record"), as
+    its group is.
+  - **研究路线** "Research routes" is the merged page (18.3); 工作台 "Desk"
+    is retired.
+- **Other single words.** 本机 is "This Mac" everywhere. The experiment
+  node kind is 实验 "Experiment" everywhere; 实验记录 and "Run record" leave
+  the interface (运行记录 is an agent run's log, 17.9).
+- **The five English words** follow the page, not the 2026-10-12 table:
+  - 改动与备注: "Changes and comments" (above);
+  - 连线确认: "Link judgments";
+  - 关系图: "Relationship map", and the engine's "relation map" follows;
+  - 补上来源: "Add a source";
+  - 缺尝试: "Missing attempt".
+- **13.4 gains** 项目首页 "Project home", 负责人 "Owner" and 任务 "Task". It
+  also gains the data page's filters 未识别生成脚本, 中间数据 and 同名文件,
+  with the English the page already has.
+- **Text rules.**
+  - The sentences in `team.js` that, since `6a4fa83`, join translated and
+    bare fragments become one template each (13.6).
+  - English entries that no key uses are removed.
+  - The glyph test also refuses », ⟶, ‹, ›, ⏵, ● and ○, and reads
+    `workspace.css` and the page's style block.
+  - `workspace.js` joins the converted surfaces.
+  - 项目首页's two disclosures use 12.13's chevron.
+
+  How they are read:
+  - *Joined sentences.* A date between two bare halves (放弃于 …，记录了 n
+    个文件的状态) is `放弃于 {when}，…`, one template for each ending, the date
+    lower case inside an English line (13.5); a verdict between two words
+    (研究判断 … 改为 …) is `研究判断 {old} 改为 {new}`, its two verdicts put in
+    by `phrase`. The proposal kinds a member chooses between are
+    `kindChoices()`, looked up when the form is drawn, and 提交提议 is
+    translated whole, since its labels sit beside labels that already were
+    (源自（可选）). The rest of `team.js` waits for its own increment (13.7), so
+    the language test holds these stretches only (`CONVERTED`).
+  - *Entries that no key uses.* An entry is kept while its Chinese is the
+    whole first argument of a `t()`, the text of a `data-i18n` element or
+    attribute, or a whole string literal where a table or the engine hands
+    it to `t()` by a variable (`t(VIA_WORDS[x])`, a label `nodepage.py`
+    sends). The test reads the same three places and lists any entry left
+    over; a sentence reworded by a rename takes its old entry with it.
+  - *The glyph test.* The list gains », ⟶, ‹, ›, ⏵, ● and ○ (a mark that
+    stands in for a word). The stylesheets are read as the page loads them:
+    `workspace.css` and each `<style>` block. Only what reaches the screen
+    counts, the `content:` strings with their escapes (`"\25B8"`) read as the
+    characters they spell; a comment or a selector is not text.
+  - *项目首页.* `workspace.js` is converted whole: its helpers (`button`,
+    `field`, `input`, `errorWords`, `named`, `quiet`) take words that are
+    already for the screen, so every call passes `t("…")`, and a table that
+    maps a code to a sentence (run states, refusals, errors, why a file was
+    left alone) holds functions of `t()`, so that each sentence is looked up
+    when it is shown. A code the table does not know reads as a generic
+    sentence, never as the code.
+  - *Disclosures.* The summary of 引用文件或尝试 and of 详情 is
+    `res-draft-summary` with the chevron `chevronIcon()` draws; the browser's
+    triangle is hidden by the class and `workspace.css` turns the chevron when
+    the disclosure is open, as `.res-draft` does elsewhere.
+
+### 18.3 The sidebar and saving (amends 12.9, 12.0, 14.3)
+
+- **研究路线 is one page.**
+  - It holds Section 14's route map with its 待办 column, and a switch 图 /
+    列表. 列表 is the grouped list that 12.9 called 研究路线 (by status,
+    proposals shown distinctly, abandoned routes with their reasons), with
+    the same 待办 column.
+  - An attempt opened from the list opens the same side panel as on the
+    map.
+  - The switch is remembered per project in the browser, a per-viewer
+    convenience.
+  - The switch's buttons read 路线图 and 列表, "Route map" and "List": 13.4's
+    own word for the map. A bare 图 would be a second English for a key the
+    table already holds (图, "Figure": the kind label of a figure in 图表与
+    论断), and a Chinese word has one English (13.4). 图 above and in 18.5
+    means that button.
+  - Anything that opened 工作台 or the old 研究路线 opens this page (in the
+    mode kept for the project; the Mac menu's two commands, `desk` and
+    `routes`, stay valid names and open the same page).
+  - In a team project, 待办's count (the rows the column lists) shows beside
+    研究路线 in the sidebar when it is not zero. A one-person project shows
+    none.
+  - The Mac menu has one item for it, ⌘2; 项目首页 is ⌘1, and the shortcuts
+    follow the sidebar's order (⌘1 to ⌘8).
+- **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
+  and, in a team project, 提议 and 成员. 项目首页 stays the first page.
+- **A one-person project** (no team file, 12.1):
+  - The sidebar shows no 提议, no 成员 and no identity reminder, and the Mac
+    menus show no 提议, 成员, 提交提议 or 发布.
+  - The project menu gains 开始协作…, which opens the existing team setup.
+  - Once a team file exists, all of these return.
+  - A team project that this Mac is not part of shows them.
+  - **How it is read** (task V14, G3-2):
+    - *Which project.* The engine's role for the open project is `single`
+      (`/api/proposals`; 12.1: no team file, an empty one, or only its PI)
+      and its answer says `team`, true when a team file lists anyone. A
+      project of one person is `single` with no `team`. Everything else shows
+      the items: a PI or a member, `none` (a team project this Mac is not
+      part of), `unknown` (a team file that cannot be read), a role the page
+      could not read at all (never taken for one person), and a PI who has
+      made the member list and added nobody -- the engine's word for them is
+      still `single`, but a team file exists, and 成员 is where they go on
+      to set the shared folder and add the first member.
+      With no project open the sidebar is hidden whole, as before.
+    - *The sidebar.* The nav starts marked one person's and the page flips
+      the mark each time it reads the role (the sidebar's other live parts
+      read at the same moments: after the page's own acts, on the desk's
+      reload when the generation moves, on a project switch), so the items
+      come back with no reload, and a one-person project never shows them
+      for a moment. The stylesheet hides exactly those two items under the
+      mark; the markup keeps 12.9's eight. The line at the foot keeps the
+      name once it is set and loses only the reminder 「还没有设置你是谁」
+      with its hover text; the form is on the page 开始协作… opens.
+    - *The Mac.* The page tells the shell `single` for such a project (and
+      with none open), and `none` for a role it could not read, so
+      the menus show 提议 and 成员 and not 提交提议 or 发布 (which need a
+      role). The shell hides 视图 > 提议 and 成员 for `single`; ⌘7 and ⌘8
+      then do nothing, and ⌘1 to ⌘6 are the sidebar's six items.
+    - *开始协作….* In the project menu, right after 推送到 GitHub…, in a
+      project of one person only. It opens the 成员 page, read afresh as the
+      sidebar's own click reads it: 我是谁 first, then the 开始协作 block
+      with 建立成员名单. The page keeps its title 成员 and no sidebar item
+      is marked, as the item is not there.
+    - *What asks for 提议 in such a project* (a Mac app built before this
+      round whose menu still has ⌘7, the compose command, a view kept from
+      another project) is routed to 开始协作, not ignored: someone who asked
+      for proposals is told how to have them. A page that asked for 提议
+      before the role was known goes on to it once it is. 成员 itself is
+      always a page of its own.
+- **Changing an existing row's 研究判断 or 结果 saves at once.**
+  - It is the same write as before (only what changed, backed up, in the
+    history, conflict-checked), without the preview step.
+  - The panel then shows 已保存 and 撤销. 撤销 writes the previous values
+    back the same way: a second history entry, not an erasure. It is
+    offered until the panel closes or the row changes again.
+  - Choosing 已放弃 still asks for the reason and confirms first, because
+    it freezes the basis. A new row keeps its preview. A member's change is
+    still a proposal (12.4).
+  - **How it is read** (task V14, G3-3):
+    - *The preview is asked, not shown.* The PI's and a single researcher's
+      save asks the engine's preview for the same body and, unless it says
+      the write turns the route abandoned, sends that body to the write at
+      once. For an update the preview also lists, per cell it would change,
+      `cells`: the cell as the file holds it (`was`: its Markdown decoration,
+      `<br>` and pipes as written, so that sending it back writes it as it
+      was), as the parser reads it (`was_text`) and as it will read after the
+      write (`now_text`).
+    - *Where.* In the side panel and in the older edit form of the node page
+      (编辑这一行). The button reads 保存. In the older form only a change of
+      研究判断 and/or 结果 saves at once: one that also changes the date, the
+      description or the variables is previewed and confirmed as before, and
+      a new row keeps 预览改动. A member's 预览这一行 is unchanged.
+    - *Conflict.* A row is written at once only while the cells the file
+      holds are still the text the form showed (`was_text`). If the file
+      changed meanwhile the row is shown instead, 原行 being the file's with a
+      note saying so, and written on 保存修改, after which 已保存 and 撤销 are
+      offered like after any save. A write the engine refuses says 写入失败，
+      文件没有被修改 with the engine's own text behind 「详情」, and what was
+      typed stays.
+    - *撤销.* It writes the previous cells (`was`) back through the preview
+      and the write: the row is what it was byte for byte, and the history
+      and the backups hold both writes. The offer stays in the panel until it
+      closes, drawn again after a refresh only while the row still reads as
+      the save left it; a second save offers back its own step only. Before
+      it writes, 撤销 asks the preview once more: a cell that no longer reads
+      as the save left it (the file changed in between), or an old verdict
+      that would abandon the route again (which needs its reason, 14.3), is
+      not written, and the panel says why in a sentence.
+    - *Abandoning* keeps its reason, its preview and 保存修改, and then says
+      已写入 as before, with no 撤销: the basis frozen in `decisions.toml` is
+      not written back by restoring the row.
+- **项目首页.**
+  - **Order:** notes and result records by last change, newest first;
+    attempts by number.
+  - **Headings:** a document's heading is written only when the person
+    typed a title different from the one the file shows, whatever the
+    screen's language (13.1). Typing during a save keeps the title.
+  - **More than 500 files:** the page says so where files are chosen. A
+    reference to an existing file beyond the 500 is still known.
+  - **A member's 提交 of tasks** takes along the result records that the
+    changed tasks link.
+  - **Read-only notice:** on a Mac that is not a member it says 这台 Mac
+    不是这个项目的成员，只能查看.
+  - **Officialness words:** 13.4's (我的改动，尚未提交 / 提议中 / 已批准，
+    待同步), from the same module as everywhere else.
+  - **An unreadable project identity** shows the page with that said, not
+    an error.
+  - **Other files:** Markdown files with other names in `research/notes/`
+    and `research/results/` show too. `research/` is not read as a paper
+    draft.
+  - **A PI's 项目首页:** notes and result records say they go to the
+    members with the next 发布.
+  - `docs/project-workspace.md` and its Chinese twin use the labels on
+    screen.
+  - **How it is read** (task V14, G3-4):
+    - *Order.* `overview` sorts notes and result records together by the
+      file's modification time, newest first, and only then cuts at 500, so
+      it is the oldest that are left out. A save answers with `modified` and
+      the page puts the saved document at the top; the page also sorts by
+      `modified` itself, the engine's order standing for ties. Attempts sort
+      by file, then by number as a number with `attempt_sort_key`'s rule (14a
+      right after 14), then by id.
+    - *Headings.* The engine decides, because it is the one place every writer
+      goes through (the page, the agent tools, a script) and the screen's
+      language is not always the one the file was read in. For an existing
+      file, a title is typed when it differs from the heading the file has;
+      for a file with no heading, when it is neither language's default for
+      its kind (笔记 / Note, 结果记录 / Result record, 研究问题与计划 /
+      Research question and plan). A new overview saved with its default title
+      writes none. A new note or result record is always given the title
+      typed, which the page requires. The cost is that someone who types
+      exactly the other language's default as the title of a headingless file
+      gets no heading; the file would show the same words anyway. `save_document`
+      takes the request's language for the title it answers with.
+    - *Typing during a save.* When the writing area differs from what was
+      sent, the page applies to it the same rule the engine applied (the one
+      `previewContent` already mirrors) if, and only if, that rule gives the
+      text the engine answered with for what was sent. The words go into the
+      writing area with the caret kept in place; while an input method is
+      composing they wait for it to end.
+    - *More than 500 files.* A sentence under the file chooser says that the
+      list is cut. `GET /api/workspace/exists` answers which of the paths
+      given (at most 200) are files `overview` would list if it were not cut:
+      regular, inside the project, not hidden or in a folder the scan leaves
+      out, no link on the way, not only in the cloud. The preview and 提交修改
+      ask it only for the links the list does not hold, only when the list was
+      cut, and remember the answers until the page reads the project again.
+    - *Tasks and their records.* `overview` and the task save answer
+      `changed_task_reports`: the `report` of each task that is new or differs
+      from the official version the working copy was synced to (all of them if
+      that cannot be read), for a member only. The page adds them to
+      `research/tasks.json` in 提交修改; a path that is no change is left out
+      by the proposal itself.
+    - *Officialness.* `local_annotations` builds the officialness module's own
+      view of the workspace files only (their hashes against the base) and
+      asks the module for each file's state and words, so 提议中 and 已批准，
+      待同步 show as they do on every page. It reads the member's own
+      proposals from the shared folder, as the other pages do, waiting for it
+      no longer than the desk does (`SHARED_TIMEOUT`, 14.4) and never under the
+      project lock: a save writes the file, releases the lock, and only then
+      builds the mark. A folder that does not answer in time leaves the words
+      of the local comparison and `pending_known` false. It does not walk or
+      hash the rest of the project. The mark has no `pending_known`;
+      `officialness_mode` is the module's mode answer, which has it.
+    - *Names.* Any visible `.md` name directly in the two folders is listed
+      and can be opened and saved; one that does not exist cannot be created
+      by naming it, and nothing is read from a deeper folder or from a link.
+      `research/tasks.json`'s `report` still names a 32-hex result record.
+    - *Backups of a hand-made name.* A save of an existing note or result
+      record keeps the copy it replaces and the daily snapshot under
+      `.researchos/backups/`, which name a series by the bare file name (the
+      newest 20 copies, one snapshot a day). The engine's own names (32 hex
+      digits), the overview and the task list stay in that folder; a name of
+      the researcher's own is kept in `.researchos/backups/research/notes/` or
+      `.../research/results/`, so `Summary.md` in both, or a note named like
+      the attempt table, never share a series.
+    - *Not a draft.* The files Research OS writes in `research/` at the project
+      root -- `overview.md`, the files directly in `notes/` and `results/`, and
+      the attempt table (`attempts.md`, or the file `attempts.toml` names in
+      that folder) -- are skipped by `_is_paper_markdown`, which the citation
+      step uses too, and count as skipped in the scan report. Any other
+      Markdown file in `research/` is the researcher's own (a manuscript kept
+      there) and is read as a draft, like one elsewhere. A skipped file is in
+      the claims step's cleanup with no claims, so the claims (and their
+      `backed_by` candidates) an earlier scan made of a note go on the next
+      scan -- a judgment already made stays in the ledger, 9.1; the sections
+      and figure links it made are left as they were.
+
+### 18.4 Speed (no change of behaviour)
+
+Every item leaves payloads as they were, adds no dependency, and keeps
+nothing new inside the project.
+
+1. **图表与论断:** one shared trace context per request. Attempt rows, the
+   configuration, link flags and variable cards are read once; file
+   checks are remembered; a figure is traced once. 设为论文正文 keeps the
+   generation it gets back.
+
+   How it is read:
+   - *The context.* `trace.Shared(conn, root)` is made once per request by
+     `nodepage.results` (the page, and a draft's claims) and handed to each
+     `trace.chain(…, shared=)`. It is per request and per thread, and keeps
+     nothing between requests. It reads nothing until a trace first needs
+     it: the link flags; `attempts.toml` once, the verdict words taken from
+     that read; the attempt rows, with an index from a step file's path to
+     the attempts that name it (an attempt's `via` keeps its step files in
+     the order its description gives them, then the files attached by hand,
+     as before); the variable cards and a table's header; whether a path is
+     on disk. A read that fails is not kept: an `attempts.toml` that cannot be
+     read as text fails the first trace that needs it, with the same error,
+     and building the context never fails. `chain` without a context builds
+     its own, so the CLI, `/api/trace` and the node page read as they did.
+   - *What the page asks.* The states need the breaks and the attempts only,
+     so `chain(…, variables=False)` leaves the cards unread (`variables`
+     comes back empty). A figure two sections include is traced once, and
+     each item is given a copy of its state: the officialness marks are
+     written into the payload in place.
+   - *The mark.* 设为论文正文 stores the generation the POST returns in the
+     page's counter and refreshes the page's views itself, as the page's other
+     writes do, so the poll that follows finds nothing new.
+2. **Agent runs:**
+   - The after-picture reuses the before hash of a file whose size,
+     modification time, inode and status-change time are unchanged.
+   - `GET /api/agents/runs/<id>` reads the event log from where it last
+     stopped and lists runs once per request.
+   - 项目首页's run poll stops while the window is hidden and polls once
+     when it is shown again.
+
+   How it is read:
+   - *The after-picture.* `snapshot.take(root, reuse=before)`. A file's entry
+     in a picture gains `ino` (its inode) and `ctime_ns` (its status-change
+     time) when the file was hashed and its
+     modification time lay at least 3 s before the picture began: a stamp is
+     as fine as the file system keeps it (2 s on FAT), and a file written
+     again within that could carry the same stamp. The after-picture keeps a
+     before hash for a file whose entry has `ino` and `ctime_ns` and whose
+     size, modification time (ns), inode and status-change time (ns) are the
+     same now; any other file is opened and hashed as before, and a file that
+     is copied (the before-picture) is always read. A picture stored without
+     `ino` and `ctime_ns` reuses nothing. The 64 MB and 50,000-file rules, the
+     data walk and `fingerprint` are as they were, and the after-picture is
+     the one a full read gives (`ino` and `ctime_ns` included). The
+     status-change time moves with every write, every `chmod` and every
+     `utime`, and a program cannot put it back, so a file rewritten in place
+     with its modification time set back (a program's own `os.utime`, `touch
+     -r`, `cp -p`, `rsync -t`) is hashed again and shows as changed, a
+     protected file included (the check of 18.1 depends on it). A file whose
+     status changed without its content (a `chmod`, an extended attribute a
+     sync client sets) is hashed again too and found unchanged: it costs a
+     read, never an answer. The data walk is as it was: it trusts size and
+     time for the data files the main walk did not see. Not seen: a volume
+     that keeps no status-change time apart from the modification time
+     reports the set-back time for both, and there the case stays unseen.
+   - *The log.* `detail` keeps, per run and in memory, a cursor into
+     `events.jsonl`: the stream parser after the last complete line, the byte
+     offset there, the file's device and inode and the 64 bytes before the
+     offset. A poll reads what was appended, feeds the parser the complete
+     lines, and reads a half-written last line on a throw-away copy of the
+     parser, so the steps are the ones a read of the whole file gives (line
+     splitting, the 20 MB limit and the closing step included). The cursor
+     starts over when the inode differs, the file is shorter than the offset,
+     or the 64 bytes differ, and also when a parser raised midway. It keeps
+     the last 500 steps (plus up to 100 more, trimmed together) and the newest
+     `say`, which the closing step is compared with, and counts the rest;
+     the manager keeps the cursors of the 8 runs asked for last.
+   - *The listing.* `GET /api/agents/runs` lists the project's runs once:
+     `_recovered` returns the listing recovery worked from, with the runs it
+     looked at (those recorded active, those owing a comparison) read again,
+     and the page's answer is built from it; a run started since is found by
+     listing again. `_summary_of` (the run's detail, the undo list) reads the
+     runs newest first and stops at the newest run of the task.
+   - *The window.* 项目首页 keeps no run-poll timer while
+     `document.hidden`: a timer pending when the window is hidden is cleared,
+     a poll that ends while hidden sets none, and when the window is shown
+     again, if a poll was held back, one poll is made (it sets the next timer
+     if a run still goes, and reloads the page if one ended). Nothing was held
+     back, nothing is polled. 停止服务 ends it for good: the timer is cleared,
+     a poll in flight sets none, and showing the window or returning to the
+     home starts none.
+3. **The generation poll** pauses while the window is hidden and runs at
+   once when it is shown.
+
+   How it is read: the page's interval is cleared when the window is
+   hidden. When it is shown, `pollGeneration` runs at once (what moved
+   meanwhile is read then) and the interval starts again; a page opened in a
+   hidden window starts its poll when it is first shown. 停止服务 clears the
+   interval and the run poll above, and nothing starts either again.
+4. **Teams:**
+   - A published manifest or signature is parsed and verified once per
+     content, keyed by its bytes' SHA-256, in memory. `ssh-keygen` runs once
+     per data, signature and key.
+   - The working-copy walk takes one `lstat` per file and writes its
+     fingerprint file only when an entry changed.
+   - Publishing and approving stop rebuilding the file map for each file.
+   - A proposal's snapshot id is built on the fingerprints.
+
+   How it is read:
+   - *The memories.* `researchos.memo.Memo` is a least-recently-used map in
+     memory that the server's threads may share. It holds at most the
+     entries (and, where entries are weighed, the total weight) named below,
+     keeps nothing heavier than its whole budget, is lost when the engine
+     stops, and is only asked with a key that holds everything the answer
+     depends on: a content hash, or a file's path, size, modification time
+     and inode. Losing an entry costs time, never an answer.
+   - *A manifest.* `read_snapshots` still lists the folder and reads each
+     manifest, its `ready.toml` and its signature on every call, so a
+     snapshot that appears, goes or changes shows at once. What it works out
+     of the manifest's bytes is kept by their SHA-256 and the number the
+     folder gives the snapshot (1,024 entries): that the manifest is not
+     valid, with the sentence saying why, or its `Head` (`seq`, `project`,
+     `by`, `at`, `note`, `prev_seq`, `prev_manifest_sha256`, the count of its
+     files, and its own entry for `.researchos/team.toml`). The listing, the
+     chain check, the status and the previews read only the `Head`. The file
+     list (`Snapshot.files` and `.data`) is parsed on first use, for the
+     snapshot that is used, and kept for the last 4 manifests used and at
+     most 60,000 file entries in all; a `Snapshot` builds its map once and
+     hands it to every caller (none changes it), and the memory itself is
+     never handed out. `payload()`, `files` and `data` give what they gave.
+     A manifest with other bytes has another hash and is parsed, validated
+     and verified again; so is the same text under another number.
+   - *A signature.* `signing.verify` keeps `ssh-keygen -Y verify`'s answer by
+     the program, the SHA-256 of the data, the SHA-256 of the signature and
+     the key (1,024 answers). A "yes" is kept, and a "no" only when it is
+     the program's judgement of the signature: the program exited with a
+     failure, printed `Could not verify signature.`, and said either nothing
+     (the key is not the one allowed) or `incorrect signature` or `Couldn't
+     parse signature` on its standard error. `ssh-keygen` exits 255 for every
+     failure it has, so a run that failed to judge (no user for the uid, no
+     descriptor or memory, a file it could not read) is not an answer and is
+     not kept: one such failure refuses that request's snapshot, not every
+     later request until the engine stops. A run that did not end (no
+     program, a timeout, a signal) is not an answer and is not kept;
+     `check` reads it as "bad" as before. Proposals, outcomes and packets
+     are verified through the same function.
+   - *The chain.* `verify_chain` reads a snapshot's project, author and links
+     from its `Head` and its signature from `signing.check`, and decides
+     as it did on every call, in the same order, from parts remembered by
+     content. `team.toml` is read from the folder on every call, its hash
+     checked, so a file damaged since is seen at once and the snapshot
+     refused as before; only what its bytes mean is kept, by their SHA-256
+     (256 entries). The verdict as a whole is not kept: whether a snapshot
+     links to the last good one depends on the snapshots before it, and the
+     parts that cost something (the signature, the header, the team) are
+     already kept.
+   - *The walk.* `official_files` and `proposals.manifest` share one
+     inventory (`share._inventory`): `os.scandir`, with the folders pruned
+     as `ingest.files.iter_files` prunes them (noise and dot-prefixed
+     folders, links not followed, hidden files and links left out, folders
+     that cannot be listed skipped), the same files in the same order, and
+     one `lstat` per file taken as its folder is listed (mode, size,
+     modification time and status-change time in ns, inode and, on macOS, the
+     flag that says it is only in the cloud: `share._is_dataless`, where the
+     walk's tests put the cloud). A file that is about to be read (its
+     fingerprint is not kept) is asked about the cloud once more, with a
+     fresh `lstat` right before it is opened: the walk's flag is as old as
+     the walk, and macOS may evict a file while the files before it are
+     hashed. A file that has gone to the cloud since is reported as a
+     cloud-only file (`official_files` lists it as `dataless`,
+     `proposals.manifest` gives `{sha256: None, size, dataless: True}`) and
+     is never opened (11.1, 12.2). A file whose fingerprint is kept costs no
+     second `lstat`. The record files and the cards' version files are added
+     as before. Only regular files are looked at. `official_files` keeps the
+     files `snapshot_rels` keeps, sorted, the cloud-only ones apart;
+     `proposals.manifest` keeps the files of `project_files` in that
+     function's order, a cloud-only one as `{sha256: None, size, dataless:
+     True}`; a folder with no readable project identity is read as before,
+     every file opened.
+   - *The fingerprints.* `<home>/graphs/<id>/share-fingerprints.json` keeps
+     `{path: [stamp, sha256]}`, the stamp being
+     `size:mtime_ns:inode:ctime_ns`. A file is read only when its stamp is
+     not the one kept, or when it had not settled when the look began. The
+     status-change time (`ctime_ns`) moves with every write, `chmod` and
+     `utime` and cannot be put back, so a file rewritten in place with its
+     modification time restored (`touch -r`, `cp -p`, `rsync -t`) is read
+     again; a file made unreadable since it was fingerprinted (a `chmod`
+     moves the status-change time) is refused when it is read again, as a
+     full reading refuses it (`officialness.view` says so in its `problems`,
+     as it does of a file unreadable from the start). The stamp had three
+     parts before: a fingerprint file written by the version before has none
+     that matches, and every file is read once after the upgrade.
+     *Settled* is `memo.settled`'s rule (item 7, `memo.RACY_NS`): the file's
+     modification time lay at least 3 s before the look began, taken before
+     its first `lstat`. A stamp is as fine as the file system keeps it (2 s
+     on FAT, 1 s on HFS+, a coarse network share), and a file written again
+     within that after a look could carry the stamp the look saw. So the
+     fingerprint of a file that has not settled is neither kept (in the file
+     or in memory) nor trusted: the file is read by every look until its
+     modification time is 3 s old, then read once more and kept (a file dated
+     in the future never settles and is read by every look). Both looks
+     leave the same map: every settled file seen (not in the cloud) whose
+     fingerprint is known, computed now or kept and still at its stamp, so a
+     deleted or changed file drops out and the two looks do not take turns
+     rewriting the file. It is written, atomically, only when that map is
+     not the one the file held; nothing is written when nothing changed. The
+     map is also kept in memory by the file's own size, modification time and
+     inode (8 files, 100,000 entries in all): a file replaced, deleted or
+     rewritten by another process is read again. An entry is its own proof (a
+     stamp is what a cache trusts, here as before).
+   - *Publishing and approving.* `_publish_locked` builds the last
+     snapshot's file map once; approving publishes through it. A snapshot
+     builds its `files` once, so the other readers (`sync`, `join`, the
+     preview, the status) ask a dictionary.
+   - *The snapshot id.* `snapshot_id(manifest(root))`, which the PI's
+     reading of a proposal (`what_changes`, hence `open_for` and `approve`)
+     compares with the proposal's base, and the `manifest` a member's
+     `make_proposal` and `start_working_copy` take, no longer open every file:
+     they read the fingerprint file above and open the files whose stamp
+     moved or that had not settled. The ids are the ones the old reading
+     gave, `moved` and a proposal's `work` included: a file rewritten within
+     the tick of the volume's clock, or with its time put back, is read, not
+     taken from the file.
+5. **File preview and drafting** read at most 200 KB and one byte, and take
+   the size from the open file.
+
+   How it is read:
+   - *The read.* `cloud.read_head(path, limit)` makes the cloud check of
+     `read_bytes` (11.1), opens the file once, unbuffered, takes its size
+     from the open file (`os.fstat`) and reads up to `limit` bytes, however
+     large the file is. `file_payload` asks for the 200 KB limit and one byte
+     more: that byte is what says `truncated`, and `size` is the open file's.
+     Everything else is as it was: the 8 KB window in which a NUL byte
+     refuses the file, the decoding (a cut that falls inside a multi-byte
+     character is dropped; a file over the limit that is not UTF-8 is cut and
+     decoded with its bad bytes dropped; one under it is refused), the
+     refusals, their bodies and the payload keys. A `.dta` returns before any
+     read. A draft from chosen files reads each through `file_payload`
+     (`_draft_file`), so it reads the same head.
+   - *What it costs.* For a 64 MB file, and for a 1 GB file, whose first
+     300 KB is text, Python's memory peaks at about 600 KB (the 200 KB read,
+     its cut and its decoded text); the whole read held the file.
+6. **The change history behind 研究路线** uses a time index and reads only
+   the window it shows.
+
+   How it is read:
+   - *What the desk asks.* For each card, when its row or one of its files
+     last changed (`changed_at`, `changed`, `changed_more`). That needs the
+     newest version of each node the cards show, never the whole history.
+     `desk._change_times(root, id, nodes)` is given those nodes (the attempts
+     and the files they hold, 14.3's membership rule) and leaves the other
+     nodes of the store unread; a node outside `nodes` may or may not be in
+     its answer, and the desk never asks for one. The page sends no time of
+     its own (it compares `changed_at` with its last visit), so what the
+     window holds is bounded by each node's newest version, not by a date.
+   - *The indexes.* `history.Store` makes, once for a store that lacks them,
+     `idx_versions_at` on `julianday(at)` and `idx_versions_node_at` on
+     `(node, julianday(at))`, in the version store beside the index
+     (`<home>/graphs/<id>/history/`), nothing in the project. SQLite reads an
+     `at` as an instant in UTC, so versions recorded either side of a change
+     of clocks, or at different offsets, are ordered by the instant, not by
+     their text. A store that cannot be written (read only, or held by a
+     writer for more than 250 ms) is opened as it is, without them, and is
+     read in full as before. SQLite refuses to index the word `now`: a store
+     that holds one goes without the indexes, and none can be added; Research
+     OS writes real times only.
+   - *The window.* `Store.time_readable` says the indexes can answer: both
+     exist, SQLite reads every `at` as a time (no `julianday` of NULL), and
+     none lies before 1970 or after 2199 (so none is a number or a word taken
+     for a time). `Store.earliest_times` gives the `at` of every version within
+     2 days (`TIME_MARGIN_DAYS`) of the earliest of the attempts' rows and of
+     everything else, for the baseline. `Store.node_windows(nodes)` gives, per
+     node, its number of versions, its first version's time and source, the
+     kind of its newest version, the latest `julianday` it has, and the
+     versions within 2 days of that. These are plain `SELECT`s over the
+     indexes (one grouped read of the node's index entries, a join to the
+     window, and the first and last versions by key); nothing is `DISTINCT`.
+   - *The judge.* SQLite only narrows. `desk._window_times` reads each time it
+     keeps with `_parse`, as `_scan_times` (the full read, kept as it was)
+     does, applies the same baseline rule (`_first_is_baseline`: the first
+     version is no change when a scan or publish recorded it within 10
+     minutes of the earliest of its kind; the kind is the node's newest
+     version's), and takes the latest. The answer is the full read's, node for
+     node. SQLite reads a time with no offset as UTC and Python as local
+     time, up to 14 hours apart (`OFFSET_DAYS` = 0.6 day), which is why the
+     window is 2 days wide: a version outside it cannot read later than one
+     inside it. The newest taken from a window is kept only when the window
+     holds all the node's versions, or the newest is no earlier than
+     `TIME_MARGIN_DAYS - OFFSET_DAYS` before SQLite's newest; otherwise that
+     node's versions are all read (`Store.stamps`).
+   - *When it does not decide.* `_window_times` answers None, and the full read
+     (`_scan_times`) answers instead, when the indexes are missing, a time is
+     one SQLite cannot read or reads outside 1970-2199, a version in a window
+     is not a time `_parse` reads, or the newest chosen reads a day or more
+     later than SQLite's. Nothing is guessed: such a store costs what it cost.
+   - *What it costs.* 100,000 versions of 3,000 nodes over a year (this
+     machine): the full read 350 ms; the window for all 3,000 nodes 36 ms,
+     for the 300 the cards show 6 ms. The first open of a store of that size
+     builds the two indexes once (about 0.1 s).
+7. **Smaller:**
+   - `/api/summary` counts in SQL.
+   - `GET /api/agents` remembers a program's version while its path, size
+     and modification time are unchanged.
+   - 项目首页 takes `/api/me` and `/api/share` from the page's shared
+     context.
+   - `/api/stata` remembers each script's reading by path, size and
+     modification time.
+   - The one `t()` call made while the page loads is made when it is drawn.
+
+   How it is read:
+   - *The counts.* `db.count_nodes_by_type` and `db.count_edges_by_type` are
+     `SELECT type, COUNT(*) … GROUP BY type`; `summary_payload` takes every
+     type of `NODE_TYPES` and `EDGE_TYPES` from them, in sorted order and
+     with a zero for a type that has none, which is the payload the old
+     count of loaded rows gave (the index's CHECK keeps a row to the known
+     types). `pending` still reads the pending edges, `review` as before.
+     On 12,000 nodes and 18,000 edges the counting took 143 ms and now
+     takes 3 ms.
+   - *The versions.* `find` still reads `agent_commands` and looks at the
+     program (found on the widened `PATH`, or the saved path there and
+     executable) on every call; only the `--version` answer is remembered.
+     `profiles._VERSIONS` is a `Memo` of 32 entries, asked with the path as
+     `find` resolved it, the file's device, inode, size and modification time
+     in ns (`memo.stamp`, the key of the team memories, 4) and the `PATH` the
+     program is started with. An answer is kept only when it is a version
+     (a program that failed, said nothing or timed out gave no answer and is
+     asked again at the next request), the modification time lay at least
+     `memo.RACY_NS` (3 s, as in 2) before the program was started, and the
+     stamp was the same after it ran. `set_commands` clears the memory, so
+     saving locations asks afresh. The payload is the one every request
+     starting the programs gave. Not seen: a program rewritten in place with
+     its time set back, and a program whose answer changes with something
+     other than its file and its `PATH` (an interpreter upgraded under it).
+   - *The shared context.* `desk.js` already reads `/api/me`, `/api/proposals`
+     and, for a team, `/api/share` once per project at a time
+     (`ensureContext`, `loadContext`: one read in flight per data epoch).
+     `workspace.js` asks `RODesk.context()` for who I am and the team and
+     copies `me` and `share` out of it, but only when the context is already
+     there: filled (`mode` set), made in this data epoch and for this
+     project. It never waits for a load that is still going and never starts
+     one: `/api/proposals` and `/api/share` read the shared folder with no
+     time limit, and a folder that hangs must not hold who I am. Otherwise
+     it reads them itself, one after the other as it always did (who I am
+     first, so the owner list offers it at once; the team alone waits for
+     `/api/share`): when there is no desk module or `context()` fails, while
+     a load is in flight or after one failed, when the context is not this
+     epoch's, and for `/api/share` alone when the project is a PI's or a
+     member's and the context did not ask for the shared folder (its role
+     read otherwise). A context made while `/api/me` is read serves the
+     team. The cost is that a page that loads while the sidebar's context
+     read is in flight reads `/api/me` and `/api/share` once more itself;
+     once the context is made the page reads neither.
+   - *The scripts.* `dataflow._stata_scans(…, remember=True)`, which only
+     `/api/stata` asks for, keeps for each script the `stata.Reading` of its
+     text: the lexer's commands and problem and the names `st_local()` and
+     `st_global()` mention, which depend on the text alone and are never
+     changed. `dataflow._READINGS` is a `Memo` of at most 2,000 scripts and
+     120,000 commands, by the path and `memo.stamp` of the file. A request
+     checks the cloud (11.1) for every script as before, looks at the file
+     once, and takes the reading kept when the stamp is the same and the file
+     can still be opened for reading; otherwise it reads and lexes the file,
+     and keeps the reading if the file had settled (`memo.RACY_NS`) and its
+     stamp was the same after the read. `_File` is made from the text or from
+     the reading, with the same warnings; the project pass (macros, programs,
+     runs, the calls) is made on every request, since it needs every file.
+     The ingest that writes the index asks without `remember` and reads every
+     script as before. On 120 scripts of 36,000 commands the request took
+     797 ms with nothing remembered and 444 ms with it; one edited script
+     adds its own reading.
+   - *The text.* app.html's `NO_PROJECT_NAME` constant is the function
+     `noProjectName()`: the name is looked up in the language in force when
+     the project button is drawn (13.6), and no script makes a constant of a
+     `t()` call while it loads.
+
+### 18.5 Acceptance
+
+1. A Python script started by a run that POSTs to the engine, without the
+   session and with `Host` and no `Origin`, gets 403 and changes nothing.
+   The app and `researchos serve` (browser) still save everything they
+   did. A page opened without the session reads, and refuses its first
+   write with 18.1's sentence.
+2. In a run:
+   - `Read` of `~/.researchos/settings.json` is refused.
+   - `env` shows no `RESEARCHOS_HOME` and none of the removed variables,
+     and the log names them.
+   - A project `.claude/settings.json` written by the agent is out of
+     bounds, and is not loaded by the next run.
+   - A watcher scan during the run records the agent's new file under the
+     agent.
+   - A planted `.git/hooks/pre-commit` makes the run read 越过了限制.
+3. Undo lists its files with checkboxes. An unchecked file is left as it
+   is and listed as kept. A folder that existed before the run survives
+   undo.
+4. Terms: no screen says 判断 for a link or 工作台; English shows no
+   "Published version" and no "Outputs" for 图表与论断; node page and
+   panel both say 备注. The language tests list no Chinese left on the
+   converted surfaces, and the glossary test (13.4) matches the page.
+5. The sidebar of a one-person project has six items and no identity
+   reminder; 开始协作… is in the project menu; after a team file exists, 提议
+   and 成员 appear. 研究路线 switches between 图 and 列表 and remembers it.
+6. Changing a 研究判断 in the panel writes at once, and 撤销 puts it back;
+   both are in the history. Choosing 已放弃 still asks for the reason.
+7. Speed:
+   - On a fixture of 400 figures and 10 variable cards, 图表与论断 answers
+     in under 0.5 s.
+   - A member's page with 30 published snapshots answers in under 1 s.
+   - Previewing a 1 GB file raises memory by less than 5 MB.
+   - The history window at 100,000 versions takes under 60 ms.
+   - On the researcher's copy, no endpoint is slower than before.
+8. The full suite passes on Python 3.11 and 3.13.

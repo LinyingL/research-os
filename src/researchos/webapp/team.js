@@ -42,7 +42,10 @@
   // -- packetWords, syncWrites, differenceBlock, syncDone, syncFlash -- which
   // 成员 shares (one helper, every page); and (14.6) a proposal as the desk's
   // panel decides it (renderProposalInto, which 提议 draws too) and a
-  // member's draft (composeInto).
+  // member's draft (composeInto); and (18.2) the lines that joined translated and bare
+  // fragments -- an abandoned route's date and what it froze, a proposed change of a research
+  // assessment -- and 提交提议 (kindChoices, renderComposer); and (18.3) 研究路线's list half, which
+  // the page shows beside the route map, and 「当时的依据」 (loadRoutes to evidenceFile).
   function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
   function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
 
@@ -63,12 +66,15 @@
   // A proposal's kind is the desk's word for it (RODesk.kindWord); 14.6: the
   // words a proposal is decided and drafted with go through t().
 
-  const KIND_CHOICES = [
-    ["attempt_new", "新的尝试", "尝试表里新加的一行，连同与它关联的文件"],
-    ["verdict_change", "修改判断", "只有尝试表里这一行的研究判断和结果"],
-    ["variable_version", "变量定义", "一张变量定义卡的新版本"],
-    ["files", "只有文件", "你选的脚本、数据和文稿"],
-  ];
+  // The kinds a member can propose, as [code, name, what it carries]; looked up at call time (13.6).
+  function kindChoices() {
+    return [
+      ["attempt_new", t("新的尝试"), t("尝试表里新加的一行，连同与它关联的文件")],
+      ["verdict_change", t("修改研究判断"), t("只有尝试表里这一行的研究判断和结果")],
+      ["variable_version", t("变量定义"), t("一张变量定义卡的新版本")],
+      ["files", t("只有文件"), t("你选的脚本、数据和文稿")],
+    ];
+  }
   // What a proposal does to a file.
   function fileAction(action) {
     switch (action) {
@@ -165,7 +171,7 @@
   // What a proposal of this kind carries unless the member adds or unticks (12.13).
   function carryWords(kind) {
     switch (kind) {
-      case "verdict_change": return t("修改判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
+      case "verdict_change": return t("修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
       case "attempt_new":
         return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
       case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
@@ -191,7 +197,7 @@
     if (!c) return "";
     const parts = [];
     if (c.notes) parts.push(t("{n} 条备注", { n: numberText(c.notes) }));
-    if (c.judgements) parts.push(t("{n} 条关联判断", { n: numberText(c.judgements) }));
+    if (c.judgements) parts.push(t("{n} 条连线确认", { n: numberText(c.judgements) }));
     if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
     if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
     if (c.links_removed) parts.push(t("删除 {n} 条连线", { n: numberText(c.links_removed) }));
@@ -236,15 +242,15 @@
       { sending: sending, area: p.area || "提议/你的邮箱/" }) : "";
     if (p.up_to_date) {
       return send ? t("{send}你的工作副本已经是最新的正式版本。", { send: send })
-        : t("你的工作副本已经是最新的正式版本，没有要发送的备注、判断或连线。");
+        : t("你的工作副本已经是最新的正式版本，没有要发送的备注、连线确认或手工连线。");
     }
     const parts = [];
     if (p.update && p.update.length) parts.push(t("更新 {n} 个你没改过的文件", { n: numberText(p.update.length) }));
     if (p.remove && p.remove.length) parts.push(t("删除 {n} 个正式版本已删除的文件", { n: numberText(p.remove.length) }));
     if (p.beside && p.beside.length) {
-      parts.push(t("{n} 个两边都改过的文件留着你的，把官方的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
+      parts.push(t("{n} 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）", { n: numberText(p.beside.length) }));
     }
-    if (p.records && p.records.length) parts.push(t("备注、判断和连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
+    if (p.records && p.records.length) parts.push(t("备注、连线确认和手工连线的记录文件：你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的"));
     const listed = parts.length ? t("：{parts}", { parts: parts.join(t("；")) }) : "";
     return send ? t("{send}然后把工作副本带到第 {seq} 版{parts}。从不合并，你改过的内容不会被覆盖。",
       { send: send, seq: numberText(p.to), parts: listed })
@@ -271,9 +277,10 @@
       const by = item.decision.by && item.decision.by.label;
       const ok = item.decision.approved_by && item.decision.approved_by.label;
       if (directAbandonment(item.decision)) return by ? t("由 {who} 放弃", { who: by }) : "";
-      return [by ? "提议人 " + by : "", ok ? "批准人 " + ok : ""].filter(Boolean).join("，");
+      if (by && ok) return t("提议人 {proposer}，批准人 {approver}", { proposer: by, approver: ok });
+      return by ? t("提议人 {who}", { who: by }) : ok ? t("批准人 {who}", { who: ok }) : "";
     }
-    return item.reason_from === "table" ? "写在尝试表里" : "";
+    return item.reason_from === "table" ? t("写在尝试表里") : "";
   }
 
   // Which proposals belong on 研究路线: routes proposed or re-judged.
@@ -308,10 +315,10 @@
   // what they must do in OneDrive.
   async function after(key, items) {
     flash[key] = items || [];
-    const host = key === "members" ? views.members : key === "proposals" ? views.proposals : views.tree;
+    const host = key === "members" ? views.members : key === "proposals" ? views.proposals : views.desk;
     if (key === "members") await loadMembers(host, true, true);
     else if (key === "proposals") await loadProposals(host, true, true);
-    else await loadRoutes(host, true, true);
+    else await RODesk.loadDesk(host, true); // 研究路线: the page, with its list in list mode (18.3)
     if (flash[key].length) revealFlash(host);
   }
 
@@ -328,7 +335,7 @@
   // put beside it -- yours first, then the official one.
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
-    d.appendChild(mk("summary", null, t("你的和官方的有什么不同")));
+    d.appendChild(mk("summary", null, t("你的和正式的有什么不同")));
     // 12.13: a table's rows and columns first (the engine's sentence, in the
     // page's language), its line diff below when small.
     if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
@@ -341,6 +348,8 @@
 
   function now() { return new Date(); }
   function when(at) { return at ? RODesk.whenWords(at, now()) || String(at) : ""; }
+  // A date inside a line starts lower case in English (13.5), as desk.js writes it.
+  function whenInLine(at) { const w = when(at); return w.charAt(0).toLowerCase() + w.slice(1); }
   function mode() { const c = RODesk.context(); return c && c.mode; }
 
   // A refusal: the engine's own Chinese sentence when it names one, the
@@ -444,18 +453,20 @@
 
   // -- 研究路线 (12.9) ------------------------------------------------------------------
 
+  // 研究路线 (18.3) opened on the list with only the abandoned routes shown.
   function showAbandoned() {
     view.filter = "abandoned";
-    delete views.tree.dataset.loaded;
-    if (currentView === "tree") loadRoutes(views.tree);
-    else activateView("tree");
+    RODesk.setMode("list"); // on the page already: the list drawn again, with the filter
+    if (currentView === "desk") return;
+    delete views.desk.dataset.loaded; // else opened afresh, the list read again
+    activateView("desk");
   }
 
   async function loadRoutes(host, refresh, acted) {
     const epoch = state.dataEpoch;
     if (refresh && !acted && keepsTyping(host)) return;
     if (!refresh) flash.routes = [];
-    if (!refresh) host.innerHTML = '<p class="empty-note">载入中…</p>';
+    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
     let data, ctx;
     try {
       [data, ctx] = await Promise.all([apiGet("/api/routes"), RODesk.ensureContext()]);
@@ -466,11 +477,11 @@
     }
     if (epoch !== state.dataEpoch) return;
     clearProjectState();
-    const top = window.scrollY;
+    const top = host.scrollTop; // the list is a pane of its own beside 待办 (18.3)
     host.innerHTML = "";
     const page = mk("div", "routes");
     const list = (ctx && ctx.proposals && ctx.proposals.proposals) || [];
-    if (ctx && ctx.mode === "none") page.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
+    if (ctx && ctx.mode === "none") page.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
     if (ctx && (ctx.mode === "pi" || ctx.mode === "member")) {
       const shown = routeProposals(list, ctx.mode);
       if (shown.length) page.appendChild(routeProposalBlock(shown, ctx));
@@ -484,21 +495,23 @@
     }
     if (data.decisions_problem) {
       const warn = mk("p", "team-line warn");
-      renderBlockingError(warn, "批准记录（decisions.toml）现在无法读取：放弃理由只显示尝试表里写着的", data.decisions_problem);
+      renderBlockingError(warn, t("批准记录（decisions.toml）现在无法读取：放弃理由只显示尝试表里写着的"), data.decisions_problem);
       page.appendChild(warn);
     }
     if (view.filter === "abandoned") {
       const bar = mk("div", "tree-filter");
-      bar.appendChild(mk("span", null, "只显示已放弃的路线，每条附当时的结果和理由。"));
-      bar.appendChild(mkButton("显示全部路线", "btn btn-small", () => { view.filter = null; loadRoutes(host); }));
+      bar.appendChild(mk("span", null, t("只显示已放弃的路线，每条附当时的结果和理由。")));
+      bar.appendChild(mkButton(t("显示全部路线"), "btn btn-small", () => { view.filter = null; loadRoutes(host); }));
       page.appendChild(bar);
     }
     data.groups.forEach((g) => {
       if (view.filter === "abandoned" && g.status !== "abandoned") return;
       const sec = mk("section", "route-group");
       // 12.11: the heading is a word set in weight; the tinted label is
-      // the verdict's, on each row, followed by the researcher's words.
-      sec.appendChild(mk("h2", "route-group-title", g.label));
+      // the verdict's, on each row, followed by the researcher's words. The heading is the
+      // desk's verdict word of the group's status code (13.4, 13.6): a default status in the
+      // screen's language, a word the researcher named as written -- as the chips on its rows.
+      sec.appendChild(mk("h2", "route-group-title", RODesk.verdictWord(g)));
       const ul = mk("ul", "route-list");
       g.items.forEach((item) => ul.appendChild(routeRow(item)));
       sec.appendChild(ul);
@@ -506,7 +519,7 @@
     });
     host.appendChild(page);
     host.dataset.loaded = "1";
-    if (refresh) window.scrollTo(0, top);
+    if (refresh) host.scrollTop = top;
   }
 
   function routeRow(item) {
@@ -515,7 +528,7 @@
     const head = mk("div", "route-head");
     head.appendChild(mk("span", "route-num mono", "#" + String(item.number || "").replace(/^#/, "")));
     head.appendChild(mk("span", "route-date", item.date || ""));
-    head.appendChild(mkButton(item.title || "（无描述）", "route-title", () => RONode.openNode(item.id)));
+    head.appendChild(mkButton(item.title || t("（无描述）"), "route-title", () => RODesk.openAttempt(item.id)));
     head.appendChild(RODesk.verdictInline(item.verdict_status));
     const own = ownMark(item);
     if (own) head.appendChild(own);
@@ -523,19 +536,20 @@
     const abandoned = item.verdict_status && item.verdict_status.status === "abandoned";
     if (abandoned) {
       const body = mk("div", "route-basis");
-      body.appendChild(mk("p", "route-fact", "结果：" + (item.result || "（没有写）")));
+      body.appendChild(mk("p", "route-fact", t("结果：{result}", { result: item.result || t("（没有写）") })));
       if (item.reason) {
-        const r = mk("p", "route-fact", "理由：" + item.reason);
+        const r = mk("p", "route-fact", t("理由：{reason}", { reason: item.reason }));
         const src = reasonSource(item);
         if (src) r.appendChild(mk("span", "route-src", src));
         body.appendChild(r);
       }
       if (item.decision && item.decision.act === "abandoned") {
         const act = mk("div", "route-actions");
-        act.appendChild(mkButton("当时的依据", "btn btn-small", () => openEvidence(item.id, item)));
+        act.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => openEvidence(item.id, item)));
         const d = item.decision;
-        act.appendChild(mk("span", "route-src", "放弃于 " + when(d.at) + "，" +
-          (d.evidence_count ? t("记录了 {n} 个文件的状态", { n: d.evidence_count }) : "当时这条路线没有关联的文件")));
+        act.appendChild(mk("span", "route-src", d.evidence_count
+          ? t("放弃于 {when}，记录了 {n} 个文件的状态", { when: whenInLine(d.at), n: d.evidence_count })
+          : t("放弃于 {when}，当时这条路线没有关联的文件", { when: whenInLine(d.at) })));
         body.appendChild(act);
       }
       li.appendChild(body);
@@ -546,9 +560,9 @@
   function routeProposalBlock(shown, ctx) {
     const pi = ctx.mode === "pi";
     const sec = mk("section", "route-group route-proposals");
-    sec.appendChild(mk("h2", "route-group-title serif", pi ? "提议中" : "我的提议"));
-    sec.appendChild(line(pi ? "这些路线还不是正式记录：批准以后才会进入尝试表和每一条来龙去脉。"
-      : "你提出的路线和修改判断：PI 批准以后才进入正式版本。", "quiet"));
+    sec.appendChild(mk("h2", "route-group-title serif", pi ? t("提议中") : t("我的提议")));
+    sec.appendChild(line(pi ? t("这些路线还不是正式记录：批准以后才会进入尝试表和每一条来龙去脉。")
+      : t("你提出的路线和修改研究判断：PI 批准以后才进入正式版本。"), "quiet"));
     const team = (ctx.share && ctx.share.team) || [];
     const ul = mk("ul", "route-list");
     shown.forEach((p) => {
@@ -559,15 +573,13 @@
       if (a) {
         head.appendChild(mk("span", "route-num mono", "#" + String(a.number || "").replace(/^#/, "")));
         head.appendChild(mk("span", "route-date", a.date || ""));
-        head.appendChild(mkButton(a.description || p.sentence || "（无描述）", "route-title", () => openProposal(p.id, p.by)));
+        head.appendChild(mkButton(a.description || p.sentence || t("（无描述）"), "route-title", () => openProposal(p.id, p.by)));
         if (a.verdict_status) head.appendChild(RODesk.verdictInline(a.verdict_status));
       } else if (v) {
         head.appendChild(mk("span", "route-num mono", "#" + String(v.number || "").replace(/^#/, "")));
-        const t = mkButton(p.sentence || "修改判断", "route-title", () => openProposal(p.id, p.by));
-        head.appendChild(t);
-        const move = mk("span", "desk-what");
-        move.append("研究判断 ", RODesk.verdictInline(v.old_status), " 改为 ", RODesk.verdictInline(v.new_status));
-        head.appendChild(move);
+        head.appendChild(mkButton(p.sentence || t("修改研究判断"), "route-title", () => openProposal(p.id, p.by)));
+        head.appendChild(phrase(mk("span", "desk-what"), t("研究判断 {old} 改为 {new}"),
+          { old: RODesk.verdictInline(v.old_status), new: RODesk.verdictInline(v.new_status) }));
       }
       const st = stateLabel(p);
       head.appendChild(label(st.label, st.tone));
@@ -576,7 +588,7 @@
       li.appendChild(mk("div", "desk-meta", meta.filter(Boolean).join(" · ")));
       if (p.state === "returned") {
         const o = lastOutcome(p, "returned");
-        if (o && o.text) li.appendChild(mk("p", "desk-note", "退回的理由：" + o.text));
+        if (o && o.text) li.appendChild(mk("p", "desk-note", t("退回的理由：{reason}", { reason: o.text })));
       }
       ul.appendChild(li);
     });
@@ -590,10 +602,11 @@
   async function openEvidence(id, item) {
     const subject = { kind: "evidence", id: id };
     state.panelSubject = subject;
-    panelTitle.textContent = "当时的依据";
+    panelTitle.textContent = t("当时的依据");
     panelTitle.title = "";
     panelSubtitle.textContent = item ? "#" + String(item.number || "").replace(/^#/, "") + " " + (item.title || "") : "";
-    panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
+    panelBody.innerHTML = "";
+    panelBody.appendChild(mk("p", "empty-note", t("载入中…")));
     openPanel();
     let data;
     try {
@@ -602,7 +615,7 @@
       if (state.panelSubject !== subject) return;
       panelBody.innerHTML = "";
       const box = mk("div", "panel-status err");
-      failed(box, "没能读到这条路线当时的依据", err);
+      failed(box, t("没能读到这条路线当时的依据"), err);
       panelBody.appendChild(box);
       return;
     }
@@ -611,62 +624,101 @@
     panelBody.innerHTML = "";
     const decisions = (data.decisions || []).filter((d) => (d.files || []).length || d.act === "abandoned");
     if (!decisions.length) {
-      panelBody.appendChild(line("这条路线没有经批准记下的依据：它是在尝试表里直接改的。", "quiet"));
+      panelBody.appendChild(line(t("这条路线没有经批准记下的依据：它是在尝试表里直接改的。"), "quiet"));
       return;
     }
     decisions.forEach((d) => {
       const sec = mk("section", "evidence");
       const head = mk("div", "desk-head");
-      head.appendChild(mk("span", "desk-what strong", d.act === "abandoned" ? "放弃这条路线" : "批准"));
+      head.appendChild(mk("span", "desk-what strong", d.act === "abandoned" ? t("放弃这条路线") : t("批准")));
       if (d.verdict_status) head.appendChild(RODesk.verdictInline(d.verdict_status));
       sec.appendChild(head);
       const direct = directAbandonment(d);
-      const by = d.by ? (direct ? t("由 {who} 放弃", { who: d.by.label }) : "提议人 " + d.by.label) : "";
-      const who = [when(d.at), by, d.approved_by ? "批准人 " + d.approved_by.label : ""];
+      const by = d.by ? (direct ? t("由 {who} 放弃", { who: d.by.label }) : t("提议人 {who}", { who: d.by.label })) : "";
+      const who = [when(d.at), by, d.approved_by ? t("批准人 {who}", { who: d.approved_by.label }) : ""];
       sec.appendChild(mk("div", "desk-meta", who.filter(Boolean).join(" · ")));
-      if (d.result) sec.appendChild(mk("p", "desk-note", "结果：" + d.result));
-      if (d.reason) sec.appendChild(mk("p", "desk-note", "理由：" + d.reason));
-      if (d.note) sec.appendChild(mk("p", "desk-note", "PI 的附言：" + d.note));
-      if (d.missing_from_file) sec.appendChild(line("这条记录已经不在 decisions.toml 里了（这台电脑记得它）。", "warn"));
+      if (d.result) sec.appendChild(mk("p", "desk-note", t("结果：{result}", { result: d.result })));
+      if (d.reason) sec.appendChild(mk("p", "desk-note", t("理由：{reason}", { reason: d.reason })));
+      if (d.note) sec.appendChild(mk("p", "desk-note", t("PI 的附言：{note}", { note: d.note })));
+      if (d.missing_from_file) sec.appendChild(line(t("这条记录已经不在 decisions.toml 里了（这台电脑记得它）。"), "warn"));
       sec.appendChild(mk("h3", "panel-h3", direct ? t("放弃时的文件状态") : t("批准时的文件状态")));
       const ul = mk("ul", "evidence-files");
       (d.files || []).forEach((f) => ul.appendChild(evidenceFile(f)));
-      if (!(d.files || []).length) ul.appendChild(mk("li", "node-empty", "当时没有找到属于这条路线的文件。"));
+      if (!(d.files || []).length) ul.appendChild(mk("li", "node-empty", t("当时没有找到属于这条路线的文件。")));
       sec.appendChild(ul);
       panelBody.appendChild(sec);
     });
   }
 
+  // A frozen file's role, what was kept of it and how it stands now (12.4): the payload's codes
+  // (role, state, now) in words for the screen -- the engine's own Chinese labels beside them are not shown.
+  function evidenceRole(role) {
+    switch (role) {
+      case "script": return t("步骤脚本");
+      case "output": return t("脚本写出的文件");
+      default: return t("关联的文件");
+    }
+  }
+
+  function evidenceState(state) {
+    switch (state) {
+      case "kept": return t("内容已保存");
+      case "fingerprint": return t("只记下了指纹");
+      case "missing": return t("当时文件已不存在");
+      case "dataless": return t("当时文件只在云端");
+      case "unreadable": return t("当时文件无法读取");
+      default: return "";
+    }
+  }
+
+  function evidenceNow(now) {
+    switch (now) {
+      case "missing": return t("现在已不在项目里");
+      case "same": return t("现在仍是这一版");
+      case "changed": return t("之后改过");
+      default: return "";
+    }
+  }
+
+  // Why a kept version shows no text: the payload's code (the engine's sentence beside it is not shown).
+  function versionReason(v) {
+    switch (v.reason_code) {
+      case "not_kept": return t("这一版只记下了指纹和大小，没有保存内容");
+      case "not_text": return t("这一版不是文本，不在这里显示");
+      default: return t("这一版没有保存内容。");
+    }
+  }
+
   function evidenceFile(f) {
     const li = mk("li", "evidence-file");
     const head = mk("div", "desk-head");
-    head.appendChild(mk("span", "evidence-role", f.role_label || "文件"));
+    head.appendChild(mk("span", "evidence-role", evidenceRole(f.role)));
     head.appendChild(mkButton(f.path, "desk-link mono", () => RONode.openNode(f.node)));
     li.appendChild(head);
-    const facts = [f.state_label, f.size != null ? sizeWords(f.size) : "", f.now_label].filter(Boolean);
+    const facts = [evidenceState(f.state), f.size != null ? sizeWords(f.size) : "", evidenceNow(f.now)].filter(Boolean);
     li.appendChild(mk("div", "desk-meta", facts.join(" · ")));
-    if (f.sha256) li.appendChild(mk("div", "evidence-sha mono", "指纹 " + String(f.sha256).slice(0, 16)));
+    if (f.sha256) li.appendChild(mk("div", "evidence-sha mono", t("指纹 {sha}", { sha: String(f.sha256).slice(0, 16) })));
     if (f.viewable) {
       const slot = mk("div", "evidence-slot");
-      const btn = mkButton("查看当时的内容", "btn btn-small", async () => {
-        if (slot.childElementCount) { slot.innerHTML = ""; btn.textContent = "查看当时的内容"; btn.setAttribute("aria-expanded", "false"); return; }
+      const btn = mkButton(t("查看当时的内容"), "btn btn-small", async () => {
+        if (slot.childElementCount) { slot.innerHTML = ""; btn.textContent = t("查看当时的内容"); btn.setAttribute("aria-expanded", "false"); return; }
         btn.disabled = true;
         try {
           // By fingerprint: the version number is the approving machine's own.
           const v = await apiGet("/api/history/version?node=" + encodeURIComponent(f.node) +
             (f.sha256 ? "&sha256=" + encodeURIComponent(f.sha256) : "&version=" + encodeURIComponent(f.version)));
           slot.innerHTML = "";
-          if (v.text == null) slot.appendChild(line(v.reason || "这一版没有保存内容。", "quiet"));
+          if (v.text == null) slot.appendChild(line(versionReason(v), "quiet"));
           else {
-            slot.appendChild(mk("div", "desk-meta", v.at ? "当时的内容，记下于 " + when(v.at) : "当时的内容"));
+            slot.appendChild(mk("div", "desk-meta", v.at ? t("当时的内容，记下于 {when}", { when: whenInLine(v.at) }) : t("当时的内容")));
             slot.appendChild(mk("pre", "evidence-text", v.text));
-            if (v.truncated) slot.appendChild(line("内容太长，只显示了开头。", "quiet"));
+            if (v.truncated) slot.appendChild(line(t("内容太长，只显示了开头。"), "quiet"));
           }
-          btn.textContent = "收起";
+          btn.textContent = t("收起");
           btn.setAttribute("aria-expanded", "true");
         } catch (err) {
           const s = mk("div", "notice-status");
-          failed(s, "没能读到当时的内容", err);
+          failed(s, t("没能读到当时的内容"), err);
           slot.innerHTML = "";
           slot.appendChild(s);
         }
@@ -724,6 +776,13 @@
     if (epoch !== state.dataEpoch) return;
     if (view.proposal) { await renderProposalPage(host, view.proposal, view.member, refresh); return; }
     if (epoch !== state.dataEpoch || view.proposal) return;
+    // 18.3: a project of one person has no 提议 page. One reached before the role was known (a view kept from
+    // another project, opened at start) goes on to 开始协作, as activateView does once it knows.
+    if (RODesk.onePerson() && currentView === "proposals") {
+      delete views.members.dataset.loaded;
+      activateView("members");
+      return;
+    }
     const top = window.scrollY;
     host.innerHTML = "";
     const page = mk("div", "team");
@@ -955,7 +1014,7 @@
       s.appendChild(line(t("变量 {card} 的第 {version} 版定义", { card: full.variable.card, version: full.variable.version }), ""));
     }
     if (full.route) s.appendChild(line(RODesk.proposalWhat(full), ""));
-    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("说明：{note}", { note: full.route.note })));
+    if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("备注：{note}", { note: full.route.note })));
     s.appendChild(fileList(full.files || [], null));
     page.appendChild(s);
   }
@@ -1062,7 +1121,7 @@
     if (r) {
       const box = mk("div", "proposal-part");
       box.appendChild(mk("p", "desk-head", r.words || ""));
-      if (r.note) box.appendChild(mk("p", "desk-note", t("说明：{note}", { note: r.note })));
+      if (r.note) box.appendChild(mk("p", "desk-note", t("备注：{note}", { note: r.note })));
       if (r.state === "conflict" || r.state === "problem") box.appendChild(mk("p", "desk-break", r.reason || ""));
       else if (r.state === "same") box.appendChild(line(t("正式版本的连线记录里已经是这样了。"), "quiet"));
       s.appendChild(box);
@@ -1198,16 +1257,16 @@
   // -- 提交提议 (a member) -----------------------------------------------------------------
 
   function renderComposer(page) {
-    const s = block("提交提议");
+    const s = block(t("提交提议"));
     s.dataset.anchor = "compose"; // the shell's 文件 > 提交提议…
     const form = mk("div", "compose");
     const kinds = mk("div", "compose-kinds");
     kinds.setAttribute("role", "radiogroup");
-    kinds.setAttribute("aria-label", "提议的类型");
+    kinds.setAttribute("aria-label", t("提议的类型"));
     let kind = (view.compose && view.compose.kind) || "attempt_new";
     const extra = mk("div", "compose-extra");
     const inputs = {};
-    KIND_CHOICES.forEach(([k, text, help]) => {
+    kindChoices().forEach(([k, text, help]) => {
       const lab = mk("label", "compose-kind");
       const r = mk("input");
       r.type = "radio";
@@ -1218,42 +1277,42 @@
       lab.append(r, mk("span", "compose-kind-name", text), mk("span", "team-help", help));
       kinds.appendChild(lab);
     });
-    const sentence = textArea(2, "用你自己的话说明这份提议：PI 会先看到这句话");
+    const sentence = textArea(2, t("用你自己的话说明这份提议：PI 会先看到这句话"));
     function drawExtra() {
       extra.innerHTML = "";
       Object.keys(inputs).forEach((k) => delete inputs[k]);
       if (kind === "attempt_new" || kind === "verdict_change") {
-        inputs.number = textInput("不填：只有一行时自动找出", true);
-        extra.appendChild(field("尝试的编号", inputs.number, "工作副本里改了不止一行时，填上要提议的那一行"));
+        inputs.number = textInput(t("不填：只有一行时自动找出"), true);
+        extra.appendChild(field(t("尝试的编号"), inputs.number, t("工作副本里改了不止一行时，填上要提议的那一行")));
       }
       if (kind === "attempt_new") {
         inputs.parents = textInput(t("例如 16, 17"), true);
         extra.appendChild(field(t("源自（可选）"), inputs.parents, t("它源自的正式尝试；PI 批准后，这些连线画到路线图上")));
       }
       if (kind === "verdict_change") {
-        inputs.result = textArea(2, "不填：用尝试表里这一行现在的结果");
-        extra.appendChild(field("结果", inputs.result));
-        inputs.reason = textArea(2, "放弃一条路线时必须写明");
-        extra.appendChild(field("理由", inputs.reason, "放弃（研究判断标为已放弃）时，结果和理由都必须填写"));
+        inputs.result = textArea(2, t("不填：用尝试表里这一行现在的结果"));
+        extra.appendChild(field(t("结果"), inputs.result));
+        inputs.reason = textArea(2, t("放弃一条路线时必须写明"));
+        extra.appendChild(field(t("理由"), inputs.reason, t("放弃（研究判断标为已放弃）时，结果和理由都必须填写")));
       }
       if (kind === "variable_version") {
-        inputs.card = textInput("变量卡的编号，例如 topicshift", true);
-        extra.appendChild(field("变量卡", inputs.card));
+        inputs.card = textInput(t("变量卡的编号，例如 topicshift"), true);
+        extra.appendChild(field(t("变量卡"), inputs.card));
         const sel = mk("select", "form-input");
-        [["", "请选择"], ["yes", "是"], ["no", "否"], ["unknown", "不确定"]].forEach(([v, t]) => {
-          const o = mk("option", null, t);
+        [["", t("请选择")], ["yes", t("是")], ["no", t("否")], ["unknown", t("不确定")]].forEach(([v, words]) => {
+          const o = mk("option", null, words);
           o.value = v;
           sel.appendChild(o);
         });
         inputs.attested = sel;
-        extra.appendChild(field("现有的输出文件是按这个定义生成的吗", sel));
+        extra.appendChild(field(t("现有的输出文件是按这个定义生成的吗"), sel));
       }
     }
     drawExtra();
-    form.append(kinds, field("一句话说明", sentence), extra);
+    form.append(kinds, field(t("一句话说明"), sentence), extra);
     const status = mk("div", "notice-status");
-    const look = mkButton("查看将要发送的内容", "btn btn-primary", async () => {
-      if (!sentence.value.trim()) { setStatus(status, "err", "请用一句话说明这份提议"); sentence.focus(); return; }
+    const look = mkButton(t("查看将要发送的内容"), "btn btn-primary", async () => {
+      if (!sentence.value.trim()) { setStatus(status, "err", t("请用一句话说明这份提议")); sentence.focus(); return; }
       const body = { kind: kind, sentence: sentence.value.trim() };
       if (inputs.number && inputs.number.value.trim()) body.number = inputs.number.value.trim().replace(/^#/, "");
       if (inputs.result && inputs.result.value.trim()) body.result = inputs.result.value.trim();
@@ -1262,7 +1321,7 @@
       if (parents.length) body.parents = parents;
       if (inputs.card) body.card = inputs.card.value.trim();
       if (inputs.attested) {
-        if (!inputs.attested.value) { setStatus(status, "err", "请回答：现有的输出文件是否按这个定义生成"); return; }
+        if (!inputs.attested.value) { setStatus(status, "err", t("请回答：现有的输出文件是否按这个定义生成")); return; }
         body.attested = inputs.attested.value;
       }
       view.compose = { kind: kind };
@@ -1280,7 +1339,7 @@
   }
 
   // The engine's dry run of a proposal, shown exactly, then 发送提议. Used
-  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议修改判断.
+  // by 提交提议 and by the attempt form's 提议新的尝试 / 提议修改研究判断.
   async function composeInto(host, body, status) {
     setStatus(status, "", t("正在比较你的工作副本和正式版本…"));
     host.innerHTML = "";
@@ -1406,7 +1465,6 @@
       // hidden ones reload on their next showing, the open one now.
       markViewsStale();
       if (currentView === "proposals" && !view.proposal) await after("proposals", [{ text: sent }]);
-      else if (currentView === "tree") await loadRoutes(views.tree, true, true);
       else if (typeof refreshCurrentView === "function" && currentView !== "proposals") await refreshCurrentView();
       if (typeof pollGeneration === "function") pollGeneration();
       return res;
@@ -1750,7 +1808,7 @@
       s.appendChild(where);
       const mine = mk("p", "team-line");
       if (share.mine) mine.append("你自己的提议文件夹：", mk("span", "mono", share.mine.path), share.mine.reachable ? "" : "（现在打不开）");
-      else mine.append("你自己的提议文件夹还没有选：选好以后才能发送提议、笔记和连线。");
+      else mine.append("你自己的提议文件夹还没有选：选好以后才能发送提议、备注和连线。");
       s.appendChild(mine);
     } else if (share.shared) {
       const where = mk("p", "team-line");
@@ -1765,7 +1823,7 @@
     if ((share.refused || []).length) s.appendChild(line("公盘上有 " + share.refused.length + " 个版本没有通过签名验证，没有采用；采用的是最后一个通过验证的版本。", "warn"));
     if ((j.official_copies || []).length) {
       s.appendChild(mk("h3", "panel-h3", "放在旁边的正式版本"));
-      s.appendChild(line("你的文件没有动；官方的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
+      s.appendChild(line("你的文件没有动；正式的一份放在它旁边。看完不同之处，自己决定留哪一份、怎么改。", "quiet"));
       const ul = mk("ul", "desk-files");
       const beside = j.beside || j.official_copies.map((c) => ({ copy: c }));
       beside.forEach((b) => {
@@ -1811,7 +1869,7 @@
         const ul = mk("ul", "desk-files");
         p.beside.forEach((b) => {
           const li = mk("li");
-          li.append(mk("span", "mono", b.path), mk("span", "team-help", "官方的一份会放在 " + b.official_copy));
+          li.append(mk("span", "mono", b.path), mk("span", "team-help", t("正式的一份会放在 {copy}", { copy: b.official_copy })));
           ul.appendChild(li);
         });
         writes.after(ul);
@@ -1905,14 +1963,14 @@
   // deleted); `notes_waiting` are record files whose entries have not
   // reached the official version yet.
   function syncDone(res) {
-    const sent = res.entries_sent ? t("已把你的 {n} 条备注、判断或连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
+    const sent = res.entries_sent ? t("已把你的 {n} 条备注、连线确认或手工连线改动发送到公盘", { n: numberText(res.entries_sent) }) : "";
     if (res.up_to_date) return sent ? t("已经是最新的正式版本；{sent}。", { sent: sent }) : t("已经是最新的正式版本。");
     const parts = [t("已同步到第 {seq} 版", { seq: numberText(res.seq) })];
     if (sent) parts.push(sent);
     if ((res.updated || []).length) parts.push(t("更新了 {n} 个文件", { n: numberText(res.updated.length) }));
     if ((res.removed || []).length) parts.push(t("删除了 {n} 个正式版本已删除的文件", { n: numberText(res.removed.length) }));
     if ((res.conflicts || []).length) {
-      parts.push(t("{n} 个两边都改过的文件留着你的，官方的一份放在旁边", { n: numberText(res.conflicts.length) }));
+      parts.push(t("{n} 个两边都改过的文件留着你的，正式的一份放在旁边", { n: numberText(res.conflicts.length) }));
     }
     // The engine's reason, in the page's language (13.2).
     if ((res.kept_yours || []).length) {
@@ -1928,7 +1986,7 @@
   function syncFlash(res) {
     const lists = [{ text: syncDone(res) }];
     (res.conflicts || []).forEach((c) => lists.push({
-      text: t("官方的 {path} 放在了旁边：{copy}；你的没有动。", { path: c.path, copy: c.official_copy || "" }),
+      text: t("正式版本的 {path} 放在了旁边：{copy}；你的没有动。", { path: c.path, copy: c.official_copy || "" }),
       diff: c.diff, truncated: c.truncated, summary: c.summary }));
     return lists;
   }

@@ -171,7 +171,7 @@ def test_u4_a_proposal_page_says_its_variable_versions_and_not_carried_changes_i
 
 
 def test_u4_the_attempt_preview_says_whether_a_verdict_abandons(tmp_path):
-    """A member's 提议修改判断 asks for the result and the reason before anything
+    """A member's 提议修改研究判断 asks for the result and the reason before anything
     is written: the dry run of a row says whether its verdict abandons the
     route (☠, or a marker the project declares)."""
     root = _project(tmp_path / "proj")

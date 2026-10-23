@@ -685,7 +685,7 @@ def test_scenario_9_a_link_produced_through_two_calls_is_not_sent_to_review(tmp_
 
 
 def test_a_migrated_judgment_is_never_shown_with_the_migration_time_as_its_time(tmp_path, capsys):
-    """9.12: 「迁移自旧索引（原判断时间未知）」 -- `researchos review` and every
+    """9.12: 「迁移自旧索引（原连线确认的时间未知）」 -- `researchos review` and every
     reader get the flag, not the migration time as the judgment's."""
     root = _folder(tmp_path)
     build_pre_v5_index(root)
@@ -702,7 +702,7 @@ def test_a_migrated_judgment_is_never_shown_with_the_migration_time_as_its_time(
     finally:
         conn.close()
     assert items and all(i["migrated"] and i["at_label"] == judgements.MIGRATED_AT_LABEL for i in items)
-    assert flags.for_key(TWO_BASES)["judgement"]["at_label"] == "迁移自旧索引（原判断时间未知）"
+    assert flags.for_key(TWO_BASES)["judgement"]["at_label"] == "迁移自旧索引（原连线确认的时间未知）"
     history = judgements.history(root, M_READ)
     assert history[0]["migrated"] is True
     judgements.judge(root, TWO_BASES, "confirmed", via="cli")  # 仍然成立: the researcher's own act

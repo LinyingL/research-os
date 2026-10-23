@@ -15,12 +15,13 @@
 
   The page's structure (DESIGN.md 12.9, task V8 phase U2): a sidebar --
   the project switcher at the top (the 10.1 menu below), the open
-  project's sections 工作台 / 研究路线 / 成果 / 变量 / 文献 / 数据与代码 /
+  project's sections 项目首页 / 研究路线 / 图表与论断 / 变量 / 文献 / 数据与代码 /
   提议 / 成员, and at the bottom the shared drive's line, who I am, 记录 and
-  停止服务 -- beside a workspace whose serif title names the section. The
-  desk (工作台, 12.0) and the sidebar's live lines are the third served
+  停止服务 -- beside a workspace whose serif title names the section. 研究路线
+  (18.3: the route map of Section 14 or the grouped list, with 待办 beside
+  either) and the sidebar's live lines are the third served
   file, /desk.js (window.RODesk; GET /api/desk, /api/proposals, /api/share,
-  /api/me). The node page, 成果 and 数据与代码's list are the fourth,
+  /api/me). The node page, 图表与论断 and 数据与代码's list are the fourth,
   /node.js (window.RONode, U3; GET /api/node, /api/results,
   /api/data-code): every object -- a script, data file, figure, draft
   section or claim, attempt, variable, reference -- opens the same node
@@ -221,6 +222,9 @@ body {
 .me-role, .me-unset { color: var(--ink-soft); }
 .side-tools { display: flex; flex-wrap: wrap; gap: 0.1rem 1rem; margin-top: 0.2rem; }
 body.no-project .side-nav, body.no-project .share-line { display: none !important; }
+/* 18.3: a project of one person has no 提议 and no 成员 in the sidebar (desk.js sets data-team). */
+.side-nav[data-team="single"] .side-item[data-section="proposals"],
+.side-nav[data-team="single"] .side-item[data-section="members"] { display: none; }
 
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .topbar {
@@ -459,8 +463,9 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .tree-filter { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: baseline; font-size: 0.86rem; margin: 0 0 0.8rem; color: var(--ink-soft); }
 .attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
 
-/* -- The desk (工作台, DESIGN.md 14): the route map with the column beside it,
-   the whole window below the header (canvas-mode); lists, not dashboards. -- */
+/* -- 研究路线 (DESIGN.md 14, 18.3): the route map -- or the grouped list in a
+   pane of its own -- with the 待办 column beside it, the whole window below
+   the header (canvas-mode); lists, not dashboards. -- */
 body.canvas-mode #view-desk { flex: 1; min-height: 0; display: flex; }
 body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
 .desk-layout { flex: 1; min-width: 0; min-height: 0; display: flex; }
@@ -468,6 +473,8 @@ body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
   flex: none; width: 22rem; overflow-y: auto; padding: 1.1rem 1.25rem 3rem; border-left: 1px solid var(--line-strong);
   display: flex; flex-direction: column; gap: 1.6rem;
 }
+.routes-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 1.4rem 2rem 3rem; }
+.route-row.picked { background: var(--paper-alt); box-shadow: -0.5rem 0 0 var(--paper-alt), 0.5rem 0 0 var(--paper-alt); }
 .desk-column-title { font-family: var(--font-sans); font-size: 0.78rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 -0.8rem; }
 .desk-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.35rem; }
 .desk-sub { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
@@ -631,7 +638,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .node-links-more { padding: 0.5rem 0; list-style: none; }
 .node-graph { position: relative; height: 480px; margin-top: 0.7rem; border: 1px solid var(--line-strong); }
 
-/* 成果 and 数据与代码 (12.9): lists, each row opening its node page. */
+/* 图表与论断 and 数据与代码 (12.9): lists, each row opening its node page. */
 .results { display: flex; flex-direction: column; gap: 1.6rem; max-width: 900px; }
 .res-group { margin-bottom: 1.1rem; }
 .res-group-title { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.86rem; color: var(--ink-soft); margin: 0.6rem 0 0.25rem; }
@@ -1281,6 +1288,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 @media (max-width: 960px) {
   .desk-layout { flex-direction: column; overflow-y: auto; }
   .desk-map { flex: none; height: 62vh; }
+  .routes-pane { flex: none; overflow-y: visible; }
   .desk-column { width: auto; overflow-y: visible; border-left: none; border-top: 1px solid var(--line-strong); }
 }
 </style>
@@ -1300,11 +1308,10 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>
       </span>
     </div>
-    <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
+    <nav class="side-nav" id="side-nav" data-team="single" aria-label="栏目" data-i18n-attr="aria-label">
       <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
-      <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label" data-i18n>工作台</span></button>
-      <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
-      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>成果</span></button>
+      <button type="button" class="side-item" data-section="routes" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span><span class="side-count" id="side-count-routes"></span></button>
+      <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>图表与论断</span></button>
       <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label" data-i18n>变量</span></button>
       <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label" data-i18n>文献</span></button>
       <button type="button" class="side-item" data-section="data" data-view="lineage"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 4c0-.9 2.2-1.5 5-1.5s5 .6 5 1.5-2.2 1.5-5 1.5S3 4.9 3 4zM3 4v8c0 .9 2.2 1.5 5 1.5s5-.6 5-1.5V4M3 8c0 .9 2.2 1.5 5 1.5S13 8.9 13 8"/></svg><span class="side-label" data-i18n>数据与代码</span></button>
@@ -1352,9 +1359,14 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>清单</button>
         <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
+      <!-- 研究路线 (18.3): the route map or the grouped list, one page with
+           the same 待办 column; kept per project (desk.js). -->
+      <div id="routes-switch" class="subnav hidden" role="tablist" aria-label="研究路线" data-i18n-attr="aria-label">
+        <button type="button" class="subnav-item" role="tab" data-mode="map" aria-selected="true" data-i18n>路线图</button>
+        <button type="button" class="subnav-item" role="tab" data-mode="list" aria-selected="false" data-i18n>列表</button>
+      </div>
       <section id="view-workspace" class="view"></section>
       <section id="view-desk" class="view hidden"></section>
-      <section id="view-tree" class="view hidden"></section>
       <section id="view-results" class="view hidden"></section>
       <section id="view-lineage" class="view hidden"></section>
       <section id="view-canvas" class="view hidden"></section>
@@ -1392,7 +1404,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <script src="/routemap.js"></script>
 <!-- The sidebar's live lines and the desk (DESIGN.md 12.0, 12.9): window.RODesk. -->
 <script src="/desk.js"></script>
-<!-- The node page, 成果 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
+<!-- The node page, 图表与论断 and 数据与代码 (DESIGN.md 12.6, 12.7, 12.9): window.RONode. -->
 <script src="/node.js"></script>
 <!-- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4, 12.9): window.ROTeam. -->
 <script src="/team.js"></script>
@@ -1589,7 +1601,7 @@ function escapeHtml(value) {
 // the researcher judged (9.12): it reads MIGRATED_AT_LABEL instead. What the
 // desk's 待复核 panel shows is in the screen's language (14.6): the maps'
 // words through t() where they are read (each has an English entry).
-const MIGRATED_AT_LABEL = "迁移自旧索引（原判断时间未知）";
+const MIGRATED_AT_LABEL = "迁移自旧索引（原连线确认的时间未知）";
 const VERDICT_WORDS = { confirmed: "确认", rejected: "否决", withdrawn: "撤回", undone: "撤销" };
 const VIA_WORDS = { canvas: "在关系图上", cli: "在命令行里", mcp: "通过 MCP" };
 const LINK_VERBS = {
@@ -1616,7 +1628,7 @@ function verdictWord(verdict) {
 // time-zone arithmetic: `at` is for a person to read, 9.3).
 function whenText(entry) {
   if (!entry) return "";
-  if (entry.migrated) return entry.at_label || t("迁移自旧索引（原判断时间未知）");
+  if (entry.migrated) return entry.at_label || t("迁移自旧索引（原连线确认的时间未知）");
   const at = entry.at == null ? "" : String(entry.at);
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? at.slice(0, 10) + " " + at.slice(11, 16) : at;
 }
@@ -1711,10 +1723,10 @@ function linkText(key) {
 // Who did what, when, from where: 「2026-10-04 21:15 · 你在画布上否决」.
 function historyEntryText(entry) {
   const what = entry.verdict === "undone" ? t("撤销了上一步")
-    : entry.verdict === "withdrawn" ? t("撤回了判断") : verdictWord(entry.verdict);
+    : entry.verdict === "withdrawn" ? t("撤回了连线确认") : verdictWord(entry.verdict);
   const when = whenText(entry);
   if (entry.migrated) return when + " · " + what;
-  if (entry.via === "recovered") return t("{when} · 补回文件里缺少的判断：{what}", { when: when, what: what });
+  if (entry.via === "recovered") return t("{when} · 补回文件里缺少的连线确认：{what}", { when: when, what: what });
   const via = Object.prototype.hasOwnProperty.call(VIA_WORDS, entry.via) ? t(VIA_WORDS[entry.via]) : "";
   return via ? t("{when} · 你{via}{what}", { when: when, via: via, what: what }) : t("{when} · 你{what}", { when: when, what: what });
 }
@@ -1768,17 +1780,20 @@ const BLOCKING_ERROR_TEXT = {
   mapping_role_unknown: "成员文件（team.toml）当前无法读取，无法判断你能否直接画或删这条连线",
   // DESIGN.md 9.4 / 9.7 / 9.10: a write that was refused, nothing written
   project_moved: "项目已移动或已在别处认领，请重新打开",
-  needs_migration: "迁移后才能记录判断：这个项目来自旧版本，请先在页面上方迁移旧记录",
+  needs_migration: "迁移后才能记录连线确认：这个项目来自旧版本，请先在页面上方迁移旧记录",
   read_only: "项目当前是只读打开的，不会写入任何东西",
   project_busy: "另一个 Research OS 进程正在写入这个项目，请稍后再试",
   project_blocked: "这个项目需要你先确认，确认之前不会写入任何东西",
+  // DESIGN.md 18.1: this window was not opened from the app, so the engine has no session for it;
+  // every write is refused with this sentence (the engine's own, word for word, in either language)
+  session_required: "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。",
   // DESIGN.md 9.3 / 9.2: a record Research OS cannot trust right now, nothing written
-  record_untrusted: "判断记录文件当前无法读取，请先恢复它",
-  record_shrunk: "判断记录文件比图谱少了几条判断，需要你先确认以哪一份为准",
+  record_untrusted: "连线确认的记录文件当前无法读取，请先恢复它",
+  record_shrunk: "连线确认的记录文件比图谱少了几条连线确认，需要你先确认以哪一份为准",
   layout_unreadable: "关系图位置记录文件无法读取，请先修复它",
   // DESIGN.md 9.3's question and 9.4 / 9.5's answers, refused: nothing written
   record_question_changed: "记录文件在提问之后又变了，请重新查看问题再回答",
-  record_would_lose: "记录文件当前为空或无法使用，以文件为准会丢掉仅存的判断副本；请先恢复文件，或选择「把缺少的补回文件」",
+  record_would_lose: "记录文件当前为空或无法使用，以文件为准会丢掉仅存的连线确认副本；请先恢复文件，或选择「把缺少的补回文件」",
   no_question: "现在已经没有需要回答的问题了，记录文件可能已经恢复",
   answer_refused: "项目的情况在你选择之前又变了，没有写入任何东西；请看看现在的问题再选",
   not_this_project: "这个文件夹带着别的项目身份（或没有身份），不是要找的项目；什么都没有关联",
@@ -1925,14 +1940,13 @@ function renderViewFailure(container, err) {
 
 // -- Tabs ---------------------------------------------------------------------
 
-// DESIGN.md 12.9: the views are shown through the sidebar's sections. Until
-// the later phases rebuild them, 研究路线 is the decision tree, 数据与代码
-// the lineage report with 关系图 (the canvas) beside it, and 成果 / 提议 /
-// 成员 say plainly that they are still being made.
+// DESIGN.md 12.9: the views are shown through the sidebar's sections.
+// 研究路线 (18.3) is one view, "desk" -- the name Section 14 gave the route
+// map's page --, showing the route map or the grouped list beside 待办;
+// 数据与代码 is the lineage report with 关系图 (the canvas) beside it.
 const views = {
   workspace: document.getElementById("view-workspace"),
   desk: document.getElementById("view-desk"),
-  tree: document.getElementById("view-tree"),
   results: document.getElementById("view-results"),
   lineage: document.getElementById("view-lineage"),
   canvas: document.getElementById("view-canvas"),
@@ -1946,13 +1960,13 @@ let currentView = null;
 
 const SECTION_OF_VIEW = {
   workspace: "workspace",
-  desk: "desk", tree: "routes", results: "results", lineage: "data", canvas: "data",
+  desk: "routes", results: "results", lineage: "data", canvas: "data",
   variables: "variables", literature: "literature", proposals: "proposals", members: "members",
   node: null, // the section it was opened from (RONode.section)
 };
 const SECTION_TITLES = {
   workspace: "项目首页",
-  desk: "工作台", routes: "研究路线", results: "成果", variables: "变量", literature: "文献",
+  routes: "研究路线", results: "图表与论断", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
 // A section's title on screen (13.4): the page title, in the screen's
@@ -1961,7 +1975,7 @@ const SECTION_TITLES = {
 function sectionTitle(section) {
   const titles = {
     workspace: t("项目首页"),
-    desk: t("工作台"), routes: t("研究路线"), results: t("成果"), variables: t("变量"), literature: t("文献"),
+    routes: t("研究路线"), results: t("图表与论断"), variables: t("变量"), literature: t("文献"),
     data: t("数据与代码"), proposals: t("提议"), members: t("成员"),
   };
   return Object.prototype.hasOwnProperty.call(titles, section) ? titles[section] : "";
@@ -1977,7 +1991,8 @@ const VIEW_STORAGE_KEY = "rce.view";
 
 function storedView() {
   try {
-    const v = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    const v = stored === "tree" ? "desk" : stored; // 18.3: the old 研究路线 list is a mode of the one page
     return v && v !== "node" && Object.prototype.hasOwnProperty.call(views, v) ? v : null;
   } catch (err) {
     return null;
@@ -1990,6 +2005,9 @@ const FULL_WINDOW_VIEWS = ["canvas", "desk"];
 // acts on the canvas (适应全部 from the menu) can wait for it.
 function activateView(name) {
   if (!Object.prototype.hasOwnProperty.call(views, name)) name = "workspace";
+  // 18.3: a project of one person has no 提议 page. Whatever asks for it -- a menu built before 18.3, a view
+  // kept from another project -- lands on 开始协作, the team setup, instead of on a page about nothing.
+  if (name === "proposals" && window.RODesk && RODesk.onePerson && RODesk.onePerson()) return startCollaborating();
   if (currentView === name) return null;
   if (currentView === "workspace" && window.ROWorkspace && !ROWorkspace.mayLeave()) return null;
   // 14.3: the desk's panel (no backdrop) belongs to the desk -- leaving it
@@ -2005,10 +2023,12 @@ function activateView(name) {
     if (btn.dataset.section === section) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
-  document.querySelectorAll(".subnav-item").forEach((btn) => {
+  document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
     btn.setAttribute("aria-selected", String(btn.dataset.subview === name));
   });
   document.getElementById("data-switch").classList.toggle("hidden", section !== "data" || name === "node");
+  // 研究路线's switch (18.3) belongs to the page, not to a node page opened from it.
+  document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node");
   document.getElementById("page-title").textContent = sectionTitle(section);
   // 新增尝试 belongs to the attempts (研究路线); the native menu still
   // reaches the form from anywhere.
@@ -2023,11 +2043,11 @@ function activateView(name) {
   // project home follows it again (its own poll stops when it is not on screen).
   if (name === "workspace" && typeof ROWorkspace.resume === "function") ROWorkspace.resume();
   if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
+  else if (name === "desk") RODesk.resume(); // drawn already: shown the way it is now kept
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);
   if (name === "proposals" && !views.proposals.dataset.loaded) ROTeam.loadProposals(views.proposals);
   if (name === "members" && !views.members.dataset.loaded) ROTeam.loadMembers(views.members);
-  if (name === "tree" && !views.tree.dataset.loaded) loadTreeView();
   if (name === "lineage" && !views.lineage.dataset.loaded) loadLineageView();
   if (name === "variables" && !views.variables.dataset.loaded) loadVariablesView();
   if (name === "literature" && !views.literature.dataset.loaded) loadLiteratureView();
@@ -2042,7 +2062,7 @@ function activateView(name) {
 // a member sent, the official version) are read afresh each time the
 // researcher goes to them: those acts do not move the project's generation
 // on this machine. 提议 always opens on the list (inbox or 我的提议).
-const SHARED_STATE_VIEWS = ["desk", "proposals", "tree", "members"];
+const SHARED_STATE_VIEWS = ["desk", "proposals", "members"];
 document.querySelectorAll(".side-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     const target = btn.dataset.section === "data" ? lastDataView : btn.dataset.view;
@@ -2051,9 +2071,28 @@ document.querySelectorAll(".side-item").forEach((btn) => {
     activateView(target);
   });
 });
-document.querySelectorAll(".subnav-item").forEach((btn) => {
+document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
   btn.addEventListener("click", () => activateView(btn.dataset.subview));
 });
+// 研究路线's 路线图 / 列表 (18.3): the mode is kept per project (desk.js).
+document.querySelectorAll("#routes-switch .subnav-item").forEach((btn) => {
+  btn.addEventListener("click", () => RODesk.setMode(btn.dataset.mode));
+});
+
+// 开始协作… (18.3, the project menu of a project of one person): the team setup is the 成员 page -- its 开始协作
+// block, or 建立成员名单 -- whose sidebar item such a project does not show. Read afresh, as the sidebar's own
+// click reads it.
+function startCollaborating() {
+  if (currentView !== "members") delete views.members.dataset.loaded;
+  return activateView("members");
+}
+
+// 研究路线 (18.3), the one page: opened on `mode` ("map" or "list") when the
+// caller means one of the two, else the way it is kept for the project.
+function showRoutes(mode) {
+  if (mode) RODesk.setMode(mode);
+  activateView("desk");
+}
 
 // The desk's 「在研究路线中查看」 for the abandoned routes: 研究路线 with
 // only those shown, until the researcher shows them all again.
@@ -2133,8 +2172,8 @@ async function loadProjectSummary(force) {
       btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
       // 13.5: a plural in English, its thousands separated ("1,497"); the Chinese as it was.
-      btn.textContent = t("{n} 条判断待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
-      btn.title = t("查看证据变了的旧判断");
+      btn.textContent = t("{n} 项待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
+      btn.title = t("查看依据变了的旧连线确认和变量卡");
       btn.addEventListener("click", (e) => { e.stopPropagation(); if (mayReplacePanel()) openReviewPanel(null); });
       line.append(btn);
     }
@@ -2166,14 +2205,16 @@ async function loadProjectSummary(force) {
 const projectMenuBtn = document.getElementById("project-menu-btn");
 const projectMenu = document.getElementById("project-menu");
 const projectMenuWrap = document.getElementById("project-menu-wrap");
-const NO_PROJECT_NAME = t("还没有项目");
+// The name shown for no project: looked up when it is drawn, in the language then in force (13.6), not once when the
+// page loads.
+function noProjectName() { return t("还没有项目"); }
 let projectMenuMode = "list"; // "list" | "rename" | "remove"
 
 // 12.11: the button is the project's display name and nothing else; that
 // it opens a menu is said by the control itself (aria-haspopup) and by the
 // 「项目」 line above it, never by a glyph.
 function setProjectMenuLabel(label, path) {
-  projectMenuBtn.textContent = label || NO_PROJECT_NAME;
+  projectMenuBtn.textContent = label || noProjectName();
   projectMenuBtn.title = path ? path + "\n" + t("切换项目或管理列表") : t("添加项目");
 }
 
@@ -2342,6 +2383,10 @@ function renderProjectMenu() {
   // 11.3: for every served project -- linked, without a remote (a private
   // repository is offered), or not a git repository (the panel explains).
   projectMenu.appendChild(pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject }));
+  // 18.3: a project of one person has no 成员 in the sidebar; the team setup is opened from here.
+  if (window.RODesk && RODesk.onePerson && RODesk.onePerson()) {
+    projectMenu.appendChild(pmItem(t("开始协作…"), () => { closeProjectMenu(false); startCollaborating(); }));
+  }
   projectMenu.appendChild(pmItem(t("新建项目…"), () => { closeProjectMenu(false); ROWorkspace.openCreateProject(); }));
   projectMenu.appendChild(pmItem(t("添加项目…"), () => { closeProjectMenu(false); openAddDialog(); }));
   projectMenu.appendChild(pmItem(t("从公盘加入项目…"), () => { closeProjectMenu(false); ROTeam.openJoinDialog(); }));
@@ -2948,7 +2993,6 @@ async function reloadAllViews(opts) {
   else if (currentView === "workspace") ROWorkspace.load(views.workspace);
   else if (currentView === "desk") RODesk.loadDesk(views.desk);
   else if (currentView === "results") RONode.loadResults(views.results);
-  else if (currentView === "tree") loadTreeView();
   else if (currentView === "lineage") loadLineageView();
   else if (currentView === "canvas") RCECanvas.load(views.canvas);
   else if (currentView === "variables") loadVariablesView();
@@ -2988,6 +3032,34 @@ const refreshChip = document.getElementById("refresh-chip");
 let lastGeneration = null;
 let refreshInFlight = false;
 let pollTimer = null; // held so the 停止服务 flow (task V3 phase 4) can stop polling a dead server
+
+// -- The poll rests while the window is hidden (DESIGN.md 18.4 item 3) -------
+// A hidden window asks nothing: the interval is taken away when the window
+// is hidden, and when it is shown again the poll runs at once (what moved
+// meanwhile is read then) and the interval starts anew. `generationLive` is
+// set when the page starts watching (init, below) and cleared by 停止服务,
+// after which nothing starts the poll again.
+let generationLive = false;
+
+function startGenerationPoll() {
+  if (pollTimer !== null || !generationLive || document.hidden) return;
+  pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
+}
+
+function stopGenerationPoll() {
+  if (pollTimer !== null) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!generationLive) return;
+  if (document.hidden) {
+    stopGenerationPoll();
+  } else if (pollTimer === null) {
+    pollGeneration();
+    startGenerationPoll();
+  }
+});
 
 function showRefreshingChip() {
   refreshChip.classList.remove("hidden", "err");
@@ -3057,8 +3129,6 @@ async function refreshCurrentView() {
     await ROTeam.loadProposals(views.proposals, true);
   } else if (currentView === "members") {
     await ROTeam.loadMembers(views.members, true);
-  } else if (currentView === "tree") {
-    await loadTreeView(true);
   } else if (currentView === "lineage") {
     await loadLineageView(true);
   } else if (currentView === "canvas") {
@@ -3278,13 +3348,6 @@ function ownMark(item) {
   span.className = "own-mark";
   span.textContent = o.label;
   return span;
-}
-
-// 研究路线 (12.9, U4): the attempts grouped by status, the proposals shown
-// apart, an abandoned route with its result, its reason and 「当时的依据」
-// (team.js). `refresh` (an auto-refresh) keeps the page in place.
-function loadTreeView(refresh) {
-  return ROTeam.loadRoutes(views.tree, refresh);
 }
 
 // -- Lineage view ---------------------------------------------------------------
@@ -3976,13 +4039,13 @@ function renderAttemptForm(mode, attemptId) {
   const role = ROTeam.mode();
   const proposing = role === "member";
   if (role === "none") {
-    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议修改判断";
+    panelTitle.textContent = mode === "append" ? "提议新的尝试" : "提议修改研究判断";
     panelSubtitle.textContent = "";
     panelBody.appendChild(mk("p", "desk-alone", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"));
     openPanel();
     return;
   }
-  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改判断 #" + number)
+  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改研究判断 #" + number)
     : (mode === "append" ? "新增尝试" : "编辑尝试 #" + number);
   panelSubtitle.textContent = proposing
     ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
@@ -4023,7 +4086,7 @@ function renderAttemptForm(mode, attemptId) {
     { key: "description", label: config.columns.description || "描述", multiline: true },
     { key: "variables", label: config.columns.variables || "变量", multiline: true },
     { key: "result", label: config.columns.result || "结果", multiline: true },
-    { key: "verdict", label: config.columns.verdict || "结论" },
+    { key: "verdict", label: config.columns.verdict || "研究判断" },
   ];
   defs.forEach((def) => {
     let input;
@@ -4044,11 +4107,11 @@ function renderAttemptForm(mode, attemptId) {
     }
     inputs[def.key] = input;
     initial[def.key] = input.value;
-    // 提议修改判断 carries the verdict and the result only (12.4).
+    // 提议修改研究判断 carries the verdict and the result only (12.4).
     if (proposing && mode === "update" && def.key !== "verdict" && def.key !== "result") {
       input.disabled = true;
       input.dataset.fixed = "1";
-      input.title = "修改判断只包括研究判断和结果；其它格子的改动不会随提议发送";
+      input.title = "修改研究判断的提议只带研究判断和结果；其它格子的改动不会随提议发送";
     }
     const fieldEl = formFieldEl(def.label, input);
     if (def.key === "verdict") {
@@ -4143,7 +4206,9 @@ function renderAttemptForm(mode, attemptId) {
   const submitBtn = document.createElement("button");
   submitBtn.type = "submit";
   submitBtn.className = "btn btn-primary";
-  submitBtn.textContent = proposing ? "预览这一行" : "预览改动";
+  // 18.3: an existing row of the PI or a single researcher is saved, not previewed (a route turned abandoned still is).
+  const updating = mode === "update" && !proposing;
+  submitBtn.textContent = proposing ? t("预览这一行") : updating ? t("保存") : t("预览改动");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "btn";
@@ -4191,7 +4256,74 @@ function renderAttemptForm(mode, attemptId) {
     submitBtn.disabled = disabled;
   }
 
-  function renderPreview(preview, body) {
+  // 18.3: changing only the 研究判断 or 结果 of an existing row writes at once (the preview was asked for its
+  // guards, not shown), then 已保存 and 撤销, which writes the old cells back the same way (desk.js, shared
+  // with the side panel). What the form showed is its fields' text when it was drawn or last saved.
+  const shownCells = () => ({ verdict: initial.verdict, result: initial.result });
+
+  // The field holds what the file holds now (after a save, after 撤销): nothing typed in it is unwritten, so
+  // opening another panel does not ask (desk.js halfTyped, as the side panel's own save does).
+  function fieldIsWritten(key) {
+    initial[key] = inputs[key].value;
+    inputs[key].dataset.initial = inputs[key].value;
+    delete inputs[key].dataset.typed;
+  }
+
+  function offerUndo(u) {
+    setFormStatus(statusEl, "ok", "");
+    RODesk.atOnce.line(statusEl, () => undoNow(u));
+  }
+
+  async function saveAtOnce(preview, body) {
+    previewHost.innerHTML = "";
+    setFormDisabled(true);
+    setFormStatus(statusEl, "", t("正在写入…"));
+    let result;
+    try {
+      result = await apiPost("/api/attempts/write", body); // the body the preview was made for, verbatim
+    } catch (err) {
+      setFormDisabled(false);
+      setFormStatus(statusEl, "err", t("写入失败，文件没有被修改"), err);
+      return;
+    }
+    pollGeneration();
+    setFormDisabled(false);
+    if (result.ingest_error) {
+      setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), result.ingest_error);
+      return;
+    }
+    const undo = RODesk.atOnce.undoOf(preview, body, shownCells());
+    EDITABLE_KEYS.forEach((key) => fieldIsWritten(key));
+    offerUndo(undo);
+  }
+
+  async function undoNow(undo) {
+    setFormDisabled(true);
+    setFormStatus(statusEl, "", t("正在写入…"));
+    let done;
+    try {
+      done = await RODesk.atOnce.undo(undo);
+    } catch (err) {
+      setFormDisabled(false);
+      setFormStatus(statusEl, "err", t("写入失败，文件没有被修改"), err);
+      return;
+    }
+    setFormDisabled(false);
+    if (done.state !== "done") {
+      setFormStatus(statusEl, "err", done.state === "abandons"
+        ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"));
+      return;
+    }
+    pollGeneration();
+    if (done.res.ingest_error) {
+      setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), done.res.ingest_error);
+      return;
+    }
+    Object.keys(undo.was).forEach((key) => { inputs[key].value = undo.text[key]; fieldIsWritten(key); });
+    setFormStatus(statusEl, "ok", t("撤销了上一步"));
+  }
+
+  function renderPreview(preview, body, moved) {
     previewHost.innerHTML = "";
     setFormDisabled(true); // frozen while the preview stands -- 返回修改 unfreezes
     if (preview.old_row !== null && preview.old_row !== undefined) {
@@ -4236,9 +4368,11 @@ function renderAttemptForm(mode, attemptId) {
     if (!proposing && preview.reason_required) {
       previewHost.append(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
     }
+    if (moved) previewHost.append(mk("div", "confirm-note", t("这一行在你打开它以后被改过：上面的原行是文件里现在的样子。")));
     previewHost.append(confirmActions);
 
     confirmBtn.addEventListener("click", async () => {
+      if (moved) { saveAtOnce(preview, body); return; } // the row was shown because the file moved: written, then 撤销
       confirmBtn.disabled = true;
       backBtn.disabled = true;
       setFormStatus(statusEl, "", "正在写入…");
@@ -4298,13 +4432,13 @@ function renderAttemptForm(mode, attemptId) {
     // 16.1: a draft landing while the preview is made would show text the snapshot lacks.
     const unfreezeDraft = () => { if (draftBlock) draftBlock.setFrozen(false); };
     if (draftBlock) draftBlock.setFrozen(true);
-    setFormStatus(statusEl, "", "正在生成预览…");
+    setFormStatus(statusEl, "", updating ? t("正在保存…") : "正在生成预览…");
     let preview;
     try {
       preview = await apiPost("/api/attempts/preview", body);
     } catch (err) {
       unfreezeDraft();
-      setFormStatus(statusEl, "err", "无法生成预览", err);
+      setFormStatus(statusEl, "err", updating ? t("写入失败，文件没有被修改") : "无法生成预览", err);
       return;
     }
     // 12.4: abandoning a route through a proposal -- a verdict changed, or a
@@ -4328,7 +4462,9 @@ function renderAttemptForm(mode, attemptId) {
       }
     }
     statusEl.textContent = "";
-    renderPreview(preview, body);
+    const how = updating && RODesk.atOnce.kind(body) ? RODesk.atOnce.verdict(preview, body, shownCells()) : "preview";
+    if (how === "once") saveAtOnce(preview, body);
+    else renderPreview(preview, body, how === "moved");
   });
 
   panelBody.append(form, statusEl, previewHost);
@@ -4380,7 +4516,7 @@ function setStatus(el, cls, text, err) {
 function humanRecordsBlocked() {
   const s = state.summary;
   if (!s) return null;
-  if (s.needs_migration) return t("迁移后才能记录判断");
+  if (s.needs_migration) return t("迁移后才能记录连线确认");
   if (s.read_only) return t("只读打开：不会写入任何东西");
   return null;
 }
@@ -4402,7 +4538,7 @@ async function openReviewPanel(focus) {
   state.panelSubject = subject;
   panelTitle.textContent = t("待复核");
   panelTitle.title = "";
-  panelSubtitle.textContent = t("证据变了的旧判断，等你再看一眼");
+  panelSubtitle.textContent = t("依据变了的旧连线确认和变量卡，等你再看一眼");
   panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderReviewPanel(subject);
@@ -4445,7 +4581,7 @@ async function judgeFromReview(target, verdict, note, statusEl, buttons, done, o
     if (res && typeof res.generation === "number") lastGeneration = res.generation;
   } catch (err) {
     buttons.forEach((b) => { b.disabled = false; });
-    setStatus(statusEl, "err", t("没能记录这条判断"), err);
+    setStatus(statusEl, "err", t("没能记录这条连线确认"), err);
     return;
   }
   reviewNotes.delete(keyId(target));
@@ -4491,8 +4627,8 @@ function renderReviewItem(item, subject) {
   if (item.outcome === "conflict") {
     const d = item.detail || {};
     box.appendChild(mk("p", "review-note", d.contradicts
-      ? t("迁移来的旧判断和记录里已有的判断相反（两台电脑各判断过一次）。Research OS 不按迁移日期替你选，请写一条新判断定下它。")
-      : t("两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新判断定下它。")));
+      ? t("迁移来的旧连线确认和记录里已有的连线确认相反（两台电脑各做了一次）。Research OS 不按迁移日期替你选，请写一条新的连线确认来定下它。")
+      : t("两份记录各自追加了不同的内容（可能是两台电脑各改了一份，再被同步合并）。Research OS 不按时间替你选，请写一条新的连线确认来定下它。")));
     if (d.common && d.common.length) {
       box.appendChild(mk("div", "review-note", t("共同的记录：{entries}", { entries: d.common.map(historyEntryText).join(t("；")) })));
     }
@@ -4505,7 +4641,7 @@ function renderReviewItem(item, subject) {
     });
     box.appendChild(branches);
   } else {
-    box.appendChild(mk("div", "review-was", t("原判断：{verdict} · {when}", { verdict: verdictWord(item.verdict), when: whenText(item) })));
+    box.appendChild(mk("div", "review-was", t("原连线确认：{verdict} · {when}", { verdict: verdictWord(item.verdict), when: whenText(item) })));
     if (item.note) box.appendChild(mk("div", "review-note", t("备注：{note}", { note: item.note })));
     const pair = mk("div", "basis-pair");
     pair.append(basisColumn(t("当时的依据"), basisLines(item.basis)), basisColumn(t("现在"), reasonNow(item)));
@@ -4522,7 +4658,7 @@ function renderReviewItem(item, subject) {
   if (candidates.length && (item.verdict === "confirmed" || item.verdict === "rejected")) {
     const cands = mk("div", "review-cands");
     cands.appendChild(mk("div", "review-cands-title",
-      t("可能对应的新关联（同一次扫描里新出现）：旧判断不会自己转过去，点了才会在它上面记下一条新判断，旧的这条保持原样。")));
+      t("可能对应的新关联（同一次扫描里新出现）：旧连线确认不会自己转过去，点了才会在它上面记下一条新的连线确认，旧的这条保持原样。")));
     candidates.forEach((c) => {
       const row = mk("div", "review-cand");
       const name = mk("span", "review-link", linkText(c));
@@ -4532,7 +4668,7 @@ function renderReviewItem(item, subject) {
         // Applied already (9.6: one click, one entry): said, not offered again.
         row.appendChild(mk("span", "review-note", t("已用到这条关联上（{verdict}）", { verdict: verdictWord(item.verdict) })));
       } else {
-        const b = mkButton(t("把这条旧判断用到它上面"), "btn btn-small", () =>
+        const b = mkButton(t("把这条旧连线确认用到它上面"), "btn btn-small", () =>
           judgeFromReview(c, item.verdict, noteInput.value, status, buttons, t("已用到新关联上（{verdict}）", { verdict: verdictWord(item.verdict) }), id));
         buttons.push(b);
         row.appendChild(b);
@@ -4578,7 +4714,7 @@ async function renderReviewPanel(subject) {
   const ledger = data.ledger || {};
   if (ledger.state && ledger.state !== "ok") {
     const warn = mk("div", "notice bad");
-    warn.appendChild(mk("div", "notice-title", ledger.message || t("判断记录文件当前无法读取，请先恢复它")));
+    warn.appendChild(mk("div", "notice-title", ledger.message || t("连线确认的记录文件当前无法读取，请先恢复它")));
     warn.appendChild(mk("p", null, t("修好之前，这里的操作都不会被记录。")));
     panelBody.appendChild(warn);
   }
@@ -4594,9 +4730,9 @@ async function renderReviewPanel(subject) {
   const cardGroups = (data.cards && data.cards.groups) || [];
   if (data.review.length || !cardGroups.length) {
     panelBody.appendChild(mk("p", "review-intro",
-      t("这些判断做出时依据的事实，这次扫描看到的不一样了。判断没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。")));
+      t("这些连线确认做出时依据的事实，这次扫描看到的不一样了。连线确认没有被删掉，也没有被套用：连线暂时按机器的结果显示，等你决定。")));
   }
-  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", t("没有待复核的旧判断。")));
+  if (!data.review.length && !cardGroups.length) panelBody.appendChild(mk("p", "empty-note", t("没有待复核的旧连线确认。")));
   data.review.forEach((item) => panelBody.appendChild(renderReviewItem(item, subject)));
   // 9.11 stage (b): variable cards whose implementation moved, in the same list.
   if (cardGroups.length) renderCardReviewGroups(panelBody, data.cards);
@@ -4607,7 +4743,7 @@ async function renderReviewPanel(subject) {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
         " · " + t("来源文件暂不可读：{files}", { files: sourceFiles(item).join(t("、")) }) +
-        " · " + t("判断照旧（{verdict}）", { verdict: verdictWord(item.verdict) }) +
+        " · " + t("连线确认照旧（{verdict}）", { verdict: verdictWord(item.verdict) }) +
         // 11.1: only in a synced folder's cloud, its client not running
         (typeof item.cloud === "string" && item.cloud ? " · " + item.cloud : ""));
       panelBody.appendChild(row);
@@ -4615,7 +4751,7 @@ async function renderReviewPanel(subject) {
     absent.forEach((item) => {
       const row = mk("div", "review-quiet");
       row.append(mk("span", "review-link", linkText(item)),
-        " · " + t("图谱里还没有这条关联") + " · " + t("你的判断：{verdict}（{when}）", { verdict: verdictWord(item.verdict), when: whenText(item) }));
+        " · " + t("图谱里还没有这条关联") + " · " + t("你的连线确认：{verdict}（{when}）", { verdict: verdictWord(item.verdict), when: whenText(item) }));
       panelBody.appendChild(row);
     });
   }
@@ -4644,12 +4780,12 @@ async function renderReviewPanel(subject) {
 const RECORD_KIND_WORDS = {
   judgements: "对机器连线的确认与否决",
   mappings: "手工连线与备注",
-  attempts: "尝试结论",
+  attempts: "尝试的研究判断",
   attempts_config: "尝试年表配置",
   canvas: "关系图位置",
   variables: "变量定义卡",
-  legacy: "旧版本索引里的判断",
-  notes: "笔记",
+  legacy: "旧版本索引里的连线确认",
+  notes: "备注",
   decisions: "经 PI 批准的决定",
   stata: "Stata 全局变量指向的项目里的文件夹",
   history: "版本历史（保存的材料，不是记录）",
@@ -4666,14 +4802,14 @@ function recordCountText(row) {
   switch (row.code) {
     case "judgements":
       if (typeof f.entries === "number") {
-        return f.entries + " 条记录，其中 " + f.standing + " 条判断生效中" + (f.conflicts ? "，" + f.conflicts + " 条记录冲突" : "");
+        return f.entries + " 条记录，其中 " + f.standing + " 条连线确认生效中" + (f.conflicts ? "，" + f.conflicts + " 条记录冲突" : "");
       }
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "mappings":
       if (f.state === "present") return f.links + " 条手工连线，其中 " + f.with_note + " 条带备注";
       return f.state === "absent" ? "还没有" : "无法读取";
     case "attempts":
-      if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有结论";
+      if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有研究判断";
       return { not_configured: "还没有配置尝试年表", unusable: "年表配置无法使用", table_missing: "找不到年表" }[f.state] || "无法读取";
     case "attempts_config":
       return f.exists ? "已配置" : "没有";
@@ -4687,7 +4823,7 @@ function recordCountText(row) {
     case "legacy":
       return f.waiting + " 个旧索引等待迁移";
     case "notes":
-      if (typeof f.notes === "number") return f.notes + " 条笔记，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
+      if (typeof f.notes === "number") return f.notes + " 条备注，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
       return f.file_state === "absent" ? "还没有" : "无法读取";
     case "decisions":
       if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
@@ -5525,7 +5661,7 @@ function renderVariableCard(host, card) {
   host.appendChild(back);
   const head = mk("div", "var-head");
   head.append(mk("h2", "var-title", card.name), mk("span", "var-id", card.id));
-  head.appendChild(mkButton("来龙去脉与笔记", "var-back", () => RONode.openNode("variable:" + card.id)));
+  head.appendChild(mkButton("来龙去脉与备注", "var-back", () => RONode.openNode("variable:" + card.id)));
   cardChips({ state: card.state, reason: card.reason, abandoned: !!card.abandoned, in_use: card.in_use, draft: card.draft })
     .forEach(([text, cls]) => head.appendChild(mk("span", "var-chip " + cls, text)));
   host.appendChild(head);
@@ -6055,7 +6191,7 @@ function previewLines(p) {
     (p.mapping_links ? "；另有 " + p.mapping_links + " 条手工连线，它们本来就在 mappings.toml 里" : ""));
   if (p.judged) {
     lines.push(p.judged + " 条里有 " + p.produced + " 条的两端能在这个文件夹里扫到");
-    if (p.produced / p.judged < 0.5) lines.push("匹配很低：这些判断可能属于另一个项目。");
+    if (p.produced / p.judged < 0.5) lines.push("匹配很低：这些连线确认可能属于另一个项目。");
     if (p.produced < p.judged && p.outside) {
       lines.push("这个文件夹里有 " + p.outside + " 个脚本读写的是文件夹以外的绝对路径——项目被移动或复制过时，匹配就会这样偏低。");
     }
@@ -6068,8 +6204,8 @@ function migrationNotice(s) {
   const box = notice("warn");
   const waiting = (s.migration && s.migration.waiting) || [];
   const resuming = s.migration && s.migration.migrating_from;
-  noticeHead(box, resuming ? "上次迁移没有完成" : waiting.length ? "旧版本的判断在等待迁移" : "这个项目来自旧版本");
-  box.appendChild(mk("p", null, "迁移后才能记录判断。" + (resuming || waiting.length
+  noticeHead(box, resuming ? "上次迁移没有完成" : waiting.length ? "旧版本的连线确认在等待迁移" : "这个项目来自旧版本");
+  box.appendChild(mk("p", null, "迁移后才能记录连线确认。" + (resuming || waiting.length
     ? "迁移会把旧索引里的确认、否决和关系图位置写进项目自己的 .researchos/，核对数目对上之后才把旧索引移到一旁（不删除）。"
     : "没有找到等待迁移的旧索引；在终端运行 researchos migrate --list 可以查看本机所有旧索引。")));
   const status = mk("div", "notice-status");
@@ -6168,25 +6304,25 @@ async function runMigration(answer, statusEl, buttons) {
 // -- 9.3: a ledger Research OS cannot trust, and the shrink question -----------------------
 
 const RECORD_TROUBLE = {
-  missing: ["判断记录文件不见了", "项目身份文件记着这个项目有判断记录（.researchos/judgements.toml），但文件不在。Research OS 不会新建一个空文件来代替它；请从备份或同步服务里把它找回来。"],
-  dataless: ["判断记录文件还在云端", "系统正在下载 .researchos/judgements.toml，下载完成后会自动恢复。"],
-  unreadable: ["判断记录文件无法读取", ".researchos/judgements.toml 读不出来。"],
-  invalid: ["判断记录文件有一处无法解析", ".researchos/judgements.toml 里有一处读不懂（常见于手工编辑），请修正它。"],
-  empty_but_expected: ["判断记录文件是空的", "这个项目记录过判断，但 .researchos/judgements.toml 现在没有任何条目。"],
-  conflict_copy: ["判断记录文件旁有同步冲突副本", "同步服务在 .researchos/ 里留下了冲突副本。Research OS 不会自行合并：请留下正确的那一份，把另一份移走。"],
-  no_identity: ["项目身份文件无法读取", "没有可读的项目身份，判断无处记录。"],
-  migrating: ["项目正在迁移", "迁移完成之前不能记录判断。"],
+  missing: ["连线确认的记录文件不见了", "项目身份文件记着这个项目有连线确认的记录（.researchos/judgements.toml），但文件不在。Research OS 不会新建一个空文件来代替它；请从备份或同步服务里把它找回来。"],
+  dataless: ["连线确认的记录文件还在云端", "系统正在下载 .researchos/judgements.toml，下载完成后会自动恢复。"],
+  unreadable: ["连线确认的记录文件无法读取", ".researchos/judgements.toml 读不出来。"],
+  invalid: ["连线确认的记录文件有一处无法解析", ".researchos/judgements.toml 里有一处读不懂（常见于手工编辑），请修正它。"],
+  empty_but_expected: ["连线确认的记录文件是空的", "这个项目记录过连线确认，但 .researchos/judgements.toml 现在没有任何条目。"],
+  conflict_copy: ["连线确认的记录文件旁有同步冲突副本", "同步服务在 .researchos/ 里留下了冲突副本。Research OS 不会自行合并：请留下正确的那一份，把另一份移走。"],
+  no_identity: ["项目身份文件无法读取", "没有可读的项目身份，连线确认无处记录。"],
+  migrating: ["项目正在迁移", "迁移完成之前不能记录连线确认。"],
 };
 
 function recordsNotice(rec) {
   if (rec.state === "shrunk") return shrinkNotice(rec);
   const box = notice("bad");
-  const trouble = RECORD_TROUBLE[rec.reason] || [rec.message || "判断记录文件当前无法读取，请先恢复它", ""];
+  const trouble = RECORD_TROUBLE[rec.reason] || [rec.message || "连线确认的记录文件当前无法读取，请先恢复它", ""];
   noticeHead(box, trouble[0]);
   if (trouble[1]) box.appendChild(mk("p", null, trouble[1]));
   if (rec.reason === "invalid" && rec.line) box.appendChild(mk("div", "fact-line", "出错的位置：第 " + rec.line + " 行"));
   if (rec.conflict_copies && rec.conflict_copies.length) box.appendChild(mk("div", "fact-line", "冲突副本：" + rec.conflict_copies.join("、")));
-  box.appendChild(mk("p", null, "修好之前，确认、否决、撤回都不会被记录；图谱保留着它原来知道的判断状态，没有因此改变。"));
+  box.appendChild(mk("p", null, "修好之前，确认、否决、撤回都不会被记录；图谱保留着它原来知道的连线确认，没有因此改变。"));
   if (rec.detail) {
     const d = mk("div", "notice-status");
     renderBlockingError(d, "", rec.detail);
@@ -6199,9 +6335,9 @@ function shrinkNotice(rec) {
   const missing = rec.missing || [];
   const n = missing.length;
   const box = notice("warn");
-  noticeHead(box, "记录文件比图谱少了 " + n + " 条判断");
+  noticeHead(box, "记录文件比图谱少了 " + n + " 条连线确认");
   box.appendChild(mk("p", null,
-    "图谱记得下面这些判断，但 .researchos/judgements.toml 里没有了（可能是从备份恢复、同步服务保留了另一台电脑的文件，或文件被截断）。Research OS 什么都没改，等你决定以哪一份为准。"));
+    "图谱记得下面这些连线确认，但 .researchos/judgements.toml 里没有了（可能是从备份恢复、同步服务保留了另一台电脑的文件，或文件被截断）。Research OS 什么都没改，等你决定以哪一份为准。"));
   const list = mk("ul", "entry-list");
   missing.forEach((m) => {
     const li = mk("li", null, historyEntryText(m));
@@ -6212,8 +6348,8 @@ function shrinkNotice(rec) {
   const ids = missing.map((m) => m.id); // the answer names exactly the entries shown (9.12)
   const status = mk("div", "notice-status");
   const answers = [
-    ["file", "以文件为准", "这是有意从备份恢复时要的：图谱忘掉这 " + n + " 条判断，以文件现在的内容为准。"],
-    ["restore", "把缺少的补回文件", "把这 " + n + " 条判断按原样追加回文件末尾（标为补回），文件里已有的内容不动。"],
+    ["file", "以文件为准", "这是有意从备份恢复时要的：图谱忘掉这 " + n + " 条连线确认，以文件现在的内容为准。"],
+    ["restore", "把缺少的补回文件", "把这 " + n + " 条连线确认按原样追加回文件末尾（标为补回），文件里已有的内容不动。"],
   ];
   const buttons = [];
   answers.forEach(([answer, label, help]) => {
@@ -6228,7 +6364,7 @@ function shrinkNotice(rec) {
 }
 
 async function answerShrink(answer, ids, n, statusEl, buttons) {
-  if (answer === "file" && !window.confirm("以文件为准？\n\n图谱会忘掉这 " + n + " 条判断，以 .researchos/judgements.toml 现在的内容为准。")) return;
+  if (answer === "file" && !window.confirm("以文件为准？\n\n图谱会忘掉这 " + n + " 条连线确认，以 .researchos/judgements.toml 现在的内容为准。")) return;
   state.noticeBusy = true;
   buttons.forEach((b) => { b.disabled = true; });
   setStatus(statusEl, "", "正在处理…");
@@ -6242,8 +6378,8 @@ async function answerShrink(answer, ids, n, statusEl, buttons) {
   }
   state.noticeBusy = false;
   state.sessionNotes.push(answer === "file"
-    ? { tone: "", title: "已以文件为准", lines: ["图谱现在只按 .researchos/judgements.toml 里的判断显示。"] }
-    : { tone: "", title: "已把缺少的 " + n + " 条判断补回文件", lines: ["它们追加在 .researchos/judgements.toml 末尾，标为补回。"] });
+    ? { tone: "", title: "已以文件为准", lines: ["图谱现在只按 .researchos/judgements.toml 里的连线确认显示。"] }
+    : { tone: "", title: "已把缺少的 " + n + " 条连线确认补回文件", lines: ["它们追加在 .researchos/judgements.toml 末尾，标为补回。"] });
   await refreshCurrentView();
   renderNotices(true);
 }
@@ -6278,20 +6414,20 @@ const SITUATION_TITLES = {
 const ANSWER_HELP = {
   fork: "这个文件夹得到新的项目身份，带着现有的全部记录从这里起与原项目分开；原来的文件夹不受影响。",
   claim: "这里才是原项目：项目的索引改为跟随这个文件夹，并按它重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的判断、关系图位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
+  other: "这个文件夹只是收到了别处复制来的 .researchos/：给它新的身份；复制来的连线确认、关系图位置和变量卡移到 .researchos/backups/，不再算作它的记录。",
   readonly: "先只浏览，不认领、不写入任何东西；原位置能访问后再来回答。",
   restore: "用 .researchos/backups/ 里的快照把项目身份文件放回去，项目恢复原来的身份。",
-  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的判断、关系图位置和变量卡全部保留，并据此重新建立索引。",
+  adopt: "给这个文件夹新的项目身份，.researchos/ 里现有的连线确认、关系图位置和变量卡全部保留，并据此重新建立索引。",
 };
 
 const ANSWER_CONFIRM = {
   claim: "这里才是原项目？\n\n项目的索引会按这个文件夹重新建立；另一个文件夹下次打开时会被问同样的问题。",
-  other: "这是另一个项目？\n\n复制来的判断、关系图位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
+  other: "这是另一个项目？\n\n复制来的连线确认、关系图位置和变量卡会被移到 .researchos/backups/（不删除），这个文件夹得到新的身份。",
 };
 
 function resolveNote(answer, res) {
   const lines = [];
-  if (answer === "fork") lines.push("新的项目身份：" + res.project_id + "。从现在起，这里的判断不会出现在原项目里。");
+  if (answer === "fork") lines.push("新的项目身份：" + res.project_id + "。从现在起，这里的连线确认不会出现在原项目里。");
   if (answer === "claim") lines.push("项目的索引已按这个文件夹重新建立。");
   if (answer === "adopt") lines.push("新的项目身份：" + res.project_id + "，原有记录都保留了。");
   if (answer === "restore" && res.restored_from) lines.push("项目身份文件已从备份恢复：" + res.restored_from);
@@ -6996,7 +7132,9 @@ async function answerForAdd(subject, answer, statusEl, buttons) {
 // The stopped page in the screen's language (13.7); the command stays as
 // typed, set in <code> where the sentence names {command}.
 function renderStoppedState() {
-  if (pollTimer !== null) clearInterval(pollTimer);
+  generationLive = false;
+  stopGenerationPoll();
+  if (window.ROWorkspace && typeof ROWorkspace.stop === "function") ROWorkspace.stop(); // 项目首页's run poll too
   closePanel();
   const command = escapeHtml(t("下次要查看时，双击 Research OS.app，或在终端运行 {command}。"))
     .replace("{command}", "<code>researchos serve</code>");
@@ -7086,6 +7224,7 @@ function shellZoom(step) {
   Object.entries(views).forEach(([key, node]) => {
     if (key !== "canvas" && key !== "desk") node.style.zoom = z === 1 ? "" : String(z);
   });
+  RODesk.listZoom(z === 1 ? "" : String(z)); // 研究路线 as a list (18.3) reads like the others
 }
 
 // A failed Finder command reports in the header line, the same spot a
@@ -7175,9 +7314,12 @@ ROWorkspace.onPropose = (paths) => {
 const SHELL_COMMANDS = {
   "workspace": () => activateView("workspace"),
   "create-project": () => ROWorkspace.openCreateProject(),
-  // 视图 ⌘1-8 (12.9): one command per sidebar section.
-  "desk": () => activateView("desk"),
-  "routes": () => activateView("tree"),
+  // 视图 ⌘1-8 (12.9): one command per sidebar section. 研究路线 is one page
+  // (18.3), and its one menu item sends either name: both open it the way it
+  // is kept for the project (a menu built before 18.3 sent "desk" for the map
+  // and "routes" for the list, as two items; the page cannot tell them apart now).
+  "desk": () => showRoutes(),
+  "routes": () => showRoutes(),
   "results": () => activateView("results"),
   "variables": () => activateView("variables"),
   "literature": () => activateView("literature"),
@@ -7202,7 +7344,7 @@ const SHELL_COMMANDS = {
 // source). Understood, never offered: no menu of the current shell names
 // these.
 const SHELL_COMMANDS_BEFORE_U5 = {
-  "tree": () => activateView("tree"),
+  "tree": () => showRoutes("list"), // the decision tree was 研究路线's list
   "lineage": () => activateView("lineage"),
   "canvas": () => activateView("canvas"),
   "new-attempt": () => { if (mayReplacePanel()) openAttemptForm("append"); },
@@ -7229,7 +7371,7 @@ window.RCE = Object.freeze({
       : Object.prototype.hasOwnProperty.call(SHELL_COMMANDS_BEFORE_U5, name) ? SHELL_COMMANDS_BEFORE_U5 : null;
     if (!table) return false;
     // After 停止服务 the page is a static note; a menu click must not throw.
-    if (!document.getElementById("view-tree")) return false;
+    if (!document.getElementById("view-desk")) return false;
     try {
       table[name]();
     } catch (err) {
@@ -7289,7 +7431,8 @@ function postShellLanguage() {
   RODesk.refreshSidebar();
   activateView(storedView() || "workspace");
   syncGeneration();
-  pollTimer = setInterval(pollGeneration, REFRESH_POLL_MS);
+  generationLive = true;
+  startGenerationPoll();
 })();
 </script>
 </body>

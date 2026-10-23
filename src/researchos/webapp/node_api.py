@@ -14,7 +14,7 @@ who I am, notes, what changed, and the trace -- the payloads only.
 - `GET /api/trace?node=…` -- the whole chain of 12.7 with its breaks.
 - `GET /api/node?node=…` -- one object's page (U3): its trace as columns,
   its breaks with their repairs, the links touching it;
-  `GET /api/results[?draft=…]` -- 成果; `GET /api/data-code` -- 数据与代码
+  `GET /api/results[?draft=…]` -- 图表与论断; `GET /api/data-code` -- 数据与代码
   (`researchos.nodepage`).
 - `POST /api/papers {draft, marked}` -- 「设为论文正文」 (12.13,
   `researchos.records.papers`).
@@ -113,7 +113,7 @@ def _note_refused(exc: notes_mod.NoteRefused) -> NodeApiRefused:
             "missing": [notes_mod._public(m) for m in exc.decision.missing],
         }
     code = "record_shrunk" if exc.decision is not None and exc.decision.verdict.value == "shrunk" else exc.code
-    return NodeApiRefused(status, code, str(exc), exc.message_zh or "笔记没有保存", extra)
+    return NodeApiRefused(status, code, str(exc), exc.message_zh or "备注没有保存", extra)
 
 
 def notes_post_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -122,12 +122,12 @@ def notes_post_payload(root: Path, project_id: str | None, body: dict[str, Any],
         if action == "add":
             node, text = body.get("node"), body.get("text")
             if not isinstance(node, str) or not isinstance(text, str):
-                raise NodeApiRefused(400, "missing", "request body must carry string 'node' and 'text'", "请填写笔记")
+                raise NodeApiRefused(400, "missing", "request body must carry string 'node' and 'text'", "请填写备注")
             entry = notes_mod.add_note(root, node, text, via="app", expected_id=project_id, timeout=timeout)
         elif action == "withdraw":
             note_id = body.get("id")
             if not isinstance(note_id, str) or not note_id:
-                raise NodeApiRefused(400, "missing", "request body must carry the note's 'id'", "缺少笔记编号")
+                raise NodeApiRefused(400, "missing", "request body must carry the note's 'id'", "缺少备注编号")
             entry = notes_mod.withdraw_note(root, note_id, via="app", expected_id=project_id, timeout=timeout)
         else:
             raise NodeApiRefused(400, "bad_action", f"'action' must be add or withdraw, got {action!r}", "不支持的操作")
@@ -221,7 +221,7 @@ def trace_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> 
     return result
 
 
-# -- the node page, 成果, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
+# -- the node page, 图表与论断, 数据与代码 (12.6, 12.7, 12.9; V8 U3) ----------------------------
 
 
 def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang: str = "zh") -> dict[str, Any]:
@@ -239,7 +239,7 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang
 
 
 def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
-    """GET /api/results[?draft=…]: 成果, or one draft's claims."""
+    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims."""
     from researchos import nodepage  # noqa: PLC0415
 
     try:
@@ -335,18 +335,18 @@ _NOT_CARRIED = (
      lambda m: f"Attempt #{m.group(1)} ({ {'new': 'added', 'removed': 'removed', 'changed': 'changed'}[m.group(2)] })"
                " is not part of this proposal"),
     (r"^row (\S+): changes to (.+) are not part of a verdict change$",
-     lambda m: f"尝试 #{m.group(1)} 的其他字段修改不属于修改判断，不会发送",
+     lambda m: f"尝试 #{m.group(1)} 的其他字段修改不属于修改研究判断，不会发送",
      lambda m: f"Changes to the other fields of attempt #{m.group(1)} are not part of a research assessment change and are not sent"),
     (r"^changes outside the table's rows are not proposed$", lambda m: "尝试表的行以外的改动不会提议",
      lambda m: "Changes outside the table's rows are not proposed"),
     (r"^variable versions travel in a variable_version proposal$", lambda m: "变量定义的新版本要用「变量定义」提议发送",
      lambda m: "A new version of a variable definition is sent in a “Variable definition” proposal"),
     (r"^the official version's copy that sync put beside yours$", lambda m: "同步时放在旁边的正式版本，不会发送",
-     lambda m: "The published copy that sync put beside yours is not sent"),
-    (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、关联判断和手工连线随同步发送，不需要批准",
-     lambda m: "Notes, link judgments and hand-drawn links travel with sync, with no approval needed"),
+     lambda m: "The official copy that sync put beside yours is not sent"),
+    (r"^notes, link judgments and hand-drawn links travel", lambda m: "备注、连线确认和手工连线随同步发送，不需要批准",
+     lambda m: "Comments, link judgments and hand-drawn links travel with sync, with no approval needed"),
     (r"^canvas arrangements do not travel", lambda m: "关系图上的摆放不随提议发送：每个人保留自己的",
-     lambda m: "Arrangements on the relation map do not travel with a proposal: everyone keeps their own"),
+     lambda m: "Arrangements on the relationship map do not travel with a proposal: everyone keeps their own"),
     (r"^Research OS's own record files are not part of a proposal$", lambda m: "Research OS 自己的记录文件不属于提议",
      lambda m: "Research OS's own record files are not part of a proposal"),
     (r"^not chosen for this proposal$", lambda m: "没有选进这份提议", lambda m: "Not chosen for this proposal"),
@@ -393,10 +393,15 @@ def _worded(out: dict[str, Any], root: Path, lang: str = "zh") -> dict[str, Any]
 
 
 def proposals_payload(root: Path) -> dict[str, Any]:
-    """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议."""
+    """GET /api/proposals: the PI's inbox (收件箱) or a member's 我的提议, and `team`: whether a team
+    file lists anyone."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
-    return _proposal_call(lambda: proposals_mod.listing(root))
+    out = _proposal_call(lambda: proposals_mod.listing(root))
+    # 18.3: the role is "single" for a PI alone in the team file (12.1), but the page shows 提议 and 成员
+    # once the file exists, and leaves them out only for a project of one person.
+    out["team"] = bool(people.read_team(root).members)
+    return out
 
 
 def proposal_payload(root: Path, proposal_id: str, lang: str = "zh", member: str | None = None) -> dict[str, Any]:
@@ -771,7 +776,7 @@ def _proposal_sentence(p: Any, lang: str) -> str:
     return settings.say("{g} 写的是这台电脑上的项目路径 {value}，所以在这里以它开头的路径都能找到；成员的工作副本在别的"
                         "位置，需要知道它指项目里的哪个文件夹。按这里的位置，它指{where}（以它开头的 {n} 条路径里，"
                         "{k} 条{under}存在）",
-                        "{g} holds this computer’s project path, {value}, so the paths that start with it are found "
+                        "{g} holds this Mac’s project path, {value}, so the paths that start with it are found "
                         "here. Members’ working copies sit elsewhere and need to know which project folder it stands "
                         "for: from here, it is {where} (of the {n} {path_s} that start with it, {k} {exist} {under})",
                         lang, **fields)
@@ -804,7 +809,7 @@ def stata_payload(root: Path, lang: str = "zh") -> dict[str, Any]:
         words = stata_record.message_of(decision) or stata_record.MESSAGES["missing"]
         record = {"state": "untrusted", "reason": decision.reason, "detail": decision.detail or loaded.error or "",
                   "message": settings.say(*words, lang)}
-    scans = dataflow._stata_scans(root, inventory["do"], inventory["ado"])
+    scans = dataflow._stata_scans(root, inventory["do"], inventory["ado"], remember=True)  # 18.4 item 7
     role = stata_record.role(root)
     answers = stata_record.answers_from(loaded)
     heads = stata_folders.head_globals(scans, team=role != "single")

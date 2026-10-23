@@ -71,11 +71,13 @@ DIRTY_ENV = {
     "OPENCODE_PERMISSION": "{\"bash\": \"allow\"}",
     "RESEARCHOS_AGENT_RUN": "r-stale",
     "CLAUDE_CODE_USE_BEDROCK": "1",  # provider selection, not session identity: kept
+    "RESEARCHOS_HOME": "/real/home",  # where Research OS keeps its files: not the agent's to know (18.1 item 2)
+    names.LEGACY_HOME_ENV_VAR: "/real/legacy",
 }
 
 
 def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
-    env = runners.child_env(DIRTY_ENV, run_id="r-20261021T101112Z-abc123", home="/h", program="/opt/x/bin/claude")
+    env = runners.child_env(DIRTY_ENV, run_id="r-20261021T101112Z-abc123", program="/opt/x/bin/claude")
     for gone in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
                  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_REMOTE", "CLAUDE_CODE_MESSAGING_SOCKET",
                  "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_CONTAINER_ID", "CLAUDE_CODE_WORKER_EPOCH",
@@ -84,7 +86,7 @@ def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
         assert gone not in env, gone
     assert env["ANTHROPIC_API_KEY"] == "sk-keep" and env["HTTPS_PROXY"] == "http://proxy:3128"
     assert env["HOME"] == "/home/me" and env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert env["RESEARCHOS_HOME"] == "/h"
+    assert "RESEARCHOS_HOME" not in env and names.LEGACY_HOME_ENV_VAR not in env  # only the MCP server's entry names the home
     assert env["RESEARCHOS_AGENT_RUN"] == "r-20261021T101112Z-abc123"  # replaces the inherited one
     assert env["PYTHONUNBUFFERED"] == "1"
     path = env["PATH"].split(os.pathsep)
@@ -95,24 +97,24 @@ def test_child_env_scrubs_session_identity_and_widens_path(profiles_mod):
 
 
 def test_child_env_program_dir_not_duplicated_and_relative_program(profiles_mod):
-    env = runners.child_env({"PATH": "/a:/usr/local/bin:/b"}, run_id="r", home="/h", program="/usr/local/bin/claude")
+    env = runners.child_env({"PATH": "/a:/usr/local/bin:/b"}, run_id="r", program="/usr/local/bin/claude")
     assert env["PATH"].split(os.pathsep)[:3] == ["/usr/local/bin", "/a", "/b"]
     assert env["PATH"].split(os.pathsep).count("/usr/local/bin") == 1
-    env = runners.child_env({"PATH": "/a"}, run_id="r", home="/h", program="claude")  # no directory part
+    env = runners.child_env({"PATH": "/a"}, run_id="r", program="claude")  # no directory part
     assert env["PATH"].split(os.pathsep)[0] == "/a"
 
 
 def test_child_env_uses_profiles_search_path(profiles_mod, monkeypatch):
     seen = []
     monkeypatch.setattr(profiles_mod, "search_path", lambda base=None: seen.append(base) or "/x:/y")
-    env = runners.child_env({"PATH": "/base"}, run_id="r", home="/h", program="/p/claude")
+    env = runners.child_env({"PATH": "/base"}, run_id="r", program="/p/claude")
     assert seen == ["/base"] and env["PATH"] == "/p:/x:/y"
 
 
 def test_child_env_with_the_real_search_path():
     """No stand-in: package A's own `search_path` widens PATH with the install places."""
     profiles = pytest.importorskip("researchos.agents.profiles")
-    env = runners.child_env({"PATH": "/usr/bin"}, run_id="r", home="/h", program="/opt/x/claude")
+    env = runners.child_env({"PATH": "/usr/bin"}, run_id="r", program="/opt/x/claude")
     parts = env["PATH"].split(os.pathsep)
     assert parts[:2] == ["/opt/x", "/usr/bin"] and "/opt/homebrew/bin" in parts and "/usr/local/bin" in parts
     assert env["PATH"].split(os.pathsep)[2:] == [p for p in profiles.search_path("/usr/bin").split(os.pathsep)
@@ -122,11 +124,108 @@ def test_child_env_with_the_real_search_path():
 def test_scrub_regex_names():
     scrubbed = ["CLAUDECODE", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
                 "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_USE_CCR_V2_REMOTE", "CLAUDE_SESSION_X", "CCR_A",
-                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG"]
+                "RCE_ENGINE_PORT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "RESEARCHOS_HOME", names.LEGACY_HOME_ENV_VAR]
     kept = ["CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_BASE_URL", "OPENCODE_DISABLE_AUTOUPDATE", "PATH", "XCLAUDECODE",
-            "MY_CCR_X", "OPENCODE_CONFIG_DIR"]
+            "MY_CCR_X", "OPENCODE_CONFIG_DIR", "RESEARCHOS_AGENT_RUN", "MY_RESEARCHOS_HOME", "RESEARCHOS_HOME_X"]
     assert all(runners.SCRUB_ENV_RE.match(n) for n in scrubbed)
     assert not any(runners.SCRUB_ENV_RE.match(n) for n in kept)
+
+
+# -- credentials are not handed over (18.1 item 2) ---------------------------------
+
+CREDENTIAL_ENV = {
+    "PATH": "/usr/bin", "HOME": "/home/me", "LANG": "en_US.UTF-8",
+    "GITHUB_TOKEN": "g", "GH_ENTERPRISE_TOKEN": "g", "GITHUB_PAT": "g", "NPM_TOKEN": "n", "FOO_SECRET": "s",
+    "DB_PASSWORD": "p", "OLD_PASSWD": "p", "MY_CREDENTIALS": "c", "PRIVATE_KEY_PATH": "k", "STRIPE_API_KEY": "k",
+    "S3_ACCESS_KEY_ID": "k", "OAUTH_THING": "o", "TERM_SESSION_ID": "t", "SOME_COOKIE": "c",
+    "SSH_AUTH_SOCK": "/tmp/agent", "GPG_AGENT_INFO": "x", "RCE_LLM_API_KEY": "k", "github_token": "lower",
+    "AWS_ACCESS_KEY_ID": "a", "AWS_PROFILE": "prod", "AWS_REGION": "eu", "GOOGLE_APPLICATION_CREDENTIALS": "/g.json",
+    "GOOGLE_CLOUD_PROJECT": "proj",
+    "ANTHROPIC_API_KEY": "sk-1", "ANTHROPIC_AUTH_TOKEN": "sk-2", "CLAUDE_CODE_OAUTH_TOKEN": "oat",
+    "OPENAI_API_KEY": "o", "OPENROUTER_API_KEY": "r", "GEMINI_API_KEY": "g", "GROQ_API_KEY": "q",
+    "MISTRAL_API_KEY": "m", "DEEPSEEK_API_KEY": "d", "ZAI_API_KEY": "z",
+}
+
+
+def test_credential_looking_variables_are_not_given_to_claude_code(profiles_mod):
+    env = runners.child_env(CREDENTIAL_ENV, run_id="r", program="/p/claude", runner="claude-code")
+    removed = runners.credential_names(CREDENTIAL_ENV, "claude-code")
+    for name in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_PAT", "NPM_TOKEN", "FOO_SECRET", "DB_PASSWORD",
+                 "OLD_PASSWD", "MY_CREDENTIALS", "PRIVATE_KEY_PATH", "STRIPE_API_KEY", "S3_ACCESS_KEY_ID",
+                 "OAUTH_THING", "TERM_SESSION_ID", "SOME_COOKIE", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "RCE_LLM_API_KEY",
+                 "github_token", "AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "GOOGLE_APPLICATION_CREDENTIALS",
+                 "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "ZAI_API_KEY"):
+        assert name not in env and name in removed, name
+    # what Claude Code needs to reach its model, and what is no credential at all
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "PATH", "HOME", "LANG",
+                 "GOOGLE_CLOUD_PROJECT"):
+        assert name in env and name not in removed, name
+    assert removed == sorted(removed)
+    assert not set(CREDENTIAL_ENV.values()) & set(removed)  # names only, never a value
+
+
+def test_bedrock_and_vertex_keep_their_cloud_variables_only_when_selected(profiles_mod):
+    bedrock = dict(CREDENTIAL_ENV, CLAUDE_CODE_USE_BEDROCK="1")
+    env = runners.child_env(bedrock, run_id="r", program="/p/claude", runner="claude-code")
+    assert env["AWS_ACCESS_KEY_ID"] == "a" and env["AWS_PROFILE"] == "prod"
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in env and "GITHUB_TOKEN" not in env
+    vertex = dict(CREDENTIAL_ENV, CLAUDE_CODE_USE_VERTEX="1")
+    env = runners.child_env(vertex, run_id="r", program="/p/claude", runner="claude-code")
+    assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/g.json" and "AWS_ACCESS_KEY_ID" not in env
+    # OpenCode: its providers' keys, and GOOGLE_*, whatever else is set
+    env = runners.child_env(CREDENTIAL_ENV, run_id="r", program="/p/opencode", runner="opencode")
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+                 "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT"):
+        assert name in env, name
+    for name in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_ACCESS_KEY_ID", "GITHUB_TOKEN", "ZAI_API_KEY"):
+        assert name not in env, name
+
+
+def test_launches_report_the_removed_names_and_never_the_values(tmp_path, profiles_mod):
+    launch, _ = _claude(tmp_path, profiles_mod, base_env=CREDENTIAL_ENV)
+    assert launch.removed_env == runners.credential_names(CREDENTIAL_ENV, "claude-code") and "GITHUB_TOKEN" in launch.removed_env
+    assert not any(v in launch.removed_env for v in CREDENTIAL_ENV.values() if len(v) > 2)
+    oc, _ = _opencode(tmp_path, profiles_mod, base_env=CREDENTIAL_ENV)
+    assert oc.removed_env == runners.credential_names(CREDENTIAL_ENV, "opencode") and "OPENAI_API_KEY" not in oc.removed_env
+    assert "ANTHROPIC_AUTH_TOKEN" in oc.removed_env
+    # the MCP server's entry is the one place that is given the home
+    mcp = json.loads(launch.files["mcp.json"])["mcpServers"]["researchos"]["env"]
+    assert mcp["RESEARCHOS_HOME"].endswith("home")
+
+
+def test_claude_does_not_load_the_projects_own_settings(tmp_path, profiles_mod):
+    launch, _ = _claude(tmp_path, profiles_mod)
+    argv = launch.argv
+    assert argv[argv.index("--setting-sources") + 1] == "user"  # a run's .claude/settings.json is not the next run's
+    assert argv.index("--setting-sources") < argv.index("--allowedTools")  # the variadic lists stay last
+    assert argv[argv.index("--settings") + 1].endswith("claude-settings.json")
+
+
+def test_claude_gets_the_projects_claude_md_back_without_its_settings(tmp_path, profiles_mod):
+    """18.1 item 2: `--setting-sources user` also drops the project's CLAUDE.md. The project folder is given again
+    with `--add-dir`, and the variable makes Claude Code read an added folder's CLAUDE.md; the project's own
+    `.claude/settings*.json` is still not loaded (`--setting-sources user` is unchanged)."""
+    launch, a = _claude(tmp_path, profiles_mod)
+    argv = launch.argv
+    assert argv.count("--add-dir") == 1 and argv[argv.index("--add-dir") + 1] == str(a["root"])
+    assert argv[argv.index("--add-dir") + 1] == launch.cwd  # the project root: the folder the program starts in
+    assert argv[argv.index("--add-dir") + 2].startswith("--")  # --add-dir takes any number of values: a flag ends it
+    assert argv.index("--add-dir") < argv.index("--allowedTools")  # the variadic tool lists stay last
+    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert launch.env["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] == "1"
+    assert runners.ADD_DIR_CLAUDE_MD_ENV == "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"
+    # the engine's own environment does not decide it, and the scrub does not remove it
+    for inherited in ("0", "", "1"):
+        base = dict(DIRTY_ENV, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=inherited)
+        assert _claude(tmp_path, profiles_mod, base_env=base)[0].env[runners.ADD_DIR_CLAUDE_MD_ENV] == "1"
+    kept = runners.child_env(dict(DIRTY_ENV, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD="1"), run_id="r",
+                             program="/p/claude", runner="claude-code")
+    assert kept[runners.ADD_DIR_CLAUDE_MD_ENV] == "1"
+    assert not runners.SCRUB_ENV_RE.match(runners.ADD_DIR_CLAUDE_MD_ENV)
+    assert not runners.credential_like(runners.ADD_DIR_CLAUDE_MD_ENV)
+    assert runners.ADD_DIR_CLAUDE_MD_ENV not in launch.removed_env
+    oc, _ = _opencode(tmp_path, profiles_mod)  # only Claude Code is given either
+    assert runners.ADD_DIR_CLAUDE_MD_ENV not in oc.env and "--add-dir" not in oc.argv
 
 
 # -- Claude Code launch ---------------------------------------------------------
@@ -203,15 +302,25 @@ def test_claude_denials_cover_git_and_researchos():
                                         "researchos_find", "researchos_trace", "researchos_status"}
 
 
+def test_both_programs_are_denied_the_verbs_the_hook_refuses():
+    """18.1 item 6: one list. Claude Code's deny list, OpenCode's patterns and the hook (`guard.GIT_MUTATING`) cannot
+    drift: OpenCode has no hook, so its patterns are all that keep it from `git pull` or `git update-ref`."""
+    assert set(runners.GIT_DENIED) == set(guard.GIT_MUTATING) and len(runners.GIT_DENIED) == len(guard.GIT_MUTATING)
+    for verb in ("pull", "am", "update-ref", "filter-branch", "replace"):  # once missing from the programs' lists
+        assert verb in runners.GIT_DENIED and f"Bash(git {verb}:*)" in runners.CLAUDE_DISALLOWED
+    assert set(runners.CLAUDE_DISALLOWED) == {f"Bash(git {c}:*)" for c in guard.GIT_MUTATING} | {
+        "Bash(researchos:*)", "Bash(rce:*)"}
+
+
 def test_claude_env_and_files(tmp_path, profiles_mod):
     launch, a = _claude(tmp_path, profiles_mod)
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in launch.env and launch.env["RESEARCHOS_AGENT_RUN"] == RUN_ID
-    assert launch.env["RESEARCHOS_HOME"] == a["home"] and launch.env["PATH"].startswith("/opt/bin" + os.pathsep)
+    assert "RESEARCHOS_HOME" not in launch.env and launch.env["PATH"].startswith("/opt/bin" + os.pathsep)
     assert set(launch.files) == {"claude-settings.json", "mcp.json"}
 
     settings = json.loads(launch.files["claude-settings.json"])
     (group,) = settings["hooks"]["PreToolUse"]
-    assert group["matcher"] == "Edit|Write|MultiEdit|NotebookEdit|Bash"
+    assert group["matcher"] == "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Glob|Grep|LS"  # 18.1 item 2
     (hook,) = group["hooks"]
     assert hook["type"] == "command"
     assert shlex.split(hook["command"]) == ["sh", "-c", runners.HOOK_SHELL, sys.executable, str(a["run_dir"])]
@@ -257,7 +366,7 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
     env = launch.env
     assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert "OPENCODE_CONFIG" not in env and "OPENCODE_PERMISSION" not in env
-    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and env["RESEARCHOS_HOME"] == a["home"]
+    assert env["RESEARCHOS_AGENT_RUN"] == RUN_ID and "RESEARCHOS_HOME" not in env and names.LEGACY_HOME_ENV_VAR not in env
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in env
 
     config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
@@ -269,12 +378,11 @@ def test_opencode_argv_env_and_config(tmp_path, profiles_mod):
     assert perm["edit"] == "allow" and perm["webfetch"] == "allow" and perm["external_directory"] == "deny"
     bash = perm["bash"]
     assert list(bash)[0] == "*" and bash["*"] == "allow"  # the later rule wins: the catch-all is first
-    for command in runners.GIT_DENIED:
-        assert bash[f"git {command}*"] == "deny"
+    for command in runners.GIT_DENIED:  # 18.1 item 6: `git` anywhere in the command, the verb a word of its own
+        assert bash[f"*git {command}*"] == bash[f"*git * {command}"] == bash[f"*git * {command} *"] == "deny"
+        assert all(bash[pattern] == "deny" for pattern in runners.opencode_git_patterns(command))
     assert bash["researchos*"] == bash["rce *"] == bash["rce"] == "deny"
     assert "ask" not in json.dumps(config)  # an unattended run rejects what would ask and stops
-    for command in runners.GIT_DENIED:  # git's own options may come first
-        assert bash[f"git * {command}"] == bash[f"git * {command} *"] == "deny"
     assert perm["doom_loop"] == "deny"
     assert perm["read"] == {"*": "allow", "*.env": "deny", "*.env.*": "deny"}
 
@@ -446,6 +554,42 @@ def test_claude_stream_error_results():
     assert st.session_id == "6a1a94a9"
     assert runners.outcome("claude-code", 1, st) == ("failed", {
         "code": "error_during_execution", "detail": "No conversation found with session ID: 6a1a94a9"})
+
+
+def test_claude_end_with_no_words_has_no_text_never_the_subtype():
+    """18.1 item 6: `success` and `error_max_turns` are codes, not sentences. A run that stops after a tool call with no
+    closing sentence ends with no text; the page words a failed one by the code the manager attaches."""
+    ok = runners.ClaudeStream()
+    steps = _feed(ok, [CLAUDE_INIT, CLAUDE_MCP_CALL,
+                       '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"%s"}' % SID])
+    assert steps[-1] == {"kind": "end", "text": "", "tool": None}
+    assert runners.outcome("claude-code", 0, ok) == ("ok", None)
+
+    for line in ('{"type":"result","subtype":"success","is_error":false,"session_id":"%s"}' % SID,
+                 '{"type":"result","subtype":"success","is_error":false,"result":null,"errors":[],"session_id":"%s"}' % SID):
+        assert _feed(runners.ClaudeStream(), [line])[-1] == {"kind": "end", "text": "", "tool": None}
+
+    failed = runners.ClaudeStream()
+    steps = _feed(failed, ['{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"%s"}' % SID])
+    assert steps[-1] == {"kind": "end", "text": "", "tool": None}  # the manager gives it the code `error_max_turns`
+    assert runners.outcome("claude-code", 1, failed)[1]["code"] == "error_max_turns"
+
+
+def test_claude_failure_with_no_text_has_no_detail_not_its_code():
+    """18.1 item 6: `error.detail` is the program's own words, and when it said none it is empty; the code is the
+    error's own field and the page words it. The subtype is never put in the detail's place."""
+    for line, code in (('{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"%s"}' % SID,
+                        "error_max_turns"),
+                       ('{"type":"result","subtype":"success","is_error":true,"session_id":"%s"}' % SID, "error"),
+                       ('{"type":"result","subtype":"error_during_execution","is_error":true,"result":"  ",'
+                        '"errors":[],"session_id":"%s"}' % SID, "error_during_execution")):
+        stream = runners.ClaudeStream()
+        _feed(stream, [CLAUDE_INIT, line])
+        assert runners.outcome("claude-code", 1, stream) == ("failed", {"code": code, "detail": ""})
+    stream = runners.ClaudeStream()  # with words, the words stay
+    _feed(stream, [CLAUDE_INIT, '{"type":"result","subtype":"error_max_turns","is_error":true,'
+                                '"result":"Stopped after 3 turns","session_id":"%s"}' % SID])
+    assert runners.outcome("claude-code", 1, stream)[1] == {"code": "error_max_turns", "detail": "Stopped after 3 turns"}
 
 
 def test_claude_stream_tolerates_garbage():
@@ -655,12 +799,37 @@ def test_rules_language_of_the_report():
 
 def test_rules_commands_and_roles_in_plain_words():
     en = brief.rules(lang="en", runner="opencode", prot=PROT)
-    for word in ("verdict", "propose", "approve", "publish", "push", "commit", "stash", "tag", "existed before",
-                 "write new files", "tasks.json", "errand", "Never invent"):
+    for word in ("research assessment", "link judgment", "propose", "approve", "publish", "push", "commit", "stash", "tag",
+                 "existed before", "write new files", "tasks.json", "errand", "Never invent"):
         assert word.lower() in en.lower(), word
     zh = brief.rules(lang="zh", runner="opencode", prot=PROT)
-    for word in ("判决", "提议", "发布", "推送", "commit", "stash", "新文件", "tasks.json", "编造"):
+    for word in ("研究判断", "连线确认", "提议", "发布", "推送", "commit", "stash", "新文件", "tasks.json", "编造"):
         assert word in zh, word
+
+
+def _rule_4_verbs(text: str, lang: str) -> list[str]:
+    rule = next(line for line in text.splitlines() if line.startswith("4. "))
+    if lang == "en":
+        return rule.split("commands: ", 1)[1].split(". Deleting", 1)[0].split(", ")
+    return rule.split("一概不用：", 1)[1].split("；", 1)[0].split("、")
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+@pytest.mark.parametrize("runner", ["claude-code", "opencode"])
+def test_rule_4_names_every_git_command_the_hook_refuses(lang, runner, monkeypatch):
+    """18.1 item 6: one list. The words to the agent are made from `guard.GIT_MUTATING`, the list the hook, Claude
+    Code's denials and OpenCode's patterns are made from, so they name every verb that is refused and cannot drift."""
+    text = brief.rules(lang=lang, runner=runner, prot=PROT)
+    assert _rule_4_verbs(text, lang) == sorted(guard.GIT_MUTATING)
+    for verb in ("pull", "am", "update-ref", "filter-branch", "replace", "cherry-pick", "switch", "restore"):
+        assert verb in _rule_4_verbs(text, lang)  # once missing from the words
+    for read_only in ("status", "diff", "log"):  # reading stays allowed, and is said so
+        assert read_only not in guard.GIT_MUTATING and read_only in text
+    assert "分支" in text if lang == "zh" else "renaming a branch" in text  # deleting or renaming a branch, refused too
+    _clean(text)
+    # not a second copy: a verb added to the hook's list is in the words with no other edit
+    monkeypatch.setattr(guard, "GIT_MUTATING", guard.GIT_MUTATING | {"zzz-new-verb"})
+    assert "zzz-new-verb" in _rule_4_verbs(brief.rules(lang=lang, runner=runner, prot=PROT), lang)
 
 
 def test_rules_protected_list_is_capped():
@@ -953,6 +1122,71 @@ def test_opencode_denies_git_with_options_in_front(tmp_path):
         assert decide(command) == "allow", command
 
 
+def _opencode_decide(tmp_path):
+    """`decide(command)` as OpenCode reads `permission.bash`: the last matching pattern wins, `*` matches any text
+    (`fnmatch` is the stand-in; the patterns hold no other special character)."""
+    import fnmatch
+
+    bash = runners.opencode_config(tmp_path / "proj", "r-" + "0" * 32, "/h")["permission"]["bash"]
+
+    def decide(command):
+        verdict = None
+        for pattern, value in bash.items():
+            if fnmatch.fnmatchcase(command, pattern):
+                verdict = value
+        return verdict
+
+    return decide, bash
+
+
+def test_opencode_denies_a_command_with_git_and_a_verb_as_separate_words(tmp_path):
+    """18.1 item 6: not only a command that starts with `git`."""
+    decide, _bash = _opencode_decide(tmp_path)
+    for command in ("/usr/bin/git push", "/opt/homebrew/bin/git commit -m x", "env git push", "env GIT_DIR=.git git push origin",
+                    "cd x && git commit", "cd x && git commit -am 'msg'", "cd x; git tag v1", "(cd x && git stash)",
+                    "git -C . push", "git -C . push origin main", "/usr/bin/git -C . push", "env git -c a=b commit -m x",
+                    "cd x && git -C . reset --hard", "sudo git clean -fd", "xargs git rebase", "echo a | git merge -",
+                    "bash -c 'git push'", "bash -c 'git -C . push'", 'sh -c "cd x && git -C . commit"',
+                    "git -C . push; echo done", "git -C . push&& echo done", "git -C . push\necho done",
+                    "echo `git -C . stash`", "cd x\ngit checkout main", "git  push", "git -C . cherry-pick abc",
+                    "/usr/bin/git switch main", "git revert HEAD", "git restore .", "cd p && git --no-pager tag v2",
+                    # the verbs the hook refuses too (they were missing from OpenCode's patterns)
+                    "git pull", "git -C . pull --rebase", "git update-ref -d refs/heads/x", "git am x.patch",
+                    "git filter-branch --all", "git replace a b", "cd x && git -C . pull", "env git am x.patch",
+                    # a redirect written with no space, and a tab after the verb: OpenCode matches the whole statement
+                    "git -C . push>/dev/null", "git -C . commit>x", "git -C . commit>x -m y", "git -C . push</dev/null",
+                    "git --no-pager -C . reset>/dev/null", "git -C . push\tfoo", "git push>/dev/null"):
+        assert decide(command) == "deny", command
+    for command in runners.GIT_DENIED:
+        assert decide(f"/usr/local/bin/git {command}") == decide(f"env git -C . {command}") == "deny", command
+        assert decide(f"git -C . {command}>/dev/null") == decide(f"git -C . {command}\targ") == "deny", command
+
+
+def test_opencode_still_allows_what_has_no_git_verb(tmp_path):
+    decide, _bash = _opencode_decide(tmp_path)
+    for command in ("git status", "git -C /p status", "git diff --stat", "git log -1", "git add clean_data.py",
+                    "git diff merge_panels.py", "git show HEAD:tags.csv", "git log --oneline -5", "git describe --tags",
+                    "git -C . diff restore.py", "git blame commit_log.R", "git remote -v", "git ls-files",
+                    "ls", "python x.py", "python make_tag.py", "echo pushing the limits", "grep -rn merge analysis/",
+                    "cat .gitignore", "pip install gitpython", "Rscript clean.R", "make clean",
+                    "git diff replace.py", "git log --oneline > pulled.txt", "git add amend_notes.md",
+                    "git diff >restore.py", "git status>status.txt", "git ls-files | grep tag_"):
+        assert decide(command) == "allow", command
+
+
+def test_opencode_git_patterns_use_only_the_star_wildcard(tmp_path):
+    """Nothing but `*` is relied on in a pattern: no `?`, `[`, `|`, `)` or `.` that a regular expression or a glob
+    could read as more than itself."""
+    _decide, bash = _opencode_decide(tmp_path)
+    allowed = set("abcdefghijklmnopqrstuvwxyz-* ;&<>\t`'\"\n")  # `<` and `>` are no special character of a regular expression
+    for command in runners.GIT_DENIED:
+        patterns = runners.opencode_git_patterns(command)
+        assert len(patterns) == len(set(patterns)) and all(bash[p] == "deny" for p in patterns)
+        for pattern in patterns:
+            assert pattern.startswith("*git ") and set(pattern) <= allowed, repr(pattern)
+    assert list(bash)[0] == "*" and bash["*"] == "allow"  # the later rule wins: the catch-all stays first
+
+
 # -- the brief says what is true of each runner (review finding 35) -----------------------------------------------
 
 
@@ -974,3 +1208,72 @@ def test_rules_tell_the_truth_about_enforcement_per_runner(lang):
     for text in (claude, opencode):
         _clean(text)
         assert "data/raw.csv" in text and brief.tool_name("claude-code" if text is claude else "opencode", "ask") in text
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_rules_name_every_data_suffix_the_check_protects(lang):
+    """The rule the agent is told is the rule the hook and the after-run check hold (18.1 item 6): three copies
+    of the list (snapshot, and this prose in two languages) must not drift apart."""
+    text = brief.rules(lang=lang, runner="claude-code", prot=PROT)
+    rule = next(line for line in text.splitlines() if line.startswith("3. "))
+    for suffix in snapshot.DATA_SUFFIXES:
+        assert re.search(rf"(?<![\w.]){re.escape(suffix)}(?![\w])", rule), suffix
+    listed = set(re.findall(r"(?<![\w.])\.[a-z0-9]+(?![\w])", rule))
+    assert listed == set(snapshot.DATA_SUFFIXES)  # nothing named that is not protected
+    assert "package.json" in rule and "package-lock.json" in rule
+
+
+# -- 18.1 item 6: the steps of the log carry the code of a refusal or an error -------------------------------------
+
+
+def _hook_blocked(reason_text: str) -> str:
+    """A Claude Code `tool_result` as the stream carries a hook's refusal: its wrapper, then what the hook said."""
+    content = "PreToolUse:Write hook error: [python3 -m researchos.agents.hook /runs/r1]: " + reason_text
+    return json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "content": content, "is_error": True, "tool_use_id": "toolu_01"}]}, "session_id": SID})
+
+
+def test_claude_stream_reads_the_code_the_hook_ended_its_refusal_with():
+    st = runners.ClaudeStream()
+    (step,) = _feed(st, [_hook_blocked("Research OS: that file is protected; write a new file instead. [refusal: protected_file]\n")])
+    assert step == {"kind": "refused", "text": "Research OS: that file is protected; write a new file instead.",
+                    "tool": "Write", "code": "protected_file"}
+    # a log written before codes existed, and a code nobody declared: no code, and the words as they were
+    (old,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: that file is protected.\n")])
+    assert "code" not in old and old["text"] == "Research OS: that file is protected."
+    (odd,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: odd. [refusal: made_up]\n")])
+    assert "code" not in odd and odd["text"].endswith("[refusal: made_up]")
+    # the code is read before the text is cut to a step's length
+    (long,) = _feed(runners.ClaudeStream(), [_hook_blocked("Research OS: " + "word " * 300 + "[refusal: git_state]\n")])
+    assert long["code"] == "git_state" and len(long["text"]) <= runners.STEP_TEXT_LIMIT and "[refusal" not in long["text"]
+
+
+def test_the_codes_the_streams_attach_to_other_refusals_and_errors():
+    (denied,) = _feed(runners.ClaudeStream(), [CLAUDE_DENIED])
+    assert denied["kind"] == "refused" and denied["code"] == "permission_rule" and "git push" in denied["text"]
+    failed_init = CLAUDE_INIT.replace('"status":"connected"', '"status":"failed"')
+    steps = _feed(runners.ClaudeStream(), [failed_init])
+    assert steps[1]["kind"] == "error" and steps[1]["code"] == "mcp_failed"
+    steps = _feed(runners.OpenCodeStream(), [OC_RULE_DENIED, OC_REJECTED, OC_INVALID, OC_TOOL_FAILED, OC_API_ERROR])
+    assert [(s["kind"], s.get("code")) for s in steps] == [
+        ("refused", "permission_rule"), ("refused", "permission_rule"), ("refused", "tool_unavailable"),
+        ("error", None), ("error", None)]  # the program's own errors have no code: the page says it generally
+    assert all("code" not in s for s in _feed(runners.ClaudeStream(), [CLAUDE_INIT, CLAUDE_WRITE, CLAUDE_TEXT, CLAUDE_TOOL_ERROR]))
+
+
+def test_what_the_real_hook_says_is_read_back_as_the_code_of_the_step(shadowed, tmp_path):
+    """From the hook's standard error, through the wrapper Claude Code puts around it, to the step of the log. The
+    hook runs as this source tree has it (`-m`, no `-I`: an isolated interpreter would import whatever copy of
+    Research OS is installed), from a folder that shadows nothing."""
+    command = shlex.join([sys.executable, "-m", "researchos.agents.hook", str(shadowed.run_dir)])
+    for tool_input, code in (({"file_path": str(shadowed.root / "data" / "raw.csv")}, "protected_file"),
+                             ({"file_path": str(shadowed.root.parent / "elsewhere.txt")}, "outside_project"),
+                             ({"file_path": str(shadowed.root / ".researchos" / "x")}, "records_folder")):
+        done = _run_hook_shell(command, tmp_path, {"tool_name": "Write", "tool_input": tool_input, "cwd": str(shadowed.root)})
+        assert done.returncode == 2
+        (step,) = _feed(runners.ClaudeStream(), [_hook_blocked(done.stderr.decode("utf-8"))])
+        assert step["kind"] == "refused" and step["code"] == code and step["text"].startswith("Research OS: ")
+        assert "[refusal" not in step["text"]
+    done = _run_hook_shell(command, tmp_path, {"tool_name": "Bash", "tool_input": {"command": "git push"}, "cwd": str(shadowed.root)})
+    (step,) = _feed(runners.ClaudeStream(), [_hook_blocked(done.stderr.decode("utf-8"))])
+    assert step["code"] == "git_state"

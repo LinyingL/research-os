@@ -28,6 +28,10 @@ sentence Research OS writes, these carry no emoji and no arrow characters
 (12.11); the person's own words (the task, the overview, titles) are passed
 through as they are.
 
+Rule 4 names the git commands from the hook's own list (`guard.GIT_MUTATING`, the
+list Claude Code's denials and OpenCode's patterns are made from too, 18.1 item 6),
+so that the words and the enforcement cannot drift apart.
+
 Pure: nothing here reads a file or the environment.
 """
 
@@ -35,6 +39,8 @@ from __future__ import annotations
 
 import re
 from typing import Iterable, Mapping
+
+from researchos.agents import guard
 
 OVERVIEW_LIMIT = 8000
 DOCUMENT_LIST_LIMIT = 50
@@ -103,6 +109,13 @@ def _attempt_table(prot: Mapping[str, object]) -> str | None:
     return None
 
 
+def _git_verbs(separator: str) -> str:
+    """The git commands rule 4 forbids, every one the hook refuses (`guard.GIT_MUTATING`), sorted so that the text
+    is the same on every start. A command added to that list is in the rules the agent is sent with no second edit
+    here."""
+    return separator.join(sorted(guard.GIT_MUTATING))
+
+
 def _code_list(paths: Iterable[str]) -> str:
     return ", ".join(f"`{p}`" for p in paths)
 
@@ -143,14 +156,16 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
              "commands the moment you call them; everything else is compared with the project after the run, "
              "listed as out of bounds, and can be undone. So do not do any of these things at all, whether "
              "or not a call is blocked."),
-            f"1. Make a judgment that belongs to the person: an attempt's verdict or result in {table_words}, "
-            "confirming or rejecting a link, confirming a variable definition, or anything inside "
-            "`.researchos/`.",
+            "1. Make a decision that belongs to the person: an attempt's research assessment or result in "
+            f"{table_words}, confirming or rejecting a machine-found link (a link judgment), confirming a "
+            "variable definition, or anything inside `.researchos/`.",
             "2. Act for the team: propose, approve or return a proposal, publish, sync, or push to GitHub.",
             "3. Change or delete a data file that existed before this run (.csv, .tsv, .xlsx, .xls, .parquet, "
-            ".feather, .rds, .rdata, .dta, .sav, .json, .h5, .pkl). Write new files instead. " + files_words,
-            "4. Change git's state: commit, push, reset, checkout, rebase, merge, stash, clean, tag. Reading "
-            "it (status, diff, log) is fine.",
+            ".feather, .rds, .rdata, .dta, .sav, .json, .h5, .pkl, .sqlite, .db, .npy, .npz, .mat, "
+            ".sas7bdat, .jsonl, .pickle; package.json and package-lock.json are not data). Write new "
+            "files instead. " + files_words,
+            "4. Change git's state, with any of these git commands: " + _git_verbs(", ") + ". Deleting or "
+            "renaming a branch counts too. Reading it (status, diff, log) is fine.",
             f"5. Edit `{TASKS_PATH}` directly. The tools below mark the task done.",
             "6. Run the `researchos` or `rce` command, or contact the Research OS app in any other way.",
             "",
@@ -181,19 +196,20 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         ("下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。" if hooked else
          "下面这些事绝对不能做。git 命令以及 `researchos`、`rce` 命令在你调用的那一刻就会被拦下；其余的事在运行结束后"
          "会与项目逐一比对，列为越界，并且可以被撤回。所以这些事根本不要做，不管某次调用有没有被拦下。"),
-        f"1. 不替人做判断：不要写尝试的判决或结果（{table_words}），不要确认或否定任何连接，"
-        "不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
+        f"1. 不替人做判断：不要写尝试的研究判断或结果（{table_words}），不要做连线确认"
+        "（确认或否决机器提取的连线），不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
         "2. 不替团队行事：不要提议，不要批准或退回提议，不要发布、同步，也不要推送到 GitHub。",
         "3. 不修改、不删除运行开始前就存在的数据文件（.csv、.tsv、.xlsx、.xls、.parquet、.feather、.rds、"
-        ".rdata、.dta、.sav、.json、.h5、.pkl）；需要新数据时写新文件。" + files_words,
-        "4. 不改变 git 的状态：commit、push、reset、checkout、rebase、merge、stash、clean、tag 一概不做。"
+        ".rdata、.dta、.sav、.json、.h5、.pkl、.sqlite、.db、.npy、.npz、.mat、.sas7bdat、.jsonl、.pickle；"
+        "package.json 和 package-lock.json 不算数据文件）；需要新数据时写新文件。" + files_words,
+        "4. 不改变 git 的状态：下面这些 git 命令一概不用：" + _git_verbs("、") + "；也不删除或重命名分支。"
         "只读的操作（status、diff、log）可以。",
         f"5. 不直接编辑 `{TASKS_PATH}`；任务的完成标记由下面的工具写入。",
         "6. 不运行 `researchos` 或 `rce` 命令，也不以任何其他方式联系 Research OS 应用。",
         "",
         "怎样收尾：",
         f"- 任务完成后，调用 `{complete}`，参数 report 是一份 Markdown 报告：做了什么、运行过的命令、"
-        "产出的文件，以及关键数字，数字必须原样取自你真实运行的结果。绝不编造或估算数字、文件或结论。"
+        "输出的文件，以及关键数字，数字必须原样取自你真实运行的结果。绝不编造或估算数字、文件或结论。"
         "再给一个几个词的简短标题，说明这是什么结果。这一次调用同时把任务标为完成。",
         f"- 如果做不下去，或需要这个人来决定，调用 `{ask}`，提出一个清楚的问题，然后停下。"
         "他们的回答会接上这段对话。",

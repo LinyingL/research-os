@@ -153,7 +153,7 @@ def test_first_launch_page_shows_only_the_welcome_and_asks_the_engine_for_nothin
     assert "if (state.noProject) {" in _src()[_src().index("async function loadProjectSummary"):][:900]
     assert "if (state.noProject) return; // 10.1" in _function("openAttemptForm")
     reload = _function("reloadAllViews")
-    assert reload.index("if (state.noProject) return;") < reload.index("loadTreeView()")
+    assert reload.index("if (state.noProject) return;") < reload.index("RODesk.loadDesk(views.desk)")  # 18.3: the one page's load, not the old tree's
     load = _src()[_src().index("async function loadProjects()"):]
     load = load[: load.index("\n}\n")]
     assert "const noProject = !!data.no_project || data.current == null;" in load
@@ -404,7 +404,7 @@ def test_the_project_menu_replaces_the_select_and_offers_what_10_1_lists():
     assert '<div id="project-menu" class="project-menu hidden" role="menu" aria-label="项目" data-i18n-attr="aria-label"></div>' in src
     # 12.11 (V8 U2): the button names the project and nothing else -- 「项目」
     # is the line above it, no ▾; the open project's mark is a drawn check.
-    assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in src
+    assert 'projectMenuBtn.textContent = label || noProjectName();' in src
     assert '<div class="side-eyebrow" id="project-eyebrow" data-i18n>项目</div>' in src
     menu = _function("renderProjectMenu")
     order = [menu.index(s) for s in (

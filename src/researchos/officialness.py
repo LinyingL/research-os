@@ -16,7 +16,8 @@ shown with its state.
   official version this machine knows;
 - **the copy as it is now**: every file's fingerprint (the share module's
   cached walk, `researchos.share.official_files`: a file whose size,
-  modification time and inode did not change is not read again);
+  modification time, inode and status-change time did not change, and
+  that had settled, is not read again);
 - **the member's pending proposals** in the shared folder (their own area
   only), with what each carries.
 

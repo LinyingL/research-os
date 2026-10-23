@@ -41,7 +41,7 @@ the same functions:
   sync conflict copy beside it**: every write refused;
 - **shrunk** -- readable, but lacking entries the index applied (the
   index keeps a copy, `applied_notes`, migration 0007): nothing changes,
-  writes are refused, and the question 「笔记记录文件比图谱少了 N 条」 has
+  writes are refused, and the question 「备注记录文件比图谱少了 N 条」 has
   the ledger's two answers (`answer_shrunk`).
 
 While the file cannot be trusted, readers show the notes the index last
@@ -87,13 +87,13 @@ _HEADER = "# 节点上的笔记。Research OS 只追加、不改写；撤回一�
 MESSAGES = {
     "no_identity": "项目身份文件无法读取",
     "migrating": "项目正在迁移，迁移完成前不能写入人工记录",
-    "missing": "笔记记录文件当前无法读取，请先恢复它",
+    "missing": "备注记录文件当前无法读取，请先恢复它",
     "dataless": "记录文件正在从云端下载…",
-    "unreadable": "笔记记录文件当前无法读取，请先恢复它",
-    "invalid": "笔记记录文件当前无法读取，请先恢复它",
-    "empty_but_expected": "笔记记录文件当前无法读取，请先恢复它",
-    "conflict_copy": "笔记记录文件旁有同步冲突副本，请先处理",
-    "shrunk": "笔记记录文件比图谱少了 {n} 条",
+    "unreadable": "备注记录文件当前无法读取，请先恢复它",
+    "invalid": "备注记录文件当前无法读取，请先恢复它",
+    "empty_but_expected": "备注记录文件当前无法读取，请先恢复它",
+    "conflict_copy": "备注记录文件旁有同步冲突副本，请先处理",
+    "shrunk": "备注记录文件比图谱少了 {n} 条",
 }
 
 #: Node-id prefixes Research OS knows (Section 4's types, the citation
@@ -130,7 +130,7 @@ class NoteRefused(Exception):
 def message_of(decision: TrustDecision) -> str | None:
     if decision.reason is None:
         return None
-    return MESSAGES.get(decision.reason, "笔记记录文件当前无法读取，请先恢复它").format(n=len(decision.missing))
+    return MESSAGES.get(decision.reason, "备注记录文件当前无法读取，请先恢复它").format(n=len(decision.missing))
 
 
 # -- node names ---------------------------------------------------------------------
@@ -424,9 +424,9 @@ def add_note(
     try:
         node_id = normalize_node(node)
     except ValueError as exc:
-        raise NoteRefused("invalid", str(exc), message_zh="无法识别这条笔记要写在哪里") from exc
+        raise NoteRefused("invalid", str(exc), message_zh="无法识别这条备注要写在哪里") from exc
     if not isinstance(text, str) or not text.strip():
-        raise NoteRefused("invalid", "a note needs text", message_zh="笔记不能为空")
+        raise NoteRefused("invalid", "a note needs text", message_zh="备注不能为空")
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     return _write(
         project_root, {"act": NOTE_ACT, "node": node_id, "text": text, "via": via},
@@ -448,9 +448,9 @@ def withdraw_note(
     def plan(ledger: ledger_mod.Ledger) -> Mapping[str, Any]:
         target = ledger.by_id(note_id) if isinstance(note_id, str) else None
         if target is None or target.get("act") != NOTE_ACT:
-            raise NoteRefused("no_such_note", f"no note {note_id!r} in {NOTES_FILENAME}", message_zh="找不到这条笔记")
+            raise NoteRefused("no_such_note", f"no note {note_id!r} in {NOTES_FILENAME}", message_zh="找不到这条备注")
         if any(e.get("act") == WITHDRAWN_ACT and _target_of(ledger, e) is target for e in ledger.entries):
-            raise NoteRefused("already_withdrawn", f"note {note_id} is already withdrawn", message_zh="这条笔记已经撤回")
+            raise NoteRefused("already_withdrawn", f"note {note_id} is already withdrawn", message_zh="这条备注已经撤回")
         return {"act": WITHDRAWN_ACT, "node": target.get("node"), "withdraws": target.id, "via": via}
 
     return _write(project_root, plan, expected_id=expected_id, timeout=timeout, now=now)
@@ -472,7 +472,7 @@ def answer_shrunk(
     timeout: float | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> tuple[int, int]:
-    """Answer 「笔记记录文件比图谱少了 N 条」: `file` forgets the missing
+    """Answer 「备注记录文件比图谱少了 N 条」: `file` forgets the missing
     entries from the index's copy (refused when the file as it is could not
     be applied afterwards); `restore` appends them again in one write, `via
     = "recovered"`, their content and attribution kept. `expected_missing`

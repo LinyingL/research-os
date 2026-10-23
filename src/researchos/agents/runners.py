@@ -10,9 +10,20 @@ model, a fresh `--session-id` (or `--resume`), `--permission-mode dontAsk`
 with the tools it may use in `--allowedTools` and the denials of 17.5 in
 `--disallowedTools`, a `PreToolUse` hook and the MCP server from files in the
 run's folder (`--settings`, `--mcp-config --strict-mcp-config`), and the rules
-in `--append-system-prompt`. `--allowedTools` and `--disallowedTools` are
-variadic: a positional prompt after them would be swallowed as a tool name,
-so they come LAST and the instruction goes in on standard input.
+in `--append-system-prompt`. `--setting-sources user` keeps the project's own
+`.claude/settings*.json` from being loaded (a run could have written one for
+the next, 18.1 item 2), but it also stops the project's `CLAUDE.md` from
+loading, and the agent would lose the project's own instructions. So the
+project folder is also given as `--add-dir <project root>` and the program's
+environment carries `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`
+(`ADD_DIR_CLAUDE_MD_ENV`): an added folder's `CLAUDE.md` is read only with
+that variable, and a `.claude/settings.json` planted in the project stays
+without effect (checked with Claude Code 2.1.87). `--add-dir` takes any number
+of values, so a flag always follows it. The hook runs on the editing tools,
+Bash and the reading tools (Read, Glob, Grep, LS). `--allowedTools` and
+`--disallowedTools` are variadic: a positional prompt after them would be
+swallowed as a tool name, so they come LAST and the instruction goes in on
+standard input.
 The hook's command is `sh -c` around the hook (`hook_command`) so that only
 its exit code 0 allows a call and every other outcome (a crash at start, a
 missing interpreter) is exit code 2, which Claude Code treats as a refusal;
@@ -27,15 +38,24 @@ Its configuration -- permissions and the MCP server -- travels in
 `OPENCODE_CONFIG_CONTENT`; a project's own `opencode.json` is switched off
 (`OPENCODE_DISABLE_PROJECT_CONFIG`) because it could allow what we deny.
 Every permission is `allow` or `deny`, never `ask`: an unattended run rejects
-what would ask and stops.
+what would ask and stops. Its git denials (`opencode_git_patterns`) match any
+command that has `git` and a rule-4 verb as separate words, not only one that
+starts with `git` (18.1 item 6); only the `*` wildcard is relied on.
 
 **The environment** is the engine's, less everything that could join a
 Claude Code session that started Research OS (`CLAUDE_CODE_REMOTE_SESSION_ID`
 makes a child adopt its parent's session) or redirect OpenCode's
-configuration; `PATH` is widened with the usual install places, since an app
+configuration, less Research OS's home (`RESEARCHOS_HOME`, `RCE_HOME`: only the
+MCP server's own entry names it) and less every variable that looks like a
+credential, except what the runner needs to reach its model (`credential_names`,
+18.1 item 2; the names removed, never the values, come back in `Launch.removed_env`
+for the run log). `PATH` is widened with the usual install places, since an app
 opened from the Finder has none of the shell's. The agent's processes carry
 `RESEARCHOS_AGENT_RUN`, which makes every Research OS write path refuse
-(17.5).
+(17.5). Claude Code's environment also carries
+`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`, set after the scrub, so that
+neither the scrub nor a value inherited from the engine's own environment
+(`0`) changes it.
 
 **The streams** (`ClaudeStream`, `OpenCodeStream`) read the program's JSON
 lines tolerantly -- an unknown event type, a missing field or a line that is
@@ -59,22 +79,47 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
+from researchos.agents import guard
+
 MCP_KEY = "researchos"
 AGENT_TOOLS = ("researchos_complete_task", "researchos_ask", "researchos_save_note",
                "researchos_find", "researchos_trace", "researchos_status")
 CLAUDE_ALLOWED = ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "Bash",
                   "WebFetch", "WebSearch", "TodoWrite", "Task", "mcp__researchos")
-GIT_DENIED = ("push", "commit", "reset", "rebase", "merge", "checkout", "switch", "restore", "stash", "clean",
-              "tag", "cherry-pick", "revert")
+#: The git verbs both programs are denied: the hook's own list (`guard.GIT_MUTATING`, 17.5 rule 4), so that Claude
+#: Code's deny list, OpenCode's patterns (which are all OpenCode has: it has no hook) and the hook cannot drift apart
+#: (18.1 item 6). Sorted, so that the generated lists are the same on every start.
+GIT_DENIED = tuple(sorted(guard.GIT_MUTATING))
 CLAUDE_DISALLOWED = tuple(f"Bash(git {c}:*)" for c in GIT_DENIED) + ("Bash(researchos:*)", "Bash(rce:*)")
+#: Without this variable Claude Code reads no `CLAUDE.md` from a folder given with `--add-dir`. `claude_launch` gives
+#: the project folder that way, because `--setting-sources user` would otherwise leave the agent without the project's
+#: own instructions (18.1 item 2). Its name matches neither `SCRUB_ENV_RE` nor `CREDENTIAL_WORDS`; it is set after the
+#: scrub all the same.
+ADD_DIR_CLAUDE_MD_ENV = "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"
 #: Inherited variables that would join a Claude Code session (CLAUDE_CODE_REMOTE_SESSION_ID
 #: is the one that makes a child adopt its parent's id), reach a parent's messaging channel, or
 #: replace OpenCode's configuration.
 SCRUB_ENV_RE = re.compile(
     r"^(CLAUDECODE|CLAUDE_CODE_.*(SESSION|REMOTE|ENTRYPOINT|CHILD|MESSAGING|CONTAINER|WORKER).*"
-    r"|CLAUDE_SESSION_.*|CCR_.*|RCE_ENGINE_PORT|OPENCODE_CONFIG_CONTENT|OPENCODE_CONFIG)$")
+    r"|CLAUDE_SESSION_.*|CCR_.*|RCE_ENGINE_PORT|OPENCODE_CONFIG_CONTENT|OPENCODE_CONFIG"
+    r"|RESEARCHOS_HOME|RCE_HOME)$")  # the home: the agent is not told where Research OS keeps its files (18.1 item 2)
 #: Variables that could widen what OpenCode allows beyond the configuration we pass; removed too.
 OPENCODE_OVERRIDE_ENV = ("OPENCODE_PERMISSION",)
+#: A variable whose name looks like it holds a credential is not handed to the agent program (18.1 item 2): the name
+#: contains one of these words, or is one of the exact names, or starts with one of the prefixes.
+CREDENTIAL_WORDS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE", "API_KEY", "ACCESS_KEY", "AUTH",
+                    "SESSION", "COOKIE")
+CREDENTIAL_NAMES = frozenset({"SSH_AUTH_SOCK", "GPG_AGENT_INFO", "RCE_LLM_API_KEY"})
+CREDENTIAL_PREFIXES = ("AWS_", "GITHUB_", "GH_")
+#: What each runner keeps although it looks like a credential: it needs it to reach its model. Exact names, prefixes
+#: and, for the prefixes in `_KEEP_IF`, the variable that has to be set for the prefix to count.
+_KEEP = {
+    "claude-code": {"names": frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), "prefixes": ("ANTHROPIC_",)},
+    "opencode": {"names": frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY",
+                                     "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"}),
+                 "prefixes": ("GOOGLE_",)},
+}
+_KEEP_IF = {"claude-code": (("AWS_", "CLAUDE_CODE_USE_BEDROCK"), ("GOOGLE_", "CLAUDE_CODE_USE_VERTEX"))}
 
 STEP_TEXT_LIMIT = 500
 TOOL_SUMMARY_LIMIT = 300
@@ -98,6 +143,8 @@ class Launch:
     stdin: str
     cwd: str
     files: dict[str, str] = field(default_factory=dict)
+    #: Names (never values) of the environment variables left out as credentials (18.1 item 2); the run log lists them.
+    removed_env: list[str] = field(default_factory=list)
 
 
 # -- starting ---------------------------------------------------------------
@@ -113,21 +160,38 @@ def mcp_command(root: Path, run_id: str) -> list[str]:
     return [sys.executable, "-I", "-m", "researchos.cli", "mcp", "--agent-run", run_id, "--path", str(root)]
 
 
-def child_env(base: Mapping[str, str], *, run_id: str, home: str, program: str) -> dict[str, str]:
-    """The environment of the agent program: `base` less `SCRUB_ENV_RE`;
-    `PATH` widened (`profiles.search_path`) with the program's own folder
-    first (a `#!/usr/bin/env node` launcher finds its node beside it);
-    `RESEARCHOS_HOME` and `RESEARCHOS_AGENT_RUN` set so every process the
-    agent starts is marked and finds this Mac's home."""
+def credential_like(name: str) -> bool:
+    """Whether a variable's name looks like it holds a credential (`CREDENTIAL_WORDS`, `CREDENTIAL_NAMES`,
+    `CREDENTIAL_PREFIXES`; upper or lower case)."""
+    upper = name.upper()
+    return upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_PREFIXES) or any(w in upper for w in CREDENTIAL_WORDS)
+
+
+def credential_names(base: Mapping[str, str], runner: str) -> list[str]:
+    """The names in `base` that `child_env` removes as credentials for `runner`, sorted: those that look like one
+    (`credential_like`) and are not among what the runner keeps to reach its model -- for Claude Code `ANTHROPIC_*`
+    and `CLAUDE_CODE_OAUTH_TOKEN`, `AWS_*` only when `CLAUDE_CODE_USE_BEDROCK` is set and `GOOGLE_*` only when
+    `CLAUDE_CODE_USE_VERTEX` is; for OpenCode its providers' API keys and `GOOGLE_*`."""
+    keep = _KEEP.get(runner, {"names": frozenset(), "prefixes": ()})
+    prefixes = tuple(keep["prefixes"]) + tuple(p for p, variable in _KEEP_IF.get(runner, ()) if base.get(variable))
+    return sorted(k for k in base if isinstance(k, str) and credential_like(k)
+                  and k not in keep["names"] and not k.startswith(prefixes))
+
+
+def child_env(base: Mapping[str, str], *, run_id: str, program: str, runner: str = "claude-code") -> dict[str, str]:
+    """The environment of the agent program: `base` less `SCRUB_ENV_RE` (the home among it) and less
+    `credential_names`; `PATH` widened (`profiles.search_path`) with the program's own folder first (a
+    `#!/usr/bin/env node` launcher finds its node beside it); `RESEARCHOS_AGENT_RUN` set so every process the agent
+    starts is marked. `RESEARCHOS_HOME` is not set: only the MCP server's entry names the home (18.1 item 2)."""
     from researchos.agents import profiles  # lazily: package A, and this module stays importable alone
 
-    env = {k: v for k, v in base.items() if isinstance(k, str) and not SCRUB_ENV_RE.match(k)}
+    drop = set(credential_names(base, runner))
+    env = {k: v for k, v in base.items() if isinstance(k, str) and not SCRUB_ENV_RE.match(k) and k not in drop}
     parts = [p for p in profiles.search_path(base.get("PATH")).split(os.pathsep) if p]
     first = os.path.dirname(program) if isinstance(program, str) else ""
     if first:
         parts = [first] + [p for p in parts if p != first]
     env["PATH"] = os.pathsep.join(parts)
-    env["RESEARCHOS_HOME"] = home
     env["RESEARCHOS_AGENT_RUN"] = run_id
     env["PYTHONUNBUFFERED"] = "1"
     return env
@@ -227,6 +291,10 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
             "--model", _check_model(model),
             "--resume" if resume else "--session-id", _check_session(session_id),
             "--permission-mode", "dontAsk",
+            "--setting-sources", "user",  # not the project's .claude/settings*.json (18.1 item 2)
+            # ... but its CLAUDE.md, which that also drops, comes back through the added folder and
+            # `ADD_DIR_CLAUDE_MD_ENV` below. `--add-dir` is variadic: another flag must follow it.
+            "--add-dir", str(root),
             "--settings", str(run_dir / "claude-settings.json"),
             "--mcp-config", str(run_dir / "mcp.json"),
             "--strict-mcp-config",
@@ -236,15 +304,35 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
     argv += ["--allowedTools", *CLAUDE_ALLOWED, "--disallowedTools", *CLAUDE_DISALLOWED]
     settings = {"disableAllHooks": False,  # a user-level `disableAllHooks: true` must not switch the guard off
                 "hooks": {"PreToolUse": [{
-                    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+                    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Glob|Grep|LS",
                     "hooks": [{"type": "command", "command": hook_command(run_dir)}]}]}}
     mcp = {"mcpServers": {MCP_KEY: {
         "command": sys.executable, "args": mcp_command(root, run_id)[1:],
         "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}}}
-    return Launch(argv=argv,
-                  env=child_env(base_env, run_id=run_id, home=home, program=program),
-                  stdin=prompt, cwd=str(root),
-                  files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)})
+    env = child_env(base_env, run_id=run_id, program=program, runner="claude-code")
+    env[ADD_DIR_CLAUDE_MD_ENV] = "1"  # after the scrub, and whatever the engine's own environment says
+    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root),
+                  files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)},
+                  removed_env=credential_names(base_env, "claude-code"))
+
+
+#: What may follow a git verb that has to be a word of its own in an OpenCode denial pattern (`*git * push<end>`):
+#: the end of the command, a space, and the characters a shell ends a word with, among them the `>` and `<` of a
+#: redirect written with no space (`git -C . push>/dev/null`: OpenCode matches the whole redirected statement) and a
+#: tab. `|` and `)` are left out on purpose, and only `*` is relied on in a pattern: a matcher that does not escape
+#: them reads `|` as an alternative, which would make the pattern match every command. The installed OpenCode
+#: splits a command into its parts and matches each, so `git -C . push|cat` and `(git -C . push)` are caught by
+#: the part `git -C . push`. So `git add clean_data.py` is not `git clean`, and `bash -c 'git -C . push'` still is.
+GIT_VERB_ENDS = ("", " *", "\t*", "\n*", ";*", "&*", ">*", "<*", "`*", "'*", '"*')
+
+
+def opencode_git_patterns(command: str) -> list[str]:
+    """The `permission.bash` patterns (`*` is the only wildcard) that deny the git verb `command`: a command that
+    has `git` and the verb as separate words, wherever the `git` is in it (18.1 item 6): `git push`,
+    `/usr/bin/git push`, `env git push`, `cd x && git commit`, and with git's own options between,
+    `git -C . push`, `git -c a=b commit -m x`, and a redirect with no space, `git -C . push>/dev/null`. A harmless
+    command that also has both words, such as `git log --grep push`, is refused too: the accepted cost."""
+    return [f"*git {command}*"] + [f"*git * {command}{end}" for end in GIT_VERB_ENDS]
 
 
 def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
@@ -252,10 +340,8 @@ def opencode_config(root: Path, run_id: str, home: str) -> dict[str, Any]:
     In `permission.bash` the later rule wins, so `*` comes first."""
     bash: dict[str, str] = {"*": "allow"}
     for command in GIT_DENIED:
-        bash[f"git {command}*"] = "deny"
-    for command in GIT_DENIED:  # git's own options may come first: `git -C dir push`, `git -c a=b commit -m x`
-        bash[f"git * {command}"] = "deny"
-        bash[f"git * {command} *"] = "deny"
+        for pattern in opencode_git_patterns(command):
+            bash[pattern] = "deny"
     bash["researchos*"] = "deny"
     bash["rce *"] = "deny"
     bash["rce"] = "deny"
@@ -278,13 +364,14 @@ def opencode_launch(*, program: str, model: str, root: Path, run_dir: Path, run_
     argv = [program, "run", "--format", "json", "--model", _check_model(model), "--dir", str(root)]
     if session_id:
         argv += ["--session", _check_session(session_id)]
-    env = child_env(base_env, run_id=run_id, home=home, program=program)
+    env = child_env(base_env, run_id=run_id, program=program, runner="opencode")
     for name in OPENCODE_OVERRIDE_ENV:
         env.pop(name, None)
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_config(root, run_id, home), ensure_ascii=True)
     env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={})
+    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root), files={},
+                  removed_env=credential_names(base_env, "opencode"))
 
 
 # -- reading the streams ----------------------------------------------------
@@ -298,8 +385,14 @@ def _flat(text: object, limit: int) -> str:
     return out if len(out) <= limit else out[: max(0, limit - 3)].rstrip() + "..."
 
 
-def _step(kind: str, text: object, tool: str | None = None) -> dict[str, Any]:
-    return {"kind": kind, "text": _flat(text, STEP_TEXT_LIMIT), "tool": tool}
+def _step(kind: str, text: object, tool: str | None = None, code: str | None = None) -> dict[str, Any]:
+    """One step of the run log. `text` is the program's own words (or the engine's English sentence), kept as the
+    detail; a refused or error step may also carry a `code` (18.1 item 6): the page says what it means in the
+    person's language and shows `text` beneath. The key is absent when there is no code."""
+    step = {"kind": kind, "text": _flat(text, STEP_TEXT_LIMIT), "tool": tool}
+    if code:
+        step["code"] = code
+    return step
 
 
 #: Display name of a built-in tool (Claude Code spells them capitalised, OpenCode lowercase) and
@@ -431,12 +524,12 @@ class ClaudeStream:
             steps = [_step("start", model if isinstance(model, str) else "")]  # the model's own name, no words of ours
             for server in event.get("mcp_servers") or ():
                 if isinstance(server, dict) and server.get("name") == MCP_KEY and server.get("status") == "failed":
-                    steps.append(_step("error", "The Research OS tools did not start (status: failed)."))
+                    steps.append(_step("error", "The Research OS tools did not start (status: failed).", code="mcp_failed"))
             return steps
         if subtype == "permission_denied":
             tool = event.get("tool_name")
             return [_step("refused", event.get("message") or f"{tool} was denied",
-                          _tool_label(tool) if isinstance(tool, str) else None)]
+                          _tool_label(tool) if isinstance(tool, str) else None, "permission_rule")]
         return []
 
     def _assistant(self, event: dict) -> list[dict]:
@@ -465,7 +558,8 @@ class ClaudeStream:
                 continue
             tool = text[len("PreToolUse:"):].split(" ", 1)[0] or None
             marker = text.find("Research OS:")  # our hook's message, without Claude Code's wrapper
-            steps.append(_step("refused", text[marker:] if marker >= 0 else text, tool))
+            reason, code = guard.split_refusal(text[marker:] if marker >= 0 else text)  # and the code it ends with
+            steps.append(_step("refused", reason, tool, code))
         return steps
 
     def _result(self, event: dict) -> list[dict]:
@@ -480,7 +574,9 @@ class ClaudeStream:
         self.result_text = text if isinstance(text, str) else None
         errors = [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
                   for e in event.get("errors") or () if e]
-        shown = (self.result_text or "").strip() or "; ".join(errors) or str(event.get("subtype") or "")
+        # the subtype (`success`, `error_max_turns`) is a code, never a sentence for the person: a run that stopped
+        # with no closing words ends with no text, and a failed one gets its code from the manager (18.1 item 6)
+        shown = (self.result_text or "").strip() or "; ".join(errors)
         said = next((st["text"] for st in reversed(self.steps) if st["kind"] == "say"), None)
         if said is not None and _flat(shown, STEP_TEXT_LIMIT) == said:
             shown = ""  # the final answer was just shown as what it said: the end needs no second copy
@@ -492,6 +588,11 @@ _INTERNAL_TOOLS = frozenset({"ToolSearch"})
 
 #: OpenCode's error text when a permission rule, or the person's rejection, stopped a tool call.
 _REFUSED_RE = re.compile(r"specified a rule which prevents|rejected permission|unavailable tool", re.I)
+
+
+def _refused_code(text: str) -> str:
+    """The code of a refusal OpenCode reports in its own words: a tool that is not there, else a permission rule."""
+    return "tool_unavailable" if "unavailable tool" in text.lower() else "permission_rule"
 
 
 class OpenCodeStream:
@@ -550,15 +651,18 @@ class OpenCodeStream:
         label = _tool_label(name)
         if name == "invalid":  # a call to a tool that was removed by a deny rule, or with bad arguments
             output = state.get("output") if isinstance(state.get("output"), str) else ""
-            return [_step("refused" if "unavailable tool" in output else "error", output or "invalid tool call", label)]
+            refused = "unavailable tool" in output
+            return [_step("refused" if refused else "error", output or "invalid tool call", label,
+                          "tool_unavailable" if refused else None)]
         summary = summarize_tool(name, tool_input)
         if status == "completed":
             return [_step("tool", summary, label)]
         if status == "error":
             error = state.get("error") if isinstance(state.get("error"), str) else ""
             reason = error.split(" Here are", 1)[0]  # the rule list that follows is long and no help
-            return [_step("refused" if _REFUSED_RE.search(error) else "error",
-                          f"{summary}: {reason}" if reason else summary, label)]
+            refused = bool(_REFUSED_RE.search(error))
+            return [_step("refused" if refused else "error", f"{summary}: {reason}" if reason else summary, label,
+                          _refused_code(error) if refused else None)]
         return []
 
     def _error(self, error: dict) -> list[dict]:
@@ -584,7 +688,8 @@ def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeS
     Claude Code: ok needs exit 0 and a result that is not an error. A
     SIGTERM (143/-15, or a kill) or a stream without a result is `aborted`;
     a result with `is_error` (whatever its `subtype`) fails with the
-    subtype as code and the errors or result text as detail; any other
+    subtype as code and the errors or result text as detail (an empty detail
+    when it has neither: the code is never put in its place); any other
     non-zero exit is `exit`. OpenCode: an `error` event is `model_error`
     with its message; else a non-zero exit is `exit`; else ok."""
     if runner == "claude-code":
@@ -599,7 +704,8 @@ def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeS
             code = subtype if isinstance(subtype, str) and subtype and subtype != "success" else "error"
             errors = [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
                       for e in result.get("errors") or () if e]
-            detail = "; ".join(errors) or (stream.result_text or "").strip() or code
+            # the program's own words, or none: the code is not a text (18.1 item 6), the page words it
+            detail = "; ".join(errors) or (stream.result_text or "").strip()
             return _failed(code, detail)
         if exit_code not in (None, 0):
             return _failed("exit", f"exit code {exit_code}")

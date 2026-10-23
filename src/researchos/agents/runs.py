@@ -34,12 +34,15 @@ import shutil
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
 RUN_ID_RE = re.compile(r"r-\d{8}T\d{6}Z-[0-9a-f]{6}\Z")
-STATES = ("preparing", "running", "needs_input", "done", "ended", "failed", "stopped", "interrupted")
+#: `out_of_bounds` (18.1 item 4) is how a run reads that ended with an out-of-bounds change, whatever else it
+#: would have read; `outcome` then keeps the state it would have had (`outcome_of`).
+STATES = ("preparing", "running", "needs_input", "done", "ended", "failed", "stopped", "interrupted",
+          "out_of_bounds")
 ACTIVE_STATES = frozenset({"preparing", "running"})
 SIGNAL_KINDS = frozenset({"complete", "ask", "note"})
 #: Run folders kept per project: `run.json`, `events.jsonl` and `instruction.txt` (the run's log) stay for the
@@ -49,6 +52,9 @@ KEEP_RUNS = 200
 #: older runs keep their log but can no longer be undone (17.6).
 KEEP_BACKUPS = 20
 EVENTS_LIMIT = 20 * 1024 * 1024
+#: `stderr.log` is capped as `events.jsonl` is (18.1 item 6); a run that hit either cap is marked `events_truncated` /
+#: `stderr_truncated`.
+STDERR_LIMIT = EVENTS_LIMIT
 
 RUNS_DIRNAME = "agent-runs"
 RUN_FILENAME = "run.json"
@@ -92,6 +98,22 @@ def project_runs_dir(project_id: str) -> Path:
     return runs_root() / _check_project_id(project_id)
 
 
+def project_ids() -> list[str]:
+    """The ids of the projects that have a folder of runs on this Mac, sorted; a folder whose name is not a
+    project id is not one."""
+    try:
+        found = sorted(e.name for e in os.scandir(runs_root()) if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+    out = []
+    for name in found:
+        try:
+            out.append(_check_project_id(name))
+        except ValueError:
+            continue
+    return out
+
+
 def new_run_id(now: datetime | None = None) -> str:
     """A fresh run id. Without `now` the id is also strictly greater than
     every id this process minted before, so ids sort in creation order even
@@ -119,6 +141,15 @@ def new_run_id(now: datetime | None = None) -> str:
 
 def run_dir(project_id: str, run_id: str) -> Path:
     return project_runs_dir(project_id) / _check_run_id(run_id)
+
+
+def outcome_of(run: dict[str, Any]) -> Any:
+    """How the run ended apart from the warning: its state, or, for a run that went out of bounds, the state
+    it would otherwise have read (`outcome`: `done`, `ended`, `needs_input`, `failed`, `stopped` or
+    `interrupted`) -- what decides whether it can be answered or sent back."""
+    if run.get("state") == "out_of_bounds" and run.get("outcome"):
+        return run["outcome"]
+    return run.get("state")
 
 
 # -- run.json -------------------------------------------------------------------------------
@@ -204,15 +235,19 @@ def update_run_if_active(project_id: str, run_id: str, **changes: Any) -> dict[s
         return run
 
 
-def list_runs(project_id: str) -> list[dict[str, Any]]:
-    """The project's runs, newest first; folders without a readable
-    `run.json` are skipped."""
-    out = []
+def iter_runs(project_id: str) -> Iterator[dict[str, Any]]:
+    """The project's runs, newest first, each read when it is asked for (18.4 item 2): whoever stops at the first
+    run it wants reads no `run.json` after it. Folders without a readable `run.json` are skipped."""
     for run_id in _run_ids(project_id):
         run = _read_run(project_runs_dir(project_id) / run_id, run_id)
         if run is not None:
-            out.append(run)
-    return out
+            yield run
+
+
+def list_runs(project_id: str) -> list[dict[str, Any]]:
+    """The project's runs, newest first; folders without a readable
+    `run.json` are skipped."""
+    return list(iter_runs(project_id))
 
 
 def _run_ids(project_id: str) -> list[str]:

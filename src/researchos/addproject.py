@@ -116,7 +116,7 @@ OPENABLE = frozenset({Situation.NORMAL, Situation.MOVED, Situation.NO_INDEX})
 KIND_MESSAGES = {
     ALREADY_REGISTERED: "这个项目已经在列表里",
     RESEARCHOS_PROJECT: "这是一个 Research OS 项目，可以加入列表并打开",
-    PRE_V5: "这是旧版 Research OS 项目：加入后需要先迁移，才能记录判断",
+    PRE_V5: "这是旧版 Research OS 项目：加入后需要先迁移，才能记录连线确认",
     NEW_FOLDER: "Research OS 还没有读过这个文件夹",
     WAITING_PERMISSION: "正在等待系统授权访问这个文件夹……如果系统询问，请点“允许”",
 }
@@ -880,7 +880,7 @@ STEP_LABELS = {
     "sources": "读取脚本、数据和文稿",
     "attempts": "尝试表及其检查",
     "mappings": "手画的连线",
-    "judgements": "应用判断记录",
+    "judgements": "应用连线确认记录",
 }
 STEP_NAMES = {
     "sources": "every source extractor",

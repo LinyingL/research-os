@@ -227,6 +227,25 @@ def read_bytes(path: str | Path) -> bytes:
     return Path(path).read_bytes()
 
 
+def read_head(path: str | Path, limit: int) -> tuple[bytes, int]:
+    """The first `limit` bytes of the file (fewer when it is shorter) and
+    the file's size, from one open: the same cloud check as `read_bytes`,
+    then no more than `limit` bytes are ever read, whatever the file's size
+    (DESIGN.md 18.4 item 5). The size is the open file's (`os.fstat`)."""
+    check_readable(path)
+    chunks: list[bytes] = []
+    got = 0
+    with open(path, "rb", buffering=0) as handle:
+        size = os.fstat(handle.fileno()).st_size
+        while got < limit:
+            chunk = handle.read(limit - got)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            got += len(chunk)
+    return (chunks[0] if len(chunks) == 1 else b"".join(chunks)), size
+
+
 def blocked_files(root: str | Path, rel_paths) -> dict[Provider, list[str]]:
     """{provider: [rel path]} of the files under `root` that are blocked."""
     found: dict[Provider, list[str]] = {}

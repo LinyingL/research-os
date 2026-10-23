@@ -31,8 +31,9 @@
 //   character is HTML-escaped, so a log line can never become markup. The
 //   child runs with PYTHONUNBUFFERED=1, so its startup line and any error
 //   reach serve.log at once. On quit, and only if THIS app spawned the engine and it is
-//   still running, POST /api/shutdown with body {"pid": <child's pid>} and
-//   wait for it to exit (terminate it after a grace period). The pid is
+//   still running, POST /api/shutdown with body {"pid": <child's pid>} and the
+//   session header (next bullet), and wait for it to exit (terminate it
+//   after a grace period). The pid is
 //   what keeps a terminal-started engine safe: the child may still be
 //   alive WITHOUT having bound the port (blocked in a slow first-touch
 //   migration) while an engine the researcher started by hand holds it --
@@ -40,6 +41,19 @@
 //   serving, and our own child is then stopped by signal alone (8.9: an
 //   engine the user started is left alone). SIGTERM/SIGINT take the same
 //   quit path.
+// - Session (DESIGN.md 18.1): when it starts, the engine makes a random secret
+//   and refuses every request other than GET and HEAD that does not carry it,
+//   so a program that merely POSTs to the port can no longer write. It keeps
+//   the secret in <home>/engine/<port>.session (mode 0600, removed when it
+//   stops). Once the probe answers, the shell reads that file from the same
+//   home as serve.log and loads /boot?session=<secret> (percent-encoded)
+//   instead of /: the engine sets the page's cookie and redirects to /, which
+//   also takes the secret out of the address. Apart from that address the
+//   secret goes to one place, the header X-ResearchOS-Session on the shell's
+//   own POST /api/shutdown (its only POST; the page's requests carry the
+//   cookie). It is read from the file at each use and kept in no property,
+//   never written to serve.log, shown on a waiting page or printed. With no
+//   file (an older engine) the shell loads / and sends no header, as before.
 // - Bridge, native -> page: every menu command runs the fixed string
 //   `window.RCE && RCE.command('<name>')`, the name taken from the
 //   compiled-in whitelist `shellCommands` below and checked again right
@@ -69,9 +83,10 @@
 //   proposals folder, shared with them on its own), from "choose-folder-mine".
 //   Since V8 U5 (DESIGN.md 12.9): `{type: "mode", mode: String}`, mode
 //   exactly one of teamModes, sent by the page whenever it learns the open
-//   project's role. It only shows or hides 文件 > 提交提议… (a member) and
-//   发布 (the PI); both commands only take the page to the place that says
-//   what they would write -- nothing is written from a menu.
+//   project's role. It only shows or hides 文件 > 提交提议… (a member),
+//   发布 (the PI) and, unless the project is one person's ("single", DESIGN.md
+//   18.3), 视图 > 提议 and 成员; the commands only take the page to the place
+//   that says what they would write -- nothing is written from a menu.
 //   Since V9 (DESIGN.md 13.3): `{type: "language"}`, exactly one key, sent
 //   when the researcher switches the interface language in the page. The
 //   shell re-reads settings.json -- the message names no language and the
@@ -100,7 +115,9 @@ import AppKit
 // The page-side dispatcher (app.html, "Native shell bridge") accepts the
 // same names. Only [a-z-] characters: safe inside a single-quoted JS string.
 // V8 U5 (DESIGN.md 12.9): one command per sidebar section, plus 提交提议
-// (a member) and 发布 (the PI).
+// (a member) and 发布 (the PI). 18.3: 研究路线 is one page and the menu has one
+// item for it ("routes"); "desk" stays a valid name, and the page opens the
+// same page for both.
 let shellCommands: Set<String> = [
     "workspace", "create-project",
     "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
@@ -108,7 +125,9 @@ let shellCommands: Set<String> = [
 ]
 
 // What the page says the open project is (V8 U5): exactly one of these, or
-// the message is ignored. 提交提议… shows for "member", 发布 for "pi".
+// the message is ignored. 提交提议… shows for "member", 发布 for "pi"; 视图 >
+// 提议 and 成员 show for every mode but "single" (18.3: a project of one person
+// has neither, nor does its sidebar).
 let teamModes: Set<String> = ["single", "pi", "member", "none"]
 
 let defaultPort = 7357
@@ -183,9 +202,8 @@ let englishText: [String: String] = [
     "全选": "Select All",
     // 视图
     "视图": "View",
-    "工作台": "Desk",
     "研究路线": "Research Routes",
-    "成果": "Outputs",
+    "图表与论断": "Figures and Claims",
     "变量": "Variables",
     "文献": "Literature",
     "数据与代码": "Data & Code",
@@ -268,6 +286,48 @@ func systemLanguageScript(preferred: [String]) -> String {
 }
 
 // -- end of the two languages ---------------------------------------------------
+
+// -- The engine session (DESIGN.md 18.1) ----------------------------------------
+// The file the engine keeps its secret in (researchos.paths.engine_session_path),
+// what the shell makes of it, and the address it loads first. Nothing here
+// prints, logs or stores the secret; the header comment says where it goes.
+
+let sessionHeader = "X-ResearchOS-Session"
+let sessionDirectory = "engine"
+let sessionSuffix = ".session"
+// The engine's secret is 64 hex characters; a longer text is not one.
+let sessionLimit = 512
+// RFC 3986's unreserved characters stay as they are in the address; everything
+// else, '+' and '&' included, is percent-encoded (the engine reads a literal
+// '+' in a query as a space).
+let sessionQueryAllowed = CharacterSet(
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+// <home>/engine/<port>.session
+func engineSessionFile(home: URL, port: Int) -> URL {
+    home.appendingPathComponent(sessionDirectory, isDirectory: true)
+        .appendingPathComponent("\(port)\(sessionSuffix)", isDirectory: false)
+}
+
+// The secret the file holds, without its closing newline; nil when there is no
+// readable file (an older engine writes none) or its text is not one token of
+// printable ASCII -- nil then means "no session": the plain address, no header.
+func engineSession(at file: URL) -> String? {
+    guard let data = try? Data(contentsOf: file),
+          let text = String(data: data, encoding: .utf8) else { return nil }
+    let secret = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !secret.isEmpty, secret.count <= sessionLimit,
+          secret.unicodeScalars.allSatisfy({ (0x21...0x7E).contains($0.value) }) else { return nil }
+    return secret
+}
+
+// <base>boot?session=<secret>, the secret percent-encoded; base ends in a slash.
+func bootURL(base: URL, secret: String) -> URL? {
+    guard let encoded = secret.addingPercentEncoding(withAllowedCharacters: sessionQueryAllowed) else { return nil }
+    return URL(string: "boot?session=" + encoded, relativeTo: base)?.absoluteURL
+}
+
+// -- end of the engine session --------------------------------------------------
 
 func isFolderRequest(_ request: String) -> Bool {
     !request.isEmpty && request.count <= folderRequestLimit
@@ -426,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var proposeItem: NSMenuItem!
     var publishItem: NSMenuItem!
     var teamSeparator: NSMenuItem!
+    var teamViewItems: [NSMenuItem] = []
 
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -436,6 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     var baseURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
     var logURL: URL { rceHome().appendingPathComponent("serve.log") }
+    var sessionFileURL: URL { engineSessionFile(home: rceHome(), port: port) }
 
     // MARK: launch
 
@@ -624,9 +686,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         showPlaceholder(headline, detail: detail, log: tail ?? nil)
     }
 
+    // 18.1: the secret of the engine on this port, read from its file now and
+    // kept nowhere; nil for an engine without a file (an older one).
+    func engineSecret() -> String? {
+        engineSession(at: sessionFileURL)
+    }
+
+    // Where the web view starts: /boot?session=<secret> when the engine kept a
+    // session file (it sets the page's cookie and redirects to /), the plain
+    // address when it did not.
+    func entryURL() -> URL {
+        guard let secret = engineSecret(), let boot = bootURL(base: baseURL, secret: secret) else { return baseURL }
+        return boot
+    }
+
     func loadApp() {
         appLoaded = true
-        webView.load(URLRequest(url: baseURL))
+        webView.load(URLRequest(url: entryURL()))
     }
 
     // MARK: quit
@@ -679,6 +755,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Only the engine whose pid this is may act on it (header comment).
         request.httpBody = Data("{\"pid\": \(process.processIdentifier)}".utf8)
+        // 18.1: the engine asks every POST for its session. Read now, not kept
+        // from the load: a quit can come before any load. No file, no header.
+        if let secret = engineSecret() { request.setValue(secret, forHTTPHeaderField: sessionHeader) }
         session.dataTask(with: request) { _, _, _ in }.resume()
 
         let deadline = Date().addingTimeInterval(3)
@@ -738,7 +817,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             item("退出", #selector(NSApplication.terminate(_:)), "q"),
         ]))
         // 提交提议… / 发布 appear only in a collaborative project, by role
-        // (applyTeamMode); a project of one person has neither.
+        // (applyTeamMode); a project of one person has neither, nor 提议 and
+        // 成员 in 视图 (18.3).
         proposeItem = cmd("提交提议…", "propose")
         publishItem = cmd("发布", "publish")
         teamSeparator = .separator()
@@ -751,7 +831,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             .separator(),
             item("关闭", #selector(NSWindow.performClose(_:)), "w"),
         ]))
-        applyTeamMode()
         main.addItem(submenu("编辑", [
             item("撤销", Selector(("undo:")), "z"),
             item("重做", Selector(("redo:")), "z", [.command, .shift]),
@@ -767,10 +846,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         zoomInAlt.isHidden = true
         zoomInAlt.allowsKeyEquivalentWhenHidden = true
         let viewMenu = submenu("视图", [
-            cmd("项目首页", "workspace"),
-            cmd("工作台", "desk", "1"),
+            cmd("项目首页", "workspace", "1"),
             cmd("研究路线", "routes", "2"),
-            cmd("成果", "results", "3"),
+            cmd("图表与论断", "results", "3"),
             cmd("变量", "variables", "4"),
             cmd("文献", "literature", "5"),
             cmd("数据与代码", "data", "6"),
@@ -785,6 +863,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             cmd("实际大小", "zoom-reset", "0"),
         ])
         viewMenu.submenu?.items.first { $0.action == #selector(reloadPage(_:)) }?.target = self
+        teamViewItems = (viewMenu.submenu?.items ?? []).filter {
+            ["proposals", "members"].contains($0.representedObject as? String ?? "")
+        }
+        applyTeamMode()
         main.addItem(viewMenu)
         let windowMenu = submenu("窗口", [
             item("最小化", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -806,10 +888,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     // 文件 > 提交提议… for a member, 发布 for the PI; neither otherwise.
+    // 视图 > 提议 and 成员 (⌘7, ⌘8): in every project but one person's (18.3);
+    // a hidden item is off the menu and its shortcut does nothing.
     func applyTeamMode() {
         proposeItem.isHidden = teamMode != "member"
         publishItem.isHidden = teamMode != "pi"
         teamSeparator.isHidden = teamMode != "member" && teamMode != "pi"
+        teamViewItems.forEach { $0.isHidden = teamMode == "single" }
     }
 
     @objc func showAbout(_ sender: Any?) {

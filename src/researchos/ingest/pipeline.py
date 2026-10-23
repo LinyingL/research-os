@@ -208,7 +208,7 @@ def _scan_sources(
         )
         echo(
             f"  mdpaper: {len(inventory['md'])} .md scanned "
-            f"({md_counts['md_skipped_non_paper']} skipped as README/CHANGELOG/LICENSE) "
+            f"({md_counts['md_skipped_non_paper']} skipped as README/CHANGELOG/LICENSE or in research/) "
             f"-> {_format_counts(md_counts)}"
         )
         claims_counts = claims_ingest.ingest_claims_repo(conn, project_root, inventory["tex"], scan=sc)
@@ -216,7 +216,7 @@ def _scan_sources(
         # 11.4: citations last -- its links start at the sections and claims
         # the extractors above wrote in this scan.
         citation_counts = citations_ingest.ingest_citations_repo(
-            conn, project_root, citations_ingest.drafts_of(inventory), scan=sc, complete=True,
+            conn, project_root, citations_ingest.drafts_of(inventory, project_root), scan=sc, complete=True,
         )
         echo(f"  citations: {_format_counts(citation_counts)}")
         return warnings.count

@@ -145,3 +145,54 @@ def test_new_project_can_start_an_attempt_without_importing_a_table(tmp_path, mo
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=5)
+
+
+def _en_post(base: str, path: str, body: dict) -> tuple[int, dict]:
+    return _request_with_headers(base, "POST", path, {
+        "Host": base.removeprefix("http://"), "Content-Type": "application/json", "X-ResearchOS-Lang": "en",
+    }, json.dumps(body).encode("utf-8"))
+
+
+def test_an_english_screen_saving_a_document_without_a_heading_writes_no_heading(writing_server):
+    """DESIGN.md 18.3: the heading is written only for a title the person typed, whatever the screen's language."""
+    base, root, _httpd = writing_server
+    status, first = _post(base, "/api/workspace/document", {
+        "project": str(root), "kind": "result", "title": "Fit", "content": "Estimates.", "revision": None})
+    assert status == 200
+    (root / first["path"]).write_text("Estimates, no heading.\n", encoding="utf-8")
+    status, shown = _request_with_headers(base, "GET", "/api/workspace/document?path=" + first["path"],
+                                         {"Host": base.removeprefix("http://"), "X-ResearchOS-Lang": "en"})
+    assert status == 200 and shown["title"] == "Result record"
+    status, saved = _en_post(base, "/api/workspace/document", {
+        "project": str(root), "path": first["path"], "title": shown["title"], "content": shown["content"] + "More.\n",
+        "revision": shown["revision"]})
+    assert status == 200, saved
+    assert (root / first["path"]).read_text(encoding="utf-8") == "Estimates, no heading.\nMore.\n"
+    assert saved["title"] == "Result record" and saved["modified"]
+    status, again = _post(base, "/api/workspace/document", {
+        "project": str(root), "path": first["path"], "title": "结果记录", "content": saved["content"] + "x",
+        "revision": saved["revision"]})  # a Chinese screen reading the same file: no heading either
+    assert status == 200 and not again["content"].startswith("#") and again["title"] == "结果记录"
+
+
+def test_a_link_to_an_existing_file_beyond_the_listed_ones_is_still_known(writing_server, monkeypatch):
+    base, root, _httpd = writing_server
+    for name in ("a.csv", "b.csv", "c.csv"):
+        (root / name).write_text("x\n")
+    monkeypatch.setattr(workspace, "FILE_LIMIT", 2)
+    status, data = _get(base, "/api/workspace")
+    assert status == 200 and data["files_truncated"] and data["files_limit"] == 2 and len(data["files"]) == 2
+    unlisted = ({"a.csv", "b.csv", "c.csv"} - {f["path"] for f in data["files"]}).pop()
+    query = f"project={root}&path={unlisted}&path=missing.csv&path=../outside.csv&path=.secret"
+    status, got = _get(base, "/api/workspace/exists?" + query.replace(" ", "%20"))
+    assert status == 200 and got == {"exists": [unlisted]}
+    status, error = _get(base, "/api/workspace/exists?project=" + str(root.parent / "other") + "&path=a.csv")
+    assert status == 409 and error["state"] == "workspace_project_changed"
+
+
+def test_an_unreadable_project_identity_is_a_page_not_a_server_error(writing_server):
+    base, root, _httpd = writing_server
+    (root / ".researchos" / "project.toml").write_text("not = [valid", encoding="utf-8")
+    status, data = _get(base, "/api/workspace")
+    assert status == 200, data
+    assert data["attempts"] == [] and data["identity_error"]["code"] == "identity" and data["read_only"]

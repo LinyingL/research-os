@@ -39,7 +39,7 @@ def _listener(pattern: str) -> str:
 
 @needs_node
 def test_14_3_the_frames_openers_ask_before_they_replace_a_half_typed_panel():
-    """A note half typed in #16's panel: the header's 「N 条判断待复核」 and
+    """A note half typed in #16's panel: the header's 「N 项待复核」 and
     the sidebar's 记录 ask first -- declined, #16 stays with its text;
     accepted, the review list (the records) opens. The same question as
     every opener inside the desk."""
@@ -94,7 +94,7 @@ def test_14_3_leaving_the_desk_takes_its_panel_with_it_after_asking():
       extra.after = [state.panelSubject, panelPart("panel").className];
       await window.RODesk.openAttempt(%(a16)s);
       extra.quiet = window.RODesk.leaveDesk();
-      global.currentView = "tree";
+      global.currentView = "results";
       await window.RODesk.openAttempt(%(a16)s);
       const before = posted.length;
       extra.redrawn = window.RODesk.revalidatePanel(state.panelSubject);

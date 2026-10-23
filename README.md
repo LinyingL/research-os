@@ -56,7 +56,7 @@ aside, and proposals awaiting review.
 ![Research route map with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
 
 **Result context.** Open a figure to inspect its linked scripts, data,
-research attempt, and paper draft, together with its history and notes.
+research attempt, and paper draft, together with its history and comments.
 
 ![A figure linked to source data, scripts, an intermediate dataset, and a paper draft](docs/images/result-provenance.png)
 
@@ -83,11 +83,11 @@ In a team, each person works in a local copy:
 4. Approved changes are applied to the PI's project and published.
    Members sync to receive that version.
 
-An unapproved proposal stays separate from the published version. Approval
+An unapproved proposal stays separate from the official version. Approval
 covers research attempts, verdicts, variable versions, project files, and
 links between attempts. Plans and notes saved as project documents use
-the file review workflow. Comments on files or attempts, judgments on
-extracted links, and manually recorded file relationships sync without
+the file review workflow. Comments on files or attempts, link judgments,
+and manually recorded file relationships sync without
 individual approval.
 
 The PI's computer holds the accepted project, the shared folder carries
@@ -211,14 +211,14 @@ Project identity, configuration, and other research records live in
 under `~/.researchos/`, outside the project folder. Back up both the project
 and local history; rebuilding the index does not restore old file contents.
 
-File relationships may come from code, imported run records, or a person's
+File relationships may come from code, imported experiment logs, or a person's
 statement. Their basis stays visible, and the app does not promise a
 complete execution history for every result. Local file history retains
 text up to 5 MB; a fingerprint or summary of a larger file is not a
 restorable copy. Published team snapshots retain file contents separately.
 
 Conflicting edits need a person to resolve them. Sync preserves the local
-file and places the published version beside it for comparison. The app
+file and places the official version beside it for comparison. The app
 is still in early development; use a backed-up project when trying a new
 version.
 

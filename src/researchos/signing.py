@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Mapping
 
 from researchos import paths
+from researchos.memo import Memo
 
 NAMESPACE = "researchos"
 KEYS_DIRNAME = "keys"
@@ -224,10 +225,41 @@ def sign(data: bytes) -> bytes:
     return done.stdout
 
 
+#: What `ssh-keygen -Y verify` said, by the program, the SHA-256 of the data, the SHA-256 of the signature
+#: and the key (DESIGN.md 18.4, item 4): the answer is a function of exactly those, so it is asked once per
+#: triple while the engine runs. A "yes" is kept; a "no" only when it is the program's judgement of the
+#: signature (`_is_verdict`). A run that did not end (no program, a timeout, a signal) and a run that failed
+#: to judge (it exits 255 for every failure it has) are not answers and are not kept.
+_VERIFIED = Memo(1024)
+
+#: The line `ssh-keygen -Y verify` prints on its standard output when it set about verifying and the signature
+#: did not verify. A failure before that point (no user for the uid, no memory, no input) does not print it.
+_NOT_VERIFIED = b"Could not verify signature."
+#: What it says on its standard error when the signature itself is what it judged: the data is not what was
+#: signed, or the text is no signature at all. Said of the key that was not allowed, it says nothing.
+_JUDGED_BY_STDERR = (b"incorrect signature", b"Couldn't parse signature")
+
+
+def _is_verdict(done: subprocess.CompletedProcess) -> bool:
+    """Whether a run of `ssh-keygen -Y verify` that did not succeed is the program's judgement that the
+    signature is not valid, which only the inputs decide, and not a failure to judge (it could not make its
+    files or memory, the user database did not answer, ...), which a later run may not repeat."""
+    if done.returncode <= 0 or _NOT_VERIFIED not in done.stdout:
+        return False
+    said = done.stderr.strip()
+    return not said or any(words in said for words in _JUDGED_BY_STDERR)
+
+
 def verify(data: bytes, signature: bytes, public_key: str) -> bool:
     """Whether `signature` is a valid signature over `data` by exactly
     `public_key`, in Research OS's namespace."""
     key = parse_public_key(public_key)
+    program = tool()
+    asked = (program, hashlib.sha256(data).hexdigest(), hashlib.sha256(signature).hexdigest(), key) if program else None
+    if asked is not None:
+        known = _VERIFIED.get(asked)
+        if known is not None:
+            return known
     with tempfile.TemporaryDirectory(prefix="researchos-verify-") as private:
         home = Path(private)
         allowed, sig = home / "allowed_signers", home / "data.sig"
@@ -235,7 +267,10 @@ def verify(data: bytes, signature: bytes, public_key: str) -> bool:
         sig.write_bytes(signature)
         done = _run(["-Y", "verify", "-f", str(allowed), "-I", _PRINCIPAL, "-n", NAMESPACE, "-s", str(sig)],
                     data=data, home=home)
-    return done.returncode == 0
+    good = done.returncode == 0
+    if asked is not None and (good or _is_verdict(done)):
+        _VERIFIED.put(asked, good)
+    return good
 
 
 @dataclass(frozen=True)

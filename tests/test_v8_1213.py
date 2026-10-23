@@ -1,7 +1,7 @@
 """DESIGN.md 12.13 -- rulings from building and accepting the V8 interface:
 words not arrows on screen; who a version came from; 「已批准，待同步」;
 what a proposal carries by kind; tables summary first; a link's note in the
-timeline; 成果 lists claims only from drafts marked 「设为论文正文」; a
+timeline; 图表与论断 lists claims only from drafts marked 「设为论文正文」; a
 member's two folders. Every test names its ruling."""
 
 from __future__ import annotations
@@ -339,7 +339,7 @@ def test_12_13_a_link_s_day_is_said_as_a_day_and_sorts_by_time_not_by_string(tz)
     assert (said_today, said_yesterday) == ("今天", "昨天")
 
 
-# -- 成果 and 设为论文正文 (12.13) ------------------------------------------------------------------
+# -- 图表与论断 and 设为论文正文 (12.13) ------------------------------------------------------------------
 
 
 def test_12_13_papers_toml_is_a_record_ledger_snapshotted_and_marked_drafts_feed_results(tmp_path, monkeypatch):
@@ -588,7 +588,7 @@ GUIDE_APP_LABELS = (
     "公盘和工作副本", "选择…", "公盘文件夹，或 PI 共享给你的「已发布」文件夹", "你自己的提议文件夹",
     "工作副本放在哪里", "查看", "PI 公钥指纹", "核对无误，加入", "公盘与同步", "同步", "已经是最新的正式版本",
     "开始协作", "建立成员名单", "设为公盘", "发布", "添加成员", "公钥文字", "公钥文件", "指纹：",
-    "选择文件夹…", "加入并扫描", "提交提议", "新的尝试", "修改判断", "变量定义", "只有文件", "查看将要发送的内容",
+    "选择文件夹…", "加入并扫描", "提交提议", "新的尝试", "修改研究判断", "变量定义", "只有文件", "查看将要发送的内容",
     "按勾选的文件重新查看", "发送提议", "提议中", "已批准", "已退回", "已批准，待同步", "批准并加入", "退回并说明",
     "讨论", "两边都改过", "放在旁边的正式版本", "团队", "关闭",
 )
@@ -628,7 +628,9 @@ GUIDE_EN = ROOT / "docs" / "install-and-join.en.md"
 GUIDE_LABELS_NOW_ENGLISH = ("添加项目…", "从公盘加入项目…", "已经是最新的正式版本", "已批准，待同步",
                             # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
                             "按勾选的文件重新查看", "发送提议", "提议中", "已批准", "已退回", "批准并加入", "退回并说明",
-                            "讨论", "两边都改过", "关联文件", "补上来源")
+                            "讨论", "两边都改过", "关联文件", "补上来源",
+                            # 18.2 text rules: the composer under 提议 is in English too (kinds, fields, buttons).
+                            "提交提议", "新的尝试", "修改研究判断", "变量定义", "只有文件", "查看将要发送的内容")
 #: Every Chinese label the English guide quotes from a screen still in Chinese, each written
 #: **label** (meaning), so that a reader who does not read Chinese can match it on screen.
 GUIDE_EN_CHINESE_LABELS = (
@@ -636,8 +638,7 @@ GUIDE_EN_CHINESE_LABELS = (
     "复制", "请手动选中复制", "关闭", "3. 公盘和工作副本", "选择…", "公盘文件夹，或 PI 共享给你的「已发布」文件夹",
     "你自己的提议文件夹（PI 单独共享给你时才选；也可以以后在「成员」里选）", "工作副本放在哪里（一个新的或空的文件夹）", "查看", "PI 公钥指纹", "核对无误，加入", "公盘与同步", "同步",
     "团队", "选择文件夹…", "加入并扫描", "开始协作", "建立成员名单", "公盘", "设为公盘", "发布",
-    "添加成员", "公钥文字", "公钥文件", "指纹：", "提交提议", "新的尝试", "修改判断", "变量定义", "只有文件",
-    "查看将要发送的内容", "放在旁边的正式版本",
+    "添加成员", "公钥文字", "公钥文件", "指纹：", "放在旁边的正式版本",
 )
 #: The only other Chinese the English guide may show: the line `researchos app` prints, the two
 #: fixed folder names on the shared drive (13.1) and the switch's label on an English screen (13.3).

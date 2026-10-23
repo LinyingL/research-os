@@ -47,7 +47,7 @@ def test_12_10_2_status_of_one_person_says_no_approval_step_and_counts_notes_and
     root = _project(tmp_path / "proj")
     code, out, _ = _run(capsys, "status", root)
     assert code == 0
-    assert "Who I am: not set on this computer" in out and "researchos me set --name NAME --email EMAIL" in out
+    assert "Who I am: not set on this Mac" in out and "researchos me set --name NAME --email EMAIL" in out
     assert "My role: one person -- no approval step" in out
     assert "Notes: none yet" in out and "History: " in out and "kept by Research OS" in out
     assert "Shared folder" not in out  # one person, nothing shared: nothing to say

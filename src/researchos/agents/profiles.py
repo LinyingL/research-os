@@ -19,7 +19,9 @@ by `labels.check_model` (never starts with `-`).
 `PATH`, so `search_path` widens it with the usual install folders of both
 programs (17.1). Found means an executable regular file that answers
 `--version` within `VERSION_TIMEOUT_S`; the version is shown. Research OS
-never installs a runner.
+never installs a runner. A version that was answered is remembered in memory
+while the program is the same file (18.4 item 7), so the page asking again
+does not start the program again.
 
 **The MCP extra.** An agent reports through Research OS's own MCP tools, so
 running one needs the optional `mcp` package in this Python (17.1).
@@ -40,11 +42,12 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from researchos import settings
+from researchos import memo, settings
 from researchos.agents import labels
 
 MAX_AGENTS = 20
@@ -175,6 +178,7 @@ def set_commands(mapping: object) -> dict[str, str]:
     else:
         data.pop(COMMANDS_SETTING, None)
     settings.write_json(settings.settings_path(), data)
+    _VERSIONS.clear()  # a saved location is asked about afresh (18.4 item 7)
     return commands()
 
 
@@ -260,6 +264,36 @@ def _version_of(path: str) -> str | None:
     return None
 
 
+#: What `--version` answered, kept while the program is the same file (18.4 item 7): by the path as `find`
+#: resolved it, the file's device, inode, size and modification time, and the `PATH` the program is started
+#: with. Only a version is kept: a program that failed, said nothing or timed out gave no answer, and is asked
+#: again. A file whose modification time is less than `memo.RACY_NS` old is not kept either.
+_VERSIONS = memo.Memo(32)
+
+
+def _remembered_version(path: str) -> str | None:
+    """`_version_of(path)`, asked again only when something it depends on has moved: the file (its stamp, looked at
+    before and after the program ran, so a file replaced while `--version` was running is not taken for the old
+    one), its path, or the `PATH` it runs with. A file that cannot be looked at is asked as it always was."""
+    began = time.time_ns()
+    try:
+        before = os.stat(path)
+    except OSError:
+        return _version_of(path)
+    key = (path, memo.stamp(before), _program_env().get("PATH", ""))
+    kept = _VERSIONS.get(key)
+    if kept is not None:
+        return kept
+    version = _version_of(path)
+    if version is not None and memo.settled(before, began):
+        try:
+            if memo.stamp(os.stat(path)) == key[1]:
+                _VERSIONS.put(key, version)
+        except OSError:
+            pass
+    return version
+
+
 def find(runner: str, *, check_version: bool = True) -> Found:
     """Where `runner`'s program is and whether it answers (17.1). The
     person's saved path wins and is never second-guessed by a `PATH`
@@ -282,7 +316,7 @@ def find(runner: str, *, check_version: bool = True) -> Found:
         path = found
     if not check_version:
         return Found(runner, path, None, None)
-    version = _version_of(path)
+    version = _remembered_version(path)
     return Found(runner, path, version, None if version else "no_version")
 
 

@@ -151,8 +151,23 @@ Endpoints (all GET unless noted):
                             the task; answers the run's summary at once.
     POST /api/agents/runs/<id>/reply -- `{project, message}`: answer a
                             question or send the task back.
+    GET  /api/agents/runs/<id>/revert-plan -- what 撤回本次运行 would do now,
+                            without doing it (18.1 item 5): `restore` (files
+                            put back), `remove` (files moved away), each path
+                            with its `time`, and `cannot` (files it leaves
+                            alone, each with a reason code). Refuses as the
+                            undo does (`agent_reverted`, `agent_later_run`,
+                            `agent_not_revertible`, ...). Reads only.
+    GET  /api/agents/large-files -- the served project's files over 16 MB,
+                            which a run may change and an undo cannot restore
+                            (18.1 item 5): `{count, largest: [{path, size}],
+                            partial}`, the ten biggest, biggest first. Reads
+                            only.
     POST /api/agents/runs/<id>/stop, /revert -- `{project}`: stop the run and
-                            everything it started; undo it (17.6).
+                            everything it started; undo it (17.6). `revert`
+                            takes `files` (the paths the person left checked in
+                            the plan; absent = all): the others are left as
+                            they are and listed in the run's log as kept.
                             Every run endpoint needs an unblocked served
                             project, a POST carries `project` (409
                             `agent_project_changed` when it is no longer the
@@ -181,8 +196,8 @@ Endpoints (all GET unless noted):
                             edit against the researcher's own map file --
                             unified diff plus old/new row, NOTHING written
                             (see `attempts_preview_payload` and
-                            `researchos.webapp.mapedit`), and
-                            `reason_required` (14.3).
+                            `researchos.webapp.mapedit`), `reason_required` (14.3)
+                            and, for an update, `cells` (18.3).
     POST /api/attempts/write -- same body: actually performs the edit --
                             backup, atomic write into the source Markdown,
                             re-ingest under the watcher's own ingest lock,
@@ -312,7 +327,7 @@ Endpoints (all GET unless noted):
                             `reopen_payload`).
     POST /api/records/answer -- body `{"file": "judgements", "answer":
                             "file"|"restore"}` answers 「记录文件比图谱少了 N
-                            条判断」 (9.3); `{"file": "canvas", "answer":
+                            条连线确认」 (9.3); `{"file": "canvas", "answer":
                             "set_aside"}` moves an arrangement record Research OS
                             cannot read into `.researchos/backups/`.
     GET  /api/migration -- 9.5: the pre-V5 indexes waiting for this folder,
@@ -355,7 +370,7 @@ Endpoints (all GET unless noted):
                             `src/researchos/webapp/desk.js` exactly as
                             /canvas.js is: read fresh, same origin check,
                             packaged as `package-data`.
-    GET  /node.js      -- the node page, 成果 and 数据与代码 (DESIGN.md
+    GET  /node.js      -- the node page, 图表与论断 and 数据与代码 (DESIGN.md
                             12.6, 12.7, 12.9; task V8 phase U3), served the
                             same way.
     GET  /routemap.js  -- the desk's route map (DESIGN.md 14.1, 14.2; task
@@ -364,7 +379,7 @@ Endpoints (all GET unless noted):
                             trace as columns with the lines between them,
                             its breaks with their repairs, the links that
                             touch it (`researchos.nodepage.node`).
-    GET  /api/results  -- 成果: the drafts' figures and tables by section
+    GET  /api/results  -- 图表与论断: the drafts' figures and tables by section
                             with their trace state; `?draft=<file>`: that
                             draft's claims.
     GET  /api/data-code -- 数据与代码: every script and data file with its
@@ -438,6 +453,23 @@ foreign page's Origin still always names its own host, so the portless
 loopback form proves the same thing the exact one does) -- missing entirely
 is accepted, since a non-browser CLI caller (`curl`, this module's own test
 suite) never sends one.
+
+Engine session (DESIGN.md 18.1, every write): the origin check says a request
+came from a page this loopback server itself served, not that the program
+sending it is the researcher's page -- a script an AI agent writes and runs
+can POST here with the right `Host` and no `Origin` at all. So every request
+other than GET and HEAD must also carry the session the engine made when it
+started (`serve`: 32 random bytes, kept in memory and in
+`<home>/engine/<port>.session`, mode 0600): the cookie `ro_session_<port>`
+(set by `GET /boot?session=...`, which `researchos serve` and the Mac app load
+first) or the header `X-ResearchOS-Session`. `RceRequestHandler._check_session`
+runs right after `_check_local_origin` and before routing or reading the body;
+without it the answer is 403 `session_required` with a sentence in the
+request's language, and nothing is changed. A page without the session still
+reads (every GET but `/boot` is open, see `do_GET`'s audit note). The secret
+is compared in constant time and is never printed or logged. `build_server`
+takes the secret as `session`; None (the default, what the tests build) means
+no session is asked for, `serve` never builds one that way.
 
 Switch-target defense (`POST /api/projects/switch`, task V3 phase 1): this
 is the one endpoint that changes what the whole server serves, so its input
@@ -617,10 +649,12 @@ catch in `main()`.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -641,6 +675,7 @@ from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
+from researchos.agents import snapshot as agent_snapshot
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
 from researchos import desk as desk_mod
@@ -712,6 +747,48 @@ class PathTraversalError(ApiError):
 
 class ForbiddenOriginError(ApiError):
     status = 403
+
+
+#: 18.1: the engine's session, as a write carries it -- the cookie `ro_session_<port>` (the port is
+#: in the name because cookies are shared across the ports of 127.0.0.1) or this header.
+SESSION_COOKIE_PREFIX = "ro_session_"
+SESSION_HEADER = "X-ResearchOS-Session"
+#: What a window without the session is told when its first write is refused (18.1), in both languages.
+#: The second sentence is for the window that is the app already: an app built before the session existed loads the
+#: plain address, and only `researchos app` makes a new one.
+SESSION_REQUIRED_ZH = ("这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。"
+                       "如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。")
+SESSION_REQUIRED_EN = ("This window cannot save: open it from the Research OS app. "
+                       "If you already did, the app is out of date: run researchos app to rebuild it.")
+
+
+#: A `/boot?...` request target, and the `session=` values in it (the secret is the first one the engine reads).
+_BOOT_TARGET = re.compile(r"/boot\?[^\s\"#]*")
+_SESSION_VALUE = re.compile(r"(session=)[^&]*")
+
+
+def _without_secret(text: str) -> str:
+    """`text` (a request line, a path) with the secret of a `/boot?session=...` hidden, wherever it stands among
+    the query's other parameters: whatever the engine logs about a request goes through this, since the log is a
+    file any program of the user can read (18.1)."""
+    return _BOOT_TARGET.sub(lambda m: _SESSION_VALUE.sub(r"\1<hidden>", m.group(0)), text)
+
+
+class SessionRequiredError(ApiError):
+    """A write that carries no valid engine session (18.1): 403, `state` and `code`
+    `session_required`, `message` the sentence in the request's language, `detail`
+    what the engine looked for. The page shows `message` where the write's status
+    shows (app.html's BLOCKING_ERROR_TEXT)."""
+
+    status = 403
+    state = "session_required"
+
+    def __init__(self, port: int, lang: str) -> None:
+        super().__init__(
+            f"the request carries no engine session: send the cookie {SESSION_COOKIE_PREFIX}{port} "
+            f"or the header {SESSION_HEADER}")
+        self.extra = {"code": self.state, "detail": str(self),
+                      "message": settings_mod.say(SESSION_REQUIRED_ZH, SESSION_REQUIRED_EN, lang)}
 
 
 class NotAFileError(ApiError):
@@ -1415,10 +1492,11 @@ def _attempts_config_echo(project_root: Path) -> dict[str, Any] | None:
 
 
 def summary_payload(conn: Connection, project_root: Path, served: ServedProject | None = None) -> dict[str, Any]:
-    node_counts = {t: len(db.get_nodes_by_type(conn, t)) for t in sorted(db.NODE_TYPES)}
-    edge_counts = {t: 0 for t in sorted(db.EDGE_TYPES)}
-    for edge in db.query_edges(conn):
-        edge_counts[edge["type"]] += 1
+    # Counted by SQL (18.4 item 7): no node or edge is loaded to be counted. The index's CHECK keeps a row to
+    # the known types, so the zero-filled lists are exactly the old ones.
+    node_found, edge_found = db.count_nodes_by_type(conn), db.count_edges_by_type(conn)
+    node_counts = {t: node_found.get(t, 0) for t in sorted(db.NODE_TYPES)}
+    edge_counts = {t: edge_found.get(t, 0) for t in sorted(db.EDGE_TYPES)}
     return {
         "project_root": str(project_root),
         # Section 8.10 rule 1: "`researchos status` and `/api/summary` report the
@@ -1662,8 +1740,8 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     link = github_link_payload(project_root, target)
     if target.suffix.lower() == ".dta":
         return _dta_payload(target, rel_path, link, lang)
-    try:
-        raw = cloud.read_bytes(target)
+    try:  # one byte past the limit says "truncated"; the size is the open file's (18.4 item 5)
+        raw, size = cloud.read_head(target, _FILE_SIZE_LIMIT + 1)
     except cloud.CloudOnlyError as exc:
         raise CloudOnlyApiError(exc, {"github": link}) from exc
     if b"\x00" in raw[:8192]:
@@ -1682,7 +1760,7 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
         # The 200KB cut can land mid multi-byte character; that is a
         # truncation artifact, not evidence the file is binary.
         content = content_bytes.decode("utf-8", errors="ignore")
-    return {"path": rel_path, "content": content, "truncated": truncated, "size": len(raw), "github": link}
+    return {"path": rel_path, "content": content, "truncated": truncated, "size": size, "github": link}
 
 
 def _dta_payload(target: Path, rel_path: str, link: Any, lang: str) -> dict[str, Any]:
@@ -2495,7 +2573,9 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     or a single researcher must say why (the body's `reason`); with one,
     the rows shown carry it in the result as the write will. Such a write
     while the team file cannot be read is refused here as it would be
-    (`attempt_role_unknown`)."""
+    (`attempt_role_unknown`). An update also says, per cell it would change,
+    what the file holds now and what it will hold (`cells`, 18.3: a row's
+    研究判断 or 结果 saves at once, and 撤销 sends the old cell back)."""
     from researchos import proposals as proposals_mod  # noqa: PLC0415
 
     op, number, fields = _parse_attempt_edit_body(body)
@@ -2508,6 +2588,19 @@ def attempts_preview_payload(project_root: Path, body: dict[str, Any]) -> dict[s
     except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError, proposals_mod.ProposalRefused) as exc:
         raise _attempt_edit_error(exc, project_root) from exc
     out = {**out, "reason_required": turn is not None}
+    if op == "update" and isinstance(out.get("old_row"), str):
+        # 18.3: an existing row's 研究判断 or 结果 saves at once, so the page cannot show the old row first.
+        # For each cell the write would change: the cell as the file holds it now (`was`, decoration and
+        # <br> kept, so sending it back writes it as it was -- what 撤销 sends), its text as the parser
+        # reads it (`was_text`, what the page showed while the file was unchanged) and as it will read
+        # after the write (`now_text`). The page saves at once only while `was_text` is what it showed.
+        try:
+            cells = mapedit.row_cells(project_root, number) or {}
+        except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
+            raise _attempt_edit_error(exc, project_root) from exc
+        out["cells"] = {key: {"was": cells[key], "was_text": attempts_ingest._clean_cell(cells[key]),
+                              "now_text": attempts_ingest._clean_cell(value)}
+                        for key, value in fields.items() if key in cells and isinstance(value, str)}
     if isinstance(fields.get("verdict"), str):
         # U4: whether the verdict abandons the route (☠, or a marker of
         # attempts.toml's abandoned_verdicts) -- a member's 提议改判 then
@@ -2837,7 +2930,7 @@ def _judgement_error(exc: judgements.JudgementRefused) -> ApiError:
 # 8.8: what the page says when an answer to 9.3's question is refused.
 RECORD_ANSWER_MESSAGES = {
     "question_changed": "记录文件在提问之后又变了，请重新查看问题再回答",
-    "would_lose": "记录文件当前为空或无法使用，以文件为准会丢掉仅存的判断副本；请先恢复文件，或选择「把缺少的补回文件」",
+    "would_lose": "记录文件当前为空或无法使用，以文件为准会丢掉仅存的连线确认副本；请先恢复文件，或选择「把缺少的补回文件」",
 }
 
 
@@ -3196,7 +3289,7 @@ def _desk_js() -> str:
 
 
 def _node_js() -> str:
-    """`src/researchos/webapp/node.js` verbatim (the node page, 成果 and
+    """`src/researchos/webapp/node.js` verbatim (the node page, 图表与论断 and
     数据与代码, DESIGN.md 12.6, 12.7, 12.9), read fresh per request."""
     return _NODE_JS_PATH.read_text(encoding="utf-8")
 
@@ -3242,7 +3335,11 @@ class RceHTTPServer(ThreadingHTTPServer):
         project_root: Path | None,
         watch_interval: float = project_watcher.DEFAULT_INTERVAL_SECONDS,
         served: ServedProject | None = None,
+        session: str | None = None,
     ) -> None:
+        # 18.1: the secret every write must carry (`RceRequestHandler._check_session`);
+        # None asks for none -- the tests' servers. `serve` never passes None.
+        self.session = session
         # Mutable since task V3 phase 1 (POST /api/projects/switch), and
         # only ever touched through the accessors below: each request runs
         # on its own thread (ThreadingHTTPServer), so a bare attribute would
@@ -3487,7 +3584,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
     server: RceHTTPServer  # set by socketserver at construction time
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (stdlib's own name)
-        logger.debug("%s - %s", self.address_string(), format % args)
+        # 18.1: the request line of `GET /boot?session=...` holds the secret; it is never logged
+        logger.debug("%s - %s", self.address_string(), _without_secret(format % args))
 
     def _project_root(self) -> Path:
         """One locked read per call (RceHTTPServer.get_project_root) -- a
@@ -3700,7 +3798,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             return payload
         self._agent_writable(served)
         by, _name = self._agent_person(strict=False)
-        payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by))
+        payload = self._agent_api(lambda: agents.revert(served.root, served.project_id, run_id, by=by,
+                                                        files=body.get("files")))
         payload["generation"] = self.server.watcher.record_external_change(None)
         try:
             self.server.start_scan(served)
@@ -3740,6 +3839,46 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 f"request Origin {origin!r} does not match this server; refusing"
             )
 
+    def _has_session(self) -> bool:
+        """18.1: whether this request carries the engine's session -- the cookie
+        `ro_session_<port>` or the header `X-ResearchOS-Session` -- compared in constant
+        time. A server built without a session (the tests') asks for none: every request
+        that passed the origin check has it."""
+        expected = self.server.session
+        if expected is None:
+            return True
+        wanted = expected.encode("utf-8")
+        cookie = f"{SESSION_COOKIE_PREFIX}{self.server.server_address[1]}"
+        offered = [self.headers.get(SESSION_HEADER) or ""]
+        for line in self.headers.get_all("Cookie") or []:
+            for part in line.split(";"):
+                name, sep, value = part.strip().partition("=")
+                if sep and name == cookie:
+                    offered.append(value.strip().strip('"'))
+        return any(hmac.compare_digest(value.strip().encode("utf-8"), wanted) for value in offered if value.strip())
+
+    def _check_session(self) -> None:
+        """18.1: refuse a request without the session (403 `session_required`, the
+        sentence in the request's language). Called by `do_POST` right after the origin
+        check and before routing or reading the body, so a refused write changes nothing."""
+        if not self._has_session():
+            raise SessionRequiredError(self.server.server_address[1], self._lang())
+
+    def _boot(self, query: dict[str, list[str]]) -> None:
+        """`GET /boot?session=<secret>` (18.1): the right secret sets the session cookie
+        (HttpOnly, SameSite=Strict, Path=/), a wrong or missing one does not; either way
+        the answer is a 303 to `/`, which also takes the secret out of the address bar."""
+        expected = self.server.session
+        offered = (query.get("session") or [""])[0]
+        self.send_response(303)
+        if expected is not None and hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
+            cookie = f"{SESSION_COOKIE_PREFIX}{self.server.server_address[1]}"
+            self.send_header("Set-Cookie", f"{cookie}={expected}; HttpOnly; SameSite=Strict; Path=/")
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _lang(self) -> str:
         """The language this request asks for (13.2): "en" or "zh" from
         its `X-ResearchOS-Lang` header, Chinese without one. For the
@@ -3757,11 +3896,23 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             raise ProjectBlockedError(served.blocked or {"situation": NO_PROJECT_SITUATION})
 
     def do_GET(self) -> None:  # noqa: N802 (stdlib's own method name)
+        # 18.1 audit (the table is tests/test_engine_session.py's GET_ROUTES, which fails for a route
+        # it does not list): no GET here writes a record, a setting or the project, opens an
+        # application or starts a scan, so none asks for the session -- a window without it
+        # still reads. The reads that run another program (read-only `git`, `<runner> --version`,
+        # `opencode models`, `mdfind`) change nothing; the one GET that writes, the run list's
+        # recovery of runs a gone engine left active, does so only with the session.
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
         try:
             self._check_local_origin()
+            if path == "/boot":  # 18.1: answers with no project too, before anything else is looked at
+                try:
+                    self._boot(query)
+                except OSError:  # the window went away while it was answered: nothing to report, and nothing to log
+                    pass
+                return
             self._refuse_without_project(path, _NO_PROJECT_GET)
             if path == "/":
                 self._send_html(200, _app_html())
@@ -3796,6 +3947,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 marks = workspace.local_annotations(served.root, {rel: payload["revision"]}, self._lang())
                 payload["officialness"] = marks["files"][rel]
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/exists":
+                # Which of the paths a document names are files it may link to: the page's list of files stops at
+                # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                self._send_json(200, {"exists": workspace.existing_files(served.root, query.get("path", []))})
             elif path == "/api/workspace/asset":
                 served = self._require_unblocked()
                 rel = (query.get("path") or [""])[0]
@@ -3978,7 +4136,22 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if served.project_id is None:  # no identity yet: nothing could have run
                     self._send_json(200, {"runs": [], "active": None})
                 else:
-                    self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id)))
+                    # Listing recovers the runs a gone engine left active (a write, and it may end their
+                    # program): only for a request that carries the session (18.1); without it, the list is read as stored.
+                    recover = self._has_session()
+                    self._send_json(200, self._agent_api(lambda: self.server.agents.runs(served.project_id, recover=recover)))
+            elif path == "/api/agents/large-files":
+                # 18.1 item 5: what the confirmation before a first run names (a stat-only walk)
+                served = self._require_unblocked()
+                self._send_json(200, agent_snapshot.large_files(served.root))
+            elif path.startswith("/api/agents/runs/") and path.endswith("/revert-plan") and path.count("/") == 5:
+                # 18.1 item 5: the undo's list, which only reads
+                served = self._require_unblocked()
+                run_id = path[len("/api/agents/runs/"):-len("/revert-plan")]
+                if served.project_id is None:
+                    raise AgentApiError(agent_manager.AgentError("run_missing"), self._lang())
+                self._send_json(200, self._agent_api(lambda: self.server.agents.revert_plan(
+                    served.root, served.project_id, run_id)))
             elif path.startswith("/api/agents/runs/") and "/" not in path[len("/api/agents/runs/"):]:
                 served = self._require_unblocked()
                 run_id = path[len("/api/agents/runs/"):]
@@ -4001,7 +4174,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send_api_error(exc)
         except Exception:
-            logger.exception("unhandled error handling GET %s", self.path)
+            logger.exception("unhandled error handling GET %s", _without_secret(self.path))
             self._send_json(500, {"error": "internal server error"})
 
     def _read_json_object(self) -> dict[str, Any]:
@@ -4036,6 +4209,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             # out; switch repoints the whole server), so this line is what
             # stands between them and a drive-by page's cross-origin fetch.
             self._check_local_origin()
+            # 18.1: and the session, which the origin check cannot prove -- a
+            # program on this Mac can send the right Host and no Origin at all.
+            self._check_session()
             self._refuse_without_project(parsed.path, _NO_PROJECT_POST)
             if parsed.path == "/api/open":
                 body = self._read_json_body_with_path()
@@ -4059,13 +4235,16 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._workspace_target(body)
                 with self.server.write_guard(human=True):
                     self._workspace_target(body)  # a concurrent window may have switched projects
-                    writer = workspace.save_tasks if parsed.path.endswith("/tasks") else workspace.save_document
-                    payload = self._workspace_api(lambda: writer(served.root, {k: v for k, v in body.items() if k != "project"}))
                     task_save = parsed.path.endswith("/tasks")
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: workspace.save_tasks(served.root, saved) if task_save
+                                                  else workspace.save_document(served.root, saved, lang=self._lang()))
                     rel = workspace.TASKS_PATH if task_save else payload["path"]
                     revision = payload["tasks_revision"] if task_save else payload["revision"]
-                    marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())
-                    payload["tasks_officialness" if task_save else "officialness"] = marks["files"][rel]
+                # The file is written and the lock released; the marks only decorate the answer, and a member's
+                # reads the shared folder (bounded in time) -- never under the project lock (DESIGN.md 18.3).
+                marks = workspace.local_annotations(served.root, {rel: revision}, self._lang())
+                payload["tasks_officialness" if task_save else "officialness"] = marks["files"][rel]
                 payload["generation"] = self.server.watcher.record_write(set())
                 if parsed.path.endswith("/document"):
                     try:
@@ -4455,7 +4634,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send_api_error(exc)
         except Exception:
-            logger.exception("unhandled error handling POST %s", self.path)
+            logger.exception("unhandled error handling POST %s", _without_secret(self.path))
             self._send_json(500, {"error": "internal server error"})
 
 
@@ -4482,6 +4661,7 @@ def build_server(
     port: int,
     watch_interval: float = project_watcher.DEFAULT_INTERVAL_SECONDS,
     served: ServedProject | None = None,
+    session: str | None = None,
 ) -> RceHTTPServer:
     """Bound to 127.0.0.1 only -- see module docstring. `port=0` (used by
     the test suite) asks the OS for a free ephemeral port; the caller reads
@@ -4489,9 +4669,13 @@ def build_server(
     is the auto-refresh watcher's polling period, injectable so tests can
     run a fast real-thread loop -- the watcher itself is created either
     way but only serve() starts its thread. `project_root=None` with no
-    `served` starts in the no-project state (DESIGN.md 10.1)."""
+    `served` starts in the no-project state (DESIGN.md 10.1). `session` is
+    the secret every write must carry (18.1); None, the default, asks for
+    none -- so the tests build servers that need no session, and `serve`
+    never does."""
     return RceHTTPServer(
         ("127.0.0.1", port), RceRequestHandler, project_root, watch_interval=watch_interval, served=served,
+        session=session,
     )
 
 
@@ -4529,6 +4713,63 @@ def _install_sigterm_handler(httpd: RceHTTPServer | None = None) -> Callable[[],
     return restore
 
 
+class SessionFileError(ApiError):
+    """The engine could not write its session file (18.1): it refuses to start, because the
+    Mac app could never learn the session and every window would be read-only."""
+
+
+def new_session() -> str:
+    """18.1: a fresh engine session -- 32 random bytes, as 64 hex characters."""
+    return secrets.token_hex(32)
+
+
+def write_session_file(port: int, session: str) -> Path:
+    """18.1: `<home>/engine/<port>.session` -- the secret and a newline, mode 0600 from the first
+    byte, replaced atomically (written beside it, then renamed), so a reader sees the old file
+    or the whole new one and no other user ever sees the secret. The caller removes it at shutdown
+    (`remove_session_file`)."""
+    target = paths.engine_session_path(port)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(session + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+        raise
+    return target
+
+
+def remove_session_file(path: Path, session: str) -> None:
+    """Remove the session file written for `session` -- not one a newer engine of the same port
+    wrote since (it holds another secret). Never raises: a shutdown is not the place for it."""
+    try:
+        if path.read_text(encoding="utf-8").strip() == session:
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _recover_agent_runs(httpd: RceHTTPServer) -> None:
+    """The body of `serve`'s recovery thread (18.1 item 6): `AgentManager.recover_all`, whose trouble is
+    logged and never ends the engine."""
+    agents = getattr(httpd, "agents", None)
+    if agents is None:
+        return
+    try:
+        recovered = agents.recover_all()
+    except Exception:  # noqa: BLE001 -- documented: recovery is a courtesy to the next page load
+        logger.exception("could not recover the agent runs an earlier engine left going")
+        return
+    if recovered:
+        logger.info("recovered %d agent run(s) left going by an earlier engine: %s", len(recovered), ", ".join(recovered))
+
+
 def serve(project_root: Path | None, port: int, open_browser: bool = True, served: ServedProject | None = None) -> None:
     """`researchos serve`'s entry point: validate the project, print the one
     startup line the task spec requires verbatim, optionally open a browser
@@ -4549,7 +4790,16 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
     (module docstring, "Project identity") and writes nothing.
 
     17.3: from the main thread a SIGTERM ends the serve loop like Ctrl+C, so
-    the `finally` below stops every running agent before the process exits."""
+    the `finally` below stops every running agent before the process exits.
+
+    18.1: `serve` always makes an engine session (`new_session`): the server
+    asks every write for it, `<home>/engine/<port>.session` holds it (mode
+    0600) until shutdown, and a browser it opens is sent to
+    `/boot?session=...` first. The secret is never printed, whether or not a
+    browser is opened -- the startup line is the plain address.
+
+    18.1 item 6: a thread recovers the agent runs an earlier engine left
+    preparing or running, of every project that has runs on this Mac."""
     if served is None:
         served = no_project_served() if project_root is None else served_for(Path(project_root))
     try:
@@ -4571,13 +4821,26 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
         # 「引擎没有在 10 秒内启动」; serving lets the page show the honest
         # header state and pick the graph up by itself once it is local.
         print(f"Research OS: {exc}", file=sys.stderr)
-    httpd = build_server(served.root, port, served=served)
+    session = new_session()
+    httpd = build_server(served.root, port, served=served, session=session)
     bound_port = httpd.server_address[1]
+    try:
+        session_file = write_session_file(bound_port, session)
+    except OSError as exc:
+        httpd.server_close()
+        raise SessionFileError(
+            f"cannot write the engine session file {paths.engine_session_path(bound_port)}: {exc}; "
+            f"not starting without it"
+        ) from exc
     url = f"http://127.0.0.1:{bound_port}"
     print(f"Research OS app: {url}  (Ctrl+C to stop)")
     httpd.watcher.start()
+    # 18.1 item 6: the runs an earlier engine left going are recovered now, not when their project's runs
+    # are next listed; a thread, so that a big project's after-picture does not hold up the first request.
+    threading.Thread(target=_recover_agent_runs, args=(httpd,), name="researchos-agent-recover",
+                     daemon=True).start()
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(f"{url}/boot?session={session}")
     restore = _install_sigterm_handler(httpd)
     try:
         httpd.serve_forever()
@@ -4585,6 +4848,9 @@ def serve(project_root: Path | None, port: int, open_browser: bool = True, serve
         pass
     finally:
         httpd._closing = True  # noqa: SLF001 -- from here on a SIGTERM must not interrupt the shutdown
+        # first, so the file is gone before the slow part of the shutdown (the agents stopping)
+        # and a newer engine of this port is never left without its own
+        remove_session_file(session_file, session)
         try:
             httpd.server_close()
         finally:

@@ -6,7 +6,10 @@ starts (`write_guard_file`): the project's real path, the protected folders
 and files (`snapshot.protected`) and the engine's port. The hook
 (`researchos.agents.hook`, one short process per tool call) loads it and
 asks `check_tool`, which answers a reason (one English sentence addressed to
-the agent, saying what to do instead) or None.
+the agent, saying what to do instead) or None. The reason is a `Refusal`: a `str`
+that also carries a `code` from `REFUSAL_CODES` (18.1 item 6), which the hook logs
+and hands the agent at the end of its sentence, so that the run log can say in the
+person's language which kind of refusal it was.
 
 **File tools** (Edit, Write, MultiEdit, NotebookEdit) are checked on the
 path as the filesystem will see it: relative paths resolve against the
@@ -36,6 +39,15 @@ new.csv`) stay allowed. This is a barrier against mistakes and the obvious,
 not a sandbox: a program the agent runs can write anything its user can, and
 the after-run check (`snapshot.violations`) is what shows that (17.5).
 
+**Reading tools** (Read, Glob, Grep, LS) are checked on the path too (18.1 item 2): a path inside Research OS's home
+(the session secret of the running engine lives there, mode 0600 but readable by this user) or inside `~/.ssh` is
+refused, symbolic links resolved; a Grep that starts above one of those folders would read into it and is refused.
+The Bash text check refuses the home's absolute path, `$RESEARCHOS_HOME` and `.ssh` as it refuses `.researchos`.
+
+**The agent program's own settings** are protected like `.researchos`: `.claude/` and `.opencode/` at any depth and
+`opencode.json` / `opencode.jsonc` anywhere. A file tool never writes there, and a
+Bash command that names one of them together with a writing operation (or a copy) is refused.
+
 Everything here is stdlib only and fast: the hook runs before every call.
 """
 
@@ -56,9 +68,69 @@ from typing import Any, Callable, Iterable
 from researchos.agents import runs
 
 FILE_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+#: Tools that only read; checked against `off_limits` (18.1 item 2). Grep also reads below its starting folder.
+READ_TOOLS = frozenset({"Read", "Glob", "Grep", "LS"})
+#: The agent program's own project settings (18.1 item 2): folders refused at any depth and file names refused
+#: anywhere. `snapshot.PROTECTED_DIRS` lists the folders too, so the after-run check reports a change there.
+AGENT_SETTINGS_DIRS = frozenset({".claude", ".opencode"})
+AGENT_SETTINGS_FILES = frozenset({"opencode.json", "opencode.jsonc"})
 GUARD_FILENAME = "guard.json"
 REFUSALS_FILENAME = "refusals.jsonl"
 _TARGET_CAP = 500
+
+#: Why a call is refused, as a code (18.1 item 6). The run log shows the person a sentence for the code in their
+#: language; the English sentence addressed to the agent travels with it and stays the detail.
+REFUSAL_CODES = frozenset({
+    "unchecked",            # the call or its arguments could not be read, or the check itself failed
+    "no_file",              # no file named, or the project folder itself
+    "outside_project",      # a file outside the project folder
+    "records_folder",       # inside .researchos / .rce
+    "git_files",            # inside .git (a file tool), or a write there (Bash)
+    "agent_settings",       # .claude / .opencode / opencode.json
+    "protected_file",       # a data file that existed before the run, the attempt table, research/tasks.json
+    "off_limits",           # Research OS's home, ~/.ssh
+    "research_os_command",  # the researchos / rce program
+    "git_state",            # a git command of rule 4
+    "engine_api",           # the engine's address or API
+})
+#: What the hook adds at the end of the sentence it hands the agent, so that the run log (which reads the program's
+#: own event stream) can tell which refusal it was. `split_refusal` takes it off again.
+_MARKER_RE = re.compile(r"\s*\[refusal: ([a-z_]+)\]\s*\Z")
+
+
+class Refusal(str):
+    """A refusal reason (one English sentence addressed to the agent) that also carries its `code`, one of
+    `REFUSAL_CODES`. It is a `str`: whatever compares or prints a reason is unaffected."""
+
+    code: str
+
+    def __new__(cls, text: str, code: str) -> "Refusal":
+        if code not in REFUSAL_CODES:
+            raise ValueError(f"not a refusal code: {code!r}")
+        obj = super().__new__(cls, text)
+        obj.code = code
+        return obj
+
+
+def refusal_code(reason: object) -> str | None:
+    """The code of a refusal reason, None for a plain string."""
+    code = getattr(reason, "code", None)
+    return code if code in REFUSAL_CODES else None
+
+
+def with_marker(reason: str, code: str | None) -> str:
+    """`reason` as the hook hands it to the agent: with its code at the end, when it has one."""
+    return f"{reason} [refusal: {code}]" if code in REFUSAL_CODES else str(reason)
+
+
+def split_refusal(text: str) -> tuple[str, str | None]:
+    """`(reason, code)` from what `with_marker` made; a text without a known code at its end comes back as it
+    is, with None."""
+    match = _MARKER_RE.search(text)
+    if match is None or match.group(1) not in REFUSAL_CODES:
+        return text, None
+    return text[: match.start()], match.group(1)
+
 
 #: Subcommands that change git's state (17.5 rule 4); `pull` is fetch plus merge.
 GIT_MUTATING = frozenset({"push", "commit", "reset", "rebase", "merge", "checkout", "switch", "restore", "stash",
@@ -78,7 +150,13 @@ _PROGRAM_MODULE_RE = re.compile(r"-m\s+researchos\b", re.I)
 _API_RE = re.compile(r"(?<![\w.\-])(?:127(?:\.\d{1,3}){3}|localhost|0\.0\.0\.0|\[::1\])(?::[^/\s]*)?"
                      r"/api/(proposals|share|judgements|attempts|workspace|edges|mappings|records|github|"
                      r"shutdown|settings|notes|papers|variables|projects|stata|agents)\b", re.I)
-_RESEARCHOS_DIR_RE = re.compile(r"""(^|[\s'"/=])\.(researchos|rce)(/|\s|$|['"])""", re.I)
+_RESEARCHOS_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.(researchos|rce)(/|\s|$|['";&|)`>])""", re.I)
+_SSH_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.ssh(/|\s|$|['";&|)`>])""", re.I)
+#: The variable that names Research OS's home (and the one it replaced): an agent has no use for either.
+_HOME_VAR_RE = re.compile(r"\b(RESEARCHOS|RCE)_HOME\b", re.I)
+_SETTINGS_DIR_RE = re.compile(r"""(^|[\s'"/=(;&|`<>])\.(claude|opencode)(/|\s|$|['";&|)`>])""", re.I)
+#: Copying and creating programs: with one of these a command that names a protected folder may write there.
+_COPY_WORD_RE = re.compile(r"\b(cp|install|rsync|ln|ditto|mkdir|touch|unzip|tar|curl|wget)\b", re.I)
 _GIT_DIR_RE = re.compile(r"""(^|[\s'"/=])\.git(/|\s|$|['"])""", re.I)
 #: Writing operations other than a redirect: any of them anywhere in a command that names a protected file.
 _WRITE_OP_RE = re.compile(r"(\brm\b|\bmv\b|\bsed\b[^;&|\n]*?\s-(?:[A-Za-z]*i|-in-place)|\btruncate\b|\btee\b|\bdd\b"
@@ -100,9 +178,27 @@ def _key(name: str) -> str:
 # -- the guard file --------------------------------------------------------------------------------
 
 
-def write_guard_file(run_dir: Path, *, root: Path, prot: dict[str, Any], engine_port: int | None) -> None:
-    """Write `guard.json` (atomically: the hook may read it at any moment)."""
+def default_off_limits() -> list[str]:
+    """The folders an agent may not read (18.1 item 2): Research OS's home (the one in use, and the default
+    `~/.researchos` and legacy `~/.rce` even when the environment names another) and `~/.ssh`. Each is given as
+    spelled and with its symbolic links resolved, so the Bash text check and the path check both find it."""
+    from researchos import paths  # noqa: PLC0415 -- the engine writes the guard file; the hook never calls this
+
+    found: list[str] = []
+    for folder in (paths.researchos_home(), paths.default_home(), paths.legacy_default_home(),
+                   Path(os.path.expanduser("~/.ssh"))):
+        for spelling in (os.path.abspath(folder), os.path.realpath(folder)):
+            if spelling not in found:
+                found.append(spelling)
+    return found
+
+
+def write_guard_file(run_dir: Path, *, root: Path, prot: dict[str, Any], engine_port: int | None,
+                     off_limits: Iterable[str] | None = None) -> None:
+    """Write `guard.json` (atomically: the hook may read it at any moment). `off_limits` are the folders the
+    reading tools may not enter (`default_off_limits` when not given)."""
     guard = {"root": os.path.realpath(root), "dirs": list(prot.get("dirs", ())), "files": list(prot.get("files", ())),
+             "off_limits": list(default_off_limits() if off_limits is None else off_limits),
              "engine_port": engine_port}
     data = (json.dumps(guard, ensure_ascii=False) + "\n").encode("utf-8")
     fd, tmp = tempfile.mkstemp(prefix=".guard.", suffix=".tmp", dir=run_dir)
@@ -129,6 +225,9 @@ def load_guard(run_dir: Path) -> dict[str, Any]:
     for key in ("dirs", "files"):
         if not isinstance(guard.get(key), list) or not all(isinstance(x, str) for x in guard[key]):
             raise ValueError(f"guard.json {key} is not a list of names")
+    if "off_limits" in guard and (not isinstance(guard["off_limits"], list)
+                                  or not all(isinstance(x, str) for x in guard["off_limits"])):
+        raise ValueError("guard.json off_limits is not a list of paths")  # absent from an older file: none listed
     port = guard.get("engine_port")
     if port is not None and (isinstance(port, bool) or not isinstance(port, int)):
         raise ValueError("guard.json engine_port is not a number")
@@ -138,10 +237,17 @@ def load_guard(run_dir: Path) -> dict[str, Any]:
 # -- file tools ---------------------------------------------------------------------------------------
 
 
-def _check_file_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str, Any], cwd: str | None) -> str | None:
+def _settings_message(what: str) -> Refusal:
+    return Refusal(f"{what} is a project setting of the agent program itself (.claude, .opencode, opencode.json): it would "
+                   f"be loaded by a later run and can run commands, so it belongs to the person and an agent may not "
+                   f"write there; put your work in ordinary project files instead.", "agent_settings")
+
+
+def _check_file_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str, Any], cwd: str | None) -> Refusal | None:
     target = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(target, str) or not target.strip() or "\0" in target:
-        return f"{tool_name} was called without a usable file path, so Research OS cannot tell where it would write; give the full path of a file inside the project."
+        return Refusal(f"{tool_name} was called without a usable file path, so Research OS cannot tell where it would write; "
+                       f"give the full path of a file inside the project.", "no_file")
     root = os.path.realpath(guard["root"])
     path = os.path.expanduser(target)
     if not os.path.isabs(path):
@@ -149,22 +255,88 @@ def _check_file_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str
     real = os.path.realpath(path)
     rel = os.path.relpath(real, root)
     if rel == ".":
-        return (f"{target} is the project folder itself, not a file in it; give the path of a file inside "
-                f"the project.")
+        return Refusal(f"{target} is the project folder itself, not a file in it; give the path of a file inside "
+                       f"the project.", "no_file")
     if rel == ".." or rel.startswith(".." + os.sep) or os.path.isabs(rel):
-        return (f"{target} is outside the project folder, and an agent may only change files inside the project; "
-                f"write to a new file inside {root} instead.")
+        return Refusal(f"{target} is outside the project folder, and an agent may only change files inside the project; "
+                       f"write to a new file inside {root} instead.", "outside_project")
     parts = rel.split(os.sep)
-    protected_dirs = {_key(d) for d in guard["dirs"]}
+    protected_dirs = {_key(d) for d in guard["dirs"]} | AGENT_SETTINGS_DIRS
     for part in parts:
         if _key(part) in protected_dirs:
-            return (f"{rel} is inside {part}, which belongs to the person and to Research OS and is off limits to "
-                    f"an agent; do not touch it, and put your work in ordinary project files instead.")
+            if _key(part) in AGENT_SETTINGS_DIRS:
+                return _settings_message(rel)
+            return Refusal(f"{rel} is inside {part}, which belongs to the person and to Research OS and is off limits to "
+                           f"an agent; do not touch it, and put your work in ordinary project files instead.",
+                           "git_files" if _key(part) == ".git" else "records_folder")
+    if _key(parts[-1]) in AGENT_SETTINGS_FILES:
+        return _settings_message(rel)
     posix = "/".join(parts)
     if _key(posix) in {_key(f) for f in guard["files"]}:
-        return (f"{posix} is a protected file (a data file that existed before this run, the attempt table, or "
-                f"research/tasks.json) and cannot be changed by an agent; write the result to a new file instead, "
-                f"and use the researchos_* tools to report on the task.")
+        return Refusal(f"{posix} is a protected file (a data file that existed before this run, the attempt table, or "
+                       f"research/tasks.json) and cannot be changed by an agent; write the result to a new file instead, "
+                       f"and use the researchos_* tools to report on the task.", "protected_file")
+    return None
+
+
+# -- reading tools ------------------------------------------------------------------------------------------
+
+_GLOB_CHARS_RE = re.compile(r"[*?\[{]")
+
+
+def _off_limits_keys(guard: dict[str, Any]) -> set[str]:
+    """Comparison keys of the folders an agent may not read, as spelled and resolved."""
+    keys = set()
+    for folder in guard.get("off_limits", ()):
+        if isinstance(folder, str) and folder.strip():
+            keys.add(_key(os.path.abspath(folder)))
+            keys.add(_key(os.path.realpath(folder)))
+    return {k for k in keys if k.rstrip(os.sep)}
+
+
+def _read_targets(tool_name: str, tool_input: dict[str, Any]) -> list[str]:
+    """The paths a reading call names: `file_path` / `path`, and for Glob the literal folder in front of the
+    first wildcard of an absolute pattern."""
+    out = [v for k in ("file_path", "path", "notebook_path") if isinstance(v := tool_input.get(k), str) and v.strip()]
+    pattern = tool_input.get("pattern")
+    if tool_name == "Glob" and isinstance(pattern, str) and (os.path.isabs(pattern) or pattern.startswith("~")):
+        literal = []
+        for part in pattern.split("/"):
+            if _GLOB_CHARS_RE.search(part):
+                break
+            literal.append(part)
+        out.append("/".join(literal) or "/")
+    return out
+
+
+def _check_read_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str, Any], cwd: str | None) -> Refusal | None:
+    """Read, Glob, Grep and LS: refused on a path inside Research OS's home or `~/.ssh`; a Grep also on a folder
+    above one of them (ripgrep would read into it). Glob and LS above them only list names."""
+    off = _off_limits_keys(guard)
+    if not off:
+        return None
+    root = os.path.realpath(guard["root"])
+    here = cwd if isinstance(cwd, str) and cwd and os.path.isabs(cwd) else root
+    targets = _read_targets(tool_name, tool_input)
+    if tool_name == "Grep" and not any(isinstance(tool_input.get(k), str) and tool_input[k].strip()
+                                       for k in ("path", "file_path")):
+        targets.append(here)  # no folder given: it searches where the call runs
+    for target in targets:
+        if "\0" in target:
+            return Refusal(f"{tool_name} was called with a path Research OS cannot read, so it is refused.", "unchecked")
+        path = os.path.expanduser(target)
+        if not os.path.isabs(path):
+            path = os.path.join(here, path)
+        real = _key(os.path.realpath(path))
+        for folder in off:
+            if real == folder or real.startswith(folder.rstrip(os.sep) + os.sep):
+                return Refusal(f"{target} is inside Research OS's home folder or ~/.ssh, which belong to the person and are "
+                               f"off limits to an agent: do not read there. Everything the task needs is in the project "
+                               f"folder and in the researchos_* tools you were given.", "off_limits")
+            if tool_name == "Grep" and folder.startswith(real.rstrip(os.sep) + os.sep):
+                return Refusal(f"{target} holds Research OS's home folder or ~/.ssh, which belong to the person and are "
+                               f"off limits to an agent, and a search there would read into them: search a folder inside "
+                               f"the project instead.", "off_limits")
     return None
 
 
@@ -304,9 +476,9 @@ _MEMBER_CAP = 100_000
 _WALK_CAP = 20_000
 _GLOB_CAP = 200
 
-_PROTECTED_MSG = ("This command would write to, delete or move a protected file (a data file that existed before "
-                  "this run, the attempt table, or research/tasks.json), or a folder that holds one; write the "
-                  "result to a new file or a new folder instead and leave the original as it is.")
+_PROTECTED_MSG = Refusal("This command would write to, delete or move a protected file (a data file that existed before "
+                         "this run, the attempt table, or research/tasks.json), or a folder that holds one; write the "
+                         "result to a new file or a new folder instead and leave the original as it is.", "protected_file")
 
 
 class _Refuse(Exception):
@@ -790,6 +962,36 @@ class _PathCheck:
             raise _Refuse
 
 
+def _names_off_limits(guard: dict[str, Any], command: str) -> bool:
+    """Whether `command` spells the absolute path of Research OS's home (or of `~/.ssh`) in any of its forms."""
+    text = unicodedata.normalize("NFC", command).casefold()
+    for folder in guard.get("off_limits", ()):
+        if not isinstance(folder, str) or len(folder.strip("/")) < 2:
+            continue
+        spelled = unicodedata.normalize("NFC", folder).casefold().rstrip("/")
+        if re.search(r"(?<![\w.\-])" + re.escape(spelled) + r"(?![\w.\-])", text):
+            return True
+    return False
+
+
+def _names_settings(text: str) -> bool:
+    """Whether `text` names a `.claude` / `.opencode` folder or an `opencode.json` file."""
+    if _SETTINGS_DIR_RE.search(text):
+        return True
+    folded = unicodedata.normalize("NFC", text).casefold()
+    return any(re.search(r"(?<![\w.\-])" + re.escape(name) + r"(?![\w.\-])", folded) for name in AGENT_SETTINGS_FILES)
+
+
+def _writes_settings(command: str, command_nr: str, targets: list[str]) -> bool:
+    """Whether `command` names the agent program's project settings together with a write: a redirect into them (or
+    into a target that cannot be judged), a writing operation, or a copying or creating program."""
+    if not _names_settings(command):
+        return False
+    if _WRITE_OP_RE.search(command_nr) or _COPY_WORD_RE.search(command_nr):
+        return True
+    return any(not t or re.search(r"[$`(]", t) or _names_settings(t.strip("'\"")) for t in targets)
+
+
 def _check_paths(guard: dict[str, Any], command: str, cwd: str | None) -> bool:
     """Whether the path-aware reading of `command` finds a protected file removed, moved or overwritten."""
     if not guard.get("files"):
@@ -801,53 +1003,67 @@ def _check_paths(guard: dict[str, Any], command: str, cwd: str | None) -> bool:
     return False
 
 
-def _check_bash(guard: dict[str, Any], command: str, cwd: str | None = None) -> str | None:
+def _check_bash(guard: dict[str, Any], command: str, cwd: str | None = None) -> Refusal | None:
     if _PROGRAM_RE.search(command) or _PROGRAM_MODULE_RE.search(command):
-        return ("Research OS's own command (researchos, rce) is not available to an agent; use the researchos_* "
-                "tools you were given to report on the task.")
+        return Refusal("Research OS's own command (researchos, rce) is not available to an agent; use the researchos_* "
+                       "tools you were given to report on the task.", "research_os_command")
     if _git_mutation(command):
-        return ("Changing git's state (push, commit, reset, checkout, rebase, merge, stash, clean, tag and the like) "
-                "is not allowed in this run; leave git as it is, the person will commit what they want to keep.")
+        return Refusal("Changing git's state (push, commit, reset, checkout, rebase, merge, stash, clean, tag and the like) "
+                       "is not allowed in this run; leave git as it is, the person will commit what they want to keep.",
+                       "git_state")
     port = guard.get("engine_port")
     if (port and re.search(rf"(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]):{int(port)}\b", command, re.I)) \
             or _API_RE.search(command):
-        return ("Research OS's own programme interface is not available to an agent; use the researchos_* tools "
-                "you were given instead.")
+        return Refusal("Research OS's own programme interface is not available to an agent; use the researchos_* tools "
+                       "you were given instead.", "engine_api")
     if _RESEARCHOS_DIR_RE.search(command):
-        return (".researchos (and .rce) belong to the person and to Research OS and are off limits to an agent; "
-                "do not read or write there, and keep your work in ordinary project files.")
+        return Refusal(".researchos (and .rce) belong to the person and to Research OS and are off limits to an agent; "
+                       "do not read or write there, and keep your work in ordinary project files.", "records_folder")
+    if _SSH_DIR_RE.search(command) or _HOME_VAR_RE.search(command) or _names_off_limits(guard, command):
+        return Refusal("Research OS's home folder and ~/.ssh belong to the person and are off limits to an agent; "
+                       "do not read or write there, and keep your work in ordinary project files.", "off_limits")
     command_nr = _HARMLESS_REDIRECT_RE.sub(" ", command)
     targets = _REDIRECT_RE.findall(command_nr)
     if _GIT_DIR_RE.search(command) and (targets or _WRITE_OP_RE.search(command_nr)):
-        return "Writing inside .git is not allowed in this run; leave git's files alone."
+        return Refusal("Writing inside .git is not allowed in this run; leave git's files alone.", "git_files")
+    if _writes_settings(command, command_nr, targets):
+        return _settings_message("a .claude / .opencode folder or an opencode.json file")
     basenames = {_key(f.rsplit("/", 1)[-1]) for f in guard["files"]}
     if basenames and (_writes_protected(command_nr, targets, basenames) or _copy_into(command, basenames)):
-        return ("This command would write to a protected file (a data file that existed before this run, the "
-                "attempt table, or research/tasks.json); write the result to a new file instead and leave the "
-                "original as it is.")
+        return Refusal("This command would write to a protected file (a data file that existed before this run, the "
+                       "attempt table, or research/tasks.json); write the result to a new file instead and leave the "
+                       "original as it is.", "protected_file")
     if _check_paths(guard, command, cwd):
         return _PROTECTED_MSG
     return None
 
 
-def check_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str, Any], cwd: str | None = None) -> str | None:
-    """Why this tool call must be refused, or None when it may go ahead."""
-    if tool_name in FILE_TOOLS or tool_name == "Bash":
+def check_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str, Any], cwd: str | None = None) -> Refusal | None:
+    """Why this tool call must be refused (a `Refusal`: a sentence for the agent that carries its code), or None when
+    it may go ahead."""
+    if tool_name in FILE_TOOLS or tool_name in READ_TOOLS or tool_name == "Bash":
         if not isinstance(tool_input, dict):
-            return f"{tool_name} was called without arguments Research OS can read, so it is refused."
+            return Refusal(f"{tool_name} was called without arguments Research OS can read, so it is refused.", "unchecked")
     if tool_name in FILE_TOOLS:
         return _check_file_tool(guard, tool_name, tool_input, cwd)
+    if tool_name in READ_TOOLS:
+        return _check_read_tool(guard, tool_name, tool_input, cwd)
     if tool_name == "Bash":
         command = tool_input.get("command")
         if command is None:
             return None
         if not isinstance(command, str):
-            return "The Bash command was not text, so Research OS cannot check it and refuses it."
+            return Refusal("The Bash command was not text, so Research OS cannot check it and refuses it.", "unchecked")
         return _check_bash(guard, command, cwd)
     return None
 
 
 def log_refusal(run_dir: Path, tool_name: str, target: str, reason: str) -> None:
-    """Append one refusal to the run's `refusals.jsonl` (the run log shows it)."""
-    runs.append_line(Path(run_dir) / REFUSALS_FILENAME, {
-        "at": runs.now_iso(), "tool": str(tool_name)[:100], "target": str(target)[:_TARGET_CAP], "reason": reason})
+    """Append one refusal to the run's `refusals.jsonl` (the run log shows it): when, the tool, what it was about,
+    the English `reason` and, when `reason` is a `Refusal`, its `code` (18.1 item 6)."""
+    record = {"at": runs.now_iso(), "tool": str(tool_name)[:100], "target": str(target)[:_TARGET_CAP],
+              "reason": str(reason)}
+    code = refusal_code(reason)
+    if code is not None:
+        record["code"] = code
+    runs.append_line(Path(run_dir) / REFUSALS_FILENAME, record)

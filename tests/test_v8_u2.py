@@ -37,9 +37,11 @@ needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 #: 12.11's forbidden marks: emoji (the pictographic planes, the dingbats and
 #: miscellaneous symbols the researcher's verdict markers come from, the
-#: variation selector that makes a symbol an emoji) and arrow characters.
+#: variation selector that makes a symbol an emoji) and arrow characters --
+#: since 18.2 also the quotation-mark arrows » ‹ ›, the long arrow ⟶, the play
+#: mark ⏵ and the dots ● ○ (a decoration that stands in for a word).
 FORBIDDEN = re.compile(
-    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿️←-⇿▲-◅＋]|->|=>"
+    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿️←-⇿▲-◅＋»⟶‹›⏵●○]|->|=>"
 )
 _REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
 _KEYWORDS_BEFORE = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
@@ -129,6 +131,29 @@ def _served_scripts() -> list[Path]:
     return [WEBAPP / name for name in names]
 
 
+def css_content_strings(css: str) -> list[str]:
+    """What a stylesheet's `content:` puts on screen (a ::before or ::after), its escapes (\\25B8) read as the
+    characters they spell. Comments, selectors and every other property are not on screen and are skipped."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = []
+    for m in re.finditer(r"(?<![\w-])content\s*:\s*([^;}]*)", css):
+        for double, single in re.findall(r'"((?:\\.|[^"\\])*)"|\'((?:\\.|[^\'\\])*)\'', m.group(1)):
+            def code(k: re.Match[str]) -> str:
+                n = int(k.group(1), 16)
+                return chr(n) if n <= 0x10FFFF else "\ufffd"
+            text = re.sub(r"\\([0-9a-fA-F]{1,6})\s?", code, double or single)
+            out.append(re.sub(r"\\(.)", r"\1", text))
+    return out
+
+
+def _served_stylesheets() -> list[tuple[str, str]]:
+    """The page's CSS, as served: each <link rel="stylesheet" href="/x.css"> file and each inline <style> block."""
+    html = APP_HTML.read_text(encoding="utf-8")
+    sheets = [(name, (WEBAPP / name).read_text(encoding="utf-8"))
+              for name in re.findall(r'<link rel="stylesheet" href="/([\w.-]+\.css)">', html)]
+    return sheets + [("app.html <style>", block) for block in re.findall(r"<style\b[^>]*>(.*?)</style>", html, re.S)]
+
+
 def _offenders() -> list[str]:
     html = APP_HTML.read_text(encoding="utf-8")
     found = [f"app.html markup: {t.strip()!r}" for t in html_screen_text(html) if FORBIDDEN.search(t)]
@@ -137,15 +162,21 @@ def _offenders() -> list[str]:
     for path in _served_scripts():
         found += [f"{path.name} line {ln}: {s!r}" for ln, s in js_strings(path.read_text(encoding="utf-8"))
                   if FORBIDDEN.search(s)]
+    for name, css in _served_stylesheets():
+        found += [f"{name} content: {s!r}" for s in css_content_strings(css) if FORBIDDEN.search(s)]
     return found
 
 
 def test_12_11_no_emoji_or_arrow_reaches_the_screen_from_the_served_page():
     """12.11 binding for every surface: app.html's markup and every string
-    in its scripts and in each served script (canvas.js, desk.js) is free
-    of emoji and of → ← ↔ ⇒ ▸ ▾ ► ◄ ＋ '->' '=>'. The researcher's own text
-    is exempt by construction: it comes from the server at run time."""
-    assert {p.name for p in _served_scripts()} >= {"canvas.js", "desk.js"}
+    in its scripts and in each served script (canvas.js, desk.js, workspace.js)
+    is free of emoji and of → ← ↔ ⇒ ▸ ▾ ► ◄ ＋ » ⟶ ‹ › ⏵ ● ○ '->' '=>', and so is
+    every `content:` of the served stylesheets (workspace.css and app.html's
+    <style> blocks: a ::before can put a glyph on screen as well as a string
+    can). The researcher's own text is exempt by construction: it comes from
+    the server at run time."""
+    assert {p.name for p in _served_scripts()} >= {"canvas.js", "desk.js", "workspace.js"}
+    assert {name for name, _css in _served_stylesheets()} == {"workspace.css", "app.html <style>"}
     assert _offenders() == []
 
 
@@ -166,6 +197,30 @@ def test_12_11_the_scanner_sees_strings_and_skips_code():
         "新增 ＋", "打开 ▾"]
 
 
+def test_18_2_the_glyph_test_also_refuses_quote_arrows_the_long_arrow_the_play_mark_and_the_dots():
+    """18.2: » ⟶ ‹ › ⏵ ● ○ join 12.11's list, each caught alone and inside a sentence; the plain words around
+    them (a Chinese 「」, an English “ ”, a middle dot ·) are not."""
+    for mark in "»⟶‹›⏵●○":
+        assert FORBIDDEN.search(mark) and FORBIDDEN.search(f"打开 {mark} 详情") and FORBIDDEN.search(f"Open {mark}"), mark
+    assert not FORBIDDEN.search("「打开」 “open” · 详情 – x") and not FORBIDDEN.search("")
+
+
+def test_18_2_the_css_scanner_reads_content_values_and_their_escapes_and_skips_the_rest():
+    """The check on the stylesheets is not vacuous: a `content:` string or its escape (\\25B8) is caught; a glyph
+    in a comment, a selector, justify-content, a counter or the empty string is not on screen and is not."""
+    css = (
+        "/* ● in a comment */\n"
+        ".a::before { content: \"●\"; }\n"
+        ".b::after { content: '\\25B8'; }\n"
+        ".c::after { content: \"\\203A\"; margin: 0 }\n"
+        ".d::before { content: \"\"; justify-content: space-between; }\n"
+        ".e::before { content: counter(item) \". \"; }\n"
+        ".f[data-x=\"○\"] { color: red; }\n"
+    )
+    assert css_content_strings(css) == ["●", "▸", "›", "", ". "]
+    assert [s for s in css_content_strings(css) if FORBIDDEN.search(s)] == ["●", "▸", "›"]
+
+
 def test_12_11_verdicts_are_shown_as_words_never_as_markers():
     """The tree, the attempt panel, the edit form's quick choices and the
     canvas's scope list read `verdict_status` (现行 / 已放弃 / …): the page
@@ -180,37 +235,43 @@ def test_12_11_verdicts_are_shown_as_words_never_as_markers():
 # -- 12.9: the sidebar ---------------------------------------------------------------------------------------
 
 
-SECTIONS = [("workspace", "项目首页"), ("desk", "工作台"), ("routes", "研究路线"), ("results", "成果"), ("variables", "变量"),
+SECTIONS = [("workspace", "项目首页"), ("routes", "研究路线"), ("results", "图表与论断"), ("variables", "变量"),
             ("literature", "文献"), ("data", "数据与代码"), ("proposals", "提议"), ("members", "成员")]
 
 
 def test_12_9_the_sidebar_has_the_projects_and_the_sections_in_order():
     """The tabs are gone; the sidebar holds the project switcher (a real
-    menu button naming the project, no glyph), the eight sections in 12.9's
-    order with drawn line icons, and at the bottom the shared drive's line
-    and who I am."""
+    menu button naming the project, no glyph), the sections in 12.9's order
+    (18.3: 工作台 and 研究路线 are one item, 研究路线) with drawn line icons,
+    and at the bottom the shared drive's line and who I am."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'class="tab' not in html and 'role="tablist" aria-label="数据与代码"' in html
     found = re.findall(r'<button type="button" class="side-item" data-section="(\w+)" data-view="(\w+)">'
                        r'<svg class="side-icon"[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(s, label) for s, _v, label in found] == SECTIONS
-    assert dict((s, v) for s, v, _l in found)["routes"] == "tree" and dict((s, v) for s, v, _l in found)["data"] == "lineage"
+    assert dict((s, v) for s, v, _l in found)["routes"] == "desk" and dict((s, v) for s, v, _l in found)["data"] == "lineage"
     nav = html[html.index('<aside class="sidebar"'):html.index("</aside>")]
     assert nav.index('id="project-menu-btn"') < nav.index('class="side-nav"') < nav.index('id="share-line"') < nav.index('id="me-line"')
     assert 'aria-haspopup="menu"' in nav and 'id="side-count-proposals"' in nav
-    assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in html
+    # 18.3: 待办's count sits beside 研究路线, in the 提议 item's style.
+    assert nav.count('<span class="side-count" id="side-count-routes"></span>') == 1
+    assert nav.index('id="side-count-routes"') < nav.index('data-section="results"')
+    assert 'projectMenuBtn.textContent = label || noProjectName();' in html
     # 数据与代码 holds the lineage list and 关系图 (the canvas, 12.9).
     assert 'data-subview="lineage"' in html and 'data-subview="canvas"' in html and ">关系图<" in html
 
 
 def test_12_9_every_old_view_stays_reachable_and_the_shell_commands_still_work():
-    """Until the later phases rebuild them, 研究路线 is the decision tree and
-    数据与代码 the lineage report beside 关系图; the native menu's commands
-    keep their names (12.12: identifiers the researcher never sees stay)."""
+    """研究路线 is one view (18.3: the route map and the grouped list, formerly
+    工作台 and 研究路线) and 数据与代码 the lineage report beside 关系图; the
+    native menu's commands keep their names (12.12: identifiers the
+    researcher never sees stay), and the old tree view's command opens the
+    page's list."""
     html = APP_HTML.read_text(encoding="utf-8")
-    for view in ("desk", "tree", "results", "lineage", "canvas", "variables", "literature", "proposals", "members"):
+    for view in ("desk", "results", "lineage", "canvas", "variables", "literature", "proposals", "members"):
         assert f'id="view-{view}"' in html
-    for command in ('"tree": () => activateView("tree")', '"lineage": () => activateView("lineage")',
+    assert 'id="view-tree"' not in html and "tree: document.getElementById" not in html
+    for command in ('"tree": () => showRoutes("list")', '"lineage": () => activateView("lineage")',
                     '"canvas": () => activateView("canvas")', '"variables": () => activateView("variables")',
                     '"add-project": () => openAddDialog(),'):
         assert command in html
@@ -243,11 +304,11 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     # The desk's column per 14.4 for each person, and 12.12's sentence for someone not yet in
     # the team (not a project of one). Re-baselined for V10: the desk is the route map with the
     # column beside it, and 14.5 folds the first desk's lists of changes, outputs whose basis
-    # changed and abandoned routes into the map's cards (and 成果).
+    # changed and abandoned routes into the map's cards (and 图表与论断).
     for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "正式版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
-    for gone in ("依据变了的成果", "已放弃的路线"):
+    for gone in ("依据变了的图表与论断", "已放弃的路线"):
         assert gone not in js, gone
     # 14.5: what changed since I last looked is 「有改动」 on a card and the panel's timeline, which
     # carries 13.4's fixed words for it as its title -- never a block of the column.
@@ -290,7 +351,7 @@ def _card(out: dict, number: str) -> dict:
 # Re-baselined for V10 (DESIGN.md 14.5): the desk is the route map. What changed since I last
 # looked is each card's `changed_at` (its row or one of its files; the page compares it with its
 # own last visit for 「有改动」) and the panel's timeline -- the node's history -- says what and
-# who; abandoned routes are the quieter cards; results that lost their evidence are on 成果.
+# who; abandoned routes are the quieter cards; results that lost their evidence are on 图表与论断.
 
 
 def test_12_0_a_project_just_added_reports_no_change_for_every_file(tmp_path):
@@ -328,7 +389,7 @@ def test_12_0_what_changed_since_i_last_looked_and_exactly_where(tmp_path):
 def test_12_0_results_that_lost_their_evidence(tmp_path):
     """figs/fig1.png is cited by the paper but nothing makes it: 缺来源, the
     break named; figs/fig2.png, whose chain is whole, is not -- and once
-    its data file is gone it is. On 成果 (12.13), not on the desk."""
+    its data file is gone it is. On 图表与论断 (12.13), not on the desk."""
     root = _project(tmp_path / "proj")
 
     def traces() -> dict:

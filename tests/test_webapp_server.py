@@ -478,7 +478,8 @@ def test_serve_raises_before_binding_when_project_not_initialized(tmp_path):
 
 def test_serve_prints_url_and_opens_browser(tmp_path, monkeypatch, capsys):
     _init_project(tmp_path)
-    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", lambda self: None)
+    secrets_seen = []
+    monkeypatch.setattr(server.RceHTTPServer, "serve_forever", lambda self: secrets_seen.append(self.session))
     opened = []
     monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url))
 
@@ -488,7 +489,10 @@ def test_serve_prints_url_and_opens_browser(tmp_path, monkeypatch, capsys):
     assert out.startswith("Research OS app: http://127.0.0.1:")
     assert out.rstrip("\n").endswith("(Ctrl+C to stop)")
     url = out.split("Research OS app: ")[1].split("  (Ctrl+C")[0]
-    assert opened == [url]
+    # DESIGN.md 18.1: the browser is sent to /boot first, which hands it the engine's session; the
+    # printed line stays the plain address (the secret is never printed)
+    assert opened == [f"{url}/boot?session={secrets_seen[0]}"]
+    assert secrets_seen[0] and secrets_seen[0] not in out
 
 
 def test_serve_does_not_open_browser_when_disabled(tmp_path, monkeypatch, capsys):
@@ -583,7 +587,7 @@ def test_http_root_returns_spa_shell_with_key_mount_points(live_server):
     html = body.decode("utf-8")
     assert html.lstrip().lower().startswith("<!doctype html>")
     for mount_point in (
-        'id="app"', 'id="view-tree"', 'id="view-lineage"', 'id="panel"',
+        'id="app"', 'id="view-desk"', 'id="view-lineage"', 'id="panel"',
         'id="panel-backdrop"', 'id="panel-body"',
         # Section 8.10's degraded-project header state; DESIGN.md 10.1's
         # project menu (it replaced the <select> and 「移除失效项目」), the
@@ -592,8 +596,10 @@ def test_http_root_returns_spa_shell_with_key_mount_points(live_server):
         'id="welcome"', 'id="welcome-add-btn"',
         # DESIGN.md 12.9 (V8 U2): the sidebar's sections route to the views;
         # the canvas is 关系图 inside 数据与代码.
-        'data-view="tree"', 'data-view="lineage"', 'data-subview="canvas"', 'id="view-canvas"',
-        'id="view-desk"', 'id="sidebar"',
+        'data-view="desk"', 'data-view="lineage"', 'data-subview="canvas"', 'id="view-canvas"',
+        # 18.3: 研究路线 is one page; its switch and the count of 待办 beside it.
+        'id="routes-switch"', 'data-mode="map"', 'data-mode="list"', 'id="side-count-routes"',
+        'id="sidebar"',
     ):
         assert mount_point in html, f"missing mount point in served app.html: {mount_point}"
 
@@ -693,7 +699,7 @@ def test_served_app_tabs_read_in_product_language(live_server):
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
     sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(v, label) for _s, v, label in sections] == [
-        ("workspace", "项目首页"), ("desk", "工作台"), ("tree", "研究路线"), ("results", "成果"), ("variables", "变量"), ("literature", "文献"),
+        ("workspace", "项目首页"), ("desk", "研究路线"), ("results", "图表与论断"), ("variables", "变量"), ("literature", "文献"),
         ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
     ]
     assert '<span class="brand-mark">Research OS</span>' in html
@@ -1905,7 +1911,7 @@ def test_serve_starts_even_while_the_graph_is_downloading(tmp_path, monkeypatch)
         def server_close(self):
             started.append("closed")
 
-    monkeypatch.setattr(server, "build_server", lambda root, port, served=None: _Stub())
+    monkeypatch.setattr(server, "build_server", lambda root, port, served=None, session=None: _Stub())
     server.serve(project, 0, open_browser=False)
     assert started == ["watcher", "serving", "closed"]
 

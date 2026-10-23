@@ -195,7 +195,7 @@ def test_the_pi_is_asked_about_their_own_project_path_and_a_members_copy_resolve
         (proposal,) = got["proposals"]
         assert (proposal["global"], proposal["folder"], proposal["reason"], proposal["found"]) == (
             "root", "analysis", "local_root", 1)
-        assert "this computer’s project path" in proposal["sentence"] and not CJK.search(proposal["sentence"])
+        assert "this Mac’s project path" in proposal["sentence"] and not CJK.search(proposal["sentence"])
         assert "这台电脑上的项目路径" in node_api.stata_payload(drive.official)["proposals"][0]["sentence"]
         assert stata_record.answer(drive.official, "root", "analysis", via="app")["changed"]
         assert _calls(drive.official, rel) == before  # nothing changes on the PI's computer

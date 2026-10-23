@@ -95,7 +95,7 @@ The PI will share two OneDrive folders with you:
 
 | Folder | Purpose | Your permission |
 | --- | --- | --- |
-| `已发布` | The team's published version | Can view |
+| `已发布` | The team's official version | Can view |
 | A folder named after your e-mail address | Your proposals | Can edit |
 
 Open each invitation and choose Add shortcut to My files in OneDrive on
@@ -125,7 +125,7 @@ Compare it with the PI by phone or in person. If it matches, click
 ### 4. Sync the team version
 
 On **Members**, under **公盘与同步** (Shared folder and sync), click
-**同步** (Sync). You can start work when it says **Already the latest published version**
+**同步** (Sync). You can start work when it says **Already the latest official version**
 and your name appears under **团队** (Team). If your name is
 missing, ask the PI to add you and publish, then sync again.
 
@@ -135,9 +135,13 @@ missing, ask the PI to add you and publish, then sync again.
 
 1. Click **Add project…**, then **选择文件夹…** (Choose folder…), and select
    the project. Review the scan scope and click **加入并扫描** (Add and scan).
-2. Open **Members**. Under **我是谁** (Who I am), enter your name and
-   OneDrive e-mail address, then click **保存** (Save).
+2. Click the project name at the top of the sidebar and choose
+   **Start collaborating…** to open **Members**. Under **我是谁** (Who I am),
+   enter your name and OneDrive e-mail address, then click **保存** (Save).
 3. Under **开始协作** (Start collaborating), click **建立成员名单** (Create the member list).
+
+While you are the only person, the sidebar has no **Members** or
+**Proposals**. Once you have created the member list, both appear in it.
 
 Back up `~/.researchos/keys` to a secure location. Losing the private key
 requires a new key and a new fingerprint check for every member.
@@ -181,17 +185,17 @@ person when they join.
 ### Members: submit changes
 
 1. Click **同步** (Sync) on **Members**, then edit your local working copy.
-2. Open **Proposals**. Under **提交提议** (Submit a proposal), choose
-   **新的尝试** (New attempt), **修改判断** (Change research assessment),
-   **变量定义** (Variable definition), or **只有文件** (Files only). Add an explanation
-   and click **查看将要发送的内容** (Review what will be sent).
+2. Open **Proposals**. Under **Submit a proposal**, choose
+   **New attempt**, **Change a research assessment**,
+   **Variable definition**, or **Files only**. Add an explanation
+   and click **Review what will be sent**.
 3. Check the file list. If you change the selection, click
    **Review again with the ticked files**, then **Send proposal**.
 4. Check **Proposals** for **Proposed**, **Approved**, or **Returned**, with
    the reason. Sync again when it says **Approved, awaiting sync**.
 
-Proposals and replies arrive after OneDrive syncs. Notes, judgments on
-machine links, and changes made with **Link files** or **Add a source**
+Proposals and replies arrive after OneDrive syncs. Comments, link judgments,
+and changes made with **Link files** or **Add a source**
 travel with sync without individual approval.
 Lines between research attempts require the PI's approval.
 
@@ -214,9 +218,9 @@ A proposal marked **Changed on both sides** cannot yet be approved. Ask the
 member to sync, compare the two copies, and submit again. The attempt table
 is compared by row; edits to other rows do not block this proposal.
 
-On a member's sync, the local file is kept and the published version is
+On a member's sync, the local file is kept and the official version is
 placed beside it, for example `16-build.official.py`. Compare them under
-**放在旁边的正式版本** (Published versions set aside) on **Members**. Keep
+**放在旁边的正式版本** (Official versions set aside) on **Members**. Keep
 the content you need in the original file, delete the `.official` copy,
 and submit a new proposal.
 

@@ -1,5 +1,7 @@
-// The sidebar's live lines and the desk (工作台) -- DESIGN.md 12.9, 12.11 and
-// Section 14 (task V10: the desk is the route map). Served verbatim at
+// The sidebar's live lines and the page 研究路线 -- DESIGN.md 12.9, 12.11,
+// Section 14 (task V10: the route map and the column beside it) and 18.3
+// (one page: the map or the grouped list, with the same 待办 column; the
+// old 工作台 is retired, this module keeps the name "desk"). Served verbatim at
 // /desk.js by the same process and loaded by app.html with a plain
 // same-origin <script src>, exactly as /canvas.js is: zero build, zero
 // external resources, same origin check.
@@ -21,12 +23,15 @@
 //   /api/history    -- how its row moved, for the panel's timeline (14.5).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
 //
-// The desk is the route map with what waits for me beside it (14.1, 14.4):
+// 研究路线 is the route map with what waits for me beside it (14.1, 14.4)
+// or, by the switch 路线图 / 列表 (18.3), the grouped list that team.js
+// draws, with the same column beside it:
 // the PI's 等你批准, a member's 我的提议, 待复核 under the attempt it
 // belongs to, a member's 正式版本有更新 with 同步, the lines with a missing
 // end -- or one quiet line. What changed since I last looked is 「有改动」
 // on the cards, abandoned routes are the quieter cards (14.5). No
-// statistics, no charts, no counters for their own sake. Nothing typed on
+// statistics, no charts, no counters for their own sake (the one count is
+// the sidebar's 待办 beside 研究路线 in a team project, 18.3). Nothing typed on
 // the page ever becomes a filesystem path: every path shown comes from the
 // server.
 //
@@ -171,6 +176,12 @@
     return "ro.desk.gotit:" + String(project || "") + ":" + String(me || "-");
   }
 
+  // ... and of the way 研究路线 is looked at, 路线图 or 列表 (18.3): per
+  // project, in this browser, a per-viewer convenience.
+  function modeKey(project) {
+    return "ro.routes.mode:" + String(project || "");
+  }
+
   function nameOf(id, team) {
     const m = (team || []).find((x) => x.id === id);
     return m && m.name ? m.name : String(id || "");
@@ -251,7 +262,8 @@
 
   // -- runtime --------------------------------------------------------------------
 
-  const ctx = { me: null, share: null, proposals: null, mode: null, project: null, epoch: -1 };
+  const ctx = { me: null, share: null, proposals: null, mode: null, single: false, project: null, epoch: -1 };
+  let todo = { project: null, n: 0 }; // how many rows the 待办 column lists, for the sidebar (18.3)
   const sessionSince = new Map(); // project key -> the last-seen time this page session shows from
   const gotItNow = new Map();     // gotItKey -> the returned proposals said 「知道了」 to (storage may be off)
   const GOT_IT_KEPT = 200;
@@ -316,6 +328,11 @@
     ctx.proposals = proposals;
     ctx.share = share;
     ctx.mode = role === "pi" || role === "member" || role === "none" ? role : "single";
+    // A project of one person (18.3) is the engine's own "single" with no team file listing anyone: a PI
+    // alone in the file is "single" to the engine (12.1) and has a team to set up, so for the sidebar the
+    // team file counts. A read that failed, or a team file that cannot be read ("unknown"), also leave
+    // `mode` at "single" for the pages that always did, and are never taken for one person.
+    ctx.single = role === "single" && !(proposals && proposals.team === true);
     ctx.project = projectKey();
     ctx.epoch = epoch;
     return true;
@@ -350,6 +367,72 @@
       /* the lines keep what they last said */
     }
     renderSidebar();
+    readTodo();
+  }
+
+  // A project with a team: someone is the PI, a member, or not yet in it (the
+  // roles /api/proposals names; "single" is a project of one person).
+  function teamProject() {
+    return !state.noProject && (ctx.mode === "pi" || ctx.mode === "member" || ctx.mode === "none");
+  }
+
+  // A project of one person (12.1, 18.3): the engine said "single" for the open project and no team file
+  // lists anyone (ctx.single). Not known yet, not read (the request failed, a team file that cannot be
+  // read) is not that: the sidebar and the menus then show everything, as for a team.
+  function onePerson() {
+    return !state.noProject && ctx.single === true && ctx.project === projectKey() && ctx.epoch === state.dataEpoch;
+  }
+
+  // What the Mac's menus are told (the shell takes exactly these four, V8 U5): "single" hides 提议, 成员,
+  // 提交提议 and 发布 there; a project the page could not read the role of is "none" -- 提议 and 成员 show,
+  // the two that need a role do not.
+  function shellMode() {
+    if (state.noProject || onePerson()) return "single";
+    return ctx.mode === "pi" || ctx.mode === "member" ? ctx.mode : "none";
+  }
+
+  // 待办's count (18.3) is what the column lists: the PI's proposals waiting,
+  // a member's own that wait, the judgments to review, a member's newer
+  // official version, the lines with a missing end.
+  function todoCount(data) {
+    const c = (data && data.column) || {};
+    const role = c.role || (data && data.role);
+    let n = 0;
+    if (role === "pi") n += (c.waiting || []).length;
+    if (role === "member") n += (c.mine || []).filter(waits).length;
+    n += (c.review && c.review.count) || 0;
+    const sync = c.sync;
+    if (role === "member" && sync && sync.shared && sync.reachable && sync.behind && sync.last_snapshot) n += 1;
+    return n + ((data && data.lines_missing) || []).length;
+  }
+
+  function setTodo(data) {
+    todo = { project: projectKey(), n: todoCount(data) };
+  }
+
+  // On the page the column's own reading sets the count; from any other page
+  // it is read here, in a project with a team only (it is not shown in a
+  // project of one): /api/desk, not touching the last visit the page keeps,
+  // one request at a time -- a refresh that came meanwhile reads once more.
+  let todoBusy = false;
+  let todoAgain = false;
+  async function readTodo() {
+    if (onDesk() || !teamProject()) return;
+    if (todoBusy) { todoAgain = true; return; }
+    todoBusy = true;
+    const epoch = state.dataEpoch;
+    try {
+      const data = await apiGet("/api/desk");
+      if (epoch === state.dataEpoch && !onDesk()) {
+        setTodo(data);
+        renderSidebar();
+      }
+    } catch (err) {
+      /* the count keeps what it last said */
+    } finally {
+      todoBusy = false;
+      if (todoAgain) { todoAgain = false; readTodo(); }
+    }
   }
 
   function waitingForMe() {
@@ -363,11 +446,24 @@
     const shareLine = document.getElementById("share-line");
     const meLine = document.getElementById("me-line");
     if (!count || !shareLine || !meLine) return;
-    // The shell's 文件 menu shows 提交提议… or 发布 by role (V8 U5).
-    if (typeof postShellMode === "function") postShellMode(state.noProject ? "single" : ctx.mode);
+    // The shell's menus show 提交提议… or 发布 by role (V8 U5), and 提议 and 成员 unless the project is one
+    // person's (18.3).
+    if (typeof postShellMode === "function") postShellMode(shellMode());
+    // 18.3: the sidebar of a project of one person has no 提议 and no 成员 (app.html's stylesheet reads this
+    // mark). With no project there is no sidebar to speak of, and the mark stays as the page starts, so a
+    // project added next does not show the two for a moment.
+    const nav = document.getElementById("side-nav");
+    if (nav && nav.dataset) nav.dataset.team = state.noProject || onePerson() ? "single" : "team";
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
     count.title = n > 0 ? t("{n} 条提议等你批准", { n: n }) : "";
+    // 18.3: the 待办 column's count beside 研究路线, in a project with a team.
+    const routes = document.getElementById("side-count-routes");
+    if (routes) {
+      const todos = teamProject() && todo.project === projectKey() ? todo.n : 0;
+      routes.textContent = todos > 0 ? String(todos) : "";
+      routes.title = todos > 0 ? t("{n} 项待办", { n: todos }) : "";
+    }
     const line = state.noProject ? "" : shareLineText(ctx.share, now());
     shareLine.textContent = line;
     shareLine.classList.toggle("hidden", !line);
@@ -388,9 +484,11 @@
         : ctx.mode === "none" ? t("尚未加入团队") : "";
       if (role && !state.noProject) meLine.append(mk("span", "me-role", role));
       meLine.title = me.id || "";
-    } else {
+    } else if (!onePerson()) {
       meLine.append(mk("span", "me-unset", t("还没有设置你是谁")));
       meLine.title = t("在「成员」一栏里设置");
+    } else {
+      meLine.title = ""; // 18.3: a project of one person does not ask who you are; 开始协作… does
     }
   }
 
@@ -427,26 +525,148 @@
 
   let routeMap = null;
   let layoutEl = null;
+  let mapEl = null;             // the map's element, hidden while the page is a list
+  let listEl = null;            // the list's pane (team.js loadRoutes), made when first wanted
   let columnEl = null;
   let drawnEpoch = -1;          // the project (state.dataEpoch) the desk last showed
+  let listDrawn = -1;           // ... and the one the list last showed
+  let listZoomed = "";          // the text zoom the list is shown at ("" for none)
   let picked = null;            // the column's row picked: { key, ids }
   const drawnKeys = new Set();  // the rows the column shows now
 
+  // -- 路线图 or 列表 (DESIGN.md 18.3) ----------------------------------------------------
+  // One page, one 待办 column; beside it the route map or the grouped list
+  // (team.js loadRoutes, in a pane of its own). The choice is kept per project
+  // in this browser -- the map until the researcher picks the list -- and the
+  // switch in the page's header (app.html #routes-switch) shows it.
+
+  const MODES = ["map", "list"];
+  const modeSeen = new Map(); // project key -> the mode this page session shows (storage may be off)
+
+  function routesMode() {
+    const project = projectKey();
+    if (!modeSeen.has(project)) {
+      const stored = storageGet(modeKey(project));
+      modeSeen.set(project, MODES.indexOf(stored) >= 0 ? stored : "map");
+    }
+    return modeSeen.get(project);
+  }
+
+  function listShown() { return routesMode() === "list"; }
+
+  function onDesk() { return typeof currentView !== "undefined" && currentView === "desk"; }
+
+  // The switch's buttons marked as the other switches mark theirs.
+  function syncSwitch() {
+    const bar = typeof document !== "undefined" && document.getElementById ? document.getElementById("routes-switch") : null;
+    if (!bar || typeof bar.querySelectorAll !== "function") return;
+    const mode = routesMode();
+    Array.from(bar.querySelectorAll(".subnav-item")).forEach((b) => b.setAttribute("aria-selected", String(b.dataset.mode === mode)));
+  }
+
+  // The list's pane, between the map and the column.
+  function listPane() {
+    if (!listEl) {
+      listEl = mk("div", "routes-pane hidden");
+      if (listZoomed) listEl.style.zoom = listZoomed;
+      layoutEl.insertBefore(listEl, columnEl);
+    }
+    return listEl;
+  }
+
+  // The map's element and the list's shown or hidden to match the mode.
+  function showMode() {
+    syncSwitch();
+    if (!layoutEl) return;
+    const list = listShown();
+    if (mapEl) mapEl.classList.toggle("hidden", list);
+    if (list) listPane().classList.remove("hidden");
+    else if (listEl) listEl.classList.add("hidden");
+  }
+
+  // The list drawn (list mode only): in place when it was drawn already for
+  // this project and `refresh`, else with 载入中… first. What the column has
+  // picked stays marked in it.
+  function loadList(refresh, acted) {
+    if (!listShown() || !layoutEl || !window.ROTeam || !ROTeam.loadRoutes) return null;
+    const epoch = state.dataEpoch;
+    const pane = listPane();
+    return Promise.resolve(ROTeam.loadRoutes(pane, !!refresh && listDrawn === epoch, acted)).then(() => {
+      if (epoch !== state.dataEpoch) return;
+      listDrawn = epoch;
+      markListRows(picked ? picked.ids : [], false);
+    }).catch((err) => { if (typeof console !== "undefined") console.error(err); });
+  }
+
+  // The page looks the way it is kept: shown, the column's hints worded for
+  // it, the picked row marked in what is on screen. `reload`: the list read
+  // again even if drawn already (the researcher just switched to it).
+  function applyMode(reload) {
+    showMode();
+    if (lastData && columnEl) renderColumn(columnEl, lastData);
+    if (listShown()) return reload || listDrawn !== state.dataEpoch ? loadList(true) : null;
+    if (routeMap) routeMap.highlight(picked ? picked.ids : []);
+    return null;
+  }
+
+  // The switch (app.html), or a caller that means one of the two. Kept at
+  // once; drawn at once when the page is on screen, else when it is next
+  // opened (resume).
+  function setMode(mode) {
+    if (MODES.indexOf(mode) < 0) return null;
+    const project = projectKey();
+    modeSeen.set(project, mode);
+    storageSet(modeKey(project), mode);
+    syncSwitch();
+    return layoutEl && onDesk() ? applyMode(true) : null;
+  }
+
+  // The page opened again with its drawing kept (app.html activateView).
+  function resume() {
+    syncSwitch();
+    return layoutEl ? applyMode(false) : null;
+  }
+
+  // The attempts' rows of the list marked, as the map marks their cards
+  // (14.4); the first is brought into view when `scroll`.
+  function markListRows(ids, scroll) {
+    if (!listEl || typeof listEl.querySelectorAll !== "function") return;
+    const want = new Set(ids);
+    let first = null;
+    Array.from(listEl.querySelectorAll(".route-row")).forEach((row) => {
+      const on = want.has(row.dataset.node);
+      row.classList.toggle("picked", on);
+      if (on && !first) first = row;
+    });
+    if (scroll && first && typeof first.scrollIntoView === "function") first.scrollIntoView({ block: "nearest" });
+  }
+
+  // The list zooms as the reading pages do (app.html shellZoom); the map keeps
+  // its own camera.
+  function listZoom(value) {
+    listZoomed = value;
+    if (listEl) listEl.style.zoom = value;
+  }
+
   // A row of the column picked (14.4): the attempts it touches are marked on
-  // the map and brought into view; picked again, unmarked. `on` true: marked
-  // whatever it was (its proposal opened in the panel).
+  // the map -- or, in the list, on their rows -- and brought into view;
+  // picked again, unmarked. `on` true: marked whatever it was (its proposal
+  // opened in the panel).
   function pick(key, ids, on) {
     picked = on || !(picked && picked.key === key) ? { key: key, ids: ids } : null;
     columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
-    if (routeMap) routeMap.highlight(picked ? picked.ids : []);
+    if (listShown()) markListRows(picked ? picked.ids : [], true);
+    else if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
 
-  // `title`: what marking it does, when the row is not a proposal's.
+  // `title`: what marking it does, when the row is not a proposal's -- worded
+  // for the map or for the list, whichever the page is.
   function pickLink(row, text, key, ids, title) {
     row.dataset.pick = key;
     drawnKeys.add(key);
     if (picked && picked.key === key) row.classList.add("picked");
-    return rowLink(text, "strong", () => pick(key, ids), ids.length ? title || t("在路线图上标出它涉及的尝试") : "");
+    const hint = title || (listShown() ? t("在列表中标出它涉及的尝试") : t("在路线图上标出它涉及的尝试"));
+    return rowLink(text, "strong", () => pick(key, ids), ids.length ? hint : "");
   }
 
   function listBlock(host, title, rows) {
@@ -493,6 +713,8 @@
     const ids = gotIt();
     ids.add(String(p.id));
     storageSet(gotItKey(projectKey(), meId()), JSON.stringify(Array.from(ids).slice(-GOT_IT_KEPT)));
+    setTodo(lastData);
+    renderSidebar();
     renderColumn(columnEl, lastData);
     const s = state.panelSubject;
     return s && s.kind === "desk-attempt" && panelShown() ? drawPanel(s) : null;
@@ -574,7 +796,7 @@
   function renderReview(host, review, byId) {
     if (!review || !review.count) return false;
     const sec = block(t("待复核"));
-    const sub = mk("p", "desk-sub", t("{n} 条判断的依据变了，等你复核。", { n: numberText(review.count) }));
+    const sub = mk("p", "desk-sub", t("{n} 项的依据变了，等你复核。", { n: numberText(review.count) }));
     sub.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
     sec.appendChild(sub);
     const ul = mk("ul", "desk-list");
@@ -582,7 +804,7 @@
       const row = mk("li", "desk-row");
       const main = mk("div", "desk-main");
       const head = mk("div", "desk-head");
-      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], t("在路线图上标出这条尝试")));
+      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], listShown() ? t("在列表中标出这条尝试") : t("在路线图上标出这条尝试")));
       const own = ownMark(g);
       if (own) head.appendChild(own);
       if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openAttempt(g.id, true))); // judged in its panel (14.3)
@@ -741,10 +963,10 @@
     if (!layoutEl) {
       layoutEl = mk("div", "desk-layout");
       if (window.RORouteMap) {
-        const map = mk("div", "desk-map");
+        mapEl = mk("div", "desk-map");
         routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
-        routeMap.mount(map);
-        layoutEl.appendChild(map);
+        routeMap.mount(mapEl);
+        layoutEl.appendChild(mapEl);
       }
       columnEl = mk("aside", "desk-column");
       layoutEl.appendChild(columnEl);
@@ -804,6 +1026,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     if (drawnEpoch !== epoch) picked = null;
+    setTodo(data);
     if (ctx.epoch === epoch) renderSidebar();
     lastData = data;
     lastChanged = changedSince(since);
@@ -812,6 +1035,8 @@
     if (routeMap) routeMap.update(data, { changed: lastChanged });
     drawnEpoch = epoch;
     host.dataset.loaded = "1";
+    showMode();
+    loadList(refresh || drawn); // 列表 only: the grouped list beside the same column (18.3)
     catchUp(data, epoch);
   }
 
@@ -826,7 +1051,6 @@
   function catchUp(data, epoch) {
     const shared = ((data && data.column) || {}).shared || {};
     if (shared.state !== "slow" && shared.state !== "stale") { catchUpTries = 0; return; }
-    const onDesk = () => typeof currentView !== "undefined" && currentView === "desk";
     if (catchUpTimer || catchUpTries >= CATCH_UP_TRIES || !onDesk()) return;
     catchUpTries += 1;
     catchUpTimer = setTimeout(() => {
@@ -838,15 +1062,15 @@
   // -- the side panel (DESIGN.md 14.3) ----------------------------------------------------
   // A card opens its attempt in app.html's side panel, on the desk, the map
   // live beside it (no backdrop): the attempt -- its verdict and result
-  // changed through the map file's preview-then-confirm write, dirty cells
+  // saved at once through the map file's write with 撤销 (18.3), dirty cells
   // only; a member's change becomes a verdict-change proposal (12.4); turning
-  // a route abandoned asks its reason --, 写备注, 来龙去脉 (the node page's
-  // trace), 源自 and 由它而来 with remove, 待办 (the proposals touching it,
-  // each opened in place and answered there), its 待复核 judged in place,
-  // what changed since the last visit (14.5), 打开详情页. The column's 查看
-  // opens a proposal there as its own subject (team.js draws it, reading
-  // /api/proposals/<id>?from=). One panel at a time: what is half typed in
-  // it is never replaced unasked.
+  // a route abandoned asks its reason and is previewed first --, 写备注,
+  // 来龙去脉 (the node page's trace), 源自 and 由它而来 with remove, 待办
+  // (the proposals touching it, each opened in place and answered there),
+  // its 待复核 judged in place, what changed since the last visit (14.5),
+  // 打开详情页. The column's 查看 opens a proposal there as its own subject
+  // (team.js draws it, reading /api/proposals/<id>?from=). One panel at a
+  // time: what is half typed in it is never replaced unasked.
 
   const NOTES_SHOWN = 5;
   let lastData = null;     // the desk payload last drawn: attempts, lines, the column
@@ -1118,10 +1342,10 @@
     s.appendChild(top);
     if (review && review.failed) {
       const box = mk("div", "notice-status");
-      setStatus(box, "err", t("没能读到待复核的判断"), review.failed);
+      setStatus(box, "err", t("没能读到待复核的连线确认"), review.failed);
       s.appendChild(box);
     } else if (review && review.ledger && review.ledger.state && review.ledger.state !== "ok") {
-      s.appendChild(mk("p", "desk-alone", t("判断记录文件当前无法读取，请先恢复它")));
+      s.appendChild(mk("p", "desk-alone", t("连线确认的记录文件当前无法读取，请先恢复它")));
     }
     const wanted = new Set(keys);
     const boxes = (review && !review.failed ? review.review || [] : []).filter((i) => wanted.has(keyId(i))).map((i) => {
@@ -1250,8 +1474,88 @@
     return chips;
   }
 
-  // The attempt's verdict and result (14.3): preview, then confirm; only the
-  // cells changed are sent. Description, date and variables are 研究路线's.
+  // -- an existing row's 研究判断 or 结果 saves at once (18.3) ---------------------------------
+  // For the PI and a single researcher (a member's change is still a proposal,
+  // a new row keeps its preview). The engine's preview is still asked, but not
+  // shown: it says whether this write turns the route abandoned (then the
+  // reason and the confirmation stay, 14.3) and what the cells hold now
+  // (`cells`, server.attempts_preview_payload). The write is the same one --
+  // only what changed, backed up, in the history, checked against the file as
+  // it is -- and 撤销 writes the previous cells back through it: a second
+  // entry in the history, not an erasure. Shared with app.html's older form.
+  const AT_ONCE_KEYS = ["verdict", "result"];
+
+  // The table's two endpoints (the panel's save, its confirmation and 撤销 all use these).
+  const previewRow = (b) => apiPost("/api/attempts/preview", b);
+  const writeRow = (b) => apiPost("/api/attempts/write", b);
+
+  // Compared with every space and line break taken out: an <input> keeps no line break of a cell with <br>.
+  function squash(s) { return String(s == null ? "" : s).replace(/\s+/g, ""); }
+
+  // Whether the cells `b` writes are only of this kind, in an existing row.
+  function atOnceKind(b) {
+    const keys = Object.keys((b && b.fields) || {});
+    return !!b && b.op === "update" && keys.length > 0 && keys.every((k) => AT_ONCE_KEYS.indexOf(k) >= 0);
+  }
+
+  // The preview `p` of `b` against the text the form showed (`shown`: key ->
+  // text): "once" (write now), "abandons" (it turns the route abandoned: the
+  // reason and the confirmation as before) or "moved" (a cell is no longer
+  // the text the form showed -- the file changed meanwhile --: the preview is
+  // shown, with the row as it is now).
+  function atOnceVerdict(p, b, shown) {
+    if (p.reason_required) return "abandons";
+    const cells = p.cells || {};
+    return Object.keys(b.fields).some((k) => cells[k] && squash(cells[k].was_text) !== squash(shown[k])) ? "moved" : "once";
+  }
+
+  // What 撤销 will do: write back the cells as the file held them (`was`, from
+  // the preview; the form's own text if the engine did not say), once the
+  // row still reads as this write left it (`now`). `text` is what a field
+  // goes back to: the text the form showed, unless the file had moved on
+  // from it before this write -- then the file's own text (`was_text`), which
+  // is what `was` puts back.
+  function undoOf(p, b, shown) {
+    const cells = p.cells || {};
+    const u = { number: b.number, was: {}, now: {}, text: {} };
+    Object.keys(b.fields).forEach((k) => {
+      u.was[k] = cells[k] && typeof cells[k].was === "string" ? cells[k].was : toCellText(String(shown[k] == null ? "" : shown[k]));
+      const seen = String(shown[k] == null ? "" : shown[k]);
+      const filed = cells[k] && typeof cells[k].was_text === "string" ? cells[k].was_text : seen;
+      u.text[k] = squash(filed) === squash(seen) ? seen : filed;
+      if (cells[k] && typeof cells[k].now_text === "string") u.now[k] = cells[k].now_text;
+    });
+    return u;
+  }
+
+  // Whether the row (as its page says it, `details`) still reads as the write left it.
+  function stillSo(u, details) {
+    return Object.keys(u.now).every((k) => squash((details || {})[k]) === squash(u.now[k]));
+  }
+
+  // 撤销: the same way as the write -- the preview, then the write. {state}:
+  // "abandons" (writing the old cells back would abandon the route again,
+  // which needs its reason), "moved" (the row changed again meanwhile) or
+  // "done" (with `res`, the write's answer). Throws what the engine refuses.
+  async function undoWrite(u) {
+    const b = { op: "update", number: u.number, fields: u.was };
+    const p = await previewRow(b);
+    if (p.reason_required) return { state: "abandons" };
+    const cells = p.cells || {};
+    if (Object.keys(u.now).some((k) => cells[k] && squash(cells[k].was_text) !== squash(u.now[k]))) return { state: "moved" };
+    return { state: "done", res: await writeRow(b) };
+  }
+
+  // 已保存 and 撤销 in `el`, a status line (its class set by the caller).
+  function savedLine(el, onUndo) {
+    el.textContent = "";
+    el.append(mk("span", null, t("已保存")), mkButton(t("撤销"), "err-detail-toggle", onUndo));
+  }
+
+  // The attempt's verdict and result (14.3, 18.3): the PI's and a single
+  // researcher's save at once, with 撤销; turning a route abandoned, and a
+  // member's change, are previewed and confirmed. Only the cells changed are
+  // sent. Description, date and variables are 研究路线's.
   function editPart(subject, a, page) {
     const d = page.details || {};
     const role = deskRole();
@@ -1293,12 +1597,22 @@
     s.appendChild(reasonField);
     const status = mk("div", "notice-status");
     const shown = mk("div", "dp-preview");
-    const go = mkButton(proposing ? t("预览这一行") : t("预览改动"), "btn btn-primary", () => preview());
+    const go = mkButton(proposing ? t("预览这一行") : t("保存"), "btn btn-primary", () => preview());
     const row = mk("div", "form-actions");
     row.appendChild(go);
     s.append(row, status, shown);
     const fields = [verdict, result, reason].concat(sentence ? [sentence] : []);
     const freeze = (on) => { fields.forEach((f) => { f.disabled = on; }); go.disabled = on; subject.hold = on; };
+    const shownText = () => ({ verdict: verdict.dataset.initial, result: result.dataset.initial });
+
+    // 18.3: 已保存 and 撤销 while the row still reads as the last save left it; a
+    // row that changed again (a refresh found it so) is not offered back.
+    function offer(u) {
+      setStatus(status, "ok", "");
+      savedLine(status, () => undoIt(u));
+    }
+    if (subject.undo && !proposing && !stillSo(subject.undo, d)) subject.undo = null;
+    if (subject.undo && !proposing) offer(subject.undo);
 
     function body() {
       const changed = {};
@@ -1314,12 +1628,12 @@
       if (proposing && !sentence.value.trim()) { setStatus(status, "err", t("请用一句话说明这份提议")); sentence.focus(); return; }
       const b = body();
       if (!b) { setStatus(status, "", t("没有需要写入的改动")); return; }
-      setStatus(status, "", t("正在生成预览…"));
+      setStatus(status, "", proposing ? t("正在生成预览…") : t("正在保存…"));
       let p;
       try {
-        p = await apiPost("/api/attempts/preview", b);
+        p = await previewRow(b);
       } catch (err) {
-        setStatus(status, "err", t("无法生成预览"), err);
+        setStatus(status, "err", proposing ? t("无法生成预览") : t("写入失败，文件没有被修改"), err);
         return;
       }
       // A2b: the PI and a single researcher give the reason when this write
@@ -1334,10 +1648,12 @@
         return;
       }
       setStatus(status, "", "");
-      showPreview(p, b);
+      const how = proposing ? "preview" : atOnceVerdict(p, b, shownText());
+      if (how === "once") return saveNow(p, b);
+      showPreview(p, b, how === "moved");
     }
 
-    function showPreview(p, b) {
+    function showPreview(p, b, moved) {
       freeze(true);
       shown.textContent = "";
       if (p.old_row != null) shown.append(mk("div", "diff-label", t("原行")), mk("div", "diff-row old", p.old_row));
@@ -1351,8 +1667,10 @@
           : t("这一行还不在正式版本里：它会整行作为一条新的尝试提议。")));
       }
       if (!proposing && p.reason_required) shown.appendChild(mk("div", "confirm-note", t("这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。")));
+      if (moved) shown.appendChild(mk("div", "confirm-note", t("这一行在你打开它以后被改过：上面的原行是文件里现在的样子。")));
       const actions = mk("div", "form-actions");
-      const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary", () => write(b, ok, back));
+      const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary",
+        () => (moved ? saveNow(p, b) : write(b, ok, back)));
       const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); setStatus(status, "", ""); });
       actions.append(ok, back);
       shown.appendChild(actions);
@@ -1364,7 +1682,7 @@
       setStatus(status, "", t("正在写入…"));
       let res;
       try {
-        res = await apiPost("/api/attempts/write", b); // the confirmed body, verbatim
+        res = await writeRow(b); // the confirmed body, verbatim
       } catch (err) {
         setStatus(status, "err", t("写入失败，文件没有被修改"), err);
         back.disabled = false;
@@ -1400,7 +1718,74 @@
       fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
       shown.textContent = "";
       freeze(false);
+      subject.undo = null; // the frozen basis is not written back by 撤销: an abandonment is not offered
       panelSaid = { id: subject.id, text: t("已写入 {file}。", { file: res.file }) };
+      setStatus(status, "ok", panelSaid.text);
+      await drawPanel(subject);
+    }
+
+    // 18.3: written at once -- the body the preview was made for, verbatim --, then 已保存 and 撤销.
+    async function saveNow(p, b) {
+      freeze(true);
+      shown.textContent = "";
+      setStatus(status, "", t("正在写入…"));
+      let res;
+      try {
+        res = await writeRow(b);
+      } catch (err) {
+        freeze(false);
+        setStatus(status, "err", t("写入失败，文件没有被修改"), err);
+        return;
+      }
+      if (typeof pollGeneration === "function") pollGeneration();
+      freeze(false);
+      if (res.ingest_error) {
+        setStatus(status, "err", t("已写入并备份，但重扫失败"), res.ingest_error);
+        return;
+      }
+      const u = undoOf(p, b, shownText());
+      reason.value = "";
+      reasonField.classList.add("hidden");
+      fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+      subject.undo = u;
+      panelSaid = null;
+      offer(u);
+      await drawPanel(subject);
+    }
+
+    // 撤销: the previous cells written back the same way; the panel then says so and offers nothing more.
+    async function undoIt(u) {
+      freeze(true);
+      setStatus(status, "", t("正在写入…"));
+      let r;
+      try {
+        r = await undoWrite(u);
+      } catch (err) {
+        freeze(false);
+        setStatus(status, "err", t("写入失败，文件没有被修改"), err);
+        return;
+      }
+      freeze(false);
+      if (r.state !== "done") {
+        subject.undo = null;
+        setStatus(status, "err", r.state === "abandons"
+          ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。")
+          : t("这一行之后又改过，不能撤销。"));
+        return;
+      }
+      if (typeof pollGeneration === "function") pollGeneration();
+      subject.undo = null;
+      if (r.res.ingest_error) {
+        setStatus(status, "err", t("已写入并备份，但重扫失败"), r.res.ingest_error);
+        return;
+      }
+      const fieldOf = { verdict: verdict, result: result };
+      Object.keys(u.was).forEach((k) => {
+        fieldOf[k].value = u.text[k];
+        fieldOf[k].dataset.initial = u.text[k];
+        delete fieldOf[k].dataset.typed;
+      });
+      panelSaid = { id: subject.id, text: t("撤销了上一步") };
       setStatus(status, "ok", panelSaid.text);
       await drawPanel(subject);
     }
@@ -1425,7 +1810,7 @@
     }
     const input = typedField("textarea", "", t("写一条备注：为什么这样做、要注意什么"));
     input.rows = 3;
-    input.setAttribute("aria-label", t("备注"));
+    input.setAttribute("aria-label", t("备注", { n: 1 }));
     const status = mk("div", "notice-status");
     const add = mkButton(t("添加备注"), "btn btn-small", async () => {
       const text = input.value.trim();
@@ -1549,11 +1934,14 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
+    setMode, resume, syncSwitch, listZoom, mode: routesMode, onePerson,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
+    // an existing row's 研究判断 or 结果 saved at once with 撤销 (18.3): the panel's, and app.html's older form
+    atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
-    _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,
+    _proposalStateText: proposalStateText, _seenKey: seenKey, _modeKey: modeKey, _toneOf: toneOf,
     _verdictChoices: verdictChoices, _withMarker: withMarker,
   });
 })();

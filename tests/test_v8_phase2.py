@@ -240,7 +240,7 @@ def test_12_10_2_notes_missing_though_expected_is_never_recreated(tmp_path):
     notes.notes_path(root).unlink()
     with pytest.raises(notes.NoteRefused) as err:
         notes.add_note(root, "steps/16-build.py", "two", via="cli")
-    assert err.value.code == "untrusted" and err.value.message_zh.startswith("笔记记录文件")
+    assert err.value.code == "untrusted" and err.value.message_zh.startswith("备注记录文件")
     assert not notes.notes_path(root).exists()
 
 
@@ -644,7 +644,7 @@ def test_12_10_2_http_notes_history_trace_and_me(live):
     status, body = _call(f"{base}/api/notes?node=figure%3Afigs%2Ffig2.png")
     assert status == 200 and body["notes"][0]["text"] == "单位" and body["notes"][0]["name"] == "李"
     status, body = _call(f"{base}/api/notes", "POST", {"action": "withdraw", "id": "n-nope"})
-    assert status == 404 and body["state"] == "no_such_note" and body["message"] == "找不到这条笔记"
+    assert status == 404 and body["state"] == "no_such_note" and body["message"] == "找不到这条备注"
     (root / "data" / "panel.csv").write_text(_csv(97))
     _scan(root)
     status, body = _call(f"{base}/api/history?node=data%2Fpanel.csv")

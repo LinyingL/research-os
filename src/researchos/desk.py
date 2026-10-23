@@ -11,7 +11,7 @@ says: *what changed since I last looked* is each card's `changed_at` (its
 row or one of its files; the page compares it with its own last visit for
 「有改动」, and the panel's timeline says what), *abandoned routes* are the
 quieter cards with their reason, *results that lost their evidence* are on
-成果 (12.13). A node's *first* version recorded with the first scan of its
+图表与论断 (12.13). A node's *first* version recorded with the first scan of its
 kind is the baseline, not a change: a project added today does not mark
 every attempt as changed.
 
@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from sqlite3 import Connection
@@ -70,8 +70,12 @@ def _who(by: str | None, team: people.TeamRead | None, *, name: str | None = Non
     return people.attribution({"by": by}, team, lang)["label"]
 
 
+def _kind_group(kind: str) -> str:
+    return "attempt" if kind == "attempt" else "file"
+
+
 def _group(row: sqlite3.Row) -> str:
-    return "attempt" if row["kind"] == "attempt" else "file"
+    return _kind_group(row["kind"])
 
 
 def _store_versions(store: history.Store) -> tuple[dict[str, list[sqlite3.Row]], dict[str, datetime]]:
@@ -87,13 +91,16 @@ def _store_versions(store: history.Store) -> tuple[dict[str, list[sqlite3.Row]],
     return by_node, baseline
 
 
-def _is_baseline(versions: list[sqlite3.Row], baseline: dict[str, datetime]) -> bool:
+def _first_is_baseline(source: str, first: datetime | None, group: str, baseline: dict[str, datetime]) -> bool:
     """The first version the first scan of its kind recorded is the
     baseline, not a change (module docstring); so is a first version 加入
-    installed (`publish`)."""
-    first, group = _parse(versions[0]["at"]), _group(versions[-1])
-    return (versions[0]["source"] in ("scan", "publish") and first is not None and group in baseline
-            and first - baseline[group] < BASELINE_WINDOW)
+    installed (`publish`). `source` and `first` (its time) are the node's
+    first version's, `group` its newest version's."""
+    return source in ("scan", "publish") and first is not None and group in baseline and first - baseline[group] < BASELINE_WINDOW
+
+
+def _is_baseline(versions: list[sqlite3.Row], baseline: dict[str, datetime]) -> bool:
+    return _first_is_baseline(versions[0]["source"], _parse(versions[0]["at"]), _group(versions[-1]), baseline)
 
 
 def _git_times(root: Path) -> tuple[dict[str, datetime], set[str] | None]:
@@ -234,6 +241,16 @@ def _start(key: str, fn: Callable[[], Any], keep: Callable[[Any], bool] = lambda
     return job
 
 
+def read_within(key: str, fn: Callable[[], Any], timeout: float | None = None) -> tuple[str, Any]:
+    """`fn` -- a read of the shared folder -- on the desk's job for `key` (`_start`), waited for `timeout` seconds
+    (SHARED_TIMEOUT): ("ok", what it returned), ("error", the exception) or ("slow", None) when it has not finished
+    by then. Never raises and never waits longer; a read that finishes late is dropped, the next one starts afresh.
+    For a page other than the desk (项目首页) that needs a part of the shared folder's answer (18.3)."""
+    job = _start(key, fn, keep=lambda result: False)
+    job["done"].wait(SHARED_TIMEOUT if timeout is None else timeout)
+    return job["result"] if job["done"].is_set() else ("slow", None)
+
+
 def _read_shared(root: Path, role: str, seen: Any) -> dict[str, Any]:
     """Everything the desk reads from the shared folder: the proposals (the
     PI's inbox, a member's own), and a member's sync state and the
@@ -254,25 +271,102 @@ def _read_shared(root: Path, role: str, seen: Any) -> dict[str, Any]:
     return got
 
 
-def _change_times(root: Path, project_id: str | None) -> dict[str, datetime]:
+def _scan_times(store: history.Store) -> dict[str, datetime]:
+    """When each node last changed in the version store (the baseline
+    aside), from every version in it: how 14.5 first read it, and how a store
+    without its time indexes, or with a time SQLite cannot read, still is."""
+    by_node, baseline = _store_versions(store)
+    out: dict[str, datetime] = {}
+    for node, versions in by_node.items():
+        times = [w for v in versions[1 if _is_baseline(versions, baseline) else 0:] if (w := _parse(v["at"]))]
+        if times:
+            out[node] = max(times)
+    return out
+
+
+#: A time Python reads this many days from SQLite's reading is not one the time index can be trusted with (18.4
+#: item 6); and the most Python and SQLite can differ on a time that is fine: a time with no UTC offset is the local
+#: time to Python and UTC to SQLite, 14 hours at the widest.
+ALIKE_DAYS = 1.0
+OFFSET_DAYS = 0.6
+
+
+def _julian(when: datetime) -> float:
+    return when.timestamp() / 86400.0 + 2440587.5
+
+
+def _times_of(rows: Iterable[tuple[int, str]], skip: int | None) -> list[datetime] | None:
+    """The times `_parse` reads in `rows` (seq, at), the version `skip` left out; None when one is not a time."""
+    out = []
+    for seq, at in rows:
+        if seq != skip:
+            when = _parse(at)
+            if when is None:
+                return None
+            out.append(when)
+    return out
+
+
+def _window_times(store: history.Store, nodes: Iterable[str] | None) -> dict[str, datetime] | None:
+    """`_scan_times` for `nodes` (every node when None), reading from the
+    version store only what decides it (18.4 item 6): the earliest time of
+    each kind for the baseline, and, per node, its first version, its newest
+    kind and the versions near its newest, found by the time indexes. SQLite
+    only narrows; every time chosen is read by `_parse`, as the scan reads it.
+    A node's newest change is taken from its window only when no version
+    outside it can be later (the window is TIME_MARGIN_DAYS wide, a reading
+    differs by at most OFFSET_DAYS); else all its versions are read. None
+    when that cannot be promised -- no indexes (a store that could not be
+    written), a time SQLite cannot read, a version in the window that
+    `_parse` cannot read or reads far from SQLite's -- and the caller scans."""
+    if not store.time_readable():
+        return None
+    baseline: dict[str, datetime] = {}
+    for group, stamps in store.earliest_times().items():
+        found = [_parse(at) for at in set(stamps)]
+        if None in found:  # a later version could be the earliest the scan reads
+            return None
+        baseline[group] = min(found)
+    out: dict[str, datetime] = {}
+    for node, window in store.node_windows(nodes).items():
+        skip = window.first_seq \
+            if _first_is_baseline(window.first_source, _parse(window.first_at), _kind_group(window.last_kind), baseline) else None
+        times = _times_of(window.rows, skip)
+        if times is not None and len(window.rows) < window.count \
+                and (not times or _julian(max(times)) < window.newest - (history.TIME_MARGIN_DAYS - OFFSET_DAYS)):
+            times = _times_of(store.stamps(node), skip)  # a version outside the window could be later: read them all
+        if times is None:
+            return None
+        if times:
+            newest = max(times)
+            if _julian(newest) - window.newest >= ALIKE_DAYS:
+                return None
+            out[node] = newest
+    return out
+
+
+def _change_times(root: Path, project_id: str | None, nodes: Iterable[str] | None = None) -> dict[str, datetime]:
     """When each node last changed (14.5's 「有改动」): a file git tracks by
     its newest commit or uncommitted edit (the last GIT_COMMIT_LIMIT
     commits), anything else -- an attempt's row, a file git does not track
-    -- by its newest version in the version store, the baseline aside."""
+    -- by its newest version in the version store, the baseline aside. The
+    store is read for `nodes` only (every node when None), by its time
+    indexes where it has them (`_window_times`), else in full; a node outside
+    `nodes` may or may not be in the answer."""
     out, tracked = _git_times(root)
     store = history.Store.existing(project_id) if project_id is not None else None
     if store is None:
         return out
+    wanted = None if nodes is None else [n for n in nodes if tracked is None or notes_mod.node_path(n) not in tracked]
     try:
-        by_node, baseline = _store_versions(store)
+        found = _window_times(store, wanted)
+        if found is None:
+            found = _scan_times(store)
     finally:
         store.close()
-    for node, versions in by_node.items():
-        if tracked is not None and notes_mod.node_path(node) in tracked:
-            continue
-        times = [w for v in versions[1 if _is_baseline(versions, baseline) else 0:] if (w := _parse(v["at"]))]
-        if times:
-            out[node] = max(times)
+    for node, when in found.items():
+        if tracked is None or notes_mod.node_path(node) not in tracked:
+            out[node] = when
     return out
 
 
@@ -395,7 +489,8 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
         for f in files:
             holders.setdefault(f, []).append(attempt_id)
     got = read_identity(root)
-    times = _change_times(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None)
+    shown = {n["id"] for n in nodes}.union(*members.values())  # the nodes whose changes the cards say
+    times = _change_times(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None, shown)
     abandoned = {a["id"]: a for a in _abandoned(conn, labels, root, team_known, lang)}
     attempts = []
     for n in nodes:

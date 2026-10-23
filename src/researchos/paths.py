@@ -138,6 +138,8 @@ README_FILENAME = "README"
 
 # Under researchos_home(): ~/.researchos/graphs/<id>/{graph.db,canvas.json}
 GRAPHS_DIRNAME = "graphs"
+# Under researchos_home(): ~/.researchos/engine/<port>.session, the running engine's session (18.1)
+ENGINE_DIRNAME = "engine"
 LOCKS_DIRNAME = names.LOCKS_DIRNAME
 
 HOME_ENV_VAR = names.HOME_ENV_VAR
@@ -225,6 +227,13 @@ def researchos_home() -> Path:
     if not os.path.lexists(home) and os.path.isdir(legacy) and not os.path.islink(legacy):
         return legacy
     return home
+
+
+def engine_session_path(port: int) -> Path:
+    """`~/.researchos/engine/<port>.session`: where `researchos serve` keeps the session
+    secret of the engine bound to `port` while it runs (DESIGN.md 18.1). Mode 0600; the
+    Mac app reads it, nothing prints it."""
+    return researchos_home() / ENGINE_DIRNAME / f"{int(port)}.session"
 
 
 def _canonical_path(project_root: str | Path) -> str:

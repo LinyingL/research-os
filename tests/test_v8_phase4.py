@@ -521,8 +521,9 @@ def test_12_5_a_pi_whose_key_is_listed_cannot_publish_without_ssh_keygen(drive, 
 def test_12_2_publishing_never_reads_a_file_only_in_the_cloud(drive, monkeypatch):
     """12.2 / 8.10: a file only in the cloud on the PI's machine is never
     read; publishing is refused naming it, and nothing is written."""
-    real = share.paths.is_dataless
-    monkeypatch.setattr(share.paths, "is_dataless", lambda p: str(p).endswith("panel.csv") or real(p))
+    real = share._is_dataless  # 18.4: the flag is read from the lstat the walk already made
+    cloud = (drive.official / "data" / "panel.csv").stat().st_ino
+    monkeypatch.setattr(share, "_is_dataless", lambda st: st.st_ino == cloud or real(st))
     with drive.pi():
         (drive.official / "paper.md").write_text("# v2\n")
         with pytest.raises(share.ShareError) as refused:

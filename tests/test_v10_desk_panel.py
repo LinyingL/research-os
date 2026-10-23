@@ -20,7 +20,7 @@ import pytest
 from test_v8_phase2 import _call, _project
 from test_v8_phase3 import _serve
 from test_v8_u2 import FORBIDDEN
-from test_v9_language import CJK, WEBAPP, _i18n_source, _node, needs_node
+from test_v9_language import CJK, WEBAPP, _app_function, _i18n_source, _node, needs_node
 
 A16, A17, A18 = (f"attempt:map.md#{n}" for n in (16, 17, 18))
 
@@ -158,7 +158,7 @@ def _case(role: str, lang: str = "zh") -> dict:
                 {"key": "scripts", "title": w("脚本", "Scripts"), "items": [
                     {"id": "script:steps/16-build.py", "type": "script", "label": "16-build.py", "path": "steps/16-build.py",
                      "exists": True, "member": "step_files"}]},
-                {"key": "out", "title": w("产出", "Outputs"), "items": [
+                {"key": "out", "title": w("输出", "Outputs"), "items": [
                     {"id": "figure:figs/fig1.png", "type": "figure", "label": "fig1.png", "path": "figs/fig1.png", "exists": False,
                      "member": "belongs_to"}]}],
                 "lines": [{"from": "dataset:data/raw.csv", "to": "script:steps/16-build.py", "type": "reads", "relation": "读取",
@@ -204,7 +204,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
     for line in ["panel-title plain-title: #16 TopicShift 波动", "panel-subtitle: 07-26", "status-label tone-ochre: 待定",
                  "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 研究判断与结果",
                  "form-input:  = 待定 先看", "chip: 已放弃", "form-textarea:  = t=2.91",
-                 "btn btn-primary: 预览改动", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
+                 "btn btn-primary: 保存", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
                  "form-textarea:  =  (写一条备注：为什么这样做、要注意什么)", "btn btn-small: 添加备注",
                  "node-sec-title: 来龙去脉", "trace-col-title: 读取的数据", "trace-item-name: raw.csv", "status-label tone-plain: 原始数据",
                  "status-label tone-plain: 步骤脚本", "status-label tone-clay: 文件不存在", "status-label tone-plain: 人工关联",
@@ -223,7 +223,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
 @needs_node
 def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     """English mode: every word Research OS writes in the panel is English
-    (13.4: Verdict, Result, Provenance, Grew out of, What grew out of it),
+    (13.4: Research assessment, Result, Provenance, Grew out of, What grew out of it),
     the researcher's text as written; no arrows or emoji, no 节点 or 画布."""
     out = _run(_case("pi", "en"), "await window.RODesk.openAttempt(" + json.dumps(A16) + ");", lang="en")
     lines = [line.split(" = ")[0] if " = " in line and "(" not in line.split(" = ")[1] else line for line in out["lines"]]
@@ -231,8 +231,8 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
                  "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "chip: Abandoned",
-                 "btn btn-primary: Preview the change", "node-sec-title: Write a note", "desk-meta: Li · 1 Mar 2024",
-                 "btn btn-small: Add note", "node-sec-title: Provenance", "trace-col-title: Data read",
+                 "btn btn-primary: Save", "node-sec-title: Write a comment", "desk-meta: Li · 1 Mar 2024",
+                 "btn btn-small: Add comment", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
                  "node-sec-title: Grew out of", "desk-empty: Origin not marked yet", "node-sec-title: What grew out of it",
                  # 13.5 (V10 review, finding 20): a line's date in the screen's form, re-baselined from its ISO day.
@@ -267,44 +267,224 @@ def test_14_3_an_abandoned_cards_panel_says_who_abandoned_it(lang):
                      w(f"desk-meta: 提议人 Wang · 批准人 Li · {day}", f"desk-meta: Proposed by Wang · Approved by Li · {day}")]]
 
 
+#: A stand-in for the engine's attempt table, for the steps that save a row: the row's cells as the file holds
+#: them (`file`, decoration kept), the preview's `cells` read from it as server.attempts_preview_payload does,
+#: and the write changing it -- so that the panel, drawn again, shows what was written. The page it reads is
+#: #16's (`c.get[...]`), `refuse` a state the write is refused with, `moved` a cell the file holds that the
+#: panel did not show.
+_ENGINE = r"""
+global.file = { verdict: "待定 先看", result: "**t=2.91**" };
+global.refuse = null;
+const plain = (raw) => raw.replace(/\*\*/g, "").replace(/<br>/g, "\n");
+const node = "/api/node?node=" + encodeURIComponent(%(id)s);
+const sync = () => { c.get[node].details.verdict = plain(file.verdict); c.get[node].details.result = plain(file.result); };
+c.post = {
+  "/api/attempts/preview": (b) => {
+    const cells = {};
+    Object.keys(b.fields).forEach((k) => { const raw = k in file ? file[k] : "";
+      cells[k] = { was: raw, was_text: plain(raw), now_text: plain(b.fields[k]) }; });
+    const abandons = (b.fields.verdict || "").startsWith("☠");
+    return { file: "map.md", old_row: "| 16 | old |", new_row: "| 16 | new |", abandons, cells,
+             reason_required: abandons && !file.verdict.startsWith("☠") };
+  },
+  "/api/attempts/write": (b) => {
+    if (refuse) throw Object.assign(new Error("refused"), { state: refuse });
+    Object.keys(b.fields).forEach((k) => { file[k] = b.fields[k]; });
+    sync();
+    return { ok: true, file: "map.md", ingest_error: null, generation: 7 };
+  },
+};
+global.flush = async () => { for (let i = 0; i < 8; i++) await settle(); };
+global.resultField = () => fields().find((f) => f.tag === "TEXTAREA" && !f.placeholder);
+global.verdictField = () => fields().find((f) => f.tag === "INPUT");
+"""
+
+
+def _saving(role: str = "single", lang: str = "zh") -> tuple[dict, str]:
+    """#16 as `role` sees it, the engine stand-in installed once the panel is open; `steps` run after it."""
+    case = _case(role, lang)
+    page = case["get"]["/api/node?node=" + A16.replace(":", "%3A").replace("#", "%23")]
+    page["details"]["result"] = "t=2.91"
+    return case, "await window.RODesk.openAttempt(%s);\n" % json.dumps(A16) + _ENGINE.replace("%(id)s", json.dumps(A16))
+
+
 @needs_node
-def test_14_3_a_change_previews_then_writes_only_the_cells_changed_and_abandoning_asks_why():
-    """The result changed alone: the preview and the write carry that cell
-    only. Then an abandoning verdict: the engine's preview says the write
-    turns the route abandoned, so the reason is asked before anything is
-    shown; with it, the preview and the write carry it, and the panel is
-    drawn again with what was written."""
-    case = _case("single")
-    row = {"file": "map.md", "old_row": "| 16 | 07-26 | … | t=2.91 | 待定 先看 |", "new_row": "| 16 | … |"}
-    case["post"] = {"/api/attempts/write": {"ok": True, "file": "map.md", "ingest_error": None}}
-    steps = """
-      await window.RODesk.openAttempt(%(id)s);
-      global.apiPost = ((post) => async (path, body) => path === "/api/attempts/preview"
-        ? (posted.push([path, body]), Object.assign({ reason_required: (body.fields.verdict || "").startsWith("☠"), abandons: false }, %(row)s))
-        : post(path, body))(global.apiPost);
-      type(fields().find((f) => f.tag === "TEXTAREA" && f.value === "t=2.91"), "t=3.10");
-      find("预览改动").click(); await settle(); await settle();
-      find("保存修改").click(); await settle(); await settle(); await settle();
-      find("已放弃", "BUTTON").click();
-      find("预览改动").click(); await settle(); await settle();
-      global.extra = panelLines().filter((l) => l.startsWith("notice-status") || l.includes("放弃的理由"));
-      type(field("为什么放弃这条路线"), "残差不平稳");
-      find("预览改动").click(); await settle(); await settle();
-      find("保存修改").click(); await settle(); await settle(); await settle();
-    """ % {"id": json.dumps(A16), "row": json.dumps(row, ensure_ascii=False)}
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_18_3_a_change_of_the_result_saves_at_once_and_撤销_writes_the_old_cell_back(lang):
+    """One person changes #16's result and presses 保存: the preview is asked (silently) and the write follows with
+    the same body -- no row shown, no second click --, and the panel says 已保存 with 撤销 beside it. 撤销
+    writes the cell back as the file held it (its Markdown decoration included, not the text the panel
+    showed), the same way: a preview, then a write. The panel then says it undid the step and offers nothing."""
+    w = (lambda zh, en: en if lang == "en" else zh)
+    case, head = _saving("single", lang)
+    steps = head + """
+      type(resultField(), "t=3.10");
+      find(%(save)s, "BUTTON").click(); await flush();
+      const saved = panelLines();
+      const savedFile = { ...file };
+      global.extra = { saved, savedFile, shown: [find(%(confirm)s, "BUTTON"), find(%(back)s, "BUTTON")].map((x) => !!x),
+                       field: resultField().value };
+      find(%(undo)s, "BUTTON").click(); await flush();
+      extra.undone = panelLines(); extra.file = { ...file }; extra.field = [extra.field, resultField().value];
+      extra.offered = !!find(%(undo)s, "BUTTON");
+    """ % {"save": json.dumps(w("保存", "Save")), "confirm": json.dumps(w("保存修改", "Save changes")),
+           "back": json.dumps(w("返回修改", "Back to editing")), "undo": json.dumps(w("撤销", "Undo"))}
+    out = _run(case, steps, lang=None if lang == "zh" else lang)
+    body = {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}
+    undo = {"op": "update", "number": "16", "fields": {"result": "**t=2.91**"}}
+    assert out["posted"] == [["/api/attempts/preview", body], ["/api/attempts/write", body],
+                             ["/api/attempts/preview", undo], ["/api/attempts/write", undo]]
+    extra = out["extra"]
+    assert extra["shown"] == [False, False]  # no row, no confirmation, no way back to a preview
+    assert not any(line.startswith("diff-row") or line.startswith("diff-label") for line in extra["saved"])
+    assert extra["savedFile"]["result"] == "t=3.10" and extra["file"] == {"verdict": "待定 先看", "result": "**t=2.91**"}
+    assert f": {w('已保存', 'Saved')}" in extra["saved"] and f"err-detail-toggle: {w('撤销', 'Undo')}" in extra["saved"]
+    assert extra["field"] == ["t=3.10", "t=2.91"] and extra["offered"] is False
+    assert f"notice-status ok: {w('撤销了上一步', 'Undid the last step')}" in extra["undone"]
+    assert out["asked"] == []
+    if lang == "en":  # the researcher's own cells (field values) apart, no Chinese
+        words = [line for line in extra["saved"] + extra["undone"] if " = " not in line]
+        assert [line for line in words if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))] == []
+
+
+@needs_node
+def test_18_3_a_second_edit_replaces_the_offer_and_a_row_that_changed_again_is_not_offered_back():
+    """撤销 is offered until the panel closes or the row changes again. A second save offers back only its own
+    step. A refresh that finds the row changed by someone else (the file edited meanwhile) draws the panel
+    without 撤销; a refresh that finds it as the save left it keeps it; closing and opening the panel again
+    offers nothing."""
+    case, head = _saving()
+    steps = head + """
+      type(resultField(), "t=3.10");
+      find("保存", "BUTTON").click(); await flush();
+      type(verdictField(), "现行 主线");
+      find("保存", "BUTTON").click(); await flush();
+      const twice = posted.length;
+      await window.RODesk.revalidatePanel(state.panelSubject); await flush();
+      const kept = !!find("撤销", "BUTTON");
+      find("撤销", "BUTTON").click(); await flush();
+      const afterUndo = { ...file };
+      type(resultField(), "t=3.50");
+      find("保存", "BUTTON").click(); await flush();
+      file.result = "somebody else";                 // the file changed elsewhere ...
+      c.get[node].details.result = "somebody else";   // ... and the refresh read it
+      await window.RODesk.revalidatePanel(state.panelSubject); await flush();
+      const gone = !find("撤销", "BUTTON");
+      await window.RODesk.openAttempt(%(a18)s);
+      await window.RODesk.openAttempt(%(a16)s); await flush();
+      global.extra = { twice, kept, afterUndo, gone, reopened: !find("撤销", "BUTTON") };
+    """.replace("%(a18)s", json.dumps(A18)).replace("%(a16)s", json.dumps(A16))
+    case["get"]["/api/node?node=" + A18.replace(":", "%3A").replace("#", "%23")] = {
+        **case["get"]["/api/node?node=" + A16.replace(":", "%3A").replace("#", "%23")], "id": A18}
+    case["get"]["/api/notes?node=" + A18.replace(":", "%3A").replace("#", "%23")] = {"notes": [], "trusted": True}
     out = _run(case, steps)
     posted = out["posted"]
+    assert posted[3] == ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "现行 主线"}}]
+    assert out["extra"]["twice"] == 4 and out["extra"]["kept"] is True
+    # 撤销 after the second save undid that step only: the verdict is back, the first save's result stays.
+    assert posted[4:6] == [["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "待定 先看"}}],
+                           ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "待定 先看"}}]]
+    assert out["extra"]["afterUndo"] == {"verdict": "待定 先看", "result": "t=3.10"}
+    assert out["extra"]["gone"] is True and out["extra"]["reopened"] is True
+
+
+@needs_node
+def test_18_3_撤销_is_refused_in_place_when_the_row_moved_on_or_would_abandon_the_route_again():
+    """The click on 撤销 asks the engine once more: a cell that no longer reads as the save left it (the file
+    changed between the refresh and the click) is not written over, and an old cell that would abandon the
+    route again needs its reason (14.3), so neither is written; each says so in a sentence of its own."""
+    case, head = _saving()
+    steps = head + """
+      type(resultField(), "t=3.10");
+      find("保存", "BUTTON").click(); await flush();
+      file.result = "typed in the editor";             // the file moved on; the page has not read it yet
+      find("撤销", "BUTTON").click(); await flush();
+      const moved = panelLines().filter((l) => l.startsWith("notice-status"));
+      const writes = posted.filter(([path]) => path === "/api/attempts/write").length;
+      // The same for a route un-abandoned: the old verdict would abandon it again.
+      file.verdict = "☠ 方向反了"; file.result = "t=2.91"; sync();
+      await window.RODesk.revalidatePanel(state.panelSubject); await flush();
+      type(verdictField(), "待定 再看");
+      find("保存", "BUTTON").click(); await flush();
+      find("撤销", "BUTTON").click(); await flush();
+      global.extra = { moved, writes, abandons: panelLines().filter((l) => l.startsWith("notice-status")),
+                       writesAfter: posted.filter(([path]) => path === "/api/attempts/write").length, verdict: file.verdict };
+    """
+    out = _run(case, steps)
+    extra = out["extra"]
+    assert extra["moved"] == ["notice-status err: 这一行之后又改过，不能撤销。"] and extra["writes"] == 1
+    assert extra["abandons"] == ["notice-status err: 撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。"]
+    assert extra["writesAfter"] == 2 and extra["verdict"] == "待定 再看"  # the second save only; both undos wrote nothing
+
+
+@needs_node
+def test_18_3_a_file_that_changed_meanwhile_and_a_refused_write_are_not_saved_over_unseen():
+    """Conflict-checked. The cell the file holds is no longer the one the panel showed (edited elsewhere while
+    the panel was open): nothing is written at once -- the row is previewed, with the file's row and a note
+    saying it changed, and written only on 保存修改 (then 撤销 is offered as for any save). A write the engine
+    refuses (the row is gone) says the existing sentence with the engine's text behind 「详情」, and the
+    fields keep what was typed."""
+    case, head = _saving()
+    steps = head + """
+      file.result = "**t=2.95**";                      // changed in the file; the panel still shows t=2.91
+      type(resultField(), "t=3.10");
+      find("保存", "BUTTON").click(); await flush();
+      const held = { lines: panelLines(), writes: posted.filter(([path]) => path === "/api/attempts/write").length };
+      find("保存修改", "BUTTON").click(); await flush();
+      const written = { file: { ...file }, offered: !!find("撤销", "BUTTON") };
+      refuse = "attempt_not_found";
+      type(resultField(), "t=4.00");
+      find("保存", "BUTTON").click(); await flush();
+      global.extra = { held, written, refused: panelLines().filter((l) => l.startsWith("notice-status")), typed: resultField().value,
+                       fields: fields().filter((f) => !f.disabled).length };
+    """
+    out = _run(case, steps)
+    extra = out["extra"]
+    assert extra["held"]["writes"] == 0
+    for line in ["diff-row old: | 16 | old |", "diff-row new: | 16 | new |", "btn btn-primary: 保存修改", "btn: 返回修改",
+                 "confirm-note: 这一行在你打开它以后被改过：上面的原行是文件里现在的样子。"]:
+        assert line in extra["held"]["lines"], line
+    assert extra["written"] == {"file": {"verdict": "待定 先看", "result": "t=3.10"}, "offered": True}
+    assert extra["refused"] == ["notice-status err: 写入失败，文件没有被修改"] and extra["typed"] == "t=4.00"
+    assert extra["fields"] >= 3  # the form is open again, not frozen
+
+
+@needs_node
+def test_14_3_abandoning_is_previewed_and_asks_why_before_anything_is_written():
+    """An abandoning verdict is not saved at once: the engine's preview says the write turns the route
+    abandoned, so the reason is asked before anything is shown; with it, the row is previewed and written only
+    on 保存修改, the panel is drawn again with what was written -- and no 撤销, since the basis frozen with the
+    abandonment (decisions.toml) is not written back by restoring the row."""
+    case, head = _saving()
+    steps = head + """
+      type(resultField(), "t=3.10");
+      find("保存", "BUTTON").click(); await flush();
+      find("已放弃", "BUTTON").click();
+      find("保存", "BUTTON").click(); await flush();
+      global.extra = { asked: panelLines().filter((l) => l.startsWith("notice-status") || l.includes("放弃的理由")),
+                       writes: posted.filter(([path]) => path === "/api/attempts/write").length };
+      type(field("为什么放弃这条路线"), "残差不平稳");
+      find("保存", "BUTTON").click(); await flush();
+      extra.preview = panelLines().filter((l) => l.startsWith("diff-") || l.startsWith("confirm-note"));
+      extra.writesBefore = posted.filter(([path]) => path === "/api/attempts/write").length;
+      find("保存修改", "BUTTON").click(); await flush();
+      extra.after = { lines: panelLines(), offered: !!find("撤销", "BUTTON") };
+    """
+    out = _run(case, steps)
+    posted = out["posted"]
+    # The result alone first (saved at once), then the abandoning verdict without its reason (previewed, refused
+    # before anything is shown), then with it: previewed, written on the confirmation.
     assert posted[0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}]
     assert posted[1] == ["/api/attempts/write", posted[0][1]]
-    # The abandoning verdict, first without its reason: previewed, refused before anything is shown.
-    # (Re-baselined at acceptance: the 已放弃 chip puts the table's ☠ before the field's words, 待定 not being a marker.)
     assert posted[2] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"}}]
     assert posted[3] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"},
                                                    "reason": "残差不平稳"}]
     assert posted[4] == ["/api/attempts/write", posted[3][1]] and len(posted) == 5
-    # Asked before the row was shown: the reason's field, said in its own sentence.
-    assert out["extra"] == ["notice-status ok: 已写入 map.md。", ": 放弃的理由（必填）", "notice-status err: 放弃一条路线时必须写明理由"]
-    assert "notice-status ok: 已写入 map.md。" in out["lines"]
+    extra = out["extra"]
+    assert extra["asked"] == [": 放弃的理由（必填）", "notice-status err: 放弃一条路线时必须写明理由"]
+    assert extra["writes"] == 1 and extra["writesBefore"] == 1  # only the result was written before the confirmation
+    assert "confirm-note: 这一行会放弃这条路线：理由写进结果一栏，它当时的依据冻结下来。" in extra["preview"]
+    assert extra["after"]["offered"] is False and "notice-status ok: 已写入 map.md。" in extra["after"]["lines"]
     assert out["asked"] == []
 
 
@@ -388,5 +568,211 @@ def test_14_6_the_attempt_trace_speaks_the_requests_language(tmp_path):
         assert status == 200
         status, en = _call(base + url, headers={"X-ResearchOS-Lang": "en"})
         assert status == 200
-    assert [c["title"] for c in zh["trace"]["columns"]] == ["读取的数据", "脚本", "产出"]
+    assert [c["title"] for c in zh["trace"]["columns"]] == ["读取的数据", "脚本", "输出"]
     assert [c["title"] for c in en["trace"]["columns"]] == ["Data read", "Scripts", "Outputs"]
+
+
+# -- app.html's older attempt form (the node page's 编辑这一行): the same rule (18.3) ----------------------------
+
+
+def _form_run(steps: str, lang: str | None = None, role: str = "single") -> dict:
+    """The older form (app.html `renderAttemptForm`) built for #16 under node, with the engine stand-in of the panel
+    tests and desk.js's helpers it shares (RODesk.atOnce); `steps` run after it is drawn. Reports the panel's lines,
+    what was posted and what `steps` left in `extra`."""
+    i18n = "" if lang is None else f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
+    helpers = "\n".join(_app_function(head) for head in (
+        "function defaultNewNumber(", "function defaultDateValue(", "function distinctVerdicts(", "function setFormStatus(",
+        "function renderAttemptForm("))
+    record = {"id": A16, "attrs": {"number": "16", "date": "07-26", "description": "TopicShift 波动", "variables": "TopicShift->RV"},
+              "verdict": "待定 先看", "result": "t=2.91"}
+    script = ("global.window = {};\n" + i18n + _PANEL_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8") + "\n" + helpers + "\n"
+              + "global.panelTitle = panelPart('panel-title'); global.panelSubtitle = panelPart('panel-subtitle');\n"
+              "global.panelBody = panelPart('panel-body');\n"
+              "global.t = (s, v) => (window.ROI18N ? window.ROI18N.t(s, v) : String(s).replace(/\\{(\\w+)\\}/g, (m, k) => (v && k in v ? String(v[k]) : m)));\n"
+              "global.RODesk = window.RODesk;\n"
+              "global.ROTeam.mode = () => " + json.dumps(role) + ";\n"
+              "global.renderBlockingError = (node, text, err) => { node.textContent = text; node.title = err && err.state || ''; };\n"
+              "global.attemptDraftBlock = () => null; global.panelErrorBoxCn = (m) => el('div', 'error-box', m);\n"
+              "global.closePanel = () => { global.closed = (global.closed || 0) + 1; };\n"
+              "global.EDITABLE_KEYS = ['date', 'description', 'variables', 'result', 'verdict'];\n"
+              "global.mayReplacePanel = () => true;\n"
+              f"state.attemptsById = new Map([[{json.dumps(A16)}, {json.dumps(record, ensure_ascii=False)}]]);\n"
+              "state.attemptsConfig = { file: 'map.md', columns: { date: '日期', description: '描述', variables: '变量', result: '结果', verdict: '研究判断' } };\n"
+              "const c = { post: {}, get: {} };\n"
+              "global.apiPost = async (path, body) => { posted.push([path, body]); const a = c.post[path];\n"
+              "  if (a && a.refuse) throw Object.assign(new Error('refused'), { state: a.refuse }); return typeof a === 'function' ? a(body) : a || { ok: true }; };\n"
+              + _ENGINE.replace("%(id)s", json.dumps(A16)).replace("c.get[node].details", "(c.get[node] || { details: {} }).details")
+              + "\nglobal.formFields = () => panelPart('panel-body').all().filter((k) => k.tag === 'INPUT' || k.tag === 'TEXTAREA');\n"
+              "global.submit = async () => { const form = panelPart('panel-body').all().find((k) => k.tag === 'FORM'); (form.on.submit[0])({ preventDefault() {} }); await flush(); };\n"
+              "(async () => {\n" + steps + "\n process.stdout.write(JSON.stringify({ lines: panelLines(), posted, extra: global.extra || null, closed: global.closed || 0 })); })();\n")
+    return _node(script)
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_18_3_the_older_form_saves_a_changed_result_at_once_and_撤销_puts_it_back(lang):
+    """The node page's 编辑这一行 (app.html's form): the PI or a single researcher changes the result and presses
+    保存 -- no row shown, no confirmation --, the form stays open saying 已保存 with 撤销, which writes the old cell
+    back (decoration kept) the same way and puts the old text in the field. Changing the date, description
+    or variables as well is a preview, as before."""
+    w = (lambda zh, en: en if lang == "en" else zh)
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      global.extra = { label: panelPart("panel-body").all().find((k) => k.tag === "BUTTON" && k.type === "submit").textContent };
+      result.value = "t=3.10";
+      await submit();
+      extra.saved = panelLines().filter((l) => l.startsWith("panel-status") || l.startsWith("err-detail") || l.startsWith(": " + %(saved)s));
+      extra.rowShown = panelPart("panel-body").all().filter((k) => k.cls.has("diff-row")).length;
+      extra.file = { ...file };
+      find(%(undo)s, "BUTTON").click(); await flush();
+      extra.undone = panelLines().filter((l) => l.startsWith("panel-status") || l.startsWith("err-detail"));
+      extra.field = result.value; extra.fileBack = { ...file };
+      // description with the result: previewed, not written
+      result.value = "t=4"; description.value = "TopicShift 波动 (重跑)";
+      await submit();
+      extra.mixed = { writes: posted.filter(([path]) => path === "/api/attempts/write").length,
+                      confirm: !!find(%(confirm)s, "BUTTON"), rows: panelPart("panel-body").all().filter((k) => k.cls.has("diff-row")).length };
+    """ % {"id": json.dumps(A16), "saved": json.dumps(w("已保存", "Saved")), "undo": json.dumps(w("撤销", "Undo")),
+           "confirm": json.dumps(w("保存修改", "Save changes"))}
+    out = _form_run(steps, lang=None if lang == "zh" else lang)
+    extra = out["extra"]
+    body = {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}
+    undo = {"op": "update", "number": "16", "fields": {"result": "**t=2.91**"}}
+    assert out["posted"][:4] == [["/api/attempts/preview", body], ["/api/attempts/write", body],
+                                 ["/api/attempts/preview", undo], ["/api/attempts/write", undo]]
+    assert extra["label"] == w("保存", "Save") and extra["rowShown"] == 0
+    assert [l for l in extra["saved"] if l.startswith("err-detail")] == [f"err-detail-toggle: {w('撤销', 'Undo')}"]
+    assert f": {w('已保存', 'Saved')}" in extra["saved"] and extra["file"]["result"] == "t=3.10"
+    assert extra["undone"] == [f"panel-status ok: {w('撤销了上一步', 'Undid the last step')}"]
+    assert extra["field"] == "t=2.91" and extra["fileBack"] == {"verdict": "待定 先看", "result": "**t=2.91**"}
+    assert out["closed"] == 0  # the form stays: 已保存 and 撤销 are in it
+    # Other cells with it: the preview and its confirmation, nothing written yet.
+    assert extra["mixed"] == {"writes": 2, "confirm": True, "rows": 2}
+    assert out["posted"][4][0] == "/api/attempts/preview" and out["posted"][4][1]["fields"] == {"description": "TopicShift 波动 (重跑)", "result": "t=4"}
+
+
+@needs_node
+def test_18_3_the_older_form_holds_nothing_unwritten_after_a_save_at_once_or_撤销():
+    """After 保存 (written at once, the form staying open) and after 撤销, the fields hold what the file holds:
+    opening another panel (RODesk.mayLeavePanel, which every opener asks) does not ask 'content not yet written'.
+    Text typed after that is still guarded."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      const leave = () => { answers.push(false); return RODesk.mayLeavePanel(); };
+      type(result, "t=3.10");
+      const typedFirst = leave();
+      await submit();
+      const saved = { may: leave(), typed: result.dataset.typed || null, initial: result.dataset.initial };
+      find("撤销", "BUTTON").click(); await flush();
+      const undone = { may: leave(), typed: result.dataset.typed || null, field: result.value, initial: result.dataset.initial };
+      type(result, "t=4");
+      const typedAgain = leave();
+      global.extra = { typedFirst, saved, undone, typedAgain, asked: asked.slice() };
+    """ % {"id": json.dumps(A16)}
+    extra = _form_run(steps)["extra"]
+    question = "这里有还没写入的内容，离开它就不保存了。继续吗？"
+    assert extra["typedFirst"] is False and extra["typedAgain"] is False  # typed and unwritten: still asked
+    assert extra["saved"] == {"may": True, "typed": None, "initial": "t=3.10"}
+    assert extra["undone"] == {"may": True, "typed": None, "field": "t=2.91", "initial": "t=2.91"}
+    assert extra["asked"] == [question, question]  # the two unwritten moments only
+
+
+@needs_node
+def test_18_3_撤销_in_the_older_form_puts_back_what_the_file_held_when_it_had_moved():
+    """The file changed after the form opened (the cell reads 't=2.95', the form showed 't=2.91'): 保存 shows the
+    row, 保存修改 writes it, and 撤销 writes the file's own cell back -- so the field says 't=2.95' too, not the
+    text the form opened with, and the next change is judged against it (saved at once, not 'moved' again)."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      file.result = "**t=2.95**";
+      result.value = "t=3.10";
+      await submit();
+      find("保存修改", "BUTTON").click(); await flush();
+      const written = file.result;
+      find("撤销", "BUTTON").click(); await flush();
+      const undone = { file: file.result, field: result.value, status: panelLines().filter((l) => l.startsWith("panel-status")) };
+      result.value = "t=4";
+      const before = posted.length;
+      await submit();
+      global.extra = { written, undone, again: { rows: panelPart("panel-body").all().filter((k) => k.cls.has("diff-row")).length,
+                       written: posted.slice(before).filter(([path]) => path === "/api/attempts/write").map(([, b]) => b.fields.result) } };
+    """ % {"id": json.dumps(A16)}
+    extra = _form_run(steps)["extra"]
+    assert extra["written"] == "t=3.10"
+    assert extra["undone"] == {"file": "**t=2.95**", "field": "t=2.95", "status": ["panel-status ok: 撤销了上一步"]}
+    assert extra["again"] == {"rows": 0, "written": ["t=4"]}
+
+
+@needs_node
+def test_18_3_the_older_form_still_previews_abandoning_a_new_row_and_a_members_change():
+    """What keeps its preview in the older form: a verdict that abandons the route (the reason is asked, then the
+    row is shown and written on 保存修改, the form closing as before, no 撤销), a new row (其 button still reads
+    预览改动), and a member's change, which is a proposal needing its sentence first."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      let [number, date, description, variables, result, verdict] = formFields();
+      verdict.value = "☠ 方向反了";
+      await submit();
+      const asked = { writes: posted.filter(([path]) => path === "/api/attempts/write").length,
+                      lines: panelLines().filter((l) => l.includes("放弃的理由") || l.startsWith("panel-status")) };
+      formFields().find((f) => f.tag === "TEXTAREA" && f.placeholder === "为什么放弃这条路线").value = "残差不平稳";
+      await submit();
+      const rows = panelPart("panel-body").all().filter((k) => k.cls.has("diff-row")).length;
+      find("保存修改", "BUTTON").click(); await flush();
+      const after = { closed: global.closed || 0, writes: posted.filter(([path]) => path === "/api/attempts/write").length, offered: !!find("撤销", "BUTTON") };
+      renderAttemptForm("append");
+      const label = panelPart("panel-body").all().find((k) => k.tag === "BUTTON" && k.type === "submit").textContent;
+      global.extra = { asked, rows, after, label };
+    """ % {"id": json.dumps(A16)}
+    out = _form_run(steps)
+    extra = out["extra"]
+    assert extra["asked"]["writes"] == 0
+    assert extra["asked"]["lines"] == [": 放弃的理由（必填）", "panel-status err: 放弃一条路线时必须写明理由"]
+    assert extra["rows"] == 2 and extra["after"] == {"closed": 1, "writes": 1, "offered": False}
+    assert extra["label"] == "预览改动"
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      let [number, date, description, variables, result, verdict] = formFields();
+      result.value = "t=3.10";
+      await submit();
+      global.extra = { posted: posted.length, lines: panelLines().filter((l) => l.startsWith("panel-status")),
+                       label: panelPart("panel-body").all().find((k) => k.tag === "BUTTON" && k.type === "submit").textContent };
+    """ % {"id": json.dumps(A16)}
+    out = _form_run(steps, role="member")
+    assert out["extra"] == {"posted": 0, "lines": ["panel-status err: 请用一句话说明这份提议"], "label": "预览这一行"}
+
+
+@needs_node
+def test_18_3_the_older_form_shows_the_row_when_the_file_moved_and_says_why_撤销_is_refused():
+    """Conflict-checked in the older form too: a cell the file holds that the form did not show is previewed with
+    its note and written only on 保存修改 (then 已保存 and 撤销, the form open); a refused write says the
+    existing sentence and keeps the typed text; 撤销 after the file moved on writes nothing."""
+    steps = """
+      renderAttemptForm("update", %(id)s);
+      const [number, date, description, variables, result, verdict] = formFields();
+      file.result = "**t=2.95**";
+      result.value = "t=3.10";
+      await submit();
+      const held = { writes: posted.filter(([path]) => path === "/api/attempts/write").length,
+                     note: panelLines().includes("confirm-note: 这一行在你打开它以后被改过：上面的原行是文件里现在的样子。") };
+      find("保存修改", "BUTTON").click(); await flush();
+      const written = { file: { ...file }, offered: !!find("撤销", "BUTTON"), closed: global.closed || 0 };
+      file.result = "typed in the editor";
+      find("撤销", "BUTTON").click(); await flush();
+      const refused = panelLines().filter((l) => l.startsWith("panel-status"));
+      file.result = "t=3.10"; refuse = "attempt_not_found";
+      result.value = "t=5";
+      await submit();
+      global.extra = { held, written, refused, failed: panelLines().filter((l) => l.startsWith("panel-status")), typed: result.value,
+                       writes: posted.filter(([path]) => path === "/api/attempts/write").map(([, b]) => b.fields.result) };
+    """ % {"id": json.dumps(A16)}
+    out = _form_run(steps)
+    extra = out["extra"]
+    assert extra["held"] == {"writes": 0, "note": True}
+    assert extra["written"] == {"file": {"verdict": "待定 先看", "result": "t=3.10"}, "offered": True, "closed": 0}
+    assert extra["refused"] == ["panel-status err: 这一行之后又改过，不能撤销。"]
+    assert extra["failed"] == ["panel-status err: 写入失败，文件没有被修改 (title: attempt_not_found)"] and extra["typed"] == "t=5"
+    assert extra["writes"] == ["t=3.10", "t=5"]  # the first save, and the refused one -- not the 撤销

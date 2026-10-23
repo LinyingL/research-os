@@ -56,13 +56,13 @@ class Trust(str, enum.Enum):
 MESSAGES = {
     "no_identity": "项目身份文件无法读取",
     "migrating": "项目正在迁移，迁移完成前不能写入人工记录",
-    "missing": "判断记录文件当前无法读取，请先恢复它",
+    "missing": "连线确认的记录文件当前无法读取，请先恢复它",
     "dataless": "记录文件正在从云端下载…",
-    "unreadable": "判断记录文件当前无法读取，请先恢复它",
-    "invalid": "判断记录文件当前无法读取，请先恢复它",
-    "empty_but_expected": "判断记录文件当前无法读取，请先恢复它",
-    "conflict_copy": "判断记录文件旁有同步冲突副本，请先处理",
-    "shrunk": "记录文件比图谱少了 {n} 条判断",
+    "unreadable": "连线确认的记录文件当前无法读取，请先恢复它",
+    "invalid": "连线确认的记录文件当前无法读取，请先恢复它",
+    "empty_but_expected": "连线确认的记录文件当前无法读取，请先恢复它",
+    "conflict_copy": "连线确认的记录文件旁有同步冲突副本，请先处理",
+    "shrunk": "记录文件比图谱少了 {n} 条连线确认",
 }
 
 

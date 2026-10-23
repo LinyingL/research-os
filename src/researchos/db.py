@@ -322,6 +322,20 @@ def get_nodes_by_type(conn: sqlite3.Connection, type: str) -> list[dict[str, Any
     return nodes
 
 
+def count_nodes_by_type(conn: sqlite3.Connection) -> dict[str, int]:
+    """How many nodes there are of each type that has any -- what
+    `len(get_nodes_by_type(conn, t))` says for each `t`, counted by SQL
+    without decoding a row (DESIGN.md 18.4 item 7). A type with no node is
+    not in the answer."""
+    return {row[0]: row[1] for row in conn.execute("SELECT type, COUNT(*) FROM nodes GROUP BY type")}
+
+
+def count_edges_by_type(conn: sqlite3.Connection) -> dict[str, int]:
+    """How many edges there are of each type that has any (`query_edges`
+    counted by SQL, 18.4 item 7), whatever their status."""
+    return {row[0]: row[1] for row in conn.execute("SELECT type, COUNT(*) FROM edges GROUP BY type")}
+
+
 def _merge_edge_evidence(
     existing_evidence_json: str | None,
     new_evidence: dict[str, Any],

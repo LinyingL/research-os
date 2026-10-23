@@ -16,6 +16,8 @@ really opening Finder.
 
 from __future__ import annotations
 
+import contextlib
+import http.client
 import json
 import os
 import plistlib
@@ -23,12 +25,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from researchos import cli
-from researchos.webapp import macapp
+from researchos import cli, paths
+from researchos.webapp import macapp, server
 from test_v8_u2 import FORBIDDEN
 
 
@@ -120,6 +124,77 @@ def test_launcher_expands_baked_path_only_double_quoted(tmp_path):
     script = _launcher(macapp.generate_bundle(tmp_path, executable=rce)).read_text()
     assert '"$ENGINE" serve' in script
     assert script.count("$ENGINE") == script.count('"$ENGINE"')  # every expansion is the quoted one
+
+
+# -- the launcher opens the page with the engine's session (DESIGN.md 18.1) ----------------------------------
+
+_HEX = "0123456789abcdef" * 4
+_FAKE_CURL = """#!/bin/sh
+# answers like a reachable engine once $FAKE_UP exists
+[ -e "$FAKE_UP" ]
+"""
+_FAKE_OPEN = """#!/bin/sh
+printf '%s\\n' "$@" >> "$OPENED"
+"""
+#: What the engine does on start (it writes its session file before it answers), as far as the launcher can tell.
+_FAKE_ENGINE = """#!/bin/sh
+if [ -n "$FAKE_SESSION" ]; then
+  mkdir -p "$RESEARCHOS_HOME/engine"
+  printf '%s\\n' "$FAKE_SESSION" > "$RESEARCHOS_HOME/engine/7357.session"
+fi
+: > "$FAKE_UP"
+"""
+
+
+def _run_launcher(tmp_path, *, running: bool, session_file: str | None, start_writes: str | None = None) -> list[str]:
+    """Run the generated launcher against stand-ins for `curl`, `open` and the engine; what `open` was asked to open."""
+    if not shutil.which("bash"):
+        pytest.skip("bash is not installed")
+    tools = tmp_path / "tools"
+    tools.mkdir(parents=True)
+    for name, body in (("curl", _FAKE_CURL), ("open", _FAKE_OPEN)):
+        (tools / name).write_text(body)
+        (tools / name).chmod(0o755)
+    engine = tmp_path / "engine bin" / "researchos"
+    engine.parent.mkdir()
+    engine.write_text(_FAKE_ENGINE)
+    engine.chmod(0o755)
+    launcher = _launcher(macapp.generate_bundle(tmp_path, executable=engine))
+    home = tmp_path / "rhome"
+    home.mkdir()
+    if session_file is not None:
+        (home / "engine").mkdir()
+        (home / "engine" / f"{macapp.DEFAULT_PORT}.session").write_text(session_file)
+    up, opened = tmp_path / "up", tmp_path / "opened"
+    if running:
+        up.write_text("")
+    env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "RESEARCHOS_HOME": str(home),
+           "HOME": str(tmp_path / "home"), "FAKE_UP": str(up), "OPENED": str(opened), "FAKE_SESSION": start_writes or ""}
+    done = subprocess.run(["bash", str(launcher)], env=env, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert _HEX not in done.stdout + done.stderr  # the secret is printed nowhere
+    return opened.read_text().split() if opened.exists() else []
+
+
+def test_launcher_opens_boot_with_the_session_of_an_engine_that_is_already_running(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "a", running=True, session_file=_HEX + "\n") == [f"{base}/boot?session={_HEX}"]
+
+
+def test_launcher_opens_boot_with_the_session_of_the_engine_it_starts(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "b", running=False, session_file=None, start_writes=_HEX) == [f"{base}/boot?session={_HEX}"]
+
+
+def test_launcher_opens_the_plain_address_for_an_engine_without_a_session_file(tmp_path):
+    base = f"http://127.0.0.1:{macapp.DEFAULT_PORT}"
+    assert _run_launcher(tmp_path / "c", running=True, session_file=None) == [base]
+    assert _run_launcher(tmp_path / "d", running=False, session_file=None) == [base]
+
+
+@pytest.mark.parametrize("text", ["", "\n", "not hex!\n", _HEX + " extra\n", "../../etc/passwd\n", "ab&cd\n", "zz" * 32])
+def test_launcher_never_puts_anything_but_a_hex_secret_in_the_address(tmp_path, text):
+    assert _run_launcher(tmp_path, running=True, session_file=text) == [f"http://127.0.0.1:{macapp.DEFAULT_PORT}"]
 
 
 # -- resolve_executable ----------------------------------------------------
@@ -331,15 +406,17 @@ def test_swift_sources_ship_as_package_data():
 
 def test_shell_menus_match_the_design():
     """V8 U5 (12.9): 文件 holds 添加项目… ⌘O, 提交提议… / 发布 by role, 关闭 ⌘W;
-    视图 names the eight sidebar sections on ⌘1-⌘8, then 重新载入 and the
-    zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) are gone."""
+    视图 names the eight sidebar sections on ⌘1-⌘8 in the sidebar's order
+    (18.3: 研究路线 is one item and 项目首页 is ⌘1), then 重新载入 and the
+    zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) and 工作台
+    are gone."""
     for snippet in (
         'submenu("Research OS"', 'item("关于 Research OS"', 'item("退出", #selector(NSApplication.terminate(_:)), "q")',
         'submenu("文件"', 'cmd("添加项目…", "add-project", "o")', 'proposeItem = cmd("提交提议…", "propose")',
         'publishItem = cmd("发布", "publish")',
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
         'submenu("编辑"', '"undo:"', '"redo:"', "NSText.cut", "NSText.copy", "NSText.paste", "NSText.selectAll",
-        'submenu("视图"', 'cmd("工作台", "desk", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("成果", "results", "3")',
+        'submenu("视图"', 'cmd("项目首页", "workspace", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("图表与论断", "results", "3")',
         'cmd("变量", "variables", "4")', 'cmd("文献", "literature", "5")', 'cmd("数据与代码", "data", "6")',
         'cmd("提议", "proposals", "7")', 'cmd("成员", "members", "8")',
         'item("重新载入", #selector(reloadPage(_:)), "r")', 'cmd("放大", "zoom-in", "+")',
@@ -349,7 +426,7 @@ def test_shell_menus_match_the_design():
         'submenu("帮助", [cmd("打开项目地图", "open-map")])',
     ):
         assert snippet in _SHELL, f"menu item missing from RCEShell.swift: {snippet}"
-    for gone in ('"决策树"', '"血缘"', '"画布"', '"适应全部"', '"fit"', '"new-attempt"', '"reveal-project"'):
+    for gone in ('"决策树"', '"血缘"', '"画布"', '"适应全部"', '"fit"', '"new-attempt"', '"reveal-project"', '"工作台"'):
         assert gone not in _SHELL, f"pre-12.9 menu item still in RCEShell.swift: {gone}"
     files = _SHELL[_SHELL.index('submenu("文件"'):]
     files = files[: files.index("]))")]
@@ -359,11 +436,16 @@ def test_shell_menus_match_the_design():
     view = view[: view.index("])")]
     keys = [view.index(f'"{k}")') for k in "12345678"]
     assert keys == sorted(keys)
+    # The shortcuts follow the sidebar's order, one item each.
+    sidebar = [view.index(f'cmd("{name}"') for name in ("项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员")]
+    assert sidebar == sorted(sidebar) and view.count('"routes"') == 1
 
 
 def test_shell_whitelist_and_page_dispatcher_agree():
     """Every command the shell can send is one the page's dispatcher
-    accepts, and every section command lands on its 12.9 section."""
+    accepts, and every section command lands on its 12.9 section. 18.3:
+    `desk` and `routes` are both valid names and open the one page 研究路线;
+    the menu sends `routes`."""
     import re
 
     whitelist = _SHELL[_SHELL.index("let shellCommands"):]
@@ -375,6 +457,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     }
     sent = set(re.findall(r'cmd\("[^"]+", "([a-z-]+)"', _SHELL))
     assert sent <= whitelist and "reload" in _SHELL
+    assert "desk" in whitelist and "desk" not in sent and "routes" in sent
     page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
     table = page[page.index("const SHELL_COMMANDS = {"):]
     table = table[: table.index("\n};\n")]
@@ -382,7 +465,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     assert whitelist <= accepted
     for name, target in (("workspace", 'activateView("workspace")'),
                          ("create-project", "ROWorkspace.openCreateProject()"),
-                         ("desk", 'activateView("desk")'), ("routes", 'activateView("tree")'),
+                         ("desk", "showRoutes()"), ("routes", "showRoutes()"),
                          ("results", 'activateView("results")'), ("variables", 'activateView("variables")'),
                          ("literature", 'activateView("literature")'), ("data", "activateView(lastDataView)"),
                          ("proposals", 'activateView("proposals")'), ("members", 'activateView("members")'),
@@ -418,7 +501,35 @@ def test_shell_file_menu_shows_propose_or_publish_by_the_pages_mode():
     assert '["single", "pi", "member", "none"].indexOf(mode) >= 0 ? mode : "single"' in post
     assert 'postMessage({ type: "mode", mode: m })' in post
     desk = (Path(macapp.__file__).parent / "desk.js").read_text(encoding="utf-8")
-    assert 'postShellMode(state.noProject ? "single" : ctx.mode)' in desk
+    # 18.3: what the page tells the shell is the one-person reading, not the raw role (a role it could not read is "none").
+    assert "postShellMode(shellMode())" in desk
+    assert 'if (state.noProject || onePerson()) return "single";' in desk
+    assert 'return ctx.mode === "pi" || ctx.mode === "member" ? ctx.mode : "none";' in desk
+
+
+def test_shell_view_menu_has_no_proposals_or_members_for_a_project_of_one_person():
+    """18.3: 视图 > 提议 and 成员 (⌘7, ⌘8) are the two items a project of one
+    person does not have, as it has no 提交提议… or 发布 in 文件: they are
+    found among the items the menu was built with (the commands `proposals`
+    and `members`), hidden for the mode "single" and shown for every other,
+    set when the menus are built (a language change rebuilds them) and
+    whenever the page says the mode; the other six sections stay, so the
+    shortcuts ⌘1 to ⌘6 are the sidebar's six."""
+    build = _SHELL[_SHELL.index("func buildMainMenu"):]
+    build = build[: build.index("\n    }\n")]
+    assert 'cmd("提议", "proposals", "7")' in build and 'cmd("成员", "members", "8")' in build
+    assert 'var teamViewItems: [NSMenuItem] = []' in _SHELL
+    assert ('teamViewItems = (viewMenu.submenu?.items ?? []).filter {\n'
+            '            ["proposals", "members"].contains($0.representedObject as? String ?? "")\n        }') in build
+    # Made after the 视图 menu exists and before it is put in the bar, so a rebuilt menu is right from the start.
+    assert build.index('submenu("视图"') < build.index("teamViewItems = ") < build.index("applyTeamMode()") < build.index("main.addItem(viewMenu)")
+    assert build.count("applyTeamMode()") == 1
+    apply = _SHELL[_SHELL.index("func applyTeamMode"):]
+    apply = apply[: apply.index("\n    }\n")]
+    assert 'teamViewItems.forEach { $0.isHidden = teamMode == "single" }' in apply
+    # The mode "none" (a team project this Mac is not part of, or a role the page could not read) shows them.
+    assert 'let teamModes: Set<String> = ["single", "pi", "member", "none"]' in _SHELL
+    assert 'var teamMode = "single"' in _SHELL  # until the page says otherwise, as before
 
 
 def test_shell_choose_folder_answers_through_a_fixed_callback_with_arguments():
@@ -627,6 +738,94 @@ def test_shell_stops_only_an_engine_it_spawned():
     assert "guard let process = child, process.isRunning else { return .terminateNow }" in quit_
 
 
+# -- The engine session (DESIGN.md 18.1 item 1, task V14 G1-2) --------------------------
+# The engine asks every write for the secret it keeps in <home>/engine/<port>.session.
+# The shell reads that file once the probe answers, loads /boot?session=... first and
+# sends the header on its one POST. Pinned in the Swift text here; the section that
+# does the reading is compiled and run against the engine's own file at the end.
+
+
+def _method(name: str) -> str:
+    """One AppDelegate method, from `func name(` to its closing brace."""
+    start = _SHELL.index(f"    func {name}(")
+    return _SHELL[start:_SHELL.index("\n    }\n", start)]
+
+
+def _session_section() -> str:
+    return _SHELL[_SHELL.index("// -- The engine session"):_SHELL.index("// -- end of the engine session")]
+
+
+def test_shell_reads_the_session_file_from_its_own_home_once_the_probe_answers():
+    section = _session_section()
+    # the file researchos.paths.engine_session_path names: <home>/engine/<port>.session
+    assert f'let sessionDirectory = "{paths.ENGINE_DIRNAME}"' in section
+    assert 'let sessionSuffix = ".session"' in section
+    assert '.appendingPathComponent("\\(port)\\(sessionSuffix)", isDirectory: false)' in section
+    # in the home the shell already computes for serve.log and settings.json
+    assert "var sessionFileURL: URL { engineSessionFile(home: rceHome(), port: port) }" in _SHELL
+    assert "engineSession(at: sessionFileURL)" in _method("engineSecret")
+    # the page is entered only after a probe has answered
+    start = _method("startEngine")
+    assert "if ok { self.loadApp(); return }" in start
+    poll = _method("pollTick")
+    assert poll.index("if ok {") < poll.index("self.loadApp()")
+    assert _SHELL.count("loadApp()") == 3  # the definition and those two
+    assert _SHELL.count("entryURL()") == 2  # the definition and loadApp
+
+
+def test_shell_loads_boot_with_the_session_and_the_plain_address_without_one():
+    entry = _method("entryURL")
+    assert ("guard let secret = engineSecret(), let boot = bootURL(base: baseURL, secret: secret) "
+            "else { return baseURL }") in entry
+    assert entry.count("return ") == 2 and entry.rstrip().endswith("return boot")
+    load = _method("loadApp")
+    assert "webView.load(URLRequest(url: entryURL()))" in load and "baseURL" not in load
+    # the secret rides in the query, percent-encoded, to the engine's /boot and nowhere else
+    section = _session_section()
+    assert _SHELL.count('"boot?session="') == 1
+    assert 'URL(string: "boot?session=" + encoded, relativeTo: base)' in section
+    assert "secret.addingPercentEncoding(withAllowedCharacters: sessionQueryAllowed)" in section
+    assert 'charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"' in section
+    # the load passes the navigation policy (same host and port; the redirect to / does too)
+    assert 'url.scheme == "http" && url.host == "127.0.0.1" && url.port == port' in _method("isEngineURL")
+
+
+def test_shell_sends_the_session_header_on_its_shutdown_and_on_every_post():
+    assert f'let sessionHeader = "{server.SESSION_HEADER}"' in _SHELL
+    quit_path = _method("stopEngineForQuit")
+    line = "if let secret = engineSecret() { request.setValue(secret, forHTTPHeaderField: sessionHeader) }"
+    assert line in quit_path
+    assert quit_path.index(line) < quit_path.index("session.dataTask(with: request)")
+    # an engine without a file (an older one) is sent the request as before: nothing else changed
+    assert 'request.httpMethod = "POST"' in quit_path
+    assert '\\"pid\\": \\(process.processIdentifier)' in quit_path
+    # the shell makes no other request with a method of its own; whichever it made would need the header
+    code = _code_without_comments(_SHELL)
+    assert code.count("httpMethod =") == 1 and code.count("forHTTPHeaderField: sessionHeader") == 1
+    # and it goes only to the engine's own address
+    assert 'baseURL.appendingPathComponent("api/shutdown")' in quit_path
+
+
+def test_shell_never_logs_prints_or_shows_the_session():
+    """The app's serve.log is readable by any program of the user (18.1), and so is a
+    waiting page's text: the secret is read where it is used and goes nowhere else."""
+    code = _code_without_comments(_SHELL)
+    for sink in ("print(", "NSLog(", "debugPrint(", "dump(", "os_log(", "Logger(", "write("):
+        assert sink not in code, sink
+    # the child's environment gets one addition, and its arguments are pinned elsewhere
+    assert re.findall(r'environment\["(\w+)"\] =', code) == ["PYTHONUNBUFFERED"]
+    # the secret is read in two places only, and mentioned in no other function
+    assert code.count("engineSecret()") == 3  # the definition, entryURL, stopEngineForQuit
+    rest = code.replace(_code_without_comments(_session_section()), "")
+    rest = rest.replace("    var sessionFileURL: URL { engineSessionFile(home: rceHome(), port: port) }\n", "")  # a path
+    for name in ("engineSecret", "entryURL", "stopEngineForQuit"):
+        rest = rest.replace(_code_without_comments(_method(name)), "")
+    for word in ("secret", "sessionHeader", "engineSession", "bootURL", "sessionFileURL"):
+        assert word not in rest, word
+    # the page is not handed it by script either: its scripts are fixed text
+    assert _SHELL.count("evaluateJavaScript(") == 3 and _SHELL.count("callAsyncJavaScript(") == 1
+
+
 # -- cli wiring: `researchos app` -----------------------------------------------------
 
 
@@ -810,7 +1009,7 @@ _ENGLISH_MENUS = {
     "关闭": "Close",
     "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
     "全选": "Select All",
-    "视图": "View", "工作台": "Desk", "研究路线": "Research Routes", "成果": "Outputs", "变量": "Variables",
+    "视图": "View", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "变量": "Variables",
     "文献": "Literature", "数据与代码": "Data & Code", "提议": "Proposals", "成员": "Members",
     "重新载入": "Reload", "放大": "Zoom In", "缩小": "Zoom Out", "实际大小": "Actual Size",
     "窗口": "Window", "最小化": "Minimize", "缩放": "Zoom",
@@ -871,13 +1070,13 @@ def test_shell_english_follows_the_glossary_and_macos_names():
     table = _english_table()
     for zh, en in _ENGLISH_MENUS.items():
         assert table[zh] == en, zh
-        assert all(word[0].isupper() or word == "&" for word in en.split()), en
+        assert all(word[0].isupper() or word in ("&", "and") for word in en.split()), en  # headline style: "and" stays lower case
     titles = {t for t in re.findall(r'(?:item|cmd|submenu)\("([^"]+)"', _SHELL) if _CJK.search(t)}
     assert titles == set(_ENGLISH_MENUS)
     design = (Path(__file__).parents[1] / "DESIGN.md").read_text(encoding="utf-8")
     glossary = dict(re.findall(r"^\| (\S+) \| ([^|]+?) \|$", design[design.index("### 13.4"):], re.M))
-    for section in ("工作台", "研究路线", "成果", "变量", "文献", "数据与代码", "提议", "成员"):
-        title_case = " ".join(word[:1].upper() + word[1:] for word in glossary[section].split(" "))
+    for section in ("研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"):
+        title_case = " ".join(word if word == "and" else word[:1].upper() + word[1:] for word in glossary[section].split(" "))
         assert table[section] == title_case, section
     assert (table["好"], table["取消"], table["选择"]) == ("OK", "Cancel", "Choose")
     for zh, en in table.items():
@@ -999,7 +1198,7 @@ let path = "/a/{path}/日志 \"x\"/serve.log"
 for language in ["zh", "en"] {
     out[language + " log"] = shellText("以下是 {path} 的最后几行（⌘R 重试）：", language, path: path)
     out[language + " no log"] = shellText("还没有日志文件：{path}", language, path: path)
-    out[language + " desk"] = shellText("工作台", language)
+    out[language + " routes"] = shellText("研究路线", language)
     out[language + " missing"] = shellText("没有这一条", language)
     out[language + " hint"] = shellText(documentsHint, language)
 }
@@ -1061,9 +1260,156 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     assert out["zh no log"] == "还没有日志文件：" + path
     assert out["en log"] == "The last lines of " + path + " (⌘R to try again):"
     assert out["en no log"] == "No log file yet: " + path
-    assert (out["zh desk"], out["en desk"]) == ("工作台", "Desk")
+    assert (out["zh routes"], out["en routes"]) == ("研究路线", "Research Routes")
     assert out["zh missing"] == out["en missing"] == "没有这一条"
     assert out["zh hint"] == _swift_value(_DOCUMENTS_HINT)
     assert out["en hint"] == _english_table()[_swift_value(_DOCUMENTS_HINT)]
     assert out["zh is every key itself"] == "yes"
     assert out["entries"] == str(len(_english_entries()))
+
+
+# -- The engine session, compiled and run (18.1) -------------------------------------------
+# The section of RCEShell.swift that reads the session file and builds the /boot address,
+# compiled on its own with a small harness, and run against what the engine really writes
+# (`server.write_session_file`) and answers (`GET /boot` of a real server).
+
+_SESSION_HARNESS = r"""
+let arguments = CommandLine.arguments
+let home = URL(fileURLWithPath: arguments[1], isDirectory: true)
+let port = Int(arguments[2])!
+let base = URL(string: arguments[3])!
+let folder = URL(fileURLWithPath: arguments[4], isDirectory: true)
+let secrets = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: arguments[5]))) as! [String]
+var out: [String: Any] = [:]
+let file = engineSessionFile(home: home, port: port)
+out["file"] = file.path
+out["secret"] = engineSession(at: file) ?? NSNull()
+var files: [String: Any] = [:]
+for name in try! FileManager.default.contentsOfDirectory(atPath: folder.path) + ["no such file"] {
+    files[name] = engineSession(at: folder.appendingPathComponent(name)) ?? NSNull()
+}
+out["files"] = files
+var boots: [String: Any] = [:]
+for secret in secrets {
+    boots[secret] = bootURL(base: base, secret: secret)?.absoluteString ?? NSNull()
+}
+out["boots"] = boots
+FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]))
+"""
+
+_HEX = "ab" * 32
+#: Texts the shell must not take for a secret: it then loads the plain address and sends no header.
+_SESSION_FILES = {
+    "engine-form": (f"{_HEX}\n".encode(), _HEX),
+    "crlf": (f"{_HEX}\r\n".encode(), _HEX),
+    "no newline": (_HEX.encode(), _HEX),
+    "padded": (f"  {_HEX}  \n".encode(), _HEX),
+    "longest": (b"a" * 512 + b"\n", "a" * 512),
+    "empty": (b"", None),
+    "blank": (b"\n\n", None),
+    "two words": (b"ab cd\n", None),
+    "two lines": (b"ab\ncd\n", None),
+    "tab inside": (b"ab\tcd\n", None),
+    "non-ascii": ("sécret\n".encode(), None),
+    "too long": (b"a" * 513 + b"\n", None),
+    "not utf-8": (b"\xff\xfe\x00ab\n", None),
+}
+_BOOT_SECRETS = [_HEX, "a&b+c%d#e/f=g?h", "~._-AZaz09", "100%", "a+b"]
+
+
+@pytest.fixture(scope="module")
+def session_harness(tmp_path_factory):
+    if not _HAS_SWIFTC:
+        pytest.skip("needs macOS with swiftc")
+    folder = tmp_path_factory.mktemp("session-harness")
+    main = folder / "main.swift"
+    main.write_text("import Foundation\n" + _session_section() + _SESSION_HARNESS, encoding="utf-8")
+    binary = folder / "session"
+    compiled = subprocess.run(["swiftc", "-target", macapp._swift_target(), "-o", str(binary), str(main)],
+                              capture_output=True, text=True, timeout=300)
+    assert compiled.returncode == 0, compiled.stderr
+    return binary
+
+
+def _run_session_harness(binary: Path, tmp_path: Path, home: Path, port: int, base: str) -> dict:
+    files = tmp_path / "session-files"
+    files.mkdir(exist_ok=True)
+    for name, (raw, _expected) in _SESSION_FILES.items():
+        (files / name).write_bytes(raw)
+    (files / "a directory").mkdir(exist_ok=True)
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps(_BOOT_SECRETS), encoding="utf-8")
+    done = subprocess.run([str(binary), str(home), str(port), base, str(files), str(secrets)],
+                          capture_output=True, text=True, check=True, timeout=60)
+    return json.loads(done.stdout)
+
+
+@native_only
+def test_shell_reads_the_file_the_engine_writes_and_nothing_it_would_misread(session_harness, tmp_path, monkeypatch):
+    """The shell and `researchos serve` name the same file and agree on its text: what
+    `write_session_file` wrote (mode 0600, a closing newline) is read back as the secret;
+    no file, an empty one, a directory or text that is not one token is no session."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("RESEARCHOS_HOME", str(home))
+    secret = server.new_session()
+    written = server.write_session_file(7391, secret)
+    out = _run_session_harness(session_harness, tmp_path, home, 7391, "http://127.0.0.1:7391/")
+    assert Path(out["file"]) == written == paths.engine_session_path(7391)
+    assert out["secret"] == secret and len(secret) == 64
+    assert {name: out["files"][name] for name in _SESSION_FILES} == {
+        name: expected for name, (_raw, expected) in _SESSION_FILES.items()}
+    assert out["files"]["a directory"] is None and out["files"]["no such file"] is None
+    # an older engine writes no file: the other port of the same home has none
+    other = _run_session_harness(session_harness, tmp_path, home, 7392, "http://127.0.0.1:7392/")
+    assert other["secret"] is None and Path(other["file"]) == paths.engine_session_path(7392)
+
+
+@native_only
+def test_shell_boot_address_is_percent_encoded_and_reads_back_whole(session_harness, tmp_path):
+    out = _run_session_harness(session_harness, tmp_path, tmp_path / "home", 7391, "http://127.0.0.1:7391/")
+    assert out["boots"][_HEX] == f"http://127.0.0.1:7391/boot?session={_HEX}"
+    assert out["boots"]["~._-AZaz09"].endswith("?session=~._-AZaz09")
+    assert out["boots"]["a&b+c%d#e/f=g?h"].endswith("?session=a%26b%2Bc%25d%23e%2Ff%3Dg%3Fh")
+    assert out["boots"]["a+b"].endswith("?session=a%2Bb")  # a literal + would be read as a space
+    for secret, url in out["boots"].items():
+        parts = urlsplit(url)
+        assert (parts.scheme, parts.netloc, parts.path, parts.fragment) == ("http", "127.0.0.1:7391", "/boot", "")
+        assert parse_qs(parts.query, strict_parsing=True) == {"session": [secret]}
+
+
+@contextlib.contextmanager
+def _engine_asking_for(session: str):
+    httpd = server.build_server(None, 0, session=session)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield httpd.server_address[1]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+@native_only
+@pytest.mark.parametrize("secret", [_HEX, "a&b+c%d#e/f=g?h", "a+b"])
+def test_the_address_the_shell_loads_makes_the_engine_set_its_cookie(session_harness, tmp_path, secret):
+    """End to end on the wire: the /boot address the shell builds from a secret is the one a
+    real engine that asks for that secret answers with the session cookie and a redirect to /."""
+    with _engine_asking_for(secret) as port:
+        out = _run_session_harness(session_harness, tmp_path, tmp_path / "home", port, f"http://127.0.0.1:{port}/")
+        url = urlsplit(out["boots"][secret])
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            conn.request("GET", url.path + "?" + url.query)
+            response = conn.getresponse()
+            response.read()
+            headers = {k.lower(): v for k, v in response.getheaders()}
+            assert response.status == 303 and headers["location"] == "/"
+            assert headers["set-cookie"] == f"ro_session_{port}={secret}; HttpOnly; SameSite=Strict; Path=/"
+            # and a boot address with another secret sets nothing
+            conn.request("GET", "/boot?session=" + "0" * 64)
+            wrong = conn.getresponse()
+            wrong.read()
+            assert wrong.status == 303 and wrong.getheader("Set-Cookie") is None
+        finally:
+            conn.close()

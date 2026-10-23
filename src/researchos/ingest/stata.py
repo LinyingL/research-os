@@ -121,7 +121,7 @@ import posixpath
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from researchos import names
 
@@ -859,7 +859,7 @@ def _file_words(form: str, command: str, tokens: list[_Token]) -> tuple[list[_To
 # ---------------------------------------------------------------------------
 
 
-def _blocks(cmds: list[Command]):
+def _blocks(cmds: Sequence[Command]):
     """The commands outside Mata and Python blocks, with their command
     text after prefixes."""
     block = False
@@ -898,23 +898,44 @@ class _Line:
     depth: int = 0  # how many { } blocks it sits in
 
 
+@dataclass(frozen=True)
+class Reading:
+    """What the text of one do-file or .ado says by itself -- the lexer's commands and its problem, and the names
+    `st_local()` and `st_global()` mention -- whatever project it sits in. A function of the text alone, and never
+    changed once made, so it can be kept while the file stays the same (18.4 item 7: `dataflow._stata_scans` with
+    `remember`) and handed to any number of scans."""
+
+    commands: tuple[Command, ...]
+    problem: str | None
+    st_locals: frozenset[str]
+    st_globals: tuple[str, ...]
+
+
+def reading_of(text: str) -> Reading:
+    """The `Reading` of one file's text."""
+    cmds, problem = commands(text)
+    return Reading(tuple(cmds), problem, frozenset(_ST_LOCAL_RE.findall(text)), tuple(_ST_GLOBAL_RE.findall(text)))
+
+
 class _File:
     """One do-file or .ado: its commands with their scope and blocks, and
-    the macros it assigns."""
+    the macros it assigns. Made from the file's text or from its `Reading`
+    (the same file either way)."""
 
-    def __init__(self, rel: str, text: str) -> None:
-        self.rel, self.text = rel, text
-        cmds, problem = commands(text)
+    def __init__(self, rel: str, source: str | Reading) -> None:
+        self.rel = rel
+        reading = source if isinstance(source, Reading) else reading_of(source)
         self.parsed = True
-        if problem:
-            self._lost(problem)
-        self.lines = self._lines(cmds)
+        if reading.problem:
+            self._lost(reading.problem)
+        self.lines = self._lines(reading.commands)
         self.tempfiles: set[str] = set()
         self.locals: dict[tuple[str, str], list[_Def]] = {}
         self.loops: set[tuple[str, str]] = set()
         self.frozen: set[str] = set()  # scopes whose locals never fold
         self.built: set[tuple[str, str]] = set()  # (scope, prefix) of names built from macros
-        self.st_locals = set(_ST_LOCAL_RE.findall(text))
+        self.st_locals = reading.st_locals
+        self.st_globals = reading.st_globals
 
     def _lost(self, where: str) -> None:
         """The lexer lost its place; said only of a do-file (an .ado is read
@@ -927,7 +948,7 @@ class _File:
     def programs(self) -> set[str]:
         return {ln.scope for ln in self.lines if ln.scope}
 
-    def _lines(self, cmds: list[Command]) -> list[_Line]:
+    def _lines(self, cmds: Sequence[Command]) -> list[_Line]:
         out: list[_Line] = []
         braces, scope = 0, ""
         for cmd, body, written, name, rest in _blocks(cmds):
@@ -970,8 +991,8 @@ class _Project:
     macros they assign and the program names they define."""
 
     def __init__(
-        self, root: str | Path | None, texts: Mapping[str, str], programs, anchors: Mapping[str, str] | None = None,
-        only: str | None = None,
+        self, root: str | Path | None, texts: Mapping[str, str | Reading], programs,
+        anchors: Mapping[str, str] | None = None, only: str | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else None
         self.only = only  # the one do-file scanned for its calls (and logged), None for all
@@ -1051,7 +1072,7 @@ class _Project:
                         self._global_def(_Def(f.rel, line, scope, "global", word, None))
             elif name == "c_local" and words:
                 self.c_locals.add(words[0])
-        for target in _ST_GLOBAL_RE.findall(f.text):
+        for target in f.st_globals:
             self._global_def(_Def(f.rel, 0, "", "global", target, None))
 
     # -- expansion ---------------------------------------------------------------------
@@ -1687,7 +1708,7 @@ def _skip(rel_path: str, s: Skip) -> Skip:
 
 
 def scan_project(
-    root: str | Path | None, texts: Mapping[str, str], *, programs: frozenset[str] | set[str] = frozenset(),
+    root: str | Path | None, texts: Mapping[str, str | Reading], *, programs: frozenset[str] | set[str] = frozenset(),
     anchors: Mapping[str, str] | None = None, only: str | None = None,
 ) -> dict[str, DoScan]:
     """The read/write commands of a project's do-files (the keys of `texts`
@@ -1697,7 +1718,8 @@ def scan_project(
     is known to, and no anchor is used. `anchors`: global -> confirmed
     project folder. `only`: the one do-file whose calls are wanted (the
     others are read for their macros and runs, and their skips are not
-    logged)."""
+    logged). A value of `texts` is a file's text or its `Reading` (`reading_of`): the
+    same scan either way."""
     return _Project(root, texts, programs, anchors, only).scan()
 
 
