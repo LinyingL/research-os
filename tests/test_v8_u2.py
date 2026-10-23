@@ -235,37 +235,43 @@ def test_12_11_verdicts_are_shown_as_words_never_as_markers():
 # -- 12.9: the sidebar ---------------------------------------------------------------------------------------
 
 
-SECTIONS = [("workspace", "项目首页"), ("desk", "工作台"), ("routes", "研究路线"), ("results", "图表与论断"), ("variables", "变量"),
+SECTIONS = [("workspace", "项目首页"), ("routes", "研究路线"), ("results", "图表与论断"), ("variables", "变量"),
             ("literature", "文献"), ("data", "数据与代码"), ("proposals", "提议"), ("members", "成员")]
 
 
 def test_12_9_the_sidebar_has_the_projects_and_the_sections_in_order():
     """The tabs are gone; the sidebar holds the project switcher (a real
-    menu button naming the project, no glyph), the eight sections in 12.9's
-    order with drawn line icons, and at the bottom the shared drive's line
-    and who I am."""
+    menu button naming the project, no glyph), the sections in 12.9's order
+    (18.3: 工作台 and 研究路线 are one item, 研究路线) with drawn line icons,
+    and at the bottom the shared drive's line and who I am."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'class="tab' not in html and 'role="tablist" aria-label="数据与代码"' in html
     found = re.findall(r'<button type="button" class="side-item" data-section="(\w+)" data-view="(\w+)">'
                        r'<svg class="side-icon"[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(s, label) for s, _v, label in found] == SECTIONS
-    assert dict((s, v) for s, v, _l in found)["routes"] == "tree" and dict((s, v) for s, v, _l in found)["data"] == "lineage"
+    assert dict((s, v) for s, v, _l in found)["routes"] == "desk" and dict((s, v) for s, v, _l in found)["data"] == "lineage"
     nav = html[html.index('<aside class="sidebar"'):html.index("</aside>")]
     assert nav.index('id="project-menu-btn"') < nav.index('class="side-nav"') < nav.index('id="share-line"') < nav.index('id="me-line"')
     assert 'aria-haspopup="menu"' in nav and 'id="side-count-proposals"' in nav
+    # 18.3: 待办's count sits beside 研究路线, in the 提议 item's style.
+    assert nav.count('<span class="side-count" id="side-count-routes"></span>') == 1
+    assert nav.index('id="side-count-routes"') < nav.index('data-section="results"')
     assert 'projectMenuBtn.textContent = label || NO_PROJECT_NAME;' in html
     # 数据与代码 holds the lineage list and 关系图 (the canvas, 12.9).
     assert 'data-subview="lineage"' in html and 'data-subview="canvas"' in html and ">关系图<" in html
 
 
 def test_12_9_every_old_view_stays_reachable_and_the_shell_commands_still_work():
-    """Until the later phases rebuild them, 研究路线 is the decision tree and
-    数据与代码 the lineage report beside 关系图; the native menu's commands
-    keep their names (12.12: identifiers the researcher never sees stay)."""
+    """研究路线 is one view (18.3: the route map and the grouped list, formerly
+    工作台 and 研究路线) and 数据与代码 the lineage report beside 关系图; the
+    native menu's commands keep their names (12.12: identifiers the
+    researcher never sees stay), and the old tree view's command opens the
+    page's list."""
     html = APP_HTML.read_text(encoding="utf-8")
-    for view in ("desk", "tree", "results", "lineage", "canvas", "variables", "literature", "proposals", "members"):
+    for view in ("desk", "results", "lineage", "canvas", "variables", "literature", "proposals", "members"):
         assert f'id="view-{view}"' in html
-    for command in ('"tree": () => activateView("tree")', '"lineage": () => activateView("lineage")',
+    assert 'id="view-tree"' not in html and "tree: document.getElementById" not in html
+    for command in ('"tree": () => showRoutes("list")', '"lineage": () => activateView("lineage")',
                     '"canvas": () => activateView("canvas")', '"variables": () => activateView("variables")',
                     '"add-project": () => openAddDialog(),'):
         assert command in html

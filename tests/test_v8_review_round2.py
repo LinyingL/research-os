@@ -548,7 +548,7 @@ def test_12_9_the_sidebar_and_views_follow_collaborative_acts():
     assert 'if (target === "proposals") { ROTeam.showList(); return; }' in app
     assert "function showList()" in team and "view.proposal = null;" in team
     # the views showing the shared drive reload when gone to
-    assert 'const SHARED_STATE_VIEWS = ["desk", "proposals", "tree", "members"];' in app
+    assert 'const SHARED_STATE_VIEWS = ["desk", "proposals", "members"];' in app
     # every act that changes what the views show marks them stale
     assert team.count("markViewsStale();") >= 4 and "markViewsStale()" in desk_js
     # the act's sentence is brought into view

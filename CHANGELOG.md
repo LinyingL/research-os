@@ -83,6 +83,17 @@
   English sentences that no screen uses any more are gone. The check for
   arrows and emoji now also refuses », ⟶, ‹, ›, ⏵, ● and ○, and reads the
   stylesheets. Nothing on disk changes.
+- Make 研究路线 one page. The route map (the old 工作台) and the list of
+  attempts grouped by status are two ways of looking at the same page, switched
+  by 路线图 / 列表 ("Route map" / "List") under the title; both show the 待办
+  column beside them, and a route opened from the list opens the same side panel
+  as a card on the map. The choice is remembered for each project in this
+  browser and starts on the map. The sidebar has one item for the page, and in a
+  project with a team it shows how many things wait in 待办 when there are any
+  (a project of one person shows none). The View menu has one 研究路线 item, ⌘2,
+  and 项目首页 is ⌘1, so the shortcuts follow the sidebar; an app built earlier
+  still opens the page from both of its old menu items. After updating, run
+  `researchos app` again to get the new menu. Nothing on disk changes.
 - Add author credits and a GitHub profile link to About; adopt the MIT license.
 - Create a project from its name and save location. The app prepares an empty
   attempt record; no historical table or configuration file is needed first.

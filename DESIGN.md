@@ -3224,9 +3224,9 @@ has 「 」.
 
 | 中文 | English |
 |---|---|
-| 工作台 | Desk |
 | 项目首页 | Project home |
 | 研究路线 | Research routes |
+| 路线图 / 列表 | Route map / List |
 | 图表与论断 | Figures and claims |
 | 变量 | Variables |
 | 文献 | Literature |
@@ -4709,9 +4709,19 @@ does not add.
     map.
   - The switch is remembered per project in the browser, a per-viewer
     convenience.
-  - Anything that opened 工作台 or the old 研究路线 opens this page.
-  - In a team project, 待办's count shows beside 研究路线 in the sidebar.
-  - The Mac menu has one item for it.
+  - The switch's buttons read 路线图 and 列表, "Route map" and "List": 13.4's
+    own word for the map. A bare 图 would be a second English for a key the
+    table already holds (图, "Figure": the kind label of a figure in 图表与
+    论断), and a Chinese word has one English (13.4). 图 above and in 18.5
+    means that button.
+  - Anything that opened 工作台 or the old 研究路线 opens this page (in the
+    mode kept for the project; the Mac menu's two commands, `desk` and
+    `routes`, stay valid names and open the same page).
+  - In a team project, 待办's count (the rows the column lists) shows beside
+    研究路线 in the sidebar when it is not zero. A one-person project shows
+    none.
+  - The Mac menu has one item for it, ⌘2; 项目首页 is ⌘1, and the shortcuts
+    follow the sidebar's order (⌘1 to ⌘8).
 - **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
   and, in a team project, 提议 and 成员. 项目首页 stays the first page.
 - **A one-person project** (no team file, 12.1):

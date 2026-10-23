@@ -406,11 +406,11 @@ def _abandoned_routes() -> dict:
 
 _ROUTES_AND_COMPOSER = """
   global.state.attemptsConfig = true; global.clearProjectState = () => {};
-  views.tree = el("div", "host");
-  await window.ROTeam.loadRoutes(views.tree);
-  global.extra = { since: views.tree.all().filter((k) => k.cls.has("route-src")).map((k) => k.textContent),
-                   moves: views.tree.all().filter((k) => k.cls.has("desk-what")).map((k) => k.textContent),
-                   head: dump(views.tree, []).slice(0, 2) };
+  views.list = el("div", "host");
+  await window.ROTeam.loadRoutes(views.list);
+  global.extra = { since: views.list.all().filter((k) => k.cls.has("route-src")).map((k) => k.textContent),
+                   moves: views.list.all().filter((k) => k.cls.has("desk-what")).map((k) => k.textContent),
+                   head: dump(views.list, []).slice(0, 2) };
   views.proposals = el("div", "host");
   await window.ROTeam.loadProposals(views.proposals);
   const composer = (host) => { const lines = dump(host, []); return lines.slice(lines.findIndex((l) => l.startsWith("team-title: ") && %(submit)s.includes(l.slice(12)))); };

@@ -101,9 +101,12 @@ TERMS_OF_18_2 = {
 
 #: Words 18.2 retired, on either side: none of them may stand in the table
 #: (a Chinese word is exact, an English word is a whole cell of a row).
-RETIRED_CHINESE = ["判断", "判决", "成果", "官方版本", "产出", "实验记录"]
+RETIRED_CHINESE = ["判断", "判决", "成果", "官方版本", "产出", "实验记录", "工作台"]
 RETIRED_ENGLISH = ["Judgments", "Verdict", "Relation map", "Published version", "Add source", "No attempt",
-                   "Changes & notes", "Run record", "Link judgment"]
+                   "Changes & notes", "Run record", "Link judgment", "Desk"]
+
+#: 18.3's switch on 研究路线. Not 图: that key is "Figure" (the kind label of a figure on 图表与论断), and a Chinese word has one English.
+TERMS_OF_18_3 = {"路线图": "Route map", "列表": "List"}
 
 
 def test_the_table_names_the_terms_of_18_2_and_none_it_retired():
@@ -114,6 +117,20 @@ def test_the_table_names_the_terms_of_18_2_and_none_it_retired():
         assert pairs.get(zh) == en, f"{zh}: the table gives {pairs.get(zh)!r}, 18.2 gives {en!r}"
     assert [zh for zh in RETIRED_CHINESE if zh in pairs] == []
     assert [en for en in RETIRED_ENGLISH if en in pairs.values()] == []
+
+
+@needs_node
+def test_the_switch_of_the_one_research_routes_page_has_its_two_words_and_no_second_english_for_a_figure():
+    """18.3: 研究路线's switch reads 路线图 / 列表, rows of the table; the page's
+    English table holds exactly those words for them, and 图 stays "Figure"
+    (the kind label of a figure on 图表与论断), so the switch cannot have taken
+    the bare 图 for the map."""
+    pairs = dict(table_pairs())
+    table = english_table()
+    for zh, en in TERMS_OF_18_3.items():
+        assert pairs.get(zh) == en, f"{zh}: the table gives {pairs.get(zh)!r}, 18.3 gives {en!r}"
+        assert table.get(zh) == en, f"{zh}: the page says {table.get(zh)!r}"
+    assert "图" not in pairs and table["图"] == "Figure"
 
 
 def test_the_lists_are_read_and_give_a_word_once_with_one_english():

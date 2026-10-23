@@ -979,12 +979,13 @@ def test_13_6_the_completeness_scanner_is_not_vacuous():
 #: The frame's markup, as stretches of the served page: the whole sidebar (its
 #: label and brand, the project line with its eyebrow, switcher and menu, the
 #: eight sections, the shared folder's line, who I am and the tool row), the
-#: page title, the top bar's action button and the welcome shown without a
-#: project (13.7).
+#: page title, the top bar's action button, 研究路线's switch (18.3) and the
+#: welcome shown without a project (13.7).
 FRAME_MARKUP = [
     ('<aside class="sidebar"', "</aside>"),
     ('<h1 class="page-title"', "</h1>"),
     ('<button id="new-attempt-btn"', "</button>"),
+    ('<div id="routes-switch"', "</div>"),  # 18.3: 研究路线's 路线图 / 列表
     ('<section id="welcome"', "</section>"),
 ]
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
@@ -1081,8 +1082,10 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                     if CJK.search(el["attrs"].get(name, ""))]
     assert chinese == []
     assert _words(after, "brand-sub") == ["Research provenance"]
-    assert _words(after, "side-label") == ["Project home", "Desk", "Research routes", "Figures and claims", "Variables", "Literature",
+    assert _words(after, "side-label") == ["Project home", "Research routes", "Figures and claims", "Variables", "Literature",
                                            "Data & code", "Proposals", "Members"]
+    # 18.3: 研究路线's switch.
+    assert _words(after, "subnav-item") == ["Route map", "List"]
     assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Project home"]
     assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
@@ -1095,7 +1098,8 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                       "project-menu": ("Project", None), "welcome": ("No project yet", None)}
     welcome = [el["text"].strip() for el in after if el["tag"] in ("p", "button") and el["text"].strip()
                and el["attrs"].get("id") not in ("project-menu-btn", "lang-btn", "new-attempt-btn")
-               and "shutdown-btn" not in el["attrs"].get("class", "") and "side-item" not in el["attrs"].get("class", "")]
+               and "shutdown-btn" not in el["attrs"].get("class", "") and "side-item" not in el["attrs"].get("class", "")
+               and "subnav-item" not in el["attrs"].get("class", "")]
     assert welcome == [
         "Start with a research question and a plan, then write notes and bring results together here.",
         "Keep using your own tools for code and analysis. Link their files to your research records whenever you need them.",
@@ -1111,7 +1115,8 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     page, i18n_js = _served_page_and_i18n(live, saved)
     before, after = _frame_on_screen(page, i18n_js, languages)
     assert after == before
-    assert _words(after, "side-label") == ["项目首页", "工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "subnav-item") == ["路线图", "列表"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
     assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
@@ -1141,19 +1146,20 @@ def test_13_7_page_titles_follow_the_language(saved):
     language; SECTION_TITLES stays the Chinese node.js's 「返回…」 reads."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'document.getElementById("page-title").textContent = sectionTitle(section);' in html
-    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  desk: "工作台", routes: "研究路线", results: "图表与论断", variables: "变量", '
+    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  routes: "研究路线", results: "图表与论断", variables: "变量", '
             'literature: "文献",\n  data: "数据与代码", proposals: "提议", members: "成员",\n};') in html
     code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
             + _app_function("function sectionTitle("))
     sections = ["workspace", "desk", "routes", "results", "variables", "literature", "data", "proposals", "members", "node", None]
+    # 18.3: "desk" is no section any more (the view of that name belongs to the section "routes").
     expr = f"(function () {{ {code} return {json.dumps(sections)}.map(sectionTitle); }})()"
     got = _node("global.window = {};\n" + f"process.stdout.write(JSON.stringify({expr}));\n") if saved is None \
         else _with_i18n(expr, saved=saved)
     if saved == "en":
-        assert got == ["Project home", "Desk", "Research routes", "Figures and claims", "Variables", "Literature", "Data & code", "Proposals",
+        assert got == ["Project home", "", "Research routes", "Figures and claims", "Variables", "Literature", "Data & code", "Proposals",
                        "Members", "", ""]
     else:
-        assert got == ["项目首页", "工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
+        assert got == ["项目首页", "", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
 
 
 _STOPPED_ZH = ('<main id="main"><div class="stopped-note"><h2>服务已停止</h2><p>本地服务已经关闭，可以关闭此页。</p>'

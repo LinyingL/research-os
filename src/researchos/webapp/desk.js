@@ -1,5 +1,7 @@
-// The sidebar's live lines and the desk (工作台) -- DESIGN.md 12.9, 12.11 and
-// Section 14 (task V10: the desk is the route map). Served verbatim at
+// The sidebar's live lines and the page 研究路线 -- DESIGN.md 12.9, 12.11,
+// Section 14 (task V10: the route map and the column beside it) and 18.3
+// (one page: the map or the grouped list, with the same 待办 column; the
+// old 工作台 is retired, this module keeps the name "desk"). Served verbatim at
 // /desk.js by the same process and loaded by app.html with a plain
 // same-origin <script src>, exactly as /canvas.js is: zero build, zero
 // external resources, same origin check.
@@ -21,12 +23,15 @@
 //   /api/history    -- how its row moved, for the panel's timeline (14.5).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
 //
-// The desk is the route map with what waits for me beside it (14.1, 14.4):
+// 研究路线 is the route map with what waits for me beside it (14.1, 14.4)
+// or, by the switch 路线图 / 列表 (18.3), the grouped list that team.js
+// draws, with the same column beside it:
 // the PI's 等你批准, a member's 我的提议, 待复核 under the attempt it
 // belongs to, a member's 正式版本有更新 with 同步, the lines with a missing
 // end -- or one quiet line. What changed since I last looked is 「有改动」
 // on the cards, abandoned routes are the quieter cards (14.5). No
-// statistics, no charts, no counters for their own sake. Nothing typed on
+// statistics, no charts, no counters for their own sake (the one count is
+// the sidebar's 待办 beside 研究路线 in a team project, 18.3). Nothing typed on
 // the page ever becomes a filesystem path: every path shown comes from the
 // server.
 //
@@ -171,6 +176,12 @@
     return "ro.desk.gotit:" + String(project || "") + ":" + String(me || "-");
   }
 
+  // ... and of the way 研究路线 is looked at, 路线图 or 列表 (18.3): per
+  // project, in this browser, a per-viewer convenience.
+  function modeKey(project) {
+    return "ro.routes.mode:" + String(project || "");
+  }
+
   function nameOf(id, team) {
     const m = (team || []).find((x) => x.id === id);
     return m && m.name ? m.name : String(id || "");
@@ -252,6 +263,7 @@
   // -- runtime --------------------------------------------------------------------
 
   const ctx = { me: null, share: null, proposals: null, mode: null, project: null, epoch: -1 };
+  let todo = { project: null, n: 0 }; // how many rows the 待办 column lists, for the sidebar (18.3)
   const sessionSince = new Map(); // project key -> the last-seen time this page session shows from
   const gotItNow = new Map();     // gotItKey -> the returned proposals said 「知道了」 to (storage may be off)
   const GOT_IT_KEPT = 200;
@@ -350,6 +362,57 @@
       /* the lines keep what they last said */
     }
     renderSidebar();
+    readTodo();
+  }
+
+  // A project with a team: someone is the PI, a member, or not yet in it (the
+  // roles /api/proposals names; "single" is a project of one person).
+  function teamProject() {
+    return !state.noProject && (ctx.mode === "pi" || ctx.mode === "member" || ctx.mode === "none");
+  }
+
+  // 待办's count (18.3) is what the column lists: the PI's proposals waiting,
+  // a member's own that wait, the judgments to review, a member's newer
+  // official version, the lines with a missing end.
+  function todoCount(data) {
+    const c = (data && data.column) || {};
+    const role = c.role || (data && data.role);
+    let n = 0;
+    if (role === "pi") n += (c.waiting || []).length;
+    if (role === "member") n += (c.mine || []).filter(waits).length;
+    n += (c.review && c.review.count) || 0;
+    const sync = c.sync;
+    if (role === "member" && sync && sync.shared && sync.reachable && sync.behind && sync.last_snapshot) n += 1;
+    return n + ((data && data.lines_missing) || []).length;
+  }
+
+  function setTodo(data) {
+    todo = { project: projectKey(), n: todoCount(data) };
+  }
+
+  // On the page the column's own reading sets the count; from any other page
+  // it is read here, in a project with a team only (it is not shown in a
+  // project of one): /api/desk, not touching the last visit the page keeps,
+  // one request at a time -- a refresh that came meanwhile reads once more.
+  let todoBusy = false;
+  let todoAgain = false;
+  async function readTodo() {
+    if (onDesk() || !teamProject()) return;
+    if (todoBusy) { todoAgain = true; return; }
+    todoBusy = true;
+    const epoch = state.dataEpoch;
+    try {
+      const data = await apiGet("/api/desk");
+      if (epoch === state.dataEpoch && !onDesk()) {
+        setTodo(data);
+        renderSidebar();
+      }
+    } catch (err) {
+      /* the count keeps what it last said */
+    } finally {
+      todoBusy = false;
+      if (todoAgain) { todoAgain = false; readTodo(); }
+    }
   }
 
   function waitingForMe() {
@@ -368,6 +431,13 @@
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
     count.title = n > 0 ? t("{n} 条提议等你批准", { n: n }) : "";
+    // 18.3: the 待办 column's count beside 研究路线, in a project with a team.
+    const routes = document.getElementById("side-count-routes");
+    if (routes) {
+      const todos = teamProject() && todo.project === projectKey() ? todo.n : 0;
+      routes.textContent = todos > 0 ? String(todos) : "";
+      routes.title = todos > 0 ? t("{n} 项待办", { n: todos }) : "";
+    }
     const line = state.noProject ? "" : shareLineText(ctx.share, now());
     shareLine.textContent = line;
     shareLine.classList.toggle("hidden", !line);
@@ -427,26 +497,148 @@
 
   let routeMap = null;
   let layoutEl = null;
+  let mapEl = null;             // the map's element, hidden while the page is a list
+  let listEl = null;            // the list's pane (team.js loadRoutes), made when first wanted
   let columnEl = null;
   let drawnEpoch = -1;          // the project (state.dataEpoch) the desk last showed
+  let listDrawn = -1;           // ... and the one the list last showed
+  let listZoomed = "";          // the text zoom the list is shown at ("" for none)
   let picked = null;            // the column's row picked: { key, ids }
   const drawnKeys = new Set();  // the rows the column shows now
 
+  // -- 路线图 or 列表 (DESIGN.md 18.3) ----------------------------------------------------
+  // One page, one 待办 column; beside it the route map or the grouped list
+  // (team.js loadRoutes, in a pane of its own). The choice is kept per project
+  // in this browser -- the map until the researcher picks the list -- and the
+  // switch in the page's header (app.html #routes-switch) shows it.
+
+  const MODES = ["map", "list"];
+  const modeSeen = new Map(); // project key -> the mode this page session shows (storage may be off)
+
+  function routesMode() {
+    const project = projectKey();
+    if (!modeSeen.has(project)) {
+      const stored = storageGet(modeKey(project));
+      modeSeen.set(project, MODES.indexOf(stored) >= 0 ? stored : "map");
+    }
+    return modeSeen.get(project);
+  }
+
+  function listShown() { return routesMode() === "list"; }
+
+  function onDesk() { return typeof currentView !== "undefined" && currentView === "desk"; }
+
+  // The switch's buttons marked as the other switches mark theirs.
+  function syncSwitch() {
+    const bar = typeof document !== "undefined" && document.getElementById ? document.getElementById("routes-switch") : null;
+    if (!bar || typeof bar.querySelectorAll !== "function") return;
+    const mode = routesMode();
+    Array.from(bar.querySelectorAll(".subnav-item")).forEach((b) => b.setAttribute("aria-selected", String(b.dataset.mode === mode)));
+  }
+
+  // The list's pane, between the map and the column.
+  function listPane() {
+    if (!listEl) {
+      listEl = mk("div", "routes-pane hidden");
+      if (listZoomed) listEl.style.zoom = listZoomed;
+      layoutEl.insertBefore(listEl, columnEl);
+    }
+    return listEl;
+  }
+
+  // The map's element and the list's shown or hidden to match the mode.
+  function showMode() {
+    syncSwitch();
+    if (!layoutEl) return;
+    const list = listShown();
+    if (mapEl) mapEl.classList.toggle("hidden", list);
+    if (list) listPane().classList.remove("hidden");
+    else if (listEl) listEl.classList.add("hidden");
+  }
+
+  // The list drawn (list mode only): in place when it was drawn already for
+  // this project and `refresh`, else with 载入中… first. What the column has
+  // picked stays marked in it.
+  function loadList(refresh, acted) {
+    if (!listShown() || !layoutEl || !window.ROTeam || !ROTeam.loadRoutes) return null;
+    const epoch = state.dataEpoch;
+    const pane = listPane();
+    return Promise.resolve(ROTeam.loadRoutes(pane, !!refresh && listDrawn === epoch, acted)).then(() => {
+      if (epoch !== state.dataEpoch) return;
+      listDrawn = epoch;
+      markListRows(picked ? picked.ids : [], false);
+    }).catch((err) => { if (typeof console !== "undefined") console.error(err); });
+  }
+
+  // The page looks the way it is kept: shown, the column's hints worded for
+  // it, the picked row marked in what is on screen. `reload`: the list read
+  // again even if drawn already (the researcher just switched to it).
+  function applyMode(reload) {
+    showMode();
+    if (lastData && columnEl) renderColumn(columnEl, lastData);
+    if (listShown()) return reload || listDrawn !== state.dataEpoch ? loadList(true) : null;
+    if (routeMap) routeMap.highlight(picked ? picked.ids : []);
+    return null;
+  }
+
+  // The switch (app.html), or a caller that means one of the two. Kept at
+  // once; drawn at once when the page is on screen, else when it is next
+  // opened (resume).
+  function setMode(mode) {
+    if (MODES.indexOf(mode) < 0) return null;
+    const project = projectKey();
+    modeSeen.set(project, mode);
+    storageSet(modeKey(project), mode);
+    syncSwitch();
+    return layoutEl && onDesk() ? applyMode(true) : null;
+  }
+
+  // The page opened again with its drawing kept (app.html activateView).
+  function resume() {
+    syncSwitch();
+    return layoutEl ? applyMode(false) : null;
+  }
+
+  // The attempts' rows of the list marked, as the map marks their cards
+  // (14.4); the first is brought into view when `scroll`.
+  function markListRows(ids, scroll) {
+    if (!listEl || typeof listEl.querySelectorAll !== "function") return;
+    const want = new Set(ids);
+    let first = null;
+    Array.from(listEl.querySelectorAll(".route-row")).forEach((row) => {
+      const on = want.has(row.dataset.node);
+      row.classList.toggle("picked", on);
+      if (on && !first) first = row;
+    });
+    if (scroll && first && typeof first.scrollIntoView === "function") first.scrollIntoView({ block: "nearest" });
+  }
+
+  // The list zooms as the reading pages do (app.html shellZoom); the map keeps
+  // its own camera.
+  function listZoom(value) {
+    listZoomed = value;
+    if (listEl) listEl.style.zoom = value;
+  }
+
   // A row of the column picked (14.4): the attempts it touches are marked on
-  // the map and brought into view; picked again, unmarked. `on` true: marked
-  // whatever it was (its proposal opened in the panel).
+  // the map -- or, in the list, on their rows -- and brought into view;
+  // picked again, unmarked. `on` true: marked whatever it was (its proposal
+  // opened in the panel).
   function pick(key, ids, on) {
     picked = on || !(picked && picked.key === key) ? { key: key, ids: ids } : null;
     columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
-    if (routeMap) routeMap.highlight(picked ? picked.ids : []);
+    if (listShown()) markListRows(picked ? picked.ids : [], true);
+    else if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
 
-  // `title`: what marking it does, when the row is not a proposal's.
+  // `title`: what marking it does, when the row is not a proposal's -- worded
+  // for the map or for the list, whichever the page is.
   function pickLink(row, text, key, ids, title) {
     row.dataset.pick = key;
     drawnKeys.add(key);
     if (picked && picked.key === key) row.classList.add("picked");
-    return rowLink(text, "strong", () => pick(key, ids), ids.length ? title || t("在路线图上标出它涉及的尝试") : "");
+    const hint = title || (listShown() ? t("在列表中标出它涉及的尝试") : t("在路线图上标出它涉及的尝试"));
+    return rowLink(text, "strong", () => pick(key, ids), ids.length ? hint : "");
   }
 
   function listBlock(host, title, rows) {
@@ -493,6 +685,8 @@
     const ids = gotIt();
     ids.add(String(p.id));
     storageSet(gotItKey(projectKey(), meId()), JSON.stringify(Array.from(ids).slice(-GOT_IT_KEPT)));
+    setTodo(lastData);
+    renderSidebar();
     renderColumn(columnEl, lastData);
     const s = state.panelSubject;
     return s && s.kind === "desk-attempt" && panelShown() ? drawPanel(s) : null;
@@ -582,7 +776,7 @@
       const row = mk("li", "desk-row");
       const main = mk("div", "desk-main");
       const head = mk("div", "desk-head");
-      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], t("在路线图上标出这条尝试")));
+      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], listShown() ? t("在列表中标出这条尝试") : t("在路线图上标出这条尝试")));
       const own = ownMark(g);
       if (own) head.appendChild(own);
       if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openAttempt(g.id, true))); // judged in its panel (14.3)
@@ -741,10 +935,10 @@
     if (!layoutEl) {
       layoutEl = mk("div", "desk-layout");
       if (window.RORouteMap) {
-        const map = mk("div", "desk-map");
+        mapEl = mk("div", "desk-map");
         routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
-        routeMap.mount(map);
-        layoutEl.appendChild(map);
+        routeMap.mount(mapEl);
+        layoutEl.appendChild(mapEl);
       }
       columnEl = mk("aside", "desk-column");
       layoutEl.appendChild(columnEl);
@@ -804,6 +998,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     if (drawnEpoch !== epoch) picked = null;
+    setTodo(data);
     if (ctx.epoch === epoch) renderSidebar();
     lastData = data;
     lastChanged = changedSince(since);
@@ -812,6 +1007,8 @@
     if (routeMap) routeMap.update(data, { changed: lastChanged });
     drawnEpoch = epoch;
     host.dataset.loaded = "1";
+    showMode();
+    loadList(refresh || drawn); // 列表 only: the grouped list beside the same column (18.3)
     catchUp(data, epoch);
   }
 
@@ -826,7 +1023,6 @@
   function catchUp(data, epoch) {
     const shared = ((data && data.column) || {}).shared || {};
     if (shared.state !== "slow" && shared.state !== "stale") { catchUpTries = 0; return; }
-    const onDesk = () => typeof currentView !== "undefined" && currentView === "desk";
     if (catchUpTimer || catchUpTries >= CATCH_UP_TRIES || !onDesk()) return;
     catchUpTries += 1;
     catchUpTimer = setTimeout(() => {
@@ -1549,11 +1745,12 @@
 
   window.RODesk = Object.freeze({
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
+    setMode, resume, syncSwitch, listZoom, mode: routesMode,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
-    _proposalStateText: proposalStateText, _seenKey: seenKey, _toneOf: toneOf,
+    _proposalStateText: proposalStateText, _seenKey: seenKey, _modeKey: modeKey, _toneOf: toneOf,
     _verdictChoices: verdictChoices, _withMarker: withMarker,
   });
 })();

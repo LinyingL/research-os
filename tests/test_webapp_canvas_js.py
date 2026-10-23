@@ -1272,10 +1272,11 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     for name in ("defaultNewNumber", "defaultDateValue", "distinctVerdicts"):
         assert _APP_SRC.count(name + "(") == 2, name  # defined once, called only by the form
         assert "state." not in _function_body(_APP_SRC, f"function {name}(")
-    # One fetch path for the records. Since V8 U4 研究路线 reads /api/routes
-    # (team.js), so the form is the records' only reader.
+    # One fetch path for the records. Since V8 U4 研究路线's list reads /api/routes
+    # (team.js, drawn into the page's list pane by desk.js since 18.3), so the form
+    # is the records' only reader.
     assert _APP_SRC.count('apiGet("/api/attempts")') == 1
-    assert "ROTeam.loadRoutes(views.tree, refresh)" in _function_body(_APP_SRC, "function loadTreeView(")
+    assert "function loadTreeView(" not in _APP_SRC and "ROTeam.loadRoutes(pane," in (CANVAS_JS.parent / "desk.js").read_text(encoding="utf-8")
     assert _APP_SRC.count("state.attemptsById = ") == 2  # the loader, and the project-switch reset
     reset = _function_body(_APP_SRC, "async function reloadAllViews(")
     for line in ("state.dataEpoch += 1;", "state.attemptsConfig = null;"):

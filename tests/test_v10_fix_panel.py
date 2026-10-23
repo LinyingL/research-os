@@ -94,7 +94,7 @@ def test_14_3_leaving_the_desk_takes_its_panel_with_it_after_asking():
       extra.after = [state.panelSubject, panelPart("panel").className];
       await window.RODesk.openAttempt(%(a16)s);
       extra.quiet = window.RODesk.leaveDesk();
-      global.currentView = "tree";
+      global.currentView = "results";
       await window.RODesk.openAttempt(%(a16)s);
       const before = posted.length;
       extra.redrawn = window.RODesk.revalidatePanel(state.panelSubject);

@@ -114,7 +114,9 @@ import AppKit
 // The page-side dispatcher (app.html, "Native shell bridge") accepts the
 // same names. Only [a-z-] characters: safe inside a single-quoted JS string.
 // V8 U5 (DESIGN.md 12.9): one command per sidebar section, plus 提交提议
-// (a member) and 发布 (the PI).
+// (a member) and 发布 (the PI). 18.3: 研究路线 is one page and the menu has one
+// item for it ("routes"); "desk" stays a valid name, and the page opens the
+// same page for both.
 let shellCommands: Set<String> = [
     "workspace", "create-project",
     "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
@@ -197,7 +199,6 @@ let englishText: [String: String] = [
     "全选": "Select All",
     // 视图
     "视图": "View",
-    "工作台": "Desk",
     "研究路线": "Research Routes",
     "图表与论断": "Figures and Claims",
     "变量": "Variables",
@@ -841,8 +842,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         zoomInAlt.isHidden = true
         zoomInAlt.allowsKeyEquivalentWhenHidden = true
         let viewMenu = submenu("视图", [
-            cmd("项目首页", "workspace"),
-            cmd("工作台", "desk", "1"),
+            cmd("项目首页", "workspace", "1"),
             cmd("研究路线", "routes", "2"),
             cmd("图表与论断", "results", "3"),
             cmd("变量", "variables", "4"),

@@ -15,10 +15,11 @@
 
   The page's structure (DESIGN.md 12.9, task V8 phase U2): a sidebar --
   the project switcher at the top (the 10.1 menu below), the open
-  project's sections 工作台 / 研究路线 / 图表与论断 / 变量 / 文献 / 数据与代码 /
+  project's sections 项目首页 / 研究路线 / 图表与论断 / 变量 / 文献 / 数据与代码 /
   提议 / 成员, and at the bottom the shared drive's line, who I am, 记录 and
-  停止服务 -- beside a workspace whose serif title names the section. The
-  desk (工作台, 12.0) and the sidebar's live lines are the third served
+  停止服务 -- beside a workspace whose serif title names the section. 研究路线
+  (18.3: the route map of Section 14 or the grouped list, with 待办 beside
+  either) and the sidebar's live lines are the third served
   file, /desk.js (window.RODesk; GET /api/desk, /api/proposals, /api/share,
   /api/me). The node page, 图表与论断 and 数据与代码's list are the fourth,
   /node.js (window.RONode, U3; GET /api/node, /api/results,
@@ -459,8 +460,9 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .tree-filter { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: baseline; font-size: 0.86rem; margin: 0 0 0.8rem; color: var(--ink-soft); }
 .attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
 
-/* -- The desk (工作台, DESIGN.md 14): the route map with the column beside it,
-   the whole window below the header (canvas-mode); lists, not dashboards. -- */
+/* -- 研究路线 (DESIGN.md 14, 18.3): the route map -- or the grouped list in a
+   pane of its own -- with the 待办 column beside it, the whole window below
+   the header (canvas-mode); lists, not dashboards. -- */
 body.canvas-mode #view-desk { flex: 1; min-height: 0; display: flex; }
 body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
 .desk-layout { flex: 1; min-width: 0; min-height: 0; display: flex; }
@@ -468,6 +470,8 @@ body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
   flex: none; width: 22rem; overflow-y: auto; padding: 1.1rem 1.25rem 3rem; border-left: 1px solid var(--line-strong);
   display: flex; flex-direction: column; gap: 1.6rem;
 }
+.routes-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 1.4rem 2rem 3rem; }
+.route-row.picked { background: var(--paper-alt); box-shadow: -0.5rem 0 0 var(--paper-alt), 0.5rem 0 0 var(--paper-alt); }
 .desk-column-title { font-family: var(--font-sans); font-size: 0.78rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 -0.8rem; }
 .desk-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.35rem; }
 .desk-sub { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
@@ -1281,6 +1285,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 @media (max-width: 960px) {
   .desk-layout { flex-direction: column; overflow-y: auto; }
   .desk-map { flex: none; height: 62vh; }
+  .routes-pane { flex: none; overflow-y: visible; }
   .desk-column { width: auto; overflow-y: visible; border-left: none; border-top: 1px solid var(--line-strong); }
 }
 </style>
@@ -1302,8 +1307,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
     </div>
     <nav class="side-nav" id="side-nav" aria-label="栏目" data-i18n-attr="aria-label">
       <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
-      <button type="button" class="side-item" data-section="desk" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6.5h12M3.5 6.5v6.5M12.5 6.5v6.5M5.5 6.5V3.5h5v3"/></svg><span class="side-label" data-i18n>工作台</span></button>
-      <button type="button" class="side-item" data-section="routes" data-view="tree"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
+      <button type="button" class="side-item" data-section="routes" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span><span class="side-count" id="side-count-routes"></span></button>
       <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>图表与论断</span></button>
       <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label" data-i18n>变量</span></button>
       <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label" data-i18n>文献</span></button>
@@ -1352,9 +1356,14 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>清单</button>
         <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
+      <!-- 研究路线 (18.3): the route map or the grouped list, one page with
+           the same 待办 column; kept per project (desk.js). -->
+      <div id="routes-switch" class="subnav hidden" role="tablist" aria-label="研究路线" data-i18n-attr="aria-label">
+        <button type="button" class="subnav-item" role="tab" data-mode="map" aria-selected="true" data-i18n>路线图</button>
+        <button type="button" class="subnav-item" role="tab" data-mode="list" aria-selected="false" data-i18n>列表</button>
+      </div>
       <section id="view-workspace" class="view"></section>
       <section id="view-desk" class="view hidden"></section>
-      <section id="view-tree" class="view hidden"></section>
       <section id="view-results" class="view hidden"></section>
       <section id="view-lineage" class="view hidden"></section>
       <section id="view-canvas" class="view hidden"></section>
@@ -1928,14 +1937,13 @@ function renderViewFailure(container, err) {
 
 // -- Tabs ---------------------------------------------------------------------
 
-// DESIGN.md 12.9: the views are shown through the sidebar's sections. Until
-// the later phases rebuild them, 研究路线 is the decision tree, 数据与代码
-// the lineage report with 关系图 (the canvas) beside it, and 图表与论断 / 提议 /
-// 成员 say plainly that they are still being made.
+// DESIGN.md 12.9: the views are shown through the sidebar's sections.
+// 研究路线 (18.3) is one view, "desk" -- the name Section 14 gave the route
+// map's page --, showing the route map or the grouped list beside 待办;
+// 数据与代码 is the lineage report with 关系图 (the canvas) beside it.
 const views = {
   workspace: document.getElementById("view-workspace"),
   desk: document.getElementById("view-desk"),
-  tree: document.getElementById("view-tree"),
   results: document.getElementById("view-results"),
   lineage: document.getElementById("view-lineage"),
   canvas: document.getElementById("view-canvas"),
@@ -1949,13 +1957,13 @@ let currentView = null;
 
 const SECTION_OF_VIEW = {
   workspace: "workspace",
-  desk: "desk", tree: "routes", results: "results", lineage: "data", canvas: "data",
+  desk: "routes", results: "results", lineage: "data", canvas: "data",
   variables: "variables", literature: "literature", proposals: "proposals", members: "members",
   node: null, // the section it was opened from (RONode.section)
 };
 const SECTION_TITLES = {
   workspace: "项目首页",
-  desk: "工作台", routes: "研究路线", results: "图表与论断", variables: "变量", literature: "文献",
+  routes: "研究路线", results: "图表与论断", variables: "变量", literature: "文献",
   data: "数据与代码", proposals: "提议", members: "成员",
 };
 // A section's title on screen (13.4): the page title, in the screen's
@@ -1964,7 +1972,7 @@ const SECTION_TITLES = {
 function sectionTitle(section) {
   const titles = {
     workspace: t("项目首页"),
-    desk: t("工作台"), routes: t("研究路线"), results: t("图表与论断"), variables: t("变量"), literature: t("文献"),
+    routes: t("研究路线"), results: t("图表与论断"), variables: t("变量"), literature: t("文献"),
     data: t("数据与代码"), proposals: t("提议"), members: t("成员"),
   };
   return Object.prototype.hasOwnProperty.call(titles, section) ? titles[section] : "";
@@ -1980,7 +1988,8 @@ const VIEW_STORAGE_KEY = "rce.view";
 
 function storedView() {
   try {
-    const v = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    const v = stored === "tree" ? "desk" : stored; // 18.3: the old 研究路线 list is a mode of the one page
     return v && v !== "node" && Object.prototype.hasOwnProperty.call(views, v) ? v : null;
   } catch (err) {
     return null;
@@ -2008,10 +2017,12 @@ function activateView(name) {
     if (btn.dataset.section === section) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
-  document.querySelectorAll(".subnav-item").forEach((btn) => {
+  document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
     btn.setAttribute("aria-selected", String(btn.dataset.subview === name));
   });
   document.getElementById("data-switch").classList.toggle("hidden", section !== "data" || name === "node");
+  // 研究路线's switch (18.3) belongs to the page, not to a node page opened from it.
+  document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node");
   document.getElementById("page-title").textContent = sectionTitle(section);
   // 新增尝试 belongs to the attempts (研究路线); the native menu still
   // reaches the form from anywhere.
@@ -2026,11 +2037,11 @@ function activateView(name) {
   // project home follows it again (its own poll stops when it is not on screen).
   if (name === "workspace" && typeof ROWorkspace.resume === "function") ROWorkspace.resume();
   if (name === "desk" && !views.desk.dataset.loaded) RODesk.loadDesk(views.desk);
+  else if (name === "desk") RODesk.resume(); // drawn already: shown the way it is now kept
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);
   if (name === "proposals" && !views.proposals.dataset.loaded) ROTeam.loadProposals(views.proposals);
   if (name === "members" && !views.members.dataset.loaded) ROTeam.loadMembers(views.members);
-  if (name === "tree" && !views.tree.dataset.loaded) loadTreeView();
   if (name === "lineage" && !views.lineage.dataset.loaded) loadLineageView();
   if (name === "variables" && !views.variables.dataset.loaded) loadVariablesView();
   if (name === "literature" && !views.literature.dataset.loaded) loadLiteratureView();
@@ -2045,7 +2056,7 @@ function activateView(name) {
 // a member sent, the official version) are read afresh each time the
 // researcher goes to them: those acts do not move the project's generation
 // on this machine. 提议 always opens on the list (inbox or 我的提议).
-const SHARED_STATE_VIEWS = ["desk", "proposals", "tree", "members"];
+const SHARED_STATE_VIEWS = ["desk", "proposals", "members"];
 document.querySelectorAll(".side-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     const target = btn.dataset.section === "data" ? lastDataView : btn.dataset.view;
@@ -2054,9 +2065,20 @@ document.querySelectorAll(".side-item").forEach((btn) => {
     activateView(target);
   });
 });
-document.querySelectorAll(".subnav-item").forEach((btn) => {
+document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
   btn.addEventListener("click", () => activateView(btn.dataset.subview));
 });
+// 研究路线's 路线图 / 列表 (18.3): the mode is kept per project (desk.js).
+document.querySelectorAll("#routes-switch .subnav-item").forEach((btn) => {
+  btn.addEventListener("click", () => RODesk.setMode(btn.dataset.mode));
+});
+
+// 研究路线 (18.3), the one page: opened on `mode` ("map" or "list") when the
+// caller means one of the two, else the way it is kept for the project.
+function showRoutes(mode) {
+  if (mode) RODesk.setMode(mode);
+  activateView("desk");
+}
 
 // The desk's 「在研究路线中查看」 for the abandoned routes: 研究路线 with
 // only those shown, until the researcher shows them all again.
@@ -2951,7 +2973,6 @@ async function reloadAllViews(opts) {
   else if (currentView === "workspace") ROWorkspace.load(views.workspace);
   else if (currentView === "desk") RODesk.loadDesk(views.desk);
   else if (currentView === "results") RONode.loadResults(views.results);
-  else if (currentView === "tree") loadTreeView();
   else if (currentView === "lineage") loadLineageView();
   else if (currentView === "canvas") RCECanvas.load(views.canvas);
   else if (currentView === "variables") loadVariablesView();
@@ -3060,8 +3081,6 @@ async function refreshCurrentView() {
     await ROTeam.loadProposals(views.proposals, true);
   } else if (currentView === "members") {
     await ROTeam.loadMembers(views.members, true);
-  } else if (currentView === "tree") {
-    await loadTreeView(true);
   } else if (currentView === "lineage") {
     await loadLineageView(true);
   } else if (currentView === "canvas") {
@@ -3281,13 +3300,6 @@ function ownMark(item) {
   span.className = "own-mark";
   span.textContent = o.label;
   return span;
-}
-
-// 研究路线 (12.9, U4): the attempts grouped by status, the proposals shown
-// apart, an abandoned route with its result, its reason and 「当时的依据」
-// (team.js). `refresh` (an auto-refresh) keeps the page in place.
-function loadTreeView(refresh) {
-  return ROTeam.loadRoutes(views.tree, refresh);
 }
 
 // -- Lineage view ---------------------------------------------------------------
@@ -7089,6 +7101,7 @@ function shellZoom(step) {
   Object.entries(views).forEach(([key, node]) => {
     if (key !== "canvas" && key !== "desk") node.style.zoom = z === 1 ? "" : String(z);
   });
+  RODesk.listZoom(z === 1 ? "" : String(z)); // 研究路线 as a list (18.3) reads like the others
 }
 
 // A failed Finder command reports in the header line, the same spot a
@@ -7178,9 +7191,12 @@ ROWorkspace.onPropose = (paths) => {
 const SHELL_COMMANDS = {
   "workspace": () => activateView("workspace"),
   "create-project": () => ROWorkspace.openCreateProject(),
-  // 视图 ⌘1-8 (12.9): one command per sidebar section.
-  "desk": () => activateView("desk"),
-  "routes": () => activateView("tree"),
+  // 视图 ⌘1-8 (12.9): one command per sidebar section. 研究路线 is one page
+  // (18.3), and its one menu item sends either name: both open it the way it
+  // is kept for the project (a menu built before 18.3 sent "desk" for the map
+  // and "routes" for the list, as two items; the page cannot tell them apart now).
+  "desk": () => showRoutes(),
+  "routes": () => showRoutes(),
   "results": () => activateView("results"),
   "variables": () => activateView("variables"),
   "literature": () => activateView("literature"),
@@ -7205,7 +7221,7 @@ const SHELL_COMMANDS = {
 // source). Understood, never offered: no menu of the current shell names
 // these.
 const SHELL_COMMANDS_BEFORE_U5 = {
-  "tree": () => activateView("tree"),
+  "tree": () => showRoutes("list"), // the decision tree was 研究路线's list
   "lineage": () => activateView("lineage"),
   "canvas": () => activateView("canvas"),
   "new-attempt": () => { if (mayReplacePanel()) openAttemptForm("append"); },
@@ -7232,7 +7248,7 @@ window.RCE = Object.freeze({
       : Object.prototype.hasOwnProperty.call(SHELL_COMMANDS_BEFORE_U5, name) ? SHELL_COMMANDS_BEFORE_U5 : null;
     if (!table) return false;
     // After 停止服务 the page is a static note; a menu click must not throw.
-    if (!document.getElementById("view-tree")) return false;
+    if (!document.getElementById("view-desk")) return false;
     try {
       table[name]();
     } catch (err) {

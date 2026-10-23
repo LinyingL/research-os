@@ -313,10 +313,10 @@
   // what they must do in OneDrive.
   async function after(key, items) {
     flash[key] = items || [];
-    const host = key === "members" ? views.members : key === "proposals" ? views.proposals : views.tree;
+    const host = key === "members" ? views.members : key === "proposals" ? views.proposals : views.desk;
     if (key === "members") await loadMembers(host, true, true);
     else if (key === "proposals") await loadProposals(host, true, true);
-    else await loadRoutes(host, true, true);
+    else await RODesk.loadDesk(host, true); // 研究路线: the page, with its list in list mode (18.3)
     if (flash[key].length) revealFlash(host);
   }
 
@@ -451,11 +451,13 @@
 
   // -- 研究路线 (12.9) ------------------------------------------------------------------
 
+  // 研究路线 (18.3) opened on the list with only the abandoned routes shown.
   function showAbandoned() {
     view.filter = "abandoned";
-    delete views.tree.dataset.loaded;
-    if (currentView === "tree") loadRoutes(views.tree);
-    else activateView("tree");
+    RODesk.setMode("list"); // on the page already: the list drawn again, with the filter
+    if (currentView === "desk") return;
+    delete views.desk.dataset.loaded; // else opened afresh, the list read again
+    activateView("desk");
   }
 
   async function loadRoutes(host, refresh, acted) {
@@ -473,7 +475,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     clearProjectState();
-    const top = window.scrollY;
+    const top = host.scrollTop; // the list is a pane of its own beside 待办 (18.3)
     host.innerHTML = "";
     const page = mk("div", "routes");
     const list = (ctx && ctx.proposals && ctx.proposals.proposals) || [];
@@ -513,7 +515,7 @@
     });
     host.appendChild(page);
     host.dataset.loaded = "1";
-    if (refresh) window.scrollTo(0, top);
+    if (refresh) host.scrollTop = top;
   }
 
   function routeRow(item) {
@@ -522,7 +524,7 @@
     const head = mk("div", "route-head");
     head.appendChild(mk("span", "route-num mono", "#" + String(item.number || "").replace(/^#/, "")));
     head.appendChild(mk("span", "route-date", item.date || ""));
-    head.appendChild(mkButton(item.title || "（无描述）", "route-title", () => RONode.openNode(item.id)));
+    head.appendChild(mkButton(item.title || "（无描述）", "route-title", () => RODesk.openAttempt(item.id)));
     head.appendChild(RODesk.verdictInline(item.verdict_status));
     const own = ownMark(item);
     if (own) head.appendChild(own);
@@ -1412,7 +1414,6 @@
       // hidden ones reload on their next showing, the open one now.
       markViewsStale();
       if (currentView === "proposals" && !view.proposal) await after("proposals", [{ text: sent }]);
-      else if (currentView === "tree") await loadRoutes(views.tree, true, true);
       else if (typeof refreshCurrentView === "function" && currentView !== "proposals") await refreshCurrentView();
       if (typeof pollGeneration === "function") pollGeneration();
       return res;

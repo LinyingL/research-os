@@ -406,15 +406,17 @@ def test_swift_sources_ship_as_package_data():
 
 def test_shell_menus_match_the_design():
     """V8 U5 (12.9): 文件 holds 添加项目… ⌘O, 提交提议… / 发布 by role, 关闭 ⌘W;
-    视图 names the eight sidebar sections on ⌘1-⌘8, then 重新载入 and the
-    zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) are gone."""
+    视图 names the eight sidebar sections on ⌘1-⌘8 in the sidebar's order
+    (18.3: 研究路线 is one item and 项目首页 is ⌘1), then 重新载入 and the
+    zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) and 工作台
+    are gone."""
     for snippet in (
         'submenu("Research OS"', 'item("关于 Research OS"', 'item("退出", #selector(NSApplication.terminate(_:)), "q")',
         'submenu("文件"', 'cmd("添加项目…", "add-project", "o")', 'proposeItem = cmd("提交提议…", "propose")',
         'publishItem = cmd("发布", "publish")',
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
         'submenu("编辑"', '"undo:"', '"redo:"', "NSText.cut", "NSText.copy", "NSText.paste", "NSText.selectAll",
-        'submenu("视图"', 'cmd("工作台", "desk", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("图表与论断", "results", "3")',
+        'submenu("视图"', 'cmd("项目首页", "workspace", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("图表与论断", "results", "3")',
         'cmd("变量", "variables", "4")', 'cmd("文献", "literature", "5")', 'cmd("数据与代码", "data", "6")',
         'cmd("提议", "proposals", "7")', 'cmd("成员", "members", "8")',
         'item("重新载入", #selector(reloadPage(_:)), "r")', 'cmd("放大", "zoom-in", "+")',
@@ -424,7 +426,7 @@ def test_shell_menus_match_the_design():
         'submenu("帮助", [cmd("打开项目地图", "open-map")])',
     ):
         assert snippet in _SHELL, f"menu item missing from RCEShell.swift: {snippet}"
-    for gone in ('"决策树"', '"血缘"', '"画布"', '"适应全部"', '"fit"', '"new-attempt"', '"reveal-project"'):
+    for gone in ('"决策树"', '"血缘"', '"画布"', '"适应全部"', '"fit"', '"new-attempt"', '"reveal-project"', '"工作台"'):
         assert gone not in _SHELL, f"pre-12.9 menu item still in RCEShell.swift: {gone}"
     files = _SHELL[_SHELL.index('submenu("文件"'):]
     files = files[: files.index("]))")]
@@ -434,11 +436,16 @@ def test_shell_menus_match_the_design():
     view = view[: view.index("])")]
     keys = [view.index(f'"{k}")') for k in "12345678"]
     assert keys == sorted(keys)
+    # The shortcuts follow the sidebar's order, one item each.
+    sidebar = [view.index(f'cmd("{name}"') for name in ("项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员")]
+    assert sidebar == sorted(sidebar) and view.count('"routes"') == 1
 
 
 def test_shell_whitelist_and_page_dispatcher_agree():
     """Every command the shell can send is one the page's dispatcher
-    accepts, and every section command lands on its 12.9 section."""
+    accepts, and every section command lands on its 12.9 section. 18.3:
+    `desk` and `routes` are both valid names and open the one page 研究路线;
+    the menu sends `routes`."""
     import re
 
     whitelist = _SHELL[_SHELL.index("let shellCommands"):]
@@ -450,6 +457,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     }
     sent = set(re.findall(r'cmd\("[^"]+", "([a-z-]+)"', _SHELL))
     assert sent <= whitelist and "reload" in _SHELL
+    assert "desk" in whitelist and "desk" not in sent and "routes" in sent
     page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
     table = page[page.index("const SHELL_COMMANDS = {"):]
     table = table[: table.index("\n};\n")]
@@ -457,7 +465,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     assert whitelist <= accepted
     for name, target in (("workspace", 'activateView("workspace")'),
                          ("create-project", "ROWorkspace.openCreateProject()"),
-                         ("desk", 'activateView("desk")'), ("routes", 'activateView("tree")'),
+                         ("desk", "showRoutes()"), ("routes", "showRoutes()"),
                          ("results", 'activateView("results")'), ("variables", 'activateView("variables")'),
                          ("literature", 'activateView("literature")'), ("data", "activateView(lastDataView)"),
                          ("proposals", 'activateView("proposals")'), ("members", 'activateView("members")'),
@@ -973,7 +981,7 @@ _ENGLISH_MENUS = {
     "关闭": "Close",
     "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
     "全选": "Select All",
-    "视图": "View", "工作台": "Desk", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "变量": "Variables",
+    "视图": "View", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "变量": "Variables",
     "文献": "Literature", "数据与代码": "Data & Code", "提议": "Proposals", "成员": "Members",
     "重新载入": "Reload", "放大": "Zoom In", "缩小": "Zoom Out", "实际大小": "Actual Size",
     "窗口": "Window", "最小化": "Minimize", "缩放": "Zoom",
@@ -1039,7 +1047,7 @@ def test_shell_english_follows_the_glossary_and_macos_names():
     assert titles == set(_ENGLISH_MENUS)
     design = (Path(__file__).parents[1] / "DESIGN.md").read_text(encoding="utf-8")
     glossary = dict(re.findall(r"^\| (\S+) \| ([^|]+?) \|$", design[design.index("### 13.4"):], re.M))
-    for section in ("工作台", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"):
+    for section in ("研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"):
         title_case = " ".join(word if word == "and" else word[:1].upper() + word[1:] for word in glossary[section].split(" "))
         assert table[section] == title_case, section
     assert (table["好"], table["取消"], table["选择"]) == ("OK", "Cancel", "Choose")
@@ -1162,7 +1170,7 @@ let path = "/a/{path}/日志 \"x\"/serve.log"
 for language in ["zh", "en"] {
     out[language + " log"] = shellText("以下是 {path} 的最后几行（⌘R 重试）：", language, path: path)
     out[language + " no log"] = shellText("还没有日志文件：{path}", language, path: path)
-    out[language + " desk"] = shellText("工作台", language)
+    out[language + " routes"] = shellText("研究路线", language)
     out[language + " missing"] = shellText("没有这一条", language)
     out[language + " hint"] = shellText(documentsHint, language)
 }
@@ -1224,7 +1232,7 @@ def test_shell_language_rules_run_as_swift(tmp_path):
     assert out["zh no log"] == "还没有日志文件：" + path
     assert out["en log"] == "The last lines of " + path + " (⌘R to try again):"
     assert out["en no log"] == "No log file yet: " + path
-    assert (out["zh desk"], out["en desk"]) == ("工作台", "Desk")
+    assert (out["zh routes"], out["en routes"]) == ("研究路线", "Research Routes")
     assert out["zh missing"] == out["en missing"] == "没有这一条"
     assert out["zh hint"] == _swift_value(_DOCUMENTS_HINT)
     assert out["en hint"] == _english_table()[_swift_value(_DOCUMENTS_HINT)]
