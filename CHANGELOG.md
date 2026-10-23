@@ -20,7 +20,12 @@
   longer read as a paper draft: a number in a note does not become a claim, and
   the claims an earlier scan made of a note go on the next scan. A manuscript of
   your own in that folder is still read. On the PI's page notes and result
-  records say they go to the members with the next 发布.
+  records say they go to the members with the next 发布. A member's page and
+  its saves wait for the shared folder no longer than the desk does, and a save
+  no longer holds the project lock while it asks; the word beside an open
+  document (提议中, 已批准，待同步) follows a proposal sent, approved or synced. A
+  note or result record with a name of your own keeps its backups in a folder
+  of its own, so two files named alike never share them.
 - Save a changed 研究判断 or 结果 at once, and take it back with 撤销. In a
   one-person project or as the PI, pressing 保存 on an existing row in the side
   panel (and in the node page's edit form, when only those two cells changed)
@@ -29,7 +34,10 @@
   they were (a second history entry, nothing erased). If the file changed
   while the panel was open, the row is shown first and written on 保存修改.
   Turning a route abandoned still asks its reason and shows the row first, a
-  new row keeps its preview, and a member's change is still a proposal.
+  new row keeps its preview, and a member's change is still a proposal. After
+  保存 or 撤销 in the node page's edit form, opening another panel does not ask
+  about content not yet written, and 撤销 of a row that moved puts the file's
+  text back in the field.
 - Make the engine ask for its own session before it saves anything. A program
   running on your Mac, an AI agent's script included, can no longer save,
   approve or publish by calling Research OS's local address: the app, and the
