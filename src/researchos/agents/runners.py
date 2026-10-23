@@ -12,10 +12,18 @@ with the tools it may use in `--allowedTools` and the denials of 17.5 in
 run's folder (`--settings`, `--mcp-config --strict-mcp-config`), and the rules
 in `--append-system-prompt`. `--setting-sources user` keeps the project's own
 `.claude/settings*.json` from being loaded (a run could have written one for
-the next, 18.1 item 2); the hook runs on the editing tools, Bash and the
-reading tools (Read, Glob, Grep, LS). `--allowedTools` and `--disallowedTools` are
-variadic: a positional prompt after them would be swallowed as a tool name,
-so they come LAST and the instruction goes in on standard input.
+the next, 18.1 item 2), but it also stops the project's `CLAUDE.md` from
+loading, and the agent would lose the project's own instructions. So the
+project folder is also given as `--add-dir <project root>` and the program's
+environment carries `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`
+(`ADD_DIR_CLAUDE_MD_ENV`): an added folder's `CLAUDE.md` is read only with
+that variable, and a `.claude/settings.json` planted in the project stays
+without effect (checked with Claude Code 2.1.87). `--add-dir` takes any number
+of values, so a flag always follows it. The hook runs on the editing tools,
+Bash and the reading tools (Read, Glob, Grep, LS). `--allowedTools` and
+`--disallowedTools` are variadic: a positional prompt after them would be
+swallowed as a tool name, so they come LAST and the instruction goes in on
+standard input.
 The hook's command is `sh -c` around the hook (`hook_command`) so that only
 its exit code 0 allows a call and every other outcome (a crash at start, a
 missing interpreter) is exit code 2, which Claude Code treats as a refusal;
@@ -44,7 +52,10 @@ credential, except what the runner needs to reach its model (`credential_names`,
 for the run log). `PATH` is widened with the usual install places, since an app
 opened from the Finder has none of the shell's. The agent's processes carry
 `RESEARCHOS_AGENT_RUN`, which makes every Research OS write path refuse
-(17.5).
+(17.5). Claude Code's environment also carries
+`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`, set after the scrub, so that
+neither the scrub nor a value inherited from the engine's own environment
+(`0`) changes it.
 
 **The streams** (`ClaudeStream`, `OpenCodeStream`) read the program's JSON
 lines tolerantly -- an unknown event type, a missing field or a line that is
@@ -80,6 +91,11 @@ CLAUDE_ALLOWED = ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", 
 #: (18.1 item 6). Sorted, so that the generated lists are the same on every start.
 GIT_DENIED = tuple(sorted(guard.GIT_MUTATING))
 CLAUDE_DISALLOWED = tuple(f"Bash(git {c}:*)" for c in GIT_DENIED) + ("Bash(researchos:*)", "Bash(rce:*)")
+#: Without this variable Claude Code reads no `CLAUDE.md` from a folder given with `--add-dir`. `claude_launch` gives
+#: the project folder that way, because `--setting-sources user` would otherwise leave the agent without the project's
+#: own instructions (18.1 item 2). Its name matches neither `SCRUB_ENV_RE` nor `CREDENTIAL_WORDS`; it is set after the
+#: scrub all the same.
+ADD_DIR_CLAUDE_MD_ENV = "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"
 #: Inherited variables that would join a Claude Code session (CLAUDE_CODE_REMOTE_SESSION_ID
 #: is the one that makes a child adopt its parent's id), reach a parent's messaging channel, or
 #: replace OpenCode's configuration.
@@ -276,6 +292,9 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
             "--resume" if resume else "--session-id", _check_session(session_id),
             "--permission-mode", "dontAsk",
             "--setting-sources", "user",  # not the project's .claude/settings*.json (18.1 item 2)
+            # ... but its CLAUDE.md, which that also drops, comes back through the added folder and
+            # `ADD_DIR_CLAUDE_MD_ENV` below. `--add-dir` is variadic: another flag must follow it.
+            "--add-dir", str(root),
             "--settings", str(run_dir / "claude-settings.json"),
             "--mcp-config", str(run_dir / "mcp.json"),
             "--strict-mcp-config",
@@ -290,9 +309,9 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
     mcp = {"mcpServers": {MCP_KEY: {
         "command": sys.executable, "args": mcp_command(root, run_id)[1:],
         "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}}}
-    return Launch(argv=argv,
-                  env=child_env(base_env, run_id=run_id, program=program, runner="claude-code"),
-                  stdin=prompt, cwd=str(root),
+    env = child_env(base_env, run_id=run_id, program=program, runner="claude-code")
+    env[ADD_DIR_CLAUDE_MD_ENV] = "1"  # after the scrub, and whatever the engine's own environment says
+    return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root),
                   files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)},
                   removed_env=credential_names(base_env, "claude-code"))
 
@@ -669,7 +688,8 @@ def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeS
     Claude Code: ok needs exit 0 and a result that is not an error. A
     SIGTERM (143/-15, or a kill) or a stream without a result is `aborted`;
     a result with `is_error` (whatever its `subtype`) fails with the
-    subtype as code and the errors or result text as detail; any other
+    subtype as code and the errors or result text as detail (an empty detail
+    when it has neither: the code is never put in its place); any other
     non-zero exit is `exit`. OpenCode: an `error` event is `model_error`
     with its message; else a non-zero exit is `exit`; else ok."""
     if runner == "claude-code":
@@ -684,7 +704,8 @@ def outcome(runner: str, exit_code: int | None, stream: ClaudeStream | OpenCodeS
             code = subtype if isinstance(subtype, str) and subtype and subtype != "success" else "error"
             errors = [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
                       for e in result.get("errors") or () if e]
-            detail = "; ".join(errors) or (stream.result_text or "").strip() or code
+            # the program's own words, or none: the code is not a text (18.1 item 6), the page words it
+            detail = "; ".join(errors) or (stream.result_text or "").strip()
             return _failed(code, detail)
         if exit_code not in (None, 0):
             return _failed("exit", f"exit code {exit_code}")

@@ -201,6 +201,33 @@ def test_claude_does_not_load_the_projects_own_settings(tmp_path, profiles_mod):
     assert argv[argv.index("--settings") + 1].endswith("claude-settings.json")
 
 
+def test_claude_gets_the_projects_claude_md_back_without_its_settings(tmp_path, profiles_mod):
+    """18.1 item 2: `--setting-sources user` also drops the project's CLAUDE.md. The project folder is given again
+    with `--add-dir`, and the variable makes Claude Code read an added folder's CLAUDE.md; the project's own
+    `.claude/settings*.json` is still not loaded (`--setting-sources user` is unchanged)."""
+    launch, a = _claude(tmp_path, profiles_mod)
+    argv = launch.argv
+    assert argv.count("--add-dir") == 1 and argv[argv.index("--add-dir") + 1] == str(a["root"])
+    assert argv[argv.index("--add-dir") + 1] == launch.cwd  # the project root: the folder the program starts in
+    assert argv[argv.index("--add-dir") + 2].startswith("--")  # --add-dir takes any number of values: a flag ends it
+    assert argv.index("--add-dir") < argv.index("--allowedTools")  # the variadic tool lists stay last
+    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert launch.env["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] == "1"
+    assert runners.ADD_DIR_CLAUDE_MD_ENV == "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"
+    # the engine's own environment does not decide it, and the scrub does not remove it
+    for inherited in ("0", "", "1"):
+        base = dict(DIRTY_ENV, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=inherited)
+        assert _claude(tmp_path, profiles_mod, base_env=base)[0].env[runners.ADD_DIR_CLAUDE_MD_ENV] == "1"
+    kept = runners.child_env(dict(DIRTY_ENV, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD="1"), run_id="r",
+                             program="/p/claude", runner="claude-code")
+    assert kept[runners.ADD_DIR_CLAUDE_MD_ENV] == "1"
+    assert not runners.SCRUB_ENV_RE.match(runners.ADD_DIR_CLAUDE_MD_ENV)
+    assert not runners.credential_like(runners.ADD_DIR_CLAUDE_MD_ENV)
+    assert runners.ADD_DIR_CLAUDE_MD_ENV not in launch.removed_env
+    oc, _ = _opencode(tmp_path, profiles_mod)  # only Claude Code is given either
+    assert runners.ADD_DIR_CLAUDE_MD_ENV not in oc.env and "--add-dir" not in oc.argv
+
+
 # -- Claude Code launch ---------------------------------------------------------
 
 RUN_ID = "r-20261021T101112Z-abc123"
@@ -548,6 +575,23 @@ def test_claude_end_with_no_words_has_no_text_never_the_subtype():
     assert runners.outcome("claude-code", 1, failed)[1]["code"] == "error_max_turns"
 
 
+def test_claude_failure_with_no_text_has_no_detail_not_its_code():
+    """18.1 item 6: `error.detail` is the program's own words, and when it said none it is empty; the code is the
+    error's own field and the page words it. The subtype is never put in the detail's place."""
+    for line, code in (('{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"%s"}' % SID,
+                        "error_max_turns"),
+                       ('{"type":"result","subtype":"success","is_error":true,"session_id":"%s"}' % SID, "error"),
+                       ('{"type":"result","subtype":"error_during_execution","is_error":true,"result":"  ",'
+                        '"errors":[],"session_id":"%s"}' % SID, "error_during_execution")):
+        stream = runners.ClaudeStream()
+        _feed(stream, [CLAUDE_INIT, line])
+        assert runners.outcome("claude-code", 1, stream) == ("failed", {"code": code, "detail": ""})
+    stream = runners.ClaudeStream()  # with words, the words stay
+    _feed(stream, [CLAUDE_INIT, '{"type":"result","subtype":"error_max_turns","is_error":true,'
+                                '"result":"Stopped after 3 turns","session_id":"%s"}' % SID])
+    assert runners.outcome("claude-code", 1, stream)[1] == {"code": "error_max_turns", "detail": "Stopped after 3 turns"}
+
+
 def test_claude_stream_tolerates_garbage():
     st = runners.ClaudeStream()
     junk = ["not json", "{", "[1,2]", "null", "42", '"s"', '{"type":"assistant"}', '{"type":"assistant","message":5}',
@@ -761,6 +805,31 @@ def test_rules_commands_and_roles_in_plain_words():
     zh = brief.rules(lang="zh", runner="opencode", prot=PROT)
     for word in ("判决", "提议", "发布", "推送", "commit", "stash", "新文件", "tasks.json", "编造"):
         assert word in zh, word
+
+
+def _rule_4_verbs(text: str, lang: str) -> list[str]:
+    rule = next(line for line in text.splitlines() if line.startswith("4. "))
+    if lang == "en":
+        return rule.split("commands: ", 1)[1].split(". Deleting", 1)[0].split(", ")
+    return rule.split("一概不用：", 1)[1].split("；", 1)[0].split("、")
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+@pytest.mark.parametrize("runner", ["claude-code", "opencode"])
+def test_rule_4_names_every_git_command_the_hook_refuses(lang, runner, monkeypatch):
+    """18.1 item 6: one list. The words to the agent are made from `guard.GIT_MUTATING`, the list the hook, Claude
+    Code's denials and OpenCode's patterns are made from, so they name every verb that is refused and cannot drift."""
+    text = brief.rules(lang=lang, runner=runner, prot=PROT)
+    assert _rule_4_verbs(text, lang) == sorted(guard.GIT_MUTATING)
+    for verb in ("pull", "am", "update-ref", "filter-branch", "replace", "cherry-pick", "switch", "restore"):
+        assert verb in _rule_4_verbs(text, lang)  # once missing from the words
+    for read_only in ("status", "diff", "log"):  # reading stays allowed, and is said so
+        assert read_only not in guard.GIT_MUTATING and read_only in text
+    assert "分支" in text if lang == "zh" else "renaming a branch" in text  # deleting or renaming a branch, refused too
+    _clean(text)
+    # not a second copy: a verb added to the hook's list is in the words with no other edit
+    monkeypatch.setattr(guard, "GIT_MUTATING", guard.GIT_MUTATING | {"zzz-new-verb"})
+    assert "zzz-new-verb" in _rule_4_verbs(brief.rules(lang=lang, runner=runner, prot=PROT), lang)
 
 
 def test_rules_protected_list_is_capped():

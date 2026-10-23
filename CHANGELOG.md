@@ -17,7 +17,8 @@
   is not told where Research OS keeps its files and gets none of the
   environment variables whose names look like credentials (the run log lists
   the names it was not given). Claude Code no longer loads the project's own
-  `.claude/settings*.json`, and `.claude/`, `.opencode/` and `opencode.json`
+  `.claude/settings*.json` (the project's `CLAUDE.md` is still read), and
+  `.claude/`, `.opencode/` and `opencode.json`
   can neither be written by a run nor changed without the run reading Went out
   of bounds. Undo now says a file has no copy when it has none, instead of
   saying you kept it; a run whose folder was not there when Research OS

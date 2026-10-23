@@ -374,6 +374,9 @@ def test_done_run_end_to_end(scene: Scene, monkeypatch):
     assert argv[argv.index("--model") + 1] == "sonnet"
     assert argv.index("--allowedTools") > argv.index("--append-system-prompt")
     assert argv[argv.index("--setting-sources") + 1] == "user"  # the project's own .claude/settings*.json is not loaded
+    # ... but its CLAUDE.md is: the project folder is added, and Claude Code reads an added folder's CLAUDE.md with this
+    assert argv[argv.index("--add-dir") + 1] == str(scene.root.resolve()) == call["cwd"]
+    assert call["env"]["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] == "1"
     assert call["cwd"] == str(scene.root.resolve())
     assert call["env"]["RESEARCHOS_AGENT_RUN"] == run["id"]
     assert "CLAUDECODE" not in call["env"] and "CLAUDE_CODE_REMOTE_SESSION_ID" not in call["env"]

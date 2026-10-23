@@ -4283,6 +4283,28 @@ the check. This round closes that door and the cheaper ones beside it.
      configuration is already off for the same reason. `.claude/`,
      `opencode.json` and `.opencode/` in the project are protected: an edit
      there is refused, and a change there is out of bounds.
+   - Why `--add-dir` and a variable go with it. `--setting-sources user` also
+     stops the project's own `CLAUDE.md` from loading, and the agent would
+     lose the project's own instructions. So Claude Code is also given the
+     project root as `--add-dir <project root>`, and its environment carries
+     `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`, which is what makes
+     Claude Code read the `CLAUDE.md` of an added folder. Checked with
+     Claude Code 2.1.87: with `--setting-sources user` alone the project's
+     `CLAUDE.md` is not read; with the two added it is, and a
+     `.claude/settings.json` planted in the project still has no effect, so
+     the settings door stays shut.
+     - The folder added is the folder the program already starts in, so the
+       agent is given no place it did not have. `--add-dir` takes any number
+       of values, so a flag always follows it in the argument list; the tool
+       lists stay last.
+     - The variable is set after the scrub, to `1` whatever the engine's own
+       environment says; it matches neither the session-identity pattern nor
+       a credential word, and the names removed (`env_removed`) never include it.
+       OpenCode is given neither.
+     - `CLAUDE.md` is instructions to the model, not configuration: it grants
+       no permission and does not touch the hook, and the rules and the hook
+       hold whatever it says. A run that edits it shows in the change list
+       like any other file.
 
    How it is read:
    - *The folders.* `guard.json` lists them as `off_limits`: the home in
@@ -4466,6 +4488,12 @@ the check. This round closes that door and the cheaper ones beside it.
        Claude Code's `--disallowedTools` and OpenCode's patterns (which are
        all OpenCode has: it has no hook) cannot drift apart, and a test says
        so. Before this, OpenCode could `git pull` or `git update-ref`.
+       The words the agent is sent for rule 4 (`brief.rules`) are made from
+       the same list, sorted, so that they name every command that is refused
+       (before, they named the nine of 17.5 and left the rest out), and they
+       add that deleting or renaming a branch counts too, which the hook also
+       refuses; a test reads the verbs out of the words and compares them with
+       the list, in both languages.
    - Hook refusals and run errors show in the person's language.
      - *How.* Every refusal of the guard is a `guard.Refusal`, a `str` (the
        English sentence addressed to the agent, as before) that also carries a
@@ -4494,7 +4522,9 @@ the check. This round closes that door and the cheaper ones beside it.
        拒绝了」, 「程序报告了一个错误」, 「这次运行没有成功」); the same holds for
        a run state the page does not know (「状态未知」). A raw code is never
        shown. `error.detail` stays under 「详情」 in the run's error, as before;
-       the engine no longer puts the code in the place of a missing detail.
+       the engine no longer puts the code in the place of a missing detail
+       (a Claude Code result with `is_error` and neither errors nor text fails
+       with its code and an empty detail, and the page shows no 「详情」).
    - `stderr.log` is capped as the event log is.
      - *How.* The program's standard error reaches the engine through a pipe
        and a thread copies it into `stderr.log` while the file stays within
