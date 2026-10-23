@@ -591,6 +591,27 @@ console.log(JSON.stringify({words:byClass('ws-tasks').textContent}));
     assert "我的改动，尚未提交" in out["words"]
 
 
+def test_the_open_documents_officialness_word_follows_a_proposal_sent_approved_and_synced():
+    """The same text can be read again under another word (DESIGN 18.3): 提议中 once 发送提议 is done, 已批准，待同步
+    once the PI approved, nothing once the sync made it official. The refresh after 发送提议 (a quiet re-read of the
+    open document, same revision) redraws the word beside the kind -- once, not added to -- and only that: the
+    writing area is the one on the page, not a new one."""
+    out = run(r"""
+const MINE={state:'mine',label:'我的改动，尚未提交'}, PROP={state:'proposed',label:'提议中'},
+      APPROVED={state:'approved',label:'已批准，待同步'}, OFFICIAL={state:'official'};
+const set=m=>{ listed.documents[0].officialness=m; docs['research/overview.md'].officialness=m; listed.tasks_officialness=m; };
+listed.mode='member'; set(MINE);
+await window.ROWorkspace.load(root);
+const area=byClass('ws-writing');
+const words=()=>byClass('ws-kind').querySelectorAll('.ws-officialness').map(e=>e.textContent);
+const seen=[words()];
+for (const m of [PROP, APPROVED, OFFICIAL, MINE]) { set(m); await window.ROWorkspace.load(root,true); seen.push(words()); }
+console.log(JSON.stringify({seen, sameArea: byClass('ws-writing')===area, kind: byClass('ws-kind').textContent}));
+""")
+    assert out["seen"] == [["我的改动，尚未提交"], ["提议中"], ["已批准，待同步"], [], ["我的改动，尚未提交"]]
+    assert out["sameArea"] is True and out["kind"].endswith("我的改动，尚未提交")
+
+
 # -- 项目首页 (DESIGN.md 18.3) ---------------------------------------------------------------------------------
 
 

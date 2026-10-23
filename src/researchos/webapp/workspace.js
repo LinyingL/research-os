@@ -343,9 +343,21 @@
       ui.rail.append(group);
     });
   }
-  function setDraft(doc) {
+  // The officialness words of a document: the engine's answer for it, or the list's.
+  function officialnessOf(doc) {
     const listed = data && (data.documents || []).find((item) => item.path === doc.path);
-    draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: doc.officialness || (listed && listed.officialness) || null };
+    return doc.officialness || (listed && listed.officialness) || null;
+  }
+  // The word beside the kind, drawn on its own: the same text can be read again under another word (提议中 once the
+  // proposal is sent, 已批准，待同步 once approved, none once synced), and what is typed must not be redrawn for it.
+  function drawOfficialness() {
+    if (!ui || !ui.kindLabel || !draft) return;
+    const old = ui.kindLabel.querySelector(".ws-officialness");
+    if (old) old.remove();
+    if (draft.officialness && draft.officialness.label) ui.kindLabel.append(el("span", "ws-officialness", draft.officialness.label));
+  }
+  function setDraft(doc) {
+    draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc) };
     saved = { title: draft.title, content: draft.content };
     renderEditor(); renderNav();
   }
@@ -361,7 +373,11 @@
         status(ui.docStatus, t("读取期间有新的输入，已保留当前文档。请再次选择要打开的文档。")); return;
       }
       if (quiet && !discard && documentDirty()) return;
-      if (quiet && draft && doc.path === draft.path && doc.revision === draft.revision) return;
+      if (quiet && draft && doc.path === draft.path && doc.revision === draft.revision) {
+        draft.officialness = officialnessOf(doc); // the same text: only its word may have moved
+        drawOfficialness();
+        return;
+      }
       setDraft(doc);
     } catch (err) {
       if (!live(mark) || token !== docRequest) return;
@@ -415,7 +431,7 @@
       else ui.text.focus();
     });
     previewToggle.setAttribute("aria-pressed", "false");
-    if (draft.officialness && draft.officialness.label) label.append(el("span", "ws-officialness", draft.officialness.label));
+    ui.kindLabel = label; drawOfficialness();
     tools.append(previewToggle, save); header.append(label, tools);
     const title = input("text", t("标题")); title.value = draft.title; title.disabled = !editable();
     title.className = "ws-title-input"; title.setAttribute("aria-label", t("标题"));
