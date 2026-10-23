@@ -1398,7 +1398,7 @@ REASONS = {
     "table_unreadable": ("尝试表无法读取：{error}", "The attempt table cannot be read: {error}"),
     "row_taken": ("正式版本的尝试表里已经有第 {n} 行", "The official attempt table already has row {n}"),
     "row_missing": ("正式版本的尝试表里没有第 {n} 行", "The official attempt table has no row {n}"),
-    "verdict_moved": ("第 {n} 行的结论或结果在正式版本里也改了", "Row {n}'s verdict or result also changed in the official version"),
+    "verdict_moved": ("第 {n} 行的研究判断或结果在正式版本里也改了", "Row {n}'s research assessment or result also changed in the official version"),
     "row_moved": ("第 {n} 行在提议之后，正式版本里也改了", "Row {n} also changed in the official version after the proposal"),
     "reason_required": (MESSAGES["reason_required"], "Abandoning a route needs both the result and the reason"),
     "version_missing": ("提议里缺少这个版本文件", "The proposal is missing this version file"),

@@ -38,6 +38,11 @@
   and 提议修改研究判断. A person's confirming or rejecting of a machine link is
   now 连线确认 ("Link judgments") on the node page, the 待复核 list and its
   count, the desk, the canvas link card and every notice about the record file.
+  The count in the top bar and the desk's line also hold the variable cards of a
+  changed script, so they say "N 项待复核" ("N items need review") and the list's
+  subtitle names the cards beside the links. 研究判断 is also the word where the
+  proposal's conflict line, the instruction sent to an agent, the 记录 panel, the
+  attempt form and `researchos history` said 结论 or 判决 ("verdict").
   Nothing on disk changes: `judgements.toml`, its header and the commands keep
   their names.
 - Settle the single words. 正式版本 is "Official version" on every screen (the
@@ -48,8 +53,10 @@
   outputs are 输出 where they were 产出. The page 成果 is now 图表与论断
   ("Figures and claims"): the sidebar, the page titles, the app's View menu and
   every sentence that names it. 项目首页's section for result documents is
-  "Result records" in English. Nothing on disk changes: the command name is
-  still `results`, and the header of `papers.toml` keeps its words.
+  "Result records" in English. A result document with no heading is titled
+  结果记录 ("Result record"), no longer the attempt cell's 结果 ("Result").
+  Nothing on disk changes: the command name is still `results`, and the header
+  of `papers.toml` keeps its words.
 - Stop calling two different things 笔记. What you write on an object (a script,
   a data file, an attempt, a figure) is 备注 ("Comment") on the node page as it
   already was in the route map's panel, and the node page now uses the panel's

@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from test_v9_language import CJK, FORBIDDEN, english_table, needs_node
+from test_v9_language import APP_HTML, CJK, FORBIDDEN, _node, english_table, needs_node
 
 DESIGN = Path(__file__).parents[1] / "DESIGN.md"
 
@@ -218,3 +218,60 @@ def test_the_comparison_tells_a_drifted_word_from_a_plural_and_skips_a_missing_k
     assert LISTED_WORD.findall('运行 (a run, and the button) "Run"; AI 执行 (history source) "By an agent"; '
                                '成员 as a role "Member"; PI stays "PI"') == [
         ("运行", "Run"), ("AI 执行", "By an agent"), ("成员", "Member")]
+
+
+# -- the engine's own sentences ----------------------------------------------------------------------------------
+
+
+def test_the_engines_sentences_call_an_attempts_cell_and_a_link_judgment_by_the_pages_words():
+    """The conflict line on a proposal's panel (proposals.REASONS) and the
+    instruction shown under 发给它的指示 (agents.brief.rules) are engine
+    sentences, so the key-based checks above never see them. An attempt's
+    verdict cell is 研究判断 / "research assessment" in both languages -- not 结论,
+    判决 or "verdict" -- and a person's confirming or rejecting of a machine
+    link is 连线确认 / "link judgment", not 连接. (The column header the
+    researcher writes in the attempt table is theirs and is not read here.)"""
+    from researchos import proposals
+    from researchos.agents import brief
+
+    zh, en = proposals.REASONS["verdict_moved"]
+    assert zh == "第 {n} 行的研究判断或结果在正式版本里也改了"
+    assert en == "Row {n}'s research assessment or result also changed in the official version"
+    for code, (reason_zh, reason_en) in proposals.REASONS.items():
+        assert "结论" not in reason_zh and "判决" not in reason_zh, code
+        assert "verdict" not in reason_en.lower(), code
+    prot = {"dirs": [".researchos", ".git"], "files": ["data/raw.csv", "research/attempts.md"], "data": ["data/raw.csv"],
+            "records": ["research/attempts.md"]}
+    for runner in ("claude-code", "opencode"):
+        text_zh, text_en = brief.rules(lang="zh", runner=runner, prot=prot), brief.rules(lang="en", runner=runner, prot=prot)
+        rule_zh = next(line for line in text_zh.splitlines() if line.startswith("1. "))
+        rule_en = next(line for line in text_en.splitlines() if line.startswith("1. "))
+        assert "研究判断" in rule_zh and "连线确认" in rule_zh and "判决" not in text_zh and "连接" not in text_zh
+        assert "research assessment" in rule_en and "link judgment" in rule_en and "verdict" not in text_en.lower()
+
+
+def test_history_says_research_assessment_where_an_attempts_assessment_did_not_change():
+    """`researchos history` words an attempt version that kept its cell as
+    研究判断不变, as the page's own words (12.13) do -- not 结论不变."""
+    from researchos import history
+
+    same = {"verdict": "现行", "result": "", "sha256": "a"}
+    assert history._attempt_change(same, dict(same))["summary"] == "研究判断不变（现行）"
+    assert history._attempt_change(same, dict(same), words=True)["summary"] == "研究判断不变（「现行」）"
+
+
+@needs_node
+def test_the_records_panel_and_the_attempt_form_call_the_verdict_cell_the_research_assessment():
+    """DESIGN 13.4 / 18.2: the 记录 panel lists the attempts record as 尝试的研究判断
+    and counts the rows that have one as 有研究判断 -- not 结论 -- and the attempt
+    form's label for the cell, where the project's header is missing, is 研究判断
+    too (app.html's own code, under node)."""
+    src = APP_HTML.read_text(encoding="utf-8")
+    start = src.index("const RECORD_KIND_WORDS = {")
+    kinds = src[start:src.index("const RECORD_ISSUE_WORDS", start)]
+    count = src[src.index("function recordCountText(row) {"):]
+    count = count[:count.index("\n}\n") + 3]
+    script = (kinds + count + "\nprocess.stdout.write(JSON.stringify([RECORD_KIND_WORDS.attempts, "
+              'recordCountText({ code: "attempts", facts: { state: "present", attempts: 7, with_verdict: 5 } })]));\n')
+    assert _node(script) == ["尝试的研究判断", "7 条尝试，其中 5 条有研究判断"]
+    assert 'config.columns.verdict || "研究判断"' in src and "结论" not in kinds + count

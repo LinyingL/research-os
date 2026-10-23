@@ -313,9 +313,9 @@
     "已被你后来的提议替代": "Replaced by your later proposal",
     "查看": "View",
     "复核": "Review",
-    "{n} 条连线确认的依据变了，等你复核。": {
-      one: "The basis of {n} link judgment changed; it awaits your review.",
-      other: "The basis of {n} link judgments changed; they await your review.",
+    "{n} 项的依据变了，等你复核。": {
+      one: "The basis of {n} item changed; it awaits your review.",
+      other: "The basis of {n} items changed; they await your review.",
     },
     // The first desk's block titles (13.4) and words of its rows that other pages show too; since
     // V10 the desk is the route map (14.5).
@@ -580,8 +580,8 @@
     "{relation}（人工标注）": "{relation} (drawn by hand)",
     // 待复核 (9.6), which the desk's column opens (14.4, 14.6): a judgment, its link and its
     // basis in words (app.html's judgment wording), the acts, the variable cards' part.
-    "{n} 条连线确认待复核": { one: "{n} link judgment needs review", other: "{n} link judgments need review" },
-    "查看证据变了的旧连线确认": "See the earlier link judgments whose evidence changed",
+    "{n} 项待复核": { one: "{n} item needs review", other: "{n} items need review" },
+    "查看依据变了的旧连线确认和变量卡": "See the earlier link judgments and variable cards whose basis changed",
     "确认": "Confirmed",
     "否决": "Rejected",
     "撤回": "Withdraw",
@@ -621,7 +621,7 @@
     "{when} · 补回文件里缺少的连线确认：{what}": "{when} · A link judgment the file was missing, put back: {what}",
     "{when} · 你{via}{what}": "{when} · {what} ({via})",
     "{when} · 你{what}": "{when} · {what}",
-    "证据变了的旧连线确认，等你再看一眼": "Earlier link judgments whose evidence changed, waiting for another look",
+    "依据变了的旧连线确认和变量卡，等你再看一眼": "Earlier link judgments and variable cards whose basis changed, waiting for another look",
     "本次扫描读到了两端，但没有得出这条关联": "This scan read both ends but did not find this link",
     "关联的一端不在本次扫描结果里": "One end of the link is not in this scan",
     "本次扫描没有给出依据": "This scan gave no basis",

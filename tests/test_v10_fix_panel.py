@@ -39,7 +39,7 @@ def _listener(pattern: str) -> str:
 
 @needs_node
 def test_14_3_the_frames_openers_ask_before_they_replace_a_half_typed_panel():
-    """A note half typed in #16's panel: the header's 「N 条连线确认待复核」 and
+    """A note half typed in #16's panel: the header's 「N 项待复核」 and
     the sidebar's 记录 ask first -- declined, #16 stays with its text;
     accepted, the review list (the records) opens. The same question as
     every opener inside the desk."""

@@ -2136,8 +2136,8 @@ async function loadProjectSummary(force) {
       btn.className = "review-count-btn line-part has";
       btn.id = "review-count";
       // 13.5: a plural in English, its thousands separated ("1,497"); the Chinese as it was.
-      btn.textContent = t("{n} 条连线确认待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
-      btn.title = t("查看证据变了的旧连线确认");
+      btn.textContent = t("{n} 项待复核", { n: uiLang() === "en" ? groupedNumber(data.review) : data.review });
+      btn.title = t("查看依据变了的旧连线确认和变量卡");
       btn.addEventListener("click", (e) => { e.stopPropagation(); if (mayReplacePanel()) openReviewPanel(null); });
       line.append(btn);
     }
@@ -4026,7 +4026,7 @@ function renderAttemptForm(mode, attemptId) {
     { key: "description", label: config.columns.description || "描述", multiline: true },
     { key: "variables", label: config.columns.variables || "变量", multiline: true },
     { key: "result", label: config.columns.result || "结果", multiline: true },
-    { key: "verdict", label: config.columns.verdict || "结论" },
+    { key: "verdict", label: config.columns.verdict || "研究判断" },
   ];
   defs.forEach((def) => {
     let input;
@@ -4405,7 +4405,7 @@ async function openReviewPanel(focus) {
   state.panelSubject = subject;
   panelTitle.textContent = t("待复核");
   panelTitle.title = "";
-  panelSubtitle.textContent = t("证据变了的旧连线确认，等你再看一眼");
+  panelSubtitle.textContent = t("依据变了的旧连线确认和变量卡，等你再看一眼");
   panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderReviewPanel(subject);
@@ -4647,7 +4647,7 @@ async function renderReviewPanel(subject) {
 const RECORD_KIND_WORDS = {
   judgements: "对机器连线的确认与否决",
   mappings: "手工连线与备注",
-  attempts: "尝试结论",
+  attempts: "尝试的研究判断",
   attempts_config: "尝试年表配置",
   canvas: "关系图位置",
   variables: "变量定义卡",
@@ -4676,7 +4676,7 @@ function recordCountText(row) {
       if (f.state === "present") return f.links + " 条手工连线，其中 " + f.with_note + " 条带备注";
       return f.state === "absent" ? "还没有" : "无法读取";
     case "attempts":
-      if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有结论";
+      if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有研究判断";
       return { not_configured: "还没有配置尝试年表", unusable: "年表配置无法使用", table_missing: "找不到年表" }[f.state] || "无法读取";
     case "attempts_config":
       return f.exists ? "已配置" : "没有";

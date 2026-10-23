@@ -214,7 +214,7 @@ def test_14_6_the_review_panel_the_desk_opens_reads_in_english():
     assert _chinese(lines) == []
     assert not [line for line in lines if FORBIDDEN.search(line)]
     for expected in (
-        "panel-title: Needs review", "panel-subtitle: Earlier link judgments whose evidence changed, waiting for another look",
+        "panel-title: Needs review", "panel-subtitle: Earlier link judgments and variable cards whose basis changed, waiting for another look",
         "review-link: 17-叙事.Rmd reads panel.csv", "review-reason: The basis changed",
         "review-was: Earlier link judgment: Confirmed · 2026-10-04 21:15", "review-note: Comment: 先看缺失值",
         "basis-col-title: The basis then", ": Calls: read.csv, read_dta", "basis-col-title: Now",
@@ -280,7 +280,9 @@ def test_14_6_an_act_and_a_refusal_in_the_review_panel_read_in_english():
 #: Moved on purpose by DESIGN.md 18.2 (task V14): a person's confirming or rejecting of a machine
 #: link is 连线确认 where the panel said 判断 (the subtitle, 原连线确认, the old-link buttons and notes,
 #: the quiet rows, the migrated label) -- checked by putting the old words back: the old digest.
-_REVIEW_ZH_SHA256 = "818b8de6f98792a1140c30734c809ea262781f65a83225fa73dc2c9925122e7f"
+#: Moved again for the finding that the count also holds variable cards: the subtitle reads
+#: 依据变了的旧连线确认和变量卡 (checked by putting the old subtitle back: the digest 818b8de6...).
+_REVIEW_ZH_SHA256 = "1cd7bd2c88e6a24ce863dc6aa89d0fe5cc224c283ebbed31454248de8d24ded9"
 
 
 @needs_node
@@ -300,11 +302,11 @@ def test_14_6_the_review_panel_in_chinese_reads_as_before():
 
 @needs_node
 @pytest.mark.parametrize("lang, said", [
-    ("en", ["1 link judgment needs review", "2 link judgments need review", "1,497 link judgments need review"]),
-    ("zh", ["1 条连线确认待复核", "2 条连线确认待复核", "1497 条连线确认待复核"]),
+    ("en", ["1 item needs review", "2 items need review", "1,497 items need review"]),
+    ("zh", ["1 项待复核", "2 项待复核", "1497 项待复核"]),
 ])
 def test_14_6_the_top_bars_review_count_has_a_singular_and_a_plural(lang, said):
-    """Ruled 2026-10-13: the header's 「N 条连线确认待复核」 is frame -- English in
+    """Ruled 2026-10-13: the header's 「N 项待复核」 is frame -- English in
     English mode with a singular and a plural and its thousands separated
     (13.5); the Chinese as before. app.html's own code for it, under node."""
     src = APP_HTML.read_text(encoding="utf-8")
@@ -318,3 +320,37 @@ def test_14_6_the_top_bars_review_count_has_a_singular_and_a_plural(lang, said):
               + chip + "line.append(btn);\n  }\n}\nprocess.stdout.write(JSON.stringify(said));\n")
     assert _node(script) == [["review-count-btn line-part has", text] for text in said]
 
+
+
+# -- the count that holds more than links ---------------------------------------------------------------
+
+
+def test_14_6_the_review_count_can_be_only_variable_cards_so_its_words_name_items_not_links(tmp_path):
+    """DESIGN.md 18.2: 连线确认 is a person's confirming or rejecting of a machine
+    link. A project with no link judgment to review and one script changed
+    under two variable cards still shows a 待复核 count of 1 (the engine adds
+    the cards' groups to the links), and its list holds only that group. So the
+    top bar, the desk's line and the panel's subtitle say 项 / items, and the
+    panel's subtitle names the variable cards beside the links."""
+    root = _two_on_one_script(tmp_path)
+    (root / "build.py").write_text((root / "build.py").read_text() + "df = df.dropna()\n")
+    ident = cards._identity_now(root)
+    conn = db.connect(index_db_path(ident.id))
+    try:
+        cards.apply_cards(conn, root, identity=ident)
+    finally:
+        conn.close()
+    with _serve(root) as base:
+        status, summary = _call(base + "/api/summary")
+        assert status == 200
+        status, review = _call(base + "/api/review")
+        assert status == 200
+    assert review["review"] == [] and review["cards"]["count"] == 1
+    assert summary["review"] == 1  # one item, and it is not a link
+    src = APP_HTML.read_text(encoding="utf-8")
+    chip = _app_slice(src, 'if (typeof data.review === "number" && data.review > 0) {', "line.append(btn);")
+    assert 't("{n} 项待复核"' in chip and "连线确认" not in chip.replace("查看依据变了的旧连线确认和变量卡", "")
+    subtitle = _app_slice(src, 'panelTitle.textContent = t("待复核");', "panelBody.innerHTML")
+    assert "变量卡" in subtitle and "旧连线确认" in subtitle
+    desk = (WEBAPP / "desk.js").read_text(encoding="utf-8")
+    assert 't("{n} 项的依据变了，等你复核。"' in desk and "条连线确认的依据变了" not in desk

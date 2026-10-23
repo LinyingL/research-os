@@ -72,8 +72,8 @@ def _root(value: str | Path) -> Path:
 
 
 def _title(kind: str, lang: str = "zh") -> str:
-    return ({"overview": "Research question and plan", "note": "Note", "result": "Result"}
-            if lang == "en" else {"overview": "研究问题与计划", "note": "笔记", "result": "结果"})[kind]
+    return ({"overview": "Research question and plan", "note": "Note", "result": "Result record"}
+            if lang == "en" else {"overview": "研究问题与计划", "note": "笔记", "result": "结果记录"})[kind]
 
 
 def _kind(rel: Any) -> str:

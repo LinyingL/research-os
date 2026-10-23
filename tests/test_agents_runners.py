@@ -799,11 +799,11 @@ def test_rules_language_of_the_report():
 
 def test_rules_commands_and_roles_in_plain_words():
     en = brief.rules(lang="en", runner="opencode", prot=PROT)
-    for word in ("verdict", "propose", "approve", "publish", "push", "commit", "stash", "tag", "existed before",
-                 "write new files", "tasks.json", "errand", "Never invent"):
+    for word in ("research assessment", "link judgment", "propose", "approve", "publish", "push", "commit", "stash", "tag",
+                 "existed before", "write new files", "tasks.json", "errand", "Never invent"):
         assert word.lower() in en.lower(), word
     zh = brief.rules(lang="zh", runner="opencode", prot=PROT)
-    for word in ("判决", "提议", "发布", "推送", "commit", "stash", "新文件", "tasks.json", "编造"):
+    for word in ("研究判断", "连线确认", "提议", "发布", "推送", "commit", "stash", "新文件", "tasks.json", "编造"):
         assert word in zh, word
 
 

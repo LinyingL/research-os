@@ -1454,7 +1454,7 @@ def _attempt_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = Fal
         la, lb = _verdict_word(va), _verdict_word(vb)
         parts = [f"研究判断从「{la}」改为「{lb}」" if old_v != new_v else f"研究判断不变（「{lb}」）"]
     else:
-        parts = [f"{old_v} → {new_v}" if old_v != new_v else f"结论不变（{new_v}）"]
+        parts = [f"{old_v} → {new_v}" if old_v != new_v else f"研究判断不变（{new_v}）"]
     if (va.get("result") or "") != (vb.get("result") or ""):
         parts.append(f"结果改为：{vb.get('result') or '（空）'}")
     return {"summary": "，".join(parts), "same": va.get("sha256") == vb.get("sha256")}

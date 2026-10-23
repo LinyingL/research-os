@@ -4615,11 +4615,19 @@ does not add.
 - **研究判断** stays as an attempt's verdict: "Research assessment". 13.4's
   row becomes 尝试 / 研究判断 / 结果, "Attempt / Research assessment /
   Result". Where 判断 means the attempt's (修改判断, 提议修改判断), it
-  becomes 研究判断.
+  becomes 研究判断. No other word names that cell: 结论 and 判决 (and "verdict") are
+  not used for it in the 记录 panel, the attempt form, a proposal's conflict line
+  (第 {n} 行的研究判断或结果在正式版本里也改了), the instruction an agent is sent, or
+  `researchos history`.
 - **连线确认** is a person's confirming or rejecting of a machine link,
   formerly 判断; English stays "Link judgments". The node page's section,
   its filters and every sentence that says 判断 for a link say 连线确认
   (for example 待复核的连线确认).
+  Where a count or a list may also hold a variable card (a script changed under
+  it), the word is 项: the top bar's 「N 项待复核」, the desk's 「N 项的依据变了，等你复核。」
+  and the panel's subtitle 「依据变了的旧连线确认和变量卡，等你再看一眼」. 连线确认 stays
+  where every item is a link: the empty note, the ledger notices and the node
+  page's tag.
 - **正式版本** "Official version", 12.2's word. The English "Published
   version" is retired: 发布 "Publish" is only the act. 官方的一份 becomes
   正式的一份, "official copy".
@@ -4632,6 +4640,8 @@ does not add.
   - **输出** "Outputs" is a script's outputs; 产出 becomes 输出.
   - **结果记录** "Result records" are documents in 项目首页. **结果**
     "Result" is the attempt's cell.
+    A result document with no heading is titled 结果记录 ("Result record"), as
+    its group is.
   - **研究路线** "Research routes" is the merged page (18.3); 工作台 "Desk"
     is retired.
 - **Other single words.** 本机 is "This Mac" everywhere. The experiment

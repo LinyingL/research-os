@@ -346,3 +346,20 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
         assert published["seq"] >= 2
         assert workspace.TASKS_PATH in proposals.manifest(drive.official)
         assert note["path"] in proposals.manifest(drive.official)
+
+
+def test_a_result_document_without_a_heading_is_titled_result_record_not_the_attempt_cells_word(root):
+    """DESIGN.md 18.2: 结果记录 / "Result record" is a document in 项目首页, 结果 /
+    "Result" the attempt's cell. A result document whose heading was deleted
+    (in the writing area, or by an agent) is listed and opened under the
+    document's word in both languages; a note keeps its own."""
+    result = _new(root, "result", "# Fit results\n\nIt worked.\n")
+    note = _new(root, "note", "# Reading list\n")
+    (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
+    (root / note["path"]).write_text("Only a thought.\n", encoding="utf-8")
+    assert workspace.document(root, result["path"], lang="en")["title"] == "Result record"
+    assert workspace.document(root, result["path"])["title"] == "结果记录"
+    assert workspace.document(root, note["path"], lang="en")["title"] == "Note"
+    assert workspace.document(root, note["path"])["title"] == "笔记"
+    listed = {doc["path"]: doc["title"] for doc in workspace.overview(root, lang="en")["documents"]}
+    assert listed[result["path"]] == "Result record" and listed[note["path"]] == "Note"

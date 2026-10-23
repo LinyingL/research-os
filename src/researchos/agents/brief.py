@@ -156,9 +156,9 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
              "commands the moment you call them; everything else is compared with the project after the run, "
              "listed as out of bounds, and can be undone. So do not do any of these things at all, whether "
              "or not a call is blocked."),
-            f"1. Make a judgment that belongs to the person: an attempt's verdict or result in {table_words}, "
-            "confirming or rejecting a link, confirming a variable definition, or anything inside "
-            "`.researchos/`.",
+            "1. Make a decision that belongs to the person: an attempt's research assessment or result in "
+            f"{table_words}, confirming or rejecting a machine-found link (a link judgment), confirming a "
+            "variable definition, or anything inside `.researchos/`.",
             "2. Act for the team: propose, approve or return a proposal, publish, sync, or push to GitHub.",
             "3. Change or delete a data file that existed before this run (.csv, .tsv, .xlsx, .xls, .parquet, "
             ".feather, .rds, .rdata, .dta, .sav, .json, .h5, .pkl, .sqlite, .db, .npy, .npz, .mat, "
@@ -196,8 +196,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         ("下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。" if hooked else
          "下面这些事绝对不能做。git 命令以及 `researchos`、`rce` 命令在你调用的那一刻就会被拦下；其余的事在运行结束后"
          "会与项目逐一比对，列为越界，并且可以被撤回。所以这些事根本不要做，不管某次调用有没有被拦下。"),
-        f"1. 不替人做判断：不要写尝试的判决或结果（{table_words}），不要确认或否定任何连接，"
-        "不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
+        f"1. 不替人做判断：不要写尝试的研究判断或结果（{table_words}），不要做连线确认"
+        "（确认或否决机器提取的连线），不要确认变量定义，也不要碰 `.researchos/` 里的任何东西。",
         "2. 不替团队行事：不要提议，不要批准或退回提议，不要发布、同步，也不要推送到 GitHub。",
         "3. 不修改、不删除运行开始前就存在的数据文件（.csv、.tsv、.xlsx、.xls、.parquet、.feather、.rds、"
         ".rdata、.dta、.sav、.json、.h5、.pkl、.sqlite、.db、.npy、.npz、.mat、.sas7bdat、.jsonl、.pickle；"

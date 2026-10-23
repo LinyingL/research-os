@@ -574,7 +574,7 @@
   function renderReview(host, review, byId) {
     if (!review || !review.count) return false;
     const sec = block(t("待复核"));
-    const sub = mk("p", "desk-sub", t("{n} 条连线确认的依据变了，等你复核。", { n: numberText(review.count) }));
+    const sub = mk("p", "desk-sub", t("{n} 项的依据变了，等你复核。", { n: numberText(review.count) }));
     sub.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
     sec.appendChild(sub);
     const ul = mk("ul", "desk-list");

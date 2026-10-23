@@ -1517,7 +1517,9 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 # UX copy: research assessment and official-version labels; behavior unchanged.
 #: Moved on purpose by DESIGN.md 18.2 (task V14): the 待复核 sentence says 连线确认 where it said
 #: 判断 (two rows) -- checked by putting the old word back: the old digest.
-_DESK_ZH_SHA256 = "e72502984be169ca567801f35931661f39fbdae57d681b2de87641f1cf2d7767"
+#: Moved again for the finding that the count also holds variable cards: the same sentence says
+#: 项 (「1497 项的依据变了」), not 连线确认 -- checked by putting the old sentence back: the digest e7250298...
+_DESK_ZH_SHA256 = "b096158f2637bdcff2bc7de4edfe0ba7a62a1015a4bd0db04bb2144280c4dda4"
 
 
 @needs_node
@@ -1528,7 +1530,7 @@ def test_13_8_the_desk_in_chinese_is_as_before(saved):
     desks = _desks(saved)
     assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
     assert desks[0][:2] == ["desk-column-title: 待办", "desk-title: 等你批准"]
-    assert "desk-sub: 1497 条连线确认的依据变了，等你复核。[desk-link]" in desks[0]
+    assert "desk-sub: 1497 项的依据变了，等你复核。[desk-link]" in desks[0]
     assert "desk-link strong: 加上连线：#18 源自 #17 (title: 在路线图上标出它涉及的尝试)" in desks[0]
 
 
@@ -1552,7 +1554,7 @@ def test_13_7_the_desk_in_english():
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
         "(title: Mark the attempts it touches on the route map)",
-        "desk-title: Needs review", "desk-sub: The basis of 1,497 link judgments changed; they await your review.[desk-link]",
+        "desk-title: Needs review", "desk-sub: The basis of 1,497 items changed; they await your review.[desk-link]",
         "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark this attempt on the route map)",
         ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
         "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
@@ -1593,7 +1595,7 @@ def test_13_7_the_desk_in_english():
     assert "desk-alone: This project is not connected to a shared folder: proposals and sync cannot be shown" in desks[6]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
     assert "desk-alone: The members file (team.toml) cannot be read right now, so who the PI is cannot be told" in desks[8]
-    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 link judgment changed; it awaits your review.[desk-link]"]
+    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 item changed; it awaits your review.[desk-link]"]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
 
 
