@@ -4581,7 +4581,8 @@ does not add.
   - **研究路线** "Research routes" is the merged page (18.3); 工作台 "Desk"
     is retired.
 - **Other single words.** 本机 is "This Mac" everywhere. The experiment
-  node kind is 运行记录 "Run record"; 实验 and 实验记录 leave the interface.
+  node kind is 实验 "Experiment" everywhere; 实验记录 and "Run record" leave
+  the interface (运行记录 is an agent run's log, 17.9).
 - **The five English words** follow the page, not the 2026-10-12 table:
   - 改动与备注: "Changes and comments" (above);
   - 连线确认: "Link judgments";
