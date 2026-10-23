@@ -1080,7 +1080,9 @@ class AgentManager:
     def _copy_stderr(self, act: _Active, pipe: Any, log: Any) -> None:
         """Copy the program's standard error into `stderr.log` (`log`, open for appending) while the file stays
         within `STDERR_LIMIT`, the cap of `events.jsonl` (18.1 item 6). What does not fit is dropped and the run is
-        marked `stderr_truncated`, as `events_truncated` marks the events. The pipe is read to its end whatever
+        marked `stderr_truncated`, as `events_truncated` marks the events. The last `STDERR_TAIL_BYTES` the program
+        wrote are kept in memory and, when the cap was hit, left in `stderr.tail` at the end: the cap keeps the
+        beginning, but what the person looks for is how the program died. The pipe is read to its end whatever
         happens, so that a chatty program is never stopped by a full pipe. Closes both."""
         written = 0
         try:
@@ -1088,6 +1090,7 @@ class AgentManager:
         except (OSError, ValueError):
             pass
         out, truncated = log, False  # `out` becomes None when the file can no longer be written
+        tail = bytearray()
         try:
             fd = pipe.fileno()
             while True:
@@ -1097,6 +1100,8 @@ class AgentManager:
                     break
                 if not chunk:
                     break
+                tail += chunk
+                del tail[:-STDERR_TAIL_BYTES]
                 if out is None or truncated:
                     continue
                 room = max(0, run_store.STDERR_LIMIT - written)
@@ -1114,6 +1119,9 @@ class AgentManager:
         except (OSError, ValueError):
             pass
         finally:
+            if truncated:
+                with contextlib.suppress(Exception):
+                    (run_store.run_dir(act.project_id, act.run_id) / "stderr.tail").write_bytes(bytes(tail))
             for handle in (log, pipe):
                 with contextlib.suppress(Exception):
                     if handle is not None:
@@ -1540,7 +1548,10 @@ class AgentManager:
             steps=steps, steps_total=total, changes=run.get("changes") or {}, violations=run.get("violations") or [],
             instruction=_read_text(rd / "instruction.txt"),
             refusals=run_store.read_lines(rd / "refusals.jsonl", tail_bytes=REFUSALS_TAIL_BYTES),
-            stderr_tail=_read_text(rd / "stderr.log", STDERR_TAIL_BYTES, tail=True),
+            # a log cut at its cap holds the program's first words; its last ones are in `stderr.tail` (18.1 item 6)
+            stderr_tail=((_read_text(rd / "stderr.tail", STDERR_TAIL_BYTES, tail=True)
+                          if run.get("stderr_truncated") else "")
+                         or _read_text(rd / "stderr.log", STDERR_TAIL_BYTES, tail=True)),
             error=run.get("error"), message=run.get("message"), summary=run.get("summary"),
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
@@ -1573,18 +1584,20 @@ class AgentManager:
             steps[-1]["code"] = code
         if state not in run_store.ACTIVE_STATES and not (steps and steps[-1]["kind"] == "end"):
             en = _lang(run.get("lang")) == "en"
+            end_code: str | None = None
             if outcome == "stopped":
-                text = "Stopped by the person." if en else "已被你停止。"
-            elif outcome == "interrupted":
+                # no sentence in the language the run began in: the page words the code in the person's language
+                text, end_code = "", "stopped"
+            elif error and (code or outcome != "interrupted"):
+                text, end_code = str(error.get("detail") or ""), code  # the code is never the text: the page words it
+            elif outcome == "interrupted":  # an old record with no error: the only case that keeps a sentence of ours
                 text = ("Interrupted: Research OS was closed while the run was going." if en
                         else "已中断：运行期间 Research OS 被关闭了。")
-            elif error:
-                text = str(error.get("detail") or "")  # the code is never the text: the page words it
             else:
                 text = (run.get("summary") or "").strip() or ("Ended." if en else "已结束。")
             end = {"kind": "end", "text": " ".join(text.split())[:runners.STEP_TEXT_LIMIT], "tool": None}
-            if code and error and outcome not in ("stopped", "interrupted"):
-                end["code"] = code
+            if end_code:
+                end["code"] = end_code
             steps.append(end)
         total = len(steps)
         return steps[-STEPS_LIMIT:], total

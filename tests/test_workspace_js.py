@@ -1880,6 +1880,45 @@ def test_a_refusal_and_an_error_in_the_log_read_in_english_with_no_chinese():
     assert not re.search(r"[㐀-鿿]", out["words"] + out["top"])
 
 
+END_STEPS_SETUP = r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const run=mkRun({state:'failed',can_reply:true,error:{code:'internal',detail:'OSError: [Errno 28] No space left on device'}});
+setRuns([run]);
+runLogs[run.id]=Object.assign(clone(run),{steps:[
+  {kind:'end',text:'OSError: [Errno 28] No space left on device',tool:null,code:'internal'},
+  {kind:'end',text:'',tool:null,code:'stopped'},
+  {kind:'end',text:'Research OS was closed while the run was going',tool:null,code:'shutdown'},
+  {kind:'end',text:'Research OS stopped while the run was going',tool:null,code:'engine_gone'}],
+  steps_total:4,changes:{created:[],modified:[],deleted:[],by_person:[]},violations:[],instruction:'',stderr_tail:'',refusals:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(LOG,byClass('ws-agent')).click();await sleepTick();
+const d=byClass('ws-run-details');
+const rows=d.all().filter(e=>e.classList.contains('ws-step')).map(li=>({
+  text:li.all().filter(e=>e.classList.contains('ws-step-text')).map(e=>e.textContent)[0],
+  detail:li.all().filter(e=>e.tagName==='PRE').map(e=>e.textContent)[0]||null}));
+console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error').textContent}));
+"""
+
+
+def test_an_internal_error_is_worded_generally_and_a_stopped_or_interrupted_end_is_told_by_its_code():
+    """18.1 item 6: `internal` is also the code of a crash before the program started, so it does not say the output was
+    being read. The engine-written end of a stopped or interrupted run carries a code and the page words it."""
+    out = run(END_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    assert out["top"].startswith("Research OS 在运行中出了错。") and "读取程序的输出" not in out["words"] + out["top"]
+    assert [r["text"] for r in out["rows"]] == [
+        "Research OS 在运行中出了错。", "运行已被你停止。", "运行期间 Research OS 被关闭了。", "运行期间 Research OS 退出了。"]
+    assert [r["detail"] for r in out["rows"]] == [
+        "OSError: [Errno 28] No space left on device", None,  # a stopped run has no words of the engine's under it
+        "Research OS was closed while the run was going", "Research OS stopped while the run was going"]
+    english = run(END_STEPS_SETUP.replace("LOG", "'Run log'"), lang="en")
+    assert english["top"].startswith("Research OS ran into an internal error during the run.")
+    assert [r["text"] for r in english["rows"]] == [
+        "Research OS ran into an internal error during the run.", "The run was stopped by you.",
+        "Research OS was closed while the run was going.", "Research OS quit while the run was going."]
+    assert "reading" not in english["words"] + english["top"]
+    assert not re.search(r"[㐀-鿿]", english["words"] + english["top"])
+
+
 def _table_words(name: str) -> dict[str, str]:
     script = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
     table = re.search(r"const " + name + r" = \{(.*?)\n  \};", script, re.S).group(1)
@@ -1895,7 +1934,8 @@ def test_every_code_the_engine_can_attach_has_a_sentence_in_both_languages():
     steps = _table_words("STEP_WORDS")
     assert set(steps) == set(guard.REFUSAL_CODES) | {"permission_rule", "tool_unavailable", "mcp_failed"}
     errors = _table_words("ERROR_WORDS")
-    assert {"internal", "error_max_turns", "error_during_execution", "error_max_budget_usd", "guard_failed"} <= set(errors)
+    assert {"internal", "error_max_turns", "error_during_execution", "error_max_budget_usd", "guard_failed",
+            "shutdown", "engine_gone", "stopped"} <= set(errors)  # the last three: the codes of an end the engine writes
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     for sentence in [*steps.values(), *errors.values(), "这一步被拒绝了。", "程序报告了一个错误。", "这次运行没有成功。", "状态未知"]:
         match = re.search(r'"' + re.escape(sentence) + r'":\s*"([^"]+)"', i18n)

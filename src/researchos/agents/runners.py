@@ -75,8 +75,10 @@ AGENT_TOOLS = ("researchos_complete_task", "researchos_ask", "researchos_save_no
                "researchos_find", "researchos_trace", "researchos_status")
 CLAUDE_ALLOWED = ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "Bash",
                   "WebFetch", "WebSearch", "TodoWrite", "Task", "mcp__researchos")
-GIT_DENIED = ("push", "commit", "reset", "rebase", "merge", "checkout", "switch", "restore", "stash", "clean",
-              "tag", "cherry-pick", "revert")
+#: The git verbs both programs are denied: the hook's own list (`guard.GIT_MUTATING`, 17.5 rule 4), so that Claude
+#: Code's deny list, OpenCode's patterns (which are all OpenCode has: it has no hook) and the hook cannot drift apart
+#: (18.1 item 6). Sorted, so that the generated lists are the same on every start.
+GIT_DENIED = tuple(sorted(guard.GIT_MUTATING))
 CLAUDE_DISALLOWED = tuple(f"Bash(git {c}:*)" for c in GIT_DENIED) + ("Bash(researchos:*)", "Bash(rce:*)")
 #: Inherited variables that would join a Claude Code session (CLAUDE_CODE_REMOTE_SESSION_ID
 #: is the one that makes a child adopt its parent's id), reach a parent's messaging channel, or
@@ -296,18 +298,21 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
 
 
 #: What may follow a git verb that has to be a word of its own in an OpenCode denial pattern (`*git * push<end>`):
-#: the end of the command, a space, and the characters a shell ends a word with. `|` and `)` are left out on
-#: purpose: they are special characters of a regular expression, and only `*` is relied on in a pattern. So
-#: `git add clean_data.py` is not `git clean`, and `bash -c 'git -C . push'` still is.
-GIT_VERB_ENDS = ("", " *", "\n*", ";*", "&*", "`*", "'*", '"*')
+#: the end of the command, a space, and the characters a shell ends a word with, among them the `>` and `<` of a
+#: redirect written with no space (`git -C . push>/dev/null`: OpenCode matches the whole redirected statement) and a
+#: tab. `|` and `)` are left out on purpose, and only `*` is relied on in a pattern: a matcher that does not escape
+#: them reads `|` as an alternative, which would make the pattern match every command. The installed OpenCode
+#: splits a command into its parts and matches each, so `git -C . push|cat` and `(git -C . push)` are caught by
+#: the part `git -C . push`. So `git add clean_data.py` is not `git clean`, and `bash -c 'git -C . push'` still is.
+GIT_VERB_ENDS = ("", " *", "\t*", "\n*", ";*", "&*", ">*", "<*", "`*", "'*", '"*')
 
 
 def opencode_git_patterns(command: str) -> list[str]:
     """The `permission.bash` patterns (`*` is the only wildcard) that deny the git verb `command`: a command that
     has `git` and the verb as separate words, wherever the `git` is in it (18.1 item 6): `git push`,
     `/usr/bin/git push`, `env git push`, `cd x && git commit`, and with git's own options between,
-    `git -C . push`, `git -c a=b commit -m x`. A harmless command that also has both words, such as
-    `git log --grep push`, is refused too: the accepted cost."""
+    `git -C . push`, `git -c a=b commit -m x`, and a redirect with no space, `git -C . push>/dev/null`. A harmless
+    command that also has both words, such as `git log --grep push`, is refused too: the accepted cost."""
     return [f"*git {command}*"] + [f"*git * {command}{end}" for end in GIT_VERB_ENDS]
 
 
@@ -550,7 +555,9 @@ class ClaudeStream:
         self.result_text = text if isinstance(text, str) else None
         errors = [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
                   for e in event.get("errors") or () if e]
-        shown = (self.result_text or "").strip() or "; ".join(errors) or str(event.get("subtype") or "")
+        # the subtype (`success`, `error_max_turns`) is a code, never a sentence for the person: a run that stopped
+        # with no closing words ends with no text, and a failed one gets its code from the manager (18.1 item 6)
+        shown = (self.result_text or "").strip() or "; ".join(errors)
         said = next((st["text"] for st in reversed(self.steps) if st["kind"] == "say"), None)
         if said is not None and _flat(shown, STEP_TEXT_LIMIT) == said:
             shown = ""  # the final answer was just shown as what it said: the end needs no second copy

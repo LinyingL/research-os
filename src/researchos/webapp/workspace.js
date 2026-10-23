@@ -652,13 +652,14 @@
     backup_deleted: "删除了 Research OS 的备份",
     agent_settings_changed: "改动了 Claude Code 或 OpenCode 在项目里的设置（.claude、.opencode、opencode.json）",
   };
+  // A run's error code, and the code of an end step the engine writes (`stopped` is no error: it words a stopped run).
   const ERROR_WORDS = {
     timeout: "运行超过了时间限制，已被停止。", shutdown: "运行期间 Research OS 被关闭了。", engine_gone: "运行期间 Research OS 退出了。",
     aborted: "程序在给出结果之前就结束了。", exit: "程序异常退出。", model_error: "模型返回了错误。", start_failed: "程序没能启动。",
     check_failed: "运行结束后核对改动时出了错，改动清单可能不完整。", error_max_budget_usd: "费用达到了上限。",
     guard_failed: "Research OS 的检查程序没有正常启动，为了安全没有运行。",
-    internal: "Research OS 在读取程序的输出时出了错。", error_max_turns: "达到了最多可以走的步数。",
-    error_during_execution: "程序在运行中出了错。",
+    internal: "Research OS 在运行中出了错。", error_max_turns: "达到了最多可以走的步数。",
+    error_during_execution: "程序在运行中出了错。", stopped: "运行已被你停止。",
   };
   // A step of the run log that carries a code (18.1 item 6): why the hook (or the program's own permission rules)
   // refused a call, and an error the engine knows. The person reads the sentence; the program's own words stay

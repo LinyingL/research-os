@@ -728,6 +728,7 @@ def test_shutdown_interrupts_every_run_and_refuses_new_ones(scene: Scene):
     scene.manager.shutdown()  # idempotent
     run = scene.run(started["id"])
     assert run["state"] == "interrupted" and run["error"]["code"] == "shutdown"
+    assert scene.manager.detail(scene.pid, started["id"])["steps"][-1]["code"] == "shutdown"  # the log ends with the code
     assert wait_gone(pid)
     assert "partial.txt" in run["changes"]["created"] and run["revertible"] is True  # it can still be undone
     assert codes(scene.manager.start, scene.root, scene.pid, "t1", by=None, by_name=None, lang="en") == "start_failed"
@@ -944,7 +945,7 @@ def test_a_stopped_or_failed_run_that_went_out_of_bounds_still_says_so_first(sce
     detail = scene.manager.detail(scene.pid, run["id"])
     assert detail["state"] == "out_of_bounds" and detail["outcome"] == run["outcome"]
     if how == "stop":
-        assert detail["steps"][-1]["text"] == "Stopped by the person."  # the log still says how it ended
+        assert detail["steps"][-1] == {"kind": "end", "text": "", "tool": None, "code": "stopped"}  # the log still says how it ended
     else:
         assert detail["error"]
 
@@ -1446,6 +1447,7 @@ def test_stale_running_run_is_marked_interrupted_with_its_changes(scene: Scene):
     assert listing["active"] is None
     (item,) = listing["runs"]
     assert item["state"] == "interrupted" and item["error"]["code"] == "engine_gone" and item["can_stop"] is False
+    assert scene.manager.detail(scene.pid, run["id"])["steps"][-1]["code"] == "engine_gone"
     stored = scene.run(run["id"])
     assert stored["ended"] and stored["changes"]["created"] == ["made_by_agent.txt"] and stored["revertible"] is True
     assert item["can_revert"] is True
@@ -2506,9 +2508,27 @@ def test_an_end_the_engine_adds_says_the_programs_words_and_the_code_never_stand
     run_store.update_run(scene.pid, died["id"], error={"code": "error_something_new"})
     end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
     assert end == {"kind": "end", "text": "", "tool": None, "code": "error_something_new"}
-    # a stopped run keeps its own sentence, in the language of the run (these runs are English)
+    # a stopped run's end has the code `stopped` and no sentence of ours: the page words it in the person's language,
+    # not in the language the run began in
     run_store.update_run(scene.pid, died["id"], state="stopped", error=None)
-    assert scene.manager.detail(scene.pid, died["id"])["steps"][-1] == {"kind": "end", "text": "Stopped by the person.", "tool": None}
+    assert scene.manager.detail(scene.pid, died["id"])["steps"][-1] == {"kind": "end", "text": "", "tool": None, "code": "stopped"}
+
+
+@pytest.mark.parametrize("lang", ["en", "zh"])
+@pytest.mark.parametrize("code", ["shutdown", "engine_gone"])
+def test_the_end_of_an_interrupted_run_has_the_code_of_its_error_in_either_language(scene: Scene, code, lang):
+    """18.1 item 6: a run that failed or was interrupted ends its log with the code of its error. An interrupted run has no
+    result event, so the engine writes the end: with the code, and the error's detail (the engine's own words) as the
+    text, whatever language the run began in."""
+    died = scene.go([init_step(), {"op": "say", "text": "hmm"}, {"op": "exit", "code": 3}])  # no result event
+    detail_text = "Research OS was closed while the run was going"
+    run_store.update_run(scene.pid, died["id"], state="interrupted", lang=lang, error={"code": code, "detail": detail_text})
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end == {"kind": "end", "text": detail_text, "tool": None, "code": code}
+    # an old record that has no error keeps the sentence in the run's language, with no code
+    run_store.update_run(scene.pid, died["id"], error=None)
+    end = scene.manager.detail(scene.pid, died["id"])["steps"][-1]
+    assert end["kind"] == "end" and "code" not in end and end["text"].startswith("Interrupted:" if lang == "en" else "已中断")
 
 
 def test_stderr_log_is_capped_as_the_event_log_is(scene: Scene, monkeypatch):
@@ -2524,10 +2544,30 @@ def test_stderr_log_is_capped_as_the_event_log_is(scene: Scene, monkeypatch):
     assert len(detail["stderr_tail"].encode()) <= manager.STDERR_TAIL_BYTES
 
 
+def test_a_capped_stderr_shows_how_the_program_ended_not_where_the_cap_fell(scene: Scene, monkeypatch):
+    """18.1 item 6: the log keeps the beginning, but the page's `stderr_tail` is the program's last words: a program that
+    prints a great deal of warnings and then dies with `fatal: out of memory` shows that, not the cap's 4 KB."""
+    monkeypatch.setattr(run_store, "STDERR_LIMIT", 600)
+    steps = ([init_step()] + [{"op": "stderr", "text": "warning " * 20} for _ in range(40)]  # 6.6 KB, over the 600 bytes
+             + [{"op": "stderr", "text": "fatal: out of memory"}, finish_step()])
+    run = scene.go(steps)
+    rd = run_store.run_dir(scene.pid, run["id"])
+    assert (rd / "stderr.log").stat().st_size == 600 and run["stderr_truncated"] is True  # the cap itself is as before
+    assert (rd / "stderr.log").read_text().startswith("warning warning")
+    tail = scene.manager.detail(scene.pid, run["id"])["stderr_tail"]
+    assert tail.endswith("fatal: out of memory\n") and len(tail.encode()) == manager.STDERR_TAIL_BYTES
+    assert tail.encode() == (rd / "stderr.tail").read_bytes()  # the last 4096 bytes the program wrote, not a byte more
+    # if the sidecar is gone (an engine that died before it was written), the log's own end is the best there is
+    (rd / "stderr.tail").unlink()
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_tail"] == (rd / "stderr.log").read_text()[-manager.STDERR_TAIL_BYTES:]
+
+
 def test_stderr_under_the_cap_is_whole_and_unmarked(scene: Scene):
     run = scene.go([init_step(), {"op": "stderr", "text": "one"}, {"op": "stderr", "text": "two"}, finish_step()])
     rd = run_store.run_dir(scene.pid, run["id"])
     assert (rd / "stderr.log").read_text() == "one\ntwo\n" and not run.get("stderr_truncated")
+    assert not (rd / "stderr.tail").exists()  # only a log that was cut has a second file
+    assert scene.manager.detail(scene.pid, run["id"])["stderr_tail"] == "one\ntwo\n"
     assert scene.manager.detail(scene.pid, run["id"])["stderr_truncated"] is False
     assert run_store.STDERR_LIMIT == run_store.EVENTS_LIMIT  # the same cap
 

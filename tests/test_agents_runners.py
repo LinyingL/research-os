@@ -275,6 +275,16 @@ def test_claude_denials_cover_git_and_researchos():
                                         "researchos_find", "researchos_trace", "researchos_status"}
 
 
+def test_both_programs_are_denied_the_verbs_the_hook_refuses():
+    """18.1 item 6: one list. Claude Code's deny list, OpenCode's patterns and the hook (`guard.GIT_MUTATING`) cannot
+    drift: OpenCode has no hook, so its patterns are all that keep it from `git pull` or `git update-ref`."""
+    assert set(runners.GIT_DENIED) == set(guard.GIT_MUTATING) and len(runners.GIT_DENIED) == len(guard.GIT_MUTATING)
+    for verb in ("pull", "am", "update-ref", "filter-branch", "replace"):  # once missing from the programs' lists
+        assert verb in runners.GIT_DENIED and f"Bash(git {verb}:*)" in runners.CLAUDE_DISALLOWED
+    assert set(runners.CLAUDE_DISALLOWED) == {f"Bash(git {c}:*)" for c in guard.GIT_MUTATING} | {
+        "Bash(researchos:*)", "Bash(rce:*)"}
+
+
 def test_claude_env_and_files(tmp_path, profiles_mod):
     launch, a = _claude(tmp_path, profiles_mod)
     assert "CLAUDE_CODE_REMOTE_SESSION_ID" not in launch.env and launch.env["RESEARCHOS_AGENT_RUN"] == RUN_ID
@@ -517,6 +527,25 @@ def test_claude_stream_error_results():
     assert st.session_id == "6a1a94a9"
     assert runners.outcome("claude-code", 1, st) == ("failed", {
         "code": "error_during_execution", "detail": "No conversation found with session ID: 6a1a94a9"})
+
+
+def test_claude_end_with_no_words_has_no_text_never_the_subtype():
+    """18.1 item 6: `success` and `error_max_turns` are codes, not sentences. A run that stops after a tool call with no
+    closing sentence ends with no text; the page words a failed one by the code the manager attaches."""
+    ok = runners.ClaudeStream()
+    steps = _feed(ok, [CLAUDE_INIT, CLAUDE_MCP_CALL,
+                       '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"%s"}' % SID])
+    assert steps[-1] == {"kind": "end", "text": "", "tool": None}
+    assert runners.outcome("claude-code", 0, ok) == ("ok", None)
+
+    for line in ('{"type":"result","subtype":"success","is_error":false,"session_id":"%s"}' % SID,
+                 '{"type":"result","subtype":"success","is_error":false,"result":null,"errors":[],"session_id":"%s"}' % SID):
+        assert _feed(runners.ClaudeStream(), [line])[-1] == {"kind": "end", "text": "", "tool": None}
+
+    failed = runners.ClaudeStream()
+    steps = _feed(failed, ['{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"%s"}' % SID])
+    assert steps[-1] == {"kind": "end", "text": "", "tool": None}  # the manager gives it the code `error_max_turns`
+    assert runners.outcome("claude-code", 1, failed)[1]["code"] == "error_max_turns"
 
 
 def test_claude_stream_tolerates_garbage():
@@ -1051,10 +1080,17 @@ def test_opencode_denies_a_command_with_git_and_a_verb_as_separate_words(tmp_pat
                     "bash -c 'git push'", "bash -c 'git -C . push'", 'sh -c "cd x && git -C . commit"',
                     "git -C . push; echo done", "git -C . push&& echo done", "git -C . push\necho done",
                     "echo `git -C . stash`", "cd x\ngit checkout main", "git  push", "git -C . cherry-pick abc",
-                    "/usr/bin/git switch main", "git revert HEAD", "git restore .", "cd p && git --no-pager tag v2"):
+                    "/usr/bin/git switch main", "git revert HEAD", "git restore .", "cd p && git --no-pager tag v2",
+                    # the verbs the hook refuses too (they were missing from OpenCode's patterns)
+                    "git pull", "git -C . pull --rebase", "git update-ref -d refs/heads/x", "git am x.patch",
+                    "git filter-branch --all", "git replace a b", "cd x && git -C . pull", "env git am x.patch",
+                    # a redirect written with no space, and a tab after the verb: OpenCode matches the whole statement
+                    "git -C . push>/dev/null", "git -C . commit>x", "git -C . commit>x -m y", "git -C . push</dev/null",
+                    "git --no-pager -C . reset>/dev/null", "git -C . push\tfoo", "git push>/dev/null"):
         assert decide(command) == "deny", command
     for command in runners.GIT_DENIED:
         assert decide(f"/usr/local/bin/git {command}") == decide(f"env git -C . {command}") == "deny", command
+        assert decide(f"git -C . {command}>/dev/null") == decide(f"git -C . {command}\targ") == "deny", command
 
 
 def test_opencode_still_allows_what_has_no_git_verb(tmp_path):
@@ -1063,7 +1099,9 @@ def test_opencode_still_allows_what_has_no_git_verb(tmp_path):
                     "git diff merge_panels.py", "git show HEAD:tags.csv", "git log --oneline -5", "git describe --tags",
                     "git -C . diff restore.py", "git blame commit_log.R", "git remote -v", "git ls-files",
                     "ls", "python x.py", "python make_tag.py", "echo pushing the limits", "grep -rn merge analysis/",
-                    "cat .gitignore", "pip install gitpython", "Rscript clean.R", "make clean"):
+                    "cat .gitignore", "pip install gitpython", "Rscript clean.R", "make clean",
+                    "git diff replace.py", "git log --oneline > pulled.txt", "git add amend_notes.md",
+                    "git diff >restore.py", "git status>status.txt", "git ls-files | grep tag_"):
         assert decide(command) == "allow", command
 
 
@@ -1071,7 +1109,7 @@ def test_opencode_git_patterns_use_only_the_star_wildcard(tmp_path):
     """Nothing but `*` is relied on in a pattern: no `?`, `[`, `|`, `)` or `.` that a regular expression or a glob
     could read as more than itself."""
     _decide, bash = _opencode_decide(tmp_path)
-    allowed = set("abcdefghijklmnopqrstuvwxyz-* ;&`'\"\n")
+    allowed = set("abcdefghijklmnopqrstuvwxyz-* ;&<>\t`'\"\n")  # `<` and `>` are no special character of a regular expression
     for command in runners.GIT_DENIED:
         patterns = runners.opencode_git_patterns(command)
         assert len(patterns) == len(set(patterns)) and all(bash[p] == "deny" for p in patterns)

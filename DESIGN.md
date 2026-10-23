@@ -4449,12 +4449,23 @@ the check. This round closes that door and the cheaper ones beside it.
        `runners.opencode_git_patterns` in `permission.bash`: `*git <verb>*`
        (the verb right after `git`, as before) and `*git * <verb><end>` (git's
        own options between), where `<end>` is the end of the command, a space,
-       or one of newline, `;`, `&`, a backtick, `'` and `"`. The verb must be a
+       or one of tab, newline, `;`, `&`, `>`, `<`, a backtick, `'` and `"`
+       (`>` and `<`: OpenCode matches a redirected statement as a whole, so
+       `git -C . push>/dev/null` has to end its verb there). The verb must be a
        word of its own: `git add clean_data.py` and `git describe --tags` pass,
        `/usr/bin/git push`, `env git push`, `cd x && git commit`, `git -C . push` and
-       `bash -c 'git -C . push'` do not. Only `*` is used: `|` and `)`, which a
-       regular expression reads as more than themselves, are not, so
-       `git -C . push|cat` and `(git -C . push)` are not caught by these.
+       `bash -c 'git -C . push'` do not. Only `*` is used: `|` and `)` are left
+       out, because a matcher that does not escape them reads `|` as an
+       alternative and the pattern would match every command. The installed
+       OpenCode splits a command into its parts and matches each, so
+       `git -C . push|cat` and `(git -C . push)` are caught through the part
+       `git -C . push`.
+     - *One list.* `runners.GIT_DENIED` is `guard.GIT_MUTATING`, sorted: the
+       hook (rule 4's nine verbs, and `cherry-pick`, `revert`, `switch`,
+       `restore`, `pull`, `am`, `filter-branch`, `update-ref` and `replace`),
+       Claude Code's `--disallowedTools` and OpenCode's patterns (which are
+       all OpenCode has: it has no hook) cannot drift apart, and a test says
+       so. Before this, OpenCode could `git pull` or `git update-ref`.
    - Hook refusals and run errors show in the person's language.
      - *How.* Every refusal of the guard is a `guard.Refusal`, a `str` (the
        English sentence addressed to the agent, as before) that also carries a
@@ -4467,8 +4478,15 @@ the check. This round closes that door and the cheaper ones beside it.
        a step `code` (only when there is one): the hook's, `permission_rule`
        (Claude Code's deny list, OpenCode's rule or rejection),
        `tool_unavailable` and `mcp_failed`. The end of a run that failed or was
-       interrupted gets the code of its error (`run.error.code`). A step's
-       `text` stays the program's or the engine's own words.
+       interrupted gets the code of its error (`run.error.code`), also when
+       the engine writes that end itself (an interrupted run has no result
+       event) and then the error's detail is its text, never a sentence in the
+       language the run began in; the engine-written end of a stopped run has
+       the code `stopped` and no text. A step's `text` stays the program's or
+       the engine's own words. Claude Code's end text is the result text or
+       its errors; the result's `subtype` (`success`, `error_max_turns`) is a
+       code, never the text, so a run that stops with no closing sentence ends
+       with no text.
      - The page tells a refused step, an error step and a failed end by their
        code in the person's language (`t()`), and puts `text` beneath it as
        the detail (「详情」 "Details"). A code the page does not know, a refusal
@@ -4485,6 +4503,17 @@ the check. This round closes that door and the cheaper ones beside it.
        as `events_truncated` marks the events, and the pipe is read to its end
        all the same, so that a program that writes a great deal is never held
        up. The page shows neither mark.
+     - *The end is kept.* The cap keeps the beginning, but what the person
+       looks for in 「程序的错误输出」 is how the program died. The thread
+       also holds the last `STDERR_TAIL_BYTES` (4096) the program wrote and,
+       when the cap was hit, leaves them in `stderr.tail` when standard error
+       ends. The detail's `stderr_tail` is that file for a run marked
+       `stderr_truncated` (else the end of `stderr.log`, which is also what
+       it falls back on if the file is not there, say after an engine that
+       died first). `stderr.log` itself stays at the cap.
+   - `internal`, the code of any crash of the run's thread (writing the run's
+     files before the program starts, taking the pictures, reading the
+     output), is worded for all of them: 「Research OS 在运行中出了错。」
    - When the engine starts, runs of every registered project that were
      left preparing or running are recovered at once, not only when that
      project's runs are listed. A process still alive that is verifiably

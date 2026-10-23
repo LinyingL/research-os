@@ -2196,7 +2196,8 @@ def test_the_added_suffixes_are_data_for_the_walk_the_hook_and_the_after_run_che
 def test_package_json_and_package_lock_are_not_data_in_any_folder(tmp_path):
     exempt = ["package.json", "package-lock.json", "web/package.json", "web/sub/package-lock.json",
               "up/Package.JSON", "up/PACKAGE-LOCK.json"]
-    data = ["packages.json", "my-package.json", "web/package.jsonl", "web/package-lock.json.csv", "settings.json"]
+    data = ["packages.json", "my-package.json", "web/package.jsonl", "web/package-lock.json.csv", "settings.json",
+            "npm-shrinkwrap.json"]  # exactly the two names are exempt (18.1 item 6): a dataset of that name is not
     root = _project(tmp_path / "proj", {rel: "{}" for rel in exempt + data})
     picture = snapshot.take(root)
     assert set(picture["data"]) == set(data)
