@@ -269,9 +269,12 @@ Endpoints (all GET unless noted):
     GET  /api/citations -- the 「文献」 view (11.4): per draft, its citations
                             and how each resolves, candidates with the
                             links 确认 / 否决 write through /api/judgements;
+                            also the project reference library and abstracts;
                             see `researchos.webapp.literature_api`.
     POST /api/citations/lookup-setting -- `{"on": bool}`: 「用 DOI 联网查文献
                             信息」, Research OS's own setting; nothing is asked here.
+    POST /api/literature/abstract -- `{"doi": str}`: fetch/cache one abstract
+                            from Crossref, only when DOI lookup is enabled.
     POST /api/settings/language -- `{"language": "zh"|"en"}` (DESIGN.md
                             13.2, 13.3): the switch beside 记录 and 停止服务
                             saves this Mac's interface language
@@ -1917,6 +1920,8 @@ def literature_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
     try:
         if path == "/api/citations/lookup-setting":
             return literature_api.lookup_setting_payload(body)
+        if path == "/api/literature/abstract":
+            return literature_api.abstract_payload(body)
         if path == "/api/zotero/open-attachment":
             return literature_api.open_attachment_payload(body, open_external)
         return literature_api.open_item_payload(body, open_external)
@@ -4346,7 +4351,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/github/push":
                 # 11.3 「推送」: the only request that pushes; never forced.
                 self._send_json(200, github_push_payload(self._served(), self._read_json_object(), lang=self._lang()))
-            elif parsed.path in ("/api/citations/lookup-setting", "/api/zotero/open-attachment", "/api/zotero/open-item"):
+            elif parsed.path in ("/api/citations/lookup-setting", "/api/literature/abstract",
+                                 "/api/zotero/open-attachment", "/api/zotero/open-item"):
                 # 11.4: the 「文献」 view's setting and its two openers; a
                 # judgment on a candidate is POST /api/judgements.
                 self._send_json(200, literature_post(parsed.path, self._read_json_object()))

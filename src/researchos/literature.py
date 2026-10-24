@@ -37,8 +37,9 @@ under the Research OS home, `doi_online_lookup`; 「用 DOI 联网查文献信�
 `researchos citations lookup --on`). Only then does `lookup_dois` ask
 `https://api.crossref.org/works/<doi>` -- the DOI in the URL and nothing
 else: no email, no user agent naming anyone, no draft text. Answers are
-cached under the Research OS home with the date (`doi-cache.json`); a cached DOI
-is never asked again. A failure (no network, a timeout, a 404, an answer
+cached under the Research OS home with the date (`doi-cache.json`). Scans reuse
+cached DOIs; an explicit abstract request can upgrade an older cache entry
+that predates abstract support. A failure (no network, a timeout, a 404, an answer
 that does not parse) is not cached: it is asked again on a later scan,
 never recorded as "not found". After a failure of the network itself the
 remaining DOIs of that scan are not asked (each would wait out its own
@@ -63,6 +64,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -288,6 +290,7 @@ class ZoteroItem:
     venue: str | None
     doi: str | None
     attachments: tuple[ZoteroAttachment, ...] = ()
+    abstract: str | None = None
 
     def metadata(self) -> dict[str, Any]:
         """A reference node's attrs (11.4): what the library says."""
@@ -300,6 +303,7 @@ class ZoteroItem:
             "doi": self.doi,
             "zotero_key": self.key,
             "attachments": [a.payload() for a in self.attachments],
+            "abstract": self.abstract,
         }
 
 
@@ -407,6 +411,7 @@ def _read_items(conn: sqlite3.Connection, data_dir: Path) -> list[ZoteroItem]:
             creators=tuple(name for _o, name, _t in people), first_creator=first,
             year=_year_of(f.get("date")), venue=venue, doi=dois[0][2] if dois else None,
             attachments=tuple(attachments.get(item_id, [])),
+            abstract=abstract_text(f.get("abstractNote")),
         ))
     return sorted(items, key=lambda i: i.key)
 
@@ -663,6 +668,42 @@ def _first_text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+class _AbstractText(HTMLParser):
+    """Read publisher JATS/HTML as text; never send markup to the page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        name = tag.split(":")[-1]
+        if name in ("script", "style"):
+            self.hidden += 1
+        elif name in ("p", "br", "title", "sec"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        name = tag.split(":")[-1]
+        if name in ("script", "style"):
+            self.hidden = max(0, self.hidden - 1)
+        elif name in ("p", "title", "sec"):
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def abstract_text(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parser = _AbstractText()
+    parser.feed(value[:100_000])
+    lines = [" ".join(line.split()) for line in "".join(parser.parts).splitlines()]
+    return "\n\n".join(line for line in lines if line)[:30_000] or None
+
+
 def parse_crossref(body: bytes) -> dict[str, Any]:
     """A Crossref `works` answer as a reference node's attrs; raises
     `LookupFailed` when it does not parse."""
@@ -689,7 +730,28 @@ def parse_crossref(body: bytes) -> dict[str, Any]:
         "authors": authors,
         "year": year,
         "venue": _first_text(message.get("container-title")) or _first_text(message.get("publisher")),
+        "abstract": abstract_text(message.get("abstract")),
     }
+
+
+def lookup_abstract(doi: str) -> dict[str, Any]:
+    """Explicit single-DOI lookup, including upgrading a pre-abstract cache.
+
+    A missing abstract is cached as None. Network failures are not cached.
+    Reading the literature view itself never calls this function.
+    """
+    prior = cached(doi)
+    if prior is not None and "abstract" in prior:
+        return prior
+    if not doi_lookup_enabled():
+        raise LookupFailed("DOI lookup is disabled")
+    meta = parse_crossref(FETCH(crossref_url(doi), TIMEOUT_S))
+    meta["fetched"] = date.today().isoformat()
+    cache = _read_json(cache_path())
+    cache[doi] = {**(prior or {}), **{k: v for k, v in meta.items() if v is not None},
+                  "abstract": meta["abstract"]}
+    _write_json(cache_path(), cache)
+    return cache[doi]
 
 
 def lookup_dois(dois: Iterable[str], *, today: date | None = None) -> dict[str, dict[str, Any]]:

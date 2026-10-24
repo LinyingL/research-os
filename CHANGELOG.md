@@ -19,6 +19,11 @@
 
 ### Research routes and interface
 
+- Browse project references by title, author, and year, with a reading pane for
+  abstracts. Read BibTeX and references CSV/JSON exports, enrich matching DOIs
+  from Zotero, and keep citation checking in its own tab. Fetch missing abstracts
+  from Crossref on request when online DOI lookup is enabled; cache the result
+  locally and distinguish an unavailable abstract from a failed request.
 - Resize the shared file and detail panel by dragging its left edge. Keep its
   width on this device, support keyboard adjustment, and reset on double-click.
 - Combine the route map and grouped attempt list into one Research routes page,

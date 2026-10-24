@@ -1218,6 +1218,30 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-hint { font-size: 0.76rem; color: var(--ink-soft); }
 .lit-quiet { font-size: 0.8rem; color: var(--ink-soft); margin: 0.3rem 0 1rem; }
 .lit-quiet-file { font-family: var(--font-mono); font-size: 0.78rem; padding: 0.1rem 0; word-break: break-all; }
+.lit-tabs { display: flex; gap: 1rem; border-bottom: 1px solid var(--line); margin-bottom: 1.2rem; }
+.lit-tab { font: inherit; color: var(--ink-soft); border: 0; border-bottom: 2px solid transparent; background: none; padding: 0.4rem 0; cursor: pointer; }
+.lit-tab.active { color: var(--ink); border-bottom-color: var(--clay); }
+.lit-library-tools { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.lit-search { width: min(100%, 420px); box-sizing: border-box; font: inherit; font-size: 0.86rem; padding: 0.5rem 0.6rem; color: var(--ink); background: var(--paper-alt); border: 1px solid var(--line-strong); border-radius: 0; }
+.lit-search:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+.lit-library-grid { display: grid; grid-template-columns: minmax(230px, 34%) minmax(0, 1fr); gap: 1.8rem; align-items: start; }
+.lit-library-list { max-height: 72vh; overflow-y: auto; border-right: 1px solid var(--line); padding-right: 0.8rem; }
+.lit-library-item { display: block; width: 100%; box-sizing: border-box; font: inherit; text-align: left; color: var(--ink); background: none; border: 0; border-left: 2px solid transparent; border-bottom: 1px solid var(--line); padding: 0.8rem; cursor: pointer; }
+.lit-library-item:hover, .lit-library-item.active { background: var(--paper-alt); }
+.lit-library-item.active { border-left-color: var(--clay); }
+.lit-library-item-title { display: block; font-family: var(--font-serif); line-height: 1.5; overflow-wrap: anywhere; }
+.lit-library-meta { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 0.35rem; overflow-wrap: anywhere; }
+.lit-reader { min-width: 0; }
+.lit-reader h2 { font-family: var(--font-serif); font-weight: normal; font-size: 1.4rem; line-height: 1.5; margin: 0 0 0.6rem; overflow-wrap: anywhere; }
+.lit-reader h3 { font-weight: normal; font-size: 1rem; margin: 1.5rem 0 0.7rem; }
+.lit-abstract { white-space: pre-wrap; line-height: 1.8; overflow-wrap: anywhere; margin: 0 0 0.7rem; }
+.lit-reader-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; margin: 1rem 0; }
+.lit-reader-sources { margin-top: 1.5rem; font-size: 0.8rem; color: var(--ink-soft); }
+.lit-reader-sources button { display: block; overflow-wrap: anywhere; text-align: left; margin-top: 0.5rem; }
+@media (max-width: 850px) {
+  .lit-library-grid { grid-template-columns: minmax(0, 1fr); }
+  .lit-library-list { max-height: 32vh; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
+}
 
 /* 研究路线, 提议, 成员 (DESIGN.md 12.3, 12.4, 12.9; V8 U4, team.js): weight
    and space carry the hierarchy (12.11); labels are quiet tints. */
@@ -2983,6 +3007,9 @@ async function reloadAllViews(opts) {
   litState.data = null;
   litState.open.clear();
   litState.quiet = false;
+  litState.tab = "library";
+  litState.query = "";
+  litState.selected = null;
   varState.card = null;
   varState.version = null;
   varState.asking = null;
@@ -5902,6 +5929,9 @@ const litState = {
   data: null,
   open: new Set(),   // drafts shown opened, kept across re-renders
   quiet: false,      // the drafts without citations, shown
+  tab: "library",
+  query: "",
+  selected: null,
 };
 
 async function loadLiteratureView() {
@@ -5930,6 +5960,143 @@ async function loadLiteratureView() {
 }
 
 function renderLiterature(host, data) {
+  const tabs = mk("div", "lit-tabs");
+  [["library", t("文献列表")], ["citations", t("引用核对")]].forEach(([id, label]) => {
+    const button = mkButton(label, "lit-tab" + (litState.tab === id ? " active" : ""), () => {
+      litState.tab = id;
+      host.replaceChildren();
+      renderLiterature(host, data);
+    });
+    button.setAttribute("aria-pressed", String(litState.tab === id));
+    tabs.appendChild(button);
+  });
+  host.appendChild(tabs);
+  if (litState.tab === "citations") renderCitationAudit(host, data);
+  else renderLiteratureLibrary(host, data);
+}
+
+function renderLiteratureLibrary(host, data) {
+  const library = data.library || {};
+  const items = library.items || [];
+  const tools = mk("div", "lit-library-tools");
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "lit-search";
+  search.placeholder = t("搜索标题、作者、年份或 DOI");
+  search.setAttribute("aria-label", search.placeholder);
+  search.value = litState.query;
+  const count = mk("span", "lit-hint");
+  tools.append(search, count);
+  host.appendChild(tools);
+  const grid = mk("div", "lit-library-grid");
+  const list = mk("div", "lit-library-list");
+  list.setAttribute("aria-label", t("文献列表"));
+  const reader = mk("article", "lit-reader");
+  grid.append(list, reader);
+  host.appendChild(grid);
+  let shown = 100;
+  function fill() {
+    const scroll = list.scrollTop;
+    const query = search.value.trim().toLocaleLowerCase();
+    litState.query = search.value;
+    const found = items.filter((item) => [item.title, ...(item.authors || []), item.year, item.doi, item.venue]
+      .filter(Boolean).join(" ").toLocaleLowerCase().includes(query));
+    count.textContent = t("{n} 篇文献", { n: found.length });
+    list.replaceChildren();
+    reader.replaceChildren();
+    if (!found.length) {
+      reader.appendChild(mk("p", "empty-note", items.length ? t("没有匹配的文献。") : t("还没有项目文献。可在项目中加入 BibTeX 或 references.csv / references.json，再重新扫描。")));
+      return;
+    }
+    if (!found.some((item) => item.id === litState.selected)) litState.selected = found[0].id;
+    const selected = found.find((item) => item.id === litState.selected);
+    found.slice(0, shown).forEach((item) => {
+      const active = item.id === litState.selected;
+      const button = mkButton("", "lit-library-item" + (active ? " active" : ""), () => {
+        litState.selected = item.id;
+        fill();
+      });
+      button.setAttribute("aria-pressed", String(active));
+      button.append(mk("span", "lit-library-item-title", item.title || item.doi),
+        mk("span", "lit-library-meta", [...(item.authors || []).slice(0, 3), item.year].filter(Boolean).join(" · ")));
+      list.appendChild(button);
+    });
+    if (found.length > shown) list.appendChild(mkButton(t("显示更多"), "btn btn-small", () => { shown += 100; fill(); }));
+    list.scrollTop = scroll;
+    renderLiteratureReader(reader, selected, data);
+  }
+  search.addEventListener("input", () => { shown = 100; fill(); });
+  fill();
+  if ((library.warnings || []).length) {
+    const warning = mk("details", "lit-reader-sources");
+    warning.appendChild(mk("summary", null, t("部分文献文件未能读取")));
+    library.warnings.forEach((item) => warning.appendChild(mk("p", null, item.file + ": " + item.detail)));
+    host.appendChild(warning);
+  }
+  const setting = mk("details", "lit-reader-sources");
+  setting.appendChild(mk("summary", null, t("联网查询设置")));
+  setting.appendChild(renderLookupSetting(data.lookup || {}));
+  host.appendChild(setting);
+}
+
+function renderLiteratureReader(host, item, data) {
+  host.appendChild(mk("h2", null, item.title || item.doi));
+  host.appendChild(mk("p", "lit-library-meta", [...(item.authors || []), item.year, item.venue].filter(Boolean).join(" · ")));
+  const actions = mk("div", "lit-reader-actions");
+  const status = mk("div", "notice-status");
+  if (item.doi_url) {
+    const a = mk("a", "lit-link", t("打开 DOI"));
+    a.href = item.doi_url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    actions.appendChild(a);
+  }
+  if (item.pdf) actions.appendChild(mkButton(t("打开 PDF"), "lit-link-btn", () =>
+    litOpen("/api/zotero/open-attachment", { item_key: item.pdf.item_key, attachment_key: item.pdf.attachment_key }, status, t("没能打开这个 PDF"))));
+  if (item.zotero_url && data.zotero && data.zotero.installed) actions.appendChild(mkButton(t("在 Zotero 中打开"), "lit-link-btn", () =>
+    litOpen("/api/zotero/open-item", { item_key: item.zotero_key }, status, t("没能在 Zotero 中打开"))));
+  if (item.node) actions.appendChild(mkButton(t("关联与引用"), "lit-link-btn", () => RONode.openNode(item.node)));
+  host.append(actions, status, mk("h3", null, t("摘要")));
+  if (item.abstract) {
+    host.appendChild(mk("p", "lit-abstract", item.abstract));
+    if (item.abstract_source) host.appendChild(mk("p", "lit-hint", t("摘要来源：{source}", { source: item.abstract_source })));
+  } else {
+    host.appendChild(mk("p", "lit-hint", item.abstract_checked ? t("Crossref 未提供这篇文献的摘要。") : t("该条目尚无摘要。")));
+    if (item.doi && !item.abstract_checked) {
+      const button = mkButton(t("获取摘要"), "btn btn-small", async () => {
+        const epoch = state.dataEpoch;
+        button.disabled = true;
+        setStatus(status, "", t("正在获取摘要…"));
+        try {
+          const result = await apiPost("/api/literature/abstract", { doi: item.doi });
+          if (epoch !== state.dataEpoch) return;
+          item.abstract = result.abstract;
+          item.abstract_source = result.abstract ? result.source : null;
+          item.abstract_checked = true;
+          if (litState.selected === item.id && currentView === "literature" && host.isConnected) {
+            host.replaceChildren();
+            renderLiteratureReader(host, item, data);
+          }
+        } catch (err) {
+          if (epoch !== state.dataEpoch || !host.isConnected) return;
+          button.disabled = false;
+          setStatus(status, "err", t("没能获取摘要"), err);
+        }
+      });
+      button.disabled = !(data.lookup && data.lookup.enabled);
+      host.appendChild(button);
+      if (button.disabled) host.appendChild(mk("p", "lit-hint", t("开启下方的联网查询后，可按 DOI 获取摘要。")));
+    }
+  }
+  if ((item.files || []).length) {
+    const sources = mk("details", "lit-reader-sources");
+    sources.appendChild(mk("summary", null, t("项目中的文献文件")));
+    item.files.forEach((file) => sources.appendChild(mkButton(file, "lit-link-btn", () => openFilePanel(file))));
+    host.appendChild(sources);
+  }
+}
+
+function renderCitationAudit(host, data) {
   // The page title above says 文献 (12.9); the view starts with its content.
   host.appendChild(renderLookupSetting(data.lookup || {}));
   const zline = mk("p", "lit-zotero", litZoteroText(data.zotero));
@@ -6000,22 +6167,30 @@ function renderLookupSetting(lookup) {
   input.type = "checkbox";
   input.id = "lit-lookup";
   input.checked = !!lookup.enabled;
-  label.append(input, mk("span", null, "用 DOI 联网查文献信息"));
+  label.append(input, mk("span", null, t("用 DOI 联网查文献信息")));
   box.appendChild(label);
-  box.appendChild(mk("div", "lit-setting-note", "只发送 DOI，不发送文稿内容。打开后，下次扫描时向 Crossref 查询还没有描述的 DOI，结果保存在本机。"));
+  box.appendChild(mk("div", "lit-setting-note", t("只发送 DOI，不发送文稿内容。打开后，下次扫描时向 Crossref 查询还没有描述的 DOI，结果保存在本机。")));
   const status = mk("div", "notice-status");
   box.appendChild(status);
   input.addEventListener("change", async () => {
+    const epoch = state.dataEpoch;
     const wanted = input.checked;
     input.disabled = true;
-    setStatus(status, "", "正在保存…");
+    setStatus(status, "", t("正在保存…"));
     try {
       const res = await apiPost("/api/citations/lookup-setting", { on: wanted });
+      if (epoch !== state.dataEpoch) return;
       input.checked = !!(res && res.lookup && res.lookup.enabled);
-      setStatus(status, "ok", input.checked ? "已打开：下次扫描时查询" : "已关闭：不会联网查询");
+      if (litState.data) litState.data.lookup = res.lookup;
+      setStatus(status, "ok", input.checked ? t("已打开：下次扫描时查询") : t("已关闭：不会联网查询"));
+      if (litState.tab === "library" && currentView === "literature" && litState.data) {
+        views.literature.replaceChildren();
+        renderLiterature(views.literature, litState.data);
+      }
     } catch (err) {
+      if (epoch !== state.dataEpoch) return;
       input.checked = !wanted;
-      setStatus(status, "err", "没能保存这个设置", err);
+      setStatus(status, "err", t("没能保存这个设置"), err);
     }
     input.disabled = false;
   });

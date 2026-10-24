@@ -13,6 +13,8 @@ task V7 phase D). Routed by `researchos.webapp.server`, whose handler runs
                                          (a machine setting under the Research OS home;
                                          nothing is asked here, the next scan
                                          asks, and only the DOIs)
+    POST /api/literature/abstract        {doi} -- fetch/cache a missing abstract
+                                         when online DOI lookup is enabled
     POST /api/zotero/open-attachment     {item_key, attachment_key?} -- 「打开 PDF」
     POST /api/zotero/open-item           {item_key} -- 「在 Zotero 中打开」
 
@@ -46,7 +48,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable
 
-from researchos import literature
+from researchos import bibliography, literature
 from researchos.ingest import citations as citations_ingest
 from researchos.ingest import scan as scan_mod
 
@@ -149,7 +151,31 @@ def citations_payload(conn: Connection, root: Path) -> dict[str, Any]:
                 t["pdf"] = _pdf_of(t)
     rep["scanned"] = _citations_ran(conn)
     rep["zotero"]["installed"] = literature.zotero_installed()
+    rep["library"] = bibliography.catalog(conn, root, rep, library)
+    for item in rep["library"]["items"]:
+        item["doi_url"] = doi_url(item["doi"]) if item.get("doi") else None
+        key = item.get("zotero_key")
+        item["zotero_url"] = literature.zotero_select_url(key) if literature.valid_zotero_key(key) else None
+        item["pdf"] = _pdf_of(item)
     return rep
+
+
+def abstract_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """Explicit metadata lookup; only the chosen DOI leaves this Mac."""
+    doi = body.get("doi")
+    if not isinstance(doi, str) or len(doi) > 2048:
+        raise LiteratureRefused("bad_doi", 400, "DOI 格式不正确", "expected a DOI string")
+    doi = literature.normalize_doi(doi)
+    found = literature.find_dois(doi)
+    if len(found) != 1 or found[0] != (0, len(doi), doi):
+        raise LiteratureRefused("bad_doi", 400, "DOI 格式不正确", "expected one complete DOI")
+    if not literature.doi_lookup_enabled():
+        raise LiteratureRefused("lookup_off", 409, "请先开启 DOI 联网查询", "DOI lookup is disabled")
+    try:
+        meta = literature.lookup_abstract(doi)
+    except (literature.LookupFailed, OSError) as exc:
+        raise LiteratureRefused("lookup_failed", 502, "暂时无法获取摘要，请稍后重试", str(exc)) from exc
+    return {"doi": doi, "abstract": meta.get("abstract"), "source": "Crossref", "checked": True}
 
 
 def lookup_setting_payload(body: dict[str, Any]) -> dict[str, Any]:
