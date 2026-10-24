@@ -137,6 +137,9 @@
 .ws-agent-add .btn { margin-bottom: .1rem; }
 .ws-agent-item { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; padding: .2rem 0; border-bottom: 1px solid var(--line); font-size: .84rem; }
 .ws-agent-item .btn { margin-left: auto; }
+.ws-agent-item .ws-field { margin: 0; min-width: 8rem; }
+.ws-agent-effort { flex: 0 1 10rem; }
+.ws-agent-add .ws-agent-effort .ws-field { margin: 0; }
 .ws-install { display: flex; flex-direction: column; gap: .25rem; margin: .3rem 0; }
 .ws-install-cmd { display: block; padding: .35rem .6rem; background: var(--paper); border: 1px solid var(--line); overflow-x: auto; white-space: pre; }
 @media (max-width: 700px) {

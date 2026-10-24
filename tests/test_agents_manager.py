@@ -478,6 +478,26 @@ def test_a_program_that_never_reads_its_input_is_fine(scene: Scene):
 # -- the other states --------------------------------------------------------------------------------------
 
 
+def test_reasoning_effort_is_frozen_for_run_and_continuation(scene: Scene):
+    model = "claude-sonnet-5-5"
+    scene.write_tasks([{"id": "t1", "text": "Check the sample", "owner": "agent:claude-code:" + model}])
+    profiles.set_agents([{"runner": "claude-code", "model": model, "reasoning_effort": "max"}])
+    scene.scenario([init_step(), {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
+    first = scene.wait(scene.start()["id"])
+    assert first["state"] == "needs_input"
+    assert first["reasoning_effort"] == "max"
+    profiles.set_agents([{"runner": "claude-code", "model": model, "reasoning_effort": "low"}])
+    scene.scenario(COMPLETE)
+    second = scene.wait(scene.manager.reply(scene.root, scene.pid, first["id"], "Use sample A",
+                                           by="m-1", by_name="Lin", lang="en")["id"])
+    assert second["state"] == "done" and second["reasoning_effort"] == "max"
+    assert second["session_id"] == first["session_id"]
+    assert scene.manager.detail(scene.pid, second["id"])["reasoning_effort"] == "max"
+    for call in scene.calls():
+        assert call["argv"][call["argv"].index("--effort") + 1] == "max"
+    assert profiles.reasoning_effort(labels.Agent("claude-code", model)) == "low"
+
+
 def test_needs_input_then_answer_then_send_back(scene: Scene):
     scene.scenario([init_step(), {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
     first = scene.wait(scene.start()["id"])

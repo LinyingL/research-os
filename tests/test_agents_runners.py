@@ -132,6 +132,30 @@ def test_codex_launch_isolated_config_exact_version_and_targeted_resume(tmp_path
     assert resumed.argv[resumed.argv.index("--model") + 1] == "gpt-5.5"
 
 
+def test_reasoning_settings_reach_each_runner_without_changing_its_policy(tmp_path):
+    common = dict(root=tmp_path, run_dir=tmp_path / "run", run_id="r-test", session_id=None,
+                  prompt="Check the sample", home=str(tmp_path / "home"), base_env={})
+    codex = runners.codex_launch(program="/bin/codex", model="gpt-6.1-sol", reasoning_effort="max", **common)
+    config = tomllib.loads("\n".join(codex.argv[i+1] for i, v in enumerate(codex.argv) if v == "-c"))
+    assert config["model_reasoning_effort"] == "max"
+    assert config["approval_policy"] == "never" and config["sandbox_mode"] == "workspace-write"
+    claude = runners.claude_launch(program="/bin/claude", model="claude-sonnet-5-5", reasoning_effort="xhigh",
+                                  resume=False, rules="Rules", max_budget_usd=None,
+                                  **dict(common, session_id="test-session", base_env={"CLAUDE_CODE_EFFORT_LEVEL": "low"}))
+    assert claude.argv[claude.argv.index("--effort") + 1] == "xhigh"
+    assert claude.env["CLAUDE_CODE_EFFORT_LEVEL"] == "xhigh"
+    for level in (None, "off", "low", "high", "max"):
+        harness = runners.harness_launch(program="/bin/dsh", model="deepseek-official/deepseek-flash",
+                                         reasoning_effort=level, **common)
+        selection = next(row["config"] for row in json.loads(harness.files["harness.patch.yml"])
+                         if row.get("id") == "agent-default-model")
+        assert selection.get("reasoningEffort") == level
+        assert ("reasoningEffort" in selection) == (level is not None)
+    with pytest.raises(ValueError):
+        runners.harness_launch(program="/bin/dsh", model="deepseek-official/deepseek-flash",
+                               reasoning_effort="medium", **common)
+
+
 def test_codex_stream_records_tools_and_requires_completed_turn():
     stream = runners.CodexStream()
     events = [

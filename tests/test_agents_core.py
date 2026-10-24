@@ -82,6 +82,44 @@ def test_codex_catalog_filters_hidden_models_and_preserves_full_ids(tmp_path):
     assert profiles.codex_models(str(binary)) == ["gpt-6.1-sol", "gpt-5.5"]
 
 
+def test_reasoning_effort_is_saved_separately_from_agent_identity(monkeypatch):
+    from researchos.agents import reasoning
+
+    monkeypatch.setattr(profiles, "find", lambda *a, **kw: profiles.Found("codex", "/test/codex", None, None))
+    monkeypatch.setattr(profiles, "codex_model_catalog", lambda path: {"gpt-6.1-sol": ["low", "max"]})
+    entries = [
+        {"runner": "claude-code", "model": "claude-opus-4-6", "reasoning_effort": "max"},
+        {"runner": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "max"},
+        {"runner": "deepseek-harness", "model": "deepseek-official/deepseek-flash", "reasoning_effort": "off"},
+    ]
+    profiles.set_agents(entries)
+    assert _settings()["agents"] == entries
+    assert [profiles.reasoning_effort(a) for a in profiles.agents()] == ["max", "max", "off"]
+    assert [labels.parse_owner(a.owner) for a in profiles.agents()] == profiles.agents()
+    before = _settings()
+    for runner, model, level in (("claude-code", "claude-opus-4-6", "xhigh"),
+                                 ("claude-code", "claude-haiku-4-5-20251001", "high"),
+                                 ("codex", "gpt-6.1-sol", "high"),
+                                 ("deepseek-harness", "deepseek-official/deepseek-flash", "medium"),
+                                 ("opencode", "local/model", "high"),
+                                 ("codex", "gpt-6.1-sol", "--help")):
+        with pytest.raises(ValueError):
+            profiles.set_agents([{"runner": runner, "model": model, "reasoning_effort": level}])
+        assert _settings() == before
+    assert reasoning.known_levels("claude-code", "claude-sonnet-5-5") == ("low", "medium", "high", "xhigh", "max")
+    profiles.set_agents([dict(item, reasoning_effort=None) for item in entries])
+    assert all(profiles.reasoning_effort(a) is None for a in profiles.agents())
+    assert all("reasoning_effort" not in item for item in _settings()["agents"])
+
+
+def test_codex_catalog_retains_only_advertised_valid_efforts(tmp_path):
+    data = {"models": [{"slug": "test-model", "supported_reasoning_levels": [
+        {"effort": "low"}, {"effort": "ultra"}, {"effort": "low"}, {"effort": "--help"}, None,
+    ]}, {"slug": "hidden", "visibility": "hide", "supported_reasoning_levels": [{"effort": "high"}]}]}
+    binary = _script(tmp_path / "codex", f"print({json.dumps(data)!r})\n")
+    assert profiles.codex_model_catalog(str(binary)) == {"test-model": ["low", "ultra"]}
+
+
 @pytest.mark.parametrize("output", ["not json", "[]", '{"models": {}}'])
 def test_codex_catalog_does_not_invent_models_on_invalid_output(tmp_path, output):
     binary = _script(tmp_path / "codex", f"print({output!r})\n")

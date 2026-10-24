@@ -4,7 +4,7 @@
 `researchos.settings`), each written only when the person changes it and
 read tolerantly (a bad value reads as "not set", never as an error):
 
-- `agents`: `[{"runner", "model"}]`, at most `MAX_AGENTS`, the agents the
+- `agents`: `[{"runner", "model", "reasoning_effort"?}]`, at most `MAX_AGENTS`, the agents the
   owner control offers;
 - `agent_commands`: `{runner: absolute path}`, where the person says a
   program lives (otherwise it is looked up on a widened `PATH`);
@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from researchos import memo, settings
-from researchos.agents import labels
+from researchos.agents import labels, reasoning
 
 MAX_AGENTS = 20
 DEFAULT_TIMEOUT_MINUTES = 120
@@ -142,20 +142,60 @@ def set_agents(items: object) -> list[labels.Agent]:
     list removes the key (17.1: written only when the person changes it)."""
     if not isinstance(items, (list, tuple)):
         raise ValueError("agents must be a list of {runner, model}")
+    data = settings.read_settings()
+    saved = data.get(AGENTS_SETTING)
+    previous: dict[str, str | None] = {}
+    for old in saved if isinstance(saved, list) else []:
+        try:
+            old_agent = _agent_of(old)
+            previous[old_agent.owner] = reasoning.check(old_agent.runner, old_agent.model, old.get("reasoning_effort"))
+        except ValueError:
+            continue
     chosen: list[labels.Agent] = []
+    entries: list[dict[str, str]] = []
+    codex_catalog: dict[str, list[str]] | None = None
     for item in items:
         agent = _agent_of(item)
+        level = reasoning.check(agent.runner, agent.model, item.get("reasoning_effort"))
+        if level is not None and agent.runner == "codex" and level != previous.get(agent.owner):
+            if codex_catalog is None:
+                found = find("codex", check_version=False)
+                if not found.found or found.path is None:
+                    raise ValueError("Codex must be available to check reasoning effort")
+                try:
+                    codex_catalog = codex_model_catalog(found.path)
+                except RuntimeError as exc:
+                    raise ValueError(str(exc)) from exc
+            if level not in codex_catalog.get(agent.model, []):
+                raise ValueError(f"Codex's catalog does not offer {level!r} for {agent.model}")
         if agent not in chosen:
             chosen.append(agent)
+            entry = {"runner": agent.runner, "model": agent.model}
+            if level is not None:
+                entry["reasoning_effort"] = level
+            entries.append(entry)
     if len(chosen) > MAX_AGENTS:
         raise ValueError(f"at most {MAX_AGENTS} agents can be saved")
+    # Catalog discovery can take seconds; retain unrelated settings saved in the meantime.
     data = settings.read_settings()
     if chosen:
-        data[AGENTS_SETTING] = [{"runner": a.runner, "model": a.model} for a in chosen]
+        data[AGENTS_SETTING] = entries
     else:
         data.pop(AGENTS_SETTING, None)
     settings.write_json(settings.settings_path(), data)
     return chosen
+
+
+def reasoning_effort(agent: labels.Agent) -> str | None:
+    """This Mac's choice for a new run; owner values and old profiles stay compatible."""
+    saved = settings.read_settings().get(AGENTS_SETTING)
+    for item in saved if isinstance(saved, list) else []:
+        try:
+            if _agent_of(item) == agent:
+                return reasoning.check(agent.runner, agent.model, item.get("reasoning_effort"))
+        except ValueError:
+            continue
+    return None
 
 
 # -- where the programs are --------------------------------------------------------------
@@ -480,7 +520,7 @@ def opencode_models(path: str) -> list[str]:
     return models
 
 
-def codex_models(path: str) -> list[str]:
+def codex_model_catalog(path: str) -> dict[str, list[str]]:
     """Read Codex's refreshed catalog, retaining complete IDs and omitting hidden models.
 
     No inference request is made. Failure is reported rather than offering an invented catalog;
@@ -498,13 +538,21 @@ def codex_models(path: str) -> list[str]:
         rows = data.get("models") if isinstance(data, dict) else None
         if not isinstance(rows, list):
             raise ValueError("expected a model catalog")
-        result = []
+        result: dict[str, list[str]] = {}
         for item in rows:
             if not isinstance(item, dict) or item.get("visibility") == "hide":
                 continue
             model = item.get("slug")
             if isinstance(model, str) and labels.MODEL_RE.fullmatch(model) and model not in result:
-                result.append(model)
+                levels = item.get("supported_reasoning_levels")
+                result[model] = list(dict.fromkeys(
+                    row["effort"] for row in levels if isinstance(row, dict)
+                    and row.get("effort") in reasoning.LEVELS and row["effort"] != "off"
+                )) if isinstance(levels, list) else []
         return result
     except (ValueError, RecursionError) as exc:
         raise RuntimeError(f"could not read Codex's model catalog: {exc}") from None
+
+
+def codex_models(path: str) -> list[str]:
+    return list(codex_model_catalog(path))

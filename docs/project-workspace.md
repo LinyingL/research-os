@@ -70,6 +70,14 @@ it is no longer available with ChatGPT sign-in. See the
 [Codex model guide](https://learn.chatgpt.com/docs/models).
 A model served locally through OpenCode works the same way.
 
+**Reasoning effort.** Select a level beside the model when adding an agent,
+or change it in the saved agent's row. **Default** leaves the runner's own
+configuration in force. Claude Code and DeepSeek Harness offer levels for
+supported model versions; Codex reads them from its current model catalog.
+The control is hidden for models without known supported levels, including
+OpenCode. The run log records the selected setting. Replies and revisions
+in the same conversation retain that setting; a new run uses the current choice.
+
 For DeepSeek Harness, Research OS detects the official desktop app's bundled
 `dsh` in `/Applications` or `~/Applications`, or a standalone `dsh` on PATH.
 Choose an **Account** model to use the Harness desktop sign-in, or an **API Key**

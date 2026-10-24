@@ -95,6 +95,7 @@ const agentFixture=()=>({
            {runner:'deepseek-harness',label:'DeepSeek Harness',path:'/apps/dsh',version:'0.2.1-rc.2',problem:null,found:true}],
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
   harness_models:['deepseek-account/deepseek-flash','deepseek-official/deepseek-v4-pro'],
+  reasoning_efforts:{'claude-code':{'claude-sonnet-5-5':['low','medium','high','xhigh','max'],'claude-opus-4-6':['low','medium','high','max']},'deepseek-harness':{'deepseek-account/deepseek-flash':['off','low','high','max'],'deepseek-official/deepseek-v4-pro':['off','low','high','max']}},
   mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
@@ -143,7 +144,7 @@ global.apiPost=async(path,body)=>{
     Object.assign(run,{can_reply:false}); runsList.runs.unshift(next); runsList.active=next.id; return clone(next);
   }
   if(path==='/api/settings/agents') {
-    if(body.agents) agentsInfo.agents=body.agents.map(a=>({runner:a.runner,model:a.model,owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
+    if(body.agents) agentsInfo.agents=body.agents.map(a=>Object.assign({},a,{owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
     if(body.commands) for(const [runner,p] of Object.entries(body.commands)) Object.assign(agentsInfo.runners.find(r=>r.runner===runner),{path:p,version:'0.9.0',problem:null,found:true});
     if(body.timeout_minutes) agentsInfo.timeout_minutes=body.timeout_minutes;
     if('max_budget_usd' in body) agentsInfo.max_budget_usd=body.max_budget_usd;
@@ -1348,6 +1349,56 @@ console.log(JSON.stringify({claude,empty,afterAdd,opencode,posted:posted.map(p=>
     assert out["posted"] == [{"agents": [sonnet, opus]}, {"agents": [sonnet, opus, qwen]}, {"agents": [opus, qwen]}, {"timeout_minutes": 90}]
     assert out["tooLow"] == 3
     assert out["list"] == ["Claude Code · claude-opus-4-6", "OpenCode · lmstudio/qwen3-coder"]
+
+
+def test_reasoning_picker_follows_model_and_preserves_saved_settings():
+    out = run(r"""
+agentsInfo=agentFixture();
+customGet=path=>path==='/api/agents/models?runner=codex'?{models:['gpt-test'],reasoning_efforts:{'gpt-test':['medium','high']}}:undefined;
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),form=()=>byClass('ws-agent-add',byClass('ws-agent-list'));
+const model=()=>field('模型版本',form()),effort=()=>field('推理强度',form());
+model().value='claude-sonnet-5-5';await model().emit('change');
+const sonnet=optionsOf(effort());effort().value='xhigh';await effort().emit('change');
+await find('添加',box()).click();await sleepTick();
+let rows=()=>byClass('ws-agent-list').children.filter(e=>e.classList.contains('ws-agent-item'));
+const saved=field('推理强度',rows()[1]).value;
+field('推理强度',rows()[1]).value='';await field('推理强度',rows()[1]).emit('change');await sleepTick();
+const cleared=agentsInfo.agents[1];
+model().value='claude-opus-4-6';await model().emit('change');const opus=optionsOf(effort());
+const program=()=>field('程序',form());program().value='deepseek-harness';await program().emit('change');
+model().value='deepseek-official/deepseek-v4-pro';await model().emit('change');const harness=optionsOf(effort());
+effort().value='off';await effort().emit('change');await find('添加',box()).click();await sleepTick();
+program().value='codex';await program().emit('change');await sleepTick();
+model().value='gpt-test';await model().emit('change');const codex=optionsOf(effort());
+effort().value='high';await effort().emit('change');await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({sonnet,opus,harness,codex,saved,cleared,posted:posted.filter(p=>p[0]==='/api/settings/agents')}));
+""")
+    assert [v for _, v in out["sonnet"]] == ["", "low", "medium", "high", "xhigh", "max"]
+    assert [v for _, v in out["opus"]] == ["", "low", "medium", "high", "max"]
+    assert [v for _, v in out["harness"]] == ["", "off", "low", "high", "max"]
+    assert [v for _, v in out["codex"]] == ["", "medium", "high"]
+    assert out["saved"] == "xhigh" and "reasoning_effort" not in out["cleared"]
+    posts = [body["agents"] for _, body in out["posted"]]
+    assert posts[0][-1]["reasoning_effort"] == "xhigh"
+    assert posts[2][-1]["reasoning_effort"] == "off"
+    assert posts[3][-1]["reasoning_effort"] == "high"
+    assert posts[3][-2]["reasoning_effort"] == "off"  # other saved profiles retain their choices
+
+
+@pytest.mark.parametrize("lang,level,words", [("en", "max", "Reasoning effort: Max"),
+                                              ("zh", None, "推理强度：默认"),
+                                              ("en", "off", "Reasoning effort: Off")])
+def test_run_log_shows_recorded_reasoning_setting(lang, level, words):
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const recorded=mkRun({state:'ended',reasoning_effort:LEVEL});setRuns([recorded]);
+runLogs[recorded.id]=Object.assign({},recorded,{steps:[],changes:{},violations:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(uiLang()==='en'?'Run log':'运行记录',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
+""".replace("LEVEL", json.dumps(level)), lang=lang)
+    assert words in out["words"]
 
 
 def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():

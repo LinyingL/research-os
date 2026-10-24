@@ -108,7 +108,7 @@
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
-  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", customModel: false, minutes: null, budget: null }; }
+  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null;
@@ -1454,6 +1454,7 @@
       return box;
     }
     const d = loaded.data;
+    if (Object.prototype.hasOwnProperty.call(d, "reasoning_effort")) box.append(quiet(t("推理强度：{level}", { level: effortLabel(d.reasoning_effort) })));
     // A folder with more files than the picture holds: what happened beyond them cannot be checked or undone (17.5).
     if (d.snapshot && d.snapshot.partial) box.append(el("p", "ws-status err", t("这个项目文件太多，运行前只记录了前 50,000 个文件：之后的文件（数据文件除外）改动无法核对，也无法撤回。")));
     if (outcomeOf(run) !== "needs_input" && run.question) box.append(el("p", "ws-agent-question", run.question));
@@ -1534,7 +1535,37 @@
     settingsBusy = false;
     refreshOwnerOptions(); renderSettings(); updateAgentSections();
   }
-  function currentAgents() { return ((agentInfo && agentInfo.agents) || []).map((a) => ({ runner: a.runner, model: a.model })); }
+  function currentAgents() { return ((agentInfo && agentInfo.agents) || []).map((a) => {
+    const item = { runner: a.runner, model: a.model };
+    if (a.reasoning_effort) item.reasoning_effort = a.reasoning_effort;
+    return item;
+  }); }
+  function effortLabel(level) {
+    const words = { none: t("无推理"), off: t("关闭推理"), minimal: t("最低"), low: t("低"), medium: t("中"), high: t("高"), xhigh: t("很高"), max: t("最高"), ultra: "Ultra" };
+    return level ? (words[level] || level) : t("默认");
+  }
+  function effortLevels(runner, model) {
+    const catalog = modelsState[runner] || {};
+    const known = ((agentInfo && agentInfo.reasoning_efforts) || {})[runner] || {};
+    const levels = catalog.efforts || known;
+    return levels[model] || (runner === "claude-code" && levels[model.replace(/\[1m\]$/, "").replace(/-\d{8}$/, "")]) || [];
+  }
+  function effortSelect(runner, model, value, key, onChange) {
+    const select = keyed(el("select", "form-input"), key), levels = effortLevels(runner, model);
+    const offered = value && !levels.includes(value) ? levels.concat([value]) : levels;
+    ["", ...offered].forEach((level) => { const option = el("option", null, effortLabel(level)); option.value = level; select.append(option); });
+    select.value = value || ""; select.disabled = settingsBusy;
+    select.addEventListener("change", () => onChange(select.value));
+    const control = field(t("推理强度"), select);
+    control.classList.toggle("hidden", !offered.length);
+    return control;
+  }
+  function fillEffortList() {
+    if (!ui || !ui.effortSlot) return;
+    ui.effortSlot.classList.toggle("hidden", !effortLevels(settingsInputs.runner, settingsInputs.model).length);
+    if (!effortLevels(settingsInputs.runner, settingsInputs.model).includes(settingsInputs.effort)) settingsInputs.effort = "";
+    ui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
+  }
   function quiet(words) { return el("p", "ws-agent-quiet", words); }
   function runnerBlock(r) {
     const row = el("div", "ws-runner"), program = PROGRAMS[r.runner] || r.runner;
@@ -1588,6 +1619,7 @@
       ui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
         : catalog.loading ? t("正在读取…") : "";
     }
+    fillEffortList();
   }
   async function loadModels(runner, refresh) {
     if (runner === "claude-code" || runner === "deepseek-harness") return;
@@ -1596,16 +1628,16 @@
     const found = agentInfo && (agentInfo.runners || []).find((r) => r.runner === runner);
     if (!found || !found.found) return;
     const mark = stamp();
-    modelsState[runner] = { loading: true }; fillModelList();
+    modelsState[runner] = Object.assign({}, catalog, { loading: true }); fillModelList();
     try {
       const response = await apiGet("/api/agents/models?runner=" + encodeURIComponent(runner));
       if (!live(mark)) return;
-      modelsState[runner] = { list: Array.isArray(response && response.models) ? response.models : [] };
+      modelsState[runner] = { list: Array.isArray(response && response.models) ? response.models : [], efforts: (response && response.reasoning_efforts) || {} };
     } catch (err) {
       if (!live(mark)) return;
       modelsState[runner] = { error: err };
     }
-    fillModelList();
+    renderSettings(true);
   }
   function agentsBlock() {
     const box = el("div", "ws-agent-list");
@@ -1615,6 +1647,15 @@
     agents.forEach((a) => {
       const row = el("div", "ws-agent-item");
       row.append(el("span", "ws-agent-label", a.label));
+      row.append(effortSelect(a.runner, a.model, a.reasoning_effort, "set-effort:" + a.owner, (level) => {
+        const agents = currentAgents().map((item) => {
+          if (item.runner === a.runner && item.model === a.model) {
+            if (level) item.reasoning_effort = level; else delete item.reasoning_effort;
+          }
+          return item;
+        });
+        saveAgentSettings({ agents: agents }, t("已保存"));
+      }));
       if (a.available === false) row.append(el("span", "ws-agent-meta bad", t("找不到它的程序")));
       const remove = keyed(named(button(t("移除"), () => saveAgentSettings({ agents: currentAgents().filter((x) => x.runner + ":" + x.model !== a.runner + ":" + a.model) }, t("已移除"))), t("移除：{name}", { name: a.label })), "set-remove:" + a.runner + ":" + a.model);
       remove.disabled = settingsBusy; row.append(remove); box.append(row);
@@ -1627,6 +1668,7 @@
     ui.modelList.id = "ws-model-list"; ui.modelList.disabled = settingsBusy;
     ui.modelCustom = field(t("完整模型 ID"), model);
     ui.modelNote = el("p", "ws-agent-quiet");
+    ui.effortSlot = el("div", "ws-agent-effort");
     ui.modelList.addEventListener("change", () => {
       settingsInputs.customModel = ui.modelList.value === "__custom__";
       settingsInputs.model = settingsInputs.customModel ? "" : ui.modelList.value;
@@ -1636,17 +1678,19 @@
       settingsInputs.runner = runner.value; settingsInputs.model = ""; settingsInputs.customModel = false;
       fillModelList(); loadModels(runner.value);
     });
-    model.addEventListener("input", () => { settingsInputs.model = model.value; });
+    model.addEventListener("input", () => { settingsInputs.model = model.value.trim(); fillEffortList(); });
     const add = button(t("添加"), () => {
       const name = model.value.trim();
       if (!name) { settingsNote = { words: t("请写上模型名。"), kind: "err" }; renderSettings(true); return; }
-      saveAgentSettings({ agents: currentAgents().concat([{ runner: runner.value, model: name }]) }, t("已添加"), () => { settingsInputs.model = ""; settingsInputs.customModel = false; });
+      const item = { runner: runner.value, model: name };
+      if (settingsInputs.effort) item.reasoning_effort = settingsInputs.effort;
+      saveAgentSettings({ agents: currentAgents().concat([item]) }, t("已添加"), () => { settingsInputs.model = ""; settingsInputs.effort = ""; settingsInputs.customModel = false; });
     }); keyed(add, "set-add"); add.disabled = runner.disabled = model.disabled = settingsBusy;
     const refresh = button(t("刷新模型列表"), () => loadModels(settingsInputs.runner, true));
     const suggested = () => runner.value === "claude-code" || runner.value === "deepseek-harness";
     refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", suggested());
     runner.addEventListener("change", () => refresh.classList.toggle("hidden", suggested()));
-    form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, add, refresh);
+    form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, ui.effortSlot, add, refresh);
     box.append(form, ui.modelNote);
     fillModelList();
     return box;
@@ -1704,6 +1748,7 @@
     ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
     restoreFocus(box, snap);
     loadModels(settingsInputs.runner);
+    (agentInfo.agents || []).forEach((agent) => loadModels(agent.runner));
   }
   function showSettingsNote() {
     if (!ui || !ui.settingsNote) return;

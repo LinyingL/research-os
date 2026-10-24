@@ -169,6 +169,10 @@ works in the project folder: it can read files, write code, run analysis,
 and write notes. Its completion report becomes a result record linked to
 the task.
 
+For supported models, choose **Reasoning effort** separately from the model
+version. **Default** uses the runner's configuration. Each run records the
+selection and retains it when you reply or send work back.
+
 The initial instruction includes the task, the saved research question
 and plan up to 8,000 characters, and the titles and paths of up to 50 notes
 and result records. The agent reads further files as needed. Conversations

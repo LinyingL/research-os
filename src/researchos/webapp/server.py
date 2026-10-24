@@ -675,6 +675,7 @@ from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
+from researchos.agents import reasoning as agent_reasoning
 from researchos.agents import snapshot as agent_snapshot
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
@@ -1942,11 +1943,17 @@ def agents_payload() -> dict[str, Any]:
     mcp = agent_profiles.mcp_available()
     return {
         "runners": [found[runner].payload() for runner in agent_labels.RUNNERS],
-        "agents": [dict(agent.payload(), available=found[agent.runner].found, mcp=mcp)
+        "agents": [dict(agent.payload(), available=found[agent.runner].found, mcp=mcp,
+                        reasoning_effort=agent_profiles.reasoning_effort(agent))
                    for agent in agent_profiles.agents()],
         "mcp": mcp,
         "claude_models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
         "harness_models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS),
+        "reasoning_efforts": {
+            runner: {model: list(agent_reasoning.known_levels(runner, model)) for model in models}
+            for runner, models in (("claude-code", agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
+                                   ("deepseek-harness", agent_profiles.HARNESS_MODEL_SUGGESTIONS))
+        },
         "timeout_minutes": agent_profiles.timeout_minutes(),
         "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
         "max_budget_usd": agent_profiles.max_budget_usd(),
@@ -1971,8 +1978,10 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
     if not found.found or found.path is None:
         raise agent_manager.AgentError("runner_missing")
     try:
-        read_models = agent_profiles.codex_models if runner == "codex" else agent_profiles.opencode_models
-        return {"runner": runner, "models": read_models(found.path)}
+        if runner == "codex":
+            catalog = agent_profiles.codex_model_catalog(found.path)
+            return {"runner": runner, "models": list(catalog), "reasoning_efforts": catalog}
+        return {"runner": runner, "models": agent_profiles.opencode_models(found.path)}
     except RuntimeError as exc:
         words = "读取不到 Codex 的模型列表" if runner == "codex" else "读取不到 OpenCode 的模型列表"
         raise _AgentRefusal("models_failed", 502, str(exc), words) from exc

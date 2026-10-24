@@ -293,7 +293,7 @@ def hook_canary(run_dir: Path) -> str | None:
 
 def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str, session_id: str,
                   resume: bool, prompt: str, rules: str, max_budget_usd: float | None, home: str,
-                  base_env: Mapping[str, str]) -> Launch:
+                  base_env: Mapping[str, str], reasoning_effort: str | None = None) -> Launch:
     """Claude Code: see the module docstring. The variadic tool lists come
     last; `prompt` goes to standard input and is never in `argv`."""
     argv = [program, "-p", "--output-format", "stream-json", "--verbose",
@@ -308,6 +308,10 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
             "--mcp-config", str(run_dir / "mcp.json"),
             "--strict-mcp-config",
             "--append-system-prompt", rules]
+    from researchos.agents import reasoning
+    level = reasoning.check("claude-code", model, reasoning_effort)
+    if level is not None:
+        argv += ["--effort", level]
     if max_budget_usd is not None:
         argv += ["--max-budget-usd", _budget(max_budget_usd)]
     argv += ["--allowedTools", *CLAUDE_ALLOWED, "--disallowedTools", *CLAUDE_DISALLOWED]
@@ -319,6 +323,9 @@ def claude_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id
         "command": sys.executable, "args": mcp_command(root, run_id)[1:],
         "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}}}
     env = child_env(base_env, run_id=run_id, program=program, runner="claude-code")
+    if level is not None:
+        # The inherited environment has precedence over --effort in Claude Code.
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = level
     env[ADD_DIR_CLAUDE_MD_ENV] = "1"  # after the scrub, and whatever the engine's own environment says
     return Launch(argv=argv, env=env, stdin=prompt, cwd=str(root),
                   files={"claude-settings.json": _json_file(settings), "mcp.json": _json_file(mcp)},
@@ -398,7 +405,7 @@ def _toml_value(value: Any) -> str:
 
 def codex_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str,
                  session_id: str | None, prompt: str, home: str,
-                 base_env: Mapping[str, str]) -> Launch:
+                 base_env: Mapping[str, str], reasoning_effort: str | None = None) -> Launch:
     """Official CLI, explicit model, workspace sandbox, and only this run's MCP server.
 
     User configuration/rules are not loaded; authentication still uses Codex's normal account.
@@ -415,6 +422,10 @@ def codex_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id:
                                  "env": {"RESEARCHOS_HOME": home, "RESEARCHOS_AGENT_RUN": run_id}}},
         "features": {"multi_agent": False, "hooks": False},
     }
+    from researchos.agents import reasoning
+    level = reasoning.check("codex", model, reasoning_effort)
+    if level is not None:
+        config["model_reasoning_effort"] = level
     argv = [program, "-C", str(root), "exec", "--json", "--skip-git-repo-check",
             "--ignore-user-config", "--ignore-rules", "--model", _check_model(model)]
     for key, value in config.items():
@@ -428,7 +439,7 @@ def codex_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id:
 
 def harness_launch(*, program: str, model: str, root: Path, run_dir: Path, run_id: str,
                    session_id: str | None, prompt: str, home: str,
-                   base_env: Mapping[str, str]) -> Launch:
+                   base_env: Mapping[str, str], reasoning_effort: str | None = None) -> Launch:
     """Desktop-bundled or standalone dsh; one headless task with a per-run overlay.
 
     Reuse the official credential store via its supported plugins. Never boot or
@@ -439,11 +450,16 @@ def harness_launch(*, program: str, model: str, root: Path, run_dir: Path, run_i
     from researchos.agents.labels import harness_route
 
     route = harness_route(model)
+    from researchos.agents import reasoning
+    level = reasoning.check("deepseek-harness", model, reasoning_effort)
+    selection = {"provider": route[0], "model": route[1]}
+    if level is not None:
+        selection["reasoningEffort"] = level
     command = mcp_command(root, run_id)
     patch = [
         {"id": name, "disabled": False} for name in ("credentials", "authorization", "deepseek-account")
     ] + [
-        {"id": "agent-default-model", "config": {"provider": route[0], "model": route[1]}},
+        {"id": "agent-default-model", "config": selection},
         {"id": "sandbox-policy", "config": {"mode": "workspace-write", "workspaceRoot": str(root),
                                               "additionalWritableRoots": []}},
         {"id": "approval", "config": {"policy": "never"}},

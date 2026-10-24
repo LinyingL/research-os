@@ -339,13 +339,27 @@ def test_models(api, monkeypatch, tmp_path):
 
 
 def test_codex_models_and_exact_version_settings(api, monkeypatch):
-    monkeypatch.setattr(profiles, "codex_models", lambda path: ["gpt-6.1-sol", "gpt-6-luna"])
+    catalog = {"gpt-6.1-sol": ["low", "high", "max"], "gpt-6-luna": ["medium", "high"]}
+    monkeypatch.setattr(profiles, "codex_model_catalog", lambda path: catalog)
     status, data = api.get("/api/agents/models?runner=codex")
-    assert status == 200 and data == {"runner": "codex", "models": ["gpt-6.1-sol", "gpt-6-luna"]}
+    assert status == 200 and data == {"runner": "codex", "models": list(catalog), "reasoning_efforts": catalog}
     chosen = [{"runner": "codex", "model": "gpt-6.1-sol"}, {"runner": "codex", "model": "gpt-5.5"}]
     assert api.post("/api/settings/agents", {"agents": chosen}, project=False)[0] == 200
     _, data = api.get("/api/agents")
     assert [a["owner"] for a in data["agents"]] == ["agent:codex:gpt-6.1-sol", "agent:codex:gpt-5.5"]
+
+
+def test_reasoning_effort_round_trip_and_invalid_settings_are_atomic(api, monkeypatch):
+    monkeypatch.setattr(profiles, "codex_model_catalog", lambda path: {"gpt-6.1-sol": ["low", "max"]})
+    entries = [{"runner": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "max"},
+               {"runner": "claude-code", "model": "claude-sonnet-5-5", "reasoning_effort": "xhigh"}]
+    status, data = api.post("/api/settings/agents", {"agents": entries}, project=False)
+    assert status == 200
+    assert [a["reasoning_effort"] for a in data["agents"]] == ["max", "xhigh"]
+    assert data["reasoning_efforts"]["claude-code"]["claude-opus-4-6"] == ["low", "medium", "high", "max"]
+    bad = [dict(entries[0], reasoning_effort="high")]
+    assert api.post("/api/settings/agents", {"agents": bad}, project=False)[0] == 400
+    assert [a["reasoning_effort"] for a in api.get("/api/agents")[1]["agents"]] == ["max", "xhigh"]
 
 
 # -- the full flow -------------------------------------------------------------------------------

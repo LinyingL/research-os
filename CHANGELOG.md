@@ -37,6 +37,9 @@
   readable version labels and exact IDs; existing alias-based tasks are kept.
   Preserve the selected ID for task ownership, execution, and continuation.
   Detect the macOS desktop app's bundled Codex CLI as well as saved paths.
+- Choose reasoning effort separately for each Claude Code, Codex, or DeepSeek
+  Harness model. Offer model-specific levels, retain the runner's default when
+  unset, and record the selection for the run and its continuations.
 - Run Codex in a workspace-write sandbox with a dedicated Research OS MCP
   server, JSON event logs, and continuation in the recorded session.
 - Detect DeepSeek Harness's bundled desktop CLI and run tasks through its
