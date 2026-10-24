@@ -673,7 +673,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
 from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
@@ -801,6 +801,20 @@ class NotAFileError(ApiError):
 
 class BinaryFileError(ApiError):
     status = 415
+    state = "preview_unsupported"
+
+
+class DocxPreviewApiError(BinaryFileError):
+    state = "docx_refused"
+
+    def __init__(self, exc: docx_preview.PreviewError, lang: str, link: Any) -> None:
+        super().__init__(str(exc))
+        message = settings_mod.say(
+            "这份 Word 文档超出预览范围，请点击“打开”查看。" if exc.code == "too_large" else
+            "无法预览这份 Word 文档。请点击“打开”检查原文件。",
+            "This Word document exceeds the preview limit. Click “Open” to view it." if exc.code == "too_large" else
+            "Could not preview this Word document. Click “Open” to check the original file.", lang)
+        self.extra = {"message": message, "detail": str(exc), "github": link}
 
 
 class WorkspaceApiError(ApiError):
@@ -1744,6 +1758,16 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     link = github_link_payload(project_root, target)
     if target.suffix.lower() == ".dta":
         return _dta_payload(target, rel_path, link, lang)
+    if target.suffix.lower() == ".docx":
+        try:
+            cloud.check_readable(target)
+            preview = docx_preview.read(target, equation=settings_mod.say("〔公式〕", "[Equation]", lang),
+                                        image=settings_mod.say("〔图片或对象〕", "[Image or object]", lang))
+        except cloud.CloudOnlyError as exc:
+            raise CloudOnlyApiError(exc, {"github": link}) from exc
+        except docx_preview.PreviewError as exc:
+            raise DocxPreviewApiError(exc, lang, link) from exc
+        return {"path": rel_path, "kind": "docx", "size": target.stat().st_size, "github": link, **preview}
     try:  # one byte past the limit says "truncated"; the size is the open file's (18.4 item 5)
         raw, size = cloud.read_head(target, _FILE_SIZE_LIMIT + 1)
     except cloud.CloudOnlyError as exc:

@@ -1238,6 +1238,16 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-reader-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; margin: 1rem 0; }
 .lit-reader-sources { margin-top: 1.5rem; font-size: 0.8rem; color: var(--ink-soft); }
 .lit-reader-sources button { display: block; overflow-wrap: anywhere; text-align: left; margin-top: 0.5rem; }
+.word-preview { font-size: .95rem; line-height: 1.85; overflow-wrap: anywhere; }
+.word-preview p { white-space: pre-wrap; }
+.word-preview h1, .word-preview h2, .word-preview h3 { font-family: var(--font-serif); font-weight: normal; line-height: 1.5; }
+.word-preview h1 { font-size: 1.5rem; }
+.word-preview h2 { font-size: 1.3rem; }
+.word-preview h3 { font-size: 1.1rem; }
+.preview-format-note { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); margin: 0 0 1.2rem; }
+.word-table-wrap { max-width: 100%; overflow-x: auto; margin: 1rem 0; }
+.word-table { border-collapse: collapse; font-size: .84rem; }
+.word-table td { padding: .4rem .6rem; border: 1px solid var(--line); white-space: pre-wrap; min-width: 3rem; }
 @media (max-width: 850px) {
   .lit-library-grid { grid-template-columns: minmax(0, 1fr); }
   .lit-library-list { max-height: 32vh; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
@@ -1532,6 +1542,7 @@ const PROJECT_STATES = {
 
 function apiError(path, res, body) {
   const err = new Error((body && body.error) ? body.error : ("请求 " + path + " 失败：HTTP " + res.status));
+  err.status = res.status;
   if (body && typeof body.state === "string") err.state = body.state;
   if (body && body.situation && typeof body.situation === "object") err.situation = body.situation;
   // A refusal that names its own product sentence (a variable card's,
@@ -3508,6 +3519,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 const FILE_TYPE_RULES = [
+  [/\.docx$/i, "Word 文档"],
   [/\.(py|r|rmd|jl|ipynb|sh|do|ado)$/i, "脚本"],
   [/\.(csv|tsv|json|parquet|dta|rds|rda|pkl|feather|h5|hdf5)$/i, "数据集"],
   [/\.(png|jpe?g|pdf|svg|eps|gif|tiff?)$/i, "图表"],
@@ -3602,6 +3614,30 @@ function isCurrentFilePanel(path) {
   return !!s && s.kind === "file" && s.path === path;
 }
 
+function docxPreview(data) {
+  const wrap = mk("div", "word-preview");
+  wrap.appendChild(mk("p", "preview-format-note", t("正文与表格预览。图片、公式和完整排版请点击“打开”查看。")));
+  if (data.truncated) wrap.appendChild(mk("p", "truncated-note", t("文档较长，仅显示部分内容。点击“打开”查看全文。")));
+  const blocks = data.blocks || [];
+  blocks.forEach((block) => {
+    if (block.kind === "table") {
+      const box = mk("div", "word-table-wrap");
+      const table = mk("table", "word-table");
+      (block.rows || []).forEach((row) => {
+        const tr = mk("tr");
+        row.forEach((cell) => tr.appendChild(mk("td", null, cell)));
+        table.appendChild(tr);
+      });
+      box.appendChild(table); wrap.appendChild(box);
+    } else {
+      const heading = block.kind === "heading" ? Math.max(1, Math.min(6, Number(block.level) || 1)) : 0;
+      wrap.appendChild(mk(heading ? "h" + heading : "p", null, block.text || ""));
+    }
+  });
+  if (!blocks.length) wrap.appendChild(mk("p", "empty-note", t("文档中没有可预览的正文文字。请点击“打开”查看原文件。")));
+  return wrap;
+}
+
 async function openFilePanel(path, hint) {
   state.panelSubject = { kind: "file", path: path };
   panelTitle.textContent = path;
@@ -3625,6 +3661,17 @@ async function openFilePanel(path, hint) {
   } catch (err) {
     if (!isCurrentFilePanel(path)) return;
     renderGitHubLink(githubHost, err && err.github);
+    if (err && err.state === "docx_refused") {
+      contentHost.innerHTML = "";
+      const box = mk("div", "panel-status err");
+      renderBlockingError(box, err.engineMessage || t("无法预览这份 Word 文档。请点击“打开”检查原文件。"), err);
+      contentHost.appendChild(box);
+      return;
+    }
+    if (err && (err.state === "preview_unsupported" || (!err.state && err.status === 415))) {
+      contentHost.replaceChildren(mk("p", "empty-note", t("此文件格式暂不支持预览。请点击“打开”，用默认应用查看。")));
+      return;
+    }
     if (err && err.state === "dta_refused") {
       // 15.4: a .dta file the header reader refused -- the engine's sentence
       // in the page's language, the reader's account behind 「详情」.
@@ -3650,6 +3697,10 @@ async function openFilePanel(path, hint) {
   contentHost.innerHTML = "";
   if (data.kind === "dta") {
     contentHost.appendChild(dtaPreview(data.dta || {}));
+    return;
+  }
+  if (data.kind === "docx") {
+    contentHost.appendChild(docxPreview(data));
     return;
   }
   if (data.truncated) {

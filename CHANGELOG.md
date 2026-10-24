@@ -22,6 +22,9 @@
 
 ### Research routes and interface
 
+- Preview Word (.docx) body text and tables in the file panel. Keep external
+  opening for complete Word layout, and explain unsupported formats instead of
+  presenting them as an engine error.
 - Browse project references by title, author, and year, with a reading pane for
   abstracts. Read BibTeX and references CSV/JSON exports, enrich matching DOIs
   from Zotero, and keep citation checking in its own tab. Fetch missing abstracts
