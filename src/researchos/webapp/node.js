@@ -1201,6 +1201,7 @@
     const top = window.scrollY;
     host.innerHTML = "";
     const page = mk("div", "results");
+    if (data.outputs) renderRegisteredOutputs(page, data.outputs);
     page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉：完整，或者缺来源、缺尝试。")));
     const figs = mk("section", "res-block");
     figs.appendChild(mk("h2", "desk-title", t("图与表")));
@@ -1436,6 +1437,7 @@
     const top = window.scrollY;
     host.innerHTML = "";
     const bar = mk("div", "dc-filters");
+    if (data.outputs) renderRegisteredOutputs(host, data.outputs);
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", t("筛选"));
     const counts = Object.assign({}, data.counts || {});

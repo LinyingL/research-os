@@ -48,6 +48,19 @@
 
 ### AI agents
 
+- Set project output folders for code, data, figures, tables, references,
+  documents, and variable drafts, reusing existing directories. Give each run
+  a fixed copy of those locations without moving files or creating a template tree.
+- Accept typed final-file declarations through the completion tool. Validate
+  their locations, existence, formats, reference exports, and variable TOML;
+  retain the task, run, report, and file fingerprints in a project catalog.
+  Show registered products in the relevant views before a rescan, including
+  bounded CSV/TSV samples and image previews. Keep missing files out of the
+  catalog view and mark changed ones.
+- Import reported variable definitions only through a human action, into a new
+  card or the next version draft. Keep open drafts and confirmed versions intact;
+  never confirm a definition on behalf of the agent. Include the output catalog
+  in run undo and link registered files from the result record for team review.
 - Assign tasks to a locally installed Codex, Claude Code, DeepSeek Harness, or OpenCode program. Agents
   can write code, run analysis, and finish with a result record linked to the task.
 - Select complete model versions from the runner's catalog, or enter a full ID.

@@ -142,7 +142,7 @@ def test_every_post_route_is_refused_without_the_session_before_it_is_routed(eng
     """The check runs before routing: even an endpoint that does not exist answers 403 session_required, so
     the answer never tells a program which writes there are."""
     eng, _root = engine
-    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/projects/switch", "/api/nope", "/"):
+    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/nope", "/"):
         status, body = eng.post(path, {})
         assert (status, body["state"]) == (403, "session_required"), path
 
@@ -515,6 +515,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/workspace.js": ("page", "/workspace.js"),
     "/workspace.css": ("page", "/workspace.css"),
     "/api/workspace": ("read", "/api/workspace"),
+    "/api/outputs/folders": ("read", "/api/outputs/folders"),
     "/api/workspace/document": ("read", "/api/workspace/document?path=research/overview.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),

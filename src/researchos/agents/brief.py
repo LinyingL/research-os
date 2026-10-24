@@ -105,7 +105,7 @@ def _protected_records(prot: Mapping[str, object]) -> list[str]:
 def _attempt_table(prot: Mapping[str, object]) -> str | None:
     """The attempt table's path: the record that is not the task file."""
     for rel in _protected_records(prot):
-        if rel != TASKS_PATH:
+        if rel not in {TASKS_PATH, "research/folders.json"} and not guard.is_output_record(rel):
             return rel
     return None
 
@@ -121,7 +121,7 @@ def _code_list(paths: Iterable[str]) -> str:
     return ", ".join(f"`{p}`" for p in paths)
 
 
-def rules(*, lang: str, runner: str, prot: dict) -> str:
+def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None = None) -> str:
     """The binding rules of 17.5 in plain words, and how to finish (17.4).
 
     `prot` is `snapshot.protected(...)`: its `data` files (up to
@@ -137,6 +137,20 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
     data = _protected_data(prot)
     shown, more = data[:PROTECTED_LIST_LIMIT], max(0, len(data) - PROTECTED_LIST_LIMIT)
     hooked = runner == "claude-code"  # only Claude Code has a hook that refuses every listed action (17.5)
+
+    routing = []
+    if folders:
+        routing = (["Output folders (project-relative; use subfolders here rather than creating parallel top-level folders):"]
+                   if _is_en(lang) else ["产出目录（项目内相对路径；需要细分时在这些目录里建子目录，不另建同用途的顶层目录）："])
+        routing += [f"- {kind}: `{rel}/`" for kind, rel in folders.items()]
+        routing += (["Report every final file in the complete tool's outputs list: {kind, path, title}. Use [] for no files. "
+                     "Intermediate caches are not final outputs. Do not edit research/folders.json or the *.outputs.json records in research/results/ directly.",
+                     "Literature: use .bib or CSV/JSON reference exports (title, authors, year, doi, abstract); PDF files can also be registered, but need a reference export for abstract reading. "
+                     "Variable: use a .toml definition with name, meaning, unit, granularity, [[input]], [construction], "
+                     "[implementation] and an optional proposed [decision].why. Leave decided_by and adopted_on empty; a human imports and confirms it."]
+                    if _is_en(lang) else ["在完成工具的 outputs 参数中列出每个最终文件：{kind, path, title}；没有文件时传 []。中间缓存不算最终产出。不要直接编辑 research/folders.json 或 research/results/ 中的 *.outputs.json 登记文件。",
+                     "文献使用 .bib 或 CSV/JSON 文献导出（title、authors、year、doi、abstract）；PDF 也可登记，要在文献列表阅读摘要时请同时保留文献导出。变量使用 .toml 定义，字段为 name、meaning、unit、granularity、[[input]]、[construction]、[implementation]；可以填写建议理由 [decision].why，但 decided_by、adopted_on 留空，由人导入和确认。"])
+        routing += [""]
 
     if _is_en(lang):
         table_words = f"the attempt table (`{table}`)" if table else "the attempt table"
@@ -173,6 +187,7 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "6. Run the `researchos` or `rce` command, or contact the Research OS app in any other way.",
             "",
             "How to finish:",
+            *routing,
             f"- When the task is done, call `{complete}` with a Markdown report: what you did, the commands "
             "you ran, the files you produced, and the key numbers exactly as your actual runs produced them. "
             "Never invent or estimate a number, a file or a result. Give it a short title naming the result "
@@ -212,6 +227,7 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "6. 不运行 `researchos` 或 `rce` 命令，也不以任何其他方式联系 Research OS 应用。",
         "",
         "怎样收尾：",
+        *routing,
         f"- 任务完成后，调用 `{complete}`，参数 report 是一份 Markdown 报告：做了什么、运行过的命令、"
         "输出的文件，以及关键数字，数字必须原样取自你真实运行的结果。绝不编造或估算数字、文件或结论。"
         "再给一个几个词的简短标题，说明这是什么结果。这一次调用同时把任务标为完成。",

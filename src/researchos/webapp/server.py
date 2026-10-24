@@ -673,7 +673,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, workspace
 from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
@@ -3975,6 +3975,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _WORKSPACE_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
             elif path == "/workspace.css":
                 self._send_text(200, _WORKSPACE_CSS_PATH.read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            elif path == "/api/outputs/folders":
+                served = self._require_unblocked()
+                self._send_json(200, self._workspace_api(lambda: outputs.folders(served.root)))
             elif path == "/api/workspace":
                 served = self._require_unblocked()
                 payload = self._workspace_api(lambda: workspace.overview(served.root, self._lang()))
@@ -4272,6 +4275,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 except ApiError as exc:
                     payload["scanning"] = False
                     payload["scan_error"] = str(exc)
+                self._send_json(200, payload)
+            elif parsed.path in ("/api/outputs/folders", "/api/outputs/variable"):
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    fn = outputs.save_folders if parsed.path.endswith("/folders") else outputs.import_variable
+                    payload = self._workspace_api(lambda: fn(served.root, body))
+                payload["generation"] = self.server.watcher.record_write(set())
                 self._send_json(200, payload)
             elif parsed.path in ("/api/workspace/document", "/api/workspace/tasks"):
                 body = self._read_json_object()

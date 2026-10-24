@@ -130,7 +130,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from researchos import history, names, paths, workspace
+from researchos import history, names, outputs, paths, workspace
 from researchos.agents import brief, guard, labels, profiles, runners
 from researchos.agents import runs as run_store
 from researchos.agents import snapshot
@@ -1100,7 +1100,9 @@ class AgentManager:
                              launch_error={"code": "guard_failed", "detail": refused[:2000]})
                 return
 
-        rules = brief.rules(lang=lang, runner=runner, prot=prot)
+        locations = outputs.folders(root)["folders"]
+        self._update(act, output_folders=locations)
+        rules = brief.rules(lang=lang, runner=runner, prot=prot, folders=locations)
         if run["kind"] == "start":
             text = brief.instruction(lang=lang, task={"text": run["task_text"], "due": run.get("task_due")},
                                      project_name=root.name, overview=self._overview(root, lang),
@@ -1415,6 +1417,7 @@ class AgentManager:
         signals = run_store.read_signals(project_id, run_id)
         tool_paths: set[str] = set()
         shas: set[str] = set()
+        output_shas: dict[str, set[str]] = {}
         for sig in signals:
             if isinstance(sig.get("path"), str) and sig.get("kind") in ("complete", "note"):
                 tool_paths.add(sig["path"])
@@ -1423,11 +1426,15 @@ class AgentManager:
                     tool_paths.add(p)
             if sig.get("kind") == "complete" and isinstance(sig.get("tasks_sha"), str):
                 shas.add(sig["tasks_sha"])
+            catalog = sig.get("outputs_catalog")
+            if (sig.get("kind") == "complete" and isinstance(sig.get("outputs_sha"), str)
+                    and isinstance(catalog, str) and guard.is_output_record(catalog)):
+                output_shas.setdefault(catalog, set()).add(sig["outputs_sha"])
         decisive = [s for s in signals if s.get("kind") in ("ask", "complete")]
         complete = [s for s in signals if s.get("kind") == "complete"]
         asks = [s for s in signals if s.get("kind") == "ask"]
         return signals, {
-            "tool_paths": sorted(tool_paths), "tasks_shas": shas,
+            "tool_paths": sorted(tool_paths), "tasks_shas": shas, "outputs_shas": output_shas,
             "last": decisive[-1]["kind"] if decisive else None,
             "question": asks[-1].get("question") if asks and isinstance(asks[-1].get("question"), str) else None,
             "report": complete[-1].get("path") if complete and isinstance(complete[-1].get("path"), str) else None,
@@ -1467,6 +1474,7 @@ class AgentManager:
         if before_task.get("sha256"):
             tasks_ok.add(before_task["sha256"])
         allowed: dict[str, set[str]] = {TASKS_PATH: tasks_ok}
+        allowed.update(info["outputs_shas"])
         for kind in everything.values():
             for rel in kind:
                 if _key(rel) in shas:

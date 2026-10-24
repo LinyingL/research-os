@@ -1,4 +1,15 @@
 /* A writing surface in the project's existing paper palette. */
+.ws-output-folders { max-width: 640px; }
+.ws-output-folders .ws-field { margin: .8rem 0; }
+.registered-outputs { margin: 0 0 1.8rem; }
+.registered-output { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .8rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.registered-output p { width: 100%; margin: .2rem 0; }
+.registered-output input { max-width: 230px; }
+.registered-figure { display: block; max-width: 100%; max-height: 400px; object-fit: contain; margin: .6rem 0; }
+.registered-table { width: 100%; overflow-x: auto; margin: .6rem 0; }
+.registered-table table { border-collapse: collapse; font-size: .85rem; }
+.registered-table td, .registered-table th { padding: .4rem .7rem; border: 1px solid var(--line); text-align: left; }
+.registered-output pre { width: 100%; white-space: pre-wrap; }
 .ws-page { max-width: 1120px; margin: 0 auto; padding-bottom: 3rem; }
 .ws-heading { display: flex; gap: 1.5rem; justify-content: space-between; align-items: flex-start; margin-bottom: 1.8rem; }
 .ws-project-name { font-family: var(--font-serif); font-size: 1.65rem; font-weight: normal; line-height: 1.4; margin: 0 0 .45rem; overflow-wrap: anywhere; }

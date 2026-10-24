@@ -243,7 +243,10 @@ def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -
     from researchos import nodepage  # noqa: PLC0415
 
     try:
-        return nodepage.results(conn, root, _arg(query, "draft"))
+        from researchos import outputs
+
+        return {**nodepage.results(conn, root, _arg(query, "draft")),
+                "outputs": outputs.catalog(root, {"figure", "table"})}
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 
@@ -287,7 +290,9 @@ def data_code_payload(conn: Connection, root: Path) -> dict[str, Any]:
     """GET /api/data-code: 数据与代码."""
     from researchos import nodepage  # noqa: PLC0415
 
-    return nodepage.data_code(conn, root)
+    from researchos import outputs
+
+    return {**nodepage.data_code(conn, root), "outputs": outputs.catalog(root, {"code", "data", "document"})}
 
 
 # -- proposals (12.3, 12.4; V8 phase 3) -----------------------------------------------

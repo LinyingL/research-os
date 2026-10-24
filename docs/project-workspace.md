@@ -72,6 +72,32 @@ it is no longer available with ChatGPT sign-in. See the
 [Codex model guide](https://learn.chatgpt.com/docs/models).
 A model served locally through OpenCode works the same way.
 
+**Output folders.** Open **Output folders** in the task area to choose where
+code, data, figures, tables, references, documents, and variable drafts belong.
+Defaults reuse common existing directories. Saving keeps files in place and
+does not create empty output folders. Each run receives its own copy of the
+locations; later setting changes apply to new runs.
+
+The agent lists its final files when completing the task. The app checks each
+file's location, existence, and supported format, then lists it in the relevant
+view. Figures and CSV/TSV tables have previews; bibliography exports provide
+their available abstracts, and registered PDFs have file links. A reference
+export can have any filename when registered. Missing files stop appearing;
+changed files carry **File changed**. These links record the task's declaration,
+not proof of execution or a confirmed research assessment.
+
+Variable definitions use the native TOML format and appear as drafts under
+**Variables**. **Import as variable draft** creates a card, or the next draft
+version of an existing confirmed card. An existing open draft must be resolved
+first. Importing leaves confirmed versions in place and does not confirm the
+new definition. Confirmation uses the card's separate human action.
+
+Folder settings live in `research/folders.json`. Each task report has its own
+`<report-id>.outputs.json` beside it in `research/results/`, so independent tasks
+can also be undone independently. The app maintains these registration files;
+agents use the completion tool. Submitting changed tasks also selects the
+registered files and metadata for the existing team review.
+
 **Reasoning effort.** Select a level beside the model when adding an agent,
 or change it in the saved agent's row. **Default** leaves the runner's own
 configuration in force. Claude Code and DeepSeek Harness offer levels for

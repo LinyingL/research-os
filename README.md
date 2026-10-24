@@ -46,6 +46,10 @@ research workspace:
   OpenCode. Select a model version and, where supported, its reasoning
   effort. Follow the run, answer questions, and receive a result record.
   Preview the files an undo would affect and choose which changes to keep.
+- **Output folders:** keep the project's existing layout and choose where
+  new code, data, figures, tables, references, reports, and variable drafts
+  belong. Agents report their final files when completing a task; the app
+  checks their paths and formats and shows them in the relevant views.
 
 See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
@@ -213,6 +217,27 @@ works in the project folder: it can read files, write code, run analysis,
 and write notes. Its completion report becomes a result record linked to
 the task.
 
+Use **Output folders** beside **AI agent** to review the project's output
+locations. Defaults reuse common existing folders. Saving the settings
+keeps files in place and creates no output folders; the agent creates them
+as needed. Each run receives its own copy of the locations, so changing
+them applies to new runs.
+
+When completing a task, the agent lists its final files by type and path.
+The app checks that they exist locally, stay within the assigned folder,
+and use a supported format. Figures and tables appear under **Figures and
+claims**, with image and CSV/TSV previews. Reference exports enter the
+**Literature** library with their available abstracts; registered PDFs are
+also listed there. Code, data, and reports appear under **Data and code**.
+The result record links to the files.
+
+Variable definitions arrive as TOML drafts under **Variables**. Click
+**Import as variable draft** to create a native card, or a new draft
+version of an existing confirmed card. An open draft is kept for you to
+resolve first. Confirmation remains a separate human action. Registering
+a file associates it with the task; it does not establish that an analysis
+ran or that a research finding is correct.
+
 For supported models, choose **Reasoning effort** separately from the model
 version. **Default** uses the runner's configuration. Each run records the
 selection and retains it when you reply or send work back.
@@ -285,6 +310,8 @@ research/overview.md      Research question and plan
 research/notes/           Notes
 research/results/         Result records, including agent reports
 research/tasks.json      Optional tasks
+research/folders.json    Output locations, when saved
+research/results/*.outputs.json   File registrations beside each task report
 .researchos/              Project identity, settings, and research records
 ```
 

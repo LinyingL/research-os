@@ -480,7 +480,10 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
             official = {task["id"]: task for task in _tasks(json.loads(raw))}
     except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError, WorkspaceError):
         official = {}
-    return list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+    reports = list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+    from researchos import outputs
+
+    return reports + outputs.related_files(root, reports)
 
 
 def _attempt_order(row: sqlite3.Row) -> tuple[Any, ...]:

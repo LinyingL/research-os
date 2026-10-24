@@ -16,7 +16,9 @@ Reads (GET, files first, the index for the trust decision and stage (b)):
 
 Writes (POST) -- ONLY what Research OS authors, each through `researchos.records.cards`
 (`via="app"`, `expected_id` = the served id). Never the researcher's text:
-there is no endpoint that writes a `v<n>.toml` or creates a card.
+these actions do not write definitions. A separate human action,
+`POST /api/outputs/variable`, copies a registered agent definition into a
+new card draft; confirmation still uses the existing human action below.
 
     /api/variables/confirm      {id, attested: yes|no|unknown, content_hash}
     /api/variables/revise       {id}                       (also 「口径已变」)
@@ -211,7 +213,12 @@ def list_payload(conn: Connection | None, root: Path) -> dict[str, Any]:
             "under_review": bool(review and review.get("under_review")),
             "review_labels": [r["label"] for r in (review or {}).get("reasons") or []],
         })
-    return {"cards": rows, "empty_help": EMPTY_HELP}
+    from researchos import outputs
+
+    pending = outputs.catalog(root, {"variable"})
+    known = {r["id"].casefold() for r in rows}
+    pending["items"] = [i for i in pending["items"] if str(i.get("variable_card") or "").casefold() not in known]
+    return {"cards": rows, "empty_help": EMPTY_HELP, "outputs": pending}
 
 
 def _open(root: Path, card_id: str) -> V.Card:

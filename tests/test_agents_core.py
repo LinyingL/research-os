@@ -911,7 +911,7 @@ def test_protected_lists_data_records_and_dirs(tmp_path):
     before = snapshot.take(root)
     prot = snapshot.protected(root, before)
     assert prot["dirs"] == [".researchos", names.LEGACY_PROJECT_DIRNAME, ".git", ".claude", ".codex", ".opencode"]
-    assert prot["records"] == ["map.md", "research/tasks.json"]
+    assert prot["records"] == ["map.md", "research/tasks.json", "research/folders.json"]
     assert prot["data"] == ["config.json", "data/clean.DTA", "data/raw.csv"]
     assert prot["files"] == sorted(prot["data"] + prot["records"])
     assert "figs/plot.png" not in prot["files"] and "data/notes.txt" not in prot["files"]
@@ -921,7 +921,7 @@ def test_protected_lists_data_records_and_dirs(tmp_path):
 def test_protected_without_attempts_config_or_tasks_file(tmp_path):
     root = _project(tmp_path / "proj", {"x.csv": "1", "script.py": "1"})
     prot = snapshot.protected(root, snapshot.take(root))
-    assert prot["records"] == ["research/tasks.json"]  # listed even though it does not exist yet
+    assert prot["records"] == ["research/tasks.json", "research/folders.json"]  # protected even before creation
     assert prot["data"] == ["x.csv"] and "research/tasks.json" in prot["files"]
 
 
@@ -929,7 +929,7 @@ def test_protected_attempt_table_that_is_a_data_file_is_a_record(tmp_path):
     root = _project(tmp_path / "proj", {".researchos/attempts.toml": ATTEMPTS_TOML.replace("map.md", "attempts.csv"),
                                         "attempts.csv": "a", "other.csv": "b"})
     prot = snapshot.protected(root, snapshot.take(root))
-    assert prot["records"] == ["attempts.csv", "research/tasks.json"] and prot["data"] == ["other.csv"]
+    assert prot["records"] == ["attempts.csv", "research/tasks.json", "research/folders.json"] and prot["data"] == ["other.csv"]
 
 
 def _violations(root, mutate, *, allowed=None, after_sha_from_disk=True):

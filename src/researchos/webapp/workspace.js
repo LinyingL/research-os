@@ -75,7 +75,7 @@
   let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
-  let createSubject = null, foreignBlocked = false;
+  let createSubject = null, folderSubject = null, foreignBlocked = false;
   // AI agents carry out tasks (DESIGN.md Section 17): what the page knows of this Mac's agents, the people
   // an owner can be, the project's runs and what is open in each task's row. The programs and every limit
   // on them are the engine's; the page asks, shows words and follows a run by polling.
@@ -105,13 +105,20 @@
   }
   // Words typed into an open reply form and not yet sent (17.8) are unsaved writing too.
   function replyDirty() { return Object.keys(agentUiState).some((id) => !!agentUiState[id].reply && !!String(agentUiState[id].text).trim()); }
-  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty(); }
+  function folderDirty() { return !!folderSubject && state.panelSubject === folderSubject && folderSubject.dirty; }
+  function mayLeaveFolders() {
+    if (!folderDirty()) return true;
+    if (!window.confirm(t("有未保存的内容，仍要离开吗？"))) return false;
+    folderSubject.dirty = false;
+    return true;
+  }
+  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
   function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
-    host = null; data = null; draft = null; saved = null; ui = null; createSubject = null;
+    host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
     foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
     stopPolling(); offline = false;
@@ -642,6 +649,7 @@
     const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
     const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
+    const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
     ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
@@ -1851,6 +1859,42 @@
     form.append(choose, create, feedback); panelBody.append(form); openPanel(); name.focus();
   }
 
-  window.ROWorkspace = { load: load, mayLeave: mayLeave, reset: reset, openCreateProject: openCreateProject, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  async function openOutputFolders() {
+    if (!mayReplacePanel()) return;
+    const mark = stamp(), subject = { kind: "output-folders", dirty: false };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("输出目录"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    const active = () => live(mark) && state.panelSubject === subject;
+    try {
+      const info = await apiGet("/api/outputs/folders");
+      if (!active()) return;
+      panelBody.replaceChildren();
+      panelBody.append(el("p", "ws-agent-quiet", t("已有文件保持原位。新任务按这些目录保存输出，可以在目录内继续分组。")));
+      const labels = { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿") };
+      const form = el("form", "ws-output-folders"), inputs = {};
+      Object.keys(labels).forEach((kind) => {
+        const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
+        box.addEventListener("input", () => { subject.dirty = true; });
+        form.append(field(labels[kind], box));
+      });
+      const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
+      const save = button(t("保存"), async () => {
+        save.disabled = true; Object.values(inputs).forEach((box) => { box.disabled = true; });
+        try {
+          const response = await apiPost("/api/outputs/folders", { project: mark.project, revision: info.revision,
+            folders: Object.fromEntries(Object.entries(inputs).map(([kind, box]) => [kind, box.value.trim()])) });
+          if (!active()) return;
+          info.revision = response.revision; subject.dirty = false; save.disabled = false;
+          Object.values(inputs).forEach((box) => { box.disabled = false; });
+          status(feedback, t("已保存，下次任务运行时使用。"), "ok");
+        } catch (err) { if (active()) { save.disabled = false; Object.values(inputs).forEach((box) => { box.disabled = false; }); status(feedback, errorWords(t("没能保存输出目录。"), err), "err"); } }
+      });
+      form.addEventListener("submit", (event) => { event.preventDefault(); if (!save.disabled) save.click(); });
+      form.append(save, feedback); panelBody.append(form);
+    } catch (err) { if (active()) status(note, errorWords(t("没能读取输出目录。"), err), "err"); }
+  }
+
+  window.ROWorkspace = { load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

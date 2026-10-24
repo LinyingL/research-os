@@ -724,7 +724,8 @@ def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
     skipped folders included) when it has one, else from `files`; a data
     file inside `.researchos`, `.rce` or `.git` is covered as part of that
     folder and not listed again."""
-    records = [r for r in (attempts_table(root), TASKS_PATH) if r]
+    records = [r for r in (attempts_table(root), TASKS_PATH, "research/folders.json") if r]
+    records += [r for r in _file_map(before) if guard.is_output_record(r)]
     records = list(dict.fromkeys(records))
     walked = before.get("data") if isinstance(before, Mapping) else None
     source = walked if isinstance(walked, Mapping) else _file_map(before)
@@ -813,7 +814,7 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
             elif is_agent_settings(rel):
                 if kind == "deleted" or not permitted(rel):
                     add(rel, "agent_settings_changed")
-            elif rel in records:
+            elif rel in records or guard.is_output_record(rel):
                 if kind == "deleted":
                     add(rel, "record_deleted")
                 elif not permitted(rel):

@@ -94,9 +94,16 @@ def catalog(conn: Connection, root: Path, report: dict[str, Any],
     paths.update(r["attrs"]["bib_file"] for r in records if r["attrs"].get("bib_file"))
     sources = sorted(p for p in paths if Path(p).suffix.lower() == ".bib" or
                      (Path(p).stem.lower() in _EXPORT_NAMES and Path(p).suffix.lower() in (".csv", ".json")))
+    from researchos import outputs
+
+    registered = outputs.catalog(root, {"literature"})
+    sources = sorted(set(sources) | {i["path"] for i in registered["items"]
+                                    if i["state"] == "current" and Path(i["path"]).suffix.lower() in {".bib", ".csv", ".json"}})
     entries: dict[str, dict[str, Any]] = {}
     titles: dict[str, str] = {}
     warnings: list[dict[str, str]] = []
+    if registered["error"]:
+        warnings.append({"file": outputs.CATALOG_PATH, "detail": registered["error"]})
 
     def add(raw: dict[str, Any], source: str, *, node: str | None = None, file: str | None = None) -> None:
         item = _record(raw)

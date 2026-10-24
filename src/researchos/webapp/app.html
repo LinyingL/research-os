@@ -3496,6 +3496,7 @@ function openPanel() {
 }
 
 function closePanel() {
+  if (window.ROWorkspace && ROWorkspace.mayLeavePanel && !ROWorkspace.mayLeavePanel()) return;
   endPanelResize();
   panel.classList.add("hidden");
   panelBackdrop.classList.add("hidden");
@@ -3508,6 +3509,7 @@ function closePanel() {
 // before it takes the place of a panel holding half-typed text, as every
 // opener inside the desk does (RODesk.mayLeavePanel; true when nothing is typed).
 function mayReplacePanel() {
+  if (window.ROWorkspace && ROWorkspace.mayLeavePanel && !ROWorkspace.mayLeavePanel()) return false;
   return !(window.RODesk && RODesk.mayLeavePanel) || RODesk.mayLeavePanel();
 }
 
@@ -5258,8 +5260,10 @@ function cardChips(row) {
 }
 
 function renderVariableList(host, data) {
-  host.appendChild(mk("h2", "section-title", "变量定义卡"));
+  if (data.outputs) renderRegisteredOutputs(host, data.outputs, true);
   const rows = data.cards || [];
+  if (!rows.length && data.outputs && (data.outputs.items || []).length) return;
+  host.appendChild(mk("h2", "section-title", t("变量定义卡")));
   if (!rows.length) {
     const card = mk("div", "guide-card");
     card.appendChild(mk("h2", null, "还没有变量定义卡"));
@@ -5283,6 +5287,66 @@ function renderVariableList(host, data) {
     div.addEventListener("click", () => RONode.openNode("variable:" + row.id));
     host.appendChild(div);
   });
+}
+
+function renderRegisteredOutputs(host, bundle, variableDrafts) {
+  if (!(bundle.items || []).length && !bundle.error) return;
+  const box = mk("section", "registered-outputs");
+  box.appendChild(mk("h2", "section-title", variableDrafts ? t("待确认的变量草稿") : t("任务输出")));
+  if (bundle.error) box.appendChild(mk("p", "notice-status err", t("输出清单暂时无法读取。")));
+  const items = bundle.items || []; let shown = 0;
+  const more = mkButton(t("显示更多"), "btn btn-small", appendNext);
+  function appendNext() {
+    more.remove();
+    items.slice(shown, shown + 50).forEach((item) => {
+      const row = mk("div", "registered-output");
+      row.appendChild(mkButton(item.title || item.path, "btn btn-small", () => openFilePanel(item.path)));
+      row.appendChild(mk("span", "mono lit-hint", item.path));
+      if (item.agent) row.appendChild(mk("span", "lit-hint", item.agent));
+      if (item.report) row.appendChild(mkButton(t("打开结果"), "btn btn-small", () => {
+        if (window.ROWorkspace && ROWorkspace.openReport) ROWorkspace.openReport(item.report);
+      }));
+      if (item.state === "changed") row.appendChild(mk("span", "lit-hint", t("文件已改动")));
+      if (item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+        const image = mk("img", "registered-figure"); image.alt = item.title || item.path; image.loading = "lazy";
+        image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); row.appendChild(image);
+      }
+      if ((item.table_preview || []).length) {
+        const preview = mk("div", "registered-table"), table = mk("table");
+        item.table_preview.forEach((cells, index) => {
+          const tr = mk("tr"); cells.forEach((cell) => tr.appendChild(mk(index ? "td" : "th", null, cell))); table.appendChild(tr);
+        });
+        preview.appendChild(table); row.appendChild(preview);
+        row.appendChild(mk("span", "lit-hint", t("表格预览：最多显示 10 行、20 列。")));
+      }
+      if (variableDrafts && item.variable_card) {
+        row.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(item.variable_card)));
+      } else if (variableDrafts) {
+        const definition = item.definition || {};
+        row.appendChild(mk("p", null, [definition.name, definition.meaning, definition.unit, definition.granularity].filter(Boolean).join(" · ")));
+        if (definition.construction && definition.construction.formula) row.appendChild(mk("pre", null, definition.construction.formula));
+        const id = mk("input", "form-input"); id.setAttribute("aria-label", t("变量 ID"));
+        id.value = (item.path.split("/").pop() || "variable").replace(/\.toml$/i, "").replace(/[^A-Za-z0-9_-]/g, "_");
+        const status = mk("p", "notice-status");
+        const action = mkButton(t("导入为变量草稿"), "btn btn-small", async () => {
+          const epoch = state.dataEpoch, project = state.currentPath;
+          action.disabled = true;
+          try {
+            const saved = await apiPost("/api/outputs/variable", { project: project, path: item.path, id: id.value });
+            if (epoch !== state.dataEpoch) return;
+            openVariableCard(saved.id);
+          } catch (err) { if (epoch === state.dataEpoch) { action.disabled = false; setStatus(status, "err", t("没能导入变量草稿。"), err); } }
+        });
+        action.disabled = item.state !== "current" || !!humanRecordsBlocked();
+        row.append(id, action, status);
+      }
+      box.appendChild(row);
+    });
+    shown += 50;
+    if (shown < items.length) box.appendChild(more);
+  }
+  appendNext();
+  host.appendChild(box);
 }
 
 function versionLabel(v) {
@@ -6093,6 +6157,7 @@ function renderLiteratureLibrary(host, data) {
   setting.appendChild(mk("summary", null, t("联网查询设置")));
   setting.appendChild(renderLookupSetting(data.lookup || {}));
   host.appendChild(setting);
+  if (data.outputs) renderRegisteredOutputs(host, data.outputs);
 }
 
 function applyAbstractResult(item, result) {
