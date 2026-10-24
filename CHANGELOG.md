@@ -6,6 +6,8 @@
 
 - Create projects from a name and save location, with an empty research record.
   Importing an existing attempt table is optional.
+- Prepare an empty attempt table automatically when an existing project opens
+  its first new-attempt form. Preserve existing files and configured tables.
 - Write research questions, plans, notes, and result records in Project home.
   Preview Markdown, figures, and tables, and reference project files and attempts.
 - Open existing Markdown files in `research/notes/` and `research/results/`,

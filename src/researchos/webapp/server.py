@@ -4365,6 +4365,16 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/projects/rename":
                 # 10.4: the registry label only, never the folder.
                 self._send_json(200, rename_payload(self._read_json_object()))
+            elif parsed.path == "/api/attempts/initialize":
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    payload = self._workspace_api(lambda: workspace.initialize_attempts(served.root, self._lang()))
+                if payload["created"]:
+                    payload["generation"] = self.server.watcher.record_write({
+                        str(attempts_ingest.config_path(served.root)), str(served.root / payload["file"]),
+                    })
+                self._send_json(200, payload)
             elif parsed.path == "/api/attempts/preview":
                 # Pure dry run (task V3 phase 3) -- but origin-checked like
                 # a write anyway (above), since its twin below mutates and

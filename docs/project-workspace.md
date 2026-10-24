@@ -10,6 +10,8 @@ prepared for when you need it; importing history is optional.
 Use **Add project…** to open an existing research folder. Opening its home
 page does not change its files. Its first saved plan creates the writing
 page without changing its existing attempt table.
+If it has no attempt table, clicking **New attempt** creates an empty table
+and its settings automatically, then opens the form. Existing files are kept.
 
 ## Write and organize
 

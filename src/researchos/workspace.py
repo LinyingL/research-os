@@ -27,7 +27,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from researchos import desk, history, officialness, paths, proposals, settings
+from researchos import db, desk, history, officialness, paths, proposals, settings
 from researchos.agents import labels as agent_labels
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import files as ingest_files
@@ -682,3 +682,69 @@ def initialize(root: str | Path, language: str = "zh") -> dict[str, Any]:
         _backup, history_error = _save(root, OVERVIEW_PATH, None, after, pid)
         return {**_document(root, OVERVIEW_PATH, after, lang=language), "created": True, "backup": None,
                 "history_error": history_error}
+
+
+def initialize_attempts(root: str | Path, language: str = "zh") -> dict[str, Any]:
+    """Prepare the first attempt in an existing folder, using the new-project template.
+
+    Explicit write only; reads and opening the project remain non-mutating. Never
+    replace an existing config, guess a hand-written table, or hide indexed history.
+    """
+    from researchos import newproject
+
+    root = _root(root)
+    if language not in ("zh", "en"):
+        raise WorkspaceError("invalid", "Choose Chinese or English for the attempt table")
+    with situation.write_guard(root, human=True):
+        pid = _require_write(root)
+        record_dir = paths.project_dir(root)
+        config_path = _confined(root, str((record_dir / "attempts.toml").relative_to(root)))
+        if os.path.lexists(config_path):
+            try:
+                config = attempts_ingest.load_config(root)
+            except (attempts_ingest.AttemptsConfigError, OSError, ValueError, TypeError) as exc:
+                raise WorkspaceError("attempts_config", str(exc), 409,
+                                     "已有的尝试记录配置无法读取，请检查或恢复配置文件。") from exc
+            return {"created": False, "file": config.file}
+        if proposals.role_of(root)[0] == "member":
+            raise WorkspaceError("read_only", "The PI must set up the team's first attempt table", 403,
+                                 "请 PI 先创建第一条研究尝试，再同步到工作副本。")
+        graph = paths.graph_db_path(root)
+        if graph.exists():
+            conn = db.connect(graph)
+            try:
+                found = conn.execute("SELECT 1 FROM nodes WHERE type='attempt' LIMIT 1").fetchone()
+            finally:
+                conn.close()
+            if found:
+                raise WorkspaceError("attempts_config", "Indexed attempts exist but their configuration is missing", 409,
+                                     "项目已有研究尝试，但配置文件丢失了。请恢复原配置，以保留已有记录。")
+        _confined(root, "research")
+        filename = "attempts.md"
+        for index in range(1, EXISTS_LIMIT + 1):
+            filename = "attempts.md" if index == 1 else f"attempts-{index}.md"
+            candidate = root / "research" / filename
+            if not os.path.lexists(candidate) and not paths.is_dataless(candidate) and not candidate.with_name(f".{candidate.name}.icloud").exists():
+                break
+        else:
+            raise WorkspaceError("conflict", "No unused attempt table filename is available", 409)
+        info = root.stat()
+        pin = (info.st_dev, info.st_ino)
+
+        def guard() -> None:
+            opened = os.fstat(root_fd)
+            if not newproject._same_directory(root, pin) or (opened.st_dev, opened.st_ino) != pin:
+                raise WorkspaceError("conflict", "The project folder changed during setup", 409)
+            situation.check_still_home(root, pid)
+            _confined(root, "research")
+            _confined(root, record_dir.name)
+
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            newproject._attempts(root, root_fd, language, guard, filename=filename)
+        except OSError as exc:
+            raise WorkspaceError("unwritable", f"Could not create the attempt table: {exc}", 409,
+                                 "无法创建尝试记录，请检查项目文件夹的访问权限。") from exc
+        finally:
+            os.close(root_fd)
+        return {"created": True, "file": "research/" + filename}

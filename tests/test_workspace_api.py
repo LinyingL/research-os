@@ -45,6 +45,34 @@ def test_existing_project_can_write_a_plan_without_an_attempt_table(writing_serv
     assert not (root / ".researchos/attempts.toml").exists()
 
 
+def test_first_attempt_setup_then_preview_and_save_over_http(writing_server):
+    base, root, _httpd = writing_server
+    assert _get(base, "/api/summary")[1]["attempts_config"] is None
+    assert not (root / "research").exists()
+    status, initialized = _post(base, "/api/attempts/initialize", {"project": str(root)})
+    assert status == 200 and initialized["created"] is True
+    assert _get(base, "/api/summary")[1]["attempts_config"]["file"] == "research/attempts.md"
+    body = {"op": "append", "number": "1", "fields": {"description": "First research idea"}}
+    assert _post(base, "/api/attempts/preview", body)[0] == 200
+    status, saved = _post(base, "/api/attempts/write", body)
+    assert status == 200, saved
+    assert "First research idea" in (root / "research/attempts.md").read_text()
+    assert _post(base, "/api/attempts/initialize", {"project": str(root)})[1]["created"] is False
+
+
+def test_first_attempt_setup_respects_project_readonly_and_origin(writing_server):
+    base, root, httpd = writing_server
+    endpoint = "/api/attempts/initialize"
+    assert _post(base, endpoint, {"project": "/other/project"})[0] == 409
+    assert _request_with_headers(base, "POST", endpoint,
+                                 {"Origin": "https://example.com", "Content-Type": "application/json"},
+                                 json.dumps({"project": str(root)}).encode())[0] == 403
+    httpd.set_served(dataclasses.replace(httpd.get_served(), read_only=True))
+    assert _post(base, endpoint, {"project": str(root)})[0] == 409
+    assert not (root / ".researchos/attempts.toml").exists()
+    assert not (root / "research").exists()
+
+
 def test_stale_save_keeps_external_edit_and_gives_a_readable_conflict(writing_server):
     base, root, _httpd = writing_server
     payload = {"project": str(root), "path": workspace.OVERVIEW_PATH, "revision": None, "content": "# Plan\noriginal"}

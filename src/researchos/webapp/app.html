@@ -3682,7 +3682,7 @@ function panelErrorBoxCn(message, err) {
   box.className = "error-box";
   const title = document.createElement("div");
   title.className = "error-title";
-  title.textContent = "无法打开编辑表单";
+  title.textContent = t("无法打开尝试表单");
   const msg = document.createElement("div");
   if (err) renderBlockingError(msg, message, err);
   else msg.textContent = message;
@@ -3713,6 +3713,7 @@ function setFormStatus(statusEl, cls, cnText, err) {
 async function openAttemptForm(mode, attemptId) {
   if (state.noProject) return; // 10.1: no project, no attempt table (⌘N from the shell)
   const subject = { kind: "attempt-form" };
+  const project = state.currentPath, epoch = state.dataEpoch;
   state.panelSubject = subject;
   panelTitle.textContent = mode === "append" ? "新增尝试" : "编辑尝试";
   panelTitle.title = "";
@@ -3726,14 +3727,20 @@ async function openAttemptForm(mode, attemptId) {
     // table (one person, the PI) or proposes (a member); never throws.
     await RODesk.ensureContext();
     ready = await ensureAttemptData();
+    if (ready && state.panelSubject === subject && mode === "append" && !state.attemptsConfig) {
+      await apiPost("/api/attempts/initialize", { project });
+      if (epoch !== state.dataEpoch || state.panelSubject !== subject) return;
+      ready = await ensureAttemptData();
+    }
   } catch (err) {
+    ready = false;
     failure = err;
   }
   if (state.panelSubject !== subject) return; // closed, replaced, or the project switched
   if (!ready) {
     panelBody.innerHTML = "";
     panelBody.appendChild(failure
-      ? panelErrorBoxCn("没能读到最新的尝试年表，表单先不打开，以免编号和日期填错。", failure)
+      ? panelErrorBoxCn(t("无法读取或创建尝试记录，请查看错误详情。"), failure)
       : panelErrorBoxCn("项目刚刚切换，请重新打开表单。"));
     return;
   }
@@ -4016,7 +4023,7 @@ function renderAttemptForm(mode, attemptId) {
     panelTitle.textContent = mode === "append" ? "新增尝试" : "编辑尝试";
     panelSubtitle.textContent = "";
     panelBody.appendChild(panelErrorBoxCn(
-      "尚未找到可用的尝试年表配置（.researchos/attempts.toml）。请先在项目里配置年表，再从界面新增或编辑。"
+      t("尝试记录的配置无法读取，请检查或恢复项目中的配置文件。")
     ));
     openPanel();
     return;
