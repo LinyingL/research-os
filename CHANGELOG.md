@@ -10,6 +10,9 @@
   its first new-attempt form. Preserve existing files and configured tables.
 - Write research questions, plans, notes, and result records in Project home.
   Preview Markdown, figures, and tables, and reference project files and attempts.
+- Open existing plans, notes, and result records in preview. Enter editing
+  explicitly and return to preview after saving; new documents start in editing.
+  Keep the current mode and unsaved writing during background refreshes.
 - Open existing Markdown files in `research/notes/` and `research/results/`,
   including files named outside the app. List documents by their last change.
 - Preserve unsaved writing, detect external edits, and keep saved versions.

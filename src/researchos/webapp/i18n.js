@@ -265,7 +265,6 @@
     "项目名称": "Project name",
     "预览": "Preview",
     "还没有研究方案。": "No research plan yet.",
-    "继续编辑": "Continue editing",
     "例如：整理下一次组会要讨论的问题": "For example: gather questions for the next group meeting",
     "姓名（可留空）": "Name (optional)",
     "保存任务": "Save task",

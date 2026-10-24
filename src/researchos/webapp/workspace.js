@@ -359,10 +359,10 @@
     if (old) old.remove();
     if (draft.officialness && draft.officialness.label) ui.kindLabel.append(el("span", "ws-officialness", draft.officialness.label));
   }
-  function setDraft(doc) {
+  function setDraft(doc, previewing) {
     draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc) };
     saved = { title: draft.title, content: draft.content };
-    renderEditor(); renderNav();
+    renderEditor(previewing == null ? draft.revision != null || !editable() : previewing); renderNav();
   }
   async function openDocument(path, quiet, discard) {
     if (!quiet && !discard && documentDirty() && !window.confirm(t("当前文档还没有保存。放弃这些修改并打开另一份吗？"))) return;
@@ -381,7 +381,8 @@
         drawOfficialness();
         return;
       }
-      setDraft(doc);
+      const previewing = quiet && draft && doc.path === draft.path ? ui.previewing : undefined;
+      setDraft(doc, previewing);
     } catch (err) {
       if (!live(mark) || token !== docRequest) return;
       if (!draft && ui) { ui.editor.replaceChildren(el("p", "ws-status err", errorWords(t("没能读取文档。"), err)), button(t("重试"), () => openDocument(path))); }
@@ -419,21 +420,19 @@
       if (found && ui && ui.preview === node && ui.previewing) renderMarkdown(node, previewContent(), draft.path || fallbackPath(draft.kind));
     });
   }
-  function renderEditor() {
+  function renderEditor(previewing) {
+    ui.previewing = !editable() || (previewing == null ? !!ui.previewing : previewing);
     const box = ui.editor; box.replaceChildren();
     const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", kindLabel(draft.kind));
     const tools = el("div", "ws-actions"), save = button(t("保存"), saveDocument, "btn btn-primary btn-small");
     save.disabled = !editable();
-    const previewToggle = button(t("预览"), () => {
+    const previewToggle = button("", () => {
       ui.previewing = !ui.previewing;
-      ui.title.classList.toggle("hidden", ui.previewing);
-      ui.text.classList.toggle("hidden", ui.previewing); ui.preview.classList.toggle("hidden", !ui.previewing);
-      previewToggle.textContent = ui.previewing ? t("继续编辑") : t("预览");
-      previewToggle.setAttribute("aria-pressed", String(ui.previewing));
-      if (ui.previewing) renderPreview();
-      else ui.text.focus();
+      showMode();
+      if (!ui.previewing) ui.text.focus();
     });
-    previewToggle.setAttribute("aria-pressed", "false");
+    previewToggle.disabled = !editable();
+    previewToggle.classList.toggle("hidden", !editable());
     ui.kindLabel = label; drawOfficialness();
     tools.append(previewToggle, save); header.append(label, tools);
     const title = input("text", t("标题")); title.value = draft.title; title.disabled = !editable();
@@ -442,7 +441,7 @@
     text.placeholder = draft.kind === "overview" ? t("研究问题、思路与计划") : draft.kind === "result" ? t("结果、解释与待确认的问题") : t("写笔记…");
     text.setAttribute("aria-label", kindLabel(draft.kind));
     const preview = el("div", "ws-preview hidden"), docStatus = el("div", "ws-status"); docStatus.setAttribute("role", "status");
-    ui.title = title; ui.text = text; ui.preview = preview; ui.save = save; ui.docStatus = docStatus; ui.previewing = false;
+    ui.title = title; ui.text = text; ui.preview = preview; ui.save = save; ui.docStatus = docStatus;
     ui.composing = false; ui.afterComposing = null;
     text.addEventListener("compositionstart", () => { ui.composing = true; });
     text.addEventListener("compositionend", () => {
@@ -470,6 +469,16 @@
     // to the members with the next 发布 (DESIGN.md 18.3).
     if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和结果记录会随下一次发布交给成员。")));
     box.append(footer);
+    function showMode() {
+      title.classList.toggle("hidden", ui.previewing);
+      text.classList.toggle("hidden", ui.previewing);
+      preview.classList.toggle("hidden", !ui.previewing);
+      save.classList.toggle("hidden", ui.previewing);
+      ui.attachments.classList.toggle("hidden", ui.previewing);
+      previewToggle.textContent = ui.previewing ? t("编辑") : t("预览");
+      if (ui.previewing) renderPreview();
+    }
+    showMode();
   }
   function insertText(words) {
     const text = ui.text, start = text.selectionStart == null ? text.value.length : text.selectionStart;
@@ -483,6 +492,7 @@
   }
   function attachmentTools() {
     const tools = el("details", "ws-attachments"); tools.append(disclosureSummary(t("引用文件或尝试")));
+    tools.classList.toggle("hidden", !!ui.previewing);
     ui.attachments = tools;
     const row = el("div", "ws-attachment-row"), select = el("select", "form-input");
     select.setAttribute("aria-label", t("选择项目文件"));
@@ -575,7 +585,7 @@
       draft.path = response.path; draft.revision = response.revision; draft.officialness = response.officialness || draft.officialness;
       const unchanged = draft.title === titleSent && draft.content === contentSent;
       saved = { title: response.title == null ? payload.title : response.title, content: response.content == null ? contentSent : response.content };
-      if (unchanged) { draft.title = saved.title; draft.content = saved.content; renderEditor(); }
+      if (unchanged) { draft.title = saved.title; draft.content = saved.content; renderEditor(true); }
       else { ui.save.disabled = !editable(); carryHeading(titleSent, contentSent, response.content, wasNew, shown); }
       const summary = { path: draft.path, kind: draft.kind, title: saved.title, excerpt: saved.content.slice(0, 100), officialness: draft.officialness, modified: response.modified || new Date().toISOString() };
       const index = (data.documents || []).findIndex((d) => d.path === draft.path);
