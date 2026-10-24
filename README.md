@@ -15,7 +15,9 @@ usual editor for analysis. Work on your own or share a project with a PI
 and collaborators. Plans, notes, tasks, and research attempts can develop
 in whatever order your work needs.
 
-![Project home with a fictional paper airplane study in English](docs/images/project-home-demo-en.png)
+![Project home in preview mode, with a research plan, notes, result records, and tasks](docs/images/project-home-demo-en.png)
+
+*Research OS 0.3.0, English interface. All screenshots use fictional demo data.*
 
 ## Version 0.3.0
 
@@ -304,19 +306,27 @@ provide evidence of execution; a relationship found in code alone does
 not establish that it ran. File tracing is limited to the formats and paths
 the readers can resolve.
 
-## Earlier demo views
+## Screenshots
 
-These English screenshots use synthetic data from the 0.1.0 Demo.
-Their layouts predate 0.3.0.
+These views show the current 0.3.0 interface with a fictional paper airplane
+project. Reference titles, abstracts, measurements, and results are sample data.
 
 <details>
-<summary>Research routes, result context, and PI review</summary>
+<summary>Research routes, literature abstracts, and Word preview</summary>
 
-![Research routes with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
+**Research routes.** Browse attempts by assessment and retain the recorded
+results of abandoned routes.
 
-![A figure linked to data, scripts, a research attempt, and a manuscript](docs/images/result-provenance.png)
+![Research attempts grouped as current, pending, adverse evidence, and abandoned](docs/images/research-routes-en.png)
 
-![PI review with previous and proposed content, a code diff, and review controls](docs/images/proposal-review.png)
+**Literature.** Search references and read the selected abstract with its source.
+
+![Reference library with a complete fictional abstract and its local source](docs/images/literature-abstract-en.png)
+
+**Word preview.** Open a document link and widen the file panel to read body
+text and tables beside the project.
+
+![Word document text and table in the widened file panel](docs/images/word-preview-en.png)
 
 </details>
 
