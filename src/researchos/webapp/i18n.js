@@ -54,6 +54,8 @@
     "无法读取或创建尝试记录，请查看错误详情。": "Could not read or create the attempt records. See the error details.",
     "尝试记录的配置无法读取，请检查或恢复项目中的配置文件。": "The attempt configuration could not be read. Check or restore the project's configuration file.",
     "无法打开尝试表单": "Could not open the attempt form",
+    "调整面板宽度": "Resize panel",
+    "拖动调整宽度，双击恢复默认": "Drag to resize; double-click to reset",
     "笔记": {one: "Note", other: "Notes"},
     "新建笔记": "New note",
     "记录结果": "Record results",

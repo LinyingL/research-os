@@ -700,7 +700,8 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
   top: 0;
   right: 0;
   height: 100vh;
-  width: min(560px, 92vw);
+  width: min(var(--panel-width, 560px), calc(100vw - 24px));
+  box-sizing: border-box;
   background: var(--paper);
   border-left: 1px solid var(--line-strong);
   z-index: 50;
@@ -708,14 +709,21 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
   flex-direction: column;
   box-shadow: -6px 0 24px rgba(38, 34, 27, 0.12);
 }
+.panel-resizer { position: absolute; top: 0; bottom: 0; left: -6px; width: 12px; z-index: 1; cursor: col-resize; touch-action: none; }
+.panel-resizer::after { content: ""; position: absolute; left: 5px; top: 50%; width: 3px; height: 44px; border-radius: 2px; transform: translateY(-50%); background: var(--line-strong); }
+.panel-resizer:hover::after, .panel-resizer:focus-visible::after { background: var(--clay); }
+.panel-resizer:focus-visible { outline: none; }
+.panel-resizer:focus-visible::after { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--clay); }
+body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.3rem; border-bottom: 1px solid var(--line-strong); }
+.panel-head-text { min-width: 0; }
 .panel-title { font-family: var(--font-mono); font-size: 0.95rem; word-break: break-all; }
 .panel-title.plain-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; word-break: normal; }
 .panel-subtitle { font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.25rem; }
 /* 12.11: closed with the word, not a glyph. */
 .panel-close { flex: none; background: none; border: none; font: inherit; font-size: 0.82rem; line-height: 1.4; cursor: pointer; color: var(--ink-soft); padding: 0.1rem 0.2rem; white-space: nowrap; }
 .panel-close:hover { color: var(--ink); }
-.panel-body { flex: 1; overflow-y: auto; padding: 1.1rem 1.3rem; }
+.panel-body { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 1.1rem 1.3rem; }
 /* The desk's side panel (DESIGN.md 14.3): an attempt, its note, trace, lines and what waits on it. */
 .panel-body .dp-part, .panel-body .node-trace-sec { margin: 0 0 1.6rem; }
 .dp-head { display: flex; flex-direction: column; gap: 0.4rem; margin: 0 0 1.4rem; }
@@ -1382,6 +1390,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 
 <div id="panel-backdrop" class="panel-backdrop hidden"></div>
 <aside id="panel" class="panel hidden" aria-hidden="true">
+  <div id="panel-resizer" class="panel-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="panel-body" aria-label="调整面板宽度" title="拖动调整宽度，双击恢复默认" data-i18n-attr="aria-label title"></div>
   <div class="panel-head">
     <div class="panel-head-text">
       <div class="panel-title" id="panel-title"></div>
@@ -3366,6 +3375,81 @@ const panelTitle = document.getElementById("panel-title");
 const panelSubtitle = document.getElementById("panel-subtitle");
 const panelBody = document.getElementById("panel-body");
 
+// -- Panel resizing: local display preference, independent of project files and runs.
+const endPanelResize = (() => {
+  const handle = document.getElementById("panel-resizer"), key = "researchos.panel-width";
+  let preferred = null, width = 560, drag = null;
+  try {
+    const saved = Number(window.localStorage.getItem(key));
+    if (Number.isFinite(saved) && saved > 0) preferred = saved;
+  } catch (err) { /* Site data may be unavailable. Resizing still works. */ }
+  function apply(value) {
+    const max = Math.max(1, window.innerWidth - 24), min = Math.min(320, max);
+    width = Math.round(Math.max(min, Math.min(max, value)));
+    panel.style.setProperty("--panel-width", width + "px");
+    handle.setAttribute("aria-valuemin", String(min));
+    handle.setAttribute("aria-valuemax", String(max));
+    handle.setAttribute("aria-valuenow", String(width));
+  }
+  function remember() {
+    preferred = width;
+    try { window.localStorage.setItem(key, String(width)); } catch (err) { /* Convenience only. */ }
+  }
+  function move(event) {
+    if (!drag || event.pointerId !== drag.id || !Number.isFinite(event.clientX)) return;
+    event.preventDefault();
+    apply(drag.width + drag.x - event.clientX);
+  }
+  function finish(save = true) {
+    if (!drag) return;
+    const id = drag.id; drag = null;
+    document.body.classList.remove("panel-resizing");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
+    window.removeEventListener("blur", cancel);
+    if (handle.hasPointerCapture && handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+    if (save) remember(); else apply(preferred || 560);
+  }
+  function up(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    move(event); finish();
+  }
+  function cancel() { finish(false); }
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.isPrimary === false || drag) return;
+    event.preventDefault(); event.stopPropagation();
+    handle.focus({ preventScroll: true });
+    drag = { id: event.pointerId, x: event.clientX, width };
+    document.body.classList.add("panel-resizing");
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    try { handle.setPointerCapture(event.pointerId); } catch (err) { /* Window listeners also track the drag. */ }
+  });
+  handle.addEventListener("lostpointercapture", cancel);
+  handle.addEventListener("click", (event) => event.stopPropagation());
+  handle.addEventListener("dblclick", (event) => {
+    event.preventDefault(); preferred = null;
+    try { window.localStorage.removeItem(key); } catch (err) { /* Convenience only. */ }
+    apply(560);
+  });
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 64 : 32;
+    if (event.key === "ArrowLeft") apply(width + step);
+    else if (event.key === "ArrowRight") apply(width - step);
+    else if (event.key === "Home") apply(320);
+    else if (event.key === "End") apply(window.innerWidth - 24);
+    else return;
+    event.preventDefault(); event.stopPropagation(); remember();
+  });
+  window.addEventListener("resize", () => apply(drag ? width : (preferred || 560)));
+  apply(preferred || 560);
+  return finish;
+})();
+// -- End panel resizing.
+
 function openPanel() {
   panel.classList.remove("hidden");
   panelBackdrop.classList.remove("hidden");
@@ -3373,6 +3457,7 @@ function openPanel() {
 }
 
 function closePanel() {
+  endPanelResize();
   panel.classList.add("hidden");
   panelBackdrop.classList.add("hidden");
   panel.setAttribute("aria-hidden", "true");

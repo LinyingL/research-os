@@ -19,6 +19,8 @@
 
 ### Research routes and interface
 
+- Resize the shared file and detail panel by dragging its left edge. Keep its
+  width on this device, support keyboard adjustment, and reset on double-click.
 - Combine the route map and grouped attempt list into one Research routes page,
   with a shared detail panel and pending work alongside either view.
 - Hide team navigation and identity reminders in single-person projects. Start
