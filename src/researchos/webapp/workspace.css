@@ -65,6 +65,12 @@
 .ws-task-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0; }
 .ws-task { display: flex; gap: .6rem; align-items: flex-start; padding: .6rem 0; border-bottom: 1px solid var(--line); font-size: .86rem; }
 .ws-task > input { width: auto; margin: .35rem 0 0; accent-color: var(--olive); }
+.ws-task-details { min-width: 0; flex: 1; }
+.ws-task-details > .ws-task-summary { align-items: flex-start; padding: 0; font-size: inherit; gap: .45rem; }
+.ws-task-summary > .res-chevron { margin-top: .3rem; }
+.ws-task-details[open] > .ws-task-summary .res-chevron { transform: rotate(90deg); }
+.ws-task-body { display: flex; flex-wrap: wrap; gap: .6rem; padding: .25rem 0 0 calc(12px + .45rem); }
+.ws-task-actions { display: flex; align-items: flex-start; gap: .6rem; }
 .ws-task-words { min-width: 0; flex: 1; }
 .ws-task-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ws-task-meta { display: block; color: var(--ink-soft); font-size: .75rem; margin-top: .1rem; }

@@ -19,6 +19,8 @@
   Team submissions include referenced files and the result records linked by tasks.
 - Keep optional tasks with an owner, date, completion status, and result link.
   Tasks have no required order and do not gate writing or research attempts.
+- Collapse task details individually, opening only the three newest tasks by
+  default. Keep manual disclosure choices and unsent replies during refreshes.
 
 ### Research routes and interface
 

@@ -574,6 +574,60 @@ console.log(JSON.stringify({content:byClass('ws-writing').value,status:byClass('
     assert out["dirty"]
 
 
+@pytest.mark.parametrize("count", [0, 2, 6])
+def test_only_the_three_newest_tasks_show_their_details_by_default(count):
+    out = run(r"""
+listed.tasks=Array.from({length:COUNT},(_,i)=>agentTask({id:'t'+i,text:'Task '+i}));
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({rows:root.all().filter(e=>e.classList.contains('ws-task')).map(row=>({
+  title:byClass('ws-task-summary',row).textContent,open:byClass('ws-task-details',row).open,
+  check:row.children[0].type,actions:buttonsIn(byClass('ws-task-body',row))})),posted}));
+""".replace("COUNT", str(count)))
+    assert [row["title"] for row in out["rows"]] == [f"Task {i}" for i in range(count)]
+    assert [row["open"] for row in out["rows"]] == [i >= count - 3 for i in range(count)]
+    assert all(row["check"] == "checkbox" and "编辑" in row["actions"] for row in out["rows"])
+    assert out["posted"] == []
+
+
+def test_task_disclosures_keep_manual_choices_and_reply_drafts_through_refresh():
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=Array.from({length:6},(_,i)=>agentTask({id:'t'+i,text:'Task '+i}));
+setRuns([mkRun({task_id:'t0',state:'needs_input',question:'Which sample?',can_reply:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const boxes=()=>root.all().filter(e=>e.classList.contains('ws-task-details'));
+// A refresh can land before the native toggle event is delivered.
+boxes()[0].open=true;boxes()[5].open=false;
+await window.ROWorkspace.load(root,true);await sleepTick();
+const afterRefresh=boxes().map(e=>e.open);
+await find('回答',boxes()[0]).click();typed(byClass('ws-agent-reply').children[0],'Keep the balanced sample.');
+boxes()[0].open=false;await boxes()[0].emit('toggle');
+await window.ROWorkspace.load(root,true);await sleepTick();
+const closed=boxes()[0].open;
+boxes()[0].open=true;await boxes()[0].emit('toggle');
+console.log(JSON.stringify({afterRefresh,closed,reply:byClass('ws-agent-reply').children[0].value,dirty:window.ROWorkspace.isDirty(),posted}));
+""")
+    assert out["afterRefresh"] == [True, False, False, True, True, False]
+    assert not out["closed"]
+    assert out["reply"] == "Keep the balanced sample."
+    assert out["dirty"] and out["posted"] == []
+
+
+def test_adding_a_task_updates_default_disclosures_without_resetting_manual_choices():
+    out = run(r"""
+listed.tasks=Array.from({length:6},(_,i)=>({id:'t'+i,text:'Task '+i,owner:'Demo'}));
+await window.ROWorkspace.load(root);await sleepTick();
+const boxes=()=>root.all().filter(e=>e.classList.contains('ws-task-details'));
+boxes()[0].open=true;await boxes()[0].emit('toggle');
+typed(field('任务'),'New task');await find('添加任务').click();await sleepTick();
+const added=boxes().map(e=>e.open);
+window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({added,reopened:boxes().map(e=>e.open),tasks:listed.tasks.length}));
+""")
+    assert out["added"] == [True, False, False, False, True, True, True]
+    assert out["reopened"] == [False, False, False, False, True, True, True]
+    assert out["tasks"] == 7
+
+
 def test_tasks_can_finish_edit_and_remove_independently_of_the_research_plan():
     out = run(r"""
 listed.tasks=[{id:'one',text:'Old task',owner:'Lin',due:'',done:false}];
@@ -976,12 +1030,12 @@ def test_owner_control_keeps_a_typed_name_and_names_an_agent_this_mac_lacks():
 agentsInfo=agentFixture();
 listed.tasks=[{id:'a',text:'By hand',owner:'Lin',due:'',done:false},agentTask({id:'b',owner:'agent:opencode:lmstudio/qwen3-coder'})];
 await window.ROWorkspace.load(root);await sleepTick();
-const rows=root.all().filter(e=>e.classList.contains('ws-task'));
-await rows[0].children.find(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').click();
+const rows=()=>root.all().filter(e=>e.classList.contains('ws-task'));
+await find('编辑',rows()[0]).click();
 const typedName={options:optionsOf(field('负责人')),value:field('负责人').value};
-await rows[1].children.find(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').click();
+await find('编辑',rows()[1]).click();
 const unknown={options:optionsOf(field('负责人')),value:field('负责人').value};
-console.log(JSON.stringify({typedName,unknown,meta:rows.map(r=>byClass('ws-task-meta',r).textContent)}));
+console.log(JSON.stringify({typedName,unknown,meta:rows().map(r=>byClass('ws-task-meta',r).textContent)}));
 """)
     assert ["Lin", "Lin"] in out["typedName"]["options"] and out["typedName"]["value"] == "Lin"
     assert ["OpenCode · lmstudio/qwen3-coder", "agent:opencode:lmstudio/qwen3-coder"] in out["unknown"]["options"]

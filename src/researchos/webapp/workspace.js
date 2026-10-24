@@ -75,6 +75,7 @@
   let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
+  let taskOpen = {}, taskDisclosures = {};
   let createSubject = null, folderSubject = null, foreignBlocked = false;
   // AI agents carry out tasks (DESIGN.md Section 17): what the page knows of this Mac's agents, the people
   // an owner can be, the project's runs and what is open in each task's row. The programs and every limit
@@ -121,6 +122,7 @@
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
     foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
+    taskOpen = {}; taskDisclosures = {};
     stopPolling(); offline = false;
     agentInfo = null; agentInfoError = null; agentInfoLoading = false;
     people = { loaded: false, loading: false, me: null, team: [] };
@@ -610,8 +612,13 @@
 
   function renderTaskList() {
     const list = ui.list, snap = focusSnapshot(list);
+    // A native toggle can be queued just before a refresh; read it before replacing the row.
+    Object.values(taskDisclosures).forEach((view) => view.remember());
     list.replaceChildren();
     sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    taskDisclosures = {};
+    // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
+    const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
     showTaskError();
     (data.tasks || []).forEach((task) => {
       const run = latestRun(task.id);
@@ -619,7 +626,16 @@
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
       check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
       check.addEventListener("change", () => mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x)));
-      const words = el("div", "ws-task-words"); words.append(el("span", "ws-task-text", task.text));
+      const disclosure = el("details", "ws-task-details");
+      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
+      const view = { open: disclosure.open, remember: () => {
+        if (view.open !== disclosure.open) { view.open = disclosure.open; taskOpen[task.id] = disclosure.open; }
+      } };
+      taskDisclosures[task.id] = view;
+      disclosure.addEventListener("toggle", () => { if (taskDisclosures[task.id] === view) view.remember(); });
+      const summary = keyed(disclosureSummary(task.text), "task-details:" + task.id);
+      summary.className += " ws-task-summary"; summary.lastChild.className = "ws-task-text";
+      const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
@@ -630,7 +646,9 @@
       const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
-      row.append(check, words, edit, remove); list.append(row);
+      const actions = el("div", "ws-task-actions"); actions.append(edit, remove);
+      body.append(words, actions); disclosure.append(summary, body);
+      row.append(check, disclosure); list.append(row);
     });
     restoreFocus(list, snap);
   }
