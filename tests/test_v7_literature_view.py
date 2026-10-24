@@ -440,6 +440,7 @@ def test_11_5_6_page_tab_setting_lazy_drafts_and_the_one_write_path():
     assert "postJudgement(link, verdict)" in view
     assert set(__import__("re").findall(r'"(/api/[\w/-]+)"', view)) == {
         "/api/citations", "/api/citations/lookup-setting", "/api/zotero/open-item", "/api/zotero/open-attachment",
+        "/api/literature/abstract",
     }
     assert "{ item_key: t.pdf.item_key, attachment_key: t.pdf.attachment_key }" in view and "path:" not in view
     assert 'a.rel = "noopener noreferrer";' in view and "innerHTML = \"\"" in view and ".innerHTML = d" not in view

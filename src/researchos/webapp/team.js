@@ -487,8 +487,7 @@
       if (shown.length) page.appendChild(routeProposalBlock(shown, ctx));
     }
     if (!data.groups || !data.groups.length) {
-      page.appendChild(line(state.attemptsConfig ? t("还没有研究尝试。")
-        : t("尚未设置尝试表。请在 .researchos/attempts.toml 中配置。"), "quiet"));
+      page.appendChild(line(t("还没有研究尝试。点击“新增尝试”开始记录。"), "quiet"));
       host.appendChild(page);
       host.dataset.loaded = "1";
       return;

@@ -454,7 +454,8 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
     out = {
         "id": run.get("id"), "task_id": run.get("task_id"), "task_text": run.get("task_text"),
         "owner": run.get("owner"), "label": run.get("label"), "runner": run.get("runner"),
-        "model": run.get("model"), "state": state, "outcome": outcome, "reverted": reverted,
+        "model": run.get("model"),
+        "state": state, "outcome": outcome, "reverted": reverted,
         "kind": run.get("kind"),
         "parent": run.get("parent"), "created": run.get("created"), "started": run.get("started"),
         "ended": run.get("ended"), "question": run.get("question"), "report": run.get("report"),
@@ -467,6 +468,8 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
         "can_revert": bool(finished and not active and not reverted and run.get("revertible")
                            and (changed > 0 or run.get("report"))),
     }
+    if "reasoning_effort" in run:
+        out["reasoning_effort"] = run["reasoning_effort"]
     revert = run.get("revert")
     if isinstance(revert, dict) and isinstance(revert.get("skipped"), list):
         out["revert_skipped"] = len(revert["skipped"])  # a partial undo: the page says so and lists them
@@ -815,7 +818,8 @@ class AgentManager:
             raise AgentError("task_done")
         found = self._check_runner(agent.runner)
         return self._launch(root, project_id, task, agent, found, by=by, by_name=by_name, lang=_lang(lang),
-                            kind="start", parent=None, message=None, session=None)
+                            kind="start", parent=None, message=None, session=None,
+                            reasoning_effort=profiles.reasoning_effort(agent))
 
     def reply(self, root: Path, project_id: str, run_id: str, message: str, *, by: str | None,
               by_name: str | None, lang: str) -> dict:
@@ -874,7 +878,8 @@ class AgentManager:
             cleared = True
         try:
             return self._launch(root, project_id, task, agent, found, by=by, by_name=by_name, lang=_lang(lang),
-                                kind=kind, parent=run_id, message=text, session=session)
+                                kind=kind, parent=run_id, message=text, session=session,
+                                reasoning_effort=parent.get("reasoning_effort"))
         except BaseException:
             if cleared:  # the run did not start: give the person's task its done mark back
                 with contextlib.suppress(Exception):
@@ -885,7 +890,7 @@ class AgentManager:
 
     def _launch(self, root: Path, project_id: str, task: dict, agent: labels.Agent, found: profiles.Found, *,
                 by: str | None, by_name: str | None, lang: str, kind: str, parent: str | None,
-                message: str | None, session: str | None) -> dict:
+                message: str | None, session: str | None, reasoning_effort: str | None = None) -> dict:
         assert found.path is not None
         self._recover(project_id)
         engine_started = self._engine_started()
@@ -893,6 +898,7 @@ class AgentManager:
             "id": None, "project_id": project_id, "root": str(root), "task_id": task["id"],
             "task_text": task["text"], "task_due": task.get("due") or None,
             "runner": agent.runner, "model": agent.model, "owner": agent.owner, "label": agent.label,
+            "reasoning_effort": reasoning_effort,
             "by": by if isinstance(by, str) and by else None,
             "by_name": by_name if isinstance(by_name, str) and by_name else None,
             "lang": lang, "kind": kind, "parent": parent, "message": message,
@@ -1113,17 +1119,20 @@ class AgentManager:
             launch = runners.claude_launch(
                 program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,
                 session_id=session, resume=resume, prompt=text, rules=rules,
-                max_budget_usd=profiles.max_budget_usd(), home=home, base_env=os.environ)
+                max_budget_usd=profiles.max_budget_usd(), home=home, base_env=os.environ,
+                reasoning_effort=run.get("reasoning_effort"))
             stream: runners.ClaudeStream | runners.OpenCodeStream | runners.CodexStream | runners.HarnessStream = runners.ClaudeStream()
         elif runner == "deepseek-harness":
             launch = runners.harness_launch(
                 program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,
-                session_id=act.resume_session, prompt=combined, home=home, base_env=os.environ)
+                session_id=act.resume_session, prompt=combined, home=home, base_env=os.environ,
+                reasoning_effort=run.get("reasoning_effort"))
             stream = runners.HarnessStream()
         elif runner == "codex":
             launch = runners.codex_launch(
                 program=act.program, model=run["model"], root=root, run_dir=rd, run_id=act.run_id,
-                session_id=act.resume_session, prompt=combined, home=home, base_env=os.environ)
+                session_id=act.resume_session, prompt=combined, home=home, base_env=os.environ,
+                reasoning_effort=run.get("reasoning_effort"))
             stream = runners.CodexStream()
         else:
             launch = runners.opencode_launch(

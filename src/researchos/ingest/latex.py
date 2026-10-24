@@ -80,7 +80,7 @@ def _normalize_bib_key(key: str) -> str:
 
 _BIB_ENTRY_START_RE = re.compile(r"@(\w+)\s*\{\s*([^,\s}]+)\s*,")
 _BIB_FIELD_START_RE = re.compile(r"(\w+)\s*=\s*")
-_BIB_FIELDS_WANTED = frozenset({"title", "author", "year"})
+_BIB_FIELDS_WANTED = frozenset({"title", "author", "year", "doi", "journal", "booktitle", "abstract", "url"})
 _BIB_NON_ENTRY_TYPES = frozenset({"comment", "string", "preamble"})
 
 def _strip_comment(line: str) -> str:
@@ -395,7 +395,7 @@ def parse_tex_file(repo_root: str | Path, tex_rel_path: str) -> TexParseResult:
     return TexParseResult(tex_rel_path, sections, section_attrs, figure_links, cite_links)
 
 def _parse_bib_fields(body: str) -> dict[str, str]:
-    """Extract title/author/year from one @entry's body, handling BibTeX's
+    """Extract bibliographic fields from one @entry's body, handling BibTeX's
     three value forms: {braced} (brace-counted, nested braces survive),
     "quoted", and bare (e.g. `year = 2020`, ends at the next comma).
 
@@ -444,7 +444,7 @@ def _parse_bib_fields(body: str) -> dict[str, str]:
 
 def parse_bib_entries(text: str) -> list[BibEntry]:
     """Parse @entry blocks via brace-depth counting -- not a full BibTeX
-    grammar (Occam rule 1/5: title/author/year is all v0 needs).
+    grammar. Bibliographic metadata and abstracts use the same parser.
 
     Unlike .tex, '%' has no comment meaning in BibTeX -- it is an ordinary
     character that shows up routinely in field values (e.g.

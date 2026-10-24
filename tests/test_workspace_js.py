@@ -95,6 +95,7 @@ const agentFixture=()=>({
            {runner:'deepseek-harness',label:'DeepSeek Harness',path:'/apps/dsh',version:'0.2.1-rc.2',problem:null,found:true}],
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
   harness_models:['deepseek-account/deepseek-flash','deepseek-official/deepseek-v4-pro'],
+  reasoning_efforts:{'claude-code':{'claude-sonnet-5-5':['low','medium','high','xhigh','max'],'claude-opus-4-6':['low','medium','high','max']},'deepseek-harness':{'deepseek-account/deepseek-flash':['off','low','high','max'],'deepseek-official/deepseek-v4-pro':['off','low','high','max']}},
   mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
@@ -143,7 +144,7 @@ global.apiPost=async(path,body)=>{
     Object.assign(run,{can_reply:false}); runsList.runs.unshift(next); runsList.active=next.id; return clone(next);
   }
   if(path==='/api/settings/agents') {
-    if(body.agents) agentsInfo.agents=body.agents.map(a=>({runner:a.runner,model:a.model,owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
+    if(body.agents) agentsInfo.agents=body.agents.map(a=>Object.assign({},a,{owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
     if(body.commands) for(const [runner,p] of Object.entries(body.commands)) Object.assign(agentsInfo.runners.find(r=>r.runner===runner),{path:p,version:'0.9.0',problem:null,found:true});
     if(body.timeout_minutes) agentsInfo.timeout_minutes=body.timeout_minutes;
     if('max_budget_usd' in body) agentsInfo.max_budget_usd=body.max_budget_usd;
@@ -167,7 +168,10 @@ const waiting=()=>timers.filter(t=>!t.cancelled&&!t.fired).length;
 const tick=async()=>{ for(const t of timers.filter(t=>!t.cancelled&&!t.fired)) { t.fired=true; await t.f(); } await sleepTick(); await sleepTick(); };
 const find=(label,where=root)=>[where,...where.all()].find(e=>e.tagName==='BUTTON'&&e.textContent===label);
 const byClass=(cls,where=root)=>[where,...where.all()].find(e=>e.classList.contains(cls));
-const typed=(node,value)=>{node.value=value;(node.on.input||[]).forEach(f=>f({target:node}));};
+const typed=(node,value)=>{if(node.classList.contains('hidden'))throw Error('Cannot type into a hidden field');node.value=value;(node.on.input||[]).forEach(f=>f({target:node}));};
+const editDocument=async()=>{const edit=find(window.ROI18N.t('编辑'),byClass('ws-editor-host'));if(edit&&!edit.classList.contains('hidden'))await edit.click();};
+const writeDocument=async value=>{await editDocument();typed(byClass('ws-writing'),value);};
+const titleDocument=async value=>{await editDocument();typed(byClass('ws-title-input'),value);};
 const field=(words,where=root)=>where.all().find(e=>e.tagName==='LABEL'&&e.children[0].textContent===words).children[1];
 const sleepTick=()=>new Promise(r=>setTimeout(r,0));
 const buttonsIn=node=>node.all().filter(e=>e.tagName==='BUTTON').map(e=>e.textContent);
@@ -214,13 +218,13 @@ console.log(JSON.stringify({posted,created,chosenPurpose,words:panelBody.textCon
 def test_write_plan_note_and_result_as_project_files_without_importing_history():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'# A flexible plan\nTry several explanations.');
+await writeDocument('# A flexible plan\nTry several explanations.');
 await find('保存').click();
 await find('新建笔记').click();
-typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'An idea worth revisiting.');
+await titleDocument('Discussion'); await writeDocument('An idea worth revisiting.');
 await find('保存').click();
 await find('记录结果').click();
-typed(byClass('ws-title-input'),'Exploratory result'); typed(byClass('ws-writing'),'This is still uncertain.');
+await titleDocument('Exploratory result'); await writeDocument('This is still uncertain.');
 await find('保存').click();
 console.log(JSON.stringify({posted,words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
 """)
@@ -252,14 +256,83 @@ console.log(JSON.stringify({initial,note,result:byClass('ws-writing').placeholde
     assert out["taskHeading"] == "任务"
 
 
+@pytest.mark.parametrize("kind, path", [
+    ("overview", "research/overview.md"),
+    ("note", "research/notes/discussion.md"),
+    ("result", "research/results/finding.md"),
+])
+def test_existing_documents_open_in_preview_and_only_edit_after_a_click(kind, path):
+    out = run(r"""
+const path=DOC_PATH,kind=DOC_KIND;
+listed.documents=[{path,kind,title:'Read this'}];
+docs[path]={path,kind,title:'Read this',content:'# Read this\nAn observation.',revision:'existing'};
+await window.ROWorkspace.load(root);
+await find('Read this',byClass('ws-documents')).click();
+const initial={preview:!byClass('ws-preview').classList.contains('hidden'),
+  writing:!byClass('ws-writing').classList.contains('hidden'),title:!byClass('ws-title-input').classList.contains('hidden'),
+  save:!find('保存').classList.contains('hidden'),attachments:!byClass('ws-attachments').classList.contains('hidden'),words:byClass('ws-preview').textContent};
+await find('编辑',byClass('ws-editor-host')).click();
+const editing={preview:!byClass('ws-preview').classList.contains('hidden'),
+  writing:!byClass('ws-writing').classList.contains('hidden'),save:!find('保存').classList.contains('hidden'),
+  attachments:!byClass('ws-attachments').classList.contains('hidden'),focused:focused===byClass('ws-writing')};
+typed(byClass('ws-writing'),'# Read this\nA revised observation.');
+await find('保存').click();
+console.log(JSON.stringify({initial,editing,after:{preview:!byClass('ws-preview').classList.contains('hidden'),
+  writing:!byClass('ws-writing').classList.contains('hidden'),words:byClass('ws-preview').textContent,dirty:window.ROWorkspace.isDirty()}}));
+""".replace("DOC_PATH", json.dumps(path)).replace("DOC_KIND", json.dumps(kind)))
+    assert out["initial"] == {"preview": True, "writing": False, "title": False,
+                              "save": False, "attachments": False, "words": "Read thisAn observation."}
+    assert out["editing"] == {"preview": False, "writing": True, "save": True, "attachments": True, "focused": True}
+    assert out["after"] == {"preview": True, "writing": False, "words": "Read thisA revised observation.", "dirty": False}
+
+
+def test_new_documents_start_in_editing_and_read_only_documents_stay_in_preview():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+const fresh=[];
+for (const label of ['新建笔记','记录结果']) {
+  await find(label).click();
+  fresh.push({writing:!byClass('ws-writing').classList.contains('hidden'),
+    preview:!byClass('ws-preview').classList.contains('hidden'),focused:focused===byClass('ws-title-input')});
+}
+window.ROWorkspace.reset();listed.read_only=true;listed.can_write=false;
+await window.ROWorkspace.load(root);
+console.log(JSON.stringify({fresh,readonly:{preview:!byClass('ws-preview').classList.contains('hidden'),
+  editHidden:find('编辑',byClass('ws-editor-host')).classList.contains('hidden'),
+  editDisabled:find('编辑',byClass('ws-editor-host')).disabled,saveHidden:find('保存').classList.contains('hidden')}}));
+""")
+    assert out["fresh"] == [{"writing": True, "preview": False, "focused": True}] * 2
+    assert out["readonly"] == {"preview": True, "editHidden": True, "editDisabled": True, "saveHidden": True}
+
+
+def test_background_refresh_preserves_preview_and_edit_modes_and_unsaved_text():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+docs['research/overview.md'].revision='external-1';
+await window.ROWorkspace.load(root,true);
+const readMode=!byClass('ws-preview').classList.contains('hidden');
+await find('编辑',byClass('ws-editor-host')).click();
+docs['research/overview.md'].revision='external-2';
+await window.ROWorkspace.load(root,true);
+const editMode=!byClass('ws-writing').classList.contains('hidden');
+const area=byClass('ws-writing');typed(area,'An unfinished thought.');
+docs['research/overview.md'].revision='external-3';
+await window.ROWorkspace.load(root,true);
+console.log(JSON.stringify({readMode,editMode,sameArea:area===byClass('ws-writing'),
+  words:byClass('ws-writing').value,hidden:byClass('ws-writing').classList.contains('hidden'),dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out == {"readMode": True, "editMode": True, "sameArea": True,
+                   "words": "An unfinished thought.", "hidden": False, "dirty": True}
+
+
 def test_preview_hides_editable_title_and_returns_to_unchanged_writing():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-title-input'),'Updated research question');
-typed(byClass('ws-writing'),'# Updated research question\nAn unfinished plan.');
+await titleDocument('Updated research question');
+await writeDocument('# Updated research question\nAn unfinished plan.');
 await find('预览').click();
 const preview={titleHidden:byClass('ws-title-input').classList.contains('hidden'),writingHidden:byClass('ws-writing').classList.contains('hidden'),words:byClass('ws-preview').textContent};
-await find('继续编辑').click();
+await find('编辑',byClass('ws-editor-host')).click();
 console.log(JSON.stringify({preview,titleHidden:byClass('ws-title-input').classList.contains('hidden'),writingHidden:byClass('ws-writing').classList.contains('hidden'),title:byClass('ws-title-input').value,content:byClass('ws-writing').value,dirty:window.ROWorkspace.isDirty(),posted}));
 """)
     assert out["preview"]["titleHidden"] and out["preview"]["writingHidden"]
@@ -270,7 +343,7 @@ console.log(JSON.stringify({preview,titleHidden:byClass('ws-title-input').classL
     assert out["dirty"] and not out["posted"]
     note = run(r"""
 await window.ROWorkspace.load(root);await find('新建笔记').click();
-typed(byClass('ws-title-input'),'A separate title');typed(byClass('ws-writing'),'## Finding\nAn observation.');
+await titleDocument('A separate title');await writeDocument('## Finding\nAn observation.');
 await find('预览').click();
 console.log(JSON.stringify({words:byClass('ws-preview').textContent,titleHidden:byClass('ws-title-input').classList.contains('hidden')}));
 """)
@@ -285,7 +358,7 @@ console.log(JSON.stringify({words:byClass('ws-preview').textContent,titleHidden:
 def test_preview_keeps_body_headings_without_inserting_the_old_title(body, expected):
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),BODY);
+await writeDocument(BODY);
 await find('预览').click();
 console.log(JSON.stringify({words:byClass('ws-preview').textContent,posted,content:byClass('ws-writing').value}));
 """.replace("BODY", json.dumps(body)))
@@ -297,7 +370,7 @@ def test_clear_task_form_leaves_the_saved_task_unchanged():
     out = run(r"""
 listed.tasks=[{id:'one',text:'Existing task',owner:'Lin',due:'2026-11-02',done:false}];
 await window.ROWorkspace.load(root);
-await find('编辑').click();typed(field('任务'),'Unsaved task edit');
+await find('编辑',byClass('ws-tasks')).click();typed(field('任务'),'Unsaved task edit');
 await find('清空').click();
 console.log(JSON.stringify({text:field('任务').value,owner:field('负责人').value,due:field('日期').value,tasks:listed.tasks,posted,adding:!!find('添加任务'),dirty:window.ROWorkspace.isDirty()}));
 """)
@@ -308,7 +381,7 @@ console.log(JSON.stringify({text:field('任务').value,owner:field('负责人').
 
 def test_saved_document_keeps_file_actions_and_uses_short_success_message():
     out = run(r"""
-await window.ROWorkspace.load(root);typed(byClass('ws-writing'),'Saved words');
+await window.ROWorkspace.load(root);await writeDocument('Saved words');
 customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:body.title,content:body.content,revision:'new',backup:'backup/previous.md'}:undefined;
 await find('保存').click();
 const saved=root.all().find(e=>e.getAttribute('role')==='status').textContent;
@@ -323,8 +396,8 @@ console.log(JSON.stringify({saved,openedFiles,openedAttempts,dirty:window.ROWork
 def test_project_references_are_relative_images_are_local_and_html_is_text():
     out = run(r"""
 await window.ROWorkspace.load(root); await find('记录结果').click();
-typed(byClass('ws-title-input'),'A figure');
-typed(byClass('ws-writing'),'<script>alert(1)</script>\n[bad](javascript:alert)\n[escape](../../../../outside.png)');
+await titleDocument('A figure');
+await writeDocument('<script>alert(1)</script>\n[bad](javascript:alert)\n[escape](../../../../outside.png)');
 const files=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择项目文件');
 files.value='figures/图 (1).png'; await find('插入引用').click();
 files.value='code/model.do'; await find('插入引用').click();
@@ -352,7 +425,7 @@ console.log(JSON.stringify({content,src:image.src,htmlText:preview.textContent,t
 def test_background_refresh_and_task_writes_keep_unsaved_document_and_task_form():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'Unfinished paragraph');
+await writeDocument('Unfinished paragraph');
 typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');typed(field('日期'),'2026-11-02');
 docs['research/overview.md'].content='Changed outside';docs['research/overview.md'].revision='doc-external';
 await window.ROWorkspace.load(root,true);
@@ -373,9 +446,9 @@ def test_newer_typing_survives_a_slow_save_response():
     out = run(r"""
 await window.ROWorkspace.load(root);
 const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
-typed(byClass('ws-writing'),'First paragraph');
+await writeDocument('First paragraph');
 const saving=find('保存').click();
-typed(byClass('ws-writing'),'First paragraph\nMore writing while saving');
+await writeDocument('First paragraph\nMore writing while saving');
 waiting.resolve({path:'research/overview.md',kind:'overview',title:'Research question',content:'First paragraph',revision:'doc-1'});
 await saving;
 const after=byClass('ws-writing').value;
@@ -391,7 +464,7 @@ console.log(JSON.stringify({after,posted,dirty:window.ROWorkspace.isDirty()}));
 def test_conflicting_file_is_never_overwritten_and_reload_is_explicit():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'My unsaved paragraph');
+await writeDocument('My unsaved paragraph');
 customPost=()=>Promise.reject(Object.assign(Error('external change'),{state:'workspace_conflict'}));
 await find('保存').click();
 const kept=byClass('ws-writing').value;
@@ -446,11 +519,13 @@ console.log(JSON.stringify({content:byClass('ws-writing').value,words:root.textC
 def test_readonly_project_can_preview_but_cannot_create_or_save():
     out = run(r"""
 listed.read_only=true;await window.ROWorkspace.load(root);
-await find('保存').click();await find('新建笔记').click();await find('预览').click();
-console.log(JSON.stringify({posted,disabled:byClass('ws-writing').disabled,preview:byClass('ws-preview').textContent,words:root.textContent}));
+await find('保存').click();await find('新建笔记').click();
+console.log(JSON.stringify({posted,disabled:byClass('ws-writing').disabled,preview:byClass('ws-preview').textContent,
+  visible:!byClass('ws-preview').classList.contains('hidden'),words:root.textContent}));
 """)
     assert out["posted"] == []
     assert out["disabled"]
+    assert out["visible"]
     assert "An open question." in out["preview"]
 
 
@@ -470,7 +545,7 @@ console.log(JSON.stringify({screen,dialog}));
 def test_refresh_files_finds_external_stata_outputs_without_losing_writing():
     out = run(r"""
 await window.ROWorkspace.load(root);await find('记录结果').click();
-typed(byClass('ws-title-input'),'Current finding');typed(byClass('ws-writing'),'An unfinished interpretation.');
+await titleDocument('Current finding');await writeDocument('An unfinished interpretation.');
 listed.files.push({path:'analysis/stata-new.csv',type:'dataset'});
 await find('刷新文件').click();
 const files=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择项目文件');
@@ -490,7 +565,7 @@ listed.documents.push({path:'research/notes/discussion.md',kind:'note',title:'Di
 await window.ROWorkspace.load(root);
 const waiting=deferred();customGet=path=>path.includes('discussion.md')?waiting.promise:undefined;
 const opening=find('Discussion').click();
-typed(byClass('ws-writing'),'Writing added while another document loads.');
+await writeDocument('Writing added while another document loads.');
 waiting.resolve({path:'research/notes/discussion.md',kind:'note',title:'Discussion',content:'The other note',revision:'note-1'});
 await opening;
 console.log(JSON.stringify({content:byClass('ws-writing').value,status:byClass('ws-status').textContent,dirty:window.ROWorkspace.isDirty()}));
@@ -503,9 +578,9 @@ def test_tasks_can_finish_edit_and_remove_independently_of_the_research_plan():
     out = run(r"""
 listed.tasks=[{id:'one',text:'Old task',owner:'Lin',due:'',done:false}];
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'An unfinished plan');
+await writeDocument('An unfinished plan');
 const check=byClass('ws-task').children[0];check.checked=true;await check.emit('change');
-await find('编辑').click();typed(field('任务'),'Revised task');await find('保存任务').click();
+await find('编辑',byClass('ws-tasks')).click();typed(field('任务'),'Revised task');await find('保存任务').click();
 const afterEdit=clone(listed.tasks);
 await find('移除').click();
 console.log(JSON.stringify({afterEdit,tasks:listed.tasks,content:byClass('ws-writing').value,posted,dirty:window.ROWorkspace.isDirty()}));
@@ -523,7 +598,7 @@ listed.tasks_error={code:'workspace_invalid',message:'Invalid task JSON'};
 listed.documents.push({path:'research/notes/bad.md',kind:'note',title:'Bad note',error:{code:'cloud',message:'Not downloaded'}});
 await window.ROWorkspace.load(root);
 const blocked=field('任务').disabled;
-await find('新建笔记').click();typed(byClass('ws-title-input'),'Working note');typed(byClass('ws-writing'),'Still able to write');await find('保存').click();
+await find('新建笔记').click();await titleDocument('Working note');await writeDocument('Still able to write');await find('保存').click();
 console.log(JSON.stringify({blocked,posted,words:root.textContent}));
 """)
     assert out["blocked"]
@@ -534,7 +609,7 @@ console.log(JSON.stringify({blocked,posted,words:root.textContent}));
 
 def test_saved_file_with_history_warning_does_not_offer_to_retry_the_write():
     out = run(r"""
-await window.ROWorkspace.load(root);typed(byClass('ws-writing'),'Saved words');
+await window.ROWorkspace.load(root);await writeDocument('Saved words');
 customPost=(path,body)=>path==='/api/workspace/document'?{path:body.path,kind:body.kind,title:body.title,content:body.content,revision:'new',history_error:'temporarily busy'}:undefined;
 await find('保存').click();
 console.log(JSON.stringify({words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
@@ -547,7 +622,7 @@ def test_member_submission_includes_only_saved_file_and_browser_close_is_guarded
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
 const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
-typed(byClass('ws-writing'),'Draft content');await find('提交修改').click();
+await writeDocument('Draft content');await find('提交修改').click();
 let prevented=false;const event={preventDefault(){prevented=true;}};events.beforeunload[0](event);
 await find('保存').click();await find('提交修改').click();
 console.log(JSON.stringify({proposals,prevented,returnValue:event.returnValue}));
@@ -559,7 +634,7 @@ console.log(JSON.stringify({proposals,prevented,returnValue:event.returnValue}))
 def test_foreign_window_project_switch_preserves_writing_and_task_drafts():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'Keep this unfinished interpretation.');typed(field('任务'),'Keep this task too');
+await writeDocument('Keep this unfinished interpretation.');typed(field('任务'),'Keep this task too');
 window.ROWorkspace.projectChangedElsewhere();
 const blocked=find('保存').disabled, before=byClass('ws-writing').value;
 customPost=(path,body)=>path==='/api/projects/switch'?{}:undefined;
@@ -577,7 +652,7 @@ def test_result_submission_includes_local_references_for_pi_review():
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
 const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
-typed(byClass('ws-writing'),'![Result](../figures/%E5%9B%BE%20%281%29.png)\n[Script](../code/model.do)\n[Remote](https://example.com/file.csv)\n[Outside](../../secret.csv)');
+await writeDocument('![Result](../figures/%E5%9B%BE%20%281%29.png)\n[Script](../code/model.do)\n[Remote](https://example.com/file.csv)\n[Outside](../../secret.csv)');
 await find('保存').click();await find('提交修改').click();
 console.log(JSON.stringify({proposals}));
 """)
@@ -634,7 +709,7 @@ await window.ROWorkspace.load(root);
 const names=()=>root.all().filter(e=>e.classList.contains('ws-document')).map(e=>e.textContent);
 const before=names();
 await find('Oldest').click();
-typed(byClass('ws-writing'),'# Oldest\n\nEdited');
+await writeDocument('# Oldest\n\nEdited');
 await find('保存').click();
 console.log(JSON.stringify({before,after:names()}));
 """)
@@ -646,7 +721,7 @@ def test_typing_during_a_save_keeps_the_title_the_engine_wrote_into_a_new_docume
     out = run(r"""
 await window.ROWorkspace.load(root);
 await find('新建笔记').click();
-typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'First words');
+await titleDocument('Discussion'); await writeDocument('First words');
 const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
 const saving=find('保存').click();
 const area=byClass('ws-writing'); typed(area,'First words and more'); area.selectionStart=area.selectionEnd=20;
@@ -668,10 +743,10 @@ def test_typing_during_a_save_keeps_a_changed_title_in_place_of_the_old_heading(
     out = run(_note("research/notes/n2.md", "Old", "2026-10-20T10:00:00+00:00") + r"""
 await window.ROWorkspace.load(root);
 await find('Old').click();
-typed(byClass('ws-title-input'),'New');
+await titleDocument('New');
 const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
 const saving=find('保存').click();
-typed(byClass('ws-writing'),'# Old\n\nBody, then more');
+await writeDocument('# Old\n\nBody, then more');
 waiting.resolve({path:'research/notes/n2.md',kind:'note',title:'New',content:'# New\n\nBody',revision:'n2-1'});
 await saving;
 const after=byClass('ws-writing').value;
@@ -688,9 +763,9 @@ def test_typing_during_a_save_leaves_the_text_alone_when_no_heading_was_written_
     plain = run(r"""
 await window.ROWorkspace.load(root);
 const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
-typed(byClass('ws-writing'),'First paragraph');
+await writeDocument('First paragraph');
 const saving=find('保存').click();
-typed(byClass('ws-writing'),'First paragraph\nMore');
+await writeDocument('First paragraph\nMore');
 waiting.resolve({path:'research/overview.md',kind:'overview',title:'Research question',content:'First paragraph',revision:'doc-1'});
 await saving;
 console.log(JSON.stringify({after:byClass('ws-writing').value}));
@@ -699,7 +774,7 @@ console.log(JSON.stringify({after:byClass('ws-writing').value}));
     composing = run(r"""
 await window.ROWorkspace.load(root);
 await find('新建笔记').click();
-typed(byClass('ws-title-input'),'Discussion'); typed(byClass('ws-writing'),'Words');
+await titleDocument('Discussion'); await writeDocument('Words');
 const waiting=deferred(); customPost=(path)=>path==='/api/workspace/document'?waiting.promise:undefined;
 const saving=find('保存').click();
 const area=byClass('ws-writing'); await area.emit('compositionstart'); typed(area,'Words ni');
@@ -717,10 +792,10 @@ def test_a_new_overview_saved_with_the_title_it_was_shown_with_gets_no_heading()
     out = run(r"""
 listed.documents=[];
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'Why does this happen?');
+await writeDocument('Why does this happen?');
 await find('预览').click();
 const preview=byClass('ws-preview').textContent;
-await find('继续编辑').click();
+await find('编辑',byClass('ws-editor-host')).click();
 await find('保存').click();
 console.log(JSON.stringify({preview,sent:posted[0][1]}));
 """)
@@ -734,11 +809,11 @@ listed.files_truncated=true; listed.files_limit=500;
 await window.ROWorkspace.load(root);
 const sentence=byClass('ws-files-cut').textContent;
 customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
-typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await writeDocument('[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
 await find('预览').click(); await sleepTick(); await sleepTick();
 const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A').map(e=>e.textContent);
 const asked=gets.filter(p=>p.startsWith('/api/workspace/exists?'));
-await find('继续编辑').click(); await find('预览').click(); await sleepTick();
+await find('编辑',byClass('ws-editor-host')).click(); await find('预览').click(); await sleepTick();
 console.log(JSON.stringify({sentence,links,words:preview.textContent,asked,askedAgain:gets.filter(p=>p.startsWith('/api/workspace/exists?')).length}));
 """)
     assert out["sentence"] == "项目里的文件多于 500 个，这里只列出前 500 个；其余的可以在正文里手写链接。"
@@ -751,7 +826,7 @@ console.log(JSON.stringify({sentence,links,words:preview.textContent,asked,asked
 def test_a_complete_file_list_says_nothing_and_asks_nothing():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)');
+await writeDocument('[Beyond](../data/beyond.csv)');
 await find('预览').click(); await sleepTick();
 console.log(JSON.stringify({sentence:!!byClass('ws-files-cut'),gets:gets.filter(p=>p.includes('exists'))}));
 """)
@@ -764,7 +839,7 @@ listed.mode='member'; listed.files_truncated=true; listed.files_limit=500;
 await window.ROWorkspace.load(root);
 const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
 customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
-typed(byClass('ws-writing'),'[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
+await writeDocument('[Beyond](../data/beyond.csv)\n[Absent](../data/absent.csv)\n[Listed](../code/model.do)');
 await find('保存').click(); await find('提交修改').click();
 console.log(JSON.stringify({proposals}));
 """)
@@ -1139,7 +1214,7 @@ def test_task_edits_keep_the_report_the_agent_linked():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask({done:true,report:REPORT_PATH})];
 await window.ROWorkspace.load(root);await sleepTick();
-await find('编辑').click();typed(field('任务'),'Run the model again');await pickOwner('Claude Code · sonnet');
+await find('编辑',byClass('ws-tasks')).click();typed(field('任务'),'Run the model again');await pickOwner('Claude Code · sonnet');
 await find('保存任务').click();
 console.log(JSON.stringify({tasks:listed.tasks}));
 """.replace("REPORT_PATH", json.dumps(REPORT)))
@@ -1211,7 +1286,7 @@ def test_the_two_disclosures_of_the_project_home_draw_the_quiet_chevron_not_the_
     script = r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];
 setRuns([mkRun({state:'failed',can_reply:true,error:{code:'exit',detail:'exit code 2'}})]);
-await window.ROWorkspace.load(root);await sleepTick();
+await window.ROWorkspace.load(root);await sleepTick();await editDocument();
 const rows=root.all().filter(e=>e.tagName==='DETAILS'&&(e.classList.contains('ws-attachments')||e.classList.contains('ws-agent-more'))).map(d=>{
   const s=d.children[0];
   return {box:d.className,tag:s.tagName,cls:s.className,chevronFirst:s.children[0].classList.contains('res-chevron'),words:s.textContent};});
@@ -1348,6 +1423,56 @@ console.log(JSON.stringify({claude,empty,afterAdd,opencode,posted:posted.map(p=>
     assert out["posted"] == [{"agents": [sonnet, opus]}, {"agents": [sonnet, opus, qwen]}, {"agents": [opus, qwen]}, {"timeout_minutes": 90}]
     assert out["tooLow"] == 3
     assert out["list"] == ["Claude Code · claude-opus-4-6", "OpenCode · lmstudio/qwen3-coder"]
+
+
+def test_reasoning_picker_follows_model_and_preserves_saved_settings():
+    out = run(r"""
+agentsInfo=agentFixture();
+customGet=path=>path==='/api/agents/models?runner=codex'?{models:['gpt-test'],reasoning_efforts:{'gpt-test':['medium','high']}}:undefined;
+await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+const box=()=>byClass('ws-agent-settings'),form=()=>byClass('ws-agent-add',byClass('ws-agent-list'));
+const model=()=>field('模型版本',form()),effort=()=>field('推理强度',form());
+model().value='claude-sonnet-5-5';await model().emit('change');
+const sonnet=optionsOf(effort());effort().value='xhigh';await effort().emit('change');
+await find('添加',box()).click();await sleepTick();
+let rows=()=>byClass('ws-agent-list').children.filter(e=>e.classList.contains('ws-agent-item'));
+const saved=field('推理强度',rows()[1]).value;
+field('推理强度',rows()[1]).value='';await field('推理强度',rows()[1]).emit('change');await sleepTick();
+const cleared=agentsInfo.agents[1];
+model().value='claude-opus-4-6';await model().emit('change');const opus=optionsOf(effort());
+const program=()=>field('程序',form());program().value='deepseek-harness';await program().emit('change');
+model().value='deepseek-official/deepseek-v4-pro';await model().emit('change');const harness=optionsOf(effort());
+effort().value='off';await effort().emit('change');await find('添加',box()).click();await sleepTick();
+program().value='codex';await program().emit('change');await sleepTick();
+model().value='gpt-test';await model().emit('change');const codex=optionsOf(effort());
+effort().value='high';await effort().emit('change');await find('添加',box()).click();await sleepTick();
+console.log(JSON.stringify({sonnet,opus,harness,codex,saved,cleared,posted:posted.filter(p=>p[0]==='/api/settings/agents')}));
+""")
+    assert [v for _, v in out["sonnet"]] == ["", "low", "medium", "high", "xhigh", "max"]
+    assert [v for _, v in out["opus"]] == ["", "low", "medium", "high", "max"]
+    assert [v for _, v in out["harness"]] == ["", "off", "low", "high", "max"]
+    assert [v for _, v in out["codex"]] == ["", "medium", "high"]
+    assert out["saved"] == "xhigh" and "reasoning_effort" not in out["cleared"]
+    posts = [body["agents"] for _, body in out["posted"]]
+    assert posts[0][-1]["reasoning_effort"] == "xhigh"
+    assert posts[2][-1]["reasoning_effort"] == "off"
+    assert posts[3][-1]["reasoning_effort"] == "high"
+    assert posts[3][-2]["reasoning_effort"] == "off"  # other saved profiles retain their choices
+
+
+@pytest.mark.parametrize("lang,level,words", [("en", "max", "Reasoning effort: Max"),
+                                              ("zh", None, "推理强度：默认"),
+                                              ("en", "off", "Reasoning effort: Off")])
+def test_run_log_shows_recorded_reasoning_setting(lang, level, words):
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+const recorded=mkRun({state:'ended',reasoning_effort:LEVEL});setRuns([recorded]);
+runLogs[recorded.id]=Object.assign({},recorded,{steps:[],changes:{},violations:[]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(uiLang()==='en'?'Run log':'运行记录',byClass('ws-agent')).click();await sleepTick();
+console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
+""".replace("LEVEL", json.dumps(level)), lang=lang)
+    assert words in out["words"]
 
 
 def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():
@@ -1555,7 +1680,7 @@ def test_an_edit_in_progress_is_kept_but_not_saved_when_the_task_file_moved():
     out = run(r"""
 listed.tasks=[{id:'t1',text:'Plan the survey',owner:'',due:'',done:false}];
 await window.ROWorkspace.load(root);await sleepTick();
-await find('编辑').click();typed(field('任务'),'Plan the survey, twice');
+await find('编辑',byClass('ws-tasks')).click();typed(field('任务'),'Plan the survey, twice');
 listed.tasks=[{id:'t1',text:'Plan the survey',owner:'',due:'',done:true}];listed.tasks_revision='tasks-moved';
 await window.ROWorkspace.load(root,true);await sleepTick();
 const held={text:field('任务').value,disabled:find('保存任务').disabled,status:byClass('ws-status',root.all().find(e=>e.classList.contains('ws-task-form')).parentNode.children.slice(-1)[0]||root)};
@@ -1709,7 +1834,7 @@ setRuns([mkRun({state:'needs_input',can_reply:true,question:'Which sample?'})]);
 await window.ROWorkspace.load(root);await sleepTick();
 const box=()=>byClass('ws-agent');
 const names={log:find('运行记录',box()).getAttribute('aria-label'),answer:find('回答',box()).getAttribute('aria-label'),
-  edit:root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').map(e=>e.getAttribute('aria-label')),
+  edit:byClass('ws-tasks').all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').map(e=>e.getAttribute('aria-label')),
   remove:root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除').map(e=>e.getAttribute('aria-label'))};
 const logButton=find('运行记录',box());logButton.focus();await logButton.click();
 const afterLog={moved:document.activeElement!==logButton,key:document.activeElement.dataset.key,label:document.activeElement.textContent,expanded:document.activeElement.getAttribute('aria-expanded')};

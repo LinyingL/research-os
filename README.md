@@ -15,16 +15,26 @@ usual editor for analysis. Work on your own or share a project with a PI
 and collaborators. Plans, notes, tasks, and research attempts can develop
 in whatever order your work needs.
 
-![Project home with a fictional paper airplane study in English](docs/images/project-home-demo-en.png)
+![Project home in preview mode, with a research plan, notes, result records, and tasks](docs/images/project-home-demo-en.png)
+
+*Research OS 0.3.0, English interface. All screenshots use fictional demo data.*
 
 ## Version 0.3.0
 
-This version brings writing and AI task execution into the research workspace:
+This version adds writing, reference reading, and AI task execution to the
+research workspace:
 
-- **Project home:** write plans, notes, and result records as Markdown.
-  Reference project files and research attempts, preview figures and tables,
-  and inspect saved changes. Existing Markdown files in `research/notes/`
-  and `research/results/` can be opened and edited too.
+- **Writing:** write plans, notes, and result records as Markdown. Saved
+  documents open in preview; click **Edit** to change them and **Save** to
+  return to reading. Existing Markdown files in `research/notes/` and
+  `research/results/` can be opened and edited too.
+- **File reading:** follow links to project files and drag the side panel's
+  left edge to give them more room. Preview Word (`.docx`) body text and
+  tables, or open the original in its default app.
+- **Literature:** browse and search project references with a full abstract
+  reading pane. Read local exports and Zotero metadata, or fetch missing
+  abstracts by DOI from Crossref and OpenAlex. Retry individual lookups or
+  fill missing abstracts in a batch; citation checking has its own tab.
 - **One research routes page:** switch between the route map and a grouped
   list. Both open the same attempt panel, with its assessment, results,
   related files, comments, and review actions.
@@ -32,12 +42,10 @@ This version brings writing and AI task execution into the research workspace:
   enabled. Ordinary changes to an existing attempt's assessment and result
   can be saved directly, with undo; abandoning a route still records a reason
   and preserves its basis.
-- **AI agents:** assign tasks to Codex, Claude Code, or OpenCode, follow their work,
-  answer questions, and receive a result record. Preview the files an undo
-  would affect and choose which changes to keep.
-- **Interface and engine improvements:** clearer terms in English and Chinese,
-  session checks for writes, stronger agent checks, and less repeated file
-  hashing, parsing, and polling.
+- **AI agents:** assign tasks to Codex, Claude Code, DeepSeek Harness, or
+  OpenCode. Select a model version and, where supported, its reasoning
+  effort. Follow the run, answer questions, and receive a result record.
+  Preview the files an undo would affect and choose which changes to keep.
 
 See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
@@ -49,13 +57,47 @@ See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 | Research routes | Record attempts, connect directions that grew out of earlier work, and retain the reasons for continuing or abandoning them. |
 | Figures and claims | Inspect figures, tables, and quantitative claims in manuscripts, together with the relationships recorded for them. |
 | Data and code | Browse scripts and datasets, inspect their inputs and outputs, and follow file relationships. |
-| Variables and literature | Keep variable definitions and their versions, inspect citations, and connect a local Zotero library. |
+| Variables | Keep variable definitions and their versions. |
+| Literature | Read project references and abstracts, search titles, authors, years, and DOIs, and check citations separately. |
 | Team review | Submit changes from a working copy, compare them as PI, and publish the accepted version. |
 
 A **note** is an editable document. A **comment** is a short, attributed
 message attached to a file or research attempt. **Result records** hold
 findings and interpretation; **Figures and claims** shows the material
 linked from manuscripts.
+
+## Read files and references
+
+### Project files
+
+Insert a file reference while writing, or use a relative Markdown link to
+an existing project file. Clicking the link opens the file panel. Drag its
+left edge to resize it; the app remembers the width on this device.
+Double-click the edge to reset it.
+
+Word (`.docx`) previews show body text and tables. Use **Open** for images,
+equations, and the complete Word layout. Files without an in-app preview
+can also be opened in their default application or revealed in Finder.
+
+### Literature and abstracts
+
+The **Literature** page separates the reference library from citation
+checking. Select a reference to read its title, authors, publication details,
+and abstract. The library reads indexed BibTeX files and reference exports
+such as `references.csv` and `references.json`, and uses matching DOIs to
+add information from a local Zotero library.
+
+For missing abstracts, enable **Look up references online by DOI** under
+**Online lookup settings**. Click **Fetch abstract** for one reference or
+**Fetch missing abstracts** for the project. Research OS checks Crossref,
+then OpenAlex when needed, matches the exact DOI, and shows the abstract's
+source. Results are cached on this Mac; opening the library itself makes
+no online requests. Online lookup sends DOIs, not manuscript contents.
+
+Coverage depends on the sources. A reference can remain without an
+abstract after a successful lookup. **Retry abstract lookup** lets you
+check again; a failed request stays distinct from a completed lookup
+that found no abstract.
 
 ## Install
 
@@ -80,12 +122,14 @@ Open **Research OS.app** from `~/Applications`:
 - **Join a project from the shared folder…** joins a team working copy.
 
 New projects start with an empty research record. Importing an old attempt
-table is optional.
+table is optional. An existing project without an attempt table gets an
+empty table and its settings when you first open **New attempt**.
 
-When updating, close the app before installing, then run `researchos app`
-again. This rebuilds the app with the current menus and the session needed
-to save changes. A window opened through a plain server URL can read the
-project but cannot save; open it through the app or `researchos serve`.
+Before updating, save drafts and let any running agent tasks finish. Close
+the app, install the update, then run `researchos app` again. This rebuilds
+the native app and starts the updated engine. A window opened through a
+plain server URL can read the project but cannot save; open it through the
+app or `researchos serve`.
 
 ### Command line and development
 
@@ -108,7 +152,7 @@ researchos serve /path/to/project
 The [command-line guide](docs/cli-reference.md) covers file tracing,
 research records, variables, and team commands.
 
-## Optional AI
+## AI assistance
 
 ### Optional: AI agents
 
@@ -168,6 +212,10 @@ and model version. Select it as a task's **Owner**, save, and click **Run**. The
 works in the project folder: it can read files, write code, run analysis,
 and write notes. Its completion report becomes a result record linked to
 the task.
+
+For supported models, choose **Reasoning effort** separately from the model
+version. **Default** uses the runner's configuration. Each run records the
+selection and retains it when you reply or send work back.
 
 The initial instruction includes the task, the saved research question
 and plan up to 8,000 characters, and the titles and paths of up to 50 notes
@@ -258,19 +306,27 @@ provide evidence of execution; a relationship found in code alone does
 not establish that it ran. File tracing is limited to the formats and paths
 the readers can resolve.
 
-## Earlier demo views
+## Screenshots
 
-These English screenshots use synthetic data from the 0.1.0 Demo.
-Their layouts predate 0.3.0.
+These views show the current 0.3.0 interface with a fictional paper airplane
+project. Reference titles, abstracts, measurements, and results are sample data.
 
 <details>
-<summary>Research routes, result context, and PI review</summary>
+<summary>Research routes, literature abstracts, and Word preview</summary>
 
-![Research routes with six attempts and a proposal awaiting PI review](docs/images/research-routes.png)
+**Research routes.** Browse attempts by assessment and retain the recorded
+results of abandoned routes.
 
-![A figure linked to data, scripts, a research attempt, and a manuscript](docs/images/result-provenance.png)
+![Research attempts grouped as current, pending, adverse evidence, and abandoned](docs/images/research-routes-en.png)
 
-![PI review with previous and proposed content, a code diff, and review controls](docs/images/proposal-review.png)
+**Literature.** Search references and read the selected abstract with its source.
+
+![Reference library with a complete fictional abstract and its local source](docs/images/literature-abstract-en.png)
+
+**Word preview.** Open a document link and widen the file panel to read body
+text and tables beside the project.
+
+![Word document text and table in the widened file panel](docs/images/word-preview-en.png)
 
 </details>
 

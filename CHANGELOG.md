@@ -6,8 +6,13 @@
 
 - Create projects from a name and save location, with an empty research record.
   Importing an existing attempt table is optional.
+- Prepare an empty attempt table automatically when an existing project opens
+  its first new-attempt form. Preserve existing files and configured tables.
 - Write research questions, plans, notes, and result records in Project home.
   Preview Markdown, figures, and tables, and reference project files and attempts.
+- Open existing plans, notes, and result records in preview. Enter editing
+  explicitly and return to preview after saving; new documents start in editing.
+  Keep the current mode and unsaved writing during background refreshes.
 - Open existing Markdown files in `research/notes/` and `research/results/`,
   including files named outside the app. List documents by their last change.
 - Preserve unsaved writing, detect external edits, and keep saved versions.
@@ -17,6 +22,19 @@
 
 ### Research routes and interface
 
+- Preview Word (.docx) body text and tables in the file panel. Keep external
+  opening for complete Word layout, and explain unsupported formats instead of
+  presenting them as an engine error.
+- Browse project references by title, author, and year, with a reading pane for
+  abstracts. Read BibTeX and references CSV/JSON exports, enrich matching DOIs
+  from Zotero, and keep citation checking in its own tab. Fetch missing abstracts
+  from Crossref on request when online DOI lookup is enabled; cache the result
+  locally and distinguish an unavailable abstract from a failed request.
+- Look up missing abstracts in OpenAlex when Crossref has none, checking the
+  exact DOI and keeping the abstract's source separate from reference metadata.
+  Add a missing-abstract batch action and allow retrying unsuccessful lookups.
+- Resize the shared file and detail panel by dragging its left edge. Keep its
+  width on this device, support keyboard adjustment, and reset on double-click.
 - Combine the route map and grouped attempt list into one Research routes page,
   with a shared detail panel and pending work alongside either view.
 - Hide team navigation and identity reminders in single-person projects. Start
@@ -37,6 +55,9 @@
   readable version labels and exact IDs; existing alias-based tasks are kept.
   Preserve the selected ID for task ownership, execution, and continuation.
   Detect the macOS desktop app's bundled Codex CLI as well as saved paths.
+- Choose reasoning effort separately for each Claude Code, Codex, or DeepSeek
+  Harness model. Offer model-specific levels, retain the runner's default when
+  unset, and record the selection for the run and its continuations.
 - Run Codex in a workspace-write sandbox with a dedicated Research OS MCP
   server, JSON event logs, and continuation in the recorded session.
 - Detect DeepSeek Harness's bundled desktop CLI and run tasks through its

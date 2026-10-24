@@ -269,9 +269,12 @@ Endpoints (all GET unless noted):
     GET  /api/citations -- the 「文献」 view (11.4): per draft, its citations
                             and how each resolves, candidates with the
                             links 确认 / 否决 write through /api/judgements;
+                            also the project reference library and abstracts;
                             see `researchos.webapp.literature_api`.
     POST /api/citations/lookup-setting -- `{"on": bool}`: 「用 DOI 联网查文献
                             信息」, Research OS's own setting; nothing is asked here.
+    POST /api/literature/abstract -- `{"doi": str}`: fetch/cache one abstract
+                            from Crossref, only when DOI lookup is enabled.
     POST /api/settings/language -- `{"language": "zh"|"en"}` (DESIGN.md
                             13.2, 13.3): the switch beside 记录 and 停止服务
                             saves this Mac's interface language
@@ -670,11 +673,12 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, paths, people, workspace
 from researchos import settings as settings_mod
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
+from researchos.agents import reasoning as agent_reasoning
 from researchos.agents import snapshot as agent_snapshot
 from researchos.ingest import scan as scan_mod
 from researchos import project as project_identity
@@ -797,6 +801,20 @@ class NotAFileError(ApiError):
 
 class BinaryFileError(ApiError):
     status = 415
+    state = "preview_unsupported"
+
+
+class DocxPreviewApiError(BinaryFileError):
+    state = "docx_refused"
+
+    def __init__(self, exc: docx_preview.PreviewError, lang: str, link: Any) -> None:
+        super().__init__(str(exc))
+        message = settings_mod.say(
+            "这份 Word 文档超出预览范围，请点击“打开”查看。" if exc.code == "too_large" else
+            "无法预览这份 Word 文档。请点击“打开”检查原文件。",
+            "This Word document exceeds the preview limit. Click “Open” to view it." if exc.code == "too_large" else
+            "Could not preview this Word document. Click “Open” to check the original file.", lang)
+        self.extra = {"message": message, "detail": str(exc), "github": link}
 
 
 class WorkspaceApiError(ApiError):
@@ -1740,6 +1758,16 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     link = github_link_payload(project_root, target)
     if target.suffix.lower() == ".dta":
         return _dta_payload(target, rel_path, link, lang)
+    if target.suffix.lower() == ".docx":
+        try:
+            cloud.check_readable(target)
+            preview = docx_preview.read(target, equation=settings_mod.say("〔公式〕", "[Equation]", lang),
+                                        image=settings_mod.say("〔图片或对象〕", "[Image or object]", lang))
+        except cloud.CloudOnlyError as exc:
+            raise CloudOnlyApiError(exc, {"github": link}) from exc
+        except docx_preview.PreviewError as exc:
+            raise DocxPreviewApiError(exc, lang, link) from exc
+        return {"path": rel_path, "kind": "docx", "size": target.stat().st_size, "github": link, **preview}
     try:  # one byte past the limit says "truncated"; the size is the open file's (18.4 item 5)
         raw, size = cloud.read_head(target, _FILE_SIZE_LIMIT + 1)
     except cloud.CloudOnlyError as exc:
@@ -1916,6 +1944,8 @@ def literature_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
     try:
         if path == "/api/citations/lookup-setting":
             return literature_api.lookup_setting_payload(body)
+        if path == "/api/literature/abstract":
+            return literature_api.abstract_payload(body)
         if path == "/api/zotero/open-attachment":
             return literature_api.open_attachment_payload(body, open_external)
         return literature_api.open_item_payload(body, open_external)
@@ -1942,11 +1972,17 @@ def agents_payload() -> dict[str, Any]:
     mcp = agent_profiles.mcp_available()
     return {
         "runners": [found[runner].payload() for runner in agent_labels.RUNNERS],
-        "agents": [dict(agent.payload(), available=found[agent.runner].found, mcp=mcp)
+        "agents": [dict(agent.payload(), available=found[agent.runner].found, mcp=mcp,
+                        reasoning_effort=agent_profiles.reasoning_effort(agent))
                    for agent in agent_profiles.agents()],
         "mcp": mcp,
         "claude_models": list(agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
         "harness_models": list(agent_profiles.HARNESS_MODEL_SUGGESTIONS),
+        "reasoning_efforts": {
+            runner: {model: list(agent_reasoning.known_levels(runner, model)) for model in models}
+            for runner, models in (("claude-code", agent_profiles.CLAUDE_MODEL_SUGGESTIONS),
+                                   ("deepseek-harness", agent_profiles.HARNESS_MODEL_SUGGESTIONS))
+        },
         "timeout_minutes": agent_profiles.timeout_minutes(),
         "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
         "max_budget_usd": agent_profiles.max_budget_usd(),
@@ -1971,8 +2007,10 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
     if not found.found or found.path is None:
         raise agent_manager.AgentError("runner_missing")
     try:
-        read_models = agent_profiles.codex_models if runner == "codex" else agent_profiles.opencode_models
-        return {"runner": runner, "models": read_models(found.path)}
+        if runner == "codex":
+            catalog = agent_profiles.codex_model_catalog(found.path)
+            return {"runner": runner, "models": list(catalog), "reasoning_efforts": catalog}
+        return {"runner": runner, "models": agent_profiles.opencode_models(found.path)}
     except RuntimeError as exc:
         words = "读取不到 Codex 的模型列表" if runner == "codex" else "读取不到 OpenCode 的模型列表"
         raise _AgentRefusal("models_failed", 502, str(exc), words) from exc
@@ -4337,7 +4375,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/github/push":
                 # 11.3 「推送」: the only request that pushes; never forced.
                 self._send_json(200, github_push_payload(self._served(), self._read_json_object(), lang=self._lang()))
-            elif parsed.path in ("/api/citations/lookup-setting", "/api/zotero/open-attachment", "/api/zotero/open-item"):
+            elif parsed.path in ("/api/citations/lookup-setting", "/api/literature/abstract",
+                                 "/api/zotero/open-attachment", "/api/zotero/open-item"):
                 # 11.4: the 「文献」 view's setting and its two openers; a
                 # judgment on a candidate is POST /api/judgements.
                 self._send_json(200, literature_post(parsed.path, self._read_json_object()))
@@ -4356,6 +4395,16 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/projects/rename":
                 # 10.4: the registry label only, never the folder.
                 self._send_json(200, rename_payload(self._read_json_object()))
+            elif parsed.path == "/api/attempts/initialize":
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    payload = self._workspace_api(lambda: workspace.initialize_attempts(served.root, self._lang()))
+                if payload["created"]:
+                    payload["generation"] = self.server.watcher.record_write({
+                        str(attempts_ingest.config_path(served.root)), str(served.root / payload["file"]),
+                    })
+                self._send_json(200, payload)
             elif parsed.path == "/api/attempts/preview":
                 # Pure dry run (task V3 phase 3) -- but origin-checked like
                 # a write anyway (above), since its twin below mutates and

@@ -878,6 +878,7 @@ def reference_nodes(
                 attrs = {
                     "source": "crossref", "title": meta.get("title"), "authors": list(meta.get("authors") or []),
                     "year": meta.get("year"), "venue": meta.get("venue"), "fetched": meta.get("fetched"),
+                    "abstract": meta.get("abstract"),
                 }
             elif doi in entries_by_doi:
                 attrs = entries_by_doi[doi].metadata()

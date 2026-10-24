@@ -10,6 +10,8 @@ prepared for when you need it; importing history is optional.
 Use **Add project…** to open an existing research folder. Opening its home
 page does not change its files. Its first saved plan creates the writing
 page without changing its existing attempt table.
+If it has no attempt table, clicking **New attempt** creates an empty table
+and its settings automatically, then opens the form. Existing files are kept.
 
 ## Write and organize
 
@@ -69,6 +71,14 @@ bundled with the macOS desktop app. GPT-5.5 requires API authentication;
 it is no longer available with ChatGPT sign-in. See the
 [Codex model guide](https://learn.chatgpt.com/docs/models).
 A model served locally through OpenCode works the same way.
+
+**Reasoning effort.** Select a level beside the model when adding an agent,
+or change it in the saved agent's row. **Default** leaves the runner's own
+configuration in force. Claude Code and DeepSeek Harness offer levels for
+supported model versions; Codex reads them from its current model catalog.
+The control is hidden for models without known supported levels, including
+OpenCode. The run log records the selected setting. Replies and revisions
+in the same conversation retain that setting; a new run uses the current choice.
 
 For DeepSeek Harness, Research OS detects the official desktop app's bundled
 `dsh` in `/Applications` or `~/Applications`, or a standalone `dsh` on PATH.

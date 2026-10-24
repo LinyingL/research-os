@@ -1245,6 +1245,41 @@ def _function_body(src: str, signature: str) -> str:
     return body[: body.index("\n}\n")]
 
 
+@pytest.mark.parametrize("configured,mode,fail", [(False, "append", False), (True, "append", False),
+                                                 (False, "update", False), (False, "append", True)])
+def test_first_attempt_form_initializes_only_on_new_attempt(configured, mode, fail):
+    config = {"file": "research/attempts.md", "columns": {"description": "Description"}}
+    opener = _function_body(_APP_SRC, "async function openAttemptForm(") + "\n}"
+    result = _attempt_run(r"""
+      state.currentPath='/projects/Existing';
+      global.RODesk={ensureContext:async()=>{}};
+      global.panelTitle={};global.panelSubtitle={};
+      const errors=[];global.panelBody={innerHTML:'',appendChild:box=>errors.push(box.message)};
+      global.t=words=>words;global.openPanel=()=>{};
+      global.panelErrorBoxCn=(message,err)=>({message:err?err.message:message});
+      let rendered=null;
+      global.renderAttemptForm=mode=>{rendered={mode,file:state.attemptsConfig&&state.attemptsConfig.file};};
+      global.apiPost=async(path,body)=>{
+        calls.push({path,body});
+        if(input.fail)throw Error('Folder is read-only');
+        server['/api/summary'].attempts_config=input.config;
+        return {created:true};
+      };
+      eval(input.opener);
+      await openAttemptForm(input.mode);
+      return {rendered,errors};
+    """, server={"/api/attempts": {"attempts": []}, "/api/summary": {"attempts_config": config if configured else None}},
+        opener=opener, config=config, fail=fail, mode=mode)
+    posts = [call for call in result["calls"] if isinstance(call, dict)]
+    assert len(posts) == (1 if not configured and mode == "append" else 0)
+    if posts:
+        assert posts[0] == {"path": "/api/attempts/initialize", "body": {"project": "/projects/Existing"}}
+    if fail:
+        assert result["out"] == {"rendered": None, "errors": ["Folder is read-only"]}
+    else:
+        assert result["out"]["rendered"] == {"mode": mode, "file": config["file"] if mode == "append" else None}
+
+
 def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     """Source pins: the form is built in exactly one place, which only
     openAttemptForm calls, after awaiting ensureAttemptData; every entry

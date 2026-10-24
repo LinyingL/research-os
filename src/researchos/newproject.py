@@ -161,7 +161,7 @@ def _same_directory(path: Path, pin: tuple[int, int]) -> bool:
         return False
 
 
-def _attempts(root: Path, root_fd: int, language: str, guard) -> None:
+def _attempts(root: Path, root_fd: int, language: str, guard, *, filename: str = "attempts.md") -> None:
     """An empty, configured timeline lets the first real attempt be appended."""
     research = root / "research"
     guard()
@@ -182,10 +182,10 @@ def _attempts(root: Path, root_fd: int, language: str, guard) -> None:
                    "result": "结果", "verdict": "状态"}
     content = f"# {heading}\n\n| " + " | ".join(columns.values()) + " |\n"
     content += "| " + " | ".join("---" for _ in columns) + " |\n"
-    config = f'file = "research/attempts.md"\nheading = {json.dumps(heading, ensure_ascii=False)}\n\n[columns]\n'
+    config = f'file = "research/{filename}"\nheading = {json.dumps(heading, ensure_ascii=False)}\n\n[columns]\n'
     config += "".join(f"{key} = {json.dumps(value, ensure_ascii=False)}\n" for key, value in columns.items())
-    for dirname, filename, text in (("research", "attempts.md", content),
-                                    (paths.PROJECT_DIRNAME, "attempts.toml", config)):
+    for dirname, filename, text in (("research", filename, content),
+                                    (paths.project_dir(root).name, "attempts.toml", config)):
         guard()
         # Unlike a replacement, this cannot overwrite a file added by another
         # process after the directory was created. Directory descriptors keep a
