@@ -14,7 +14,9 @@ What `take` never does: follow a symbolic link (a link is recorded by its
 target and compared by it), open a file that is only in the cloud (marked
 `dataless`; reading it would download it), open anything but a regular file
 (a FIFO would block), or walk into `.git/` (but see below),
-`.researchos/backups/` (but see below) and the usual caches. Hidden files and
+`.researchos/backups/` (but see below) and dependency folders that already
+existed. Python bytecode and pytest caches are included, so undo can clear
+them and the folders they otherwise leave behind. Hidden files and
 folders are otherwise included on purpose: `.researchos/*.toml` is exactly
 what an agent must not touch (17.5 rule 1).
 
@@ -38,6 +40,13 @@ never recorded: it is not research data and nobody did it on purpose.
 ones included, so that undo can tell a folder that was there before the run from one the run made -- a folder
 that only held files the picture does not record (editor noise, a cache) is as much the researcher's as any. A
 picture cut at `FILE_LIMIT` files, or past `DIR_LIMIT` folders, marks the list incomplete (`dirs_partial`).
+
+**Excluded directory existence is recorded.** An existing environment such
+as `.venv` or `node_modules` is a marker, with no dependency scan or copies.
+For an environment created during the run, the after-picture records a bounded
+metadata digest of its tree. Undo can move it away as one directory only while
+that digest still matches. Old snapshots cannot prove an excluded directory
+was absent; they never authorize this removal.
 
 **Data files are walked separately** (`picture["data"]`, 17.5 rule 3): a
 second, stat-only walk of the whole tree records every file whose suffix is
@@ -97,8 +106,10 @@ from researchos.agents import guard
 
 logger = logging.getLogger(__name__)
 
-SKIP_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv", "venv", ".ipynb_checkpoints",
-                       ".Rproj.user", "_cache", ".mypy_cache", ".pytest_cache", ".tox", ".cache"})
+# Python bytecode and pytest caches are run outputs too: omitting them left
+# files behind after undo and prevented their new parent folders being removed.
+SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", ".ipynb_checkpoints",
+                       ".Rproj.user", "_cache", ".mypy_cache", ".tox", ".cache"})
 SKIP_PATHS = frozenset({f"{names.PROJECT_DIRNAME}/backups", f"{names.LEGACY_PROJECT_DIRNAME}/backups"})
 COPY_LIMIT = 16 * 1024 * 1024
 COPY_BUDGET = 1024 * 1024 * 1024
@@ -294,19 +305,67 @@ def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
     return entry, nbytes
 
 
-def fingerprint(root: Path, rel: str) -> dict[str, Any] | None:
+def fingerprint(root: Path, rel: str, *, directory: bool = False) -> dict[str, Any] | None:
     """One file's entry as `take` records it (with a hash when small enough),
-    or None when it is missing or `rel` is not a path inside `root`."""
+    or None when it is missing or `rel` is not a path inside `root`.
+    `directory=True` also fingerprints a new excluded directory's metadata."""
     if not isinstance(rel, str) or not rel or posixpath.isabs(rel) or ".." in rel.split("/"):
         return None
     full = os.path.join(root, *rel.split("/"))
     try:
+        if not Path(os.path.realpath(os.path.dirname(full))).is_relative_to(root.resolve()):
+            return None
         st = os.lstat(full)
     except OSError:
         return None
     if stat.S_ISDIR(st.st_mode):
-        return None
+        return _tree_entry(full) if directory else None
     return _entry(full, st)[0]
+
+
+def _tree_entry(full: str) -> dict[str, Any]:
+    """A newly created excluded directory, without opening files or following links.
+
+    A metadata digest detects later writes, replacements, and added/removed files.
+    Existing dependency trees are never scanned; this is only used for a new tree
+    after a run and again when that tree is considered for undo.
+    """
+    digest = hashlib.sha256()
+    count = size = 0
+    complete = True
+
+    def failed(_error: OSError) -> None:
+        nonlocal complete
+        complete = False
+
+    for directory, dirs, names in os.walk(full, followlinks=False, onerror=failed):
+        dirs.sort()
+        for name in ["", *sorted(dirs + names)]:
+            if count >= FILE_LIMIT:
+                complete = False
+                break
+            count += 1
+            path = os.path.join(directory, name) if name else directory
+            try:
+                st = os.lstat(path)
+                if paths.is_dataless(path):
+                    complete = False
+                    if name in dirs:
+                        dirs.remove(name)
+                    continue
+                rel = os.path.relpath(path, full)
+                fields = (rel, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino,
+                          os.readlink(path) if stat.S_ISLNK(st.st_mode) else None)
+                digest.update(repr(fields).encode("utf-8", "surrogateescape") + b"\n")
+                if stat.S_ISREG(st.st_mode):
+                    size += st.st_size
+            except OSError:
+                complete = False
+        if count >= FILE_LIMIT:
+            complete = False
+            break
+    return {"directory": True, "size": size, "tree_entries": count,
+            "tree_sha256": digest.hexdigest() if complete else None, "tree_partial": not complete}
 
 
 def _data_entry(full: str, st: os.stat_result) -> dict[str, Any]:
@@ -472,7 +531,29 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
         links = []
         for name in sorted(dirnames):
             rel = f"{reldir}/{name}" if reldir else name
-            if name in SKIP_DIRS or rel in SKIP_PATHS:
+            if rel in SKIP_PATHS or name == ".git":
+                continue
+            if name in SKIP_DIRS:
+                # Remember existence even when dependencies/caches are excluded.
+                # Only a new tree with a complete, current-format before-picture
+                # can later be moved away by undo. Never infer absence from an old
+                # or partial snapshot, and never scan a pre-existing environment.
+                if reuse is not None and not reuse.get("excluded_dirs_recorded") and rel not in earlier:
+                    continue  # legacy snapshots did not record whether this tree existed
+                if len(files) >= FILE_LIMIT:
+                    partial = stopped = True
+                    break
+                target = os.path.join(dirpath, name)
+                known_absent = (reuse is not None and reuse.get("excluded_dirs_recorded")
+                                and not reuse.get("partial") and not reuse.get("dirs_partial")
+                                and rel not in earlier)
+                if os.path.islink(target):
+                    try:
+                        files[rel] = _entry(target, os.lstat(target))[0]
+                    except OSError:
+                        pass
+                else:
+                    files[rel] = _tree_entry(target) if known_absent else {"directory": True, "excluded": True, "size": 0}
                 continue
             if os.path.islink(os.path.join(dirpath, name)):
                 links.append(name)  # a link to a folder is one entry, never walked
@@ -483,6 +564,8 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
                 else:
                     dirs_partial = True
         dirnames[:] = keep
+        if stopped:
+            break
         for name in sorted(filenames + links):
             if skip_file(name):
                 continue
@@ -501,7 +584,7 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
     return {"files": files, "partial": partial, "copied_bytes": copied_bytes, "not_copied": not_copied,
             "git": git_state(root), "data": data, "data_partial": data_partial,
             "backups": backups, "backups_partial": backups_partial,
-            "dirs": sorted(dirs), "dirs_partial": dirs_partial}
+            "dirs": sorted(dirs), "dirs_partial": dirs_partial, "excluded_dirs_recorded": True}
 
 
 #: How many of the biggest files `large_files` names.
@@ -576,6 +659,10 @@ def same(a: Mapping[str, Any] | None, b: Mapping[str, Any] | None) -> bool:
         return a is None and b is None
     if "link" in a or "link" in b:
         return "link" in a and "link" in b and a["link"] == b["link"]
+    if a.get("directory") or b.get("directory"):
+        if a.get("excluded") and b.get("excluded"):
+            return True
+        return bool(a.get("tree_sha256")) and a.get("tree_sha256") == b.get("tree_sha256")
     if a.get("sha256") and b.get("sha256"):
         return a["sha256"] == b["sha256"]
     return a.get("size") == b.get("size") and a.get("mtime_ns") == b.get("mtime_ns")

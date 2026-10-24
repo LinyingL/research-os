@@ -603,6 +603,7 @@ def _folders_before(before: dict) -> set[str] | None:
         return None
     folders = {"/".join(p.split("/")[:i]) for p in (before.get("files") or ()) for i in range(1, p.count("/") + 1)}
     folders.update(d for d in before.get("dirs") or () if isinstance(d, str))
+    folders.update(p for p, entry in (before.get("files") or {}).items() if entry.get("directory"))
     return folders
 
 
@@ -1513,7 +1514,7 @@ class AgentManager:
                 for rel in wanted:
                     full = act_root / rel
                     try:
-                        if paths.is_dataless(full) or full.stat().st_size > HISTORY_FILE_SIZE_LIMIT:
+                        if full.is_dir() or paths.is_dataless(full) or full.stat().st_size > HISTORY_FILE_SIZE_LIMIT:
                             continue
                         # what a scan saw while the run went on is already there under this note (18.1 item 3)
                         history.record_file(store, act_root, rel, source="agent", who=who, note=run["id"],
@@ -1976,6 +1977,8 @@ class AgentManager:
 
         def item(rel: str) -> dict[str, Any]:
             entry: dict[str, Any] = {"path": rel}
+            if (after["files"].get(rel) or before["files"].get(rel) or {}).get("directory"):
+                entry["directory"] = True
             source = origin.get(rel, rel)
             moment = None
             if rel == TASKS_PATH:
@@ -2044,7 +2047,7 @@ class AgentManager:
             with situation.write_guard(root, project_id, human=True, timeout=10.0):
                 self._undo_files(root, real_root, rd, before["files"], after["files"], changes, run_id,
                                  restored, removed, skipped, project_id, person=self._person_paths(run, changes),
-                                 folders=_folders_before(before), chosen=chosen)
+                                 folders=_folders_before(before), after_folders=_folders_before(after), chosen=chosen)
                 self._undo_task(root, run, info, restored, skipped, chosen=chosen)
         except ProjectLockError as exc:
             raise AgentError("busy", f"The project is being written by something else: {exc}") from exc
@@ -2062,6 +2065,7 @@ class AgentManager:
     def _undo_files(self, root: Path, real_root: str, rd: Path, old: dict, new: dict, changes: dict, run_id: str,
                     restored: list[str], removed: list[str], skipped: list[dict[str, str]],
                     project_id: str, person: set[str] | None = None, *, folders: set[str] | None = None,
+                    after_folders: set[str] | None = None,
                     chosen: set[str] | None = None, dry: bool = False,
                     origin: dict[str, str] | None = None) -> None:
         """Undo (or, with `dry`, work out the undo of) the files of a run (17.6), filling `restored`, `removed`
@@ -2214,7 +2218,11 @@ class AgentManager:
             if rel.split("/", 1)[0].casefold() in _RECORD_DIRS or rel == snapshot.GIT_CONFIG:
                 skip(rel, "protected")  # never move the project's own records, nor the config of a repository
                 continue
-            current = snapshot.fingerprint(root, rel)
+            if (new.get(rel) or {}).get("tree_partial"):
+                skip(rel, "not_recorded")
+                continue
+            current = (snapshot.fingerprint(root, rel, directory=True) if (new.get(rel) or {}).get("directory")
+                       else snapshot.fingerprint(root, rel))
             if current is None or not snapshot.same(current, new.get(rel)):
                 skip(rel, "changed_since")
                 continue
@@ -2238,14 +2246,6 @@ class AgentManager:
                 continue
             removed.append(rel)
             moved.append(rel)
-        # the folders the moves emptied, deepest first, unless they were there before the run
-        emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
-        for folder in sorted(emptied, key=lambda f: f.count("/"), reverse=True):
-            if folders is None or folder in folders or folder.split("/", 1)[0].casefold() in _RECORD_AND_GIT_DIRS:
-                continue
-            with contextlib.suppress(OSError):  # not empty: it stays
-                if not os.path.islink(path_of(folder)):
-                    os.rmdir(path_of(folder))
         for rel in changes.get("modified", ()):
             if rel == TASKS_PATH:
                 continue
@@ -2285,6 +2285,20 @@ class AgentManager:
                 skip(rel, "changed_since")
                 continue
             restore(rel, checked=True)
+        # Clean the folders this run left empty, including ones created empty.
+        # Only a complete before-picture can prove a folder was not there already.
+        # Later files, kept files, and pre-existing folders prevent any removal.
+        if not dry and folders is not None and (restored or removed):
+            emptied = {"/".join(rel.split("/")[:i]) for rel in moved for i in range(1, rel.count("/") + 1)}
+            emptied.update(after_folders or ())
+            for folder in sorted(emptied - folders, key=lambda f: (-f.count("/"), f)):
+                if (not folder or folder in (".", "..") or os.path.isabs(folder)
+                        or any(part.casefold() in _RECORD_AND_GIT_DIRS or part == ".." for part in folder.split("/"))):
+                    continue
+                target = path_of(folder)
+                with contextlib.suppress(OSError):  # never recurse: a nonempty or replaced folder stays
+                    if not os.path.islink(target) and _inside(real_root, os.path.realpath(target)):
+                        os.rmdir(target)
         # git's own files and the project's records are not the change history's business (as in `_attribute`)
         recorded = [rel for rel in recorded if rel.split("/", 1)[0].casefold() not in _RECORD_AND_GIT_DIRS]
         if recorded:

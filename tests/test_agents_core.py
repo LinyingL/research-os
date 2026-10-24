@@ -586,12 +586,13 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
         "data.csv": "a,b\n1,2\n", "code/run.py": "print(1)\n", "中文/说明.md": "你好",
         ".researchos/attempts.toml": "x = 1\n", ".researchos/backups/old.bak": "old",
         f"{names.LEGACY_PROJECT_DIRNAME}/backups/old2.bak": "old", ".git/config": "[core]", "node_modules/m/x.js": "x",
-        "sub/__pycache__/a.pyc": "x", "sub/.venv/pyvenv.cfg": "x", ".hidden": "h"})
+        "sub/__pycache__/a.pyc": "x", ".pytest_cache/v/cache/nodeids": "[]", "sub/.venv/pyvenv.cfg": "x", ".hidden": "h"})
     copies = tmp_path / "copies"
     picture = snapshot.take(root, copy_to=copies)
     # `.git/config` is the one thing of `.git/` the picture holds (18.1 item 4); the backups are listed apart
     assert set(picture["files"]) == {"data.csv", "code/run.py", "中文/说明.md", ".researchos/attempts.toml", ".hidden",
-                                     ".git/config"}
+                                     ".git/config", "sub/__pycache__/a.pyc", ".pytest_cache/v/cache/nodeids",
+                                     "node_modules", "sub/.venv"}
     assert picture["backups"] == {".researchos/backups/old.bak": {"size": 3},
                                   f"{names.LEGACY_PROJECT_DIRNAME}/backups/old2.bak": {"size": 3}}
     assert picture["backups_partial"] is False
@@ -604,11 +605,51 @@ def test_take_records_hashes_copies_and_skips(tmp_path):
     assert (copies / "中文" / "说明.md").read_text(encoding="utf-8") == "你好"
     assert (copies / ".researchos" / "attempts.toml").is_file()
     assert (copies / ".git" / "config").read_text() == "[core]"
+    assert (copies / "sub/__pycache__/a.pyc").read_text() == "x"
+    assert (copies / ".pytest_cache/v/cache/nodeids").read_text() == "[]"
     assert not (copies / ".researchos" / "backups").exists() and not (copies / "node_modules").exists()
     assert picture["partial"] is False and picture["not_copied"] == 0
     assert picture["git"]["head"] is None and picture["git"]["branch"] is None and len(picture["git"]["refs"]) == 64
     assert picture["copied_bytes"] == sum(e["size"] for e in picture["files"].values())
     json.dumps(picture)  # it is stored as before.json
+
+
+def test_new_dependency_tree_is_fingerprinted_without_following_links(tmp_path):
+    root = _project(tmp_path / "proj", {"note.md": "existing"})
+    before = snapshot.take(root)
+    _project(root, {".venv/pyvenv.cfg": "home = /python", ".venv/lib/module.py": "x = 1"})
+    (root / ".venv/python").symlink_to(tmp_path / "absent-outside")
+    after = snapshot.take(root, reuse=before)
+    tree = after["files"][".venv"]
+    assert tree["directory"] and tree["tree_sha256"] and not tree["tree_partial"]
+    assert snapshot.same(tree, snapshot.fingerprint(root, ".venv", directory=True))
+    unchanged_root = (root / ".venv").stat().st_mtime_ns
+    (root / ".venv/lib/module.py").write_text("x = 2")
+    assert (root / ".venv").stat().st_mtime_ns == unchanged_root
+    assert not snapshot.same(tree, snapshot.fingerprint(root, ".venv", directory=True))
+
+
+def test_existing_dependency_trees_are_not_scanned_or_treated_as_run_outputs(tmp_path, monkeypatch):
+    root = _project(tmp_path / "proj", {".venv/lib/module.py": "old", "node_modules/pkg/index.js": "old"})
+    monkeypatch.setattr(snapshot, "_tree_entry", lambda _: pytest.fail("existing dependencies must not be walked"))
+    before = snapshot.take(root)
+    assert before["files"][".venv"]["excluded"]
+    (root / ".venv/lib/module.py").write_text("changed dependency")
+    after = snapshot.take(root, reuse=before)
+    assert snapshot.compare(before, after) == {"created": [], "modified": [], "deleted": []}
+    # An older snapshot did not record directory existence: never infer that an environment is new.
+    before.pop("excluded_dirs_recorded")
+    before["files"].pop(".venv")
+    before["files"].pop("node_modules")
+    assert ".venv" not in snapshot.take(root, reuse=before)["files"]
+
+
+def test_an_incomplete_dependency_tree_cannot_match_for_undo(tmp_path, monkeypatch):
+    root = _project(tmp_path / "proj", {".venv/a": "a", ".venv/b": "b"})
+    monkeypatch.setattr(snapshot, "FILE_LIMIT", 1)
+    tree = snapshot.fingerprint(root, ".venv", directory=True)
+    assert tree["tree_partial"] and tree["tree_sha256"] is None
+    assert not snapshot.same(tree, tree)
 
 
 def test_take_without_copies(tmp_path):
@@ -628,7 +669,7 @@ def test_take_records_the_folders_empty_ones_and_ones_holding_only_noise_include
     (root / "empty" / "nested").mkdir()
     (root / "link-to-folder").symlink_to(root / "code")
     picture = snapshot.take(root)
-    assert picture["dirs"] == sorted([".researchos", "code", "deep", "deep/er", "empty", "empty/nested", "figs"])
+    assert picture["dirs"] == sorted([".researchos", "__pycache__", "code", "deep", "deep/er", "empty", "empty/nested", "figs"])
     assert picture["dirs_partial"] is False
     assert "figs/.DS_Store" not in picture["files"]  # the noise is not a file of the picture; its folder is
     json.dumps(picture)

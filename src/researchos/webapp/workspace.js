@@ -799,6 +799,7 @@
     mcp_failed: () => t("Research OS 的工具没有启动，AI 执行者无法汇报结果。"),
   };
   const REVERT_SKIPPED = {
+    not_recorded: () => t("目录内容未完整记录，无法安全撤回"),
     changed_since: () => t("运行之后又改动过"), no_copy: () => t("没有运行前的副本"), in_cloud: () => t("文件只在云端"),
     kept: () => t("你选择保留"), protected: () => t("属于 Research OS 的记录文件夹或 git，撤回不会动它"),
   };

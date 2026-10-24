@@ -123,6 +123,14 @@ for step in scenario.get("steps", []):
             out.write(step["text"])
     elif op == "delete":
         os.unlink(step["path"])
+    elif op == "compile":
+        import py_compile
+        py_compile.compile(step["path"], doraise=True)
+    elif op == "mkdir":
+        Path(step["path"]).mkdir(parents=True, exist_ok=True)
+    elif op == "venv":
+        import venv
+        venv.EnvBuilder(with_pip=False, symlinks=True).create(step["path"])
     elif op == "rename":
         Path(step["to"]).parent.mkdir(parents=True, exist_ok=True)
         os.rename(step["from"], step["to"])
@@ -2227,6 +2235,94 @@ def test_undo_keeps_the_folders_that_existed_before_the_run(scene: Scene):
         assert (scene.root / folder).is_dir(), folder  # the researcher's own folders, empty or not
     assert (scene.root / "quiet" / ".DS_Store").is_file() and (scene.root / "busy" / "a.txt").is_file()
     assert not (scene.root / "made").exists()  # made by the run, emptied by the undo
+
+
+def test_undo_removes_python_and_pytest_caches_and_new_empty_folders(scene: Scene):
+    run = scene.go([init_step(), {"op": "write", "path": "src/model.py", "text": "x = 1\n"},
+                    {"op": "compile", "path": "src/model.py"},
+                    {"op": "write", "path": ".pytest_cache/v/cache/nodeids", "text": '["test_model"]'},
+                    {"op": "mkdir", "path": "outputs/unused/empty"}, finish_step()])
+    cache = next((scene.root / "src/__pycache__").glob("model.*.pyc")).relative_to(scene.root).as_posix()
+    assert cache in run["changes"]["created"]
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert cache in plan_paths(plan["remove"]) and ".pytest_cache/v/cache/nodeids" in plan_paths(plan["remove"])
+    # A folder made after the run is not part of its cleanup.
+    (scene.root / "later-empty").mkdir()
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == []
+    assert set(result["removed"]) == {"src/model.py", cache, ".pytest_cache/v/cache/nodeids"}
+    assert not (scene.root / "src").exists() and not (scene.root / ".pytest_cache").exists()
+    assert not (scene.root / "outputs").exists() and (scene.root / "later-empty").is_dir()
+    assert (run_store.run_dir(scene.pid, run["id"]) / "reverted" / cache).is_file()
+
+
+def test_undo_restores_old_caches_and_keeps_cache_files_changed_after_the_run(scene: Scene):
+    scene.put(".pytest_cache/v/cache/nodeids", '["old_test"]')
+    scene.put("src/__pycache__/existing.pyc", "old bytecode")
+    run = scene.go([init_step(), {"op": "write", "path": ".pytest_cache/v/cache/nodeids", "text": '["new_test"]'},
+                    {"op": "write", "path": "src/__pycache__/existing.pyc", "text": "new bytecode"},
+                    {"op": "write", "path": "src/__pycache__/keep.pyc", "text": "run bytecode"}, finish_step()])
+    scene.put("src/__pycache__/keep.pyc", "later bytecode")
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert (scene.root / ".pytest_cache/v/cache/nodeids").read_text() == '["old_test"]'
+    assert (scene.root / "src/__pycache__/existing.pyc").read_text() == "old bytecode"
+    assert (scene.root / "src/__pycache__/keep.pyc").read_text() == "later bytecode"
+    assert result["skipped"] == [{"path": "src/__pycache__/keep.pyc", "reason": "changed_since"}]
+
+
+def test_undo_archives_a_new_virtual_environment(scene: Scene):
+    run = scene.go([init_step(), {"op": "venv", "path": ".venv"}, finish_step()])
+    assert run["changes"]["created"] == [".venv"]
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan["remove"][0]["path"] == ".venv" and plan["remove"][0]["directory"]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == [".venv"] and result["skipped"] == []
+    assert not (scene.root / ".venv").exists()
+    assert (run_store.run_dir(scene.pid, run["id"]) / "reverted/.venv/pyvenv.cfg").is_file()
+
+
+def test_undo_does_not_archive_an_environment_with_an_incomplete_snapshot(scene: Scene, monkeypatch):
+    monkeypatch.setattr(snapshot, "FILE_LIMIT", 5)
+    run = scene.go([init_step(), {"op": "venv", "path": ".venv"}, finish_step()])
+    after = json.loads((run_store.run_dir(scene.pid, run["id"]) / "after.json").read_text())
+    assert after["files"][".venv"]["tree_partial"]
+    plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
+    assert plan["remove"] == [] and plan["cannot"] == [{"path": ".venv", "reason": "not_recorded"}]
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["skipped"] == plan["cannot"] and not result["run"]["reverted"]
+    assert (scene.root / ".venv/pyvenv.cfg").is_file()
+
+
+def test_undo_keeps_a_new_environment_changed_after_the_run(scene: Scene):
+    run = scene.go([init_step(), {"op": "venv", "path": ".venv"},
+                    {"op": "write", "path": "generated.txt", "text": "run"}, finish_step()])
+    scene.put(".venv/later-package.txt", "installed later")
+    result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert result["removed"] == ["generated.txt"]
+    assert result["skipped"] == [{"path": ".venv", "reason": "changed_since"}]
+    assert (scene.root / ".venv/later-package.txt").read_text() == "installed later"
+
+
+def test_undo_keeps_an_environment_that_existed_before_the_run(scene: Scene):
+    scene.put(".venv/pyvenv.cfg", "existing environment")
+    run = scene.go([init_step(), {"op": "write", "path": ".venv/installed.txt", "text": "package"},
+                    {"op": "write", "path": "generated.txt", "text": "run"}, finish_step()])
+    assert run["changes"]["created"] == ["generated.txt"]
+    scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert (scene.root / ".venv/pyvenv.cfg").read_text() == "existing environment"
+    assert (scene.root / ".venv/installed.txt").is_file()
+
+
+def test_undo_folder_cleanup_does_not_follow_a_replaced_parent(scene: Scene, tmp_path):
+    run = scene.go([init_step(), {"op": "mkdir", "path": "outputs/empty"},
+                    {"op": "write", "path": "generated.txt", "text": "run"}, finish_step()])
+    outside = tmp_path / "outside"
+    (outside / "empty").mkdir(parents=True)
+    (scene.root / "outputs/empty").rmdir()
+    (scene.root / "outputs").rmdir()
+    (scene.root / "outputs").symlink_to(outside, target_is_directory=True)
+    scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
+    assert (outside / "empty").is_dir() and (scene.root / "outputs").is_symlink()
 
 
 def test_a_picture_without_folders_still_keeps_the_folders_its_files_stand_in(scene: Scene):
