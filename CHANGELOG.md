@@ -30,6 +30,9 @@
   from Zotero, and keep citation checking in its own tab. Fetch missing abstracts
   from Crossref on request when online DOI lookup is enabled; cache the result
   locally and distinguish an unavailable abstract from a failed request.
+- Look up missing abstracts in OpenAlex when Crossref has none, checking the
+  exact DOI and keeping the abstract's source separate from reference metadata.
+  Add a missing-abstract batch action and allow retrying unsuccessful lookups.
 - Resize the shared file and detail panel by dragging its left edge. Keep its
   width on this device, support keyboard adjustment, and reset on double-click.
 - Combine the route map and grouped attempt list into one Research routes page,

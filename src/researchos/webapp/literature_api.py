@@ -13,7 +13,7 @@ task V7 phase D). Routed by `researchos.webapp.server`, whose handler runs
                                          (a machine setting under the Research OS home;
                                          nothing is asked here, the next scan
                                          asks, and only the DOIs)
-    POST /api/literature/abstract        {doi} -- fetch/cache a missing abstract
+    POST /api/literature/abstract        {doi, refresh?} -- fetch/cache an abstract
                                          when online DOI lookup is enabled
     POST /api/zotero/open-attachment     {item_key, attachment_key?} -- 「打开 PDF」
     POST /api/zotero/open-item           {item_key} -- 「在 Zotero 中打开」
@@ -171,11 +171,15 @@ def abstract_payload(body: dict[str, Any]) -> dict[str, Any]:
         raise LiteratureRefused("bad_doi", 400, "DOI 格式不正确", "expected one complete DOI")
     if not literature.doi_lookup_enabled():
         raise LiteratureRefused("lookup_off", 409, "请先开启 DOI 联网查询", "DOI lookup is disabled")
+    refresh = body.get("refresh", False)
+    if not isinstance(refresh, bool):
+        raise LiteratureRefused("bad_setting", 400, "查询选项格式不正确", "refresh must be a boolean")
     try:
-        meta = literature.lookup_abstract(doi)
+        meta = literature.lookup_abstract(doi, refresh=refresh)
     except (literature.LookupFailed, OSError) as exc:
         raise LiteratureRefused("lookup_failed", 502, "暂时无法获取摘要，请稍后重试", str(exc)) from exc
-    return {"doi": doi, "abstract": meta.get("abstract"), "source": "Crossref", "checked": True}
+    return {"doi": doi, "abstract": meta.get("abstract"), "source": meta.get("abstract_source"),
+            "source_url": meta.get("source_url"), "checked": True}
 
 
 def lookup_setting_payload(body: dict[str, Any]) -> dict[str, Any]:

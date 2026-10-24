@@ -78,3 +78,4 @@ def no_real_doi_lookup(monkeypatch) -> None:
             raise AssertionError(f"a test tried to reach the network: {request.full_url}")
 
     monkeypatch.setattr(literature, "_OPENER", _NoNetwork())
+    monkeypatch.setattr(literature, "_OPENALEX_OPENER", _NoNetwork())

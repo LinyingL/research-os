@@ -45,6 +45,10 @@ never recorded as "not found". After a failure of the network itself the
 remaining DOIs of that scan are not asked (each would wait out its own
 timeout). `FETCH` is the one function that touches the network; tests
 replace it with a recording stand-in.
+
+Explicit abstract requests also consult OpenAlex by exact DOI when Crossref
+has no abstract. Supplementary text and its source are kept separately in
+`abstract-cache.json`; reading a page never triggers an online request.
 """
 
 from __future__ import annotations
@@ -618,6 +622,8 @@ def crossref_url(doi: str) -> str:
 
 
 CROSSREF_HOST = "api.crossref.org"
+OPENALEX_HOST = "api.openalex.org"
+ABSTRACT_CACHE_FILENAME = "abstract-cache.json"
 
 
 class _CrossrefRedirectsOnly(urllib.request.HTTPRedirectHandler):
@@ -626,19 +632,28 @@ class _CrossrefRedirectsOnly(urllib.request.HTTPRedirectHandler):
     doi.org / Crossref). Any other redirect ends the request (an HTTP
     error: the DOI is asked again on a later scan)."""
 
+    host = CROSSREF_HOST
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001 -- urllib's signature
         target = urllib.parse.urlsplit(newurl)
         try:
             port = target.port
         except ValueError:
             return None
-        if target.scheme != "https" or (target.hostname or "").lower() != CROSSREF_HOST or port not in (None, 443):
+        if target.scheme != "https" or (target.hostname or "").lower() != self.host or port not in (None, 443):
             logger.info("DOI lookup: a redirect to another place was not followed (%s %s)", code, target.scheme)
             return None
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 _OPENER = urllib.request.build_opener(_CrossrefRedirectsOnly())
+
+
+class _OpenAlexRedirectsOnly(_CrossrefRedirectsOnly):
+    host = OPENALEX_HOST
+
+
+_OPENALEX_OPENER = urllib.request.build_opener(_OpenAlexRedirectsOnly())
 
 
 def _fetch_crossref(url: str, timeout: float) -> bytes:
@@ -658,8 +673,77 @@ def _fetch_crossref(url: str, timeout: float) -> bytes:
         raise LookupFailed(f"{type(exc).__name__}: {exc}") from exc
 
 
-#: The one function that touches the network (tests replace it).
+#: Crossref's network boundary (tests replace it).
 FETCH: Callable[[str, float], bytes] = _fetch_crossref
+
+
+def _fetch_openalex(url: str, timeout: float) -> bytes:
+    headers = {"Accept": "application/json"}
+    # Optional existing user configuration; the small keyless API budget also works.
+    key = os.environ.get("OPENALEX_API_KEY", "").strip()
+    if key:
+        headers["Authorization"] = "Bearer " + key
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with _OPENALEX_OPENER.open(request, timeout=timeout) as response:
+            body = response.read(1024 * 1024 + 1)
+        if len(body) > 1024 * 1024:
+            raise LookupFailed("OpenAlex response exceeds the size limit")
+        return body
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return b"null"
+        raise LookupFailed(f"OpenAlex HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
+        raise LookupFailed(f"OpenAlex {type(exc).__name__}", network=True) from exc
+
+
+FETCH_OPENALEX: Callable[[str, float], bytes] = _fetch_openalex
+
+
+def abstract_cache_path() -> Path:
+    return paths.researchos_home() / ABSTRACT_CACHE_FILENAME
+
+
+def openalex_url(doi: str) -> str:
+    return ("https://api.openalex.org/works/https://doi.org/" + urllib.parse.quote(doi, safe="/:;()")
+            + "?select=id,doi,abstract_inverted_index")
+
+
+def parse_openalex(body: bytes, doi: str) -> dict[str, Any]:
+    """Reconstruct only the abstract attached to the exact requested DOI."""
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise LookupFailed("Unparseable OpenAlex response") from exc
+    if data is None:
+        return {"abstract": None, "source": "OpenAlex", "source_url": None}
+    if not isinstance(data, dict):
+        raise LookupFailed("Unparseable OpenAlex work")
+    found = find_dois(str(data.get("doi") or ""))
+    if not found or found[0][2] != doi:
+        raise LookupFailed("OpenAlex returned a different DOI")
+    index = data.get("abstract_inverted_index")
+    words: dict[int, str] = {}
+    if index is not None:
+        if not isinstance(index, dict) or len(index) > 10_000:
+            raise LookupFailed("Invalid OpenAlex abstract index")
+        for word, positions in index.items():
+            if not isinstance(word, str) or not isinstance(positions, list):
+                raise LookupFailed("Invalid OpenAlex abstract index")
+            for pos in positions:
+                if type(pos) is not int or not 0 <= pos < 10_000 or pos in words:
+                    raise LookupFailed("Invalid OpenAlex abstract positions")
+                words[pos] = word
+        if words and set(words) != set(range(max(words) + 1)):
+            raise LookupFailed("Incomplete OpenAlex abstract index")
+    value = " ".join(words[p] for p in sorted(words)) or None
+    if value and len(value) > 30_000:
+        raise LookupFailed("OpenAlex abstract exceeds the size limit")
+    url = data.get("id")
+    if not isinstance(url, str) or not re.fullmatch(r"https://openalex.org/W\d+", url):
+        url = None
+    return {"abstract": value, "source": "OpenAlex", "source_url": url}
 
 
 def _first_text(value: Any) -> str | None:
@@ -734,24 +818,52 @@ def parse_crossref(body: bytes) -> dict[str, Any]:
     }
 
 
-def lookup_abstract(doi: str) -> dict[str, Any]:
-    """Explicit single-DOI lookup, including upgrading a pre-abstract cache.
+def lookup_abstract(doi: str, *, refresh: bool = False) -> dict[str, Any]:
+    """Crossref, then OpenAlex, only on an explicit opt-in request.
 
-    A missing abstract is cached as None. Network failures are not cached.
-    Reading the literature view itself never calls this function.
+    Supplementary abstracts have their own cache so metadata and abstract
+    sources cannot be confused, including by older app processes.
+    Failed requests are retryable; completed negative lookups expire in a week.
     """
     prior = cached(doi)
-    if prior is not None and "abstract" in prior:
-        return prior
     if not doi_lookup_enabled():
         raise LookupFailed("DOI lookup is disabled")
-    meta = parse_crossref(FETCH(crossref_url(doi), TIMEOUT_S))
-    meta["fetched"] = date.today().isoformat()
-    cache = _read_json(cache_path())
-    cache[doi] = {**(prior or {}), **{k: v for k, v in meta.items() if v is not None},
-                  "abstract": meta["abstract"]}
-    _write_json(cache_path(), cache)
-    return cache[doi]
+    if prior and prior.get("abstract"):
+        return {**prior, "abstract_source": "Crossref"}
+    supplements = _read_json(abstract_cache_path())
+    extra = supplements.get(doi)
+    if isinstance(extra, dict) and extra.get("abstract") and not refresh:
+        return {**(prior or {}), **extra, "abstract_source": extra.get("source")}
+    crossref_error = None
+    if refresh or prior is None or "abstract" not in prior:
+        try:
+            meta = parse_crossref(FETCH(crossref_url(doi), TIMEOUT_S))
+            meta["fetched"] = date.today().isoformat()
+            cache = _read_json(cache_path())
+            prior = {**(prior or {}), **{k: v for k, v in meta.items() if v is not None},
+                     "abstract": meta["abstract"]}
+            cache[doi] = prior
+            _write_json(cache_path(), cache)
+            if prior.get("abstract"):
+                return {**prior, "abstract_source": "Crossref"}
+        except LookupFailed as exc:
+            crossref_error = exc
+    fresh = False
+    if isinstance(extra, dict):
+        try:
+            age = (date.today() - date.fromisoformat(extra.get("checked_at", ""))).days
+            fresh = 0 <= age < 7
+        except (ValueError, TypeError):
+            pass
+    if not isinstance(extra, dict) or refresh or not fresh:
+        extra = parse_openalex(FETCH_OPENALEX(openalex_url(doi), TIMEOUT_S), doi)
+        extra["checked_at"] = date.today().isoformat()
+        supplements = _read_json(abstract_cache_path())
+        supplements[doi] = extra
+        _write_json(abstract_cache_path(), supplements)
+    if crossref_error and not extra.get("abstract"):
+        raise crossref_error
+    return {**(prior or {}), **extra, "abstract_source": extra.get("source") if extra.get("abstract") else None}
 
 
 def lookup_dois(dois: Iterable[str], *, today: date | None = None) -> dict[str, dict[str, Any]]:

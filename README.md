@@ -49,7 +49,7 @@ See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 | Research routes | Record attempts, connect directions that grew out of earlier work, and retain the reasons for continuing or abandoning them. |
 | Figures and claims | Inspect figures, tables, and quantitative claims in manuscripts, together with the relationships recorded for them. |
 | Data and code | Browse scripts and datasets, inspect their inputs and outputs, and follow file relationships. |
-| Variables and literature | Keep variable definitions and their versions. Browse project references with abstracts, search titles and authors, and check citations separately. Connect a local Zotero library or fetch missing abstracts by DOI. |
+| Variables and literature | Keep variable definitions and their versions. Browse project references with abstracts, search titles and authors, and check citations separately. Read local Zotero abstracts or fetch missing ones by DOI from Crossref and OpenAlex, individually or in a batch. |
 | Team review | Submit changes from a working copy, compare them as PI, and publish the accepted version. |
 
 A **note** is an editable document. A **comment** is a short, attributed

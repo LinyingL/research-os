@@ -150,14 +150,16 @@ def catalog(conn: Connection, root: Path, report: dict[str, Any],
                 add(target, target.get("source") or "entry", node=target.get("node"))
 
     cache = literature._read_json(literature.cache_path())
+    abstracts = literature._read_json(literature.abstract_cache_path())
     unique = {id(v): v for v in entries.values()}
     for item in unique.values():
         doi = item.get("doi")
         zotero = library.by_doi(doi) if doi else None
         meta = cache.get(doi) if doi else None
-        item["abstract_checked"] = isinstance(meta, dict) and "abstract" in meta
+        extra_abstract = abstracts.get(doi) if doi else None
+        item["abstract_checked"] = isinstance(extra_abstract, dict) and bool(extra_abstract.get("checked_at"))
         for extra, source in ((zotero.metadata() if zotero else None, "Zotero"),
-                              (meta, "Crossref")):
+                              (meta, "Crossref"), (extra_abstract, "OpenAlex")):
             if not isinstance(extra, dict):
                 continue
             for field in ("title", "authors", "year", "venue", "abstract"):
@@ -166,6 +168,7 @@ def catalog(conn: Connection, root: Path, report: dict[str, Any],
                     item[field] = value
                     if field == "abstract":
                         item["abstract_source"] = source
+                        item["abstract_source_url"] = extra.get("source_url") if source == "OpenAlex" else None
             if zotero:
                 item["zotero_key"] = zotero.key
                 item["attachments"] = [a.payload() for a in zotero.attachments]

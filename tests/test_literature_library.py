@@ -13,6 +13,11 @@ from test_v7_citations import _conn, _scan, zotero  # noqa: F401
 from test_v7_literature_view import lit_server, no_network  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def missing_openalex(monkeypatch):
+    monkeypatch.setattr(literature, "FETCH_OPENALEX", lambda url, timeout: b"null")
+
+
 def _catalog(root):
     conn = _conn(root)
     try:
