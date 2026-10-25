@@ -5423,8 +5423,10 @@ described here for the first time and stay as they are unless said otherwise).
   contain or lie inside another role's location, and may not lie under `research/`. Saving
   such a choice is refused; an unsaved default that would clash, or a candidate that is a
   file or a link, moves on to the next candidate, and when none is usable the settings still
-  read (the panel opens and says the work location needs choosing) while a run refuses to
-  start with that message instead of failing inside.
+  read (the panel opens and says 「请为过程文件选一个目录。」 / "Choose a folder for process
+  files." under the work field, until a saved choice clears it) while a run refuses to start
+  with that message instead of failing inside. That refusal, and one for output settings that
+  cannot be read, is an answer the person can act on (409), never a server error.
 - **A run's work folder** is `<work>/<YYYYMMDD>-<slug>/`: the date the task's first run
   started (local time) and the task's first line, at most 24 characters, every run of
   characters other than letters, digits, CJK, `-` and `_` turned into one `-`, repeated `-`
@@ -5496,7 +5498,8 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   group and keeps the choices.
 - **Earlier runs.** `GET /api/outputs/backfill?project=` lists, for every run on this Mac
   that is not undone and whose task still exists with a result record, the files it created
-  that are still there, not records, not caches and not yet registered, each with a suggested
+  that are still there, not records, not caches, not inside that run's own work folder (19.4
+  files them as `work`) and not yet registered, each with a suggested
   kind, first rule that matches:
   1. a path segment `checks`, `check`, `logs`, `log`, `tmp`, `scratch`, `cache`, `sources`,
      `vendor`, or a name `*_stdout.txt`, `*_stderr.txt`, `*.log`, `report_check.*`,
@@ -5510,7 +5513,10 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   8. otherwise — not registered.
   Nothing is written by the listing. The page shows it grouped by task (task text, run date,
   agent), each file with its kind (a select that also offers 不登记) and a checkbox; 「登记所选」
-  registers through the endpoint above, one catalog per task.
+  registers through the endpoint above, one catalog per task. A refusal names the file it
+  is about in both languages (a reference export with no readable reference, a `.toml` that
+  is no variable definition, a file changed or gone since the listing), so the person knows
+  which box to clear.
 - The 输出目录 panel offers 「补登记以往运行的文件…」 when the listing is not empty.
 
 ### 19.6 The page (amends 17.9's row, 17a1527's views)
@@ -5520,6 +5526,11 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   shared file panel; figures as small previews), each with 「移除登记」; then, from the latest
   run's `filing`, 「N 个新文件未登记」 with 「登记…」 (the 19.5 list for that run alone), and the
   work folder's path with its file count. Collapsed with the task's details (a3d7ccc).
+  A registration whose file is gone stays listed in the row, marked 「文件已不在」 ("File no
+  longer there"), with 「移除登记」, and does not count as registered for a file that later
+  appears at that path; the views leave it out as before. A catalog entry whose `at` cannot be
+  read as a date falls back to its run id's time, and one bad entry never empties a view. The
+  row's data is computed once per change of the project's files, not on every poll.
 - **The views.** Every registered row on 图表与论断, 数据与代码 and 文献 says which task
   produced it (the task's first line, cut as the record title is) and when. 「打开结果」 there
   switches to 项目首页 and opens the record.
