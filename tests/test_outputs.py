@@ -834,6 +834,58 @@ def test_a_person_registers_only_for_a_task_that_owns_the_record_and_each_file_o
         person(root, report, one)
 
 
+def many_files(root, count):
+    """`count` small code files under gen/ and the items that register them."""
+    for i in range(count):
+        put(root, f"gen/f{i:04d}.py", f"x = {i}\n")
+    return [{"kind": "code", "path": f"gen/f{i:04d}.py"} for i in range(count)]
+
+
+def test_a_person_registers_more_files_in_one_call_than_an_agent_may_declare(root):
+    report, _pid, _run_id = recorded(root)
+    items = many_files(root, 250)
+    got = person(root, report, *items)                                             # the review list sends a task's files at once
+    assert got["registered"] == [i["path"] for i in items]
+    assert set(entries_of_report(root, report)) == {i["path"] for i in items}
+    assert {e["evidence"] for e in entries_of_report(root, report).values()} == {"person"}
+    with pytest.raises(workspace.WorkspaceError, match="at most 200"):             # an agent's declaration stays at 200
+        outputs.validate(root, items[:201], outputs.folders(root)["folders"])
+    with pytest.raises(workspace.WorkspaceError, match="at most 200"):
+        outputs.validate(root, "x", None, anywhere=True)                           # and a person's call is still a list
+
+
+def test_a_task_whose_catalog_cannot_hold_the_files_says_so_and_changes_nothing(root):
+    report, _pid, _run_id = recorded(root)
+    items = many_files(root, 1001)
+    sentence = "这项任务的登记清单装不下这么多文件。请少勾选一些，或先移除不需要的登记。"
+    with pytest.raises(workspace.WorkspaceError) as count:                         # more files than a catalog's count
+        person(root, report, *items)
+    with pytest.raises(workspace.WorkspaceError) as size:                          # 1,000 entries are more than the 200 KB a record may be
+        person(root, report, *items[:1000])
+    assert count.value.message_zh == size.value.message_zh == sentence
+    assert "cannot hold that many files" in str(count.value) and str(count.value) == str(size.value)
+    assert catalog_bytes(root, report) is None
+    person(root, report, *items[:300])                                             # what fits goes through
+    before = catalog_bytes(root, report)
+    with pytest.raises(workspace.WorkspaceError) as more:                          # and what would not fit leaves the catalog as it was
+        person(root, report, *items[300:1000])
+    assert more.value.message_zh == sentence and catalog_bytes(root, report) == before
+    assert len(entries_of_report(root, report)) == 300
+
+
+def test_a_catalog_past_its_count_is_refused_in_the_same_words(root, monkeypatch):
+    report, _pid, _run_id = recorded(root)
+    monkeypatch.setattr(outputs, "LIMIT", 5)
+    items = many_files(root, 7)
+    person(root, report, *items[:3])
+    before = catalog_bytes(root, report)
+    with pytest.raises(workspace.WorkspaceError, match="cannot hold that many files"):
+        person(root, report, *items[3:6])                                          # 3 held and 3 more are 6 of 5
+    assert catalog_bytes(root, report) == before
+    person(root, report, *items[3:5])                                              # exactly the count is fine
+    assert len(entries_of_report(root, report)) == 5
+
+
 def test_a_person_cannot_register_for_a_task_that_was_removed_but_can_still_unregister(root):
     put(root, "scratch/run.log", "text")
     report, _pid, _run_id = recorded(root)

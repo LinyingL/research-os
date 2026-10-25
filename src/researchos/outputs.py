@@ -316,12 +316,23 @@ def _is_record(rel: str) -> bool:
             or any(key.startswith(ingest_files.fold(folder) + "/") for folder in RECORD_FOLDERS))
 
 
+def _catalog_full() -> workspace.WorkspaceError:
+    """The refusal of a person's registration that a task's catalog cannot hold (DESIGN.md 19.5): more than `LIMIT`
+    entries, or a catalog past the 200 KB a record may be (`workspace.TEXT_LIMIT`), which comes first."""
+    return _bad("This task's list of registered files cannot hold that many files: register fewer, or remove "
+                "registrations first",
+                "这项任务的登记清单装不下这么多文件。请少勾选一些，或先移除不需要的登记。")
+
+
 def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, anywhere: bool = False) -> list[dict[str, Any]]:
     """Check every declaration before any result/task/catalog file is written. A declaration is an output
     (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported.
-    With `anywhere` (a person registering, 19.5; `locations` is then not looked at) a file may be wherever it is, and
-    kind `work` is accepted with any suffix; the rest of the checks stand."""
-    if not isinstance(declared, list) or len(declared) > 200:
+    With `anywhere` (a person registering, 19.5; `locations` is then not looked at) a file may be wherever it is, kind
+    `work` is accepted with any suffix, and the call may name as many files as a catalog holds (`LIMIT`, where an
+    agent's declaration is at most 200); the rest of the checks stand."""
+    if anywhere and isinstance(declared, list) and len(declared) > LIMIT:
+        raise _catalog_full()
+    if not isinstance(declared, list) or len(declared) > (LIMIT if anywhere else 200):
         raise _bad("outputs must be a list of at most 200 {kind, path, title?} objects; use [] for no files")
     locations = None if anywhere else _folders(root, _roles(root, locations), unset=True)
     checked = []
@@ -464,8 +475,14 @@ def register_files(root: Path, body: dict[str, Any]) -> dict[str, Any]:
             items[item["path"]] = {**item, "report": report, "task": task["id"], "evidence": "person", "who": who,
                                    "at": at, "created": created}
         if len(items) > LIMIT:
-            raise _bad("The output catalog is full")
-        workspace._save(root, rel, before, _bytes({"version": 1, "items": list(items.values())}), pid)  # noqa: SLF001
+            raise _catalog_full()
+        try:
+            after = _bytes({"version": 1, "items": list(items.values())})
+        except workspace.WorkspaceError as exc:  # past 200 KB a record cannot be read back: say what a person can do
+            if exc.code != "too_large":
+                raise
+            raise _catalog_full() from exc
+        workspace._save(root, rel, before, after, pid)  # noqa: SLF001
     return {"catalog": rel, "registered": [item["path"] for item in checked]}
 
 

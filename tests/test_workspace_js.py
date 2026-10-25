@@ -2968,6 +2968,62 @@ console.log(JSON.stringify({closed,opened,none,all,again:groupsIn()[0].open,rows
     assert out["again"] is False and out["rowsKept"] == 46
 
 
+def test_a_task_with_hundreds_of_ticked_files_is_registered_with_one_call_for_the_task():
+    out = run(_BACKFILL + r"""
+server.listing.groups[0].runs[0].files=Array.from({length:250},(_, i)=>({path:'gen/f'+String(i).padStart(4,'0')+'.py',kind:'code'}));
+await openList();
+const ticked=totalLine();
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({ticked,calls:registered().map(c=>[c.report,c.items.length,c.items[0].path,c.items[249]&&c.items[249].path]),says:says(),
+  left:server.listing.groups.length}));
+""")
+    assert out["ticked"] == ["已选 252 项，共 252 项"]                                    # the engine takes a person's call of up to a catalog's files
+    assert out["calls"] == [[REPORT, 250, "gen/f0000.py", "gen/f0249.py"], [REPORT2, 2, "reports/plan.md", None]]
+    assert out["says"] == ["已登记 252 个文件。"] and out["left"] == 0
+
+
+def test_a_task_the_catalog_cannot_hold_says_so_in_its_group_and_the_person_can_choose_fewer_and_try_again():
+    out = run(_BACKFILL + r"""
+const full='这项任务的登记清单装不下这么多文件。请少勾选一些，或先移除不需要的登记。';
+server.listing.groups[0].runs[0].files=Array.from({length:350},(_, i)=>({path:'gen/f'+String(i).padStart(4,'0')+'.py',kind:'code'}));
+const base=customPost;
+customPost=(path,body)=>{ if(path==='/api/outputs/register'&&body.items.length>300) { server.calls.push(body.report);const e=new Error('full');e.engineMessage=full;throw e; } return base(path,body); };
+await openList();
+await registerButton().click();await sleepTick();
+const notes=groupsIn()[0].all().filter(e=>e.classList.contains('err')).map(e=>e.textContent);
+const refused={notes,open:groupsIn()[0].open,total:totalLine(),dirty:window.ROWorkspace.isDirty(),sent:registered().map(c=>c.items.length)};
+await find('全部取消勾选',groupsIn()[0]).click();
+for (const p of ['gen/f0000.py','gen/f0001.py','gen/f0002.py']) await tick(p,true);
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({refused,again:{sent:registered().map(c=>c.items.length),says:says(),notes:panelBody.all().filter(e=>e.classList.contains('err')).length,
+  left:server.listing.groups.map(g=>[g.task,g.runs[0].files.length])}}));
+""")
+    assert out["refused"]["notes"] == ["没能登记这项任务的文件。 这项任务的登记清单装不下这么多文件。请少勾选一些，或先移除不需要的登记。"]
+    assert out["refused"]["open"] is True and out["refused"]["dirty"] is True             # the group opens on its note and the choices stay
+    assert out["refused"]["total"] == ["已选 350 项，共 350 项"]                          # the other task's two went through and are gone from the list
+    assert out["refused"]["sent"] == [350, 2]
+    assert out["again"]["sent"] == [350, 2, 3] and out["again"]["says"] == ["已登记 3 个文件。"] and out["again"]["notes"] == 0
+    assert out["again"]["left"] == [["t1", 347]]
+
+
+def test_the_counts_of_a_long_review_list_read_with_thousands_separators_in_english():
+    out = run(_BACKFILL + r"""
+server.listing.groups[0].runs[0].files=Array.from({length:1200},(_, i)=>({path:'gen/f'+i+'.py',kind:'code'})).concat([{path:'gen/readme',kind:null}]);
+await openList();
+const before={heads:groupsIn().map(d=>d.children[0].textContent),total:totalLine()};
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({before,says:says()}));
+""", lang="en")
+    assert out["before"] == {"heads": ["Run the model1,200 of 1,201 selected", "Second task2 of 2 selected"], "total": ["1,202 of 1,203 selected"]}
+    assert out["says"] == ["Registered 1,202 files."]
+    zh = run(_BACKFILL + r"""
+server.listing.groups[0].runs[0].files=Array.from({length:1200},(_, i)=>({path:'gen/f'+i+'.py',kind:'code'}));
+await openList();
+console.log(JSON.stringify({heads:groupsIn().map(d=>d.children[0].textContent),total:totalLine()}));
+""")
+    assert zh == {"heads": ["Run the model已选 1200 项，共 1200 项", "Second task已选 2 项，共 2 项"], "total": ["已选 1202 项，共 1202 项"]}   # Chinese keeps its digits
+
+
 def test_files_past_the_bound_are_counted_and_a_listing_that_cannot_be_read_is_said():
     out = run(_BACKFILL + r"""
 server.listing.more=1200;server.listing.listed=5000;

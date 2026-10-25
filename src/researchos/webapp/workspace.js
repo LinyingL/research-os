@@ -1422,7 +1422,7 @@
     function sync() {
       syncs.forEach((f) => f());
       const n = groups.reduce((sum, group) => sum + backfillTicked(subject, group).length, 0);
-      count.textContent = t("已选 {n} 项，共 {total} 项", { n: n, total: total });
+      count.textContent = t("已选 {n} 项，共 {total} 项", { n: countText(n), total: countText(total) });
       register.disabled = !n || backfillLocked(subject);
     }
     subject.lock = () => { repaints.forEach((f) => f()); sync(); };
@@ -1433,7 +1433,7 @@
       const files = backfillFiles(group), box = el("details", "res-draft"), summary = disclosureSummary(group.text || group.task);
       const tally = el("span", "ws-agent-quiet"), inner = el("div", "res-draft-body"), rows = {}, bulk = [];
       summary.append(tally);
-      syncs.push(() => { tally.textContent = t("已选 {n} 项，共 {total} 项", { n: backfillTicked(subject, group).length, total: files.length }); });
+      syncs.push(() => { tally.textContent = t("已选 {n} 项，共 {total} 项", { n: countText(backfillTicked(subject, group).length), total: countText(files.length) }); });
       box.open = subject.notes[group.task] ? true
         : Object.prototype.hasOwnProperty.call(subject.open, group.task) ? subject.open[group.task] : total <= BACKFILL_OPEN;
       if (subject.notes[group.task]) { const problem = el("p", "ws-status err", subject.notes[group.task]); problem.setAttribute("role", "status"); inner.append(problem); }
@@ -1527,7 +1527,7 @@
     subject.busy = false; subject.dirty = failed > 0;
     const lines = [];
     if (done) lines.push(t("已登记 {n} 个文件。", { n: countText(done) }));
-    if (failed) lines.push(t("有 {n} 项任务的文件没能登记，选择都还在。", { n: failed }));
+    if (failed) lines.push(t("有 {n} 项任务的文件没能登记，选择都还在。", { n: countText(failed) }));
     subject.status = { words: lines.join("\n"), kind: failed ? "err" : "ok" };
     try {
       subject.listing = await apiGet(backfillUrl(subject.run));

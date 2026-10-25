@@ -5488,6 +5488,12 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   wherever it is**. Kind `work` accepts any suffix. A record file, anything under
   `research/notes/` or `research/results/`, and `.researchos/` are refused. The entry's
   `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`.
+  **How many.** A person's call may name up to 1,000 files, a catalog's own count (an agent's
+  declaration stays at 200), so the review list registers a task's files in one call. A catalog
+  is a record and a record is at most 200 KB: with long paths it holds fewer than 1,000
+  entries. A call that would not fit is refused whole, nothing written, in a sentence that
+  says to register fewer or remove registrations first; the review list shows it in the task's
+  group and keeps the choices.
 - **Earlier runs.** `GET /api/outputs/backfill?project=` lists, for every run on this Mac
   that is not undone and whose task still exists with a result record, the files it created
   that are still there, not records, not caches and not yet registered, each with a suggested

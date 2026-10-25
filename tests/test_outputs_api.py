@@ -235,3 +235,21 @@ def test_what_the_route_lists_is_registered_one_call_per_task_and_leaves_the_lis
         "scripts/fetch.py": ("person", True), "data/prices.csv": ("person", True),
         "checks/run_stdout.txt": ("person", True), "reports/plan.md": ("person", True)}
     assert _get(base, f"/api/outputs/backfill?project={pid}")[1] == {"groups": [], "listed": 0, "more": 0}
+
+
+def test_the_register_route_takes_hundreds_of_a_tasks_files_in_one_call_and_says_when_the_catalog_cannot_hold_more(writing_server):
+    base, root, _httpd = writing_server
+    report, _pid, _run_id = _recorded(root)
+    for i in range(1100):
+        put(root, f"gen/f{i:04d}.py", f"x = {i}\n")
+    def mine(lo, hi):
+        return [{"kind": "code", "path": f"gen/f{i:04d}.py"} for i in range(lo, hi)]
+
+    status, done = _post(base, "/api/outputs/register", {"project": str(root), "report": report, "items": mine(0, 250)})
+    assert status == 200 and len(done["registered"]) == 250                                  # the review list's one call for a task
+    held = (root / outputs.catalog_path(report)).read_bytes()
+    for items in (mine(250, 1100), mine(250, 1000)):                                         # more than a catalog's count; more than it can hold
+        status, refused = _post(base, "/api/outputs/register", {"project": str(root), "report": report, "items": items})
+        assert status == 409 and refused["state"] == "workspace_output"
+        assert refused["message"].startswith("这项任务的登记清单装不下这么多文件。") and "cannot hold that many files" in refused["detail"]
+    assert (root / outputs.catalog_path(report)).read_bytes() == held                        # nothing of either call was written
