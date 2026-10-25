@@ -2660,6 +2660,37 @@ console.log(JSON.stringify({text:lost.textContent, words:words(lost), label:lost
                        "words": ["Remove registration"], "label": "Remove registration: Lost"}
 
 
+_CLOUD = r"""
+listed.task_outputs.t1.entries.push(entry('table','tables/far.csv','Far',{state:'cloud'}),entry('figure','figures/far.png','Far fig',{state:'cloud'}));
+await window.ROWorkspace.load(root);await sleepTick();
+const block=blockOf();
+const rowOf2=title=>block.all().find(e=>e.classList.contains('ws-output')&&e.children[0].textContent===title);
+const far=rowOf2('Far'), farFig=rowOf2('Far fig');
+const words=li=>li.all().filter(e=>e.tagName==='BUTTON').map(b=>b.textContent);
+"""
+
+
+def test_a_registration_whose_file_is_only_in_the_cloud_is_marked_so_in_the_row_and_can_be_removed():
+    """DESIGN.md 19.6: a file that is there but cannot be read on this Mac is not 「文件已不在」: its row says
+    「文件只在云端」, with 移除登记 and nothing to open or preview, like a gone one."""
+    out = run(_OUTPUTS + _CLOUD + r"""
+const state={far:far.textContent, farWords:words(far), figWords:words(farFig), images:farFig.all().filter(e=>e.tagName==='IMG').length,
+  opened:openedFiles.length, group:block.all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent)};
+answers.push(true);
+await far.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
+console.log(JSON.stringify(Object.assign(state,{posted})));
+""")
+    assert out["far"] == "Far" + "tables/far.csv" + "文件只在云端" + "移除登记" and "文件已不在" not in out["far"]
+    assert out["farWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0 and out["opened"] == 0
+    assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]          # counted where they are listed
+    assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "tables/far.csv"}]]
+    english = run(_OUTPUTS + _CLOUD + r"""
+console.log(JSON.stringify({text:far.textContent, words:words(far), label:far.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
+""", lang="en")
+    assert english == {"text": "Far" + "tables/far.csv" + "The file is only in the cloud" + "Remove registration",
+                       "words": ["Remove registration"], "label": "Remove registration: Far"}
+
+
 def test_the_counted_words_have_both_forms_in_english_and_group_thousands():
     out = run(_OUTPUTS + r"""
 const seen=[];

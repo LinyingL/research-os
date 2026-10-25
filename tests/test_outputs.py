@@ -1739,3 +1739,116 @@ def test_the_before_picture_is_read_only_when_there_are_outputs_to_flag(root, mo
     put(root, "tables/a.csv", "n\n1\n")
     answer, _pid, _run_id = complete(root, [{"kind": "table", "path": "tables/a.csv"}])
     assert answer.startswith("Saved") and seen == [["tables/a.csv"]]
+
+
+# -- V15 step 4c (DESIGN 19.2, 19.6) ---------------------------------------------------------------------------------------
+
+
+def damaged(root, report, *extra):
+    """The catalog of `report` with raw `extra` entries added at its end, such as a tool would not write; its path."""
+    full = root / outputs.catalog_path(report)
+    value = json.loads(full.read_text())
+    value["items"].extend(extra)
+    full.write_text(json.dumps(value))
+    return outputs.catalog_path(report)
+
+
+def test_an_entry_that_cannot_be_used_costs_only_itself_in_the_views_the_row_and_the_count(root):
+    """DESIGN 19.6: one bad entry never empties a view. An entry without a fingerprint, with a hidden path, a path that
+    leads out, a kind nobody knows, or no entry at all, is left out and said (the catalog is named); the catalog's other
+    entries show in the views and in the row, and count as registered. What writes a catalog still refuses it."""
+    for name in ("a", "b", "g"):
+        put(root, f"tables/{name}.csv", "n\n1\n")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    person(root, report, {"kind": "table", "path": "tables/b.csv"})
+    created_by(pid, run_id, "tables/a.csv", "tables/b.csv")
+    mark = {"sha256": "0" * 64, "size": 1, "mtime_ns": 1}
+    rel = damaged(root, report,
+                  {"kind": "table", "path": "tables/c.csv", "title": "No fingerprint"},
+                  {"kind": "table", "path": ".hidden/d.csv", "title": "Hidden", "fingerprint": mark},
+                  {"kind": "table", "path": "../e.csv", "title": "Outside", "fingerprint": mark},
+                  {"kind": "spreadsheet", "path": "tables/f.csv", "title": "Unknown kind", "fingerprint": mark},
+                  "not an entry")
+    got = outputs.catalog(root)
+    assert sorted(r["path"] for r in got["items"]) == ["tables/a.csv", "tables/b.csv"]
+    assert rel in got["error"] and "5 entries" in got["error"] and got["broken"] == [rel]
+    assert outputs.catalog(root, {"figure"})["items"] == [] and rel in outputs.catalog(root, {"figure"})["error"]
+    tasks, _revision = workspace.read_tasks(root)
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert row["error"] is True and [e["path"] for e in row["entries"]] == ["tables/a.csv", "tables/b.csv"]
+    assert row["filing"]["counts"]["output"] == 2 and row["filing"]["counts"]["unregistered"] == 0
+    filed = outputs.filing(root, ["tables/a.csv", "tables/b.csv"], records=[], reports=[report], work_folder=None)
+    assert filed["counts"]["output"] == 2
+    held = catalog_bytes(root, report)
+    for call in (lambda: person(root, report, {"kind": "table", "path": "tables/g.csv"}),
+                 lambda: outputs.unregister_file(root, {"report": report, "path": "tables/a.csv"})):
+        with pytest.raises(workspace.WorkspaceError):
+            call()
+    assert catalog_bytes(root, report) == held                                      # the damaged catalog is not written over
+    put(root, rel, json.dumps({"version": 1, "items": json.loads(held)["items"][:2]}))
+    assert outputs.catalog(root)["error"] is None and "broken" not in outputs.catalog(root)
+
+
+@pytest.mark.parametrize("damage", ["not json", json.dumps({"version": 2, "items": []}), json.dumps({"version": 1, "items": "x"}),
+                                    json.dumps([1])])
+def test_a_catalog_that_cannot_be_read_costs_only_its_own_rows_and_is_named(root, damage):
+    """DESIGN 19.6: each catalog is read in its own try. The error line is still there, naming the catalog; the other
+    catalogs' rows show, and so does the other task's row."""
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "tables/b.csv", "n\n2\n")
+    report, pid, _run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    second = second_record(root)
+    outputs.register_files(root, {"report": second, "items": [{"kind": "table", "path": "tables/b.csv"}]})
+    assert sorted(r["path"] for r in outputs.catalog(root)["items"]) == ["tables/a.csv", "tables/b.csv"]
+    rel = outputs.catalog_path(report)
+    put(root, rel, damage)
+    got = outputs.catalog(root)
+    assert [r["path"] for r in got["items"]] == ["tables/b.csv"]
+    assert rel in got["error"] and got["broken"] == [rel]
+    tasks, _revision = workspace.read_tasks(root)
+    rows = outputs.task_outputs(root, pid, tasks)
+    assert rows["t1"]["error"] is True and rows["t1"]["entries"] == []
+    assert rows["t2"]["error"] is False and [e["path"] for e in rows["t2"]["entries"]] == ["tables/b.csv"]
+
+
+def test_a_registered_file_that_is_there_but_only_in_the_cloud_is_not_gone_and_still_counts_as_registered(root, monkeypatch):
+    """DESIGN 19.6: a registration whose file is there and cannot be read on this Mac has its own state, `cloud`, however
+    it shows (macOS says the content is evicted, iCloud's placeholder stands in its place, the hash cannot be taken); it
+    counts as registered; the views leave it out as they do today; its registration can be removed."""
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "tables/b.csv", "n\n2\n")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    person(root, report, {"kind": "table", "path": "tables/b.csv"})
+    created_by(pid, run_id, "tables/a.csv", "tables/b.csv")
+    tasks, _revision = workspace.read_tasks(root)
+    row = lambda: outputs.task_outputs(root, pid, tasks)["t1"]                      # noqa: E731
+    states = lambda: {e["path"]: e["state"] for e in row()["entries"]}               # noqa: E731
+    assert states() == {"tables/a.csv": "current", "tables/b.csv": "current"}
+    # 1. the content is evicted (the flag `workspace._confined` and the scan ask for)
+    with monkeypatch.context() as patch:
+        patch.setattr(paths, "is_dataless", lambda p: Path(p).name == "b.csv")
+        assert states() == {"tables/a.csv": "current", "tables/b.csv": "cloud"} and row()["error"] is False
+        assert row()["filing"]["counts"]["output"] == 2                              # registered: not gone, not new
+        assert outputs.filing(root, ["tables/b.csv"], records=[], reports=[report], work_folder=None)["counts"]["output"] == 1
+        got = outputs.catalog(root)
+        assert [r["path"] for r in got["items"]] == ["tables/a.csv"] and got["error"] is None   # the views as before
+        assert flat(listing(root, pid)) == []
+    assert states()["tables/b.csv"] == "current"                                      # downloaded again
+    # 2. only iCloud's placeholder is left
+    (root / "tables/b.csv").unlink()
+    put(root, "tables/.b.csv.icloud", "placeholder")
+    assert states()["tables/b.csv"] == "cloud" and row()["filing"]["counts"]["output"] == 2
+    (root / "tables/.b.csv.icloud").unlink()
+    assert states()["tables/b.csv"] == "gone"                                         # nothing there at all: gone, as before
+    # 3. the file is there and changed, and its hash cannot be taken (the fingerprint says dataless)
+    put(root, "tables/b.csv", "n\n222\n")
+    assert states()["tables/b.csv"] == "changed"
+    with monkeypatch.context() as patch:
+        patch.setattr(outputs.snapshot, "fingerprint", lambda *_a, **_k: {"dataless": True, "size": 6})
+        assert states()["tables/b.csv"] == "cloud" and row()["filing"]["counts"]["output"] == 2
+    # its registration can be removed whatever state it is in, and the catalog reads with such an entry in it
+    with monkeypatch.context() as patch:
+        patch.setattr(paths, "is_dataless", lambda p: Path(p).name == "b.csv")
+        assert states()["tables/b.csv"] == "cloud"
+        outputs.unregister_file(root, {"report": report, "path": "tables/b.csv"})
+        assert states() == {"tables/a.csv": "current"}

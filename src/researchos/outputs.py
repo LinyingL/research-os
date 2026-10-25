@@ -83,7 +83,11 @@ FILING_KEPT = 500
 CACHE_FOLDERS = frozenset(snapshot.SKIP_DIRS - {snapshot.GIT_DIR}) | {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
-def _bad(message: str, zh: str = "输出目录或文件不符合设置，请检查后重试") -> workspace.WorkspaceError:
+#: What a refusal says in Chinese when nothing more specific is known.
+GENERIC_ZH = "输出目录或文件不符合设置，请检查后重试"
+
+
+def _bad(message: str, zh: str = GENERIC_ZH) -> workspace.WorkspaceError:
     return workspace.WorkspaceError("output", message, 409, zh)
 
 
@@ -108,7 +112,7 @@ def _read(root: Path, rel: str) -> tuple[Any, bytes | None]:
     try:
         return json.loads(raw), raw
     except ValueError as exc:
-        raise _bad(f"Cannot read {rel}: invalid JSON") from exc
+        raise _bad(f"Cannot read {rel}: invalid JSON", f"“{rel}”不是有效的 JSON，读不出来。") from exc
 
 
 def _bytes(value: Any) -> bytes:
@@ -189,7 +193,7 @@ def folders(root: Path) -> dict[str, Any]:
     value, raw = _read(root, FOLDERS_PATH)
     if raw is not None:
         if not isinstance(value, dict) or value.get("version") != 1:
-            raise _bad("Unknown output-folder settings version")
+            raise _bad("Unknown output-folder settings version", f"“{FOLDERS_PATH}”的版本号不认识，读不出来。")
         chosen = _folders(root, _roles(root, value.get("folders")), unset=True)
     else:
         chosen = {}
@@ -222,6 +226,16 @@ def folders(root: Path) -> dict[str, Any]:
     return found
 
 
+def unreadable_zh(error: workspace.WorkspaceError) -> str:
+    """The Chinese sentence of a refusal because the output settings cannot be read (DESIGN.md 19.2), as the English
+    one says it: which file, `research/folders.json`, and the reason where one is known (its own words: invalid JSON,
+    an unknown version, a location that is a file, a work location that crowds another)."""
+    reason = "" if error.message_zh == GENERIC_ZH else error.message_zh
+    if FOLDERS_PATH in reason:
+        return f"读不出输出目录的设置：{reason}"
+    return f"读不出输出目录的设置：{FOLDERS_PATH} 里的设置不能用。{reason}"
+
+
 def save_folders(root: Path, body: dict[str, Any]) -> dict[str, Any]:
     with situation.write_guard(root, human=True):
         pid = workspace._require_write(root)
@@ -239,20 +253,55 @@ def catalog_path(report: str) -> str:
     return report.removesuffix(".md") + ".outputs.json"
 
 
-def _entries(root: Path, rel: str) -> tuple[list[dict[str, Any]], bytes | None]:
+def _items(root: Path, rel: str) -> tuple[list[Any], bytes | None]:
+    """What the catalog `rel` lists, once the catalog as a whole reads (version 1, a list of at most `LIMIT`); the
+    entries are not looked at."""
     value, raw = _read(root, rel)
     if raw is None:
         return [], None
     if (not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("items"), list)
-            or len(value["items"]) > LIMIT or not all(isinstance(i, dict) for i in value["items"])):
-        raise _bad("Cannot read the output catalog")
-    for item in value["items"]:
-        if (not isinstance(item.get("kind"), str) or item["kind"] not in ROLES
-                or not isinstance(item.get("path"), str) or not isinstance(item.get("title"), str)
-                or not isinstance(item.get("fingerprint"), dict)):
-            raise _bad("Cannot read an entry in the output catalog")
-        _path(root, item["path"])
+            or len(value["items"]) > LIMIT):
+        raise _bad(f"Cannot read the output catalog {rel}")
     return value["items"], raw
+
+
+def _check_entry(root: Path, item: Any) -> None:
+    """Refuse an entry of a catalog that cannot be used: no kind, path, title or fingerprint, or a path `_path` refuses.
+    A file that is only in the cloud (`_in_cloud`) is a registration like any other: its entry reads, and can be removed
+    (DESIGN.md 19.6)."""
+    if (not isinstance(item, dict) or not isinstance(item.get("kind"), str) or item["kind"] not in ROLES
+            or not isinstance(item.get("path"), str) or not isinstance(item.get("title"), str)
+            or not isinstance(item.get("fingerprint"), dict)):
+        raise _bad("Cannot read an entry in the output catalog")
+    try:
+        _path(root, item["path"])
+    except workspace.WorkspaceError as exc:
+        if not _in_cloud(exc):
+            raise
+
+
+def _entries(root: Path, rel: str) -> tuple[list[dict[str, Any]], bytes | None]:
+    """The whole catalog, or a refusal: one entry that cannot be used makes it unreadable, so nothing that writes a
+    catalog (a registration, an import, a person's removal) goes over one that is damaged."""
+    items, raw = _items(root, rel)
+    for item in items:
+        _check_entry(root, item)
+    return items, raw
+
+
+def _readable(root: Path, rel: str) -> tuple[list[dict[str, Any]], int]:
+    """What the catalog `rel` holds that can be used, and how many entries could not be (DESIGN.md 19.6: one bad entry
+    never empties a view). The entries are checked one by one as `_entries` checks them; a catalog that does not read
+    as a whole is still refused. For what only reads: the views, the task rows, what the filing counts as registered."""
+    items, _raw = _items(root, rel)
+    found = []
+    for item in items:
+        try:
+            _check_entry(root, item)
+        except (workspace.WorkspaceError, OSError):
+            continue
+        found.append(item)
+    return found, len(items) - len(found)
 
 
 def _fingerprint(root: Path, rel: str, known: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -563,11 +612,12 @@ def _moment(item: dict[str, Any]) -> datetime | None:
 
 
 def _state(root: Path, item: dict[str, Any]) -> str | None:
-    """`current` when the registered file is what was registered, `changed` when it is not, None when it is gone."""
+    """`current` when the registered file is what was registered, `changed` when it is not, `cloud` when it is there
+    but cannot be read on this Mac (only in the cloud, DESIGN.md 19.6), None when it is gone."""
     try:
         return "current" if _current(item, _fingerprint(root, item.get("path"), item.get("fingerprint"))) else "changed"
     except (workspace.WorkspaceError, OSError):
-        return None
+        return "cloud" if _there(root, item.get("path")) else None
 
 
 def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -> dict[str, Any] | None:
@@ -609,8 +659,15 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -
 def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
     """Read registered files even before the index catches up; never follow missing files. Each row says which task
     produced it (`task_title`, or `task_removed` when the task is gone from the task list) and when (`at`, local ISO
-    time; DESIGN.md 19.6)."""
+    time; DESIGN.md 19.6).
+
+    One bad entry never empties a view (19.6): each catalog is read in its own try and its entries are checked one by
+    one (`_readable`), so a catalog that cannot be read, or an entry without a fingerprint or with a hidden path, costs
+    only itself and the other catalogs' rows show. It is still said: `error` is a sentence naming the catalogs
+    concerned and `broken` lists them, for the views' error line; with nothing wrong, `error` is None and there is
+    no `broken`."""
     items = []
+    broken: dict[str, str] = {}
     try:
         try:
             titles = {t["id"]: task_title(t["text"]) for t in workspace.read_tasks(root)[0]}
@@ -624,9 +681,15 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
         entries = []
         for source in sources:
             rel = source.relative_to(root).as_posix()
-            if not _path(root, rel.removesuffix(".outputs.json") + ".md").is_file():
+            try:
+                if not _path(root, rel.removesuffix(".outputs.json") + ".md").is_file():
+                    continue
+                found, left_out = _readable(root, rel)
+            except (workspace.WorkspaceError, OSError) as exc:
+                broken[rel] = str(exc) if rel in str(exc) else f"{rel}: {exc}"
                 continue
-            found, _raw = _entries(root, rel)
+            if left_out:
+                broken[rel] = f"{rel}: {left_out} {'entry' if left_out == 1 else 'entries'} could not be used and left out"
             entries.extend({**i, "catalog": rel} for i in found)
             if len(entries) >= LIMIT:
                 break
@@ -645,6 +708,10 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
                 continue
             if row is not None:
                 items.append(row)
+        if broken:
+            said = list(broken.values())
+            more = f"; and {len(said) - 3} more" if len(said) > 3 else ""
+            return {"items": items, "error": "; ".join(said[:3]) + more, "broken": list(broken)}
         return {"items": items, "error": None}
     except (workspace.WorkspaceError, OSError) as exc:
         return {"items": [], "error": str(exc)}
@@ -682,22 +749,25 @@ def import_variable(root: Path, body: dict[str, Any]) -> dict[str, Any]:
     return {"id": card_id, "file": rel}
 
 
-def _official_named(base: Any, rel: str) -> set[str]:
+def _official_marks(base: Any, rel: str) -> dict[str, Any]:
     """The paths the official version's copy of the catalog `rel` names (`base`: the version a member's working copy was
-    last synced to, `proposals.Base`): none when it had no such catalog or it cannot be read."""
+    last synced to, `proposals.Base`), each with the fingerprint that entry registered: none when it had no such
+    catalog or it cannot be read."""
     text = base.text(rel)
     try:
-        return {i["path"] for i in json.loads(text)["items"] if isinstance(i, dict) and isinstance(i.get("path"), str)} if text else set()
+        return ({i["path"]: i.get("fingerprint") for i in json.loads(text)["items"]
+                 if isinstance(i, dict) and isinstance(i.get("path"), str)} if text else {})
     except (ValueError, KeyError, TypeError):
-        return set()
+        return {}
 
 
 def related_files(root: Path, reports: list[str], *, unchanged: Iterable[str] = (), base: Any = None) -> list[str]:
     """Files to offer alongside changed task reports in the existing team review (DESIGN.md 18.3, 19.5): the catalog
     of each of `reports` and every file it names. The catalog of a task that did not change (`unchanged`: the reports
     of such tasks) is offered too when it differs from the official version's (`base`), with the files it names that
-    the official one did not -- a file a member registered for a task whose own record stays as it is. Nothing of the
-    kind without a `base`."""
+    the official one did not, and those it names with another fingerprint than the official entry of the same path
+    (`_current`: a file registered again after it changed) -- what a member registered for a task whose own record
+    stays as it is. Nothing of the kind without a `base`."""
     related = []
     for report in reports:
         rel = catalog_path(report)
@@ -716,8 +786,9 @@ def related_files(root: Path, reports: list[str], *, unchanged: Iterable[str] = 
             if raw is None or hashlib.sha256(raw).hexdigest() == (base.files.get(rel) or {}).get("sha256"):
                 continue
             related.append(rel)
-            official = _official_named(base, rel)
-            related.extend(i["path"] for i in entries if i["path"] not in official)
+            official = _official_marks(base, rel)
+            related.extend(i["path"] for i in entries
+                           if i["path"] not in official or not _current({"fingerprint": official[i["path"]]}, i["fingerprint"]))
         except (workspace.WorkspaceError, OSError):
             continue
     if related and _path(root, FOLDERS_PATH).is_file():
@@ -745,13 +816,21 @@ def _is_cache(rel: str) -> bool:
     return any(part in CACHE_FOLDERS for part in rel.split("/")) or rel.lower().endswith((".pyc", ".pyo"))
 
 
+def _in_cloud(error: Exception) -> bool:
+    """Whether `_path` refused a file because it is only in the cloud (DESIGN.md 19.6): macOS has moved its content to
+    iCloud (a dataless file) or left iCloud's placeholder in its place (`workspace._confined`, code `cloud`)."""
+    cause = error.__cause__
+    return isinstance(cause, workspace.WorkspaceError) and cause.code == "cloud"
+
+
 def _there(root: Path, rel: Any) -> bool:
-    """Whether the file a registration names is there (DESIGN.md 19.6): a regular file of the project that can be read
-    on this Mac. It is looked for and never read."""
+    """Whether the file a registration names is there (DESIGN.md 19.6): a regular file of the project, or one that is
+    only in the cloud, which cannot be read on this Mac yet and is not gone: it counts as registered and the task's row
+    marks it so (`_state`). It is looked for and never read."""
     try:
         return _path(root, rel).is_file()
-    except (workspace.WorkspaceError, OSError):
-        return False
+    except (workspace.WorkspaceError, OSError) as exc:
+        return _in_cloud(exc)
 
 
 #: One path a catalog names: the spelling it is registered under, the run that made the entry (an agent's declaration
@@ -761,12 +840,13 @@ Named = tuple[str, Any, datetime | None]
 
 def _named(root: Path, catalogs: Iterable[str]) -> dict[str, list[Named]]:
     """What the catalogs name: each path (`files.fold`) with the spellings it is registered under, and by whom and
-    when each entry was made (`Named`). A catalog that cannot be read registers nothing, and an entry whose time
+    when each entry was made (`Named`). A catalog that cannot be read registers nothing, an entry that cannot be used
+    only itself (`_readable`: it costs the catalog's other entries nothing, as in the views), and an entry whose time
     cannot be worked out is named without one."""
     found: dict[str, list[Named]] = {}
     for rel in catalogs:
         try:
-            for item in _entries(root, rel)[0]:
+            for item in _readable(root, rel)[0]:
                 try:
                     moment = _moment(item)
                 except (ValueError, OverflowError, OSError, TypeError):  # one bad time costs its entry's date (19.6)
@@ -899,12 +979,13 @@ def _task_outputs(root: Path, task: dict[str, Any], run: dict[str, Any] | None,
                   registered: dict[str, list[Named]]) -> dict[str, Any]:
     found: dict[str, Any] = {"entries": [], "error": False, "filing": None, "work_folder": None,
                              "work_files": None, "work_files_more": False}
-    try:
-        entries, _raw = _entries(root, catalog_path(task["report"]))
-    except (workspace.WorkspaceError, OSError):  # a catalog that cannot be read registers nothing, and is said so
+    try:  # one bad entry costs only itself, a catalog that cannot be read only this task's row; both are said (19.6)
+        entries, left_out = _readable(root, catalog_path(task["report"]))
+        found["error"] = left_out > 0
+    except (workspace.WorkspaceError, OSError):
         entries, found["error"] = [], True
     for item in entries:
-        # a file that is gone stays listed, to be removed (19.6); the views leave it out
+        # a file that is gone, or only in the cloud, stays listed, to be removed (19.6); the views leave it out
         found["entries"].append({"kind": item["kind"], "path": item["path"], "title": item["title"],
                                  "state": _state(root, item) or "gone", "evidence": item.get("evidence")})
     if run is not None:
@@ -945,9 +1026,10 @@ def _rows_key(root: Path, project_id: str, token: Any, wanted: list[dict[str, An
 def task_outputs(root: Path, project_id: str, tasks: Iterable[dict[str, Any]], *, memo: dict[str, Any] | None = None,
                  token: Any = None) -> dict[str, dict[str, Any]]:
     """What the task rows show under the run controls (DESIGN.md 19.6), by task id, for each task with a result
-    record: `entries` (its catalog's files: kind, path, title, evidence, and `state`: `current`, `changed`, or `gone`
-    for a file that is no longer there, which stays listed so that its registration can be removed; at most `LIMIT`),
-    `error` (the catalog cannot be read), and, from the task's latest run on this Mac, `filing` (the counts of 19.4
+    record: `entries` (its catalog's files: kind, path, title, evidence, and `state`: `current`, `changed`, `cloud` for
+    a file that is only in the cloud, or `gone` for one that is no longer there, both of which stay listed so that their
+    registrations can be removed; at most `LIMIT`), `error` (the catalog cannot be read, or an entry of it could not be
+    used and is left out: the others show, 19.6), and, from the task's latest run on this Mac, `filing` (the counts of 19.4
     as they stand now, `_latest_filing`) and the `work_folder` with `work_files`, the files in it now
     (`_count_files`; `work_files_more` when there are more than are counted). Reads only.
 

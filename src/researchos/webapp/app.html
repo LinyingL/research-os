@@ -5306,7 +5306,11 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
   if (!(bundle.items || []).length && !bundle.error) return;
   const box = mk("section", "registered-outputs");
   box.appendChild(mk("h2", "section-title", variableDrafts ? t("待确认的变量草稿") : t("任务输出")));
-  if (bundle.error) box.appendChild(mk("p", "notice-status err", t("输出清单暂时无法读取。")));
+  if (bundle.error) {  // 19.6: the other catalogs' rows still show below; the line names the catalogs it is about
+    const line = mk("p", "notice-status err", t("输出清单暂时无法读取。"));
+    (bundle.broken || []).slice(0, 3).forEach((file) => line.appendChild(mk("span", "mono lit-hint", " " + file)));
+    box.appendChild(line);
+  }
   const items = bundle.items || []; let shown = 0;
   const more = mkButton(t("显示更多"), "btn btn-small", appendNext);
   function appendNext() {

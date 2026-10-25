@@ -1278,3 +1278,29 @@ def test_a_run_is_refused_over_http_while_the_output_settings_cannot_be_read(api
     assert run_store.list_runs(api.pid) == [] and api.get("/api/agents/runs")[1]["runs"] == []
     api.put("research/folders.json", json.dumps({"version": 1, "folders": {**seven, "work": "work"}}))
     assert api.poll(api.start()["id"])["state"] == "ended"
+
+
+def test_the_chinese_refusal_for_unreadable_output_settings_names_the_file_and_the_reason(api):
+    """DESIGN 19.2 (amended): the 409 says in Chinese what the English says -- which file (research/folders.json) and,
+    where it is known, why: invalid JSON, a version nobody knows, a location that is a file, a work location that
+    crowds another."""
+    seven = {"code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+             "document": "reports", "variable": "research/variables"}
+    api.put("src", "a file, not a folder")
+    api.scenario([init_step(), finish_step()])
+    cases = [
+        ("not json", "invalid JSON", "不是有效的 JSON"),
+        (json.dumps({"version": 2, "folders": {**seven, "work": "work"}}), "Unknown output-folder settings version", "版本号不认识"),
+        (json.dumps({"version": 1, "folders": {**seven, "code": "src", "work": "work"}}), "The code location is a file", "“src”是文件"),
+        (json.dumps({"version": 1, "folders": {**seven, "work": "reports/work"}}), "work location must stand apart",
+         "过程文件的目录“reports/work”不能与“reports”相同"),
+    ]
+    for text, english, chinese in cases:
+        api.put("research/folders.json", text)
+        status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+        assert status == 409 and error["state"] == "agent_output_folders" and english in error["message"]
+        status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+        assert status == 409 and error["message"].startswith("读不出输出目录的设置：")
+        assert "research/folders.json" in error["message"] and chinese in error["message"]
+        assert "输出目录或文件不符合设置" not in error["message"]
+    assert run_store.list_runs(api.pid) == []

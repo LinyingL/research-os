@@ -5426,7 +5426,10 @@ described here for the first time and stay as they are unless said otherwise).
   read (the panel opens and says 「请为过程文件选一个目录。」 / "Choose a folder for process
   files." under the work field, until a saved choice clears it) while a run refuses to start
   with that message instead of failing inside. That refusal, and one for output settings that
-  cannot be read, is an answer the person can act on (409), never a server error.
+  cannot be read, is an answer the person can act on (409), never a server error; the Chinese
+  sentence of the second names `research/folders.json` and, where known, the reason (invalid
+  JSON, a version nobody knows, a location that is a file, a work location that crowds
+  another), as the English does.
 - **A run's work folder** is `<work>/<YYYYMMDD>-<slug>/`: the date the task's first run
   started (local time) and the task's first line, at most 24 characters, every run of
   characters other than letters, digits, CJK, `-` and `_` turned into one `-`, repeated `-`
@@ -5490,8 +5493,9 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   wherever it is**. Kind `work` accepts any suffix. A record file, anything under
   `research/notes/` or `research/results/`, and `.researchos/` are refused. The entry's
   `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`. In a team,
-  a member's changed catalog (and the files it newly names) is offered in 提交改动 like a
-  changed task's result record, even when the task itself did not change (18.3).
+  a member's changed catalog (and the files it newly names, or names with another fingerprint
+  than the official catalog's entry of the same path) is offered in 提交改动 like a changed
+  task's result record, even when the task itself did not change (18.3).
   **How many.** A person's call may name up to 1,000 files, a catalog's own count (an agent's
   declaration stays at 200), so the review list registers a task's files in one call. A catalog
   is a record and a record is at most 200 KB: with long paths it holds fewer than 1,000
@@ -5534,9 +5538,15 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   files a run created, an entry made before the run began (an agent's entry: the time its run id
   carries; a person's: `at`; the run's own declaration always counts) registered another file.
   This is judged to the second, and an entry with no time is judged by its file alone. The views
-  leave a gone file out as before. A catalog entry whose `at` cannot be
-  read as a date falls back to its run id's time, and one bad entry never empties a view. The
-  row's data is computed once per change of the project's files, not on every poll.
+  leave a gone file out as before. A file that is there but cannot be read on this Mac (only
+  in the cloud) is not gone: its row says 「文件只在云端」 ("The file is only in the cloud"),
+  offers 「移除登记」, and it counts as registered; the views leave it out as they do today. A
+  catalog entry whose `at` cannot be read as a date falls back to its run id's time, and one
+  bad entry never empties a view: each catalog is read on its own and its entries one by one,
+  so a catalog that cannot be read, an entry without a fingerprint or one with a hidden path
+  costs only itself; the error is still said (the views' error line, naming the catalog) and
+  the other catalogs' rows show. The row's data does the same per task, and is computed once
+  per change of the project's files, not on every poll.
 - **The views.** Every registered row on 图表与论断, 数据与代码 and 文献 says which task
   produced it (the task's first line, cut as the record title is) and when. 「打开结果」 there
   switches to 项目首页 and opens the record.

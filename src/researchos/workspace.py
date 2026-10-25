@@ -469,8 +469,8 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
     anyone who changes the official version directly. A proposal carries only files that differ from the base, so a
     path that is no change (a record already official) is harmless in the list; when the base cannot be read every
     task counts as changed. A task that did not change is still offered its list of registered files when that differs
-    from the official one, with the files it newly names (DESIGN.md 19.5): a member who registers a file for a task
-    whose record stays as it is has made a change the PI's version lacks."""
+    from the official one, with the files it newly names and those it names with another fingerprint (DESIGN.md 19.5):
+    a member who registers a file for a task whose record stays as it is has made a change the PI's version lacks."""
     if mode != "member" or not any(task.get("report") for task in tasks):
         return []
     official: dict[str, dict[str, Any]] = {}

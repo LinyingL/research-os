@@ -940,7 +940,7 @@ class AgentManager:
             places = outputs.folders(root)
         except workspace.WorkspaceError as exc:  # settings that cannot be read: the person can mend them (409, 19.2)
             raise AgentError("output_folders", f"The output folders could not be read: {exc}",
-                             message_zh=f"读不出输出目录的设置：{exc.message_zh}") from exc
+                             message_zh=outputs.unreadable_zh(exc)) from exc
         if places.get("choose"):
             raise AgentError("work_location")
         self._recover(project_id)

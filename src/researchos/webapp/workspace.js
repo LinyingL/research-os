@@ -1291,16 +1291,18 @@
     return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state), run ? run.id : null]);
   }
   function outputRow(task, item, locked) {
-    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone";
-    // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview
-    if (gone) li.append(el("span", null, name));
+    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+    // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview;
+    // so does one whose file is there but only in the cloud, which cannot be read on this Mac
+    if (gone || cloud) li.append(el("span", null, name));
     else li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
     if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
     if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
     if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
+    if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
     const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
     remove.disabled = locked; li.append(remove);
-    if (!gone && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+    if (!gone && !cloud && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
       const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
       image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
       preview.append(image); li.append(preview);

@@ -354,3 +354,25 @@ def test_the_line_that_says_the_work_location_needs_choosing_goes_after_a_save_t
     en = run(_CHOOSING_GOES % {"open": "'Output folders'", "work": "'Process files'", "save": "'Save'",
                                "line": "'Choose a folder for process files.'", "sentence": "'Process files: scripts written only'"}, lang="en")
     assert en == {"opened": 1, "afterRefusal": 1, "afterSave": 0, "posted": "process", "sentence": True}
+
+
+# -- the views' error line names the catalogs it is about (DESIGN.md 19.6) ----------------------------------------------
+
+_ERROR_LINE = r"""
+const lines = (host) => host.all().filter((e) => e.classList.contains('err')).map((e) => e.textContent);
+const rows = (host) => host.all().filter((e) => e.classList.contains('registered-output')).length;
+const named = new Element('div'), alone = new Element('div'), clean = new Element('div');
+renderRegisteredOutputs(named, { items: [{ path: 'figures/fit.png', title: 'Fit', kind: 'figure' }], error: 'x',
+  broken: ['research/results/a.outputs.json', 'research/results/b.outputs.json'] });
+renderRegisteredOutputs(alone, { items: [], error: 'research/results/c.outputs.json: Cannot read it' });   // no list: the sentence only
+renderRegisteredOutputs(clean, { items: [{ path: 'figures/fit.png', title: 'Fit', kind: 'figure' }], error: null });
+console.log(JSON.stringify({ named: lines(named), namedRows: rows(named), alone: lines(alone), clean: lines(clean) }));
+"""
+
+
+def test_the_views_error_line_names_the_catalogs_it_is_about_and_the_other_rows_still_show():
+    zh = _home_run(_ERROR_LINE)
+    assert zh["named"] == ["输出清单暂时无法读取。 research/results/a.outputs.json research/results/b.outputs.json"]
+    assert zh["namedRows"] == 1 and zh["alone"] == ["输出清单暂时无法读取。"] and zh["clean"] == []
+    en = _home_run(_ERROR_LINE, lang="en")
+    assert en["named"] == ["The output list could not be read. research/results/a.outputs.json research/results/b.outputs.json"]
