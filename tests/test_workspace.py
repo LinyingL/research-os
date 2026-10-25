@@ -750,3 +750,35 @@ def test_a_file_a_member_registers_again_after_it_changed_is_offered_though_the_
         assert offered == [catalog, "tables/a.csv"]       # the official list names a.csv, with another fingerprint; b.csv is as it was
         draft = proposals.make_proposal(drive.work, "files", "Register the edited a.csv", only=[workspace.TASKS_PATH, *offered])
         assert {item["path"] for item in draft.data["file"]} == {catalog, "tables/a.csv"}
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_malformed_official_catalog_never_breaks_the_project_home_of_a_member_whose_catalog_differs(tmp_path, monkeypatch):
+    """DESIGN 19.5: the official copy of a catalog is another person's file; an entry of it whose fingerprint is no
+    mapping, or a copy that does not parse, offers the member's files instead of raising into GET /api/workspace."""
+    from researchos import outputs
+
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.pi():
+        official = drive.official
+        record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
+                                                    "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+                                        "revision": None})
+        (official / "tables").mkdir()
+        (official / "tables/a.csv").write_text("n\na\n")
+        outputs.register_files(official, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"}]})
+        share.publish(official)
+    catalog = outputs.catalog_path(record)
+    with drive.member():
+        project.open_project(drive.work)
+        share.sync(drive.work)
+        (drive.work / "tables/b.csv").write_text("n\nb\n")
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/b.csv"}]})
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/b.csv"]
+        text = proposals.Base.text
+        for official_copy in ('{"version": 1, "items": [{"kind": "table", "path": "tables/a.csv", "fingerprint": "x"}]}',
+                              '{"version": 1, "items": [{"kind": "table", "path": "tables/a.csv", "fingerprint": ["x"]}]}',
+                              "[" * 100_000 + "]" * 100_000):
+            monkeypatch.setattr(proposals.Base, "text", lambda self, rel, copy=official_copy: copy if rel == catalog else text(self, rel))
+            assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/a.csv", "tables/b.csv"], official_copy[:40]

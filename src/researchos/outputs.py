@@ -751,13 +751,14 @@ def import_variable(root: Path, body: dict[str, Any]) -> dict[str, Any]:
 
 def _official_marks(base: Any, rel: str) -> dict[str, Any]:
     """The paths the official version's copy of the catalog `rel` names (`base`: the version a member's working copy was
-    last synced to, `proposals.Base`), each with the fingerprint that entry registered: none when it had no such
-    catalog or it cannot be read."""
+    last synced to, `proposals.Base`), each with the fingerprint that entry registered (an empty one when it is no
+    mapping: the official copy is another person's file and names no content then): none when it had no such catalog
+    or it cannot be read."""
     text = base.text(rel)
     try:
-        return ({i["path"]: i.get("fingerprint") for i in json.loads(text)["items"]
-                 if isinstance(i, dict) and isinstance(i.get("path"), str)} if text else {})
-    except (ValueError, KeyError, TypeError):
+        return ({i["path"]: (i["fingerprint"] if isinstance(i.get("fingerprint"), dict) else {})
+                 for i in json.loads(text)["items"] if isinstance(i, dict) and isinstance(i.get("path"), str)} if text else {})
+    except (ValueError, KeyError, TypeError, RecursionError):
         return {}
 
 
@@ -788,7 +789,7 @@ def related_files(root: Path, reports: list[str], *, unchanged: Iterable[str] = 
             related.append(rel)
             official = _official_marks(base, rel)
             related.extend(i["path"] for i in entries
-                           if i["path"] not in official or not _current({"fingerprint": official[i["path"]]}, i["fingerprint"]))
+                           if not official.get(i["path"]) or not _current({"fingerprint": official[i["path"]]}, i["fingerprint"]))
         except (workspace.WorkspaceError, OSError):
             continue
     if related and _path(root, FOLDERS_PATH).is_file():

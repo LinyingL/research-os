@@ -1852,3 +1852,39 @@ def test_a_registered_file_that_is_there_but_only_in_the_cloud_is_not_gone_and_s
         assert states()["tables/b.csv"] == "cloud"
         outputs.unregister_file(root, {"report": report, "path": "tables/b.csv"})
         assert states() == {"tables/a.csv": "current"}
+
+
+def test_a_malformed_official_catalog_never_breaks_what_a_members_unchanged_task_offers(root):
+    """DESIGN 19.5: the official version's copy of a catalog is another person's file. An entry of it whose fingerprint is
+    no mapping names no content, so its path is offered like one the official catalog does not name; a catalog that does
+    not read as a whole offers everything the member's names; nothing raises into the project home (task V15 step 4c)."""
+    from types import SimpleNamespace
+
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "tables/b.csv", "n\n2\n")
+    report, _pid, _run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    person(root, report, {"kind": "table", "path": "tables/b.csv"})
+    rel = outputs.catalog_path(report)
+    mine = {e["path"]: e["fingerprint"] for e in json.loads(catalog_bytes(root, report))["items"]}
+    entry = lambda path, fingerprint: {"kind": "table", "path": path, "title": path,    # noqa: E731
+                                       **({} if fingerprint is ... else {"fingerprint": fingerprint})}
+
+    def offered(text):
+        base = SimpleNamespace(files={rel: {"sha256": "0" * 64}}, text=lambda r: text if r == rel else None)
+        return outputs.related_files(root, [], unchanged=[report], base=base)
+
+    # the same bytes as the official entry: only the catalog is offered, as it should be
+    same = json.dumps({"version": 1, "items": [entry(p, f) for p, f in mine.items()]})
+    assert offered(same) == [rel]
+    # an entry whose fingerprint is no mapping (or says nothing) offers its path; the entry that reads is judged on its own
+    for bad in ("garbage", ["x"], 5, 1.5, True, None, [], {}, ...):
+        text = json.dumps({"version": 1, "items": [entry("tables/a.csv", bad), entry("tables/b.csv", mine["tables/b.csv"])]})
+        assert offered(text) == [rel, "tables/a.csv"], bad
+    # entries that are not entries are passed over, the one that reads still counts
+    text = json.dumps({"version": 1, "items": ["x", 5, None, [1], {"path": 3}, {"fingerprint": mine["tables/a.csv"]},
+                                               entry("tables/a.csv", mine["tables/a.csv"])]})
+    assert offered(text) == [rel, "tables/b.csv"]
+    # a catalog that does not read at all (or is not there) offers every file the member's names
+    for unreadable in ("{not json", "[1, 2]", "null", '{"version": 1}', '{"items": 5}', '{"items": {"path": "x"}}',
+                       "[" * 100_000 + "]" * 100_000, "", None):
+        assert offered(unreadable) == [rel, "tables/a.csv", "tables/b.csv"], unreadable

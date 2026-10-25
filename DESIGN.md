@@ -5495,7 +5495,10 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`. In a team,
   a member's changed catalog (and the files it newly names, or names with another fingerprint
   than the official catalog's entry of the same path) is offered in 提交改动 like a changed
-  task's result record, even when the task itself did not change (18.3).
+  task's result record, even when the task itself did not change (18.3). The official catalog
+  is another person's file: an entry of it whose fingerprint is no mapping names no content (its
+  path is offered), and a copy that does not read names no entry (every file the member's names
+  is offered); neither stops the project home from loading.
   **How many.** A person's call may name up to 1,000 files, a catalog's own count (an agent's
   declaration stays at 200), so the review list registers a task's files in one call. A catalog
   is a record and a record is at most 200 KB: with long paths it holds fewer than 1,000
