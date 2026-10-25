@@ -754,32 +754,56 @@ def _there(root: Path, rel: Any) -> bool:
         return False
 
 
-def _named(root: Path, catalogs: Iterable[str]) -> dict[str, list[str]]:
-    """What the catalogs name: each path (`files.fold`) with the spellings it is registered under. A catalog that
-    cannot be read registers nothing."""
-    found: dict[str, list[str]] = {}
+#: One path a catalog names: the spelling it is registered under, the run that made the entry (an agent's declaration
+#: has one, a person's registration does not) and when (`_moment`; None when the entry carries no time).
+Named = tuple[str, Any, datetime | None]
+
+
+def _named(root: Path, catalogs: Iterable[str]) -> dict[str, list[Named]]:
+    """What the catalogs name: each path (`files.fold`) with the spellings it is registered under, and by whom and
+    when each entry was made (`Named`). A catalog that cannot be read registers nothing, and an entry whose time
+    cannot be worked out is named without one."""
+    found: dict[str, list[Named]] = {}
     for rel in catalogs:
         try:
             for item in _entries(root, rel)[0]:
-                found.setdefault(ingest_files.fold(item["path"]), []).append(item["path"])
+                try:
+                    moment = _moment(item)
+                except (ValueError, OverflowError, OSError, TypeError):  # one bad time costs its entry's date (19.6)
+                    moment = None
+                found.setdefault(ingest_files.fold(item["path"]), []).append((item["path"], item.get("run"), moment))
         except (workspace.WorkspaceError, OSError, TypeError):
             continue
     return found
 
 
-def _registered(root: Path, named: dict[str, list[str]], rel: str) -> bool:
+def _registered(root: Path, named: dict[str, list[Named]], rel: str, run: dict[str, Any] | None = None) -> bool:
     """Whether `rel` is registered (DESIGN.md 19.6): a catalog of `named` names it, and the file it registered is
     there. While that file is gone the registration stays in its task's row, to be removed, and counts for nothing:
-    not in the filing, not in the row's count, not as "already registered" in the listing of earlier runs' files."""
-    return any(_there(root, path) for path in named.get(ingest_files.fold(rel), ()))
+    not in the filing, not in the row's count, not as "already registered" in the listing of earlier runs' files.
+    Nor does it count for a file that later appears at that path: asked about a file `run` created, an entry made
+    before the run began (not the run's own declaration) registered an earlier file, which was gone by then -- a file
+    a run creates was not there when it began -- so the new one is not registered. An entry with no time, or a run
+    with none, is judged by the file alone."""
+    began = _began(run) if run else None
+    floor = began.replace(microsecond=0) if began is not None else None   # entries are stamped to the second
+    for path, by, moment in named.get(ingest_files.fold(rel), ()):
+        if not _there(root, path):
+            continue
+        if floor is not None and moment is not None and by != run.get("id") and moment < floor:
+            continue
+        return True
+    return False
 
 
 def filing(root: Path, created: Iterable[str], *, records: Iterable[str], reports: Iterable[Any],
-           work_folder: Any, registered: dict[str, list[str]] | None = None) -> dict[str, Any]:
+           work_folder: Any, registered: dict[str, list[Named]] | None = None,
+           run: dict[str, Any] | None = None) -> dict[str, Any]:
     """Sort the files a run created into one class each (DESIGN.md 19.4), first match: `record` (`records`: written by
     Research OS's own tools), `output` (registered, and its file is there: named by the catalog of one of the task's
-    result records, `reports`, or, given `registered` (`_named`), by any catalog it was made from), `work` (inside the
-    run's `work_folder`), `cache` (`CACHE_FOLDERS`, `.pyc`) and `unregistered` (the rest). Returns `{"counts":
+    result records, `reports`, or, given `registered` (`_named`), by any catalog it was made from; given the `run`
+    that created the files, not by an entry made before it began, `_registered`), `work` (inside the run's
+    `work_folder`), `cache` (`CACHE_FOLDERS`, `.pyc`) and `unregistered` (the rest). Returns `{"counts":
     {class: n}, "unregistered": [at most FILING_KEPT paths], "unregistered_more": n}`. It reads the catalogs and
     nothing else, changes no state, and a catalog it cannot read registers nothing; no class is a violation."""
     known = {ingest_files.fold(rel) for rel in records}
@@ -798,7 +822,7 @@ def filing(root: Path, created: Iterable[str], *, records: Iterable[str], report
         key = ingest_files.fold(rel)
         if key in known:
             kind = "record"
-        elif _registered(root, registered, rel):
+        elif _registered(root, registered, rel, run):
             kind = "output"
         elif folder is not None and key.startswith(folder):
             kind = "work"
@@ -846,12 +870,14 @@ def _count_files(root: Path, rel: str) -> tuple[int, bool]:
     return count, False
 
 
-def _latest_filing(root: Path, run: dict[str, Any], registered: dict[str, list[str]]) -> dict[str, Any] | None:
+def _latest_filing(root: Path, run: dict[str, Any], registered: dict[str, list[Named]]) -> dict[str, Any] | None:
     """The filing of the task's latest run as it stands now (DESIGN.md 19.4, 19.6): the files the run created sorted
     again against the catalogs, so that a file registered or unregistered since shows; a run from before V15, which
     has no `filing`, files all it created as unregistered. A file counts as registered when any catalog of the
-    project names it (`registered`, `_registered_paths`) and the file is there, as the listing of earlier runs' files
-    has it (`backfill`), so that the row's count and that list agree; a record is also what the run's tools wrote
+    project names it (`registered`, `_registered_paths`), the file is there and the entry was not made before the
+    run began (`_registered`: a file that appears again at the path of a registration whose file was gone is a new
+    one), as the listing of earlier runs' files has it (`backfill`), so that the row's count and that list agree; a
+    record is also what the run's tools wrote
     (`tool_paths`). Only the unregistered files that are still there and that a person could register count
     (`workspace.existing_files`: visible, outside the dependency folders). None for a run that was undone: what it
     created was moved away."""
@@ -861,7 +887,7 @@ def _latest_filing(root: Path, run: dict[str, Any], registered: dict[str, list[s
     created = [rel for rel in (changes.get("created") if isinstance(changes, dict) else None) or () if isinstance(rel, str)]
     held = [rel for rel in run.get("tool_paths") or () if isinstance(rel, str)]
     sorted_ = filing(root, created, records=[*held, *(rel for rel in created if _is_record(rel))], reports=(),
-                     work_folder=run.get("work_folder"), registered=registered)
+                     work_folder=run.get("work_folder"), registered=registered, run=run)
     there: list[str] = []
     for start in range(0, len(sorted_["unregistered"]), workspace.EXISTS_LIMIT):
         there.extend(workspace.existing_files(root, sorted_["unregistered"][start:start + workspace.EXISTS_LIMIT]))
@@ -870,7 +896,7 @@ def _latest_filing(root: Path, run: dict[str, Any], registered: dict[str, list[s
 
 
 def _task_outputs(root: Path, task: dict[str, Any], run: dict[str, Any] | None,
-                  registered: dict[str, list[str]]) -> dict[str, Any]:
+                  registered: dict[str, list[Named]]) -> dict[str, Any]:
     found: dict[str, Any] = {"entries": [], "error": False, "filing": None, "work_folder": None,
                              "work_files": None, "work_files_more": False}
     try:
@@ -1001,7 +1027,7 @@ def _has_record(root: Path, report: str) -> bool:
         return False
 
 
-def _registered_paths(root: Path) -> dict[str, list[str]]:
+def _registered_paths(root: Path) -> dict[str, list[Named]]:
     """Every path any catalog of the project names (`_named`), a catalog being what the views read: the one beside a
     result record that is there. A catalog that cannot be read registers nothing."""
     catalogs = []
@@ -1020,13 +1046,18 @@ def _registered_paths(root: Path) -> dict[str, list[str]]:
     return _named(root, catalogs)
 
 
-def _run_moment(run: dict[str, Any]) -> str | None:
-    """When a run began, as local ISO time: its `started`, else its `created`, else the UTC time its id carries."""
+def _began(run: dict[str, Any]) -> datetime | None:
+    """When a run began: its `started`, else its `created`, else the UTC time its id carries; None for none of them."""
     for value in (run.get("started"), run.get("created")):
         moment = _moment({"at": value}) if isinstance(value, str) else None
         if moment is not None:
-            return moment.astimezone().isoformat(timespec="seconds")
-    moment = _moment({"run": run.get("id")})
+            return moment
+    return _moment({"run": run.get("id")})
+
+
+def _run_moment(run: dict[str, Any]) -> str | None:
+    """When a run began, as local ISO time (`_began`)."""
+    moment = _began(run)
     return moment.astimezone().isoformat(timespec="seconds") if moment is not None else None
 
 
@@ -1036,7 +1067,8 @@ def backfill(root: Path, project_id: Any, run_id: Any = None) -> dict[str, Any]:
     that one run -- the files it created (`changes.created`) that are still regular files in the project (visible, so
     `.DS_Store` is none; no link on the way: `workspace.existing_files`), and are not records (the run's `tool_paths`,
     the app's record files, notes and results), not caches, not inside the run's own work folder (19.4 files those as
-    `work`, not as new) and not yet in any catalog; each with the kind `suggest_kind` proposes. A file a newer run
+    `work`, not as new) and not yet registered (in any catalog, its file there and the entry not made before the run
+    began: `_registered`); each with the kind `suggest_kind` proposes. A file a newer run
     created again is listed once, under the newest run. Grouped by task, then by run, newest first:
     `{"groups": [{"task", "text", "report", "runs": [{"id", "date", "agent", "files": [{"path", "kind"}]}]}],
     "listed": n, "more": n}`, at most `BACKFILL_LIMIT` files named and the rest counted in `more`. It reads and writes
@@ -1062,7 +1094,7 @@ def backfill(root: Path, project_id: Any, run_id: Any = None) -> dict[str, Any]:
             for rel in created:
                 key = ingest_files.fold(rel) if isinstance(rel, str) else None
                 if (key is None or key in seen or key in held or _is_record(rel) or _is_cache(rel)
-                        or (folder is not None and key.startswith(folder)) or _registered(root, registered, rel)):
+                        or (folder is not None and key.startswith(folder)) or _registered(root, registered, rel, run)):
                     continue
                 seen.add(key)
                 wanted.append(rel)

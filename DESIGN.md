@@ -5530,7 +5530,11 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   work folder's path with its file count. Collapsed with the task's details (a3d7ccc).
   A registration whose file is gone stays listed in the row, marked 「文件已不在」 ("File no
   longer there"), with 「移除登记」, and does not count as registered for a file that later
-  appears at that path; the views leave it out as before. A catalog entry whose `at` cannot be
+  appears at that path: a run creates only a file that was not there when it began, so for the
+  files a run created, an entry made before the run began (an agent's entry: the time its run id
+  carries; a person's: `at`; the run's own declaration always counts) registered another file.
+  This is judged to the second, and an entry with no time is judged by its file alone. The views
+  leave a gone file out as before. A catalog entry whose `at` cannot be
   read as a date falls back to its run id's time, and one bad entry never empties a view. The
   row's data is computed once per change of the project's files, not on every poll.
 - **The views.** Every registered row on 图表与论断, 数据与代码 and 文献 says which task

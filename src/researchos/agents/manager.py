@@ -1557,7 +1557,7 @@ class AgentManager:
         try:  # 19.4: a summary, so that trouble reading a catalog never costs the run its check
             assessed["filing"] = outputs.filing(
                 root, changes["created"], records=[*info["tool_paths"], TASKS_PATH],
-                reports=[info["report"], run.get("task_report_before")], work_folder=run.get("work_folder"))
+                reports=[info["report"], run.get("task_report_before")], work_folder=run.get("work_folder"), run=run)
         except Exception:  # noqa: BLE001
             logger.warning("could not sort the files agent run %s created", run_id, exc_info=True)
         return assessed

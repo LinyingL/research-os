@@ -2903,6 +2903,32 @@ def test_a_run_files_what_it_created_and_the_page_summary_carries_it(scene: Scen
     assert scene.manager.detail(scene.pid, run["id"])["filing"] == filing  # the paths are in the run's detail
 
 
+def test_a_run_files_a_file_it_made_again_where_a_registration_lost_its_file_as_new(scene: Scene):
+    """DESIGN 19.6: the registration of a file that is gone does not count for a file that later appears at the path."""
+    first = scene.go([init_step(), {"op": "write", "path": "figures/fit.png", "text": "one"}, {"op": "complete"}, finish_step()])
+    report = workspace.read_tasks(scene.root)[0][0]["report"]
+    outputs.register_files(scene.root, {"report": report, "items": [{"kind": "figure", "path": "figures/fit.png"}]})
+    catalog = scene.root / outputs.catalog_path(report)
+    made = json.loads(catalog.read_text())
+    for item in made["items"]:
+        item["at"] = "2020-01-01T00:00:00Z"                                           # registered long before the next run
+    catalog.write_text(json.dumps(made))
+    (scene.root / "figures/fit.png").unlink()
+    scene.write_tasks([dict(t, done=False) for t in workspace.read_tasks(scene.root)[0]])   # a done task is not run again
+    second = scene.go([init_step(), {"op": "write", "path": "figures/fit.png", "text": "two"}, {"op": "complete"}, finish_step()])
+    assert second["id"] != first["id"] and second["changes"]["created"] == ["figures/fit.png"]
+    assert second["filing"]["counts"]["output"] == 0 and second["filing"]["unregistered"] == ["figures/fit.png"]
+    # an entry made after the run began covers what the run made (the stamp is a time this test has not reached)
+    for item in made["items"]:
+        item["at"] = "2099-01-01T00:00:00Z"
+    catalog.write_text(json.dumps(made))
+    (scene.root / "figures/fit.png").unlink()
+    scene.write_tasks([dict(t, done=False) for t in workspace.read_tasks(scene.root)[0]])
+    third = scene.go([init_step(), {"op": "write", "path": "figures/fit.png", "text": "three"}, {"op": "complete"}, finish_step()])
+    assert third["changes"]["created"] == ["figures/fit.png"]
+    assert third["filing"]["counts"]["output"] == 1 and third["filing"]["unregistered"] == []
+
+
 def test_a_run_from_before_the_filing_has_none_and_stays_valid():
     old = manager.summary({"id": "r", "state": "done", "changes": {"created": ["a"], "modified": [], "deleted": []}},
                           latest_of_task=True, active=False)

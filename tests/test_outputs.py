@@ -735,6 +735,8 @@ def recorded(root, declared=()):
     """A project whose task t1 has a result record (an agent completed it, declaring `declared`): (report, pid, run id)."""
     answer, pid, run_id = complete(root, list(declared))
     assert answer.startswith("Saved"), answer
+    # a real run says when it was made (`created`); the id's time can run ahead of the clock when a test mints many
+    runs.update_run(pid, run_id, created=runs.now_iso())
     return _task(root)["report"], pid, run_id
 
 
@@ -1518,11 +1520,75 @@ def test_a_registration_whose_file_is_gone_stays_in_the_row_counts_for_nothing_a
     assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/summary.csv"]    # the views leave it out as before
     filed = outputs.filing(root, ["figures/fit.png"], records=[], reports=[report], work_folder=None)
     assert filed["counts"]["output"] == 0 and filed["unregistered"] == ["figures/fit.png"]
-    put(root, "figures/fit.png", "png")                                              # the file is back: so is the registration
+    put(root, "figures/fit.png", "png")                                              # the file is back, no run made it new: so is the registration
     assert states()["figures/fit.png"] == "current" and row()["filing"]["counts"]["output"] == 2
     (root / "figures/fit.png").unlink()
     outputs.unregister_file(root, {"report": report, "path": "figures/fit.png"})     # a gone file's registration can be taken away
     assert states() == {"tables/summary.csv": "current"}
+
+
+def aged(root, report, at):
+    """Say when the person's entries of a catalog were made, for a test that cannot wait for the clock: what an entry
+    covers follows from it (DESIGN.md 19.6)."""
+    full = root / outputs.catalog_path(report)
+    value = json.loads(full.read_text())
+    for item in value["items"]:
+        if item.get("evidence") == "person":
+            item["at"] = at
+    full.write_text(json.dumps(value))
+
+
+def test_a_file_made_again_where_a_registration_lost_its_file_is_new_in_the_filing_the_row_and_the_listing(root):
+    """DESIGN.md 19.6: a registration whose file is gone does not count as registered for a file that later appears at
+    that path. A run creates only what was not there when it began, so an entry made before the run began (an agent's:
+    the time its run id carries; a person's: `at`) registered another file, and the new one is not registered."""
+    put(root, "tables/summary.csv", "n\n1\n")
+    put(root, "figures/fit.png", "png")
+    report, pid, _bare = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])        # an agent's entry
+    person(root, report, {"kind": "figure", "path": "figures/fit.png"})                           # a person's, made now
+    for rel in ("tables/summary.csv", "figures/fit.png"):
+        (root / rel).unlink()
+    # a run that began after both registrations (a time later than this test runs, so that it is the task's latest run)
+    second = earlier(root, pid, "20261101T080000", ["tables/summary.csv", "figures/fit.png"])
+    tasks, _revision = workspace.read_tasks(root)
+    row = lambda: outputs.task_outputs(root, pid, tasks)["t1"]                                    # noqa: E731
+    counts = lambda: (row()["filing"]["counts"]["output"], row()["filing"]["counts"]["unregistered"])   # noqa: E731
+    new = lambda: [path for _task, _run, path, _kind in flat(listing(root, pid, second))]         # noqa: E731
+    assert counts() == (0, 0) and new() == []                                                     # gone: no registered file, no new one
+    for rel in ("tables/summary.csv", "figures/fit.png"):
+        put(root, rel, "again")                                                                   # the run made them again
+    assert counts() == (0, 2)                                                                     # new files: not registered
+    assert new() == ["tables/summary.csv", "figures/fit.png"] == [p for _t, _r, p, _k in flat(listing(root, pid))]
+    assert len(new()) == counts()[1]                                                              # the row's N and the list agree
+    run = runs.load_run(pid, second)
+    kept = dict(records=[], reports=[report], work_folder=None)
+    assert outputs.filing(root, run["changes"]["created"], run=run, **kept)["counts"]["output"] == 0   # the run's own end
+    assert outputs.filing(root, run["changes"]["created"], **kept)["counts"]["output"] == 2              # no run: the file alone
+    person(root, report, {"kind": "table", "path": "tables/summary.csv"}, {"kind": "figure", "path": "figures/fit.png"})
+    assert counts() == (0, 2)                                                                     # made now, still before that run began
+    aged(root, report, "2026-11-02T00:00:00Z")                                                    # registered once the run had begun
+    assert counts() == (2, 0) and new() == []
+    aged(root, report, "not a time")                                                              # no time to judge by: the file alone
+    assert counts() == (2, 0) and new() == []
+
+
+def test_an_entry_is_judged_to_the_second_and_a_runs_own_declaration_always_covers_what_it_created(root):
+    put(root, "tables/summary.csv", "n\n1\n")
+    put(root, "figures/fit.png", "png")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])
+    person(root, report, {"kind": "figure", "path": "figures/fit.png"})
+    created_by(pid, run_id, "tables/summary.csv", "figures/fit.png")
+    tasks, _revision = workspace.read_tasks(root)
+    counts = lambda: tuple(outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"][k] for k in ("output", "unregistered"))   # noqa: E731
+    aged(root, report, "2026-11-01T08:00:00Z")
+    runs.update_run(pid, run_id, started="2026-11-01T08:00:00.900000Z")              # entries are stamped to the second: not before it
+    assert counts() == (2, 0)
+    runs.update_run(pid, run_id, started="2026-11-01T08:00:01.000000Z")              # a second later: the person's entry is from before
+    assert counts() == (1, 1)                                                        # the run's own declaration covers whatever its id carries
+    runs.update_run(pid, run_id, started=None, created="2026-11-01T08:00:01.000000Z")   # `created` when it never started
+    assert counts() == (1, 1)
+    runs.update_run(pid, run_id, started=None, created=None)                         # and the id's time when it has neither: now
+    assert counts() == (2, 0)
 
 
 def test_the_listing_asks_whether_the_registered_file_is_there(root, monkeypatch):
