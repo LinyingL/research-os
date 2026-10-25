@@ -142,7 +142,7 @@ def test_every_post_route_is_refused_without_the_session_before_it_is_routed(eng
     """The check runs before routing: even an endpoint that does not exist answers 403 session_required, so
     the answer never tells a program which writes there are."""
     eng, _root = engine
-    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/nope", "/"):
+    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/nope", "/"):
         status, body = eng.post(path, {})
         assert (status, body["state"]) == (403, "session_required"), path
 

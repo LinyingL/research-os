@@ -2556,3 +2556,292 @@ await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({label:byClass('status-label').textContent}));
 """, lang="en")
     assert english["label"] == "Unknown state"
+
+
+# -- V15 step 3: 任务输出 in a task's row (DESIGN.md 19.6) ----------------------------------------------------------------
+
+#: A task with a result record, five registered files of four kinds, two new files nobody registered, and a work folder;
+#: a second task without a record. `outputsFor` is the engine's `task_outputs` row for one task.
+_OUTPUTS = r"""
+agentsInfo=agentFixture();
+listed.tasks=[agentTask({done:true,report:REPORT_PATH}),agentTask({id:'t2',text:'Second task',owner:''})];
+const outputsFor=o=>Object.assign({entries:[],error:false,filing:null,work_folder:null,work_files:null,work_files_more:false},o);
+const REPORT_FILE=REPORT_PATH;
+const entry=(kind,path,title,o)=>Object.assign({kind:kind,path:path,title:title,state:'current',evidence:'agent_declaration'},o);
+const counts=n=>({counts:{record:2,output:5,work:3,cache:0,unregistered:n},unregistered_more:0});
+listed.task_outputs={t1:outputsFor({entries:[entry('figure','figures/fit.png','Fit'),entry('figure','figures/two.pdf','Two'),
+  entry('table','tables/summary.csv','Summary',{state:'changed'}),entry('code','src/model.py','model.py',{evidence:'person'}),
+  entry('work','work/x/run.log','run.log')],filing:counts(2),work_folder:'work/20261025-run-the-model',work_files:7})};
+setRuns([mkRun({state:'done',can_reply:true,report:REPORT_PATH})]);
+const blockOf=id=>root.all().filter(e=>e.classList.contains('ws-task')).map(row=>byClass('ws-outputs',row)).filter(Boolean)[0]||null;
+const rowOf=text=>root.all().find(e=>e.classList.contains('ws-task')&&e.textContent.includes(text));
+const removeButtons=()=>buttonsIn(blockOf()).filter(w=>w.includes('移除登记')||w.includes('Remove registration'));
+""".replace("REPORT_PATH", json.dumps(REPORT))
+
+
+def test_a_task_with_a_result_shows_its_files_by_kind_the_new_ones_nobody_registered_and_its_work_folder():
+    out = run(_OUTPUTS + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const block=blockOf(), row=rowOf('Run the model'), details=byClass('ws-task-details',row);
+const groups=block.all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent);
+const titles=block.all().filter(e=>e.classList.contains('ws-output')).map(li=>li.children[0].textContent);
+const images=block.all().filter(e=>e.tagName==='IMG').map(e=>[e.src,e.alt]);
+await find('Fit',block).click();await find('model.py',block).click();
+const inDetails=(function walk(n){return n===details||(n.parentNode?walk(n.parentNode):false);})(block);
+console.log(JSON.stringify({heading:block.children[0].textContent,groups,titles,images,openedFiles,text:block.textContent,inDetails,
+  order:byClass('ws-task-words',row).children.map(e=>e.className),others:root.all().filter(e=>e.classList.contains('ws-outputs')).length,
+  lines:block.all().filter(e=>e.classList.contains('ws-outputs-line')).map(e=>e.children.map(c=>c.textContent)),posted}));
+""")
+    assert out["heading"] == "任务输出"
+    assert out["groups"] == ["代码1 个文件", "图2 个文件", "表1 个文件", "过程文件1 个文件"]    # the 输出目录 panel's order and words
+    assert out["titles"] == ["model.py", "Fit", "Two", "Summary", "run.log"]
+    assert out["images"] == [["/api/workspace/asset?path=figures%2Ffit.png", "Fit"]]         # a small preview for an image, not the pdf
+    assert out["openedFiles"] == ["figures/fit.png", "src/model.py"]                          # the shared file panel
+    assert "文件已改动" in out["text"] and out["text"].count("移除登记") == 5
+    assert out["lines"] == [["2 个新文件未登记"], ["工作文件夹", "work/20261025-run-the-model", "7 个文件"]]
+    assert out["inDetails"] and out["others"] == 1                                            # only the task with a record has one
+    assert out["order"][-2:] == ["ws-agent", "ws-task-outputs"]                               # under the run controls
+    assert out["posted"] == []
+
+
+def test_a_task_row_says_nothing_of_files_when_it_has_nothing_to_show_and_what_it_has_when_it_has_only_some():
+    out = run(_OUTPUTS + r"""
+const seen=[];
+const show=async row=>{ listed.task_outputs={t1:outputsFor(row)};window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();
+  const b=blockOf();seen.push(b?b.textContent:null); };
+await show({});
+await show({filing:counts(0)});
+await show({work_folder:'work/w',work_files:0});
+await show({filing:counts(1)});
+await show({error:true});
+await show({work_folder:'work/w',work_files:5000,work_files_more:true});
+listed.task_outputs={};window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();seen.push(blockOf()?'block':null);
+listed.tasks[0].report='';delete listed.task_outputs;window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();seen.push(blockOf()?'block':null);
+console.log(JSON.stringify(seen));
+""")
+    assert out == [None, None,
+                   "任务输出还没有登记的文件。工作文件夹work/w0 个文件",
+                   "任务输出还没有登记的文件。1 个新文件未登记",
+                   "任务输出输出清单暂时无法读取。",
+                   "任务输出还没有登记的文件。工作文件夹work/w超过 5000 个文件",
+                   None, None]
+
+
+def test_the_counted_words_have_both_forms_in_english_and_group_thousands():
+    out = run(_OUTPUTS + r"""
+const seen=[];
+const show=async row=>{ listed.task_outputs={t1:outputsFor(Object.assign({entries:[entry('code','src/a.py','a.py')]},row))};
+  window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();seen.push(blockOf().all().filter(e=>e.classList.contains('ws-outputs-kind')||e.classList.contains('ws-outputs-line')).map(e=>e.textContent)); };
+await show({filing:counts(1),work_folder:'work/w',work_files:1});
+await show({filing:counts(1200),work_folder:'work/w',work_files:1500});
+await show({work_folder:'work/w',work_files:5000,work_files_more:true});
+console.log(JSON.stringify(seen));
+""", lang="en")
+    assert out == [["Code1 file", "1 new file not registered", "Work folderwork/w1 file"],
+                   ["Code1 file", "1,200 new files not registered", "Work folderwork/w1,500 files"],
+                   ["Code1 file", "Work folderwork/wMore than 5,000 files"]]
+    zh = run(_OUTPUTS + r"""
+listed.task_outputs.t1.filing=counts(1200);listed.task_outputs.t1.work_files=15000;
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify(blockOf().all().filter(e=>e.classList.contains('ws-outputs-line')).map(e=>e.textContent)));
+""")
+    assert zh == ["1200 个新文件未登记", "工作文件夹work/20261025-run-the-model15000 个文件"]       # Chinese stays as it is
+
+
+def test_removing_a_registration_asks_first_leaves_the_file_and_reads_the_counts_again():
+    out = run(_OUTPUTS + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const pending=deferred();
+customPost=(path,body)=>{ if(path!=='/api/outputs/unregister') return undefined;
+  listed.task_outputs.t1.entries=listed.task_outputs.t1.entries.filter(e=>e.path!==body.path);listed.task_outputs.t1.filing=counts(3);return pending.promise; };
+const fit=()=>buttonsIn(blockOf()).indexOf('移除登记');
+const buttonOf=title=>blockOf().all().find(li=>li.classList.contains('ws-output')&&li.children[0].textContent===title).children.find(c=>c.tagName==='BUTTON'&&c.textContent==='移除登记');
+answers.push(false);await buttonOf('Fit').click();
+const declined={asked:confirmQuestions.slice(),posted:posted.length,titles:blockOf().textContent.includes('Fit')};
+const getsBefore=gets.filter(g=>g==='/api/workspace').length;
+answers.push(true);const clicking=buttonOf('Two').click();await sleepTick();
+const during={disabled:blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').every(e=>e.disabled),
+  aria:blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').map(e=>e.getAttribute('aria-label'))};
+pending.resolve({catalog:'x',removed:'figures/two.pdf',generation:5});await clicking;await sleepTick();
+const block=blockOf();
+console.log(JSON.stringify({declined,during,posted,titles:block.all().filter(e=>e.classList.contains('ws-output')).map(li=>li.children[0].textContent),
+  line:block.all().filter(e=>e.classList.contains('ws-outputs-line'))[0].textContent,
+  enabled:block.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').every(e=>!e.disabled),
+  reread:gets.filter(g=>g==='/api/workspace').length-getsBefore,generations}));
+""")
+    assert out["declined"] == {"asked": ["移除这个文件的登记吗？文件本身不会改动。"], "posted": 0, "titles": True}
+    assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "figures/two.pdf"}]]
+    assert out["during"]["disabled"] and out["during"]["aria"][0] == "移除登记：model.py"
+    assert out["titles"] == ["model.py", "Fit", "Summary", "run.log"]
+    assert out["line"] == "3 个新文件未登记" and out["enabled"] and out["reread"] == 1 and out["generations"] >= 1
+
+
+def test_the_question_and_the_buttons_of_a_registration_read_in_english_without_chinese():
+    out = run(_OUTPUTS + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const labels=blockOf().all().filter(e=>e.tagName==='BUTTON').map(e=>e.textContent+'|'+(e.getAttribute('aria-label')||''));
+answers.push(false);
+await blockOf().all().find(e=>e.tagName==='BUTTON'&&e.textContent==='Remove registration').click();
+console.log(JSON.stringify({text:blockOf().textContent+labels.join(' '),labels,asked:confirmQuestions}));
+""", lang="en")
+    assert not re.search(r"[㐀-鿿]", out["text"]), out["text"]
+    assert out["asked"] == ["Remove this file's registration? The file itself is not changed."]
+    assert out["labels"][0] == "model.py|" and "Remove registration|Remove registration: model.py" in out["labels"]
+    for words in ("Task outputs", "Code", "Figure", "Table", "Process files", "File changed", "2 new files not registered", "Work folder", "7 files"):
+        assert words in out["text"], words
+
+
+def test_a_failed_removal_says_so_in_the_row_and_keeps_the_file_registered_and_a_row_that_cannot_be_written_offers_none():
+    out = run(_OUTPUTS + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+customPost=path=>{ if(path==='/api/outputs/unregister') { const e=new Error('conflict');e.engineMessage='The catalog changed.';throw e; } };
+await blockOf().all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
+const failed={focus:document.activeElement&&document.activeElement.dataset.key,says:blockOf().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent),titles:blockOf().all().filter(e=>e.classList.contains('ws-output')).length,
+  enabled:removeButtons().length};
+// the same row when this Mac may not write, and while a run of the task goes on
+listed.read_only=true;await window.ROWorkspace.load(root,true);await sleepTick();
+const readOnly=blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').every(e=>e.disabled);
+listed.read_only=false;window.ROWorkspace.reset();setRuns([mkRun({state:'running',can_stop:true})]);await window.ROWorkspace.load(root);await sleepTick();
+const running=blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').every(e=>e.disabled);
+console.log(JSON.stringify({failed,readOnly,running}));
+""")
+    assert out["failed"] == {"focus": "output-remove:t1:src/model.py", "says": ["没能移除登记。 The catalog changed."], "titles": 5, "enabled": 5}
+    assert out["readOnly"] and out["running"]
+
+
+def test_task_outputs_keep_their_nodes_and_focus_through_polls_and_redraws_and_follow_the_data():
+    out = run(_OUTPUTS + r"""
+listed.tasks.push(agentTask({id:'t3',text:'Third task'}));
+setRuns([mkRun({state:'done',can_reply:true,report:REPORT_FILE}),mkRun({id:'r-20261021T090100Z-bbbbbb',task_id:'t3',state:'needs_input',question:'Which?',can_reply:true})]);
+await window.ROWorkspace.load(root);await sleepTick();
+const focusRemove=()=>{ const b=blockOf().all().find(e=>e.tagName==='BUTTON'&&e.dataset.key==='output-remove:t1:figures/two.pdf'); b.focus(); return b; };
+const first=blockOf();
+// a full redraw keeps the keyboard where it was
+focusRemove();await window.ROWorkspace.load(root,true);await sleepTick();
+const afterRedraw={key:document.activeElement.dataset.key,inTree:root.all().includes(document.activeElement),moved:blockOf()!==first};
+// while a reply is typed in another row the row is patched in place: the same node until the data changes
+await find('回答',rowOf('Third task')).click();
+const reply=byClass('ws-agent-reply',rowOf('Third task')).children[0];typed(reply,'Keep the balanced sample.');reply.focus();
+const held=blockOf();
+await window.ROWorkspace.load(root,true);await sleepTick();
+const same=blockOf()===held, typing=reply.value;
+listed.task_outputs.t1.entries.pop();await window.ROWorkspace.load(root,true);await sleepTick();
+const changed={node:blockOf()!==held,files:blockOf().all().filter(e=>e.classList.contains('ws-output')).length,reply:byClass('ws-agent-reply',rowOf('Third task')).children[0]===reply&&reply.value};
+console.log(JSON.stringify({afterRedraw,same,typing,changed}));
+""")
+    assert out["afterRedraw"] == {"key": "output-remove:t1:figures/two.pdf", "inTree": True, "moved": True}
+    assert out["same"] is True and out["typing"] == "Keep the balanced sample."
+    assert out["changed"] == {"node": True, "files": 4, "reply": "Keep the balanced sample."}
+
+
+def test_a_run_that_arrives_after_the_row_was_drawn_goes_above_the_task_outputs():
+    out = run(_OUTPUTS + r"""
+listed.tasks[0].owner='';                       // a person's task: no run section until a run is known
+const late=deferred();
+customGet=path=>path==='/api/agents/runs'?late.promise:undefined;
+await window.ROWorkspace.load(root);await sleepTick();
+const classes=()=>byClass('ws-task-words',rowOf('Run the model')).children.map(e=>e.className);
+const before=classes();
+setRuns([mkRun({state:'done',can_reply:true,report:REPORT_FILE})]);
+late.resolve(clone(runsList));await sleepTick();await sleepTick();
+console.log(JSON.stringify({before,after:classes(),block:!!blockOf()}));
+""")
+    assert out["before"][-1] == "ws-task-outputs" and "ws-agent" not in out["before"]
+    assert out["after"][-2:] == ["ws-agent", "ws-task-outputs"] and out["block"]
+
+
+def test_the_hook_for_registering_the_new_files_is_left_for_step_4_and_draws_nothing_yet():
+    out = run(_OUTPUTS + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({line:blockOf().all().filter(e=>e.classList.contains('ws-outputs-line'))[0].children.map(e=>e.tagName+':'+e.textContent)}));
+""")
+    assert out["line"] == ["SPAN:2 个新文件未登记"]                                 # step 4 adds 「登记…」 after the count
+
+
+# -- V15 step 3: record links (DESIGN.md 19.6) ----------------------------------------------------------------------------
+
+
+def test_a_code_span_that_is_a_project_file_path_becomes_a_link_and_other_code_stays_text():
+    out = run(r"""
+await window.ROWorkspace.load(root); await find('记录结果').click();
+await titleDocument('Record');
+const body='Fit `data/source.csv` with `code/model.do`; not `data/absent.csv`, `x = 1`, `../code/model.do`, `/data/source.csv`, `data/`, `data/./source.csv`, `a\\b`.\n\n```\n`data/source.csv`\n```\n\n- Table `figures/图 (1).png`';
+await writeDocument(body);
+await find('预览').click();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A');
+await links[1].click();
+const codes=preview.all().filter(e=>e.tagName==='CODE');
+console.log(JSON.stringify({links:links.map(e=>[e.textContent,e.href,e.children.map(c=>c.tagName)]),codes:codes.map(e=>[e.textContent,e.parentNode.tagName]),
+  openedFiles,text:byClass('ws-writing').value===body,posted,pre:preview.all().filter(e=>e.tagName==='PRE').map(e=>e.textContent)}));
+""")
+    assert out["links"] == [["data/source.csv", "/api/file?path=data%2Fsource.csv", ["CODE"]],
+                            ["code/model.do", "/api/file?path=code%2Fmodel.do", ["CODE"]],
+                            ["figures/图 (1).png", "/api/file?path=figures%2F%E5%9B%BE%20(1).png", ["CODE"]]]
+    assert [c[0] for c in out["codes"] if c[1] != "A"] == ["data/absent.csv", "x = 1", "../code/model.do", "/data/source.csv", "data/",
+                                                            "data/./source.csv", "a\\b"]
+    assert out["openedFiles"] == ["code/model.do"] and out["text"] is True and out["posted"] == []   # the file is never rewritten
+    assert out["pre"] == ["`data/source.csv`"]                                                          # a fenced block is code, not a link
+
+
+def test_a_code_span_beyond_the_listed_files_is_asked_about_once_and_only_when_it_looks_like_a_path():
+    out = run(r"""
+listed.files_truncated=true; listed.files_limit=500;
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+await window.ROWorkspace.load(root);
+await writeDocument('`data/beyond.csv` `data/absent.csv` `code/model.do` `n_obs` `x = 1` `Makefile`');
+await find('预览').click(); await sleepTick(); await sleepTick();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A').map(e=>e.textContent);
+const asked=gets.filter(p=>p.startsWith('/api/workspace/exists?'));
+await find('编辑',byClass('ws-editor-host')).click(); await find('预览').click(); await sleepTick();
+console.log(JSON.stringify({links,asked,askedAgain:gets.filter(p=>p.startsWith('/api/workspace/exists?')).length}));
+""")
+    assert out["links"] == ["data/beyond.csv", "code/model.do"]
+    assert out["asked"] == ["/api/workspace/exists?project=%2Fprojects%2Fstudy&path=data%2Fbeyond.csv&path=data%2Fabsent.csv"]
+    assert out["askedAgain"] == 1                                                        # the answers are remembered
+
+
+def test_a_link_that_resolves_from_the_project_root_but_not_from_the_documents_folder_opens_that_file():
+    out = run(r"""
+listed.files.push({path:'figures/fit.png',type:'figure'},{path:'research/results/data/source.csv',type:'dataset'});
+await window.ROWorkspace.load(root); await find('记录结果').click();
+await titleDocument('Record');
+const body='[Root](code/model.do)\n[Own folder wins](data/source.csv)\n[Absent](data/absent.csv)\n![Fit](figures/fit.png)\n[Up](../../code/model.do)\n[Above](../../../../outside.do)';
+await writeDocument(body);
+await find('预览').click();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A');
+for (const a of links) await a.click();
+console.log(JSON.stringify({links:links.map(e=>[e.textContent,e.href]),openedFiles,image:preview.all().filter(e=>e.tagName==='IMG').map(e=>e.src),
+  words:preview.textContent,text:byClass('ws-writing').value===body,posted}));
+""")
+    assert [link[0] for link in out["links"]] == ["Root", "Own folder wins", "Up"]
+    assert out["openedFiles"] == ["code/model.do", "research/results/data/source.csv", "code/model.do"]
+    assert out["image"] == ["/api/workspace/asset?path=figures%2Ffit.png"]
+    assert "[Absent](data/absent.csv)" in out["words"] and "[Above](../../../../outside.do)" in out["words"]
+    assert out["text"] is True and out["posted"] == []
+
+
+def test_a_root_relative_link_beyond_the_listed_files_is_asked_about_with_the_one_from_the_documents_folder():
+    out = run(r"""
+listed.files_truncated=true; listed.files_limit=500;
+customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
+await window.ROWorkspace.load(root); await find('记录结果').click();
+await writeDocument('[Beyond](data/beyond.csv)\n[Absent](data/absent.csv)');
+await find('预览').click(); await sleepTick(); await sleepTick();
+const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A');
+await links[0].click();
+console.log(JSON.stringify({links:links.map(e=>e.textContent),openedFiles,asked:gets.filter(p=>p.startsWith('/api/workspace/exists?')).map(p=>decodeURIComponent(p.split('?')[1]).split('&path=').slice(1))}));
+""")
+    assert out["links"] == ["Beyond"] and out["openedFiles"] == ["data/beyond.csv"]
+    assert out["asked"] == [["research/results/data/beyond.csv", "data/beyond.csv", "research/results/data/absent.csv", "data/absent.csv"]]
+
+
+def test_a_files_own_relative_links_are_unchanged_when_they_resolve_from_its_folder():
+    out = run(r"""
+await window.ROWorkspace.load(root); await find('记录结果').click();
+await writeDocument('[Model](../../code/model.do)');
+await find('预览').click();
+const links=byClass('ws-preview').all().filter(e=>e.tagName==='A');
+await links[0].click();
+console.log(JSON.stringify({links:links.map(e=>[e.textContent,e.href]),openedFiles}));
+""")
+    assert out["links"] == [["Model", "/api/file?path=code%2Fmodel.do"]] and out["openedFiles"] == ["code/model.do"]

@@ -9,6 +9,10 @@ and `filing` (19.4) is how the app tells, after a run, which of the files the ru
 created are records, outputs, process files, caches or none of these. It stands
 apart from the other seven (`_apart`); when nothing usable is left to name it,
 the settings still read and `choose` says so (`folders`).
+
+A person registers a file for a task's result record, and takes a registration away, in the same catalog an agent's
+declaration goes to (DESIGN.md 19.5: `register_files`, `unregister_file`); the task rows and the views read the catalogs
+back with the task each entry belongs to (19.6: `task_outputs`, `catalog`).
 """
 from __future__ import annotations
 
@@ -21,10 +25,11 @@ import os
 import posixpath
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from researchos import workspace
+from researchos import people, workspace
 from researchos.agents import guard, runs, snapshot
 from researchos.ingest import files as ingest_files
 from researchos.records import situation
@@ -59,6 +64,10 @@ RECORD_FILES = (FOLDERS_PATH, workspace.TASKS_PATH, workspace.OVERVIEW_PATH)
 CHOOSE_WORK = ("Choose a folder for process files.", "请为过程文件选一个目录。")
 #: The longest first line of a task a slug is made from (19.2).
 SLUG_LIMIT = 24
+#: A task's first line as a heading or a label is cut here, at a word boundary where there is one (19.6).
+TITLE_CUT = 80
+#: How many files of a work folder are counted for the task row (19.6); past it the row says "more than".
+WORK_COUNT_LIMIT = 5000
 #: Filing (19.4): the classes a created file is sorted into, and how many unregistered paths a run keeps.
 FILING_CLASSES = ("record", "output", "work", "cache", "unregistered")
 FILING_KEPT = 500
@@ -218,7 +227,7 @@ def save_folders(root: Path, body: dict[str, Any]) -> dict[str, Any]:
 
 
 def catalog_path(report: str) -> str:
-    if not workspace._REPORT_RE.fullmatch(report):
+    if not isinstance(report, str) or not workspace._REPORT_RE.fullmatch(report):
         raise _bad("An output record must belong to a task result")
     return report.removesuffix(".md") + ".outputs.json"
 
@@ -267,7 +276,7 @@ def variable_content(root: Path, rel: str) -> tuple[dict[str, Any], bytes]:
         raise _bad(f"The variable definition is missing: {rel}")
     try:
         content = variables.parse_version(raw.decode("utf-8"))
-    except (variables.VariableError, ValueError) as exc:
+    except (variables.VariableError, variables.VersionInvalid, ValueError) as exc:
         raise _bad(f"Invalid variable definition {rel}: {exc}") from exc
     if not content.get("name"):
         raise _bad("A variable draft needs a name")
@@ -305,12 +314,14 @@ def _is_record(rel: str) -> bool:
             or any(key.startswith(ingest_files.fold(folder) + "/") for folder in RECORD_FOLDERS))
 
 
-def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[str, Any]]:
+def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, anywhere: bool = False) -> list[dict[str, Any]]:
     """Check every declaration before any result/task/catalog file is written. A declaration is an output
-    (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported."""
+    (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported.
+    With `anywhere` (a person registering, 19.5; `locations` is then not looked at) a file may be wherever it is, and
+    kind `work` is accepted with any suffix; the rest of the checks stand."""
     if not isinstance(declared, list) or len(declared) > 200:
         raise _bad("outputs must be a list of at most 200 {kind, path, title?} objects; use [] for no files")
-    locations = _folders(root, _roles(root, locations), unset=True)
+    locations = None if anywhere else _folders(root, _roles(root, locations), unset=True)
     checked = []
     seen = set()
     for raw in declared:
@@ -319,15 +330,15 @@ def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[
         kind, rel = raw.get("kind"), raw.get("path")
         if not isinstance(kind, str) or kind not in ROLES or not isinstance(rel, str):
             raise _bad("Each output needs a supported kind and a project-relative path")
-        if kind == "work":
+        if kind == "work" and not anywhere:
             raise _bad("Process files are not reported as outputs: leave them in your work folder and declare only "
                        f"the outputs ({rel})", "过程文件留在这次任务的工作文件夹里，不要登记；只列出输出文件。")
         _path(root, rel)
         if _is_record(rel):
             raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}")
-        if not _within(root, rel, locations[kind]):
+        if not anywhere and not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}")
-        if Path(rel).suffix.lower() not in SUFFIXES[kind]:
+        if kind != "work" and Path(rel).suffix.lower() not in SUFFIXES[kind]:
             raise _bad(f"Unsupported {kind} format: {rel}")
         if rel in seen:
             raise _bad(f"Report each output file once: {rel}")
@@ -392,10 +403,131 @@ def made_by_run(project_id: str, run_id: str, rels: Iterable[str]) -> set[str]:
     return {rel for rel in rels if ingest_files.fold(rel) not in known and not snapshot.SKIP_DIRS & set(rel.split("/"))}
 
 
+# -- a person registers and unregisters (DESIGN.md 19.5) ------------------------------------------------------------
+
+
+def _owner(root: Path, report: Any) -> dict[str, Any]:
+    """The task whose result record `report` is: a person registers files for a task, so the task must still exist (and
+    the record be there to be read)."""
+    catalog_path(report)  # a research/results/<32 hex>.md path, or refused
+    tasks, _revision = workspace.read_tasks(root)
+    task = next((t for t in tasks if t.get("report") == report), None)
+    if task is None or workspace._read(root, report) is None:  # noqa: SLF001
+        raise _bad(f"No task owns the result record {report}", "没有哪项任务的结果记录是这一份，不能给它登记文件。")
+    return task
+
+
+def _created_by(project_id: str, task_id: str, rels: Iterable[str]) -> set[str]:
+    """Which of `rels` a run of the task on this Mac created (DESIGN.md 19.5): the paths in the `changes.created` of
+    its runs, an undone run's left out (what it created was moved away, so a file at that path now is not its own),
+    compared as the scan compares paths (`files.fold`)."""
+    known: set[str] = set()
+    try:
+        for run in runs.iter_runs(project_id):
+            created = (run.get("changes") or {}).get("created")
+            if run.get("task_id") == task_id and not run.get("reverted") and isinstance(created, list):
+                known.update(ingest_files.fold(rel) for rel in created if isinstance(rel, str))
+    except (OSError, ValueError):
+        pass
+    return {rel for rel in rels if ingest_files.fold(rel) in known}
+
+
+def register_files(root: Path, body: dict[str, Any]) -> dict[str, Any]:
+    """A person registers files for a task's result record (DESIGN.md 19.5, `POST /api/outputs/register`): the checks
+    of `validate` with the folder rule dropped (`anywhere`), the entries joining the record's catalog beside an
+    agent's. An entry says `evidence: "person"`, `who` (the id `me.toml` names, as the ledgers record `by`; none when
+    the Mac names nobody), `at` (UTC) and `created`: whether a run of the task on this Mac created the file (a file
+    already registered as created stays so). The write is the single person's, the PI's in the official project, a
+    member's in their working copy, and goes through the history and backup of every other save."""
+    with situation.write_guard(root, human=True):
+        pid = workspace._require_write(root)  # noqa: SLF001
+        report = body.get("report")
+        task = _owner(root, report)
+        checked = validate(root, body.get("items"), None, anywhere=True)
+        if not checked:
+            raise _bad("Choose at least one file to register", "请选择要登记的文件。")
+        try:
+            who = people.current_member_id()
+        except people.PeopleError as exc:  # no entry without saying who made it
+            raise _bad(str(exc), "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它。") from exc
+        made = _created_by(pid, task["id"], [item["path"] for item in checked])
+        rel = catalog_path(report)
+        existing, before = _entries(root, rel)
+        items = {item.get("path"): item for item in existing}
+        at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        for item in checked:
+            if not _current(item, _fingerprint(root, item["path"])):
+                raise _bad(f"The file changed during registration: {item['path']}")
+            created = item["path"] in made or (items.get(item["path"]) or {}).get("created") is True
+            items[item["path"]] = {**item, "report": report, "task": task["id"], "evidence": "person", "who": who,
+                                   "at": at, "created": created}
+        if len(items) > LIMIT:
+            raise _bad("The output catalog is full")
+        workspace._save(root, rel, before, _bytes({"version": 1, "items": list(items.values())}), pid)  # noqa: SLF001
+    return {"catalog": rel, "registered": [item["path"] for item in checked]}
+
+
+def unregister_file(root: Path, body: dict[str, Any]) -> dict[str, Any]:
+    """A person takes one file's registration away (DESIGN.md 19.5, `POST /api/outputs/unregister`): the entry leaves
+    the record's catalog, which stays a valid file when it is the last. The file itself is never touched. Whoever made
+    the entry, agent or person; the task need not be there any more."""
+    with situation.write_guard(root, human=True):
+        pid = workspace._require_write(root)  # noqa: SLF001
+        rel = catalog_path(body.get("report"))
+        existing, before = _entries(root, rel)
+        kept = [item for item in existing if item.get("path") != body.get("path")]
+        if before is None or len(kept) == len(existing):
+            raise _bad(f"That file is not registered for this task: {body.get('path')}", "这个文件没有登记在这项任务下。")
+        workspace._save(root, rel, before, _bytes({"version": 1, "items": kept}), pid)  # noqa: SLF001
+    return {"catalog": rel, "removed": body.get("path")}
+
+
+# -- the catalogs read back ------------------------------------------------------------------------------------------
+
+
+def task_title(text: Any) -> str:
+    """A task's first line as a heading or a label (DESIGN.md 19.6): the result record's default heading (the agent
+    gave none) and the task named on the views' rows. The first line that is not blank as one line, a leading `#`
+    dropped, cut to `TITLE_CUT` characters at a space where there is one past half of them, with `…`."""
+    lines = (text if isinstance(text, str) else "").splitlines()
+    first = re.sub(r"^#+\s*", "", re.sub(r"[\s\0]+", " ", next((line for line in lines if line.strip()), "")).strip())
+    if len(first) > TITLE_CUT:
+        cut = first[:TITLE_CUT]
+        space = cut.rfind(" ")
+        first = (cut[:space] if space > TITLE_CUT // 2 else cut).rstrip(" ,;:，；：") + "…"
+    return first
+
+
+def _moment(item: dict[str, Any]) -> datetime | None:
+    """When an entry was made (DESIGN.md 19.6): its `at`, else the UTC time its run id carries; None for neither."""
+    try:
+        if isinstance(item.get("at"), str):
+            moment = datetime.fromisoformat(item["at"].replace("Z", "+00:00"))
+            return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+        found = re.match(r"r-(\d{8}T\d{6}Z)-", str(item.get("run") or ""))
+        return datetime.strptime(found.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc) if found else None
+    except ValueError:
+        return None
+
+
+def _state(root: Path, item: dict[str, Any]) -> str | None:
+    """`current` when the registered file is what was registered, `changed` when it is not, None when it is gone."""
+    try:
+        return "current" if _current(item, _fingerprint(root, item.get("path"), item.get("fingerprint"))) else "changed"
+    except (workspace.WorkspaceError, OSError):
+        return None
+
+
 def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
-    """Read registered files even before the index catches up; never follow missing files."""
+    """Read registered files even before the index catches up; never follow missing files. Each row says which task
+    produced it (`task_title`, or `task_removed` when the task is gone from the task list) and when (`at`, local ISO
+    time; DESIGN.md 19.6)."""
     items = []
     try:
+        try:
+            titles = {t["id"]: task_title(t["text"]) for t in workspace.read_tasks(root)[0]}
+        except workspace.WorkspaceError:  # a damaged task list names no task, and removes none
+            titles = None
         directory = _path(root, "research/results")
         sources = []
         if directory.is_dir():
@@ -410,7 +542,8 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
             entries.extend({**i, "catalog": rel} for i in found)
             if len(entries) >= LIMIT:
                 break
-        entries.sort(key=lambda i: str(i.get("run") or ""), reverse=True)
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        entries.sort(key=lambda i: (_moment(i) or floor, str(i.get("run") or "")), reverse=True)
         seen = set()
         for item in entries:
             if item.get("kind") not in ROLES or (kinds is not None and item["kind"] not in kinds):
@@ -423,6 +556,15 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
             except (workspace.WorkspaceError, OSError):
                 continue
             row = {**item, "state": "current" if _current(item, mark) else "changed"}
+            task = item.get("task")
+            if titles is not None and isinstance(task, str) and task:
+                if task in titles:
+                    row["task_title"] = titles[task]
+                else:
+                    row["task_removed"] = True
+            moment = _moment(item)
+            if moment is not None:
+                row["at"] = moment.astimezone().isoformat(timespec="seconds")
             if item["kind"] == "variable" and row["state"] == "current":
                 row["definition"] = variable_content(root, item["path"])[0]
             if item["kind"] == "table" and Path(item["path"]).suffix.lower() in {".csv", ".tsv"}:
@@ -547,3 +689,91 @@ def filing(root: Path, created: Iterable[str], *, records: Iterable[str], report
         counts[kind] += 1
     return {"counts": counts, "unregistered": unregistered[:FILING_KEPT],
             "unregistered_more": max(0, len(unregistered) - FILING_KEPT)}
+
+
+# -- what a task's row shows (DESIGN.md 19.6) ----------------------------------------------------------------------
+
+
+def _count_files(root: Path, rel: str) -> tuple[int, bool]:
+    """How many visible files the folder `rel` holds now, links not followed, and whether it holds more than
+    `WORK_COUNT_LIMIT` (the count is then the limit). A folder that is not there holds none."""
+    try:
+        stack = [_path(root, rel)]
+    except workspace.WorkspaceError:
+        return 0, False
+    count = 0
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        count += 1
+                        if count > WORK_COUNT_LIMIT:
+                            return WORK_COUNT_LIMIT, True
+        except OSError:
+            continue
+    return count, False
+
+
+def _latest_filing(root: Path, task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any] | None:
+    """The filing of the task's latest run as it stands now (DESIGN.md 19.4, 19.6): the files the run created sorted
+    again against the catalogs, so that a file registered or unregistered since shows; a run from before V15, which
+    has no `filing`, files all it created as unregistered. Only the unregistered files that are still there and that
+    a person could register count (`workspace.existing_files`: visible, outside the dependency folders). None for a
+    run that was undone: what it created was moved away."""
+    if run.get("reverted"):
+        return None
+    changes = run.get("changes")
+    created = [rel for rel in (changes.get("created") if isinstance(changes, dict) else None) or () if isinstance(rel, str)]
+    sorted_ = filing(root, created, records=[rel for rel in created if _is_record(rel)],
+                     reports=[task["report"], run.get("task_report_before")], work_folder=run.get("work_folder"))
+    there: list[str] = []
+    for start in range(0, len(sorted_["unregistered"]), workspace.EXISTS_LIMIT):
+        there.extend(workspace.existing_files(root, sorted_["unregistered"][start:start + workspace.EXISTS_LIMIT]))
+    return {"counts": {**sorted_["counts"], "unregistered": len(there) + sorted_["unregistered_more"]},
+            "unregistered_more": sorted_["unregistered_more"]}
+
+
+def _task_outputs(root: Path, task: dict[str, Any], run: dict[str, Any] | None) -> dict[str, Any]:
+    found: dict[str, Any] = {"entries": [], "error": False, "filing": None, "work_folder": None,
+                             "work_files": None, "work_files_more": False}
+    try:
+        entries, _raw = _entries(root, catalog_path(task["report"]))
+    except (workspace.WorkspaceError, OSError):  # a catalog that cannot be read registers nothing, and is said so
+        entries, found["error"] = [], True
+    for item in entries:
+        state = _state(root, item)
+        if state is not None:  # a file that is gone is not offered
+            found["entries"].append({"kind": item["kind"], "path": item["path"], "title": item["title"],
+                                     "state": state, "evidence": item.get("evidence")})
+    if run is not None:
+        if isinstance(run.get("work_folder"), str) and run["work_folder"]:
+            found["work_folder"] = run["work_folder"]
+            found["work_files"], found["work_files_more"] = _count_files(root, run["work_folder"])
+        found["filing"] = _latest_filing(root, task, run)
+    return found
+
+
+def task_outputs(root: Path, project_id: str, tasks: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """What the task rows show under the run controls (DESIGN.md 19.6), by task id, for each task with a result
+    record: `entries` (its catalog's files that are still there: kind, path, title, state, evidence; at most `LIMIT`),
+    `error` (the catalog cannot be read), and, from the task's latest run on this Mac, `filing` (the counts of 19.4
+    as they stand now, `_latest_filing`) and the `work_folder` with `work_files`, the files in it now
+    (`_count_files`; `work_files_more` when there are more than are counted). Reads only."""
+    wanted = [task for task in tasks if isinstance(task.get("report"), str) and task["report"]]
+    pending = {task["id"] for task in wanted}
+    latest: dict[str, dict[str, Any]] = {}
+    try:
+        for run in runs.iter_runs(project_id) if pending else ():
+            if run.get("task_id") in pending:
+                latest[run["task_id"]] = run
+                pending.discard(run["task_id"])
+            if not pending:
+                break
+    except (OSError, ValueError):  # no runs folder to read, or no valid project id: no runs
+        pass
+    return {task["id"]: _task_outputs(root, task, latest.get(task["id"])) for task in wanted}

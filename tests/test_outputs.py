@@ -3,17 +3,18 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from researchos import bibliography, db, literature, mcp_server, outputs, paths, project, workspace
+from researchos import bibliography, db, literature, mcp_server, outputs, paths, people, project, workspace
 from researchos.ingest import files as ingest_files
 from researchos.agents import brief, manager, runs, snapshot
-from researchos.records import variables
+from researchos.records import situation, variables
 from researchos.records.identity import read_identity
 from researchos.webapp import node_api, variables_api
-from test_agents_mcp import _run, _tasks, _task
+from test_agents_mcp import _run, _tasks, _task, _versions
 
 
 @pytest.fixture
@@ -722,3 +723,383 @@ def test_a_registered_output_inside_the_runs_work_folder_files_as_output_not_wor
                          reports=[report], work_folder="work/20261025-probe")
     assert got["counts"] == {"record": 0, "output": 1, "work": 1, "cache": 0, "unregistered": 0}
     assert got["unregistered"] == []
+
+
+# -- V15 step 3: a person registers and unregisters files; the rows name their task (DESIGN 19.5, 19.6) -----------------
+
+
+def recorded(root, declared=()):
+    """A project whose task t1 has a result record (an agent completed it, declaring `declared`): (report, pid, run id)."""
+    answer, pid, run_id = complete(root, list(declared))
+    assert answer.startswith("Saved"), answer
+    return _task(root)["report"], pid, run_id
+
+
+def person(root, report, *items):
+    return outputs.register_files(root, {"report": report, "items": [dict(item) for item in items]})
+
+
+def created_by(pid, run_id, *paths_):
+    runs.update_run(pid, run_id, changes={"created": list(paths_), "modified": [], "deleted": []})
+
+
+def catalog_bytes(root, report):
+    full = root / outputs.catalog_path(report)
+    return full.read_bytes() if full.exists() else None
+
+
+def test_a_person_registers_files_wherever_they_are_and_the_entry_says_who_when_and_whether_a_run_made_it(root):
+    people.write_me("Li", "li@example.com")
+    put(root, "tables/summary.csv", "n\n2\n")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])
+    created_by(pid, run_id, "analysis/fit.png", "tables/summary.csv")
+    put(root, "analysis/fit.png", "png")                                  # in none of the places
+    put(root, "scratch/run.log", "text")                                  # kind work takes any suffix
+    put(root, "notes.txt", "text")
+    got = person(root, report, {"kind": "figure", "path": "analysis/fit.png", "title": " Fit "},
+                 {"kind": "work", "path": "scratch/run.log"}, {"kind": "document", "path": "notes.txt"})
+    assert got == {"catalog": outputs.catalog_path(report), "registered": ["analysis/fit.png", "scratch/run.log", "notes.txt"]}
+    found = entries_of(root)
+    fit = found["analysis/fit.png"]
+    assert set(fit) == {"kind", "path", "title", "fingerprint", "report", "task", "evidence", "who", "at", "created"}
+    assert (fit["kind"], fit["title"], fit["report"], fit["task"]) == ("figure", "Fit", report, "t1")
+    assert (fit["evidence"], fit["who"], fit["created"]) == ("person", "li@example.com", True)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", fit["at"])
+    assert (found["scratch/run.log"]["created"], found["scratch/run.log"]["title"]) == (False, "run.log")
+    assert found["notes.txt"]["created"] is False                         # no run of the task made it
+    assert found["tables/summary.csv"]["evidence"] == "agent_declaration" and "who" not in found["tables/summary.csv"]
+    assert [i["state"] for i in outputs.catalog(root)["items"]] == ["current"] * 4
+
+
+def test_a_registration_is_a_save_with_history_and_a_backup_like_an_agents(root):
+    report, pid, _run_id = recorded(root)
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "tables/b.csv", "n\n2\n")
+    rel = outputs.catalog_path(report)
+    person(root, report, {"kind": "table", "path": "tables/a.csv"})                # the catalog is new
+    first = _versions(pid, root, rel)
+    person(root, report, {"kind": "table", "path": "tables/b.csv"})                # and then changed
+    second = _versions(pid, root, rel)
+    assert len(first) == 1 and len(second) == 2
+    assert list((root / ".researchos/backups").glob("*.outputs.json*"))           # the earlier catalog was kept
+
+
+@pytest.mark.parametrize("item", [
+    {"kind": "document", "path": "research/notes/n.md"}, {"kind": "document", "path": "research/results/other.md"},
+    {"kind": "document", "path": "REPORT"}, {"kind": "work", "path": "CATALOG"}, {"kind": "work", "path": "research/tasks.json"},
+    {"kind": "work", "path": "research/folders.json"}, {"kind": "work", "path": "research/overview.md"},
+    {"kind": "work", "path": "Research/Notes/N.md"},                                  # whatever its spelling
+    {"kind": "work", "path": ".researchos/state.json"}, {"kind": "work", "path": ".hidden/a.log"},
+    {"kind": "work", "path": "scratch/.secret.log"}, {"kind": "work", "path": "node_modules/pkg/index.js"},
+    {"kind": "work", "path": "venv/a.txt"}, {"kind": "work", "path": "src/__pycache__/a.pyc"},
+    {"kind": "code", "path": "scratch/run.log"}, {"kind": "figure", "path": "scratch/run.log"},   # a kind's suffixes stand
+    {"kind": "work", "path": "missing.log"}, {"kind": "work", "path": "../outside.log"}, {"kind": "work", "path": "/etc/hosts"},
+    {"kind": "work", "path": "scratch/../scratch/run.log"}, {"kind": "work", "path": "scratch"},   # not normal / not a file
+    {"kind": "other", "path": "scratch/run.log"}, {"kind": "work"}, {"path": "scratch/run.log"},
+    {"kind": "work", "path": "scratch/run.log", "title": ""}, {"kind": "work", "path": "scratch/run.log", "title": "a\nb"},
+    {"kind": "work", "path": "scratch/run.log", "confirmed": True},
+    {"kind": "literature", "path": "scratch/bad.bib"}, {"kind": "variable", "path": "scratch/bad.toml"},
+])
+def test_a_person_cannot_register_what_the_checks_of_17a1527_refuse_and_the_whole_batch_waits(root, item):
+    report, _pid, _run_id = recorded(root)
+    put(root, "scratch/run.log", "text")
+    put(root, "scratch/good.log", "text")
+    put(root, "scratch/.secret.log", "text")
+    put(root, "scratch/bad.bib", "not a bibliography")
+    put(root, "scratch/bad.toml", "not = a variable")
+    put(root, "research/notes/n.md", "# n")
+    put(root, "research/results/other.md", "# other")
+    for rel in (".researchos/state.json", ".hidden/a.log", "node_modules/pkg/index.js", "venv/a.txt", "src/__pycache__/a.pyc"):
+        put(root, rel, "text")
+    item = {k: (report if v == "REPORT" else outputs.catalog_path(report) if v == "CATALOG" else v) for k, v in item.items()}
+    before = catalog_bytes(root, report)
+    with pytest.raises(workspace.WorkspaceError):
+        person(root, report, {"kind": "work", "path": "scratch/good.log"}, item)
+    assert catalog_bytes(root, report) == before                                  # the good one was not registered either
+
+
+def test_a_person_registers_only_for_a_task_that_owns_the_record_and_each_file_once(root):
+    report, _pid, _run_id = recorded(root)
+    put(root, "scratch/run.log", "text")
+    one = {"kind": "work", "path": "scratch/run.log"}
+    for bad in ("research/results/" + "0" * 32 + ".md", "research/results/other.md", "scratch/run.log", None, 7):
+        with pytest.raises(workspace.WorkspaceError):
+            outputs.register_files(root, {"report": bad, "items": [one]})
+    for items in ([], None, "x", [one, one], [one] * 201):
+        with pytest.raises(workspace.WorkspaceError):
+            outputs.register_files(root, {"report": report, "items": items})
+    assert catalog_bytes(root, report) is None
+    (root / report).unlink()                                                      # the record itself is gone
+    with pytest.raises(workspace.WorkspaceError):
+        person(root, report, one)
+
+
+def test_a_person_cannot_register_for_a_task_that_was_removed_but_can_still_unregister(root):
+    put(root, "scratch/run.log", "text")
+    report, _pid, _run_id = recorded(root)
+    person(root, report, {"kind": "work", "path": "scratch/run.log"})
+    tasks, revision = workspace.read_tasks(root)
+    workspace.save_tasks(root, {"tasks": [t for t in tasks if t["id"] != "t1"], "revision": revision})
+    put(root, "scratch/two.log", "text")
+    with pytest.raises(workspace.WorkspaceError):
+        person(root, report, {"kind": "work", "path": "scratch/two.log"})
+    outputs.unregister_file(root, {"report": report, "path": "scratch/run.log"})
+    assert entries_of_report(root, report) == {}
+
+
+def entries_of_report(root, report):
+    return {i["path"]: i for i in json.loads((root / outputs.catalog_path(report)).read_text())["items"]}
+
+
+def test_created_is_true_for_a_file_a_run_of_the_task_made_on_this_mac_and_stays_so(root):
+    put(root, "analysis/one.csv", "n\n1\n")
+    put(root, "analysis/two.csv", "n\n2\n")
+    put(root, "analysis/three.csv", "n\n3\n")
+    report, pid, run_id = recorded(root)
+    created_by(pid, run_id, "analysis/one.csv", "Analysis/Two.csv")
+    other = _run(root, pid, task_id="t2")                                         # another task's run does not count
+    created_by(pid, other, "analysis/three.csv")
+    person(root, report, {"kind": "data", "path": "analysis/one.csv"}, {"kind": "data", "path": "analysis/two.csv"},
+           {"kind": "data", "path": "analysis/three.csv"})
+    found = entries_of(root)
+    assert [found[p]["created"] for p in ("analysis/one.csv", "analysis/two.csv", "analysis/three.csv")] == [True, True, False]
+    runs.update_run(pid, run_id, changes={"created": [], "modified": [], "deleted": []})      # the record of it is gone
+    person(root, report, {"kind": "data", "path": "analysis/one.csv"})                          # registered again
+    assert entries_of(root)["analysis/one.csv"]["created"] is True                              # once created, created
+    runs.update_run(pid, run_id, changes={"created": ["analysis/three.csv"], "modified": [], "deleted": []}, reverted=True)
+    person(root, report, {"kind": "data", "path": "analysis/three.csv"})                        # an undone run made nothing
+    assert entries_of(root)["analysis/three.csv"]["created"] is False
+
+
+def test_registering_an_agents_file_again_makes_it_the_persons_and_keeps_what_the_agent_knew(root):
+    put(root, "reports/plan.md", "# Plan\n")
+    pid = read_identity(root).identity.id
+    _tasks(root)
+    run_id = _run(root, pid, lang="en")
+    picture_of(root, pid, run_id)
+    put(root, "reports/new.md", "# New\n")
+    assert declare(root, pid, run_id, [{"kind": "document", "path": "reports/new.md"}]).startswith("Saved")
+    report = _task(root)["report"]
+    assert entries_of(root)["reports/new.md"]["created"] is True and entries_of(root)["reports/new.md"]["evidence"] == "agent_declaration"
+    person(root, report, {"kind": "document", "path": "reports/new.md", "title": "Retitled"})
+    entry = entries_of(root)["reports/new.md"]
+    assert (entry["evidence"], entry["title"], entry["created"]) == ("person", "Retitled", True)
+    assert "run" not in entry and "agent" not in entry
+    assert len(entries_of(root)) == 1
+
+
+def test_who_is_the_id_me_toml_names_none_when_it_names_nobody_and_a_broken_one_stops_the_write(root):
+    put(root, "scratch/a.log", "text")
+    put(root, "scratch/b.log", "text")
+    report, _pid, _run_id = recorded(root)
+    person(root, report, {"kind": "work", "path": "scratch/a.log"})
+    assert entries_of(root)["scratch/a.log"]["who"] is None                      # no me.toml: nobody is named
+    people.me_path().parent.mkdir(parents=True, exist_ok=True)
+    people.me_path().write_text("this is not toml = = =")
+    before = catalog_bytes(root, report)
+    with pytest.raises(workspace.WorkspaceError, match="me.toml"):
+        person(root, report, {"kind": "work", "path": "scratch/b.log"})
+    assert catalog_bytes(root, report) == before                                  # no entry without saying who made it
+
+
+def test_a_registration_is_a_human_write_and_refused_inside_an_agents_run(root, monkeypatch):
+    put(root, "scratch/a.log", "text")
+    report, _pid, _run_id = recorded(root)
+    monkeypatch.setenv("RESEARCHOS_AGENT_RUN", "r-20261025T090000Z-abcdef")
+    with pytest.raises(situation.AgentRunRefused):
+        person(root, report, {"kind": "work", "path": "scratch/a.log"})
+    with pytest.raises(situation.AgentRunRefused):
+        outputs.unregister_file(root, {"report": report, "path": "scratch/a.log"})
+    assert catalog_bytes(root, report) is None
+
+
+def test_unregistering_takes_one_entry_away_leaves_the_file_and_keeps_an_emptied_catalog_valid(root):
+    put(root, "tables/summary.csv", "n\n2\n")
+    put(root, "scratch/run.log", "text")
+    report, pid, _run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])
+    person(root, report, {"kind": "work", "path": "scratch/run.log"})
+    rel = outputs.catalog_path(report)
+    before = len(_versions(pid, root, rel))
+    assert outputs.unregister_file(root, {"report": report, "path": "scratch/run.log"}) == {"catalog": rel, "removed": "scratch/run.log"}
+    assert list(entries_of(root)) == ["tables/summary.csv"] and (root / "scratch/run.log").read_text() == "text"
+    assert len(_versions(pid, root, rel)) == before + 1                           # a save: history and backup
+    outputs.unregister_file(root, {"report": report, "path": "tables/summary.csv"})   # an agent's entry goes the same way
+    assert json.loads((root / rel).read_text()) == {"version": 1, "items": []}    # still a valid catalog
+    assert (root / "tables/summary.csv").read_text() == "n\n2\n"
+    assert outputs.catalog(root) == {"items": [], "error": None}
+    person(root, report, {"kind": "work", "path": "scratch/run.log"})              # and it takes entries again
+    assert list(entries_of(root)) == ["scratch/run.log"]
+
+
+@pytest.mark.parametrize("body", [{"path": "scratch/other.log"}, {"path": None}, {"path": 7}, {"path": ""}, {}])
+def test_unregistering_something_that_is_not_registered_is_refused_and_changes_nothing(root, body):
+    put(root, "scratch/run.log", "text")
+    report, _pid, _run_id = recorded(root)
+    with pytest.raises(workspace.WorkspaceError):                                 # no catalog at all
+        outputs.unregister_file(root, {"report": report, **body})
+    person(root, report, {"kind": "work", "path": "scratch/run.log"})
+    before = catalog_bytes(root, report)
+    with pytest.raises(workspace.WorkspaceError):
+        outputs.unregister_file(root, {"report": report, **body})
+    for report_ in (None, "scratch/run.log", "research/results/" + "0" * 32 + ".md"):
+        with pytest.raises(workspace.WorkspaceError):
+            outputs.unregister_file(root, {"report": report_, "path": "scratch/run.log"})
+    assert catalog_bytes(root, report) == before
+
+
+def test_a_corrupt_catalog_is_not_overwritten_by_a_person_either(root):
+    put(root, "scratch/run.log", "text")
+    report, _pid, _run_id = recorded(root)
+    put(root, outputs.catalog_path(report), "not json")
+    for call in (lambda: person(root, report, {"kind": "work", "path": "scratch/run.log"}),
+                 lambda: outputs.unregister_file(root, {"report": report, "path": "scratch/run.log"})):
+        with pytest.raises(workspace.WorkspaceError):
+            call()
+    assert catalog_bytes(root, report) == b"not json"
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Short task", "Short task"), ("  \n\n  First line  \nsecond", "First line"), ("## Heading task", "Heading task"),
+    ("", ""), (None, ""), (7, ""), ("   \n  ", ""), ("tabs\tand\0nul", "tabs and nul"),
+    ("word " * 30, ("word " * 30)[:80].rsplit(" ", 1)[0] + "…"),
+    ("x" * 100, "x" * 80 + "…"),
+    ("汇" * 100, "汇" * 80 + "…"),
+    ("alpha beta, " * 10, "alpha beta, " * 6 + "alpha…"),
+])
+def test_a_tasks_label_is_its_first_line_cut_the_way_the_result_records_title_is(text, expected):
+    assert outputs.task_title(text) == expected
+    assert mcp_server._result_title(None, text if isinstance(text, str) else "") == (expected or "Task result")
+    assert mcp_server.DEFAULT_TITLE_LIMIT == outputs.TITLE_CUT == 80
+
+
+def test_every_registered_row_names_its_task_and_its_time_and_a_removed_task_reads_so(root):
+    put(root, "tables/summary.csv", "n\n2\n")
+    put(root, "scratch/run.log", "text")
+    report, _pid, run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])
+    person(root, report, {"kind": "work", "path": "scratch/run.log"})
+    rows = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    agent_row, person_row = rows["tables/summary.csv"], rows["scratch/run.log"]
+    assert agent_row["task_title"] == person_row["task_title"] == "Clean the survey data" and "task_removed" not in agent_row
+    started = datetime.strptime(run_id[2:18], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    assert agent_row["at"] == started.astimezone().isoformat(timespec="seconds")      # no `at`: the run id's UTC time, local
+    assert datetime.fromisoformat(person_row["at"]).tzinfo is not None
+    assert datetime.fromisoformat(person_row["at"]) == datetime.fromisoformat(entries_of(root)["scratch/run.log"]["at"].replace("Z", "+00:00"))
+    tasks, revision = workspace.read_tasks(root)
+    workspace.save_tasks(root, {"tasks": [t for t in tasks if t["id"] != "t1"], "revision": revision})
+    gone = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    assert all(r["task_removed"] is True and "task_title" not in r for r in gone.values())
+    put(root, "research/tasks.json", "not json")                                          # a damaged list names no task
+    damaged = outputs.catalog(root)
+    assert damaged["error"] is None and all("task_title" not in r and "task_removed" not in r for r in damaged["items"])
+
+
+def test_the_views_rows_come_newest_first_by_their_time_whoever_made_them(root):
+    people.write_me("Li", "li@example.com")
+    for name in ("old", "mid", "new"):
+        put(root, f"tables/{name}.csv", "n\n1\n")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/old.csv"}])
+    later = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    person(root, report, {"kind": "table", "path": "tables/mid.csv"})
+    path = root / outputs.catalog_path(report)
+    value = json.loads(path.read_text())
+    value["items"][1]["at"] = later
+    path.write_text(json.dumps(value))
+    assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/mid.csv", "tables/old.csv"]
+    value["items"][1]["at"] = "2020-01-01T00:00:00Z"
+    path.write_text(json.dumps(value))
+    assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/old.csv", "tables/mid.csv"]
+    value["items"][1]["at"] = "not a time"                                                  # unreadable: last, never a failure
+    path.write_text(json.dumps(value))
+    assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/old.csv", "tables/mid.csv"]
+
+
+def test_task_outputs_gives_each_task_with_a_record_its_files_filing_and_work_folder(root):
+    put(root, "tables/summary.csv", "n\n2\n")
+    put(root, "tables/gone.csv", "n\n3\n")
+    put(root, "figures/fit.png", "png")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"},
+                                           {"kind": "table", "path": "tables/gone.csv"}])
+    put(root, "scratch/run.log", "text")
+    person(root, report, {"kind": "work", "path": "scratch/run.log"}, {"kind": "figure", "path": "figures/fit.png"})
+    (root / "tables/gone.csv").unlink()
+    (root / "scratch/run.log").write_text("changed")
+    put(root, "work/20261025-clean/a.py", "1")
+    put(root, "work/20261025-clean/deep/b.py", "2")
+    put(root, "work/20261025-clean/.hidden/c.py", "3")
+    put(root, "work/20261025-clean/.d", "4")
+    put(root, "loose.py", "5")
+    put(root, "also/loose.csv", "6")
+    created_by(pid, run_id, report, outputs.catalog_path(report), "research/tasks.json", "tables/summary.csv", "figures/fit.png",
+               "work/20261025-clean/a.py", "work/20261025-clean/deep/b.py", "loose.py", "also/loose.csv", "deleted.py",
+               "pkg/__pycache__/m.pyc", ".cache/x.py")
+    runs.update_run(pid, run_id, work_folder="work/20261025-clean")
+    tasks, _revision = workspace.read_tasks(root)
+    got = outputs.task_outputs(root, pid, tasks)
+    assert list(got) == ["t1"]                                                       # t2 has no record
+    row = got["t1"]
+    assert [(e["kind"], e["path"], e["title"], e["state"], e["evidence"]) for e in row["entries"]] == [
+        ("table", "tables/summary.csv", "summary.csv", "current", "agent_declaration"),
+        ("work", "scratch/run.log", "run.log", "changed", "person"),
+        ("figure", "figures/fit.png", "fit.png", "current", "person")]          # the file that is gone is not offered
+    assert row["error"] is False
+    assert row["filing"] == {"counts": {"record": 3, "output": 2, "work": 2, "cache": 2, "unregistered": 2},
+                             "unregistered_more": 0}                              # loose.py, also/loose.csv: there still; deleted.py is gone; .cache and __pycache__ are caches
+    assert (row["work_folder"], row["work_files"], row["work_files_more"]) == ("work/20261025-clean", 2, False)
+
+
+def test_filing_in_a_task_row_follows_a_registration_made_since_and_a_run_from_before_v15(root):
+    report, pid, run_id = recorded(root)
+    put(root, "loose.py", "1")
+    put(root, "also.py", "2")
+    created_by(pid, run_id, "loose.py", "also.py")
+    tasks, _revision = workspace.read_tasks(root)
+    unregistered = lambda: outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"]["unregistered"]  # noqa: E731
+    assert "filing" not in runs.load_run(pid, run_id)                                # a run of before V15: no filing of its own
+    assert unregistered() == 2                                                       # all it created counts as unregistered
+    person(root, report, {"kind": "code", "path": "loose.py"})
+    assert unregistered() == 1
+    outputs.unregister_file(root, {"report": report, "path": "loose.py"})
+    assert unregistered() == 2
+    runs.update_run(pid, run_id, reverted=True)                                      # undone: what it created was moved away
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"] is None
+
+
+def test_a_task_row_is_about_the_latest_run_only_and_says_nothing_of_files_without_a_run(root):
+    report, pid, run_id = recorded(root)
+    put(root, "old.py", "1")
+    created_by(pid, run_id, "old.py")
+    runs.update_run(pid, run_id, work_folder="work/20261025-old")
+    newer = _run(root, pid)
+    runs.update_run(pid, newer, work_folder="work/20261025-new")
+    tasks, _revision = workspace.read_tasks(root)
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert row["work_folder"] == "work/20261025-new" and row["work_files"] == 0           # the folder is not there yet
+    assert row["filing"]["counts"]["unregistered"] == 0                                    # the newer run created nothing
+    assert outputs.task_outputs(root, "p-" + "0" * 8, tasks)["t1"]["work_folder"] is None  # no runs of that project on this Mac
+    assert outputs.task_outputs(root, pid, [])  == {}
+    assert outputs.task_outputs(root, pid, [{"id": "t9", "text": "x", "done": False}]) == {}
+
+
+def test_the_work_folder_count_is_bounded_and_follows_no_links(root, monkeypatch, tmp_path):
+    report, pid, run_id = recorded(root)
+    for i in range(6):
+        put(root, f"work/w/d{i % 2}/f{i}.txt", "x")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.txt").write_text("x")
+    (root / "work/w/link").symlink_to(outside, target_is_directory=True)
+    (root / "work/w/file-link.txt").symlink_to(outside / "x.txt")
+    runs.update_run(pid, run_id, work_folder="work/w")
+    tasks, _revision = workspace.read_tasks(root)
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["work_files"] == 6
+    monkeypatch.setattr(outputs, "WORK_COUNT_LIMIT", 4)
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert (row["work_files"], row["work_files_more"]) == (4, True)
+
+
+def test_a_catalog_a_row_cannot_read_is_said_and_does_not_fail_the_rest(root):
+    report, pid, _run_id = recorded(root)
+    put(root, outputs.catalog_path(report), "not json")
+    tasks, _revision = workspace.read_tasks(root)
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert row["error"] is True and row["entries"] == []

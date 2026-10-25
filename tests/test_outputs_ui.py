@@ -260,3 +260,65 @@ console.log(JSON.stringify({home, refused, view: currentView, homeReads: homeRea
     assert refused["loaded"] == "1"
     # nothing is held against the next try
     assert out["view"] == "workspace" and out["homeReads"] == 1 and "The estimate is 0.42." in out["words"]
+
+
+# -- every registered row names the task that produced it and when (DESIGN.md 19.6) ---------------------------------------
+
+_ROWS_PRELUDE = r"""
+global.t = (s, v) => window.ROI18N.t(s, v);
+global.openResultOnHome = async () => {};
+const rowsOf = (items) => {
+  const host = new Element('div');
+  renderRegisteredOutputs(host, { items });
+  return host.all().filter((e) => e.classList.contains('registered-output'));
+};
+const words = (row) => row.children.filter((e) => e.tagName === 'SPAN').map((e) => e.textContent);
+"""
+
+
+def _rows_run(scenario: str, *, lang: str = "zh") -> dict:
+    """The registered rows as app.html draws them, on their own."""
+    source = DOM + "\nwindow.ROI18N_SAVED=" + json.dumps(lang) + ";\n" + (WEBAPP / "i18n.js").read_text() + "\n" + _ROWS_PRELUDE
+    for head in ("function mk(", "function mkButton(", "function atText(", "function renderRegisteredOutputs("):
+        source += _app_function(head) + "\n"
+    source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
+    return _node(source)
+
+
+_ROW_ITEMS = r"""
+const items = [
+  { path: 'figures/fit.png', title: 'Fit', kind: 'figure', report: 'research/results/a.md', agent: 'Claude Code', task_title: 'Clean the survey data', at: '2026-10-21T09:41:12+02:00' },
+  { path: 'tables/two.csv', title: 'Two', kind: 'table', report: 'research/results/b.md', task_removed: true, at: '2026-10-22T18:05:00+02:00' },
+  { path: 'tables/old.csv', title: 'Old', kind: 'table' },
+  { path: 'tables/three.csv', title: 'Three', kind: 'table', task_title: 'A task without a date' },
+];
+"""
+
+
+def test_a_registered_row_says_which_task_produced_it_and_when_and_a_removed_task_reads_so():
+    out = _rows_run(_ROW_ITEMS + r"""
+console.log(JSON.stringify(rowsOf(items).map(words)));
+""")
+    assert out == [["figures/fit.png", "Claude Code", "Clean the survey data", "2026-10-21 09:41"],
+                   ["tables/two.csv", "任务已移除", "2026-10-22 18:05"],
+                   ["tables/old.csv"],                                        # an entry that names no task and no time says neither
+                   ["tables/three.csv", "A task without a date"]]
+
+
+def test_a_registered_row_reads_in_english_without_chinese():
+    out = _rows_run(_ROW_ITEMS + r"""
+const rows = rowsOf(items);
+console.log(JSON.stringify({words: rows.map(words), all: rows.map((r) => r.textContent).join(' ')}));
+""", lang="en")
+    assert out["words"][1] == ["tables/two.csv", "Task removed", "2026-10-22 18:05"]
+    assert not any("㐀" <= c <= "鿿" for c in out["all"])
+
+
+def test_the_four_views_draw_their_registered_rows_with_the_one_function():
+    """图表与论断 and 数据与代码 (node.js), 文献 and 变量 (app.html) all call renderRegisteredOutputs, so the task and
+    the date are on every one of them."""
+    app = (WEBAPP / "app.html").read_text(encoding="utf-8")
+    node = (WEBAPP / "node.js").read_text(encoding="utf-8")
+    assert app.count("function renderRegisteredOutputs(") == 1 and node.count("function renderRegisteredOutputs(") == 0
+    assert app.count("renderRegisteredOutputs(host, data.outputs") == 2      # 变量 (the drafts) and 文献
+    assert node.count("renderRegisteredOutputs(") == 2                        # 图表与论断 and 数据与代码

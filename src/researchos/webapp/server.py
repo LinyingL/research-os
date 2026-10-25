@@ -3983,6 +3983,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 payload = self._workspace_api(lambda: workspace.overview(served.root, self._lang()))
                 payload.update(project=str(served.root), id=served.project_id,
                                read_only=served.read_only or served.needs_migration or not payload.get("can_write", payload.get("mode") in {"single", "pi", "member"}))
+                # 19.6: what each task row shows of its files (a read; the runs are this Mac's, found by the project id)
+                payload["task_outputs"] = outputs.task_outputs(served.root, served.project_id, payload.get("tasks") or [])
                 self._send_json(200, payload)
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
@@ -4276,12 +4278,14 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     payload["scanning"] = False
                     payload["scan_error"] = str(exc)
                 self._send_json(200, payload)
-            elif parsed.path in ("/api/outputs/folders", "/api/outputs/variable"):
+            elif parsed.path in _OUTPUT_WRITES:
+                # the folder settings, a variable draft's import and (19.5) a person's registering and unregistering
+                # of files: one human write each, guarded alike
                 body = self._read_json_object()
                 served = self._workspace_target(body)
                 with self.server.write_guard(human=True):
                     self._workspace_target(body)
-                    fn = outputs.save_folders if parsed.path.endswith("/folders") else outputs.import_variable
+                    fn = _OUTPUT_WRITES[parsed.path]
                     payload = self._workspace_api(lambda: fn(served.root, body))
                 payload["generation"] = self.server.watcher.record_write(set())
                 self._send_json(200, payload)
@@ -4716,6 +4720,11 @@ _NO_PROJECT_POST = frozenset({
     "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
     "/api/settings/llm", "/api/settings/agents",
 })
+#: The writes of the output places and the files registered in them, each a person's (commit 17a1527; DESIGN.md 19.5).
+_OUTPUT_WRITES: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
+    "/api/outputs/folders": outputs.save_folders, "/api/outputs/variable": outputs.import_variable,
+    "/api/outputs/register": outputs.register_files, "/api/outputs/unregister": outputs.unregister_file,
+}
 
 
 def _now_iso() -> str:

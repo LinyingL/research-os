@@ -332,8 +332,9 @@ def _attribution_line(run: dict[str, Any], agent: agent_labels.Agent) -> str:
     return "> " + " · ".join(parts)
 
 
-#: A heading made from the task's own words is cut here, at a word boundary where there is one.
-DEFAULT_TITLE_LIMIT = 80
+#: A heading made from the task's own words is cut here, at a word boundary where there is one. The rule is
+#: `outputs.task_title`'s: the views name the task that produced a file with the same words (DESIGN.md 19.6).
+DEFAULT_TITLE_LIMIT = output_files.TITLE_CUT
 
 
 def _result_title(title: str | None, task_text: str) -> str:
@@ -343,12 +344,7 @@ def _result_title(title: str | None, task_text: str) -> str:
     given = re.sub(r"^#+\s*", "", _one_line(title, TITLE_LIMIT))
     if given:
         return given
-    first = re.sub(r"^#+\s*", "", _one_line(next((line for line in task_text.splitlines() if line.strip()), "")))
-    if len(first) > DEFAULT_TITLE_LIMIT:
-        cut = first[:DEFAULT_TITLE_LIMIT]
-        space = cut.rfind(" ")
-        first = (cut[:space] if space > DEFAULT_TITLE_LIMIT // 2 else cut).rstrip(" ,;:，；：") + "…"
-    return first or "Task result"
+    return output_files.task_title(task_text) or "Task result"
 
 
 def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None,

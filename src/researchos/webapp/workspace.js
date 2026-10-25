@@ -85,6 +85,9 @@
   let people = { loaded: false, loading: false, me: null, team: [] };
   let runsInfo = { runs: [], active: null }, details = {}, detailPending = {};
   let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, metaNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
+  // 任务输出 in a task's row (DESIGN.md 19.6): the place it is drawn in, the removal in progress and the sentence that
+  // says it failed, each by task id.
+  let outputNodes = {}, outputBusy = {}, outputNotes = {};
   let offline = false;
   let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
   let pollTimer = null, pollFails = 0;
@@ -128,6 +131,7 @@
     people = { loaded: false, loading: false, me: null, team: [] };
     runsInfo = { runs: [], active: null }; details = {}; detailPending = {};
     agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    outputNodes = {}; outputBusy = {}; outputNotes = {};
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
   }
 
@@ -214,33 +218,55 @@
     renderTasks();
   }
 
+  // A link to a project file that opens it in the file panel.
+  function fileLink(local, label) {
+    const a = el("a", "ws-file-link");
+    a.append(label);
+    a.href = "/api/file?path=" + encodeURIComponent(local);
+    a.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (typeof openFilePanel === "function") openFilePanel(local);
+    });
+    return a;
+  }
+  // The project-relative file path an inline code span is, or null (DESIGN.md 19.6): a plain path of visible names,
+  // without a leading slash, a backslash, a control character, or a `.` or `..` step.
+  function codePath(text) {
+    if (!text || text.length > 500 || text.startsWith("/") || /[\\\x00-\x1f]/.test(text)) return null;
+    return text.split("/").every((part) => part && part !== "." && part !== "..") ? text : null;
+  }
+
   // Deliberately small Markdown reader: DOM nodes only. User HTML remains text;
-  // project images and links are resolved within the project and served locally.
+  // project images and links are resolved within the project and served locally. A record names its files from the
+  // project root as often as from its own folder (DESIGN.md 19.6): an inline code span that is the whole path of a
+  // file the project has is a link to it, and a link that points at no file from the document's folder but at one from
+  // the project root opens that one. Both ask the engine about the paths the file list cannot place only once (the
+  // same `wantLookup` and `knownCache` as every link), and nothing is ever written to the document.
   function inline(parent, text, from) {
     const pattern = /(!?\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*)/g;
     let start = 0, match;
     while ((match = pattern.exec(text))) {
       parent.append(text.slice(start, match.index));
-      if (match[4]) parent.append(el("code", null, match[4]));
-      else if (match[5]) parent.append(el("strong", null, match[5]));
+      if (match[4]) {
+        const path = codePath(match[4]), code = el("code", null, match[4]), known = !!path && knownFile(path);
+        if (path && !known && /[./]/.test(path)) wantLookup(path);
+        parent.append(known ? fileLink(path, code) : code);
+      } else if (match[5]) parent.append(el("strong", null, match[5]));
       else {
         const image = match[1].startsWith("!"), label = match[2].replace(/\\([\[\]\\])/g, "$1"), target = match[3];
-        const local = resolvePath(from, target);
-        const known = !!local && knownFile(local);
-        if (local && !known) wantLookup(local);
+        let local = resolvePath(from, target), known = !!local && knownFile(local);
+        if (local && !known) {
+          const rooted = resolvePath("", target);
+          if (rooted && rooted !== local && knownFile(rooted)) { local = rooted; known = true; }
+          else { wantLookup(local); if (rooted && rooted !== local) wantLookup(rooted); }
+        }
         if (image && known && /\.(png|jpe?g|gif|webp)$/i.test(local)) {
           const img = el("img", "ws-image");
           img.src = "/api/workspace/asset?path=" + encodeURIComponent(local);
           img.alt = label; img.loading = "lazy";
           parent.append(img);
         } else if (known) {
-          const a = el("a", "ws-file-link", label || local);
-          a.href = "/api/file?path=" + encodeURIComponent(local);
-          a.addEventListener("click", (event) => {
-            event.preventDefault();
-            if (typeof openFilePanel === "function") openFilePanel(local);
-          });
-          parent.append(a);
+          parent.append(fileLink(local, label || local));
         } else if (/^https?:\/\//i.test(target)) {
           const a = el("a", null, label || target);
           a.href = target; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -615,7 +641,7 @@
     // A native toggle can be queued just before a refresh; read it before replacing the row.
     Object.values(taskDisclosures).forEach((view) => view.remember());
     list.replaceChildren();
-    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
     taskDisclosures = {};
     // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
     const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
@@ -649,6 +675,7 @@
       const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
+      outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
       const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
         taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false }; renderTasks(); ui.taskText.focus();
@@ -1138,10 +1165,14 @@
     if (!ui || !ui.tasks) return;
     (data.tasks || []).forEach((task) => {
       lockRow(task);
+      drawTaskOutputs(task);
       const old = sections[task.id];
       if (!old) {
-        // The runs of a project arrive after its tasks are drawn.
-        if (wordsNodes[task.id] && (parseAgent(task.owner) || latestRun(task.id))) { sections[task.id] = agentSection(task); wordsNodes[task.id].append(sections[task.id]); }
+        // The runs of a project arrive after its tasks are drawn; the section goes above 任务输出, under the task's words.
+        if (wordsNodes[task.id] && (parseAgent(task.owner) || latestRun(task.id))) {
+          sections[task.id] = agentSection(task);
+          if (outputNodes[task.id]) outputNodes[task.id].before(sections[task.id]); else wordsNodes[task.id].append(sections[task.id]);
+        }
         return;
       }
       if (old.dataset.sig === agentSig(task)) return;
@@ -1241,6 +1272,111 @@
   }
   function setNote(taskId, words, kind, extra) {
     agentNotes[taskId] = words ? Object.assign({ words: words, kind: kind || "" }, extra || {}) : null;
+  }
+
+  // -- 任务输出: a task's files in its row (DESIGN.md 19.6) -------------------------------------------------------
+  // Under the run controls of a task with a result record: the files registered for it by kind (the 输出目录 panel's
+  // words), each opening in the file panel and each with 移除登记; the latest run's new files that nobody registered;
+  // the task's work folder with the files in it now. The engine's `task_outputs` (one answer with the page) has the
+  // facts; the place sits inside the task's details, so it collapses with them, and is drawn again only when what it
+  // shows has changed, so a poll leaves it and its focus alone.
+  function outputKinds() {
+    return { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿"), work: t("过程文件") };
+  }
+  // 13.5: English separates thousands with commas, Chinese stays as it is; a counted noun still picks its form by n.
+  function countText(n) { return typeof window !== "undefined" && window.ROI18N && window.ROI18N.lang === "en" ? String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : n; }
+  function outputsOf(task) { return (data && task.report && data.task_outputs && data.task_outputs[task.id]) || null; }
+  function outputsSig(task) {
+    const run = latestRun(task.id);
+    return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state)]);
+  }
+  function outputRow(task, item, locked) {
+    const li = el("li", "ws-output"), name = item.title || item.path;
+    li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
+    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+    if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
+    const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
+    remove.disabled = locked; li.append(remove);
+    if (item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+      const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
+      image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
+      preview.append(image); li.append(preview);
+    }
+    return li;
+  }
+  // Step 4 of task V15 (DESIGN.md 19.5, 19.10 item 4) puts 「登记…」 on this line: the button that opens the list of the
+  // run's new files for review, one run at a time. `info.filing` has the count; the run's own paths are in its detail.
+  function registerNewFilesHook(task, info, line) { /* step 4 */ }
+  // The block, or nothing when the task has nothing to show: no file registered, no new file, no work folder.
+  function taskOutputsBlock(task) {
+    const info = outputsOf(task);
+    if (!info) return null;
+    const entries = info.entries || [], unregistered = info.filing && info.filing.counts ? Number(info.filing.counts.unregistered) || 0 : 0;
+    if (!entries.length && !info.error && !unregistered && !info.work_folder) return null;
+    const run = latestRun(task.id), locked = !editable() || !!outputBusy[task.id] || (!!run && isActiveState(run.state));
+    const box = el("div", "ws-outputs");
+    box.append(el("h3", "ws-outputs-title", t("任务输出")));
+    if (info.error) box.append(el("p", "ws-status err", t("输出清单暂时无法读取。")));
+    else if (!entries.length) box.append(quiet(t("还没有登记的文件。")));
+    const kinds = outputKinds();
+    Object.keys(kinds).forEach((kind) => {
+      const group = entries.filter((item) => item.kind === kind);
+      if (!group.length) return;
+      const head = el("p", "ws-outputs-kind"), list = el("ul", "ws-outputs-files");
+      head.append(el("span", null, kinds[kind]), el("span", "ws-agent-quiet", t("{n} 个文件", { n: countText(group.length) })));
+      group.forEach((item) => list.append(outputRow(task, item, locked)));
+      box.append(head, list);
+    });
+    const note = outputNotes[task.id];
+    if (note) { const says = el("p", "ws-status err", note); says.setAttribute("role", "status"); box.append(says); }
+    if (unregistered > 0) {
+      const line = el("p", "ws-outputs-line");
+      line.append(el("span", null, t("{n} 个新文件未登记", { n: countText(unregistered) })));
+      registerNewFilesHook(task, info, line);
+      box.append(line);
+    }
+    if (info.work_folder) {
+      const files = Number(info.work_files) || 0, line = el("p", "ws-outputs-line");
+      line.append(el("span", null, t("工作文件夹")), el("code", "ws-output-path", info.work_folder),
+        el("span", "ws-agent-quiet", info.work_files_more ? t("超过 {n} 个文件", { n: countText(files) }) : t("{n} 个文件", { n: countText(files) })));
+      box.append(line);
+    }
+    return box;
+  }
+  function drawTaskOutputs(task) {
+    const holder = outputNodes[task.id];
+    if (!holder) return;
+    const sig = outputsOf(task) || outputNotes[task.id] ? outputsSig(task) : "";
+    if (holder.dataset.sig === sig) return;
+    const snap = focusSnapshot(holder), block = taskOutputsBlock(task);
+    holder.dataset.sig = sig;
+    holder.replaceChildren(...(block ? [block] : []));
+    restoreFocus(holder, snap);
+  }
+  // 移除登记: asked first, then the registration goes (the file stays), and the answer is read again for the counts.
+  async function removeRegistration(task, item) {
+    if (outputBusy[task.id] || !editable()) return;
+    if (!window.confirm(t("移除这个文件的登记吗？文件本身不会改动。"))) return;
+    const mark = stamp();
+    outputBusy[task.id] = true; outputNotes[task.id] = null; drawTaskOutputs(task);
+    try {
+      await apiPost("/api/outputs/unregister", { project: project(), report: task.report, path: item.path });
+    } catch (err) {
+      if (!live(mark)) return;
+      outputBusy[task.id] = false; outputNotes[task.id] = errorWords(t("没能移除登记。"), err); drawTaskOutputs(task);
+      focusKey(outputNodes[task.id], "output-remove:" + task.id + ":" + item.path);   // the button that was pressed is still there
+      return;
+    }
+    if (!live(mark)) return;
+    const info = outputsOf(task);
+    if (info) info.entries = (info.entries || []).filter((x) => x.path !== item.path);
+    try {
+      const fresh = await apiGet("/api/workspace");
+      if (live(mark) && data && fresh.project === project() && fresh.task_outputs) data.task_outputs = fresh.task_outputs;
+    } catch (err) { /* the page reads the project again on its own; what was removed is already gone from the row */ }
+    if (!live(mark)) return;
+    outputBusy[task.id] = false; drawTaskOutputs(task);
+    if (typeof pollGeneration === "function") pollGeneration();
   }
 
   // -- the actions ---------------------------------------------------------------------------------
@@ -1899,7 +2035,7 @@
       if (!active()) return;
       panelBody.replaceChildren();
       panelBody.append(el("p", "ws-agent-quiet", t("已有文件保持原位。新任务按这些目录保存输出，可以在目录内继续分组。")));
-      const labels = { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿"), work: t("过程文件") };
+      const labels = outputKinds();
       const form = el("form", "ws-output-folders"), inputs = {};
       Object.keys(labels).forEach((kind) => {
         const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
