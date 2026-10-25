@@ -5489,7 +5489,9 @@ carries the counts only; the paths are in the run's detail. A run from before V1
   bibliography and variable contents) except the folder rule: **a person may register a file
   wherever it is**. Kind `work` accepts any suffix. A record file, anything under
   `research/notes/` or `research/results/`, and `.researchos/` are refused. The entry's
-  `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`.
+  `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`. In a team,
+  a member's changed catalog (and the files it newly names) is offered in 提交改动 like a
+  changed task's result record, even when the task itself did not change (18.3).
   **How many.** A person's call may name up to 1,000 files, a catalog's own count (an agent's
   declaration stays at 200), so the review list registers a task's files in one call. A catalog
   is a record and a record is at most 200 KB: with long paths it holds fewer than 1,000
