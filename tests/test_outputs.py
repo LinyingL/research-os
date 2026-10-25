@@ -1548,8 +1548,8 @@ def test_a_file_made_again_where_a_registration_lost_its_file_is_new_in_the_fili
     person(root, report, {"kind": "figure", "path": "figures/fit.png"})                           # a person's, made now
     for rel in ("tables/summary.csv", "figures/fit.png"):
         (root / rel).unlink()
-    # a run that began after both registrations (a time later than this test runs, so that it is the task's latest run)
-    second = earlier(root, pid, "20261101T080000", ["tables/summary.csv", "figures/fit.png"])
+    # a run that began after both registrations (a time later than this test will ever run, so that it is the task's latest run)
+    second = earlier(root, pid, "20991101T080000", ["tables/summary.csv", "figures/fit.png"])
     tasks, _revision = workspace.read_tasks(root)
     row = lambda: outputs.task_outputs(root, pid, tasks)["t1"]                                    # noqa: E731
     counts = lambda: (row()["filing"]["counts"]["output"], row()["filing"]["counts"]["unregistered"])   # noqa: E731
@@ -1566,7 +1566,7 @@ def test_a_file_made_again_where_a_registration_lost_its_file_is_new_in_the_fili
     assert outputs.filing(root, run["changes"]["created"], **kept)["counts"]["output"] == 2              # no run: the file alone
     person(root, report, {"kind": "table", "path": "tables/summary.csv"}, {"kind": "figure", "path": "figures/fit.png"})
     assert counts() == (0, 2)                                                                     # made now, still before that run began
-    aged(root, report, "2026-11-02T00:00:00Z")                                                    # registered once the run had begun
+    aged(root, report, "2099-11-02T00:00:00Z")                                                    # registered once the run had begun
     assert counts() == (2, 0) and new() == []
     aged(root, report, "not a time")                                                              # no time to judge by: the file alone
     assert counts() == (2, 0) and new() == []
@@ -1587,6 +1587,7 @@ def test_an_entry_is_judged_to_the_second_and_a_runs_own_declaration_always_cove
     assert counts() == (1, 1)                                                        # the run's own declaration covers whatever its id carries
     runs.update_run(pid, run_id, started=None, created="2026-11-01T08:00:01.000000Z")   # `created` when it never started
     assert counts() == (1, 1)
+    aged(root, report, "2099-01-01T00:00:00Z")                                       # an entry later than any day this test runs
     runs.update_run(pid, run_id, started=None, created=None)                         # and the id's time when it has neither: now
     assert counts() == (2, 0)
 
