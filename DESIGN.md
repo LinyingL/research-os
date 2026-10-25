@@ -5364,3 +5364,225 @@ a documented suggestion list, not a live account entitlement check, and
 requires no API key or model inference to display.
 
 Source: [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration).
+
+
+## Section 19 — Where an agent's files go, and how the app knows them (task V15)
+
+The researcher, 2026-10-25: "文件夹纪律：AI Agent 执行 Sessions 的文件，和输出结果的文件，
+没有很好的管理", and "AI 输出的结果，也没有登记到 APP 对应的位置。看上去很乱没有条理".
+This section amends 17.4–17.6 and the output routing that commit 17a1527 added without a
+design entry (its `research/folders.json` and `research/results/<report>.outputs.json` are
+described here for the first time and stay as they are unless said otherwise).
+
+### 19.0 What was found (2026-10-25, three real projects, read only)
+
+- **Process files had no place.** The brief named seven kinds of final output and said
+  only "intermediate caches are not final outputs". Claude Code, Codex and DeepSeek Harness
+  each invented the same answer: a folder `research/<topic>_<date>/` holding `scripts/`,
+  `checks/`, `data/`, `figures/`, `sources/` and a report. Quant has 11 of them (326 MB,
+  ~460 files) beside the app's own notes and result records; the code that fetches data and
+  runs the backtests (~8,700 lines) lives in them, not in `src/`.
+- **Three texts per task.** A result record (`research/results/<32 hex>.md`), the agent's own
+  long report, and a note titled 「…要点与文件位置」 restating where the files are.
+- **Almost nothing registered.** 25 of 26 runs predate the routing; Quant's agents created
+  583 files, 15 are registered. Registration is the agent's own declaration and is never
+  compared with what the run created; a person cannot register a file; registered files are
+  split over 图表与论断 and 数据与代码 with nothing saying which task produced them; the
+  agents' reports were read as paper drafts (~855 claims).
+- **The run store is invisible and unbounded.** `~/.researchos/agent-runs` holds 4.3 GB:
+  every run copies up to 1 GiB of the project without deduplication (93% of 论文重建's three
+  copies are the same bytes), 20 copies are kept per project, an undone run keeps its copy,
+  files moved away by an undo are kept with no limit and deleted silently at the 200-run
+  rule, and nothing in the app shows any of it.
+- Two defects: 「打开结果」 on 图表与论断 and 数据与代码 opens the record in the hidden
+  project home, so nothing seems to happen; 14 of Quant's 15 agent tasks lost their done
+  mark after completion. The only writer that does that is the row's checkbox (history shows
+  page saves 50 s to 6 h after each completion); the researcher did not mean to.
+
+### 19.1 Decided by the researcher (2026-10-25)
+
+1. **Outputs stay sorted by kind** (17a1527's model), not one folder per task. A new
+   location, the **work folder** (过程文件), takes everything else a run writes. The app, not
+   the folder tree, ties a task's files together.
+2. **Earlier outputs are registered where they are**, never moved, after the person has
+   reviewed the proposed list.
+3. **The run store is deduplicated, capped at 5 GB per project, and visible**, with the
+   undo backups the only thing ever removed automatically. Files an undo moved away are
+   removed only by the person.
+4. The lost done marks are treated as a defect.
+5. The work is done in increments (19.10), each verified and committed on its own; the
+   size budget is waived for this task.
+
+### 19.2 Places
+
+- **Kinds.** `research/folders.json` gains an eighth role, `work`, default `work` (candidates:
+  `work`). A saved version-1 file without `work` reads as if it named the default; saving
+  writes all eight. The 输出目录 panel shows the work folder last, with the words
+  「过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。」
+- **A run's work folder** is `<work>/<YYYYMMDD>-<slug>/`: the date the task's first run
+  started (local time) and the task's first line, at most 24 characters, every run of
+  characters other than letters, digits, CJK, `-` and `_` turned into one `-`, trimmed of
+  `-`. Every later run of the same task (an answer, a sending back, a new start) uses the
+  same folder, recorded in `run.json` as `work_folder`. A name taken by another task's folder
+  gets `-2`, `-3`. Research OS does not create the folder; the agent does when it needs it.
+- **The same slug names the task's subfolders** in the output folders, so one task reads
+  as one name across kinds (`src/<slug>/`, `figures/<slug>/`, `data/derived/<slug>/`).
+- **Outputs versus process.** An output is a file the person will read or use again: a
+  figure, a table, a dataset meant for further work, a document, a reference export, a
+  variable draft, and the code needed to reproduce any of these. Everything else the run
+  writes — one-off probe and check scripts, their stdout, verification JSON, downloaded
+  third-party sources, scratch data, caches — is process and goes to the work folder.
+  **Table versus data:** a table is a result meant to be read (summary statistics, a
+  regression, an attribution); data is a dataset meant as input to further code.
+- **Nothing new under `research/`.** Only Research OS's tools write in `research/` (notes,
+  result records, tasks, catalogs, variable drafts when `variable` points there).
+- **Folder matching is by the file system's own case rule.** On a case-insensitive volume a
+  declared `Data/x.csv` matches the location `data`; the check compares the resolved real
+  paths, not the strings.
+- **Work files are not protected data.** A data file inside any run's work folder that
+  existed before a run is not on the protected list (17.5 rule 3) and is not named in the
+  brief: a later run may overwrite its own task's process files.
+
+### 19.3 What the agent is told (amends 17.4)
+
+The routing block of the brief becomes, in both languages:
+
+- the eight locations, then "this task's work folder is `<work folder>`; this task's
+  subfolder name is `<slug>`";
+- where process files go (19.2) and that nothing is created under `research/`;
+- one deliverable: the result record is the task's report. When the task asks for a
+  document (a plan, a review, a write-up), the document goes to the document folder as an
+  output and the result record stays short — the conclusion, the key numbers, what to read
+  first. A note is only for something the person asked to keep apart from the result; never
+  a list of files (the record's 输出文件 list is written by Research OS);
+- the table/data rule and readable file names (words, not hashes or run ids);
+- every output in `outputs` as now.
+
+The words are fixed by tests for every runner, as now.
+
+### 19.4 After the run: filing
+
+When the after-picture is taken (17.5), Research OS sorts every file the run created into
+one class and keeps the result in `run.json` as `filing`: `record` (written by its own
+tools), `output` (in this task's catalog), `work` (inside the run's work folder), `cache`
+(`__pycache__`, `.pyc`, `.pytest_cache`, files 17.5 already does not count) and
+`unregistered` (the rest; at most 500 paths kept, then a count). Filing changes no state and
+is not out of bounds; it is what the task row shows (19.6). A run from before V15 has no
+`filing`; the page treats all its created files as unregistered until 19.5 registers them.
+
+### 19.5 A person registers files
+
+- `POST /api/outputs/register` `{project, report, items: [{kind, path, title?}]}` and
+  `POST /api/outputs/unregister` `{project, report, path}`: a human write (`write_guard
+  human=True`, the single person or the PI in the official project, a member in their working
+  copy). The task must have a result record (`report`); the items join its catalog. The
+  checks are 17a1527's (visible path, exists, readable locally, the kind's suffixes,
+  bibliography and variable contents) except the folder rule: **a person may register a file
+  wherever it is**. Kind `work` accepts any suffix. A record file, anything under
+  `research/notes/` or `research/results/`, and `.researchos/` are refused. The entry's
+  `evidence` is `person`, with `who`; an agent's entries keep `agent_declaration`.
+- **Earlier runs.** `GET /api/outputs/backfill?project=` lists, for every run on this Mac
+  that is not undone and whose task still exists with a result record, the files it created
+  that are still there, not records, not caches and not yet registered, each with a suggested
+  kind, first rule that matches:
+  1. a path segment `checks`, `check`, `logs`, `log`, `tmp`, `scratch`, `cache`, `sources`,
+     `vendor`, or a name `*_stdout.txt`, `*_stderr.txt`, `*.log`, `report_check.*`,
+     `summary_check.*`, `pytest*.xml`, `*sha256*.json` — `work`;
+  2. an image suffix, or `.pdf` under a `figures`, `figure`, `plots` or `fig` segment — `figure`;
+  3. `.bib` — `literature`; `.toml` under a `variables` segment — `variable`;
+  4. a code suffix (17a1527's list) — `code`;
+  5. `.csv` / `.tsv` under a `tables` segment — `table`;
+  6. a data suffix — `data`;
+  7. `.md`, `.docx`, `.tex`, `.html`, `.txt`, `.pdf` — `document`;
+  8. otherwise — not registered.
+  Nothing is written by the listing. The page shows it grouped by task (task text, run date,
+  agent), each file with its kind (a select that also offers 不登记) and a checkbox; 「登记所选」
+  registers through the endpoint above, one catalog per task.
+- The 输出目录 panel offers 「补登记以往运行的文件…」 when the listing is not empty.
+
+### 19.6 The page (amends 17.9's row, 17a1527's views)
+
+- **The task row's 任务输出.** Under the run controls of a task with a result record:
+  the registered files grouped by kind (kind word, count, each file by title, opening in the
+  shared file panel; figures as small previews), each with 「移除登记」; then, from the latest
+  run's `filing`, 「N 个新文件未登记」 with 「登记…」 (the 19.5 list for that run alone), and the
+  work folder's path with its file count. Collapsed with the task's details (a3d7ccc).
+- **The views.** Every registered row on 图表与论断, 数据与代码 and 文献 says which task
+  produced it (the task's first line, cut as the record title is) and when. 「打开结果」 there
+  switches to 项目首页 and opens the record.
+- **Result records link their files.** In a record's preview, an inline code span whose
+  whole text is an existing project-relative file path becomes a link to that file, and a
+  relative link that does not resolve from the record's folder but does from the project
+  root opens that file. The file is never rewritten.
+- **The done mark.** Clearing the done mark of a task that has a result record asks first:
+  「这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？」.
+  Ticking never asks.
+
+### 19.7 The index
+
+The scan skips the work folder (as configured, else its default) like a noise folder, and
+skips files registered as `work`. Files registered as `document`, and result records as
+before, are not paper drafts: no claims are drawn from them. The catalogs and
+`research/folders.json` travel with the project, so every member's index agrees.
+
+### 19.8 The run store (amends 17.6)
+
+- **One copy of each content.** Each project's run folder has `blobs/<aa>/<sha256>` (read
+  only). A run's `before/<path>` is a hard link to its blob; a file whose stamp matches the
+  previous picture (`_same_stamp`) is linked from the blob without being read again. Only
+  newly stored bytes count toward the 1 GiB a run may copy. Undo already writes the bytes back
+  and checks the hash (17.6), so a shared blob is never changed by it.
+- **An undone run releases its backup** (`before/`, `before.json`, `after.json`): it cannot be
+  undone twice.
+- **5 GB per project.** `settings.json` `agent_store_limit_gb` (default 5, 1–100) bounds the
+  project's store: blobs counted once, files moved away by undo, and logs. After every run and
+  when the space panel opens, while the store is over the limit the oldest run still holding
+  a backup (never an active one) releases it and becomes not revertible. Blobs no hard link
+  uses any more are deleted. Files moved away by undo (`reverted/`) are never removed
+  automatically: past the 200-run rule a run that holds them keeps `run.json` and
+  `reverted/`. When they alone pass the limit, the panel says so.
+- **Existing stores** are converted on the project's first clean-up after the upgrade: every
+  `before/` file is moved into the blobs (identical content once) and linked back; undone runs
+  release their backups.
+- **The space panel** (「运行占用的空间」, in the AI agent area): for the open project, the
+  sizes of undo backups, files moved away by undo, and logs, against the limit; the runs
+  holding moved-away files (task text, or 「任务已移除」, date, size, count) with 「删除这些文件」
+  (asks first); and 「释放所有撤回备份」 (asks first; active runs keep theirs).
+- **The agent programs' own session records** (Claude Code in `~/.claude/projects`, DeepSeek
+  Harness in `~/.dsh/sessions`, Codex in `~/.codex/sessions`) belong to those programs.
+  Research OS never reads, moves or deletes them; the run log names the session id.
+
+### 19.9 Language
+
+Added to 13.4: 过程文件 "Process files"; 工作文件夹 (a run's work folder) "Work folder";
+登记 "Register"; 未登记 "Not registered"; 移除登记 "Remove registration"; 补登记以往运行的文件
+"Register files from earlier runs"; 登记所选 "Register selected"; 不登记 "Do not register";
+运行占用的空间 "Space used by runs"; 撤回备份 "Undo backups"; 撤回时移走的文件 "Files moved
+away by undo"; 释放所有撤回备份 "Release all undo backups"; 删除这些文件 "Delete these
+files"; 任务已移除 "Task removed". 任务输出 stays "Task outputs". No arrows or emoji (12.11).
+
+### 19.10 Increments and acceptance
+
+1. **Defects.** 「打开结果」 from the views switches to 项目首页; the done-mark question.
+   Accepted by page tests for both.
+2. **Filing new runs.** The `work` role and compatibility of saved settings, the run's work
+   folder and slug, the brief (19.3), filing (19.4), case rule and work files unprotected
+   (19.2), the index (19.7). Accepted by unit tests and a brief-text test per runner.
+3. **The page.** 任务输出 in the row, task and date on the views' rows, record links (19.6),
+   the person's register/unregister endpoints. Accepted by page and API tests.
+4. **Earlier runs.** The backfill listing, its rules and review list (19.5). Accepted by tests
+   over a fixture shaped like Quant's dated folders.
+5. **The store.** Blobs, release on undo, the limit, conversion, the panel (19.8). Accepted by
+   tests that run two runs over the same project and find one stored copy, and by an undo
+   after deduplication that restores byte for byte.
+6. **On a copy of Quant** (never the real project or the real home): the listing proposes the
+   11 dated folders' files with the kinds of 19.5; registering them fills the views with task
+   labels; a short Claude Code run writes its probe into `work/…`, registers its figure and
+   leaves 0 unregistered files; the store of the copy's runs shrinks and undo still restores.
+
+### 19.11 Not in V15
+
+Moving the earlier files; one folder per task (declined 2026-10-25); the guard's
+whole-word match of protected file names inside commands, which refused an agent's
+`rm` of a folder it had just made and led to a 126 MB duplicate (to be designed); the agent
+programs' own session stores; a separate 「已验收」 mark.
