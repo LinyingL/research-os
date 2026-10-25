@@ -625,7 +625,17 @@
       const row = el("div", "ws-task" + (task.done ? " done" : ""));
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
       check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
-      check.addEventListener("change", () => mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x)));
+      check.addEventListener("change", () => {
+        // DESIGN.md 19.6: clearing the done mark of a task that has a result record asks first (the list the page holds
+        // now, not the row as drawn: the row is kept while a reply is typed). Declined, the box is ticked again and
+        // nothing is saved. Ticking never asks.
+        const now = (data.tasks || []).find((x) => x.id === task.id) || task;
+        if (!check.checked && now.report && !window.confirm(t("这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"))) {
+          check.checked = true;
+          return;
+        }
+        return mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x));
+      });
       const disclosure = el("details", "ws-task-details");
       disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
       const view = { open: disclosure.open, remember: () => {

@@ -1716,6 +1716,80 @@ console.log(JSON.stringify({after,revision:save&&save[1].revision,tasks:save&&sa
     assert out["tasks"] == [["Run the model", True], ["Next question for the group", False]]
 
 
+# -- the done mark of a task that has a result record (DESIGN.md 19.6, 19.10 item 1) ------------------------------
+
+DONE_QUESTION_ZH = "这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"
+DONE_QUESTION_EN = ("This task already has a result. Once it is marked not done it can be run again, and a new run "
+                    "rewrites the same result record. Mark it as not done?")
+#: One task with a result record and one without; `box(id)` is the done checkbox of a task's row as drawn now.
+_DONE_TASKS = r"""
+listed.tasks=[{id:'t1',text:'Plan the run',owner:'',due:'',done:true,report:'research/results/a.md'},
+              {id:'t2',text:'Read the paper',owner:'',due:'',done:true},
+              {id:'t3',text:'Check the sample',owner:'',due:'',done:false,report:'research/results/c.md'}];
+await window.ROWorkspace.load(root);await sleepTick();
+const rows=()=>root.all().filter(e=>e.classList.contains('ws-task'));
+const box=index=>rows()[index].all().find(e=>e.tagName==='INPUT'&&e.type==='checkbox');
+const saves=()=>posted.filter(p=>p[0]==='/api/workspace/tasks');
+const doneMarks=()=>listed.tasks.map(x=>x.done);
+"""
+
+
+@pytest.mark.parametrize("lang,question", [("zh", DONE_QUESTION_ZH), ("en", DONE_QUESTION_EN)])
+def test_clearing_the_done_mark_of_a_task_with_a_result_asks_and_declining_changes_nothing(lang, question):
+    out = run(_DONE_TASKS + r"""
+const check=box(0);answers.push(false);
+check.checked=false;await check.emit('change');await sleepTick();
+console.log(JSON.stringify({asked:[...confirmQuestions],checked:check.checked,same:box(0)===check,saves:saves().length,
+  engine:doneMarks(),dirty:window.ROWorkspace.isDirty(),row:rows()[0].className}));
+""", lang=lang)
+    assert out["asked"] == [question]
+    assert out["checked"] is True and out["same"] is True and out["saves"] == 0
+    assert out["engine"] == [True, True, False] and out["dirty"] is False and out["row"].split() == ["ws-task", "done"]
+
+
+def test_accepting_the_question_clears_the_done_mark_and_saves_it():
+    out = run(_DONE_TASKS + r"""
+const check=box(0);answers.push(true);
+check.checked=false;await check.emit('change');await sleepTick();
+console.log(JSON.stringify({asked:confirmQuestions.length,saves:saves().map(p=>p[1].tasks.map(x=>[x.id,x.done,x.report||null])),
+  engine:doneMarks(),checked:box(0).checked,row:rows()[0].className}));
+""")
+    assert out["asked"] == 1
+    assert out["saves"] == [[["t1", False, "research/results/a.md"], ["t2", True, None], ["t3", False, "research/results/c.md"]]]
+    assert out["engine"] == [False, True, False] and out["checked"] is False and out["row"] == "ws-task"
+
+
+def test_ticking_never_asks_and_a_task_without_a_result_never_asks():
+    out = run(_DONE_TASKS + r"""
+const tick=box(2);tick.checked=true;await tick.emit('change');await sleepTick();
+const afterTick={asked:confirmQuestions.length,engine:doneMarks()};
+const plain=box(1);plain.checked=false;await plain.emit('change');await sleepTick();
+console.log(JSON.stringify({afterTick,asked:confirmQuestions.length,saves:saves().length,engine:doneMarks(),checked:[0,1,2].map(i=>box(i).checked)}));
+""")
+    assert out["afterTick"] == {"asked": 0, "engine": [True, True, True]}
+    assert out["asked"] == 0 and out["saves"] == 2
+    assert out["engine"] == [True, False, True] and out["checked"] == [True, False, True]
+
+
+def test_the_question_follows_the_task_list_when_the_row_was_drawn_before_the_result_arrived():
+    # The row stays as drawn while a reply is typed (the list is patched, not rebuilt): the agent's report arrives
+    # in the page's task list, and the question still comes for the box in the old row.
+    out = run(r"""
+agentsInfo=agentFixture();listed.tasks=[agentTask()];
+setRuns([mkRun({state:'needs_input',can_reply:true,question:'Which sample?'})]);
+await window.ROWorkspace.load(root);await sleepTick();
+await find('回答').click();const area=byClass('form-textarea');typed(area,'Sample B, because');
+listed.tasks=[agentTask({done:true,report:'research/results/run.md'})];listed.tasks_revision='tasks-agent';
+await window.ROWorkspace.load(root,true);await sleepTick();
+const check=root.all().find(e=>e.tagName==='INPUT'&&e.type==='checkbox');
+const kept=byClass('form-textarea')===area, ticked=check.checked;
+answers.push(false);check.checked=false;await check.emit('change');await sleepTick();
+console.log(JSON.stringify({kept,ticked,asked:confirmQuestions.length,checked:check.checked,
+  saves:posted.filter(p=>p[0]==='/api/workspace/tasks').length}));
+""")
+    assert out == {"kept": True, "ticked": True, "asked": 1, "checked": True, "saves": 0}
+
+
 def test_the_task_list_is_redrawn_around_a_task_form_that_has_focus():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);

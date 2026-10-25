@@ -5289,6 +5289,19 @@ function renderVariableList(host, data) {
   });
 }
 
+// 「打开结果」 on a registered row (DESIGN.md 19.6, 19.10 item 1): the record is read on 项目首页, where the writing area
+// is, not in that page while it is hidden. The page's own view switch decides whether the home is shown: a view that
+// asks to be kept (the desk with half-typed words) refuses, and then the page stays where it is and opens nothing.
+// A home that has not read this project yet is read first. The record opens as the task row's own 打开结果 opens it.
+async function openResultOnHome(path) {
+  const epoch = state.dataEpoch;
+  const loading = activateView("workspace");
+  if (currentView !== "workspace") return;
+  if (loading) await loading;
+  if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
+  await ROWorkspace.openReport(path);
+}
+
 function renderRegisteredOutputs(host, bundle, variableDrafts) {
   if (!(bundle.items || []).length && !bundle.error) return;
   const box = mk("section", "registered-outputs");
@@ -5303,9 +5316,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
       row.appendChild(mkButton(item.title || item.path, "btn btn-small", () => openFilePanel(item.path)));
       row.appendChild(mk("span", "mono lit-hint", item.path));
       if (item.agent) row.appendChild(mk("span", "lit-hint", item.agent));
-      if (item.report) row.appendChild(mkButton(t("打开结果"), "btn btn-small", () => {
-        if (window.ROWorkspace && ROWorkspace.openReport) ROWorkspace.openReport(item.report);
-      }));
+      if (item.report) row.appendChild(mkButton(t("打开结果"), "btn btn-small", () => openResultOnHome(item.report)));
       if (item.state === "changed") row.appendChild(mk("span", "lit-hint", t("文件已改动")));
       if (item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
         const image = mk("img", "registered-figure"); image.alt = item.title || item.path; image.loading = "lazy";

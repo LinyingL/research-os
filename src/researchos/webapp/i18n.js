@@ -1469,6 +1469,9 @@
     "服务地址要用 http 或 https，写明主机，不带用户名和密码": "The server address must use http or https, name a host and carry no user name or password",
     "服务地址": "Server address",
     "模型": "Model",
+    // The done mark of a task that has a result record (DESIGN.md 19.6): clearing it asks first.
+    "这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？":
+      "This task already has a result. Once it is marked not done it can be run again, and a new run rewrites the same result record. Mark it as not done?",
 
   };
 
