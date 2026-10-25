@@ -1251,6 +1251,7 @@
     "待确认的变量草稿": "Variable drafts for review",
     "输出清单暂时无法读取。": "The output list could not be read.",
     "文件已改动": "File changed",
+    "文件已不在": "File no longer there",
     "表格预览：最多显示 10 行、20 列。": "Table preview: up to 10 rows and 20 columns.",
     "变量 ID": "Variable ID",
     "导入为变量草稿": "Import as variable draft",

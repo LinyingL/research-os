@@ -3414,6 +3414,9 @@ class RceHTTPServer(ThreadingHTTPServer):
             write_guard=lambda: self.write_guard(human=False, timeout=None),
             active=self._watcher_active,
         )
+        # 19.6: the answer of `outputs.task_outputs` for the project served, kept until the project's files move
+        # (the watcher's generation, and a few stats; see `outputs._rows_key`), so a poll does not work it out again.
+        self.task_outputs_memo: dict[str, Any] = {}
         # 17.3: set BEFORE the socket is bound -- `TCPServer.__init__` calls
         # `server_close()` when the bind fails, which reads both; a busy port
         # must surface as the bind's own `OSError`, not an AttributeError.
@@ -3990,11 +3993,14 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._workspace_api(lambda: outputs.backfill(served.root, served.project_id, run_id)))
             elif path == "/api/workspace":
                 served = self._require_unblocked()
+                generation = self.server.watcher.generation   # before the rows are worked out (see `outputs.task_outputs`)
                 payload = self._workspace_api(lambda: workspace.overview(served.root, self._lang()))
                 payload.update(project=str(served.root), id=served.project_id,
                                read_only=served.read_only or served.needs_migration or not payload.get("can_write", payload.get("mode") in {"single", "pi", "member"}))
-                # 19.6: what each task row shows of its files (a read; the runs are this Mac's, found by the project id)
-                payload["task_outputs"] = outputs.task_outputs(served.root, served.project_id, payload.get("tasks") or [])
+                # 19.6: what each task row shows of its files (a read; the runs are this Mac's, found by the project id),
+                # worked out once per change of the project's files and not on every poll
+                payload["task_outputs"] = outputs.task_outputs(served.root, served.project_id, payload.get("tasks") or [],
+                                                               memo=self.server.task_outputs_memo, token=generation)
                 self._send_json(200, payload)
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()

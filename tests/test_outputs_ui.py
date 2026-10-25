@@ -322,3 +322,35 @@ def test_the_four_views_draw_their_registered_rows_with_the_one_function():
     assert app.count("function renderRegisteredOutputs(") == 1 and node.count("function renderRegisteredOutputs(") == 0
     assert app.count("renderRegisteredOutputs(host, data.outputs") == 2      # 变量 (the drafts) and 文献
     assert node.count("renderRegisteredOutputs(") == 2                        # 图表与论断 and 数据与代码
+
+
+_CHOOSING_GOES = r'''
+const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:''};
+customGet=path=>path==='/api/outputs/folders'?{folders,revision:null,saved:false,choose:['work']}:undefined;
+let calls=0;
+customPost=(path,body)=>{if(path==='/api/outputs/folders'){calls++;if(calls===1)throw Error('conflict');return {revision:'r1',saved:true,folders:body.folders};}};
+await window.ROWorkspace.load(root);
+await find(%(open)s).click();
+const line=%(line)s;
+const says=()=>panelBody.all().filter(e=>e.textContent===line).length;
+const seen={opened:says()};
+typed(field(%(work)s,panelBody),'process');
+await find(%(save)s,panelBody).click();                    // refused by the engine: the line is still true
+seen.afterRefusal=says();
+await find(%(save)s,panelBody).click();
+seen.afterSave=says();
+seen.posted=posted[posted.length-1][1].folders.work;
+seen.sentence=panelBody.textContent.includes(%(sentence)s);
+console.log(JSON.stringify(seen));
+'''
+
+
+def test_the_line_that_says_the_work_location_needs_choosing_goes_after_a_save_that_sets_it():
+    """DESIGN.md 19.2 (amended): the red line under the work field stays while no choice is saved -- a refused save
+    leaves it -- and disappears with the first successful save; the sentence about process files stays."""
+    zh = run(_CHOOSING_GOES % {"open": "'输出目录'", "work": "'过程文件'", "save": "'保存'", "line": "'请为过程文件选一个目录。'",
+                               "sentence": "'过程文件：只为完成这次任务而写的脚本'"})
+    assert zh == {"opened": 1, "afterRefusal": 1, "afterSave": 0, "posted": "process", "sentence": True}
+    en = run(_CHOOSING_GOES % {"open": "'Output folders'", "work": "'Process files'", "save": "'Save'",
+                               "line": "'Choose a folder for process files.'", "sentence": "'Process files: scripts written only'"}, lang="en")
+    assert en == {"opened": 1, "afterRefusal": 1, "afterSave": 0, "posted": "process", "sentence": True}

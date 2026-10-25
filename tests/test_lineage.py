@@ -190,6 +190,13 @@ def test_duplicate_scan_leaves_out_the_work_folder_and_files_registered_as_work_
     assert report["duplicates"][0]["other_copies"] == ["archive/panel.csv", "work/20261024-other/panel.csv", "work/20261025-probe/panel.csv"]
 
 
+def test_the_module_says_the_duplicate_walk_leaves_out_the_work_folder_and_files_registered_as_work():
+    """DESIGN.md 19.7: block 4 of the module's description tells what the walk skips, as the function that walks does."""
+    block = lineage.__doc__.split("4. **Duplicate copies**")[1].split("Two kinds of edge")[0]
+    assert "work folder" in block and "registered as `work`" in block and "DESIGN.md 19.7" in block
+    assert "work folder" in lineage._scan_basenames.__doc__ and "registered as `work`" in lineage._scan_basenames.__doc__
+
+
 # ---------------------------------------------------------------------------
 # Whole-report shape: empty graph, scan counters
 # ---------------------------------------------------------------------------

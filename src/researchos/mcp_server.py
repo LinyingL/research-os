@@ -370,8 +370,9 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
         checked = output_files.validate(root, outputs, run.get("output_folders") or output_files.folders(root)["folders"]) if outputs is not None else []
         # 19.7: a file the run created says so (`created: true`), as the run's before-picture shows; one that was there
         # before -- the researcher's own draft an agent edited and declared -- does not, and stays what it was
-        made = output_files.made_by_run(project_id, run_id, [item["path"] for item in checked])
-        checked = [{**item, "created": True} if item["path"] in made else item for item in checked]
+        if checked:  # the before-picture is read only when there are outputs to flag
+            made = output_files.made_by_run(project_id, run_id, [item["path"] for item in checked])
+            checked = [{**item, "created": True} if item["path"] in made else item for item in checked]
         if checked and task.get("report") and (root / task["report"]).is_file():
             output_files._entries(root, output_files.catalog_path(task["report"]))
         heading = _result_title(title, task["text"])

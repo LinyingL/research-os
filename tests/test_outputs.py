@@ -1,8 +1,11 @@
 """Declared task products use configured folders and become readable app objects."""
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1091,8 +1094,9 @@ def test_task_outputs_gives_each_task_with_a_record_its_files_filing_and_work_fo
     row = got["t1"]
     assert [(e["kind"], e["path"], e["title"], e["state"], e["evidence"]) for e in row["entries"]] == [
         ("table", "tables/summary.csv", "summary.csv", "current", "agent_declaration"),
+        ("table", "tables/gone.csv", "gone.csv", "gone", "agent_declaration"),    # gone: stays listed, to be removed (19.6)
         ("work", "scratch/run.log", "run.log", "changed", "person"),
-        ("figure", "figures/fit.png", "fit.png", "current", "person")]          # the file that is gone is not offered
+        ("figure", "figures/fit.png", "fit.png", "current", "person")]
     assert row["error"] is False
     assert row["filing"] == {"counts": {"record": 3, "output": 2, "work": 2, "cache": 2, "unregistered": 2},
                              "unregistered_more": 0}                              # loose.py, also/loose.csv: there still; deleted.py is gone; .cache and __pycache__ are caches
@@ -1428,3 +1432,243 @@ def test_the_listing_of_a_finished_run_is_what_its_filing_calls_unregistered_and
     assert flat(listing(root, pid, run_id)) == flat(listing(root, pid))
     agent_manager.revert(root, pid, run_id, by=None)
     assert listing(root, pid) == {"groups": [], "listed": 0, "more": 0}                                    # moved away by the undo
+
+
+# -- V15 step 4b: what the reviews of steps 2b to 4 left (DESIGN 19.5, 19.6) ------------------------------------------
+
+
+@pytest.fixture
+def local_zone():
+    """Sets this process's zone for a test (the conversion to local time overflows at one edge of the calendar or the
+    other, depending on the side of UTC the zone lies on) and puts it back."""
+    patch = pytest.MonkeyPatch()    # its own, so that putting the zone back undoes nothing else a test patched
+
+    def use(name):
+        patch.setenv("TZ", name)
+        time.tzset()
+    yield use
+    patch.undo()
+    time.tzset()
+
+
+#: An `at` that is none, and the zone in which it overflows: the offsets overflow in every zone, the `Z` ones on one side.
+BAD_TIMES = [("0001-01-01T00:00:00Z", "America/Los_Angeles"), ("9999-12-31T23:59:59Z", "Europe/Berlin"),
+             ("9999-12-31T23:59:59Z", "Pacific/Auckland"), ("0001-01-01T00:00:00+05:00", "UTC"),
+             ("9999-12-31T23:59:59-05:00", "UTC"), ("not a time", "UTC"), ("", "UTC"), (12345, "UTC"), ({"x": 1}, "UTC")]
+
+
+@pytest.mark.parametrize("bad, zone", BAD_TIMES)
+def test_an_entry_whose_time_cannot_be_read_or_shown_is_dated_by_its_run_and_never_empties_a_view(root, local_zone, bad, zone):
+    local_zone(zone)
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "tables/b.csv", "n\n2\n")
+    report, _pid, run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    person(root, report, {"kind": "table", "path": "tables/b.csv"})
+    path = root / outputs.catalog_path(report)
+    value = json.loads(path.read_text())
+    value["items"][0]["at"] = bad                                                   # the agent's entry; the person's is fine
+    path.write_text(json.dumps(value))
+    got = outputs.catalog(root)
+    assert got["error"] is None and sorted(r["path"] for r in got["items"]) == ["tables/a.csv", "tables/b.csv"]
+    row = next(r for r in got["items"] if r["path"] == "tables/a.csv")
+    started = datetime.strptime(run_id[2:18], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    assert row["at"] == started.astimezone().isoformat(timespec="seconds")          # the run id's time stands in
+    value["items"][0]["run"] = "not a run id"                                       # and with that gone too: no date, still a row
+    path.write_text(json.dumps(value))
+    row = next(r for r in outputs.catalog(root)["items"] if r["path"] == "tables/a.csv")
+    assert "at" not in row and "task_title" in row
+
+
+def test_a_run_whose_start_overflows_is_dated_by_the_next_time_it_has(root, local_zone):
+    local_zone("Europe/Berlin")
+    _report, pid, _bare = recorded(root)
+    put(root, "a.py", "x")
+    earlier(root, pid, "20261024T101010", ["a.py"], started="9999-12-31T23:59:59Z")
+    got = listing(root, pid)
+    assert utc(got["groups"][0]["runs"][0]["date"]) == datetime(2026, 10, 24, 10, 10, 10, tzinfo=timezone.utc)   # its `created`
+
+
+def test_a_row_that_cannot_be_made_costs_only_itself(root, monkeypatch):
+    put(root, "tables/a.csv", "n\n1\n")
+    put(root, "research/variables/distance.toml", 'name="Distance"\nmeaning="Flight distance"\nunit="m"')
+    recorded(root, [{"kind": "table", "path": "tables/a.csv"}, {"kind": "variable", "path": "research/variables/distance.toml"}])
+    assert sorted(r["path"] for r in outputs.catalog(root)["items"]) == ["research/variables/distance.toml", "tables/a.csv"]
+    def broken(_root, rel):
+        raise workspace.WorkspaceError("invalid", f"cannot read {rel}")
+    monkeypatch.setattr(outputs, "variable_content", broken)
+    got = outputs.catalog(root)
+    assert got["error"] is None and [r["path"] for r in got["items"]] == ["tables/a.csv"]
+
+
+def test_a_registration_whose_file_is_gone_stays_in_the_row_counts_for_nothing_and_stands_again_with_its_file(root):
+    put(root, "tables/summary.csv", "n\n2\n")
+    put(root, "figures/fit.png", "png")
+    report, pid, run_id = recorded(root, [{"kind": "table", "path": "tables/summary.csv"}])
+    person(root, report, {"kind": "figure", "path": "figures/fit.png"})
+    created_by(pid, run_id, "tables/summary.csv", "figures/fit.png")
+    tasks, _revision = workspace.read_tasks(root)
+    row = lambda: outputs.task_outputs(root, pid, tasks)["t1"]                      # noqa: E731
+    states = lambda: {e["path"]: e["state"] for e in row()["entries"]}               # noqa: E731
+    assert states() == {"tables/summary.csv": "current", "figures/fit.png": "current"}
+    assert row()["filing"]["counts"]["output"] == 2
+    (root / "figures/fit.png").unlink()
+    assert states() == {"tables/summary.csv": "current", "figures/fit.png": "gone"}   # still listed, to be removed
+    counts = row()["filing"]["counts"]
+    assert counts["output"] == 1 and counts["unregistered"] == 0                     # it is no registered file, and no new one: not there
+    assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/summary.csv"]    # the views leave it out as before
+    filed = outputs.filing(root, ["figures/fit.png"], records=[], reports=[report], work_folder=None)
+    assert filed["counts"]["output"] == 0 and filed["unregistered"] == ["figures/fit.png"]
+    put(root, "figures/fit.png", "png")                                              # the file is back: so is the registration
+    assert states()["figures/fit.png"] == "current" and row()["filing"]["counts"]["output"] == 2
+    (root / "figures/fit.png").unlink()
+    outputs.unregister_file(root, {"report": report, "path": "figures/fit.png"})     # a gone file's registration can be taken away
+    assert states() == {"tables/summary.csv": "current"}
+
+
+def test_the_listing_asks_whether_the_registered_file_is_there(root, monkeypatch):
+    """A path registered under a spelling whose file is gone is offered when a file is at the path (the way to have both:
+    another spelling of it on a case-sensitive volume), so the listing asks `_there` of what it finds registered."""
+    report, pid, _bare = recorded(root)
+    put(root, "tables/a.csv", "n\n1\n")
+    person(root, report, {"kind": "table", "path": "tables/a.csv"})
+    earlier(root, pid, "20261024T101010", ["tables/a.csv"])
+    assert flat(listing(root, pid)) == []
+    monkeypatch.setattr(outputs, "_there", lambda _root, _rel: False)
+    assert [path for _task, _run_id, path, _kind in flat(listing(root, pid))] == ["tables/a.csv"]
+
+
+def test_the_rows_count_and_the_run_filtered_listing_agree_on_what_is_registered_in_any_catalog(root):
+    report, pid, run_id = recorded(root)
+    second = second_record(root)
+    for rel in ("mine.py", "theirs.py", "tool.py", "scratch/x.py"):
+        put(root, rel, "x")
+    created_by(pid, run_id, "mine.py", "theirs.py", "tool.py", "scratch/x.py", "research/tasks.json")
+    runs.update_run(pid, run_id, tool_paths=["tool.py"], work_folder="scratch")
+    tasks, _revision = workspace.read_tasks(root)
+    unregistered = lambda: outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"]["unregistered"]   # noqa: E731
+    assert unregistered() == 2 == len(flat(listing(root, pid, run_id)))               # mine.py, theirs.py
+    outputs.register_files(root, {"report": second, "items": [{"kind": "code", "path": "theirs.py"}]})        # for another task
+    assert unregistered() == 1
+    assert [p for _t, _r, p, _k in flat(listing(root, pid, run_id))] == ["mine.py"]                            # the same one file
+    person(root, report, {"kind": "code", "path": "mine.py"})
+    assert unregistered() == 0 and flat(listing(root, pid, run_id)) == []
+
+
+def test_a_row_is_worked_out_once_per_change_of_the_files_and_not_once_per_read(root, monkeypatch):
+    report, pid, run_id = recorded(root)
+    os.utime(runs.project_runs_dir(pid), ns=(10**18, 10**18))                       # long ago, so that a new run is a change
+    tasks, _revision = workspace.read_tasks(root)
+    worked = []
+    real = outputs._task_outputs
+    monkeypatch.setattr(outputs, "_task_outputs", lambda root_, task, *more: worked.append(task["id"]) or real(root_, task, *more))
+    memo: dict = {}
+    first = outputs.task_outputs(root, pid, tasks, memo=memo, token=1)
+    assert outputs.task_outputs(root, pid, tasks, memo=memo, token=1) is first and worked == ["t1"]    # nothing moved: once
+    outputs.task_outputs(root, pid, tasks, memo=memo, token=2)
+    assert len(worked) == 2                                                          # the watcher's generation moved
+    outputs.task_outputs(root, pid, tasks, memo=memo, token=2)
+    assert len(worked) == 2
+    put(root, "tables/a.csv", "n\n1\n")
+    person(root, report, {"kind": "table", "path": "tables/a.csv"})                  # a catalog changed, whatever the token says
+    again = outputs.task_outputs(root, pid, tasks, memo=memo, token=2)
+    assert len(worked) == 3 and [e["path"] for e in again["t1"]["entries"]] == ["tables/a.csv"]
+    _run(root, pid)                                                                  # a run started
+    outputs.task_outputs(root, pid, tasks, memo=memo, token=2)
+    assert len(worked) == 4
+    outputs.task_outputs(root, pid, [{**t, "report": ""} if t["id"] == "t1" else t for t in tasks], memo=memo, token=2)
+    assert len(worked) == 4                                                          # no task with a record left: nothing to work out
+    outputs.task_outputs(root, pid, tasks, memo=memo, token=2)
+    assert len(worked) == 5                                                          # the tasks asked about differ from the kept answer's
+    for kept in ({"memo": memo}, {"token": 2}, {}):                                  # never kept without both a memo and a token
+        outputs.task_outputs(root, pid, tasks, **kept)
+    assert len(worked) == 8
+
+
+def test_the_work_folder_count_looks_at_a_bounded_number_of_entries_and_stats_none(root, monkeypatch):
+    report, pid, run_id = recorded(root)
+    for i in range(20):
+        (root / f"work/w/empty{i:02d}").mkdir(parents=True)                          # nothing but folders
+    for i in range(3):
+        put(root, f"work/w/f{i}.txt", "x")
+    runs.update_run(pid, run_id, work_folder="work/w")
+    tasks, _revision = workspace.read_tasks(root)
+    assert outputs.WORK_VISIT_FACTOR * outputs.WORK_COUNT_LIMIT >= 20000 and outputs.task_outputs(root, pid, tasks)["t1"]["work_files"] == 3
+    monkeypatch.setattr(outputs, "WORK_COUNT_LIMIT", 2)                              # looks at 2 * 4 entries, whatever they are
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert row["work_files_more"] is True and row["work_files"] <= 2
+
+    real = os.scandir
+
+    class Seen:
+        def __init__(self, entry):
+            self.entry, self.name, self.path = entry, entry.name, entry.path
+        def is_dir(self, **how):
+            return self.entry.is_dir(**how)
+        def is_file(self, **how):
+            return self.entry.is_file(**how)
+        def stat(self, **how):
+            pytest.fail("the count of a folder's files must not stat what it counts")
+
+    @contextlib.contextmanager
+    def scandir(path):
+        with real(path) as entries:
+            yield [Seen(e) for e in entries]
+
+    monkeypatch.setattr(outputs, "WORK_COUNT_LIMIT", 5000)
+    monkeypatch.setattr(outputs.os, "scandir", scandir)       # (the runs' folder is listed with the same call: the count alone)
+    assert outputs._count_files(root, "work/w") == (3, False)
+
+
+def refused_in(root, report, *items):
+    with pytest.raises(workspace.WorkspaceError) as caught:
+        person(root, report, *items)
+    return caught.value
+
+
+GENERIC_ZH = "输出目录或文件不符合设置，请检查后重试"
+
+
+@pytest.mark.parametrize("rel, kind, content", [
+    ("refs/empty.bib", "literature", "% no entries in here\n"),
+    ("refs/broken.bib", "literature", "@article{x, title = \n"),
+    ("vars/no_definition.toml", "variable", "not = a variable\n"),
+    ("vars/decided.toml", "variable", 'name = "Distance"\nmeaning = "x"\nunit = "m"\n[decision]\ndecided_by = "li"\n'),
+    ("scratch/run.log", "figure", "text"),                       # a format the kind does not take
+])
+def test_a_persons_refusal_of_a_file_names_it_in_both_languages(root, rel, kind, content):
+    report, _pid, _run_id = recorded(root)
+    put(root, rel, content)
+    caught = refused_in(root, report, {"kind": kind, "path": rel})
+    assert rel in str(caught) and f"“{rel}”" in caught.message_zh and caught.message_zh != GENERIC_ZH
+    assert not re.search(r"[㐀-鿿]", str(caught)) and re.search(r"[㐀-鿿]", caught.message_zh)
+    assert catalog_bytes(root, report) is None
+
+
+def test_a_file_gone_or_changed_since_the_listing_is_refused_by_name_in_both_languages(root, monkeypatch):
+    report, _pid, _run_id = recorded(root)
+    put(root, "scratch/a.log", "text")
+    put(root, "scratch/b.log", "text")
+    gone = refused_in(root, report, {"kind": "work", "path": "scratch/a.log"}, {"kind": "work", "path": "scratch/gone.log"})
+    assert "scratch/gone.log" in str(gone) and "“scratch/gone.log”" in gone.message_zh and gone.message_zh != GENERIC_ZH
+    twice = refused_in(root, report, {"kind": "work", "path": "scratch/a.log"}, {"kind": "work", "path": "scratch/a.log"})
+    assert "scratch/a.log" in str(twice) and "“scratch/a.log”" in twice.message_zh and twice.message_zh != GENERIC_ZH
+    kept = outputs.snapshot.fingerprint
+    monkeypatch.setattr(outputs.snapshot, "fingerprint", lambda *_a, **_k: {"dataless": True, "size": 4})      # only in the cloud now
+    cloud = refused_in(root, report, {"kind": "work", "path": "scratch/a.log"})
+    assert "scratch/a.log" in str(cloud) and "“scratch/a.log”" in cloud.message_zh and cloud.message_zh != GENERIC_ZH
+    monkeypatch.setattr(outputs.snapshot, "fingerprint", kept)
+    monkeypatch.setattr(outputs, "_current", lambda _item, _mark: False)                                       # changed meanwhile
+    changed = refused_in(root, report, {"kind": "work", "path": "scratch/b.log"})
+    assert "scratch/b.log" in str(changed) and "“scratch/b.log”" in changed.message_zh and changed.message_zh != GENERIC_ZH
+    assert catalog_bytes(root, report) is None
+
+
+def test_the_before_picture_is_read_only_when_there_are_outputs_to_flag(root, monkeypatch):
+    seen = []
+    real = outputs.made_by_run
+    monkeypatch.setattr(outputs, "made_by_run", lambda *args: seen.append(args[2]) or real(*args))
+    answer, _pid, _run_id = complete(root, [])
+    assert answer.startswith("Saved") and seen == []                                 # nothing declared: nothing to flag
+    put(root, "tables/a.csv", "n\n1\n")
+    answer, _pid, _run_id = complete(root, [{"kind": "table", "path": "tables/a.csv"}])
+    assert answer.startswith("Saved") and seen == [["tables/a.csv"]]

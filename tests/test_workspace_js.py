@@ -2627,6 +2627,39 @@ console.log(JSON.stringify(seen));
                    None, None]
 
 
+_GONE = r"""
+listed.task_outputs.t1.entries.push(entry('table','tables/lost.csv','Lost',{state:'gone'}),entry('figure','figures/lost.png','Lost fig',{state:'gone'}));
+await window.ROWorkspace.load(root);await sleepTick();
+const block=blockOf();
+const rowOf2=title=>block.all().find(e=>e.classList.contains('ws-output')&&e.children[0].textContent===title);
+const lost=rowOf2('Lost'), lostFig=rowOf2('Lost fig'), fit=rowOf2('Fit');
+const words=li=>li.all().filter(e=>e.tagName==='BUTTON').map(b=>b.textContent);
+"""
+
+
+def test_a_registration_whose_file_is_gone_stays_in_the_row_marked_and_can_be_removed():
+    """DESIGN.md 19.6: the row keeps the registration of a file that is no longer there, marked 「文件已不在」, with
+    移除登记 and nothing to open or preview; the files that are there are as before."""
+    out = run(_OUTPUTS + _GONE + r"""
+const state={lost:lost.textContent, lostWords:words(lost), figWords:words(lostFig), images:lostFig.all().filter(e=>e.tagName==='IMG').length,
+  fitWords:words(fit), fitImages:fit.all().filter(e=>e.tagName==='IMG').length, opened:openedFiles.length, group:block.all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent)};
+answers.push(true);
+await lost.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
+console.log(JSON.stringify(Object.assign(state,{posted,asked:confirmQuestions,after:blockOf().all().filter(e=>e.classList.contains('ws-output')).map(e=>e.children[0].textContent)})));
+""")
+    assert out["lost"] == "Lost" + "tables/lost.csv" + "文件已不在" + "移除登记"
+    assert out["lostWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0   # nothing to open, nothing to preview
+    assert out["fitWords"] == ["Fit", "移除登记"] and out["fitImages"] == 1 and out["opened"] == 0
+    assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]            # the gone ones are counted where they are listed
+    assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "tables/lost.csv"}]]
+    assert out["asked"] == ["移除这个文件的登记吗？文件本身不会改动。"]
+    english = run(_OUTPUTS + _GONE + r"""
+console.log(JSON.stringify({text:lost.textContent, words:words(lost), label:lost.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
+""", lang="en")
+    assert english == {"text": "Lost" + "tables/lost.csv" + "File no longer there" + "Remove registration",
+                       "words": ["Remove registration"], "label": "Remove registration: Lost"}
+
+
 def test_the_counted_words_have_both_forms_in_english_and_group_thousands():
     out = run(_OUTPUTS + r"""
 const seen=[];

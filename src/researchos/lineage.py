@@ -26,6 +26,9 @@ raises:
    exists at other paths in the project tree, scoped to `dataset` only for
    the same reason as orphans: "which of the 4 copies of theme_counts.csv did
    the script actually read" is a data-provenance question, not a figure one.
+   The walk that finds the copies leaves out the work folder and the files
+   registered as `work` (DESIGN.md 19.7), as the scan does: a copy an agent
+   kept among its process files is not another copy the script could have read.
 
 Two kinds of edge are treated specially, so this report and the canvas
 (DESIGN.md section 8.2's clay orphan dot is "the lineage report's own

@@ -1661,7 +1661,7 @@ def test_summary_flags():
 def test_agent_error_table():
     for code in ("mcp_missing", "runner_missing", "task_missing", "not_agent_task", "task_done", "busy", "read_only",
                  "run_missing", "run_active", "not_latest", "no_session", "reverted", "later_run", "not_finished",
-                 "invalid", "start_failed"):
+                 "invalid", "work_location", "output_folders", "start_failed"):
         err = manager.AgentError(code)
         assert err.code == code and err.message and err.message_zh and err.status in (400, 403, 404, 409, 500)
         assert "→" not in err.message_zh and "->" not in err.message
@@ -2977,11 +2977,40 @@ def test_a_task_sent_back_while_the_work_location_has_no_usable_name_keeps_its_d
     assert scene.tasks()["t1"]["done"] is True and len(run_store.list_runs(scene.pid)) == 1
 
 
-def test_settings_that_cannot_be_read_refuse_the_run_with_their_own_words_instead_of_failing_inside(scene: Scene):
+def test_settings_that_cannot_be_read_refuse_the_run_with_their_own_words_as_a_409_the_person_can_act_on(scene: Scene):
+    """DESIGN 19.2 (amended): not `start_failed` (500) but `output_folders` (409), the settings' own sentence in both
+    languages, nothing recorded; once they read again, the same task runs."""
     scene.put(outputs.FOLDERS_PATH, "not json")
     with pytest.raises(manager.AgentError) as caught:
         scene.start()
-    assert caught.value.code == "start_failed" and "invalid JSON" in str(caught.value) and run_store.list_runs(scene.pid) == []
+    assert caught.value.code == "output_folders" and caught.value.status == 409
+    assert "invalid JSON" in str(caught.value) and caught.value.message_zh.startswith("读不出输出目录的设置：")
+    assert run_store.list_runs(scene.pid) == [] and not run_store.project_runs_dir(scene.pid).exists()
+    scene.put(outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": {
+        "code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+        "document": "reports", "variable": "research/variables", "work": "work"}}))
+    scene.scenario([init_step(), finish_step()])
+    assert scene.wait(scene.start()["id"])["state"] == "ended"
+
+
+def test_a_saved_work_location_that_crowds_another_refuses_the_run_the_same_way(scene: Scene):
+    folders = {"code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+               "document": "reports", "variable": "research/variables", "work": "reports/work"}
+    scene.put(outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": folders}))
+    with pytest.raises(manager.AgentError) as caught:
+        scene.start()
+    assert caught.value.code == "output_folders" and caught.value.status == 409 and "work location" in str(caught.value)
+    assert "过程文件的目录" in caught.value.message_zh and run_store.list_runs(scene.pid) == []
+
+
+def test_a_task_sent_back_while_the_output_settings_cannot_be_read_keeps_its_done_mark(scene: Scene):
+    first = scene.go(COMPLETE)
+    assert first["state"] == "done" and scene.tasks()["t1"]["done"] is True
+    scene.put(outputs.FOLDERS_PATH, "not json")
+    with pytest.raises(manager.AgentError) as caught:
+        scene.manager.reply(scene.root, scene.pid, first["id"], "Do it again", by="m-1", by_name="Lin", lang="en")
+    assert caught.value.code == "output_folders" and caught.value.status == 409
+    assert scene.tasks()["t1"]["done"] is True and len(run_store.list_runs(scene.pid)) == 1
 
 
 def test_an_interrupted_run_compared_after_the_restart_is_filed_like_any_other(scene: Scene):

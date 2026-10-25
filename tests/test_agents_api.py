@@ -1258,3 +1258,23 @@ def test_a_run_is_refused_over_http_while_the_work_location_has_no_usable_name(a
     status, saved = api.post("/api/outputs/folders", {"revision": None, "folders": {**info["folders"], "work": "process"}})
     assert status == 200 and saved["folders"]["work"] == "process" and "choose" not in saved
     assert api.poll(api.start()["id"])["state"] == "ended"
+
+
+def test_a_run_is_refused_over_http_while_the_output_settings_cannot_be_read(api):
+    """DESIGN 19.2 (amended): settings that cannot be read -- a file that is no JSON, a saved work location that
+    crowds another -- refuse the run as `agent_output_folders`, a 409 with the settings' own sentence in the request's
+    language, not a server error; nothing is recorded, and the run starts once they read again."""
+    api.put("research/folders.json", "not json")
+    api.scenario([init_step(), finish_step()])
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_output_folders" and "invalid JSON" in error["message"]
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+    assert status == 409 and error["message"].startswith("读不出输出目录的设置：")
+    seven = {"code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+             "document": "reports", "variable": "research/variables"}
+    api.put("research/folders.json", json.dumps({"version": 1, "folders": {**seven, "work": "reports/work"}}))
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_output_folders" and "work location" in error["message"]
+    assert run_store.list_runs(api.pid) == [] and api.get("/api/agents/runs")[1]["runs"] == []
+    api.put("research/folders.json", json.dumps({"version": 1, "folders": {**seven, "work": "work"}}))
+    assert api.poll(api.start()["id"])["state"] == "ended"

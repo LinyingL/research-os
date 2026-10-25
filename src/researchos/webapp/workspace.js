@@ -1291,13 +1291,16 @@
     return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state), run ? run.id : null]);
   }
   function outputRow(task, item, locked) {
-    const li = el("li", "ws-output"), name = item.title || item.path;
-    li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
+    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone";
+    // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview
+    if (gone) li.append(el("span", null, name));
+    else li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
     if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
     if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
+    if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
     const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
     remove.disabled = locked; li.append(remove);
-    if (item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+    if (!gone && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
       const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
       image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
       preview.append(image); li.append(preview);
@@ -2209,6 +2212,7 @@
       panelBody.append(el("p", "ws-agent-quiet", t("已有文件保持原位。新任务按这些目录保存输出，可以在目录内继续分组。")));
       const labels = outputKinds();
       const form = el("form", "ws-output-folders"), inputs = {};
+      let choosing = null;   // the line that says the work location needs choosing, until a save sets it
       Object.keys(labels).forEach((kind) => {
         const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
         box.addEventListener("input", () => { subject.dirty = true; });
@@ -2216,7 +2220,7 @@
         // 19.2: the work location comes last, and says what it holds and what the app does with it; when no name is
         // usable for it (the settings still read: it is empty), the field says it needs choosing
         if (kind === "work") {
-          if (Array.isArray(info.choose) && info.choose.indexOf("work") >= 0) form.append(el("p", "ws-status err", t("请为过程文件选一个目录。")));
+          if (Array.isArray(info.choose) && info.choose.indexOf("work") >= 0) form.append(choosing = el("p", "ws-status err", t("请为过程文件选一个目录。")));
           form.append(el("p", "ws-agent-quiet", t("过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。")));
         }
       });
@@ -2229,6 +2233,8 @@
           if (!active()) return;
           info.revision = response.revision; subject.dirty = false; save.disabled = false;
           Object.values(inputs).forEach((box) => { box.disabled = false; });
+          // a save that set the work location answers the line (19.2); one that left it empty would have been refused
+          if (choosing && inputs.work.value.trim()) { choosing.remove(); choosing = null; }
           status(feedback, t("已保存，下次任务运行时使用。"), "ok");
         } catch (err) { if (active()) { save.disabled = false; Object.values(inputs).forEach((box) => { box.disabled = false; }); status(feedback, errorWords(t("没能保存输出目录。"), err), "err"); } }
       });

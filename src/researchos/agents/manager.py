@@ -70,7 +70,8 @@ there ("seen during run <id>").
 **Where a run's files go** (DESIGN.md 19.2, 19.4). When a run starts, its output locations are frozen in `run.json`
 (`output_folders`) with its work folder and slug (`work_folder`, `slug`: `_work_places`); a task's later runs reuse
 the first one's. The locations are read when the run is accepted (`_launch`): a project whose work location has no
-usable name refuses the run (`work_location`). Data files inside a work folder are not protected
+usable name refuses the run (`work_location`), and so does one whose output settings cannot be read (`output_folders`);
+both are 409s the person can act on, never a server error. Data files inside a work folder are not protected
 (`snapshot.protected(work=)`). When the after-picture is compared, every file the run created is sorted into a class
 (`filing`, `outputs.filing`): a summary of what the run did with the app's places, never a violation. The page's
 listing carries its counts; the paths of what is not registered are in the run's detail.
@@ -221,6 +222,8 @@ _ERRORS: dict[str, tuple[int, str, str]] = {
                        "这次运行已无法撤回（备份已不在，或它没有改动任何文件）"),
     "invalid": (400, "The request is not valid", "请求的内容不对"),
     "work_location": (409, *outputs.CHOOSE_WORK),
+    "output_folders": (409, "The output folder settings cannot be read; fix them, then run the task again",
+                       "读不出输出目录的设置，请先改好它们，再运行任务"),
     "start_failed": (500, "The run could not be started", "无法开始这次运行"),
 }
 
@@ -935,8 +938,8 @@ class AgentManager:
         assert found.path is not None
         try:  # 19.2: before the run is recorded or anything is copied; no usable work location refuses it
             places = outputs.folders(root)
-        except workspace.WorkspaceError as exc:
-            raise AgentError("start_failed", f"The output folders could not be read: {exc}",
+        except workspace.WorkspaceError as exc:  # settings that cannot be read: the person can mend them (409, 19.2)
+            raise AgentError("output_folders", f"The output folders could not be read: {exc}",
                              message_zh=f"读不出输出目录的设置：{exc.message_zh}") from exc
         if places.get("choose"):
             raise AgentError("work_location")

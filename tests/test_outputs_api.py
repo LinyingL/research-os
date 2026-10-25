@@ -253,3 +253,47 @@ def test_the_register_route_takes_hundreds_of_a_tasks_files_in_one_call_and_says
         assert status == 409 and refused["state"] == "workspace_output"
         assert refused["message"].startswith("这项任务的登记清单装不下这么多文件。") and "cannot hold that many files" in refused["detail"]
     assert (root / outputs.catalog_path(report)).read_bytes() == held                        # nothing of either call was written
+
+
+# -- V15 step 4b (DESIGN 19.5, 19.6) -------------------------------------------------------------------------------------
+
+
+def test_the_workspace_payload_works_a_tasks_row_out_once_per_change_and_not_once_per_poll(writing_server, monkeypatch):
+    base, root, httpd = writing_server
+    report, _pid, _run_id = _recorded(root)
+    worked = []
+    real = outputs._task_outputs
+    monkeypatch.setattr(outputs, "_task_outputs", lambda *args: worked.append(args[1]["id"]) or real(*args))
+    first = _get(base, "/api/workspace")[1]["task_outputs"]
+    again = _get(base, "/api/workspace")[1]["task_outputs"]
+    assert again == first and list(first) == ["t1"] and worked == ["t1"]                            # a poll: no new work
+    put(root, "analysis/fit.png", "png")
+    body = {"project": str(root), "report": report, "items": [{"kind": "figure", "path": "analysis/fit.png", "title": "Fit"}]}
+    assert _post(base, "/api/outputs/register", body)[0] == 200                                    # the page's own write moves the generation
+    after = _get(base, "/api/workspace")[1]["task_outputs"]["t1"]
+    assert worked == ["t1", "t1"] and [e["path"] for e in after["entries"]] == ["analysis/fit.png"]
+    _get(base, "/api/workspace")
+    assert len(worked) == 2
+    httpd.watcher.bump_generation()                                                                 # a run that ended, a scan that finished
+    _get(base, "/api/workspace")
+    _get(base, "/api/workspace")
+    assert len(worked) == 3
+    (root / "analysis/fit.png").unlink()
+    httpd.watcher.bump_generation()
+    gone = _get(base, "/api/workspace")[1]["task_outputs"]["t1"]
+    assert [(e["path"], e["state"]) for e in gone["entries"]] == [("analysis/fit.png", "gone")] and len(worked) == 4
+
+
+def test_a_refused_registration_names_the_file_in_the_language_of_the_request(writing_server):
+    base, root, _httpd = writing_server
+    put(root, "refs/empty.bib", "% no entries in here\n")
+    report, _pid, _run_id = _recorded(root)
+    body = {"project": str(root), "report": report, "items": [{"kind": "literature", "path": "refs/empty.bib"}]}
+    status, refused = _post(base, "/api/outputs/register", body)
+    assert status == 409 and refused["state"] == "workspace_output"
+    assert "“refs/empty.bib”" in refused["message"] and "refs/empty.bib" in refused["detail"]
+    assert refused["message"] != "输出目录或文件不符合设置，请检查后重试"
+    (root / "refs/empty.bib").unlink()                                                              # gone since the listing
+    status, refused = _post(base, "/api/outputs/register", body)
+    assert status == 409 and "“refs/empty.bib”" in refused["message"] and "refs/empty.bib" in refused["detail"]
+    assert not (root / outputs.catalog_path(report)).exists()
