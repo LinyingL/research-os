@@ -1768,10 +1768,11 @@ def test_an_entry_that_cannot_be_used_costs_only_itself_in_the_views_the_row_and
                   {"kind": "table", "path": ".hidden/d.csv", "title": "Hidden", "fingerprint": mark},
                   {"kind": "table", "path": "../e.csv", "title": "Outside", "fingerprint": mark},
                   {"kind": "spreadsheet", "path": "tables/f.csv", "title": "Unknown kind", "fingerprint": mark},
+                  {"kind": "table", "path": "tables/h\ud800.csv", "title": "No file can have this name", "fingerprint": mark},
                   "not an entry")
     got = outputs.catalog(root)
     assert sorted(r["path"] for r in got["items"]) == ["tables/a.csv", "tables/b.csv"]
-    assert rel in got["error"] and "5 entries" in got["error"] and got["broken"] == [rel]
+    assert rel in got["error"] and "6 entries" in got["error"] and got["broken"] == [rel]
     assert outputs.catalog(root, {"figure"})["items"] == [] and rel in outputs.catalog(root, {"figure"})["error"]
     tasks, _revision = workspace.read_tasks(root)
     row = outputs.task_outputs(root, pid, tasks)["t1"]
@@ -1790,7 +1791,8 @@ def test_an_entry_that_cannot_be_used_costs_only_itself_in_the_views_the_row_and
 
 
 @pytest.mark.parametrize("damage", ["not json", json.dumps({"version": 2, "items": []}), json.dumps({"version": 1, "items": "x"}),
-                                    json.dumps([1])])
+                                    json.dumps([1]), "[" * 100_000 + "]" * 100_000],
+                         ids=["not-json", "version-2", "items-not-a-list", "a-list", "nested-past-the-parser"])
 def test_a_catalog_that_cannot_be_read_costs_only_its_own_rows_and_is_named(root, damage):
     """DESIGN 19.6: each catalog is read in its own try. The error line is still there, naming the catalog; the other
     catalogs' rows show, and so does the other task's row."""

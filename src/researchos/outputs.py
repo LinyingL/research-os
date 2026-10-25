@@ -91,8 +91,17 @@ def _bad(message: str, zh: str = GENERIC_ZH) -> workspace.WorkspaceError:
     return workspace.WorkspaceError("output", message, 409, zh)
 
 
+def _encodes(rel: str) -> bool:
+    """Whether `rel` can name a file at all: a lone surrogate (JSON's "\\ud800") cannot be encoded (DESIGN.md 19.6)."""
+    try:
+        rel.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _path(root: Path, rel: Any) -> Path:
-    if (not isinstance(rel, str) or not rel or len(rel) > 1024 or "\\" in rel
+    if (not isinstance(rel, str) or not rel or len(rel) > 1024 or not _encodes(rel) or "\\" in rel
             or posixpath.isabs(rel) or posixpath.normpath(rel) != rel
             or any(ord(c) < 32 or ord(c) == 127 for c in rel)
             or any(p.startswith(".") for p in rel.split("/"))
@@ -111,7 +120,7 @@ def _read(root: Path, rel: str) -> tuple[Any, bytes | None]:
         return None, None
     try:
         return json.loads(raw), raw
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:  # nested past the parser's depth reads as no JSON (DESIGN.md 19.6)
         raise _bad(f"Cannot read {rel}: invalid JSON", f"“{rel}”不是有效的 JSON，读不出来。") from exc
 
 
@@ -298,7 +307,7 @@ def _readable(root: Path, rel: str) -> tuple[list[dict[str, Any]], int]:
     for item in items:
         try:
             _check_entry(root, item)
-        except (workspace.WorkspaceError, OSError):
+        except (workspace.WorkspaceError, OSError, ValueError):
             continue
         found.append(item)
     return found, len(items) - len(found)
