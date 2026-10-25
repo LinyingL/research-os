@@ -3978,6 +3978,16 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/outputs/folders":
                 served = self._require_unblocked()
                 self._send_json(200, self._workspace_api(lambda: outputs.folders(served.root)))
+            elif path == "/api/outputs/backfill":
+                # 19.5: the files earlier runs created and nobody registered, for a person to review. A read of this
+                # Mac's runs and the project's files; the page names the project by its id (the open project's path
+                # passes too) so that a window of another project is told so, and `run` limits it to one run.
+                served = self._require_unblocked()
+                wanted = (query.get("project") or [None])[0]
+                if wanted is not None and wanted != served.project_id:
+                    self._workspace_target({"project": wanted})
+                run_id = (query.get("run") or [None])[0]
+                self._send_json(200, self._workspace_api(lambda: outputs.backfill(served.root, served.project_id, run_id)))
             elif path == "/api/workspace":
                 served = self._require_unblocked()
                 payload = self._workspace_api(lambda: workspace.overview(served.root, self._lang()))

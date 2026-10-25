@@ -1103,3 +1103,276 @@ def test_a_catalog_a_row_cannot_read_is_said_and_does_not_fail_the_rest(root):
     tasks, _revision = workspace.read_tasks(root)
     row = outputs.task_outputs(root, pid, tasks)["t1"]
     assert row["error"] is True and row["entries"] == []
+
+
+# -- V15 step 4: the files of earlier runs, listed for a person to review (DESIGN 19.5, 19.10 item 4) -------------------
+
+#: Paths shaped like the agents' dated folders in Quant (19.0), with the kind each of the eight rules gives (None: rule 8).
+SWORD = "research/sword_backtest_review_20261024"
+OPENSTOCK = "research/openstock_review_20261024"
+RULES = [
+    # 1 -- process files, whatever else they look like
+    (f"{SWORD}/checks/verify_backtest.py", "work"), (f"{SWORD}/checks/summary.csv", "work"), (f"{SWORD}/checks/plot.png", "work"),
+    (f"{OPENSTOCK}/sources/README.md", "work"), (f"{OPENSTOCK}/sources/vendor/lib.py", "work"), (f"{SWORD}/logs/run.txt", "work"),
+    (f"{SWORD}/tmp/x.csv", "work"), (f"{SWORD}/scratch/x.py", "work"), (f"{SWORD}/cache/x.json", "work"), ("a/check/x.md", "work"),
+    ("a/log/x.csv", "work"), ("fetch_stdout.txt", "work"), (f"{SWORD}/fetch_stderr.txt", "work"), ("run.log", "work"),
+    ("report_check.json", "work"), (f"{SWORD}/summary_check.md", "work"), ("pytest_results.xml", "work"),
+    (f"{SWORD}/data/prices_sha256.json", "work"), ("Checks/Run.PY", "work"), ("figures/logs/fit.png", "work"),
+    # 2 -- figures
+    (f"{SWORD}/figures/equity.png", "figure"), ("figures/x/y.png", "figure"), ("plot.JPG", "figure"), ("a/b.svg", "figure"),
+    (f"{SWORD}/figures/equity.pdf", "figure"), ("plots/fit.pdf", "figure"), ("fig/a.pdf", "figure"), ("Figures/A.PDF", "figure"),
+    # 3 -- references and variable drafts
+    ("references/library.bib", "literature"), ("research/variables/gdp.toml", "variable"),
+    # 4 -- code
+    (f"{SWORD}/scripts/fetch_prices.py", "code"), ("src/sword_v03/x.py", "code"), ("analysis/model.R", "code"), ("do/clean.do", "code"),
+    ("Scripts/A.PY", "code"), ("nb/explore.ipynb", "code"), ("run_all.sh", "code"),
+    # 5 -- tables
+    (f"{SWORD}/tables/attribution.csv", "table"), ("tables/x.tsv", "table"), ("data/tables/summary.csv", "table"),
+    # 6 -- data
+    (f"{SWORD}/data/prices.csv", "data"), ("data/derived/x/y.csv", "data"), ("tables/summary.xlsx", "data"), ("out/result.json", "data"),
+    ("out/panel.dta", "data"), ("figures/panel.csv", "data"), ("x.parquet", "data"),
+    # 7 -- documents
+    ("reports/X.md", "document"), (f"{SWORD}/report.pdf", "document"), ("reports/plan.docx", "document"), ("notes.txt", "document"),
+    ("page.html", "document"), ("paper/main.tex", "document"), ("tables/readme.md", "document"),
+    # 8 -- none
+    ("LICENSE", None), ("data/notes.xyz", None), ("plot.tiff", None), (f"{SWORD}/other.toml", None), ("a/b.rst", None),
+]
+
+
+@pytest.mark.parametrize("rel, kind", RULES)
+def test_the_eight_rules_suggest_a_kind_first_match_wins(rel, kind):
+    assert outputs.suggest_kind(rel) == kind
+    if kind not in {None, "work"}:                                       # a suggestion a person can really register
+        assert Path(rel).suffix.lower() in outputs.SUFFIXES[kind]
+
+
+def test_a_dated_folder_of_an_agent_reads_as_one_name_across_its_kinds():
+    folder = f"{SWORD}"
+    got = {rel: outputs.suggest_kind(rel) for rel in (f"{folder}/{p}" for p in (
+        "checks/a.py", "scripts/a.py", "data/a.csv", "figures/a.png", "tables/a.csv", "report.md", "a_stdout.txt"))}
+    assert list(got.values()) == ["work", "code", "data", "figure", "table", "document", "work"]
+
+
+def earlier(root, pid, stamp, created, task_id="t1", **more):
+    """A finished run of `task_id` that started at `stamp` (UTC, `YYYYMMDDTHHMMSS`) and created `created`: its id."""
+    run_id = f"r-{stamp}Z-aaaaaa"
+    runs.create_run(pid, {"id": run_id, "project_id": pid, "root": str(root), "task_id": task_id, "task_text": "x",
+                          "runner": "claude-code", "model": "sonnet", "owner": "agent:claude-code:sonnet",
+                          "label": "Claude Code · sonnet", "state": "done", "reverted": False,
+                          "created": f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}.000000Z",
+                          "changes": {"created": list(created), "modified": [], "deleted": [], "by_person": []},
+                          "tool_paths": [], **more})
+    return run_id
+
+
+def second_record(root, task_id="t2"):
+    """A result record for a second task; its report path."""
+    report = "research/results/" + "b" * 32 + ".md"
+    put(root, report, "# Second result\n")
+    tasks, revision = workspace.read_tasks(root)
+    workspace.save_tasks(root, {"tasks": [{**t, "report": report} if t["id"] == task_id else t for t in tasks], "revision": revision})
+    return report
+
+
+def listing(root, pid, run=None):
+    return outputs.backfill(root, pid, run)
+
+
+def flat(got):
+    """`[(task, run, path, kind)]` in the order the listing gives them."""
+    return [(g["task"], r["id"], f["path"], f["kind"]) for g in got["groups"] for r in g["runs"] for f in r["files"]]
+
+
+def utc(value):
+    return datetime.fromisoformat(value).astimezone(timezone.utc)
+
+
+def test_the_listing_gathers_what_earlier_runs_created_by_task_and_run_with_the_suggested_kinds(root):
+    report, pid, _bare = recorded(root)                                              # t1 has a record; this run created nothing
+    second = second_record(root)
+    sword = [f"{SWORD}/checks/verify_backtest.py", f"{SWORD}/scripts/fetch_prices.py", f"{SWORD}/data/prices.csv",
+             f"{SWORD}/figures/equity.png", f"{SWORD}/tables/attribution.csv", f"{SWORD}/report.md", f"{SWORD}/checks/run_stdout.txt"]
+    stock = [f"{OPENSTOCK}/sources/README.md", "src/sword_v03/x.py", "reports/X.md", "data/derived/x/y.csv", "figures/x/y.png",
+             "report_check.json", "LICENSE"]
+    for rel in (*sword, *stock):
+        put(root, rel, "x")
+    old = earlier(root, pid, "20261024T101010", sword)
+    new = earlier(root, pid, "20261025T090000", stock, task_id="t2")
+    runs.update_run(pid, old, created=None)                                           # no time of its own: the id's
+    got = listing(root, pid)
+    assert [(g["task"], g["text"], g["report"]) for g in got["groups"]] == [("t2", "Another task", second),
+                                                                           ("t1", "Clean the survey data", report)]
+    assert (got["listed"], got["more"]) == (14, 0)
+    assert [(r["id"], r["agent"]) for g in got["groups"] for r in g["runs"]] == [(new, "Claude Code · sonnet"), (old, "Claude Code · sonnet")]
+    assert [utc(r["date"]) for g in got["groups"] for r in g["runs"]] == [datetime(2026, 10, 25, 9, tzinfo=timezone.utc),
+                                                                         datetime(2026, 10, 24, 10, 10, 10, tzinfo=timezone.utc)]
+    assert flat(got) == [("t2", new, rel, kind) for rel, kind in zip(stock, ["work", "code", "document", "data", "figure", "work", None])] + [
+        ("t1", old, rel, kind) for rel, kind in zip(sword, ["work", "code", "data", "figure", "table", "document", "work"])]
+    assert utc(runs.load_run(pid, new)["created"]) == utc(got["groups"][0]["runs"][0]["date"])      # the run's own `created`
+    runs.update_run(pid, new, started="2026-10-25T10:30:00.500000Z")                                # a start is preferred
+    assert utc(listing(root, pid)["groups"][0]["runs"][0]["date"]) == datetime(2026, 10, 25, 10, 30, tzinfo=timezone.utc)
+
+
+def test_one_task_with_several_runs_is_one_group_newest_run_first(root):
+    report, pid, _bare = recorded(root)
+    for rel in ("a.py", "b.py", "c.py"):
+        put(root, rel, "x")
+    first = earlier(root, pid, "20261020T080000", ["a.py"])
+    last = earlier(root, pid, "20261022T080000", ["c.py"])
+    middle = earlier(root, pid, "20261021T080000", ["b.py"])
+    got = listing(root, pid)
+    assert [g["task"] for g in got["groups"]] == ["t1"]
+    assert [(r["id"], [f["path"] for f in r["files"]]) for r in got["groups"][0]["runs"]] == [(last, ["c.py"]), (middle, ["b.py"]), (first, ["a.py"])]
+
+
+def test_the_listing_leaves_out_records_caches_process_files_of_the_run_what_is_gone_and_what_is_registered(root):
+    report, pid, _bare = recorded(root)
+    second = second_record(root)
+    here = ["scripts/keep.py", "tables/registered.csv", "tables/elsewhere.csv", "analysis/tool_wrote.md", "pkg/__pycache__/m.pyc", "m.pyc",
+            ".pytest_cache/README.md", ".DS_Store", "figures/.DS_Store", ".hidden/x.py", "node_modules/x.js", "work/20261024-x/probe.py",
+            "Work/20261024-X/Later.py", "link.py"]
+    for rel in here:
+        put(root, rel, "x")
+    (root / "adir").mkdir()
+    (root / "link.py").unlink()
+    (root / "link.py").symlink_to(root / "scripts/keep.py")
+    created = [*here, "gone.py", "adir", 5, None, "research/tasks.json", report, outputs.catalog_path(report), outputs.FOLDERS_PATH,
+               "research/notes/n.md", "keep/../x.py", "/abs.py"]
+    old = earlier(root, pid, "20261024T101010", created, work_folder="work/20261024-x", tool_paths=["analysis/tool_wrote.md"])
+    person(root, report, {"kind": "table", "path": "tables/registered.csv"})                    # registered for this task
+    outputs.register_files(root, {"report": second, "items": [{"kind": "table", "path": "tables/elsewhere.csv"}]})   # and for another
+    assert flat(listing(root, pid)) == [("t1", old, "scripts/keep.py", "code")]
+    outputs.unregister_file(root, {"report": report, "path": "tables/registered.csv"})           # a registration taken away is a file to review again
+    assert [p for _t, _r, p, _k in flat(listing(root, pid))] == ["scripts/keep.py", "tables/registered.csv"]
+
+
+def test_the_listing_is_about_runs_not_undone_of_tasks_that_still_exist_with_a_result_record(root):
+    report, pid, _bare = recorded(root)
+    second = second_record(root)
+    for rel in ("undone.py", "kept.py", "removed.py", "no_record.py", "lost_record.py", "second.py"):
+        put(root, rel, "x")
+    earlier(root, pid, "20261020T080000", ["undone.py"], reverted=True)               # moved away by its undo
+    kept = earlier(root, pid, "20261021T080000", ["kept.py"])
+    earlier(root, pid, "20261022T080000", ["removed.py"], task_id="t9")                         # no such task any more
+    tasks, revision = workspace.read_tasks(root)
+    workspace.save_tasks(root, {"tasks": [*tasks, {"id": "t3", "text": "No record yet", "done": False, "owner": "", "due": ""},
+                                          {"id": "t4", "text": "Record lost", "done": False, "owner": "", "due": "",
+                                           "report": "research/results/" + "c" * 32 + ".md"}], "revision": revision})
+    earlier(root, pid, "20261023T080000", ["no_record.py"], task_id="t3")                       # a task without a result record
+    earlier(root, pid, "20261023T090000", ["lost_record.py"], task_id="t4")                     # the record file is gone
+    gone = earlier(root, pid, "20261024T080000", ["second.py"], task_id="t2")
+    assert [(t, r, p) for t, r, p, _k in flat(listing(root, pid))] == [("t2", gone, "second.py"), ("t1", kept, "kept.py")]
+    tasks, revision = workspace.read_tasks(root)
+    workspace.save_tasks(root, {"tasks": [t for t in tasks if t["id"] != "t2"], "revision": revision})   # the task is removed
+    assert [(t, r, p) for t, r, p, _k in flat(listing(root, pid))] == [("t1", kept, "kept.py")]
+
+
+def test_a_run_filter_lists_that_run_alone_and_a_file_made_again_is_listed_under_the_newest_run(root):
+    report, pid, _bare = recorded(root)
+    for rel in ("shared.py", "only_old.py", "only_new.py"):
+        put(root, rel, "x")
+    old = earlier(root, pid, "20261020T080000", ["shared.py", "only_old.py"])
+    new = earlier(root, pid, "20261021T080000", ["shared.py", "only_new.py"])
+    assert flat(listing(root, pid)) == [("t1", new, "shared.py", "code"), ("t1", new, "only_new.py", "code"), ("t1", old, "only_old.py", "code")]
+    assert flat(listing(root, pid, new)) == [("t1", new, "shared.py", "code"), ("t1", new, "only_new.py", "code")]
+    assert flat(listing(root, pid, old)) == [("t1", old, "shared.py", "code"), ("t1", old, "only_old.py", "code")]
+    nothing = {"groups": [], "listed": 0, "more": 0}
+    assert listing(root, pid, "r-20261019T080000Z-aaaaaa") == nothing                           # a run that is not there
+    assert listing(root, pid, "not a run id") == nothing
+    assert listing(root, pid, 7) == listing(root, pid)                                          # not a run id at all: no filter
+    runs.update_run(pid, old, reverted=True)
+    assert listing(root, pid, old) == nothing                                                   # undone runs are never listed
+    assert flat(listing(root, pid)) == [("t1", new, "shared.py", "code"), ("t1", new, "only_new.py", "code")]
+
+
+def test_a_project_without_runs_or_with_an_unreadable_id_lists_nothing(root):
+    recorded(root)
+    nothing = {"groups": [], "listed": 0, "more": 0}
+    assert outputs.backfill(root, "p-" + "0" * 8) == nothing
+    assert outputs.backfill(root, "nope") == nothing
+    assert outputs.backfill(root, None) == nothing
+
+
+def test_the_listing_names_at_most_5000_files_and_counts_the_rest(root, monkeypatch):
+    report, pid, _bare = recorded(root)
+    assert outputs.BACKFILL_LIMIT == 5000
+    monkeypatch.setattr(outputs, "BACKFILL_LIMIT", 4)
+    names = [f"gen/f{i}.py" for i in range(7)]
+    for rel in names:
+        put(root, rel, "x")
+    old = earlier(root, pid, "20261020T080000", [names[0], names[1], "gone.py", "pkg/__pycache__/x.pyc"])
+    new = earlier(root, pid, "20261021T080000", [names[2], names[3], names[4], names[5], names[6], names[0], "gone2.py"])
+    got = listing(root, pid)
+    assert (got["listed"], got["more"]) == (4, 3)                                                # names[0] is the newest run's; gone ones do not count
+    assert [f["path"] for g in got["groups"] for r in g["runs"] for f in r["files"]] == [names[2], names[3], names[4], names[5]]
+    assert [r["id"] for g in got["groups"] for r in g["runs"]] == [new]                          # the older run's files all fall past the bound
+    monkeypatch.setattr(outputs, "BACKFILL_LIMIT", 5000)
+    assert listing(root, pid)["listed"] == 7
+
+
+def test_the_listing_writes_nothing_to_the_project_or_to_the_runs(root):
+    report, pid, _bare = recorded(root)
+    put(root, "scripts/a.py", "x")
+    put(root, "reports/plan.md", "# plan")
+    earlier(root, pid, "20261020T080000", ["scripts/a.py", "reports/plan.md"])
+
+    def tree(*bases):
+        return {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for base in bases for p in base.rglob("*") if p.is_file()}
+
+    before = tree(root, runs.project_runs_dir(pid))
+    assert listing(root, pid)["listed"] == 2
+    assert tree(root, runs.project_runs_dir(pid)) == before
+
+
+def test_registering_what_the_listing_offers_says_person_and_created_and_stops_a_runs_documents_being_drafts(root):
+    people.write_me("Li", "li@example.com")
+    put(root, "reports/mine.md", "# My own draft\n\nWe reach 87.3% accuracy.\n")                # there before any run
+    report, pid, _bare = recorded(root)
+    second = second_record(root)
+    for rel in ("reports/plan.md", "scripts/fetch.py", "data/prices.csv", f"{OPENSTOCK}/sources/README.md"):
+        put(root, rel, "x")
+    earlier(root, pid, "20261024T101010", ["reports/plan.md", "scripts/fetch.py", f"{OPENSTOCK}/sources/README.md"])
+    earlier(root, pid, "20261025T090000", ["data/prices.csv"], task_id="t2")
+    got = listing(root, pid)
+    assert ingest_files.registered(root).get("document") is None                                  # nothing registered yet
+    for group in got["groups"]:                                                                   # one call per task, the suggested kinds
+        outputs.register_files(root, {"report": group["report"], "items": [
+            {"kind": f["kind"], "path": f["path"]} for r in group["runs"] for f in r["files"] if f["kind"]]})
+    mine = outputs.register_files(root, {"report": report, "items": [{"kind": "document", "path": "reports/mine.md"}]})
+    assert mine["registered"] == ["reports/mine.md"]
+    first, second_entries = entries_of_report(root, report), entries_of_report(root, second)
+    assert {p: (e["kind"], e["evidence"], e["created"], e["who"]) for p, e in first.items()} == {
+        "reports/plan.md": ("document", "person", True, "li@example.com"), "scripts/fetch.py": ("code", "person", True, "li@example.com"),
+        f"{OPENSTOCK}/sources/README.md": ("work", "person", True, "li@example.com"),
+        "reports/mine.md": ("document", "person", False, "li@example.com")}
+    assert {p: (e["kind"], e["created"]) for p, e in second_entries.items()} == {"data/prices.csv": ("data", True)}
+    assert ingest_files.registered(root)["document"] == frozenset({"reports/plan.md"})           # the run's document is no draft; mine still is
+    assert listing(root, pid) == {"groups": [], "listed": 0, "more": 0}                           # all of it registered now
+
+
+def test_the_listing_of_a_finished_run_is_what_its_filing_calls_unregistered_and_an_undo_empties_it(root):
+    """Through the manager, as a real run ends: the files the task row counts as new (19.4, 19.6) are the ones the list
+    for that run offers -- not the work folder's, the caches', the records' nor the registered output."""
+    pid = read_identity(root).identity.id
+    _tasks(root)
+    run_id = _run(root, pid, lang="en")
+    runs.update_run(pid, run_id, work_folder="work/20261025-probe", slug="probe")
+    rd = runs.run_dir(pid, run_id)
+    before = snapshot.take(root, copy_to=rd / "before")
+    (rd / "before.json").write_text(json.dumps(before))
+    put(root, "tables/counts.csv", "n\n2\n")
+    put(root, "work/20261025-probe/probe.py", "print(1)")
+    put(root, "loose.py", "print(2)")
+    put(root, "analysis/checks/verify.py", "print(3)")
+    put(root, "pkg/__pycache__/m.cpython-312.pyc", "x")
+    assert mcp_server.agent_complete_task(root, pid, run_id, "A report", outputs=[{"kind": "table", "path": "tables/counts.csv"}]).startswith("Saved")
+    agent_manager = manager.AgentManager()
+    assessed = agent_manager._assess(root, pid, run_id, runs.load_run(pid, run_id), before, lambda: [])
+    runs.update_run(pid, run_id, state="done", **{k: v for k, v in assessed.items() if k != "signal_info"})
+    assert assessed["filing"]["unregistered"] == ["analysis/checks/verify.py", "loose.py"]
+    assert [(p, k) for _t, _r, p, k in flat(listing(root, pid))] == [("analysis/checks/verify.py", "work"), ("loose.py", "code")]
+    tasks, _revision = workspace.read_tasks(root)
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"]["unregistered"] == 2          # the number the row shows
+    assert flat(listing(root, pid, run_id)) == flat(listing(root, pid))
+    agent_manager.revert(root, pid, run_id, by=None)
+    assert listing(root, pid) == {"groups": [], "listed": 0, "more": 0}                                    # moved away by the undo

@@ -12,10 +12,12 @@ the settings still read and `choose` says so (`folders`).
 
 A person registers a file for a task's result record, and takes a registration away, in the same catalog an agent's
 declaration goes to (DESIGN.md 19.5: `register_files`, `unregister_file`); the task rows and the views read the catalogs
-back with the task each entry belongs to (19.6: `task_outputs`, `catalog`).
+back with the task each entry belongs to (19.6: `task_outputs`, `catalog`). The files that runs before this one created
+and nobody registered are listed for the person to review, each with a suggested kind (19.5: `backfill`).
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import csv
 import io
@@ -777,3 +779,137 @@ def task_outputs(root: Path, project_id: str, tasks: Iterable[dict[str, Any]]) -
     except (OSError, ValueError):  # no runs folder to read, or no valid project id: no runs
         pass
     return {task["id"]: _task_outputs(root, task, latest.get(task["id"])) for task in wanted}
+
+
+# -- the files of earlier runs, for a person to review (DESIGN.md 19.5, 19.10 item 4) ---------------------------------
+
+#: How many files the listing of earlier runs' unregistered files names (19.5); past it, a count.
+BACKFILL_LIMIT = 5000
+#: 19.5's rule 1, the first to match: a path segment of a process file, or a file name of one.
+WORK_SEGMENTS = frozenset({"checks", "check", "logs", "log", "tmp", "scratch", "cache", "sources", "vendor"})
+WORK_NAMES = ("*_stdout.txt", "*_stderr.txt", "*.log", "report_check.*", "summary_check.*", "pytest*.xml", "*sha256*.json")
+#: Rule 2: an image, or a pdf under one of these folders, is a figure.
+FIGURE_SEGMENTS = frozenset({"figures", "figure", "plots", "fig"})
+IMAGE_SUFFIXES = SUFFIXES["figure"] - {".pdf"}
+
+
+def suggest_kind(rel: str) -> str | None:
+    """The kind DESIGN.md 19.5 suggests for a file an earlier run created, by the eight numbered rules, first match
+    wins; None is rule 8, not registered. The path is compared as the scan compares paths (`files.fold`), so `Checks/`
+    is `checks/`. Every kind returned is one the file's suffix lets a person register it as (`SUFFIXES`)."""
+    parts = ingest_files.fold(rel).split("/")
+    name, folders = parts[-1], set(parts[:-1])
+    suffix = posixpath.splitext(name)[1]
+    if WORK_SEGMENTS & set(parts) or any(fnmatch.fnmatchcase(name, pattern) for pattern in WORK_NAMES):
+        return "work"                                                               # 1
+    if suffix in IMAGE_SUFFIXES or (suffix == ".pdf" and FIGURE_SEGMENTS & folders):
+        return "figure"                                                             # 2
+    if suffix == ".bib":
+        return "literature"                                                         # 3
+    if suffix == ".toml" and "variables" in folders:
+        return "variable"
+    if suffix in SUFFIXES["code"]:
+        return "code"                                                               # 4
+    if suffix in {".csv", ".tsv"} and "tables" in folders:
+        return "table"                                                              # 5
+    if suffix in SUFFIXES["data"]:
+        return "data"                                                               # 6
+    if suffix in SUFFIXES["document"]:
+        return "document"                                                           # 7
+    return None                                                                     # 8
+
+
+def _has_record(root: Path, report: str) -> bool:
+    """Whether the result record `report` names is there to be read, as the views read the catalogs beside it."""
+    try:
+        catalog_path(report)
+        return _path(root, report).is_file()
+    except workspace.WorkspaceError:
+        return False
+
+
+def _registered_paths(root: Path) -> set[str]:
+    """Every path any catalog of the project names (`files.fold`), a catalog being what the views read: the one beside
+    a result record that is there. A catalog that cannot be read registers nothing."""
+    found: set[str] = set()
+    try:
+        directory = _path(root, "research/results")
+        sources = sorted(directory.iterdir()) if directory.is_dir() else []
+    except (workspace.WorkspaceError, OSError):
+        return found
+    for source in sources:
+        rel = source.relative_to(root).as_posix()
+        try:
+            if guard.is_output_record(rel) and _path(root, rel.removesuffix(".outputs.json") + ".md").is_file():
+                found.update(ingest_files.fold(item["path"]) for item in _entries(root, rel)[0])
+        except (workspace.WorkspaceError, OSError):
+            continue
+    return found
+
+
+def _run_moment(run: dict[str, Any]) -> str | None:
+    """When a run began, as local ISO time: its `started`, else its `created`, else the UTC time its id carries."""
+    for value in (run.get("started"), run.get("created")):
+        moment = _moment({"at": value}) if isinstance(value, str) else None
+        if moment is not None:
+            return moment.astimezone().isoformat(timespec="seconds")
+    moment = _moment({"run": run.get("id")})
+    return moment.astimezone().isoformat(timespec="seconds") if moment is not None else None
+
+
+def backfill(root: Path, project_id: Any, run_id: Any = None) -> dict[str, Any]:
+    """What a person may register from earlier runs (DESIGN.md 19.5, `GET /api/outputs/backfill`): for every run of the
+    project on this Mac that is not undone and whose task still exists with a result record -- `run_id` limits it to
+    that one run -- the files it created (`changes.created`) that are still regular files in the project (visible, so
+    `.DS_Store` is none; no link on the way: `workspace.existing_files`), and are not records (the run's `tool_paths`,
+    the app's record files, notes and results), not caches, not inside the run's own work folder (19.4 files those as
+    `work`, not as new) and not yet in any catalog; each with the kind `suggest_kind` proposes. A file a newer run
+    created again is listed once, under the newest run. Grouped by task, then by run, newest first:
+    `{"groups": [{"task", "text", "report", "runs": [{"id", "date", "agent", "files": [{"path", "kind"}]}]}],
+    "listed": n, "more": n}`, at most `BACKFILL_LIMIT` files named and the rest counted in `more`. It reads and writes
+    nothing of the project and nothing at all of the runs."""
+    tasks, _revision = workspace.read_tasks(root)
+    owners = {t["id"]: t for t in tasks if isinstance(t.get("report"), str) and t["report"] and _has_record(root, t["report"])}
+    registered = _registered_paths(root)
+    seen: set[str] = set()
+    groups: dict[str, dict[str, Any]] = {}
+    listed = more = 0
+    try:
+        found = [runs.load_run(project_id, run_id)] if isinstance(run_id, str) and run_id else runs.iter_runs(project_id)
+        for run in found:
+            changes = run.get("changes") if run else None
+            created = changes.get("created") if isinstance(changes, dict) else None
+            if not run or run.get("reverted") or run.get("task_id") not in owners or not isinstance(created, list):
+                continue
+            task = owners[run["task_id"]]
+            held = {ingest_files.fold(rel) for rel in run.get("tool_paths") or () if isinstance(rel, str)}
+            work = run.get("work_folder")
+            folder = ingest_files.fold(work).rstrip("/") + "/" if isinstance(work, str) and work else None
+            wanted = []
+            for rel in created:
+                key = ingest_files.fold(rel) if isinstance(rel, str) else None
+                if (key is None or key in seen or key in registered or key in held or _is_record(rel) or _is_cache(rel)
+                        or (folder is not None and key.startswith(folder))):
+                    continue
+                seen.add(key)
+                wanted.append(rel)
+            there: set[str] = set()
+            for start in range(0, len(wanted), workspace.EXISTS_LIMIT):
+                there.update(workspace.existing_files(root, wanted[start:start + workspace.EXISTS_LIMIT]))
+            files = []
+            for rel in wanted:
+                if rel not in there:
+                    continue
+                if listed >= BACKFILL_LIMIT:
+                    more += 1
+                    continue
+                files.append({"path": rel, "kind": suggest_kind(rel)})
+                listed += 1
+            if files:
+                group = groups.setdefault(task["id"], {"task": task["id"], "text": task_title(task["text"]),
+                                                       "report": task["report"], "runs": []})
+                group["runs"].append({"id": run.get("id"), "date": _run_moment(run),
+                                      "agent": run.get("label") or run.get("owner"), "files": files})
+    except (OSError, ValueError):  # no runs folder to read, or no valid project id or run id: no runs
+        pass
+    return {"groups": list(groups.values()), "listed": listed, "more": more}

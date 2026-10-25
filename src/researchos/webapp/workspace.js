@@ -1288,7 +1288,7 @@
   function outputsOf(task) { return (data && task.report && data.task_outputs && data.task_outputs[task.id]) || null; }
   function outputsSig(task) {
     const run = latestRun(task.id);
-    return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state)]);
+    return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state), run ? run.id : null]);
   }
   function outputRow(task, item, locked) {
     const li = el("li", "ws-output"), name = item.title || item.path;
@@ -1304,9 +1304,15 @@
     }
     return li;
   }
-  // Step 4 of task V15 (DESIGN.md 19.5, 19.10 item 4) puts 「登记…」 on this line: the button that opens the list of the
-  // run's new files for review, one run at a time. `info.filing` has the count; the run's own paths are in its detail.
-  function registerNewFilesHook(task, info, line) { /* step 4 */ }
+  // 登记… on the line of the count (DESIGN.md 19.5, 19.6): the list of the new files of the run the count is about, its
+  // latest, for review. `info.filing` has the count; the engine's listing has the paths.
+  function registerNewFilesHook(task, info, line) {
+    const run = latestRun(task.id);
+    if (!run) return;
+    const open = keyed(named(button(t("登记…"), () => openBackfill(run.id)), t("登记：{task}", { task: task.text })), "output-register:" + task.id);
+    open.disabled = !editable() || !!outputBusy[task.id] || isActiveState(run.state);
+    line.append(open);
+  }
   // The block, or nothing when the task has nothing to show: no file registered, no new file, no work folder.
   function taskOutputsBlock(task) {
     const info = outputsOf(task);
@@ -1377,6 +1383,172 @@
     if (!live(mark)) return;
     outputBusy[task.id] = false; drawTaskOutputs(task);
     if (typeof pollGeneration === "function") pollGeneration();
+  }
+
+  // -- 补登记以往运行的文件: the review list (DESIGN.md 19.5, 19.10 item 4) ----------------------------------------
+  // The engine lists the files that runs on this Mac created and nobody registered, by task and run, each with the kind
+  // it suggests (`GET /api/outputs/backfill`). The person reviews them in the side panel: a box and a kind for each file
+  // (the box is on when a kind is suggested; 不登记 is no kind and leaves the box off), a disclosure for each task and a
+  // select-all in it. 登记所选 registers each task's checked files with one call to /api/outputs/register, then reads the
+  // list again; a task whose call failed says so and keeps what the person chose. The list is the panel's subject like
+  // the folders form (`folderSubject`), so leaving it after a change asks first.
+  const BACKFILL_OPEN = 40;   // up to this many files every task starts open; with more, the person opens the ones to review
+  function backfillUrl(runId) {
+    const query = [];
+    if (data && data.id) query.push("project=" + encodeURIComponent(data.id));
+    if (runId) query.push("run=" + encodeURIComponent(runId));
+    return "/api/outputs/backfill" + (query.length ? "?" + query.join("&") : "");
+  }
+  function backfillFiles(group) { return (group.runs || []).flatMap((run) => run.files || []); }
+  // What the person has chosen for a file: its kind ("" is 不登记) and whether its box is on. A choice is made once, from
+  // the suggestion, and kept when the list is read again.
+  function backfillChoice(subject, file) {
+    return subject.choices[file.path] || (subject.choices[file.path] = { kind: file.kind || "", on: !!file.kind });
+  }
+  function backfillTicked(subject, group) {
+    return backfillFiles(group).filter((file) => { const choice = backfillChoice(subject, file); return choice.on && !!choice.kind; });
+  }
+  function backfillLocked(subject) { return subject.busy || !editable(); }
+  // The counts, the pictures of the rows and the sentence under the buttons are drawn from `subject`, so that ticking a
+  // box changes them and not the list: a long list keeps its place.
+  function drawBackfill(subject) {
+    const groups = (subject.listing && subject.listing.groups) || [], kinds = outputKinds();
+    const body = el("div", "ws-backfill"), total = groups.reduce((n, group) => n + backfillFiles(group).length, 0);
+    const syncs = [], repaints = [];
+    const count = el("p", "ws-backfill-total"), says = el("p", "ws-status"), footer = el("div", "ws-agent-actions");
+    says.setAttribute("role", "status");
+    const register = keyed(button(t("登记所选"), () => registerBackfill(subject), "btn btn-primary btn-small"), "backfill-register");
+    footer.append(register);
+    function sync() {
+      syncs.forEach((f) => f());
+      const n = groups.reduce((sum, group) => sum + backfillTicked(subject, group).length, 0);
+      count.textContent = t("已选 {n} 项，共 {total} 项", { n: n, total: total });
+      register.disabled = !n || backfillLocked(subject);
+    }
+    subject.lock = () => { repaints.forEach((f) => f()); sync(); };
+    panelBody.replaceChildren(body);
+    if (!groups.length) body.append(quiet(t("没有需要补登记的文件。")));
+    else body.append(quiet(t("这些文件由以往的运行创建，还没有登记。勾选的文件会登记到各自的任务下，文件本身不会移动。")));
+    groups.forEach((group) => {
+      const files = backfillFiles(group), box = el("details", "res-draft"), summary = disclosureSummary(group.text || group.task);
+      const tally = el("span", "ws-agent-quiet"), inner = el("div", "res-draft-body"), rows = {}, bulk = [];
+      summary.append(tally);
+      syncs.push(() => { tally.textContent = t("已选 {n} 项，共 {total} 项", { n: backfillTicked(subject, group).length, total: files.length }); });
+      box.open = subject.notes[group.task] ? true
+        : Object.prototype.hasOwnProperty.call(subject.open, group.task) ? subject.open[group.task] : total <= BACKFILL_OPEN;
+      if (subject.notes[group.task]) { const problem = el("p", "ws-status err", subject.notes[group.task]); problem.setAttribute("role", "status"); inner.append(problem); }
+      function paint(file) {
+        const row = rows[file.path], choice = backfillChoice(subject, file);
+        if (!row) return;
+        row.select.value = choice.kind; row.select.disabled = backfillLocked(subject);
+        row.box.checked = choice.on && !!choice.kind; row.box.disabled = !choice.kind || backfillLocked(subject);
+      }
+      function touched(file) { subject.dirty = true; paint(file); sync(); }
+      function fileRow(file) {
+        const li = el("li", "ws-backfill-file"), label = el("label", "ws-undo-row"), tick = keyed(el("input"), "backfill:" + file.path);
+        const kind = keyed(named(el("select", "form-input"), t("登记为：{file}", { file: file.path })), "backfill-kind:" + file.path);
+        tick.type = "checkbox";
+        tick.addEventListener("change", () => { backfillChoice(subject, file).on = tick.checked; touched(file); });
+        Object.keys(kinds).forEach((name) => { const option = el("option", null, kinds[name]); option.value = name; kind.append(option); });
+        const none = el("option", null, t("不登记")); none.value = ""; kind.append(none);
+        kind.addEventListener("change", () => {
+          const choice = backfillChoice(subject, file);
+          choice.on = kind.value ? (choice.kind ? choice.on : true) : false;   // a kind for a file without one ticks it; 不登记 clears it
+          choice.kind = kind.value; touched(file);
+        });
+        label.append(tick, el("code", null, file.path));
+        rows[file.path] = { box: tick, select: kind };
+        li.append(label, kind); paint(file);
+        return li;
+      }
+      function setAll(on) {
+        files.forEach((file) => { const choice = backfillChoice(subject, file); if (choice.kind) choice.on = on; paint(file); });
+        subject.dirty = true; sync();
+      }
+      // The rows of a task are drawn when its disclosure is open, not before: a long list costs nothing until it is read.
+      let filled = false;
+      function fill() {
+        if (filled || !box.open) return;
+        filled = true;
+        const all = keyed(button(t("全部勾选"), () => setAll(true)), "backfill-all:" + group.task);
+        const none = keyed(button(t("全部取消勾选"), () => setAll(false)), "backfill-none:" + group.task);
+        const actions = el("div", "ws-agent-actions");
+        bulk.push(all, none); actions.append(all, none); inner.append(actions);
+        (group.runs || []).forEach((run) => {
+          const head = el("p", "ws-backfill-run"), list = el("ul", "ws-agent-files ws-undo-list");
+          head.append(el("span", null, whenWords(run.date)), el("span", null, run.agent || ""));
+          (run.files || []).forEach((file) => list.append(fileRow(file)));
+          inner.append(head, list);
+        });
+        all.disabled = none.disabled = backfillLocked(subject);
+      }
+      repaints.push(() => { files.forEach(paint); bulk.forEach((node) => { node.disabled = backfillLocked(subject); }); });
+      box.addEventListener("toggle", () => { subject.open[group.task] = box.open; fill(); });
+      box.append(summary, inner); body.append(box);
+      fill();
+    });
+    const more = Number(subject.listing && subject.listing.more) || 0;
+    if (more > 0) body.append(quiet(t("另有 {n} 个没有列出。", { n: countText(more) })), quiet(t("登记已列出的文件后再打开，才会列出其余的。")));
+    if (groups.length) body.append(count, footer);
+    if (subject.status) status(says, subject.status.words, subject.status.kind);
+    body.append(says);
+    sync();
+  }
+  // The rows' 任务输出 and the other views after files were registered: the counts are read again, as removing a
+  // registration does, and the page's poll is asked to look at the project.
+  async function readOutputsAgain(mark) {
+    try {
+      const fresh = await apiGet("/api/workspace");
+      if (live(mark) && data && fresh.project === project() && fresh.task_outputs) data.task_outputs = fresh.task_outputs;
+    } catch (err) { /* the page reads the project again on its own */ }
+    if (!live(mark)) return;
+    ((data && data.tasks) || []).forEach(drawTaskOutputs);
+    if (typeof pollGeneration === "function") pollGeneration();
+  }
+  async function registerBackfill(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !editable() || !here()) return;
+    const chosen = ((subject.listing && subject.listing.groups) || []).map((group) => ({ group: group, files: backfillTicked(subject, group) })).filter((x) => x.files.length);
+    if (!chosen.length) return;
+    subject.busy = true; subject.notes = {}; subject.status = null; subject.lock();
+    let done = 0, failed = 0;
+    for (const entry of chosen) {
+      try {
+        await apiPost("/api/outputs/register", { project: project(), report: entry.group.report,
+          items: entry.files.map((file) => ({ kind: backfillChoice(subject, file).kind, path: file.path })) });
+        done += entry.files.length;
+      } catch (err) {
+        failed += 1; subject.notes[entry.group.task] = errorWords(t("没能登记这项任务的文件。"), err);
+      }
+      if (!live(mark)) break;   // the project changed: what was asked of the old one is done, the rest is not this project's
+    }
+    if (done && live(mark)) await readOutputsAgain(mark);
+    if (!here()) return;
+    subject.busy = false; subject.dirty = failed > 0;
+    const lines = [];
+    if (done) lines.push(t("已登记 {n} 个文件。", { n: countText(done) }));
+    if (failed) lines.push(t("有 {n} 项任务的文件没能登记，选择都还在。", { n: failed }));
+    subject.status = { words: lines.join("\n"), kind: failed ? "err" : "ok" };
+    try {
+      subject.listing = await apiGet(backfillUrl(subject.run));
+    } catch (err) { subject.status = { words: errorWords(t("没能读取要补登记的文件。"), err), kind: "err" }; }
+    if (!here()) return;
+    drawBackfill(subject);
+    focusKey(panelBody, "backfill-register");
+  }
+  // runId: the one run to list (the task row's 登记…), or none for every run (the 输出目录 panel's button).
+  async function openBackfill(runId) {
+    if (!mayReplacePanel()) return;
+    const mark = stamp();
+    const subject = { kind: "backfill", dirty: false, mark: mark, run: runId || null, busy: false, listing: null, choices: {}, open: {}, notes: {}, status: null, lock: null };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("补登记以往运行的文件"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const listing = await apiGet(backfillUrl(subject.run));
+      if (!live(mark) || state.panelSubject !== subject) return;
+      subject.listing = listing; drawBackfill(subject);
+    } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取要补登记的文件。"), err), "err"); }
   }
 
   // -- the actions ---------------------------------------------------------------------------------
@@ -2062,6 +2234,16 @@
       });
       form.addEventListener("submit", (event) => { event.preventDefault(); if (!save.disabled) save.click(); });
       form.append(save, feedback); panelBody.append(form);
+      // 19.5: the files earlier runs created and nobody registered, offered for review when there are any
+      try {
+        const earlier = await apiGet(backfillUrl(null));
+        const n = active() && earlier ? (Number(earlier.listed) || 0) + (Number(earlier.more) || 0) : 0;
+        if (n > 0) {
+          const offer = el("div", "ws-backfill-offer");
+          offer.append(quiet(t("以往的运行创建了 {n} 个还没登记的文件。", { n: countText(n) })), keyed(button(t("补登记以往运行的文件…"), () => openBackfill(null)), "output-backfill"));
+          panelBody.append(offer);
+        }
+      } catch (err) { /* no list, no offer: the folders are what this panel is for */ }
     } catch (err) { if (active()) status(note, errorWords(t("没能读取输出目录。"), err), "err"); }
   }
 

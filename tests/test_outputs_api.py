@@ -173,3 +173,65 @@ def test_the_views_rows_name_their_task_and_time_over_http(writing_server):
     rows = _get(base, "/api/results")[1]["outputs"]["items"]
     assert {r["path"] for r in rows} == {"tables/summary.csv", "tables/two.csv"}
     assert all(r["task_title"] == "Clean the survey data" and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", r["at"]) for r in rows)
+
+
+# -- V15 step 4: the listing of earlier runs' files (DESIGN 19.5, 19.10 item 4) ------------------------------------------
+
+
+def _earlier_project(root):
+    """Two tasks with result records and a finished run of each that created files; (report1, report2, pid, run1, run2)."""
+    from test_outputs import earlier, second_record
+
+    report, pid, _bare = _recorded(root)
+    second = second_record(root)
+    for rel in ("scripts/fetch.py", "data/prices.csv", "reports/plan.md", "checks/run_stdout.txt"):
+        put(root, rel, "x")
+    old = earlier(root, pid, "20261024T101010", ["scripts/fetch.py", "data/prices.csv", "checks/run_stdout.txt"])
+    new = earlier(root, pid, "20261025T090000", ["reports/plan.md"], task_id="t2")
+    return report, second, pid, old, new
+
+
+def test_the_backfill_route_lists_by_task_and_run_with_kinds_and_writes_nothing(writing_server):
+    base, root, httpd = writing_server
+    report, second, pid, old, new = _earlier_project(root)
+    served = httpd.get_served()
+    before = sorted(str(p) for p in root.rglob("*"))
+    status, got = _get(base, f"/api/outputs/backfill?project={pid}")
+    assert status == 200 and served.project_id == pid
+    assert [(g["task"], g["report"]) for g in got["groups"]] == [("t2", second), ("t1", report)]
+    assert [(r["id"], [(f["path"], f["kind"]) for f in r["files"]]) for g in got["groups"] for r in g["runs"]] == [
+        (new, [("reports/plan.md", "document")]),
+        (old, [("scripts/fetch.py", "code"), ("data/prices.csv", "data"), ("checks/run_stdout.txt", "work")])]
+    assert (got["listed"], got["more"]) == (4, 0)
+    assert sorted(str(p) for p in root.rglob("*")) == before                                  # a read: no catalog, nothing
+    assert _get(base, "/api/outputs/backfill")[1] == got                                       # the open project when none is named
+    assert _get(base, f"/api/outputs/backfill?project={root}")[1] == got                       # its path names it too
+    only = _get(base, f"/api/outputs/backfill?project={pid}&run={old}")[1]
+    assert [r["id"] for g in only["groups"] for r in g["runs"]] == [old] and only["listed"] == 3
+    assert _get(base, f"/api/outputs/backfill?project={pid}&run=r-20260101T000000Z-aaaaaa")[1]["groups"] == []
+
+
+def test_the_backfill_route_refuses_a_window_of_another_project_and_still_reads_a_read_only_one(writing_server):
+    base, root, httpd = writing_server
+    _earlier_project(root)
+    status, refused = _get(base, "/api/outputs/backfill?project=p-00000000")
+    assert status == 409 and refused["state"] == "workspace_project_changed"
+    assert _get(base, "/api/outputs/backfill?project=/another/project")[0] == 409
+    httpd.set_served(dataclasses.replace(httpd.get_served(), read_only=True))
+    status, got = _get(base, "/api/outputs/backfill")
+    assert status == 200 and got["listed"] == 4                                                # a listing is a read, not a write
+
+
+def test_what_the_route_lists_is_registered_one_call_per_task_and_leaves_the_listing_empty(writing_server):
+    base, root, _httpd = writing_server
+    report, second, pid, _old, _new = _earlier_project(root)
+    got = _get(base, f"/api/outputs/backfill?project={pid}")[1]
+    for group in got["groups"]:
+        items = [{"kind": f["kind"], "path": f["path"]} for r in group["runs"] for f in r["files"]]
+        status, done = _post(base, "/api/outputs/register", {"project": str(root), "report": group["report"], "items": items})
+        assert status == 200 and done["registered"] == [i["path"] for i in items]
+    entries = {e["path"]: e for r in (report, second) for e in json.loads((root / outputs.catalog_path(r)).read_text())["items"]}
+    assert {p: (e["evidence"], e["created"]) for p, e in entries.items()} == {
+        "scripts/fetch.py": ("person", True), "data/prices.csv": ("person", True),
+        "checks/run_stdout.txt": ("person", True), "reports/plan.md": ("person", True)}
+    assert _get(base, f"/api/outputs/backfill?project={pid}")[1] == {"groups": [], "listed": 0, "more": 0}

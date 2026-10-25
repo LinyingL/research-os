@@ -180,3 +180,13 @@
 .ws-output-preview { flex: 0 0 100%; }
 .ws-output-figure { display: block; max-width: 160px; max-height: 110px; object-fit: contain; }
 .ws-outputs-line { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; overflow-wrap: anywhere; }
+
+/* 补登记以往运行的文件 (DESIGN.md 19.5, 12.11): the review list in the side panel, grouped by task (a disclosure that
+   collapses) and by run; a file is a box, its path and a select of its kind. A long group scrolls inside itself. */
+.ws-backfill { display: flex; flex-direction: column; gap: .5rem; font-size: .8rem; }
+.ws-backfill-run { margin: .5rem 0 .2rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; font-size: .76rem; color: var(--ink-soft); }
+.ws-backfill-file { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; }
+.ws-backfill-file .ws-undo-row { flex: 1 1 16rem; }
+.ws-backfill-file select { flex: none; width: auto; max-width: 100%; font-size: .76rem; padding: .1rem .3rem; }
+.ws-backfill-total { margin: 0; color: var(--ink-soft); font-size: .76rem; }
+.ws-backfill-offer { margin-top: 1.2rem; }

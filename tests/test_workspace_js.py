@@ -2598,7 +2598,7 @@ console.log(JSON.stringify({heading:block.children[0].textContent,groups,titles,
     assert out["images"] == [["/api/workspace/asset?path=figures%2Ffit.png", "Fit"]]         # a small preview for an image, not the pdf
     assert out["openedFiles"] == ["figures/fit.png", "src/model.py"]                          # the shared file panel
     assert "文件已改动" in out["text"] and out["text"].count("移除登记") == 5
-    assert out["lines"] == [["2 个新文件未登记"], ["工作文件夹", "work/20261025-run-the-model", "7 个文件"]]
+    assert out["lines"] == [["2 个新文件未登记", "登记…"], ["工作文件夹", "work/20261025-run-the-model", "7 个文件"]]      # 19.5: 登记… ends the line of the count
     assert out["inDetails"] and out["others"] == 1                                            # only the task with a record has one
     assert out["order"][-2:] == ["ws-agent", "ws-task-outputs"]                               # under the run controls
     assert out["posted"] == []
@@ -2621,7 +2621,7 @@ console.log(JSON.stringify(seen));
 """)
     assert out == [None, None,
                    "任务输出还没有登记的文件。工作文件夹work/w0 个文件",
-                   "任务输出还没有登记的文件。1 个新文件未登记",
+                   "任务输出还没有登记的文件。1 个新文件未登记登记…",
                    "任务输出输出清单暂时无法读取。",
                    "任务输出还没有登记的文件。工作文件夹work/w超过 5000 个文件",
                    None, None]
@@ -2637,15 +2637,15 @@ await show({filing:counts(1200),work_folder:'work/w',work_files:1500});
 await show({work_folder:'work/w',work_files:5000,work_files_more:true});
 console.log(JSON.stringify(seen));
 """, lang="en")
-    assert out == [["Code1 file", "1 new file not registered", "Work folderwork/w1 file"],
-                   ["Code1 file", "1,200 new files not registered", "Work folderwork/w1,500 files"],
+    assert out == [["Code1 file", "1 new file not registeredRegister…", "Work folderwork/w1 file"],
+                   ["Code1 file", "1,200 new files not registeredRegister…", "Work folderwork/w1,500 files"],
                    ["Code1 file", "Work folderwork/wMore than 5,000 files"]]
     zh = run(_OUTPUTS + r"""
 listed.task_outputs.t1.filing=counts(1200);listed.task_outputs.t1.work_files=15000;
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify(blockOf().all().filter(e=>e.classList.contains('ws-outputs-line')).map(e=>e.textContent)));
 """)
-    assert zh == ["1200 个新文件未登记", "工作文件夹work/20261025-run-the-model15000 个文件"]       # Chinese stays as it is
+    assert zh == ["1200 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model15000 个文件"]       # Chinese stays as it is
 
 
 def test_removing_a_registration_asks_first_leaves_the_file_and_reads_the_counts_again():
@@ -2673,7 +2673,7 @@ console.log(JSON.stringify({declined,during,posted,titles:block.all().filter(e=>
     assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "figures/two.pdf"}]]
     assert out["during"]["disabled"] and out["during"]["aria"][0] == "移除登记：model.py"
     assert out["titles"] == ["model.py", "Fit", "Summary", "run.log"]
-    assert out["line"] == "3 个新文件未登记" and out["enabled"] and out["reread"] == 1 and out["generations"] >= 1
+    assert out["line"] == "3 个新文件未登记登记…" and out["enabled"] and out["reread"] == 1 and out["generations"] >= 1
 
 
 def test_the_question_and_the_buttons_of_a_registration_read_in_english_without_chinese():
@@ -2750,12 +2750,330 @@ console.log(JSON.stringify({before,after:classes(),block:!!blockOf()}));
     assert out["after"][-2:] == ["ws-agent", "ws-task-outputs"] and out["block"]
 
 
-def test_the_hook_for_registering_the_new_files_is_left_for_step_4_and_draws_nothing_yet():
-    out = run(_OUTPUTS + r"""
+# -- V15 step 4: the review list of earlier runs' files (DESIGN.md 19.5, 19.10 item 4) -----------------------------------
+
+REPORT2 = "research/results/" + "c" * 32 + ".md"
+
+#: Two tasks with records, the engine's listing for them (`server.listing`, which a registration empties as the engine
+#: would), the 输出目录 panel's answers, and handles on the list's rows: `rowFor(path)` is li > [label > [box, path], kind].
+_BACKFILL = _OUTPUTS + r"""
+const REPORT2='research/results/'+'c'.repeat(32)+'.md';
+listed.tasks=[agentTask({done:true,report:REPORT_FILE}),agentTask({id:'t2',text:'Second task',owner:'',report:REPORT2})];
+const SWORD='research/sword_backtest_review_20261024';
+const group=(task,text,report,runs)=>({task:task,text:text,report:report,runs:runs});
+const runOf=(id,date,agent,files)=>({id:id,date:date,agent:agent,files:files.map(f=>typeof f==='string'?{path:f,kind:null}:{path:f[0],kind:f[1]})});
+const baseListing=()=>({groups:[
+  group('t1','Run the model',REPORT_FILE,[runOf('r-20261024T101010Z-aaaaaa','2026-10-24T10:10:10+02:00','Claude Code · sonnet',
+    [[SWORD+'/checks/verify.py','work'],[SWORD+'/scripts/fetch.py','code'],[SWORD+'/figures/equity.png','figure'],'LICENSE'])]),
+  group('t2','Second task',REPORT2,[runOf('r-20261025T090000Z-bbbbbb','2026-10-25T09:00:00+02:00','Codex · gpt',
+    [['reports/plan.md','document'],['reports/notes.md','document']])])],listed:6,more:0});
+const server={listing:baseListing(),fail:null,broken:false,calls:[]};
+const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:'work'};
+customGet=path=>{
+  if(path==='/api/outputs/folders') return {folders:folders,revision:'r0'};
+  if(path.startsWith('/api/outputs/backfill')) { if(server.broken) { const e=new Error('boom');e.engineMessage='No runs.';throw e; } return clone(server.listing); }
+};
+customPost=(path,body)=>{
+  if(path!=='/api/outputs/register') return undefined;
+  server.calls.push(body.report);
+  if(server.fail===body.report) { const e=new Error('conflict');e.engineMessage='The catalog changed.';throw e; }
+  server.listing.groups.forEach(g=>{ if(g.report===body.report) g.runs.forEach(r=>{ r.files=r.files.filter(f=>!body.items.some(i=>i.path===f.path)); }); });
+  server.listing.groups.forEach(g=>{ g.runs=g.runs.filter(r=>r.files.length); });
+  server.listing.groups=server.listing.groups.filter(g=>g.runs.length);
+  return {catalog:'x',registered:body.items.map(i=>i.path),generation:3};
+};
+const openList=async()=>{ await window.ROWorkspace.load(root);await sleepTick();await find(window.ROI18N.t('输出目录')).click();await find(window.ROI18N.t('补登记以往运行的文件…'),panelBody).click(); };
+const FILES=()=>panelBody.all().filter(e=>e.classList.contains('ws-backfill-file'));
+const rowFor=path=>FILES().find(li=>li.children[0].children[1].textContent===path);
+const boxOf=path=>rowFor(path).children[0].children[0];
+const kindOf=path=>rowFor(path).children[1];
+const pick=async(path,value)=>{ const s=kindOf(path);s.value=value;await s.emit('change'); };
+const tick=async(path,on)=>{ const b=boxOf(path);b.checked=on;await b.emit('change'); };
+const groupsIn=()=>panelBody.all().filter(e=>e.tagName==='DETAILS');
+const registerButton=()=>panelBody.all().find(e=>e.tagName==='BUTTON'&&e.dataset.key==='backfill-register');
+const registered=()=>posted.filter(p=>p[0]==='/api/outputs/register').map(p=>p[1]);
+const says=()=>panelBody.all().filter(e=>e.getAttribute('role')==='status').map(e=>e.textContent).filter(Boolean);
+const totalLine=()=>panelBody.all().filter(e=>e.classList.contains('ws-backfill-total')).map(e=>e.textContent);
+"""
+
+
+def test_the_output_folders_panel_offers_the_review_list_only_when_there_is_something_to_review():
+    out = run(_BACKFILL + r"""
 await window.ROWorkspace.load(root);await sleepTick();
-console.log(JSON.stringify({line:blockOf().all().filter(e=>e.classList.contains('ws-outputs-line'))[0].children.map(e=>e.tagName+':'+e.textContent)}));
+const offered=async()=>{ await find('输出目录').click(); const offer=panelBody.all().find(e=>e.classList.contains('ws-backfill-offer'));
+  return [!!find('补登记以往运行的文件…',panelBody),offer?offer.children[0].textContent:null]; };
+const seen=[await offered()];
+server.listing={groups:[],listed:0,more:0};seen.push(await offered());
+server.listing=baseListing();server.broken=true;seen.push(await offered());
+server.broken=false;server.listing.more=1200;server.listing.listed=5000;seen.push(await offered());
+console.log(JSON.stringify({seen,gets:gets.filter(g=>g.startsWith('/api/outputs/backfill')).slice(0,1),folderForm:!!field('过程文件',panelBody)}));
 """)
-    assert out["line"] == ["SPAN:2 个新文件未登记"]                                 # step 4 adds 「登记…」 after the count
+    assert out["seen"] == [[True, "以往的运行创建了 6 个还没登记的文件。"], [False, None], [False, None],
+                           [True, "以往的运行创建了 6200 个还没登记的文件。"]]
+    assert out["gets"] == ["/api/outputs/backfill?project=p-study"] and out["folderForm"]       # the form is there whatever the list says
+
+
+def test_the_review_list_groups_by_task_and_run_with_a_box_and_a_kind_for_each_file():
+    out = run(_BACKFILL + r"""
+await openList();
+const kindRow=path=>[boxOf(path).checked,boxOf(path).disabled,kindOf(path).value];
+console.log(JSON.stringify({title:panelTitle.textContent,heads:groupsIn().map(d=>d.children[0].textContent),opened:groupsIn().map(d=>d.open),
+  runs:panelBody.all().filter(e=>e.classList.contains('ws-backfill-run')).map(e=>e.children.map(c=>c.textContent)),
+  files:FILES().map(li=>li.children[0].children[1].textContent),
+  options:optionsOf(kindOf('LICENSE')),
+  rows:[SWORD+'/checks/verify.py',SWORD+'/scripts/fetch.py',SWORD+'/figures/equity.png','LICENSE','reports/plan.md'].map(kindRow),
+  label:kindOf('LICENSE').getAttribute('aria-label'),total:totalLine(),
+  register:[registerButton().textContent,registerButton().disabled],intro:panelBody.children[0].children[0].textContent,
+  url:gets.filter(g=>g.startsWith('/api/outputs/backfill')).slice(-1)[0],posted}));
+""")
+    sword = "research/sword_backtest_review_20261024"
+    assert out["title"] == "补登记以往运行的文件"
+    assert out["heads"] == ["Run the model已选 3 项，共 4 项", "Second task已选 2 项，共 2 项"] and out["opened"] == [True, True]
+    assert out["runs"] == [["2026-10-24 10:10", "Claude Code · sonnet"], ["2026-10-25 09:00", "Codex · gpt"]]
+    assert out["files"] == [f"{sword}/checks/verify.py", f"{sword}/scripts/fetch.py", f"{sword}/figures/equity.png", "LICENSE",
+                            "reports/plan.md", "reports/notes.md"]
+    assert out["options"] == [["代码", "code"], ["数据", "data"], ["图", "figure"], ["表", "table"], ["文献", "literature"],
+                              ["文稿与报告", "document"], ["变量草稿", "variable"], ["过程文件", "work"], ["不登记", ""]]
+    assert out["rows"] == [[True, False, "work"], [True, False, "code"], [True, False, "figure"],
+                           [False, True, ""], [True, False, "document"]]       # a suggested kind is on; none suggested is 不登记, off
+    assert out["label"] == "登记为：LICENSE" and out["total"] == ["已选 5 项，共 6 项"]
+    assert out["register"] == ["登记所选", False] and out["intro"].startswith("这些文件由以往的运行创建")
+    assert out["url"] == "/api/outputs/backfill?project=p-study" and out["posted"] == []
+
+
+def test_the_boxes_and_kinds_follow_each_other_and_a_group_selects_all_or_none_of_its_own():
+    out = run(_BACKFILL + r"""
+await openList();
+const snap=()=>FILES().map(li=>(li.children[0].children[0].checked?'on:':'off:')+li.children[1].value);
+const first=snap(), dirtyBefore=window.ROWorkspace.isDirty();
+await pick('LICENSE','document');                          // a kind for a file without one ticks it
+const chosen=[boxOf('LICENSE').checked,boxOf('LICENSE').disabled,window.ROWorkspace.isDirty()];
+await pick('LICENSE','');                                  // 不登记 clears the box and takes it away
+const none=[boxOf('LICENSE').checked,boxOf('LICENSE').disabled];
+await tick('reports/plan.md',false);await pick('reports/plan.md','data');   // a kind changed on a file left off stays off
+const left=[boxOf('reports/plan.md').checked,kindOf('reports/plan.md').value];
+await find('全部取消勾选',groupsIn()[1]).click();
+const second=snap().slice(4);
+await find('全部勾选',groupsIn()[0]).click();
+const afterAll={state:snap().slice(0,4),heads:groupsIn().map(d=>d.children[0].textContent),total:totalLine()};
+await find('全部取消勾选',groupsIn()[0]).click();
+console.log(JSON.stringify({first,dirtyBefore,chosen,none,left,second,afterAll,after:snap(),register:registerButton().disabled}));
+""")
+    assert out["first"] == ["on:work", "on:code", "on:figure", "off:", "on:document", "on:document"] and out["dirtyBefore"] is False
+    assert out["chosen"] == [True, False, True] and out["none"] == [False, True]
+    assert out["left"] == [False, "data"]
+    assert out["second"] == ["off:data", "off:document"]
+    assert out["afterAll"]["state"] == ["on:work", "on:code", "on:figure", "off:"]            # a file with no kind has nothing to be ticked for
+    assert out["afterAll"]["heads"] == ["Run the model已选 3 项，共 4 项", "Second task已选 0 项，共 2 项"]
+    assert out["afterAll"]["total"] == ["已选 3 项，共 6 项"]
+    assert out["after"] == ["off:work", "off:code", "off:figure", "off:", "off:data", "off:document"] and out["register"] is True
+
+
+def test_register_selected_makes_one_call_per_task_with_the_checked_files_and_reads_the_list_again():
+    out = run(_BACKFILL + r"""
+await openList();
+await tick(SWORD+'/checks/verify.py',false);       // left alone
+await pick(SWORD+'/scripts/fetch.py','data');      // registered as another kind than the suggestion
+await pick('LICENSE','document');
+const getsBefore=gets.filter(g=>g==='/api/workspace').length, generationsBefore=generations;
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({calls:registered(),left:server.listing.groups.map(g=>[g.task,g.runs.map(r=>r.files.map(f=>f.path))]),
+  shown:FILES().map(li=>li.children[0].children[1].textContent),says:says(),dirty:window.ROWorkspace.isDirty(),
+  reread:gets.filter(g=>g==='/api/workspace').length-getsBefore,generations:generations-generationsBefore,
+  listGets:gets.filter(g=>g.startsWith('/api/outputs/backfill')).length}));
+""")
+    sword = "research/sword_backtest_review_20261024"
+    assert out["calls"] == [
+        {"project": "/projects/study", "report": REPORT, "items": [{"kind": "data", "path": f"{sword}/scripts/fetch.py"},
+                                                                    {"kind": "figure", "path": f"{sword}/figures/equity.png"},
+                                                                    {"kind": "document", "path": "LICENSE"}]},
+        {"project": "/projects/study", "report": REPORT2,
+         "items": [{"kind": "document", "path": "reports/plan.md"}, {"kind": "document", "path": "reports/notes.md"}]}]
+    assert out["left"] == [["t1", [[f"{sword}/checks/verify.py"]]]] and out["shown"] == [f"{sword}/checks/verify.py"]
+    assert out["says"] == ["已登记 5 个文件。"] and out["dirty"] is False
+    assert out["reread"] == 1 and out["generations"] >= 1 and out["listGets"] == 3          # the folders panel's, the list's and the one after
+
+
+def test_a_file_set_to_not_register_is_never_sent_and_registering_everything_leaves_an_empty_list():
+    out = run(_BACKFILL + r"""
+await openList();
+await pick('LICENSE','');                                  // 不登记
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({sent:registered().map(c=>c.items.map(i=>i.path)).flat().includes('LICENSE'),counts:registered().map(c=>c.items.length),
+  left:server.listing.groups.map(g=>g.task),shown:FILES().map(li=>li.children[0].children[1].textContent)}));
+""")
+    assert out == {"sent": False, "counts": [3, 2], "left": ["t1"], "shown": ["LICENSE"]}    # LICENSE has no kind and stays to be reviewed
+    out = run(_BACKFILL + r"""
+server.listing.groups=[server.listing.groups[1]];server.listing.listed=2;
+await openList();
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({text:panelBody.textContent,buttons:buttonsIn(panelBody),says:says()}));
+""")
+    assert out["says"] == ["已登记 2 个文件。"] and "没有需要补登记的文件。" in out["text"] and out["buttons"] == []
+
+
+def test_a_task_that_could_not_be_registered_says_so_in_its_group_and_keeps_what_the_person_chose():
+    out = run(_BACKFILL + r"""
+await openList();
+server.fail=REPORT2;
+await pick('reports/notes.md','table');await tick('reports/plan.md',false);
+await registerButton().click();await sleepTick();
+const heads=groupsIn().map(d=>[d.open,d.children[0].textContent]);
+const notes=groupsIn()[1].all().filter(e=>e.classList.contains('err')).map(e=>e.textContent), focus=document.activeElement&&document.activeElement.dataset.key;
+const kept=[boxOf('reports/plan.md').checked,boxOf('reports/notes.md').checked,kindOf('reports/notes.md').value];
+const dirty=window.ROWorkspace.isDirty(), status=panelBody.all().filter(e=>e.classList.contains('err')).map(e=>e.textContent);
+server.fail=null;
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({calls:server.calls,heads,notes,focus,kept,dirty,status,after:{says:says(),dirty:window.ROWorkspace.isDirty(),notes:panelBody.all().filter(e=>e.classList.contains('err')).length,
+  files:FILES().map(li=>li.children[0].children[1].textContent)}}));
+""")
+    assert out["calls"] == [REPORT, REPORT2, REPORT2]                                       # t1 went through; t2 failed, then went through
+    assert out["heads"] == [[True, "Run the model已选 0 项，共 1 项"], [True, "Second task已选 1 项，共 2 项"]]   # t1's three are registered; t2 opens on its note
+    assert out["notes"] == ["没能登记这项任务的文件。 The catalog changed."] and out["focus"] == "backfill-register"
+    assert out["kept"] == [False, True, "table"] and out["dirty"] is True                   # the choices stay, and are not yet saved
+    assert out["status"] == ["没能登记这项任务的文件。 The catalog changed.", "已登记 3 个文件。\n有 1 项任务的文件没能登记，选择都还在。"]
+    assert out["after"] == {"says": ["已登记 1 个文件。"], "dirty": False, "notes": 0, "files": ["LICENSE", "reports/plan.md"]}
+
+
+def test_closing_the_panel_while_registering_does_not_cut_the_batch_short():
+    out = run(_BACKFILL + r"""
+await openList();
+const base=customPost;
+customPost=(path,body)=>{ const answer=base(path,body); if(body.report===REPORT_FILE) { closePanel(); } return answer; };   // the person closes the panel after the first call
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({calls:server.calls,left:server.listing.groups.length,open:!panel.classList.contains('hidden')}));
+""")
+    assert out == {"calls": [REPORT, REPORT2], "left": 1, "open": False}                  # t2's files were asked for too; the list is not drawn again
+
+
+def test_a_long_list_starts_closed_draws_a_task_only_when_it_is_opened_and_stays_usable():
+    out = run(_BACKFILL + r"""
+server.listing.groups[0].runs[0].files=Array.from({length:45},(_, i)=>({path:'gen/f'+i+'.py',kind:'code'})).concat([{path:'gen/readme',kind:null}]);
+await openList();
+const closed={open:groupsIn().map(d=>d.open),rows:FILES().length,heads:groupsIn().map(d=>d.children[0].textContent),buttons:buttonsIn(panelBody),total:totalLine()};
+const first=groupsIn()[0];first.open=true;await first.emit('toggle');
+const opened={rows:FILES().length,buttons:buttonsIn(first),second:groupsIn()[1].open,scrolls:first.all().some(e=>e.classList.contains('ws-undo-list'))};
+await find('全部取消勾选',first).click();
+const none={head:groupsIn()[0].children[0].textContent,register:registerButton().disabled};
+await find('全部勾选',first).click();
+const all={head:groupsIn()[0].children[0].textContent,total:totalLine()};
+first.open=false;await first.emit('toggle');
+console.log(JSON.stringify({closed,opened,none,all,again:groupsIn()[0].open,rowsKept:FILES().length}));
+""")
+    assert out["closed"] == {"open": [False, False], "rows": 0, "buttons": ["登记所选"], "total": ["已选 47 项，共 48 项"],
+                             "heads": ["Run the model已选 45 项，共 46 项", "Second task已选 2 项，共 2 项"]}   # a closed task has drawn no rows
+    assert out["opened"] == {"rows": 46, "buttons": ["全部勾选", "全部取消勾选"], "second": False, "scrolls": True}
+    assert out["none"] == {"head": "Run the model已选 0 项，共 46 项", "register": False}          # the other task is still on
+    assert out["all"] == {"head": "Run the model已选 45 项，共 46 项", "total": ["已选 47 项，共 48 项"]}
+    assert out["again"] is False and out["rowsKept"] == 46
+
+
+def test_files_past_the_bound_are_counted_and_a_listing_that_cannot_be_read_is_said():
+    out = run(_BACKFILL + r"""
+server.listing.more=1200;server.listing.listed=5000;
+await openList();
+const quietWords=panelBody.all().filter(e=>e.classList.contains('ws-agent-quiet')).map(e=>e.textContent);
+await window.ROWorkspace.load(root,true);await sleepTick();
+server.broken=true;
+await find('登记…',rowOf('Run the model')).click();
+console.log(JSON.stringify({quietWords,failed:panelBody.textContent,title:panelTitle.textContent}));
+""")
+    assert out["quietWords"][-2:] == ["另有 1200 个没有列出。", "登记已列出的文件后再打开，才会列出其余的。"]
+    assert out["failed"] == "没能读取要补登记的文件。 No runs." and out["title"] == "补登记以往运行的文件"
+
+
+def test_the_task_rows_register_button_opens_the_list_of_its_latest_run_alone():
+    out = run(_BACKFILL + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const button=find('登记…',rowOf('Run the model'));
+const info={label:button.getAttribute('aria-label'),key:button.dataset.key,disabled:button.disabled,inLine:button.parentNode.classList.contains('ws-outputs-line')};
+await button.click();
+console.log(JSON.stringify({info,url:gets.filter(g=>g.startsWith('/api/outputs/backfill')).slice(-1)[0],title:panelTitle.textContent,files:FILES().length,posted}));
+""")
+    assert out["info"] == {"label": "登记：Run the model", "key": "output-register:t1", "disabled": False, "inLine": True}
+    assert out["url"] == "/api/outputs/backfill?project=p-study&run=r-20261021T090000Z-aaaaaa"
+    assert out["title"] == "补登记以往运行的文件" and out["files"] == 6 and out["posted"] == []
+
+
+def test_the_task_rows_register_button_is_off_while_a_run_goes_on_or_when_nothing_can_be_written():
+    out = run(_BACKFILL + r"""
+const off=()=>find('登记…',rowOf('Run the model')).disabled;
+await window.ROWorkspace.load(root);await sleepTick();
+const idle=off();
+listed.read_only=true;await window.ROWorkspace.load(root,true);await sleepTick();
+const readOnly=off();
+listed.read_only=false;window.ROWorkspace.reset();setRuns([mkRun({state:'running',can_stop:true})]);await window.ROWorkspace.load(root);await sleepTick();
+const running=off();
+window.ROWorkspace.reset();setRuns([]);await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify({idle,readOnly,running,noRun:!!find('登记…',rowOf('Run the model'))}));
+""")
+    assert out == {"idle": False, "readOnly": True, "running": True, "noRun": False}
+
+
+def test_registering_from_a_rows_list_draws_the_row_again_from_the_counts_read_after_it():
+    out = run(_BACKFILL + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const row=()=>rowOf('Run the model'), lines=()=>row().all().filter(e=>e.classList.contains('ws-outputs-line')).map(e=>e.textContent);
+const before=lines();
+await find('登记…',row()).click();
+listed.task_outputs.t1.filing=counts(1);
+await registerButton().click();await sleepTick();
+const middle=lines();
+listed.task_outputs.t1.filing=counts(0);
+await window.ROWorkspace.load(root,true);await sleepTick();
+console.log(JSON.stringify({before,middle,after:lines(),button:!!find('登记…',row())}));
+""")
+    assert out["before"] == ["2 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model7 个文件"]
+    assert out["middle"] == ["1 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model7 个文件"]   # read again after registering
+    assert out["after"] == ["工作文件夹work/20261025-run-the-model7 个文件"] and out["button"] is False
+
+
+def test_leaving_the_list_after_a_change_asks_first_and_an_untouched_list_does_not():
+    out = run(_BACKFILL + r"""
+await openList();
+const untouched=window.ROWorkspace.mayLeavePanel();
+await tick('reports/plan.md',false);
+answers.push(false);const refused=window.ROWorkspace.mayLeavePanel();
+answers.push(true);const allowed=window.ROWorkspace.mayLeavePanel();
+console.log(JSON.stringify({untouched,refused,allowed,asked:confirmQuestions}));
+""")
+    assert out == {"untouched": True, "refused": False, "allowed": True, "asked": ["有未保存的内容，仍要离开吗？"] * 2}
+
+
+def test_the_review_list_reads_in_english_without_chinese():
+    out = run(_BACKFILL + r"""
+await openList();
+await pick('LICENSE','document');
+server.fail=REPORT2;
+await registerButton().click();await sleepTick();
+console.log(JSON.stringify({text:panelTitle.textContent+panelBody.textContent,options:optionsOf(kindOf('reports/plan.md')).map(o=>o[0]),
+  buttons:buttonsIn(panelBody),label:kindOf('reports/plan.md').getAttribute('aria-label')}));
+""", lang="en")
+    assert not re.search(r"[㐀-鿿]", out["text"]), out["text"]
+    assert out["options"] == ["Code", "Data", "Figure", "Table", "Literature", "Manuscripts and reports", "Variable drafts", "Process files", "Do not register"]
+    assert out["label"] == "Register as: reports/plan.md" and "Register selected" in out["buttons"] and "Check all" in out["buttons"]
+    for words in ("Register files from earlier runs", "Registered 4 files.", "1 task could not be registered. Your choices are kept.",
+                  "Could not register this task's files. The catalog changed.", "2 of 2 selected"):
+        assert words in out["text"], words
+    offer = run(_BACKFILL + r"""
+await window.ROWorkspace.load(root);await sleepTick();await find('Output folders').click();
+console.log(JSON.stringify({text:panelBody.all().filter(e=>e.classList.contains('ws-backfill-offer')).map(e=>e.textContent)}));
+""", lang="en")
+    assert offer["text"] == ["Earlier runs created 6 files that are not registered.Register files from earlier runs…"]
+
+
+def test_a_list_that_arrives_after_the_project_changed_never_replaces_the_new_panel():
+    out = run(_BACKFILL + r"""
+const slow=deferred(), base=customGet;
+customGet=path=>path.startsWith('/api/outputs/backfill')?slow.promise:base(path);
+await window.ROWorkspace.load(root);await sleepTick();
+const opening=find('登记…',rowOf('Run the model')).click();await sleepTick();
+state.dataEpoch++;state.currentPath='/projects/new';window.ROWorkspace.reset();
+panelBody.replaceChildren(new Element('p'));panelBody.children[0].textContent='New project panel';
+slow.resolve(clone(baseListing()));await opening;await sleepTick();
+console.log(JSON.stringify({text:panelBody.textContent}));
+""")
+    assert out["text"] == "New project panel"
 
 
 # -- V15 step 3: record links (DESIGN.md 19.6) ----------------------------------------------------------------------------
