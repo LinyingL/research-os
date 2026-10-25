@@ -265,3 +265,112 @@ def test_researchos_ingest_scans_no_process_file_and_draws_no_claim_from_a_regis
         assert any("tools/real.py" in i for i in every), every
     finally:
         conn.close()
+
+
+# --- a LaTeX file registered as a document is not a paper draft either (DESIGN.md 19.7) ---------------------------
+
+
+def test_a_tex_file_registered_as_a_document_leaves_the_tex_inventory_but_other_files_stay(tmp_path):
+    """The scan reads `.tex` through the `tex` category (latex sections, claims, citation drafts), so a registered
+    document leaves that category; a `.tex` registered as another kind, a `.tex` nobody registered, and a Markdown
+    document (which mdpaper skips itself) are as before."""
+    for rel in ("paper.tex", "reports/Plan.tex", "reports/other.tex", "tables/sum.tex", "reports/plan.md"):
+        _put(tmp_path, rel, "\\section{A}\n")
+    _register(tmp_path, "a" * 32, ("document", "reports/plan.tex"), ("document", "reports/plan.md"))  # another case: same file
+    _register(tmp_path, "b" * 32, ("table", "tables/sum.tex"))
+    inventory = files_ingest.list_source_files(tmp_path)
+    assert inventory["tex"] == ["paper.tex", "reports/other.tex", "tables/sum.tex"]
+    assert inventory["md"] == ["reports/plan.md"]  # kept: mdpaper makes no sections or claims of it
+    probe = files_ingest.scan_skips(tmp_path)
+    assert probe("REPORTS/Plan.tex", "tex") and not probe("reports/plan.tex") and not probe("reports/plan.tex", "py")
+    assert not probe("reports/other.tex", "tex") and not probe("paper.tex", "tex")
+    # the add-project preview's walk is not the scan's inventory
+    assert "reports/Plan.tex" in {rel for rel, _c in files_ingest.iter_files(tmp_path)}
+
+
+def test_a_git_project_leaves_a_registered_tex_document_out_of_the_tex_inventory_but_not_out_of_the_preview(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for rel in ("paper.tex", "reports/plan.tex"):
+        _put(repo, rel, "\\section{A}\n")
+    _register(repo, "a" * 32, ("document", "reports/plan.tex"))
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True, capture_output=True)
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True)
+    subprocess.run([*git, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"], check=True, capture_output=True)
+    assert git_ingest.list_source_files(repo)["tex"] == ["paper.tex"]
+    assert "reports/plan.tex" in {rel for rel, _c in git_ingest.iter_tracked(repo)}
+
+
+def _tex_project(tmp_path: Path, *, git: bool = False, registered: bool = True) -> Path:
+    """A project with a paper and a plan in LaTeX, both stating a number one tracked run backs; the plan is registered
+    as a document (the task that wrote it said so) unless `registered` is False."""
+    from researchos import cli
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    tex = "\\section{NAME}\nOur model achieves 87.3\\% accuracy.\n"
+    _put(project, "paper.tex", tex.replace("NAME", "Results"))
+    _put(project, "reports/plan.tex", tex.replace("NAME", "Plan"))
+    if registered:
+        _register(project, "a" * 32, ("document", "reports/plan.tex"))
+    run_dir = project / "mlruns" / "0" / "run_a"
+    (run_dir / "metrics").mkdir(parents=True)
+    (run_dir / "meta.yaml").write_text("experiment_id: '0'\nrun_id: run_a\nstatus: FINISHED\n")
+    (run_dir / "metrics" / "accuracy").write_text("0 0.873 0\n")
+    if git:
+        cmd = ["git", "-C", str(project)]
+        subprocess.run([*cmd, "init", "-q"], check=True, capture_output=True)
+        subprocess.run([*cmd, "add", "-A"], check=True, capture_output=True)
+        subprocess.run([*cmd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"], check=True, capture_output=True)
+    cli.main(["init", str(project)])
+    return project
+
+
+@pytest.mark.parametrize("git_project", [False, True], ids=["no git", "git"])
+def test_researchos_ingest_makes_no_section_claim_or_candidate_of_a_registered_tex_document(tmp_path, capsys, git_project):
+    """DESIGN 19.7 end to end for LaTeX: the paper is read; the plan an agent was asked to write (registered as a
+    document, a `.tex`) yields no section, no claim, no `backed_by` candidate, and is not a draft for citations."""
+    from researchos import cli
+    from researchos.ingest import citations
+
+    project = _tex_project(tmp_path, git=git_project)
+    capsys.readouterr()
+    assert cli.main(["ingest", str(project)]) == 0
+    assert "latex: 1 .tex" in capsys.readouterr().out  # paper.tex only
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        assert [n["id"].split("#")[0] for n in db.get_nodes_by_type(conn, "section")] == ["section:paper.tex"]
+        assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.tex"]
+        assert [e["src"].split("#")[0] for e in db.query_edges(conn, type="backed_by")] == ["claim:paper.tex"]
+    finally:
+        conn.close()
+    assert citations.drafts_of(files_ingest.list_source_files(project), project) == ["paper.tex"]
+
+
+def test_what_a_scan_drew_from_a_tex_file_before_it_was_registered_as_a_document_is_reported_as_no_longer_in_the_scan(tmp_path, capsys):
+    """The file leaves the scan like one moved into the work folder: nothing new is drawn from it, and what an earlier
+    scan drew is reported as not in the scan results (it is not deleted, unlike the claims of a registered Markdown
+    document, whose file stays in the inventory)."""
+    from researchos import cli
+    from researchos.ingest import scan as scan_mod
+
+    project = _tex_project(tmp_path, registered=False)
+    capsys.readouterr()
+    assert cli.main(["ingest", str(project)]) == 0
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        before = {n["id"] for t in ("section", "claim") for n in db.get_nodes_by_type(conn, t)}
+        assert len(before) == 4 and all(scan_mod.node_present(conn, i) for i in before)
+    finally:
+        conn.close()
+    _register(project, "a" * 32, ("document", "reports/plan.tex"))
+    assert cli.main(["ingest", str(project)]) == 0
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        after = {n["id"] for t in ("section", "claim") for n in db.get_nodes_by_type(conn, t)}
+        assert after == before  # nothing new was made, nothing deleted
+        assert {i for i in after if scan_mod.node_present(conn, i)} == {i for i in after if i.split("#")[0].endswith(":paper.tex")}
+        assert {i for i in after if not scan_mod.node_present(conn, i)} == {i for i in after if ":reports/plan.tex" in i}
+    finally:
+        conn.close()

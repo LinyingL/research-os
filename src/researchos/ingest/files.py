@@ -30,7 +30,9 @@ Research OS project live in `scan_skips`, applied where the scan builds its inve
 `work` location, else `WORK_FOLDER`) and the files registered with kind `work` in
 `research/results/*.outputs.json`. Those settings are read fail-safe: a file that is missing, only in the
 cloud or not JSON means the default work folder and no registered file, never a failed scan.
-`registered` also gives the files registered as `document`, which are not paper drafts (mdpaper, citations).
+`registered` also gives the files registered as `document`, which are not paper drafts: mdpaper and citations
+leave a Markdown one out themselves, and a LaTeX one never enters the `tex` category (`scan_skips`), the list the
+latex, claims and citations extractors read.
 """
 
 from __future__ import annotations
@@ -156,15 +158,19 @@ def registered(root: str | Path) -> dict[str, frozenset[str]]:
     return {kind: frozenset(rels) for kind, rels in found.items()}
 
 
-def scan_skips(root: str | Path) -> Callable[[str], bool]:
+def scan_skips(root: str | Path) -> Callable[..., bool]:
     """Whether the project scan leaves a file out (DESIGN.md 19.7; module docstring): it is inside the work folder, or
-    registered as `work`. Read once for a whole inventory; `rel` is project-relative with forward slashes."""
+    registered as `work`, or -- given its inventory category -- a `.tex` file registered as a `document` (a plan or
+    write-up a task was asked for is that task's output, not a paper draft). Read once for a whole inventory; `rel` is
+    project-relative with forward slashes."""
     folder = fold(work_folder(root)) + "/"
-    work = {fold(rel) for rel in registered(root).get("work", ())}
+    kinds = registered(root)
+    work = {fold(rel) for rel in kinds.get("work", ())}
+    documents = {fold(rel) for rel in kinds.get("document", ())}
 
-    def skipped(rel: str) -> bool:
+    def skipped(rel: str, category: str | None = None) -> bool:
         key = fold(rel)
-        return key.startswith(folder) or key in work
+        return key.startswith(folder) or key in work or (category == "tex" and key in documents)
 
     return skipped
 
@@ -173,8 +179,9 @@ def list_source_files(root: str | Path) -> dict[str, list[str]]:
     """Inventory .tex/.bib/image/.py/.md/.r/.rmd/.do/.ado/data files under
     `root` by walking the filesystem, grouped by category -- same shape as
     `researchos.ingest.git.list_source_files`, for a project root that has no git
-    repository to ask instead. Creates no graph nodes. The work folder and
-    the files registered as `work` are left out (`scan_skips`).
+    repository to ask instead. Creates no graph nodes. The work folder, the
+    files registered as `work` and the `.tex` files registered as `document`
+    are left out (`scan_skips`).
 
     Returned paths are root-relative and forward-slash-normalized
     (`Path.as_posix()`), matching git's own path convention so downstream
@@ -186,6 +193,6 @@ def list_source_files(root: str | Path) -> dict[str, list[str]]:
     }
     skipped = scan_skips(root)
     for rel, category in iter_files(root):
-        if category is not None and not skipped(rel):
+        if category is not None and not skipped(rel, category):
             inventory[category].append(rel)
     return inventory

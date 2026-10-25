@@ -530,6 +530,16 @@ def test_claims_an_earlier_scan_made_of_a_document_go_once_it_is_registered(tmp_
     assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
 
 
+def test_a_registered_tex_document_is_not_a_draft_for_citations_whatever_inventory_lists_it(tmp_path):
+    from researchos.ingest import citations
+
+    _register_documents(tmp_path, "reports/Plan.tex", "reports/plan.md")
+    _register_documents(tmp_path, "tables/sum.tex", kind="table")  # only `document` is meant
+    inventory = {"md": ["paper.md"], "tex": ["main.tex", "reports/plan.tex", "REPORTS/PLAN.tex", "tables/sum.tex"]}
+    assert citations.drafts_of(inventory, tmp_path) == ["main.tex", "paper.md", "tables/sum.tex"]
+    assert citations.drafts_of(inventory) == sorted({*inventory["md"], *inventory["tex"]})  # no project to ask
+
+
 # --- Claim nodes + backed_by candidates (reusing claims' core write path) --
 
 
