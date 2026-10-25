@@ -90,6 +90,9 @@
   let outputNodes = {}, outputBusy = {}, outputNotes = {};
   let offline = false;
   let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  // 运行占用的空间 (DESIGN.md 19.8): what the engine says of the open project's run store, the sentence for a read or an
+  // action that failed, the action in progress and the timer that asks again while the engine tidies an old store.
+  let storeInfo = null, storeError = null, storeBusy = false, storeNote = null, storeTimer = null;
   let pollTimer = null, pollFails = 0;
   // The run poll rests while the window is hidden (DESIGN.md 18.4 item 2): a poll that was due is noted in `pollHeld`
   // and one poll is made when the window is shown again. `pollStopped` is 停止服务: the service is gone, for good.
@@ -119,7 +122,7 @@
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
-  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null }; }
+  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
@@ -133,6 +136,7 @@
     agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
     outputNodes = {}; outputBusy = {}; outputNotes = {};
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
+    stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
 
   function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("结果记录") : t("笔记", { n: 1 }); }
@@ -1814,6 +1818,8 @@
     }
     const d = loaded.data;
     if (Object.prototype.hasOwnProperty.call(d, "reasoning_effort")) box.append(quiet(t("推理强度：{level}", { level: effortLabel(d.reasoning_effort) })));
+    // 19.8: the program keeps its own record of the conversation; the log names it so that it can be found there
+    if (d.session_id) box.append(quiet(t("会话编号：{id}", { id: d.session_id })));
     // A folder with more files than the picture holds: what happened beyond them cannot be checked or undone (17.5).
     if (d.snapshot && d.snapshot.partial) box.append(el("p", "ws-status err", t("这个项目文件太多，运行前只记录了前 50,000 个文件：之后的文件（数据文件除外）改动无法核对，也无法撤回。")));
     if (outcomeOf(run) !== "needs_input" && run.question) box.append(el("p", "ws-agent-question", run.question));
@@ -1868,13 +1874,14 @@
 
   // -- 设置: this Mac's agents (17.1) -----------------------------------------------------------------
   function toggleSettings() {
-    if (settingsOpen) { settingsOpen = false; renderTasks(); return; }
+    if (settingsOpen) { settingsOpen = false; stopStoreTimer(); renderTasks(); return; }
     openSettings();
   }
   function openSettings() {
     settingsOpen = true; renderTasks();
     // The programs may have been installed since the page opened.
     if (agentInfo) loadAgentInfo(stamp(), true);
+    loadStore(stamp());
     if (ui && ui.settings && typeof ui.settings.scrollIntoView === "function") ui.settings.scrollIntoView();
   }
   async function saveAgentSettings(body, doneWords, onDone) {
@@ -2083,6 +2090,124 @@
     row.append(field(t("每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）"), usd), save);
     return row;
   }
+  // The most a project's run store may take (DESIGN.md 19.8), in whole gigabytes; saved with the other limits.
+  function storeLimitBlock() {
+    const row = el("div", "ws-agent-add"), gb = keyed(input("number"), "set-store-limit");
+    const range = agentInfo.store_limit_range || [1, 100];
+    gb.min = String(range[0]); gb.max = String(range[1]); gb.step = "1"; gb.disabled = settingsBusy;
+    gb.value = settingsInputs.storeLimit == null ? String(agentInfo.store_limit_gb == null ? "" : agentInfo.store_limit_gb) : settingsInputs.storeLimit;
+    gb.addEventListener("input", () => { settingsInputs.storeLimit = gb.value; });
+    const save = button(t("保存"), () => {
+      const value = Number(gb.value);
+      if (!gb.value.trim() || !Number.isInteger(value) || value < range[0] || value > range[1]) { settingsNote = { words: t("空间上限要在 1 到 100 GB 之间，是整数。"), kind: "err" }; renderSettings(true); return; }
+      settingsInputs.storeLimit = null;
+      saveAgentSettings({ store_limit_gb: value }, t("已保存"), () => loadStore(stamp()));
+    }); keyed(save, "set-store-limit-save"); named(save, t("保存：{name}", { name: t("空间上限") })); save.disabled = settingsBusy;
+    row.append(field(t("每个项目的运行空间上限（GB）"), gb), save);
+    return row;
+  }
+
+  // -- 运行占用的空间 (DESIGN.md 19.8): the open project's run store against its limit ---------------------
+  // A size as the panel names it: a tenth of a gigabyte from 1 GB up, whole megabytes below (13.5: thousands separated in
+  // English), and "less than 1 MB" for what a few logs take.
+  function storeSize(bytes) {
+    const mb = bytes / (1024 * 1024);
+    if (mb >= 1024) return (mb / 1024).toFixed(1) + " GB";
+    return bytes > 0 && mb < 1 ? t("小于 1 MB") : countText(Math.round(mb)) + " MB";
+  }
+  function stopStoreTimer() { if (storeTimer !== null) clearTimeout(storeTimer); storeTimer = null; }
+  // While the engine tidies an old store it says so; the panel asks again until it has finished.
+  function scheduleStore() {
+    stopStoreTimer();
+    if (settingsOpen && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
+  }
+  async function loadStore(mark) {
+    if (!settingsOpen || !project()) return;
+    try {
+      const info = await apiGet("/api/agents/store?project=" + encodeURIComponent(project()));
+      if (!live(mark)) return;
+      storeInfo = info; storeError = null;
+    } catch (err) {
+      if (!live(mark)) return;
+      storeError = err;
+    }
+    drawStore(); scheduleStore();
+  }
+  // One action on the store (release, delete): it answers the panel as it stands now.
+  async function storeAction(path, body, doneWords, failWords) {
+    if (storeBusy) return;
+    const mark = stamp();
+    storeBusy = true; storeNote = null; drawStore();
+    try {
+      const answer = await apiPost(path, Object.assign({ project: project() }, body));
+      if (!live(mark)) { storeBusy = false; return; }
+      storeInfo = answer; storeError = null; storeNote = { words: doneWords, kind: "ok" };
+    } catch (err) {
+      if (!live(mark)) { storeBusy = false; return; }
+      storeNote = { words: errorWords(failWords, err), kind: "err" };
+    }
+    storeBusy = false; drawStore(); scheduleStore();
+  }
+  function storeRunRow(item) {
+    const li = el("li", "ws-store-run");
+    const task = item.task_removed || !item.task ? t("任务已移除") : item.task;
+    li.append(el("span", "ws-store-task", task), el("span", "ws-agent-quiet", whenWords(item.date)), el("span", "ws-agent-quiet", storeSize(item.size)),
+      el("span", "ws-agent-quiet", t("{n} 个文件", { n: countText(item.files) })));
+    const remove = keyed(named(button(t("删除这些文件"), () => {
+      if (!window.confirm(t("要删除这次运行撤回时移走的 {n} 个文件吗？删除后无法恢复。", { n: countText(item.files) }))) return;
+      storeAction("/api/agents/store/delete-moved", { run: item.run }, t("已删除。"), t("没能删除这些文件。"));
+    }), t("删除这些文件：{task}", { task: task })), "store-delete:" + item.run);
+    remove.disabled = storeBusy; li.append(remove);
+    return li;
+  }
+  function drawStore() {
+    const slot = ui && ui.storeSlot;
+    if (!slot) return;
+    const snap = focusSnapshot(slot);
+    slot.replaceChildren();
+    // a read that failed says so, with what was known before it under it; the first read says it is going
+    if (storeError) {
+      slot.append(el("p", "ws-status err", errorWords(t("没能读取运行占用的空间。"), storeError)));
+      slot.append(keyed(button(t("重试"), () => loadStore(stamp())), "store-retry"));
+    }
+    if (!storeInfo) {
+      if (!storeError) slot.append(el("p", "ws-status", t("正在读取…")));
+      return;
+    }
+    const info = storeInfo;
+    if (info.converting) slot.append(el("p", "ws-status", t("正在整理撤回备份…")));
+    else {
+      const rows = el("div", "ws-store-rows");
+      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行记录"), info.records]].forEach(([name, bytes]) => {
+        const row = el("div", "ws-store-row");
+        row.append(el("span", null, name), el("span", "ws-store-size", storeSize(bytes || 0)));
+        rows.append(row);
+      });
+      slot.append(rows);
+      slot.append(quiet(t("共占用 {used}，每个项目最多 {limit}。", { used: storeSize(info.total || 0), limit: storeSize(info.limit) })));
+    }
+    slot.append(quiet(t("超过上限时，从最早的运行开始释放撤回备份，正在运行的那一次不受影响。")));
+    if (info.moved_over && !info.converting) slot.append(el("p", "ws-status err", t("撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。")));
+    if ((info.moved_runs || []).length && !info.converting) {
+      const list = el("ul", "ws-store-runs");
+      info.moved_runs.slice().reverse().forEach((item) => list.append(storeRunRow(item)));
+      slot.append(list);
+    }
+    const release = keyed(button(t("释放所有撤回备份"), () => {
+      if (!window.confirm(t("要释放这个项目所有的撤回备份吗？释放后，这些运行就不能再撤回了。正在运行的那一次保留自己的备份。"))) return;
+      storeAction("/api/agents/store/release", {}, t("已释放。"), t("没能释放撤回备份。"));
+    }), "store-release");
+    release.disabled = storeBusy || !!info.converting || !info.releasable; slot.append(release);
+    if (storeNote) slot.append(el("p", "ws-status " + storeNote.kind, storeNote.words));
+    restoreFocus(slot, snap);
+  }
+  function storeBlock() {
+    const box = el("div", "ws-agent-list ws-store");
+    box.append(el("h4", "ws-runner-name", t("运行占用的空间")));
+    ui.storeSlot = el("div", "ws-store-body"); box.append(ui.storeSlot);
+    drawStore();
+    return box;
+  }
   // `fresh`: the settings box was just made (or the person asked for the redraw). Otherwise an input the person is
   // typing in is not rebuilt: the program list and statuses of the next redraw wait, only the note is patched.
   function renderSettings(fresh) {
@@ -2103,7 +2228,7 @@
     }
     if (agentInfo.mcp === false) { const warn = el("div", "ws-agent-warn"); warn.append(el("p", "ws-status err", mcpWords()), installBlock()); box.append(warn); }
     (agentInfo.runners || []).forEach((r) => box.append(runnerBlock(r)));
-    box.append(agentsBlock(), limitBlock(), budgetBlock());
+    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock(), storeBlock());
     ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
     restoreFocus(box, snap);
     loadModels(settingsInputs.runner);

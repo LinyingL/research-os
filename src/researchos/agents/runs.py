@@ -5,8 +5,10 @@ run leaves behind -- `run.json` (the state the page shows), `instruction.txt`
 (what was sent), `events.jsonl` (the program's own stream), `stderr.log`,
 `signals.jsonl` (what the agent tools reported), `guard.json` and
 `refusals.jsonl` (the hook's rules and what it refused), `before.json` /
-`after.json` and the `before/` copies (17.5, 17.6), and the generated
-`claude-settings.json` / `mcp.json`. It lives in the Research OS home, never
+`after.json` and the `before/` copies (17.5, 17.6; hard links to the project's
+`blobs/`, one copy of each content, `agents.store`, 19.8), `reverted/` (the
+files an undo moved away), and the generated `claude-settings.json` /
+`mcp.json`. It lives in the Research OS home, never
 in the project: the run log "stays on the Mac that ran it" (17.2).
 
 **Who writes what.** Only the engine writes `run.json`, atomically
@@ -333,11 +335,14 @@ def read_lines(path: Path, *, tail_bytes: int | None = None) -> list[dict[str, A
 
 
 def prune(project_id: str) -> None:
-    """Retention (17.6): the newest `KEEP_RUNS` run folders of the project are kept (never one that is
-    active), older ones are removed whole; runs beyond the newest `KEEP_BACKUPS` lose their `before/` copies
-    and the two pictures (`before.json`, `after.json`) and become not revertible, but keep `run.json`,
-    `events.jsonl` and `instruction.txt` -- the log. Errors are logged, never raised: a failed clean-up
-    must not fail a finished run."""
+    """Retention (17.6, 19.8): the newest `KEEP_RUNS` run folders of the project are kept (never one that is
+    active), older ones are removed whole -- except a run that holds files an undo moved away, which keeps `run.json`
+    and `reverted/` (only the person deletes those) and loses the rest; runs beyond the newest `KEEP_BACKUPS` lose their
+    `before/` copies and the two pictures (`before.json`, `after.json`) and become not revertible, but keep
+    `run.json`, `events.jsonl` and `instruction.txt` -- the log. The blobs nothing links any more go with them. Errors
+    are logged, never raised: a failed clean-up must not fail a finished run."""
+    from researchos.agents import store  # noqa: PLC0415 -- store imports this module
+
     for index, run_id in enumerate(_run_ids(project_id)):
         directory = project_runs_dir(project_id) / run_id
         try:
@@ -345,19 +350,17 @@ def prune(project_id: str) -> None:
             if run is not None and run.get("state") in ACTIVE_STATES:
                 continue
             if index >= KEEP_RUNS:
-                shutil.rmtree(directory, ignore_errors=True)
+                with store.lock(project_id):
+                    if store.holds_moved(directory):
+                        store.strip(project_id, run_id)
+                    else:
+                        shutil.rmtree(directory, ignore_errors=True)
             elif index >= KEEP_BACKUPS:
-                before = directory / "before"
-                pictures = [directory / "before.json", directory / "after.json"]
-                if (before.exists() or any(p.exists() for p in pictures)
-                        or (run is not None and run.get("revertible") is not False)):
-                    shutil.rmtree(before, ignore_errors=True)
-                    for picture in pictures:
-                        try:
-                            picture.unlink()
-                        except FileNotFoundError:
-                            pass
-                    if run is not None:
-                        update_run(project_id, run_id, revertible=False)
+                if store.holds_backup(directory) or (run is not None and run.get("revertible") is not False):
+                    store.release(project_id, run_id, sweep=False)
         except (OSError, KeyError, ValueError) as exc:
             logger.warning("could not prune agent run %s: %s", run_id, exc)
+    try:
+        store.collect(project_id)
+    except OSError as exc:
+        logger.warning("could not delete the unused blobs of project %s: %s", project_id, exc)

@@ -87,6 +87,9 @@ const gets=[];
 let agentsInfo=null, meInfo=null, shareInfo=null, modelsList=null, runsList={runs:[],active:null}, runLogs={};
 // 18.1 item 5: what an undo would do (per run id; a default plan otherwise) and the project's files over 16 MB.
 let runPlans={}, bigFiles={count:0,largest:[],partial:false};
+// 19.8: what the engine says of the open project's run store (the space panel); by default a project that has used nothing.
+const GB=1024**3, MB=1024**2;
+let storeInfo={limit:5*GB,limit_gb:5,converting:false,backups:0,moved:0,records:0,total:0,over:false,moved_over:false,moved_runs:[],releasable:0};
 const defaultPlan=run=>({run:clone(run),restore:[{path:'analysis.py',time:'2026-10-21T09:41:12+02:00'}],remove:[{path:'out/new.csv',time:'2026-10-21T09:40:03+02:00'}],cannot:[]});
 const agentFixture=()=>({
   runners:[{runner:'claude-code',label:'Claude Code',path:'/usr/local/bin/claude',version:'2.1.0',problem:null,found:true},
@@ -96,7 +99,7 @@ const agentFixture=()=>({
   agents:[{runner:'claude-code',model:'sonnet',owner:'agent:claude-code:sonnet',label:'Claude Code · sonnet',available:true}],
   harness_models:['deepseek-account/deepseek-flash','deepseek-official/deepseek-v4-pro'],
   reasoning_efforts:{'claude-code':{'claude-sonnet-5-5':['low','medium','high','xhigh','max'],'claude-opus-4-6':['low','medium','high','max']},'deepseek-harness':{'deepseek-account/deepseek-flash':['off','low','high','max'],'deepseek-official/deepseek-v4-pro':['off','low','high','max']}},
-  mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null });
+  mcp:true, claude_models:['claude-sonnet-5-5','claude-sonnet-4-6','claude-opus-5-5','claude-opus-4-6','claude-haiku-4-5-20251001'], timeout_minutes:120, max_budget_usd:null, store_limit_gb:5, store_limit_range:[1,100] });
 const mkRun=(o)=>Object.assign({id:'r-20261021T090000Z-aaaaaa',task_id:'t1',task_text:'Run the model',owner:'agent:claude-code:sonnet',
   label:'Claude Code · sonnet',runner:'claude-code',model:'sonnet',state:'running',reverted:false,kind:'start',parent:null,
   created:'2026-10-21T09:00:00Z',started:null,ended:null,question:null,report:null,error:null,cost_usd:null,by:null,by_name:null,
@@ -110,6 +113,7 @@ global.apiGet=async path=>{
   if(path.startsWith('/api/workspace/document?')) return clone(docs[new URLSearchParams(path.split('?')[1]).get('path')]);
   if(path==='/api/agents'&&agentsInfo) return clone(agentsInfo);
   if(path==='/api/agents/large-files') return clone(bigFiles);
+  if(path.startsWith('/api/agents/store?project=')) return clone(storeInfo);
   let plan=/^\/api\/agents\/runs\/([^/]+)\/revert-plan$/.exec(path);
   if(plan) { const id=decodeURIComponent(plan[1]); return clone(runPlans[id]||defaultPlan(runById(id))); }
   if(path==='/api/agents/runs'&&runsList) return clone(runsList);
@@ -143,11 +147,23 @@ global.apiPost=async(path,body)=>{
     const next=mkRun({id:'r-20261021T0959'+runsList.runs.length+'0Z-cccccc',task_id:run.task_id,state:'running',can_stop:true,parent:run.id,kind:run.state==='needs_input'?'answer':'send_back',message:body.message});
     Object.assign(run,{can_reply:false}); runsList.runs.unshift(next); runsList.active=next.id; return clone(next);
   }
+  if(path==='/api/agents/store/release') {
+    const released=storeInfo.releasable?['r-released']:[];
+    Object.assign(storeInfo,{releasable:0,backups:0,total:storeInfo.moved+storeInfo.records});
+    return Object.assign(clone(storeInfo),{released});
+  }
+  if(path==='/api/agents/store/delete-moved') {
+    const gone=storeInfo.moved_runs.find(r=>r.run===body.run);
+    storeInfo.moved_runs=storeInfo.moved_runs.filter(r=>r.run!==body.run);
+    storeInfo.moved-=gone.size; storeInfo.total-=gone.size; storeInfo.moved_over=storeInfo.moved>storeInfo.limit;
+    return Object.assign(clone(storeInfo),{freed:gone.size});
+  }
   if(path==='/api/settings/agents') {
     if(body.agents) agentsInfo.agents=body.agents.map(a=>Object.assign({},a,{owner:'agent:'+a.runner+':'+a.model,label:(a.runner==='claude-code'?'Claude Code':'OpenCode')+' · '+a.model,available:true}));
     if(body.commands) for(const [runner,p] of Object.entries(body.commands)) Object.assign(agentsInfo.runners.find(r=>r.runner===runner),{path:p,version:'0.9.0',problem:null,found:true});
     if(body.timeout_minutes) agentsInfo.timeout_minutes=body.timeout_minutes;
     if('max_budget_usd' in body) agentsInfo.max_budget_usd=body.max_budget_usd;
+    if(body.store_limit_gb) { agentsInfo.store_limit_gb=body.store_limit_gb; storeInfo.limit_gb=body.store_limit_gb; storeInfo.limit=body.store_limit_gb*GB; }
     return clone(agentsInfo);
   }
   if(path==='/api/workspace/document') {
@@ -3283,3 +3299,185 @@ await links[0].click();
 console.log(JSON.stringify({links:links.map(e=>[e.textContent,e.href]),openedFiles}));
 """)
     assert out["links"] == [["Model", "/api/file?path=code%2Fmodel.do"]] and out["openedFiles"] == ["code/model.do"]
+
+
+# -- 运行占用的空间 (DESIGN.md 19.8): the space panel in the AI agent area ----------------------------------------------------
+
+STORE_SCENE = r"""
+const T=(s,v)=>window.ROI18N.t(s,v);
+agentsInfo=agentFixture();
+storeInfo=Object.assign(storeInfo,{backups:Math.round(1.5*GB),moved:250*MB,records:30*MB,total:Math.round(1.5*GB)+280*MB,releasable:3,
+  moved_runs:[{run:'r-1',task:'Compare models',task_removed:false,date:'2026-10-21T09:40:03+02:00',size:200*MB,files:1497},
+              {run:'r-2',task:'Old task',task_removed:true,date:'2026-10-19T18:02:00+02:00',size:50*MB,files:1}]});
+await window.ROWorkspace.load(root);await sleepTick();
+await find(T('AI 执行者')).click();await sleepTick();
+const store=()=>byClass('ws-store');
+const rows=()=>byClass('ws-store-rows').children.map(r=>r.children.map(c=>c.textContent));
+const runRows=()=>(byClass('ws-store-runs')?byClass('ws-store-runs').children:[]).map(li=>li.children.map(c=>c.textContent));
+const buttonOf=(li)=>li.children.find(e=>e.tagName==='BUTTON');
+"""
+
+
+def test_the_space_panel_shows_sizes_against_the_limit_and_the_runs_holding_moved_away_files():
+    out = run(STORE_SCENE + r"""
+console.log(JSON.stringify({heading:store().children[0].textContent,rows:rows(),words:store().textContent,runs:runRows(),
+  asked:gets.filter(g=>g.startsWith('/api/agents/store')),over:!!store().all().find(e=>e.classList.contains('err')),
+  release:find(T('释放所有撤回备份'),store()).disabled}));
+""")
+    assert out["heading"] == "运行占用的空间"
+    assert out["rows"] == [["撤回备份", "1.5 GB"], ["撤回时移走的文件", "250 MB"], ["运行记录", "30 MB"]]
+    assert "共占用 1.8 GB，每个项目最多 5.0 GB。" in out["words"]
+    assert "超过上限时，从最早的运行开始释放撤回备份，正在运行的那一次不受影响。" in out["words"]
+    assert out["runs"] == [["任务已移除", "2026-10-19 18:02", "50 MB", "1 个文件", "删除这些文件"],
+                           ["Compare models", "2026-10-21 09:40", "200 MB", "1497 个文件", "删除这些文件"]]
+    assert out["asked"] == ["/api/agents/store?project=%2Fprojects%2Fstudy"]
+    assert out["over"] is False and out["release"] is False
+
+
+def test_the_space_panel_in_english_reads_in_the_glossarys_words_with_counted_nouns_and_no_chinese():
+    out = run(STORE_SCENE + r"""
+console.log(JSON.stringify({heading:store().children[0].textContent,rows:rows(),words:store().textContent,runs:runRows(),
+  labels:store().all().filter(e=>e.tagName==='BUTTON').map(e=>e.getAttribute('aria-label')||e.textContent)}));
+""", lang="en")
+    assert out["heading"] == "Space used by runs"
+    assert out["rows"] == [["Undo backups", "1.5 GB"], ["Files moved away by undo", "250 MB"], ["Run log", "30 MB"]]
+    assert "1.8 GB in use. Each project may use up to 5.0 GB." in out["words"]
+    assert out["runs"] == [["Task removed", "2026-10-19 18:02", "50 MB", "1 file", "Delete these files"],
+                           ["Compare models", "2026-10-21 09:40", "200 MB", "1,497 files", "Delete these files"]]
+    assert out["labels"] == ["Delete these files: Task removed", "Delete these files: Compare models", "Release all undo backups"]
+    assert not re.search(r"[㐀-鿿]", out["words"] + "".join(out["labels"]))
+
+
+def test_the_space_panel_says_so_when_the_files_moved_away_alone_pass_the_limit():
+    out = run(STORE_SCENE + r"""
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+console.log(JSON.stringify({words:store().textContent,err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
+""")
+    assert out["err"] == ["撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。"]
+
+
+def test_the_space_panel_says_the_engine_is_tidying_asks_again_and_then_shows_the_sizes():
+    out = run(STORE_SCENE.replace("moved_runs:[", "converting:true,moved_runs:[") + r"""
+Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
+await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+const during={words:store().textContent,rows:byClass('ws-store-rows')===undefined,waiting:waiting(),release:find(T('释放所有撤回备份'),store()).disabled};
+Object.assign(storeInfo,{converting:false,backups:5*MB,moved:0,records:MB,total:6*MB});
+await tick();
+console.log(JSON.stringify({during,words:store().textContent,rows:rows(),waitingAfter:waiting(),asked:gets.filter(g=>g.startsWith('/api/agents/store')).length}));
+""")
+    assert "正在整理撤回备份…" in out["during"]["words"] and out["during"]["rows"] is True  # no sizes, no rows, while it goes
+    assert "共占用" not in out["during"]["words"] and "GB" not in out["during"]["words"]
+    assert out["during"]["waiting"] >= 1 and out["during"]["release"] is True
+    assert "正在整理撤回备份…" not in out["words"] and out["rows"][0] == ["撤回备份", "5 MB"]
+    assert out["waitingAfter"] == 0 and out["asked"] >= 3
+
+
+def test_the_space_panel_in_english_says_tidying():
+    out = run(STORE_SCENE + r"""
+Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
+await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+console.log(JSON.stringify({words:store().textContent}));
+""", lang="en")
+    assert "Tidying undo backups…" in out["words"] and not re.search(r"[㐀-鿿]", out["words"])
+
+
+def test_deleting_moved_away_files_asks_first_and_deletes_only_that_runs():
+    out = run(STORE_SCENE + r"""
+const second=()=>byClass('ws-store-runs').children[1];   // r-1 (newest first: r-2 is the first row)
+answers.push(false);
+await buttonOf(second()).click(); await sleepTick();
+const declined={posted:posted.filter(p=>p[0].includes('/store/')).length,questions:confirmQuestions.slice(),runs:runRows().length};
+answers.push(true);
+await buttonOf(second()).click(); await sleepTick();
+console.log(JSON.stringify({declined,posted:posted.filter(p=>p[0].includes('/store/')),runs:runRows(),rows:rows(),note:store().textContent.includes('已删除。'),
+  aria:buttonOf(byClass('ws-store-runs').children[0]).getAttribute('aria-label')}));
+""")
+    assert out["declined"] == {"posted": 0, "questions": ["要删除这次运行撤回时移走的 1497 个文件吗？删除后无法恢复。"], "runs": 2}
+    assert out["posted"] == [["/api/agents/store/delete-moved", {"project": "/projects/study", "run": "r-1"}]]
+    assert out["runs"] == [["任务已移除", "2026-10-19 18:02", "50 MB", "1 个文件", "删除这些文件"]]
+    assert out["rows"][1] == ["撤回时移走的文件", "50 MB"] and out["note"] is True
+    assert out["aria"] == "删除这些文件：任务已移除"
+
+
+def test_deleting_one_file_asks_in_the_singular_in_english():
+    out = run(STORE_SCENE + r"""
+answers.push(false);
+await buttonOf(byClass('ws-store-runs').children[0]).click();
+console.log(JSON.stringify({questions:confirmQuestions}));
+""", lang="en")
+    assert out["questions"] == ["Delete the file this run's undo moved away? It cannot be recovered."]
+
+
+def test_releasing_all_backups_asks_first_and_the_button_waits_for_something_to_release():
+    out = run(STORE_SCENE + r"""
+const release=()=>find(T('释放所有撤回备份'),store());
+answers.push(false);
+await release().click(); await sleepTick();
+const declined={posted:posted.filter(p=>p[0].includes('/store/')).length,questions:confirmQuestions.slice()};
+answers.push(true);
+await release().click(); await sleepTick();
+console.log(JSON.stringify({declined,posted:posted.filter(p=>p[0].includes('/store/')),rows:rows(),disabled:release().disabled,
+  note:store().textContent.includes('已释放。'),runs:runRows().length}));
+""")
+    assert out["declined"] == {"posted": 0, "questions": ["要释放这个项目所有的撤回备份吗？释放后，这些运行就不能再撤回了。正在运行的那一次保留自己的备份。"]}
+    assert out["posted"] == [["/api/agents/store/release", {"project": "/projects/study"}]]
+    assert out["rows"][0] == ["撤回备份", "0 MB"] and out["disabled"] is True and out["note"] is True and out["runs"] == 2
+
+
+def test_a_failed_read_or_action_on_the_space_panel_says_so_and_a_read_can_be_retried():
+    out = run(STORE_SCENE + r"""
+let fail=true; customGet=path=>path.startsWith('/api/agents/store')&&fail?Promise.reject(Error('boom')):undefined;
+await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+const failed=store().textContent;
+fail=false; await find(T('重试'),store()).click(); await sleepTick();
+customPost=path=>path.includes('/store/')?Promise.reject(Error('no')):undefined;
+answers.push(true);
+await find(T('释放所有撤回备份'),store()).click(); await sleepTick();
+console.log(JSON.stringify({failed,words:store().textContent,rows:rows()}));
+""")
+    assert "没能读取运行占用的空间。 boom" in out["failed"] and "重试" in out["failed"]
+    assert out["rows"][0] == ["撤回备份", "1.5 GB"] and "没能释放撤回备份。 no" in out["words"]
+
+
+def test_the_space_limit_is_saved_with_the_other_limits_and_refuses_what_is_not_a_whole_number_from_1_to_100():
+    out = run(STORE_SCENE + r"""
+const box=()=>byClass('ws-agent-settings'), limit=()=>field('每个项目的运行空间上限（GB）',box());
+const start=limit().value;
+const bad=[];
+for (const value of ['0','101','2.5','']) { typed(limit(),value); await find('保存',limit().parentNode.parentNode).click(); bad.push([value,posted.filter(p=>p[0]==='/api/settings/agents').length,byClass('ws-agent-settings').textContent.includes('空间上限要在 1 到 100 GB 之间，是整数。')]); }
+typed(limit(),'12'); await find('保存',limit().parentNode.parentNode).click(); await sleepTick();
+console.log(JSON.stringify({start,bad,posted:posted.filter(p=>p[0]==='/api/settings/agents').map(p=>p[1]),after:limit().value,
+  sentence:byClass('ws-store').textContent,asked:gets.filter(g=>g.startsWith('/api/agents/store')).length,
+  attrs:[limit().min,limit().max,limit().step]}));
+""")
+    assert out["start"] == "5" and out["attrs"] == ["1", "100", "1"]
+    assert [b[1] for b in out["bad"]] == [0, 0, 0, 0] and all(b[2] for b in out["bad"])
+    assert out["posted"] == [{"store_limit_gb": 12}] and out["after"] == "12"
+    assert "每个项目最多 12.0 GB。" in out["sentence"] and out["asked"] >= 2   # the panel was read again against the new limit
+
+
+def test_the_space_panel_is_not_drawn_into_a_project_that_was_left_meanwhile():
+    out = run(STORE_SCENE + r"""
+const slow=deferred(); let seen=0;
+customGet=path=>{ if(path.startsWith('/api/agents/store')&&++seen===1) return slow.promise; };
+await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click();   // closed, opened again: a read is pending
+state.currentPath='/projects/other'; window.ROWorkspace.reset && window.ROWorkspace.reset();
+slow.resolve(Object.assign({},storeInfo,{backups:9*GB}));
+await sleepTick();
+console.log(JSON.stringify({words:root.textContent.includes('9.0 GB')}));
+""")
+    assert out["words"] is False
+
+
+def test_the_run_log_names_the_session_id_when_the_program_gave_one():
+    out = run(r"""
+agentsInfo=agentFixture();
+listed.tasks=[agentTask({id:'t1'})];
+const run1=mkRun({state:'done',changes:0,id:'r-20261021T090000Z-aaaaaa'});
+setRuns([run1]);
+runLogs[run1.id]=Object.assign(clone(run1),{steps:[],steps_total:0,changes:{},violations:[],session_id:'0a1b2c3d-1111-2222-3333-444455556666'});
+await window.ROWorkspace.load(root);await sleepTick();
+await find('运行记录').click();await sleepTick();
+console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
+""")
+    assert "会话编号：0a1b2c3d-1111-2222-3333-444455556666" in out["words"]

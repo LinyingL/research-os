@@ -142,7 +142,7 @@ def test_every_post_route_is_refused_without_the_session_before_it_is_routed(eng
     """The check runs before routing: even an endpoint that does not exist answers 403 session_required, so
     the answer never tells a program which writes there are."""
     eng, _root = engine
-    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/nope", "/"):
+    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/agents/store/release", "/api/agents/store/delete-moved", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/nope", "/"):
         status, body = eng.post(path, {})
         assert (status, body["state"]) == (403, "session_required"), path
 
@@ -500,6 +500,9 @@ def test_a_live_engine_started_by_serve_refuses_a_write_without_the_session(tmp_
 #:             `<runner> --version`, `opencode models`, `mdfind` for Zotero; none changes anything
 #:   recovers  reads, and also writes -- but only for a request that carries the session (the run list's recovery
 #:             of runs a gone engine left active)
+#:   tidies    reads, and also writes -- but only for a request that carries the session (the space panel's start of
+#:             the conversion of an old run store, in the engine's background, and its keeping the store's limit,
+#:             DESIGN.md 19.8)
 #:   none      the 404 for an unknown /api/ path
 #: The sample is a request that reaches the route. No route opens an application, changes a setting, writes into
 #: the project or starts a scan; those are POSTs, which need the session.
@@ -559,6 +562,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/agents/runs": ("recovers", "/api/agents/runs"),
     "/api/agents/runs/": ("read", "/api/agents/runs/r-nothing"),   # one run, and its /revert-plan (18.1 item 5)
     "/api/agents/large-files": ("read", "/api/agents/large-files"),
+    "/api/agents/store": ("tidies", "/api/agents/store"),
     "/api/records": ("read", "/api/records"),
     "/api/file": ("probe", "/api/file?path=map.md"),
     "/api/": ("none", "/api/nope"),
@@ -588,8 +592,9 @@ def test_the_get_audit_names_every_route_do_get_answers():
     (does it write, start something, open an application, change a setting?)."""
     declared = _routes_in_do_get()
     assert declared == set(GET_ROUTES), (sorted(declared - set(GET_ROUTES)), sorted(set(GET_ROUTES) - declared))
-    assert {kind for kind, _sample in GET_ROUTES.values()} == {"boot", "page", "read", "probe", "recovers", "none"}
+    assert {kind for kind, _sample in GET_ROUTES.values()} == {"boot", "page", "read", "probe", "recovers", "tidies", "none"}
     assert [r for r, (kind, _s) in GET_ROUTES.items() if kind == "recovers"] == ["/api/agents/runs"]
+    assert [r for r, (kind, _s) in GET_ROUTES.items() if kind == "tidies"] == ["/api/agents/store"]
 
 
 def _tree_state(*roots: Path) -> dict[str, tuple[int, str]]:
@@ -707,6 +712,45 @@ def test_a_server_without_a_session_still_recovers_on_listing(tmp_path):
     try:
         assert Engine(httpd).get("/api/agents/runs")[1]["runs"][0]["state"] == "interrupted"
         assert run_store.load_run(pid, run["id"])["state"] == "interrupted"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_the_space_panel_starts_the_conversion_and_keeps_the_limit_only_for_a_request_with_the_session(tmp_path):
+    """19.8: the one other GET that writes. A window without the session reads the sizes and changes nothing; the
+    app's window starts the conversion of an old run store, which the engine does in its background."""
+    import time
+
+    from researchos.agents import store
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    project.init_project(root)
+    pid = read_identity(root).identity.id
+    (root / "data.txt").write_text("data\n")
+    run = stale_run(types.SimpleNamespace(pid=pid, root=root), state="done", before=True)   # an old store: plain copies
+    copy = run_store.run_dir(pid, run["id"]) / "before" / "data.txt"
+    assert copy.stat().st_nlink == 1 and store.needs_conversion(pid)
+    httpd, thread = _running(root)
+    try:
+        eng = Engine(httpd)
+        home = paths.researchos_home()
+        before = _tree_state(home)
+        status, panel = eng.get(f"/api/agents/store?project={pid}")
+        assert status == 200 and panel["converting"] is False and panel["total"] > 0 and panel["limit_gb"] == 5
+        assert eng.get("/api/agents/store", {"X-ResearchOS-Session": "wrong"})[1]["converting"] is False
+        assert _tree_state(home) == before and copy.stat().st_nlink == 1 and not store.converted(pid)
+        status, error = eng.get("/api/agents/store?project=p-" + "0" * 32)
+        assert status == 409 and error["state"] == "agent_project_changed"
+        assert eng.get(f"/api/agents/store?project={root}")[0] == 200   # the open project's path names it too
+        status, panel = eng.get("/api/agents/store", {"Cookie": f"{eng.cookie}={SECRET}"})
+        assert status == 200
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not store.converted(pid):
+            time.sleep(0.05)
+        assert store.converted(pid) and copy.stat().st_nlink == 2
+        status, panel = eng.get("/api/agents/store")
+        assert status == 200 and panel["converting"] is False and panel["backups"] > 0
     finally:
         _stop(httpd, thread)
 

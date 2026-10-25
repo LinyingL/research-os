@@ -772,10 +772,10 @@ def test_stop_during_preparing_never_launches(scene: Scene, monkeypatch):
     release, entered = threading.Event(), threading.Event()
     real_take = snapshot.take
 
-    def slow_take(root, copy_to=None):
+    def slow_take(root, copy_to=None, **kwargs):  # the run store's blobs and prior picture (19.8) arrive as keywords
         entered.set()
         release.wait(10)
-        return real_take(root, copy_to)
+        return real_take(root, copy_to, **kwargs)
 
     monkeypatch.setattr(snapshot, "take", slow_take)
     scene.scenario([init_step(), finish_step()])
@@ -1230,7 +1230,7 @@ def test_an_oversized_output_line_is_dropped_not_fatal(scene: Scene, monkeypatch
 
 
 def test_an_exception_in_the_thread_ends_in_failed_with_the_error(scene: Scene, monkeypatch):
-    def boom(root, copy_to=None):
+    def boom(root, copy_to=None, **kwargs):
         raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(snapshot, "take", boom)
@@ -1391,7 +1391,9 @@ def test_revert_a_file_without_a_copy_is_skipped(scene: Scene, monkeypatch):
 def test_revert_a_corrupt_copy_is_never_written_back(scene: Scene):
     scene.put("old.txt", "v0\n")
     run = scene.go([init_step(), {"op": "write", "path": "old.txt", "text": "v1\n"}, finish_step()])
-    (run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt").write_text("tampered\n")
+    copy = run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt"
+    copy.unlink()  # a copy is a read-only link to a shared blob (19.8): replace it, never write through it
+    copy.write_text("tampered\n")
     result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None)
     assert result["skipped"] == [{"path": "old.txt", "reason": "no_copy"}]
     assert (scene.root / "old.txt").read_text() == "v1\n"
@@ -2538,7 +2540,9 @@ def test_a_modified_file_whose_copy_is_no_longer_what_was_recorded_is_no_copy_ev
     scene.put("other.txt", "o1\n")
     run = scene.go([init_step(), {"op": "write", "path": "old.txt", "text": "v2\n"},
                     {"op": "write", "path": "other.txt", "text": "o2\n"}, finish_step()])
-    (run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt").write_text("tampered\n")  # not the recorded bytes
+    copy = run_store.run_dir(scene.pid, run["id"]) / "before" / "old.txt"
+    copy.unlink()  # a copy is a read-only link to a shared blob (19.8): replace it, never write through it
+    copy.write_text("tampered\n")  # not the recorded bytes
     plan = scene.manager.revert_plan(scene.root, scene.pid, run["id"])
     assert plan["cannot"] == [{"path": "old.txt", "reason": "no_copy"}] and plan_paths(plan["restore"]) == ["other.txt"]
     result = scene.manager.revert(scene.root, scene.pid, run["id"], by=None, files=["other.txt"])

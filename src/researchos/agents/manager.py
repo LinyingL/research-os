@@ -88,6 +88,15 @@ it is moved back, not away. Directories the move emptied are removed -- unless
 the before-picture holds them (`dirs`, 18.1 item 5): a folder that existed
 before the run survives, and a picture too cut to say removes none.
 
+**The run store** (DESIGN.md 19.8, `agents.store`). A run's before-picture copies are hard links to the project's
+blobs: `_execute` takes the picture with `blobs=` and, as `prior=`, the previous run's picture, so a file with the same
+stamp is linked without being read. Undo still reads the blob and writes the bytes into the project, checking the hash,
+and puts the mode and the modification time back from the picture's entry; an undone run then releases its backup
+(`store.release`). After every run's clean-up (`tidy`) an old store is converted once, in a thread of the engine, and the
+limit is kept (`enforce`: the oldest run's backup that is not active goes first); the space panel (`space`,
+`release_backups`, `delete_moved`) shows it and lets the person release backups or delete what an undo moved away.
+An undo holds the store's lock (`store.lock`) while it reads the backup, so a release waits for it.
+
 **Undo says what it will do, and asks** (18.1 item 5). `revert_plan` runs the
 very code of `revert` with `dry=True` -- the same checks in the same order, no
 write -- so the list the person sees is what the undo would do at that moment:
@@ -137,12 +146,12 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 from researchos import history, names, outputs, paths, workspace
 from researchos.agents import brief, guard, labels, profiles, runners
 from researchos.agents import runs as run_store
-from researchos.agents import snapshot
+from researchos.agents import snapshot, store
 from researchos.records import files as record_files
 from researchos.records import situation
 from researchos.records.lock import ProjectLockError
@@ -165,6 +174,8 @@ EXIT_DRAIN_S = 2.0
 #: How long `stop` waits for the run to reach its final state before returning the state as it is.
 STOP_WAIT_S = 30.0
 SHUTDOWN_WAIT_S = 60.0
+#: How long quitting waits for the conversion of an old run store (19.8), which stops between two files.
+CONVERT_STOP_WAIT_S = 5.0
 MAX_LINE_BYTES = 4 * 1024 * 1024
 STEPS_LIMIT = 500
 #: How many runs' event-log cursors are kept (the one asked for longest ago goes first); a cursor holds at most
@@ -444,6 +455,13 @@ def sweep_tree(stamps: dict[int, str], *, group: int | None = None, grace: float
 
 
 # -- the summary the page reads --------------------------------------------------------------------
+
+
+def empty_space() -> dict[str, Any]:
+    """The space panel's answer (`AgentManager.space`) for a project that has no run store: nothing used, against the limit."""
+    limit_gb = profiles.store_limit_gb()
+    return {"limit": limit_gb * store.GB, "limit_gb": limit_gb, "converting": False, "backups": 0, "moved": 0,
+            "records": 0, "total": 0, "over": False, "moved_over": False, "moved_runs": [], "releasable": 0}
 
 
 def _change_count(changes: object) -> int:
@@ -770,6 +788,8 @@ class AgentManager:
         self._cursor_lock = threading.Lock()
         self._active: dict[str, _Active] = {}
         self._reverting: set[str] = set()
+        #: the background conversion of an old store, by project (`tidy`, `converting`; DESIGN.md 19.8)
+        self._converting: dict[str, threading.Thread] = {}
         self._closing = False
         self._engine_stamp: str | None = None
 
@@ -1025,6 +1045,7 @@ class AgentManager:
             run_store.prune(act.project_id)
         except Exception:  # noqa: BLE001
             logger.exception("could not prune agent runs of %s", act.project_id)
+        self.tidy(act.project_id)  # 19.8: an old store is converted (once), the limit is kept
         with self._lock:
             if self._active.get(act.project_id) is act:
                 del self._active[act.project_id]
@@ -1142,7 +1163,8 @@ class AgentManager:
         listed = run_store.list_runs(act.project_id)
         work_folder, slug = _work_places(locations["work"], listed, run)
         self._update(act, output_folders=locations, work_folder=work_folder, slug=slug)
-        before = snapshot.take(root, copy_to=rd / "before")
+        before = snapshot.take(root, copy_to=rd / "before", blobs=store.blobs_dir(act.project_id),
+                               prior=self._prior_picture(act.project_id, act.run_id))  # 19.8: copies are links to blobs
         prot = snapshot.protected(root, before, work=[locations["work"], *(r.get("work_folder") for r in listed)])
         before["protected"] = prot
         _write_json(rd / "before.json", before)
@@ -1696,6 +1718,114 @@ class AgentManager:
         deadline = time.monotonic() + SHUTDOWN_WAIT_S
         for act in actives:
             act.done.wait(max(0.0, deadline - time.monotonic()))
+        with self._lock:
+            tidying = list(self._converting.values())
+        for thread in tidying:  # a conversion stops between two files (`_closing`); it is safe to interrupt anyway
+            thread.join(CONVERT_STOP_WAIT_S)
+
+    # -- the run store (DESIGN.md 19.8) ---------------------------------------------------------
+
+    @staticmethod
+    def _prior_picture(project_id: str, run_id: str) -> dict | None:
+        """The before-picture of the newest earlier run of the project that still has one: a file of the new picture with
+        the same stamp in it is linked to its blob without being read (`snapshot.take(prior=)`). None when no run has one."""
+        for other in run_store.iter_runs(project_id):
+            if other["id"] >= run_id or other.get("state") in run_store.ACTIVE_STATES:
+                continue
+            picture = _read_json(run_store.run_dir(project_id, other["id"]) / "before.json")
+            if isinstance(picture, dict) and isinstance(picture.get("files"), dict):
+                return picture
+        return None
+
+    def converting(self, project_id: str) -> bool:
+        """Whether the project's old store is being converted now (the panel says 「正在整理撤回备份…」)."""
+        with self._lock:
+            thread = self._converting.get(project_id)
+            return thread is not None and thread.is_alive()
+
+    @staticmethod
+    def enforce(project_id: str) -> store.Usage:
+        """Keep the project's store within `agent_store_limit_gb`: release the oldest runs' backups while it is over (19.8).
+        Returns the usage as it ends. A release waits for an undo that is going (it holds the store's lock)."""
+        return store.enforce(project_id, profiles.store_limit_gb() * store.GB)[1]
+
+    def tidy(self, project_id: str) -> store.Usage | None:
+        """After a run's clean-up, and when the space panel is read by a request that carries the session (19.8): a store
+        from before the blobs is converted once, in a thread of the engine -- never on the caller's thread -- and, as soon as it
+        is converted (that thread's last act), the limit is kept; a store converted already has the limit kept now (returned:
+        the usage). Never raises: this is housekeeping, and it must not fail a run or a read."""
+        try:
+            if store.needs_conversion(project_id):
+                with self._lock:
+                    thread = self._converting.get(project_id)
+                    if not self._closing and (thread is None or not thread.is_alive()):
+                        thread = threading.Thread(target=self._convert, args=(project_id,), daemon=True,
+                                                  name=f"researchos-store-{project_id}")
+                        self._converting[project_id] = thread
+                        thread.start()
+                return None
+            return self.enforce(project_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not tidy the run store of project %s", project_id)
+            return None
+
+    def _convert(self, project_id: str) -> None:
+        try:
+            if store.convert(project_id, stop=lambda: self._closing):
+                self.enforce(project_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not convert the run store of project %s", project_id)
+        finally:
+            with self._lock:
+                if self._converting.get(project_id) is threading.current_thread():
+                    del self._converting[project_id]
+
+    def space(self, root: Path, project_id: str, *, tidy: bool = False) -> dict:
+        """`GET /api/agents/store`: the project's store against its limit (19.8) -- `limit` and `limit_gb`; `backups`, `moved`,
+        `records` and their `total` in bytes (undo backups, files an undo moved away, logs and pictures); `over` (the total is
+        past the limit) and `moved_over` (the moved-away files alone are: only the person deletes those); `moved_runs`, the
+        runs that hold moved-away files, each `{run, task, task_removed, date, size, files}`; `releasable`, how many runs hold
+        a backup that may be released; `converting`, while an old store is being converted -- the sizes are then None, and
+        nothing is walked. With `tidy` (a request that carries the session) the conversion is started or the limit kept first."""
+        self._check_ids(project_id)
+        usage = self.tidy(project_id) if tidy else None
+        out = empty_space()
+        out.update(converting=self.converting(project_id), backups=None, moved=None, records=None, total=None)
+        if out["converting"]:
+            return out
+        usage = usage or store.scan(project_id)
+        try:
+            tasks: set[Any] | None = {t["id"] for t in workspace.read_tasks(root)[0]}
+        except workspace.WorkspaceError:
+            tasks = None  # nothing is said to be removed when the list cannot be read
+        moved = []
+        for item in usage.moved_runs:
+            run = run_store.load_run(project_id, item["run"]) or {}
+            moved.append({"run": item["run"], "task": run.get("task_text") or None,
+                          "task_removed": tasks is not None and run.get("task_id") not in tasks,
+                          "date": _local_time(run.get("started") or run.get("created")), "size": item["size"],
+                          "files": item["files"]})
+        out.update(backups=usage.backups, moved=usage.moved, records=usage.records, total=usage.total,
+                   over=usage.total > out["limit"], moved_over=usage.moved > out["limit"], moved_runs=moved,
+                   releasable=len(store.holders(project_id)))
+        return out
+
+    def release_backups(self, project_id: str) -> dict:
+        """The person released every undo backup of the project (19.8): `{"released": [run id]}`. A run that is going keeps
+        its backup (and so does one waiting for its changes to be compared)."""
+        self._check_ids(project_id)
+        return {"released": store.release_all(project_id)}
+
+    def delete_moved(self, project_id: str, run_id: str) -> dict:
+        """The person deleted the files an undo moved away from one run (19.8): its `reverted/` and nothing else.
+        `{"freed": bytes}`. A run past the 200-run rule that held nothing else is removed with them."""
+        self._check_ids(project_id, run_id)
+        run = self._load(project_id, run_id)
+        if run.get("state") in run_store.ACTIVE_STATES:
+            raise AgentError("run_active")
+        freed = store.delete_moved(project_id, run_id)
+        run_store.prune(project_id)
+        return {"freed": freed}
 
     # -- listing --------------------------------------------------------------------------------
 
@@ -1755,6 +1885,9 @@ class AgentManager:
             error=run.get("error"), message=run.get("message"), summary=run.get("summary"),
             exit_code=run.get("exit_code"), model_answered=run.get("model_answered"),
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
+            # 19.8: the program keeps its own record of the conversation (Claude Code, Codex, DeepSeek Harness, OpenCode);
+            # the log names it, and Research OS never reads, moves or deletes that record
+            session_id=run.get("session_id") if isinstance(run.get("session_id"), str) else None,
             leftovers=run.get("leftovers") or 0, env_removed=run.get("env_removed") or [],
             events_truncated=bool(run.get("events_truncated")), stderr_truncated=bool(run.get("stderr_truncated")))
         if isinstance(run.get("filing"), dict):  # 19.4: the listing has the counts; the unregistered paths are here
@@ -2025,7 +2158,8 @@ class AgentManager:
             self._check_undoable(project_id, run_id, run, foreign)
             self._reverting.add(project_id)
         try:
-            return self._revert(root, project_id, run, by, chosen)
+            with store.lock(project_id):  # 19.8: no backup is released, and nothing moved away is deleted, under an undo
+                return self._revert(root, project_id, run, by, chosen)
         finally:
             with self._lock:
                 self._reverting.discard(project_id)
@@ -2141,6 +2275,10 @@ class AgentManager:
         if done_something or not skipped:
             run = run_store.update_run(project_id, run_id, reverted=True, reverted_at=_now(),
                                        reverted_by=by if isinstance(by, str) and by else None, revert=result)
+            try:  # 19.8: an undone run cannot be undone twice, so its backup is released now; run.json keeps the record
+                store.release(project_id, run_id)
+            except Exception:  # noqa: BLE001 -- the undo is done; the limit or the next clean-up releases it
+                logger.warning("could not release the backup of undone agent run %s", run_id, exc_info=True)
         else:
             run = run_store.update_run(project_id, run_id, revert=result)
         return {"run": self._summary_of(project_id, run), **result}
@@ -2238,8 +2376,18 @@ class AgentManager:
                     skip(rel, "changed_since")
                     return False
                 record_files.durable_write(Path(target), src.read_bytes())
+                entry = old.get(rel) or {}
                 with contextlib.suppress(OSError):
-                    shutil.copymode(src, target)
+                    # 19.8: the mode and the modification time come from the picture's entry; a blob is shared and
+                    # read only, and its own times are those of whichever file first stored it. An entry from before the
+                    # entries held a mode has a plain copy of its own, whose mode is the file's.
+                    mode, mtime_ns = entry.get("mode"), entry.get("mtime_ns")
+                    if isinstance(mode, int) and not isinstance(mode, bool):
+                        os.chmod(target, mode)
+                    else:
+                        shutil.copymode(src, target)
+                    if isinstance(mtime_ns, int) and not isinstance(mtime_ns, bool):
+                        os.utime(target, ns=(os.stat(target).st_atime_ns, mtime_ns))
             except (OSError, record_files.RecordFileError):
                 logger.warning("could not restore %s of agent run %s", rel, run_id, exc_info=True)
                 skip(rel, "changed_since")

@@ -10,6 +10,14 @@ modified and deleted ("a touched file with the same content is not
 changed": two entries with the same hash are the same file whatever their
 modification times). The copies are what 撤回本次运行 restores from (17.6).
 
+**The copies are links to blobs** (DESIGN.md 19.8). Given the project's blob store (`take(blobs=)`, `agents.store`), a copy
+is a hard link to the one read-only file that holds its content, so two runs over the same project store it once. A file
+whose stamp (`_same_stamp`) is the one the previous run's before-picture recorded (`prior`) is linked without being read;
+any other is read once, hashing while it is written to a temporary file in the store, which becomes the blob when the
+content has none. Only newly stored bytes count toward `COPY_BUDGET`. A file system that will not link gets the plain copy.
+A copied file's entry carries its `mode`: undo puts the mode and the modification time back from the entry, never from the
+shared blob.
+
 What `take` never does: follow a symbolic link (a link is recorded by its
 target and compared by it), open a file that is only in the cloud (marked
 `dataless`; reading it would download it), open anything but a regular file
@@ -103,7 +111,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from researchos import names, paths
-from researchos.agents import guard
+from researchos.agents import guard, store
 
 logger = logging.getLogger(__name__)
 
@@ -273,13 +281,49 @@ def _same_stamp(known: Mapping[str, Any] | None, st: os.stat_result) -> bool:
             and known.get("mtime_ns") == st.st_mtime_ns and known.get("ctime_ns") == st.st_ctime_ns)
 
 
+def _blob_entry(full: str, st: os.stat_result, entry: dict[str, Any], dest: str, blobs: str, budget_left: int,
+                prior: Mapping[str, Any] | None) -> tuple[dict[str, Any], int] | None:
+    """`_entry` for a file that is copied into the run's blob store (DESIGN.md 19.8): `dest` becomes a hard link to the blob
+    of its content. A file whose stamp is the one `prior` (its entry in the previous run's before-picture) holds, and whose
+    blob is there, is linked without being read. Otherwise it is read once, hashing while it is written to a temporary file
+    inside `blobs`, which becomes the blob when the content has none and is discarded when it has; only the bytes of a
+    blob that is new count (`budget_left` is for those). None when the file system will not link (another volume, no hard
+    links): the caller then makes the plain copy of a store without blobs. Returns `(entry, newly stored bytes)`."""
+    size = st.st_size
+    if size > COPY_LIMIT:
+        return None
+    mode = stat.S_IMODE(st.st_mode)
+    if _same_stamp(prior, st) and store.link(blobs, prior["sha256"], dest):  # type: ignore[index]
+        entry.update(sha256=prior["sha256"], copied=True, mode=mode)  # type: ignore[index]
+        return entry, 0
+    try:
+        tmp = store.new_tmp(blobs) if size <= budget_left else None
+    except OSError:
+        return None
+    digest, staged, _nbytes = _hash_and_copy(full, size, tmp)
+    if digest is None:  # unreadable
+        return entry, 0
+    entry["sha256"] = digest
+    if staged:
+        linked, new = store.settle(blobs, tmp, digest, dest)  # type: ignore[arg-type]
+        if not linked:
+            return None
+        entry.update(copied=True, mode=mode)
+        return entry, size if new else 0
+    if tmp is None and store.link(blobs, digest, dest):  # over the budget, but the content is stored already
+        entry.update(copied=True, mode=mode)
+    return entry, 0
+
+
 def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
-           budget_left: int = 0, known: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], int]:
+           budget_left: int = 0, known: Mapping[str, Any] | None = None, blobs: str | None = None,
+           prior: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], int]:
     """The recorded entry for one path (from `lstat`) and the bytes copied.
     Links are recorded by target and never followed; a regular file in the
     cloud is marked and never opened. A file is not read again (and no copy
     is made) when `known`, its entry in an earlier picture, has the same
-    stamp (`_same_stamp`)."""
+    stamp (`_same_stamp`). With `blobs` the copy is a link to the content's
+    blob (`_blob_entry`; `prior` is the previous run's entry for the path)."""
     entry: dict[str, Any] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
     if stat.S_ISLNK(st.st_mode):
         try:
@@ -297,12 +341,19 @@ def _entry(full: str, st: os.stat_result, *, copy_dest: str | None = None,
     if copy_dest is None and _same_stamp(known, st):
         entry["sha256"] = known["sha256"]  # type: ignore[index]
         return entry, 0
+    if copy_dest is not None and blobs is not None:
+        stored = _blob_entry(full, st, entry, copy_dest, blobs, budget_left, prior)
+        if stored is not None:
+            return stored
+        _unlink_quietly(copy_dest)  # a plain copy must never be written through a link to a blob
+        entry.pop("sha256", None)
     want_copy = copy_dest is not None and st.st_size <= COPY_LIMIT and st.st_size <= budget_left
     digest, copied, nbytes = _hash_and_copy(full, st.st_size, copy_dest if want_copy else None)
     if digest is not None:
         entry["sha256"] = digest
     if copied:
         entry["copied"] = True
+        entry["mode"] = stat.S_IMODE(st.st_mode)  # undo puts it back (a blob's own mode is read only)
     return entry, nbytes
 
 
@@ -472,24 +523,31 @@ def _walk_backups(base: str) -> tuple[dict[str, dict[str, int]], bool]:
     return found, False
 
 
-def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | None = None,
+         blobs: Path | None = None, prior: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The before- (or after-) picture of the project folder; see the module
     docstring. Returns `{"files": {rel: entry}, "partial", "copied_bytes",
     "not_copied", "git", "data", "data_partial", "backups", "backups_partial",
     "dirs", "dirs_partial"}` where `dirs` is the sorted list of the folders
-    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `ino`, `ctime_ns`, `dataless`, `link`
-    and `copied` as they apply, `data` is the `{rel: entry}` of the separate
+    walked and an entry is `{"size", "mtime_ns"}` plus `sha256`, `ino`, `ctime_ns`, `dataless`, `link`,
+    `copied` and (of a copied file) `mode` as they apply, `data` is the `{rel: entry}` of the separate
     stat-only walk of data files (no `copied`; `sha256` only where `files` has
     it) and `backups` the `{rel: {"size"}}` of the backups. Copies go to
     `copy_to/<rel>`. `reuse` is an earlier picture of the same folder (the
     before-picture, when this is the after-picture): a file whose entry there
     has the same stamp keeps its hash instead of being read again; the picture
-    is the one a full read gives. It is not consulted for a file that is copied."""
+    is the one a full read gives. It is not consulted for a file that is copied.
+    With `blobs` (the project's blob store, DESIGN.md 19.8) a copy is a hard link to the blob of its
+    content, and only the bytes of a blob that is new count in `copied_bytes` and toward `COPY_BUDGET`;
+    `prior` is the previous run's before-picture (or its bare file map): a file whose entry there has the
+    same stamp is linked without being read."""
     began = time.time_ns()
     root = Path(root)
     base = str(root)
     copy_base = str(copy_to) if copy_to is not None else None
+    blob_base = str(blobs) if blobs is not None else None
     earlier = _file_map(reuse) if reuse is not None else {}
+    before_files = _file_map(prior) if prior is not None else {}
     files: dict[str, dict[str, Any]] = {}
     dirs: list[str] = []
     dirs_partial = False
@@ -508,7 +566,7 @@ def take(root: Path, copy_to: Path | None = None, *, reuse: Mapping[str, Any] | 
             return True  # vanished while walking
         dest = os.path.join(copy_base, *rel.split("/")) if copy_base is not None else None
         entry, nbytes = _entry(full, st, copy_dest=dest, budget_left=COPY_BUDGET - copied_bytes,
-                               known=earlier.get(rel))
+                               known=earlier.get(rel), blobs=blob_base, prior=before_files.get(rel))
         if entry.get("sha256") and st.st_mtime_ns + RACY_NS <= began:
             # what a later picture's `reuse` needs to trust this hash
             entry["ino"], entry["ctime_ns"] = st.st_ino, st.st_ctime_ns

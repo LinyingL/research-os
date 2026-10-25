@@ -132,13 +132,14 @@ Endpoints (all GET unless noted):
                             found or not (path, version, why not), the saved
                             agents (each with `available`, `mcp`), whether
                             the optional `mcp` package is installed, the
-                            suggested Claude Code models, the time limit and
-                            spending cap. Works with no project served.
+                            suggested Claude Code models, the time limit, the
+                            spending cap and the run store's limit in GB (19.8).
+                            Works with no project served.
     GET  /api/agents/models?runner=opencode -- `opencode models` (Claude Code:
                             its suggestions); a runner that is not found:
                             409 `agent_runner_missing`.
     POST /api/settings/agents -- body `{agents?, commands?, timeout_minutes?,
-                            max_budget_usd?}`: this Mac's agent settings
+                            max_budget_usd?, store_limit_gb?}`: this Mac's agent settings
                             (`researchos.agents.profiles`; keys not sent are
                             kept, a refusal saves none of them); answers like
                             GET /api/agents. Works with no project served.
@@ -163,6 +164,21 @@ Endpoints (all GET unless noted):
                             (18.1 item 5): `{count, largest: [{path, size}],
                             partial}`, the ten biggest, biggest first. Reads
                             only.
+    GET  /api/agents/store?project= -- the served project's run store against its
+                            limit (19.8, `AgentManager.space`): the sizes of the undo
+                            backups, of the files an undo moved away and of the run
+                            logs, whether it is over, the runs that hold moved-away
+                            files, and `converting` while an old store is being
+                            tidied. A request with the session also starts that
+                            conversion (in the engine's background) and keeps the
+                            limit; one without only reads.
+    POST /api/agents/store/delete-moved -- `{project, run}`: delete the files an undo
+                            moved away from that run, and nothing else. A person's
+                            act: refused without the session. Answers the panel
+                            as it stands now, with `freed`.
+    POST /api/agents/store/release -- `{project}`: release every undo backup of the
+                            project but the active runs'. Same guard; answers the
+                            panel, with `released`.
     POST /api/agents/runs/<id>/stop, /revert -- `{project}`: stop the run and
                             everything it started; undo it (17.6). `revert`
                             takes `files` (the paths the person left checked in
@@ -1958,7 +1974,7 @@ def literature_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
 #: The `settings.json` keys `POST /api/settings/agents` writes, so a refusal can put them back as they were.
 _AGENT_SETTING_KEYS = (
     agent_profiles.AGENTS_SETTING, agent_profiles.COMMANDS_SETTING,
-    agent_profiles.TIMEOUT_SETTING, agent_profiles.BUDGET_SETTING,
+    agent_profiles.TIMEOUT_SETTING, agent_profiles.BUDGET_SETTING, agent_profiles.STORE_LIMIT_SETTING,
 )
 _agent_settings_lock = threading.Lock()
 
@@ -1986,6 +2002,8 @@ def agents_payload() -> dict[str, Any]:
         "timeout_minutes": agent_profiles.timeout_minutes(),
         "timeout_range": list(agent_profiles.TIMEOUT_RANGE),
         "max_budget_usd": agent_profiles.max_budget_usd(),
+        "store_limit_gb": agent_profiles.store_limit_gb(),
+        "store_limit_range": list(agent_profiles.STORE_LIMIT_RANGE),
         "max_agents": agent_profiles.MAX_AGENTS,
     }
 
@@ -2018,8 +2036,8 @@ def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
 
 def agents_settings_payload(body: dict[str, Any]) -> dict[str, Any]:
     """`POST /api/settings/agents`: save the keys the body carries (`agents`,
-    `commands`, `timeout_minutes`, `max_budget_usd`; the others stay), then
-    answer like `GET /api/agents`. A value the setters refuse (ValueError)
+    `commands`, `timeout_minutes`, `max_budget_usd`, `store_limit_gb`; the others
+    stay), then answer like `GET /api/agents`. A value the setters refuse (ValueError)
     saves none of the keys: what was written before the refusal is put back."""
     with _agent_settings_lock:
         before = {k: v for k, v in settings_mod.read_settings().items() if k in _AGENT_SETTING_KEYS}
@@ -2036,6 +2054,9 @@ def agents_settings_payload(body: dict[str, Any]) -> dict[str, Any]:
                 wrote = True
             if "max_budget_usd" in body:
                 agent_profiles.set_max_budget_usd(body["max_budget_usd"])
+                wrote = True
+            if "store_limit_gb" in body:
+                agent_profiles.set_store_limit_gb(body["store_limit_gb"])
         except ValueError as exc:
             if wrote:
                 data = {k: v for k, v in settings_mod.read_settings().items() if k not in _AGENT_SETTING_KEYS}
@@ -3853,6 +3874,26 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             logger.info("no scan after undoing the agent run %s: %s", run_id, exc)
         return payload
 
+    def _agent_store_post(self, path: str) -> Any:
+        """`POST /api/agents/store/delete-moved` (`{project, run}`) and `/release` (`{project}`) (DESIGN.md 19.8): the person
+        deletes the files an undo moved away from one run, or releases every undo backup of the project but those of runs
+        that are going. A person's act like the other agent POSTs -- the session is required before anything is routed, so a
+        program an agent runs cannot -- and the project must be the one served. They change this Mac's store, not the
+        project, so a read-only project may free its space too. The answer is the space panel as it stands now, with
+        `freed` or `released`."""
+        body = self._read_json_object()
+        served = self._agent_target(body)
+        agents = self.server.agents
+        if path.endswith("/release"):
+            done = self._agent_api(lambda: agents.release_backups(served.project_id))
+        else:
+            run_id = body.get("run")
+            if not isinstance(run_id, str) or not run_id:
+                raise AgentApiError(_AgentRefusal(
+                    "invalid", 400, "the request must name a run", "请求里没有指明是哪次运行"), self._lang())
+            done = self._agent_api(lambda: agents.delete_moved(served.project_id, run_id))
+        return {**self._agent_api(lambda: agents.space(served.root, served.project_id)), **done}
+
     def _check_local_origin(self) -> None:
         """Reject a request whose `Host` does not name this exact loopback
         server, and one whose `Origin` (when a browser sends one at all)
@@ -4208,6 +4249,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 # 18.1 item 5: what the confirmation before a first run names (a stat-only walk)
                 served = self._require_unblocked()
                 self._send_json(200, agent_snapshot.large_files(served.root))
+            elif path == "/api/agents/store":
+                # 19.8: the project's run store against its limit. A read -- except that a request which carries the
+                # session also starts the conversion of an old store (in the engine's background) and keeps the limit,
+                # as the run list recovers runs only with it. The page names the project by its id or its path.
+                served = self._require_unblocked()
+                wanted = (query.get("project") or [None])[0]
+                if wanted is not None and wanted not in (served.project_id, str(served.root)):
+                    raise AgentApiError(_AgentRefusal(
+                        "project_changed", 409, "the open project changed; reload the page", "项目已切换，请刷新页面后再操作"), self._lang())
+                if served.project_id is None:  # no identity yet: nothing could have run
+                    self._send_json(200, agent_manager.empty_space())
+                else:
+                    tidy = self._has_session()
+                    self._send_json(200, self._agent_api(lambda: self.server.agents.space(served.root, served.project_id, tidy=tidy)))
             elif path.startswith("/api/agents/runs/") and path.endswith("/revert-plan") and path.count("/") == 5:
                 # 18.1 item 5: the undo's list, which only reads
                 served = self._require_unblocked()
@@ -4703,6 +4758,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, self._agent_api(lambda: agents_settings_payload(body)))
             elif parsed.path == "/api/agents/runs" or parsed.path.startswith("/api/agents/runs/"):
                 self._send_json(200, self._agent_runs_post(parsed.path))
+            elif parsed.path in ("/api/agents/store/delete-moved", "/api/agents/store/release"):
+                self._send_json(200, self._agent_store_post(parsed.path))
             elif parsed.path == "/api/shutdown":
                 # Stops this whole server (task V3 phase 4). Respond first,
                 # then stop the serve loop from a separate thread -- see

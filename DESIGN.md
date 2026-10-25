@@ -5598,6 +5598,41 @@ stays a paper draft. The lineage report skips the work folder as the scan does. 
 - **The agent programs' own session records** (Claude Code in `~/.claude/projects`, DeepSeek
   Harness in `~/.dsh/sessions`, Codex in `~/.codex/sessions`) belong to those programs.
   Research OS never reads, moves or deletes them; the run log names the session id.
+- **As built (task V15 step 5).** What the text above left to the build:
+  - *Blobs.* A copy is made through a temporary name inside `blobs/` (hashed while it is
+    written) that becomes the blob when the content has none; if the file system will not
+    link, that file gets the plain copy of 17.6. The picture's entry of a copied file carries
+    its `mode`, and undo puts the mode and the modification time back from the entry (a blob
+    is read only, shared, and has the times of whichever file first stored it); an entry
+    without a `mode` (a store from before the blobs) keeps the mode of its own copy. `blobs/`
+    and its folders are 0o700 like the run folders. `st_nlink == 1` is the test of an unused blob,
+    and a temporary name older than a day is a dead run's leftover.
+  - *One lock.* Conversion, release and deletion of blobs take one lock per project;
+    a run taking its picture does not (it may read for minutes) and is tolerant of a blob
+    deleted under it. An undo holds the same lock while it reads the backup, so a release waits
+    for it instead of refusing it.
+  - *The limit* is whole gigabytes of 1,073,741,824 bytes, each file counted once whatever its
+    links. The 20-run rule of 17.6 stays beside it: a run beyond the newest 20 loses its backup
+    too. A run that is going, and one waiting for its changes to be compared (`check_pending`),
+    keep theirs; when only those and `reverted/` are left the store may stay over the limit (the
+    panel's total shows it, and says so in words when the moved-away files alone pass it). The limit is not kept against a store that has not been
+    converted yet (its copies are not shared, so it would release backups the conversion is
+    about to make small): the first clean-up or panel read starts the conversion, and the
+    limit is kept the moment it ends.
+  - *Conversion* is one pass in a thread of the engine, started by a run's first clean-up after
+    the upgrade and by the space panel when a request with the session reads it (a read
+    without the session starts nothing and writes nothing). It records each copied file's
+    `mode` in `before.json` first, then links file by file (a replacement is atomic, so an
+    interruption leaves a store that undoes), skips runs that are going, releases the undone
+    runs' backups, and writes `agent-runs/<project id>/store.json` when it looked at every run.
+  - *The panel's sizes* are three: undo backups (blobs, and any copy that is no link of one),
+    files moved away (`reverted/`), run logs (everything else: logs and pictures). While the
+    conversion goes the panel says 「正在整理撤回备份…」 and shows no sizes, and asks again every
+    3 seconds. `GET /api/agents/store` answers it (`?project=` is the project's id or its path);
+    `POST /api/agents/store/release` and `/delete-moved` are a person's acts, refused without the
+    session, for the served project only, and answer the panel as it stands.
+  - *The run log* names the session id: `GET /api/agents/runs/<id>` carries `session_id`
+    and the log shows it as 会话编号.
 
 ### 19.9 Language
 
@@ -5606,7 +5641,8 @@ Added to 13.4: 过程文件 "Process files"; 工作文件夹 (a run's work folde
 "Register files from earlier runs"; 登记所选 "Register selected"; 不登记 "Do not register";
 运行占用的空间 "Space used by runs"; 撤回备份 "Undo backups"; 撤回时移走的文件 "Files moved
 away by undo"; 释放所有撤回备份 "Release all undo backups"; 删除这些文件 "Delete these
-files"; 任务已移除 "Task removed". 任务输出 stays "Task outputs". No arrows or emoji (12.11).
+files"; 任务已移除 "Task removed"; 空间上限 "Space limit"; 会话编号 "Session ID". 任务输出 stays
+"Task outputs". No arrows or emoji (12.11).
 
 ### 19.10 Increments and acceptance
 

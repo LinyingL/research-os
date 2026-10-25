@@ -662,7 +662,8 @@ def test_every_agent_post_is_refused_across_origins(api):
     run_id = done["id"]
     before_settings = api.get("/api/agents")[1]
     posts = ["/api/settings/agents", "/api/agents/runs", f"/api/agents/runs/{run_id}/reply",
-             f"/api/agents/runs/{run_id}/stop", f"/api/agents/runs/{run_id}/revert"]
+             f"/api/agents/runs/{run_id}/stop", f"/api/agents/runs/{run_id}/revert",
+             "/api/agents/store/release", "/api/agents/store/delete-moved"]
     body = json.dumps({"project": str(api.root), "task": "t1", "message": "x", "agents": [], "timeout_minutes": 7}).encode()
     host = api.base.removeprefix("http://")
     for path in posts:
@@ -673,7 +674,7 @@ def test_every_agent_post_is_refused_across_origins(api):
             api.base, "POST", path, {"Host": "evil.example:80", "Content-Length": str(len(body))}, body)
         assert status == 403, path
     for path in ("/api/agents", "/api/agents/models?runner=claude-code", "/api/agents/runs",
-                 f"/api/agents/runs/{run_id}"):
+                 f"/api/agents/runs/{run_id}", "/api/agents/store"):
         status, _ = _request_with_headers(api.base, "GET", path, {"Host": host, **FOREIGN})
         assert status == 403, path
     # nothing happened: no new run, no revert, no settings change
