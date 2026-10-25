@@ -5416,13 +5416,19 @@ described here for the first time and stay as they are unless said otherwise).
 ### 19.2 Places
 
 - **Kinds.** `research/folders.json` gains an eighth role, `work`, default `work` (candidates:
-  `work`). A saved version-1 file without `work` reads as if it named the default; saving
+  `work`, `agent-work`). A saved version-1 file without `work` reads as if it named the default; saving
   writes all eight. The 输出目录 panel shows the work folder last, with the words
   「过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。」
+- **The work location stands apart** (amended after step 2's review): it may not equal,
+  contain or lie inside another role's location, and may not lie under `research/`. Saving
+  such a choice is refused; an unsaved default that would clash, or a candidate that is a
+  file or a link, moves on to the next candidate, and when none is usable the settings still
+  read (the panel opens and says the work location needs choosing) while a run refuses to
+  start with that message instead of failing inside.
 - **A run's work folder** is `<work>/<YYYYMMDD>-<slug>/`: the date the task's first run
   started (local time) and the task's first line, at most 24 characters, every run of
-  characters other than letters, digits, CJK, `-` and `_` turned into one `-`, trimmed of
-  `-`. Every later run of the same task (an answer, a sending back, a new start) uses the
+  characters other than letters, digits, CJK, `-` and `_` turned into one `-`, repeated `-`
+  made one, trimmed of `-`. Every later run of the same task (an answer, a sending back, a new start) uses the
   same folder, recorded in `run.json` as `work_folder`. A name taken by another task's folder
   gets `-2`, `-3`. Research OS does not create the folder; the agent does when it needs it.
 - **The same slug names the task's subfolders** in the output folders, so one task reads
@@ -5467,7 +5473,8 @@ one class and keeps the result in `run.json` as `filing`: `record` (written by i
 tools), `output` (in this task's catalog), `work` (inside the run's work folder), `cache`
 (`__pycache__`, `.pyc`, `.pytest_cache`, files 17.5 already does not count) and
 `unregistered` (the rest; at most 500 paths kept, then a count). Filing changes no state and
-is not out of bounds; it is what the task row shows (19.6). A run from before V15 has no
+is not out of bounds; it is what the task row shows (19.6). The runs listing the page polls
+carries the counts only; the paths are in the run's detail. A run from before V15 has no
 `filing`; the page treats all its created files as unregistered until 19.5 registers them.
 
 ### 19.5 A person registers files
@@ -5521,8 +5528,12 @@ is not out of bounds; it is what the task row shows (19.6). A run from before V1
 ### 19.7 The index
 
 The scan skips the work folder (as configured, else its default) like a noise folder, and
-skips files registered as `work`. Files registered as `document`, and result records as
-before, are not paper drafts: no claims are drawn from them. The catalogs and
+skips files registered as `work`. A file registered as `document` that a run created, and
+result records as before, are not paper drafts: no claims are drawn from them. An entry
+says so with `created: true`: an agent's declaration of a path absent from its run's
+before-picture, or a file a person registers from a run's created files (19.5). A document
+that existed before the run — the researcher's own draft that an agent edited and declared —
+stays a paper draft. The lineage report skips the work folder as the scan does. The catalogs and
 `research/folders.json` travel with the project, so every member's index agrees.
 
 ### 19.8 The run store (amends 17.6)
