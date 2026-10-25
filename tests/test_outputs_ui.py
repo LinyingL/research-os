@@ -81,6 +81,32 @@ def test_output_folders_panel_shows_the_work_location_last_with_its_sentence():
     assert en["posted"][-1][1]["folders"]["work"] == "process"
 
 
+_CHOOSE_PANEL = r'''
+const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:%(work)s};
+customGet=path=>path==='/api/outputs/folders'?Object.assign({folders,revision:null,saved:false},%(extra)s):undefined;
+customPost=path=>path==='/api/outputs/folders'?{revision:'r1'}:undefined;
+await window.ROWorkspace.load(root);
+await find(%(open)s).click();
+const text=panelBody.textContent;
+const says=panelBody.all().filter(e=>e.className==='ws-status err').map(e=>e.textContent);
+console.log(JSON.stringify({text,says,work:field(%(field)s,panelBody).value}));
+'''
+
+
+def test_output_folders_panel_says_the_work_location_needs_choosing_when_no_name_is_usable_for_it():
+    """DESIGN.md 19.2: the settings still read, the work field is empty and says so, under the field and before the
+    sentence about process files; with a usable name nothing of the kind is said."""
+    zh = run(_CHOOSE_PANEL % {"open": "'输出目录'", "field": "'过程文件'", "work": "''", "extra": "{choose:['work']}"})
+    sentence = "过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。"
+    assert zh["says"] == ["请为过程文件选一个目录。"] and zh["work"] == ""
+    assert zh["text"].index("变量草稿") < zh["text"].index("请为过程文件选一个目录。") < zh["text"].index(sentence)
+    en = run(_CHOOSE_PANEL % {"open": "'Output folders'", "field": "'Process files'", "work": "''", "extra": "{choose:['work']}"}, lang="en")
+    assert en["says"] == ["Choose a folder for process files."] and not any("\u3400" <= c <= "\u9fff" for c in en["text"])
+    for extra in ("{}", "{choose:[]}"):
+        usable = run(_CHOOSE_PANEL % {"open": "'输出目录'", "field": "'过程文件'", "work": "'agent-work'", "extra": extra})
+        assert usable["says"] == [] and usable["work"] == "agent-work" and "请为过程文件选一个目录。" not in usable["text"]
+
+
 def test_late_folder_read_never_replaces_a_new_project_panel():
     result = run(r'''
 const late=deferred();customGet=path=>path==='/api/outputs/folders'?late.promise:undefined;
@@ -206,3 +232,31 @@ console.log(JSON.stringify({unreadable, documents: documentReads().length}));
 """)
     assert out["unreadable"] == {"view": "workspace", "loaded": None, "documents": 0}
     assert out["documents"] == 0
+
+
+def test_open_result_from_a_view_that_refuses_to_be_left_keeps_that_view_when_the_home_was_read_first():
+    """The project home was read before the page moved on to a view that asks to be kept (the desk with half-typed words):
+    the click leaves the page where it is, shows nothing new and reads no document; with the view free to be left, the
+    next click opens the record without reading the home again."""
+    out = _home_run(r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const home = {reads: homeReads().length, documents: documentReads().length, words: preview().textContent, loaded: root.dataset.loaded || null};
+const host = rowsOn('desk');
+desk.leave = false;
+const seen = gets.length;
+await find('打开结果', host).click();await sleepTick();
+const refused = {view: currentView, shown: shownView(), newGets: gets.slice(seen),
+  documents: documentReads().length, words: preview().textContent, loaded: root.dataset.loaded || null,
+  homeHidden: root.classList.contains('hidden')};
+desk.leave = true;
+await find('打开结果', host).click();await sleepTick();
+console.log(JSON.stringify({home, refused, view: currentView, homeReads: homeReads().length, words: preview().textContent}));
+""")
+    assert out["home"]["reads"] == 1 and out["home"]["loaded"] == "1" and "An open question." in out["home"]["words"]
+    refused = out["refused"]
+    assert refused["view"] == "desk" and refused["shown"] == ["desk"] and refused["homeHidden"] is True
+    assert refused["newGets"] == [] and refused["documents"] == out["home"]["documents"]   # no document is read
+    assert refused["words"] == out["home"]["words"] and "The estimate is 0.42." not in refused["words"]
+    assert refused["loaded"] == "1"
+    # nothing is held against the next try
+    assert out["view"] == "workspace" and out["homeReads"] == 1 and "The estimate is 0.42." in out["words"]

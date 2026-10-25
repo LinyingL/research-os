@@ -6,7 +6,9 @@ it never moves files, executes analysis, or confirms a research judgment.
 The eighth location, `work` (DESIGN.md 19.2), is where an agent puts everything
 it writes only to carry out a task. It is never declared: `validate` refuses it,
 and `filing` (19.4) is how the app tells, after a run, which of the files the run
-created are records, outputs, process files, caches or none of these.
+created are records, outputs, process files, caches or none of these. It stands
+apart from the other seven (`_apart`); when nothing usable is left to name it,
+the settings still read and `choose` says so (`folders`).
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from researchos import workspace
-from researchos.agents import guard, snapshot
+from researchos.agents import guard, runs, snapshot
 from researchos.ingest import files as ingest_files
 from researchos.records import situation
 
@@ -38,7 +40,7 @@ ROLES = {
     "literature": ("literature", "references", "bibliography"),
     "document": ("reports", "manuscript", "paper"),
     "variable": ("research/variables", "variables"),
-    "work": (ingest_files.WORK_FOLDER,),
+    "work": (ingest_files.WORK_FOLDER, "agent-work"),
 }
 SUFFIXES = {
     "code": {".py", ".r", ".rmd", ".do", ".ado", ".ipynb", ".jl", ".m", ".sh", ".sql"},
@@ -53,6 +55,8 @@ SUFFIXES = {
 #: records and the app's own record files.
 RECORD_FOLDERS = ("research/notes", "research/results")
 RECORD_FILES = (FOLDERS_PATH, workspace.TASKS_PATH, workspace.OVERVIEW_PATH)
+#: What a run, and the page, say while the work location has no usable name (DESIGN.md 19.2): English, Chinese.
+CHOOSE_WORK = ("Choose a folder for process files.", "请为过程文件选一个目录。")
 #: The longest first line of a task a slug is made from (19.2).
 SLUG_LIMIT = 24
 #: Filing (19.4): the classes a created file is sorted into, and how many unregistered paths a run keeps.
@@ -95,18 +99,59 @@ def _bytes(value: Any) -> bytes:
     return workspace._content(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
-def _roles(value: Any) -> Any:
+def _apart(work: str, others: dict[str, str]) -> workspace.WorkspaceError | None:
+    """Why `work` cannot be the work location (DESIGN.md 19.2), or None: it stands apart from the other roles'
+    locations (`others`) -- it is not one of them, does not contain one and does not lie inside one -- and is not under
+    `research/`, where only Research OS's tools write. Compared as the scan compares paths (`files.fold`)."""
+    key = ingest_files.fold(work)
+    if key == "research" or key.startswith("research/"):
+        return _bad("The work location cannot be under research/, which only Research OS's tools write in",
+                    "过程文件的目录不能放在 research/ 里，那里只由 Research OS 的工具写入。")
+    for role, rel in others.items():
+        other = ingest_files.fold(rel)
+        if key == other or key.startswith(other + "/") or other.startswith(key + "/"):
+            return _bad(f"The work location must stand apart from the {role} location: it cannot be, contain or lie "
+                        f"inside {rel}", f"过程文件的目录“{work}”不能与“{rel}”相同，也不能包含它或位于它里面。")
+    return None
+
+
+def _work_default(root: Path, others: dict[str, Any]) -> str:
+    """The work location nobody has chosen yet (DESIGN.md 19.2): the first of its candidates that is a folder or can
+    become one (not a file, not a link) and stands apart from the other roles' locations (`others`); one that already
+    exists as a folder wins over one that does not, as for the other roles. An empty name when none is usable."""
+    apart = {role: rel for role, rel in others.items() if isinstance(rel, str)}
+    found = ""
+    for rel in ROLES["work"]:
+        try:
+            target = _path(root, rel)
+        except workspace.WorkspaceError:
+            continue
+        if (target.exists() and not target.is_dir()) or _apart(rel, apart) is not None:
+            continue
+        if target.is_dir():
+            return rel
+        found = found or rel
+    return found
+
+
+def _roles(root: Path, value: Any) -> Any:
     """Locations as DESIGN.md 19.2 reads them: a set without `work` (a version-1 file saved before it existed, a run
-    that froze its locations before) names the default."""
+    that froze its locations before) names the default no one has chosen (`_work_default`)."""
     if isinstance(value, dict) and "work" not in value:
-        return {**value, "work": ROLES["work"][0]}
+        return {**value, "work": _work_default(root, value)}
     return value
 
 
-def _folders(root: Path, value: Any) -> dict[str, str]:
+def _folders(root: Path, value: Any, *, unset: bool = False) -> dict[str, str]:
+    """Check a full set of locations. `unset` lets `work` be empty: no candidate is usable and the person has yet to
+    choose (`folders` reads such settings; saving them is refused with `CHOOSE_WORK`)."""
     if not isinstance(value, dict) or set(value) != set(ROLES):
         raise _bad("Choose a folder for each output type: " + ", ".join(ROLES))
     for role, rel in value.items():
+        if role == "work" and rel == "":
+            if unset:
+                continue
+            raise _bad(*CHOOSE_WORK)
         target = _path(root, rel)
         if any(rel == p or rel.startswith(p + "/") for p in (FOLDERS_PATH, workspace.TASKS_PATH, workspace.OVERVIEW_PATH)):
             raise _bad("An output folder cannot replace a project record file")
@@ -114,18 +159,27 @@ def _folders(root: Path, value: Any) -> dict[str, str]:
             raise _bad(f"The {role} location is a file, not a folder: {rel}", f"“{rel}”是文件，请填写目录路径。")
         if rel in {"research", "research/notes", "research/results"} or rel.startswith(("research/notes/", "research/results/")):
             raise _bad("Notes and result records have their own save tools; choose another output folder")
+    if value["work"]:
+        problem = _apart(value["work"], {role: rel for role, rel in value.items() if role != "work"})
+        if problem is not None:
+            raise problem
     return {role: value[role] for role in ROLES}
 
 
 def folders(root: Path) -> dict[str, Any]:
+    """The eight output locations, saved or defaulted. When no candidate for the work location is usable the settings
+    still read, with `work` empty and `"choose": ["work"]` (DESIGN.md 19.2): the page says the location needs choosing,
+    and a run is refused until it is."""
     value, raw = _read(root, FOLDERS_PATH)
     if raw is not None:
         if not isinstance(value, dict) or value.get("version") != 1:
             raise _bad("Unknown output-folder settings version")
-        chosen = _folders(root, _roles(value.get("folders")))
+        chosen = _folders(root, _roles(root, value.get("folders")), unset=True)
     else:
         chosen = {}
         for role, candidates in ROLES.items():
+            if role == "work":  # last: it must stand apart from the seven that are chosen by now
+                continue
             for rel in candidates:
                 try:
                     target = _path(root, rel)
@@ -144,8 +198,12 @@ def folders(root: Path) -> dict[str, Any]:
                 chosen["data"] = "data/derived"
         except workspace.WorkspaceError:
             pass
-        chosen = _folders(root, chosen)
-    return {"folders": chosen, "revision": workspace._revision(raw), "saved": raw is not None}
+        chosen["work"] = _work_default(root, chosen)
+        chosen = _folders(root, chosen, unset=True)
+    found = {"folders": chosen, "revision": workspace._revision(raw), "saved": raw is not None}
+    if not chosen["work"]:
+        found["choose"] = ["work"]
+    return found
 
 
 def save_folders(root: Path, body: dict[str, Any]) -> dict[str, Any]:
@@ -252,7 +310,7 @@ def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[
     (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported."""
     if not isinstance(declared, list) or len(declared) > 200:
         raise _bad("outputs must be a list of at most 200 {kind, path, title?} objects; use [] for no files")
-    locations = _folders(root, _roles(locations))
+    locations = _folders(root, _roles(root, locations), unset=True)
     checked = []
     seen = set()
     for raw in declared:
@@ -295,7 +353,9 @@ def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[
 
 def register(root: Path, checked: list[dict[str, Any]], run: dict[str, Any], report: str,
              author: dict[str, Any]) -> tuple[str, str] | None:
-    """One record per task report, so independent tasks can also be undone independently."""
+    """One record per task report, so independent tasks can also be undone independently. An item the caller says the
+    run created (`created: true`, `made_by_run`; DESIGN.md 19.7) keeps that mark when a later run of the task declares
+    the file again."""
     if not checked:
         return None
     rel = catalog_path(report)
@@ -304,14 +364,32 @@ def register(root: Path, checked: list[dict[str, Any]], run: dict[str, Any], rep
     for item in checked:
         if not _current(item, _fingerprint(root, item["path"])):
             raise _bad(f"The output changed during registration: {item['path']}")
-        items[item["path"]] = {**item, "run": run["id"], "task": run["task_id"],
-                               "agent": run.get("label") or run.get("owner"), "report": report,
-                               "evidence": "agent_declaration"}
+        entry = {**item, "run": run["id"], "task": run["task_id"], "agent": run.get("label") or run.get("owner"),
+                 "report": report, "evidence": "agent_declaration"}
+        if (items.get(item["path"]) or {}).get("created") is True:  # 19.7: an earlier run of the task made the file
+            entry["created"] = True
+        items[item["path"]] = entry
     if len(items) > LIMIT:
         raise _bad("The output catalog is full")
     after = _bytes({"version": 1, "items": list(items.values())})
     workspace._save(root, rel, before, after, run["project_id"], author)
     return rel, hashlib.sha256(after).hexdigest()
+
+
+def made_by_run(project_id: str, run_id: str, rels: Iterable[str]) -> set[str]:
+    """Which of `rels` the run created (DESIGN.md 19.7), for the `created: true` of a catalog entry: the files its
+    before-picture (`before.json` in the run's folder) does not hold, compared as the scan compares paths
+    (`files.fold`). Nothing is known of a file in a folder the picture does not walk (`snapshot.SKIP_DIRS`), nor of any
+    file when the picture is missing, unreadable or cut short (`partial`): those stay as they are, not created."""
+    try:
+        before = json.loads((runs.run_dir(project_id, run_id) / "before.json").read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError):
+        return set()
+    held = before.get("files") if isinstance(before, dict) and not before.get("partial") else None
+    if not isinstance(held, dict):
+        return set()
+    known = {ingest_files.fold(rel) for rel in held}
+    return {rel for rel in rels if ingest_files.fold(rel) not in known and not snapshot.SKIP_DIRS & set(rel.split("/"))}
 
 
 def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
@@ -425,11 +503,11 @@ def related_files(root: Path, reports: list[str]) -> list[str]:
 
 def slug(text: Any) -> str:
     """The name a task goes by in its folders (DESIGN.md 19.2): its first line, cut to `SLUG_LIMIT` characters, every
-    run of characters other than letters, digits, CJK, `-` and `_` turned into one `-`, trimmed of `-`. A task with
-    nothing left of its first line is `task`."""
+    run of characters other than letters, digits, CJK, `-` and `_` turned into one `-` (a `-` among them is part of
+    the run, so `a - b` is `a-b`), trimmed of `-`. A task with nothing left of its first line is `task`."""
     lines = unicodedata.normalize("NFC", text if isinstance(text, str) else "").splitlines()
     first = next((line.strip() for line in lines if line.strip()), "")
-    return re.sub(r"[^\w-]+", "-", first[:SLUG_LIMIT]).strip("-") or "task"
+    return re.sub(r"\W+", "-", first[:SLUG_LIMIT]).strip("-") or "task"
 
 
 def _is_cache(rel: str) -> bool:

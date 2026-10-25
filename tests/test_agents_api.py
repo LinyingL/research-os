@@ -1237,3 +1237,24 @@ def test_a_failing_recovery_never_ends_the_engine(tmp_path, monkeypatch):
         assert {t.name for t in threading.enumerate()} == before
     finally:
         httpd.server_close()
+
+
+def test_a_run_is_refused_over_http_while_the_work_location_has_no_usable_name(api):
+    """DESIGN 19.2 (amended): the refusal is the work location's own sentence in the request's language, as an
+    `agent_work_location` state; nothing is recorded, and the run starts once a folder is chosen."""
+    api.put("work", "a file, not a folder")
+    api.put("agent-work", "another file")
+    api.scenario([init_step(), finish_step()])
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_work_location"
+    assert error["message"] == error["detail"] == "Choose a folder for process files."
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+    assert status == 409 and error["message"] == "请为过程文件选一个目录。"
+    assert run_store.list_runs(api.pid) == [] and api.get("/api/agents/runs")[1]["runs"] == []
+    status, info = api.get("/api/outputs/folders")                  # the panel still opens, and says what is missing
+    assert status == 200 and info["choose"] == ["work"] and info["folders"]["work"] == "" and info["folders"]["code"] == "code"
+    status, error = api.post("/api/outputs/folders", {"revision": None, "folders": info["folders"]}, lang="en")
+    assert status == 409 and error["state"] == "workspace_output" and error["message"] == "Choose a folder for process files."
+    status, saved = api.post("/api/outputs/folders", {"revision": None, "folders": {**info["folders"], "work": "process"}})
+    assert status == 200 and saved["folders"]["work"] == "process" and "choose" not in saved
+    assert api.poll(api.start()["id"])["state"] == "ended"

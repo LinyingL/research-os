@@ -727,7 +727,7 @@ def parse_draft(repo_root: str | Path, rel_path: str) -> DraftCitations:
 def drafts_of(inventory: Mapping[str, Iterable[str]], root: str | Path | None = None) -> list[str]:
     """The drafts of an inventory: paper Markdown and LaTeX files. `root`: the project, whose attempt table is not
     prose when it is in `research/` under a name of its own (without it, the table is known by its default name), and
-    whose registered documents (DESIGN.md 19.7) are not drafts, Markdown or LaTeX."""
+    whose documents a run created and registered (DESIGN.md 19.7) are not drafts, Markdown or LaTeX."""
     table = mdpaper_ingest.attempt_table_of(root) if root is not None else None
     documents = mdpaper_ingest.registered_documents(root) if root is not None else frozenset()
     md = [p for p in inventory.get("md", []) if mdpaper_ingest._is_paper_markdown(p, table, documents)]

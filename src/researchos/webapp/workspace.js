@@ -1905,8 +1905,12 @@
         const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
         box.addEventListener("input", () => { subject.dirty = true; });
         form.append(field(labels[kind], box));
-        // 19.2: the work location comes last, and says what it holds and what the app does with it
-        if (kind === "work") form.append(el("p", "ws-agent-quiet", t("过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。")));
+        // 19.2: the work location comes last, and says what it holds and what the app does with it; when no name is
+        // usable for it (the settings still read: it is empty), the field says it needs choosing
+        if (kind === "work") {
+          if (Array.isArray(info.choose) && info.choose.indexOf("work") >= 0) form.append(el("p", "ws-status err", t("请为过程文件选一个目录。")));
+          form.append(el("p", "ws-agent-quiet", t("过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。")));
+        }
       });
       const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
       const save = button(t("保存"), async () => {

@@ -377,7 +377,8 @@ def case_insensitive(root):
 
 
 def test_work_is_the_eighth_location_and_the_scan_knows_the_same_default(root):
-    assert list(outputs.ROLES)[-1] == "work" and outputs.ROLES["work"] == ("work",) == (ingest_files.WORK_FOLDER,)
+    assert list(outputs.ROLES)[-1] == "work" and outputs.ROLES["work"] == ("work", "agent-work")
+    assert outputs.ROLES["work"][0] == ingest_files.WORK_FOLDER
     got = outputs.folders(root)
     assert list(got["folders"]) == list(outputs.ROLES) and got["folders"]["work"] == "work"
     assert not (root / "work").exists() and not got["saved"]  # Research OS does not create it
@@ -466,7 +467,7 @@ def test_notes_results_and_records_stay_refused_whatever_their_spelling(root):
     ("汇率与利率传导：基于 VAR 的分析", "汇率与利率传导-基于-VAR-的分析"),
     ("snake_case-and-dash", "snake_case-and-dash"),
     ("a / b: c? d*", "a-b-c-d"),
-    ("a  -  b", "a---b"),                                                        # runs of other characters, not of "-"
+    ("a  -  b", "a-b"), ("a - b", "a-b"), ("a--b", "a-b"), ("-a-- --b-", "a-b"),   # a "-" among them is part of the run
     ("???", "task"), ("", "task"), ("   ", "task"), (None, "task"), (42, "task"), ("/-/", "task"),
     ("Cafe\u0301 am Rhein", "Caf\u00e9-am-Rhein"),                               # composed, so the letter is not cut
 ])
@@ -537,7 +538,187 @@ def test_the_after_run_check_files_what_the_run_created_and_an_undo_still_remove
                                   "unregistered":["loose.py"],"unregistered_more":0}
     runs.update_run(pid,run_id,state="done",**{k:v for k,v in assessed.items() if k != "signal_info"})
     summary = manager.summary(runs.load_run(pid,run_id),latest_of_task=True,active=False)
-    assert summary["filing"] == assessed["filing"] and summary["work_folder"] == "work/20261025-probe"
+    assert summary["filing"] == {"counts": assessed["filing"]["counts"], "unregistered_more": 0}  # no paths in the listing
+    assert summary["work_folder"] == "work/20261025-probe"
     reverted = agent_manager.revert(root,pid,run_id,by=None)
     assert {"loose.py","work/20261025-probe/probe.py","tables/counts.csv"} <= set(reverted["removed"])
     assert not (root / "loose.py").exists() and not (root / "work/20261025-probe").exists()
+
+
+# -- V15 step 2b: the work location stands apart, a candidate that cannot be used is passed over (DESIGN 19.2) ---------
+
+
+def settle(root, **named):
+    """Save the default locations with some named otherwise; the work location is whatever `named` says."""
+    chosen = {**outputs.folders(root)["folders"], **named}
+    return outputs.save_folders(root, {"revision": outputs.folders(root)["revision"], "folders": chosen})
+
+
+@pytest.mark.parametrize("named, work", [
+    ({}, "figures"),                                      # equal to another role's location
+    ({}, "FIGURES"), ({}, "Tables"),                      # ... by the folding the scan uses
+    ({}, "tables/runs"),                                  # inside one
+    ({"figure": "plots/figs"}, "plots"),                  # containing one
+    ({}, "research/variables/work"),                      # inside one, and under research/
+    ({}, "research/work"), ({}, "Research/Work"),        # under research/ whatever the other locations are
+])
+def test_the_work_location_may_not_equal_contain_or_lie_inside_another_location_or_lie_under_research(root, named, work):
+    with pytest.raises(workspace.WorkspaceError) as caught:
+        settle(root, **named, work=work)
+    assert "work location" in str(caught.value) and "过程文件的目录" in caught.value.message_zh
+    assert caught.value.status == 409 and not (root / outputs.FOLDERS_PATH).exists()
+
+
+def test_a_work_location_that_stands_apart_is_saved_and_the_other_seven_may_still_nest(root):
+    saved = settle(root, work="process/runs", table="outputs/tables", figure="outputs/figures")
+    assert saved["folders"]["work"] == "process/runs" and outputs.folders(root)["folders"] == saved["folders"]
+    assert settle(root, work="workers")["folders"]["work"] == "workers"        # a name that merely starts alike
+    assert settle(root, work="agent-work", code="agent")["folders"]["code"] == "agent"
+
+
+def test_an_unsaved_default_that_would_clash_moves_on_to_the_next_candidate(root):
+    # a version-1 file saved before the work location existed, whose code lives under work/
+    put(root, outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": {**SEVEN, "code": "work/code"}}))
+    got = outputs.folders(root)
+    assert got["folders"]["work"] == "agent-work" and "choose" not in got and got["saved"]
+    assert ingest_files.work_folder(root) == "agent-work"            # the scan names the same folder
+    put(root, "work/code/a.py", "x = 1\n")
+    put(root, "agent-work/20261025-x/probe.py", "x = 2\n")
+    assert ingest_files.list_source_files(root)["py"] == ["work/code/a.py"]
+    # the next candidate may clash too: nothing is usable, and the settings still read
+    put(root, outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": {**SEVEN, "code": "work", "data": "agent-work/data"}}))
+    got = outputs.folders(root)
+    assert got["folders"]["work"] == "" and got["choose"] == ["work"]
+
+
+def test_an_existing_candidate_folder_wins_and_one_that_is_a_file_or_a_link_is_passed_over(root, tmp_path):
+    assert outputs.folders(root)["folders"]["work"] == "work"
+    (root / "agent-work").mkdir()
+    assert outputs.folders(root)["folders"]["work"] == "agent-work"       # a folder that is there, as for the other roles
+    (root / "agent-work").rmdir()
+    put(root, "work", "not a folder")
+    assert outputs.folders(root)["folders"]["work"] == "agent-work" and "choose" not in outputs.folders(root)
+    (root / "work").unlink()
+    (root / "work").symlink_to(tmp_path, target_is_directory=True)
+    assert outputs.folders(root)["folders"]["work"] == "agent-work"
+    (root / "work").unlink()
+    (root / "agent-work").symlink_to(tmp_path, target_is_directory=True)  # only the second is unusable: the first is back
+    assert outputs.folders(root)["folders"]["work"] == "work"
+
+
+def test_with_no_usable_candidate_the_settings_still_read_and_saving_them_asks_for_a_choice(root, tmp_path):
+    put(root, "work", "a file")
+    (root / "agent-work").symlink_to(tmp_path, target_is_directory=True)
+    got = outputs.folders(root)
+    assert list(got["folders"]) == list(outputs.ROLES) and got["folders"]["work"] == ""
+    assert got["choose"] == ["work"] and got["saved"] is False and got["revision"] is None
+    assert got["folders"]["code"] == "code"                                # the other seven are as ever
+    with pytest.raises(workspace.WorkspaceError) as caught:
+        outputs.save_folders(root, {"revision": None, "folders": got["folders"]})
+    assert str(caught.value) == "Choose a folder for process files." and caught.value.message_zh == "请为过程文件选一个目录。"
+    assert not (root / outputs.FOLDERS_PATH).exists()
+    assert outputs.validate(root, [], got["folders"]) == []                # a declaration does not need the work location
+    saved = outputs.save_folders(root, {"revision": None, "folders": {**got["folders"], "work": "process"}})
+    assert "choose" not in outputs.folders(root) and outputs.folders(root) == saved
+    # a settings file whose work is empty (edited by hand) reads the same way, and names no folder to the scan
+    put(root, outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": {**SEVEN, "work": ""}}))
+    assert outputs.folders(root)["choose"] == ["work"] and ingest_files.work_folder(root) == "work"
+
+
+def test_a_saved_work_location_that_crowds_another_is_refused_like_any_unusable_setting(root):
+    put(root, outputs.FOLDERS_PATH, json.dumps({"version": 1, "folders": {**SEVEN, "work": "reports/work"}}))
+    with pytest.raises(workspace.WorkspaceError, match="work location"):
+        outputs.folders(root)
+
+
+# -- V15 step 2b: only a document the run created stops being a paper draft (DESIGN 19.7) -----------------------------
+
+
+def picture_of(root, pid, run_id, **more):
+    """The run's before-picture, taken now, as the manager keeps it in the run's folder."""
+    rd = runs.run_dir(pid, run_id)
+    before = snapshot.take(root, copy_to=rd / "before")
+    (rd / "before.json").write_text(json.dumps({**before, **more}))
+    return before
+
+
+def declare(root, pid, run_id, declared, report="A real report."):
+    runs.update_run(pid, run_id, output_folders=outputs.folders(root)["folders"])
+    return mcp_server.agent_complete_task(root, pid, run_id, report, outputs=declared)
+
+
+def entries_of(root):
+    report = _task(root)["report"]
+    return {i["path"]: i for i in json.loads((root / outputs.catalog_path(report)).read_text())["items"]}
+
+
+def test_an_agents_declaration_says_created_for_a_path_its_before_picture_lacks_and_not_for_one_it_holds(root):
+    put(root, "reports/draft.md", "# My own draft\n\nWe reach 87.3% accuracy.\n")        # the researcher's, there before
+    pid = read_identity(root).identity.id
+    _tasks(root)
+    run_id = _run(root, pid, lang="en")
+    picture_of(root, pid, run_id)
+    put(root, "reports/draft.md", "# My own draft\n\nWe reach 87.3% accuracy, edited by the agent.\n")
+    put(root, "reports/plan.md", "# Plan\n")
+    put(root, "tables/summary.csv", "n\n2\n")
+    answer = declare(root, pid, run_id, [{"kind": "document", "path": "reports/draft.md"}, {"kind": "document", "path": "reports/plan.md"},
+                                         {"kind": "table", "path": "tables/summary.csv"}])
+    assert answer.startswith("Saved"), answer
+    found = entries_of(root)
+    assert "created" not in found["reports/draft.md"]                       # it was there: stays what it was
+    assert found["reports/plan.md"]["created"] is True and found["tables/summary.csv"]["created"] is True
+    assert ingest_files.registered(root)["document"] == frozenset({"reports/plan.md"})     # only the created one leaves the drafts
+    assert outputs.catalog(root)["items"] and all(i["state"] == "current" for i in outputs.catalog(root)["items"])
+
+
+def test_a_later_run_of_the_task_declaring_the_file_again_keeps_it_created(root):
+    pid = read_identity(root).identity.id
+    _tasks(root)
+    first = _run(root, pid, lang="en")
+    picture_of(root, pid, first)
+    put(root, "reports/plan.md", "# Plan\n")
+    assert declare(root, pid, first, [{"kind": "document", "path": "reports/plan.md"}]).startswith("Saved")
+    # the task is sent back: the second run's picture holds the file, which it edits and declares again
+    second = _run(root, pid, lang="en")
+    picture_of(root, pid, second)
+    put(root, "reports/plan.md", "# Plan, revised\n")
+    assert declare(root, pid, second, [{"kind": "document", "path": "reports/plan.md"}], "A second report.").startswith("Saved")
+    entry = entries_of(root)["reports/plan.md"]
+    assert entry["created"] is True and entry["run"] == second
+
+
+def test_nothing_is_said_created_without_a_whole_before_picture_or_for_a_folder_it_does_not_walk(root):
+    pid = read_identity(root).identity.id
+    _tasks(root)
+    run_id = _run(root, pid, lang="en")
+    put(root, "reports/plan.md", "# Plan\n")
+    assert outputs.made_by_run(pid, run_id, ["reports/plan.md"]) == set()         # no picture was taken
+    runs.run_dir(pid, run_id).joinpath("before.json").write_text("not json")
+    assert outputs.made_by_run(pid, run_id, ["reports/plan.md"]) == set()
+    picture_of(root, pid, run_id, partial=True)                                    # cut short: it may have missed the file
+    assert outputs.made_by_run(pid, run_id, ["reports/plan.md"]) == set()
+    picture_of(root, pid, run_id)
+    put(root, "reports/new.md", "# New\n")
+    assert outputs.made_by_run(pid, run_id, ["reports/plan.md", "reports/new.md", "_cache/x.md", "Reports/PLAN.md"]) == {"reports/new.md"}
+    assert outputs.made_by_run(pid, run_id, []) == set()
+    answer, _pid, _run_id = complete(root, [])                                      # the helper's run has no picture at all
+    assert answer.startswith("Saved") and not list(root.glob(outputs.CATALOG_PATH))
+    put(root, "reports/other.md", "# Other\n")
+    complete(root, [{"kind": "document", "path": "reports/other.md"}])
+    assert "created" not in entries_of(root)["reports/other.md"]
+
+
+# -- V15 step 2b: filing (DESIGN 19.4) --------------------------------------------------------------------------------
+
+
+def test_a_registered_output_inside_the_runs_work_folder_files_as_output_not_work(root):
+    put(root, "work/20261025-probe/summary.csv", "n\n2\n")
+    put(root, "work/20261025-probe/scratch.csv", "n\n3\n")
+    report = workspace.save_document(root, {"kind": "result", "revision": None, "content": "A report"})["path"]
+    mark = outputs._fingerprint(root, "work/20261025-probe/summary.csv")
+    put(root, outputs.catalog_path(report), json.dumps({"version": 1, "items": [
+        {"kind": "table", "path": "work/20261025-probe/summary.csv", "title": "Summary", "fingerprint": mark}]}))
+    got = outputs.filing(root, ["work/20261025-probe/summary.csv", "work/20261025-probe/scratch.csv"], records=[],
+                         reports=[report], work_folder="work/20261025-probe")
+    assert got["counts"] == {"record": 0, "output": 1, "work": 1, "cache": 0, "unregistered": 0}
+    assert got["unregistered"] == []

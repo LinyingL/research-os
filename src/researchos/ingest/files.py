@@ -27,12 +27,13 @@ so it is filtered out explicitly via `Path.is_symlink()`.
 add-project preview, which looks at a folder that is no project yet, so the skips that belong to a
 Research OS project live in `scan_skips`, applied where the scan builds its inventory
 (`list_source_files` here and its git sibling): the work folder (process files, `research/folders.json`'s
-`work` location, else `WORK_FOLDER`) and the files registered with kind `work` in
-`research/results/*.outputs.json`. Those settings are read fail-safe: a file that is missing, only in the
+`work` location, else the default `outputs.folders` would name: `work_folder`) and the files registered with kind
+`work` in `research/results/*.outputs.json`. Those settings are read fail-safe: a file that is missing, only in the
 cloud or not JSON means the default work folder and no registered file, never a failed scan.
-`registered` also gives the files registered as `document`, which are not paper drafts: mdpaper and citations
-leave a Markdown one out themselves, and a LaTeX one never enters the `tex` category (`scan_skips`), the list the
-latex, claims and citations extractors read.
+`registered` also gives the files registered as `document` that a run created (`created: true`, 19.7), which are not
+paper drafts: mdpaper and citations leave a Markdown one out themselves, and a LaTeX one never enters the `tex`
+category (`scan_skips`), the list the latex, claims and citations extractors read. A document that was there before the
+run -- the researcher's own draft an agent edited and declared -- is not given, and stays a draft.
 """
 
 from __future__ import annotations
@@ -46,8 +47,8 @@ from typing import Any, Callable, Iterator
 from researchos import cloud, names
 from researchos.ingest.git import DATA_EXTENSIONS, IMAGE_EXTENSIONS
 
-#: The default of the `work` output location (`outputs.ROLES["work"]`, DESIGN.md 19.2): kept here so that the scan
-#: needs not import `outputs`, which imports the workspace, which imports this module.
+#: The default of the `work` output location (`outputs.ROLES["work"]`, DESIGN.md 19.2): kept here so that this module
+#: needs not import `outputs` at load, which imports the workspace, which imports this module (`work_folder` does, late).
 WORK_FOLDER = "work"
 _FOLDERS_FILE = "research/folders.json"
 _RESULTS_DIR = "research/results"
@@ -131,19 +132,27 @@ def _json(path: Path) -> Any:
 
 
 def work_folder(root: str | Path) -> str:
-    """The project's work location (DESIGN.md 19.2): `research/folders.json`'s `work`, else `WORK_FOLDER` -- also when
-    the file is unreadable or the name is not a plain project-relative folder."""
+    """The project's work location (DESIGN.md 19.2): `research/folders.json`'s `work`, else the one nobody has chosen
+    yet, which is what `outputs.folders` names (the first usable candidate: `work` unless it is a file or crowds
+    another location) -- `WORK_FOLDER` when that cannot be read either, or the name is not a plain project-relative
+    folder."""
     value = _json(Path(root) / _FOLDERS_FILE)
     folders = value.get("folders") if isinstance(value, dict) and value.get("version") == 1 else None
     named = folders.get("work") if isinstance(folders, dict) else None
     if isinstance(named, str) and not {"", ".", ".."} & set(named.split("/")):
         return named
-    return WORK_FOLDER
+    try:
+        from researchos import outputs  # noqa: PLC0415 -- that module imports this one
+
+        return outputs.folders(Path(root))["folders"]["work"] or WORK_FOLDER
+    except Exception:  # noqa: BLE001 -- the scan never fails over a settings file
+        return WORK_FOLDER
 
 
 def registered(root: str | Path) -> dict[str, frozenset[str]]:
     """The files the tasks' output records name, by kind: `{kind: {project-relative path}}` from
-    `research/results/*.outputs.json`. A record that cannot be read is left out (19.7)."""
+    `research/results/*.outputs.json`. A record that cannot be read is left out (19.7), and so is a `document` entry
+    without `created: true`: a document that was there before the run stays what it was, a paper draft."""
     directory = Path(root) / _RESULTS_DIR
     try:
         records = sorted(e.name for e in os.scandir(directory) if e.name.endswith(".outputs.json") and e.is_file())
@@ -154,15 +163,17 @@ def registered(root: str | Path) -> dict[str, frozenset[str]]:
         value = _json(directory / name)
         for item in value.get("items") if isinstance(value, dict) and isinstance(value.get("items"), list) else ():
             if isinstance(item, dict) and isinstance(item.get("kind"), str) and isinstance(item.get("path"), str):
+                if item["kind"] == "document" and item.get("created") is not True:
+                    continue
                 found.setdefault(item["kind"], set()).add(item["path"])
     return {kind: frozenset(rels) for kind, rels in found.items()}
 
 
 def scan_skips(root: str | Path) -> Callable[..., bool]:
     """Whether the project scan leaves a file out (DESIGN.md 19.7; module docstring): it is inside the work folder, or
-    registered as `work`, or -- given its inventory category -- a `.tex` file registered as a `document` (a plan or
-    write-up a task was asked for is that task's output, not a paper draft). Read once for a whole inventory; `rel` is
-    project-relative with forward slashes."""
+    registered as `work`, or -- given its inventory category -- a `.tex` file registered as a `document` that a run
+    created (a plan or write-up a task was asked for is that task's output, not a paper draft). Read once for a whole
+    inventory; `rel` is project-relative with forward slashes."""
     folder = fold(work_folder(root)) + "/"
     kinds = registered(root)
     work = {fold(rel) for rel in kinds.get("work", ())}
@@ -180,7 +191,7 @@ def list_source_files(root: str | Path) -> dict[str, list[str]]:
     `root` by walking the filesystem, grouped by category -- same shape as
     `researchos.ingest.git.list_source_files`, for a project root that has no git
     repository to ask instead. Creates no graph nodes. The work folder, the
-    files registered as `work` and the `.tex` files registered as `document`
+    files registered as `work` and the `.tex` files registered as a created `document`
     are left out (`scan_skips`).
 
     Returned paths are root-relative and forward-slash-normalized

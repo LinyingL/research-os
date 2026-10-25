@@ -69,9 +69,11 @@ there ("seen during run <id>").
 
 **Where a run's files go** (DESIGN.md 19.2, 19.4). When a run starts, its output locations are frozen in `run.json`
 (`output_folders`) with its work folder and slug (`work_folder`, `slug`: `_work_places`); a task's later runs reuse
-the first one's. Data files inside a work folder are not protected (`snapshot.protected(work=)`). When the
-after-picture is compared, every file the run created is sorted into a class (`filing`, `outputs.filing`): a
-summary of what the run did with the app's places, never a violation.
+the first one's. The locations are read when the run is accepted (`_launch`): a project whose work location has no
+usable name refuses the run (`work_location`). Data files inside a work folder are not protected
+(`snapshot.protected(work=)`). When the after-picture is compared, every file the run created is sorted into a class
+(`filing`, `outputs.filing`): a summary of what the run did with the app's places, never a violation. The page's
+listing carries its counts; the paths of what is not registered are in the run's detail.
 
 **An out-of-bounds run** (18.1 item 4) is `out_of_bounds`, not what it would
 have read (`outcome` keeps that: `done`, `ended`, ...). The task's done mark is
@@ -218,6 +220,7 @@ _ERRORS: dict[str, tuple[int, str, str]] = {
     "not_revertible": (409, "That run can no longer be undone (its copies are gone or it changed nothing)",
                        "这次运行已无法撤回（备份已不在，或它没有改动任何文件）"),
     "invalid": (400, "The request is not valid", "请求的内容不对"),
+    "work_location": (409, *outputs.CHOOSE_WORK),
     "start_failed": (500, "The run could not be started", "无法开始这次运行"),
 }
 
@@ -450,8 +453,9 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
     """What the page shows of a run: the identifying and state fields (`state`,
     and `outcome`, how the run ended apart from going out of bounds), counts
     for `violations` and `changes`, the number of files an undo left alone
-    (`revert_skipped`, present once an undo was tried) and the three things the
-    person may do with it (`can_stop`, `can_reply`, `can_revert`)."""
+    (`revert_skipped`, present once an undo was tried), the work folder and the counts of the run's
+    filing (DESIGN.md 19.4: no paths -- `detail` has those) and the three things the person may do with it
+    (`can_stop`, `can_reply`, `can_revert`)."""
     state = run.get("state")
     outcome = run_store.outcome_of(run)
     finished = state not in run_store.ACTIVE_STATES
@@ -479,7 +483,7 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
     if isinstance(run.get("work_folder"), str):  # 19.2: the task's work folder; a run from before V15 has none
         out["work_folder"] = run["work_folder"]
     if isinstance(run.get("filing"), dict):  # 19.4: what became of the files the run created; absent before V15
-        out["filing"] = run["filing"]
+        out["filing"] = {k: run["filing"][k] for k in ("counts", "unregistered_more") if k in run["filing"]}  # no paths
     revert = run.get("revert")
     if isinstance(revert, dict) and isinstance(revert.get("skipped"), list):
         out["revert_skipped"] = len(revert["skipped"])  # a partial undo: the page says so and lists them
@@ -493,8 +497,9 @@ class _Active:
     """A run this manager is carrying out."""
 
     def __init__(self, run: dict, root: Path, program: str, *, task: dict, message: str | None,
-                 resume_session: str | None) -> None:
+                 resume_session: str | None, locations: dict[str, str]) -> None:
         self.run = run
+        self.locations = locations  # the output locations read when the run was accepted (19.2)
         self.run_id: str = run["id"]
         self.project_id: str = run["project_id"]
         self.runner: str = run["runner"]
@@ -640,8 +645,10 @@ def _local_time(moment: float | str | None) -> str | None:
 def _work_places(work: str, runs: Iterable[dict], run: dict) -> tuple[str, str]:
     """`(work folder, slug)` of the run that is starting (DESIGN.md 19.2). The folder is `<work>/<YYYYMMDD>-<slug>`: the
     local date the task's first run started and `outputs.slug` of the task's first line, and every later run of the
-    task (`runs`: the project's runs on this Mac) uses the folder the earliest of its runs recorded. A name another
-    task's run holds gets `-2`, `-3` on its slug, so that the task reads as one name in every folder."""
+    task (`runs`: the project's runs on this Mac, any iterable: it is read twice) uses the folder the earliest of its
+    runs recorded. A name another task's run holds gets `-2`, `-3` on its slug, so that the task reads as one name in
+    every folder."""
+    runs = list(runs)
     task = run.get("task_id")
     mine = sorted((r for r in runs if r.get("task_id") == task and r.get("id") != run.get("id")),
                   key=lambda r: str(r.get("id")))
@@ -926,6 +933,13 @@ class AgentManager:
                 by: str | None, by_name: str | None, lang: str, kind: str, parent: str | None,
                 message: str | None, session: str | None, reasoning_effort: str | None = None) -> dict:
         assert found.path is not None
+        try:  # 19.2: before the run is recorded or anything is copied; no usable work location refuses it
+            places = outputs.folders(root)
+        except workspace.WorkspaceError as exc:
+            raise AgentError("start_failed", f"The output folders could not be read: {exc}",
+                             message_zh=f"读不出输出目录的设置：{exc.message_zh}") from exc
+        if places.get("choose"):
+            raise AgentError("work_location")
         self._recover(project_id)
         engine_started = self._engine_started()
         run: dict[str, Any] = {
@@ -956,7 +970,8 @@ class AgentManager:
                 run_store.create_run(project_id, run)
             except (OSError, ValueError) as exc:
                 raise AgentError("start_failed", f"The run could not be recorded: {exc}") from exc
-            act = _Active(run, root, found.path, task=task, message=message, resume_session=session)
+            act = _Active(run, root, found.path, task=task, message=message, resume_session=session,
+                          locations=places["folders"])
             self._active[project_id] = act
             try:
                 act.thread = threading.Thread(target=self._thread_main, args=(act,), daemon=True,
@@ -1118,9 +1133,9 @@ class AgentManager:
             self._finish(act, before=None, stream=None, exit_code=None, launch_error=None)
             return
 
-        # 19.2: the run's places are fixed before anything is read of the project: where its outputs go, and the work
-        # folder and the name of its task (a later run of the task has the first run's)
-        locations = outputs.folders(root)["folders"]
+        # 19.2: the run's places are fixed before anything is read of the project: where its outputs go (read when the
+        # run was accepted), and the work folder and the name of its task (a later run of the task has the first run's)
+        locations = act.locations
         listed = run_store.list_runs(act.project_id)
         work_folder, slug = _work_places(locations["work"], listed, run)
         self._update(act, output_folders=locations, work_folder=work_folder, slug=slug)
@@ -1720,7 +1735,8 @@ class AgentManager:
 
     def detail(self, project_id: str, run_id: str) -> dict:
         """One run with its steps (read back from `events.jsonl`), changes, out-of-bounds
-        changes, the instruction sent, the hook's refusals, the tail of stderr and its error."""
+        changes, the instruction sent, the hook's refusals, the tail of stderr and its error, and the whole
+        filing (19.4), with the paths of the files the run created and nobody registered."""
         run = self._load(project_id, run_id)
         rd = run_store.run_dir(project_id, run_id)
         out = self._summary_of(project_id, run)
@@ -1738,6 +1754,8 @@ class AgentManager:
             snapshot=run.get("snapshot"), lang=run.get("lang"), revert=run.get("revert"),
             leftovers=run.get("leftovers") or 0, env_removed=run.get("env_removed") or [],
             events_truncated=bool(run.get("events_truncated")), stderr_truncated=bool(run.get("stderr_truncated")))
+        if isinstance(run.get("filing"), dict):  # 19.4: the listing has the counts; the unregistered paths are here
+            out["filing"] = run["filing"]
         return out
 
     def _cursor(self, project_id: str, run_id: str, runner: object) -> _EventsCursor:

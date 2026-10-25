@@ -480,10 +480,13 @@ def test_claims_an_earlier_scan_made_of_a_note_go_when_the_note_is_skipped(tmp_p
 # --- a document a task registered is that task's output, not a paper draft (DESIGN.md 19.7) --------------------------
 
 
-def _register_documents(root, *rels, kind="document"):
+def _register_documents(root, *rels, kind="document", **more):
+    """A task's output record; the entries of a document a run created say `created: true` (19.7), `more` replaces that."""
     record = root / "research" / "results" / ((kind[0] * 32) + ".outputs.json")
     record.parent.mkdir(parents=True, exist_ok=True)
-    record.write_text(json.dumps({"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {}} for rel in rels]}))
+    made = {"created": True} if kind == "document" else {}
+    record.write_text(json.dumps({"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {}, **made, **more}
+                                                          for rel in rels]}))
 
 
 def test_a_registered_document_is_not_paper_markdown_but_a_registered_note_of_another_kind_is_unchanged(tmp_path):
@@ -528,6 +531,30 @@ def test_claims_an_earlier_scan_made_of_a_document_go_once_it_is_registered(tmp_
     after = mdpaper.ingest_md_repo(conn, tmp_path, ["reports/plan.md", "paper.md"])
     assert after["md_skipped_non_paper"] == 1 and after["claims_removed"] == 1 and after["backed_by_edges_removed"] == 1
     assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
+
+
+def test_a_document_the_run_did_not_create_is_still_a_paper_draft(tmp_path):
+    """The researcher's own draft that an agent edited and declared was there before the run (19.7): no `created`, a false
+    or odd `created`, and an older catalog without the key all leave it a draft with its section and claim."""
+    from researchos.ingest import citations
+
+    (tmp_path / "reports").mkdir()
+    for name in ("own", "false", "odd"):
+        (tmp_path / "reports" / f"{name}.md").write_text(f"# {name.title()}\n\nWe will reach 87.3% accuracy.\n")
+    _register_documents(tmp_path, "reports/false.md", created=False)
+    record = tmp_path / "research" / "results" / (("b" * 32) + ".outputs.json")
+    record.write_text(json.dumps({"version": 1, "items": [
+        {"kind": "document", "path": "reports/own.md", "title": "own", "fingerprint": {}},
+        {"kind": "document", "path": "reports/odd.md", "title": "odd", "fingerprint": {}, "created": "yes"}]}))
+    assert mdpaper.registered_documents(tmp_path) == frozenset()
+    assert all(mdpaper._is_paper_markdown(f"reports/{n}.md", None, mdpaper.registered_documents(tmp_path)) for n in ("own", "false", "odd"))
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, [f"reports/{n}.md" for n in ("own", "false", "odd")])
+    assert counts["md_skipped_non_paper"] == 0 and counts["sections"] == 3 and counts["claims"] == 3
+    inventory = {"md": ["reports/own.md", "reports/false.md", "reports/odd.md"], "tex": []}
+    assert citations.drafts_of(inventory, tmp_path) == sorted(inventory["md"])
+    _register_documents(tmp_path, "reports/own.md")      # a run created it after all: it leaves the drafts
+    assert citations.drafts_of(inventory, tmp_path) == ["reports/false.md", "reports/odd.md"]
 
 
 def test_a_registered_tex_document_is_not_a_draft_for_citations_whatever_inventory_lists_it(tmp_path):

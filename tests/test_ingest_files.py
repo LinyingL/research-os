@@ -144,9 +144,11 @@ def _put(root: Path, rel: str, text: str = "x = 1\n") -> None:
     (root / rel).write_text(text)
 
 
-def _register(root: Path, name: str, *items: tuple[str, str]) -> None:
-    """A task's output record, as `outputs.register` writes it (the parts the scan reads)."""
-    body = {"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {}} for kind, rel in items]}
+def _register(root: Path, name: str, *items: tuple[str, str], made: bool = True) -> None:
+    """A task's output record, as `outputs.register` writes it (the parts the scan reads): a document the run created
+    says `created: true` (19.7) unless `made` is False, the researcher's own draft that an agent edited and declared."""
+    body = {"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {},
+                                     **({"created": True} if kind == "document" and made else {})} for kind, rel in items]}
     _put(root, f"research/results/{name}.outputs.json", json.dumps(body))
 
 
@@ -302,9 +304,10 @@ def test_a_git_project_leaves_a_registered_tex_document_out_of_the_tex_inventory
     assert "reports/plan.tex" in {rel for rel, _c in git_ingest.iter_tracked(repo)}
 
 
-def _tex_project(tmp_path: Path, *, git: bool = False, registered: bool = True) -> Path:
+def _tex_project(tmp_path: Path, *, git: bool = False, registered: bool = True, made: bool = True) -> Path:
     """A project with a paper and a plan in LaTeX, both stating a number one tracked run backs; the plan is registered
-    as a document (the task that wrote it said so) unless `registered` is False."""
+    as a document (the task that wrote it said so) unless `registered` is False, and says a run created it unless
+    `made` is False (the researcher's own draft, edited and declared by an agent)."""
     from researchos import cli
 
     project = tmp_path / "proj"
@@ -313,7 +316,7 @@ def _tex_project(tmp_path: Path, *, git: bool = False, registered: bool = True) 
     _put(project, "paper.tex", tex.replace("NAME", "Results"))
     _put(project, "reports/plan.tex", tex.replace("NAME", "Plan"))
     if registered:
-        _register(project, "a" * 32, ("document", "reports/plan.tex"))
+        _register(project, "a" * 32, ("document", "reports/plan.tex"), made=made)
     run_dir = project / "mlruns" / "0" / "run_a"
     (run_dir / "metrics").mkdir(parents=True)
     (run_dir / "meta.yaml").write_text("experiment_id: '0'\nrun_id: run_a\nstatus: FINISHED\n")
@@ -374,3 +377,42 @@ def test_what_a_scan_drew_from_a_tex_file_before_it_was_registered_as_a_document
         assert {i for i in after if not scan_mod.node_present(conn, i)} == {i for i in after if ":reports/plan.tex" in i}
     finally:
         conn.close()
+
+
+# --- a document the run did not create stays a paper draft (DESIGN.md 19.7) ----------------------------------------
+
+
+def test_registered_gives_the_documents_a_run_created_and_every_other_kind_as_before(tmp_path):
+    def item(kind: str, rel: str, **more) -> dict:
+        return {"kind": kind, "path": rel, "title": rel, "fingerprint": {}, **more}
+
+    _put(tmp_path, "research/results/" + "a" * 32 + ".outputs.json", json.dumps({"version": 1, "items": [
+        item("document", "reports/made.tex", created=True), item("document", "reports/own.tex"),
+        item("document", "reports/false.tex", created=False), item("document", "reports/yes.tex", created="yes"),
+        item("table", "tables/t.csv"), item("work", "work/x.py"), item("code", "src/c.py", created=True)]}))
+    assert files_ingest.registered(tmp_path) == {"document": frozenset({"reports/made.tex"}), "table": frozenset({"tables/t.csv"}),
+                                                 "work": frozenset({"work/x.py"}), "code": frozenset({"src/c.py"})}
+    probe = files_ingest.scan_skips(tmp_path)
+    assert probe("reports/MADE.tex", "tex") and not probe("reports/own.tex", "tex") and not probe("reports/false.tex", "tex")
+
+
+@pytest.mark.parametrize("git_project", [False, True], ids=["no git", "git"])
+def test_a_tex_document_the_run_did_not_create_stays_in_the_inventory_and_is_read_as_a_draft(tmp_path, capsys, git_project):
+    """The researcher's own LaTeX draft that an agent edited and declared was there before the run: it keeps its sections,
+    its claims and its place among the citation drafts."""
+    from researchos import cli
+    from researchos.ingest import citations
+
+    project = _tex_project(tmp_path, git=git_project, made=False)
+    capsys.readouterr()
+    inventory = (git_ingest if git_project else files_ingest).list_source_files(project)
+    assert inventory["tex"] == ["paper.tex", "reports/plan.tex"]
+    assert cli.main(["ingest", str(project)]) == 0
+    assert "latex: 2 .tex" in capsys.readouterr().out
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        assert sorted(n["id"].split("#")[0] for n in db.get_nodes_by_type(conn, "section")) == ["section:paper.tex", "section:reports/plan.tex"]
+        assert sorted(c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")) == ["paper.tex", "reports/plan.tex"]
+    finally:
+        conn.close()
+    assert citations.drafts_of(inventory, project) == ["paper.tex", "reports/plan.tex"]

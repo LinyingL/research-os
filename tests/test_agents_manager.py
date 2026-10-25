@@ -2898,9 +2898,9 @@ def test_a_run_files_what_it_created_and_the_page_summary_carries_it(scene: Scen
     filing = run["filing"]
     assert filing["counts"] == {"record": 1, "output": 0, "work": 1, "cache": 1, "unregistered": 1}
     assert filing["unregistered"] == ["analysis.py"] and filing["unregistered_more"] == 0
-    listed = scene.manager.runs(scene.pid)["runs"][0]
-    assert listed["filing"] == filing and listed["work_folder"] == run["work_folder"]
-    assert scene.manager.detail(scene.pid, run["id"])["filing"] == filing
+    listed = scene.manager.runs(scene.pid)["runs"][0]  # the listing the page polls: the counts, no paths (19.4)
+    assert listed["filing"] == {"counts": filing["counts"], "unregistered_more": 0} and listed["work_folder"] == run["work_folder"]
+    assert scene.manager.detail(scene.pid, run["id"])["filing"] == filing  # the paths are in the run's detail
 
 
 def test_a_run_from_before_the_filing_has_none_and_stays_valid():
@@ -2911,6 +2911,9 @@ def test_a_run_from_before_the_filing_has_none_and_stays_valid():
                           latest_of_task=True, active=False)
     assert new["work_folder"] == "work/20261025-x" and new["filing"] == {"counts": {"work": 2}}
     assert "filing" not in manager.summary({"id": "r", "state": "done", "filing": "damaged"}, latest_of_task=True, active=False)
+    long = manager.summary({"id": "r", "state": "done", "filing": {"counts": {"unregistered": 503}, "unregistered": ["a.py"] * 500,
+                                                                  "unregistered_more": 3}}, latest_of_task=True, active=False)
+    assert long["filing"] == {"counts": {"unregistered": 503}, "unregistered_more": 3}
 
 
 def test_a_filing_that_fails_never_costs_the_run_its_check(scene: Scene, monkeypatch):
@@ -2921,3 +2924,93 @@ def test_a_filing_that_fails_never_costs_the_run_its_check(scene: Scene, monkeyp
     run = scene.go([init_step(), {"op": "write", "path": "data.csv", "text": "a\n1\n"}, {"op": "complete"}, finish_step()])
     assert run["state"] == "done" and run["error"] is None and "filing" not in run
     assert "data.csv" in run["changes"]["created"] and run["violations"] == [] and run["revertible"] is True
+
+
+# -- V15 step 2b: a one-shot listing, a slug with " - ", a work location nobody can use, an interrupted run's filing --
+
+
+def test_work_places_read_a_listing_that_can_only_be_read_once_as_they_read_a_list():
+    created = "2026-10-25T10:00:00Z"
+    day = _local_day(created)
+    taken = [_earlier("r-1", "t1", created, work_folder=f"work/{day}-fetch", slug="fetch")]
+    now = {"id": "r-2", "task_id": "t2", "task_text": "fetch", "created": created}
+    assert manager._work_places("work", iter([now, *taken]), now) == (f"work/{day}-fetch-2", "fetch-2")    # the collision is seen
+    first = _earlier("r-1", "t1", "2026-10-20T10:00:00Z", work_folder="work/20261020-fetch", slug="fetch")
+    again = {"id": "r-9", "task_id": "t1", "task_text": "words changed", "created": created}
+    assert manager._work_places("work", (r for r in [again, first]), again) == ("work/20261020-fetch", "fetch")
+    listed = [now, *taken]
+    assert manager._work_places("work", listed, now) == (f"work/{day}-fetch-2", "fetch-2") and len(listed) == 2   # not consumed
+
+
+def test_a_task_whose_first_line_has_a_dash_between_words_gets_one_dash_in_its_folder_and_name():
+    created = "2026-10-25T10:00:00Z"
+    now = {"id": "r-3", "task_id": "t1", "task_text": "Fetch - FRED  -  data\nand tidy it", "created": created}
+    assert manager._work_places("work", [now], now) == (f"work/{_local_day(created)}-Fetch-FRED-data", "Fetch-FRED-data")
+
+
+def test_a_run_is_refused_while_the_work_location_has_no_usable_name_before_anything_is_recorded_or_copied(scene: Scene):
+    scene.put("work", "a file, not a folder")
+    scene.put("agent-work", "another file")
+    scene.scenario([init_step(), finish_step()])
+    with pytest.raises(manager.AgentError) as caught:
+        scene.start()
+    assert caught.value.code == "work_location" and caught.value.status == 409
+    assert caught.value.message == "Choose a folder for process files." and caught.value.message_zh == "请为过程文件选一个目录。"
+    assert run_store.list_runs(scene.pid) == [] and not run_store.project_runs_dir(scene.pid).exists()   # no run, no copies
+    assert scene.manager.active_for(scene.pid) is None and scene.calls() == []                            # the program never started
+    # the person chooses a folder (the settings are saved with it): the same task runs
+    info = outputs.folders(scene.root)
+    outputs.save_folders(scene.root, {"revision": info["revision"], "folders": {**info["folders"], "work": "process"}})
+    run = scene.wait(scene.start()["id"])
+    assert run["state"] == "ended" and run["output_folders"]["work"] == "process"
+    assert run["work_folder"].startswith("process/")
+
+
+def test_a_task_sent_back_while_the_work_location_has_no_usable_name_keeps_its_done_mark(scene: Scene):
+    first = scene.go(COMPLETE)
+    assert first["state"] == "done" and scene.tasks()["t1"]["done"] is True
+    scene.put("work", "a file, not a folder")
+    scene.put("agent-work", "another file")
+    with pytest.raises(manager.AgentError) as caught:
+        scene.manager.reply(scene.root, scene.pid, first["id"], "Do it again", by="m-1", by_name="Lin", lang="en")
+    assert caught.value.code == "work_location"
+    assert scene.tasks()["t1"]["done"] is True and len(run_store.list_runs(scene.pid)) == 1
+
+
+def test_settings_that_cannot_be_read_refuse_the_run_with_their_own_words_instead_of_failing_inside(scene: Scene):
+    scene.put(outputs.FOLDERS_PATH, "not json")
+    with pytest.raises(manager.AgentError) as caught:
+        scene.start()
+    assert caught.value.code == "start_failed" and "invalid JSON" in str(caught.value) and run_store.list_runs(scene.pid) == []
+
+
+def test_an_interrupted_run_compared_after_the_restart_is_filed_like_any_other(scene: Scene):
+    folder = "work/20261025-x"
+    run = stale_run(scene, work_folder=folder, slug="x")
+    scene.put(f"{folder}/probe.py", "print(1)\n")
+    scene.put("loose.py", "print(2)\n")
+    scene.put("pkg/__pycache__/m.cpython-312.pyc", "x")
+    item, = scene.manager.runs(scene.pid)["runs"]
+    expected = {"record": 0, "output": 0, "work": 1, "cache": 1, "unregistered": 1}
+    assert item["state"] == "interrupted" and item["filing"] == {"counts": expected, "unregistered_more": 0}
+    assert item["work_folder"] == folder
+    stored = scene.run(run["id"])
+    assert stored["filing"] == {"counts": expected, "unregistered": ["loose.py"], "unregistered_more": 0}
+    assert scene.manager.detail(scene.pid, run["id"])["filing"] == stored["filing"]
+    assert stored["violations"] == [] and stored["revertible"] is True
+
+
+def test_an_interrupted_run_whose_folder_was_away_is_filed_when_it_is_compared_later(scene: Scene):
+    run = stale_run(scene, work_folder="work/20261025-x", slug="x")
+    scene.put("work/20261025-x/probe.py", "print(1)\n")
+    scene.put("loose.py", "print(2)\n")
+    away = scene.tmp / "project.away"
+    scene.root.rename(away)
+    scene.manager.recover_all()
+    assert "filing" not in scene.run(run["id"]) and scene.run(run["id"])["check_pending"] is True
+    away.rename(scene.root)
+    scene.manager.runs(scene.pid)
+    stored = scene.run(run["id"])
+    assert stored["check_pending"] is False
+    assert stored["filing"] == {"counts": {"record": 0, "output": 0, "work": 1, "cache": 0, "unregistered": 1},
+                                "unregistered": ["loose.py"], "unregistered_more": 0}

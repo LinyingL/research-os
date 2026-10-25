@@ -165,6 +165,31 @@ def test_duplicate_scan_skips_noise_and_hidden_directories(conn, tmp_path):
     assert report["duplicates"] == []
 
 
+def test_duplicate_scan_leaves_out_the_work_folder_and_files_registered_as_work_as_the_scan_does(conn, tmp_path):
+    """DESIGN.md 19.7: a copy of a dataset an agent kept among its process files is not another copy the script could
+    have read. The configured work folder replaces the default, and a copy is another copy again outside it."""
+    import json
+
+    def put(rel, text="x\n"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+
+    for rel in ("data/panel.csv", "archive/panel.csv", "work/20261025-probe/panel.csv", "work/20261024-other/panel.csv",
+                "scratch/panel.csv", "process/panel.csv"):
+        put(rel)
+    put("research/results/" + "a" * 32 + ".outputs.json", json.dumps({"version": 1, "items": [
+        {"kind": "work", "path": "scratch/panel.csv", "title": "t", "fingerprint": {}},
+        {"kind": "table", "path": "process/panel.csv", "title": "t", "fingerprint": {}}]}))
+    _add(conn, "scripts/read.py", "data/panel.csv", "dataset", "reads", 4, "read_csv")
+    report = lineage.build_lineage_report(conn, tmp_path)
+    assert report["duplicates"][0]["other_copies"] == ["archive/panel.csv", "process/panel.csv"]
+    folders = {"code": "src", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+               "document": "reports", "variable": "research/variables", "work": "process"}
+    put("research/folders.json", json.dumps({"version": 1, "folders": folders}))
+    report = lineage.build_lineage_report(conn, tmp_path)
+    assert report["duplicates"][0]["other_copies"] == ["archive/panel.csv", "work/20261024-other/panel.csv", "work/20261025-probe/panel.csv"]
+
+
 # ---------------------------------------------------------------------------
 # Whole-report shape: empty graph, scan counters
 # ---------------------------------------------------------------------------

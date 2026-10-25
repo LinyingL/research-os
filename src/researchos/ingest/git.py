@@ -321,7 +321,7 @@ def list_source_files(repo_path: str | Path) -> dict[str, list[str]]:
     definition above).
 
     The work folder, the files registered as `work` and the `.tex` files
-    registered as `document` are left out (DESIGN.md 19.7,
+    registered as a `document` that a run created are left out (DESIGN.md 19.7,
     `researchos.ingest.files.scan_skips`); `iter_tracked`, which the
     add-project preview counts, lists them.
     """
