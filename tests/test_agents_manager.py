@@ -18,11 +18,12 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from researchos import db, history, names, paths, project, workspace
+from researchos import db, history, names, outputs, paths, project, workspace
 from researchos.agents import labels, manager, profiles, snapshot
 from researchos.agents import runs as run_store
 from researchos.records import files as record_files
@@ -2773,3 +2774,150 @@ def test_stderr_kept_up_to_a_stop_and_a_program_that_never_starts_leaves_an_empt
     failed = scene.wait(scene.start()["id"])
     assert failed["state"] == "failed" and failed["error"]["code"] == "start_failed"
     assert (run_store.run_dir(scene.pid, failed["id"]) / "stderr.log").read_text() == ""  # made, as before, and empty
+
+
+# -- V15 step 2: a run's work folder, the unprotected process files and the filing (DESIGN 19.2, 19.4) ----------------
+
+
+def _local_day(stamp: str) -> str:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%Y%m%d")
+
+
+def _earlier(run_id: str, task: str, created: str, **more) -> dict:
+    return {"id": run_id, "task_id": task, "created": created, **more}
+
+
+def test_a_work_folder_is_the_first_runs_local_date_and_the_tasks_first_line():
+    created = "2026-10-25T10:00:00.000000Z"
+    day = _local_day(created)
+    now = {"id": "r-3", "task_id": "t1", "task_text": "Fetch macro data (FRED)\nand tidy it", "created": created}
+    assert manager._work_places("work", [now], now) == (f"work/{day}-Fetch-macro-data-FRED", "Fetch-macro-data-FRED")
+    assert manager._work_places("process/runs", [], now)[0] == f"process/runs/{day}-Fetch-macro-data-FRED"
+    assert manager._work_places("work", [], {**now, "task_text": "???"})[1] == "task"
+
+
+def test_a_later_run_of_the_task_uses_the_folder_the_earliest_run_recorded():
+    first = _earlier("r-1", "t1", "2026-10-20T10:00:00Z", work_folder="work/20261020-fetch", slug="fetch")
+    second = _earlier("r-2", "t1", "2026-10-21T10:00:00Z", work_folder="work/20261021-other", slug="other")
+    now = {"id": "r-9", "task_id": "t1", "task_text": "A task whose words changed", "created": "2026-10-25T10:00:00Z"}
+    assert manager._work_places("work", [now, second, first], now) == ("work/20261020-fetch", "fetch")
+    # a run from before V15 recorded none: the folder is made from the date of the task's first run, not of this one
+    old = _earlier("r-0", "t1", "2026-10-01T10:00:00Z", started="2026-10-01T10:00:05Z")
+    folder, slug = manager._work_places("work", [now, old], now)
+    assert (folder, slug) == (f"work/{_local_day('2026-10-01T10:00:05Z')}-A-task-whose-words-chang", "A-task-whose-words-chang")
+    # a run of another task is nothing to reuse
+    other = _earlier("r-1", "t2", "2026-10-02T10:00:00Z", work_folder="work/20261002-x", slug="x")
+    assert manager._work_places("work", [now, other], now)[0] != "work/20261002-x"
+
+
+def test_a_name_another_tasks_run_holds_gets_a_number_on_its_slug():
+    created = "2026-10-25T10:00:00Z"
+    day = _local_day(created)
+    taken = [_earlier("r-1", "t1", created, work_folder=f"work/{day}-fetch", slug="fetch")]
+    now = {"id": "r-2", "task_id": "t2", "task_text": "fetch", "created": created}
+    assert manager._work_places("work", [now, *taken], now) == (f"work/{day}-fetch-2", "fetch-2")
+    taken.append(_earlier("r-3", "t3", created, work_folder=f"work/{day}-fetch-2", slug="fetch-2"))
+    assert manager._work_places("work", [now, *taken], now) == (f"work/{day}-fetch-3", "fetch-3")
+    # the file system's own case rule and normalisation: the same folder spelled otherwise is taken too
+    spelled = [_earlier("r-1", "t1", created, work_folder=f"Work/{day}-FETCH", slug="FETCH")]
+    assert manager._work_places("work", [now, *spelled], now)[1] == "fetch-2"
+    # the task's own earlier runs are not a collision, and a day apart is another name
+    own = [_earlier("r-1", "t2", created, work_folder=f"work/{day}-fetch", slug="fetch")]
+    assert manager._work_places("work", [now, *own], now) == (f"work/{day}-fetch", "fetch")
+    later = {**now, "created": "2026-12-25T10:00:00Z"}
+    assert manager._work_places("work", [later, *taken[:1]], later)[1] == "fetch"
+
+
+def test_a_run_records_its_places_and_a_later_run_of_the_task_keeps_them(scene: Scene):
+    day = datetime.now().strftime("%Y%m%d")
+    scene.scenario([init_step(), {"op": "ask", "question": "Which sample?"}, finish_step("Asked")])
+    first = scene.wait(scene.start()["id"])
+    folder = f"work/{day}-Analyse-the-sample"
+    assert first["work_folder"] == folder and first["slug"] == "Analyse-the-sample"
+    assert list(first["output_folders"]) == list(outputs.ROLES) and first["output_folders"]["work"] == "work"
+    rd = run_store.run_dir(scene.pid, first["id"])
+    sent = (rd / "instruction.txt").read_text()
+    assert f"This task's work folder is `{folder}`; this task's subfolder name is `Analyse-the-sample`." in sent
+    assert not (scene.root / "work").exists()  # Research OS does not create it
+    listed = scene.manager.runs(scene.pid)["runs"][0]
+    assert listed["work_folder"] == folder and "filing" in listed
+    # the person answers, the task text has been edited since: the run is the task's and uses the same folder
+    tasks = [dict(t, text="A new first line") for t in workspace.read_tasks(scene.root)[0]]
+    scene.write_tasks(tasks)
+    scene.scenario(COMPLETE)
+    second = scene.wait(scene.manager.reply(scene.root, scene.pid, first["id"], "Use sample B", by="m-1", by_name="Lin",
+                                            lang="zh")["id"])
+    assert second["work_folder"] == folder and second["slug"] == "Analyse-the-sample"
+    assert f"`{folder}`" in (run_store.run_dir(scene.pid, second["id"]) / "instruction.txt").read_text()
+
+
+def test_two_tasks_with_the_same_first_line_get_two_work_folders(scene: Scene):
+    day = datetime.now().strftime("%Y%m%d")
+    scene.write_tasks([{"id": "t1", "text": "Analyse the sample", "owner": "agent:claude-code:sonnet"},
+                       {"id": "t2", "text": "Analyse the sample\nwith the other design", "owner": "agent:claude-code:sonnet"}])
+    first = scene.go([init_step(), finish_step()], task_id="t1")
+    second = scene.go([init_step(), finish_step()], task_id="t2")
+    assert first["work_folder"] == f"work/{day}-Analyse-the-sample"
+    assert second["work_folder"] == f"work/{day}-Analyse-the-sample-2" and second["slug"] == "Analyse-the-sample-2"
+    assert "subfolder name is `Analyse-the-sample-2`" in (run_store.run_dir(scene.pid, second["id"]) / "instruction.txt").read_text()
+
+
+def test_data_files_in_a_work_folder_are_not_protected_but_other_data_still_is(scene: Scene):
+    day = datetime.now().strftime("%Y%m%d")
+    mine = f"work/{day}-Analyse-the-sample/cache.csv"
+    scene.put(mine, "a\n1\n")
+    scene.put("work/20250101-someone-else/old.csv", "o\n1\n")
+    scene.put("data/raw.csv", "r\n1\n")
+    run = scene.go([init_step(), {"op": "write", "path": mine, "text": "a\n2\n"}, {"op": "delete", "path": "work/20250101-someone-else/old.csv"},
+                    {"op": "write", "path": "data/raw.csv", "text": "r\n9\n"}, finish_step()])
+    assert run["violations"] == [{"path": "data/raw.csv", "reason": "data_changed"}]  # only the protected one
+    assert mine in run["changes"]["modified"] and "work/20250101-someone-else/old.csv" in run["changes"]["deleted"]
+    rd = run_store.run_dir(scene.pid, run["id"])
+    guard_file = json.loads((rd / "guard.json").read_text())
+    assert "data/raw.csv" in guard_file["files"] and mine not in guard_file["files"]
+    assert "work/20250101-someone-else/old.csv" not in guard_file["files"]
+    sent = (rd / "instruction.txt").read_text()
+    assert "`data/raw.csv`" in sent and "cache.csv" not in sent and "old.csv" not in sent
+    assert run["violations"] and before_has_work(rd, mine)
+
+
+def before_has_work(rd: Path, rel: str) -> bool:
+    """The work file is in the before-picture (undo can restore it); it was only left off the protected list."""
+    picture = json.loads((rd / "before.json").read_text())
+    return rel in picture["files"] and rel not in picture["protected"]["data"]
+
+
+def test_a_run_files_what_it_created_and_the_page_summary_carries_it(scene: Scene):
+    day = datetime.now().strftime("%Y%m%d")
+    probe = f"work/{day}-Analyse-the-sample/probe.py"
+    run = scene.go([init_step(), {"op": "write", "path": probe, "text": "print(1)\n"},
+                    {"op": "write", "path": "analysis.py", "text": "print(2)\n"},
+                    {"op": "write", "path": "pkg/__pycache__/m.cpython-312.pyc", "text": "x"},
+                    {"op": "complete", "report": "Done"}, finish_step()])
+    assert run["state"] == "done" and run["violations"] == []
+    filing = run["filing"]
+    assert filing["counts"] == {"record": 1, "output": 0, "work": 1, "cache": 1, "unregistered": 1}
+    assert filing["unregistered"] == ["analysis.py"] and filing["unregistered_more"] == 0
+    listed = scene.manager.runs(scene.pid)["runs"][0]
+    assert listed["filing"] == filing and listed["work_folder"] == run["work_folder"]
+    assert scene.manager.detail(scene.pid, run["id"])["filing"] == filing
+
+
+def test_a_run_from_before_the_filing_has_none_and_stays_valid():
+    old = manager.summary({"id": "r", "state": "done", "changes": {"created": ["a"], "modified": [], "deleted": []}},
+                          latest_of_task=True, active=False)
+    assert "filing" not in old and "work_folder" not in old and old["changes"] == 1 and old["state"] == "done"
+    new = manager.summary({"id": "r", "state": "done", "work_folder": "work/20261025-x", "filing": {"counts": {"work": 2}}},
+                          latest_of_task=True, active=False)
+    assert new["work_folder"] == "work/20261025-x" and new["filing"] == {"counts": {"work": 2}}
+    assert "filing" not in manager.summary({"id": "r", "state": "done", "filing": "damaged"}, latest_of_task=True, active=False)
+
+
+def test_a_filing_that_fails_never_costs_the_run_its_check(scene: Scene, monkeypatch):
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("catalog trouble")
+
+    monkeypatch.setattr(outputs, "filing", broken)
+    run = scene.go([init_step(), {"op": "write", "path": "data.csv", "text": "a\n1\n"}, {"op": "complete"}, finish_step()])
+    assert run["state"] == "done" and run["error"] is None and "filing" not in run
+    assert "data.csv" in run["changes"]["created"] and run["violations"] == [] and run["revertible"] is True

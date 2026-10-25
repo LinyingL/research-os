@@ -2,6 +2,11 @@
 
 Both records are ordinary project files. Registration checks paths and formats;
 it never moves files, executes analysis, or confirms a research judgment.
+
+The eighth location, `work` (DESIGN.md 19.2), is where an agent puts everything
+it writes only to carry out a task. It is never declared: `validate` refuses it,
+and `filing` (19.4) is how the app tells, after a run, which of the files the run
+created are records, outputs, process files, caches or none of these.
 """
 from __future__ import annotations
 
@@ -10,12 +15,16 @@ import csv
 import io
 import itertools
 import json
+import os
 import posixpath
+import re
+import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from researchos import workspace
 from researchos.agents import guard, snapshot
+from researchos.ingest import files as ingest_files
 from researchos.records import situation
 
 FOLDERS_PATH = "research/folders.json"
@@ -29,6 +38,7 @@ ROLES = {
     "literature": ("literature", "references", "bibliography"),
     "document": ("reports", "manuscript", "paper"),
     "variable": ("research/variables", "variables"),
+    "work": (ingest_files.WORK_FOLDER,),
 }
 SUFFIXES = {
     "code": {".py", ".r", ".rmd", ".do", ".ado", ".ipynb", ".jl", ".m", ".sh", ".sql"},
@@ -39,6 +49,18 @@ SUFFIXES = {
     "document": {".md", ".txt", ".tex", ".docx", ".pdf", ".html"},
     "variable": {".toml"},
 }
+#: What an agent's declaration can never name, whatever a location says (DESIGN.md 19.2): the notes, the result
+#: records and the app's own record files.
+RECORD_FOLDERS = ("research/notes", "research/results")
+RECORD_FILES = (FOLDERS_PATH, workspace.TASKS_PATH, workspace.OVERVIEW_PATH)
+#: The longest first line of a task a slug is made from (19.2).
+SLUG_LIMIT = 24
+#: Filing (19.4): the classes a created file is sorted into, and how many unregistered paths a run keeps.
+FILING_CLASSES = ("record", "output", "work", "cache", "unregistered")
+FILING_KEPT = 500
+#: Folders whose files are caches (19.4): the ones 17.5 already does not walk (git's own state aside), and what Python,
+#: pytest and ruff leave behind.
+CACHE_FOLDERS = frozenset(snapshot.SKIP_DIRS - {snapshot.GIT_DIR}) | {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
 def _bad(message: str, zh: str = "输出目录或文件不符合设置，请检查后重试") -> workspace.WorkspaceError:
@@ -73,6 +95,14 @@ def _bytes(value: Any) -> bytes:
     return workspace._content(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
+def _roles(value: Any) -> Any:
+    """Locations as DESIGN.md 19.2 reads them: a set without `work` (a version-1 file saved before it existed, a run
+    that froze its locations before) names the default."""
+    if isinstance(value, dict) and "work" not in value:
+        return {**value, "work": ROLES["work"][0]}
+    return value
+
+
 def _folders(root: Path, value: Any) -> dict[str, str]:
     if not isinstance(value, dict) or set(value) != set(ROLES):
         raise _bad("Choose a folder for each output type: " + ", ".join(ROLES))
@@ -84,7 +114,7 @@ def _folders(root: Path, value: Any) -> dict[str, str]:
             raise _bad(f"The {role} location is a file, not a folder: {rel}", f"“{rel}”是文件，请填写目录路径。")
         if rel in {"research", "research/notes", "research/results"} or rel.startswith(("research/notes/", "research/results/")):
             raise _bad("Notes and result records have their own save tools; choose another output folder")
-    return dict(value)
+    return {role: value[role] for role in ROLES}
 
 
 def folders(root: Path) -> dict[str, Any]:
@@ -92,7 +122,7 @@ def folders(root: Path) -> dict[str, Any]:
     if raw is not None:
         if not isinstance(value, dict) or value.get("version") != 1:
             raise _bad("Unknown output-folder settings version")
-        chosen = _folders(root, value.get("folders"))
+        chosen = _folders(root, _roles(value.get("folders")))
     else:
         chosen = {}
         for role, candidates in ROLES.items():
@@ -189,11 +219,40 @@ def variable_content(root: Path, rel: str) -> tuple[dict[str, Any], bytes]:
     return content, raw
 
 
+def _within(root: Path, rel: str, folder: str) -> bool:
+    """Whether `rel` lies inside `folder` by the file system's own case rule (DESIGN.md 19.2): the resolved real
+    paths are compared, not the strings. On a case-insensitive volume a declared `Data/x.csv` is inside the location
+    `data` -- some folder on the way up is the very folder `data` -- and on no volume is a path outside it."""
+    top = os.path.realpath(root)
+    place, here = os.path.realpath(root / folder), os.path.realpath(root / rel)
+    if here.startswith(place + os.sep):
+        return True
+    parent = os.path.dirname(here)
+    while len(parent) > len(top) and parent.startswith(top):
+        try:
+            if os.path.samefile(parent, place):
+                return True
+        except OSError:  # the location is not there: it holds nothing
+            return False
+        parent = os.path.dirname(parent)
+    return False
+
+
+def _is_record(rel: str) -> bool:
+    """Whether a declared path is a note, a result record or one of the app's record files (DESIGN.md 19.2), in
+    whatever case or normalisation it is spelled (`files.fold`: on a case-sensitive volume this also refuses a
+    namesake, which nothing but Research OS's tools should write beside the records either)."""
+    key = ingest_files.fold(rel)
+    return (key in {ingest_files.fold(record) for record in RECORD_FILES}
+            or any(key.startswith(ingest_files.fold(folder) + "/") for folder in RECORD_FOLDERS))
+
+
 def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[str, Any]]:
-    """Check every declaration before any result/task/catalog file is written."""
+    """Check every declaration before any result/task/catalog file is written. A declaration is an output
+    (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported."""
     if not isinstance(declared, list) or len(declared) > 200:
         raise _bad("outputs must be a list of at most 200 {kind, path, title?} objects; use [] for no files")
-    _folders(root, locations)
+    locations = _folders(root, _roles(locations))
     checked = []
     seen = set()
     for raw in declared:
@@ -202,8 +261,13 @@ def validate(root: Path, declared: Any, locations: dict[str, str]) -> list[dict[
         kind, rel = raw.get("kind"), raw.get("path")
         if not isinstance(kind, str) or kind not in ROLES or not isinstance(rel, str):
             raise _bad("Each output needs a supported kind and a project-relative path")
+        if kind == "work":
+            raise _bad("Process files are not reported as outputs: leave them in your work folder and declare only "
+                       f"the outputs ({rel})", "过程文件留在这次任务的工作文件夹里，不要登记；只列出输出文件。")
         _path(root, rel)
-        if not rel.startswith(locations[kind] + "/"):
+        if _is_record(rel):
+            raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}")
+        if not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}")
         if Path(rel).suffix.lower() not in SUFFIXES[kind]:
             raise _bad(f"Unsupported {kind} format: {rel}")
@@ -354,3 +418,54 @@ def related_files(root: Path, reports: list[str]) -> list[str]:
     for start in range(0, len(related), workspace.EXISTS_LIMIT):
         found.extend(workspace.existing_files(root, related[start:start + workspace.EXISTS_LIMIT]))
     return found
+
+
+# -- a task's name and the filing of a run (DESIGN.md 19.2, 19.4) --------------------------------------------------
+
+
+def slug(text: Any) -> str:
+    """The name a task goes by in its folders (DESIGN.md 19.2): its first line, cut to `SLUG_LIMIT` characters, every
+    run of characters other than letters, digits, CJK, `-` and `_` turned into one `-`, trimmed of `-`. A task with
+    nothing left of its first line is `task`."""
+    lines = unicodedata.normalize("NFC", text if isinstance(text, str) else "").splitlines()
+    first = next((line.strip() for line in lines if line.strip()), "")
+    return re.sub(r"[^\w-]+", "-", first[:SLUG_LIMIT]).strip("-") or "task"
+
+
+def _is_cache(rel: str) -> bool:
+    return any(part in CACHE_FOLDERS for part in rel.split("/")) or rel.lower().endswith((".pyc", ".pyo"))
+
+
+def filing(root: Path, created: Iterable[str], *, records: Iterable[str], reports: Iterable[Any],
+           work_folder: Any) -> dict[str, Any]:
+    """Sort the files a run created into one class each (DESIGN.md 19.4), first match: `record` (`records`: written by
+    Research OS's own tools), `output` (in the catalog of one of the task's result records, `reports`), `work` (inside
+    the run's `work_folder`), `cache` (`CACHE_FOLDERS`, `.pyc`) and `unregistered` (the rest). Returns `{"counts":
+    {class: n}, "unregistered": [at most FILING_KEPT paths], "unregistered_more": n}`. It reads the catalogs and
+    nothing else, changes no state, and a catalog it cannot read registers nothing; no class is a violation."""
+    known = {ingest_files.fold(rel) for rel in records}
+    registered: set[str] = set()
+    for report in reports:
+        try:
+            registered.update(ingest_files.fold(item["path"]) for item in _entries(root, catalog_path(report))[0])
+        except (workspace.WorkspaceError, OSError, TypeError):
+            continue
+    folder = ingest_files.fold(work_folder).rstrip("/") + "/" if isinstance(work_folder, str) and work_folder else None
+    counts = dict.fromkeys(FILING_CLASSES, 0)
+    unregistered: list[str] = []
+    for rel in created:
+        key = ingest_files.fold(rel)
+        if key in known:
+            kind = "record"
+        elif key in registered:
+            kind = "output"
+        elif folder is not None and key.startswith(folder):
+            kind = "work"
+        elif _is_cache(rel):
+            kind = "cache"
+        else:
+            kind = "unregistered"
+            unregistered.append(rel)
+        counts[kind] += 1
+    return {"counts": counts, "unregistered": unregistered[:FILING_KEPT],
+            "unregistered_more": max(0, len(unregistered) - FILING_KEPT)}

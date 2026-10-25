@@ -67,6 +67,12 @@ bytes) and from the engine's own writes (the person's saves keep their name).
 The attribution after the run then adds nothing for a content that is already
 there ("seen during run <id>").
 
+**Where a run's files go** (DESIGN.md 19.2, 19.4). When a run starts, its output locations are frozen in `run.json`
+(`output_folders`) with its work folder and slug (`work_folder`, `slug`: `_work_places`); a task's later runs reuse
+the first one's. Data files inside a work folder are not protected (`snapshot.protected(work=)`). When the
+after-picture is compared, every file the run created is sorted into a class (`filing`, `outputs.filing`): a
+summary of what the run did with the app's places, never a violation.
+
 **An out-of-bounds run** (18.1 item 4) is `out_of_bounds`, not what it would
 have read (`outcome` keeps that: `done`, `ended`, ...). The task's done mark is
 the agent's and is left as it is; the run is what warns.
@@ -470,6 +476,10 @@ def summary(run: dict, *, latest_of_task: bool, active: bool) -> dict:
     }
     if "reasoning_effort" in run:
         out["reasoning_effort"] = run["reasoning_effort"]
+    if isinstance(run.get("work_folder"), str):  # 19.2: the task's work folder; a run from before V15 has none
+        out["work_folder"] = run["work_folder"]
+    if isinstance(run.get("filing"), dict):  # 19.4: what became of the files the run created; absent before V15
+        out["filing"] = run["filing"]
     revert = run.get("revert")
     if isinstance(revert, dict) and isinstance(revert.get("skipped"), list):
         out["revert_skipped"] = len(revert["skipped"])  # a partial undo: the page says so and lists them
@@ -625,6 +635,30 @@ def _local_time(moment: float | str | None) -> str | None:
         return stamp.astimezone().isoformat(timespec="seconds")
     except (ValueError, OverflowError, OSError):
         return None
+
+
+def _work_places(work: str, runs: Iterable[dict], run: dict) -> tuple[str, str]:
+    """`(work folder, slug)` of the run that is starting (DESIGN.md 19.2). The folder is `<work>/<YYYYMMDD>-<slug>`: the
+    local date the task's first run started and `outputs.slug` of the task's first line, and every later run of the
+    task (`runs`: the project's runs on this Mac) uses the folder the earliest of its runs recorded. A name another
+    task's run holds gets `-2`, `-3` on its slug, so that the task reads as one name in every folder."""
+    task = run.get("task_id")
+    mine = sorted((r for r in runs if r.get("task_id") == task and r.get("id") != run.get("id")),
+                  key=lambda r: str(r.get("id")))
+    for earlier in mine:
+        folder, name = earlier.get("work_folder"), earlier.get("slug")
+        if isinstance(folder, str) and folder and isinstance(name, str) and name:
+            return folder, name
+    first = mine[0] if mine else run
+    stamp = _local_time(first.get("started") or first.get("created"))
+    day = stamp[:10].replace("-", "") if stamp else datetime.now().strftime("%Y%m%d")
+    taken = {_key(r["work_folder"]) for r in runs if r.get("task_id") != task and isinstance(r.get("work_folder"), str)}
+    base = outputs.slug(run.get("task_text"))
+    name, number = base, 1
+    while _key(f"{work}/{day}-{name}") in taken:
+        number += 1
+        name = f"{base}-{number}"
+    return f"{work}/{day}-{name}", name
 
 
 class _EventsCursor:
@@ -1084,8 +1118,14 @@ class AgentManager:
             self._finish(act, before=None, stream=None, exit_code=None, launch_error=None)
             return
 
+        # 19.2: the run's places are fixed before anything is read of the project: where its outputs go, and the work
+        # folder and the name of its task (a later run of the task has the first run's)
+        locations = outputs.folders(root)["folders"]
+        listed = run_store.list_runs(act.project_id)
+        work_folder, slug = _work_places(locations["work"], listed, run)
+        self._update(act, output_folders=locations, work_folder=work_folder, slug=slug)
         before = snapshot.take(root, copy_to=rd / "before")
-        prot = snapshot.protected(root, before)
+        prot = snapshot.protected(root, before, work=[locations["work"], *(r.get("work_folder") for r in listed)])
         before["protected"] = prot
         _write_json(rd / "before.json", before)
         self._watch(act, before)
@@ -1100,9 +1140,7 @@ class AgentManager:
                              launch_error={"code": "guard_failed", "detail": refused[:2000]})
                 return
 
-        locations = outputs.folders(root)["folders"]
-        self._update(act, output_folders=locations)
-        rules = brief.rules(lang=lang, runner=runner, prot=prot, folders=locations)
+        rules = brief.rules(lang=lang, runner=runner, prot=prot, folders=locations, work_folder=work_folder, slug=slug)
         if run["kind"] == "start":
             text = brief.instruction(lang=lang, task={"text": run["task_text"], "due": run.get("task_due")},
                                      project_name=root.name, overview=self._overview(root, lang),
@@ -1491,13 +1529,20 @@ class AgentManager:
         lost_backups = [v["path"] for v in violations if v["reason"] == "backup_deleted"]
         if lost_backups:  # the picture holds no copy of a backup: the run lists it, and undo says it cannot
             changes["deleted"] = sorted({*changes["deleted"], *lost_backups})
-        return {
+        assessed = {
             "changes": {**changes, "by_person": by_person}, "violations": violations,
             "snapshot": {"files": len(old), "partial": partial,
                          "copied_bytes": before.get("copied_bytes", 0), "not_copied": before.get("not_copied", 0)},
             "tool_paths": info["tool_paths"], "revertible": True, "human_paths": human_list,
             "signal_info": info,
         }
+        try:  # 19.4: a summary, so that trouble reading a catalog never costs the run its check
+            assessed["filing"] = outputs.filing(
+                root, changes["created"], records=[*info["tool_paths"], TASKS_PATH],
+                reports=[info["report"], run.get("task_report_before")], work_folder=run.get("work_folder"))
+        except Exception:  # noqa: BLE001
+            logger.warning("could not sort the files agent run %s created", run_id, exc_info=True)
+        return assessed
 
     def _attribute(self, act_root: Path, project_id: str, run: dict, changes: dict, tool_paths: list[str]) -> None:
         """Record the files the run created or changed in the change history as the agent's (17.5), unless a

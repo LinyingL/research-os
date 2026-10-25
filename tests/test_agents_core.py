@@ -23,7 +23,7 @@ import pytest
 
 from researchos import names
 from researchos import paths, settings
-from researchos.agents import guard, hook, labels, profiles, runs, snapshot
+from researchos.agents import brief, guard, hook, labels, profiles, runs, snapshot
 
 PID = "p-" + "0123456789abcdef" * 2
 
@@ -923,6 +923,39 @@ def test_protected_without_attempts_config_or_tasks_file(tmp_path):
     prot = snapshot.protected(root, snapshot.take(root))
     assert prot["records"] == ["research/tasks.json", "research/folders.json"]  # protected even before creation
     assert prot["data"] == ["x.csv"] and "research/tasks.json" in prot["files"]
+
+
+def test_data_files_in_a_work_folder_are_process_files_not_protected_data(tmp_path):
+    """DESIGN 19.2: a data file inside a work folder that existed before a run is not on the protected list, so it is
+    not named in the brief, not refused by the hook and not out of bounds when the run changes or deletes it; the same
+    kind of file anywhere else is still protected."""
+    root = _project(tmp_path / "proj", {
+        "data/raw.csv": "a\n1\n", "work/20261025-probe/cache.csv": "c\n1\n", "work/20261025-probe/sub/out.json": "{}",
+        "Work/20261024-other/old.parquet": "x", "other_work/mine.csv": "m\n1\n", "worker/x.csv": "x\n1\n",
+        "earlier/20261001-recorded/t.csv": "t\n1\n"})
+    before = snapshot.take(root)
+    plain = snapshot.protected(root, before)
+    assert "work/20261025-probe/cache.csv" in plain["data"]  # unchanged: without work folders every data file counts
+    prot = snapshot.protected(root, before, work=["work", "earlier/20261001-recorded", None, "", "/"])
+    assert prot["data"] == ["data/raw.csv", "other_work/mine.csv", "worker/x.csv"]
+    assert prot["files"] == sorted(prot["data"] + prot["records"])
+    for gone in ("work/20261025-probe/cache.csv", "work/20261025-probe/sub/out.json", "Work/20261024-other/old.parquet",
+                 "earlier/20261001-recorded/t.csv"):
+        assert gone not in prot["files"]
+    # the hook is built from the protected list, so a work file is not refused and a protected one still is
+    assert guard.check_tool(prot, "Write", {"file_path": str(root / "work/20261025-probe/cache.csv")}, cwd=str(root)) is None
+    assert guard.check_tool(prot, "Write", {"file_path": str(root / "data/raw.csv")}, cwd=str(root)) is not None
+    # and the after-run check: changing or deleting process files is no violation, changing protected data is
+    (root / "work/20261025-probe/cache.csv").write_text("changed\n")
+    (root / "work/20261025-probe/sub/out.json").unlink()
+    (root / "data/raw.csv").write_text("changed\n")
+    after = snapshot.take(root)
+    found = snapshot.violations(snapshot.compare(before, after), prot, git_before=before["git"], git_after=after["git"],
+                                allowed={}, after=after, data_before=before["data"], data_after=after["data"])
+    assert found == [{"path": "data/raw.csv", "reason": "data_changed"}]
+    # the brief names none of them
+    text = brief.rules(lang="en", runner="claude-code", prot=prot)
+    assert "data/raw.csv" in text and "work/20261025-probe" not in text
 
 
 def test_protected_attempt_table_that_is_a_data_file_is_a_record(tmp_path):

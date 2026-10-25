@@ -1899,12 +1899,14 @@
       if (!active()) return;
       panelBody.replaceChildren();
       panelBody.append(el("p", "ws-agent-quiet", t("已有文件保持原位。新任务按这些目录保存输出，可以在目录内继续分组。")));
-      const labels = { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿") };
+      const labels = { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿"), work: t("过程文件") };
       const form = el("form", "ws-output-folders"), inputs = {};
       Object.keys(labels).forEach((kind) => {
         const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
         box.addEventListener("input", () => { subject.dirty = true; });
         form.append(field(labels[kind], box));
+        // 19.2: the work location comes last, and says what it holds and what the app does with it
+        if (kind === "work") form.append(el("p", "ws-agent-quiet", t("过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。")));
       });
       const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
       const save = button(t("保存"), async () => {

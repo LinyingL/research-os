@@ -52,7 +52,9 @@ convention names (README/CHANGELOG/LICENSE, in their customary ALL-CAPS
 form) and the files Research OS itself writes in its `research/` folder --
 the writing desk's overview, notes and result records, and the attempt table
 (DESIGN.md 18.3: a note is not a paper draft, and must not create claims or
-`backed_by` candidates) -- see `_is_paper_markdown`. Any other Markdown file in
+`backed_by` candidates) -- see `_is_paper_markdown`. Nor is a file a task registered
+as a `document` in its output record (DESIGN.md 19.7): a plan, a review or a write-up an agent was asked for
+is that task's output, not the researcher's paper. Any other Markdown file in
 `research/` is the researcher's own. Everything else is ingested: a
 researcher's own map/draft/notes file is real, traceable prose too, and
 "never guess" cuts against trying to be clever about which .md files are
@@ -75,6 +77,7 @@ from researchos import cloud
 from researchos import db
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import claims as claims_ingest
+from researchos.ingest import files as files_ingest
 from researchos.ingest import scan as scan_mod
 from researchos.ingest.latex import Link, ParsedSection, _compute_ordered_slugs, _match_known_image
 
@@ -153,11 +156,18 @@ def _is_research_own(md_rel_path: str, table: str | None = None) -> bool:
     return subfolder in _OWN_MD_SUBFOLDERS and bool(name) and "/" not in name
 
 
-def _is_paper_markdown(md_rel_path: str, table: str | None = None) -> bool:
-    """False for a well-known non-paper convention filename and for a file Research OS writes in its `research/`
-    folder (`_is_research_own`; `table`: the attempt table's file, `attempt_table_of`); True (ingest it) for
-    everything else -- see module docstring, "which .md files count"."""
-    if _is_research_own(md_rel_path, table):
+def registered_documents(repo_root: str | Path) -> frozenset[str]:
+    """The files the tasks' output records register as `document` (DESIGN.md 19.7), in the folded form
+    `_is_paper_markdown` compares (`files.fold`); an unreadable record registers nothing."""
+    return frozenset(files_ingest.fold(rel) for rel in files_ingest.registered(repo_root).get("document", ()))
+
+
+def _is_paper_markdown(md_rel_path: str, table: str | None = None, documents: frozenset[str] = frozenset()) -> bool:
+    """False for a well-known non-paper convention filename, for a file Research OS writes in its `research/`
+    folder (`_is_research_own`; `table`: the attempt table's file, `attempt_table_of`) and for a registered document
+    (`documents`: `registered_documents`); True (ingest it) for everything else -- see module docstring, "which .md
+    files count"."""
+    if _is_research_own(md_rel_path, table) or files_ingest.fold(md_rel_path) in documents:
         return False
     basename = posixpath.basename(md_rel_path)
     return not basename.startswith(_NON_PAPER_MD_PREFIXES)
@@ -408,14 +418,15 @@ def _ingest_md(
     skipped_non_paper = 0
     unreadable: list[str] = []
     table = attempt_table_of(repo_root)
+    documents = registered_documents(repo_root)
     for md_rel_path in md_paths:
-        if not _is_paper_markdown(md_rel_path, table):
+        if not _is_paper_markdown(md_rel_path, table, documents):
             skipped_non_paper += 1
             logger.info(
-                "%s: README/CHANGELOG/LICENSE or a file Research OS writes in research/, not paper prose -- skipping",
-                md_rel_path,
+                "%s: README/CHANGELOG/LICENSE, a file Research OS writes in research/ or a registered document, "
+                "not paper prose -- skipping", md_rel_path,
             )
-            if _is_research_own(md_rel_path, table):
+            if _is_research_own(md_rel_path, table) or files_ingest.fold(md_rel_path) in documents:
                 parsed_claims_by_path[md_rel_path] = []  # no claims, whatever an earlier scan made of it
             continue
         try:

@@ -319,13 +319,20 @@ def list_source_files(repo_path: str | Path) -> dict[str, list[str]]:
     same category keys, same extension-to-category rules (`DATA_EXTENSIONS`
     is the one shared source of truth for the "data" category, see its
     definition above).
+
+    The work folder and the files registered as `work` are left out
+    (DESIGN.md 19.7, `researchos.ingest.files.scan_skips`); `iter_tracked`,
+    which the add-project preview counts, lists them.
     """
+    from researchos.ingest import files as files_ingest  # noqa: PLC0415 -- that module imports this one
+
     inventory: dict[str, list[str]] = {
         "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [],
         "do": [], "ado": [], "data": [],
     }
+    skipped = files_ingest.scan_skips(repo_path)
     for path, category in iter_tracked(repo_path):
-        if category is not None:
+        if category is not None and not skipped(path):
             inventory[category].append(path)
     return inventory
 

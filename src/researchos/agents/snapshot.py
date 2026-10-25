@@ -74,7 +74,7 @@ reuses nothing. The result is the picture a full read gives, `ino` and `ctime_ns
 the folders `.researchos`, `.rce` and `.git`; the agent program's own project
 settings (`.claude/`, `.opencode/` and `.codex/` at any depth, `opencode.json`: 18.1 item 2,
 a later run must not load what an earlier one wrote); every data file that existed
-before the run; the attempt table (its path read from `attempts.toml`) and
+before the run (but not one inside a work folder: process files, DESIGN.md 19.2); the attempt table (its path read from `attempts.toml`) and
 `research/tasks.json`. `protected` is also what the hook enforces during the
 run (`guard`), and `violations` is the after-run check that catches what the
 hook cannot see (OpenCode has no hook; a script can overwrite a file behind
@@ -97,6 +97,7 @@ import shutil
 import stat
 import subprocess
 import time
+import unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -715,7 +716,7 @@ def attempts_table(root: Path) -> str | None:
         return None
 
 
-def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
+def protected(root: Path, before: Mapping[str, Any], *, work: Iterable[str] = ()) -> dict[str, Any]:
     """What an agent must not change (17.5 rules 1, 3, 5), from the
     before-picture: `{"dirs", "files", "data", "records", "root"}`. `files`
     is `data` plus `records` (the attempt table and `research/tasks.json`,
@@ -723,17 +724,27 @@ def protected(root: Path, before: Mapping[str, Any]) -> dict[str, Any]:
     from the picture's separate data walk (`before["data"]`: no file limit,
     skipped folders included) when it has one, else from `files`; a data
     file inside `.researchos`, `.rce` or `.git` is covered as part of that
-    folder and not listed again."""
+    folder and not listed again. Nor is one inside a work folder (`work`: the
+    configured location and the folders earlier runs recorded, DESIGN.md
+    19.2): process files are not protected data, so they are neither named in
+    the brief nor refused by the hook nor reported as out of bounds."""
     records = [r for r in (attempts_table(root), TASKS_PATH, "research/folders.json") if r]
     records += [r for r in _file_map(before) if guard.is_output_record(r)]
     records = list(dict.fromkeys(records))
     walked = before.get("data") if isinstance(before, Mapping) else None
     source = walked if isinstance(walked, Mapping) else _file_map(before)
     folders = {d.casefold() for d in PROTECTED_DIRS}
+    process = tuple(f"{_folded(w).strip('/')}/" for w in work if isinstance(w, str) and w.strip("/"))
     data = sorted(rel for rel in source
-                  if _is_data(rel) and rel not in records and rel.split("/", 1)[0].casefold() not in folders)
+                  if _is_data(rel) and rel not in records and rel.split("/", 1)[0].casefold() not in folders
+                  and not _folded(rel).startswith(process))
     return {"dirs": list(PROTECTED_DIRS), "files": sorted({*data, *records}), "data": data,
             "records": records, "root": str(root)}
+
+
+def _folded(rel: str) -> str:
+    """A path in the form folders are compared in: NFC, case-folded (a Mac volume is case-insensitive)."""
+    return unicodedata.normalize("NFC", rel).casefold()
 
 
 def is_agent_settings(rel: str) -> bool:

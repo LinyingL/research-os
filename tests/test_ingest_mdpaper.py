@@ -6,6 +6,7 @@ test_ingest_latex.py / test_ingest_claims.py).
 """
 
 import logging
+import json
 from pathlib import Path
 from urllib.parse import quote
 
@@ -474,6 +475,59 @@ def test_claims_an_earlier_scan_made_of_a_note_go_when_the_note_is_skipped(tmp_p
     assert after["md_skipped_non_paper"] == 1 and after["claims_removed"] == 1 and after["backed_by_edges_removed"] == 1
     assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
     assert [e["src"].split("#")[0] for e in db.query_edges(conn, type="backed_by")] == ["claim:paper.md"]
+
+
+# --- a document a task registered is that task's output, not a paper draft (DESIGN.md 19.7) --------------------------
+
+
+def _register_documents(root, *rels, kind="document"):
+    record = root / "research" / "results" / ((kind[0] * 32) + ".outputs.json")
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {}} for rel in rels]}))
+
+
+def test_a_registered_document_is_not_paper_markdown_but_a_registered_note_of_another_kind_is_unchanged(tmp_path):
+    (tmp_path / "reports").mkdir()
+    _register_documents(tmp_path, "reports/Plan.md")
+    _register_documents(tmp_path, "tables/summary.md", kind="table")  # only `document` is meant
+    documents = mdpaper.registered_documents(tmp_path)
+    assert documents == {"reports/plan.md"}  # folded: the volume's own case rule
+    assert mdpaper._is_paper_markdown("reports/Plan.md", None, documents) is False
+    assert mdpaper._is_paper_markdown("REPORTS/plan.md", None, documents) is False
+    assert mdpaper._is_paper_markdown("reports/other.md", None, documents) is True and mdpaper._is_paper_markdown("paper.md", None, documents) is True
+    assert mdpaper._is_paper_markdown("reports/Plan.md") is True  # the old call: nothing registered is known
+    assert mdpaper.registered_documents(tmp_path / "nowhere") == frozenset()
+
+
+def test_a_registered_document_makes_no_section_claim_or_backed_by_candidate_and_is_not_a_draft_for_citations(tmp_path):
+    from researchos.ingest import citations
+
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "plan.md").write_text("# Plan\n\nWe will reach 87.3% accuracy.\n")
+    _repo(tmp_path, "# Results\n\nWe reach 87.3% accuracy.\n")
+    _register_documents(tmp_path, "reports/plan.md")
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    counts = mdpaper.ingest_md_repo(conn, tmp_path, ["reports/plan.md", "paper.md"])
+    assert counts["md_skipped_non_paper"] == 1 and counts["sections"] == 1
+    assert [n["id"] for n in db.get_nodes_by_type(conn, "section")] == ["section:paper.md#results"]
+    assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
+    assert len(db.query_edges(conn, type="backed_by")) == 1
+    inventory = {"md": ["paper.md", "reports/plan.md"], "tex": []}
+    assert citations.drafts_of(inventory, tmp_path) == ["paper.md"]
+    assert citations.drafts_of(inventory) == ["paper.md", "reports/plan.md"]  # no project to ask
+
+
+def test_claims_an_earlier_scan_made_of_a_document_go_once_it_is_registered(tmp_path):
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "plan.md").write_text("# Plan\n\nWe will reach 87.3% accuracy.\n")
+    _repo(tmp_path, "# Results\n\nWe reach 87.3% accuracy.\n")
+    conn = _seeded_conn(run_a={"accuracy": 0.87312})
+    before = mdpaper.ingest_md_repo(conn, tmp_path, ["reports/plan.md", "paper.md"])  # the agent has not finished yet
+    assert before["claims"] == 2 and len(db.query_edges(conn, type="backed_by")) == 2
+    _register_documents(tmp_path, "reports/plan.md")
+    after = mdpaper.ingest_md_repo(conn, tmp_path, ["reports/plan.md", "paper.md"])
+    assert after["md_skipped_non_paper"] == 1 and after["claims_removed"] == 1 and after["backed_by_edges_removed"] == 1
+    assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
 
 
 # --- Claim nodes + backed_by candidates (reusing claims' core write path) --

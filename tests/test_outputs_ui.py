@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 def test_output_folder_form_saves_the_bound_project_and_keeps_errors_editable():
     result = run(r'''
-const folders={code:'scripts',data:'data',figure:'figures',table:'tables',literature:'references',document:'reports',variable:'research/variables'};
+const folders={code:'scripts',data:'data',figure:'figures',table:'tables',literature:'references',document:'reports',variable:'research/variables',work:'work'};
 customGet=path=>path==='/api/outputs/folders'?{folders,revision:'r0'}:undefined;
 let calls=0;
 customPost=(path,body)=>{if(path==='/api/outputs/folders'){calls++;if(calls===1)throw Error('file changed');return {revision:'r1'};}};
@@ -35,7 +35,7 @@ console.log(JSON.stringify({screen,dirtyAfterFailure,editableAfterFailure,dirtyA
 
 def test_unsaved_folder_settings_are_guarded_and_save_disables_inputs():
     result = run(r'''
-const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables'};
+const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:'work'};
 const pending=deferred();
 customGet=path=>path==='/api/outputs/folders'?{folders,revision:null}:undefined;
 customPost=path=>path==='/api/outputs/folders'?pending.promise:undefined;
@@ -48,6 +48,37 @@ pending.resolve({revision:'saved'});await saving;
 console.log(JSON.stringify({refused,disabled,clean:!window.ROWorkspace.isDirty(),enabled:!field('图',panelBody).disabled}));
 ''')
     assert all(result.values())
+
+
+_WORK_PANEL = r'''
+const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:'work'};
+customGet=path=>path==='/api/outputs/folders'?{folders,revision:'r0'}:undefined;
+customPost=path=>path==='/api/outputs/folders'?{revision:'r1'}:undefined;
+await window.ROWorkspace.load(root);
+await find(%(open)s).click();
+const labels=panelBody.all().filter(e=>e.tagName==='LABEL').map(e=>e.children[0].textContent);
+const text=panelBody.textContent;
+typed(field(%(work)s,panelBody),'process');
+await find(%(save)s,panelBody).click();
+console.log(JSON.stringify({labels,text,posted}));
+'''
+
+
+def test_output_folders_panel_shows_the_work_location_last_with_its_sentence():
+    """DESIGN.md 19.2: the eighth location is 过程文件 / "Process files", after the seven outputs and before 保存, with
+    the sentence that says what it holds; saving sends it with the others."""
+    zh = run(_WORK_PANEL % {"open": "'输出目录'", "work": "'过程文件'", "save": "'保存'"})
+    sentence = "过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。"
+    assert zh["labels"] == ["代码", "数据", "图", "表", "文献", "文稿与报告", "变量草稿", "过程文件"]
+    assert zh["text"].index("变量草稿") < zh["text"].index(sentence) and zh["text"].endswith(sentence + "保存")
+    assert zh["posted"][-1][1]["folders"]["work"] == "process"
+    en = run(_WORK_PANEL % {"open": "'Output folders'", "work": "'Process files'", "save": "'Save'"}, lang="en")
+    sentence = ("Process files: scripts written only to carry out this task, self-check output, downloaded sources "
+                "and intermediate files. Not indexed, not outputs.")
+    assert en["labels"][-1] == "Process files" and len(en["labels"]) == 8
+    assert en["text"].index("Variable drafts") < en["text"].index(sentence) and en["text"].endswith(sentence + "Save")
+    assert not any("\u3400" <= c <= "\u9fff" for c in en["text"])
+    assert en["posted"][-1][1]["folders"]["work"] == "process"
 
 
 def test_late_folder_read_never_replaces_a_new_project_panel():

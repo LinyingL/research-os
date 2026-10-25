@@ -1259,6 +1259,8 @@
     "代码": "Code",
     "文稿与报告": "Manuscripts and reports",
     "变量草稿": "Variable drafts",
+    "过程文件": "Process files",
+    "过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。": "Process files: scripts written only to carry out this task, self-check output, downloaded sources and intermediate files. Not indexed, not outputs.",
     "变量定义卡": "Variable definition cards",
     "已保存，下次任务运行时使用。": "Saved. New task runs will use these folders.",
     "没能保存输出目录。": "Could not save output folders.",
