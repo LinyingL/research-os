@@ -2614,7 +2614,7 @@ console.log(JSON.stringify({heading:block.children[0].textContent,groups,titles,
     assert out["images"] == [["/api/workspace/asset?path=figures%2Ffit.png", "Fit"]]         # a small preview for an image, not the pdf
     assert out["openedFiles"] == ["figures/fit.png", "src/model.py"]                          # the shared file panel
     assert "文件已改动" in out["text"] and out["text"].count("移除登记") == 5
-    assert out["lines"] == [["2 个新文件未登记", "登记…"], ["工作文件夹", "work/20261025-run-the-model", "7 个文件"]]      # 19.5: 登记… ends the line of the count
+    assert out["lines"] == [["2 个新文件未登记", "登记…"], ["过程文件夹", "work/20261025-run-the-model", "7 个文件"]]      # 19.5: 登记… ends the line of the count
     assert out["inDetails"] and out["others"] == 1                                            # only the task with a record has one
     assert out["order"][-2:] == ["ws-agent", "ws-task-outputs"]                               # under the run controls
     assert out["posted"] == []
@@ -2636,10 +2636,10 @@ listed.tasks[0].report='';delete listed.task_outputs;window.ROWorkspace.reset();
 console.log(JSON.stringify(seen));
 """)
     assert out == [None, None,
-                   "任务输出还没有登记的文件。工作文件夹work/w0 个文件",
+                   "任务输出还没有登记的文件。过程文件夹work/w0 个文件",
                    "任务输出还没有登记的文件。1 个新文件未登记登记…",
                    "任务输出输出清单暂时无法读取。",
-                   "任务输出还没有登记的文件。工作文件夹work/w超过 5000 个文件",
+                   "任务输出还没有登记的文件。过程文件夹work/w超过 5000 个文件",
                    None, None]
 
 
@@ -2707,6 +2707,98 @@ console.log(JSON.stringify({text:far.textContent, words:words(far), label:far.al
                        "words": ["Remove registration"], "label": "Remove registration: Far"}
 
 
+#: DESIGN.md 19.12 item 2: eleven code files (past 8), exactly eight figures, three process files.
+_MANY = r"""
+listed.task_outputs.t1.entries=[].concat(
+  Array.from({length:11},(_, i)=>entry('code','src/m'+String(i).padStart(2,'0')+'.py','m'+i+'.py')),
+  Array.from({length:8},(_, i)=>entry('figure','figures/f'+i+'.png','f'+i)),
+  Array.from({length:3},(_, i)=>entry('work','work/x/p'+i+'.log','p'+i)));
+const groupBox=head=>blockOf().all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent).indexOf(head);
+const shownIn=()=>blockOf().all().filter(e=>e.classList.contains('ws-output')).map(li=>li.children[0].textContent);
+const processFold=()=>blockOf().all().find(e=>e.tagName==='DETAILS');
+const moreButtons=()=>blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.dataset.key&&e.dataset.key.startsWith('output-more:'));
+"""
+
+
+def test_the_process_files_group_is_its_count_until_opened_and_any_other_group_past_eight_files_shows_eight():
+    """19.12 item 2: in 任务输出 the 过程文件 group is only its count (a disclosure) until opened and, opened, shows every
+    file; any other group of more than 8 files shows the first 8 and 「另外 N 个」 for the rest; exactly 8 shows all."""
+    out = run(_OUTPUTS + _MANY + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+const fold=processFold(), summary=fold.children[0];
+const buttons=moreButtons();
+console.log(JSON.stringify({heads:blockOf().all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent),
+  fold:{open:fold.open,summary:summary.textContent,kind:summary.tagName,key:summary.dataset.key,chevron:summary.all().some(e=>e.classList.contains('res-chevron')),
+    files:fold.all().filter(e=>e.classList.contains('ws-output')).length,tag:fold.tagName},
+  shown:shownIn().filter(t=>t.endsWith('.py')),figures:shownIn().filter(t=>/^f\d$/.test(t)).length,
+  buttons:buttons.map(b=>[b.textContent,b.getAttribute('aria-label'),b.dataset.key,b.parentNode===blockOf()])}));
+""")
+    assert out["heads"] == ["代码11 个文件", "图8 个文件", "过程文件3 个文件"]
+    assert out["fold"] == {"open": False, "summary": "过程文件3 个文件", "kind": "SUMMARY", "key": "output-group:t1:work", "chevron": True,
+                           "files": 3, "tag": "DETAILS"}
+    assert out["shown"] == [f"m{i}.py" for i in range(8)] and out["figures"] == 8       # the first 8; eight is not past 8
+    assert out["buttons"] == [["另外 3 个", "另外 3 个：代码", "output-more:t1:code", True]]
+
+
+def test_opening_the_rest_of_a_group_shows_every_file_and_a_redraw_keeps_what_the_person_opened():
+    """19.12 item 2: 「另外 N 个」 opens the rest and the focus goes to the first file that was not shown; the 过程文件
+    disclosure opened by the person stays open when the row is drawn again by the next poll or by a change."""
+    out = run(_OUTPUTS + _MANY + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+await moreButtons()[0].click();await sleepTick();
+const opened={shown:shownIn().filter(t=>t.endsWith('.py')).length,buttons:moreButtons().length,heads:blockOf().all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent),
+  focus:document.activeElement&&document.activeElement.dataset.key};
+const fold=processFold();fold.open=true;await fold.emit('toggle');
+await window.ROWorkspace.load(root,true);await sleepTick();                       // the page reads the project again, nothing changed
+const poll={open:processFold().open,shown:shownIn().filter(t=>t.endsWith('.py')).length};
+listed.task_outputs.t1.filing=counts(4);                                           // something changed: the block is drawn again
+await window.ROWorkspace.load(root,true);await sleepTick();
+const redrawn={open:processFold().open,shown:shownIn().filter(t=>t.endsWith('.py')).length,buttons:moreButtons().length,
+  line:blockOf().all().filter(e=>e.classList.contains('ws-outputs-line'))[0].textContent};
+processFold().open=false;await processFold().emit('toggle');
+listed.task_outputs.t1.filing=counts(5);
+await window.ROWorkspace.load(root,true);await sleepTick();
+console.log(JSON.stringify({opened,poll,redrawn,closedAgain:processFold().open,otherTask:root.all().filter(e=>e.classList.contains('ws-outputs')).length}));
+""")
+    assert out["opened"]["shown"] == 11 and out["opened"]["buttons"] == 0
+    assert out["opened"]["heads"] == ["代码11 个文件", "图8 个文件", "过程文件3 个文件"]       # the count line is the group's, whatever is shown
+    assert out["opened"]["focus"] == "output-open:t1:src/m08.py"
+    assert out["poll"] == {"open": True, "shown": 11}
+    assert out["redrawn"] == {"open": True, "shown": 11, "buttons": 0, "line": "4 个新文件未登记登记…"}
+    assert out["closedAgain"] is False and out["otherTask"] == 1
+
+
+def test_a_group_past_eight_files_reads_in_english_with_thousands_and_a_name_for_the_button():
+    out = run(_OUTPUTS + r"""
+listed.task_outputs.t1.entries=Array.from({length:1010},(_, i)=>entry('code','src/m'+i+'.py','m'+i+'.py')).concat([entry('work','work/x/a.log','a.log')]);
+await window.ROWorkspace.load(root);await sleepTick();
+const b=blockOf().all().find(e=>e.tagName==='BUTTON'&&e.dataset.key==='output-more:t1:code');
+const fold=blockOf().all().find(e=>e.tagName==='DETAILS');
+console.log(JSON.stringify({button:[b.textContent,b.getAttribute('aria-label')],fold:fold.children[0].textContent,heads:blockOf().all().filter(e=>e.classList.contains('ws-outputs-kind')).map(e=>e.textContent)}));
+""", lang="en")
+    assert out == {"button": ["1,002 more", "1,002 more: Code"], "fold": "Process files1 file", "heads": ["Code1,010 files", "Process files1 file"]}
+    zh = run(_OUTPUTS + r"""
+listed.task_outputs.t1.entries=Array.from({length:1010},(_, i)=>entry('code','src/m'+i+'.py','m'+i+'.py'));
+await window.ROWorkspace.load(root);await sleepTick();
+console.log(JSON.stringify(blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.dataset.key==='output-more:t1:code').map(b=>[b.textContent,b.getAttribute('aria-label')])));
+""")
+    assert zh == [["另外 1002 个", "另外 1002 个：代码"]]
+
+
+def test_removing_a_registration_from_a_long_group_keeps_what_the_person_opened():
+    out = run(_OUTPUTS + _MANY + r"""
+await window.ROWorkspace.load(root);await sleepTick();
+await moreButtons()[0].click();await sleepTick();
+const fold=processFold();fold.open=true;await fold.emit('toggle');
+customPost=(path,body)=>{ if(path==='/api/outputs/unregister') { listed.task_outputs.t1.entries=listed.task_outputs.t1.entries.filter(e=>e.path!==body.path); return {catalog:'x',removed:body.path}; } };
+const last=blockOf().all().filter(e=>e.classList.contains('ws-output')).find(li=>li.children[0].textContent==='m10.py');
+answers.push(true);
+await last.children.find(c=>c.tagName==='BUTTON'&&c.textContent==='移除登记').click();await sleepTick();
+console.log(JSON.stringify({shown:shownIn().filter(t=>t.endsWith('.py')).length,open:processFold().open,buttons:moreButtons().length}));
+""")
+    assert out == {"shown": 10, "open": True, "buttons": 0}
+
+
 def test_the_counted_words_have_both_forms_in_english_and_group_thousands():
     out = run(_OUTPUTS + r"""
 const seen=[];
@@ -2717,15 +2809,15 @@ await show({filing:counts(1200),work_folder:'work/w',work_files:1500});
 await show({work_folder:'work/w',work_files:5000,work_files_more:true});
 console.log(JSON.stringify(seen));
 """, lang="en")
-    assert out == [["Code1 file", "1 new file not registeredRegister…", "Work folderwork/w1 file"],
-                   ["Code1 file", "1,200 new files not registeredRegister…", "Work folderwork/w1,500 files"],
-                   ["Code1 file", "Work folderwork/wMore than 5,000 files"]]
+    assert out == [["Code1 file", "1 new file not registeredRegister…", "Process folderwork/w1 file"],
+                   ["Code1 file", "1,200 new files not registeredRegister…", "Process folderwork/w1,500 files"],
+                   ["Code1 file", "Process folderwork/wMore than 5,000 files"]]
     zh = run(_OUTPUTS + r"""
 listed.task_outputs.t1.filing=counts(1200);listed.task_outputs.t1.work_files=15000;
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify(blockOf().all().filter(e=>e.classList.contains('ws-outputs-line')).map(e=>e.textContent)));
 """)
-    assert zh == ["1200 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model15000 个文件"]       # Chinese stays as it is
+    assert zh == ["1200 个新文件未登记登记…", "过程文件夹work/20261025-run-the-model15000 个文件"]       # Chinese stays as it is
 
 
 def test_removing_a_registration_asks_first_leaves_the_file_and_reads_the_counts_again():
@@ -2767,7 +2859,7 @@ console.log(JSON.stringify({text:blockOf().textContent+labels.join(' '),labels,a
     assert not re.search(r"[㐀-鿿]", out["text"]), out["text"]
     assert out["asked"] == ["Remove this file's registration? The file itself is not changed."]
     assert out["labels"][0] == "model.py|" and "Remove registration|Remove registration: model.py" in out["labels"]
-    for words in ("Task outputs", "Code", "Figure", "Table", "Process files", "File changed", "2 new files not registered", "Work folder", "7 files"):
+    for words in ("Task outputs", "Code", "Figure", "Table", "Process files", "File changed", "2 new files not registered", "Process folder", "7 files"):
         assert words in out["text"], words
 
 
@@ -2963,12 +3055,13 @@ console.log(JSON.stringify({calls:registered(),left:server.listing.groups.map(g=
   listGets:gets.filter(g=>g.startsWith('/api/outputs/backfill')).length}));
 """)
     sword = "research/sword_backtest_review_20261024"
+    first, second = "r-20261024T101010Z-aaaaaa", "r-20261025T090000Z-bbbbbb"     # 19.12 item 4: each item names the run that created it
     assert out["calls"] == [
-        {"project": "/projects/study", "report": REPORT, "items": [{"kind": "data", "path": f"{sword}/scripts/fetch.py"},
-                                                                    {"kind": "figure", "path": f"{sword}/figures/equity.png"},
-                                                                    {"kind": "document", "path": "LICENSE"}]},
+        {"project": "/projects/study", "report": REPORT, "items": [{"kind": "data", "path": f"{sword}/scripts/fetch.py", "run": first},
+                                                                    {"kind": "figure", "path": f"{sword}/figures/equity.png", "run": first},
+                                                                    {"kind": "document", "path": "LICENSE", "run": first}]},
         {"project": "/projects/study", "report": REPORT2,
-         "items": [{"kind": "document", "path": "reports/plan.md"}, {"kind": "document", "path": "reports/notes.md"}]}]
+         "items": [{"kind": "document", "path": "reports/plan.md", "run": second}, {"kind": "document", "path": "reports/notes.md", "run": second}]}]
     assert out["left"] == [["t1", [[f"{sword}/checks/verify.py"]]]] and out["shown"] == [f"{sword}/checks/verify.py"]
     assert out["says"] == ["已登记 5 个文件。"] and out["dirty"] is False
     assert out["reread"] == 1 and out["generations"] >= 1 and out["listGets"] == 3          # the folders panel's, the list's and the one after
@@ -3118,7 +3211,8 @@ console.log(JSON.stringify({quietWords,failed:panelBody.textContent,title:panelT
     assert out["failed"] == "没能读取要补登记的文件。 No runs." and out["title"] == "补登记以往运行的文件"
 
 
-def test_the_task_rows_register_button_opens_the_list_of_its_latest_run_alone():
+def test_the_task_rows_register_button_opens_the_list_of_every_run_of_its_task():
+    """19.12 item 7 (this test was "of its latest run alone" with `&run=` before): the list is asked for by task."""
     out = run(_BACKFILL + r"""
 await window.ROWorkspace.load(root);await sleepTick();
 const button=find('登记…',rowOf('Run the model'));
@@ -3127,7 +3221,7 @@ await button.click();
 console.log(JSON.stringify({info,url:gets.filter(g=>g.startsWith('/api/outputs/backfill')).slice(-1)[0],title:panelTitle.textContent,files:FILES().length,posted}));
 """)
     assert out["info"] == {"label": "登记：Run the model", "key": "output-register:t1", "disabled": False, "inLine": True}
-    assert out["url"] == "/api/outputs/backfill?project=p-study&run=r-20261021T090000Z-aaaaaa"
+    assert out["url"] == "/api/outputs/backfill?project=p-study&task=t1"
     assert out["title"] == "补登记以往运行的文件" and out["files"] == 6 and out["posted"] == []
 
 
@@ -3159,9 +3253,9 @@ listed.task_outputs.t1.filing=counts(0);
 await window.ROWorkspace.load(root,true);await sleepTick();
 console.log(JSON.stringify({before,middle,after:lines(),button:!!find('登记…',row())}));
 """)
-    assert out["before"] == ["2 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model7 个文件"]
-    assert out["middle"] == ["1 个新文件未登记登记…", "工作文件夹work/20261025-run-the-model7 个文件"]   # read again after registering
-    assert out["after"] == ["工作文件夹work/20261025-run-the-model7 个文件"] and out["button"] is False
+    assert out["before"] == ["2 个新文件未登记登记…", "过程文件夹work/20261025-run-the-model7 个文件"]
+    assert out["middle"] == ["1 个新文件未登记登记…", "过程文件夹work/20261025-run-the-model7 个文件"]   # read again after registering
+    assert out["after"] == ["过程文件夹work/20261025-run-the-model7 个文件"] and out["button"] is False
 
 
 def test_leaving_the_list_after_a_change_asks_first_and_an_untouched_list_does_not():
@@ -3353,7 +3447,19 @@ def test_the_space_panel_says_so_when_the_files_moved_away_alone_pass_the_limit(
 storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
 console.log(JSON.stringify({words:store().textContent,err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """)
-    assert out["err"] == ["撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。"]
+    assert out["err"] == ["撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。"
+                          "在你删除它们之前，每次新运行的撤回备份会在运行结束时立刻释放，所以新的运行不能撤回。"]    # 19.12 item 8
+    english = run(STORE_SCENE + r"""
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
+""", lang="en")
+    assert english["err"] == ["Files moved away by undo are over the limit. They are never cleaned up automatically; only you can delete them. "
+                              "Until you delete them, each new run's undo backup is released as soon as the run ends, so new runs cannot be undone."]
+    quiet = run(STORE_SCENE + r"""
+await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
+""")
+    assert quiet["err"] == []                                                          # said only when the moved-away files alone pass the limit
 
 
 def test_the_space_panel_says_the_engine_is_tidying_asks_again_and_then_shows_the_sizes():

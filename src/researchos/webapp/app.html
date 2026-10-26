@@ -5312,20 +5312,40 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
     box.appendChild(line);
   }
   const items = bundle.items || []; let shown = 0;
+  // 19.12 item 3: the rows stand under one heading per task, the same wherever the rows are (a task's rows may come on
+  // different pages of 「显示更多」). The heading says what the task is -- the first heading of its result record, else its
+  // first line cut as before, 「任务已移除」 when the task is gone -- and when its run was (the date of its newest row that
+  // has a run; the rows come newest first), with 「打开结果」 once. Rows with no task and no record have no heading.
+  const tasks = new Map();
+  items.forEach((item) => {
+    const key = item.task || item.report || "";
+    const found = tasks.get(key) || tasks.set(key, { title: "", at: "", fromRun: false, report: "", node: null }).get(key);
+    if (!found.title) found.title = item.task_removed ? t("任务已移除") : (item.report_title || item.task_title || "");
+    if (item.at && (!found.at || (!found.fromRun && item.run))) { found.at = item.at; found.fromRun = !!item.run; }
+    if (!found.report && item.report) found.report = item.report;
+  });
+  function taskGroup(item) {
+    const found = tasks.get(item.task || item.report || "");
+    if (found.node) return found.node;
+    found.node = mk("div", "registered-task-group");
+    const head = mk("div", "registered-task-head");
+    if (found.title) head.appendChild(mk("h3", "registered-task-title", found.title));
+    if (found.at) head.appendChild(mk("span", "lit-hint registered-time", atText(found.at)));
+    if (found.report) head.appendChild(mkButton(t("打开结果"), "btn btn-small", () => openResultOnHome(found.report)));
+    if (head.children.length) found.node.appendChild(head);
+    box.appendChild(found.node);
+    return found.node;
+  }
   const more = mkButton(t("显示更多"), "btn btn-small", appendNext);
   function appendNext() {
     more.remove();
     items.slice(shown, shown + 50).forEach((item) => {
-      const row = mk("div", "registered-output");
+      const row = mk("div", "registered-output"), found = tasks.get(item.task || item.report || "");
       row.appendChild(mkButton(item.title || item.path, "btn btn-small", () => openFilePanel(item.path)));
       row.appendChild(mk("span", "mono lit-hint", item.path));
       if (item.agent) row.appendChild(mk("span", "lit-hint", item.agent));
-      // 19.6: which task produced the file (its first line, cut as the record's title is; 「任务已移除」 when the task is
-      // gone) and when (the engine's local time)
-      if (item.task_removed) row.appendChild(mk("span", "lit-hint registered-task", t("任务已移除")));
-      else if (item.task_title) row.appendChild(mk("span", "lit-hint registered-task", item.task_title));
-      if (item.at) row.appendChild(mk("span", "lit-hint registered-time", atText(item.at)));
-      if (item.report) row.appendChild(mkButton(t("打开结果"), "btn btn-small", () => openResultOnHome(item.report)));
+      // a row made at another time than its heading says (a later run's file, a person's own registration) says so
+      if (item.at && item.at !== found.at) row.appendChild(mk("span", "lit-hint registered-time", atText(item.at)));
       if (item.state === "changed") row.appendChild(mk("span", "lit-hint", t("文件已改动")));
       if (item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
         const image = mk("img", "registered-figure"); image.alt = item.title || item.path; image.loading = "lazy";
@@ -5360,7 +5380,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
         action.disabled = item.state !== "current" || !!humanRecordsBlocked();
         row.append(id, action, status);
       }
-      box.appendChild(row);
+      taskGroup(item).appendChild(row);
     });
     shown += 50;
     if (shown < items.length) box.appendChild(more);

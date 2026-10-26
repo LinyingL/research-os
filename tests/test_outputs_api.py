@@ -297,3 +297,45 @@ def test_a_refused_registration_names_the_file_in_the_language_of_the_request(wr
     status, refused = _post(base, "/api/outputs/register", body)
     assert status == 409 and "“refs/empty.bib”" in refused["message"] and "refs/empty.bib" in refused["detail"]
     assert not (root / outputs.catalog_path(report)).exists()
+
+
+# -- V15 step 6b (DESIGN 19.12 items 4 and 7) ------------------------------------------------------------------------------
+
+
+def test_the_backfill_route_takes_a_task_and_still_a_run(writing_server):
+    """19.12 item 7: `&task=` limits the listing to the runs of one task (the task row's 登记… asks for it); `&run=` still
+    works, and both together are both limits."""
+    base, root, _httpd = writing_server
+    report, second, pid, old, new = _earlier_project(root)
+    one = _get(base, f"/api/outputs/backfill?project={pid}&task=t1")[1]
+    assert [(g["task"], [r["id"] for r in g["runs"]]) for g in one["groups"]] == [("t1", [old])] and one["listed"] == 3
+    two = _get(base, f"/api/outputs/backfill?project={pid}&task=t2")[1]
+    assert [(g["task"], [r["id"] for r in g["runs"]]) for g in two["groups"]] == [("t2", [new])] and two["listed"] == 1
+    assert _get(base, f"/api/outputs/backfill?project={pid}&task=nobody")[1] == {"groups": [], "listed": 0, "more": 0}
+    assert _get(base, f"/api/outputs/backfill?project={pid}&task=t1&run={old}")[1] == one
+    assert _get(base, f"/api/outputs/backfill?project={pid}&task=t1&run={new}")[1]["groups"] == []
+    assert _get(base, f"/api/outputs/backfill?project={pid}&run={old}")[1]["listed"] == 3                     # as before
+    assert _get(base, f"/api/outputs/backfill?project={pid}")[1]["listed"] == 4
+
+
+def test_the_register_route_takes_a_run_per_item_and_the_views_date_the_entry_by_it(writing_server):
+    """19.12 item 4: the review list's items name their run; the route accepts it only for a run of the task that created
+    the file, and the entry then shows the run's start."""
+    base, root, _httpd = writing_server
+    report, second, pid, old, new = _earlier_project(root)
+    items = [{"kind": "code", "path": "scripts/fetch.py", "run": old}, {"kind": "data", "path": "data/prices.csv", "run": old}]
+    status, refused = _post(base, "/api/outputs/register", {"project": str(root), "report": report,
+                            "items": items + [{"kind": "document", "path": "reports/plan.md", "run": new}]})
+    assert status == 409 and refused["state"] == "workspace_output" and "reports/plan.md" in refused["detail"]   # t2's run, t1's record
+    assert not (root / outputs.catalog_path(report)).exists()
+    status, done = _post(base, "/api/outputs/register", {"project": str(root), "report": report, "items": items})
+    assert status == 200 and done["registered"] == ["scripts/fetch.py", "data/prices.csv"]
+    entries = json.loads((root / outputs.catalog_path(report)).read_text())["items"]
+    assert [(e["path"], e["run"], e["evidence"]) for e in entries] == [("scripts/fetch.py", old, "person"), ("data/prices.csv", old, "person")]
+    from datetime import datetime, timezone
+
+    rows = _get(base, "/api/data-code")[1]["outputs"]["items"]
+    started = datetime.strptime(old[2:17], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).astimezone().isoformat(timespec="seconds")
+    assert {r["path"]: r["at"] for r in rows} == {"scripts/fetch.py": started, "data/prices.csv": started}
+    assert _get(base, f"/api/outputs/backfill?project={pid}&task=t1")[1]["groups"][0]["runs"][0]["files"] == [
+        {"path": "checks/run_stdout.txt", "kind": "work"}]

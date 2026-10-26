@@ -1271,7 +1271,9 @@
     "{n} 个文件": { one: "{n} file", other: "{n} files" },
     "超过 {n} 个文件": "More than {n} files",
     "{n} 个新文件未登记": { one: "{n} new file not registered", other: "{n} new files not registered" },
-    "工作文件夹": "Work folder",
+    "过程文件夹": "Process folder",
+    "另外 {n} 个": "{n} more",
+    "另外 {n} 个：{kind}": "{n} more: {kind}",
     "任务已移除": "Task removed",
     // The space the runs take (DESIGN.md 19.8, 19.9): the limit, the panel in the AI agent area, and the session id in the log.
     "每个项目的运行空间上限（GB）": "Space limit for each project's runs (GB)",
@@ -1284,7 +1286,8 @@
     "正在整理撤回备份…": "Tidying undo backups…",
     "共占用 {used}，每个项目最多 {limit}。": "{used} in use. Each project may use up to {limit}.",
     "超过上限时，从最早的运行开始释放撤回备份，正在运行的那一次不受影响。": "Above the limit, undo backups are released starting with the oldest run. A run that is going is not affected.",
-    "撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。": "Files moved away by undo are over the limit. They are never cleaned up automatically; only you can delete them.",
+    "撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。在你删除它们之前，每次新运行的撤回备份会在运行结束时立刻释放，所以新的运行不能撤回。":
+      "Files moved away by undo are over the limit. They are never cleaned up automatically; only you can delete them. Until you delete them, each new run's undo backup is released as soon as the run ends, so new runs cannot be undone.",
     "删除这些文件": "Delete these files",
     "删除这些文件：{task}": "Delete these files: {task}",
     "要删除这次运行撤回时移走的 {n} 个文件吗？删除后无法恢复。": {

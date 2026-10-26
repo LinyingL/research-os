@@ -203,10 +203,10 @@ def test_routing_instructions_are_present_for_every_runner_and_no_false_attempt_
             assert "- work: `work/`" in text and text.index("- variable:") < text.index("- work:")
             assert "`work/20261025-fetch-data`" in text and "`fetch-data`" in text
             assert "`code/fetch-data/`" in text and "`figures/fetch-data/`" in text
-            words = ("work folder","subfolder name","Process files","Create nothing under research/","one deliverable","key numbers",
+            words = ("process folder","subfolder name","Process files","Create nothing under research/","one deliverable","key numbers",
                      "Save a note only","never as a list of files","A table is a result meant to be read","never by hash or run id",
                      "Process files are not reported") if lang == "en" else (
-                     "工作文件夹","子目录名","过程文件","不要在 research/ 下新建任何东西","只交一份成果","关键数字",
+                     "过程文件夹","子目录名","过程文件","不要在 research/ 下新建任何东西","只交一份成果","关键数字",
                      "笔记只用来保存","不要写成文件清单","表是给人读的结果","不用哈希值或运行编号","过程文件不列入")
             for word in words:
                 assert word in text,(runner,lang,word)
@@ -216,6 +216,56 @@ def test_routing_instructions_are_present_for_every_runner_and_no_false_attempt_
             end = text.index("\n\n",start)
             block[lang].setdefault(text[start:end],[]).append(runner)
     assert {lang:[len(found) for found in groups.values()] for lang,groups in block.items()} == {"en":[4],"zh":[4]}
+
+
+def test_the_brief_calls_a_runs_folder_the_process_folder_and_the_working_directory_the_project_folder(root):
+    """DESIGN 19.12 item 1: 工作文件夹 means a script's working directory (15.3) and, in the old brief, the project
+    folder, so a run's own folder is 「过程文件夹」 / "process folder" in what the agent is told and the sentences about
+    where it works say 项目文件夹 / "project folder". Every runner, both languages, the rules and the instruction."""
+    prot = snapshot.protected(root,snapshot.take(root))
+    task = {"text":"Fetch the data","due":None}
+    for runner in ("claude-code","codex","opencode","deepseek-harness"):
+        for lang,sentence,project_words,old in (
+                ("en","This task's process folder is `work/20261025-fetch-data`; this task's subfolder name is `fetch-data`.",
+                 ("do the work directly in the project folder.","You work in the project folder."),("work folder","working folder")),
+                ("zh","本任务的过程文件夹是 `work/20261025-fetch-data`；本任务的子目录名是 `fetch-data`。",
+                 ("直接在项目文件夹里把事情做完","你在项目文件夹里工作。"),("工作文件夹",))):
+            rules = brief.rules(lang=lang,runner=runner,prot=prot,folders=outputs.folders(root)["folders"],
+                                work_folder="work/20261025-fetch-data",slug="fetch-data")
+            instruction = brief.instruction(lang=lang,task=task,project_name="Demo",overview=None,documents=[])
+            assert sentence in rules,(runner,lang)
+            assert project_words[0] in rules and project_words[1] in instruction,(runner,lang)
+            for word in old:
+                assert word.lower() not in (rules + instruction).lower(),(runner,lang,word)
+
+
+def test_the_brief_says_the_record_has_one_list_of_outputs_and_research_os_appends_it(root):
+    """DESIGN 19.12 item 6: the agent names files where they matter in its report and adds no list of its outputs,
+    since Research OS appends 「已登记的输出文件」 / "Registered output files" to the record; the heading the brief names
+    is the one the record gets, and the report tool's own description no longer asks the agent for a list of files."""
+    import asyncio
+
+    prot = snapshot.protected(root,snapshot.take(root))
+    place = outputs.folders(root)["folders"]
+    for runner in ("claude-code","codex","opencode","deepseek-harness"):
+        en = brief.rules(lang="en",runner=runner,prot=prot,folders=place,work_folder="work/x",slug="x")
+        zh = brief.rules(lang="zh",runner=runner,prot=prot,folders=place,work_folder="work/x",slug="x")
+        assert "but do not add a list of your outputs" in en and 'the section "Registered output files"' in en,runner
+        assert "不要另附一份输出清单" in zh and "「已登记的输出文件」" in zh,runner
+        assert "the files you produced" not in en and "输出的文件" not in zh and "输出文件清单" not in zh,runner
+    pid = read_identity(root).identity.id
+    put(root,"figures/plot.svg",'<svg xmlns="http://www.w3.org/2000/svg"/>')
+    for lang,heading,old in (("en","## Registered output files","## Output files"),("zh","## 已登记的输出文件","## 输出文件")):
+        _tasks(root)
+        run_id = _run(root,pid,lang=lang)
+        runs.update_run(pid,run_id,output_folders=place)
+        answer = mcp_server.agent_complete_task(root,pid,run_id,"A report.",outputs=[{"kind":"figure","path":"figures/plot.svg"}])
+        assert answer.startswith("Saved"),answer
+        record = (root / _task(root)["report"]).read_text(encoding="utf-8")
+        assert heading + "\n" in record and old + "\n" not in record
+    tool = next(t for t in asyncio.run(mcp_server.build_agent_server(root,pid,run_id).list_tools()) if t.name == "researchos_complete_task")
+    assert "the files you produced" not in tool.description and "no list of your outputs" in tool.description
+    assert '"Registered output files"' in tool.description
 
 
 def test_corrupt_catalog_does_not_get_overwritten(root):
@@ -418,12 +468,13 @@ def test_a_run_that_froze_seven_locations_before_the_work_role_can_still_complet
 def test_an_agent_cannot_declare_a_process_file(root):
     put(root, "work/20261025-probe/probe.py", "print(1)")
     answer, pid, run_id = complete(root, [{"kind": "work", "path": "work/20261025-probe/probe.py"}])
-    assert answer.startswith("Not written:") and "work folder" in answer and "Process files" in answer
+    assert answer.startswith("Not written:") and "process folder" in answer and "Process files" in answer   # 19.12 item 1
+    assert "work folder" not in answer
     assert not _task(root)["done"] and not list(root.glob(outputs.CATALOG_PATH))
     assert runs.read_signals(pid, run_id) == []
     with pytest.raises(workspace.WorkspaceError) as caught:
         outputs.validate(root, [{"kind": "work", "path": "work/20261025-probe/probe.py"}], outputs.folders(root)["folders"])
-    assert "过程文件" in caught.value.message_zh
+    assert "过程文件" in caught.value.message_zh and "过程文件夹" in caught.value.message_zh and "工作文件夹" not in caught.value.message_zh
 
 
 def test_the_location_check_follows_the_file_systems_own_case_rule(root):
@@ -1122,7 +1173,10 @@ def test_filing_in_a_task_row_follows_a_registration_made_since_and_a_run_from_b
     assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"] is None
 
 
-def test_a_task_row_is_about_the_latest_run_only_and_says_nothing_of_files_without_a_run(root):
+def test_a_task_row_names_the_latest_runs_folder_counts_every_runs_files_and_says_nothing_of_files_without_a_run(root):
+    """The process folder is the latest run's (19.6); the files the row counts as new are those of every run of the
+    task that is not undone (19.12 item 7: this test was "about the latest run only" before), and a task with no run
+    says nothing."""
     report, pid, run_id = recorded(root)
     put(root, "old.py", "1")
     created_by(pid, run_id, "old.py")
@@ -1132,7 +1186,7 @@ def test_a_task_row_is_about_the_latest_run_only_and_says_nothing_of_files_witho
     tasks, _revision = workspace.read_tasks(root)
     row = outputs.task_outputs(root, pid, tasks)["t1"]
     assert row["work_folder"] == "work/20261025-new" and row["work_files"] == 0           # the folder is not there yet
-    assert row["filing"]["counts"]["unregistered"] == 0                                    # the newer run created nothing
+    assert row["filing"]["counts"]["unregistered"] == 1                                    # the newer run created nothing; the earlier one did
     assert outputs.task_outputs(root, "p-" + "0" * 8, tasks)["t1"]["work_folder"] is None  # no runs of that project on this Mac
     assert outputs.task_outputs(root, pid, [])  == {}
     assert outputs.task_outputs(root, pid, [{"id": "t9", "text": "x", "done": False}]) == {}
@@ -1189,11 +1243,19 @@ RULES = [
     # 6 -- data
     (f"{SWORD}/data/prices.csv", "data"), ("data/derived/x/y.csv", "data"), ("tables/summary.xlsx", "data"), ("out/result.json", "data"),
     ("out/panel.dta", "data"), ("figures/panel.csv", "data"), ("x.parquet", "data"),
+    # 5 and 6 read a compressed file as the file it holds (19.12 item 5)
+    (f"{SWORD}/data/prices_long.csv.gz", "data"), ("data/panel.dta.xz", "data"), ("out/result.json.bz2", "data"),
+    ("data/x.parquet.zst", "data"), ("Data/Prices.CSV.GZ", "data"), ("tables/summary.xlsx.gz", "data"),
+    ("data/tables/summary.csv.gz", "table"), ("tables/x.tsv.zst", "table"), (f"{SWORD}/tables/attribution.csv.xz", "table"),
+    ("checks/prices.csv.gz", "work"), ("figures/panel.csv.gz", "data"),
     # 7 -- documents
     ("reports/X.md", "document"), (f"{SWORD}/report.pdf", "document"), ("reports/plan.docx", "document"), ("notes.txt", "document"),
     ("page.html", "document"), ("paper/main.tex", "document"), ("tables/readme.md", "document"),
     # 8 -- none
     ("LICENSE", None), ("data/notes.xyz", None), ("plot.tiff", None), (f"{SWORD}/other.toml", None), ("a/b.rst", None),
+    # only a data or table suffix takes one compression suffix, and only one (19.12 item 5)
+    ("archive.gz", None), ("src.tar.gz", None), ("reports/notes.md.gz", None), ("figures/fit.png.gz", None),
+    ("data/x.csv.gz.gz", None), ("data/x.csv.zip", None), ("scripts/run.py.gz", None),
 ]
 
 
@@ -1201,7 +1263,7 @@ RULES = [
 def test_the_eight_rules_suggest_a_kind_first_match_wins(rel, kind):
     assert outputs.suggest_kind(rel) == kind
     if kind not in {None, "work"}:                                       # a suggestion a person can really register
-        assert Path(rel).suffix.lower() in outputs.SUFFIXES[kind]
+        assert outputs.file_suffix(rel) in outputs.SUFFIXES[kind]
 
 
 def test_a_dated_folder_of_an_agent_reads_as_one_name_across_its_kinds():
@@ -1890,3 +1952,188 @@ def test_a_malformed_official_catalog_never_breaks_what_a_members_unchanged_task
     for unreadable in ("{not json", "[1, 2]", "null", '{"version": 1}', '{"items": 5}', '{"items": {"path": "x"}}',
                        "[" * 100_000 + "]" * 100_000, "", None):
         assert offered(unreadable) == [rel, "tables/a.csv", "tables/b.csv"], unreadable
+
+
+# -- V15 step 6b: what acceptance on a copy of Quant settled (DESIGN 19.12) -------------------------------------------
+
+
+def test_a_compressed_data_or_table_registers_as_that_kind_and_only_a_plain_table_has_a_preview(root):
+    """19.12 item 5: a data or table suffix followed by one of .gz .bz2 .xz .zst is that kind, for an agent's declaration
+    and a person's registration alike; any other kind, a second compression suffix or another packer is still refused;
+    previews stay for plain .csv and .tsv; snapshot.DATA_SUFFIXES (protection of data, 17.5 rule 3) is not changed."""
+    assert outputs.COMPRESSION == (".gz", ".bz2", ".xz", ".zst")
+    assert outputs.file_suffix("data/Prices_Long.CSV.GZ") == ".csv.gz" and outputs.file_suffix("a.tar.gz") == ".tar.gz"
+    assert outputs.file_suffix("archive.gz") == ".gz" and outputs.file_suffix("x.csv") == ".csv" and outputs.file_suffix("LICENSE") == ""
+    assert {".csv.gz", ".dta.zst", ".parquet.xz", ".json.bz2"} <= outputs.SUFFIXES["data"]
+    assert {".csv.gz", ".tsv.bz2", ".xlsx.xz"} <= outputs.SUFFIXES["table"]
+    assert not any(s.endswith(outputs.COMPRESSION) for k, v in outputs.SUFFIXES.items() if k not in {"data", "table"} for s in v)
+    assert ".csv.gz" not in snapshot.DATA_SUFFIXES and not any(s.endswith(outputs.COMPRESSION) for s in snapshot.DATA_SUFFIXES)
+    for name in ("data/prices_long.csv.gz", "data/model.dta.zst", "tables/summary.csv.xz", "tables/plain.csv", "tables/plain.tsv"):
+        put(root, name, "a,b\n1,2\n")
+    answer, pid, run_id = complete(root, [{"kind": "data", "path": "data/prices_long.csv.gz"}, {"kind": "data", "path": "data/model.dta.zst"},
+                                          {"kind": "table", "path": "tables/summary.csv.xz"}, {"kind": "table", "path": "tables/plain.csv"}])
+    assert answer.startswith("Saved"), answer
+    report = _task(root)["report"]
+    got = person(root, report, {"kind": "table", "path": "tables/plain.tsv"})
+    assert got["registered"] == ["tables/plain.tsv"]
+    put(root, "scratch/prices.csv.bz2", "x")
+    assert person(root, report, {"kind": "data", "path": "scratch/prices.csv.bz2"})["registered"] == ["scratch/prices.csv.bz2"]   # anywhere
+    rows = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    assert {p: r["kind"] for p, r in rows.items()} == {
+        "data/prices_long.csv.gz": "data", "data/model.dta.zst": "data", "tables/summary.csv.xz": "table", "tables/plain.csv": "table",
+        "tables/plain.tsv": "table", "scratch/prices.csv.bz2": "data"}
+    assert rows["tables/plain.csv"]["table_preview"] == [["a", "b"], ["1", "2"]] and rows["tables/plain.tsv"]["table_preview"][0]
+    assert "table_preview" not in rows["tables/summary.csv.xz"] and "table_preview" not in rows["data/prices_long.csv.gz"]
+    refused = {("figure", "tables/summary.csv.xz"), ("literature", "data/prices_long.csv.gz"), ("code", "scratch/prices.csv.bz2"),
+               ("document", "tables/summary.csv.xz"), ("variable", "tables/summary.csv.xz")}
+    for rel in ("data/twice.csv.gz.gz", "data/other.csv.zip", "data/only.gz", "data/packed.tar.gz"):
+        put(root, rel, "x")
+        refused.add(("data", rel))
+        refused.add(("table", rel))
+    for kind, rel in sorted(refused):
+        with pytest.raises(workspace.WorkspaceError) as caught:
+            outputs.validate(root, [{"kind": kind, "path": rel}], None, anywhere=True)
+        assert f"Unsupported {kind} format: {rel}" in str(caught.value) and rel in caught.value.message_zh, (kind, rel)
+    with pytest.raises(workspace.WorkspaceError):    # the agent's folder rule stands for a compressed file too
+        outputs.validate(root, [{"kind": "data", "path": "tables/summary.csv.xz"}], outputs.folders(root)["folders"])
+
+
+def test_a_person_registering_from_a_run_records_the_run_and_only_when_that_run_of_the_task_made_the_file(root):
+    """19.12 item 4: POST /api/outputs/register takes an optional run per item; it is accepted only when that run of this
+    task on this Mac created the path (not another task's run, not an undone one, not a run that is not there), and the
+    entry carries it. An agent's declaration cannot name a run."""
+    people.write_me("Li", "li@example.com")
+    report, pid, run_id = recorded(root)
+    for rel in ("analysis/fit.png", "analysis/other.png", "analysis/theirs.png", "analysis/undone.png", "analysis/plain.png"):
+        put(root, rel, "png")
+    created_by(pid, run_id, "analysis/fit.png", "Analysis/Undone.png")
+    other = _run(root, pid, task_id="t2")                                           # another task's run
+    created_by(pid, other, "analysis/theirs.png")
+    gone = earlier(root, pid, "20240101T010101", ["analysis/undone.png"], reverted=True)
+    held = catalog_bytes(root, report)
+    for bad_run, rel in ((run_id, "analysis/other.png"), (other, "analysis/theirs.png"), (gone, "analysis/undone.png"),
+                         ("r-20200101T000000Z-aaaaaa", "analysis/fit.png"), ("not a run id", "analysis/fit.png"),
+                         ("../../x", "analysis/fit.png")):
+        with pytest.raises(workspace.WorkspaceError) as caught:
+            person(root, report, {"kind": "figure", "path": "analysis/plain.png"}, {"kind": "figure", "path": rel, "run": bad_run})
+        assert caught.value.code == "output" and caught.value.status == 409
+        assert rel in str(caught.value) and rel in caught.value.message_zh and "运行" in caught.value.message_zh
+        assert catalog_bytes(root, report) == held                                 # refused whole: not even the first item
+    for bad_value in (5, None, "", ["r-1"], {"id": run_id}):
+        with pytest.raises(workspace.WorkspaceError):
+            person(root, report, {"kind": "figure", "path": "analysis/fit.png", "run": bad_value})
+    with pytest.raises(workspace.WorkspaceError):
+        outputs.validate(root, [{"kind": "figure", "path": "analysis/fit.png", "run": run_id}], outputs.folders(root)["folders"])  # an agent
+    assert person(root, report, {"kind": "figure", "path": "analysis/fit.png", "run": run_id},
+                  {"kind": "figure", "path": "analysis/plain.png"})["registered"] == ["analysis/fit.png", "analysis/plain.png"]
+    found = entries_of(root)
+    assert found["analysis/fit.png"]["run"] == run_id and found["analysis/fit.png"]["created"] is True
+    assert found["analysis/fit.png"]["evidence"] == "person" and found["analysis/fit.png"]["at"]
+    assert "run" not in found["analysis/plain.png"]                                 # a person's own registration names no run
+    person(root, report, {"kind": "figure", "path": "analysis/undone.png", "title": "Case", "run": run_id})  # the id's case: folded
+    assert entries_of(root)["analysis/undone.png"]["run"] == run_id
+
+
+def test_every_date_shown_for_an_entry_with_a_run_is_that_runs_start_else_when_it_was_registered(root):
+    """19.12 item 4: a person's registration from a run's created files shows (and sorts by) the run's start, as an
+    agent's declaration does; an entry without a run shows its `at`. What decides whether an entry was made before a
+    run began is still the time it was registered."""
+    people.write_me("Li", "li@example.com")
+    for name in ("old", "mid", "new"):
+        put(root, f"tables/{name}.csv", "n\n1\n")
+    report, pid, _bare = recorded(root)
+    old = earlier(root, pid, "20240101T101112", ["tables/old.csv"])
+    person(root, report, {"kind": "table", "path": "tables/old.csv", "run": old})
+    person(root, report, {"kind": "table", "path": "tables/mid.csv"})
+    entry = entries_of(root)["tables/old.csv"]
+    assert entry["run"] == old and datetime.fromisoformat(entry["at"].replace("Z", "+00:00")) > datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rows = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    assert utc(rows["tables/old.csv"]["at"]) == datetime(2024, 1, 1, 10, 11, 12, tzinfo=timezone.utc)   # the run's start
+    assert utc(rows["tables/mid.csv"]["at"]) == datetime.fromisoformat(entries_of(root)["tables/mid.csv"]["at"].replace("Z", "+00:00"))
+    assert [r["path"] for r in outputs.catalog(root)["items"]] == ["tables/mid.csv", "tables/old.csv"]   # newest date first
+    # a run whose id carries no readable time falls back to `at`, an `at` that is no time to nothing (19.6)
+    path = root / outputs.catalog_path(report)
+    value = json.loads(path.read_text())
+    for item in value["items"]:
+        if item["path"] == "tables/old.csv":
+            item["run"] = "not a run id"
+    path.write_text(json.dumps(value))
+    assert utc({r["path"]: r for r in outputs.catalog(root)["items"]}["tables/old.csv"]["at"]) > datetime(2025, 1, 1, tzinfo=timezone.utc)
+    # the registration time still judges a file that appears again after its registration's file was gone
+    assert outputs._moment(entry) > datetime(2025, 1, 1, tzinfo=timezone.utc) and outputs._when(entry) == datetime(2024, 1, 1, 10, 11, 12, tzinfo=timezone.utc)
+
+
+def test_the_views_rows_carry_the_first_heading_of_their_result_record_read_once_per_record(root, monkeypatch):
+    """19.12 item 3: the engine gives each row `report_title`, the first heading of its task's result record, cut as a
+    task's first line is, read once per record; none when the record has no heading or cannot be read."""
+    for name in ("a", "b", "c"):
+        put(root, f"tables/{name}.csv", "n\n1\n")
+    report, pid, _run_id = recorded(root, [{"kind": "table", "path": "tables/a.csv"}])
+    head = (root / report).read_text().splitlines()[0]
+    assert head.startswith("# ")
+    second = second_record(root)
+    outputs.register_files(root, {"report": second, "items": [{"kind": "table", "path": "tables/b.csv"}]})
+    person(root, report, {"kind": "table", "path": "tables/c.csv"})
+    calls = []
+    real = outputs.record_heading
+    monkeypatch.setattr(outputs, "record_heading", lambda root_, rel: calls.append(rel) or real(root_, rel))
+    rows = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    assert rows["tables/a.csv"]["report_title"] == rows["tables/c.csv"]["report_title"] == head[2:]
+    assert rows["tables/b.csv"]["report_title"] == "Second result"
+    assert sorted(calls) == sorted({report, second}) and len(calls) == 2         # three rows, two records, two reads
+    monkeypatch.undo()
+    (root / second).write_text("No heading here, only words.\n" * 3)
+    long = "word " * 40
+    (root / report).write_text(f"Some words first.\n\n## {long}\n\n# Later\n")
+    rows = {r["path"]: r for r in outputs.catalog(root)["items"]}
+    assert "report_title" not in rows["tables/b.csv"]                              # no heading: the page falls back to the task's line
+    assert rows["tables/a.csv"]["report_title"].endswith("…") and len(rows["tables/a.csv"]["report_title"]) <= outputs.TITLE_CUT + 1
+    (root / second).unlink()                                                        # no record: its catalog is left out as before
+    assert "tables/b.csv" not in {r["path"] for r in outputs.catalog(root)["items"]}
+    assert outputs.record_heading(root, "research/results/" + "c" * 32 + ".md") is None
+    assert outputs.record_heading(root, "../outside.md") is None
+    (root / report).write_bytes(b"# " + "é".encode() * 6000 + b"\nbody\n")             # a first line longer than the read: cut as any is
+    assert outputs.record_heading(root, report).endswith("…")
+
+
+def test_a_task_rows_count_covers_every_run_not_undone_and_the_listing_by_task_agrees_with_it(root):
+    """19.12 item 7: the row's N new files and its 登记… cover every run of the task on this Mac that is not undone, a file
+    several runs created once; GET /api/outputs/backfill takes the task (and still the run)."""
+    people.write_me("Li", "li@example.com")
+    report, pid, bare = recorded(root)
+    second = second_record(root)
+    for rel in ("a.py", "b.py", "c.py", "d.py"):
+        put(root, rel, "x")
+    old = earlier(root, pid, "20240101T000000", ["a.py", "b.py"])
+    new = earlier(root, pid, "20240102T000000", ["b.py", "c.py"])
+    elsewhere = earlier(root, pid, "20240103T000000", ["d.py"], task_id="t2")
+    tasks, _revision = workspace.read_tasks(root)
+    count = lambda: outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"]["unregistered"]   # noqa: E731
+    listed = lambda **kw: sorted(path for _t, _r, path, _k in flat(outputs.backfill(root, pid, **kw)))   # noqa: E731
+    assert count() == 3 and listed(task_id="t1") == ["a.py", "b.py", "c.py"]            # b.py once; d.py is the other task's
+    assert [(t, r) for t, r, _p, _k in flat(outputs.backfill(root, pid, task_id="t1"))] == [("t1", new), ("t1", new), ("t1", old)]
+    assert listed(task_id="t2") == ["d.py"] and listed(task_id="nobody") == [] and listed() == ["a.py", "b.py", "c.py", "d.py"]
+    assert listed(run_id=old) == ["a.py", "b.py"] and listed(run_id=old, task_id="t1") == ["a.py", "b.py"]
+    assert flat(outputs.backfill(root, pid, run_id=old, task_id="t2")) == []            # both limits hold
+    person(root, report, {"kind": "code", "path": "a.py", "run": old})
+    assert count() == 2 and listed(task_id="t1") == ["b.py", "c.py"]                    # the row and the list agree
+    runs.update_run(pid, new, reverted=True)                                            # undone: what it created was moved away
+    assert count() == 1 and listed(task_id="t1") == ["b.py"]                            # b.py is still the earlier run's
+    runs.update_run(pid, old, reverted=True)
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"]["counts"]["unregistered"] == 0
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"] is not None           # the bare run is not undone
+    runs.update_run(pid, bare, reverted=True)
+    assert outputs.task_outputs(root, pid, tasks)["t1"]["filing"] is None               # every run undone: nothing to say
+    assert elsewhere and second
+
+
+def test_the_row_keeps_counting_a_file_a_later_run_made_again_once_and_the_latest_run_names_the_folder(root):
+    report, pid, _bare = recorded(root)
+    put(root, "work/20261025-x/p.py", "1")
+    put(root, "loose.py", "2")
+    first = earlier(root, pid, "20240101T000000", ["loose.py", "work/20261025-x/p.py"], work_folder="work/20261025-x")
+    last = earlier(root, pid, "20240201T000000", ["loose.py"], work_folder="work/20261025-x")
+    tasks, _revision = workspace.read_tasks(root)
+    row = outputs.task_outputs(root, pid, tasks)["t1"]
+    assert row["filing"]["counts"] == {"record": 0, "output": 0, "work": 1, "cache": 0, "unregistered": 1}   # loose.py once
+    assert first and last

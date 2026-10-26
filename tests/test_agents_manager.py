@@ -2841,7 +2841,7 @@ def test_a_run_records_its_places_and_a_later_run_of_the_task_keeps_them(scene: 
     assert list(first["output_folders"]) == list(outputs.ROLES) and first["output_folders"]["work"] == "work"
     rd = run_store.run_dir(scene.pid, first["id"])
     sent = (rd / "instruction.txt").read_text()
-    assert f"This task's work folder is `{folder}`; this task's subfolder name is `Analyse-the-sample`." in sent
+    assert f"This task's process folder is `{folder}`; this task's subfolder name is `Analyse-the-sample`." in sent  # 19.12 item 1
     assert not (scene.root / "work").exists()  # Research OS does not create it
     listed = scene.manager.runs(scene.pid)["runs"][0]
     assert listed["work_folder"] == folder and "filing" in listed

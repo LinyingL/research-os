@@ -2,6 +2,11 @@
 .ws-output-folders { max-width: 640px; }
 .ws-output-folders .ws-field { margin: .8rem 0; }
 .registered-outputs { margin: 0 0 1.8rem; }
+/* DESIGN.md 19.12 item 3: the rows of a task stand under one heading, its title, its run's date and 「打开结果」. */
+.registered-task-group { margin: 0 0 1.2rem; }
+.registered-task-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .7rem; padding: .3rem 0 .4rem; border-bottom: 1px solid var(--ink-soft); }
+.registered-task-title { margin: 0; font-family: var(--font-sans); font-size: .95rem; font-weight: 600; overflow-wrap: anywhere; }
+.registered-task-head .btn { margin-left: auto; }
 .registered-output { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .8rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .registered-output p { width: 100%; margin: .2rem 0; }
 .registered-output input { max-width: 230px; }
@@ -49,8 +54,8 @@
 .ws-attachments summary { cursor: pointer; color: var(--ink-soft); }
 /* DESIGN.md 12.13 (18.2): the two disclosures of 项目首页 draw the quiet line chevron, not the browser's triangle;
    the summary keeps the size of the line it sits in, and the chevron turns when it is open. */
-.ws-attachments > .res-draft-summary, .ws-agent-more > .res-draft-summary { font-size: inherit; padding: .2rem 0; gap: .45rem; }
-.ws-attachments[open] > .res-draft-summary .res-chevron, .ws-agent-more[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.ws-attachments > .res-draft-summary, .ws-agent-more > .res-draft-summary, .ws-outputs-process > .res-draft-summary { font-size: inherit; padding: .2rem 0; gap: .45rem; }
+.ws-attachments[open] > .res-draft-summary .res-chevron, .ws-agent-more[open] > .res-draft-summary .res-chevron, .ws-outputs-process[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .ws-attachment-row { display: flex; align-items: center; gap: .5rem; margin: .7rem 0; }
 .ws-attachment-row select { min-width: 0; flex: 1; width: 100%; }
 .ws-attachment-row .btn { flex-shrink: 0; }
@@ -175,6 +180,7 @@
 .ws-outputs-title { margin: 0; font-size: .76rem; font-weight: 500; color: var(--ink-soft); }
 .ws-outputs-kind { margin: .2rem 0 0; display: flex; align-items: baseline; gap: .5rem; font-size: .8rem; }
 .ws-outputs-files { list-style: none; margin: 0; padding: 0; }
+.ws-outputs-process > .ws-outputs-files { padding-left: 1.2rem; }
 .ws-output { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .6rem; padding: .1rem 0; overflow-wrap: anywhere; }
 .ws-output-path { font-family: var(--font-mono); font-size: .74rem; color: var(--ink-soft); }
 .ws-output-preview { flex: 0 0 100%; }

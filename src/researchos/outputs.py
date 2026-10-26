@@ -49,15 +49,40 @@ ROLES = {
     "variable": ("research/variables", "variables"),
     "work": (ingest_files.WORK_FOLDER, "agent-work"),
 }
+#: The compression suffixes a data or table suffix may be followed by (DESIGN.md 19.12 item 5): `prices_long.csv.gz`.
+COMPRESSION = (".gz", ".bz2", ".xz", ".zst")
+
+
+def _packed(suffixes: Iterable[str]) -> set[str]:
+    """`suffixes` and each of them followed by one compression suffix (`file_suffix` reads the file name the same way)."""
+    plain = set(suffixes)
+    return plain | {suffix + packing for suffix in plain for packing in COMPRESSION}
+
+
 SUFFIXES = {
     "code": {".py", ".r", ".rmd", ".do", ".ado", ".ipynb", ".jl", ".m", ".sh", ".sql"},
-    "data": set(snapshot.DATA_SUFFIXES),
+    "data": _packed(snapshot.DATA_SUFFIXES),   # snapshot.DATA_SUFFIXES itself is not changed: 19.12 leaves protection of compressed data to its own design
     "figure": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"},
-    "table": {".csv", ".tsv", ".xlsx", ".xls", ".tex", ".md", ".html"},
+    "table": _packed({".csv", ".tsv", ".xlsx", ".xls", ".tex", ".md", ".html"}),
     "literature": {".bib", ".csv", ".json", ".pdf"},
     "document": {".md", ".txt", ".tex", ".docx", ".pdf", ".html"},
     "variable": {".toml"},
 }
+
+
+def file_suffix(name: str) -> str:
+    """The suffix that decides what a file can be registered as (DESIGN.md 19.12 item 5): the last suffix of the name,
+    in lower case, and with the one before it when the last is a compression suffix (`COMPRESSION`): `prices_long.csv.gz`
+    is `.csv.gz`, which `SUFFIXES` holds for data and table. A name that is only a compression suffix on a stem with no
+    suffix of its own (`archive.gz`) is `.gz`."""
+    stem, last = posixpath.splitext(posixpath.basename(name).lower())
+    if last in COMPRESSION:
+        inner = posixpath.splitext(stem)[1]
+        if inner:
+            return inner + last
+    return last
+
+
 #: What an agent's declaration can never name, whatever a location says (DESIGN.md 19.2): the notes, the result
 #: records and the app's own record files.
 RECORD_FOLDERS = ("research/notes", "research/results")
@@ -396,10 +421,12 @@ def _catalog_full() -> workspace.WorkspaceError:
 
 def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, anywhere: bool = False) -> list[dict[str, Any]]:
     """Check every declaration before any result/task/catalog file is written. A declaration is an output
-    (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's work folder and are not reported.
-    With `anywhere` (a person registering, 19.5; `locations` is then not looked at) a file may be wherever it is, kind
-    `work` is accepted with any suffix, and the call may name as many files as a catalog holds (`LIMIT`, where an
-    agent's declaration is at most 200); the rest of the checks stand."""
+    (DESIGN.md 19.2): kind `work` is refused, since process files stay in the run's process folder and are not
+    reported. With `anywhere` (a person registering, 19.5; `locations` is then not looked at) a file may be wherever it
+    is, kind `work` is accepted with any suffix, the call may name as many files as a catalog holds (`LIMIT`, where an
+    agent's declaration is at most 200), and an item may name the `run` that created its file (19.12 item 4: a string,
+    carried to the result for `register_files` to check); the rest of the checks stand. A data or table suffix may be
+    followed by one compression suffix (19.12 item 5, `file_suffix`)."""
     if anywhere and isinstance(declared, list) and len(declared) > LIMIT:
         raise _catalog_full()
     if not isinstance(declared, list) or len(declared) > (LIMIT if anywhere else 200):
@@ -408,14 +435,17 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
     checked = []
     seen = set()
     for raw in declared:
-        if not isinstance(raw, dict) or set(raw) - {"kind", "path", "title"}:
-            raise _bad("Each output accepts only kind, path and an optional title")
+        if not isinstance(raw, dict) or set(raw) - ({"kind", "path", "title", "run"} if anywhere else {"kind", "path", "title"}):
+            raise _bad("Each output accepts only kind, path, an optional title and an optional run" if anywhere
+                       else "Each output accepts only kind, path and an optional title")
         kind, rel = raw.get("kind"), raw.get("path")
         if not isinstance(kind, str) or kind not in ROLES or not isinstance(rel, str):
             raise _bad("Each output needs a supported kind and a project-relative path")
+        if "run" in raw and (not isinstance(raw["run"], str) or not raw["run"]):
+            raise _bad(f"A run must be named by its id: {rel}", f"“{rel}”登记时给出的运行编号不对。")
         if kind == "work" and not anywhere:
-            raise _bad("Process files are not reported as outputs: leave them in your work folder and declare only "
-                       f"the outputs ({rel})", "过程文件留在这次任务的工作文件夹里，不要登记；只列出输出文件。")
+            raise _bad("Process files are not reported as outputs: leave them in your process folder and declare only "
+                       f"the outputs ({rel})", "过程文件留在这次任务的过程文件夹里，不要登记；只列出输出文件。")
         _path(root, rel)
         if _is_record(rel):
             raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}",
@@ -423,7 +453,7 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
         if not anywhere and not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}",
                        f"“{rel}”不在“{locations[kind]}”里：请把{KIND_ZH[kind]}放进这个目录，再报告它的新路径。")
-        if kind != "work" and Path(rel).suffix.lower() not in SUFFIXES[kind]:
+        if kind != "work" and file_suffix(rel) not in SUFFIXES[kind]:
             raise _bad(f"Unsupported {kind} format: {rel}", f"“{rel}”的文件格式不能登记为{KIND_ZH[kind]}。")
         if rel in seen:
             raise _bad(f"Report each output file once: {rel}", f"“{rel}”在同一次登记里出现了不止一次。")
@@ -445,7 +475,8 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
                            f"“{rel}”里没有读得出的文献条目，不能登记为文献。")
         elif kind == "variable":
             variable_content(root, rel)
-        checked.append({"kind": kind, "path": rel, "title": title.strip(), "fingerprint": mark})
+        checked.append({"kind": kind, "path": rel, "title": title.strip(), "fingerprint": mark,
+                        **({"run": raw["run"]} if "run" in raw else {})})
     return checked
 
 
@@ -519,13 +550,29 @@ def _created_by(project_id: str, task_id: str, rels: Iterable[str]) -> set[str]:
     return {rel for rel in rels if ingest_files.fold(rel) in known}
 
 
+def _run_created(project_id: str, task_id: str, run_id: str, rel: str) -> bool:
+    """Whether the run `run_id` made the file `rel` (DESIGN.md 19.12 item 4): it is a run of this task on this Mac, it
+    was not undone, and `rel` is in its `changes.created` (compared as the scan compares paths, `files.fold`). A run
+    that is not there, an id that is none, an unreadable `run.json` -- not."""
+    try:
+        run = runs.load_run(project_id, run_id)
+    except (OSError, ValueError):
+        return False
+    created = (run.get("changes") or {}).get("created") if run else None
+    return bool(run and run.get("task_id") == task_id and not run.get("reverted") and isinstance(created, list)
+                and ingest_files.fold(rel) in {ingest_files.fold(r) for r in created if isinstance(r, str)})
+
+
 def register_files(root: Path, body: dict[str, Any]) -> dict[str, Any]:
     """A person registers files for a task's result record (DESIGN.md 19.5, `POST /api/outputs/register`): the checks
     of `validate` with the folder rule dropped (`anywhere`), the entries joining the record's catalog beside an
     agent's. An entry says `evidence: "person"`, `who` (the id `me.toml` names, as the ledgers record `by`; none when
     the Mac names nobody), `at` (UTC) and `created`: whether a run of the task on this Mac created the file (a file
-    already registered as created stays so). The write is the single person's, the PI's in the official project, a
-    member's in their working copy, and goes through the history and backup of every other save."""
+    already registered as created stays so). An item that names the `run` which created its file (the review list of
+    earlier runs does, 19.12 item 4) is accepted only when that run of this task on this Mac did (`_run_created`), and
+    the entry carries it: every date shown for an entry with a run is that run's start. The write is the single person's,
+    the PI's in the official project, a member's in their working copy, and goes through the history and backup of every
+    other save."""
     with situation.write_guard(root, human=True):
         pid = workspace._require_write(root)  # noqa: SLF001
         report = body.get("report")
@@ -537,6 +584,10 @@ def register_files(root: Path, body: dict[str, Any]) -> dict[str, Any]:
             who = people.current_member_id()
         except people.PeopleError as exc:  # no entry without saying who made it
             raise _bad(str(exc), "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它。") from exc
+        for item in checked:
+            if "run" in item and not _run_created(pid, task["id"], item["run"], item["path"]):
+                raise _bad(f"Run {item['run']} of this task did not create {item['path']} on this Mac",
+                           f"“{item['path']}”不是这项任务的这次运行在这台电脑上创建的，不能记在这次运行名下。")
         made = _created_by(pid, task["id"], [item["path"] for item in checked])
         rel = catalog_path(report)
         existing, before = _entries(root, rel)
@@ -620,6 +671,15 @@ def _moment(item: dict[str, Any]) -> datetime | None:
         return None
 
 
+def _when(item: dict[str, Any]) -> datetime | None:
+    """The date an entry is shown with (DESIGN.md 19.12 item 4): the start of its run (the UTC time the run id carries)
+    when it has a run -- an agent's declaration, or a person's registration from a run's created files -- else its `at`
+    (`_moment`). The registration time of `_moment` is still what judges whether an entry was made before a run began
+    (`_registered`); this is only what the views and their order show."""
+    started = _moment({"run": item.get("run")}) if item.get("run") else None
+    return started or _moment(item)
+
+
 def _state(root: Path, item: dict[str, Any]) -> str | None:
     """`current` when the registered file is what was registered, `changed` when it is not, `cloud` when it is there
     but cannot be read on this Mac (only in the cloud, DESIGN.md 19.6), None when it is gone."""
@@ -629,8 +689,31 @@ def _state(root: Path, item: dict[str, Any]) -> str | None:
         return "cloud" if _there(root, item.get("path")) else None
 
 
-def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -> dict[str, Any] | None:
-    """One registered file as a view row (DESIGN.md 19.6), or None when its file is not there to be shown."""
+#: How much of a result record is read for its heading (DESIGN.md 19.12 item 3): a record opens with it.
+RECORD_HEAD = 8 * 1024
+
+
+def record_heading(root: Path, report: str) -> str | None:
+    """The first Markdown heading of the result record `report` (DESIGN.md 19.12 item 3), which is the record's title
+    (`workspace._heading`), cut as a task's first line is (`task_title`); None when the record is not there, cannot be
+    read here or has no heading in its first `RECORD_HEAD` bytes. Only the start of the record is read."""
+    try:
+        with _path(root, report).open("rb") as stream:
+            head = stream.read(RECORD_HEAD)
+    except (workspace.WorkspaceError, OSError):
+        return None
+    text = head.decode("utf-8", "ignore")
+    if len(head) == RECORD_HEAD and "\n" in text:   # the read stopped inside a line: leave the line out
+        text = text[:text.rfind("\n")]
+    found = workspace._heading(text)  # noqa: SLF001
+    return (task_title(found) or None) if found else None
+
+
+def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None,
+              headings: dict[str, str | None] | None = None) -> dict[str, Any] | None:
+    """One registered file as a view row (DESIGN.md 19.6), or None when its file is not there to be shown. `headings`
+    (the caller's memo, by result record) gives the row the `report_title` of the record beside its catalog, read once
+    per record (19.12 item 3); the date `at` is that of the entry's run when it has one (`_when`, 19.12 item 4)."""
     try:
         mark = _fingerprint(root, item.get("path"), item.get("fingerprint"))
     except (workspace.WorkspaceError, OSError):
@@ -642,7 +725,13 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -
             row["task_title"] = titles[task]
         else:
             row["task_removed"] = True
-    moment = _moment(item)
+    if headings is not None and isinstance(item.get("catalog"), str):
+        record = item["catalog"].removesuffix(".outputs.json") + ".md"
+        if record not in headings:
+            headings[record] = record_heading(root, record)
+        if headings[record]:
+            row["report_title"] = headings[record]
+    moment = _when(item)
     if moment is not None:
         row["at"] = moment.astimezone().isoformat(timespec="seconds")
     else:  # an `at` that is no time is no date (19.6)
@@ -650,7 +739,8 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -
     if item["kind"] == "variable" and row["state"] == "current":
         row["definition"] = variable_content(root, item["path"])[0]
     if item["kind"] == "table" and Path(item["path"]).suffix.lower() in {".csv", ".tsv"}:
-        # A bounded sample only; the original table remains unchanged.
+        # A bounded sample only; the original table remains unchanged. Only a plain .csv or .tsv has one: a
+        # compressed table (`x.csv.gz`, 19.12 item 5) is not read for a preview.
         try:
             full = _path(root, item["path"])
             with full.open("rb") as stream:
@@ -668,7 +758,9 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None) -
 def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
     """Read registered files even before the index catches up; never follow missing files. Each row says which task
     produced it (`task_title`, or `task_removed` when the task is gone from the task list) and when (`at`, local ISO
-    time; DESIGN.md 19.6).
+    time; DESIGN.md 19.6: the start of the entry's run when it has one, else the time it was registered, 19.12
+    item 4), and carries `report_title`, the first heading of its result record, read once per record (19.12 item 3:
+    the views stand the rows under one heading per task). Rows come newest first by that date.
 
     One bad entry never empties a view (19.6): each catalog is read in its own try and its entries are checked one by
     one (`_readable`), so a catalog that cannot be read, or an entry without a fingerprint or with a hidden path, costs
@@ -703,8 +795,9 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
             if len(entries) >= LIMIT:
                 break
         floor = datetime.min.replace(tzinfo=timezone.utc)
-        entries.sort(key=lambda i: (_moment(i) or floor, str(i.get("run") or "")), reverse=True)
+        entries.sort(key=lambda i: (_when(i) or floor, str(i.get("run") or "")), reverse=True)
         seen = set()
+        headings: dict[str, str | None] = {}
         for item in entries:
             if item.get("kind") not in ROLES or (kinds is not None and item["kind"] not in kinds):
                 continue
@@ -712,7 +805,7 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
                 continue
             seen.add(item["path"])
             try:  # a bad entry costs its own row and nothing else (19.6)
-                row = _view_row(root, item, titles)
+                row = _view_row(root, item, titles, headings)
             except (workspace.WorkspaceError, OSError, ValueError, OverflowError):
                 continue
             if row is not None:
@@ -960,32 +1053,52 @@ def _count_files(root: Path, rel: str) -> tuple[int, bool]:
     return count, False
 
 
-def _latest_filing(root: Path, run: dict[str, Any], registered: dict[str, list[Named]]) -> dict[str, Any] | None:
-    """The filing of the task's latest run as it stands now (DESIGN.md 19.4, 19.6): the files the run created sorted
-    again against the catalogs, so that a file registered or unregistered since shows; a run from before V15, which
-    has no `filing`, files all it created as unregistered. A file counts as registered when any catalog of the
-    project names it (`registered`, `_registered_paths`), the file is there and the entry was not made before the
-    run began (`_registered`: a file that appears again at the path of a registration whose file was gone is a new
-    one), as the listing of earlier runs' files has it (`backfill`), so that the row's count and that list agree; a
-    record is also what the run's tools wrote
+def _task_filing(root: Path, task_runs: Iterable[dict[str, Any]],
+                 registered: dict[str, list[Named]]) -> dict[str, Any] | None:
+    """The filing of a task's runs as it stands now (DESIGN.md 19.4, 19.6, 19.12 item 7): the files every run of the
+    task on this Mac that is not undone created, sorted again against the catalogs so that a file registered or
+    unregistered since shows, and counted together -- a question and its answer are two runs of one conversation, and
+    the row is about the task. `task_runs` come newest first, and a file several of them created is counted once, under
+    the newest, as the listing of earlier runs' files has it (`backfill`). A run from before V15, which has no `filing`,
+    files all it created as unregistered. A file counts as registered when any catalog of the project names it
+    (`registered`, `_registered_paths`), the file is there and the entry was not made before the run began
+    (`_registered`: a file that appears again at the path of a registration whose file was gone is a new one), as that
+    listing has it, so that the row's count and that list agree; a record is also what the run's tools wrote
     (`tool_paths`). Only the unregistered files that are still there and that a person could register count
-    (`workspace.existing_files`: visible, outside the dependency folders). None for a run that was undone: what it
-    created was moved away."""
-    if run.get("reverted"):
+    (`workspace.existing_files`: visible, outside the dependency folders). None when every run was undone (what it
+    created was moved away) or there is none."""
+    counts = dict.fromkeys(FILING_CLASSES, 0)
+    seen: set[str] = set()
+    kept: list[str] = []
+    more = 0
+    found = False
+    for run in task_runs:
+        if run.get("reverted"):
+            continue
+        found = True
+        changes = run.get("changes")
+        created = []
+        for rel in (changes.get("created") if isinstance(changes, dict) else None) or ():
+            if isinstance(rel, str) and ingest_files.fold(rel) not in seen:
+                seen.add(ingest_files.fold(rel))
+                created.append(rel)
+        held = [rel for rel in run.get("tool_paths") or () if isinstance(rel, str)]
+        sorted_ = filing(root, created, records=[*held, *(rel for rel in created if _is_record(rel))], reports=(),
+                         work_folder=run.get("work_folder"), registered=registered, run=run)
+        for name, number in sorted_["counts"].items():
+            counts[name] += number
+        room = FILING_KEPT - len(kept)
+        kept.extend(sorted_["unregistered"][:room])
+        more += max(0, len(sorted_["unregistered"]) - room) + sorted_["unregistered_more"]
+    if not found:
         return None
-    changes = run.get("changes")
-    created = [rel for rel in (changes.get("created") if isinstance(changes, dict) else None) or () if isinstance(rel, str)]
-    held = [rel for rel in run.get("tool_paths") or () if isinstance(rel, str)]
-    sorted_ = filing(root, created, records=[*held, *(rel for rel in created if _is_record(rel))], reports=(),
-                     work_folder=run.get("work_folder"), registered=registered, run=run)
     there: list[str] = []
-    for start in range(0, len(sorted_["unregistered"]), workspace.EXISTS_LIMIT):
-        there.extend(workspace.existing_files(root, sorted_["unregistered"][start:start + workspace.EXISTS_LIMIT]))
-    return {"counts": {**sorted_["counts"], "unregistered": len(there) + sorted_["unregistered_more"]},
-            "unregistered_more": sorted_["unregistered_more"]}
+    for start in range(0, len(kept), workspace.EXISTS_LIMIT):
+        there.extend(workspace.existing_files(root, kept[start:start + workspace.EXISTS_LIMIT]))
+    return {"counts": {**counts, "unregistered": len(there) + more}, "unregistered_more": more}
 
 
-def _task_outputs(root: Path, task: dict[str, Any], run: dict[str, Any] | None,
+def _task_outputs(root: Path, task: dict[str, Any], task_runs: list[dict[str, Any]],
                   registered: dict[str, list[Named]]) -> dict[str, Any]:
     found: dict[str, Any] = {"entries": [], "error": False, "filing": None, "work_folder": None,
                              "work_files": None, "work_files_more": False}
@@ -998,11 +1111,12 @@ def _task_outputs(root: Path, task: dict[str, Any], run: dict[str, Any] | None,
         # a file that is gone, or only in the cloud, stays listed, to be removed (19.6); the views leave it out
         found["entries"].append({"kind": item["kind"], "path": item["path"], "title": item["title"],
                                  "state": _state(root, item) or "gone", "evidence": item.get("evidence")})
-    if run is not None:
-        if isinstance(run.get("work_folder"), str) and run["work_folder"]:
-            found["work_folder"] = run["work_folder"]
-            found["work_files"], found["work_files_more"] = _count_files(root, run["work_folder"])
-        found["filing"] = _latest_filing(root, run, registered)
+    if task_runs:
+        latest = task_runs[0]   # newest first; every run of a task goes to the one process folder (19.2)
+        if isinstance(latest.get("work_folder"), str) and latest["work_folder"]:
+            found["work_folder"] = latest["work_folder"]
+            found["work_files"], found["work_files_more"] = _count_files(root, latest["work_folder"])
+        found["filing"] = _task_filing(root, task_runs, registered)
     return found
 
 
@@ -1039,9 +1153,10 @@ def task_outputs(root: Path, project_id: str, tasks: Iterable[dict[str, Any]], *
     record: `entries` (its catalog's files: kind, path, title, evidence, and `state`: `current`, `changed`, `cloud` for
     a file that is only in the cloud, or `gone` for one that is no longer there, both of which stay listed so that their
     registrations can be removed; at most `LIMIT`), `error` (the catalog cannot be read, or an entry of it could not be
-    used and is left out: the others show, 19.6), and, from the task's latest run on this Mac, `filing` (the counts of 19.4
-    as they stand now, `_latest_filing`) and the `work_folder` with `work_files`, the files in it now
-    (`_count_files`; `work_files_more` when there are more than are counted). Reads only.
+    used and is left out: the others show, 19.6), and, from the task's runs on this Mac, `filing` (the counts of 19.4
+    as they stand now, over every run that is not undone: `_task_filing`, 19.12 item 7) and the `work_folder` of the
+    latest run with `work_files`, the files in it now (`_count_files`; `work_files_more` when there are more than are
+    counted). Reads only.
 
     The answer is worked out once per change of the project's files, not once per poll of the page: given a `memo`
     (a dict the caller keeps for the project it serves) and a `token`, a call whose `_rows_key` is that of the last
@@ -1055,18 +1170,15 @@ def task_outputs(root: Path, project_id: str, tasks: Iterable[dict[str, Any]], *
         if last is not None and last[0] == key:
             return last[1]
     pending = {task["id"] for task in wanted}
-    latest: dict[str, dict[str, Any]] = {}
+    by_task: dict[str, list[dict[str, Any]]] = {}   # each task's runs on this Mac, newest first (19.12 item 7)
     try:
         for run in runs.iter_runs(project_id) if pending else ():
             if run.get("task_id") in pending:
-                latest[run["task_id"]] = run
-                pending.discard(run["task_id"])
-            if not pending:
-                break
+                by_task.setdefault(run["task_id"], []).append(run)
     except (OSError, ValueError):  # no runs folder to read, or no valid project id: no runs
         pass
-    registered = _registered_paths(root) if latest else {}   # any catalog of the project, read once for every row
-    found = {task["id"]: _task_outputs(root, task, latest.get(task["id"]), registered) for task in wanted}
+    registered = _registered_paths(root) if by_task else {}   # any catalog of the project, read once for every row
+    found = {task["id"]: _task_outputs(root, task, by_task.get(task["id"], []), registered) for task in wanted}
     if key is not None and memo is not None:
         memo["last"] = (key, found)
     return found
@@ -1082,15 +1194,19 @@ WORK_NAMES = ("*_stdout.txt", "*_stderr.txt", "*.log", "report_check.*", "summar
 #: Rule 2: an image, or a pdf under one of these folders, is a figure.
 FIGURE_SEGMENTS = frozenset({"figures", "figure", "plots", "fig"})
 IMAGE_SUFFIXES = SUFFIXES["figure"] - {".pdf"}
+#: Rule 5's suffixes: a text table, plain or compressed (19.12 item 5).
+TABLE_TEXT = frozenset(_packed({".csv", ".tsv"}))
 
 
 def suggest_kind(rel: str) -> str | None:
     """The kind DESIGN.md 19.5 suggests for a file an earlier run created, by the eight numbered rules, first match
     wins; None is rule 8, not registered. The path is compared as the scan compares paths (`files.fold`), so `Checks/`
-    is `checks/`. Every kind returned is one the file's suffix lets a person register it as (`SUFFIXES`)."""
+    is `checks/`. Every kind returned is one the file's suffix lets a person register it as (`SUFFIXES`). Rules 5 and 6
+    read a compressed file as the file it holds (19.12 item 5): `tables/prices.csv.gz` is a table, `prices_long.csv.gz`
+    data (`file_suffix`)."""
     parts = ingest_files.fold(rel).split("/")
     name, folders = parts[-1], set(parts[:-1])
-    suffix = posixpath.splitext(name)[1]
+    suffix = file_suffix(name)
     if WORK_SEGMENTS & set(parts) or any(fnmatch.fnmatchcase(name, pattern) for pattern in WORK_NAMES):
         return "work"                                                               # 1
     if suffix in IMAGE_SUFFIXES or (suffix == ".pdf" and FIGURE_SEGMENTS & folders):
@@ -1101,7 +1217,7 @@ def suggest_kind(rel: str) -> str | None:
         return "variable"
     if suffix in SUFFIXES["code"]:
         return "code"                                                               # 4
-    if suffix in {".csv", ".tsv"} and "tables" in folders:
+    if suffix in TABLE_TEXT and "tables" in folders:
         return "table"                                                              # 5
     if suffix in SUFFIXES["data"]:
         return "data"                                                               # 6
@@ -1153,10 +1269,11 @@ def _run_moment(run: dict[str, Any]) -> str | None:
     return moment.astimezone().isoformat(timespec="seconds") if moment is not None else None
 
 
-def backfill(root: Path, project_id: Any, run_id: Any = None) -> dict[str, Any]:
+def backfill(root: Path, project_id: Any, run_id: Any = None, task_id: Any = None) -> dict[str, Any]:
     """What a person may register from earlier runs (DESIGN.md 19.5, `GET /api/outputs/backfill`): for every run of the
     project on this Mac that is not undone and whose task still exists with a result record -- `run_id` limits it to
-    that one run -- the files it created (`changes.created`) that are still regular files in the project (visible, so
+    that one run, `task_id` to the runs of that task (19.12 item 7: the task row's 登记… lists every run of the task the
+    row's count counts) -- the files it created (`changes.created`) that are still regular files in the project (visible, so
     `.DS_Store` is none; no link on the way: `workspace.existing_files`), and are not records (the run's `tool_paths`,
     the app's record files, notes and results), not caches, not inside the run's own work folder (19.4 files those as
     `work`, not as new) and not yet registered (in any catalog, its file there and the entry not made before the run
@@ -1177,6 +1294,8 @@ def backfill(root: Path, project_id: Any, run_id: Any = None) -> dict[str, Any]:
             changes = run.get("changes") if run else None
             created = changes.get("created") if isinstance(changes, dict) else None
             if not run or run.get("reverted") or run.get("task_id") not in owners or not isinstance(created, list):
+                continue
+            if isinstance(task_id, str) and task_id and run["task_id"] != task_id:
                 continue
             task = owners[run["task_id"]]
             held = {ingest_files.fold(rel) for rel in run.get("tool_paths") or () if isinstance(rel, str)}

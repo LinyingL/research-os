@@ -4025,13 +4025,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/outputs/backfill":
                 # 19.5: the files earlier runs created and nobody registered, for a person to review. A read of this
                 # Mac's runs and the project's files; the page names the project by its id (the open project's path
-                # passes too) so that a window of another project is told so, and `run` limits it to one run.
+                # passes too) so that a window of another project is told so, `run` limits it to one run and `task`
+                # to the runs of one task (19.12 item 7: a task row's 登记… lists every run its count counts).
                 served = self._require_unblocked()
                 wanted = (query.get("project") or [None])[0]
                 if wanted is not None and wanted != served.project_id:
                     self._workspace_target({"project": wanted})
                 run_id = (query.get("run") or [None])[0]
-                self._send_json(200, self._workspace_api(lambda: outputs.backfill(served.root, served.project_id, run_id)))
+                task_id = (query.get("task") or [None])[0]
+                self._send_json(200, self._workspace_api(lambda: outputs.backfill(served.root, served.project_id, run_id, task_id)))
             elif path == "/api/workspace":
                 served = self._require_unblocked()
                 generation = self.server.watcher.generation   # before the rows are worked out (see `outputs.task_outputs`)

@@ -4,20 +4,21 @@
 
 ### Files from AI agents
 
-- Give each task a work folder for its process files: the one-off scripts,
+- Give each task a process folder for its process files: the one-off scripts,
   check output, downloaded sources and scratch data an agent writes only to
   carry out the task. By default it is `work/<date>-<task name>/`, shared by
   the task's later runs, and **Output folders** lists its location as
   **Process files**. The index skips it and its files are not outputs.
-- Tell each agent where every kind of file goes, which work folder and
+- Tell each agent where every kind of file goes, which process folder and
   subfolder name are its task's, and that nothing is created under
   `research/`. The result record is the task's one report: a document you
-  asked for goes to the documents folder, the record stays short, and Research
-  OS writes the record's list of output files.
+  asked for goes to the documents folder, the record stays short, the agent
+  names files in it where they matter and adds no list of its outputs, and
+  Research OS appends the section **Registered output files**.
 - Sort the files each run created after it ends: Research OS's own records,
-  registered outputs, process files, caches, and the rest. A task whose latest
-  run left files nobody registered says so in its row, for example
-  **3 new files not registered**, with **Register…** to review them.
+  registered outputs, process files, caches, and the rest. A task whose runs
+  that were not undone left files nobody registered says so in its row, for
+  example **3 new files not registered**, with **Register…** to review them.
 - Register a file that a run created and nobody registered, from the lists
   that **Register…** (in a task's row) and **Register files from earlier
   runs…** open: wherever the file lies, as a kind you choose. A file you wrote
@@ -28,12 +29,20 @@
 - Show a task's files in its row under **Task outputs**: the registered files
   grouped by kind, each opening in the file panel (figures with a small
   preview) and each with **Remove registration**; then the new files not
-  registered; then the work folder's path and file count. A registration whose
+  registered; then the process folder's path and file count. The **Process
+  files** group is only its count until opened, and any other group of more
+  than eight files shows eight and **N more**. A registration whose
   file is gone stays in the row, marked **File no longer there**, until it is
   removed.
-- Say on every registered row in Figures and claims, Data & code and
-  Literature which task produced the file and when. A task that is no longer
-  in the list reads **Task removed**.
+- Stand the registered rows in Figures and claims, Data & code, Literature and
+  Variables under one heading per task: the first heading of its result record
+  (else the task's first line; **Task removed** when the task is no longer in
+  the list), the date of the run that produced the files, and **Open the
+  result** once. A file registered from a run's created files is dated by that
+  run.
+- Register compressed data and tables (`.gz`, `.bz2`, `.xz`, `.zst` after a
+  data or table suffix, for example `prices_long.csv.gz`) as the kind they hold.
+  Only plain CSV and TSV tables have a preview.
 - Link the files a result record names. In its preview, a file path written
   in code style opens that file, and so does a link written from the project
   folder rather than from the record's own folder. The record itself is not
@@ -54,7 +63,9 @@
 - Keep a project's undo backups, files moved away by undo, and run logs within
   5 GB (1 to 100 GB, set under **Space limit** in the AI agent area). Over the
   limit, the oldest run's backup is released first and that run can no longer
-  be undone. Files moved away by undo are removed only when you delete them.
+  be undone. Files moved away by undo are removed only when you delete them;
+  when they alone pass the limit, the panel says that each new run's backup is
+  then released as soon as the run ends.
 - Show **Space used by runs** in the AI agent area: the sizes of **Undo
   backups**, **Files moved away by undo** and **Run log** against the limit,
   the runs that hold moved-away files with **Delete these files**, and

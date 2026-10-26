@@ -383,7 +383,8 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
         if checked:
             from urllib.parse import quote
 
-            label = "Output files" if run.get("lang") == "en" else "输出文件"
+            # 19.12 item 6: the record's one list of outputs is this section; the brief tells the agent to add none
+            label = "Registered output files" if run.get("lang") == "en" else "已登记的输出文件"
             content += f"\n## {label}\n\n"
             for item in checked:
                 caption = item["title"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
@@ -508,8 +509,10 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
                                  outputs: list[dict[str, str]] | None = None) -> str:
         """Call this ONCE, when the task you were given is finished. `report`
         is the result record, in Markdown: what you did, the commands you
-        ran, the files you produced (paths), and the key numbers exactly as
-        your actual runs gave them -- never invented or rounded from memory.
+        ran, and the key numbers exactly as your actual runs gave them --
+        never invented or rounded from memory. Name a file where it matters,
+        but add no list of your outputs: Research OS appends the section
+        "Registered output files" to the record from `outputs`.
         `title` is a short heading naming the result, a few words (default:
         the start of the task). This saves
         the report as a result record in the project, marks the task done

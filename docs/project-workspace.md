@@ -83,12 +83,12 @@ table, a dataset meant for further work, a document, a reference export, a
 variable draft, and the code needed to reproduce any of them. Everything an
 agent writes only to carry out the task is a process file: one-off probe and
 check scripts and their output, verification files, downloaded third-party
-sources, scratch data and caches. These go to the task's **Work folder**,
+sources, scratch data and caches. These go to the task's **Process folder**,
 `work/<date>-<task name>/` by default, for example `work/20261025-Price-check/`.
 The date is the day the task first ran and the name is the task's first line,
 shortened. Later runs of the same task (an answer, a send back, a new start) use
 the same folder. Research OS does not create it; the agent does when it needs
-it. The index skips the work folder, its files are not outputs, and a data file
+it. The index skips the process folder, its files are not outputs, and a data file
 in it is not protected, so a later run of the task may overwrite its own process
 files. The location has to stand apart: Research OS refuses a choice that
 equals, contains or lies inside another location, or lies under `research/`. If
@@ -97,25 +97,35 @@ files, and a run does not start until you do.
 
 The agent lists its final files when completing the task. The app checks each
 file's location, existence, and supported format, then lists it in the relevant
-view. Figures and CSV/TSV tables have previews; bibliography exports provide
-their available abstracts, and registered PDFs have file links. A reference
-export can have any filename when registered. Missing files stop appearing;
+view. Figures and plain CSV/TSV tables have previews; bibliography exports
+provide their available abstracts, and registered PDFs have file links. A reference
+export can have any filename when registered. A data or table file may be
+compressed with one of `.gz`, `.bz2`, `.xz` or `.zst` (`prices_long.csv.gz`) and
+is registered as the kind it holds; it has no preview, and the rule that keeps
+agents from changing data files that existed before a run does not cover
+compressed ones. Missing files stop appearing;
 changed files carry **File changed**. These links record the task's declaration,
-not proof of execution or a confirmed research assessment. Each registered row in
-**Figures and claims**, **Data & code** and **Literature** says which task
-produced the file (the task's first line, or **Task removed** when the task is
-no longer in the list) and when. **Open the result** on a row goes to **Project
-home** and opens the task's result record.
+not proof of execution or a confirmed research assessment. In **Figures and
+claims**, **Data & code**, **Literature** and **Variables**, the registered rows
+stand under one heading per task: the first heading of the task's result record
+(or the task's first line, or **Task removed** when the task is no longer in the
+list), the date of the run that produced the files, and **Open the result** once,
+which goes to **Project home** and opens the task's result record. A row does not
+repeat the task; it shows its own date only when that differs from the heading's.
 
 **Task outputs.** A task that has a result record shows its files in its row,
 under **Task outputs**, which collapses with the task's other details. The
 registered files are grouped by kind; each opens in the file panel, figures show
-small previews, and each has **Remove registration**. When a run ends, Research
-OS sorts the files it created: its own records, outputs registered for the task,
-files in the work folder, caches, and the rest. If the latest run left files in
-the rest, the row says so next, for example **3 new files not registered**, and
-**Register…** lists them for review (below). Last come the work folder's path
-and the number of files in it.
+small previews, and each has **Remove registration**. The **Process files**
+group is only its count until you open it; any other group of more than eight
+files shows the first eight and **N more** for the rest. What you opened stays
+open when the row is drawn again. When a run ends, Research OS
+sorts the files it created: its own records, outputs registered for the task,
+files in the process folder, caches, and the rest. If the task's runs that were
+not undone left files in the rest (a question and its answer are two runs of one
+conversation, and all count), the row says so next, for example **3 new files not
+registered**, and **Register…** lists them for review (below). Last come the
+process folder's path and the number of files in it.
 
 **Register and remove.** You register files from the two review lists below,
 **Register…** in a task's row and **Register files from earlier runs…** in
@@ -139,10 +149,11 @@ claims; a draft that existed before the run and that the agent edited stays one.
 
 **Register files from earlier runs.** Files that agents created in earlier runs
 were never registered. **Register files from earlier runs…** in **Output
-folders** (and **Register…** in a task's row, for that task's latest run alone)
-lists the ones still there, grouped by task with the run's date and agent. Runs
-you undid and tasks with no result record are left out, and so are records,
-caches, files in a run's own work folder and files already registered. Each file
+folders** (and **Register…** in a task's row, for all of that task's runs that
+were not undone) lists the ones still there, grouped by task with the run's date
+and agent. A file registered from here is dated by the run that created it.
+Runs you undid and tasks with no result record are left out, and so are records,
+caches, files in a run's own process folder and files already registered. Each file
 has a suggested kind taken from its folder and name: files under folders such as
 `checks`, `logs`, `tmp` or `sources`, and `.log` files, as process files; images
 as figures; `.bib` as literature; code, data and documents by their format. A
@@ -202,15 +213,16 @@ limit for Claude Code), and when you quit the app.
 **What it does.** The agent works in the project folder. It can read your
 files, write code, run Python, R or Stata, install packages, download data
 and write notes. It is told where each kind of file belongs (the locations in
-**Output folders**), which work folder and subfolder name are its task's, that
-process files go to the work folder, and that nothing is created under
+**Output folders**), which process folder and subfolder name are its task's, that
+process files go to the process folder, and that nothing is created under
 `research/`, where only Research OS writes. Programs it leaves running when it
 finishes are ended. When it finishes it writes a result record, marks the task
 done and links it; **Open the result** opens that record. The record is the
 task's one report: a document you asked for (a plan, a review, a write-up) goes
 to the documents folder as an output, and the record stays short, with the
-conclusion, the key numbers and what to read first. The record's list of output
-files is written by Research OS, not by the agent. In the preview, a file path
+conclusion, the key numbers and what to read first. The agent names files in its
+report where they matter but adds no list of its outputs: Research OS appends
+the section **Registered output files** to the record. In the preview, a file path
 written in code style opens that file, and so does a link written from the
 project folder rather than from the record's own folder; the record itself is
 not rewritten. Figures and numbers in it should come from what it ran: check
@@ -295,7 +307,9 @@ GB) in the AI agent area, where the time limit is. When they pass the limit,
 Research OS releases the oldest run's backup first, then the next, and those
 runs can no longer be undone; a run that is going, or waiting for its changes
 to be compared, keeps its own. Files moved away by undo are never removed
-automatically: when they alone pass the limit, the panel says so. **Space used
+automatically: when they alone pass the limit, the panel says so, and that each
+new run's undo backup is then released as soon as the run ends, so new runs
+cannot be undone until you delete moved-away files. **Space used
 by runs**, in the same area, shows the sizes of **Undo backups**, **Files moved
 away by undo** and **Run log** against the limit; lists the runs that hold
 moved-away files, with their task (or **Task removed**), date, size and count,

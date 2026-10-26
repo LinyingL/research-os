@@ -266,13 +266,23 @@ console.log(JSON.stringify({home, refused, view: currentView, homeReads: homeRea
 
 _ROWS_PRELUDE = r"""
 global.t = (s, v) => window.ROI18N.t(s, v);
-global.openResultOnHome = async () => {};
+const opened = [];
+global.openResultOnHome = async (path) => { opened.push(path); };
 const rowsOf = (items) => {
   const host = new Element('div');
   renderRegisteredOutputs(host, { items });
   return host.all().filter((e) => e.classList.contains('registered-output'));
 };
 const words = (row) => row.children.filter((e) => e.tagName === 'SPAN').map((e) => e.textContent);
+// 19.12 item 3: one heading per task. A group is its heading (the words of its title, date and button, in order) and its rows.
+const groupsOn = (host) => host.children.filter((e) => e.tagName === 'SECTION').flatMap((box) => box.children.filter((e) => e.classList.contains('registered-task-group')));
+const groupsOf = (items) => {
+  const host = new Element('div');
+  renderRegisteredOutputs(host, { items });
+  return groupsOn(host).map((group) => ({
+    head: group.children.filter((e) => e.classList.contains('registered-task-head')).flatMap((h) => h.children.map((c) => c.tagName.toLowerCase() + ':' + c.textContent)),
+    rows: group.children.filter((e) => e.classList.contains('registered-output')).map(words)}));
+};
 """
 
 
@@ -285,33 +295,91 @@ def _rows_run(scenario: str, *, lang: str = "zh") -> dict:
     return _node(source)
 
 
+#: One task whose record has a heading, one whose run is later than its first row, a removed task (its record still has a
+#: heading), a task known only by its first line, and an old entry that names no task.
 _ROW_ITEMS = r"""
+const A = 'research/results/a.md', B = 'research/results/b.md', C = 'research/results/c.md';
 const items = [
-  { path: 'figures/fit.png', title: 'Fit', kind: 'figure', report: 'research/results/a.md', agent: 'Claude Code', task_title: 'Clean the survey data', at: '2026-10-21T09:41:12+02:00' },
-  { path: 'tables/two.csv', title: 'Two', kind: 'table', report: 'research/results/b.md', task_removed: true, at: '2026-10-22T18:05:00+02:00' },
+  { path: 'tables/mine.csv', title: 'Mine', kind: 'table', task: 't1', report: A, evidence: 'person', task_title: 'Clean the survey data', report_title: 'Survey cleaned', at: '2026-10-23T10:00:00+02:00' },
+  { path: 'figures/fit.png', title: 'Fit', kind: 'figure', task: 't1', report: A, run: 'r-20261022T074112Z-aaaaaa', agent: 'Claude Code', task_title: 'Clean the survey data', report_title: 'Survey cleaned', at: '2026-10-22T09:41:12+02:00' },
+  { path: 'figures/fit2.png', title: 'Fit 2', kind: 'figure', task: 't1', report: A, run: 'r-20261022T074112Z-aaaaaa', agent: 'Claude Code', task_title: 'Clean the survey data', report_title: 'Survey cleaned', at: '2026-10-22T09:41:12+02:00' },
+  { path: 'tables/two.csv', title: 'Two', kind: 'table', task: 't2', report: B, task_removed: true, report_title: 'The old heading', at: '2026-10-22T18:05:00+02:00' },
   { path: 'tables/old.csv', title: 'Old', kind: 'table' },
-  { path: 'tables/three.csv', title: 'Three', kind: 'table', task_title: 'A task without a date' },
+  { path: 'tables/three.csv', title: 'Three', kind: 'table', task: 't3', report: C, task_title: 'A task without a record heading' },
+  { path: 'figures/late.png', title: 'Late', kind: 'figure', task: 't1', report: A, run: 'r-20261020T060000Z-bbbbbb', agent: 'Codex', task_title: 'Clean the survey data', report_title: 'Survey cleaned', at: '2026-10-20T08:00:00+02:00' },
 ];
 """
 
 
-def test_a_registered_row_says_which_task_produced_it_and_when_and_a_removed_task_reads_so():
+def test_the_rows_stand_under_one_heading_per_task_with_its_record_heading_its_run_date_and_the_button_once():
+    """19.12 item 3: a heading per task -- the first heading of its result record, else the task's first line, 「任务已移除」
+    for a removed task even when its record has a heading -- with the date of the run that produced the files and
+    「打开结果」 once; the rows under it no longer repeat the task, and a row made at another time says so."""
     out = _rows_run(_ROW_ITEMS + r"""
-console.log(JSON.stringify(rowsOf(items).map(words)));
+const host = new Element('div');
+renderRegisteredOutputs(host, { items });
+const groups = groupsOn(host);
+await find('打开结果', groups[0]).click();
+console.log(JSON.stringify({groups: groupsOf(items), buttons: host.all().filter((e) => e.tagName === 'BUTTON' && e.textContent === '打开结果').length,
+  heads: host.all().filter((e) => e.tagName === 'H3').map((e) => e.textContent), opened,
+  rowButtons: groups.map((g) => g.children.filter((e) => e.classList.contains('registered-output')).flatMap((r) => r.children.filter((c) => c.tagName === 'BUTTON').map((c) => c.textContent))) }));
 """)
-    assert out == [["figures/fit.png", "Claude Code", "Clean the survey data", "2026-10-21 09:41"],
-                   ["tables/two.csv", "任务已移除", "2026-10-22 18:05"],
-                   ["tables/old.csv"],                                        # an entry that names no task and no time says neither
-                   ["tables/three.csv", "A task without a date"]]
+    assert out["groups"] == [
+        {"head": ["h3:Survey cleaned", "span:2026-10-22 09:41", "button:打开结果"],      # the newest row with a run dates the heading
+         "rows": [["tables/mine.csv", "2026-10-23 10:00"], ["figures/fit.png", "Claude Code"], ["figures/fit2.png", "Claude Code"],
+                  ["figures/late.png", "Codex", "2026-10-20 08:00"]]},
+        {"head": ["h3:任务已移除", "span:2026-10-22 18:05", "button:打开结果"], "rows": [["tables/two.csv"]]},
+        {"head": [], "rows": [["tables/old.csv"]]},                                    # an entry that names no task and no record: no heading
+        {"head": ["h3:A task without a record heading", "button:打开结果"], "rows": [["tables/three.csv"]]}]
+    assert out["buttons"] == 3 and out["heads"] == ["Survey cleaned", "任务已移除", "A task without a record heading"]   # once per task, not per row
+    assert out["opened"] == ["research/results/a.md"]
+    assert all("打开结果" not in names for rows in out["rowButtons"] for names in rows)
 
 
-def test_a_registered_row_reads_in_english_without_chinese():
+def test_a_registered_heading_reads_in_english_without_chinese():
     out = _rows_run(_ROW_ITEMS + r"""
-const rows = rowsOf(items);
-console.log(JSON.stringify({words: rows.map(words), all: rows.map((r) => r.textContent).join(' ')}));
+const host = new Element('div');
+renderRegisteredOutputs(host, { items });
+console.log(JSON.stringify({groups: groupsOf(items), all: host.textContent, buttons: host.all().filter((e) => e.tagName === 'BUTTON').map((e) => e.textContent)}));
 """, lang="en")
-    assert out["words"][1] == ["tables/two.csv", "Task removed", "2026-10-22 18:05"]
+    assert out["groups"][1]["head"] == ["h3:Task removed", "span:2026-10-22 18:05", "button:Open the result"]
     assert not any("㐀" <= c <= "鿿" for c in out["all"])
+    assert out["buttons"].count("Open the result") == 3
+
+
+def test_a_tasks_rows_on_later_pages_stay_under_its_heading_and_a_tasks_pages_make_one_heading():
+    """The rows come fifty at a time (「显示更多」): the second page's rows of a task whose heading is on the first page
+    go under that heading, and a task met first on the second page gets its heading there, once."""
+    out = _rows_run(r"""
+const mine = (task, n, at) => Array.from({ length: n }, (_, i) => ({ path: 'tables/' + task + '-' + i + '.csv', title: task + i, kind: 'table', task, report: 'research/results/' + task + '.md',
+  task_title: 'Task ' + task, at }));
+const items = [].concat(mine('a', 30, '2026-10-22T09:00:00+02:00'), mine('b', 30, '2026-10-21T09:00:00+02:00'), mine('a', 5, '2026-10-22T09:00:00+02:00').map((r, i) => Object.assign(r, { path: 'tables/a-late-' + i + '.csv' })), mine('c', 3, '2026-10-20T09:00:00+02:00'));
+const host = new Element('div');
+renderRegisteredOutputs(host, { items });
+const count = () => groupsOn(host).map((g) => [g.all().filter((e) => e.tagName === 'H3').map((e) => e.textContent), g.children.filter((e) => e.classList.contains('registered-output')).length]);
+const first = count();
+await find('显示更多', host).click();
+console.log(JSON.stringify({first, second: count(), more: !!find('显示更多', host)}));
+""")
+    assert out["first"] == [[["Task a"], 30], [["Task b"], 20]] and out["more"] is False
+    assert out["second"] == [[["Task a"], 35], [["Task b"], 30], [["Task c"], 3]]
+
+
+def test_the_rows_of_a_variable_draft_stand_under_a_task_heading_too():
+    out = _rows_run(r"""
+const items = [{ path: 'research/variables/gdp.toml', title: 'gdp', kind: 'variable', task: 't1', report: 'research/results/a.md', task_title: 'Draft the GDP variable',
+  definition: { name: 'GDP', meaning: 'Output', unit: 'EUR', granularity: 'year' }, state: 'current', at: '2026-10-22T09:41:12+02:00' }];
+const host = new Element('div');
+global.humanRecordsBlocked = () => false;
+renderRegisteredOutputs(host, { items }, true);
+const group = groupsOn(host)[0];
+console.log(JSON.stringify({title: host.all().filter((e) => e.tagName === 'H2').map((e) => e.textContent), head: group.children[0].children.map((c) => c.textContent),
+  row: group.children.filter((e) => e.classList.contains('registered-output')).length,
+  import: host.all().filter((e) => e.tagName === 'BUTTON').map((e) => e.textContent)}));
+""")
+    assert out["title"] == ["待确认的变量草稿"]
+    assert out["head"] == ["Draft the GDP variable", "2026-10-22 09:41", "打开结果"] and out["row"] == 1
+    assert out["import"].count("打开结果") == 1 and "导入为变量草稿" in out["import"]
 
 
 def test_the_four_views_draw_their_registered_rows_with_the_one_function():

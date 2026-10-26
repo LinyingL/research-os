@@ -228,7 +228,7 @@ them applies to new runs.
 
 Everything an agent writes only to carry out a task, such as check scripts
 and their output, downloaded sources and scratch data, is a process file. It
-goes to the task's work folder, `work/<date>-<task name>/` by default, which
+goes to the task's process folder, `work/<date>-<task name>/` by default, which
 the index skips and which does not count as outputs. The agent is told where
 each kind of file belongs and that the result record is the task's one report.
 
@@ -238,12 +238,13 @@ and use a supported format. Figures and tables appear under **Figures and
 claims**, with image and CSV/TSV previews. Reference exports enter the
 **Literature** library with their available abstracts; registered PDFs are
 also listed there. Code, data, and reports appear under **Data and code**.
-Each registered row says which task produced the file and when. The result
+The registered rows stand under one heading per task, which says what the task
+is and when its run was. The result
 record links to the files, and a file path written in code style in its
 preview opens that file.
 
 A task's row shows its files under **Task outputs**. After a run, a count
-such as **3 new files not registered** appears when the run created files
+such as **3 new files not registered** appears when the task's runs created files
 nobody registered; **Register…** lists them for review, and **Register files
 from earlier runs…** in **Output folders** lists those from before. A file
 listed there can be registered wherever it lies, and a registration can be
