@@ -5141,11 +5141,16 @@ nothing new inside the project.
      more: that byte is what says `truncated`, and `size` is the open file's.
      Everything else is as it was: the 8 KB window in which a NUL byte
      refuses the file, the decoding (a cut that falls inside a multi-byte
-     character is dropped; a file over the limit that is not UTF-8 is cut and
-     decoded with its bad bytes dropped; one under it is refused), the
-     refusals, their bodies and the payload keys. A `.dta` returns before any
-     read. A draft from chosen files reads each through `file_payload`
-     (`_draft_file`), so it reads the same head.
+     character is dropped), the refusals, their bodies and the payload keys.
+     A `.dta` returns before any read. A draft from chosen files reads each
+     through `file_payload` (`_draft_file`), so it reads the same head.
+   - *A cut read that is not UTF-8* (changed 2026-10-26). A file over the
+     limit used to be decoded with its bad bytes dropped, so a PDF over
+     200 KB with no NUL in its first 8 KB showed as garbled text and went to
+     the model in a draft. Now only the last bytes of a character the cut
+     splits (at most 3) are dropped; a bad byte anywhere else refuses the
+     file as one under the limit is refused, and a draft answers
+     `draft_file_not_text`.
    - *What it costs.* For a 64 MB file, and for a 1 GB file, whose first
      300 KB is text, Python's memory peaks at about 600 KB (the 200 KB read,
      its cut and its decoded text); the whole read held the file.

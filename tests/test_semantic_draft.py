@@ -332,6 +332,8 @@ def _file_refusals(root):
     (root / "folder").mkdir()
     (root / "bin.dat").write_bytes(b"\x00\x01")
     (root / "latin.txt").write_bytes("caf\xe9".encode("latin-1"))
+    # over the 200 KB read, no NUL byte: its bad bytes come before the cut
+    (root / "cut.pdf").write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(1, 256)) * (server._FILE_SIZE_LIMIT // 255 + 1))
     (root / "auto.dta").write_bytes(_dta(118, "LSF", VARS, rows=2))
     (root / "broken.dta").write_bytes(b"not a dta")
     (root / "cloud.txt").write_text("beta 0.1", encoding="utf-8")
@@ -340,6 +342,7 @@ def _file_refusals(root):
     return [("nope.txt", "draft_file_missing", 404), ("folder", "draft_file_missing", 400),
             ("a\x00b.txt", "draft_file_missing", 400), ("locked.txt", "draft_file_unreadable", 400),
             ("bin.dat", "draft_file_not_text", 400), ("latin.txt", "draft_file_not_text", 400),
+            ("cut.pdf", "draft_file_not_text", 400),
             ("auto.dta", "draft_file_not_text", 400), ("broken.dta", "draft_file_not_text", 400),
             ("cloud.txt", "draft_file_cloud_only", 503), ("../outside.txt", "draft_file_outside", 403)]
 
