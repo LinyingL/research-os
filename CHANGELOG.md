@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased
+
+### Files from AI agents
+
+- Give each task a work folder for its process files: the one-off scripts,
+  check output, downloaded sources and scratch data an agent writes only to
+  carry out the task. By default it is `work/<date>-<task name>/`, shared by
+  the task's later runs, and **Output folders** lists its location as
+  **Process files**. The index skips it and its files are not outputs.
+- Tell each agent where every kind of file goes, which work folder and
+  subfolder name are its task's, and that nothing is created under
+  `research/`. The result record is the task's one report: a document you
+  asked for goes to the documents folder, the record stays short, and Research
+  OS writes the record's list of output files.
+- Sort the files each run created after it ends: Research OS's own records,
+  registered outputs, process files, caches, and the rest. A task whose latest
+  run left files nobody registered says so in its row, for example
+  **3 new files not registered**, with **Register…** to review them.
+- Register a file wherever it is, as a kind you choose, and remove a
+  registration without touching the file. In a team, a member's changed
+  registrations are offered in **Submit changes** like a changed task. A task
+  holds up to 1,000 registered files.
+- Show a task's files in its row under **Task outputs**: the registered files
+  grouped by kind, each opening in the file panel (figures with a small
+  preview) and each with **Remove registration**; then the new files not
+  registered; then the work folder's path and file count. A registration whose
+  file is gone stays in the row, marked **File no longer there**, until it is
+  removed.
+- Say on every registered row in Figures and claims, Data & code and
+  Literature which task produced the file and when. A task that is no longer
+  in the list reads **Task removed**.
+- Link the files a result record names. In its preview, a file path written
+  in code style opens that file, and so does a link written from the project
+  folder rather than from the record's own folder. The record itself is not
+  rewritten.
+- Offer the files that earlier runs created and nobody registered, from
+  **Output folders** (**Register files from earlier runs…**). Each file comes
+  with a suggested kind taken from its folder and name, or **Do not
+  register**. Nothing is registered or moved until **Register selected**.
+- Ask before a task that has a result is marked not done by clearing its box:
+  a new run rewrites the same result record. Marking a task done never asks.
+- Open the record from **Open the result** on a registered row in Figures and
+  claims, Data & code or Literature. It opened in a page that was hidden, so
+  nothing seemed to happen.
+- Store each distinct content once in a project's undo backups, as a
+  read-only copy shared by the runs that need it, instead of copying the
+  project again for every run. A run that is undone releases its backup and
+  cannot be undone twice.
+- Keep a project's undo backups, files moved away by undo, and run logs within
+  5 GB (1 to 100 GB, set under **Space limit** in the AI agent area). Over the
+  limit, the oldest run's backup is released first and that run can no longer
+  be undone. Files moved away by undo are removed only when you delete them.
+- Show **Space used by runs** in the AI agent area: the sizes of **Undo
+  backups**, **Files moved away by undo** and **Run log** against the limit,
+  the runs that hold moved-away files with **Delete these files**, and
+  **Release all undo backups**. Both ask first. Name the agent program's
+  session in the run log as **Session ID**.
+
+### Upgrading
+
+- Upgrade every team member before anyone saves output folders or registers a
+  process file. A version from before process files cannot read
+  `research/folders.json` once it lists the process-files location, and a
+  task's registrations that include a process file make its output views say
+  the list cannot be read.
+- Undo backups made before this version are converted in the background the
+  first time a project's runs are cleaned up or **Space used by runs** is
+  opened; the panel says **Tidying undo backups…** meanwhile. Backups of runs
+  that were already undone are released.
+
 ## 0.3.0
 
 ### Research workspace

@@ -47,9 +47,11 @@ research workspace:
   effort. Follow the run, answer questions, and receive a result record.
   Preview the files an undo would affect and choose which changes to keep.
 - **Output folders:** keep the project's existing layout and choose where
-  new code, data, figures, tables, references, reports, and variable drafts
-  belong. Agents report their final files when completing a task; the app
-  checks their paths and formats and shows them in the relevant views.
+  new code, data, figures, tables, references, reports, variable drafts, and
+  process files belong. Agents report their final files when completing a
+  task; the app checks their paths and formats and shows them in the relevant
+  views, each with the task that produced it. A task's row lists its files, and
+  you can register files yourself, including those earlier runs created.
 
 See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
@@ -223,13 +225,28 @@ keeps files in place and creates no output folders; the agent creates them
 as needed. Each run receives its own copy of the locations, so changing
 them applies to new runs.
 
+Everything an agent writes only to carry out a task, such as check scripts
+and their output, downloaded sources and scratch data, is a process file. It
+goes to the task's work folder, `work/<date>-<task name>/` by default, which
+the index skips and which does not count as outputs. The agent is told where
+each kind of file belongs and that the result record is the task's one report.
+
 When completing a task, the agent lists its final files by type and path.
 The app checks that they exist locally, stay within the assigned folder,
 and use a supported format. Figures and tables appear under **Figures and
 claims**, with image and CSV/TSV previews. Reference exports enter the
 **Literature** library with their available abstracts; registered PDFs are
 also listed there. Code, data, and reports appear under **Data and code**.
-The result record links to the files.
+Each registered row says which task produced the file and when. The result
+record links to the files, and a file path written in code style in its
+preview opens that file.
+
+A task's row shows its files under **Task outputs**. After a run, a count
+such as **3 new files not registered** appears when the run created files
+nobody registered; **Register…** lists them for review. You can register a
+file wherever it is, remove a registration without touching the file, and use
+**Register files from earlier runs…** in **Output folders** for files created
+before. Nothing is moved.
 
 Variable definitions arrive as TOML drafts under **Variables**. Click
 **Import as variable draft** to create a native card, or a new draft
@@ -247,18 +264,21 @@ and plan up to 8,000 characters, and the titles and paths of up to 50 notes
 and result records. The agent reads further files as needed. Conversations
 in the Claude desktop app are not included.
 
-Use **Run log** to follow progress and inspect file changes. You can stop a
-run, answer a question, send completed work back for revision, or preview
-and undo supported changes. Research assessments, link confirmation, and
-team approval stay with people.
+Use **Run log** to follow progress, inspect file changes, and find the agent
+program's own session by its **Session ID**. You can stop a run, answer a
+question, send completed work back for revision, or preview and undo supported
+changes. Research assessments, link confirmation, and team approval stay with
+people.
 
 Agent checks restrict changes to existing data and project records, but
 are not an operating system sandbox. Claude Code has checks before tool
 calls; OpenCode relies on its permissions and the comparison after a run.
 Codex runs in its workspace-write sandbox, with changes checked afterward.
-Undo keeps copies of files up to 16 MB for the newest 20 runs, leaves later
-edits alone, and cannot reverse installed software or changes outside the
-project. See the [agent guide](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task)
+Undo keeps copies of files up to 16 MB for the newest 20 runs, stores each
+distinct content once, and keeps a project's backups, moved-away files and
+logs within 5 GB by default; **Space used by runs** shows what they take. Undo
+leaves later edits alone and cannot reverse installed software or changes
+outside the project. See the [agent guide](docs/project-workspace.md#let-an-ai-agent-carry-out-a-task)
 for the full scope and limits.
 
 Claude Code sends the content it reads to Anthropic. OpenCode uses the
@@ -299,7 +319,11 @@ snapshots and proposals, transported by a service such as OneDrive.
 Research OS does not host a collaboration server.
 
 **Upgrade every team member to 0.3.0 before using agent tasks.** Version
-0.2.0 cannot read the result links an agent adds to a task record.
+0.2.0 cannot read the result links an agent adds to a task record. The same
+goes for process files: update every member before anyone saves output folders
+or registers one. A version from before process files cannot read
+`research/folders.json` once it lists the process-files location, or a task's
+registrations once one of them is a process file.
 
 ## Files and research tools
 
