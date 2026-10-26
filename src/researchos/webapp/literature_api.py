@@ -152,6 +152,9 @@ def citations_payload(conn: Connection, root: Path) -> dict[str, Any]:
     rep["scanned"] = _citations_ran(conn)
     rep["zotero"]["installed"] = literature.zotero_installed()
     rep["library"] = bibliography.catalog(conn, root, rep, library)
+    from researchos import outputs
+
+    rep["outputs"] = outputs.catalog(root, {"literature"})
     for item in rep["library"]["items"]:
         item["doi_url"] = doi_url(item["doi"]) if item.get("doi") else None
         key = item.get("zotero_key")

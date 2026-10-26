@@ -26,6 +26,9 @@ raises:
    exists at other paths in the project tree, scoped to `dataset` only for
    the same reason as orphans: "which of the 4 copies of theme_counts.csv did
    the script actually read" is a data-provenance question, not a figure one.
+   The walk that finds the copies leaves out the work folder and the files
+   registered as `work` (DESIGN.md 19.7), as the scan does: a copy an agent
+   kept among its process files is not another copy the script could have read.
 
 Two kinds of edge are treated specially, so this report and the canvas
 (DESIGN.md section 8.2's clay orphan dot is "the lineage report's own
@@ -57,6 +60,7 @@ from sqlite3 import Connection
 from typing import Any
 
 from researchos import db, names
+from researchos.ingest import files as ingest_files
 from researchos.records import judgements
 
 # Directories never worth walking for a duplicate-basename scan: version
@@ -178,9 +182,14 @@ def _scan_basenames(project_root: Path) -> dict[str, list[str]]:
     detection (block 4). Skips the same noise/hidden directories
     `researchos.ingest.files.list_source_files` skips (see `_NOISE_DIRS` above), and
     never follows a symlink, matching that module's own guard against
-    reporting a path that doesn't lead to a distinct real file.
+    reporting a path that doesn't lead to a distinct real file. It leaves out
+    what the scan leaves out of a Research OS project (`ingest.files.scan_skips`,
+    DESIGN.md 19.7): the work folder, and the files registered as `work` -- a
+    copy of a dataset an agent kept among its process files is not "another copy
+    of the dataset" the script could have read.
     """
     by_basename: dict[str, list[str]] = {}
+    skipped = ingest_files.scan_skips(project_root)
     for dirpath, dirnames, filenames in os.walk(project_root, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if d not in _NOISE_DIRS and not d.startswith("."))
         for filename in sorted(filenames):
@@ -190,7 +199,8 @@ def _scan_basenames(project_root: Path) -> dict[str, list[str]]:
             if full_path.is_symlink():
                 continue
             rel = full_path.relative_to(project_root).as_posix()
-            by_basename.setdefault(filename, []).append(rel)
+            if not skipped(rel):
+                by_basename.setdefault(filename, []).append(rel)
     return by_basename
 
 

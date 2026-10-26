@@ -40,6 +40,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
+import secrets
 import re
 import sys
 from contextlib import contextmanager
@@ -50,7 +52,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from researchos import db, names, paths, query, rename, workspace
+from researchos import db, names, outputs as output_files, paths, query, rename, workspace
 from researchos import project as project_identity
 from researchos.agents import labels as agent_labels
 from researchos.agents import runs as agent_runs
@@ -330,8 +332,9 @@ def _attribution_line(run: dict[str, Any], agent: agent_labels.Agent) -> str:
     return "> " + " · ".join(parts)
 
 
-#: A heading made from the task's own words is cut here, at a word boundary where there is one.
-DEFAULT_TITLE_LIMIT = 80
+#: A heading made from the task's own words is cut here, at a word boundary where there is one. The rule is
+#: `outputs.task_title`'s: the views name the task that produced a file with the same words (DESIGN.md 19.6).
+DEFAULT_TITLE_LIMIT = output_files.TITLE_CUT
 
 
 def _result_title(title: str | None, task_text: str) -> str:
@@ -341,15 +344,11 @@ def _result_title(title: str | None, task_text: str) -> str:
     given = re.sub(r"^#+\s*", "", _one_line(title, TITLE_LIMIT))
     if given:
         return given
-    first = re.sub(r"^#+\s*", "", _one_line(next((line for line in task_text.splitlines() if line.strip()), "")))
-    if len(first) > DEFAULT_TITLE_LIMIT:
-        cut = first[:DEFAULT_TITLE_LIMIT]
-        space = cut.rfind(" ")
-        first = (cut[:space] if space > DEFAULT_TITLE_LIMIT // 2 else cut).rstrip(" ,;:，；：") + "…"
-    return first or "Task result"
+    return output_files.task_title(task_text) or "Task result"
 
 
-def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None) -> str:
+def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None,
+              outputs: list[dict[str, str]] | None = None) -> str:
     if not isinstance(report, str) or not report.strip():
         raise _Refused("the report is empty; write what was done, the commands run, the files produced and the "
                        "key numbers exactly as the runs gave them, then call the tool again")
@@ -366,11 +365,33 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
         if task is None:
             raise _Refused(f"task {run.get('task_id')!r} no longer exists in research/tasks.json, so there is "
                            "nothing to complete; tell the person in your final message")
+        if "output_folders" in run and outputs is None:
+            raise _Refused("Include outputs=[{kind, path, title}] for the files you produced; use outputs=[] if there are none")
+        checked = output_files.validate(root, outputs, run.get("output_folders") or output_files.folders(root)["folders"]) if outputs is not None else []
+        # 19.7: a file the run created says so (`created: true`), as the run's before-picture shows; one that was there
+        # before -- the researcher's own draft an agent edited and declared -- does not, and stays what it was
+        if checked:  # the before-picture is read only when there are outputs to flag
+            made = output_files.made_by_run(project_id, run_id, [item["path"] for item in checked])
+            checked = [{**item, "created": True} if item["path"] in made else item for item in checked]
+        if checked and task.get("report") and (root / task["report"]).is_file():
+            output_files._entries(root, output_files.catalog_path(task["report"]))
         heading = _result_title(title, task["text"])
         # The record's one top heading is ours: a report that opens with its own
         # `# ...` keeps it one level down, so the document has a single title.
         body_text = re.sub(r"\A#(?=[ \t])", "##", report)
         content = f"# {heading}\n\n{_attribution_line(run, agent)}\n\n{body_text}\n"
+        if checked:
+            from urllib.parse import quote
+
+            # 19.12 item 6: the record's one list of outputs is this section; the brief tells the agent to add none
+            label = "Registered output files" if run.get("lang") == "en" else "已登记的输出文件"
+            content += f"\n## {label}\n\n"
+            for item in checked:
+                caption = item["title"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+                target = quote(posixpath.relpath(item["path"], "research/results"), safe="/")
+                content += f"- [{caption}]({target})\n"
+            if (root / output_files.FOLDERS_PATH).is_file():
+                content += "- [" + ("Output folders" if run.get("lang") == "en" else "输出目录") + "](../folders.json)\n"
         body: dict[str, Any] = {"content": content}
         existing = task.get("report")
         if existing:  # a run of this task wrote it before (a task sent back): the same record, rewritten
@@ -381,9 +402,12 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
                     raise
                 existing = None
         if not existing:
-            body.update(kind="result", revision=None)
+            body.update(kind="result", revision=None, path="research/results/" + secrets.token_hex(16) + ".md")
+        if checked:
+            body["content"] += f"- [{label}]({Path(output_files.catalog_path(body['path'])).name})\n"
         saved = workspace.save_document(root, body, author=author)
         path = saved["path"]
+        registration = output_files.register(root, checked, run, path, author)
         notes = [saved["history_error"]] if saved.get("history_error") else []
         saved_tasks = None
         for attempt in (1, 2):  # a second go only when the file moved under an external editor
@@ -403,16 +427,18 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
             raise _Refused(f"the result record {path} was saved, but the task could not be marked done")
         if saved_tasks.get("history_error"):
             notes.append(saved_tasks["history_error"])
+        extra = {"outputs_sha": registration[1], "outputs_catalog": registration[0]} if registration else {}
         agent_runs.append_signal(
             project_id, run_id, "complete", path=path, tasks_sha=saved_tasks["tasks_revision"],
-            paths=[path, workspace.TASKS_PATH],
+            paths=[path, workspace.TASKS_PATH] + ([registration[0]] if registration else []), **extra,
         )
     tail = " (The change history could not be updated; the person is told.)" if notes else ""
     return (f"Saved the result record {path} and marked the task done. "
             f"Your work on this task is finished; stop now.{tail}")
 
 
-def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: str, title: str | None = None) -> str:
+def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: str, title: str | None = None,
+                        outputs: list[dict[str, str]] | None = None) -> str:
     """`researchos_complete_task`: write the task's result record (a new
     `research/results/` document, or the one an earlier run of this task
     wrote), mark the task done and link the record as its `report`, as the
@@ -421,7 +447,7 @@ def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: 
     that is over) is `Not written: <why>`, with nothing written. The
     `complete` signal tells the engine which `research/tasks.json` is the
     tool's."""
-    return _answering(lambda: _complete(Path(root).resolve(), project_id, run_id, report, title))
+    return _answering(lambda: _complete(Path(root).resolve(), project_id, run_id, report, title, outputs))
 
 
 def _ask(project_id: str, run_id: str, question: str) -> str:
@@ -479,18 +505,26 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
     mcp = FastMCP(names.MCP_SERVER_NAME)
 
     @mcp.tool()
-    def researchos_complete_task(report: str, title: str | None = None) -> str:
+    def researchos_complete_task(report: str, title: str | None = None,
+                                 outputs: list[dict[str, str]] | None = None) -> str:
         """Call this ONCE, when the task you were given is finished. `report`
         is the result record, in Markdown: what you did, the commands you
-        ran, the files you produced (paths), and the key numbers exactly as
-        your actual runs gave them -- never invented or rounded from memory.
+        ran, and the key numbers exactly as your actual runs gave them --
+        never invented or rounded from memory. Name a file where it matters,
+        but add no list of your outputs: Research OS appends the section
+        "Registered output files" to the record from `outputs`.
         `title` is a short heading naming the result, a few words (default:
         the start of the task). This saves
         the report as a result record in the project, marks the task done
         and links the record to it. After it answers, stop: do nothing
-        more. If you cannot finish or a decision belongs to the person, call
+        more. `outputs` lists each final file as {kind, path, title}; kinds:
+        code, data, figure, table, literature, document, variable. Paths must
+        be inside the assigned folder for that kind. Use [] if no files were
+        produced. Bibliographies accept BibTeX or CSV/JSON reference exports;
+        variable drafts use the native variable-definition TOML schema and
+        remain unconfirmed. If you cannot finish or a decision belongs to the person, call
         researchos_ask instead."""
-        return agent_complete_task(root, project_id, run_id, report, title)
+        return agent_complete_task(root, project_id, run_id, report, title, outputs)
 
     @mcp.tool()
     def researchos_ask(question: str) -> str:

@@ -453,7 +453,7 @@ def test_agent_server_offers_exactly_the_six_tools(setup):
     for tool in tools:
         assert tool.description and tool.inputSchema["type"] == "object"
     assert by_name["researchos_complete_task"].inputSchema["required"] == ["report"]
-    assert set(by_name["researchos_complete_task"].inputSchema["properties"]) == {"report", "title"}
+    assert set(by_name["researchos_complete_task"].inputSchema["properties"]) == {"report", "title", "outputs"}
     assert by_name["researchos_ask"].inputSchema["required"] == ["question"]
     assert set(by_name["researchos_save_note"].inputSchema["required"]) == {"title", "content"}
     assert "researchos_confirm_edge" not in by_name

@@ -1,7 +1,7 @@
 """The glossary stays true (DESIGN.md 13.4, amended by 18.2; task V14).
 
-13.4's table and the lists of words in 13.4's paragraph below it, 14.6, 15.5
-and 17.9 are the binding English of the interface. These tests read them out
+13.4's table and the lists of words in 13.4's paragraph below it, 14.6, 15.5,
+17.9 and 19.9 are the binding English of the interface. These tests read them out
 of DESIGN.md and hold the English table in /i18n.js to them: a Chinese word
 that is a key there carries exactly the English the design writes, and the
 names that sentences carry read the same inside every sentence -- "a term
@@ -27,7 +27,8 @@ LISTED_WORD = re.compile(r'((?:[A-Z]{2,} )?[一-鿿][一-鿿\w]*)(?: \([^)]*\))?
 #: The sections whose lists of words are read (each a stretch of DESIGN.md
 #: from its heading to the next one).
 LISTS = [("13.4", "### 13.4", "### 13.5"), ("14.6", "### 14.6", "### 14.7"),
-         ("15.5", "### 15.5", "### 15.6"), ("17.9", "### 17.9", "### 17.10")]
+         ("15.5", "### 15.5", "### 15.6"), ("17.9", "### 17.9", "### 17.10"),
+         ("19.9", "### 19.9", "### 19.10")]
 
 
 def _section(head: str, nxt: str) -> str:
@@ -57,7 +58,7 @@ def table_pairs() -> list[tuple[str, str]]:
 
 def listed_pairs() -> list[tuple[str, str, str]]:
     """The words the lists write as `中文 "English"`: 13.4 below its table,
-    14.6, 15.5 and 17.9 -- (section, Chinese, English)."""
+    14.6, 15.5, 17.9 and 19.9 -- (section, Chinese, English)."""
     found = []
     for name, head, nxt in LISTS:
         text = _section(head, nxt)
@@ -99,6 +100,16 @@ TERMS_OF_18_2 = {
     "未识别生成脚本": "No generating script identified", "中间数据": "Intermediate data", "同名文件": "Same-name files",
 }
 
+#: 19.9's words (with 19.12 item 1's 过程文件夹), in the order the design writes them: they are in a list, not in the
+#: table, and held to the page as 17.9's are.
+TERMS_OF_19_9 = {
+    "过程文件": "Process files", "过程文件夹": "Process folder", "登记": "Register", "未登记": "Not registered",
+    "移除登记": "Remove registration", "补登记以往运行的文件": "Register files from earlier runs",
+    "登记所选": "Register selected", "不登记": "Do not register", "运行占用的空间": "Space used by runs",
+    "撤回备份": "Undo backups", "撤回时移走的文件": "Files moved away by undo", "释放所有撤回备份": "Release all undo backups",
+    "删除这些文件": "Delete these files", "任务已移除": "Task removed", "空间上限": "Space limit", "会话编号": "Session ID",
+}
+
 #: Words 18.2 retired, on either side: none of them may stand in the table
 #: (a Chinese word is exact, an English word is a whole cell of a row).
 RETIRED_CHINESE = ["判断", "判决", "成果", "官方版本", "产出", "实验记录", "工作台"]
@@ -134,7 +145,7 @@ def test_the_switch_of_the_one_research_routes_page_has_its_two_words_and_no_sec
 
 
 def test_the_lists_are_read_and_give_a_word_once_with_one_english():
-    """13.4's paragraph below the table, 14.6, 15.5 and 17.9 yield their
+    """13.4's paragraph below the table, 14.6, 15.5, 17.9 and 19.9 yield their
     words -- the ones the sections show -- and no word has two Englishes
     within the lists and the table together (成员 as a role is 'Member', its
     table row 'Members': one word, two forms)."""
@@ -146,6 +157,7 @@ def test_the_lists_are_read_and_give_a_word_once_with_one_english():
     assert by_section["14.6"] == ["源自", "由它而来", "路线图", "还没标来处", "有改动", "待办"]
     assert by_section["15.5"] == ["全局变量", "展开不了", "项目里的文件夹"]
     assert {"AI 执行者", "撤回本次运行", "越过了限制"} <= set(by_section["17.9"])
+    assert by_section["19.9"] == list(TERMS_OF_19_9)     # 19.9, as 17.9: its words in the order written, none missed by the reader
     given: dict[str, set[str]] = {}
     for zh, en in [*table_pairs(), *[(zh, en) for _, zh, en in listed]]:
         given.setdefault(zh, set()).add(en)
@@ -176,8 +188,8 @@ def keys_off_the_glossary(table: dict[str, Any]) -> tuple[list[str], int]:
 
 @needs_node
 def test_every_glossary_word_that_is_a_key_carries_exactly_the_glossarys_english():
-    """For each word of 13.4's table and of the lists in 13.4, 14.6, 15.5 and
-    17.9 that is a key of the English table, the entry equals the design's
+    """For each word of 13.4's table and of the lists in 13.4, 14.6, 15.5,
+    17.9 and 19.9 that is a key of the English table, the entry equals the design's
     English -- or, for a counted word, is one of its two forms. (A word that
     is no key of its own -- it lives inside sentences, or belongs to a page
     not yet converted, like 含义 to 确认这一版 -- is not compared here.) The
@@ -185,7 +197,29 @@ def test_every_glossary_word_that_is_a_key_carries_exactly_the_glossarys_english
     not let this pass."""
     wrong, compared = keys_off_the_glossary(english_table())
     assert wrong == []
-    assert compared >= 70, compared
+    assert compared >= 85, compared                       # 19.9 adds thirteen words that are keys of their own
+
+
+@needs_node
+def test_19_9s_words_are_the_ones_the_design_gives_and_the_page_holds_those_that_are_keys_and_the_sentences_that_carry_the_rest():
+    """DESIGN 19.9 (with 19.12 item 1's 过程文件夹): the list is read as written; each word that is a key of the English
+    table carries its English, and the three words that are no key of their own (登记, 未登记, 会话编号) are carried by the
+    sentences of the page in the design's English, so a word the page says otherwise is found here."""
+    given = {zh: en for name, zh, en in listed_pairs() if name == "19.9"}
+    assert given == TERMS_OF_19_9
+    table = english_table()
+    keys = [zh for zh in given if zh in table]
+    assert len(keys) == 13 and {"登记", "未登记", "会话编号"} == set(given) - set(keys), keys
+    assert [zh for zh in keys if given[zh] not in entry_forms(table[zh])] == []
+    # the words that live inside sentences: every English form of every key that carries them holds the design's English
+    carried = {"登记": "regist", "未登记": "not registered", "会话编号": "session id"}      # register, registration, registered
+    said = {zh: [k for k in table if zh in k] for zh in carried}
+    for zh, keys_with in said.items():
+        assert keys_with, zh
+        for key in keys_with:
+            for form in entry_forms(table[key]):
+                assert carried[zh] in form.lower(), f"{zh}: {key!r} -> {form!r}"
+    assert "工作文件夹" not in table and table["过程文件夹"] == "Process folder"          # the old word for a run's folder is gone
 
 
 #: The names that stay the same inside every sentence that carries them,

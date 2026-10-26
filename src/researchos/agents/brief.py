@@ -28,6 +28,16 @@ sentence Research OS writes, these carry no emoji and no arrow characters
 (12.11); the person's own words (the task, the overview, titles) are passed
 through as they are.
 
+**Where files go** (DESIGN.md 19.3). When the run's locations are given, the rules end with a routing block
+(`_routing`): the eight locations, this task's process folder and the name it goes by (`run.json`'s
+`work_folder` and `slug`, 19.2), where process files go, the one deliverable, table versus data, readable
+names and how outputs are reported. It names no tool, so it holds the same words for every runner.
+
+**One word per thing** (19.12 item 1). A run's own folder is the 过程文件夹 / "process folder" everywhere the agent
+is told of it; the folder it works in is the 项目文件夹 / "project folder", and nothing here calls either the "work
+folder". **One list of outputs** (19.12 item 6): the agent names files in its report where they matter and adds
+no list of its outputs, since Research OS appends 「已登记的输出文件」 / "Registered output files" to the record.
+
 Rule 4 names the git commands from the hook's own list (`guard.GIT_MUTATING`, the
 list Claude Code's denials and OpenCode's patterns are made from too, 18.1 item 6),
 so that the words and the enforcement cannot drift apart.
@@ -105,7 +115,7 @@ def _protected_records(prot: Mapping[str, object]) -> list[str]:
 def _attempt_table(prot: Mapping[str, object]) -> str | None:
     """The attempt table's path: the record that is not the task file."""
     for rel in _protected_records(prot):
-        if rel != TASKS_PATH:
+        if rel not in {TASKS_PATH, "research/folders.json"} and not guard.is_output_record(rel):
             return rel
     return None
 
@@ -121,12 +131,68 @@ def _code_list(paths: Iterable[str]) -> str:
     return ", ".join(f"`{p}`" for p in paths)
 
 
-def rules(*, lang: str, runner: str, prot: dict) -> str:
+def _routing(lang: str, folders: Mapping[str, str], work_folder: str | None, slug: str | None) -> list[str]:
+    """The routing block of 19.3, which holds the same words for every runner (no tool is named in it): the
+    eight locations, this task's process folder (19.12 item 1) and the name it goes by, where process files go, the
+    one deliverable (19.12 item 6: files named in the report, no list of outputs), the table-versus-data rule and
+    readable names, and how outputs are reported."""
+    name = _line(slug) or "task"
+    work = _line(work_folder) or _line(folders.get("work"))
+    near = [f"`{_line(folders[kind])}/{name}/`" for kind in ("code", "figure") if folders.get(kind)]
+    if _is_en(lang):
+        return (["Output folders (project-relative; use subfolders here rather than creating parallel top-level folders):"]
+                + [f"- {kind}: `{rel}/`" for kind, rel in folders.items()]
+                + [f"This task's process folder is `{work}`; this task's subfolder name is `{name}`."
+                   + (f" Use that name for this task's subfolders in the other folders too, for example {' and '.join(near)}." if near else ""),
+                   "Process files are everything you write only to carry out this task: one-off probe and check scripts and "
+                   "their output, verification files, downloaded third-party sources, scratch data and caches. They go in the "
+                   "process folder (create it when you need it), not among the outputs. Rule 3 does not protect data files in the "
+                   "process folder, so a later run of this task may overwrite them. Create nothing under research/: only "
+                   "Research OS's tools write there.",
+                   "There is one deliverable. The result record you write with the complete tool is the task's report. If the "
+                   "task asks for a document (a plan, a review, a write-up), put the document in the document folder as an "
+                   "output and keep the result record short: the conclusion, the key numbers, what to read first. Name a file "
+                   "in your report where it matters to what you say, but do not add a list of your outputs: Research OS "
+                   "appends the section \"Registered output files\" to the record itself. Save a note "
+                   "only for something the person asked to keep apart from the result, and never as a list of files.",
+                   "An output is a file the person will read or use again: a figure, a table, a dataset meant for further work, "
+                   "a document, a reference export, a variable draft, and the code needed to reproduce any of these. A table "
+                   "is a result meant to be read (summary statistics, a regression, an attribution); data is a dataset meant as "
+                   "input to further code. Name files in words that say what they hold, never by hash or run id.",
+                   "Report every final file in the complete tool's outputs list: {kind, path, title}. Use [] for no files. "
+                   "Process files are not reported. Intermediate caches are not final outputs. Do not edit research/folders.json or the *.outputs.json records in research/results/ directly.",
+                   "Literature: use .bib or CSV/JSON reference exports (title, authors, year, doi, abstract); PDF files can also be registered, but need a reference export for abstract reading. "
+                   "Variable: use a .toml definition with name, meaning, unit, granularity, [[input]], [construction], "
+                   "[implementation] and an optional proposed [decision].why. Leave decided_by and adopted_on empty; a human imports and confirms it.",
+                   ""])
+    return (["产出目录（项目内相对路径；需要细分时在这些目录里建子目录，不另建同用途的顶层目录）："]
+            + [f"- {kind}: `{rel}/`" for kind, rel in folders.items()]
+            + [f"本任务的过程文件夹是 `{work}`；本任务的子目录名是 `{name}`。"
+               + (f"在上面其他目录里为本任务建子目录时也用这个名字，例如 {'、'.join(near)}。" if near else ""),
+               "过程文件是只为完成这次任务而写的东西：一次性的探查和自检脚本及其输出、核对用的文件、下载来的第三方源码、临时数据和缓存。"
+               "它们放进过程文件夹（需要时自己建），不要放进输出目录。第 3 条不保护过程文件夹里的数据文件，这项任务以后的运行可以改写它们。"
+               "不要在 research/ 下新建任何东西，那里只有 Research OS 的工具写。",
+               "只交一份成果：用完成工具写的结果记录就是这项任务的报告。任务要求写文档（方案、评审、文稿）时，文档作为输出放进文档目录，"
+               "结果记录保持简短：结论、关键数字、先读什么。报告里在要紧的地方写出文件名，但不要另附一份输出清单：Research OS 会在记录末尾"
+               "自己追加「已登记的输出文件」一节。笔记只用来保存这个人要求与结果分开保管的内容，不要写成文件清单。",
+               "输出是这个人要读或要再用的文件：图、表、供后续工作用的数据集、文档、文献导出、变量草稿，以及复现其中任何一项所需的代码。"
+               "表是给人读的结果（汇总统计、回归、归因），数据是给后续代码当输入的数据集。文件名用能说明内容的词，不用哈希值或运行编号。",
+               "在完成工具的 outputs 参数中列出每个最终文件：{kind, path, title}；没有文件时传 []。过程文件不列入。中间缓存不算最终产出。不要直接编辑 research/folders.json 或 research/results/ 中的 *.outputs.json 登记文件。",
+               "文献使用 .bib 或 CSV/JSON 文献导出（title、authors、year、doi、abstract）；PDF 也可登记，要在文献列表阅读摘要时请同时保留文献导出。变量使用 .toml 定义，字段为 name、meaning、unit、granularity、[[input]]、[construction]、[implementation]；可以填写建议理由 [decision].why，但 decided_by、adopted_on 留空，由人导入和确认。",
+               ""])
+
+
+def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None = None,
+          work_folder: str | None = None, slug: str | None = None) -> str:
     """The binding rules of 17.5 in plain words, and how to finish (17.4).
 
     `prot` is `snapshot.protected(...)`: its `data` files (up to
     `PROTECTED_LIST_LIMIT` named by path, then a count) and its attempt
-    table are named so the agent knows exactly what is off limits."""
+    table are named so the agent knows exactly what is off limits.
+    `folders` (the eight locations, `outputs.folders`), `work_folder` and `slug`
+    (this task's, `run.json`) give the routing block of 19.3; the process folder
+    (19.12 item 1) is the location itself and the slug `task` when a caller names
+    neither."""
     complete = tool_name(runner, "researchos_complete_task")
     ask = tool_name(runner, "researchos_ask")
     note = tool_name(runner, "researchos_save_note")
@@ -138,6 +204,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
     shown, more = data[:PROTECTED_LIST_LIMIT], max(0, len(data) - PROTECTED_LIST_LIMIT)
     hooked = runner == "claude-code"  # only Claude Code has a hook that refuses every listed action (17.5)
 
+    routing = _routing(lang, folders, work_folder, slug) if folders else []
+
     if _is_en(lang):
         table_words = f"the attempt table (`{table}`)" if table else "the attempt table"
         if shown:
@@ -147,9 +215,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             files_words = "No data file of the project is protected by name, but the rule holds for any that exists."
         return "\n".join([
             "You are carrying out a task for a researcher through Research OS. You act on the person's "
-            "instruction, as an errand-runner: do the work directly in the working folder, which is the "
-            "project folder. You may write and edit code and notes, run Python, R or Stata, install "
-            "packages and download data.",
+            "instruction, as an errand-runner: do the work directly in the project folder. You may "
+            "write and edit code and notes, run Python, R or Stata, install packages and download data.",
             "",
             ("You must never do the following. Research OS refuses these and records the attempt; a refused "
              "call is not a reason to try another way round." if hooked else
@@ -173,8 +240,10 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
             "6. Run the `researchos` or `rce` command, or contact the Research OS app in any other way.",
             "",
             "How to finish:",
+            *routing,
             f"- When the task is done, call `{complete}` with a Markdown report: what you did, the commands "
-            "you ran, the files you produced, and the key numbers exactly as your actual runs produced them. "
+            "you ran, and the key numbers exactly as your actual runs produced them. Name a file where it "
+            "matters, but add no list of your outputs. "
             "Never invent or estimate a number, a file or a result. Give it a short title naming the result "
             "(a few words). This call also marks the task done.",
             f"- If you are blocked, or a decision belongs to the person, call `{ask}` with one clear "
@@ -192,8 +261,8 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
     else:
         files_words = "项目里没有按名字列出的受保护数据文件，但这条规则对任何已存在的数据文件都适用。"
     return "\n".join([
-        "你在替一位研究者通过 Research OS 完成一项任务。你是按这个人的指示办事的执行者：直接在工作文件夹"
-        "（也就是项目文件夹）里把事情做完。你可以写、改代码和笔记，运行 Python、R 或 Stata，安装软件包，"
+        "你在替一位研究者通过 Research OS 完成一项任务。你是按这个人的指示办事的执行者：直接在项目文件夹"
+        "里把事情做完。你可以写、改代码和笔记，运行 Python、R 或 Stata，安装软件包，"
         "下载数据。",
         "",
         ("下面这些事绝对不能做。Research OS 会拒绝它们并记下这次尝试；被拒绝之后不要换个办法再试。" if hooked else
@@ -212,8 +281,10 @@ def rules(*, lang: str, runner: str, prot: dict) -> str:
         "6. 不运行 `researchos` 或 `rce` 命令，也不以任何其他方式联系 Research OS 应用。",
         "",
         "怎样收尾：",
-        f"- 任务完成后，调用 `{complete}`，参数 report 是一份 Markdown 报告：做了什么、运行过的命令、"
-        "输出的文件，以及关键数字，数字必须原样取自你真实运行的结果。绝不编造或估算数字、文件或结论。"
+        *routing,
+        f"- 任务完成后，调用 `{complete}`，参数 report 是一份 Markdown 报告：做了什么、运行过的命令，"
+        "以及关键数字，数字必须原样取自你真实运行的结果。文件在要紧的地方写出名字，不要另附输出清单。"
+        "绝不编造或估算数字、文件或结论。"
         "再给一个几个词的简短标题，说明这是什么结果。这一次调用同时把任务标为完成。",
         f"- 如果做不下去，或需要这个人来决定，调用 `{ask}`，提出一个清楚的问题，然后停下。"
         "他们的回答会接上这段对话。",
@@ -262,13 +333,13 @@ def instruction(*, lang: str, task: dict, project_name: str, overview: str | Non
         if due:
             parts += ["", f"Due date: {due}"]
         parts += ["", "## The project", "", name or "(unnamed)",
-                  "The working folder is the project folder."]
+                  "You work in the project folder."]
         parts += ["", "## Research question and plan (research/overview.md)", ""]
     else:
         parts += ["请完成下面这项任务。", "", "## 任务", "", text or "（没有内容）"]
         if due:
             parts += ["", f"截止日期：{due}"]
-        parts += ["", "## 项目", "", name or "（未命名）", "工作文件夹就是项目文件夹。"]
+        parts += ["", "## 项目", "", name or "（未命名）", "你在项目文件夹里工作。"]
         parts += ["", "## 研究问题与计划（research/overview.md）", ""]
 
     body = overview.strip() if isinstance(overview, str) else ""

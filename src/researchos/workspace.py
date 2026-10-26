@@ -468,10 +468,13 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
     approval of the task does not leave it pointing at a record that is not in the official project. Empty for
     anyone who changes the official version directly. A proposal carries only files that differ from the base, so a
     path that is no change (a record already official) is harmless in the list; when the base cannot be read every
-    task counts as changed."""
+    task counts as changed. A task that did not change is still offered its list of registered files when that differs
+    from the official one, with the files it newly names and those it names with another fingerprint (DESIGN.md 19.5):
+    a member who registers a file for a task whose record stays as it is has made a change the PI's version lacks."""
     if mode != "member" or not any(task.get("report") for task in tasks):
         return []
     official: dict[str, dict[str, Any]] = {}
+    base = None
     try:
         got = read_identity(root)
         base = proposals.read_base(got.identity.id) if got.identity is not None else None
@@ -480,7 +483,11 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
             official = {task["id"]: task for task in _tasks(json.loads(raw))}
     except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError, WorkspaceError):
         official = {}
-    return list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+    reports = list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+    unchanged = [task["report"] for task in tasks if task.get("report") and official.get(task["id"]) == task and task["report"] not in reports]
+    from researchos import outputs
+
+    return reports + outputs.related_files(root, reports, unchanged=unchanged, base=base)
 
 
 def _attempt_order(row: sqlite3.Row) -> tuple[Any, ...]:

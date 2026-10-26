@@ -670,3 +670,115 @@ def test_a_one_person_project_has_no_report_paths_to_take_along(root):
     note = _new(root, "result", "# Fit\n")
     tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"]}], "revision": None})
     assert tasks["changed_task_reports"] == [] and workspace.overview(root)["changed_task_reports"] == []
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_members_changed_catalog_is_offered_for_review_even_when_its_task_is_unchanged(tmp_path, monkeypatch):
+    """DESIGN 19.5 (amended): a file a member registers for a task whose record and row stay as they are changes the
+    task's list of registered files only; that list, and the files it newly names (not the ones the official list
+    names already), go in 提交改动 beside the changed tasks' files -- and a proposal of them carries exactly those."""
+    from researchos import outputs
+
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.pi():
+        official = drive.official
+        record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
+                                                    "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+                                        "revision": None})
+        (official / "tables").mkdir()
+        (official / "tables/a.csv").write_text("n\na\n")
+        outputs.register_files(official, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"}]})
+        share.publish(official)
+    catalog = outputs.catalog_path(record)
+    with drive.member():
+        project.open_project(drive.work)
+        share.sync(drive.work)
+        assert workspace.overview(drive.work)["changed_task_reports"] == []                 # in step with the official version
+        for name in ("b", "c"):
+            (drive.work / "tables" / f"{name}.csv").write_text(f"n\n{name}\n")
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/b.csv"}]})
+        offered = workspace.overview(drive.work)["changed_task_reports"]
+        assert offered == [catalog, "tables/b.csv"]       # the task is unchanged, so not its record; a.csv is official already
+        draft = proposals.make_proposal(drive.work, "files", "Register b.csv for the estimate",
+                                        only=[workspace.TASKS_PATH, *offered])
+        assert {item["path"] for item in draft.data["file"]} == {catalog, "tables/b.csv"}
+        # a task that did change is offered as before: its record, its catalog and every file the catalog names
+        tasks, revision = workspace.read_tasks(drive.work)
+        saved = workspace.save_tasks(drive.work, {"tasks": [{**tasks[0], "text": "Estimate it again"}], "revision": revision})
+        assert saved["changed_task_reports"] == [record, catalog, "tables/a.csv", "tables/b.csv"]
+        workspace.save_tasks(drive.work, {"tasks": tasks, "revision": saved["tasks_revision"]})
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/b.csv"]
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/c.csv"}]})
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/b.csv", "tables/c.csv"]
+        outputs.unregister_file(drive.work, {"report": record, "path": "tables/a.csv"})   # taking an official entry away is a change too
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/b.csv", "tables/c.csv"]
+    with drive.pi():
+        assert workspace.overview(drive.official)["changed_task_reports"] == []             # whoever changes the official version directly
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_file_a_member_registers_again_after_it_changed_is_offered_though_the_official_list_names_the_path(tmp_path, monkeypatch):
+    """DESIGN 19.5 (amended): for a member's unchanged task, a named file whose fingerprint differs from the official
+    catalog's entry of the same path is offered too, not only the files the official catalog does not name. Registering
+    the same bytes again changes the catalog's entry (who, when) and offers the catalog alone."""
+    from researchos import outputs
+
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.pi():
+        official = drive.official
+        record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
+                                                    "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+                                        "revision": None})
+        (official / "tables").mkdir()
+        for name in ("a", "b"):
+            (official / "tables" / f"{name}.csv").write_text(f"n\n{name}\n")
+        outputs.register_files(official, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"},
+                                                                      {"kind": "table", "path": "tables/b.csv"}]})
+        share.publish(official)
+    catalog = outputs.catalog_path(record)
+    with drive.member():
+        project.open_project(drive.work)
+        share.sync(drive.work)
+        assert workspace.overview(drive.work)["changed_task_reports"] == []                 # in step with the official version
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"}]})
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog]          # the same bytes: the entry only
+        (drive.work / "tables/a.csv").write_text("n\nedited by the member\n")
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"}]})
+        offered = workspace.overview(drive.work)["changed_task_reports"]
+        assert offered == [catalog, "tables/a.csv"]       # the official list names a.csv, with another fingerprint; b.csv is as it was
+        draft = proposals.make_proposal(drive.work, "files", "Register the edited a.csv", only=[workspace.TASKS_PATH, *offered])
+        assert {item["path"] for item in draft.data["file"]} == {catalog, "tables/a.csv"}
+
+
+@pytest.mark.skipif(signing.tool() is None, reason="ssh-keygen is not available")
+def test_a_malformed_official_catalog_never_breaks_the_project_home_of_a_member_whose_catalog_differs(tmp_path, monkeypatch):
+    """DESIGN 19.5: the official copy of a catalog is another person's file; an entry of it whose fingerprint is no
+    mapping, or a copy that does not parse, offers the member's files instead of raising into GET /api/workspace."""
+    from researchos import outputs
+
+    drive = _member_drive(tmp_path, monkeypatch)
+    with drive.pi():
+        official = drive.official
+        record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
+                                                    "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+                                        "revision": None})
+        (official / "tables").mkdir()
+        (official / "tables/a.csv").write_text("n\na\n")
+        outputs.register_files(official, {"report": record, "items": [{"kind": "table", "path": "tables/a.csv"}]})
+        share.publish(official)
+    catalog = outputs.catalog_path(record)
+    with drive.member():
+        project.open_project(drive.work)
+        share.sync(drive.work)
+        (drive.work / "tables/b.csv").write_text("n\nb\n")
+        outputs.register_files(drive.work, {"report": record, "items": [{"kind": "table", "path": "tables/b.csv"}]})
+        assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/b.csv"]
+        text = proposals.Base.text
+        for official_copy in ('{"version": 1, "items": [{"kind": "table", "path": "tables/a.csv", "fingerprint": "x"}]}',
+                              '{"version": 1, "items": [{"kind": "table", "path": "tables/a.csv", "fingerprint": ["x"]}]}',
+                              "[" * 100_000 + "]" * 100_000):
+            monkeypatch.setattr(proposals.Base, "text", lambda self, rel, copy=official_copy: copy if rel == catalog else text(self, rel))
+            assert workspace.overview(drive.work)["changed_task_reports"] == [catalog, "tables/a.csv", "tables/b.csv"], official_copy[:40]

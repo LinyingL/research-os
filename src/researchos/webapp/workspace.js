@@ -75,7 +75,8 @@
   let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
-  let createSubject = null, foreignBlocked = false;
+  let taskOpen = {}, taskDisclosures = {};
+  let createSubject = null, folderSubject = null, foreignBlocked = false;
   // AI agents carry out tasks (DESIGN.md Section 17): what the page knows of this Mac's agents, the people
   // an owner can be, the project's runs and what is open in each task's row. The programs and every limit
   // on them are the engine's; the page asks, shows words and follows a run by polling.
@@ -84,8 +85,15 @@
   let people = { loaded: false, loading: false, me: null, team: [] };
   let runsInfo = { runs: [], active: null }, details = {}, detailPending = {};
   let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, metaNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
+  // 任务输出 in a task's row (DESIGN.md 19.6): the place it is drawn in, the removal in progress and the sentence that
+  // says it failed, each by task id; and what the person opened, which a redraw keeps (19.12 item 2): { process: the
+  // 过程文件 group is open, all: { kind: true } for a group shown past its first files }.
+  let outputNodes = {}, outputBusy = {}, outputNotes = {}, outputOpen = {};
   let offline = false;
   let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  // 运行占用的空间 (DESIGN.md 19.8): what the engine says of the open project's run store, the sentence for a read or an
+  // action that failed, the action in progress and the timer that asks again while the engine tidies an old store.
+  let storeInfo = null, storeError = null, storeBusy = false, storeNote = null, storeTimer = null;
   let pollTimer = null, pollFails = 0;
   // The run poll rests while the window is hidden (DESIGN.md 18.4 item 2): a poll that was due is noted in `pollHeld`
   // and one poll is made when the window is shown again. `pollStopped` is 停止服务: the service is gone, for good.
@@ -105,21 +113,31 @@
   }
   // Words typed into an open reply form and not yet sent (17.8) are unsaved writing too.
   function replyDirty() { return Object.keys(agentUiState).some((id) => !!agentUiState[id].reply && !!String(agentUiState[id].text).trim()); }
-  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty(); }
+  function folderDirty() { return !!folderSubject && state.panelSubject === folderSubject && folderSubject.dirty; }
+  function mayLeaveFolders() {
+    if (!folderDirty()) return true;
+    if (!window.confirm(t("有未保存的内容，仍要离开吗？"))) return false;
+    folderSubject.dirty = false;
+    return true;
+  }
+  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
-  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null }; }
+  function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
-    host = null; data = null; draft = null; saved = null; ui = null; createSubject = null;
+    host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
     foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
+    taskOpen = {}; taskDisclosures = {};
     stopPolling(); offline = false;
     agentInfo = null; agentInfoError = null; agentInfoLoading = false;
     people = { loaded: false, loading: false, me: null, team: [] };
     runsInfo = { runs: [], active: null }; details = {}; detailPending = {};
     agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    outputNodes = {}; outputBusy = {}; outputNotes = {}; outputOpen = {};
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
+    stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
 
   function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("结果记录") : t("笔记", { n: 1 }); }
@@ -205,33 +223,55 @@
     renderTasks();
   }
 
+  // A link to a project file that opens it in the file panel.
+  function fileLink(local, label) {
+    const a = el("a", "ws-file-link");
+    a.append(label);
+    a.href = "/api/file?path=" + encodeURIComponent(local);
+    a.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (typeof openFilePanel === "function") openFilePanel(local);
+    });
+    return a;
+  }
+  // The project-relative file path an inline code span is, or null (DESIGN.md 19.6): a plain path of visible names,
+  // without a leading slash, a backslash, a control character, or a `.` or `..` step.
+  function codePath(text) {
+    if (!text || text.length > 500 || text.startsWith("/") || /[\\\x00-\x1f]/.test(text)) return null;
+    return text.split("/").every((part) => part && part !== "." && part !== "..") ? text : null;
+  }
+
   // Deliberately small Markdown reader: DOM nodes only. User HTML remains text;
-  // project images and links are resolved within the project and served locally.
+  // project images and links are resolved within the project and served locally. A record names its files from the
+  // project root as often as from its own folder (DESIGN.md 19.6): an inline code span that is the whole path of a
+  // file the project has is a link to it, and a link that points at no file from the document's folder but at one from
+  // the project root opens that one. Both ask the engine about the paths the file list cannot place only once (the
+  // same `wantLookup` and `knownCache` as every link), and nothing is ever written to the document.
   function inline(parent, text, from) {
     const pattern = /(!?\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*)/g;
     let start = 0, match;
     while ((match = pattern.exec(text))) {
       parent.append(text.slice(start, match.index));
-      if (match[4]) parent.append(el("code", null, match[4]));
-      else if (match[5]) parent.append(el("strong", null, match[5]));
+      if (match[4]) {
+        const path = codePath(match[4]), code = el("code", null, match[4]), known = !!path && knownFile(path);
+        if (path && !known && /[./]/.test(path)) wantLookup(path);
+        parent.append(known ? fileLink(path, code) : code);
+      } else if (match[5]) parent.append(el("strong", null, match[5]));
       else {
         const image = match[1].startsWith("!"), label = match[2].replace(/\\([\[\]\\])/g, "$1"), target = match[3];
-        const local = resolvePath(from, target);
-        const known = !!local && knownFile(local);
-        if (local && !known) wantLookup(local);
+        let local = resolvePath(from, target), known = !!local && knownFile(local);
+        if (local && !known) {
+          const rooted = resolvePath("", target);
+          if (rooted && rooted !== local && knownFile(rooted)) { local = rooted; known = true; }
+          else { wantLookup(local); if (rooted && rooted !== local) wantLookup(rooted); }
+        }
         if (image && known && /\.(png|jpe?g|gif|webp)$/i.test(local)) {
           const img = el("img", "ws-image");
           img.src = "/api/workspace/asset?path=" + encodeURIComponent(local);
           img.alt = label; img.loading = "lazy";
           parent.append(img);
         } else if (known) {
-          const a = el("a", "ws-file-link", label || local);
-          a.href = "/api/file?path=" + encodeURIComponent(local);
-          a.addEventListener("click", (event) => {
-            event.preventDefault();
-            if (typeof openFilePanel === "function") openFilePanel(local);
-          });
-          parent.append(a);
+          parent.append(fileLink(local, label || local));
         } else if (/^https?:\/\//i.test(target)) {
           const a = el("a", null, label || target);
           a.href = target; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -603,19 +643,44 @@
 
   function renderTaskList() {
     const list = ui.list, snap = focusSnapshot(list);
+    // A native toggle can be queued just before a refresh; read it before replacing the row.
+    Object.values(taskDisclosures).forEach((view) => view.remember());
     list.replaceChildren();
-    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
+    taskDisclosures = {};
+    // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
+    const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
     showTaskError();
     (data.tasks || []).forEach((task) => {
       const run = latestRun(task.id);
       const row = el("div", "ws-task" + (task.done ? " done" : ""));
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
       check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
-      check.addEventListener("change", () => mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x)));
-      const words = el("div", "ws-task-words"); words.append(el("span", "ws-task-text", task.text));
+      check.addEventListener("change", () => {
+        // DESIGN.md 19.6: clearing the done mark of a task that has a result record asks first (the list the page holds
+        // now, not the row as drawn: the row is kept while a reply is typed). Declined, the box is ticked again and
+        // nothing is saved. Ticking never asks.
+        const now = (data.tasks || []).find((x) => x.id === task.id) || task;
+        if (!check.checked && now.report && !window.confirm(t("这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"))) {
+          check.checked = true;
+          return;
+        }
+        return mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x));
+      });
+      const disclosure = el("details", "ws-task-details");
+      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
+      const view = { open: disclosure.open, remember: () => {
+        if (view.open !== disclosure.open) { view.open = disclosure.open; taskOpen[task.id] = disclosure.open; }
+      } };
+      taskDisclosures[task.id] = view;
+      disclosure.addEventListener("toggle", () => { if (taskDisclosures[task.id] === view) view.remember(); });
+      const summary = keyed(disclosureSummary(task.text), "task-details:" + task.id);
+      summary.className += " ws-task-summary"; summary.lastChild.className = "ws-task-text";
+      const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
+      outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
       const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
         taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false }; renderTasks(); ui.taskText.focus();
@@ -623,7 +688,9 @@
       const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
-      row.append(check, words, edit, remove); list.append(row);
+      const actions = el("div", "ws-task-actions"); actions.append(edit, remove);
+      body.append(words, actions); disclosure.append(summary, body);
+      row.append(check, disclosure); list.append(row);
     });
     restoreFocus(list, snap);
   }
@@ -642,6 +709,7 @@
     const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
     const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
+    const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
     ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
@@ -1102,10 +1170,14 @@
     if (!ui || !ui.tasks) return;
     (data.tasks || []).forEach((task) => {
       lockRow(task);
+      drawTaskOutputs(task);
       const old = sections[task.id];
       if (!old) {
-        // The runs of a project arrive after its tasks are drawn.
-        if (wordsNodes[task.id] && (parseAgent(task.owner) || latestRun(task.id))) { sections[task.id] = agentSection(task); wordsNodes[task.id].append(sections[task.id]); }
+        // The runs of a project arrive after its tasks are drawn; the section goes above 任务输出, under the task's words.
+        if (wordsNodes[task.id] && (parseAgent(task.owner) || latestRun(task.id))) {
+          sections[task.id] = agentSection(task);
+          if (outputNodes[task.id]) outputNodes[task.id].before(sections[task.id]); else wordsNodes[task.id].append(sections[task.id]);
+        }
         return;
       }
       if (old.dataset.sig === agentSig(task)) return;
@@ -1205,6 +1277,332 @@
   }
   function setNote(taskId, words, kind, extra) {
     agentNotes[taskId] = words ? Object.assign({ words: words, kind: kind || "" }, extra || {}) : null;
+  }
+
+  // -- 任务输出: a task's files in its row (DESIGN.md 19.6) -------------------------------------------------------
+  // Under the run controls of a task with a result record: the files registered for it by kind (the 输出目录 panel's
+  // words), each opening in the file panel and each with 移除登记 (the 过程文件 group is its count until opened, any other
+  // past 8 files has 「另外 N 个」: 19.12 item 2); the new files that nobody registered, of every run of the task that is
+  // not undone (19.12 item 7); the task's process folder (19.12 item 1) with the files in it now. The engine's
+  // `task_outputs` (one answer with the page) has the
+  // facts; the place sits inside the task's details, so it collapses with them, and is drawn again only when what it
+  // shows has changed, so a poll leaves it and its focus alone.
+  function outputKinds() {
+    return { code: t("代码"), data: t("数据"), figure: t("图"), table: t("表"), literature: t("文献"), document: t("文稿与报告"), variable: t("变量草稿"), work: t("过程文件") };
+  }
+  // 13.5: English separates thousands with commas, Chinese stays as it is; a counted noun still picks its form by n.
+  function countText(n) { return typeof window !== "undefined" && window.ROI18N && window.ROI18N.lang === "en" ? String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : n; }
+  function outputsOf(task) { return (data && task.report && data.task_outputs && data.task_outputs[task.id]) || null; }
+  function outputsSig(task) {
+    const run = latestRun(task.id), opened = outputOpen[task.id];
+    // what is shown past a group's first files changes the drawing; whether the 过程文件 disclosure is open does not (the browser keeps it)
+    return JSON.stringify([outputsOf(task), outputNotes[task.id] || null, !!outputBusy[task.id], editable(), !!run && isActiveState(run.state), run ? run.id : null,
+      (opened && opened.all) || {}]);
+  }
+  function outputRow(task, item, locked) {
+    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+    // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview;
+    // so does one whose file is there but only in the cloud, which cannot be read on this Mac
+    if (gone || cloud) li.append(el("span", null, name));
+    else li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
+    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+    if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
+    if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
+    if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
+    const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
+    remove.disabled = locked; li.append(remove);
+    if (!gone && !cloud && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+      const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
+      image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
+      preview.append(image); li.append(preview);
+    }
+    return li;
+  }
+  // 登记… on the line of the count (DESIGN.md 19.5, 19.6, 19.12 item 7): the list of the new files the count is about,
+  // those of every run of the task on this Mac that is not undone (a question and its answer are two runs of one
+  // conversation), for review. `info.filing` has the count; the engine's listing, asked for the task, has the paths.
+  function registerNewFilesHook(task, info, line) {
+    const run = latestRun(task.id);
+    if (!run) return;
+    const open = keyed(named(button(t("登记…"), () => openBackfill({ task: task.id })), t("登记：{task}", { task: task.text })), "output-register:" + task.id);
+    open.disabled = !editable() || !!outputBusy[task.id] || isActiveState(run.state);
+    line.append(open);
+  }
+  // How many files of a group the row shows before 「另外 N 个」 (DESIGN.md 19.12 item 2); the 过程文件 group, once opened,
+  // shows them all.
+  const OUTPUT_SHOWN = 8;
+  function outputState(task) { return outputOpen[task.id] || (outputOpen[task.id] = { process: false, all: {} }); }
+  // The rest of a group, opened: drawn again with every file, and the focus goes to the first file that was not shown.
+  function showAllOutputs(task, kind, first) {
+    outputState(task).all[kind] = true;
+    drawTaskOutputs(task);
+    if (!focusKey(outputNodes[task.id], "output-open:" + task.id + ":" + first.path)) focusKey(outputNodes[task.id], "output-remove:" + task.id + ":" + first.path);
+  }
+  // The block, or nothing when the task has nothing to show: no file registered, no new file, no process folder.
+  function taskOutputsBlock(task) {
+    const info = outputsOf(task);
+    if (!info) return null;
+    const entries = info.entries || [], unregistered = info.filing && info.filing.counts ? Number(info.filing.counts.unregistered) || 0 : 0;
+    if (!entries.length && !info.error && !unregistered && !info.work_folder) return null;
+    const run = latestRun(task.id), locked = !editable() || !!outputBusy[task.id] || (!!run && isActiveState(run.state));
+    const box = el("div", "ws-outputs");
+    box.append(el("h3", "ws-outputs-title", t("任务输出")));
+    if (info.error) box.append(el("p", "ws-status err", t("输出清单暂时无法读取。")));
+    else if (!entries.length) box.append(quiet(t("还没有登记的文件。")));
+    const kinds = outputKinds();
+    Object.keys(kinds).forEach((kind) => {
+      const group = entries.filter((item) => item.kind === kind);
+      if (!group.length) return;
+      const opened = outputState(task), list = el("ul", "ws-outputs-files");
+      const count = el("span", "ws-agent-quiet", t("{n} 个文件", { n: countText(group.length) }));
+      if (kind === "work") {
+        // 19.12 item 2: process files are many and rarely read, so the group is its count until the person opens it
+        // (and stays open, or closed, when the row is drawn again)
+        const fold = el("details", "ws-outputs-process"), summary = keyed(disclosureSummary(kinds[kind]), "output-group:" + task.id + ":work");
+        summary.classList.add("ws-outputs-kind"); summary.append(count);
+        group.forEach((item) => list.append(outputRow(task, item, locked)));
+        fold.open = !!opened.process;
+        fold.addEventListener("toggle", () => { opened.process = fold.open; });
+        fold.append(summary, list);
+        box.append(fold);
+        return;
+      }
+      // any other group past OUTPUT_SHOWN files shows its first files and 「另外 N 个」 for the rest
+      const shown = opened.all[kind] ? group : group.slice(0, OUTPUT_SHOWN), head = el("p", "ws-outputs-kind");
+      head.append(el("span", null, kinds[kind]), count);
+      shown.forEach((item) => list.append(outputRow(task, item, locked)));
+      box.append(head, list);
+      if (shown.length < group.length) {
+        const rest = countText(group.length - shown.length);
+        box.append(keyed(named(button(t("另外 {n} 个", { n: rest }), () => showAllOutputs(task, kind, group[shown.length])), t("另外 {n} 个：{kind}", { n: rest, kind: kinds[kind] })),
+          "output-more:" + task.id + ":" + kind));
+      }
+    });
+    const note = outputNotes[task.id];
+    if (note) { const says = el("p", "ws-status err", note); says.setAttribute("role", "status"); box.append(says); }
+    if (unregistered > 0) {
+      const line = el("p", "ws-outputs-line");
+      line.append(el("span", null, t("{n} 个新文件未登记", { n: countText(unregistered) })));
+      registerNewFilesHook(task, info, line);
+      box.append(line);
+    }
+    if (info.work_folder) {
+      const files = Number(info.work_files) || 0, line = el("p", "ws-outputs-line");
+      line.append(el("span", null, t("过程文件夹")), el("code", "ws-output-path", info.work_folder),
+        el("span", "ws-agent-quiet", info.work_files_more ? t("超过 {n} 个文件", { n: countText(files) }) : t("{n} 个文件", { n: countText(files) })));
+      box.append(line);
+    }
+    return box;
+  }
+  function drawTaskOutputs(task) {
+    const holder = outputNodes[task.id];
+    if (!holder) return;
+    const sig = outputsOf(task) || outputNotes[task.id] ? outputsSig(task) : "";
+    if (holder.dataset.sig === sig) return;
+    const snap = focusSnapshot(holder), block = taskOutputsBlock(task);
+    holder.dataset.sig = sig;
+    holder.replaceChildren(...(block ? [block] : []));
+    restoreFocus(holder, snap);
+  }
+  // 移除登记: asked first, then the registration goes (the file stays), and the answer is read again for the counts.
+  async function removeRegistration(task, item) {
+    if (outputBusy[task.id] || !editable()) return;
+    if (!window.confirm(t("移除这个文件的登记吗？文件本身不会改动。"))) return;
+    const mark = stamp();
+    outputBusy[task.id] = true; outputNotes[task.id] = null; drawTaskOutputs(task);
+    try {
+      await apiPost("/api/outputs/unregister", { project: project(), report: task.report, path: item.path });
+    } catch (err) {
+      if (!live(mark)) return;
+      outputBusy[task.id] = false; outputNotes[task.id] = errorWords(t("没能移除登记。"), err); drawTaskOutputs(task);
+      focusKey(outputNodes[task.id], "output-remove:" + task.id + ":" + item.path);   // the button that was pressed is still there
+      return;
+    }
+    if (!live(mark)) return;
+    const info = outputsOf(task);
+    if (info) info.entries = (info.entries || []).filter((x) => x.path !== item.path);
+    try {
+      const fresh = await apiGet("/api/workspace");
+      if (live(mark) && data && fresh.project === project() && fresh.task_outputs) data.task_outputs = fresh.task_outputs;
+    } catch (err) { /* the page reads the project again on its own; what was removed is already gone from the row */ }
+    if (!live(mark)) return;
+    outputBusy[task.id] = false; drawTaskOutputs(task);
+    if (typeof pollGeneration === "function") pollGeneration();
+  }
+
+  // -- 补登记以往运行的文件: the review list (DESIGN.md 19.5, 19.10 item 4) ----------------------------------------
+  // The engine lists the files that runs on this Mac created and nobody registered, by task and run, each with the kind
+  // it suggests (`GET /api/outputs/backfill`). The person reviews them in the side panel: a box and a kind for each file
+  // (the box is on when a kind is suggested; 不登记 is no kind and leaves the box off), a disclosure for each task and a
+  // select-all in it. 登记所选 registers each task's checked files with one call to /api/outputs/register, then reads the
+  // list again; a task whose call failed says so and keeps what the person chose. The list is the panel's subject like
+  // the folders form (`folderSubject`), so leaving it after a change asks first.
+  const BACKFILL_OPEN = 40;   // up to this many files every task starts open; with more, the person opens the ones to review
+  // scope: { task } for the runs of one task (a task row's 登记…, 19.12 item 7), { run } for one run, or none for every run.
+  function backfillUrl(scope) {
+    const query = [];
+    if (data && data.id) query.push("project=" + encodeURIComponent(data.id));
+    if (scope && scope.task) query.push("task=" + encodeURIComponent(scope.task));
+    if (scope && scope.run) query.push("run=" + encodeURIComponent(scope.run));
+    return "/api/outputs/backfill" + (query.length ? "?" + query.join("&") : "");
+  }
+  // Each file knows the run that created it, which the registration records (19.12 item 4): the date shown for it
+  // afterwards is that run's.
+  function withRuns(listing) {
+    ((listing && listing.groups) || []).forEach((group) => (group.runs || []).forEach((run) => (run.files || []).forEach((file) => { if (!file.run) file.run = run.id; })));
+    return listing;
+  }
+  function backfillFiles(group) { return (group.runs || []).flatMap((run) => run.files || []); }
+  // What the person has chosen for a file: its kind ("" is 不登记) and whether its box is on. A choice is made once, from
+  // the suggestion, and kept when the list is read again.
+  function backfillChoice(subject, file) {
+    return subject.choices[file.path] || (subject.choices[file.path] = { kind: file.kind || "", on: !!file.kind });
+  }
+  function backfillTicked(subject, group) {
+    return backfillFiles(group).filter((file) => { const choice = backfillChoice(subject, file); return choice.on && !!choice.kind; });
+  }
+  function backfillLocked(subject) { return subject.busy || !editable(); }
+  // The counts, the pictures of the rows and the sentence under the buttons are drawn from `subject`, so that ticking a
+  // box changes them and not the list: a long list keeps its place.
+  function drawBackfill(subject) {
+    const groups = (subject.listing && subject.listing.groups) || [], kinds = outputKinds();
+    const body = el("div", "ws-backfill"), total = groups.reduce((n, group) => n + backfillFiles(group).length, 0);
+    const syncs = [], repaints = [];
+    const count = el("p", "ws-backfill-total"), says = el("p", "ws-status"), footer = el("div", "ws-agent-actions");
+    says.setAttribute("role", "status");
+    const register = keyed(button(t("登记所选"), () => registerBackfill(subject), "btn btn-primary btn-small"), "backfill-register");
+    footer.append(register);
+    function sync() {
+      syncs.forEach((f) => f());
+      const n = groups.reduce((sum, group) => sum + backfillTicked(subject, group).length, 0);
+      count.textContent = t("已选 {n} 项，共 {total} 项", { n: countText(n), total: countText(total) });
+      register.disabled = !n || backfillLocked(subject);
+    }
+    subject.lock = () => { repaints.forEach((f) => f()); sync(); };
+    panelBody.replaceChildren(body);
+    if (!groups.length) body.append(quiet(t("没有需要补登记的文件。")));
+    else body.append(quiet(t("这些文件由以往的运行创建，还没有登记。勾选的文件会登记到各自的任务下，文件本身不会移动。")));
+    groups.forEach((group) => {
+      const files = backfillFiles(group), box = el("details", "res-draft"), summary = disclosureSummary(group.text || group.task);
+      const tally = el("span", "ws-agent-quiet"), inner = el("div", "res-draft-body"), rows = {}, bulk = [];
+      summary.append(tally);
+      syncs.push(() => { tally.textContent = t("已选 {n} 项，共 {total} 项", { n: countText(backfillTicked(subject, group).length), total: countText(files.length) }); });
+      box.open = subject.notes[group.task] ? true
+        : Object.prototype.hasOwnProperty.call(subject.open, group.task) ? subject.open[group.task] : total <= BACKFILL_OPEN;
+      if (subject.notes[group.task]) { const problem = el("p", "ws-status err", subject.notes[group.task]); problem.setAttribute("role", "status"); inner.append(problem); }
+      function paint(file) {
+        const row = rows[file.path], choice = backfillChoice(subject, file);
+        if (!row) return;
+        row.select.value = choice.kind; row.select.disabled = backfillLocked(subject);
+        row.box.checked = choice.on && !!choice.kind; row.box.disabled = !choice.kind || backfillLocked(subject);
+      }
+      function touched(file) { subject.dirty = true; paint(file); sync(); }
+      function fileRow(file) {
+        const li = el("li", "ws-backfill-file"), label = el("label", "ws-undo-row"), tick = keyed(el("input"), "backfill:" + file.path);
+        const kind = keyed(named(el("select", "form-input"), t("登记为：{file}", { file: file.path })), "backfill-kind:" + file.path);
+        tick.type = "checkbox";
+        tick.addEventListener("change", () => { backfillChoice(subject, file).on = tick.checked; touched(file); });
+        Object.keys(kinds).forEach((name) => { const option = el("option", null, kinds[name]); option.value = name; kind.append(option); });
+        const none = el("option", null, t("不登记")); none.value = ""; kind.append(none);
+        kind.addEventListener("change", () => {
+          const choice = backfillChoice(subject, file);
+          choice.on = kind.value ? (choice.kind ? choice.on : true) : false;   // a kind for a file without one ticks it; 不登记 clears it
+          choice.kind = kind.value; touched(file);
+        });
+        label.append(tick, el("code", null, file.path));
+        rows[file.path] = { box: tick, select: kind };
+        li.append(label, kind); paint(file);
+        return li;
+      }
+      function setAll(on) {
+        files.forEach((file) => { const choice = backfillChoice(subject, file); if (choice.kind) choice.on = on; paint(file); });
+        subject.dirty = true; sync();
+      }
+      // The rows of a task are drawn when its disclosure is open, not before: a long list costs nothing until it is read.
+      let filled = false;
+      function fill() {
+        if (filled || !box.open) return;
+        filled = true;
+        const all = keyed(button(t("全部勾选"), () => setAll(true)), "backfill-all:" + group.task);
+        const none = keyed(button(t("全部取消勾选"), () => setAll(false)), "backfill-none:" + group.task);
+        const actions = el("div", "ws-agent-actions");
+        bulk.push(all, none); actions.append(all, none); inner.append(actions);
+        (group.runs || []).forEach((run) => {
+          const head = el("p", "ws-backfill-run"), list = el("ul", "ws-agent-files ws-undo-list");
+          head.append(el("span", null, whenWords(run.date)), el("span", null, run.agent || ""));
+          (run.files || []).forEach((file) => list.append(fileRow(file)));
+          inner.append(head, list);
+        });
+        all.disabled = none.disabled = backfillLocked(subject);
+      }
+      repaints.push(() => { files.forEach(paint); bulk.forEach((node) => { node.disabled = backfillLocked(subject); }); });
+      box.addEventListener("toggle", () => { subject.open[group.task] = box.open; fill(); });
+      box.append(summary, inner); body.append(box);
+      fill();
+    });
+    const more = Number(subject.listing && subject.listing.more) || 0;
+    if (more > 0) body.append(quiet(t("另有 {n} 个没有列出。", { n: countText(more) })), quiet(t("登记已列出的文件后再打开，才会列出其余的。")));
+    if (groups.length) body.append(count, footer);
+    if (subject.status) status(says, subject.status.words, subject.status.kind);
+    body.append(says);
+    sync();
+  }
+  // The rows' 任务输出 and the other views after files were registered: the counts are read again, as removing a
+  // registration does, and the page's poll is asked to look at the project.
+  async function readOutputsAgain(mark) {
+    try {
+      const fresh = await apiGet("/api/workspace");
+      if (live(mark) && data && fresh.project === project() && fresh.task_outputs) data.task_outputs = fresh.task_outputs;
+    } catch (err) { /* the page reads the project again on its own */ }
+    if (!live(mark)) return;
+    ((data && data.tasks) || []).forEach(drawTaskOutputs);
+    if (typeof pollGeneration === "function") pollGeneration();
+  }
+  async function registerBackfill(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !editable() || !here()) return;
+    const chosen = ((subject.listing && subject.listing.groups) || []).map((group) => ({ group: group, files: backfillTicked(subject, group) })).filter((x) => x.files.length);
+    if (!chosen.length) return;
+    subject.busy = true; subject.notes = {}; subject.status = null; subject.lock();
+    let done = 0, failed = 0;
+    for (const entry of chosen) {
+      try {
+        await apiPost("/api/outputs/register", { project: project(), report: entry.group.report,
+          items: entry.files.map((file) => Object.assign({ kind: backfillChoice(subject, file).kind, path: file.path }, file.run ? { run: file.run } : {})) });
+        done += entry.files.length;
+      } catch (err) {
+        failed += 1; subject.notes[entry.group.task] = errorWords(t("没能登记这项任务的文件。"), err);
+      }
+      if (!live(mark)) break;   // the project changed: what was asked of the old one is done, the rest is not this project's
+    }
+    if (done && live(mark)) await readOutputsAgain(mark);
+    if (!here()) return;
+    subject.busy = false; subject.dirty = failed > 0;
+    const lines = [];
+    if (done) lines.push(t("已登记 {n} 个文件。", { n: countText(done) }));
+    if (failed) lines.push(t("有 {n} 项任务的文件没能登记，选择都还在。", { n: countText(failed) }));
+    subject.status = { words: lines.join("\n"), kind: failed ? "err" : "ok" };
+    try {
+      subject.listing = withRuns(await apiGet(backfillUrl(subject.scope)));
+    } catch (err) { subject.status = { words: errorWords(t("没能读取要补登记的文件。"), err), kind: "err" }; }
+    if (!here()) return;
+    drawBackfill(subject);
+    focusKey(panelBody, "backfill-register");
+  }
+  // scope: { task } to list the runs of that task (the task row's 登记…, 19.12 item 7), { run } for one run, or none for
+  // every run (the 输出目录 panel's button).
+  async function openBackfill(scope) {
+    if (!mayReplacePanel()) return;
+    const mark = stamp();
+    const subject = { kind: "backfill", dirty: false, mark: mark, scope: scope || null, busy: false, listing: null, choices: {}, open: {}, notes: {}, status: null, lock: null };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("补登记以往运行的文件"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const listing = withRuns(await apiGet(backfillUrl(subject.scope)));
+      if (!live(mark) || state.panelSubject !== subject) return;
+      subject.listing = listing; drawBackfill(subject);
+    } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取要补登记的文件。"), err), "err"); }
   }
 
   // -- the actions ---------------------------------------------------------------------------------
@@ -1465,6 +1863,8 @@
     }
     const d = loaded.data;
     if (Object.prototype.hasOwnProperty.call(d, "reasoning_effort")) box.append(quiet(t("推理强度：{level}", { level: effortLabel(d.reasoning_effort) })));
+    // 19.8: the program keeps its own record of the conversation; the log names it so that it can be found there
+    if (d.session_id) box.append(quiet(t("会话编号：{id}", { id: d.session_id })));
     // A folder with more files than the picture holds: what happened beyond them cannot be checked or undone (17.5).
     if (d.snapshot && d.snapshot.partial) box.append(el("p", "ws-status err", t("这个项目文件太多，运行前只记录了前 50,000 个文件：之后的文件（数据文件除外）改动无法核对，也无法撤回。")));
     if (outcomeOf(run) !== "needs_input" && run.question) box.append(el("p", "ws-agent-question", run.question));
@@ -1519,13 +1919,14 @@
 
   // -- 设置: this Mac's agents (17.1) -----------------------------------------------------------------
   function toggleSettings() {
-    if (settingsOpen) { settingsOpen = false; renderTasks(); return; }
+    if (settingsOpen) { settingsOpen = false; stopStoreTimer(); renderTasks(); return; }
     openSettings();
   }
   function openSettings() {
     settingsOpen = true; renderTasks();
     // The programs may have been installed since the page opened.
     if (agentInfo) loadAgentInfo(stamp(), true);
+    loadStore(stamp());
     if (ui && ui.settings && typeof ui.settings.scrollIntoView === "function") ui.settings.scrollIntoView();
   }
   async function saveAgentSettings(body, doneWords, onDone) {
@@ -1734,6 +2135,125 @@
     row.append(field(t("每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）"), usd), save);
     return row;
   }
+  // The most a project's run store may take (DESIGN.md 19.8), in whole gigabytes; saved with the other limits.
+  function storeLimitBlock() {
+    const row = el("div", "ws-agent-add"), gb = keyed(input("number"), "set-store-limit");
+    const range = agentInfo.store_limit_range || [1, 100];
+    gb.min = String(range[0]); gb.max = String(range[1]); gb.step = "1"; gb.disabled = settingsBusy;
+    gb.value = settingsInputs.storeLimit == null ? String(agentInfo.store_limit_gb == null ? "" : agentInfo.store_limit_gb) : settingsInputs.storeLimit;
+    gb.addEventListener("input", () => { settingsInputs.storeLimit = gb.value; });
+    const save = button(t("保存"), () => {
+      const value = Number(gb.value);
+      if (!gb.value.trim() || !Number.isInteger(value) || value < range[0] || value > range[1]) { settingsNote = { words: t("空间上限要在 1 到 100 GB 之间，是整数。"), kind: "err" }; renderSettings(true); return; }
+      settingsInputs.storeLimit = null;
+      saveAgentSettings({ store_limit_gb: value }, t("已保存"), () => loadStore(stamp()));
+    }); keyed(save, "set-store-limit-save"); named(save, t("保存：{name}", { name: t("空间上限") })); save.disabled = settingsBusy;
+    row.append(field(t("每个项目的运行空间上限（GB）"), gb), save);
+    return row;
+  }
+
+  // -- 运行占用的空间 (DESIGN.md 19.8): the open project's run store against its limit ---------------------
+  // A size as the panel names it: a tenth of a gigabyte from 1 GB up, whole megabytes below (13.5: thousands separated in
+  // English), and "less than 1 MB" for what a few logs take.
+  function storeSize(bytes) {
+    const mb = bytes / (1024 * 1024);
+    if (mb >= 1024) return (mb / 1024).toFixed(1) + " GB";
+    return bytes > 0 && mb < 1 ? t("小于 1 MB") : countText(Math.round(mb)) + " MB";
+  }
+  function stopStoreTimer() { if (storeTimer !== null) clearTimeout(storeTimer); storeTimer = null; }
+  // While the engine tidies an old store it says so; the panel asks again until it has finished.
+  function scheduleStore() {
+    stopStoreTimer();
+    if (settingsOpen && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
+  }
+  async function loadStore(mark) {
+    if (!settingsOpen || !project()) return;
+    try {
+      const info = await apiGet("/api/agents/store?project=" + encodeURIComponent(project()));
+      if (!live(mark)) return;
+      storeInfo = info; storeError = null;
+    } catch (err) {
+      if (!live(mark)) return;
+      storeError = err;
+    }
+    drawStore(); scheduleStore();
+  }
+  // One action on the store (release, delete): it answers the panel as it stands now.
+  async function storeAction(path, body, doneWords, failWords) {
+    if (storeBusy) return;
+    const mark = stamp();
+    storeBusy = true; storeNote = null; drawStore();
+    try {
+      const answer = await apiPost(path, Object.assign({ project: project() }, body));
+      if (!live(mark)) { storeBusy = false; return; }
+      storeInfo = answer; storeError = null; storeNote = { words: doneWords, kind: "ok" };
+    } catch (err) {
+      if (!live(mark)) { storeBusy = false; return; }
+      storeNote = { words: errorWords(failWords, err), kind: "err" };
+    }
+    storeBusy = false; drawStore(); scheduleStore();
+  }
+  function storeRunRow(item) {
+    const li = el("li", "ws-store-run");
+    const task = item.task_removed || !item.task ? t("任务已移除") : item.task;
+    li.append(el("span", "ws-store-task", task), el("span", "ws-agent-quiet", whenWords(item.date)), el("span", "ws-agent-quiet", storeSize(item.size)),
+      el("span", "ws-agent-quiet", t("{n} 个文件", { n: countText(item.files) })));
+    const remove = keyed(named(button(t("删除这些文件"), () => {
+      if (!window.confirm(t("要删除这次运行撤回时移走的 {n} 个文件吗？删除后无法恢复。", { n: countText(item.files) }))) return;
+      storeAction("/api/agents/store/delete-moved", { run: item.run }, t("已删除。"), t("没能删除这些文件。"));
+    }), t("删除这些文件：{task}", { task: task })), "store-delete:" + item.run);
+    remove.disabled = storeBusy; li.append(remove);
+    return li;
+  }
+  function drawStore() {
+    const slot = ui && ui.storeSlot;
+    if (!slot) return;
+    const snap = focusSnapshot(slot);
+    slot.replaceChildren();
+    // a read that failed says so, with what was known before it under it; the first read says it is going
+    if (storeError) {
+      slot.append(el("p", "ws-status err", errorWords(t("没能读取运行占用的空间。"), storeError)));
+      slot.append(keyed(button(t("重试"), () => loadStore(stamp())), "store-retry"));
+    }
+    if (!storeInfo) {
+      if (!storeError) slot.append(el("p", "ws-status", t("正在读取…")));
+      return;
+    }
+    const info = storeInfo;
+    if (info.converting) slot.append(el("p", "ws-status", t("正在整理撤回备份…")));
+    else {
+      const rows = el("div", "ws-store-rows");
+      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行记录"), info.records]].forEach(([name, bytes]) => {
+        const row = el("div", "ws-store-row");
+        row.append(el("span", null, name), el("span", "ws-store-size", storeSize(bytes || 0)));
+        rows.append(row);
+      });
+      slot.append(rows);
+      slot.append(quiet(t("共占用 {used}，每个项目最多 {limit}。", { used: storeSize(info.total || 0), limit: storeSize(info.limit) })));
+    }
+    slot.append(quiet(t("超过上限时，从最早的运行开始释放撤回备份，正在运行的那一次不受影响。")));
+    // 19.12 item 8: and what that means for the next run, since the limit is kept by releasing backups
+    if (info.moved_over && !info.converting) slot.append(el("p", "ws-status err", t("撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。在你删除它们之前，每次新运行的撤回备份会在运行结束时立刻释放，所以新的运行不能撤回。")));
+    if ((info.moved_runs || []).length && !info.converting) {
+      const list = el("ul", "ws-store-runs");
+      info.moved_runs.slice().reverse().forEach((item) => list.append(storeRunRow(item)));
+      slot.append(list);
+    }
+    const release = keyed(button(t("释放所有撤回备份"), () => {
+      if (!window.confirm(t("要释放这个项目所有的撤回备份吗？释放后，这些运行就不能再撤回了。正在运行的那一次保留自己的备份。"))) return;
+      storeAction("/api/agents/store/release", {}, t("已释放。"), t("没能释放撤回备份。"));
+    }), "store-release");
+    release.disabled = storeBusy || !!info.converting || !info.releasable; slot.append(release);
+    if (storeNote) slot.append(el("p", "ws-status " + storeNote.kind, storeNote.words));
+    restoreFocus(slot, snap);
+  }
+  function storeBlock() {
+    const box = el("div", "ws-agent-list ws-store");
+    box.append(el("h4", "ws-runner-name", t("运行占用的空间")));
+    ui.storeSlot = el("div", "ws-store-body"); box.append(ui.storeSlot);
+    drawStore();
+    return box;
+  }
   // `fresh`: the settings box was just made (or the person asked for the redraw). Otherwise an input the person is
   // typing in is not rebuilt: the program list and statuses of the next redraw wait, only the note is patched.
   function renderSettings(fresh) {
@@ -1754,7 +2274,7 @@
     }
     if (agentInfo.mcp === false) { const warn = el("div", "ws-agent-warn"); warn.append(el("p", "ws-status err", mcpWords()), installBlock()); box.append(warn); }
     (agentInfo.runners || []).forEach((r) => box.append(runnerBlock(r)));
-    box.append(agentsBlock(), limitBlock(), budgetBlock());
+    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock(), storeBlock());
     ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
     restoreFocus(box, snap);
     loadModels(settingsInputs.runner);
@@ -1851,6 +2371,61 @@
     form.append(choose, create, feedback); panelBody.append(form); openPanel(); name.focus();
   }
 
-  window.ROWorkspace = { load: load, mayLeave: mayLeave, reset: reset, openCreateProject: openCreateProject, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  async function openOutputFolders() {
+    if (!mayReplacePanel()) return;
+    const mark = stamp(), subject = { kind: "output-folders", dirty: false };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("输出目录"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    const active = () => live(mark) && state.panelSubject === subject;
+    try {
+      const info = await apiGet("/api/outputs/folders");
+      if (!active()) return;
+      panelBody.replaceChildren();
+      panelBody.append(el("p", "ws-agent-quiet", t("已有文件保持原位。新任务按这些目录保存输出，可以在目录内继续分组。")));
+      const labels = outputKinds();
+      const form = el("form", "ws-output-folders"), inputs = {};
+      let choosing = null;   // the line that says the work location needs choosing, until a save sets it
+      Object.keys(labels).forEach((kind) => {
+        const box = input("text"); box.value = info.folders[kind]; inputs[kind] = box;
+        box.addEventListener("input", () => { subject.dirty = true; });
+        form.append(field(labels[kind], box));
+        // 19.2: the work location comes last, and says what it holds and what the app does with it; when no name is
+        // usable for it (the settings still read: it is empty), the field says it needs choosing
+        if (kind === "work") {
+          if (Array.isArray(info.choose) && info.choose.indexOf("work") >= 0) form.append(choosing = el("p", "ws-status err", t("请为过程文件选一个目录。")));
+          form.append(el("p", "ws-agent-quiet", t("过程文件：只为完成这次任务而写的脚本、自检输出、下载的源码和中间文件。不进索引，不算输出。")));
+        }
+      });
+      const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
+      const save = button(t("保存"), async () => {
+        save.disabled = true; Object.values(inputs).forEach((box) => { box.disabled = true; });
+        try {
+          const response = await apiPost("/api/outputs/folders", { project: mark.project, revision: info.revision,
+            folders: Object.fromEntries(Object.entries(inputs).map(([kind, box]) => [kind, box.value.trim()])) });
+          if (!active()) return;
+          info.revision = response.revision; subject.dirty = false; save.disabled = false;
+          Object.values(inputs).forEach((box) => { box.disabled = false; });
+          // a save that set the work location answers the line (19.2); one that left it empty would have been refused
+          if (choosing && inputs.work.value.trim()) { choosing.remove(); choosing = null; }
+          status(feedback, t("已保存，下次任务运行时使用。"), "ok");
+        } catch (err) { if (active()) { save.disabled = false; Object.values(inputs).forEach((box) => { box.disabled = false; }); status(feedback, errorWords(t("没能保存输出目录。"), err), "err"); } }
+      });
+      form.addEventListener("submit", (event) => { event.preventDefault(); if (!save.disabled) save.click(); });
+      form.append(save, feedback); panelBody.append(form);
+      // 19.5: the files earlier runs created and nobody registered, offered for review when there are any
+      try {
+        const earlier = await apiGet(backfillUrl(null));
+        const n = active() && earlier ? (Number(earlier.listed) || 0) + (Number(earlier.more) || 0) : 0;
+        if (n > 0) {
+          const offer = el("div", "ws-backfill-offer");
+          offer.append(quiet(t("以往的运行创建了 {n} 个还没登记的文件。", { n: countText(n) })), keyed(button(t("补登记以往运行的文件…"), () => openBackfill(null)), "output-backfill"));
+          panelBody.append(offer);
+        }
+      } catch (err) { /* no list, no offer: the folders are what this panel is for */ }
+    } catch (err) { if (active()) status(note, errorWords(t("没能读取输出目录。"), err), "err"); }
+  }
+
+  window.ROWorkspace = { load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

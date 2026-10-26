@@ -1,6 +1,6 @@
 """This Mac's agents and the programs that run them (DESIGN.md 17.1).
 
-**What is saved.** Four optional keys of `settings.json` (the per-Mac file of
+**What is saved.** Five optional keys of `settings.json` (the per-Mac file of
 `researchos.settings`), each written only when the person changes it and
 read tolerantly (a bad value reads as "not set", never as an error):
 
@@ -9,7 +9,9 @@ read tolerantly (a bad value reads as "not set", never as an error):
 - `agent_commands`: `{runner: absolute path}`, where the person says a
   program lives (otherwise it is looked up on a widened `PATH`);
 - `agent_timeout_minutes`: the run's time limit (default 120, 5-1440);
-- `agent_max_budget_usd`: Claude Code's `--max-budget-usd`, when set.
+- `agent_max_budget_usd`: Claude Code's `--max-budget-usd`, when set;
+- `agent_store_limit_gb`: how much of this Mac one project's run store may take (default 5, a whole number
+  from 1 to 100; DESIGN.md 19.8).
 
 Every setter is read-modify-write and keeps the other keys, and validates
 before it writes: a model name ends up on a command line, so it is checked
@@ -55,6 +57,8 @@ MAX_AGENTS = 20
 DEFAULT_TIMEOUT_MINUTES = 120
 TIMEOUT_RANGE = (5, 1440)
 MAX_BUDGET_LIMIT_USD = 1000
+DEFAULT_STORE_LIMIT_GB = 5
+STORE_LIMIT_RANGE = (1, 100)
 # Versioned suggestions from Anthropic's Claude Code model guide (2026-10-23):
 # https://support.claude.com/en/articles/11940350-claude-code-model-configuration
 # These are suggestions, not an account entitlement check. Existing aliases remain valid settings.
@@ -95,6 +99,7 @@ AGENTS_SETTING = "agents"
 COMMANDS_SETTING = "agent_commands"
 TIMEOUT_SETTING = "agent_timeout_minutes"
 BUDGET_SETTING = "agent_max_budget_usd"
+STORE_LIMIT_SETTING = "agent_store_limit_gb"
 
 _VERSION_CAP = 200
 _MODEL_LINE_RE = re.compile(r"^[^\s/]+/\S+$")
@@ -477,6 +482,34 @@ def set_max_budget_usd(value: object) -> float | None:
         data[BUDGET_SETTING] = number
     settings.write_json(settings.settings_path(), data)
     return max_budget_usd()
+
+
+def _valid_store_limit(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if STORE_LIMIT_RANGE[0] <= value <= STORE_LIMIT_RANGE[1] else None
+
+
+def store_limit_gb() -> int:
+    """How many gigabytes one project's run store may take (19.8): the saved limit, else the default."""
+    saved = _valid_store_limit(settings.read_settings().get(STORE_LIMIT_SETTING))
+    return saved if saved is not None else DEFAULT_STORE_LIMIT_GB
+
+
+def set_store_limit_gb(value: object) -> int:
+    """Save the run store's limit (a whole number of gigabytes in `STORE_LIMIT_RANGE`); None or "" removes the setting.
+    Returns the limit now in force."""
+    data = settings.read_settings()
+    if _blank(value):
+        data.pop(STORE_LIMIT_SETTING, None)
+    else:
+        number = _number(value, "the store limit")
+        if number != int(number) or not STORE_LIMIT_RANGE[0] <= number <= STORE_LIMIT_RANGE[1]:
+            raise ValueError(f"the store limit must be a whole number of gigabytes from {STORE_LIMIT_RANGE[0]} "
+                             f"to {STORE_LIMIT_RANGE[1]}")
+        data[STORE_LIMIT_SETTING] = int(number)
+    settings.write_json(settings.settings_path(), data)
+    return store_limit_gb()
 
 
 # -- the MCP extra and OpenCode's models -----------------------------------------------------

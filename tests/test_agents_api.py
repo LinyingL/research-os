@@ -662,7 +662,8 @@ def test_every_agent_post_is_refused_across_origins(api):
     run_id = done["id"]
     before_settings = api.get("/api/agents")[1]
     posts = ["/api/settings/agents", "/api/agents/runs", f"/api/agents/runs/{run_id}/reply",
-             f"/api/agents/runs/{run_id}/stop", f"/api/agents/runs/{run_id}/revert"]
+             f"/api/agents/runs/{run_id}/stop", f"/api/agents/runs/{run_id}/revert",
+             "/api/agents/store/release", "/api/agents/store/delete-moved"]
     body = json.dumps({"project": str(api.root), "task": "t1", "message": "x", "agents": [], "timeout_minutes": 7}).encode()
     host = api.base.removeprefix("http://")
     for path in posts:
@@ -673,7 +674,7 @@ def test_every_agent_post_is_refused_across_origins(api):
             api.base, "POST", path, {"Host": "evil.example:80", "Content-Length": str(len(body))}, body)
         assert status == 403, path
     for path in ("/api/agents", "/api/agents/models?runner=claude-code", "/api/agents/runs",
-                 f"/api/agents/runs/{run_id}"):
+                 f"/api/agents/runs/{run_id}", "/api/agents/store"):
         status, _ = _request_with_headers(api.base, "GET", path, {"Host": host, **FOREIGN})
         assert status == 403, path
     # nothing happened: no new run, no revert, no settings change
@@ -1237,3 +1238,70 @@ def test_a_failing_recovery_never_ends_the_engine(tmp_path, monkeypatch):
         assert {t.name for t in threading.enumerate()} == before
     finally:
         httpd.server_close()
+
+
+def test_a_run_is_refused_over_http_while_the_work_location_has_no_usable_name(api):
+    """DESIGN 19.2 (amended): the refusal is the work location's own sentence in the request's language, as an
+    `agent_work_location` state; nothing is recorded, and the run starts once a folder is chosen."""
+    api.put("work", "a file, not a folder")
+    api.put("agent-work", "another file")
+    api.scenario([init_step(), finish_step()])
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_work_location"
+    assert error["message"] == error["detail"] == "Choose a folder for process files."
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+    assert status == 409 and error["message"] == "请为过程文件选一个目录。"
+    assert run_store.list_runs(api.pid) == [] and api.get("/api/agents/runs")[1]["runs"] == []
+    status, info = api.get("/api/outputs/folders")                  # the panel still opens, and says what is missing
+    assert status == 200 and info["choose"] == ["work"] and info["folders"]["work"] == "" and info["folders"]["code"] == "code"
+    status, error = api.post("/api/outputs/folders", {"revision": None, "folders": info["folders"]}, lang="en")
+    assert status == 409 and error["state"] == "workspace_output" and error["message"] == "Choose a folder for process files."
+    status, saved = api.post("/api/outputs/folders", {"revision": None, "folders": {**info["folders"], "work": "process"}})
+    assert status == 200 and saved["folders"]["work"] == "process" and "choose" not in saved
+    assert api.poll(api.start()["id"])["state"] == "ended"
+
+
+def test_a_run_is_refused_over_http_while_the_output_settings_cannot_be_read(api):
+    """DESIGN 19.2 (amended): settings that cannot be read -- a file that is no JSON, a saved work location that
+    crowds another -- refuse the run as `agent_output_folders`, a 409 with the settings' own sentence in the request's
+    language, not a server error; nothing is recorded, and the run starts once they read again."""
+    api.put("research/folders.json", "not json")
+    api.scenario([init_step(), finish_step()])
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_output_folders" and "invalid JSON" in error["message"]
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+    assert status == 409 and error["message"].startswith("读不出输出目录的设置：")
+    seven = {"code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+             "document": "reports", "variable": "research/variables"}
+    api.put("research/folders.json", json.dumps({"version": 1, "folders": {**seven, "work": "reports/work"}}))
+    status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+    assert status == 409 and error["state"] == "agent_output_folders" and "work location" in error["message"]
+    assert run_store.list_runs(api.pid) == [] and api.get("/api/agents/runs")[1]["runs"] == []
+    api.put("research/folders.json", json.dumps({"version": 1, "folders": {**seven, "work": "work"}}))
+    assert api.poll(api.start()["id"])["state"] == "ended"
+
+
+def test_the_chinese_refusal_for_unreadable_output_settings_names_the_file_and_the_reason(api):
+    """DESIGN 19.2 (amended): the 409 says in Chinese what the English says -- which file (research/folders.json) and,
+    where it is known, why: invalid JSON, a version nobody knows, a location that is a file, a work location that
+    crowds another."""
+    seven = {"code": "code", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+             "document": "reports", "variable": "research/variables"}
+    api.put("src", "a file, not a folder")
+    api.scenario([init_step(), finish_step()])
+    cases = [
+        ("not json", "invalid JSON", "不是有效的 JSON"),
+        (json.dumps({"version": 2, "folders": {**seven, "work": "work"}}), "Unknown output-folder settings version", "版本号不认识"),
+        (json.dumps({"version": 1, "folders": {**seven, "code": "src", "work": "work"}}), "The code location is a file", "“src”是文件"),
+        (json.dumps({"version": 1, "folders": {**seven, "work": "reports/work"}}), "work location must stand apart",
+         "过程文件的目录“reports/work”不能与“reports”相同"),
+    ]
+    for text, english, chinese in cases:
+        api.put("research/folders.json", text)
+        status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="en")
+        assert status == 409 and error["state"] == "agent_output_folders" and english in error["message"]
+        status, error = api.post("/api/agents/runs", {"task": "t1"}, lang="zh")
+        assert status == 409 and error["message"].startswith("读不出输出目录的设置：")
+        assert "research/folders.json" in error["message"] and chinese in error["message"]
+        assert "输出目录或文件不符合设置" not in error["message"]
+    assert run_store.list_runs(api.pid) == []

@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.5.0
+
+### Files from AI agents
+
+- Give each task a process folder for its process files: the one-off scripts,
+  check output, downloaded sources and scratch data an agent writes only to
+  carry out the task. By default it is `work/<date>-<task name>/`, shared by
+  the task's later runs, and **Output folders** lists its location as
+  **Process files**. The index skips it and its files are not outputs.
+- Tell each agent where every kind of file goes, which process folder and
+  subfolder name are its task's, and that nothing is created under
+  `research/`. The result record is the task's one report: a document you
+  asked for goes to the documents folder, the record stays short, the agent
+  names files in it where they matter and adds no list of its outputs, and
+  Research OS appends the section **Registered output files**.
+- Sort the files each run created after it ends: Research OS's own records,
+  registered outputs, process files, caches, and the rest. A task whose runs
+  that were not undone left files nobody registered says so in its row, for
+  example **3 new files not registered**, with **Register…** to review them.
+- Register a file that a run created and nobody registered, from the lists
+  that **Register…** (in a task's row) and **Register files from earlier
+  runs…** open: wherever the file lies, as a kind you choose. A file you wrote
+  yourself is not offered and cannot be registered from the page. Remove a
+  registration without touching the file. In a team, a member's changed
+  registrations are offered in **Submit changes** like a changed task. A task
+  holds up to 1,000 registered files.
+- Show a task's files in its row under **Task outputs**: the registered files
+  grouped by kind, each opening in the file panel (figures with a small
+  preview) and each with **Remove registration**; then the new files not
+  registered; then the process folder's path and file count. The **Process
+  files** group is only its count until opened, and any other group of more
+  than eight files shows eight and **N more**. A registration whose
+  file is gone stays in the row, marked **File no longer there**, until it is
+  removed.
+- Stand the registered rows in Figures and claims, Data & code, Literature and
+  Variables under one heading per task: the first heading of its result record
+  (else the task's first line; **Task removed** when the task is no longer in
+  the list), the date of the run that produced the files, and **Open the
+  result** once. A file registered from a run's created files is dated by that
+  run.
+- Register compressed data and tables (`.gz`, `.bz2`, `.xz`, `.zst` after a
+  data or table suffix, for example `prices_long.csv.gz`) as the kind they hold.
+  Only plain CSV and TSV tables have a preview.
+- Link the files a result record names. In its preview, a file path written
+  in code style opens that file, and so does a link written from the project
+  folder rather than from the record's own folder. The record itself is not
+  rewritten.
+- Offer the files that earlier runs created and nobody registered, from
+  **Output folders** (**Register files from earlier runs…**). Each file comes
+  with a suggested kind taken from its folder and name, or **Do not
+  register**. Nothing is registered or moved until **Register selected**.
+- Ask before a task that has a result is marked not done by clearing its box:
+  a new run rewrites the same result record. Marking a task done never asks.
+- Open the record from **Open the result** on a registered row in Figures and
+  claims, Data & code or Literature. It opened in a page that was hidden, so
+  nothing seemed to happen.
+- Store each distinct content once in a project's undo backups, as a
+  read-only copy shared by the runs that need it, instead of copying the
+  project again for every run. A run that is undone releases its backup and
+  cannot be undone twice.
+- Keep a project's undo backups, files moved away by undo, and run logs within
+  5 GB (1 to 100 GB, set under **Space limit** in the AI agent area). Over the
+  limit, the oldest run's backup is released first and that run can no longer
+  be undone. Files moved away by undo are removed only when you delete them;
+  when they alone pass the limit, the panel says that each new run's backup is
+  then released as soon as the run ends.
+- Show **Space used by runs** in the AI agent area: the sizes of **Undo
+  backups**, **Files moved away by undo** and **Run log** against the limit,
+  the runs that hold moved-away files with **Delete these files**, and
+  **Release all undo backups**. Both ask first. Name the agent program's
+  session in the run log as **Session ID**.
+
+### Upgrading
+
+- Upgrade every team member before anyone saves output folders or registers a
+  process file. A version from before process files cannot read
+  `research/folders.json` once it lists the process-files location, and a
+  task's registrations that include a process file make its output views say
+  the list cannot be read.
+- Undo backups made before this version are converted in the background the
+  first time a project's runs are cleaned up or **Space used by runs** is
+  opened; the panel says **Tidying undo backups…** meanwhile. Backups of runs
+  that were already undone are released.
+- Do not return to an earlier version once a project's backups are converted:
+  an earlier version would undo a run with files that come back read only.
+
 ## 0.3.0
 
 ### Research workspace
@@ -19,6 +105,8 @@
   Team submissions include referenced files and the result records linked by tasks.
 - Keep optional tasks with an owner, date, completion status, and result link.
   Tasks have no required order and do not gate writing or research attempts.
+- Collapse task details individually, opening only the three newest tasks by
+  default. Keep manual disclosure choices and unsent replies during refreshes.
 
 ### Research routes and interface
 
@@ -48,6 +136,19 @@
 
 ### AI agents
 
+- Set project output folders for code, data, figures, tables, references,
+  documents, and variable drafts, reusing existing directories. Give each run
+  a fixed copy of those locations without moving files or creating a template tree.
+- Accept typed final-file declarations through the completion tool. Validate
+  their locations, existence, formats, reference exports, and variable TOML;
+  retain the task, run, report, and file fingerprints in a project catalog.
+  Show registered products in the relevant views before a rescan, including
+  bounded CSV/TSV samples and image previews. Keep missing files out of the
+  catalog view and mark changed ones.
+- Import reported variable definitions only through a human action, into a new
+  card or the next version draft. Keep open drafts and confirmed versions intact;
+  never confirm a definition on behalf of the agent. Include the output catalog
+  in run undo and link registered files from the result record for team review.
 - Assign tasks to a locally installed Codex, Claude Code, DeepSeek Harness, or OpenCode program. Agents
   can write code, run analysis, and finish with a result record linked to the task.
 - Select complete model versions from the runner's catalog, or enter a full ID.

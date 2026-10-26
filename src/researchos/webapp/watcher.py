@@ -517,6 +517,13 @@ class ProjectWatcher:
         project write guard, first."""
         return self._guarded_ingest_lock
 
+    @property
+    def generation(self) -> int:
+        """The generation as of now (the `generation` of `status_payload`, without the rest): what a cache of an answer
+        about the project's files is keyed to (DESIGN.md 19.6)."""
+        with self._state_lock:
+            return self._generation
+
     def bump_generation(self) -> int:
         """The graph changed without any watched FILE changing (a human
         marked a link as a wrong extraction, or restored one -- a status

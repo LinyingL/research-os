@@ -5,12 +5,16 @@ category assertions tests/test_ingest_git.py already makes for its git
 counterpart.
 """
 
+import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from researchos import db, paths
 from researchos.ingest import files as files_ingest
+from researchos.ingest import git as git_ingest
 
 
 def test_categorizes_every_tracked_extension(tmp_path: Path):
@@ -130,3 +134,285 @@ def test_empty_directory_returns_all_empty_categories(tmp_path: Path):
         "tex": [], "bib": [], "image": [], "py": [], "md": [], "r": [], "rmd": [],
         "do": [], "ado": [], "data": [],
     }
+
+
+# --- V15: the project scan leaves out the work folder and the files registered as work (DESIGN.md 19.7) ----------
+
+
+def _put(root: Path, rel: str, text: str = "x = 1\n") -> None:
+    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (root / rel).write_text(text)
+
+
+def _register(root: Path, name: str, *items: tuple[str, str], made: bool = True) -> None:
+    """A task's output record, as `outputs.register` writes it (the parts the scan reads): a document the run created
+    says `created: true` (19.7) unless `made` is False, the researcher's own draft that an agent edited and declared."""
+    body = {"version": 1, "items": [{"kind": kind, "path": rel, "title": rel, "fingerprint": {},
+                                     **({"created": True} if kind == "document" and made else {})} for kind, rel in items]}
+    _put(root, f"research/results/{name}.outputs.json", json.dumps(body))
+
+
+def _scripts(root: Path) -> list[str]:
+    return files_ingest.list_source_files(root)["py"]
+
+
+def test_the_default_work_folder_is_skipped_like_a_noise_folder_but_the_walk_itself_lists_it(tmp_path):
+    for rel in ("src/a.py", "work/20261025-probe/probe.py", "work/20261025-probe/sub/more.py", "Work/20261024-x/loud.py",
+                "worker/real.py", "src/work/real_too.py"):
+        _put(tmp_path, rel)
+    _put(tmp_path, "work/20261025-probe/out.csv", "a\n1\n")
+    inventory = files_ingest.list_source_files(tmp_path)
+    assert inventory["py"] == ["src/a.py", "src/work/real_too.py", "worker/real.py"] and inventory["data"] == []
+    # iter_files is shared with the add-project preview, which counts every file it would not scan as a noise folder
+    assert {rel for rel, _c in files_ingest.iter_files(tmp_path)} >= {"work/20261025-probe/probe.py", "work/20261025-probe/out.csv"}
+
+
+def test_the_configured_work_folder_replaces_the_default(tmp_path):
+    for rel in ("process/runs/a.py", "work/b.py", "src/c.py"):
+        _put(tmp_path, rel)
+    folders = {"code": "src", "data": "data", "figure": "figures", "table": "tables", "literature": "literature",
+               "document": "reports", "variable": "research/variables", "work": "process/runs"}
+    _put(tmp_path, "research/folders.json", json.dumps({"version": 1, "folders": folders}))
+    assert files_ingest.work_folder(tmp_path) == "process/runs"
+    assert _scripts(tmp_path) == ["src/c.py", "work/b.py"]
+    old = {k: v for k, v in folders.items() if k != "work"}  # a file saved before the work location existed
+    _put(tmp_path, "research/folders.json", json.dumps({"version": 1, "folders": old}))
+    assert files_ingest.work_folder(tmp_path) == "work" and _scripts(tmp_path) == ["process/runs/a.py", "src/c.py"]
+
+
+@pytest.mark.parametrize("settings", ["not json", "[]", "{}", '{"version": 2, "folders": {"work": "x"}}',
+                                      '{"version": 1, "folders": []}', '{"version": 1, "folders": {"work": 3}}',
+                                      '{"version": 1, "folders": {"work": ""}}', '{"version": 1, "folders": {"work": "../x"}}',
+                                      '{"version": 1, "folders": {"work": "/etc"}}', '{"version": 1, "folders": {"work": "a/./b"}}'])
+def test_unreadable_folder_settings_mean_the_default_work_folder_and_never_fail_the_scan(tmp_path, settings):
+    _put(tmp_path, "work/a.py")
+    _put(tmp_path, "src/b.py")
+    _put(tmp_path, "research/folders.json", settings)
+    assert files_ingest.work_folder(tmp_path) == "work" and _scripts(tmp_path) == ["src/b.py"]
+
+
+def test_files_registered_as_work_are_skipped_wherever_they_are_and_other_kinds_are_not(tmp_path):
+    for rel in ("scripts/probe.py", "scripts/real.py", "src/Check.py", "scripts/output_code.py"):
+        _put(tmp_path, rel)
+    _register(tmp_path, "a" * 32, ("work", "scripts/probe.py"), ("code", "scripts/real.py"))
+    _register(tmp_path, "b" * 32, ("work", "src/check.py"), ("code", "scripts/output_code.py"))  # another case: same file here
+    assert files_ingest.registered(tmp_path) == {
+        "work": frozenset({"scripts/probe.py", "src/check.py"}), "code": frozenset({"scripts/real.py", "scripts/output_code.py"})}
+    assert _scripts(tmp_path) == ["scripts/output_code.py", "scripts/real.py"]
+    probe = files_ingest.scan_skips(tmp_path)
+    assert probe("scripts/probe.py") and probe("SCRIPTS/Probe.py") and not probe("scripts/real.py") and not probe("work")
+
+
+def test_a_record_that_cannot_be_read_registers_nothing_and_the_others_still_count(tmp_path):
+    for rel in ("one.py", "two.py", "three.py"):
+        _put(tmp_path, rel)
+    _put(tmp_path, "research/results/" + "a" * 32 + ".outputs.json", "not json")
+    _put(tmp_path, "research/results/" + "b" * 32 + ".outputs.json", '{"version": 1, "items": [3, {"kind": 4}, {"kind": "work"}, '
+                                                                    '{"kind": "work", "path": 5}, {"kind": "work", "path": "two.py"}]}')
+    _put(tmp_path, "research/results/" + "c" * 32 + ".outputs.json", '{"items": "x"}')
+    _put(tmp_path, "research/results/notes.txt", "ignored")
+    assert files_ingest.registered(tmp_path) == {"work": frozenset({"two.py"})}
+    assert _scripts(tmp_path) == ["one.py", "three.py"]
+    assert files_ingest.registered(tmp_path / "nowhere") == {}
+
+
+def test_a_git_project_leaves_the_work_folder_and_registered_work_out_of_the_scan_but_not_out_of_the_preview(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for rel in ("src/a.py", "work/20261025-probe/probe.py", "tools/probe2.py", "tools/keep.py", "work/20261025-probe/out.csv"):
+        _put(repo, rel, "x = 1\n" if rel.endswith(".py") else "a\n1\n")
+    _register(repo, "a" * 32, ("work", "tools/probe2.py"))
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True, capture_output=True)
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True)
+    subprocess.run([*git, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"], check=True, capture_output=True)
+    inventory = git_ingest.list_source_files(repo)
+    assert inventory["py"] == ["src/a.py", "tools/keep.py"]
+    assert inventory["data"] == ["research/results/" + "a" * 32 + ".outputs.json"]  # the record itself is a tracked file
+    assert {rel for rel, _c in git_ingest.iter_tracked(repo)} >= {"work/20261025-probe/probe.py", "tools/probe2.py"}
+
+
+def test_researchos_ingest_scans_no_process_file_and_draws_no_claim_from_a_registered_document(tmp_path, capsys):
+    """DESIGN 19.7 end to end: the scan of a project that had a task run. Its paper is read; the plan an agent was asked
+    to write (registered as a document), the agent's probe script and a note in the work folder, and a script registered
+    as work are not."""
+    from researchos import cli
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    sentence = "# Results\n\nOur model achieves 87.3% accuracy.\n"
+    _put(project, "paper.md", sentence)
+    _put(project, "reports/plan.md", sentence.replace("Results", "Plan"))
+    _put(project, "work/20261025-probe/notes.md", sentence.replace("Results", "Scratch"))
+    _put(project, "work/20261025-probe/probe.py", "import pandas as pd\npd.read_csv('data/in.csv')\n")
+    _put(project, "tools/odd.py", "import pandas as pd\npd.read_csv('data/odd.csv')\n")
+    _put(project, "tools/real.py", "import pandas as pd\npd.read_csv('data/in.csv')\n")
+    _register(project, "a" * 32, ("document", "reports/plan.md"), ("work", "tools/odd.py"))
+    run_dir = project / "mlruns" / "0" / "run_a"
+    (run_dir / "metrics").mkdir(parents=True)
+    (run_dir / "meta.yaml").write_text("experiment_id: '0'\nrun_id: run_a\nstatus: FINISHED\n")
+    (run_dir / "metrics" / "accuracy").write_text("0 0.873 0\n")
+    cli.main(["init", str(project)])
+    capsys.readouterr()
+    assert cli.main(["ingest", str(project)]) == 0
+    out = capsys.readouterr().out
+    assert "mdpaper: 2 .md scanned (1 skipped as README/CHANGELOG/LICENSE or in research/)" in out  # plan.md; work/ never listed
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        sections = [n["id"] for n in db.get_nodes_by_type(conn, "section")]
+        assert sections == ["section:paper.md#results"]
+        assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.md"]
+        every = [n["id"] for t in ("script", "dataset", "section", "claim") for n in db.get_nodes_by_type(conn, t)]
+        assert not any("work/" in i or "probe" in i or "odd" in i or "plan.md" in i for i in every), every
+        assert any("tools/real.py" in i for i in every), every
+    finally:
+        conn.close()
+
+
+# --- a LaTeX file registered as a document is not a paper draft either (DESIGN.md 19.7) ---------------------------
+
+
+def test_a_tex_file_registered_as_a_document_leaves_the_tex_inventory_but_other_files_stay(tmp_path):
+    """The scan reads `.tex` through the `tex` category (latex sections, claims, citation drafts), so a registered
+    document leaves that category; a `.tex` registered as another kind, a `.tex` nobody registered, and a Markdown
+    document (which mdpaper skips itself) are as before."""
+    for rel in ("paper.tex", "reports/Plan.tex", "reports/other.tex", "tables/sum.tex", "reports/plan.md"):
+        _put(tmp_path, rel, "\\section{A}\n")
+    _register(tmp_path, "a" * 32, ("document", "reports/plan.tex"), ("document", "reports/plan.md"))  # another case: same file
+    _register(tmp_path, "b" * 32, ("table", "tables/sum.tex"))
+    inventory = files_ingest.list_source_files(tmp_path)
+    assert inventory["tex"] == ["paper.tex", "reports/other.tex", "tables/sum.tex"]
+    assert inventory["md"] == ["reports/plan.md"]  # kept: mdpaper makes no sections or claims of it
+    probe = files_ingest.scan_skips(tmp_path)
+    assert probe("REPORTS/Plan.tex", "tex") and not probe("reports/plan.tex") and not probe("reports/plan.tex", "py")
+    assert not probe("reports/other.tex", "tex") and not probe("paper.tex", "tex")
+    # the add-project preview's walk is not the scan's inventory
+    assert "reports/Plan.tex" in {rel for rel, _c in files_ingest.iter_files(tmp_path)}
+
+
+def test_a_git_project_leaves_a_registered_tex_document_out_of_the_tex_inventory_but_not_out_of_the_preview(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for rel in ("paper.tex", "reports/plan.tex"):
+        _put(repo, rel, "\\section{A}\n")
+    _register(repo, "a" * 32, ("document", "reports/plan.tex"))
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True, capture_output=True)
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True)
+    subprocess.run([*git, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"], check=True, capture_output=True)
+    assert git_ingest.list_source_files(repo)["tex"] == ["paper.tex"]
+    assert "reports/plan.tex" in {rel for rel, _c in git_ingest.iter_tracked(repo)}
+
+
+def _tex_project(tmp_path: Path, *, git: bool = False, registered: bool = True, made: bool = True) -> Path:
+    """A project with a paper and a plan in LaTeX, both stating a number one tracked run backs; the plan is registered
+    as a document (the task that wrote it said so) unless `registered` is False, and says a run created it unless
+    `made` is False (the researcher's own draft, edited and declared by an agent)."""
+    from researchos import cli
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    tex = "\\section{NAME}\nOur model achieves 87.3\\% accuracy.\n"
+    _put(project, "paper.tex", tex.replace("NAME", "Results"))
+    _put(project, "reports/plan.tex", tex.replace("NAME", "Plan"))
+    if registered:
+        _register(project, "a" * 32, ("document", "reports/plan.tex"), made=made)
+    run_dir = project / "mlruns" / "0" / "run_a"
+    (run_dir / "metrics").mkdir(parents=True)
+    (run_dir / "meta.yaml").write_text("experiment_id: '0'\nrun_id: run_a\nstatus: FINISHED\n")
+    (run_dir / "metrics" / "accuracy").write_text("0 0.873 0\n")
+    if git:
+        cmd = ["git", "-C", str(project)]
+        subprocess.run([*cmd, "init", "-q"], check=True, capture_output=True)
+        subprocess.run([*cmd, "add", "-A"], check=True, capture_output=True)
+        subprocess.run([*cmd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"], check=True, capture_output=True)
+    cli.main(["init", str(project)])
+    return project
+
+
+@pytest.mark.parametrize("git_project", [False, True], ids=["no git", "git"])
+def test_researchos_ingest_makes_no_section_claim_or_candidate_of_a_registered_tex_document(tmp_path, capsys, git_project):
+    """DESIGN 19.7 end to end for LaTeX: the paper is read; the plan an agent was asked to write (registered as a
+    document, a `.tex`) yields no section, no claim, no `backed_by` candidate, and is not a draft for citations."""
+    from researchos import cli
+    from researchos.ingest import citations
+
+    project = _tex_project(tmp_path, git=git_project)
+    capsys.readouterr()
+    assert cli.main(["ingest", str(project)]) == 0
+    assert "latex: 1 .tex" in capsys.readouterr().out  # paper.tex only
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        assert [n["id"].split("#")[0] for n in db.get_nodes_by_type(conn, "section")] == ["section:paper.tex"]
+        assert [c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")] == ["paper.tex"]
+        assert [e["src"].split("#")[0] for e in db.query_edges(conn, type="backed_by")] == ["claim:paper.tex"]
+    finally:
+        conn.close()
+    assert citations.drafts_of(files_ingest.list_source_files(project), project) == ["paper.tex"]
+
+
+def test_what_a_scan_drew_from_a_tex_file_before_it_was_registered_as_a_document_is_reported_as_no_longer_in_the_scan(tmp_path, capsys):
+    """The file leaves the scan like one moved into the work folder: nothing new is drawn from it, and what an earlier
+    scan drew is reported as not in the scan results (it is not deleted, unlike the claims of a registered Markdown
+    document, whose file stays in the inventory)."""
+    from researchos import cli
+    from researchos.ingest import scan as scan_mod
+
+    project = _tex_project(tmp_path, registered=False)
+    capsys.readouterr()
+    assert cli.main(["ingest", str(project)]) == 0
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        before = {n["id"] for t in ("section", "claim") for n in db.get_nodes_by_type(conn, t)}
+        assert len(before) == 4 and all(scan_mod.node_present(conn, i) for i in before)
+    finally:
+        conn.close()
+    _register(project, "a" * 32, ("document", "reports/plan.tex"))
+    assert cli.main(["ingest", str(project)]) == 0
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        after = {n["id"] for t in ("section", "claim") for n in db.get_nodes_by_type(conn, t)}
+        assert after == before  # nothing new was made, nothing deleted
+        assert {i for i in after if scan_mod.node_present(conn, i)} == {i for i in after if i.split("#")[0].endswith(":paper.tex")}
+        assert {i for i in after if not scan_mod.node_present(conn, i)} == {i for i in after if ":reports/plan.tex" in i}
+    finally:
+        conn.close()
+
+
+# --- a document the run did not create stays a paper draft (DESIGN.md 19.7) ----------------------------------------
+
+
+def test_registered_gives_the_documents_a_run_created_and_every_other_kind_as_before(tmp_path):
+    def item(kind: str, rel: str, **more) -> dict:
+        return {"kind": kind, "path": rel, "title": rel, "fingerprint": {}, **more}
+
+    _put(tmp_path, "research/results/" + "a" * 32 + ".outputs.json", json.dumps({"version": 1, "items": [
+        item("document", "reports/made.tex", created=True), item("document", "reports/own.tex"),
+        item("document", "reports/false.tex", created=False), item("document", "reports/yes.tex", created="yes"),
+        item("table", "tables/t.csv"), item("work", "work/x.py"), item("code", "src/c.py", created=True)]}))
+    assert files_ingest.registered(tmp_path) == {"document": frozenset({"reports/made.tex"}), "table": frozenset({"tables/t.csv"}),
+                                                 "work": frozenset({"work/x.py"}), "code": frozenset({"src/c.py"})}
+    probe = files_ingest.scan_skips(tmp_path)
+    assert probe("reports/MADE.tex", "tex") and not probe("reports/own.tex", "tex") and not probe("reports/false.tex", "tex")
+
+
+@pytest.mark.parametrize("git_project", [False, True], ids=["no git", "git"])
+def test_a_tex_document_the_run_did_not_create_stays_in_the_inventory_and_is_read_as_a_draft(tmp_path, capsys, git_project):
+    """The researcher's own LaTeX draft that an agent edited and declared was there before the run: it keeps its sections,
+    its claims and its place among the citation drafts."""
+    from researchos import cli
+    from researchos.ingest import citations
+
+    project = _tex_project(tmp_path, git=git_project, made=False)
+    capsys.readouterr()
+    inventory = (git_ingest if git_project else files_ingest).list_source_files(project)
+    assert inventory["tex"] == ["paper.tex", "reports/plan.tex"]
+    assert cli.main(["ingest", str(project)]) == 0
+    assert "latex: 2 .tex" in capsys.readouterr().out
+    conn = db.connect(paths.graph_db_path(project))
+    try:
+        assert sorted(n["id"].split("#")[0] for n in db.get_nodes_by_type(conn, "section")) == ["section:paper.tex", "section:reports/plan.tex"]
+        assert sorted(c["attrs"]["tex_path"] for c in db.get_nodes_by_type(conn, "claim")) == ["paper.tex", "reports/plan.tex"]
+    finally:
+        conn.close()
+    assert citations.drafts_of(inventory, project) == ["paper.tex", "reports/plan.tex"]
