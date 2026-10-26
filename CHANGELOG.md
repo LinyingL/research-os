@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### Files from AI agents
 
@@ -83,6 +83,8 @@
   first time a project's runs are cleaned up or **Space used by runs** is
   opened; the panel says **Tidying undo backups…** meanwhile. Backups of runs
   that were already undone are released.
+- Do not return to an earlier version once a project's backups are converted:
+  an earlier version would undo a run with files that come back read only.
 
 ## 0.3.0
 

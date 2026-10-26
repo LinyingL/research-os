@@ -1,6 +1,6 @@
 # Research OS
 
-[![Version: 0.3.0](https://img.shields.io/badge/version-0.3.0-956b4b)](CHANGELOG.md#030)
+[![Version: 0.5.0](https://img.shields.io/badge/version-0.5.0-956b4b)](CHANGELOG.md#050)
 [![tests](https://github.com/LinyingL/research-os/actions/workflows/tests.yml/badge.svg)](https://github.com/LinyingL/research-os/actions/workflows/tests.yml)
 
 **A workspace for research plans, notes, results, and team review.**
@@ -18,6 +18,46 @@ in whatever order your work needs.
 ![Project home in preview mode, with a research plan, notes, result records, and tasks](docs/images/project-home-demo-en.png)
 
 *Research OS 0.3.0, English interface. All screenshots use fictional demo data.*
+
+## Version 0.5.0
+
+This version puts the files AI agents leave behind in order: every file has
+a place, the app knows which task produced it, and the records Research OS
+keeps of each run stay within a limit.
+
+- **A place for every file:** outputs go to the folders set in **Output
+  folders**, and each task has its own process folder (`work/<date>-<task
+  name>/` by default) for what an agent writes only to carry out the task:
+  one-off scripts, check output, downloaded sources and scratch data. Process
+  files are not indexed and are not outputs. Agents are told where each kind of
+  file belongs, create nothing under `research/`, and hand in one result record
+  per task.
+- **Task outputs:** after every run Research OS sorts the files it created. A
+  task's row lists its registered files by kind, says how many new files nobody
+  registered, and opens them for review with **Register…**. The process folder
+  is shown with its file count.
+- **Grouped by task:** Figures and claims, Data & code, Literature and
+  Variables show registered files under one heading per task, named after its
+  result record and dated by the run that produced them. **Open the result**
+  opens the record on Project home.
+- **Earlier runs:** **Register files from earlier runs…** in **Output folders**
+  lists the files that past runs created and nobody registered, each with a
+  suggested kind. Files stay where they are, and nothing is registered until
+  you confirm. Compressed data such as `.csv.gz` can be registered as data.
+- **Records link their files:** a file path written in a result record opens
+  that file in its preview.
+- **Run storage:** undo backups keep one copy of each content, an undone run
+  releases its backup, and a project's run store is kept within 5 GB (1 to 100
+  GB). **Space used by runs** shows undo backups, files moved away by undo, and
+  run logs; files moved away by undo are deleted only when you choose to.
+- **Done marks:** clearing the done mark of a task that already has a result
+  asks first.
+
+Update every team member to 0.5.0 before anyone saves output folders or
+registers files: earlier versions cannot read the new entries. The first time
+a project's runs are cleaned up or **Space used by runs** opens, its existing
+undo backups are converted in the background; do not go back to an earlier
+version afterwards. See the [changelog](CHANGELOG.md#050) for every change.
 
 ## Version 0.3.0
 
@@ -47,12 +87,9 @@ research workspace:
   effort. Follow the run, answer questions, and receive a result record.
   Preview the files an undo would affect and choose which changes to keep.
 - **Output folders:** keep the project's existing layout and choose where
-  new code, data, figures, tables, references, reports, variable drafts, and
-  process files belong. Agents report their final files when completing a
-  task; the app checks their paths and formats and shows them in the relevant
-  views, each with the task that produced it. A task's row lists its files, and
-  you can review and register the files that runs created and nobody
-  registered, including those from earlier runs.
+  new code, data, figures, tables, references, reports, and variable drafts
+  belong. Agents report their final files when completing a task; the app
+  checks their paths and formats and shows them in the relevant views.
 
 See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
@@ -320,7 +357,7 @@ The PI's computer holds the official project. The shared folder carries
 snapshots and proposals, transported by a service such as OneDrive.
 Research OS does not host a collaboration server.
 
-**Upgrade every team member to 0.3.0 before using agent tasks.** Version
+**Upgrade every team member to 0.5.0 before using agent tasks.** Version
 0.2.0 cannot read the result links an agent adds to a task record. The same
 goes for process files: update every member before anyone saves output folders
 or registers one. A version from before process files cannot read
@@ -361,7 +398,7 @@ the readers can resolve.
 
 ## Screenshots
 
-These views show the current 0.3.0 interface with a fictional paper airplane
+These views show the 0.3.0 interface with a fictional paper airplane
 project. Reference titles, abstracts, measurements, and results are sample data.
 
 <details>

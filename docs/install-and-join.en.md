@@ -1,6 +1,6 @@
 # Install Research OS and join a team
 
-For Research OS **0.3.0**, using macOS and personal OneDrive accounts.
+For Research OS **0.5.0**, using macOS and personal OneDrive accounts.
 
 These instructions install the current source from `main`. Published tags
 are listed on the repository's [Releases page](https://github.com/LinyingL/research-os/releases).
