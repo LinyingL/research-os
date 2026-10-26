@@ -669,6 +669,7 @@ catch in `main()`.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import hmac
 import json
@@ -1797,15 +1798,14 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     truncated = len(raw) > _FILE_SIZE_LIMIT
     content_bytes = raw[:_FILE_SIZE_LIMIT] if truncated else raw
     try:
-        content = content_bytes.decode("utf-8")
+        # The 200KB cut can land mid multi-byte character: those last bytes
+        # (at most 3) are held back and dropped. A bad byte anywhere else
+        # refuses the file, cut or not (a PDF may have no NUL in its first 8 KB).
+        content = codecs.getincrementaldecoder("utf-8")().decode(content_bytes, final=not truncated)
     except UnicodeDecodeError:
-        if not truncated:
-            error = BinaryFileError(f"{rel_path} is not valid UTF-8 text; refusing to return its content")
-            error.extra = {"github": link}
-            raise error from None
-        # The 200KB cut can land mid multi-byte character; that is a
-        # truncation artifact, not evidence the file is binary.
-        content = content_bytes.decode("utf-8", errors="ignore")
+        error = BinaryFileError(f"{rel_path} is not valid UTF-8 text; refusing to return its content")
+        error.extra = {"github": link}
+        raise error from None
     return {"path": rel_path, "content": content, "truncated": truncated, "size": size, "github": link}
 
 

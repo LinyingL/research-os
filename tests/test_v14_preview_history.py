@@ -63,6 +63,14 @@ def _answer(fn, root: Path, rel: str):
         return (type(exc).__name__, str(exc), getattr(exc, "extra", None), exc.status)
 
 
+# a PDF's head (its second line's bytes are not UTF-8), then a stream with no NUL byte, past the limit
+PDF_LIKE = (b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n"
+            + bytes(range(1, 256)) * (LIMIT // 255 + 1) + b"\nendstream\n")
+
+# Cut reads with a bad byte before the cut: the old read dropped the bad bytes and returned the rest as text.
+NOT_UTF8_BEFORE_THE_CUT = {"latin1_long.txt", "pdf_like.pdf", "bad_in_the_middle.txt", "bad_last_byte.txt",
+                           "bad_before_a_cut_character.txt", "broken_pair_at_the_cut.txt"}
+
 EDGE_FILES = {
     "empty.txt": b"",
     "one.txt": b"x",
@@ -79,6 +87,10 @@ EDGE_FILES = {
     # a four-byte character that ends exactly at the limit, and one that starts at it
     "whole_four_byte.txt": b"a" * (LIMIT - 4) + "\U0001F600".encode() + b"tail",
     "starts_at_limit.txt": b"a" * LIMIT + "\U0001F600".encode(),
+    # a four-byte character cut after one, two and three bytes
+    "cut_four_a.txt": b"a" * (LIMIT - 1) + "\U0001F600".encode() + b"tail",
+    "cut_four_b.txt": b"a" * (LIMIT - 2) + "\U0001F600".encode() + b"tail",
+    "cut_four_c.txt": b"a" * (LIMIT - 3) + "\U0001F600".encode() + b"tail",
     "bom.txt": b"\xef\xbb\xbfhello",
     "nul_first.bin": b"\x00" + b"abc" * 100,
     "nul_last_in_window.bin": b"a" * 8191 + b"\x00" + b"b" * 100,
@@ -88,6 +100,13 @@ EDGE_FILES = {
     "latin1_long.txt": ("café au lait\n" * 30_000).encode("latin-1"),
     "latin1_after_the_limit.txt": b"a" * (LIMIT + 10) + "café".encode("latin-1"),
     "invalid_at_end.txt": b"hello \xff",
+    # over the limit, no NUL in the first 8 KB, a bad byte before the cut: at the start, in the middle, in the
+    # last bytes kept (one that can start no character, a lead byte whose next byte is not a continuation)
+    "pdf_like.pdf": PDF_LIKE,
+    "bad_in_the_middle.txt": "字".encode() * 30_000 + b"\xff" + b"a" * LIMIT,
+    "bad_last_byte.txt": b"a" * (LIMIT - 1) + b"\xff" + b"tail",
+    "bad_before_a_cut_character.txt": b"a" * (LIMIT - 2) + b"\xff" + "é".encode() + b"tail",
+    "broken_pair_at_the_cut.txt": b"a" * (LIMIT - 2) + b"\xc3x" + b"tail",
     "crlf.txt": b"one\r\ntwo\r\n",
 }
 
@@ -107,9 +126,12 @@ def test_the_panel_answers_as_before_on_the_edge_files(edge_project):
     """18.4 item 5: for every edge file (empty, exactly 200 KB, 200 KB and one byte, a multi-byte
     character cut at the boundary, a NUL inside and outside the 8 KB window, text that is not
     UTF-8 before and after the limit, a BOM) the payload, or the refusal with its body and status,
-    is what the whole-file read gave; a .dta returns early; a missing file and a folder are refused."""
+    is what the whole-file read gave; a .dta returns early; a missing file and a folder are refused.
+    A cut read that is not UTF-8 before the cut is the one change (the next test)."""
     names = [*EDGE_FILES, "auto.dta", "broken.dta", "adir", "missing.txt", "../outside.txt"]
     for name in names:
+        if name in NOT_UTF8_BEFORE_THE_CUT:
+            continue
         new, old = _answer(server.file_payload, edge_project, name), _answer(_old_file_payload, edge_project, name)
         assert new == old, name
     got = server.file_payload(edge_project, "exact.txt")
@@ -118,9 +140,38 @@ def test_the_panel_answers_as_before_on_the_edge_files(edge_project):
     assert got["truncated"] is True and got["size"] == LIMIT + 1 and len(got["content"]) == LIMIT
     got = server.file_payload(edge_project, "latin1_after_the_limit.txt")  # today's handling, unchanged
     assert got["truncated"] is True and got["content"] == "a" * LIMIT
-    assert _answer(server.file_payload, edge_project, "latin1_long.txt")[0] == "ok"
     assert _answer(server.file_payload, edge_project, "latin1_short.txt")[0] == "BinaryFileError"
     assert server.file_payload(edge_project, "auto.dta")["kind"] == "dta"
+
+
+def test_a_cut_read_that_is_not_utf8_before_the_cut_is_refused_as_an_uncut_one_is(edge_project):
+    """A file over the limit with a bad byte anywhere before the cut -- a PDF with no NUL in its first
+    8 KB, Latin-1 text, one bad byte in the middle or in the last bytes kept -- is refused with the
+    uncut file's sentence, body and status (the old read dropped the bad bytes and showed the rest,
+    2026-10-26: a 773 KB PDF in a project), and a draft refuses it as not text."""
+    for name in sorted(NOT_UTF8_BEFORE_THE_CUT):
+        assert _answer(_old_file_payload, edge_project, name)[0] == "ok", name  # what the old read let through
+        assert _answer(server.file_payload, edge_project, name) == (
+            "BinaryFileError", f"{name} is not valid UTF-8 text; refusing to return its content", {"github": None}, 415), name
+        with pytest.raises(server.DraftError) as refused:
+            server._draft_file(edge_project, name, name)
+        assert (refused.value.state, refused.value.status, refused.value.extra) == ("draft_file_not_text", 400, {"file": name})
+
+
+def test_a_cut_inside_a_character_still_reads(tmp_path):
+    """A UTF-8 file over the limit whose cut falls inside a two-, three- or four-byte character reads,
+    truncated, without that character; an HTML page named .pdf is text and reads."""
+    (tmp_path / "zh.md").write_bytes("字".encode() * 70_000)  # the limit is 68,266 characters and 2 bytes
+    got = server.file_payload(tmp_path, "zh.md")
+    assert got["truncated"] is True and got["size"] == 210_000 and got["content"] == "字" * (LIMIT // 3)
+    for kept, character in ((1, "é"), (1, "字"), (2, "字"), (1, "\U0001F600"), (2, "\U0001F600"), (3, "\U0001F600")):
+        (tmp_path / "cut.txt").write_bytes(b"a" * (LIMIT - kept) + character.encode() + b"tail")
+        got = server.file_payload(tmp_path, "cut.txt")
+        assert got["truncated"] is True and got["content"] == "a" * (LIMIT - kept), (kept, character)
+        assert server._draft_file(tmp_path, "cut.txt", "cut.txt")["content"] == "a" * (LIMIT - kept)
+    (tmp_path / "page.pdf").write_bytes(b"<!DOCTYPE html><html><body>" + "<p>人民币结算</p>\n".encode() * 10_000)
+    got = server.file_payload(tmp_path, "page.pdf")
+    assert got["truncated"] is True and got["content"].startswith("<!DOCTYPE html>") and got["content"].endswith("<p>")
 
 
 def test_the_panel_over_http_answers_as_before(tmp_path):
