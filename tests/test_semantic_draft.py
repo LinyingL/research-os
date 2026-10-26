@@ -17,6 +17,7 @@ from researchos.semantic.backend import LlmError
 from researchos.webapp import server
 
 from test_semantic_backend import _misbehaving_server
+from test_docx_preview import _write as _docx
 from test_v11_dta import VARS, _dta
 from test_webapp_server import _init_project, _request_with_headers
 
@@ -335,20 +336,27 @@ def _file_refusals(root):
     (root / "auto.dta").write_bytes(_dta(118, "LSF", VARS, rows=2))
     (root / "broken.dta").write_bytes(b"not a dta")
     (root / "cloud.txt").write_text("beta 0.1", encoding="utf-8")
+    (root / "cloud.docx").write_bytes(b"PK")
     (root / "locked.txt").write_text("beta 0.1", encoding="utf-8")
     (root / "locked.txt").chmod(0)
+    (root / "broken.docx").write_bytes(b"PK\x03\x04broken")
+    (root / "old.doc").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64)
+    (root / "paper.pdf").write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Length 9 >>\nstream\n\x00\x01\x02")
     return [("nope.txt", "draft_file_missing", 404), ("folder", "draft_file_missing", 400),
             ("a\x00b.txt", "draft_file_missing", 400), ("locked.txt", "draft_file_unreadable", 400),
             ("bin.dat", "draft_file_not_text", 400), ("latin.txt", "draft_file_not_text", 400),
             ("auto.dta", "draft_file_not_text", 400), ("broken.dta", "draft_file_not_text", 400),
-            ("cloud.txt", "draft_file_cloud_only", 503), ("../outside.txt", "draft_file_outside", 403)]
+            ("broken.docx", "draft_file_unreadable", 400),  # 16.4: a Word file the preview cannot read
+            ("old.doc", "draft_file_not_text", 400), ("paper.pdf", "draft_file_not_text", 400),
+            ("cloud.txt", "draft_file_cloud_only", 503), ("cloud.docx", "draft_file_cloud_only", 503),
+            ("../outside.txt", "draft_file_outside", 403)]
 
 
 def _cloud_only(monkeypatch):
     real = cloud.check_readable
 
     def only_in_the_cloud(path):
-        if str(path).endswith("cloud.txt"):
+        if str(path).endswith(("cloud.txt", "cloud.docx")):
             raise cloud.CloudOnlyError(path, cloud.Provider("OneDrive", "OneDrive", "OneDrive", "/nowhere"))
         return real(path)
 
@@ -376,6 +384,64 @@ def test_one_file_under_two_spellings_is_one_file(tmp_path, monkeypatch, no_llm_
                         lambda self, system, user, *a, **k: seen.setdefault("user", user) and {"description": EMPTY, "result": EMPTY})
     out = server.attempt_draft_payload(tmp_path, {"files": ["run.py", "RUN.PY", "Run.py"]})
     assert seen["user"].count("=== file: ") == 1 and "=== file: run.py ===" in seen["user"] and out["cut"] == []
+
+
+def _p(text):
+    return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def test_a_word_document_is_sent_as_its_paragraphs_and_tables_by_its_path_in_the_project(tmp_path, monkeypatch,
+                                                                                         no_llm_env):
+    """16.4: the panel's Word preview as plain text -- a paragraph a line, a table a row a line, its cells
+    joined by " | ", a line break in a cell a space, an equation and an image as markers, a tracked deletion
+    left out. Typed whole or from the project folder it is one file, sent by its path in the project, and
+    the number check reads its table."""
+    (tmp_path / "paper").mkdir()
+    _docx(tmp_path / "paper" / "论文.docx",
+          _p("Currency Resilience")
+          + '<w:p><w:r><w:t>We compare </w:t></w:r><w:del><w:r><w:t>0.731 </w:t></w:r></w:del>'
+          '<w:r><w:t>prices</w:t><w:tab/><w:t>and use</w:t></w:r><m:oMath xmlns:m="urn:math"><m:t>x</m:t></m:oMath>'
+          '<w:r><w:drawing/></w:r></w:p>'
+          '<w:tbl><w:tr><w:tc>' + _p("Test") + '</w:tc><w:tc>' + _p("Estimate") + '</w:tc></w:tr>'
+          '<w:tr><w:tc>' + _p("H1") + '</w:tc><w:tc>' + _p("2.444%") + _p("[0.829%]") + '</w:tc></w:tr></w:tbl>')
+    seen = {}
+
+    def fake(self, system, user, schema, name="response"):
+        seen["user"], seen["enum"] = user, schema["properties"]["result"]["properties"]["sources"]["items"]["enum"]
+        return {"description": _cell("Compares prices and use", ["paper/论文.docx"]),
+                "result": _cell("H1: 2.444% (lower bound 0.829%)", ["paper/论文.docx"])}
+
+    monkeypatch.setattr(backend.LlmBackend, "complete_json", fake)
+    out = server.attempt_draft_payload(tmp_path, {"files": [str(tmp_path / "paper" / "论文.docx"), "paper/论文.docx"]})
+    assert ("=== file: paper/论文.docx ===\nCurrency Resilience\nWe compare prices\tand use[Equation][Image or object]\n"
+            "Test | Estimate\nH1 | 2.444% [0.829%]\n\n") in seen["user"]
+    assert seen["user"].count("=== file: ") == 1 and "0.731" not in seen["user"] and seen["enum"] == ["paper/论文.docx"]
+    assert out["fields"]["result"] == _cell("H1: 2.444% (lower bound 0.829%)", ["paper/论文.docx"])
+    assert out["dropped"] == {} and out["cut"] == []
+
+
+def test_a_long_word_document_is_cut_from_its_beginning_and_a_later_table_is_not_sent(tmp_path, monkeypatch,
+                                                                                      no_llm_env):
+    """16.4: a Word document shares the same characters as any file and is cut from its beginning (the
+    researcher chose this over sending the tables first): a results table further on is not sent, so a
+    number only in it is dropped."""
+    words = " ".join(f"word{i}" for i in range(3000))
+    _docx(tmp_path / "paper.docx", _p("Abstract: valuation deteriorates.") + _p(words)
+          + "<w:tbl><w:tr><w:tc>" + _p("2.444%") + "</w:tc></w:tr></w:tbl>")
+    (tmp_path / "run.py").write_text("xtreg y x, fe\n", encoding="utf-8")
+    seen = {}
+
+    def fake(self, system, user, schema, name="response"):
+        seen["user"] = user
+        return {"description": _cell("Valuation deteriorates", ["paper.docx"]), "result": _cell("2.444%", ["paper.docx"])}
+
+    monkeypatch.setattr(backend.LlmBackend, "complete_json", fake)
+    out = server.attempt_draft_payload(tmp_path, {"files": ["paper.docx", "run.py"]})
+    sent = seen["user"].split("=== file: paper.docx (cut: only the beginning is shown) ===\n", 1)[1].split("\n\n", 1)[0]
+    assert sent.startswith("Abstract: valuation deteriorates.\nword0 word1 ")
+    assert len(sent) + len("xtreg y x, fe\n") <= draft.MAX_CHARS_TOTAL and "2.444" not in seen["user"]
+    assert out["cut"] == ["paper.docx"] and out["dropped"] == {"result": "unsupported_number"}
+    assert out["fields"]["description"] == _cell("Valuation deteriorates", ["paper.docx"])
 
 
 def test_a_name_too_long_is_a_refusal_naming_it(tmp_path, monkeypatch, no_llm_env):
@@ -621,6 +687,19 @@ def test_http_each_file_refusal_names_the_file(live, fake_model, monkeypatch):
         got_status, body = _call(base, "POST", "/api/attempts/draft", {"files": [typed]})
         assert (got_status, body["state"], body["file"]) == (status, state, typed), typed
     assert fake_model.bodies == []
+
+
+def test_http_a_word_document_typed_by_its_whole_path_produces_a_draft(live, fake_model):
+    """16.4 through the endpoint the page calls: a Word document typed whole inside the project is read as
+    text and named by its path in the project."""
+    base, root = live
+    _docx(root / "paper.docx", _p("Non-inferiority tests") + "<w:tbl><w:tr><w:tc>" + _p("2.444%") + "</w:tc></w:tr></w:tbl>")
+    fake_model.answer({"description": _cell("Non-inferiority tests", ["paper.docx"]),
+                       "result": _cell("2.444%", ["paper.docx"])})
+    status, body = _call(base, "POST", "/api/attempts/draft", {"files": [str(root / "paper.docx")]})
+    assert status == 200 and body["dropped"] == {} and body["cut"] == []
+    assert body["fields"]["result"] == _cell("2.444%", ["paper.docx"])
+    assert "=== file: paper.docx ===\nNon-inferiority tests\n2.444%\n\n" in fake_model.bodies[0]["messages"][1]["content"]
 
 
 @pytest.mark.parametrize("path, body", [("/api/attempts/draft", {"files": ["run.do"]}),

@@ -2684,6 +2684,63 @@ def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
     assert out["reread"] == ["所选文件将发送至 studio.local · 模型：qwen", False]
 
 
+_DRAFT_WORD = r"""
+const sent = [];
+let reply = null;
+global.apiGet = async (path) => path === "/api/settings/llm"
+  ? { base_url: "http://127.0.0.1:1234/v1", model: "prism-ml/bonsai-27b", saved: {}, where: "this_mac", host: "127.0.0.1" }
+  : { nodes: [] };
+global.apiPost = async (path, body) => { sent.push(body); return reply(); };
+(async () => {
+  const out = {};
+  const desc = el("textarea"), result = el("textarea"), form = el("form");
+  form.append(desc, result);
+  const block = attemptDraftBlock({ description: desc, result: result }, [], false, { description: "做了什么" });
+  const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
+  const path = all(block.el, (n) => n.tag === "input")[0], status = block.el.children[3];
+  const chips = find(block.el, (n) => n.className === "verdict-chips");
+  await tick();
+  path.value = "/Users/me/论文重建/Currency_Resilience_EN_IREF.docx";
+  await path.fire("keydown", key("Enter"));
+  out.chips = chips.children.map((c) => c.textContent);
+  reply = () => ({ fields: { description: { text: "Non-inferiority tests", sources: ["Currency_Resilience_EN_IREF.docx"] },
+    result: { text: "Settlement shows no contraction", sources: ["Currency_Resilience_EN_IREF.docx"] } },
+    dropped: {}, model: "prism-ml/bonsai-27b", cut: ["Currency_Resilience_EN_IREF.docx"] });
+  await go.fire("click");
+  out.sent = sent.slice();
+  out.cells = [desc.value, result.value];
+  out.form = form.children.map((c) => c.tag === "div" ? c.textContent : c.tag);
+  out.status = status.textContent;
+  out.refused = [];
+  for (const [state, file] of [["draft_file_unreadable", "/Users/me/论文重建/broken.docx"], ["draft_file_not_text", "slides.pdf"]]) {
+    reply = () => { throw apiError("/api/attempts/draft", { status: 400 }, { error: "x", state: state, file: file }); };
+    await go.fire("click");
+    out.refused.push([status.textContent, status.err]);
+  }
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+@needs_node
+def test_16_4_a_word_document_typed_whole_goes_as_typed_and_a_refusal_names_it():
+    """16.4 on the page: a Word document's whole path stays as typed on its chip and in the request (the
+    engine names it by its path in the project); the drafted cells name it so, a cut one says only its
+    beginning was read; a Word file the preview cannot read is 「没能读取」, a PDF keeps 「不是文本文件」."""
+    out = _draft_run(None, _DRAFT_DOM + _app_function("function apiError(") + _DRAFT_WORD)
+    assert out["chips"] == ["/Users/me/论文重建/Currency_Resilience_EN_IREF.docx 去掉"]
+    assert out["sent"] == [{"files": ["/Users/me/论文重建/Currency_Resilience_EN_IREF.docx"]}]
+    assert out["cells"] == ["Non-inferiority tests", "Settlement shows no contraction"]
+    assert out["form"] == ["textarea", "模型：prism-ml/bonsai-27b · 参考文件：Currency_Resilience_EN_IREF.docx",
+                           "textarea", "模型：prism-ml/bonsai-27b · 参考文件：Currency_Resilience_EN_IREF.docx"]
+    assert out["status"] == "已填入「做了什么」。 已填入「结果」。 较长的文件只读了开头。"
+    assert out["refused"] == [["没能读取 /Users/me/论文重建/broken.docx", "draft_file_unreadable"],
+                              ["slides.pdf 不是文本文件，模型读不了", "draft_file_not_text"]]
+    english = _draft_run("en", "process.stdout.write(JSON.stringify(draftErrorText(Object.assign(new Error('x'),"
+                         " { state: 'draft_file_unreadable', file: 'paper.docx' }))));\n")
+    assert english == "Could not read paper.docx"
+
+
 def test_16_1_the_form_freezes_the_draft_block_and_builds_it_for_new_rows_only():
     """The wiring the node run above cannot reach: setFormDisabled freezes
     the block; the block is frozen before the preview is asked for (and

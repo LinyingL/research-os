@@ -318,13 +318,15 @@ Endpoints (all GET unless noted):
                             Each path is resolved inside the project and
                             sent, deduplicated (one file under two
                             spellings is one), as its root-relative POSIX
-                            path; one file that cannot be read refuses the
-                            whole draft, the body naming it under `file`
-                            as typed: `draft_file_missing` (404, or 400
-                            for a folder or an unusable path),
-                            `draft_file_not_text` (400; a .dta too),
-                            `draft_file_unreadable` (400: no permission,
-                            a read error), `draft_file_cloud_only` (503),
+                            path; a .docx is sent as its Word preview's
+                            text (16.4). One file that cannot be read
+                            refuses the whole draft, the body naming it
+                            under `file` as typed: `draft_file_missing`
+                            (404, or 400 for a folder or an unusable
+                            path), `draft_file_not_text` (400; a .dta, a
+                            PDF too), `draft_file_unreadable` (400: no
+                            permission, a read error, a .docx the preview
+                            cannot read), `draft_file_cloud_only` (503),
                             `draft_file_outside` (403). Also
                             `draft_no_files`, `draft_too_many_files` (400),
                             `draft_too_long` (413: the model's context
@@ -2145,12 +2147,16 @@ def llm_setting_set_payload(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _draft_file(project_root: Path, rel: str, typed: str) -> dict[str, Any]:
-    """One chosen file read as `GET /api/file` reads it; any refusal is a
-    DraftError naming the file as the researcher typed it."""
+    """One chosen file read as `GET /api/file` reads it, a Word document as
+    its preview's text (16.4, the equation and image markers in English, as
+    the prompt is); any refusal is a DraftError naming the file as the
+    researcher typed it."""
     try:
-        read = file_payload(project_root, rel)
+        read = file_payload(project_root, rel, "en")
     except (NotFoundError, NotAFileError) as exc:
         raise DraftError("file_missing", exc.status, str(exc), typed) from exc
+    except DocxPreviewApiError as exc:  # damaged, or past the preview's limits: a Word file, not a non-text one
+        raise DraftError("file_unreadable", 400, str(exc), typed) from exc
     except (BinaryFileError, DtaApiError) as exc:
         raise DraftError("file_not_text", 400, str(exc), typed) from exc
     except CloudOnlyApiError as exc:
@@ -2159,6 +2165,9 @@ def _draft_file(project_root: Path, rel: str, typed: str) -> dict[str, Any]:
         raise DraftError("file_outside", exc.status, str(exc), typed) from exc
     except OSError as exc:  # no permission to read it, a name too long, a read error
         raise DraftError("file_unreadable", 400, f"{typed}: {exc}", typed) from exc
+    if read.get("kind") == "docx":
+        return {"path": read["path"], "content": docx_preview.plain_text(read["blocks"]),
+                "truncated": read["truncated"], "size": read["size"]}
     if "content" not in read:  # a .dta: its header, not text
         raise DraftError("file_not_text", 400, f"{typed} is not a text file", typed)
     return read

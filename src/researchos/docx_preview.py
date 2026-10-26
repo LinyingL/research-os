@@ -142,3 +142,16 @@ def read(path: Path, *, equation: str = "[Equation]", image: str = "[Image]") ->
 
     visit(main)
     return {"blocks": blocks, "truncated": truncated}
+
+
+def plain_text(blocks: list[dict[str, Any]]) -> str:
+    """The preview's blocks as the text a draft sends (DESIGN.md 16.4): a
+    paragraph or heading a line; a table a row a line, its cells joined by
+    " | ", a line break inside a cell read as a space."""
+    lines = []
+    for block in blocks:
+        if block["kind"] == "table":
+            lines.extend(" | ".join(cell.replace("\n", " ") for cell in row) for row in block["rows"])
+        else:
+            lines.append(block["text"])
+    return "\n".join(lines)
