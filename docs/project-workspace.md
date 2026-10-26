@@ -117,11 +117,15 @@ the rest, the row says so next, for example **3 new files not registered**, and
 **Register…** lists them for review (below). Last come the work folder's path
 and the number of files in it.
 
-**Register and remove.** You can register a file wherever it is, in an output
+**Register and remove.** You register files from the two review lists below,
+**Register…** in a task's row and **Register files from earlier runs…** in
+**Output folders**. They offer the files that a run created and nobody
+registered. Such a file can be registered wherever it lies, in an output
 folder or anywhere else in the project, as any kind its format allows; process
 files accept any format. Records, anything under `research/notes/` or
-`research/results/`, and `.researchos/` cannot be registered. **Remove
-registration** asks first and leaves the file where it is. A registration whose
+`research/results/`, and `.researchos/` are not offered and cannot be
+registered; nor can a file you wrote yourself, which no run created.
+**Remove registration** asks first and leaves the file where it is. A registration whose
 file has gone stays in the row, marked **File no longer there**, so you can
 remove it; a file that is only in the cloud and cannot be read on this Mac is
 marked **The file is only in the cloud** and still counts as registered. Process

@@ -18,7 +18,10 @@
   registered outputs, process files, caches, and the rest. A task whose latest
   run left files nobody registered says so in its row, for example
   **3 new files not registered**, with **Register…** to review them.
-- Register a file wherever it is, as a kind you choose, and remove a
+- Register a file that a run created and nobody registered, from the lists
+  that **Register…** (in a task's row) and **Register files from earlier
+  runs…** open: wherever the file lies, as a kind you choose. A file you wrote
+  yourself is not offered and cannot be registered from the page. Remove a
   registration without touching the file. In a team, a member's changed
   registrations are offered in **Submit changes** like a changed task. A task
   holds up to 1,000 registered files.

@@ -51,7 +51,8 @@ research workspace:
   process files belong. Agents report their final files when completing a
   task; the app checks their paths and formats and shows them in the relevant
   views, each with the task that produced it. A task's row lists its files, and
-  you can register files yourself, including those earlier runs created.
+  you can review and register the files that runs created and nobody
+  registered, including those from earlier runs.
 
 See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
@@ -243,10 +244,10 @@ preview opens that file.
 
 A task's row shows its files under **Task outputs**. After a run, a count
 such as **3 new files not registered** appears when the run created files
-nobody registered; **Register…** lists them for review. You can register a
-file wherever it is, remove a registration without touching the file, and use
-**Register files from earlier runs…** in **Output folders** for files created
-before. Nothing is moved.
+nobody registered; **Register…** lists them for review, and **Register files
+from earlier runs…** in **Output folders** lists those from before. A file
+listed there can be registered wherever it lies, and a registration can be
+removed without touching the file. Nothing is moved.
 
 Variable definitions arrive as TOML drafts under **Variables**. Click
 **Import as variable draft** to create a native card, or a new draft
