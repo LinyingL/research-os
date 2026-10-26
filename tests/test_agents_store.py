@@ -198,6 +198,162 @@ def test_a_partly_undone_run_releases_its_backup_too_and_an_undo_that_did_nothin
     assert (run_dir(scene, nothing) / "before").is_dir() and (run_dir(scene, nothing) / "before.json").is_file()
 
 
+# -- the size the limit is measured against ----------------------------------------------------------------------------------
+# DESIGN.md 19.8: a project's store is its blobs (each once) + every run's `reverted/` + everything else in its run folders.
+# These tests make files of known sizes and compare `store.scan` and the limit with byte counts written out here, so that a
+# count that went wrong (a blob once per run or per link, a plain copy dropped, `before/` or `reverted/` taken for a record)
+# cannot move the limit's tests along with it, as it would if they took their thresholds from `scan` itself.
+
+A_ONE, A_TWO, B_ONE = "a" * 1000, "c" * 1000, "b" * 500  # three contents of 1000, 1000 and 500 bytes
+LOG, INSTRUCTION, BEFORE_JSON, AFTER_JSON, MARKER_BYTES = 200, 50, 70, 30, 20  # the other files of a run folder, in bytes
+
+
+def sized(path: Path, size: int) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"." * size)
+    return path
+
+
+def tree_of_two_files(scene: Scene) -> Path:
+    """A folder of its own (not the project) holding a.txt of 1000 bytes and b.txt of 500, old enough for the picture to trust."""
+    folder = scene.tmp / "pictured"
+    folder.mkdir()
+    for name, text in (("a.txt", A_ONE), ("b.txt", B_ONE)):
+        (folder / name).write_text(text)
+        os.utime(folder / name, (OLD, OLD))
+    return folder
+
+
+def run_of_known_files(scene: Scene, *, pictures: bool, **more) -> dict:
+    """A finished run whose folder holds `events.jsonl` (200 bytes), `instruction.txt` (50) and, with `pictures`, `before.json`
+    (70) and `after.json` (30), beside the `run.json` that `stale_run` writes. The copies are the test's to add."""
+    run = stale_run(scene, state="done", before=False, **more)
+    rd = run_dir(scene, run)
+    sized(rd / "events.jsonl", LOG)
+    sized(rd / "instruction.txt", INSTRUCTION)
+    if pictures:
+        sized(rd / "before.json", BEFORE_JSON)
+        sized(rd / "after.json", AFTER_JSON)
+    return run
+
+
+def shared_store(scene: Scene) -> list[dict]:
+    """Four runs, oldest first. Runs 1 to 3 took the picture of a.txt (1000 bytes) and b.txt (500) through the blobs, a.txt
+    having changed (to another 1000 bytes) before the third: three blobs, A1 linked by runs 1 and 2, A2 by run 3, B by all
+    three. Run 4 was undone: no backup, two moved-away files of 40 and 25 bytes. The project's `store.json` is 20 bytes."""
+    folder = tree_of_two_files(scene)
+    made, prior = [], None
+    for n in range(3):
+        if n == 2:
+            (folder / "a.txt").write_text(A_TWO)
+            os.utime(folder / "a.txt", (OLD + 10, OLD + 10))
+        run = run_of_known_files(scene, pictures=True, revertible=True)
+        prior = snapshot.take(folder, copy_to=run_dir(scene, run) / "before", blobs=store.blobs_dir(scene.pid), prior=prior)
+        made.append(run)
+    undone = run_of_known_files(scene, pictures=False, reverted=True)
+    sized(run_dir(scene, undone) / "reverted" / "made.txt", 40)
+    sized(run_dir(scene, undone) / "reverted" / "sub" / "deeper.txt", 25)
+    sized(run_store.project_runs_dir(scene.pid) / store.MARKER, MARKER_BYTES)
+    return [*made, undone]
+
+
+def records_bytes(scene: Scene, runs: list[dict], holding: int) -> int:
+    """What `shared_store` should have as records: four logs and instructions, the marker, the two pictures of each of the
+    `holding` runs that still hold them -- all written out above -- and every `run.json` (not fixed: it carries paths and dates,
+    and a release rewrites it, so its size is read from the file)."""
+    fixed = len(runs) * (LOG + INSTRUCTION) + holding * (BEFORE_JSON + AFTER_JSON) + MARKER_BYTES
+    return fixed + sum((run_dir(scene, r) / "run.json").stat().st_size for r in runs)
+
+
+def test_a_blob_is_counted_once_however_many_runs_link_it_and_before_and_reverted_are_not_records(scene: Scene):
+    runs = shared_store(scene)
+    undone = runs[3]
+    a_one, a_two, b_one = (store.blob_path(store.blobs_dir(scene.pid), sha(t)) for t in (A_ONE, A_TWO, B_ONE))
+    assert [a_one.stat().st_nlink, a_two.stat().st_nlink, b_one.stat().st_nlink] == [3, 2, 4]  # the blob and each run's link
+    assert sorted(b.stat().st_size for b in blobs(scene)) == [500, 1000, 1000] and len(blobs(scene)) == 3
+    usage = store.scan(scene.pid)
+    assert usage.backups == 1000 + 1000 + 500  # not 3 * 1500 (once per run) and not 4500 + 1500 (once per link)
+    assert usage.moved == 40 + 25
+    assert usage.records == records_bytes(scene, runs, holding=3)  # `before/` and `reverted/` are not in it
+    assert usage.total == usage.backups + usage.moved + usage.records
+    assert usage.moved_runs == [{"run": undone["id"], "size": 65, "files": 2}]
+    space = scene.manager.space(scene.root, scene.pid)  # the panel reads the same numbers
+    assert (space["backups"], space["moved"], space["records"]) == (2500, 65, records_bytes(scene, runs, holding=3))
+    assert space["total"] == usage.total and space["releasable"] == 3 and space["over"] is False
+    assert [(row["run"], row["size"], row["files"]) for row in space["moved_runs"]] == [(undone["id"], 65, 2)]
+
+
+def test_releasing_a_run_lowers_the_size_only_by_what_no_other_run_links(scene: Scene):
+    runs = shared_store(scene)
+    one, two, three, _undone = runs
+    store.release(scene.pid, one["id"])
+    usage = store.scan(scene.pid)
+    assert usage.backups == 2500, "runs 2 and 3 still link every blob: only the pictures of run 1 went"
+    assert usage.records == records_bytes(scene, runs, holding=2) and usage.moved == 65
+    assert not (run_dir(scene, one) / "before").exists() and len(blobs(scene)) == 3
+    store.release(scene.pid, two["id"], sweep=False)
+    assert store.scan(scene.pid).backups == 2500, "A1 is nobody's copy now, but its blob is on disk and counts until it is deleted"
+    assert store.collect(scene.pid) == 1000
+    usage = store.scan(scene.pid)
+    assert usage.backups == 1000 + 500 and sorted(b.stat().st_size for b in blobs(scene)) == [500, 1000]  # A2 and B, for run 3
+    assert usage.records == records_bytes(scene, runs, holding=1)
+    store.release(scene.pid, three["id"])
+    usage = store.scan(scene.pid)
+    assert usage.backups == 0 and blobs(scene) == []
+    assert usage.moved == 65 and usage.records == records_bytes(scene, runs, holding=0)  # the moved-away files stay
+
+
+def test_a_copy_that_is_no_blob_link_counts_for_itself_and_the_conversion_leaves_one_copy_of_each(scene: Scene, monkeypatch):
+    folder = tree_of_two_files(scene)
+
+    def run_with_copies(**take_args) -> dict:
+        run = run_of_known_files(scene, pictures=False, revertible=True)
+        rd = run_dir(scene, run)
+        (rd / "before.json").write_text(json.dumps(snapshot.take(folder, copy_to=rd / "before", **take_args)))
+        return run
+
+    def refuse(*args, **kwargs):
+        raise OSError(18, "Invalid cross-device link")
+
+    plain = run_with_copies()  # a store from before the blobs: a copy of its own for each file of each run
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "link", refuse)  # and a file system that will not link: the same plain copies
+        refused = run_with_copies(blobs=store.blobs_dir(scene.pid))
+    copies = [run_dir(scene, r) / "before" / name for r in (plain, refused) for name in ("a.txt", "b.txt")]
+    assert [c.stat().st_nlink for c in copies] == [1, 1, 1, 1] and blobs(scene) == []
+    assert store.scan(scene.pid).backups == 2 * (1000 + 500)  # every copy counts, none is dropped for being no blob link
+    today = run_with_copies(blobs=store.blobs_dir(scene.pid))  # a run of today: the copies are links to two new blobs
+    assert sorted(b.stat().st_size for b in blobs(scene)) == [500, 1000]
+    assert store.scan(scene.pid).backups == 2 * 1500 + 1500  # the blobs once, not once more for the links in `before/`
+    assert store.convert(scene.pid) is True
+    assert store.scan(scene.pid).backups == 1500  # one copy of each content: the plain copies are now links to the blobs
+    assert [b.stat().st_nlink for b in blobs(scene)] == [4, 4]
+    assert all(c.read_text() in (A_ONE, B_ONE) for c in copies) and (run_dir(scene, today) / "before" / "a.txt").read_text() == A_ONE
+
+
+def test_the_limit_is_kept_against_written_out_sizes_oldest_run_first_and_never_touches_reverted(scene: Scene):
+    runs = shared_store(scene)
+    one, two, three, _undone = runs
+    total = 2500 + 65 + records_bytes(scene, runs, holding=3)
+    released, usage = store.enforce(scene.pid, total)
+    assert released == [] and usage.total == total  # exactly at the limit is within it
+    # 600 bytes under: run 1's release frees its two pictures only (the blobs stay linked), so run 2's must follow; run 3 stays
+    released, usage = store.enforce(scene.pid, total - 600)
+    assert released == [one["id"], two["id"]]
+    assert usage.backups == 1500 and usage.total == 1500 + 65 + records_bytes(scene, runs, holding=1)
+    assert [scene.run(r["id"])["revertible"] for r in (one, two, three)] == [False, False, True]
+    assert store.holds_backup(run_dir(scene, three)) and not store.holds_backup(run_dir(scene, two))
+    # 1500 bytes under the first total: the store is still over it, so the last backup goes -- A2 and B with it
+    released, usage = store.enforce(scene.pid, total - 1500)
+    assert released == [three["id"]] and usage.backups == 0 and blobs(scene) == []
+    assert usage.total == 65 + records_bytes(scene, runs, holding=0)
+    # a limit nothing can meet: no run holds a backup any more, and the moved-away files are the person's to delete
+    released, usage = store.enforce(scene.pid, 1)
+    assert released == [] and usage.moved == 65 and usage.total > 1
+    assert (run_dir(scene, runs[3]) / "reverted" / "made.txt").stat().st_size == 40
+    assert (run_dir(scene, runs[3]) / "reverted" / "sub" / "deeper.txt").stat().st_size == 25
+
+
 # -- the limit --------------------------------------------------------------------------------------------------------------
 
 
