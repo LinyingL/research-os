@@ -3861,6 +3861,38 @@ answers with no project served (it is this Mac's, as the language switch
 is); the draft is refused for a blocked project or with none, and writes
 nothing.
 
+### 16.4 Word documents (amends 16.2)
+
+The researcher, 2026-10-26: a Word document chosen under 辅助填写 was
+refused as 「不是文本文件」. 16.2 reads a chosen file as `GET /api/file`
+reads it, and since 0.3.0 that read gives a `.docx` as the panel's Word
+preview (paragraphs and tables), not as text, so the draft took it for a
+file that is not text. Decided the same day:
+
+- A `.docx` is read for a draft by the panel's Word preview
+  (`researchos.docx_preview`): `word/document.xml` only, its body
+  paragraphs and tables in document order, a tracked deletion left out; no
+  header, footer, footnote, comment, image or embedded object. It is sent
+  as plain text: a paragraph a line; a table a row a line, its cells
+  joined by " | ", a line break inside a cell read as a space; an equation
+  as `[Equation]`, an image or object as `[Image or object]`. That text is
+  what the number check (16.1) compares against.
+- It shares the 12,000 characters and the 5 files with every other chosen
+  file, and a long one is cut the same way, from its beginning: for a
+  paper, usually the title, the abstract and the start of the
+  introduction; a results table further on is not sent. The form's
+  「较长的文件只读了开头」 says so. (The researcher chose this over sending
+  the tables first.)
+- A `.docx` the preview cannot read (not a Word body, damaged, or past its
+  64 MiB archive or 8 MiB body limit) is `draft_file_unreadable`,
+  「没能读取 {file}」, the preview's reason behind 「详情」. Every other
+  format the draft still cannot read keeps `draft_file_not_text` and its
+  words: a PDF, an older `.doc`, a spreadsheet, a .dta.
+- A path typed whole (`/Users/…/project/paper.docx`) inside the project is
+  the same file as its path from the project folder, as 16.2 says: the
+  model sees it by that path, and a refusal names it as typed. Outside the
+  project it is `draft_file_outside`.
+
 ## Section 17 — AI agents carry out tasks (task V13)
 
 The researcher, 2026-10-21: a task's owner may be an AI agent installed on
