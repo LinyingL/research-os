@@ -5636,7 +5636,7 @@ stays a paper draft. The lineage report skips the work folder as the scan does. 
 
 ### 19.9 Language
 
-Added to 13.4: 过程文件 "Process files"; 工作文件夹 (a run's work folder) "Work folder";
+Added to 13.4: 过程文件 "Process files"; 过程文件夹 (a run's work folder; 19.12 item 1) "Process folder";
 登记 "Register"; 未登记 "Not registered"; 移除登记 "Remove registration"; 补登记以往运行的文件
 "Register files from earlier runs"; 登记所选 "Register selected"; 不登记 "Do not register";
 运行占用的空间 "Space used by runs"; 撤回备份 "Undo backups"; 撤回时移走的文件 "Files moved
@@ -5662,6 +5662,45 @@ files"; 任务已移除 "Task removed"; 空间上限 "Space limit"; 会话编号
    11 dated folders' files with the kinds of 19.5; registering them fills the views with task
    labels; a short Claude Code run writes its probe into `work/…`, registers its figure and
    leaves 0 unregistered files; the store of the copy's runs shrinks and undo still restores.
+
+### 19.12 After acceptance on a copy of Quant (2026-10-26)
+
+Found by registering the copy's 491 earlier files and by a real Claude Code run on it, and
+binding like the rest of this section:
+
+1. **One word per thing.** 工作文件夹 already means a script's working directory (15.3:
+   「工作文件夹无法确定」) and, in the brief, the project folder. A run's work folder is
+   therefore 「过程文件夹」 "Process folder" everywhere it is shown or told (the brief's
+   「本任务的过程文件夹是 …」, the task row, 19.9's word), and the brief's own sentences about the
+   working directory say 项目文件夹 / "project folder". 15.3's words stay.
+2. **The task row stays short.** In 任务输出 the 过程文件 group shows only its count until
+   opened; any other group of more than 8 files shows the first 8 and 「另外 N 个」 ("N more")
+   to open the rest.
+3. **The views group by task.** On 图表与论断, 数据与代码, 文献 and 变量 the registered rows
+   stand under one heading per task: the title of its result record (the record's first
+   heading), else the task's first line cut as before, with the date of the run that produced
+   the files; 「打开结果」 is on the heading, once. A row no longer repeats the task.
+4. **A file's date is its run's.** An entry a person registers from a run's created files
+   (19.5, the earlier-runs list) also records that `run`; every date shown for an entry with a
+   run is that run's start (its id), else `at`.
+5. **Compressed data and tables.** A data or table suffix followed by one of `.gz`, `.bz2`,
+   `.xz`, `.zst` (`prices_long.csv.gz`) is that kind for registration and for 19.5's rules 5
+   and 6. Previews stay for plain `.csv` and `.tsv`.
+6. **The record has one list of outputs.** Research OS's appended section is
+   「已登记的输出文件」 "Registered output files"; the brief tells the agent to name files where
+   they matter in its report but not to add a list of its outputs, since Research OS appends it.
+7. **A task's runs count together.** The row's 「N 个新文件未登记」 and its 「登记…」 cover every
+   run of the task on this Mac that is not undone (a question and its answer are two runs of
+   one conversation), not only the latest; the earlier-runs listing takes `&task=` for that.
+8. **The space panel says the consequence.** When moved-away files alone pass the limit, the
+   panel adds that each new run's undo backup is then released as soon as the run ends, so new
+   runs cannot be undone until moved-away files are deleted.
+9. 19.9's words are held by `tests/test_glossary.py` like 17.9's.
+
+Seen in the same run and left for its own design: the guard refused two read-only commands of
+the agent because they named a protected data file beside `tee`, and beside `df>0` read as a
+redirection (19.11); and Research OS's existing data rule does not protect compressed data
+files (`.csv.gz`), so an agent could change or delete them unrefused.
 
 ### 19.11 Not in V15
 
