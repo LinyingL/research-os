@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ def run(scenario):
     code = DOM + '\nwindow.ROI18N_SAVED="en";\n' + _i18n_source()
     code += '\nfunction t(s,v){return window.ROI18N.t(s,v);}\n'
     code += _app_function("function mk(") + _app_function("function mkButton(")
+    code += (Path(__file__).parents[1] / 'src/researchos/webapp/workspace.js').read_text()
     code += _app_block("// -- 文献 (DESIGN.md 11.4", "// -- end of the 文献 view")
     code += r'''
 Object.defineProperty(Element.prototype,'innerHTML',{set(v){this.replaceChildren();}});
@@ -82,3 +84,15 @@ waiting.resolve({abstract:'Late result.',source:'OpenAlex'});await pending;
 console.log(JSON.stringify({calls:posted.length,abstract:b.abstract,running:litState.abstractBatch.running}));
 ''')
     assert shown == {"calls": 1, "abstract": None, "running": False}
+
+
+def test_file_research_context_is_shown_under_its_source_file_without_doi_support_claims():
+    shown = run(r"""
+a.files=['sources.bib'];
+data.research_records_by_file={'sources.bib':[{report:'research/results/manual.md',title:'Fictional reading check',question:'Which background fits?',matches:[{path:'sources.bib',purpose:'Background candidates only'}]}]};
+const reader=byClass('lit-reader');reader.replaceChildren();renderLiteratureReader(reader,a,data);
+console.log(JSON.stringify({words:reader.textContent,source:byClass('lit-reader-sources').textContent}));
+""")
+    assert 'Research records linked to this reference file' in shown['source']
+    assert 'Background candidates only' in shown['source']
+    assert 'Fictional reading check' in shown['source']

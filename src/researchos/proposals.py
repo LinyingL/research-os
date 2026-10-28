@@ -991,6 +991,23 @@ def make_proposal(
         chosen_paths = set()
     # The member's own choice on top of the kind's: files added, files unticked.
     chosen_paths = (set(chosen_paths) | set(add or ())) - set(leave or ())
+    # A research result travels with its explicit context and materials. A
+    # sidecar is never an instruction to create a row or confirm a variable:
+    # variable versions still use the separate semantic review above.
+    chosen_paths |= _research_dependencies(root, chosen_paths)
+    # Preserve the context the author actually reviewed even when only the
+    # Markdown changed. The ordinary file reviewer recognizes these bytes
+    # as already present; carrying them also makes the research summary
+    # independent of subsequent edits on either computer.
+    candidate_paths = {c["path"] for c in candidates}
+    for rel in sorted(chosen_paths - candidate_paths) if chosen_paths & candidate_paths else []:
+        if not rel.endswith(".context.json") or not _RESEARCH_RESULT_RE.fullmatch(rel):
+            continue
+        current, old = work.get(rel), base.files.get(rel)
+        if current and old and current.get("sha256"):
+            candidates.append({"path": rel, "action": "changed", "sha256": current["sha256"],
+                               "size": current["size"], "store": "text", "base_sha256": old["sha256"],
+                               "base_size": old["size"]})
     files = [c for c in candidates if c["path"] in chosen_paths]
     if kind == "files" and not files:
         raise ProposalRefused("nothing", "no file differs from the official version" if not candidates
@@ -1020,6 +1037,74 @@ def make_proposal(
     ]
     draft.preview = preview
     return draft
+
+
+_RESEARCH_RESULT_RE = re.compile(r"research/results/((?!\.)[^/\\\x00-\x1f]+)\.(?:md|context\.json|outputs\.json)\Z")
+
+
+def _research_dependencies(root: Path, selected: Iterable[str]) -> set[str]:
+    from researchos import research_records, workspace  # noqa: PLC0415
+
+    found: set[str] = set()
+    pending = list(selected)
+    seen: set[str] = set()
+    while pending:
+        rel = pending.pop()
+        match = _RESEARCH_RESULT_RE.fullmatch(rel)
+        if match is None or match[1] in seen:
+            continue
+        seen.add(match[1])
+        report = f"research/results/{match[1]}.md"
+        # Removing a record must remain possible, even after its sidecar
+        # has been deleted. Existing records alone supply dependencies.
+        if not (root / report).is_file():
+            continue
+        sidecar = research_records.path_for(report)
+        context = research_records.parse(workspace._read(root, sidecar))
+        # Registered outputs are offered by the existing output picker. Only
+        # explicitly referenced materials are required when submitting this
+        # research record; an unrelated unticked output stays unticked.
+        required = {sidecar, *context["references"], *context["materials"]}
+        # File submission does not review variable definitions or the output
+        # catalog. Missing variable cards remain visible in the summary rather
+        # than preventing an otherwise valid report from being proposed.
+        for path in required:
+            _confined(root, path)
+        deps = required | {report}
+        found |= deps
+        pending.extend(deps)
+    return found
+
+
+def _research_summaries(stored: StoredProposal, root: Path) -> list[dict[str, Any]]:
+    """Read the proposed bytes, never the PI's possibly different context."""
+    from researchos import research_records, workspace  # noqa: PLC0415
+    from researchos.records import variables as V  # noqa: PLC0415
+
+    found = []
+    for item in stored.data.get("file") or []:
+        rel = item.get("path", "")
+        match = _RESEARCH_RESULT_RE.fullmatch(rel)
+        if match is None or not rel.endswith(".context.json") or item.get("action") == "removed":
+            continue
+        try:
+            raw = stored.content_path(item).read_bytes()
+            if len(raw) > 200 * 1024 or hashlib.sha256(raw).hexdigest() != item.get("sha256"):
+                continue
+            context = research_records.parse(raw)
+        except (OSError, ValueError, ExchangeError, workspace.WorkspaceError):
+            continue  # ordinary file review reports unreadable or invalid content
+        versions = []
+        for ref in context.get("variables", []):
+            status = {**ref, "current": None, "draft": None, "available": False}
+            try:
+                card = V.open_card(root, ref["id"])
+                status.update(current=card.in_use, draft=card.draft, available=ref["version"] in card.versions)
+            except V.VariableError:
+                pass
+            versions.append(status)
+        found.append({"path": f"research/results/{match[1]}.md", "context": context, "variable_versions": versions})
+    return found
 
 
 def _member_file_preview(root: Path, base: Base, item: Mapping[str, Any]) -> dict[str, Any]:
@@ -1371,6 +1456,7 @@ def open_for(root: str | Path, proposal_id: str, *, exchange: LocalExchange | No
         stored = ex.open_proposal(proposal_id, member=member)
     siblings = ex.list_proposals(stored.member).proposals
     out = _summary(stored, state_of(ex, stored, siblings), _labels(root))
+    out["research_records"] = _research_summaries(stored, root)
     if role == "pi":
         out["changes"] = what_changes(stored, root, lang)
     return out

@@ -79,7 +79,7 @@ let listed = { project:'/projects/study', id:'p-study', read_only:false, mode:'s
   files:[{path:'figures/图 (1).png',type:'figure'},{path:'code/model.do',type:'script'},{path:'data/source.csv',type:'dataset'}],
   attempts:[{id:'attempt:research/attempts.md#1',label:'#1 First check'}], tasks:[],tasks_revision:'tasks-0' };
 let docs = { 'research/overview.md':{path:'research/overview.md',kind:'overview',title:'Research question',content:'# Research question\nAn open question.',revision:'doc-0'} };
-let customGet=null,customPost=null;
+let customGet=null,customPost=null, researchRecords={};
 const clone = value=>JSON.parse(JSON.stringify(value));
 // AI agents (DESIGN.md Section 17): what this Mac has, who I am, the project's runs and one run's log.
 // Every one is served only when a scenario sets it, so a page without them still has to work.
@@ -109,6 +109,7 @@ const setRuns=(runs,active)=>{ runsList={runs:runs,active:active===undefined?(ru
 global.apiGet=async path=>{
   gets.push(path);
   if(customGet) { const value=customGet(path); if(value!==undefined) return await value; }
+  if(path.startsWith('/api/workspace/research-record?')) { const report=new URLSearchParams(path.split('?')[1]).get('report'); return clone(researchRecords[report] || {report,revision:null,context:{}}); }
   if(path==='/api/workspace') return clone(listed);
   if(path.startsWith('/api/workspace/document?')) return clone(docs[new URLSearchParams(path.split('?')[1]).get('path')]);
   if(path==='/api/agents'&&agentsInfo) return clone(agentsInfo);
@@ -166,6 +167,7 @@ global.apiPost=async(path,body)=>{
     if(body.store_limit_gb) { agentsInfo.store_limit_gb=body.store_limit_gb; storeInfo.limit_gb=body.store_limit_gb; storeInfo.limit=body.store_limit_gb*GB; }
     return clone(agentsInfo);
   }
+  if(path==='/api/workspace/research-record') { const record={...(researchRecords[body.report]||{}),report:body.report,path:'research/results/.records/abc.json',revision:'record-'+posted.length,context:clone(body.context)};researchRecords[body.report]=record;return clone(record); }
   if(path==='/api/workspace/document') {
     const file=body.path || 'research/'+(body.kind==='result'?'results':'notes')+'/abc.md';
     const doc={path:file,kind:body.kind,title:body.title,content:body.content,revision:'doc-'+posted.length};
@@ -3587,3 +3589,135 @@ await find('运行记录').click();await sleepTick();
 console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 """)
     assert "会话编号：0a1b2c3d-1111-2222-3333-444455556666" in out["words"]
+
+
+def test_manual_result_research_record_keeps_independent_unsaved_context_and_links():
+    out = run(r"""
+await window.ROWorkspace.load(root);
+await find('记录结果').click(); await titleDocument('Manual check'); await writeDocument('Observation.');
+typed(field('研究问题'), 'Does the finding hold?');
+await find('保存').click();
+const afterDocument=window.ROWorkspace.isDirty();
+await find('保存研究记录').click();
+const afterRecord=window.ROWorkspace.isDirty();
+await editDocument();
+const group=byClass('ws-research-links').children.find(e=>e.children[0].textContent==='研究尝试');
+const select=group.querySelector('select');select.value=listed.attempts[0].id; await find('加入关联',group).click();
+await find('保存研究记录').click();
+console.log(JSON.stringify({afterDocument,afterRecord,posted,words:root.textContent}));
+""")
+    assert out['afterDocument'] and not out['afterRecord']
+    records = [body for path, body in out['posted'] if path == '/api/workspace/research-record']
+    assert records[0]['context']['question'] == 'Does the finding hold?'
+    assert records[1]['context']['attempts'] == ['attempt:research/attempts.md#1']
+
+
+def test_research_record_concurrent_typing_and_conflict_preserve_draft():
+    out = run(r"""
+const path='research/results/manual.md';
+listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+researchRecords[path]={report:path,revision:'rr1',context:{finding:'Initial'}};
+await window.ROWorkspace.load(root);await find('Result').click();await editDocument();
+typed(field('发现与解释'),'Sent');const wait=deferred();
+customPost=(url,body)=>url==='/api/workspace/research-record'?wait.promise:undefined;
+const saving=find('保存研究记录').click();typed(field('发现与解释'),'New words');
+wait.resolve({report:path,revision:'rr2',context:{finding:'Sent'}});await saving;
+const retained=field('发现与解释').value,dirty=window.ROWorkspace.isDirty();
+customPost=(url)=>url==='/api/workspace/research-record'?Promise.reject({state:'revision_conflict',message:'changed'}):undefined;
+await find('保存研究记录').click();
+console.log(JSON.stringify({retained,dirty,current:field('发现与解释').value,words:root.textContent}));
+""")
+    assert out['retained'] == out['current'] == 'New words' and out['dirty']
+    assert '当前填写已保留' in out['words']
+
+
+def test_task_optional_research_context_is_editable_and_clearable():
+    out = run(r"""
+listed.documents.push({path:'research/results/manual.md',kind:'result',title:'Manual finding'});
+await window.ROWorkspace.load(root);typed(field('任务'),'Compare specifications');
+field('研究上下文（可选）').value='research/results/manual.md';await field('研究上下文（可选）').emit('change');
+await find('添加任务').click();const first=clone(listed.tasks[0]);await find('编辑',byClass('ws-task-actions')).click();
+field('研究上下文（可选）').value='';await field('研究上下文（可选）').emit('change');await find('保存任务').click();
+console.log(JSON.stringify({first,last:listed.tasks[0]}));
+""")
+    assert out['first']['context'] == {'report': 'research/results/manual.md'}
+    assert out['last']['context'] is None
+
+
+def test_readonly_record_reviews_pinned_variables_and_material_meaning_in_english():
+    out = run(r"""
+const path='research/results/manual.md';listed.mode='reader';listed.read_only=true;
+listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+researchRecords[path]={report:path,revision:'rr1',context:{finding:'A cautious finding',variables:[{id:'outcome',version:2}],materials:['code/model.do'],purposes:{'code/model.do':'Sensitivity comparison'}},choices:{variables:[{id:'outcome',label:'Outcome',version:2}]}};
+await window.ROWorkspace.load(root);await find('Result').click();
+console.log(JSON.stringify({words:root.textContent,save:!!find('Save research record'),open:byClass('ws-research-record').open}));
+""", lang='en')
+    assert out['open'] and not out['save']
+    assert 'Outcome · v2' in out['words'] and 'Sensitivity comparison' in out['words']
+
+
+def test_late_research_save_cannot_touch_another_project_and_focus_survives_linking():
+    out = run(r"""
+const path='research/results/manual.md';listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+await window.ROWorkspace.load(root);await find('Result').click();await editDocument();
+typed(field('研究问题'),'A pending question');
+const select=byClass('ws-research-links').querySelector('select');select.focus();select.value=listed.attempts[0].id;
+await find('加入关联',select.parentNode).click();
+const focusKey=document.activeElement.dataset.key;
+const wait=deferred();customPost=(url)=>url==='/api/workspace/research-record'?wait.promise:undefined;
+const saving=find('保存研究记录').click();window.ROWorkspace.reset();state.currentPath='/projects/other';state.dataEpoch++;
+listed={...listed,project:'/projects/other',documents:[],tasks:[]};await window.ROWorkspace.load(root);
+wait.resolve({report:path,revision:'stale',context:{question:'Stale answer'}});await saving;
+console.log(JSON.stringify({focusKey,words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out['focusKey'] == 'research-link:attempts'
+    assert 'Stale answer' not in out['words'] and not out['dirty']
+
+
+def test_research_record_pins_selected_variable_version_and_imports_native_draft():
+    out = run(r"""
+const path='research/results/manual.md';listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+researchRecords[path]={report:path,revision:'rr1',context:{},choices:{variables:[{id:'outcome',version:3,label:'outcome v3'}]},variable_drafts:[{path:'variables/proposed.md',state:'unadopted'}]};
+let imported=null,opened=null;window.ROWorkspace.onOpenVariable=id=>opened=id;
+customPost=(url,body)=>{if(url==='/api/workspace/research-record/variable'){imported=clone(body);return {id:body.id,version:1,in_use:null};}};
+await window.ROWorkspace.load(root);await find('Result').click();await editDocument();
+const group=byClass('ws-research-links').children.find(e=>e.children[0].textContent==='变量定义');
+const select=group.querySelector('select');select.value='outcome@3';await find('加入关联',group).click();await find('保存研究记录').click();
+const card=root.all().find(e=>e.dataset.key==='research-import:variables/proposed.md');typed(card,'new_outcome');await find('导入为变量草稿').click();
+const afterImportDirty=window.ROWorkspace.isDirty(),repeat=!!find('导入为变量草稿');await find('保存研究记录').click();await find('打开定义卡').click();
+console.log(JSON.stringify({imported,opened,posted,afterImportDirty,repeat,dirty:window.ROWorkspace.isDirty()}));
+""")
+    record = next(body for path, body in out['posted'] if path == '/api/workspace/research-record')
+    assert record['context']['variables'] == [{'id': 'outcome', 'version': 3}]
+    assert out['imported']['path'] == 'variables/proposed.md' and out['opened'] == 'new_outcome'
+    assert out['afterImportDirty'] and not out['repeat'] and not out['dirty']
+    assert out['posted'][-1][1]['context']['variables'][-1] == {'id': 'new_outcome', 'version': 1}
+
+
+def test_research_record_notices_and_history_warning_are_visible_without_losing_later_edits():
+    out = run(r"""
+const path='research/results/manual.md';listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+researchRecords[path]={report:path,revision:'r1',context:{finding:'Tentative'},notices:[{kind:'older_version',id:'height',version:1,current:2},{kind:'unavailable',message:'A linked material is unavailable.',message_zh:'关联材料不可用。'}]};
+await window.ROWorkspace.load(root);await find('Result').click();const before=byClass('ws-research-record').textContent;
+await editDocument();typed(field('Findings and interpretation'),'First save');
+customPost=(url,body)=>url==='/api/workspace/research-record'?{...researchRecords[path],revision:'r2',context:body.context,history_warning:'History unavailable'}:undefined;
+await find('Save research record').click();const warning=byClass('ws-research-record').textContent;
+typed(field('Findings and interpretation'),'New words after saving');await find('Save research record').click();
+console.log(JSON.stringify({before,warning,last:posted[posted.length-1][1].context.finding,dirty:window.ROWorkspace.isDirty()}));
+""", lang='en')
+    assert 'height: references version 1; currently confirmed version 2' in out['before']
+    assert 'A linked material is unavailable.' in out['before'] and '关联材料' not in out['before']
+    assert 'change history could not be recorded' in out['warning']
+    assert out['last'] == 'New words after saving' and not out['dirty']
+
+
+def test_preview_hands_attempt_draft_to_existing_form_without_writing_or_empty_sidecar():
+    out = run(r"""
+const path='research/results/manual.md';listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
+researchRecords[path]={report:path,revision:'r1',context:{attempt_draft:{description:'Compare samples',result:'Undecided',parents:[]}}};
+let prefill=null;window.ROWorkspace.onCreateAttempt=value=>prefill=value;
+await window.ROWorkspace.load(root);await find('Result').click();const saveBefore=!!find('保存研究记录');await find('记录研究尝试…').click();
+console.log(JSON.stringify({prefill,saveBefore,posted,dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out['prefill'] == {'description': 'Compare samples', 'result': 'Undecided', 'parents': []}
+    assert not out['saveBefore'] and not out['posted'] and not out['dirty']

@@ -694,6 +694,7 @@ from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, workspace
 from researchos import settings as settings_mod
+from researchos import research_records
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
@@ -4054,6 +4055,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 payload["task_outputs"] = outputs.task_outputs(served.root, served.project_id, payload.get("tasks") or [],
                                                                memo=self.server.task_outputs_memo, token=generation)
                 self._send_json(200, payload)
+            elif path == "/api/workspace/research-records":
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                records = self._workspace_api(lambda: research_records.backlinks(
+                    served.root, paths=query.get("path", []), variable_id=(query.get("variable") or [None])[0]))
+                self._send_json(200, {"records": records})
+            elif path == "/api/workspace/research-record":
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                report = (query.get("report") or [""])[0]
+                payload = self._workspace_api(lambda: research_records.read(served.root, report))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4808,6 +4823,8 @@ _NO_PROJECT_POST = frozenset({
 _OUTPUT_WRITES: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
     "/api/outputs/folders": outputs.save_folders, "/api/outputs/variable": outputs.import_variable,
     "/api/outputs/register": outputs.register_files, "/api/outputs/unregister": outputs.unregister_file,
+    "/api/workspace/research-record": research_records.save,
+    "/api/workspace/research-record/variable": research_records.import_variable,
 }
 
 

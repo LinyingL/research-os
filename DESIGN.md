@@ -5745,3 +5745,83 @@ Moving the earlier files; one folder per task (declined 2026-10-25); the guard's
 whole-word match of protected file names inside commands, which refused an agent's
 `rm` of a folder it had just made and led to a 126 MB duplicate (to be designed); the agent
 programs' own session stores; a separate 「已验收」 mark.
+
+## 20. Optional research context and handoff (unreleased)
+
+Research context extends the existing result record, task, attempt form,
+variable card and proposal paths. It introduces no parallel workflow or
+status machine. A person or an AI may write a result; neither every task nor
+every result must complete all the actions below. Existing records without
+context remain valid, including named Markdown results a person created.
+
+### 20.1 Record and associations
+
+A result `research/results/<name>.md` may have a sibling
+`<name>.context.json`, containing `version: 1` and `context`. Five optional
+text fields describe the work: `question`, `method`, `finding`, `limits`,
+`next_step`. `attempts` names existing attempt IDs; `variables` names explicit
+`{id, version}` pairs; `references` and `materials` name project files;
+`purposes` maps a linked file path to a short explanation. Missing context
+stays empty. An optional `attempt_draft` contains a description, result and
+parent attempt IDs, never a verdict or an adopted status.
+
+Saves use the existing human write guard, history and optimistic revision
+check. A stale revision refuses the write rather than overwriting another
+editor. Associations describe what the author linked: a material link or
+purpose does not prove that a run read or produced that file. Literature
+links are file-level associations, not per-reference or per-DOI support
+claims. Native file and variable views can show these explicit backlinks.
+
+### 20.2 Task and AI handoff
+
+A task may select an existing result using `context: {report: <path>}`;
+`null` clears the selection. Task reads validate its shape only. Saving a
+new or changed selection requires an existing result, while an older
+selection whose file disappeared does not make the whole task list
+unreadable or prevent unrelated edits.
+
+An AI run freezes its selected background when it starts, including the
+context revision, the first 24,000 characters of the report with its content
+hash and truncation flag, explicit variable versions and their definition
+file paths, and material availability and metadata. Variable definitions
+also carry a read-only text snapshot and full content hash: at most 8,000
+characters each and 24,000 in total, with explicit truncation flags. The brief
+directs the agent to read the full report and materials as needed. It uses
+the pinned definitions, never substitutes the current version, and never
+uses shell commands to bypass the protected records folder. An allowed
+read tool may supply missing definition text; otherwise the agent asks the
+researcher when that text is necessary. Without a separate selection, a task with an existing context
+sidecar retains its own earlier record as background. Continuation uses
+this same background. Earlier findings, limits and next steps are background, not findings of the new
+run. Completion may inherit the question and explicit associations; its
+method and findings describe the new work. The completion tool writes the
+context with the existing report/output path and attribution; agents do not
+edit sidecars directly. File relationships remain distinct from execution
+records and output fingerprints. Missing files and variable-version changes
+need review, not invented replacement relationships.
+
+### 20.3 Human decisions and team review
+
+A suggested attempt prefills the existing attempt form. Only the form's
+save or a member's proposal followed by PI approval registers the attempt;
+a sidecar alone creates no attempt node. Importing a registered variable
+file uses the native variable draft path and never confirms it. Variable
+version proposals retain their existing semantic review and confirmation.
+Solo work uses the existing direct writes without team approval.
+
+For a team submission, selecting a result or its sidecar includes the
+corresponding result, context and explicitly referenced materials that
+need to travel. The preview shows the carried files; unrelated unticked
+registered outputs are not added merely because they share the result's
+catalog. Unchanged context is carried when needed to keep the review bound
+to the author's bytes. Linked variable definitions keep their separate
+native approval path. PI proposal details show the research summary,
+variable versions and draft attempt without turning suggestions into
+accepted research decisions.
+
+The existing proposal engine checks all conflicts and stages the bundle
+before applying it. A conflict refuses the whole approval before writes.
+Multiple filesystem replacements are not a transaction: interruption can
+leave part of a report/context bundle placed. The existing approval journal
+records those files, and approving again resumes the remaining work; no new
+rollback or parallel acceptance state is introduced.

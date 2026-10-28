@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Add optional research context to existing result records, whether written
+  by a person or an AI agent: question, method, finding, limits, next step,
+  explicit attempt and variable-version links, and file purposes.
+- Let a task use an earlier result as background. AI runs retain that
+  background separately from their own findings; missing materials and changed
+  variable versions remain visible for review.
+- Reuse the existing attempt form, variable draft import, and team proposal
+  review. A suggested attempt needs saving, variable imports remain drafts,
+  and members submit changes for PI approval. File associations can be read
+  from the linked file and variable views.
+
 ## 0.5.0
 
 ### Files from AI agents

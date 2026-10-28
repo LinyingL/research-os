@@ -787,7 +787,7 @@ def protected(root: Path, before: Mapping[str, Any], *, work: Iterable[str] = ()
     19.2): process files are not protected data, so they are neither named in
     the brief nor refused by the hook nor reported as out of bounds."""
     records = [r for r in (attempts_table(root), TASKS_PATH, "research/folders.json") if r]
-    records += [r for r in _file_map(before) if guard.is_output_record(r)]
+    records += [r for r in _file_map(before) if guard.is_output_record(r) or guard.is_context_record(r)]
     records = list(dict.fromkeys(records))
     walked = before.get("data") if isinstance(before, Mapping) else None
     source = walked if isinstance(walked, Mapping) else _file_map(before)
@@ -883,7 +883,7 @@ def violations(changes: Mapping[str, Any], prot: Mapping[str, Any], *, git_befor
             elif is_agent_settings(rel):
                 if kind == "deleted" or not permitted(rel):
                     add(rel, "agent_settings_changed")
-            elif rel in records or guard.is_output_record(rel):
+            elif rel in records or guard.is_output_record(rel) or guard.is_context_record(rel):
                 if kind == "deleted":
                     add(rel, "record_deleted")
                 elif not permitted(rel):

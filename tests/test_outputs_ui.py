@@ -180,7 +180,7 @@ console.log(JSON.stringify({wasHidden, view: currentView, shown: shownView(), ti
     assert out["view"] == "workspace" and out["shown"] == ["workspace"] and out["title"] == "项目首页"
     assert out["loaded"] == "1"
     # the home was read, its own first document opened, and then the record: the record is what is left on screen
-    assert out["order"] == ["/api/workspace", "research/overview.md", "research/results/a.md"]
+    assert out["order"] == ["/api/workspace", "research/overview.md", "research/results/a.md", "/api/workspace/research-record?report=research/results/a.md"]
     assert out["reading"] is True and out["writing"] is True and "The estimate is 0.42." in out["words"]
 
 

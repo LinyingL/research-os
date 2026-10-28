@@ -231,7 +231,12 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang
 
     given = _arg(query, "node", required=True) or ""
     try:
-        return nodepage.node(conn, root, given, lang)
+        page = nodepage.node(conn, root, given, lang)
+        from researchos import research_records
+        paths = [value for value in (page.get('path'), page.get('file')) if value]
+        page['research_records'] = research_records.backlinks(root, paths=paths,
+            variable_id=given.removeprefix('variable:') if given.startswith('variable:') else None)
+        return page
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别要打开的内容") from exc
     except nodepage.NotFound as exc:
@@ -245,8 +250,13 @@ def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -
     try:
         from researchos import outputs
 
-        return {**nodepage.results(conn, root, _arg(query, "draft")),
-                "outputs": outputs.catalog(root, {"figure", "table"})}
+        page = nodepage.results(conn, root, _arg(query, "draft"))
+        bundle = outputs.catalog(root, {"figure", "table"})
+        from researchos import research_records
+        items = list(bundle.get('items', [])) + list(page.get('loose', []))
+        items.extend(item for group in page.get('sections', []) for item in group.get('items', []))
+        page['research_records'] = research_records.backlinks(root, paths=[item['path'] for item in items if item.get('path')])
+        return {**page, "outputs": bundle}
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 

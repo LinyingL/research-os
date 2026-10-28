@@ -776,3 +776,70 @@ def test_18_3_the_older_form_shows_the_row_when_the_file_moved_and_says_why_撤�
     assert extra["refused"] == ["panel-status err: 这一行之后又改过，不能撤销。"]
     assert extra["failed"] == ["panel-status err: 写入失败，文件没有被修改 (title: attempt_not_found)"] and extra["typed"] == "t=5"
     assert extra["writes"] == ["t=3.10", "t=5"]  # the first save, and the refused one -- not the 撤销
+
+
+@needs_node
+@pytest.mark.parametrize('role', ['single', 'pi', 'member'])
+def test_research_prefill_uses_existing_attempt_form_without_a_verdict(role):
+    shown = _form_run(r'''
+state.panelSubject={researchSource:{prefill:{description:'Compare fictional samples',result:'A tentative difference',parents:['attempt:map.md#16']}}};
+renderAttemptForm('append');
+const fields=formFields();
+const offset=ROTeam.mode()==='member'?1:0;
+global.extra={description:fields[2+offset].value,result:fields[4+offset].value,verdict:fields[5+offset].value,posts:posted.length};
+''', role=role, lang='en')
+    assert shown['extra']['description'] == 'Compare fictional samples'
+    assert shown['extra']['result'] == 'A tentative difference'
+    assert shown['extra']['verdict'] == '' and shown['extra']['posts'] == 0
+
+
+@needs_node
+def test_research_attempt_callback_waits_for_successful_direct_write_and_actual_reloaded_id():
+    shown = _form_run(r'''
+let linked=null;
+state.panelSubject={researchSource:{prefill:{description:'Compare fictional samples',result:'Still tentative'},onSaved:value=>linked=value.id}};
+renderAttemptForm('append');
+c.post['/api/attempts/preview']={file:'map.md',old_row:null,new_row:'Fictional new row'};
+c.post['/api/attempts/write']={file:'map.md'};
+global.ensureAttemptData=async()=>{state.attemptsById.set('attempt:map.md#17',{id:'attempt:map.md#17',attrs:{number:'17'}});return true;};
+await submit();const before=linked;
+find('保存修改','BUTTON').click();await flush();
+global.extra={before,linked};
+''')
+    assert shown['extra'] == {'before': None, 'linked': 'attempt:map.md#17'}
+
+
+@needs_node
+@pytest.mark.parametrize('role', ['single', 'pi', 'member'])
+def test_prefilled_attempt_sources_follow_existing_direct_or_member_proposal_flow(role):
+    shown = _form_run(r'''
+let linked=null;
+state.panelSubject={researchSource:{prefill:{description:'Compare two samples',result:'Tentative',parents:['attempt:map.md#16']},onSaved:(value,details)=>linked={id:value.id,workingCopy:details.workingCopy}}};
+renderAttemptForm('append');
+if(ROTeam.mode()==='member') formFields()[1].value='Compare the pilot samples';
+c.post['/api/attempts/preview']={file:'map.md',old_row:null,new_row:'Fictional new row'};
+c.post['/api/attempts/write']={file:'map.md'};
+global.ensureAttemptData=async()=>{state.attemptsById.set('attempt:map.md#17',{id:'attempt:map.md#17',attrs:{number:'17'}});return true;};
+await submit();find(ROTeam.mode()==='member'?'保存后查看提议':'保存修改','BUTTON').click();await flush();
+global.extra={linked,mappings:posted.filter(([path])=>path==='/api/mappings/add'),parents:composed[0]&&composed[0].parents};
+''', role=role)
+    assert shown['extra']['linked'] == {'id': A17, 'workingCopy': role == 'member'}
+    if role == 'member':
+        assert not shown['extra']['mappings'] and shown['extra']['parents'] == [A16]
+    else:
+        assert shown['extra']['mappings'] == [['/api/mappings/add', {'from': A17, 'to': A16, 'type': 'derives_from'}]]
+
+
+@needs_node
+def test_attempt_source_link_failure_does_not_offer_to_create_the_saved_attempt_again():
+    shown = _form_run(r'''
+state.panelSubject={researchSource:{prefill:{description:'Compare two samples',parents:['attempt:map.md#16']}}};
+renderAttemptForm('append');c.post['/api/attempts/preview']={file:'map.md',old_row:null,new_row:'New row'};c.post['/api/attempts/write']={file:'map.md'};
+c.post['/api/mappings/add']={refuse:'mapping_cycle'};
+global.ensureAttemptData=async()=>{state.attemptsById.set('attempt:map.md#17',{id:'attempt:map.md#17',attrs:{number:'17'}});return true;};
+await submit();find('保存修改','BUTTON').click();await flush();
+global.extra={again:!!find('保存修改','BUTTON'),submitDisabled:panelBody.all().find(k=>k.tag==='BUTTON'&&k.type==='submit').disabled};
+''')
+    assert shown['extra'] == {'again': False, 'submitDisabled': True}
+    assert any('尝试已保存，部分来源关联未成功' in line for line in shown['lines'])
+    assert sum(path == '/api/attempts/write' for path, _ in shown['posted']) == 1
