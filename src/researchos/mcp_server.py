@@ -52,7 +52,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from researchos import db, names, outputs as output_files, paths, query, rename, workspace
+from researchos import db, names, outputs as output_files, paths, query, rename, research_records, workspace
+from researchos.agents import research_context as agent_research_context
 from researchos import project as project_identity
 from researchos.agents import labels as agent_labels
 from researchos.agents import runs as agent_runs
@@ -348,7 +349,8 @@ def _result_title(title: str | None, task_text: str) -> str:
 
 
 def _complete(root: Path, project_id: str, run_id: str, report: str, title: str | None,
-              outputs: list[dict[str, str]] | None = None) -> str:
+              outputs: list[dict[str, str]] | None = None,
+              research_context: dict[str, Any] | None = None) -> str:
     if not isinstance(report, str) or not report.strip():
         raise _Refused("the report is empty; write what was done, the commands run, the files produced and the "
                        "key numbers exactly as the runs gave them, then call the tool again")
@@ -375,6 +377,7 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
             checked = [{**item, "created": True} if item["path"] in made else item for item in checked]
         if checked and task.get("report") and (root / task["report"]).is_file():
             output_files._entries(root, output_files.catalog_path(task["report"]))
+        context = agent_research_context.prepare(root, run, research_context, checked)
         heading = _result_title(title, task["text"])
         # The record's one top heading is ours: a report that opens with its own
         # `# ...` keeps it one level down, so the document has a single title.
@@ -405,10 +408,29 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
             body.update(kind="result", revision=None, path="research/results/" + secrets.token_hex(16) + ".md")
         if checked:
             body["content"] += f"- [{label}]({Path(output_files.catalog_path(body['path'])).name})\n"
+        context_revision = None
+        if context is not None:
+            context_rel = research_records.path_for(body['path'])
+            raw_context = workspace._read(root, context_rel)
+            research_records.parse(raw_context)
+            if (root / body['path']).is_file():
+                output_files._entries(root, output_files.catalog_path(body['path']))
+            frozen = run.get('research_handoff')
+            if isinstance(frozen, dict):
+                if frozen.get('target_report') != task.get('report'):
+                    raise _Refused('The task result association changed since this run began; start a new run')
+                context_revision = frozen.get('target_revision')
+            else:
+                context_revision = workspace._revision(raw_context)
+            workspace._check_revision({'revision': context_revision}, raw_context)
         saved = workspace.save_document(root, body, author=author)
         path = saved["path"]
         registration = output_files.register(root, checked, run, path, author)
+        saved_context = (research_records.save_agent(root, path, context, author, context_revision)
+                         if context is not None else None)
         notes = [saved["history_error"]] if saved.get("history_error") else []
+        if saved_context is not None and saved_context.get("history_warning"):
+            notes.append(saved_context["history_warning"])
         saved_tasks = None
         for attempt in (1, 2):  # a second go only when the file moved under an external editor
             tasks, revision = workspace.read_tasks(root)
@@ -428,9 +450,12 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
         if saved_tasks.get("history_error"):
             notes.append(saved_tasks["history_error"])
         extra = {"outputs_sha": registration[1], "outputs_catalog": registration[0]} if registration else {}
+        if saved_context is not None:
+            extra.update(context_path=saved_context['path'], context_sha=saved_context['written_revision'])
         agent_runs.append_signal(
             project_id, run_id, "complete", path=path, tasks_sha=saved_tasks["tasks_revision"],
-            paths=[path, workspace.TASKS_PATH] + ([registration[0]] if registration else []), **extra,
+            paths=[path, workspace.TASKS_PATH] + ([registration[0]] if registration else [])
+                  + ([saved_context['path']] if saved_context is not None else []), **extra,
         )
     tail = " (The change history could not be updated; the person is told.)" if notes else ""
     return (f"Saved the result record {path} and marked the task done. "
@@ -438,7 +463,8 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
 
 
 def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: str, title: str | None = None,
-                        outputs: list[dict[str, str]] | None = None) -> str:
+                        outputs: list[dict[str, str]] | None = None,
+                        research_context: dict[str, Any] | None = None) -> str:
     """`researchos_complete_task`: write the task's result record (a new
     `research/results/` document, or the one an earlier run of this task
     wrote), mark the task done and link the record as its `report`, as the
@@ -447,7 +473,7 @@ def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: 
     that is over) is `Not written: <why>`, with nothing written. The
     `complete` signal tells the engine which `research/tasks.json` is the
     tool's."""
-    return _answering(lambda: _complete(Path(root).resolve(), project_id, run_id, report, title, outputs))
+    return _answering(lambda: _complete(Path(root).resolve(), project_id, run_id, report, title, outputs, research_context))
 
 
 def _ask(project_id: str, run_id: str, question: str) -> str:
@@ -506,7 +532,8 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
 
     @mcp.tool()
     def researchos_complete_task(report: str, title: str | None = None,
-                                 outputs: list[dict[str, str]] | None = None) -> str:
+                                 outputs: list[dict[str, str]] | None = None,
+                                 research_context: dict[str, Any] | None = None) -> str:
         """Call this ONCE, when the task you were given is finished. `report`
         is the result record, in Markdown: what you did, the commands you
         ran, and the key numbers exactly as your actual runs gave them --
@@ -522,9 +549,15 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
         be inside the assigned folder for that kind. Use [] if no files were
         produced. Bibliographies accept BibTeX or CSV/JSON reference exports;
         variable drafts use the native variable-definition TOML schema and
-        remain unconfirmed. If you cannot finish or a decision belongs to the person, call
+        remain unconfirmed. For research tasks, include `research_context` with
+        question, method, finding, limits and next_step; attempts (existing node IDs),
+        variables ([{id, version}] for explicit existing versions), references/materials
+        (project paths), optional purposes (path to short note), and optional
+        attempt_draft {description, result, parents}. A suggested attempt is never
+        automatically registered or adopted. Earlier findings are background only.
+        If you cannot finish or a decision belongs to the person, call
         researchos_ask instead."""
-        return agent_complete_task(root, project_id, run_id, report, title, outputs)
+        return agent_complete_task(root, project_id, run_id, report, title, outputs, research_context)
 
     @mcp.tool()
     def researchos_ask(question: str) -> str:

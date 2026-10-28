@@ -1300,7 +1300,7 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert 'const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");' in node_js
     assert 'mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); })' in node_js
     assert node_js.count("openAttemptForm(") == 1
-    assert _APP_SRC.count("openAttemptForm(") == 3  # definition + the two entry points in the page
+    assert _APP_SRC.count("openAttemptForm(") == 4  # definition, header/menu, and research-record prefill entry
     form = _function_body(_APP_SRC, "function renderAttemptForm(")
     for call in ("defaultNewNumber(attempts)", "defaultDateValue(attempts, new Date())", "distinctVerdicts(attempts)"):
         assert call in form

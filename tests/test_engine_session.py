@@ -521,6 +521,8 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/outputs/folders": ("read", "/api/outputs/folders"),
     "/api/outputs/backfill": ("read", "/api/outputs/backfill"),
     "/api/workspace/document": ("read", "/api/workspace/document?path=research/overview.md"),
+    "/api/workspace/research-record": ("read", "/api/workspace/research-record?report=research/results/pilot.md"),
+    "/api/workspace/research-records": ("read", "/api/workspace/research-records?path=map.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
@@ -621,6 +623,11 @@ def audited(tmp_path, monkeypatch):
     root = _project(tmp_path / "proj")
     (root / "research").mkdir()
     (root / "research" / "overview.md").write_text("# Overview\n")
+    (root / "research" / "results").mkdir()
+    (root / "research/results/pilot.md").write_text("# Pilot comparison\n")
+    (root / "research/results/pilot.context.json").write_text(json.dumps({
+        "version": 1, "context": {"question": "What did the pilot show?", "materials": ["map.md"]},
+    }))
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "start")
@@ -662,6 +669,7 @@ def test_no_get_route_writes_or_starts_anything_but_a_read_probe(audited):
         assert not (status == 403 and b"session_required" in raw), route
         assert status < 500, (route, status, raw[:200])
     assert results["/"] == results["/api/summary"] == results["/api/agents"] == results["/api/agents/models"] == 200
+    assert results["/api/workspace/research-record"] == results["/api/workspace/research-records"] == 200
 
 
 def test_the_run_list_recovers_a_gone_engines_run_only_for_a_request_with_the_session(tmp_path):

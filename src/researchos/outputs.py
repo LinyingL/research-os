@@ -825,7 +825,10 @@ def import_variable(root: Path, body: dict[str, Any]) -> dict[str, Any]:
 
     with situation.write_guard(root, human=True):
         pid = workspace._require_write(root)
-        registered = next((i for i in catalog(root, {"variable"})["items"] if i["path"] == body.get("path")), None)
+        wanted_catalog = catalog_path(body["report"]) if body.get("report") is not None else None
+        candidates = catalog(root, {"variable"})["items"] if wanted_catalog is None else [
+            {**i, "catalog": wanted_catalog} for i in _entries(root, wanted_catalog)[0] if i.get("kind") == "variable"]
+        registered = next((i for i in candidates if i["path"] == body.get("path")), None)
         if registered is None:
             raise _bad("The registered variable draft is missing")
         rel_catalog = registered["catalog"]

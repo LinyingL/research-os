@@ -155,6 +155,13 @@ def citations_payload(conn: Connection, root: Path) -> dict[str, Any]:
     from researchos import outputs
 
     rep["outputs"] = outputs.catalog(root, {"literature"})
+    from researchos import research_records
+    # Bibliography files may contain many papers. These are file associations,
+    # deliberately kept apart from each DOI's citation and judgement records.
+    source_paths = {path for item in rep["library"]["items"] for path in item.get("files", [])}
+    related = research_records.backlinks(root, paths=list(source_paths))
+    rep["research_records_by_file"] = {path: [record for record in related
+        if any(match['path'] == path for match in record['matches'])] for path in source_paths}
     for item in rep["library"]["items"]:
         item["doi_url"] = doi_url(item["doi"]) if item.get("doi") else None
         key = item.get("zotero_key")

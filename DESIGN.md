@@ -3861,6 +3861,38 @@ answers with no project served (it is this Mac's, as the language switch
 is); the draft is refused for a blocked project or with none, and writes
 nothing.
 
+### 16.4 Word documents (amends 16.2)
+
+The researcher, 2026-10-26: a Word document chosen under 辅助填写 was
+refused as 「不是文本文件」. 16.2 reads a chosen file as `GET /api/file`
+reads it, and since 0.3.0 that read gives a `.docx` as the panel's Word
+preview (paragraphs and tables), not as text, so the draft took it for a
+file that is not text. Decided the same day:
+
+- A `.docx` is read for a draft by the panel's Word preview
+  (`researchos.docx_preview`): `word/document.xml` only, its body
+  paragraphs and tables in document order, a tracked deletion left out; no
+  header, footer, footnote, comment, image or embedded object. It is sent
+  as plain text: a paragraph a line; a table a row a line, its cells
+  joined by " | ", a line break inside a cell read as a space; an equation
+  as `[Equation]`, an image or object as `[Image or object]`. That text is
+  what the number check (16.1) compares against.
+- It shares the 12,000 characters and the 5 files with every other chosen
+  file, and a long one is cut the same way, from its beginning: for a
+  paper, usually the title, the abstract and the start of the
+  introduction; a results table further on is not sent. The form's
+  「较长的文件只读了开头」 says so. (The researcher chose this over sending
+  the tables first.)
+- A `.docx` the preview cannot read (not a Word body, damaged, or past its
+  64 MiB archive or 8 MiB body limit) is `draft_file_unreadable`,
+  「没能读取 {file}」, the preview's reason behind 「详情」. Every other
+  format the draft still cannot read keeps `draft_file_not_text` and its
+  words: a PDF, an older `.doc`, a spreadsheet, a .dta.
+- A path typed whole (`/Users/…/project/paper.docx`) inside the project is
+  the same file as its path from the project folder, as 16.2 says: the
+  model sees it by that path, and a refusal names it as typed. Outside the
+  project it is `draft_file_outside`.
+
 ## Section 17 — AI agents carry out tasks (task V13)
 
 The researcher, 2026-10-21: a task's owner may be an AI agent installed on
@@ -5141,11 +5173,16 @@ nothing new inside the project.
      more: that byte is what says `truncated`, and `size` is the open file's.
      Everything else is as it was: the 8 KB window in which a NUL byte
      refuses the file, the decoding (a cut that falls inside a multi-byte
-     character is dropped; a file over the limit that is not UTF-8 is cut and
-     decoded with its bad bytes dropped; one under it is refused), the
-     refusals, their bodies and the payload keys. A `.dta` returns before any
-     read. A draft from chosen files reads each through `file_payload`
-     (`_draft_file`), so it reads the same head.
+     character is dropped), the refusals, their bodies and the payload keys.
+     A `.dta` returns before any read. A draft from chosen files reads each
+     through `file_payload` (`_draft_file`), so it reads the same head.
+   - *A cut read that is not UTF-8* (changed 2026-10-26). A file over the
+     limit used to be decoded with its bad bytes dropped, so a PDF over
+     200 KB with no NUL in its first 8 KB showed as garbled text and went to
+     the model in a draft. Now only the last bytes of a character the cut
+     splits (at most 3) are dropped; a bad byte anywhere else refuses the
+     file as one under the limit is refused, and a draft answers
+     `draft_file_not_text`.
    - *What it costs.* For a 64 MB file, and for a 1 GB file, whose first
      300 KB is text, Python's memory peaks at about 600 KB (the 200 KB read,
      its cut and its decoded text); the whole read held the file.
@@ -5708,3 +5745,83 @@ Moving the earlier files; one folder per task (declined 2026-10-25); the guard's
 whole-word match of protected file names inside commands, which refused an agent's
 `rm` of a folder it had just made and led to a 126 MB duplicate (to be designed); the agent
 programs' own session stores; a separate 「已验收」 mark.
+
+## 20. Optional research context and handoff (unreleased)
+
+Research context extends the existing result record, task, attempt form,
+variable card and proposal paths. It introduces no parallel workflow or
+status machine. A person or an AI may write a result; neither every task nor
+every result must complete all the actions below. Existing records without
+context remain valid, including named Markdown results a person created.
+
+### 20.1 Record and associations
+
+A result `research/results/<name>.md` may have a sibling
+`<name>.context.json`, containing `version: 1` and `context`. Five optional
+text fields describe the work: `question`, `method`, `finding`, `limits`,
+`next_step`. `attempts` names existing attempt IDs; `variables` names explicit
+`{id, version}` pairs; `references` and `materials` name project files;
+`purposes` maps a linked file path to a short explanation. Missing context
+stays empty. An optional `attempt_draft` contains a description, result and
+parent attempt IDs, never a verdict or an adopted status.
+
+Saves use the existing human write guard, history and optimistic revision
+check. A stale revision refuses the write rather than overwriting another
+editor. Associations describe what the author linked: a material link or
+purpose does not prove that a run read or produced that file. Literature
+links are file-level associations, not per-reference or per-DOI support
+claims. Native file and variable views can show these explicit backlinks.
+
+### 20.2 Task and AI handoff
+
+A task may select an existing result using `context: {report: <path>}`;
+`null` clears the selection. Task reads validate its shape only. Saving a
+new or changed selection requires an existing result, while an older
+selection whose file disappeared does not make the whole task list
+unreadable or prevent unrelated edits.
+
+An AI run freezes its selected background when it starts, including the
+context revision, the first 24,000 characters of the report with its content
+hash and truncation flag, explicit variable versions and their definition
+file paths, and material availability and metadata. Variable definitions
+also carry a read-only text snapshot and full content hash: at most 8,000
+characters each and 24,000 in total, with explicit truncation flags. The brief
+directs the agent to read the full report and materials as needed. It uses
+the pinned definitions, never substitutes the current version, and never
+uses shell commands to bypass the protected records folder. An allowed
+read tool may supply missing definition text; otherwise the agent asks the
+researcher when that text is necessary. Without a separate selection, a task with an existing context
+sidecar retains its own earlier record as background. Continuation uses
+this same background. Earlier findings, limits and next steps are background, not findings of the new
+run. Completion may inherit the question and explicit associations; its
+method and findings describe the new work. The completion tool writes the
+context with the existing report/output path and attribution; agents do not
+edit sidecars directly. File relationships remain distinct from execution
+records and output fingerprints. Missing files and variable-version changes
+need review, not invented replacement relationships.
+
+### 20.3 Human decisions and team review
+
+A suggested attempt prefills the existing attempt form. Only the form's
+save or a member's proposal followed by PI approval registers the attempt;
+a sidecar alone creates no attempt node. Importing a registered variable
+file uses the native variable draft path and never confirms it. Variable
+version proposals retain their existing semantic review and confirmation.
+Solo work uses the existing direct writes without team approval.
+
+For a team submission, selecting a result or its sidecar includes the
+corresponding result, context and explicitly referenced materials that
+need to travel. The preview shows the carried files; unrelated unticked
+registered outputs are not added merely because they share the result's
+catalog. Unchanged context is carried when needed to keep the review bound
+to the author's bytes. Linked variable definitions keep their separate
+native approval path. PI proposal details show the research summary,
+variable versions and draft attempt without turning suggestions into
+accepted research decisions.
+
+The existing proposal engine checks all conflicts and stages the bundle
+before applying it. A conflict refuses the whole approval before writes.
+Multiple filesystem replacements are not a transaction: interruption can
+leave part of a report/context bundle placed. The existing approval journal
+records those files, and approving again resumes the remaining work; no new
+rollback or parallel acceptance state is introduced.

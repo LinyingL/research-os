@@ -325,4 +325,14 @@ def test_the_records_panel_and_the_attempt_form_call_the_verdict_cell_the_resear
     script = (kinds + count + "\nprocess.stdout.write(JSON.stringify([RECORD_KIND_WORDS.attempts, "
               'recordCountText({ code: "attempts", facts: { state: "present", attempts: 7, with_verdict: 5 } })]));\n')
     assert _node(script) == ["尝试的研究判断", "7 条尝试，其中 5 条有研究判断"]
-    assert 'config.columns.verdict || "研究判断"' in src and "结论" not in kinds + count
+    assert "结论" not in kinds + count
+    from test_v10_desk_panel import _form_run
+
+    for lang, assessment in [("zh", "研究判断"), ("en", "Research assessment")]:
+        shown = _form_run('''
+delete state.attemptsConfig.columns.verdict;
+renderAttemptForm("append");
+global.extra={labels:panelBody.all().filter(node=>node.tag==="LABEL").map(node=>node.textContent)};
+''', lang=lang)
+        assert assessment in shown["extra"]["labels"]
+        assert "结论" not in shown["extra"]["labels"]

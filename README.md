@@ -19,6 +19,30 @@ in whatever order your work needs.
 
 *Research OS 0.3.0, English interface. All screenshots use fictional demo data.*
 
+## Unreleased: research context and handoff
+
+Existing result records in `research/results/` can carry optional research
+context alongside their Markdown: the question, method, finding, limits, and
+next step. People can edit these fields directly, and AI agents can supply
+them when completing a task. Link existing attempts, explicit variable
+versions, and project files, with a short purpose for a file when useful.
+A task can select an earlier result as background for its next AI run; the
+run receives bounded snapshots of the report and the linked variable
+definitions, with their version and source paths. It keeps that background separate
+from its new findings and can read the full report when needed.
+
+**Record a research attempt…** opens the existing attempt form with suggested
+content. Review and save it to create the attempt; a team member submits it
+for PI review. Importing a registered variable definition creates a native
+variable draft, which still needs its own review and confirmation. Working
+alone keeps the existing direct-save workflow.
+
+Result records and their explicit material links travel through the existing
+team proposal review. Literature associations currently name project files;
+they do not record that an individual DOI supports a finding. These fields
+and actions are optional: a note, a manual result, or an ordinary task does
+not need to complete a fixed research workflow.
+
 ## Version 0.5.0
 
 This version puts the files AI agents leave behind in order: every file has

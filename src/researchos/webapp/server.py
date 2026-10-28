@@ -318,13 +318,15 @@ Endpoints (all GET unless noted):
                             Each path is resolved inside the project and
                             sent, deduplicated (one file under two
                             spellings is one), as its root-relative POSIX
-                            path; one file that cannot be read refuses the
-                            whole draft, the body naming it under `file`
-                            as typed: `draft_file_missing` (404, or 400
-                            for a folder or an unusable path),
-                            `draft_file_not_text` (400; a .dta too),
-                            `draft_file_unreadable` (400: no permission,
-                            a read error), `draft_file_cloud_only` (503),
+                            path; a .docx is sent as its Word preview's
+                            text (16.4). One file that cannot be read
+                            refuses the whole draft, the body naming it
+                            under `file` as typed: `draft_file_missing`
+                            (404, or 400 for a folder or an unusable
+                            path), `draft_file_not_text` (400; a .dta, a
+                            PDF too), `draft_file_unreadable` (400: no
+                            permission, a read error, a .docx the preview
+                            cannot read), `draft_file_cloud_only` (503),
                             `draft_file_outside` (403). Also
                             `draft_no_files`, `draft_too_many_files` (400),
                             `draft_too_long` (413: the model's context
@@ -667,6 +669,7 @@ catch in `main()`.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import hmac
 import json
@@ -691,6 +694,7 @@ from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, workspace
 from researchos import settings as settings_mod
+from researchos import research_records
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
@@ -1795,15 +1799,14 @@ def file_payload(project_root: Path, rel_path: str, lang: str = "zh") -> dict[st
     truncated = len(raw) > _FILE_SIZE_LIMIT
     content_bytes = raw[:_FILE_SIZE_LIMIT] if truncated else raw
     try:
-        content = content_bytes.decode("utf-8")
+        # The 200KB cut can land mid multi-byte character: those last bytes
+        # (at most 3) are held back and dropped. A bad byte anywhere else
+        # refuses the file, cut or not (a PDF may have no NUL in its first 8 KB).
+        content = codecs.getincrementaldecoder("utf-8")().decode(content_bytes, final=not truncated)
     except UnicodeDecodeError:
-        if not truncated:
-            error = BinaryFileError(f"{rel_path} is not valid UTF-8 text; refusing to return its content")
-            error.extra = {"github": link}
-            raise error from None
-        # The 200KB cut can land mid multi-byte character; that is a
-        # truncation artifact, not evidence the file is binary.
-        content = content_bytes.decode("utf-8", errors="ignore")
+        error = BinaryFileError(f"{rel_path} is not valid UTF-8 text; refusing to return its content")
+        error.extra = {"github": link}
+        raise error from None
     return {"path": rel_path, "content": content, "truncated": truncated, "size": size, "github": link}
 
 
@@ -2145,12 +2148,16 @@ def llm_setting_set_payload(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _draft_file(project_root: Path, rel: str, typed: str) -> dict[str, Any]:
-    """One chosen file read as `GET /api/file` reads it; any refusal is a
-    DraftError naming the file as the researcher typed it."""
+    """One chosen file read as `GET /api/file` reads it, a Word document as
+    its preview's text (16.4, the equation and image markers in English, as
+    the prompt is); any refusal is a DraftError naming the file as the
+    researcher typed it."""
     try:
-        read = file_payload(project_root, rel)
+        read = file_payload(project_root, rel, "en")
     except (NotFoundError, NotAFileError) as exc:
         raise DraftError("file_missing", exc.status, str(exc), typed) from exc
+    except DocxPreviewApiError as exc:  # damaged, or past the preview's limits: a Word file, not a non-text one
+        raise DraftError("file_unreadable", 400, str(exc), typed) from exc
     except (BinaryFileError, DtaApiError) as exc:
         raise DraftError("file_not_text", 400, str(exc), typed) from exc
     except CloudOnlyApiError as exc:
@@ -2159,6 +2166,9 @@ def _draft_file(project_root: Path, rel: str, typed: str) -> dict[str, Any]:
         raise DraftError("file_outside", exc.status, str(exc), typed) from exc
     except OSError as exc:  # no permission to read it, a name too long, a read error
         raise DraftError("file_unreadable", 400, f"{typed}: {exc}", typed) from exc
+    if read.get("kind") == "docx":
+        return {"path": read["path"], "content": docx_preview.plain_text(read["blocks"]),
+                "truncated": read["truncated"], "size": read["size"]}
     if "content" not in read:  # a .dta: its header, not text
         raise DraftError("file_not_text", 400, f"{typed} is not a text file", typed)
     return read
@@ -4045,6 +4055,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 payload["task_outputs"] = outputs.task_outputs(served.root, served.project_id, payload.get("tasks") or [],
                                                                memo=self.server.task_outputs_memo, token=generation)
                 self._send_json(200, payload)
+            elif path == "/api/workspace/research-records":
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                records = self._workspace_api(lambda: research_records.backlinks(
+                    served.root, paths=query.get("path", []), variable_id=(query.get("variable") or [None])[0]))
+                self._send_json(200, {"records": records})
+            elif path == "/api/workspace/research-record":
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                report = (query.get("report") or [""])[0]
+                payload = self._workspace_api(lambda: research_records.read(served.root, report))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4799,6 +4823,8 @@ _NO_PROJECT_POST = frozenset({
 _OUTPUT_WRITES: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
     "/api/outputs/folders": outputs.save_folders, "/api/outputs/variable": outputs.import_variable,
     "/api/outputs/register": outputs.register_files, "/api/outputs/unregister": outputs.unregister_file,
+    "/api/workspace/research-record": research_records.save,
+    "/api/workspace/research-record/variable": research_records.import_variable,
 }
 
 

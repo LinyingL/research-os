@@ -3876,12 +3876,12 @@ function setFormStatus(statusEl, cls, cnText, err) {
 // config current. Meanwhile the panel says 载入中…; a failure is said in
 // Chinese with the engine's text behind 「详情」, never an empty form with
 // wrong defaults.
-async function openAttemptForm(mode, attemptId) {
+async function openAttemptForm(mode, attemptId, researchSource) {
   if (state.noProject) return; // 10.1: no project, no attempt table (⌘N from the shell)
-  const subject = { kind: "attempt-form" };
+  const subject = { kind: "attempt-form", researchSource: mode === "append" ? researchSource : null };
   const project = state.currentPath, epoch = state.dataEpoch;
   state.panelSubject = subject;
-  panelTitle.textContent = mode === "append" ? "新增尝试" : "编辑尝试";
+  panelTitle.textContent = mode === "append" ? t("新增尝试") : t("编辑尝试");
   panelTitle.title = "";
   panelSubtitle.textContent = "";
   panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
@@ -4186,7 +4186,7 @@ function renderAttemptForm(mode, attemptId) {
   const attempts = Array.from(state.attemptsById.values());
   const config = state.attemptsConfig;
   if (!config) {
-    panelTitle.textContent = mode === "append" ? "新增尝试" : "编辑尝试";
+    panelTitle.textContent = mode === "append" ? t("新增尝试") : t("编辑尝试");
     panelSubtitle.textContent = "";
     panelBody.appendChild(panelErrorBoxCn(
       t("尝试记录的配置无法读取，请检查或恢复项目中的配置文件。")
@@ -4202,6 +4202,9 @@ function renderAttemptForm(mode, attemptId) {
     openPanel();
     return;
   }
+  const formProject = state.currentPath, formEpoch = state.dataEpoch, formSubject = state.panelSubject;
+  const researchSource = state.panelSubject && state.panelSubject.researchSource;
+  const prefill = researchSource && researchSource.prefill || {};
   const attrs = record ? (record.attrs || {}) : {};
   const number = mode === "append" ? defaultNewNumber(attempts) : (attrs.number || "");
   // 12.3, 12.4 (U4): in a project with members a member's new attempt or
@@ -4218,11 +4221,11 @@ function renderAttemptForm(mode, attemptId) {
     openPanel();
     return;
   }
-  panelTitle.textContent = proposing ? (mode === "append" ? "提议新的尝试" : "提议修改研究判断 #" + number)
-    : (mode === "append" ? "新增尝试" : "编辑尝试 #" + number);
+  panelTitle.textContent = proposing ? (mode === "append" ? t("提议新的尝试") : t("提议修改研究判断 #{number}", { number }))
+    : (mode === "append" ? t("新增尝试") : t("编辑尝试 #{number}", { number }));
   panelSubtitle.textContent = proposing
     ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
-    : "将写入 " + config.file;
+    : t("将写入 {file}", { file: config.file });
 
   const form = document.createElement("form");
   form.className = "attempt-form";
@@ -4240,7 +4243,7 @@ function renderAttemptForm(mode, attemptId) {
     numberInput.disabled = true;
     numberInput.title = "编号是这一行的身份，界面里不改；如需重编号请直接改源文件";
   }
-  form.appendChild(formFieldEl("编号", numberInput));
+  form.appendChild(formFieldEl(t("编号"), numberInput));
   if (proposing) {
     sentenceInput = document.createElement("textarea");
     sentenceInput.className = "form-textarea";
@@ -4255,11 +4258,11 @@ function renderAttemptForm(mode, attemptId) {
   // Field labels come from the project's OWN [columns] header text -- the
   // researcher's words, not this tool's.
   const defs = [
-    { key: "date", label: config.columns.date ? "日期（" + config.columns.date + "）" : "日期", mono: true },
-    { key: "description", label: config.columns.description || "描述", multiline: true },
-    { key: "variables", label: config.columns.variables || "变量", multiline: true },
-    { key: "result", label: config.columns.result || "结果", multiline: true },
-    { key: "verdict", label: config.columns.verdict || "研究判断" },
+    { key: "date", label: config.columns.date ? t("日期（{column}）", { column: config.columns.date }) : t("日期"), mono: true },
+    { key: "description", label: config.columns.description || t("描述"), multiline: true },
+    { key: "variables", label: config.columns.variables || t("变量"), multiline: true },
+    { key: "result", label: config.columns.result || t("结果"), multiline: true },
+    { key: "verdict", label: config.columns.verdict || t("研究判断") },
   ];
   defs.forEach((def) => {
     let input;
@@ -4272,7 +4275,7 @@ function renderAttemptForm(mode, attemptId) {
       input.className = "form-input" + (def.mono ? " form-mono" : "");
     }
     if (mode === "append") {
-      input.value = def.key === "date" ? defaultDateValue(attempts, new Date()) : "";
+      input.value = def.key === "date" ? defaultDateValue(attempts, new Date()) : (["description", "result"].includes(def.key) && typeof prefill[def.key] === "string" ? prefill[def.key] : "");
     } else {
       input.value = def.key === "verdict" ? (record.verdict || "")
         : def.key === "result" ? (record.result || "")
@@ -4322,7 +4325,7 @@ function renderAttemptForm(mode, attemptId) {
   // attempts only (a line is proposed against the official version);
   // approving the attempt adds those lines.
   let parentPicks = null;
-  if (proposing && mode === "append") {
+  if (mode === "append") {
     const official = attempts.filter((a) => !a.officialness || a.officialness.state === "official");
     if (official.length) {
       const box = mk("div", "parent-picks");
@@ -4331,12 +4334,13 @@ function renderAttemptForm(mode, attemptId) {
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.value = a.id;
+        cb.checked = Array.isArray(prefill.parents) && prefill.parents.includes(a.id);
         lab.append(cb, mk("span", "mono", "#" + ((a.attrs || {}).number || "")), " " + ((a.attrs || {}).description || ""));
         box.appendChild(lab);
         return cb;
       });
       const parentField = formFieldEl(t("源自（可选）"), box);
-      parentField.appendChild(mk("div", "team-help", t("它源自的正式尝试；PI 批准后，这些连线画到路线图上")));
+      parentField.appendChild(mk("div", "team-help", proposing ? t("它源自的正式尝试；PI 批准后，这些连线画到路线图上") : t("保存尝试后，按所选来源建立关联。")));
       form.appendChild(parentField);
     }
   }
@@ -4385,7 +4389,7 @@ function renderAttemptForm(mode, attemptId) {
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "btn";
-  cancelBtn.textContent = "取消";
+  cancelBtn.textContent = t("取消");
   cancelBtn.addEventListener("click", closePanel);
   actionsEl.append(submitBtn, cancelBtn);
   form.appendChild(actionsEl);
@@ -4496,13 +4500,32 @@ function renderAttemptForm(mode, attemptId) {
     setFormStatus(statusEl, "ok", t("撤销了上一步"));
   }
 
+  async function associateCreatedAttempt(result, body) {
+    if (mode !== "append" || (!researchSource && !(parentPicks || []).some((pick) => pick.checked))) return null;
+    if (formProject !== state.currentPath || formEpoch !== state.dataEpoch || formSubject !== state.panelSubject) return { stale: true };
+    await ensureAttemptData();
+    if (formProject !== state.currentPath || formEpoch !== state.dataEpoch || formSubject !== state.panelSubject) return { stale: true };
+    const created = state.attemptsById.get("attempt:" + result.file + "#" + body.number);
+    if (!created) return { missing: true };
+    const failures = [];
+    if (!proposing) {
+      for (const pick of (parentPicks || []).filter((pick) => pick.checked)) {
+        if (formProject !== state.currentPath || formEpoch !== state.dataEpoch || formSubject !== state.panelSubject) return { stale: true };
+        try { await apiPost("/api/mappings/add", { from: created.id, to: pick.value, type: "derives_from" }); }
+        catch (error) { failures.push(error); }
+      }
+    }
+    if (researchSource && typeof researchSource.onSaved === "function") researchSource.onSaved(created, { workingCopy: proposing });
+    return { failures };
+  }
+
   function renderPreview(preview, body, moved) {
     previewHost.innerHTML = "";
     setFormDisabled(true); // frozen while the preview stands -- 返回修改 unfreezes
     if (preview.old_row !== null && preview.old_row !== undefined) {
       const oldLabel = document.createElement("div");
       oldLabel.className = "diff-label";
-      oldLabel.textContent = "原行";
+      oldLabel.textContent = t("原行");
       const oldRow = document.createElement("div");
       oldRow.className = "diff-row old";
       oldRow.textContent = preview.old_row;
@@ -4510,7 +4533,7 @@ function renderAttemptForm(mode, attemptId) {
     }
     const newLabel = document.createElement("div");
     newLabel.className = "diff-label";
-    newLabel.textContent = "新行";
+    newLabel.textContent = t("新行");
     const newRow = document.createElement("div");
     newRow.className = "diff-row new";
     newRow.textContent = preview.new_row;
@@ -4530,7 +4553,7 @@ function renderAttemptForm(mode, attemptId) {
     const backBtn = document.createElement("button");
     backBtn.type = "button";
     backBtn.className = "btn";
-    backBtn.textContent = "返回修改";
+    backBtn.textContent = t("返回修改");
     backBtn.addEventListener("click", () => {
       previewHost.innerHTML = "";
       setFormDisabled(false);
@@ -4559,6 +4582,8 @@ function renderAttemptForm(mode, attemptId) {
         backBtn.disabled = false; // 返回修改, fix, and re-preview
         return;
       }
+      const association = !result.ingest_error ? await associateCreatedAttempt(result, body) : null;
+      if (association && association.stale) return;
       if (proposing) {
         // The row is the member's own change now; the proposal is the
         // engine's dry run of it, sent only on 发送提议 (team.js).
@@ -4587,6 +4612,11 @@ function renderAttemptForm(mode, attemptId) {
         backBtn.disabled = false;
         pollGeneration();
         return;
+      }
+      if (association && (association.missing || association.failures.length)) {
+        previewHost.replaceChildren();
+        setFormStatus(statusEl, "err", association.missing ? t("尝试已保存，但尚未读到新尝试，研究记录关联未更新。") : t("尝试已保存，部分来源关联未成功。可在研究路线中补充关联。"), association.failures && association.failures[0]);
+        previewHost.appendChild(mkButton(t("关闭"), "btn", closePanel)); pollGeneration(); return;
       }
       closePanel(); // success -- the auto-refresh renders the new state
       pollGeneration();
@@ -4643,6 +4673,11 @@ function renderAttemptForm(mode, attemptId) {
   panelBody.append(form, statusEl, previewHost);
   openPanel();
   (mode === "append" ? numberInput : inputs.description).focus();
+}
+
+if (window.ROWorkspace) {
+  window.ROWorkspace.onCreateAttempt = (prefill, onSaved) => { if (mayReplacePanel()) openAttemptForm("append", null, { prefill, onSaved }); };
+  window.ROWorkspace.onOpenVariable = (id) => openVariableCard(id);
 }
 
 document.getElementById("new-attempt-btn").addEventListener("click", () => { if (mayReplacePanel()) openAttemptForm("append"); });
@@ -5940,6 +5975,11 @@ function renderVariableCard(host, card) {
   cardChips({ state: card.state, reason: card.reason, abandoned: !!card.abandoned, in_use: card.in_use, draft: card.draft })
     .forEach(([text, cls]) => head.appendChild(mk("span", "var-chip " + cls, text)));
   host.appendChild(head);
+  const related = mk("div", "var-research-records"), relatedEpoch = state.dataEpoch, relatedProject = state.currentPath;
+  host.appendChild(related);
+  apiGet("/api/workspace/research-records?variable=" + encodeURIComponent(card.id) + "&project=" + encodeURIComponent(relatedProject)).then((result) => {
+    if (relatedEpoch === state.dataEpoch && relatedProject === state.currentPath && varState.card === card.id && window.ROWorkspace) window.ROWorkspace.renderResearchLinks(related, result.records);
+  }).catch(() => {});
   const shownVersion = card.versions.find((v) => v.version === card.in_use) || card.versions[card.versions.length - 1];
   const aliases = shownVersion && shownVersion.content && shownVersion.content.aliases;
   if (aliases && aliases.length) host.appendChild(mk("div", "var-aliases", "尝试表里的写法：" + aliases.join("、")));
@@ -6311,7 +6351,11 @@ function renderLiteratureReader(host, item, data) {
   if ((item.files || []).length) {
     const sources = mk("details", "lit-reader-sources");
     sources.appendChild(mk("summary", null, t("项目中的文献文件")));
-    item.files.forEach((file) => sources.appendChild(mkButton(file, "lit-link-btn", () => openFilePanel(file))));
+    item.files.forEach((file) => {
+      const source = mk("div", "lit-reader-source"); source.appendChild(mkButton(file, "lit-link-btn", () => openFilePanel(file)));
+      if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], t("此文献文件关联的研究记录"));
+      sources.appendChild(source);
+    });
     host.appendChild(sources);
   }
 }

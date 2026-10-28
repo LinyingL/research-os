@@ -243,6 +243,10 @@ def _settings_message(what: str) -> Refusal:
                    f"write there; put your work in ordinary project files instead.", "agent_settings")
 
 
+def is_context_record(rel: str) -> bool:
+    return bool(re.fullmatch(r"research/results/[^/]+\.context\.json", rel, re.I))
+
+
 def is_output_record(rel: str) -> bool:
     return bool(re.fullmatch(r"research/results/[0-9a-f]{32}\.outputs\.json", rel, re.I))
 
@@ -276,7 +280,7 @@ def _check_file_tool(guard: dict[str, Any], tool_name: str, tool_input: dict[str
     if _key(parts[-1]) in AGENT_SETTINGS_FILES:
         return _settings_message(rel)
     posix = "/".join(parts)
-    if is_output_record(posix) or _key(posix) in {_key(f) for f in guard["files"]}:
+    if (is_output_record(posix) or is_context_record(posix)) or _key(posix) in {_key(f) for f in guard["files"]}:
         return Refusal(f"{posix} is a protected file (a data file that existed before this run, the attempt table, or "
                        f"research/tasks.json) and cannot be changed by an agent; write the result to a new file instead, "
                        f"and use the researchos_* tools to report on the task.", "protected_file")
@@ -647,7 +651,7 @@ class _PathCheck:
         if found is None:
             return False
         real, key = found
-        if key in self.files or is_output_record(key):
+        if key in self.files or is_output_record(key) or is_context_record(key):
             return True
         if not (directory or os.path.isdir(real)):
             return False
@@ -659,7 +663,7 @@ class _PathCheck:
             if _GLOB_RE.search(name):
                 if any(fnmatch.fnmatchcase(f, full) for f in self.files):
                     return True
-            elif full in self.files:
+            elif full in self.files or is_output_record(full) or is_context_record(full):
                 return True
         return False
 
@@ -667,16 +671,16 @@ class _PathCheck:
 
     def run(self, command: str, depth: int = 0) -> None:
         """Raise `_Refuse` when some simple command in `command` is refusable."""
-        if depth > 3 or (not _PATH_PROGRAMS_RE.search(command) and ".outputs.json" not in command.lower()):
+        if depth > 3 or (not _PATH_PROGRAMS_RE.search(command) and ".outputs.json" not in command.lower() and ".context.json" not in command.lower()):
             return
         for segment in _segments(command, ";&|\n"):
             for target in _REDIRECT_RE.findall(segment):
-                if ".outputs.json" in target.lower() and "\0" not in target and not re.search(r"[$`]", target):
+                if any(suffix in target.lower() for suffix in (".outputs.json", ".context.json")) and "\0" not in target and not re.search(r"[$`]", target):
                     try:
                         located = self.locate(target.strip("'\""), follow_last=True)
                     except (OSError, ValueError):
                         continue
-                    if located is not None and is_output_record(located[1]):
+                    if located is not None and (is_output_record(located[1]) or is_context_record(located[1])):
                         raise _Refuse
             words = _split_words(segment)
             if words:

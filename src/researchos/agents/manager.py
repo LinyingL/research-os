@@ -149,7 +149,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
 from researchos import history, names, outputs, paths, workspace
-from researchos.agents import brief, guard, labels, profiles, runners
+from researchos.agents import brief, guard, labels, profiles, runners, research_context
 from researchos.agents import runs as run_store
 from researchos.agents import snapshot, store
 from researchos.records import files as record_files
@@ -963,11 +963,16 @@ class AgentManager:
                              message_zh=outputs.unreadable_zh(exc)) from exc
         if places.get("choose"):
             raise AgentError("work_location")
+        try:
+            handoff = research_context.freeze(root, task)
+        except workspace.WorkspaceError as exc:
+            raise AgentError("start_failed", f"Research context could not be read: {exc}") from exc
         self._recover(project_id)
         engine_started = self._engine_started()
         run: dict[str, Any] = {
             "id": None, "project_id": project_id, "root": str(root), "task_id": task["id"],
             "task_text": task["text"], "task_due": task.get("due") or None,
+            "research_handoff": handoff,
             "runner": agent.runner, "model": agent.model, "owner": agent.owner, "label": agent.label,
             "reasoning_effort": reasoning_effort,
             "by": by if isinstance(by, str) and by else None,
@@ -1187,6 +1192,7 @@ class AgentManager:
                                      documents=self._documents(root, lang))
         else:
             text = brief.continuation(lang=lang, kind=run["kind"], message=act.message or "")
+        text += brief.research_handoff(run.get("research_handoff"), lang=lang)
         combined = rules + "\n\n" + text
         record_files.durable_write(rd / "instruction.txt", combined.encode("utf-8"))
 
@@ -1496,6 +1502,7 @@ class AgentManager:
         tool_paths: set[str] = set()
         shas: set[str] = set()
         output_shas: dict[str, set[str]] = {}
+        context_shas: dict[str, set[str]] = {}
         for sig in signals:
             if isinstance(sig.get("path"), str) and sig.get("kind") in ("complete", "note"):
                 tool_paths.add(sig["path"])
@@ -1508,11 +1515,15 @@ class AgentManager:
             if (sig.get("kind") == "complete" and isinstance(sig.get("outputs_sha"), str)
                     and isinstance(catalog, str) and guard.is_output_record(catalog)):
                 output_shas.setdefault(catalog, set()).add(sig["outputs_sha"])
+            context_path = sig.get("context_path")
+            if (sig.get("kind") == "complete" and isinstance(sig.get("context_sha"), str)
+                    and isinstance(context_path, str) and guard.is_context_record(context_path)):
+                context_shas.setdefault(context_path, set()).add(sig["context_sha"])
         decisive = [s for s in signals if s.get("kind") in ("ask", "complete")]
         complete = [s for s in signals if s.get("kind") == "complete"]
         asks = [s for s in signals if s.get("kind") == "ask"]
         return signals, {
-            "tool_paths": sorted(tool_paths), "tasks_shas": shas, "outputs_shas": output_shas,
+            "tool_paths": sorted(tool_paths), "tasks_shas": shas, "outputs_shas": output_shas, "context_shas": context_shas,
             "last": decisive[-1]["kind"] if decisive else None,
             "question": asks[-1].get("question") if asks and isinstance(asks[-1].get("question"), str) else None,
             "report": complete[-1].get("path") if complete and isinstance(complete[-1].get("path"), str) else None,
@@ -1553,6 +1564,7 @@ class AgentManager:
             tasks_ok.add(before_task["sha256"])
         allowed: dict[str, set[str]] = {TASKS_PATH: tasks_ok}
         allowed.update(info["outputs_shas"])
+        allowed.update(info["context_shas"])
         for kind in everything.values():
             for rel in kind:
                 if _key(rel) in shas:

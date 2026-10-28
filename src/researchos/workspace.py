@@ -393,8 +393,8 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
     result = []
     seen = set()
     for task in value:
-        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due", "report"}:
-            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner, due and report")
+        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due", "report", "context"}:
+            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner, due, report and context")
         tid, text = task.get("id"), task.get("text")
         if not isinstance(tid, str) or not _TASK_ID_RE.fullmatch(tid) or tid in seen:
             raise WorkspaceError("invalid", "Each task needs a unique plain id")
@@ -421,6 +421,14 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
         entry = {"id": tid, "text": text, "done": done, "owner": owner, "due": due}
         if report:  # written only when set: a task without one stays as it was on disk
             entry["report"] = report
+        context = task.get("context")
+        if context is not None:
+            if not isinstance(context, dict) or set(context) != {"report"}:
+                raise WorkspaceError("invalid", "Task context contains a result record path only")
+            from researchos import research_records
+
+            research_records.path_for(context["report"])
+            entry["context"] = {"report": context["report"]}
         result.append(entry)
     return result
 
@@ -455,8 +463,13 @@ def save_tasks(root: str | Path, body: dict[str, Any], *,
     after = _content(json.dumps(tasks, ensure_ascii=False, indent=2) + "\n")
     with situation.write_guard(root, human=True):
         pid = _require_write(root)
-        _old_tasks, before = _read_tasks(root)
+        old_tasks, before = _read_tasks(root)
         _check_revision(body, before)
+        old_contexts = {task["id"]: task.get("context") for task in old_tasks}
+        for task in tasks:
+            context = task.get("context")
+            if context and context != old_contexts.get(task["id"]) and _read(root, context["report"]) is None:
+                raise WorkspaceError("not_found", "The task context result record does not exist", 409)
         backup, history_error = _save(root, TASKS_PATH, before, after, pid, author)
         return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error,
                 "changed_task_reports": _changed_reports(root, tasks, proposals.role_of(root)[0])}
@@ -471,7 +484,7 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
     task counts as changed. A task that did not change is still offered its list of registered files when that differs
     from the official one, with the files it newly names and those it names with another fingerprint (DESIGN.md 19.5):
     a member who registers a file for a task whose record stays as it is has made a change the PI's version lacks."""
-    if mode != "member" or not any(task.get("report") for task in tasks):
+    if mode != "member" or not any(task.get("report") or task.get("context") for task in tasks):
         return []
     official: dict[str, dict[str, Any]] = {}
     base = None
@@ -484,10 +497,15 @@ def _changed_reports(root: Path, tasks: list[dict[str, Any]], mode: str) -> list
     except (proposals.ProposalRefused, OSError, KeyError, TypeError, ValueError, WorkspaceError):
         official = {}
     reports = list(dict.fromkeys(task["report"] for task in tasks if task.get("report") and official.get(task["id"]) != task))
+    reports += [task["context"]["report"] for task in tasks if task.get("context")
+                and official.get(task["id"]) != task and task["context"]["report"] not in reports]
     unchanged = [task["report"] for task in tasks if task.get("report") and official.get(task["id"]) == task and task["report"] not in reports]
     from researchos import outputs
 
-    return reports + outputs.related_files(root, reports, unchanged=unchanged, base=base)
+    # Hand-written result names can be task input context; only generated
+    # task reports own the output catalogs understood by this older helper.
+    return reports + outputs.related_files(root, [report for report in reports if _REPORT_RE.fullmatch(report)],
+                                            unchanged=unchanged, base=base)
 
 
 def _attempt_order(row: sqlite3.Row) -> tuple[Any, ...]:

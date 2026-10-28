@@ -957,6 +957,7 @@
       s.appendChild(ul);
       host.appendChild(s);
     }
+    renderResearchRecords(host, full.research_records || []);
     // What approving would do is the PI's question while it waits; once
     // answered, it says what the proposal carried.
     if (full.changes && (full.state === "pending" || full.state === "conflict")) renderWhatApprovingDoes(host, full);
@@ -981,6 +982,40 @@
     const s = mk("section", "node-sec");
     s.appendChild(mk("h3", "node-sec-title", title));
     return s;
+  }
+
+  function renderResearchRecords(host, records) {
+    records.forEach((record) => {
+      const s = sec(t("研究记录"));
+      s.appendChild(mk("p", "desk-meta mono", record.path));
+      const context = record.context || {};
+      [["question", "研究问题"], ["method", "方法"],
+        ["finding", "发现"], ["limits", "局限"], ["next_step", "下一步"]].forEach(([key, title]) => {
+        if (context[key]) s.appendChild(mk("p", "desk-note", t(title) + ": " + context[key]));
+      });
+      [["attempts", "关联尝试"], ["references", "参考材料"], ["materials", "材料"]].forEach(([key, title]) => {
+        if ((context[key] || []).length) s.appendChild(mk("p", "desk-note", t(title) + ": " + context[key].join(" · ")));
+      });
+      if ((context.variables || []).length) s.appendChild(mk("p", "desk-note", t("关联变量") + ": " + context.variables.map((v) => v.id + " v" + v.version).join(" · ")));
+      (record.variable_versions || []).forEach((v) => {
+        s.appendChild(mk("p", "desk-meta", t("变量 {card}：引用第 {expected} 版，当前确认第 {current} 版", {
+          card: v.id, expected: v.version, current: v.current == null ? "—" : v.current
+        })));
+        if (!v.available || v.draft === v.version) s.appendChild(mk("p", "desk-note", t("变量草稿仍需单独审阅和确认。")));
+      });
+      Object.entries(context.purposes || {}).forEach(([path, purpose]) => {
+        s.appendChild(mk("p", "desk-note", path + ": " + purpose));
+      });
+      if (context.attempt_draft) {
+        const draft = context.attempt_draft;
+        s.appendChild(mk("h4", "desk-head", t("尝试草稿")));
+        if (draft.description) s.appendChild(mk("p", "desk-note", draft.description));
+        if (draft.result) s.appendChild(mk("p", "desk-note", t("结果：{result}", { result: draft.result })));
+        if ((draft.parents || []).length) s.appendChild(mk("p", "desk-note", t("关联尝试") + ": " + draft.parents.join(" · ")));
+        s.appendChild(mk("p", "desk-meta", t("尝试草稿仍需单独提交为新的尝试。")));
+      }
+      host.appendChild(s);
+    });
   }
 
   function diffOf(text, truncated) {

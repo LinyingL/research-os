@@ -207,3 +207,22 @@
 .ws-backfill-file select { flex: none; width: auto; max-width: 100%; font-size: .76rem; padding: .1rem .3rem; }
 .ws-backfill-total { margin: 0; color: var(--ink-soft); font-size: .76rem; }
 .ws-backfill-offer { margin-top: 1.2rem; }
+
+.ws-research-record { border-top: 1px solid var(--line); padding-top: .7rem; margin-top: .9rem; font-size: .84rem; }
+.ws-research-record > summary { cursor: pointer; color: var(--ink-soft); }
+.ws-research-record > .res-draft-summary { padding: .2rem 0; gap: .45rem; }
+.ws-research-record[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.ws-research-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin: .8rem 0; }
+.ws-research-input { width: 100%; box-sizing: border-box; resize: vertical; min-height: 4rem; }
+.ws-research-value h3, .ws-research-group h3 { font-size: .78rem; font-weight: 500; color: var(--ink-soft); margin: .7rem 0 .35rem; }
+.ws-research-value p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.ws-research-link { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .35rem 0; }
+.ws-research-link .ws-file-link { overflow-wrap: anywhere; text-align: left; min-width: 0; }
+.ws-task-form > .ws-field-context { flex: 1 1 220px; }
+@media (max-width: 640px) { .ws-research-fields { grid-template-columns: 1fr; } }
+
+.ws-related-records { margin: 1rem 0; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 4px; }
+.ws-related-records > h3 { margin: 0 0 .7rem; color: var(--ink-soft); font-size: .8rem; font-weight: 500; }
+.ws-related-record + .ws-related-record { margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--line); }
+.ws-related-record p { margin: .3rem 0; font-size: .82rem; overflow-wrap: anywhere; }
+.ws-research-purpose { color: var(--ink-soft); }

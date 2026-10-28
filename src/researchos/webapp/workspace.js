@@ -104,8 +104,8 @@
   function live(mark) { return mark.epoch === epoch && mark.app === appEpoch() && mark.project === project(); }
   function editable() { return !!data && !foreignBlocked && !data.read_only && data.can_write !== false && ["single", "pi", "member"].includes(data.mode); }
   function tasksEditable() { return editable() && !data.tasks_error; }
-  function documentDirty() { return !!draft && !!saved && (draft.title !== saved.title || draft.content !== saved.content); }
-  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due); }
+  function documentDirty() { return !!draft && !!saved && (draft.title !== saved.title || draft.content !== saved.content || researchRecordDirty()); }
+  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due || taskDraft.contextReport); }
   function createDirty() {
     return !!createSubject && typeof state !== "undefined" && state.panelSubject === createSubject &&
       (createSubject.name.value || createSubject.parent.value) &&
@@ -122,7 +122,7 @@
   }
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
-  function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false }; }
+  function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: "" }; }
   function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
@@ -195,7 +195,7 @@
       if (path && path !== own && !named.includes(path)) named.push(path);
     }
     if (data.files_truncated) await lookUpFiles(named.filter((path) => !listedFile(path) && !knownCache.has(path)));
-    return [own].concat(named.filter(knownFile));
+    return [own].concat(named.filter(knownFile), draft.researchRecord.path || []).filter((path, index, all) => path && all.indexOf(path) === index);
   }
 
   function projectChangedElsewhere() {
@@ -220,6 +220,7 @@
     });
     banner.append(feedback, reopen); host.prepend(banner);
     ui.save.disabled = true; ui.note.disabled = ui.result.disabled = true;
+    if (ui.researchRecord) descendants(ui.researchRecord).forEach((node) => { if (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(node.tagName)) node.disabled = true; });
     renderTasks();
   }
 
@@ -400,25 +401,33 @@
     if (draft.officialness && draft.officialness.label) ui.kindLabel.append(el("span", "ws-officialness", draft.officialness.label));
   }
   function setDraft(doc, previewing) {
-    draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc) };
-    saved = { title: draft.title, content: draft.content };
+    draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc), researchRecord: doc.research_record || {}, researchContext: emptyResearchContext(doc.research_record && doc.research_record.context), researchOpen: doc.kind === "result" && doc.revision != null };
+    saved = { title: draft.title, content: draft.content, researchContext: emptyResearchContext(draft.researchContext) };
     renderEditor(previewing == null ? draft.revision != null || !editable() : previewing); renderNav();
   }
   async function openDocument(path, quiet, discard) {
     if (!quiet && !discard && documentDirty() && !window.confirm(t("当前文档还没有保存。放弃这些修改并打开另一份吗？"))) return;
     const token = ++docRequest, mark = stamp();
-    const leaving = draft, leavingTitle = draft && draft.title, leavingContent = draft && draft.content;
+    const leaving = draft, leavingTitle = draft && draft.title, leavingContent = draft && draft.content, leavingResearch = draft && JSON.stringify(draft.researchContext);
     if (!quiet) status(ui && ui.docStatus, t("正在读取…"));
     try {
       const doc = await apiGet("/api/workspace/document?path=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(project()));
+      if (doc.kind === "result") {
+        try { doc.research_record = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(mark.project)); }
+        catch (err) { doc.research_record = { error: errorWords(t("没能读取研究记录。"), err) }; }
+      }
       if (!live(mark) || token !== docRequest || (doc.project && doc.project !== mark.project)) return;
-      if (draft === leaving && draft && (draft.title !== leavingTitle || draft.content !== leavingContent)) {
+      if (draft === leaving && draft && (draft.title !== leavingTitle || draft.content !== leavingContent || JSON.stringify(draft.researchContext) !== leavingResearch)) {
         status(ui.docStatus, t("读取期间有新的输入，已保留当前文档。请再次选择要打开的文档。")); return;
       }
       if (quiet && !discard && documentDirty()) return;
       if (quiet && draft && doc.path === draft.path && doc.revision === draft.revision) {
         draft.officialness = officialnessOf(doc); // the same text: only its word may have moved
         drawOfficialness();
+        if (doc.kind === "result" && !researchRecordDirty()) {
+          draft.researchRecord = doc.research_record || {}; draft.researchContext = emptyResearchContext(draft.researchRecord.context);
+          saved.researchContext = emptyResearchContext(draft.researchContext); redrawResearchRecord();
+        }
         return;
       }
       const previewing = quiet && draft && doc.path === draft.path ? ui.previewing : undefined;
@@ -493,6 +502,7 @@
     title.addEventListener("input", changed); text.addEventListener("input", changed);
     text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!save.disabled) saveDocument(); } });
     box.append(header, title, attachmentTools(), text, preview, docStatus);
+    if (draft.kind === "result") box.append(researchRecordSection());
     const footer = el("div", "ws-document-footer");
     if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
     if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }));
@@ -517,8 +527,164 @@
       ui.attachments.classList.toggle("hidden", ui.previewing);
       previewToggle.textContent = ui.previewing ? t("编辑") : t("预览");
       if (ui.previewing) renderPreview();
+      if (draft.kind === "result") redrawResearchRecord();
     }
     showMode();
+  }
+  function emptyResearchContext(value) {
+    const context = Object.assign({ question: "", method: "", finding: "", limits: "", next_step: "", attempts: [], variables: [], references: [], materials: [], purposes: {} }, value || {});
+    ["attempts", "variables", "references", "materials"].forEach((key) => { context[key] = (context[key] || []).map((item) => typeof item === "object" ? Object.assign({}, item) : item); });
+    context.purposes = Object.assign({}, context.purposes);
+    if (context.attempt_draft) context.attempt_draft = Object.assign({}, context.attempt_draft, { parents: (context.attempt_draft.parents || []).slice() });
+    return context;
+  }
+  function researchRecordDirty() { return !!draft && !!saved && JSON.stringify(draft.researchContext) !== JSON.stringify(saved.researchContext); }
+  function researchRecordSection() {
+    const box = el("details", "ws-research-record"); box.open = !!draft.researchOpen;
+    box.append(disclosureSummary(t("研究记录")));
+    box.addEventListener("toggle", () => { draft.researchOpen = box.open; });
+    const context = draft.researchContext;
+    if (draft.researchRecord.error) { box.append(el("p", "ws-status err", draft.researchRecord.error)); ui.researchRecord = box; return box; }
+    (draft.researchRecord.notices || []).forEach((notice) => {
+      const english = typeof uiLang === "function" && uiLang() === "en";
+      const words = notice.kind === "older_version" && notice.id ? t("变量 {card}：引用第 {expected} 版，当前确认第 {current} 版", { card: notice.id, expected: notice.version, current: notice.current }) : (!english && notice.message_zh ? notice.message_zh : notice.message);
+      if (words) box.append(el("p", "ws-status err", words));
+    });
+    function changed() { status(ui.docStatus, documentDirty() ? t("尚未保存") : ""); const save = box.querySelector(".ws-record-save"); if (save) save.disabled = !draft.path || draft.researchBusy || !researchRecordDirty(); }
+    const fields = el("div", "ws-research-fields");
+    [["question", t("研究问题")], ["method", t("方法与比较")], ["finding", t("发现与解释")], ["limits", t("局限与待确认")], ["next_step", t("下一步")]].forEach(([key, label]) => {
+      if (ui.previewing) {
+        if (context[key]) { const item = el("div", "ws-research-value"); item.append(el("h3", null, label), el("p", null, context[key])); fields.append(item); }
+      } else {
+        const area = keyed(el("textarea", "form-input ws-research-input"), "research:" + key); area.value = context[key] || ""; area.rows = 2; area.disabled = !editable();
+        area.addEventListener("input", () => { context[key] = area.value; changed(); }); fields.append(field(label, area));
+      }
+    });
+    box.append(fields);
+    const links = el("div", "ws-research-links"); box.append(links);
+    function linkedGroup(key, label, choices, open) {
+      const valueKey = (item) => typeof item === "object" ? item.id + "@" + item.version : item;
+      const group = el("div", "ws-research-group"); group.append(el("h3", null, label));
+      (context[key] || []).forEach((value) => {
+        const row = el("div", "ws-research-link"), choice = choices.find((item) => item.id === valueKey(value));
+        const view = button(choice ? choice.label : valueKey(value), () => open(value), "btn btn-small ws-file-link"); row.append(view);
+        if (!ui.previewing && editable()) row.append(named(button(t("移除"), () => { context[key] = context[key].filter((item) => valueKey(item) !== valueKey(value)); if ((key === "references" || key === "materials") && !context.references.includes(value) && !context.materials.includes(value)) delete context.purposes[value]; changed(); redrawResearchRecord(); }), t("移除：{task}", { task: choice ? choice.label : valueKey(value) })));
+        if (key === "references" || key === "materials") {
+          if (ui.previewing) { if (context.purposes[value]) row.append(el("span", "ws-research-purpose", context.purposes[value])); }
+          else {
+            const purpose = keyed(input("text", t("用途或关联意义（可选）")), "research-purpose:" + value); purpose.value = context.purposes[value] || "";
+            purpose.setAttribute("aria-label", t("用途：{path}", { path: value })); purpose.addEventListener("input", () => { context.purposes[value] = purpose.value; changed(); }); row.append(purpose);
+          }
+        }
+        group.append(row);
+      });
+      if (!ui.previewing && editable()) {
+        const row = el("div", "ws-attachment-row"), select = keyed(el("select", "form-input"), "research-link:" + key);
+        select.setAttribute("aria-label", label); const blank = el("option", null, t("选择…")); blank.value = ""; select.append(blank);
+        choices.filter((item) => !context[key].some((value) => valueKey(value) === item.id)).forEach((item) => { const option = el("option", null, item.label); option.value = item.id; select.append(option); });
+        const add = button(t("加入关联"), () => { if (select.value && !context[key].some((value) => valueKey(value) === select.value)) { context[key].push(key === "variables" ? choices.find((item) => item.id === select.value).value : select.value); changed(); redrawResearchRecord(); } });
+        add.disabled = choices.every((item) => context[key].some((value) => valueKey(value) === item.id)); row.append(select, add); group.append(row);
+      }
+      if (group.children.length > 1) links.append(group);
+    }
+    linkedGroup("attempts", t("研究尝试"), (data.attempts || []).map((item) => ({ id: item.id, label: item.label || item.id })), (id) => { if (window.RONode) window.RONode.openNode(id); });
+    linkedGroup("variables", t("变量定义"), ((draft.researchRecord.choices || {}).variables || []).map((item) => ({ id: item.id + "@" + item.version, label: item.label && item.label.endsWith(" v" + item.version) ? item.label : (item.label || item.id) + " · v" + item.version, value: { id: item.id, version: item.version } })), (value) => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(value.id); });
+    linkedGroup("materials", t("研究材料"), (data.files || []).map((item) => ({ id: item.path, label: item.path })), (path) => { if (typeof openFilePanel === "function") openFilePanel(path); });
+    linkedGroup("references", t("文献文件"), (data.files || []).map((item) => ({ id: item.path, label: item.path })), (path) => { if (typeof openFilePanel === "function") openFilePanel(path); });
+    const outputs = draft.researchRecord.outputs || [], variables = draft.researchRecord.variable_drafts || [];
+    if (outputs.length || variables.length) {
+      const materials = el("div", "ws-research-group"); materials.append(el("h3", null, t("相关输出")));
+      const paths = new Set(); outputs.concat(variables).forEach((item) => {
+        if (!item.path || paths.has(item.path)) return; paths.add(item.path);
+        const row = el("div", "ws-research-link"); row.append(button(item.path, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }, "btn btn-small ws-file-link"));
+        if (!item.variable_card && variables.some((value) => value.path === item.path) && editable()) {
+          const cardId = keyed(input("text", t("变量 ID")), "research-import:" + item.path); cardId.setAttribute("aria-label", t("变量 ID"));
+          const feedback = el("span", "ws-status");
+          const importButton = button(t("导入为变量草稿"), async () => {
+            if (!editable()) return;
+            if (!cardId.value.trim()) { cardId.focus(); return; }
+            const mark = stamp(), target = draft; importButton.disabled = true;
+            try {
+              const response = await apiPost("/api/workspace/research-record/variable", { project: mark.project, report: draft.path, path: item.path, id: cardId.value.trim() });
+              if (!live(mark) || draft !== target) return;
+              const id = response.id || cardId.value.trim(), version = response.version;
+              (draft.researchRecord.outputs || []).concat(draft.researchRecord.variable_drafts || []).filter((value) => value.path === item.path).forEach((value) => { value.variable_card = id; value.draft = version; value.in_use = response.in_use == null ? null : response.in_use; });
+              if (Number.isInteger(version) && version > 0) {
+                if (!context.variables.some((value) => value.id === id && value.version === version)) context.variables.push({ id, version });
+                const choices = draft.researchRecord.choices || (draft.researchRecord.choices = {});
+                choices.variables = choices.variables || [];
+                if (!choices.variables.some((value) => value.id === id && value.version === version)) choices.variables.push({ id, version, label: id + " v" + version });
+              }
+              redrawResearchRecord(); status(ui.docStatus, t("变量草稿已创建；关联尚未保存。"), "ok");
+            } catch (err) { if (live(mark) && draft === target) { importButton.disabled = false; status(feedback, errorWords(t("没能导入变量草稿。"), err), "err"); } }
+          }); row.append(cardId, importButton, feedback);
+        }
+        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); })); materials.append(row);
+      });
+      if (variables.length) materials.append(el("p", "ws-empty", t("变量草稿仍需单独审阅和确认。")));
+      box.append(materials);
+    }
+    if (context.attempt_draft) {
+      const attempt = context.attempt_draft, group = el("div", "ws-research-group"); group.append(el("h3", null, t("尝试草稿")));
+      [["description", t("尝试描述")], ["result", t("尝试结果")]].forEach(([key, label]) => {
+        if (attempt[key]) { const line = el("p", "ws-research-draft", attempt[key]); line.setAttribute("aria-label", label); group.append(line); }
+      });
+      (attempt.parents || []).forEach((id) => { group.append(button(id, () => { if (window.RONode) window.RONode.openNode(id); }, "btn btn-small ws-file-link")); });
+      group.append(el("p", "ws-empty", t("尝试草稿仍需单独提交为新的尝试。"))); box.append(group);
+    }
+    if (editable() && (!ui.previewing || context.attempt_draft || context.method || context.finding)) {
+      const actions = el("div", "ws-actions");
+      actions.append(button(t("记录研究尝试…"), () => { if (editable() && typeof window.ROWorkspace.onCreateAttempt === "function") window.ROWorkspace.onCreateAttempt(context.attempt_draft || { description: context.method, result: context.finding, parents: context.attempts }, (attempt, savedState) => {
+        if (!attempt || !attempt.id || !draft || draft.researchContext !== context) return;
+        if (!context.attempts.includes(attempt.id)) context.attempts.push(attempt.id);
+        if (!(data.attempts || []).some((item) => item.id === attempt.id)) data.attempts.push({ id: attempt.id, label: (attempt.attrs || {}).description || attempt.id });
+        redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；研究记录中的关联尚未保存。") : t("尝试已保存；研究记录中的关联尚未保存。"));
+      }); }));
+      if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }));
+      box.append(actions);
+    }
+    if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("尚未补充研究记录。")));
+    const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
+    if (editable() && (!ui.previewing || researchRecordDirty())) {
+      const save = button(t("保存研究记录"), () => saveResearchRecord(feedback, save), "btn btn-small ws-record-save");
+      save.disabled = !draft.path || draft.researchBusy || !researchRecordDirty(); box.append(save);
+      if (!draft.path) box.append(el("p", "ws-empty", t("先保存结果文档，再保存研究记录。")));
+    }
+    box.append(feedback); ui.researchRecord = box; return box;
+  }
+  async function saveResearchRecord(feedback, control) {
+    if (!draft || !draft.path || !editable() || draft.researchBusy || !researchRecordDirty()) return;
+    const mark = stamp(), target = draft, sent = emptyResearchContext(draft.researchContext);
+    draft.researchBusy = true; control.disabled = true; status(feedback, t("正在保存…"));
+    try {
+      const response = await apiPost("/api/workspace/research-record", { project: mark.project, report: draft.path, revision: draft.researchRecord.revision || null, context: sent });
+      if (!live(mark) || draft !== target) return;
+      draft.researchBusy = false; draft.researchRecord = response; saved.researchContext = emptyResearchContext(response.context || sent);
+      if (JSON.stringify(draft.researchContext) === JSON.stringify(sent)) {
+        const normalized = emptyResearchContext(saved.researchContext);
+        Object.keys(draft.researchContext).forEach((key) => { if (!(key in normalized)) delete draft.researchContext[key]; });
+        Object.assign(draft.researchContext, normalized);
+      }
+      status(feedback, response.history_warning ? t("研究记录已保存，但修改历史暂时未能记录。") : researchRecordDirty() ? t("已保存；之后输入的内容尚未保存。") : t("研究记录已保存。"), response.history_warning ? "" : "ok");
+      control.disabled = !researchRecordDirty(); if (ui.previewing && !researchRecordDirty()) control.classList.add("hidden"); status(ui.docStatus, documentDirty() ? t("尚未保存") : "");
+    } catch (err) {
+      if (!live(mark) || draft !== target) return;
+      draft.researchBusy = false; control.disabled = false;
+      status(feedback, errorWords(t("没能保存研究记录，当前填写已保留。"), err), "err");
+      if (/conflict|revision|changed/.test(err.state || "")) feedback.append(button(t("重新载入研究记录"), async () => {
+        if (!window.confirm(t("重新载入会放弃尚未保存的研究记录，继续吗？"))) return;
+        try {
+          const response = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(target.path) + "&project=" + encodeURIComponent(mark.project));
+          if (!live(mark) || draft !== target) return;
+          draft.researchRecord = response; draft.researchContext = emptyResearchContext(response.context); saved.researchContext = emptyResearchContext(response.context); redrawResearchRecord();
+        } catch (readError) { if (live(mark) && draft === target) status(feedback, errorWords(t("没能读取研究记录。"), readError), "err"); }
+      }));
+    }
+  }
+  function redrawResearchRecord() {
+    if (!ui || !ui.researchRecord || !draft || draft.kind !== "result") return;
+    const old = ui.researchRecord, snap = focusSnapshot(old); draft.researchOpen = old.open;
+    old.replaceWith(researchRecordSection()); restoreFocus(ui.researchRecord, snap);
   }
   function insertText(words) {
     const text = ui.text, start = text.selectionStart == null ? text.value.length : text.selectionStart;
@@ -624,7 +790,7 @@
       if (!live(mark) || draft !== target) return;
       draft.path = response.path; draft.revision = response.revision; draft.officialness = response.officialness || draft.officialness;
       const unchanged = draft.title === titleSent && draft.content === contentSent;
-      saved = { title: response.title == null ? payload.title : response.title, content: response.content == null ? contentSent : response.content };
+      saved = { title: response.title == null ? payload.title : response.title, content: response.content == null ? contentSent : response.content, researchContext: saved.researchContext };
       if (unchanged) { draft.title = saved.title; draft.content = saved.content; renderEditor(true); }
       else { ui.save.disabled = !editable(); carryHeading(titleSent, contentSent, response.content, wasNew, shown); }
       const summary = { path: draft.path, kind: draft.kind, title: saved.title, excerpt: saved.content.slice(0, 100), officialness: draft.officialness, modified: response.modified || new Date().toISOString() };
@@ -632,6 +798,12 @@
       if (index < 0) data.documents.push(summary); else data.documents[index] = summary;
       renderNav();
       status(ui.docStatus, documentDirty() ? t("已保存；之后输入的内容尚未保存。") : response.history_error ? t("文件已保存，但修改历史暂时未能记录。") : t("已保存"), documentDirty() || response.history_error ? "" : "ok");
+      if (wasNew && draft.kind === "result") {
+        try {
+          const record = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(draft.path) + "&project=" + encodeURIComponent(mark.project));
+          if (live(mark) && draft === target) { draft.researchRecord = record; redrawResearchRecord(); }
+        } catch (err) { /* The document is saved; its research draft remains available for a later save. */ }
+      }
       if (typeof pollGeneration === "function") pollGeneration();
     } catch (err) {
       if (!live(mark) || draft !== target) return;
@@ -677,13 +849,17 @@
       const summary = keyed(disclosureSummary(task.text), "task-details:" + task.id);
       summary.className += " ws-task-summary"; summary.lastChild.className = "ws-task-text";
       const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
+      if (task.context && task.context.report) {
+        const report = (data.documents || []).find((doc) => doc.path === task.context.report);
+        words.append(keyed(button(t("研究记录") + ": " + (report ? report.title : task.context.report), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
+      }
       const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
       outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
       const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
-        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false }; renderTasks(); ui.taskText.focus();
+        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "" }; renderTasks(); ui.taskText.focus();
       }), "edit:" + task.id);
       const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
@@ -731,7 +907,15 @@
     ownerField.className += " ws-field-owner"; dateField.className += " ws-field-date";
     form.append(field(t("任务", { n: 1 }), text), ownerField);
     if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
-    form.append(dateField, submit);
+    const context = keyed(el("select", "form-input"), "task-context");
+    const noContext = el("option", null, t("无关联研究记录")); noContext.value = ""; context.append(noContext);
+    const records = (data.documents || []).filter((doc) => doc.kind === "result");
+    records.forEach((doc) => { const option = el("option", null, doc.title || doc.path); option.value = doc.path; context.append(option); });
+    if (taskDraft.contextReport && !records.some((doc) => doc.path === taskDraft.contextReport)) { const option = el("option", null, taskDraft.contextReport); option.value = taskDraft.contextReport; context.append(option); }
+    context.value = taskDraft.contextReport || ""; context.disabled = !tasksEditable() || taskBusy || taskConflict;
+    context.addEventListener("change", () => { taskDraft.contextReport = context.value; });
+    const contextField = field(t("研究上下文（可选）"), context); contextField.className += " ws-field-context";
+    form.append(dateField, contextField, submit);
     form.append(keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear"));
     const taskStatus = el("div", "ws-status"); taskStatus.setAttribute("role", "status");
     box.append(form, taskStatus); ui.taskText = text; ui.taskStatus = taskStatus;
@@ -777,6 +961,7 @@
     const existing = next.find((task) => task.id === taskDraft.id);
     if (taskDraft.id && !existing) { status(ui.taskStatus, t("这项任务已被移除。可以把当前填写添加为新任务。"), "err"); taskDraft.id = null; return; }
     const item = { id: taskDraft.id || (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : "task-" + Date.now().toString(36) + Math.random().toString(36).slice(2)), text: taskDraft.text.trim(), owner: taskDraft.owner.trim(), due: taskDraft.due, done: existing ? !!existing.done : false };
+    if (taskDraft.contextReport) item.context = { report: taskDraft.contextReport }; else if (existing && existing.context) item.context = null;
     // Object.assign keeps what the form does not edit: a task's report (17.2) stays with it.
     if (existing) Object.assign(existing, item); else next.push(item);
     await mutateTasks(next, true);
@@ -2426,6 +2611,24 @@
     } catch (err) { if (active()) status(note, errorWords(t("没能读取输出目录。"), err), "err"); }
   }
 
-  window.ROWorkspace = { load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  function renderResearchLinks(target, records, label) {
+    if (!records || !records.length) return;
+    const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("关联研究记录")));
+    records.forEach((record) => {
+      const row = el("div", "ws-related-record");
+      row.append(button(record.title || record.report, () => openResearchRecord(record.report), "btn btn-small ws-file-link"));
+      if (record.question) row.append(el("p", null, record.question));
+      (record.matches || []).forEach((match) => { const line = el("p", "ws-research-purpose"); line.append(el("span", "mono", match.path)); if (match.purpose) line.append(" — " + match.purpose); row.append(line); });
+      (record.variables || []).forEach((ref) => row.append(el("p", null, t("所用变量版本：{id} v{version}", ref))));
+      box.append(row);
+    }); target.append(box);
+  }
+  function openResearchRecord(path) {
+    if (!mayLeave()) return;
+    if (typeof openResultOnHome === "function") { openResultOnHome(path); return; }
+    if (typeof activateView === "function") activateView("workspace");
+    if (ui) openDocument(path, false, true);
+  }
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

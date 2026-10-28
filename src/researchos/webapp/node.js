@@ -371,6 +371,7 @@
     const pageEl = mk("div", "node-page");
     pageEl.appendChild(backBar());
     renderHead(pageEl, page);
+    if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(pageEl, page.research_records);
     renderTraceSection(pageEl, page);
     renderTimelineSection(pageEl, page, history, notes, me);
     renderJudgments(pageEl, page);
@@ -1202,6 +1203,7 @@
     host.innerHTML = "";
     const page = mk("div", "results");
     if (data.outputs) renderRegisteredOutputs(page, data.outputs);
+    if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(page, data.research_records);
     page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉：完整，或者缺来源、缺尝试。")));
     const figs = mk("section", "res-block");
     figs.appendChild(mk("h2", "desk-title", t("图与表")));
