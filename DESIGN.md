@@ -6059,7 +6059,7 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    records `adopted: false`.
 3. The panel's chooser shows the chosen status; saving 待定 with a reason
    writes `🕒 <reason>`; a cell with no known marker is written back byte for
-   byte when only its reason's neighbour field is untouched.
+   byte when the person changes nothing in it.
 4. 等你处理 lists an unopened handback, a run waiting for an answer and, in a
    two-person copy, a proposal; the sidebar count matches; opening a
    handback removes it for that person only.
