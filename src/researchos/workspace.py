@@ -393,8 +393,9 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
     result = []
     seen = set()
     for task in value:
-        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due", "report", "context"}:
-            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner, due, report and context")
+        if not isinstance(task, dict) or set(task) - {"id", "text", "done", "owner", "due", "report", "context", "attempt", "after"}:
+            raise WorkspaceError("invalid", "Each task must contain only id, text, done, owner, due, report, context, "
+                                            "attempt and after")
         tid, text = task.get("id"), task.get("text")
         if not isinstance(tid, str) or not _TASK_ID_RE.fullmatch(tid) or tid in seen:
             raise WorkspaceError("invalid", "Each task needs a unique plain id")
@@ -421,6 +422,19 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
         entry = {"id": tid, "text": text, "done": done, "owner": owner, "due": due}
         if report:  # written only when set: a task without one stays as it was on disk
             entry["report"] = report
+        # DESIGN.md 21.1: the attempt a task belongs to (an attempt node id, as research_records names them) and the
+        # task it continues. The shape only: that they exist is checked when a save adds or changes them
+        # (`_check_attempt_links`), so a task whose attempt row was later removed by hand still reads and still saves.
+        attempt, after = task.get("attempt"), task.get("after")
+        if attempt is not None and attempt != "" and (not isinstance(attempt, str) or len(attempt) > 1024
+                                                      or any(ord(c) < 32 for c in attempt)):
+            raise WorkspaceError("invalid", "A task's attempt must be an attempt id")
+        if after is not None and after != "" and (not isinstance(after, str) or not _TASK_ID_RE.fullmatch(after)):
+            raise WorkspaceError("invalid", "A task's 'after' must be the id of another task")
+        if attempt:
+            entry["attempt"] = attempt
+        if after:
+            entry["after"] = after
         context = task.get("context")
         if context is not None:
             if not isinstance(context, dict) or set(context) != {"report"}:
@@ -452,6 +466,54 @@ def read_tasks(root: str | Path) -> tuple[list[dict[str, Any]], str | None]:
     return tasks, _revision(raw)
 
 
+def _check_attempt_links(root: Path, tasks: list[dict[str, Any]], old_tasks: list[dict[str, Any]]) -> None:
+    """DESIGN.md 21.1. A task that is new (its id is not in the saved list) must name an attempt of this project; a
+    task whose attempt or `after` this save adds or changes must name one that exists (an attempt of the attempt
+    table as it is indexed -- in a working copy that includes the member's own row, not yet proposed -- or another
+    task of this list), and `after` may not lead back to the task itself. A task saved as it was is not looked at
+    again: an attempt row later removed by hand, or a task removed from the list, does not make the other tasks
+    unsavable (the same rule as a task's `context`, 20.2), and tasks from before 21 stay valid without an attempt."""
+    saved = {task["id"]: task for task in old_tasks}
+    known: set[str] | None = None
+    for task in tasks:
+        before = saved.get(task["id"])
+        attempt = task.get("attempt")
+        if before is None and not attempt:
+            raise WorkspaceError(
+                "task_needs_attempt",
+                "A new task belongs to an attempt: add it from the attempt's panel (“Add a task under this attempt”), "
+                "or choose one in the task form's “Which attempt it belongs to” field, where “Start a new attempt…” "
+                "is also offered.", 400,
+                "新任务要属于一条尝试：在尝试的面板里点「在这条尝试下加任务」，"
+                "或在任务表单的「属于哪条尝试」里选一条（也可以选「新开一条尝试…」）。")
+        if attempt and (before is None or before.get("attempt") != attempt):
+            if known is None:
+                known = {row["id"] for row in _attempts(root, limit=None)}
+            if attempt not in known:
+                raise WorkspaceError("task_attempt_unknown",
+                                     "That attempt is not in the attempt table. Choose “Which attempt it belongs to” again.",
+                                     400, "这条尝试不在尝试表里。请重新选择「属于哪条尝试」。")
+    by_id = {task["id"]: task for task in tasks}
+    for task in tasks:
+        after, before = task.get("after"), saved.get(task["id"])
+        if not after or (before is not None and before.get("after") == after):
+            continue
+        if after == task["id"]:
+            raise WorkspaceError("task_after_self", "A task cannot follow itself.", 400, "一个任务不能接着它自己。")
+        if after not in by_id:
+            raise WorkspaceError("task_after_unknown",
+                                 "The task chosen in “Which task it follows” is not in the list. Choose again.",
+                                 400, "「接着哪个任务」里选的任务不在任务列表里。请重新选择。")
+        seen, step = {task["id"]}, after
+        while step:
+            if step in seen:
+                raise WorkspaceError("task_after_cycle",
+                                     "That would make tasks follow each other in a circle. Choose a different task to follow.",
+                                     400, "这样会让几个任务首尾相接绕成一圈。请换一个「接着哪个任务」。")
+            seen.add(step)
+            step = (by_id.get(step) or {}).get("after")
+
+
 def save_tasks(root: str | Path, body: dict[str, Any], *,
                author: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Save the task list; `author` as in `save_document`."""
@@ -470,6 +532,7 @@ def save_tasks(root: str | Path, body: dict[str, Any], *,
             context = task.get("context")
             if context and context != old_contexts.get(task["id"]) and _read(root, context["report"]) is None:
                 raise WorkspaceError("not_found", "The task context result record does not exist", 409)
+        _check_attempt_links(root, tasks, old_tasks)
         backup, history_error = _save(root, TASKS_PATH, before, after, pid, author)
         return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error,
                 "changed_task_reports": _changed_reports(root, tasks, proposals.role_of(root)[0])}
@@ -515,9 +578,10 @@ def _attempt_order(row: sqlite3.Row) -> tuple[Any, ...]:
     return table, attempts_ingest.attempt_sort_key(number), row["id"]
 
 
-def _attempts(root: Path) -> list[dict[str, str]]:
-    """The attempts a document can refer to, by number. An unreadable project identity is not an empty list: it
-    propagates as `paths.IdentityUnavailableError` for `overview` to say."""
+def _attempts(root: Path, limit: int | None = FILE_LIMIT) -> list[dict[str, str]]:
+    """The attempts a document can refer to, by number (the first `limit` of them, all when None: a task may name any
+    attempt of the table, DESIGN.md 21.1). An unreadable project identity is not an empty list: it propagates as
+    `paths.IdentityUnavailableError` for `overview` to say."""
     try:
         path = paths.graph_db_path(root)
         if not path.is_file() or paths.is_dataless(path):
@@ -525,7 +589,7 @@ def _attempts(root: Path) -> list[dict[str, str]]:
         with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
             conn.row_factory = sqlite3.Row
             rows = sorted(conn.execute("SELECT id, title FROM nodes WHERE type = 'attempt'"), key=_attempt_order)
-            return [{"id": row["id"], "label": row["title"] or row["id"]} for row in rows[:FILE_LIMIT]]
+            return [{"id": row["id"], "label": row["title"] or row["id"]} for row in rows[:limit]]
     except (OSError, sqlite3.Error, ValueError):
         return []
 

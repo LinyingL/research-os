@@ -1375,9 +1375,12 @@ def test_the_listing_is_about_runs_not_undone_of_tasks_that_still_exist_with_a_r
     kept = earlier(root, pid, "20261021T080000", ["kept.py"])
     earlier(root, pid, "20261022T080000", ["removed.py"], task_id="t9")                         # no such task any more
     tasks, revision = workspace.read_tasks(root)
-    workspace.save_tasks(root, {"tasks": [*tasks, {"id": "t3", "text": "No record yet", "done": False, "owner": "", "due": ""},
+    attempt = tasks[0]["attempt"]  # a new task belongs to an attempt (21.1)
+    workspace.save_tasks(root, {"tasks": [*tasks, {"id": "t3", "text": "No record yet", "done": False, "owner": "", "due": "",
+                                                   "attempt": attempt},
                                           {"id": "t4", "text": "Record lost", "done": False, "owner": "", "due": "",
-                                           "report": "research/results/" + "c" * 32 + ".md"}], "revision": revision})
+                                           "report": "research/results/" + "c" * 32 + ".md", "attempt": attempt}],
+                                "revision": revision})
     earlier(root, pid, "20261023T080000", ["no_record.py"], task_id="t3")                       # a task without a result record
     earlier(root, pid, "20261023T090000", ["lost_record.py"], task_id="t4")                     # the record file is gone
     gone = earlier(root, pid, "20261024T080000", ["second.py"], task_id="t2")

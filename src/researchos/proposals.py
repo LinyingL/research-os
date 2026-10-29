@@ -802,6 +802,24 @@ def attempt_files(root: Path, config, number: str, description: str) -> set[str]
     return found
 
 
+def attempt_task_files(root: Path, attempt_id: str) -> set[str]:
+    """The tasks of a new attempt travel with it (DESIGN.md 21.1, 12.4): when the copy's task list has tasks that name
+    `attempt_id`, the task file, with the result records and registered files those tasks point to that the official
+    version lacks (`workspace._changed_reports`, the same set the page offers for a submission of tasks). The task file
+    is one file: it carries the tasks the member changed besides, which the file review shows and the member may leave
+    out. Reads only; nothing when the list cannot be read or no task names the attempt."""
+    from researchos import workspace  # noqa: PLC0415 -- workspace imports this module
+
+    try:
+        tasks, _revision = workspace.read_tasks(root)
+        mine = [task for task in tasks if task.get("attempt") == attempt_id]
+        if not mine:
+            return set()
+        return {workspace.TASKS_PATH, *workspace._changed_reports(root, mine, "member")}  # noqa: SLF001
+    except (workspace.WorkspaceError, OSError):
+        return set()
+
+
 def _returned_paths(root: Path, pid: str, me: str) -> dict[str, list[str]]:
     """Each file that was part of one of my returned proposals, with those
     proposals' ids (12.13: flagged when it is proposed again). Nothing when
@@ -906,6 +924,7 @@ def make_proposal(
                     data["attempt"].update(reason=said, abandons="yes")
                 carried.add(chosen)
                 linked = attempt_files(root, config, chosen, work_rows[chosen].get("description") or "")
+                linked |= attempt_task_files(root, f"attempt:{table}#{chosen}")
             elif kind == "verdict_change":
                 verdicts = [n for n in changed if work_rows[n]["verdict"] != base_rows[n]["verdict"]]
                 chosen = _pick(verdicts, number, "attempt verdict")

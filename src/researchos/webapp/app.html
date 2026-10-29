@@ -1021,6 +1021,14 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
    they wrap to a second line, each whole -- one wider than the card wraps
    inside itself -- and the card grows (min-height). */
 .rm-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+/* 21.1: a card whose attempt holds tasks says them under its status -- how many and how many are unfinished, a handback
+   to open in ink and weight (the clay is for what is wrong, 21.8) -- and the first line of its latest handback. One line
+   each, cut with an ellipsis; the hover title holds them whole. */
+.rm-card.has-work { min-height: 100px; }
+.rm-work, .rm-headline { display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 12px; line-height: 18px; color: var(--ink-soft); }
+.rm-headline { display: block; text-overflow: ellipsis; color: var(--ink); }
+.rm-tasks { flex: none; }
+.rm-look { flex: none; font-weight: 600; color: var(--ink); }
 .rm-num { flex: none; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
 .rm-title { overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
 .rm-date { flex: none; font-size: 12px; color: var(--ink-soft); }
@@ -5335,6 +5343,18 @@ async function openResultOnHome(path) {
   if (loading) await loading;
   if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
   await ROWorkspace.openReport(path);
+}
+
+// 「在这条尝试下加任务」 (DESIGN.md 21.1): the task form on 项目首页, with the attempt (and, for a task that continues
+// another, that task) already chosen -- the way into it is the same as 「打开结果」: the home is shown by the page's own view
+// switch, which a half-typed desk may refuse.
+async function startTaskOnHome(choice) {
+  const epoch = state.dataEpoch;
+  const loading = activateView("workspace");
+  if (currentView !== "workspace") return;
+  if (loading) await loading;
+  if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
+  ROWorkspace.startTask(choice);
 }
 
 function renderRegisteredOutputs(host, bundle, variableDrafts) {

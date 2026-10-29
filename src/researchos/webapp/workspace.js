@@ -122,7 +122,8 @@
   }
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
-  function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: "" }; }
+  // `attempt` and `after` (DESIGN.md 21.1) are choices, not writing: a draft that holds only them is not unsaved work.
+  function blankDraft(attempt) { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: "", attempt: attempt || "", after: "" }; }
   function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
@@ -823,8 +824,17 @@
     // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
     const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
     showTaskError();
-    (data.tasks || []).forEach((task) => {
-      const run = latestRun(task.id);
+    // 21.1: the tasks stand under the attempt they belong to, in `after` order; those without one (or whose attempt is
+    // gone from the table) under 「未归入尝试」, last.
+    const sequence = [];
+    taskGroups().forEach((group) => { sequence.push({ heading: group }); group.tasks.forEach((task) => sequence.push({ task: task })); });
+    sequence.forEach((entry) => {
+      if (entry.heading) {
+        const heading = el("h3", "ws-task-group", entry.heading.title); heading.dataset.attempt = entry.heading.id || "";
+        list.append(heading);
+        return;
+      }
+      const task = entry.task, run = latestRun(task.id);
       const row = el("div", "ws-task" + (task.done ? " done" : ""));
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
       check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
@@ -859,9 +869,10 @@
       outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
       const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
-        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "" }; renderTasks(); ui.taskText.focus();
+        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "", attempt: task.attempt || "", after: task.after || "" }; renderTasks(); ui.taskText.focus();
       }), "edit:" + task.id);
-      const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
+      // A task that continued the removed one now continues what that one continued.
+      const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id).map((x) => x.after === task.id ? Object.assign({}, x, { after: task.after || null }) : x)); }), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
       const actions = el("div", "ws-task-actions"); actions.append(edit, remove);
@@ -898,14 +909,21 @@
     ui.ownerName = name;
     const due = keyed(input("date"), "task-due"); due.value = taskDraft.due;
     const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-small"), "task-submit");
-    [text, owner, name, due, submit].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });
+    // 21.1: the task's place on the route comes first -- the attempt it belongs to, and the task it continues.
+    const attempt = keyed(el("select", "form-input"), "task-attempt"), after = keyed(el("select", "form-input"), "task-after");
+    ui.taskAttempt = attempt; ui.taskAfter = after; fillAttemptOptions(attempt); fillAfterOptions(after);
+    attempt.addEventListener("change", () => chooseAttempt(attempt, after));
+    after.addEventListener("change", () => { taskDraft = Object.assign({}, taskDraft, { after: after.value }); });
+    [text, owner, name, due, submit, attempt].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });  // `after` decides for itself
     function changed() { taskDraft = Object.assign({}, taskDraft, { text: text.value, due: due.value }); }
     [text, due].forEach((node) => node.addEventListener("input", changed));
     owner.addEventListener("change", () => chooseOwner(owner));
     form.addEventListener("submit", (event) => { event.preventDefault(); addTask(); });
     const ownerField = field(t("负责人"), owner), dateField = field(t("日期"), due);
     ownerField.className += " ws-field-owner"; dateField.className += " ws-field-date";
-    form.append(field(t("任务", { n: 1 }), text), ownerField);
+    const attemptField = field(t("属于哪条尝试"), attempt), afterField = field(t("接着哪个任务"), after), textField = field(t("任务", { n: 1 }), text);
+    attemptField.className += " ws-field-attempt"; afterField.className += " ws-field-after"; textField.className += " ws-field-text";
+    form.append(attemptField, afterField, textField, ownerField);
     if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
     const context = keyed(el("select", "form-input"), "task-context");
     const noContext = el("option", null, t("无关联研究记录")); noContext.value = ""; context.append(noContext);
@@ -957,11 +975,15 @@
   async function addTask() {
     if (!tasksEditable() || taskBusy || taskConflict) return;
     if (!taskDraft.text.trim()) { status(ui.taskStatus, t("请写下要做的事。"), "err"); ui.taskText.focus(); return; }
+    // A new task belongs to an attempt (21.1); a task from before that may stay without one.
+    if (!taskDraft.id && !taskDraft.attempt) { status(ui.taskStatus, t("新任务要属于一条尝试：请在「属于哪条尝试」里选一条，或选「新开一条尝试…」。"), "err"); ui.taskAttempt.focus(); return; }
     const next = (data.tasks || []).map((task) => Object.assign({}, task));
     const existing = next.find((task) => task.id === taskDraft.id);
     if (taskDraft.id && !existing) { status(ui.taskStatus, t("这项任务已被移除。可以把当前填写添加为新任务。"), "err"); taskDraft.id = null; return; }
     const item = { id: taskDraft.id || (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : "task-" + Date.now().toString(36) + Math.random().toString(36).slice(2)), text: taskDraft.text.trim(), owner: taskDraft.owner.trim(), due: taskDraft.due, done: existing ? !!existing.done : false };
     if (taskDraft.contextReport) item.context = { report: taskDraft.contextReport }; else if (existing && existing.context) item.context = null;
+    if (taskDraft.attempt) item.attempt = taskDraft.attempt; else if (existing && existing.attempt) item.attempt = null;
+    if (taskDraft.after && taskDraft.attempt) item.after = taskDraft.after; else if (existing && existing.after) item.after = null;
     // Object.assign keeps what the form does not edit: a task's report (17.2) stays with it.
     if (existing) Object.assign(existing, item); else next.push(item);
     await mutateTasks(next, true);
@@ -990,7 +1012,7 @@
       if (!live(mark)) return;
       data.tasks = response.tasks; data.tasks_revision = response.tasks_revision; data.tasks_officialness = response.tasks_officialness || data.tasks_officialness; taskBusy = false; taskWrites += 1;
       data.changed_task_reports = response.changed_task_reports || [];
-      if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft();
+      if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft(taskDraft.attempt);
       renderTasks(); status(ui.taskStatus, response.history_error ? t("任务已保存，但修改历史暂时未能记录。") : t("已保存"), response.history_error ? "" : "ok");
       if (typeof pollGeneration === "function") pollGeneration();
     } catch (err) {
@@ -1122,6 +1144,96 @@
     return box;
   }
   function may() { return tasksEditable() && !taskBusy && !taskConflict; }
+
+  // -- the attempt a task belongs to, and the task it continues (DESIGN.md 21.1) ---------------
+  const ATTEMPT_NEW = "\u0000new";
+  function attemptLabel(item) {
+    const number = String(item.id).split("#").pop(), words = item.label && item.label !== item.id ? item.label : "";
+    return "#" + number + (words ? " " + words : "");
+  }
+  // The tasks of one attempt in `after` order (researchos.attempt_tasks.ordered): each right after the one it
+  // continues, the others by the order of the list; a circle written by hand is left to the end.
+  function orderedTasks(tasks) {
+    const ids = new Set(tasks.map((task) => task.id)), followers = new Map(), roots = [], out = [], seen = new Set();
+    tasks.forEach((task) => {
+      if (task.after && ids.has(task.after) && task.after !== task.id) { if (!followers.has(task.after)) followers.set(task.after, []); followers.get(task.after).push(task); }
+      else roots.push(task);
+    });
+    const walk = (first) => {
+      const pending = [first];
+      while (pending.length) {
+        const task = pending.pop();
+        if (seen.has(task.id)) continue;
+        seen.add(task.id); out.push(task);
+        (followers.get(task.id) || []).slice().reverse().forEach((x) => pending.push(x));
+      }
+    };
+    roots.forEach(walk); tasks.forEach(walk);
+    return out;
+  }
+  function taskGroups() {
+    const attempts = data.attempts || [], known = new Set(attempts.map((a) => a.id)), by = new Map(), loose = [];
+    (data.tasks || []).forEach((task) => {
+      if (task.attempt && known.has(task.attempt)) { if (!by.has(task.attempt)) by.set(task.attempt, []); by.get(task.attempt).push(task); }
+      else loose.push(task);
+    });
+    const groups = attempts.filter((a) => by.has(a.id)).map((a) => ({ id: a.id, title: attemptLabel(a), tasks: orderedTasks(by.get(a.id)) }));
+    if (loose.length) groups.push({ id: null, title: t("未归入尝试"), tasks: orderedTasks(loose) });
+    return groups;
+  }
+  function fillAttemptOptions(select) {
+    const choices = [{ value: "", words: t("请选择一条尝试") }].concat((data.attempts || []).map((a) => ({ value: a.id, words: attemptLabel(a) })));
+    // An attempt the draft names that is no longer in the table stays shown while it is the value.
+    if (taskDraft.attempt && !choices.some((c) => c.value === taskDraft.attempt)) choices.push({ value: taskDraft.attempt, words: attemptLabel({ id: taskDraft.attempt }) });
+    choices.push({ value: ATTEMPT_NEW, words: t("新开一条尝试…") });
+    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    select.value = taskDraft.attempt;
+  }
+  // The tasks the chosen attempt holds that this one may continue: not itself, nor one that continues it.
+  function fillAfterOptions(select) {
+    const choices = [{ value: "", words: t("不接着任何任务") }];
+    if (taskDraft.attempt) {
+      const follows = new Set(taskDraft.id ? [taskDraft.id] : []);
+      for (let grew = true; grew;) {
+        grew = false;
+        (data.tasks || []).forEach((task) => { if (task.after && follows.has(task.after) && !follows.has(task.id)) { follows.add(task.id); grew = true; } });
+      }
+      orderedTasks((data.tasks || []).filter((task) => task.attempt === taskDraft.attempt)).filter((task) => !follows.has(task.id))
+        .forEach((task) => choices.push({ value: task.id, words: String(task.text).split("\n")[0].slice(0, 60) }));
+    }
+    if (taskDraft.after && !choices.some((c) => c.value === taskDraft.after)) taskDraft = Object.assign({}, taskDraft, { after: "" });
+    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    select.value = taskDraft.after;
+    select.disabled = !taskDraft.attempt || !tasksEditable() || taskBusy || taskConflict;
+  }
+  function chooseAttempt(select, after) {
+    if (select.value === ATTEMPT_NEW) { select.value = taskDraft.attempt; startAttempt(); return; }
+    taskDraft = Object.assign({}, taskDraft, { attempt: select.value, after: "" });
+    fillAfterOptions(after);
+  }
+  // 「新开一条尝试…」: the existing new-attempt form opens; once its row is saved and read back, the form names it, and a
+  // task already written is added under it.
+  function startAttempt() {
+    if (!editable() || typeof window.ROWorkspace.onCreateAttempt !== "function") return;
+    const mark = stamp();
+    window.ROWorkspace.onCreateAttempt({}, (created) => {
+      if (!live(mark) || !created || !created.id || !ui) return;
+      if (!(data.attempts || []).some((a) => a.id === created.id)) data.attempts.push({ id: created.id, label: (created.attrs || {}).description || created.id });
+      taskDraft = Object.assign({}, taskDraft, { attempt: created.id, after: "" });
+      renderTasks();
+      if (taskDraft.text.trim() && !taskDraft.id) addTask();
+    });
+  }
+  // 「在这条尝试下加任务」 (the attempt's panel): the form with that attempt chosen, the way 再派一个任务 will ask for a
+  // task that continues another (`after`).
+  function startTask(choice) {
+    if (!ui || !ui.taskText || !editable()) return false;
+    if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return false;
+    taskDraft = Object.assign(blankDraft(), { attempt: (choice && choice.attempt) || "", after: (choice && choice.after) || "" });
+    renderTasks(); ui.taskText.focus();
+    if (ui.tasks && typeof ui.tasks.scrollIntoView === "function") ui.tasks.scrollIntoView();
+    return true;
+  }
 
   // -- the owner control: people and this Mac's agents ------------------------------------------
   function ownerChoices() {
@@ -2629,6 +2741,6 @@
     if (typeof activateView === "function") activateView("workspace");
     if (ui) openDocument(path, false, true);
   }
-  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

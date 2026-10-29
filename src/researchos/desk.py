@@ -191,6 +191,8 @@ TONES = {"current": "olive", "abandoned": "gray", "pending": "ochre", "adverse":
 SHARED_TIMEOUT = 4.0
 WAITING_WORDS = ("等你批准", "Awaiting your approval")
 REVIEW_MARK = ("待复核 {n}", "Needs review: {n}")
+#: What an attempt with no tasks says of its work (attempt_tasks.by_attempt, DESIGN.md 21.1).
+NO_WORK = {"tasks": 0, "unfinished": 0, "unopened": 0, "latest": None, "items": []}
 ROLE_WORDS = {
     "none": ("你还不是这个项目的成员：请 PI 把你加入团队，然后同步",
              "You are not a member of this project yet: ask the PI to add you to the team, then sync"),
@@ -465,7 +467,7 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
     """The desk's route map and its column (14.1, 14.3-14.5), in one pass;
     see `payload`. `seen`: the officialness view, whose pending proposals
     are read with the shared folder and merged in."""
-    from researchos import officialness, proposals  # noqa: PLC0415
+    from researchos import attempt_tasks, officialness, proposals  # noqa: PLC0415
     from researchos import trace as trace_mod  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
@@ -515,6 +517,11 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
     by_id = {a["id"]: a for a in attempts}
     for i, a in enumerate(attempts):
         a["order"] = i
+    # 21.1: the tasks an attempt holds and what its latest handback says, for the card and the panel.
+    work = attempt_tasks.by_attempt(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None,
+                                    me, list(by_id))
+    for a in attempts:
+        a["work"] = work.get(a["id"]) or {**NO_WORK, "items": []}
     lines, missing, lines_problem = _lines(root, set(by_id), team_known, lang)
     review = _review(conn, holders, list(by_id), lang)
     for group in review["groups"]:
@@ -614,7 +621,11 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
       attempt, `path` None) or a file -- for the panel's timeline (at most
       CHANGED_LISTED; `changed_more` counts the earlier ones left out),
       and `marks`: the proposals touching it (等你批准 for the PI, 提议中
-      for its author) and its 待复核 count;
+      for its author) and its 待复核 count, and `work` (DESIGN.md 21.1,
+      `attempt_tasks.by_attempt`): how many `tasks` it holds, how many are
+      `unfinished`, how many handbacks are `unopened` by this person, the
+      `latest` handback (its `line` is the first line the card shows) and
+      its `items`, the tasks in `after` order with their state codes;
     - **lines** -- the 「源自」 lines, child and parent, note, who drew them
       and when, `pending` when a proposal adds or removes one (a member's
       own proposed line is drawn, marked); **lines_missing** -- the lines

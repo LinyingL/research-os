@@ -18,7 +18,9 @@
 //   /api/share      -- the shared drive's state (the sidebar's status line);
 //   /api/proposals  -- the quiet count beside 提议 and the shell's mode;
 //   /api/desk       -- the route map's cards, lines and arrangement, and the
-//                      column beside it (researchos.desk.payload);
+//                      column beside it (researchos.desk.payload), and what
+//                      each attempt holds: its tasks and its latest handback
+//                      (DESIGN.md 21.1);
 //   /api/review     -- an attempt's 待复核, judged in its panel (14.3);
 //   /api/history    -- how its row moved, for the panel's timeline (14.5).
 // and the one write: POST /api/share/sync, 「同步」 a member's working copy.
@@ -1248,6 +1250,7 @@
     if (panelSaid && panelSaid.id === id) body.appendChild(mk("div", "notice-status ok", panelSaid.text));
     body.appendChild(panelHead(a, id));
     body.appendChild(editPart(subject, a, page));
+    body.appendChild(tasksPart(a, id));
     const changes = changesPart(a, id, hist);
     if (changes) body.appendChild(changes);
     body.appendChild(notesPart(subject, page, notes));
@@ -1264,6 +1267,61 @@
     subject.offered = null;
     if (offered && typeof offered.scrollIntoView === "function") offered.scrollIntoView({ block: "nearest" });
     if (window.RONode && RONode.drawTraceLines) RONode.drawTraceLines(body);
+  }
+
+  // 任务 (21.1): what this attempt holds, in `after` order -- each with its owner, its state in words and, once it has
+  // handed something back, the way to open the handback (the report, until the handback has a page of its own).
+  // 「在这条尝试下加任务」 writes the new task on 项目首页, whose form has this attempt chosen. The states are the
+  // engine's codes (attempt_tasks.state_of); the words are the ones 项目首页 gives a run.
+  const TASK_STATES = {
+    not_started: [() => t("未开始"), "gray"], running: [() => t("运行中"), "ochre"], needs_answer: [() => t("等你回答"), "ochre"],
+    to_read: [() => t("等你看"), "ochre"], done: [() => t("已完成"), "olive"], failed: [() => t("失败"), "clay"],
+    out_of_bounds: [() => t("越过了限制"), "clay"],
+  };
+
+  function taskState(code) {
+    const known = Object.prototype.hasOwnProperty.call(TASK_STATES, code) ? TASK_STATES[code] : TASK_STATES.not_started;
+    return mk("span", "status-label tone-" + known[1], known[0]());
+  }
+
+  function tasksPart(a, id) {
+    const s = part(t("任务", { n: 2 }));
+    const items = (a && a.work && a.work.items) || [];
+    if (!items.length) s.appendChild(emptyLine(t("这条尝试下还没有任务。")));
+    else {
+      const ul = mk("ul", "desk-list dp-tasks");
+      items.forEach((item) => {
+        const li = mk("li", "desk-row dp-task");
+        li.dataset.task = item.id;
+        const main = mk("div", "desk-main");
+        const head = mk("div", "desk-head");
+        const first = String(item.text || "").split("\n")[0];
+        const text = mk("span", "dp-task-text", first);
+        if (first !== item.text) text.title = item.text;
+        head.append(text, taskState(item.state));
+        main.appendChild(head);
+        main.appendChild(metaLine([item.owner_label, item.due]));
+        if (item.report) {
+          const actions = mk("div", "desk-actions");
+          actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => {
+            if (mayLeavePanel() && typeof openResultOnHome === "function") openResultOnHome(item.report);
+          }));
+          main.appendChild(actions);
+        }
+        li.appendChild(main);
+        ul.appendChild(li);
+      });
+      s.appendChild(ul);
+    }
+    const role = deskRole();
+    if (role === "single" || role === "pi" || role === "member") {
+      const actions = mk("div", "desk-actions");
+      actions.appendChild(mkButton(t("在这条尝试下加任务"), "btn btn-small", () => {
+        if (mayLeavePanel() && typeof startTaskOnHome === "function") startTaskOnHome({ attempt: id });
+      }));
+      s.appendChild(actions);
+    }
+    return s;
   }
 
   // 「有改动」 said in place (14.5): what changed on this attempt since the

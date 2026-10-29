@@ -190,6 +190,8 @@ const typed=(node,value)=>{if(node.classList.contains('hidden'))throw Error('Can
 const editDocument=async()=>{const edit=find(window.ROI18N.t('编辑'),byClass('ws-editor-host'));if(edit&&!edit.classList.contains('hidden'))await edit.click();};
 const writeDocument=async value=>{await editDocument();typed(byClass('ws-writing'),value);};
 const titleDocument=async value=>{await editDocument();typed(byClass('ws-title-input'),value);};
+// 21.1: a new task belongs to an attempt, chosen first in the form (the page's one attempt unless a scenario names another).
+const pickAttempt=async (id='attempt:research/attempts.md#1')=>{ const s=field('属于哪条尝试'); s.value=id; await s.emit('change'); };
 const field=(words,where=root)=>where.all().find(e=>e.tagName==='LABEL'&&e.children[0].textContent===words).children[1];
 const sleepTick=()=>new Promise(r=>setTimeout(r,0));
 const buttonsIn=node=>node.all().filter(e=>e.tagName==='BUTTON').map(e=>e.textContent);
@@ -444,7 +446,7 @@ def test_background_refresh_and_task_writes_keep_unsaved_document_and_task_form(
     out = run(r"""
 await window.ROWorkspace.load(root);
 await writeDocument('Unfinished paragraph');
-typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');typed(field('日期'),'2026-11-02');
+await pickAttempt();typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');typed(field('日期'),'2026-11-02');
 docs['research/overview.md'].content='Changed outside';docs['research/overview.md'].revision='doc-external';
 await window.ROWorkspace.load(root,true);
 answers.push(false);const allowed=window.ROWorkspace.mayLeave();
@@ -503,7 +505,7 @@ console.log(JSON.stringify({kept,afterRefresh,afterCancel,afterReload:byClass('w
 def test_task_conflict_keeps_form_and_reload_merges_it_with_latest_list():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');
+await pickAttempt();typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');
 customPost=()=>Promise.reject(Object.assign(Error('external change'),{state:'workspace_conflict'}));
 await find('添加任务').click();
 const afterFailure=field('任务').value;
@@ -636,13 +638,15 @@ listed.tasks=Array.from({length:6},(_,i)=>({id:'t'+i,text:'Task '+i,owner:'Demo'
 await window.ROWorkspace.load(root);await sleepTick();
 const boxes=()=>root.all().filter(e=>e.classList.contains('ws-task-details'));
 boxes()[0].open=true;await boxes()[0].emit('toggle');
-typed(field('任务'),'New task');await find('添加任务').click();await sleepTick();
+await pickAttempt();typed(field('任务'),'New task');await find('添加任务').click();await sleepTick();
 const added=boxes().map(e=>e.open);
 window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({added,reopened:boxes().map(e=>e.open),tasks:listed.tasks.length}));
 """)
-    assert out["added"] == [True, False, False, False, True, True, True]
-    assert out["reopened"] == [False, False, False, False, True, True, True]
+    # 21.1: the new task stands first, under its attempt; the six without one follow under 「未归入尝试」. The newest three are
+    # open by default (the new one, the last two before it); the one opened by hand stays open until the page is read again.
+    assert out["added"] == [True, True, False, False, False, True, True]
+    assert out["reopened"] == [True, False, False, False, False, True, True]
     assert out["tasks"] == 7
 
 
@@ -735,7 +739,7 @@ def test_task_save_uses_task_annotation_from_the_server():
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
 customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'mine',label:'我的改动，尚未提交'}}:undefined;
-typed(field('任务'),'Consider another explanation');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Consider another explanation');await find('添加任务').click();
 console.log(JSON.stringify({words:byClass('ws-tasks').textContent}));
 """)
     assert "我的改动，尚未提交" in out["words"]
@@ -925,7 +929,7 @@ await window.ROWorkspace.load(root);
 const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
 await find('提交修改',byClass('ws-tasks')).click();
 customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',changed_task_reports:[]}:undefined;
-typed(field('任务'),'Another task'); await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Another task'); await find('添加任务').click();
 await find('提交修改',byClass('ws-tasks')).click();
 console.log(JSON.stringify({proposals}));
 """)
@@ -1002,10 +1006,10 @@ agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
 await pickOwner('Claude Code · sonnet');
-typed(field('任务'),'Fit the model');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Fit the model');await find('添加任务').click();
 const asAgent=clone(listed.tasks);
 await pickOwner('其他人…');const hasName=!!field('姓名');
-typed(field('任务'),'Read papers');typed(field('姓名'),'Chen');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Read papers');typed(field('姓名'),'Chen');await find('添加任务').click();
 console.log(JSON.stringify({options,asAgent,hasName,tasks:listed.tasks,gets,nameGoneAfterSave:!root.all().some(e=>e.tagName==='LABEL'&&e.children[0].textContent==='姓名')}));
 """)
     assert [text for text, _ in out["options"]] == ["不指定", "Lin Ying（我）", "Wang Wei", "其他人…", "Claude Code · sonnet"]
@@ -1021,7 +1025,7 @@ def test_owner_control_works_without_a_team_or_any_agent_information():
     out = run(r"""
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
-typed(field('任务'),'Read papers');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Read papers');await find('添加任务').click();
 console.log(JSON.stringify({options,tasks:listed.tasks,gets,agentRow:!!byClass('ws-agent')}));
 """)
     assert [text for text, _ in out["options"]] == ["不指定", "其他人…"]
@@ -1717,7 +1721,7 @@ def test_the_task_list_takes_the_agents_done_mark_while_the_task_form_holds_text
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
 await window.ROWorkspace.load(root);await sleepTick();
-typed(field('任务'),'Next question for the group');
+await pickAttempt();typed(field('任务'),'Next question for the group');
 Object.assign(runsList.runs[0],{state:'done',can_stop:false,can_reply:true,changes:1});runsList.active=null;
 listed.tasks=[agentTask({done:true,report:'research/results/run.md'})];listed.tasks_revision='tasks-agent';
 await tick();
@@ -3634,7 +3638,7 @@ console.log(JSON.stringify({retained,dirty,current:field('发现与解释').valu
 def test_task_optional_research_context_is_editable_and_clearable():
     out = run(r"""
 listed.documents.push({path:'research/results/manual.md',kind:'result',title:'Manual finding'});
-await window.ROWorkspace.load(root);typed(field('任务'),'Compare specifications');
+await window.ROWorkspace.load(root);await pickAttempt();typed(field('任务'),'Compare specifications');
 field('研究上下文（可选）').value='research/results/manual.md';await field('研究上下文（可选）').emit('change');
 await find('添加任务').click();const first=clone(listed.tasks[0]);await find('编辑',byClass('ws-task-actions')).click();
 field('研究上下文（可选）').value='';await field('研究上下文（可选）').emit('change');await find('保存任务').click();

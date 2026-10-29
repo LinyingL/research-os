@@ -12,7 +12,10 @@
 // researcher's title, the date as written, the verdict as a text status in
 // its tone (route_status), abandoned cards quieter, and marks as quiet
 // words: the engine's 等你批准 / 提议中 / 待复核 N, a member's own work as
-// 12.12 says, and 有改动 when the desk says so. The 「源自」 lines are a
+// 12.12 says, and 有改动 when the desk says so. A card whose attempt holds
+// tasks (21.1) says under its status 「任务 n，未完成 m」, 「等你看 n」 when a
+// handback is unopened and the first line of its latest handback; a card
+// with no tasks is as it was, and `after` is not drawn. The 「源自」 lines are a
 // human's lines (clay, 8.2): a parent stands left of what grew out of it,
 // no arrowheads; a line a proposal carries is dashed and says so. The
 // layout is a forest by generation, siblings in the map's order (by date),
@@ -46,10 +49,13 @@
   const CARD_W = 232;
   const CARD_H = 88;
   const CARD_TALL = CARD_H + 20;    // a card whose marks wrap to a second line (app.html .rm-card min-height)
+  const CARD_WORK_H = 120;          // a card that also says its tasks and its latest handback (21.1): two more lines
   const COL_PITCH = CARD_W + 112;   // one generation to the next: room for the curve
   const ROW_PITCH = CARD_H + 28;    // rows of the forest
+  const WORK_PITCH = CARD_WORK_H + 28;
   const ROW_X = CARD_W + 24;        // 「还没标来处」, card to card
   const ROW_Y = CARD_H + 24;
+  const WORK_ROW_Y = CARD_WORK_H + 24;
   const ROW_GAP = 72;               // the forest to the row's caption
   const CAPTION_H = 30;
   const ROW_MIN = 4;                // the row wraps, at least this wide, toward a page of 1.6:1
@@ -86,8 +92,13 @@
   // arrangement does not hold joins the end of 「还没标来处」 -- the lowest
   // line of the cards with no line, as arranged -- or starts it below all;
   // the caption stands over the highest of those cards, leftmost first.
+  function hasWork(a) { return !!(a && a.work && a.work.tasks > 0); }
+
   function layoutRoutes(attempts, lines, opts) {
     const fixed = (opts && opts.fixed) || {};
+    // 21.1: when any card says its tasks, every row of the forest is as tall as such a card (a map of cards of one height).
+    const rich = attempts.some(hasWork);
+    const cardH = rich ? CARD_WORK_H : CARD_H, pitch = rich ? WORK_PITCH : ROW_PITCH, rowY = rich ? WORK_ROW_Y : ROW_Y;
     const ids = attempts.map((a) => a.id);
     const rank = new Map(ids.map((id, i) => [id, i]));
     const parents = new Map(ids.map((id) => [id, []]));
@@ -125,10 +136,10 @@
     linked.forEach((id) => { if (!parents.get(id).length) place(id, bottom()); });
     linked.forEach((id) => { if (!rowOf.has(id)) place(id, bottom()); }); // only inside a circle
     const auto = {};
-    linked.forEach((id) => { auto[id] = [gen.get(id) * COL_PITCH, rowOf.get(id) * ROW_PITCH]; });
-    const top = linked.length ? bottom() * ROW_PITCH - (ROW_PITCH - CARD_H) + ROW_GAP + CAPTION_H : CAPTION_H;
-    const per = Math.max(ROW_MIN, Math.ceil(Math.sqrt(row.length * ASPECT * ROW_Y / ROW_X)));
-    row.forEach((id, i) => { auto[id] = [(i % per) * ROW_X, top + Math.floor(i / per) * ROW_Y]; });
+    linked.forEach((id) => { auto[id] = [gen.get(id) * COL_PITCH, rowOf.get(id) * pitch]; });
+    const top = linked.length ? bottom() * pitch - (pitch - cardH) + ROW_GAP + CAPTION_H : CAPTION_H;
+    const per = Math.max(ROW_MIN, Math.ceil(Math.sqrt(row.length * ASPECT * rowY / ROW_X)));
+    row.forEach((id, i) => { auto[id] = [(i % per) * ROW_X, top + Math.floor(i / per) * rowY]; });
     const held = ids.filter((id) => hasOwn(fixed, id) && validPos(fixed[id]));
     if (!held.length) return { positions: auto, caption: row.length ? [0, top - CAPTION_H] : null, row, pinned: false };
     const positions = {};
@@ -137,9 +148,9 @@
     let x, y;
     if (inRow.length) {
       y = Math.max(...inRow.map((id) => positions[id][1]));
-      x = Math.max(...held.filter((id) => Math.abs(positions[id][1] - y) < CARD_H).map((id) => positions[id][0])) + ROW_X;
+      x = Math.max(...held.filter((id) => Math.abs(positions[id][1] - y) < cardH).map((id) => positions[id][0])) + ROW_X;
     } else {
-      y = Math.max(...held.map((id) => positions[id][1])) + CARD_H + ROW_GAP + CAPTION_H;
+      y = Math.max(...held.map((id) => positions[id][1])) + cardH + ROW_GAP + CAPTION_H;
       x = Math.min(...held.map((id) => positions[id][0]));
     }
     ids.forEach((id) => { if (!hasOwn(positions, id)) { positions[id] = [x, y]; x += ROW_X; } });
@@ -160,6 +171,18 @@
     if (marks.review) add(marks.review.label);
     if (changed) add(t("有改动"));
     return out;
+  }
+
+  // A card's work lines (21.1): how many tasks its attempt holds and how many are unfinished, how many handbacks wait
+  // to be opened, and the first line of the latest handback; nothing for an attempt with no tasks.
+  function workWords(a) {
+    if (!hasWork(a)) return { tasks: "", look: "", line: "" };
+    const w = a.work, n = w.tasks, open = w.unfinished || 0;
+    return {
+      tasks: open ? t("任务 {n}，未完成 {open}", { n: n, open: open }) : t("任务 {n}，全部完成", { n: n }),
+      look: w.unopened > 0 ? t("等你看 {n}", { n: w.unopened }) : "",
+      line: (w.latest && w.latest.line) || "",
+    };
   }
 
   function lineWords(child, parent) {
@@ -318,6 +341,7 @@
     }
     function numberOf(id) { const a = m.byId.get(id); return a ? String(a.number).replace(/^#/, "") : String(id).split("#").pop(); }
     function allLines() { return m.lines.concat(m.optimistic); }
+    function cardH() { return m.attempts.some(hasWork) ? CARD_WORK_H : CARD_H; } // the height every card is laid out for (21.1)
     function lineOf(key) { return allLines().find((l) => lineKey(l.child, l.parent) === key) || null; }
 
     // -- the DOM ---------------------------------------------------------------------
@@ -464,7 +488,10 @@
       const num = "#" + numberOf(a.id);
       const words = a.route_status && a.route_status.words;
       const said = markWords(a, !!(m.changed && m.changed(a)));
-      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "") + (said.length ? "\n" + said.join(" / ") : "");
+      const work = workWords(a);
+      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "")
+        + (work.tasks ? "\n" + [work.tasks, work.look].filter(Boolean).join(" / ") : "") + (work.line ? "\n" + work.line : "")
+        + (said.length ? "\n" + said.join(" / ") : "");
       const head = el("div", "rm-head");
       head.append(el("span", "rm-num", num), el("span", "rm-title", a.title || ""));
       const meta = el("div", "rm-meta");
@@ -474,7 +501,16 @@
       said.forEach((w) => marks.appendChild(el("span", "rm-mark", w)));
       const handle = el("div", "rm-handle");
       handle.title = t("从这里拖到另一条尝试上：那一条源自这一条");
-      c.append(head, meta, marks, handle);
+      c.append(head, meta);
+      if (work.tasks) {
+        c.classList.add("has-work");
+        const progress = el("div", "rm-work");
+        progress.appendChild(el("span", "rm-tasks", work.tasks));
+        if (work.look) progress.appendChild(el("span", "rm-look", work.look));
+        c.appendChild(progress);
+        if (work.line) c.appendChild(el("div", "rm-headline", work.line));
+      }
+      c.append(marks, handle);
       placeCard(c, a.id);
       return c;
     }
@@ -526,7 +562,7 @@
         const got = typeof label.getComputedTextLength === "function" ? label.getComputedTextLength() : 0;
         return got || Array.from(String(text)).reduce((n, ch) => n + (/[\u2e80-\uffef]/.test(ch) ? 11 : 6.2), 0);
       };
-      const boxes = m.attempts.map((a) => m.positions[a.id]).filter(Boolean).map((p) => [p[0], p[1], CARD_W, CARD_TALL]);
+      const boxes = m.attempts.map((a) => m.positions[a.id]).filter(Boolean).map((p) => [p[0], p[1], CARD_W, cardH() + (CARD_TALL - CARD_H)]);
       const plan = labelPlan(word, m.positions[l.parent], m.positions[l.child], width, boxes);
       label.remove();
       label.textContent = "";
@@ -569,11 +605,11 @@
       if (!m.marked.length || !v.w) return;
       const shown = (id) => {
         const x = m.positions[id][0] * z + m.camera.x, y = m.positions[id][1] * z + m.camera.y;
-        return x + CARD_W * z > 0 && x < v.w && y + CARD_H * z > TOOLBAR_H && y < v.h;
+        return x + CARD_W * z > 0 && x < v.w && y + cardH() * z > TOOLBAR_H && y < v.h;
       };
       if (m.marked.some(shown)) return;
       const p = m.positions[m.marked[0]];
-      m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + CARD_H / 2) * z, zoom: z };
+      m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + cardH() / 2) * z, zoom: z };
       applyCamera();
       userCamera();
     }
@@ -618,7 +654,7 @@
       m.needsFit = false;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       const take = (p, w, h) => { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0] + w); y1 = Math.max(y1, p[1] + h); };
-      Object.values(m.positions).forEach((p) => take(p, CARD_W, CARD_H));
+      Object.values(m.positions).forEach((p) => take(p, CARD_W, cardH()));
       if (m.caption) take(m.caption, CARD_W, CAPTION_H);
       if (!isFinite(x0)) {
         m.camera = { x: FIT_PAD, y: TOOLBAR_H + FIT_PAD, zoom: 1 };
@@ -935,7 +971,7 @@
     function cardAt(x, y) {
       for (let i = m.attempts.length - 1; i >= 0; i -= 1) {
         const id = m.attempts[i].id, p = m.positions[id];
-        if (p && x >= p[0] && x <= p[0] + CARD_W && y >= p[1] && y <= p[1] + CARD_H) return id;
+        if (p && x >= p[0] && x <= p[0] + CARD_W && y >= p[1] && y <= p[1] + cardH()) return id;
       }
       return null;
     }
@@ -1080,8 +1116,8 @@
     create,
     lineRefusal: refusal, // the desk's side panel says a refused removal the same way (14.3)
     // pure, for tests/test_v10_route_map.py
-    _layoutRoutes: layoutRoutes, _markWords: markWords, _lineWords: lineWords, _refusal: refusal,
+    _layoutRoutes: layoutRoutes, _markWords: markWords, _workWords: workWords, _lineWords: lineWords, _refusal: refusal,
     _checkLine: checkLine, _curve: curve, _labelPlan: labelPlan, _splitLabel: splitLabel,
-    _geometry: Object.freeze({ CARD_W, CARD_H, COL_PITCH, ROW_PITCH, ROW_X, ROW_Y, CAPTION_H }),
+    _geometry: Object.freeze({ CARD_W, CARD_H, CARD_WORK_H, COL_PITCH, ROW_PITCH, WORK_PITCH, ROW_X, ROW_Y, WORK_ROW_Y, CAPTION_H }),
   });
 })();

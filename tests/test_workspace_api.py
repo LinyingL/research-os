@@ -94,7 +94,12 @@ def test_note_result_and_optional_tasks_save_as_project_files(writing_server):
         assert status == 200, doc
         assert doc["title"] == title
         assert (root / doc["path"]).is_file()
-    task = {"id": "literature", "text": "查阅文献", "done": False, "owner": "Li", "due": "2026-12-01"}
+    # 21.1: a new task belongs to an attempt -- one the project's own table holds, read back before the task names it
+    assert _post(base, "/api/attempts/initialize", {"project": str(root)})[0] == 200
+    assert _post(base, "/api/attempts/write", {"op": "append", "number": "1", "fields": {"description": "查阅文献"}})[0] == 200
+    attempt = _get(base, "/api/workspace")[1]["attempts"][0]["id"]
+    assert attempt == "attempt:research/attempts.md#1"
+    task = {"id": "literature", "text": "查阅文献", "done": False, "owner": "Li", "due": "2026-12-01", "attempt": attempt}
     status, saved = _post(base, "/api/workspace/tasks", {"project": str(root), "tasks": [task], "revision": None})
     assert status == 200, saved
     assert json.loads((root / workspace.TASKS_PATH).read_text()) == [task]
@@ -103,6 +108,24 @@ def test_note_result_and_optional_tasks_save_as_project_files(writing_server):
     status, seen = _get(base, "/api/workspace")
     assert status == 200 and seen["tasks"] == [task]
     assert {d["kind"] for d in seen["documents"]} == {"overview", "note", "result"}
+
+
+def test_a_new_task_without_an_attempt_is_refused_over_http_in_the_pages_language_and_one_that_names_a_missing_attempt_too(writing_server):
+    base, root, _httpd = writing_server
+    body = json.dumps({"project": str(root), "revision": None, "tasks": [{"id": "t1", "text": "Read the paper"}]}).encode()
+    seen = {}
+    for lang in ("zh", "en"):
+        status, error = _request_with_headers(base, "POST", "/api/workspace/tasks", {
+            "Host": base.removeprefix("http://"), "Content-Type": "application/json", "X-ResearchOS-Lang": lang,
+            "Content-Length": str(len(body))}, body)
+        assert status == 400 and error["state"] == "workspace_task_needs_attempt", error
+        seen[lang] = error["message"]
+    assert "在这条尝试下加任务" in seen["zh"] and "属于哪条尝试" in seen["zh"] and "Add a task under this attempt" not in seen["zh"]
+    assert "Add a task under this attempt" in seen["en"] and "Which attempt it belongs to" in seen["en"]
+    status, error = _post(base, "/api/workspace/tasks", {
+        "project": str(root), "revision": None, "tasks": [{"id": "t1", "text": "x", "attempt": "attempt:research/attempts.md#7"}]})
+    assert status == 400 and error["state"] == "workspace_task_attempt_unknown"
+    assert not (root / "research").exists()
 
 
 def test_project_echo_prevents_saving_a_document_into_a_different_project(writing_server):

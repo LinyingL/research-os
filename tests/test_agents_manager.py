@@ -30,6 +30,7 @@ from researchos.records import files as record_files
 from researchos.records import notes as notes_mod
 from researchos.records.identity import read_identity
 from researchos.webapp import watcher as project_watcher
+from attempt_seed import seed_attempt
 
 FAKE = r'''#!@PYTHON@
 import json, os, signal, subprocess, sys, time
@@ -242,7 +243,8 @@ class Scene:
             _old, revision = workspace.read_tasks(self.root)
         except workspace.WorkspaceError:
             revision = None
-        workspace.save_tasks(self.root, {"tasks": tasks, "revision": revision})
+        attempt = seed_attempt(self.root)  # 21.1: a task belongs to an attempt; these tests are about the run, not the route
+        workspace.save_tasks(self.root, {"tasks": [{"attempt": attempt, **task} for task in tasks], "revision": revision})
 
     def tasks(self) -> dict[str, dict]:
         return {t["id"]: t for t in workspace.read_tasks(self.root)[0]}
@@ -1134,7 +1136,8 @@ def test_the_attempt_table_the_agent_changed_gives_the_agents_verdict(scene: Sce
     watcher.poll_once()
     conn = db.connect(paths.graph_db_path(scene.root))
     try:
-        node = db.get_nodes_by_type(conn, "attempt")[0]["id"]
+        # the scene also holds the attempt its task names (21.1); this test is about the table the agent changed
+        node = next(n["id"] for n in db.get_nodes_by_type(conn, "attempt") if n["id"].startswith("attempt:map.md#"))
     finally:
         conn.close()
     with history.Store.open(scene.pid) as store:
@@ -1186,8 +1189,8 @@ def test_two_projects_run_side_by_side(scene: Scene):
     other.mkdir()
     project.init_project(other)
     other_id = read_identity(other).identity.id
-    workspace.save_tasks(other, {"tasks": [{"id": "t1", "text": "Other", "owner": "agent:claude-code:sonnet"}],
-                                 "revision": None})
+    workspace.save_tasks(other, {"tasks": [{"id": "t1", "text": "Other", "owner": "agent:claude-code:sonnet",
+                                            "attempt": seed_attempt(other)}], "revision": None})
     gate = scene.tmp / "gate"
     scene.scenario([init_step(), {"op": "wait_file", "path": str(gate)}, finish_step()])
     first = scene.start()

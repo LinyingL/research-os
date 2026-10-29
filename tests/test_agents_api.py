@@ -26,6 +26,7 @@ from researchos.agents import labels, profiles
 from researchos.agents import runs as run_store
 from researchos.records.identity import read_identity
 from researchos.webapp import server
+from attempt_seed import seed_attempt
 from test_agents_manager import COMPLETE, FAKE, NOTE, finish_step, init_step, tree_state
 from test_webapp_server import _request_with_headers
 
@@ -87,7 +88,8 @@ class Api:
             _old, revision = workspace.read_tasks(self.root)
         except workspace.WorkspaceError:
             revision = None
-        workspace.save_tasks(self.root, {"tasks": tasks, "revision": revision})
+        attempt = seed_attempt(self.root)  # 21.1: a task belongs to an attempt; these tests are about the run, not the route
+        workspace.save_tasks(self.root, {"tasks": [{"attempt": attempt, **task} for task in tasks], "revision": revision})
 
     def tasks(self) -> dict[str, dict]:
         return {t["id"]: t for t in workspace.read_tasks(self.root)[0]}
@@ -913,7 +915,7 @@ def test_a_slow_start_does_not_stall_other_saves(api, monkeypatch):
     try:
         assert entered.wait(10)
         status, saved = api.post("/api/workspace/tasks", {"tasks": [
-            {"id": "t1", "text": "Analyse the sample", "owner": "agent:claude-code:sonnet"}],
+            {"id": "t1", "text": "Analyse the sample", "owner": "agent:claude-code:sonnet", "attempt": seed_attempt(api.root)}],
             "revision": api.get("/api/workspace")[1]["tasks_revision"]})
         assert status == 200, saved
     finally:

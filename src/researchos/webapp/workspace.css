@@ -68,6 +68,8 @@
 .ws-readonly { color: var(--ochre); border: 1px solid var(--line); padding: .7rem; font-size: .84rem; }
 .ws-tasks { border-top: 1px solid var(--line-strong); margin-top: 2.1rem; padding-top: 1rem; }
 .ws-task-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0; }
+.ws-task-group { font-size: .8rem; font-weight: 600; color: var(--ink); margin: 1rem 0 0; padding-bottom: .15rem; }
+.ws-task-group:first-child { margin-top: .4rem; }
 .ws-task { display: flex; gap: .6rem; align-items: flex-start; padding: .6rem 0; border-bottom: 1px solid var(--line); font-size: .86rem; }
 .ws-task > input { width: auto; margin: .35rem 0 0; accent-color: var(--olive); }
 .ws-task-details { min-width: 0; flex: 1; }
@@ -84,7 +86,9 @@
 .ws-task-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .65rem; padding-top: 1rem; }
 .ws-field { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
 .ws-field-label { color: var(--ink-soft); font-size: .76rem; }
-.ws-task-form > .ws-field:first-child { flex: 1 1 250px; }
+.ws-task-form > .ws-field-text { flex: 1 1 250px; }
+.ws-task-form > .ws-field-attempt { flex: 1 1 230px; }
+.ws-task-form > .ws-field-after { flex: 1 1 200px; }
 .ws-task-form > .ws-field-owner { flex: 0 1 190px; }
 .ws-task-form > .ws-field-name { flex: 0 1 130px; }
 .ws-task-form > .ws-field-date { flex: 0 1 145px; }

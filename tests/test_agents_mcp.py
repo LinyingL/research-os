@@ -24,6 +24,8 @@ from researchos.records import notes as notes_mod
 from researchos.records import situation
 from researchos.records.identity import read_identity
 
+from attempt_seed import seed_attempt
+
 AGENT = labels.Agent("claude-code", "sonnet")
 TASK_ID = "t1"
 TASK_TEXT = "Clean the survey data\nand tabulate it by region"
@@ -43,10 +45,11 @@ def pid(root: Path) -> str:
 
 
 def _tasks(root: Path, *, done: bool = False, report: str = "", owner: str = AGENT.owner) -> None:
-    task = {"id": TASK_ID, "text": TASK_TEXT, "done": done, "owner": owner, "due": "2026-11-01"}
+    attempt = seed_attempt(root)  # 21.1: a task belongs to an attempt
+    task = {"id": TASK_ID, "text": TASK_TEXT, "done": done, "owner": owner, "due": "2026-11-01", "attempt": attempt}
     if report:
         task["report"] = report
-    other = {"id": "t2", "text": "Another task", "done": False, "owner": "", "due": ""}
+    other = {"id": "t2", "text": "Another task", "done": False, "owner": "", "due": "", "attempt": attempt}
     got = workspace.read_tasks(root)
     workspace.save_tasks(root, {"tasks": [task, other], "revision": got[1]})
 
@@ -98,7 +101,8 @@ def test_complete_task_writes_result_marks_done_and_signals(setup):
     assert task["done"] is True
     assert re.fullmatch(r"research/results/[0-9a-f]{32}\.md", task["report"])
     assert task["report"] in answer and "marked the task done" in answer and "stop now" in answer
-    assert _task(root, "t2") == {"id": "t2", "text": "Another task", "done": False, "owner": "", "due": ""}
+    assert _task(root, "t2") == {"id": "t2", "text": "Another task", "done": False, "owner": "", "due": "",
+                                    "attempt": seed_attempt(root)}  # the other task is as it was
 
     text = (root / task["report"]).read_text("utf-8")
     lines = text.split("\n")

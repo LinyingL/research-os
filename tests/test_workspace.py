@@ -15,6 +15,8 @@ import pytest
 from researchos import addproject, db, history, paths, people, project, proposals, share, signing, workspace
 from researchos.records.identity import read_identity
 
+from attempt_seed import seed_attempt
+
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
@@ -238,7 +240,8 @@ def test_binary_and_oversize_documents_are_rejected_without_overwrite(root, raw,
 
 
 def test_tasks_are_optional_independent_and_revision_checked(root):
-    tasks = [{"id": "sample", "text": "Check the sample definition", "owner": "Dr Li", "due": "2026-11-04", "done": False}]
+    tasks = [{"id": "sample", "text": "Check the sample definition", "owner": "Dr Li", "due": "2026-11-04", "done": False,
+              "attempt": seed_attempt(root)}]  # 21.1: a new task belongs to an attempt
     first = workspace.save_tasks(root, {"tasks": tasks, "revision": None})
     assert json.loads((root / workspace.TASKS_PATH).read_text()) == tasks
     assert not (root / workspace.OVERVIEW_PATH).exists()
@@ -286,9 +289,10 @@ def test_inventory_links_visible_files_without_reading_their_content(root, tmp_p
 
 def test_no_save_creates_or_approves_an_attempt_node(root):
     _new(root, "result", "A preliminary finding; reasons for doubt remain.")
-    workspace.save_tasks(root, {"tasks": [{"id": "try", "text": "Try later"}], "revision": None})
+    attempt = seed_attempt(root)  # the attempt a task names exists before the task does (21.1); saving adds no other
+    workspace.save_tasks(root, {"tasks": [{"id": "try", "text": "Try later", "attempt": attempt}], "revision": None})
     with db.connect(paths.graph_db_path(root)) as conn:
-        assert db.get_nodes_by_type(conn, "attempt") == []
+        assert [node["id"] for node in db.get_nodes_by_type(conn, "attempt")] == [attempt]
 
 
 def test_unknown_team_and_nonmember_cannot_save(root):
@@ -321,7 +325,8 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
     with drive.member():
         project.open_project(drive.work)
         note = _new(drive.work, "result", "![Result](figs/fig2.png)\n[Analysis](steps/17-plot.py)")
-        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result", "report": note["path"]}],
+        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result", "report": note["path"],
+                                                           "attempt": "attempt:map.md#16"}],
                                                  "revision": None})
         # A member's 提交 of tasks takes the result records the changed tasks link along (18.3).
         assert task["changed_task_reports"] == [note["path"]]
@@ -668,7 +673,8 @@ def test_existing_files_knows_a_listable_file_beyond_the_listed_ones(root, tmp_p
 
 def test_a_one_person_project_has_no_report_paths_to_take_along(root):
     note = _new(root, "result", "# Fit\n")
-    tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"]}], "revision": None})
+    tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"],
+                                                  "attempt": seed_attempt(root)}], "revision": None})
     assert tasks["changed_task_reports"] == [] and workspace.overview(root)["changed_task_reports"] == []
 
 
@@ -684,7 +690,8 @@ def test_a_members_changed_catalog_is_offered_for_review_even_when_its_task_is_u
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         (official / "tables/a.csv").write_text("n\na\n")
@@ -729,7 +736,8 @@ def test_a_file_a_member_registers_again_after_it_changed_is_offered_though_the_
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         for name in ("a", "b"):
@@ -763,7 +771,8 @@ def test_a_malformed_official_catalog_never_breaks_the_project_home_of_a_member_
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         (official / "tables/a.csv").write_text("n\na\n")
