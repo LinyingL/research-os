@@ -213,7 +213,7 @@ second.value=ATT; await second.emit('change');
 const follows=field('接着哪个任务'); follows.value='b'; await follows.emit('change');
 typed(field('任务'),'Write up'); await find('添加任务').click(); await sleepTick();
 const saved=listed.tasks.find(t=>t.text==='Write up');
-const groups=byClass('ws-task-list').children.map(e=>e.tagName==='H3'?'# '+e.textContent:e.all().find(x=>x.classList.contains('ws-task-text')).textContent);
+const groups=byClass('ws-task-list').children.filter(e=>e.tagName!=='BUTTON').map(e=>e.tagName==='H3'?'# '+e.textContent:e.all().find(x=>x.classList.contains('ws-task-text')).textContent);
 console.log(JSON.stringify({form,chosen,other,saved,groups,
   keptAttempt:field('属于哪条尝试').value,after:field('接着哪个任务').value,text:field('任务').value,dirty:window.ROWorkspace.isDirty()}));
 """.replace("ATT", json.dumps(ATTEMPT)).replace("TASKS", _TASKS))

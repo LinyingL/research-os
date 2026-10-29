@@ -692,7 +692,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
 from researchos import research_records
 from researchos.agents import labels as agent_labels
@@ -4069,6 +4069,14 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 report = (query.get("report") or [""])[0]
                 payload = self._workspace_api(lambda: research_records.read(served.root, report))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/task-groups":
+                # 21.1: the groups proposed for the tasks that belong to no attempt, and the duplicates among them --
+                # a read; nothing is written until a group is confirmed (POST, below)
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                payload = self._workspace_api(lambda: task_groups.propose(served.root))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4407,6 +4415,19 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         self.server.start_scan(served)
                     except ApiError as exc:
                         logger.info("no immediate scan after writing a research document: %s", exc)
+                self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/task-groups":
+                # 21.1: one group the person kept -- its attempt row through the attempt write (under the watcher's
+                # ingest lock, as /api/attempts/write), then `attempt` on its tasks
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: task_groups.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock))
+                marks = workspace.local_annotations(served.root, {workspace.TASKS_PATH: payload["tasks_revision"]}, self._lang())
+                payload["tasks_officialness"] = marks["files"][workspace.TASKS_PATH]
+                payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
                 self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":
                 body = self._read_json_body_with_path()

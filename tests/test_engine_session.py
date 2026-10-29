@@ -521,6 +521,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/outputs/folders": ("read", "/api/outputs/folders"),
     "/api/outputs/backfill": ("read", "/api/outputs/backfill"),
     "/api/workspace/document": ("read", "/api/workspace/document?path=research/overview.md"),
+    "/api/workspace/task-groups": ("read", "/api/workspace/task-groups"),
     "/api/workspace/research-record": ("read", "/api/workspace/research-record?report=research/results/pilot.md"),
     "/api/workspace/research-records": ("read", "/api/workspace/research-records?path=map.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),

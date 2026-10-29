@@ -832,6 +832,7 @@
       if (entry.heading) {
         const heading = el("h3", "ws-task-group", entry.heading.title); heading.dataset.attempt = entry.heading.id || "";
         list.append(heading);
+        if (!entry.heading.id && hasLooseTasks()) list.append(openGroupingButton("group-tasks-loose"));
         return;
       }
       const task = entry.task, run = latestRun(task.id);
@@ -871,8 +872,7 @@
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
         taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "", attempt: task.attempt || "", after: task.after || "" }; renderTasks(); ui.taskText.focus();
       }), "edit:" + task.id);
-      // A task that continued the removed one now continues what that one continued.
-      const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id).map((x) => x.after === task.id ? Object.assign({}, x, { after: task.after || null }) : x)); }), "remove:" + task.id);
+      const remove = keyed(button(t("移除"), () => removeTask(task)), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
       const actions = el("div", "ws-task-actions"); actions.append(edit, remove);
@@ -880,6 +880,13 @@
       row.append(check, disclosure); list.append(row);
     });
     restoreFocus(list, snap);
+  }
+  // The removal of a task, after its question; a task that continued the removed one now continues what that one continued.
+  // True when the question was agreed to (the save follows, and may still fail: the caller looks at the list).
+  async function removeTask(task) {
+    if (!window.confirm(t("移除这项任务吗？"))) return false;
+    await mutateTasks(data.tasks.filter((x) => x.id !== task.id).map((x) => x.after === task.id ? Object.assign({}, x, { after: task.after || null }) : x));
+    return true;
   }
   function showTaskError() {
     if (!ui.taskError) return;
@@ -897,6 +904,7 @@
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
     const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
     const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
+    if (hasLooseTasks()) header.append(openGroupingButton("group-tasks"));
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
     ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
@@ -1233,6 +1241,191 @@
     renderTasks(); ui.taskText.focus();
     if (ui.tasks && typeof ui.tasks.scrollIntoView === "function") ui.tasks.scrollIntoView();
     return true;
+  }
+
+  // -- 把这些任务归入尝试…: grouping the tasks a project already has (DESIGN.md 21.1) -----------------------------------
+  // The engine proposes (`GET /api/workspace/task-groups`): groups of the tasks that belong to no attempt, each with the
+  // attempt row it would add, and the tasks that are word for word the same as an earlier one. The side panel lets the
+  // person rename a group (and change its number and date), move tasks in or out, merge it with another or drop it;
+  // nothing is written until one is confirmed, and confirming is one call (`POST` of the same path) that writes the
+  // attempt row and sets `attempt` on that group's tasks. A duplicate is removed by the task row's own removal, with its
+  // question. The panel is the folders form's kind of subject (`folderSubject`): leaving it after a change asks first.
+  function hasLooseTasks() { return (data.tasks || []).some((task) => !task.attempt); }
+  function openGroupingButton(key) {
+    const open = keyed(button(t("把这些任务归入尝试…"), openGrouping), key);
+    open.disabled = !tasksEditable();
+    return open;
+  }
+  function taskNumbered(subject, ids) { return ids.slice().sort((a, b) => subject.info[a].number - subject.info[b].number); }
+  function cutWords(words, size) { const text = String(words).split("\n")[0]; return text.length > size ? text.slice(0, size) + "…" : text; }
+  function groupWords(group) { return group.description.trim() || group.term; }
+  function moveGroupedTask(subject, id, to) {
+    subject.groups.forEach((group) => { if (group.tasks.indexOf(id) >= 0) { group.tasks = group.tasks.filter((x) => x !== id); group.edited = true; } });
+    subject.pool = subject.pool.filter((x) => x !== id);
+    const target = subject.groups.find((group) => group.id === to);
+    if (target) { target.tasks = taskNumbered(subject, target.tasks.concat(id)); target.edited = true; } else subject.pool = taskNumbered(subject, subject.pool.concat(id));
+    drawGrouping(subject);
+  }
+  function mergeGroups(subject, from, into) {
+    into.tasks = taskNumbered(subject, into.tasks.concat(from.tasks));
+    if (from.date && (!into.date || (from.date.length === into.date.length && from.date < into.date))) into.date = from.date;
+    subject.groups = subject.groups.filter((group) => group !== from);
+    into.edited = true; drawGrouping(subject);
+  }
+  function dropGroup(subject, group) {
+    subject.pool = taskNumbered(subject, subject.pool.concat(group.tasks));
+    subject.groups = subject.groups.filter((x) => x !== group);
+    subject.dropped = true; drawGrouping(subject);
+  }
+  // A duplicate goes by the removal the task list has, and its question; once it is gone the panel forgets it.
+  async function removeGroupedTask(subject, id) {
+    const task = (data.tasks || []).find((x) => x.id === id);
+    if (!task || !(await removeTask(task))) return;
+    if (!live(subject.mark) || state.panelSubject !== subject) return;
+    if ((data.tasks || []).some((x) => x.id === id)) return;   // the save failed: the task is still there
+    subject.groups.forEach((group) => { group.tasks = group.tasks.filter((x) => x !== id); });
+    subject.pool = subject.pool.filter((x) => x !== id);
+    delete subject.same[id]; delete subject.info[id];
+    drawGrouping(subject);
+  }
+  function groupedTaskRow(subject, id, group) {
+    const info = subject.info[id], row = el("li", "ws-group-task"), locked = subject.busy || !editable();
+    const words = el("span", "ws-group-task-text", cutWords(info.text, 90)); words.title = info.text;
+    row.append(el("span", "ws-group-task-n", t("第 {n} 条", { n: info.number })), words);
+    if (info.report_title) row.append(el("span", "ws-agent-quiet", t("报告：{title}", { title: cutWords(info.report_title, 50) })));
+    if (subject.same[id]) {
+      row.append(el("span", "ws-agent-quiet", t("和第 {n} 条一样", { n: subject.same[id] })));
+      const remove = keyed(named(button(t("移除"), () => removeGroupedTask(subject, id)), t("移除：{task}", { task: cutWords(info.text, 40) })), "group-remove:" + id);
+      remove.disabled = locked; row.append(remove);
+    }
+    const move = keyed(named(el("select", "form-input"), t("移动：{task}", { task: cutWords(info.text, 40) })), "group-move:" + id);
+    const here = el("option", null, t("移到…")); here.value = ""; move.append(here);
+    subject.groups.filter((other) => other !== group).forEach((other) => { const option = el("option", null, groupWords(other)); option.value = other.id; move.append(option); });
+    if (group) { const none = el("option", null, t("不归入任何组")); none.value = "\u0000none"; move.append(none); }
+    move.value = ""; move.disabled = locked;
+    move.addEventListener("change", () => { if (move.value) moveGroupedTask(subject, id, move.value === "\u0000none" ? "" : move.value); });
+    row.append(move);
+    return row;
+  }
+  function groupCard(subject, group) {
+    const card = el("section", "ws-group"), locked = subject.busy || !editable(), member = data.mode === "member";
+    card.dataset.group = group.id;
+    const number = keyed(input("text"), "group-number:" + group.id), date = keyed(input("text"), "group-date:" + group.id), name = keyed(input("text"), "group-name:" + group.id);
+    number.value = group.number; date.value = group.date; name.value = group.description;
+    const numberField = field(t("编号"), number), dateField = field(t("日期"), date), nameField = field(t("尝试的描述"), name);
+    numberField.className += " ws-field-number"; dateField.className += " ws-field-day"; nameField.className += " ws-field-describe";
+    [number, date, name].forEach((box) => { box.disabled = locked; });
+    const keep = keyed(button(t("确认这一组"), () => confirmGroup(subject, group), "btn btn-small"), "group-confirm:" + group.id);
+    keep.disabled = locked || !group.tasks.length;
+    number.addEventListener("input", () => { group.number = number.value; group.edited = true; });
+    date.addEventListener("input", () => { group.date = date.value; group.edited = true; });
+    name.addEventListener("input", () => { group.description = name.value; group.edited = true; keep.disabled = subject.busy || !editable() || !group.tasks.length; });
+    const head = el("div", "ws-group-head"); head.append(numberField, dateField, nameField); card.append(head);
+    card.append(quiet(t("共同点：{term}", { term: group.term })), quiet(t("研究判断：{status}，结果先留空", { status: t(group.verdictWord) })));
+    const list = el("ul", "ws-group-tasks");
+    if (!group.tasks.length) card.append(quiet(t("这一组还没有任务。")));
+    group.tasks.forEach((id) => list.append(groupedTaskRow(subject, id, group)));
+    card.append(list);
+    if (member) {
+      const sentence = keyed(el("textarea", "form-input"), "group-sentence:" + group.id);
+      sentence.rows = 2; sentence.value = group.sentence || t("把已有的任务归入新尝试 #{number}", { number: group.number.trim() }); sentence.disabled = locked;
+      sentence.addEventListener("input", () => { group.sentence = sentence.value; group.edited = true; });
+      card.append(field(t("一句话说明"), sentence));
+    }
+    const actions = el("div", "ws-agent-actions"), merge = keyed(named(el("select", "form-input"), t("合并这一组：{group}", { group: groupWords(group) })), "group-merge:" + group.id);
+    const first = el("option", null, t("合并到…")); first.value = ""; merge.append(first);
+    subject.groups.filter((other) => other !== group).forEach((other) => { const option = el("option", null, groupWords(other)); option.value = other.id; merge.append(option); });
+    merge.value = ""; merge.disabled = locked || subject.groups.length < 2;
+    merge.addEventListener("change", () => { const into = subject.groups.find((other) => other.id === merge.value); if (into) mergeGroups(subject, group, into); });
+    const drop = keyed(button(t("不要这一组"), () => dropGroup(subject, group)), "group-drop:" + group.id);
+    drop.disabled = locked;
+    actions.append(keep, merge, drop); card.append(actions);
+    if (group.note) { const says = el("p", "ws-status"); says.setAttribute("role", "status"); status(says, group.note.words, group.note.kind); card.append(says); }
+    return card;
+  }
+  function drawGrouping(subject) {
+    if (state.panelSubject !== subject) return;
+    const snap = focusSnapshot(panelBody), body = el("div", "ws-groups");
+    body.append(quiet(t("还没归入尝试的任务，按任务文字和报告标题里的版本号（例如 v0.2）或反复出现的同一个词分成几组。每一组都可以改名、调整任务、和别的组合并，或者不要；你确认哪一组，才会在尝试表里新增一行，并把这一组的任务归入它。文件不会移动。")));
+    if (data.mode === "member") body.append(quiet(t("你是这个项目的成员：确认一组会先把新的一行写进你的工作副本，再生成提议，PI 批准后才进入正式版本。")));
+    subject.done.forEach((node) => body.append(node));
+    if (!subject.groups.length && !subject.pool.length && !subject.done.length) body.append(quiet(t("没有可以归入尝试的任务。")));
+    subject.groups.forEach((group) => body.append(groupCard(subject, group)));
+    if (subject.pool.length) {
+      const rest = el("section", "ws-group");
+      rest.append(el("h3", "ws-task-group", t("没有分到组的任务")));
+      const list = el("ul", "ws-group-tasks");
+      subject.pool.forEach((id) => list.append(groupedTaskRow(subject, id, null)));
+      rest.append(list); body.append(rest);
+    }
+    panelBody.replaceChildren(body);
+    restoreFocus(panelBody, snap);
+  }
+  async function confirmGroup(subject, group) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !editable() || !here() || !group.tasks.length) return;
+    const number = group.number.trim(), description = group.description.trim();
+    if (!number || !description) { group.note = { words: t("请写下这条尝试的编号和描述。"), kind: "err" }; drawGrouping(subject); return; }
+    const ids = group.tasks.slice(), member = data.mode === "member";
+    subject.busy = true; group.note = { words: t("正在保存…") }; drawGrouping(subject);
+    let response;
+    try {
+      // The attempt table the first group is written into is made first, as the new-attempt form makes it (a project with none).
+      if (!subject.table) { await apiPost("/api/attempts/initialize", { project: project() }); subject.table = true; }
+      response = await apiPost("/api/workspace/task-groups", { project: project(), tasks: ids, attempt: { number: number, date: group.date.trim(), description: description } });
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; group.note = { words: errorWords(t("没能归入这一组。"), err), kind: "err" }; drawGrouping(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    // What the page holds of the project follows what was written, as after any task save.
+    data.tasks = response.tasks; data.tasks_revision = response.tasks_revision; data.tasks_officialness = response.tasks_officialness || data.tasks_officialness;
+    data.changed_task_reports = response.changed_task_reports || [];
+    if (!(data.attempts || []).some((a) => a.id === response.attempt.id)) (data.attempts = data.attempts || []).push({ id: response.attempt.id, label: response.attempt.label });
+    renderTasks();
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false;
+    const moved = response.moved || [], line = el("div", "ws-group-done");
+    subject.groups = subject.groups.filter((x) => x !== group);
+    subject.pool = subject.pool.filter((x) => moved.indexOf(x) < 0);
+    moved.forEach((id) => { delete subject.same[id]; delete subject.info[id]; });
+    if (!response.linked) {
+      line.append(el("p", "ws-status err", t("尝试 #{number} 已经写进尝试表，但没能重新读取它，任务还没有归入。稍后在任务的「属于哪条尝试」里选这一条。", { number: number })));
+    } else if (member) {
+      line.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number}，{n} 个任务归入了它。提议还没有发送。", { number: number, n: moved.length })));
+      const says = el("div", "notice-status"), host = el("div", "compose-result");
+      line.append(says, host);
+      const sentence = (group.sentence || "").trim() || t("把已有的任务归入新尝试 #{number}", { number: number });
+      if (typeof ROTeam !== "undefined" && ROTeam.composeInto) ROTeam.composeInto(host, { kind: "attempt_new", sentence: sentence, number: number }, says);
+    } else {
+      line.append(el("p", "ws-status ok", t("已新增尝试 #{number}，{n} 个任务归入了它。", { number: number, n: moved.length })));
+    }
+    subject.done.push(line);
+    drawGrouping(subject);
+  }
+  async function openGrouping() {
+    if (!editable() || !mayReplacePanel()) return;
+    const mark = stamp();
+    // Unsaved work: a group typed in or rearranged and not confirmed yet, or a group dropped (agreeing to leave clears it).
+    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, groups: [], pool: [], done: [], dropped: false,
+      get dirty() { return this.dropped || this.groups.some((group) => group.edited); },
+      set dirty(on) { if (!on) { this.dropped = false; this.groups.forEach((group) => { group.edited = false; }); } } };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("把这些任务归入尝试"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const plan = await apiGet("/api/workspace/task-groups?project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || state.panelSubject !== subject) return;
+      subject.table = plan.table !== false;
+      (plan.tasks || []).forEach((task) => { subject.info[task.id] = task; });
+      (plan.duplicates || []).forEach((pair) => { subject.same[pair.task] = pair.number; });
+      subject.groups = (plan.groups || []).map((group) => ({ id: group.id, term: group.term, number: group.attempt.number, date: group.attempt.date,
+        description: group.attempt.description, verdictWord: (group.verdict_status || {}).label || "", tasks: group.tasks.slice(), sentence: "", note: null, edited: false }));
+      subject.pool = (plan.ungrouped || []).slice();
+      drawGrouping(subject);
+    } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取任务的分组。"), err), "err"); }
   }
 
   // -- the owner control: people and this Mac's agents ------------------------------------------

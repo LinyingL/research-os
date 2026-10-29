@@ -211,6 +211,21 @@
 .ws-backfill-file select { flex: none; width: auto; max-width: 100%; font-size: .76rem; padding: .1rem .3rem; }
 .ws-backfill-total { margin: 0; color: var(--ink-soft); font-size: .76rem; }
 .ws-backfill-offer { margin-top: 1.2rem; }
+/* 21.1: 把这些任务归入尝试…, the groups proposed for the tasks that belong to no attempt, in the side panel. */
+.ws-task-list > .btn { margin: .15rem 0 .1rem; }
+.ws-groups { display: flex; flex-direction: column; gap: .8rem; font-size: .8rem; }
+.ws-group { border-top: 1px solid var(--line); padding-top: .7rem; display: flex; flex-direction: column; gap: .35rem; }
+.ws-group-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; }
+.ws-group-head .ws-field-number { flex: 0 1 4.5rem; }
+.ws-group-head .ws-field-day { flex: 0 1 7rem; }
+.ws-group-head .ws-field-describe { flex: 1 1 14rem; }
+.ws-group-head .form-input { width: 100%; box-sizing: border-box; }
+.ws-group-tasks { list-style: none; margin: 0; padding: 0; }
+.ws-group-task { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .25rem 0; border-bottom: 1px solid var(--line); }
+.ws-group-task-n { flex: none; font-family: var(--font-mono); font-size: .76rem; color: var(--ink-soft); }
+.ws-group-task-text { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+.ws-group-task select, .ws-group .ws-agent-actions select { flex: none; width: auto; max-width: 14rem; font-size: .76rem; padding: .1rem .3rem; }
+.ws-group-done { border-top: 1px solid var(--line); padding-top: .4rem; }
 
 .ws-research-record { border-top: 1px solid var(--line); padding-top: .7rem; margin-top: .9rem; font-size: .84rem; }
 .ws-research-record > summary { cursor: pointer; color: var(--ink-soft); }

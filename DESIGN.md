@@ -5890,6 +5890,67 @@ Decided the same day:
   same as another's are marked 「和第 n 条一样」 so the researcher can remove
   the duplicates.
 
+**How groups are proposed.** A small rule, so that it can be said in a
+sentence and checked by eye (`src/researchos/task_groups.py`). Only tasks
+with no `attempt` are looked at, and each lands in at most one group.
+
+1. **What is read.** A task's text (whitespace collapsed) and the title of
+   the report it points to (the report's first heading); nothing else of it,
+   and nothing is sent anywhere.
+2. **Version groups.** The first version token — `v` and digits with optional
+   `.digits` parts, in either case (`v0`, `v0.2`, `V1.2`) — in the task's
+   text, else in its report's title, together with the Latin word right
+   before it (`Sword v0.2`; a word like “run” or “the” is no subject), is the
+   task's version. Tasks of the same version (the subject compared without
+   regard to case) form a group, a group of one too: a version is one
+   attempt. Its name is the version as first written and the words the
+   tasks that say it themselves have in common, or the first clause of the
+   task when there is one.
+3. **Shared-term groups**, over the tasks left. A term is a Latin word of
+   three letters or more that is no common English word, or a run of three
+   to eight Chinese characters that does not begin with a function character
+   (对, 请, 一, 上, …) or end with one (的, 了, 等, …), taken from the first
+   line of the text and the report's title. A term counts once per distinct
+   text. The term in the most texts (two at least) goes first, the longer one
+   when equal, the one met first when still equal; its tasks become a group
+   and leave the pool, and so on until no term is shared. A term in more than
+   half of eight texts or more is the project's own name and is skipped. The
+   group is named by the longest words its tasks' first lines have in common.
+4. **The attempt each group carries.** The next free number (the greatest
+   whole number in the table plus one — “14a” counts as 14 — and one more for
+   each further group, groups in the order of their dates); the date, the
+   earliest of the group's tasks' dates (`due`) and the days its reports were
+   written, today when it has none, written as the table writes its dates
+   (`MM-DD` if any row does); the name; the research assessment 待定 (the
+   project's own marker for it, else 🕒) and an empty result.
+5. **Duplicates.** A task whose text, whitespace collapsed, is word for word
+   an earlier task's is reported with that task (`same_as`) and its place in
+   the list (`number`); the page marks it 「和第 n 条一样」. It stays in its
+   group: the person decides to remove it.
+
+The engine answers `GET /api/workspace/task-groups` (a read) with the tasks,
+the groups with their prefilled attempt, the tasks in no group and the
+duplicates. `POST /api/workspace/task-groups` takes one group the person
+kept — the attempt's number, date and name, and the ids of its tasks — and
+writes the row through the write the new-attempt form uses
+(`proposals.write_directly`: the dry run, the conflict rules, the backup, the
+re-ingest; a member's row lands in the working copy and is proposed as in
+12.4, the tasks travelling with it) and only then sets `attempt` on those
+tasks. A refused row — a taken number, no attempt table, a task that has
+since gone or found an attempt, a revision that moved when the page sent
+one — leaves `research/tasks.json` as it was; a row written whose tasks then
+cannot be moved says so and where to choose the attempt. No file moves.
+
+The panel opened by 「把这些任务归入尝试…」 (in the task header and under
+「未归入尝试」) lists the proposed groups: each can be renamed (with its
+number and date), have tasks moved in or out, be merged into another or
+dropped, and is written only when confirmed; the tasks in no group are
+listed below with the same move. A duplicate shows 「和第 n 条一样」 and is
+removed by the task list's own removal, with its question. Leaving the panel
+after a change asks first, as the other forms of the home do. In a project
+with no attempt table the first group confirmed makes the table first, as the
+new-attempt form does.
+
 ### 21.2 The handback
 
 When a run ends with `researchos_complete_task`, its report, the report's
