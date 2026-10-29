@@ -5825,3 +5825,251 @@ Multiple filesystem replacements are not a transaction: interruption can
 leave part of a report/context bundle placed. The existing approval journal
 records those files, and approving again resumes the remaining work; no new
 rollback or parallel acceptance state is introduced.
+
+## Section 21 — The route is the main line: tasks under attempts, the handback, a home that says what is going on (task V16)
+
+The researcher, 2026-10-29: "I think the app's UX and UI have problems; help
+me sort them out." A walk through every page on copies of both projects
+(Quant, run almost entirely through AI tasks; the thesis, 24 attempts kept by
+hand) and five independent reviews found one root problem: **the app holds two
+unconnected models of research work.** Tasks, agents, notes and result
+documents live on 项目首页; attempts, research assessments, the route map and
+the provenance pages know only what is written into the attempt table by
+hand. Quant had 16 tasks and 30-odd notes and reports and an empty route map
+that said 「年表里还没有尝试」, beside a 待办 column saying there was nothing to
+handle; its figures and data were flagged 缺尝试 row after row. The
+researcher's own pain, in their words: recording a research assessment, and
+not being able to tell from what an agent hands back where the work has got
+to.
+
+Decided the same day:
+
+1. **The route is the main line.** A task always belongs to an attempt.
+2. **An attempt is one version or one question** ("Sword v0.2 全成员复算",
+   "美股历史数据源调查"), with several tasks under it.
+3. **An agent's handback may suggest a research assessment; the person
+   confirms it.** This amends Section 0 and 17.5 rule 1 as 21.2 states.
+4. **The first page stays 项目首页, with 「现在在做什么」 at its top.**
+5. **What an agent produced is seen in its handback**; the kind pages list
+   by kind, each row saying which attempt it belongs to.
+6. **A research assessment is a fixed choice plus its own reason field**;
+   the file keeps its present form.
+7. **All five parts are done** (21.1–21.8), and the twelve words of 21.6 as
+   the researcher approved them.
+
+### 21.1 An attempt holds its tasks
+
+- **The link.** `research/tasks.json` gains two optional fields per task:
+  `attempt` (an attempt's node id, as `research_records` already names
+  attempts) and `after` (another task's id, the task this one continues).
+  Old tasks without `attempt` stay valid and are shown under 「未归入尝试」.
+  A new task needs an attempt: saving one without it is refused with a
+  sentence that offers both ways in (21.4).
+- **Where tasks are written.** In an attempt's panel, 「在这条尝试下加任务」;
+  on 项目首页 and in 全部任务, the task form's first field is 「属于哪条尝试」
+  — an existing attempt, or 「新开一条尝试…」, which opens the new-attempt
+  form and attaches the task once the row is saved. In a member's working
+  copy the attempt may be the member's own unproposed row; proposing the
+  attempt carries its tasks (12.4, 20.3).
+- **On the route map** each card shows, under its title: its research
+  assessment, 「任务 n」 with how many are unfinished, 「等你看 n」 when a
+  handback is unopened, and the first line of its latest handback. Lines
+  between attempts stay 源自 (Section 14); `after` orders tasks inside an
+  attempt and is not drawn on the map.
+- **The attempt's panel** lists its tasks in `after` order, each with its
+  owner, its state in words (未开始, 运行中, 等你回答, 等你看, 已完成, 失败,
+  越过了限制) and its handback.
+- **Grouping the tasks a project already has** (Quant's 16). The page offers
+  「把这些任务归入尝试…」: Research OS proposes groups — tasks whose text or
+  report title share a version token (`v0`, `v0.2`, `v0.3`) or a named
+  subject the researcher already uses; each proposed group comes with a
+  prefilled new attempt (description from the group's common words, date from
+  its earliest task, assessment 待定, empty result). The researcher keeps,
+  renames, merges, splits or drops each group; nothing is written until they
+  confirm a group, and no file moves. Tasks whose text is word for word the
+  same as another's are marked 「和第 n 条一样」 so the researcher can remove
+  the duplicates.
+
+### 21.2 The handback
+
+When a run ends with `researchos_complete_task`, its report, the report's
+context (Section 20) and its registered outputs (Section 19) are the
+**handback** (交回). It is listed in 等你处理 and on the attempt's card until
+the person who started the run opens it. "Opened" is kept per person on
+this Mac under the Research OS home, never in the project.
+
+- **What the agent is asked for.** The brief requires, for a research task,
+  these context fields beside Section 20's five:
+  - `headline`: the answer to the task's question in one plain sentence
+    (at most 200 characters);
+  - `key_numbers`: at most five `{what, value, file}`, each value as written
+    in the cited file;
+  - `undone`: what it did not finish and why;
+  - `decide`: at most three questions only the researcher can answer;
+  - `suggested_assessment`: `{status, reason}`, `status` one of the
+    project's assessment statuses (21.3), `reason` at most 1,000 characters.
+  The agent writes no note besides its report unless the task asks for one.
+- **What the person sees**, in this order: the headline; the key numbers,
+  each with its file (a value that does not occur in the text of its cited
+  file, by the number check of 16.1, is marked 「在所引文件里没找到这个数」);
+  没做完的; 需要你决定的; 代理建议 — the suggested status and reason, with
+  「确认这个判断」, 「改一下」 (the chooser of 21.3, prefilled) and 「先不判断」;
+  then 产出 by kind (figures as thumbnails, tables, data, code), each by its
+  title with the path as a quiet second line; the report in full, folded; the
+  run log. The agent and model are named once, at the top.
+- **Confirming** writes the attempt's research assessment through the same
+  write as the panel (18.3: only the changed cell, backup, history, conflict
+  check). The history entry reads 「由 张三 确认（采纳 Claude Code · sonnet 的
+  建议）」, and the report's context records `assessment_confirmed: {by, at,
+  status, adopted}`, where `adopted` says whether the person took the
+  suggestion unchanged. A member's confirmation is a verdict-change proposal
+  (12.4) whose sentence says the same. Choosing 已放弃 still asks for the
+  reason and freezes the basis (14.3).
+- **After it**, three ways on: 「再派一个任务」 (a new task in the same
+  attempt, `after` this one), 「从这条开新尝试」 (the new-attempt form prefilled
+  from `attempt_draft`, 源自 this attempt) and 「这条先到这里」.
+- **What this amends.** Section 0's "humans own judgment" and 17.5 rule 1
+  stand for the act: an agent still cannot write an assessment, and the
+  guard is unchanged. What changes is that an agent may *propose* one, in
+  its own field, always labelled as its suggestion, and that a person's
+  adoption of it is recorded as such.
+
+### 21.3 A research assessment is a choice and a reason
+
+- In the panel, the node page's 编辑这一行 and the new-attempt form, the
+  assessment is a **status chooser** — the default statuses (现行, 待定, 不利
+  证据, 已放弃, 被否, 归档, 其它) and any the researcher named in
+  `[verdict_labels]` — showing which one is chosen, and a **reason** field
+  holding the researcher's words.
+- The cell is written as today: the status's marker, a space, the reason
+  (`🕒 活跃候选(全项目最新文件)`). Reading splits it by `verdict_status`; a
+  cell with no known marker reads as 其它 with the whole text as the reason
+  and is written back unchanged unless the person picks a status. The raw
+  marker never shows in the field (12.11).
+- The new-attempt form numbers the row itself (the next free number, which
+  the person may change), drops 「日期（日期）」 for 「日期」, keeps the local
+  model's draft (Section 16) folded below the main fields, and does not show
+  the file it writes to except under 「详情」.
+
+### 21.4 项目首页: what is going on
+
+- **At the top, 「现在在做什么」**, two parts:
+  - **进行中的尝试**: every attempt whose assessment is 现行 or 待定 and that
+    has an unfinished task or an unopened handback, as cards with the 21.1
+    progress line, newest activity first; each opens the attempt's panel.
+  - **等你处理**: one list for the project — unopened handbacks, runs waiting
+    for an answer, failed or out-of-bounds runs, and what 待办 held (PI:
+    proposals awaiting approval; member: returned proposals and a newer
+    official version; 待复核 link judgments; lines with a missing end). Each
+    row opens the place that handles it. Its count shows beside 项目首页 in
+    the sidebar, in a one-person project too.
+- **Below**: 研究问题与计划, shown to its first paragraph with 「展开」; 笔记 and
+  报告 in a wider column, each with its date as a separate quiet field (the
+  title is not changed), reports grouped by attempt; 全部任务, grouped by
+  attempt with 「未归入尝试」 last, each row showing its owner and state in
+  words without being opened.
+- **The task form**: the task as several lines; 属于哪条尝试; 接着哪个任务
+  (optional); 负责人, people and agents in separate groups; 日期 (optional);
+  「保存并运行」 when the owner is an agent.
+- **研究路线's right-hand column** is the same 等你处理 list; it folds to a
+  narrow strip when empty.
+
+### 21.5 The paper and its provenance
+
+- **A warning appears only where it can be acted on, with the action beside
+  it.** 缺生成脚本: 「指定生成它的脚本」. A broken link whose file exists under
+  the same name elsewhere in the project: 「是这个吗？」, which writes the link
+  as 补上来源 does. 缺尝试: 「归入尝试」. A figure or file that is not part of
+  the paper: 「不属于论文」, kept in `.researchos/papers.toml` as `not_in_paper`
+  (a list of paths), which stops it counting as open work. A state that is
+  normal — a script that belongs to no attempt, a file that has no reader —
+  is quiet text, not a warning; the warning colour is for what the paper
+  relies on and is broken. 缺来源 on a figure says which of its causes it is,
+  on the row, not in a tooltip.
+- **The paper is chosen once.** 设为论文正文 offers the drafts changed most
+  recently first (five shown, the rest under 「更多」). Once chosen, 图表与论断
+  shows that paper's figures and claims first; other drafts are under 「其他
+  文稿」. A figure that several drafts include is one row naming its drafts.
+  Figure rows carry a small thumbnail.
+
+### 21.6 Words (amends 13.4)
+
+As approved by the researcher on 2026-10-29:
+
+| Old | New | English |
+|---|---|---|
+| 结果记录, 记录结果 (button) | 报告, 写报告 | Report, Write a report |
+| 研究记录 (a report's context) | 要点 (the opening part of the report) | Key points |
+| — | 交回 | Handback |
+| 待办 | 等你处理 | Needs you |
+| 记录 (sidebar), 人工记录 (panel) | 备份; panel 你的记录与备份 | Backups; Your records and backups |
+| 运行记录 | 运行日志 | Run log |
+| 关联文件 on a file page | 归入尝试 | File under an attempt |
+| 关联文件 on an attempt | 添加文件 | Add files |
+| 年表 | 尝试表 | Attempt table |
+| 清单 (数据与代码) | 列表 | List |
+| 未识别生成脚本, 没有找到生成它的脚本 | 缺生成脚本 (缺来源 stays the figures' umbrella) | No generating script |
+| — | 代理建议, 确认这个判断; history 「由 X 确认（采纳 … 的建议）」 | Suggested by the agent, Confirm this assessment |
+| — | 现在在做什么: 进行中的尝试, 等你处理 | In progress: Attempts in progress, Needs you |
+
+Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
+`.context.json`, `judgements.toml` keep their names.
+
+### 21.7 Storage and engine details stay out of the way (amends 8.8)
+
+- **你的记录与备份** says in words what is kept — research assessments, link
+  judgments, hand-drawn links, the route map's layout, variable cards, the
+  attempt table — each with when it was last backed up and 「在 Finder 中显
+  示」; file names and snapshot names are under 「详情」.
+- Paths are a quiet second line under a title, never the line itself; an
+  agent and model are named once per handback, not under every file.
+- **变量** gets 「新建变量卡」, which creates the draft through the same code as
+  `researchos variable new`; the page no longer tells the person to use a
+  terminal.
+- **One 设置 page** for this Mac — AI 执行者, 本地模型 (辅助填写), 联网查询,
+  界面语言 — opened from the sidebar's foot; per-project settings stay in the
+  project menu. 停止服务 names any agent still running before it stops.
+
+### 21.8 Presentation (amends 12.11)
+
+- **One primary action per page or panel**, drawn as the primary button;
+  other actions are the quiet outline button; links that only navigate are
+  text links. Titles, file names and statuses are never drawn as buttons.
+- **The clay colour means "something is wrong"**: errors, broken provenance,
+  out-of-bounds runs. Selection, the current section and links use ink and
+  weight. An assessment's tint is its own (12.11) and is not the error tint.
+- **Numbers in tables**: a value with more than six significant digits is
+  shown to four significant digits, with the value as written on hover and in
+  the file view; integers and values of six digits or fewer as written.
+- Every disclosure uses 12.13's chevron (文献 included). Every panel that
+  covers the page has the same scrim and a 返回 step when it was opened from
+  another panel. The route map fits all cards the first time a project's map
+  is opened and says how many cards are outside the view when some are.
+  Chinese text in the interface is never smaller than 12 px.
+
+### 21.9 Acceptance
+
+1. On a copy of Quant: the grouping of 21.1 proposes Sword v0, v0.2 and
+   v0.3 and a data-source group; after confirming, the route map shows those
+   attempts with their tasks counted, and 项目首页's 进行中的尝试 shows them.
+2. A real agent run on a task under an attempt hands back a headline, key
+   numbers (each found in its file), what is undone, questions and a
+   suggested assessment; 「确认这个判断」 writes the cell in the file's form and
+   the history says the suggestion was adopted; 「改一下」 to another status
+   records `adopted: false`.
+3. The panel's chooser shows the chosen status; saving 待定 with a reason
+   writes `🕒 <reason>`; a cell with no known marker is written back byte for
+   byte when only its reason's neighbour field is untouched.
+4. 等你处理 lists an unopened handback, a run waiting for an answer and, in a
+   two-person copy, a proposal; the sidebar count matches; opening a
+   handback removes it for that person only.
+5. On the thesis copy: no red warning on a script that only lacks an
+   attempt; 「是这个吗？」 repairs the `R_packages.lock.csv` link; 「不属于论文」
+   removes a by-product figure from open work; the chosen paper's figures come
+   first.
+6. No screen uses a retired word of 21.6; the glossary test covers the new
+   rows; English mode shows the new words.
+7. One primary button per page; no title or status drawn as a button; the
+   clay colour appears only on problems; long numbers are shown to four
+   significant digits.
+8. The full suite passes on Python 3.11 and 3.13.
