@@ -179,6 +179,13 @@ def test_tasks_of_an_attempt_are_listed_in_after_order_and_a_circle_written_by_h
     ({"report": REPORT}, {"state": "done"}, False, "done"),                                     # the latest run is the one that handed it back
     ({"report": REPORT}, {"state": "done"}, True, "to_read"),                                   # until its handback has been opened
     ({"report": REPORT}, {"state": "done", "reverted": True}, False, "not_started"),            # a run that was undone handed nothing back
+    # an undone run (撤回本次运行) has been dealt with: it asks, fails and warns no more, as 等你处理 leaves it out too (21.1, 21.4)
+    ({}, {"state": "needs_input", "reverted": True}, False, "not_started"),
+    ({}, {"state": "failed", "reverted": True}, False, "not_started"),
+    ({}, {"state": "out_of_bounds", "outcome": "done", "reverted": True}, False, "not_started"),
+    ({"done": True}, {"state": "out_of_bounds", "outcome": "done", "reverted": True}, False, "done"),   # the person's done mark reads again
+    ({"report": REPORT}, {"state": "failed", "reverted": True}, False, "not_started"),
+    ({}, {"state": "needs_input", "reverted": True}, True, "to_read"),                          # a handback that still waits is still to be read
     ({"report": REPORT}, {"state": "stopped"}, False, "not_started"),                           # the person stopped a later run: it is not the one that handed back
     ({"report": REPORT}, {"state": "failed"}, False, "failed"),                                 # a later run that failed still reads 失败 beside an older report
     ({"report": REPORT}, {"state": "interrupted"}, False, "failed"),
@@ -264,7 +271,7 @@ def test_an_unopened_handback_is_counted_on_its_attempt_and_waits_as_to_read(roo
     _save(root, [_task("a", attempt=A16, done=True, report=report), _task("b", attempt=A16)])
     seen = []
     with monkeypatch.context() as local:
-        local.setattr(handbacks, "unopened", lambda project_id, person, root=None: seen.append((project_id, person)) or [report])
+        local.setattr(handbacks, "unopened", lambda project_id, person, root=None, runs=None: seen.append((project_id, person)) or [report])
         work = _work(_payload(root), A16)
     assert (work["tasks"], work["unfinished"], work["unopened"]) == (2, 1, 1)
     assert [(i["id"], i["state"], i["unopened"]) for i in work["items"]] == [("a", "to_read", True), ("b", "not_started", False)]
@@ -281,7 +288,7 @@ def test_a_tasks_latest_run_decides_how_it_reads_and_only_unfinished_waiting_or_
     wanted = []
     runs = {"a": {"state": "running"}, "b": {"state": "needs_input"}, "c": {"state": "out_of_bounds", "outcome": "done"},
             "d": {"state": "failed"}, "g": {"state": "out_of_bounds", "outcome": "done"}}
-    monkeypatch.setattr(attempt_tasks, "_latest_runs", lambda project_id, ids: wanted.append(ids) or {k: v for k, v in runs.items() if k in ids})
+    monkeypatch.setattr(attempt_tasks, "_latest_runs", lambda _runs, ids: wanted.append(ids) or {k: v for k, v in runs.items() if k in ids})
     states = {i["id"]: i["state"] for i in _work(_payload(root), A16)["items"]}
     assert states == {"a": "running", "b": "needs_answer", "c": "out_of_bounds", "d": "failed", "e": "not_started", "f": "done",
                       "g": "out_of_bounds", "h": "done"}   # a finished task of an agent is looked at, for the run may have gone out of bounds
@@ -296,9 +303,9 @@ def test_the_latest_run_of_each_task_is_read_from_the_run_store_newest_first(roo
     _save(root, [_task("a", attempt=A16), _task("b", attempt=A16), _task("c", attempt=A16)])
     for n, (task, state) in enumerate([("a", "failed"), ("a", "needs_input"), ("b", "running"), ("c", "stopped")]):
         run_store.create_run(pid, {"id": f"r-20261029T10000{n}Z-aaaaa{n}", "task_id": task, "state": state})
-    found = attempt_tasks._latest_runs(pid, {"a", "b"})
+    found = attempt_tasks._latest_runs(attempt_tasks._read_runs(pid), {"a", "b"})
     assert {task: run["state"] for task, run in found.items()} == {"a": "needs_input", "b": "running"}
-    assert attempt_tasks._latest_runs(None, {"a"}) == {} and attempt_tasks._latest_runs(pid, set()) == {}
+    assert attempt_tasks._read_runs(None) == [] and attempt_tasks._latest_runs(attempt_tasks._read_runs(pid), set()) == {}
     assert {i["id"]: i["state"] for i in _work(_payload(root), A16)["items"]} == {
         "a": "needs_answer", "b": "running", "c": "not_started"}
 

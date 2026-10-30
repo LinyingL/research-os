@@ -200,7 +200,7 @@
       case "circle": case "mapping_circle": return t("这条连线会绕成一个圈：它要连的来处本身就源自它");
       case "mapping_exists": return t("这两条尝试之间已经有这条连线了");
       case "line_exists": return t("这条连线已经在正式版本里了");
-      case "mapping_attempt_not_found": return t("连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试");
+      case "mapping_attempt_not_found": return t("连线的一端在尝试表里找不到了，可能刚被改了编号；请刷新后再试");
       case "attempt_not_found": return t("连线的一端不在你上次同步的正式版本里：请同步后再试");
       case "no_such_line": return t("正式版本里没有这条连线");
       case "mapping_member_proposes": return t("你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画");
@@ -466,7 +466,7 @@
     function render() {
       const d = m.dom;
       d.cards.textContent = "";
-      d.empty.textContent = t("年表里还没有尝试。");
+      d.empty.textContent = t("尝试表里还没有尝试。");
       d.empty.classList.toggle("hidden", m.attempts.length > 0);
       if (m.caption) {
         const c = el("div", "rm-caption", t("还没标来处"));

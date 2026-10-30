@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from test_v10_desk_panel import A16, _case
+from test_v10_desk_panel import A16, _case, _st
 from test_v10_desk_panel import _run as _run_panel
 from test_v10_fix_map import _desk, _run_map
 from test_v9_language import CJK, WEBAPP, _node, needs_node
@@ -199,6 +199,44 @@ def test_someone_who_cannot_write_in_the_project_is_not_offered_the_way_to_add_a
     """ % json.dumps(A16))
     assert "btn btn-small: 在这条尝试下加任务" not in out["lines"] and "btn btn-small: 打开交回" in out["lines"]
     assert out["extra"] == "research/results/" + "a" * 32 + ".md"  # nothing half typed: no question, the report opens
+
+
+@needs_node
+def test_back_from_a_handback_read_on_the_home_draws_the_attempts_panel_from_a_fresh_desk_reading():
+    """21.4 (fix batch 3): on 项目首页 nothing reads the desk when a handback is read or confirmed (the home reloads itself),
+    so 返回 reads it again before the attempt's panel is drawn; the task that was 等你看 reads 已完成 and the chip is the new
+    assessment, as the engine now says. On 研究路线 the desk is read by the act itself and 返回 draws at once."""
+    case = _case("single")
+    report = "research/results/" + "a" * 32 + ".md"
+    before = case["desk"]["attempts"][0]
+    before["work"] = _work(tasks=1, unfinished=0, unopened=1, items=[
+        {"id": "b", "text": "Rerun with all members", "owner": "", "owner_label": "", "due": "", "done": False, "after": None,
+         "report": report, "state": "to_read", "unopened": True}])
+    after = json.loads(json.dumps(case["desk"]))
+    after["attempts"][0]["route_status"] = _st("current", "现行")
+    after["attempts"][0]["tone"] = "olive"
+    after["attempts"][0]["work"] = _work(tasks=1, unfinished=0, unopened=0, items=[{**before["work"]["items"][0], "state": "done", "unopened": True}])
+    case["after"] = after
+    steps = """
+      global.currentView = %s;
+      window.ROWorkspace = { openHandback: (path, options) => { c.desk = c.after; global.backStep = options.back; return null; } };
+      await window.RODesk.openAttemptAnywhere(%s);
+      const words = () => { const all = panelPart("panel-body").all(), mark = (list) => list.find((k) => k.cls.has("status-label")).textContent;
+        return [mark(all), mark(all.find((k) => k.cls.has("dp-task")).all())]; };   // the head's chip, the task's state
+      const seen = {first: words()};
+      panelPart('panel-body').all().find((k) => k.tag === 'BUTTON' && k.kids.join('') === '打开交回').click();
+      if (%s) await window.RODesk.loadDesk(views.desk, true);       // on the desk the act itself reads the desk again
+      state.panelSubject = {kind: 'handback'};     // the handback stands in the panel
+      global.deskReads = 0; const real = global.apiGet; global.apiGet = async (p) => { if (p === '/api/desk') deskReads += 1; return real(p); };
+      backStep(); for (let i = 0; i < 6; i++) await settle();
+      seen.after = words(); seen.reads = deskReads;
+      global.extra = seen;
+    """
+    home = _run_panel(case, steps % ("'workspace'", json.dumps(A16), "false"))["extra"]
+    assert home["first"] == ["待定", "等你看"]
+    assert home["after"] == ["现行", "已完成"] and home["reads"] == 1
+    desk = _run_panel(case, steps % ("'desk'", json.dumps(A16), "true"))["extra"]
+    assert desk["after"] == home["after"] and desk["reads"] == 0       # the desk was read by the act: nothing is read twice
 
 
 # -- the task form on 项目首页 ----------------------------------------------------------------------------------------

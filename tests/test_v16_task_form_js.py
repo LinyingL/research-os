@@ -431,3 +431,32 @@ console.log(JSON.stringify({before,after:byClass('ws-tasks').textContent,select:
     for key in ("before", "after"):
         assert not CJK.search(out[key]), out[key]
     assert out["select"] == ["Not assigned", "People", "AI agents on this Mac"]
+
+
+@needs_node
+def test_the_page_has_one_primary_button_at_a_time_save_while_a_document_is_being_written_and_add_task_otherwise():
+    """21.8 (fix batch 3): 保存 of the writing area and 添加任务 of the task form are both primary buttons, and both stand on the
+    one page. While the writing area is on screen in edit mode 保存 is the page's primary and the task form's save button is the
+    quiet one; in preview, with nothing open, or with the plan folded (its writing area is in the fold) the task form's is."""
+    out = run_workspace(_js(_SETUP + r"""
+listed.attempts=[{id:ATT,label:'First check'}]; listed.tasks=[]; listed.tasks_revision='tasks-0';
+const shown=e=>{ for (let n=e; n; n=n.parentNode) { if (n.classList && n.classList.contains('hidden')) return false;
+  if (n.parentNode && n.parentNode.tagName==='DETAILS' && n.parentNode.open===false && n.tagName!=='SUMMARY') return false; } return true; };
+const page=()=>root.all().filter(e=>e.tagName==='BUTTON'&&e.className.includes('btn-primary')&&shown(e)).map(e=>e.textContent);
+const seen={};
+await window.ROWorkspace.load(root); await sleepTick();
+seen.start=page();                                                     // the plan is folded: nothing is being written
+await find('新建笔记').click();
+seen.note=page();                                                      // a new note starts in edit mode
+await find('预览').click(); seen.preview=page();
+await find('编辑').click(); seen.again=page();
+const more=byClass('ws-plan-more');
+more.open=true; await more.emit('toggle'); await sleepTick();         // the plan unfolds into the writing area (a new note was open: it is empty)
+seen.plan=page();
+await find('编辑').click(); seen.planEdit=page();
+more.open=false; await more.emit('toggle'); await sleepTick(); seen.folded=page();
+console.log(JSON.stringify(seen));
+"""))
+    add, save = "添加任务", "保存"
+    assert out["start"] == [add] and out["note"] == [save] and out["preview"] == [add] and out["again"] == [save]
+    assert out["plan"] == [add] and out["planEdit"] == [save] and out["folded"] == [add]

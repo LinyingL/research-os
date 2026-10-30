@@ -276,7 +276,7 @@ console.log(JSON.stringify({initial,note,result:byClass('ws-writing').placeholde
     assert out["note"] == "写笔记…"
     assert out["result"] == "结果、解释与待确认的问题"
     assert out["summary"] == "引用文件或尝试"
-    assert out["taskHeading"] == "任务"
+    assert out["taskHeading"] == "全部任务"
 
 
 @pytest.mark.parametrize("kind, path", [

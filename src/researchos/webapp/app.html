@@ -449,7 +449,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 /* 12.11: a verdict is a quiet tinted text label (现行 / 已放弃 / 待定 /
    不利证据 / 被否 / 归档 / 其它), followed by the researcher's own words. */
 .status-label {
-  display: inline-block; flex: none; font-size: 0.74rem; line-height: 1.5; padding: 0 0.4rem; white-space: nowrap;
+  display: inline-block; flex: none; font-size: 0.75rem; line-height: 1.5; padding: 0 0.4rem; white-space: nowrap;
   color: var(--ink); background: var(--paper-alt);
 }
 .status-label.tone-olive { background: var(--olive-soft); color: var(--olive); }
@@ -459,7 +459,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .status-label.tone-plain { background: var(--paper-alt); color: var(--ink-soft); }
 .verdict-inline { display: inline-flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
 .verdict-words { color: var(--ink-soft); font-size: 0.86rem; }
-.own-mark { font-size: 0.74rem; color: var(--clay); }
+.own-mark { font-size: 0.75rem; color: var(--clay); }
 .tree-filter { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: baseline; font-size: 0.86rem; margin: 0 0 0.8rem; color: var(--ink-soft); }
 .attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
 
@@ -1166,7 +1166,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .var-id { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-soft); }
 /* 12.11: the same quiet tinted text labels as the verdicts (.status-label),
    no outlined badges. */
-.var-chip { font-size: 0.74rem; line-height: 1.5; padding: 0 0.4rem; background: var(--paper-alt); color: var(--ink-soft); white-space: nowrap; }
+.var-chip { font-size: 0.75rem; line-height: 1.5; padding: 0 0.4rem; background: var(--paper-alt); color: var(--ink-soft); white-space: nowrap; }
 .var-chip.in-use { background: var(--olive-soft); color: var(--olive); }
 .var-chip.draft { background: var(--ochre-soft); color: var(--ochre); }
 .var-chip.dead { background: var(--gray-soft); color: var(--gray); }
@@ -1849,7 +1849,7 @@ const BLOCKING_ERROR_TEXT = {
   mapping_exists: "这条映射已存在",
   human_link: "这是你的标注：请用「删除标注」移除",
   // a 「源自」 line between attempts (DESIGN.md 14.2), refused: nothing written
-  mapping_attempt_not_found: "连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试",
+  mapping_attempt_not_found: "连线的一端在尝试表里找不到了，可能刚被改了编号；请刷新后再试",
   mapping_self_link: "一个尝试不能源自它自己",
   mapping_circle: "这条连线会绕成一个圈：它要连的来处本身就源自它",
   mapping_member_proposes: "你是这个项目的成员：连线的增删要作为提议交给 PI 批准",

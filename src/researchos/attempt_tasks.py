@@ -89,8 +89,10 @@ def state_of(task: dict[str, Any], run: dict[str, Any] | None, waiting: bool) ->
     failed, was interrupted or ended without a report); a task the person marked done is 已完成, and so is one
     that is not but whose `report` is in and whose latest run is the one that handed it back (state done, not
     undone) or does not exist -- older versions did not set the done mark, and a copy of a project or another Mac
-    has no run records; anything else, including a run the person stopped, has not started."""
-    state = (run or {}).get("state")
+    has no run records; anything else, including a run the person stopped, has not started. A run the person undid
+    (`reverted`, 撤回本次运行) has been dealt with: it no longer asks, fails or warns, so the task reads as if its
+    latest run were not there (`attention` leaves the same run out of 等你处理)."""
+    state = None if (run or {}).get("reverted") else (run or {}).get("state")
     if state in ("preparing", "running"):
         return "running"
     if state == "needs_input":
@@ -103,7 +105,7 @@ def state_of(task: dict[str, Any], run: dict[str, Any] | None, waiting: bool) ->
         return "to_read"
     if task.get("done"):
         return "done"
-    if task.get("report") and (run is None or (state == "done" and not run.get("reverted"))):
+    if task.get("report") and (run is None or state == "done"):
         return "done"
     return "not_started"
 
@@ -155,40 +157,60 @@ def _handback(root: Path, report: str, waiting: bool) -> dict[str, Any] | None:
     return {"report": report, "title": title, "headline": headline, "line": headline or title, "unopened": waiting}
 
 
-def _latest_runs(project_id: str | None, wanted: set[str]) -> dict[str, dict[str, Any]]:
-    """The newest run of each task in `wanted`, found by reading the project's runs newest first and stopping at the
-    last one wanted (18.4 item 2)."""
-    found: dict[str, dict[str, Any]] = {}
-    if not project_id or not wanted:
-        return found
+def _read_runs(project_id: str | None) -> list[dict[str, Any]]:
+    """The project's runs, newest first: the one reading of the run store an answer makes (21.4). Nothing when the project
+    has no identity or the store cannot be read."""
+    if not project_id:
+        return []
     from researchos.agents import runs as run_store  # noqa: PLC0415
 
     try:
-        for run in run_store.iter_runs(project_id):
-            task = run.get("task_id")
-            if task in wanted and task not in found:
-                found[task] = run
-                if len(found) == len(wanted):
-                    break
-    except OSError:
-        pass
+        return list(run_store.iter_runs(project_id))
+    except (OSError, ValueError):
+        return []
+
+
+def _latest_runs(runs: list[dict[str, Any]], wanted: set[str]) -> dict[str, dict[str, Any]]:
+    """The newest run of each task in `wanted`, found in `runs` (newest first) and stopping at the last one wanted
+    (18.4 item 2)."""
+    found: dict[str, dict[str, Any]] = {}
+    if not wanted:
+        return found
+    for run in runs:
+        task = run.get("task_id")
+        if task in wanted and task not in found:
+            found[task] = run
+            if len(found) == len(wanted):
+                break
     return found
 
 
 def _look(root: Path, project_id: str | None, person: str | None, tasks: list[dict[str, Any]],
-          shared: dict[str, Any] | None) -> tuple[set[str], dict[str, dict[str, Any]]]:
+          shared: dict[str, Any] | None) -> tuple[set[str], dict[str, dict[str, Any]], tuple[list[str], list[dict[str, Any]]]]:
     """What the states of `tasks` are read from: the handbacks `person` has not opened and the latest run of each task
     that may need one -- a task not marked done, one whose handback waits, and a task an agent finished, for its run may
-    have gone out of bounds, which 已完成 must not hide (18.1). `shared`, a dict the caller hands to every function of
-    one answer, keeps the reading, so that the cards and 等你处理 of one desk payload read the run store once."""
+    have gone out of bounds, which 已完成 must not hide (18.1). The third part is the reading itself: the unopened
+    handbacks in order and the runs they were worked out from, which `reading` hands to the list of 交回 rows. `shared`,
+    a dict the caller hands to every function of one answer, keeps it, so that the cards and 等你处理 of one answer read
+    the run store once (21.4)."""
     if shared is not None and "look" in shared:
         return shared["look"]
-    waiting = set(handbacks.unopened(project_id, person, root))
-    runs = _latest_runs(project_id, {task["id"] for task in tasks
-                                     if not task.get("done") or task.get("report") in waiting or _agent_owned(task)})
+    runs = _read_runs(project_id)
+    ordered = handbacks.unopened(project_id, person, root, runs)
+    waiting = set(ordered)
+    latest = _latest_runs(runs, {task["id"] for task in tasks
+                                 if not task.get("done") or task.get("report") in waiting or _agent_owned(task)})
     if shared is not None:
-        shared["look"] = (waiting, runs)
-    return waiting, runs
+        shared["look"] = (waiting, latest, (ordered, runs))
+    return waiting, latest, (ordered, runs)
+
+
+def reading(root: str | Path, project_id: str | None, person: str | None, tasks: list[dict[str, Any]],
+            shared: dict[str, Any] | None = None) -> tuple[list[str], list[dict[str, Any]]]:
+    """The handbacks `person` has not opened (`handbacks.unopened`, oldest first) and the runs they were worked out from,
+    as the states of this answer read them (`_look`'s keep): 等你处理 lists its 交回 rows from the very reading the cards
+    and the task rows say 等你看 from, so that they cannot disagree and the run store is read once."""
+    return _look(Path(root), project_id, person, tasks, shared)[2]
 
 
 def attention(root: str | Path, project_id: str | None, person: str | None,
@@ -202,7 +224,7 @@ def attention(root: str | Path, project_id: str | None, person: str | None,
         tasks, _revision = workspace.read_tasks(root)
     except (workspace.WorkspaceError, OSError):
         return []
-    waiting, runs = _look(root, project_id, person, tasks, shared)
+    waiting, runs, _read = _look(root, project_id, person, tasks, shared)
     out = []
     for task in tasks:
         run = runs.get(task["id"])
@@ -227,7 +249,7 @@ def task_states(root: str | Path, project_id: str | None, person: str | None,
         return {}
     if not tasks:
         return {}
-    waiting, runs = _look(root, project_id, person, tasks, shared)
+    waiting, runs, _read = _look(root, project_id, person, tasks, shared)
     return {task["id"]: state_of(task, runs.get(task["id"]), bool(task.get("report")) and task["report"] in waiting) for task in tasks}
 
 
@@ -250,7 +272,7 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
     mine = [task for task in tasks if task.get("attempt") in wanted]
     if not mine:
         return {}
-    waiting, runs = _look(root, project_id, person, tasks, shared)
+    waiting, runs, _read = _look(root, project_id, person, tasks, shared)
     out: dict[str, dict[str, Any]] = {}
     for attempt in wanted:
         own = ordered([task for task in mine if task["attempt"] == attempt])

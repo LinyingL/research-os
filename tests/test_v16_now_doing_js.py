@@ -199,6 +199,32 @@ console.log(JSON.stringify({ quiet: text('ws-now-none') }));
 
 
 @needs_node
+def test_a_project_with_loose_tasks_or_no_attempt_at_all_is_told_the_ways_in_that_exist(tmp_path):
+    """21.4 (fix batch 3): Quant before the grouping has 16 tasks and an empty attempt table; 「在研究路线里打开一条尝试」 leads to a
+    map with no attempt on it. The sentence names what can be done there: group the tasks, or start an attempt in the task
+    form. A project with attempts and no loose task keeps the sentence that sends the person to an attempt's panel."""
+    from test_v8_phase2 import _project
+
+    root = _project(tmp_path / "quant")
+    _with_table(root, "# Map\n\n## Attempt timeline\n\n| # | Date | Path | Variables | Result | Verdict |\n|---|---|---|---|---|---|\n")
+    loose = "listed.attempts = []; listed.tasks = [{ id: 't1', text: 'Read the papers', owner: '', due: '', done: false }];"
+    none = "listed.attempts = []; listed.tasks = [];"
+    scenario = "%s\nawait window.ROWorkspace.load(root); await sleepTick();\nconsole.log(JSON.stringify({ quiet: text('ws-now-none') }));"
+    zh_loose = _run(_now(root), scenario % loose)["quiet"]
+    zh_none = _run(_now(root), scenario % none)["quiet"]
+    assert zh_loose == ["还没有挂着任务的尝试。全部任务下的「把这些任务归入尝试…」可以把已有的任务归到尝试里，也可以在任务表单里选「新开一条尝试…」。"]
+    assert zh_none == ["还没有挂着任务的尝试。在任务表单里选「新开一条尝试…」，写下第一个任务。"]
+    en_loose = _run(_now(root, lang="en"), scenario % loose, lang="en")["quiet"]
+    en_none = _run(_now(root, lang="en"), scenario % none, lang="en")["quiet"]
+    assert en_loose == ["No attempt holds a task yet. “Put these tasks into attempts…” under All tasks files the tasks you have under attempts, "
+                        "or choose “Start a new attempt…” in the task form."]
+    assert en_none == ["No attempt holds a task yet. In the task form, choose “Start a new attempt…” and write the first task."]
+    # attempts, but no task loose: the sentence that sends the person to an attempt stands (and a task of a listed attempt is not loose)
+    kept = _run(_now(root), "listed.tasks = [{ id: 't1', text: 'Read', owner: '', due: '', done: false, attempt: listed.attempts[0].id }];\n" + scenario % "")["quiet"]
+    assert kept == ["还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。"]
+
+
+@needs_node
 def test_a_section_the_engine_has_not_answered_is_not_drawn_and_a_read_that_fails_leaves_what_was_drawn(quant, pid):
     out = _run(_now(quant), r"""
 customGet = (path) => { if (path === '/api/workspace/now') throw new Error('down'); };
@@ -225,6 +251,25 @@ def test_the_two_parts_stand_side_by_side_at_desktop_width_and_stacked_when_narr
     assert not re.search(r"[→←➔▸]", css[css.index("现在在做什么"):])      # 12.11: no arrow glyphs in what is drawn
 
 
+def test_the_route_pages_and_the_home_never_call_the_attempt_table_by_its_retired_name():
+    """21.6, 21.9 item 6 (fix batch 3): 年表 is 尝试表 now. The row of 等你处理 for a line whose end is missing, which 项目首页 draws too,
+    and the route map's own sentences say so, and the English table has no key of the old word."""
+    for name in ("desk.js", "routemap.js", "workspace.js", "i18n.js"):
+        assert "年表" not in (WEBAPP / name).read_text(encoding="utf-8"), name
+    assert 'mapping_attempt_not_found: "连线的一端在尝试表里找不到了' in (WEBAPP / "app.html").read_text(encoding="utf-8")
+
+
+def test_the_state_words_and_marks_that_carry_chinese_are_never_smaller_than_12_px():
+    """21.8 (fix batch 3): the root is the browser's 16 px, so 0.74rem is 11.84 px. The state word of every task row, the chips of
+    等你处理, the assessment label on each card, the marks that say whose a record is and the variable chips are 12 px at least."""
+    html = (WEBAPP / "app.html").read_text(encoding="utf-8")
+    assert re.search(r"html\s*,\s*body\s*\{[^}]*margin:\s*0", html) and not re.search(r"html\s*\{[^}]*font-size", html)      # rem is the 16 px default
+    for selector in (r"\.status-label", r"\.own-mark", r"\.var-chip"):
+        rule = re.search(selector + r" \{([^}]*)\}", html).group(1)
+        size = float(re.search(r"font-size:\s*([\d.]+)rem", rule).group(1))
+        assert size * 16 >= 12, selector
+
+
 # -- the rows' actions ------------------------------------------------------------------------------------------
 
 
@@ -244,6 +289,98 @@ console.log(JSON.stringify({ reply: reply.length, focusedReply: global.focused &
 """)
     assert out["reply"] == 1 and out["focusedReply"] == "agent:a1:reply"
     assert out["panel"] == "handback" and out["got"] == 1
+
+
+@needs_node
+def test_answering_a_run_that_asked_while_another_page_was_on_screen_reads_the_runs_and_opens_the_reply_form(quant, pid):
+    """The run was still going when the home last read the runs and asked its question while the person was on 研究路线 (the
+    home polls only while it is on screen); 回答 there brings the home back, whose runs are older than the list. The reply
+    form opens all the same: the runs are read once more before the row is said to be one that cannot be answered. A run that
+    really cannot be answered (answered elsewhere meanwhile) still only brings its row into view."""
+    scenario = r"""
+listed.tasks = [{ id: 'a1', text: 'Question a1', owner: 'agent:claude-code:sonnet', due: '', done: false, attempt: 'attempt:research/attempts.md#1' }];
+const ask = (o) => mkRun({ id: 'r-20261029T090000Z-aaaaaa', task_id: 'a1', ...o });
+setRuns([ask({ state: 'running', can_stop: true })]);
+await window.ROWorkspace.load(root); await sleepTick(); await sleepTick();
+setRuns([ask(%s)]);                                                         // what the engine says since
+await button('回答', cls('desk-row', cls('ws-now-needs')[0])[0]).click();
+for (let i = 0; i < 6; i++) await sleepTick();
+console.log(JSON.stringify({ reply: cls('ws-agent-reply').length, focused: global.focused && global.focused.dataset && global.focused.dataset.key }));
+"""
+    asked = _run(_now(quant), scenario % "{ state: 'needs_input', question: 'Which sample should I use?', can_reply: true }")
+    assert asked["reply"] == 1 and asked["focused"] == "agent:a1:reply"
+    answered = _run(_now(quant), scenario % "{ state: 'ended', can_reply: false }")
+    assert answered["reply"] == 0
+
+
+@needs_node
+def test_the_home_reads_again_a_few_times_when_the_shared_folder_was_too_slow_for_the_first_read(quant, pid):
+    """21.4 (fix batch 3): the first answer of a slow shared folder holds a notice and none of the PI's proposals; the home asks
+    again 5 s later, as 研究路线 does, at most three times, and stops once the folder answers (or says it cannot be read, which
+    asking again would not change); a home that was left waits no more."""
+    now = _now(quant)
+    out = _run({**now, "shared": {"state": "slow"}}, r"""
+const ok = { ...NOW, shared: { state: 'ok' } }, slow = clone(NOW);
+const fire = async () => { await tick(); await sleepTick(); };
+await window.ROWorkspace.load(root); await sleepTick();
+const first = [nowAnswers, waiting()];
+await fire();
+const second = [nowAnswers, waiting()];
+customGet = (path) => (path === '/api/workspace/now' ? (nowAnswers += 1, clone(ok)) : undefined);      // the folder has answered
+await fire();
+const healed = [nowAnswers, waiting()];
+await fire();
+console.log(JSON.stringify({ first, second, healed, later: [nowAnswers, waiting()] }));
+""")
+    assert out["first"] == [1, 1] and out["second"] == [2, 1] and out["healed"] == [3, 0] and out["later"] == [3, 0]
+    capped = _run({**now, "shared": {"state": "stale"}}, r"""
+await window.ROWorkspace.load(root); await sleepTick();
+for (let i = 0; i < 6; i++) { await tick(); await sleepTick(); }
+console.log(JSON.stringify([nowAnswers, waiting()]));
+""")
+    assert capped == [4, 0]      # the load and three more reads
+    for state in ("unreadable", "ok", "not_needed", "not_configured"):
+        assert _run({**now, "shared": {"state": state}}, "await window.ROWorkspace.load(root); await sleepTick(); console.log(JSON.stringify([nowAnswers, waiting()]));") == [1, 0]
+    left = _run({**now, "shared": {"state": "slow"}}, r"""
+await window.ROWorkspace.load(root); await sleepTick();
+global.currentView = 'desk';           // the person went on to 研究路线: the desk reads the shared folder itself there
+await tick(); await sleepTick();
+console.log(JSON.stringify([nowAnswers, waiting()]));
+""")
+    assert left == [1, 0]
+
+
+@needs_node
+def test_a_sync_pressed_on_the_home_says_what_it_did_in_the_list_where_the_row_stood(quant):
+    """21.4 (fix batch 3): the official version's row goes with the sync that brings it in, so what the sync did is told in its
+    place in the list (the version the working copy is now at, and what was written), as 研究路线's column tells it; it stays
+    until the desk is opened afresh and is not part of the count."""
+    now = _now(quant)
+    snapshot = {"seq": 7, "at": "2026-10-29T09:00:00Z", "note": "", "note_code": None}
+    behind = {**now, "role": "member", "needs": {**now["needs"], "role": "member", "rows": [
+        {"kind": "official", "key": "official", "at": snapshot["at"], "snapshot": snapshot}]}}
+    synced = {**behind, "needs": {**behind["needs"], "rows": []}}
+    out = _run(behind, r"""
+global.ROTeam = { syncWrites: () => 'The sync writes two files.', syncFlash: (res) => [{ text: '已同步到第 7 版；更新了 2 个文件' }],
+  differenceBlock: () => mk('div', 'diff') };
+customGet = ((older) => (path) => {
+  if (path === '/api/share/sync-preview') return { untrusted: false };
+  if (path === '/api/desk') return { role: 'member', attempts: [], lines: [], lines_missing: [], needs: SYNCED.needs,
+    column: { role: 'member', me: 'zhang@example.com', shared: { state: 'ok', message: null }, waiting: [], mine: [], review: { count: 0, groups: [], none: { items: [], cards: [] } },
+      sync: { shared: true, reachable: true, behind: false, last_snapshot: SNAP } } };
+  return older(path);
+})(customGet);
+customPost = (path) => (path === '/api/share/sync' ? (NOW.needs = SYNCED.needs, { updated: [] }) : undefined);
+await window.ROWorkspace.load(root); await sleepTick(); await sleepTick();
+const before = needsRows().map((r) => r.chip);
+await button('同步').click();
+for (let i = 0; i < 8; i++) await sleepTick();
+const box = cls('ws-now-needs')[0];
+console.log(JSON.stringify({ before, after: needsRows().map((r) => r.chip), done: text('team-done', box), shown: text('desk-sync-done', box).length,
+  title: text('desk-what', box), count: sidebar['side-count-home'].textContent }));
+""", extra=f"const SYNCED = {json.dumps({**synced, 'project': '/projects/study', 'id': 'p-study'}, ensure_ascii=False)};\nconst SNAP = {json.dumps(snapshot)};\n")
+    assert out["before"] == ["正式版本有更新"] and out["done"] == ["已同步到第 7 版；更新了 2 个文件"] and out["shown"] == 1
+    assert out["after"] == ["正式版本"] and out["count"] == ""      # the row that says what was done is not something that waits
 
 
 @needs_node

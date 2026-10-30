@@ -5901,6 +5901,11 @@ Decided the same day:
   done, not undone) or the store has no run record (older versions did not
   set the done mark, and a copy of a project or another Mac has no run
   records); 未开始 for the rest, a run the person stopped included.
+  *Amended (fix batch 3):* a run the person undid (撤回本次运行) has been dealt
+  with: it no longer asks, fails or warns, so the task reads as if that run
+  were not there -- from its done mark and its handback --, which is what 等你处理
+  has always done with an undone run, so the rows and the states are one
+  reading again.
   「未完成 m」 counts the tasks that are not marked done and do not read
   已完成, so a project whose tasks all handed back says 「任务 n，全部完成」.
 - **Grouping the tasks a project already has** (Quant's 16, later 18). The
@@ -6176,7 +6181,13 @@ this Mac under the Research OS home, never in the project.
   row (`打开结果` on a task whose latest run handed its report back; a report
   written by hand still opens to write in), the attempt's panel (`打开交回`,
   with 返回 to the attempt) and the route map's card (the handback line or
-  「等你看 n」; the rest of the card opens the attempt). A registered output
+  「等你看 n」; the rest of the card opens the attempt). *Amended (fix batch 3):*
+  reading or confirming a handback on 项目首页 reloads only the home, never the
+  desk's reading the attempt's panel is drawn from, so 返回 goes through
+  `openAttemptAnywhere`, which reads the desk again when the desk is not the page
+  on screen: the task that was 等你看 reads 已完成 and the chip is the new
+  assessment, as the 研究判断 form under it already was. On 研究路线 the act
+  reads the desk itself and 返回 draws at once. A registered output
   row of a run opens its record as a handback too; `编辑报告` in the handback
   goes to the writing area. The outputs are headed 「输出」 (13.4), not the
   retired 产出. Without a suggestion the person writes the assessment in the
@@ -6307,7 +6318,14 @@ attempts.py`; `research_records.assessment_statuses`).
     A project in which no attempt holds a task says so in one quiet sentence
     with the way in (「还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条
     尝试下加任务」。」); one whose attempts hold tasks but none is in progress
-    says 「现在没有进行中的尝试。」
+    says 「现在没有进行中的尝试。」 *Amended (fix batch 3):* that way in leads
+    nowhere for a project that has tasks and no attempt (Quant before its
+    grouping: 16 tasks, a route map saying 「尝试表里还没有尝试」), so the sentence
+    names the ways in the page has: with tasks that belong to no attempt, 「全部任务
+    下的「把这些任务归入尝试…」可以把已有的任务归到尝试里，也可以在任务表单里选「新开
+    一条尝试…」」; with no attempt at all and no task, 「在任务表单里选「新开一条尝
+    试…」，写下第一个任务」. The sentence above stays for a project that has
+    attempts and no loose task.
   - **等你处理**: one list for the project and the person — unopened
     handbacks (theirs: the run was started by them), runs they started that
     wait for an answer, failed or out-of-bounds runs they started, and what
@@ -6316,7 +6334,10 @@ attempts.py`; `research_records.assessment_statuses`).
     待复核 link judgments; lines with a missing end). Each row says in a chip
     what it is, which attempt (opened in the panel) and task it concerns,
     and has the one action that handles it: 打开交回; 回答 (the task's row
-    with its reply form open); 运行日志 and 「知道了」; 查看 (a proposal, in
+    with its reply form open: the page's runs can be older than the list --
+    the home polls only while it is on screen, and a first load has none --, so
+    when they show no run waiting for an answer they are read once more before
+    the row is said to be one that cannot be answered); 运行日志 and 「知道了」; 查看 (a proposal, in
     the panel); 复核 (the attempt's 待复核, or the review panel for the
     judgments that belong to no attempt); 同步. A line with a missing end has
     no action: it is said, never dropped (14.2). Its count shows beside 项目首页
@@ -6356,7 +6377,8 @@ attempts.py`; `research_records.assessment_statuses`).
     document's row is told by ink and weight (21.8). The lists' headings are
     笔记 and 报告; the writing area keeps calling a report 结果记录 and the button
     记录结果 until the words of 21.6 reach them.
-  - **全部任务**, grouped by attempt in the same order, 「未归入尝试」 last (with
+  - **全部任务** (the section's heading; English “All tasks”, it was 任务),
+    grouped by attempt in the same order, 「未归入尝试」 last (with
     「把这些任务归入尝试…」 under it, as before). A row's summary says the task's
     words (two lines of them while the row is shut), its owner -- the person,
     or the agent and its model -- and its state in words (未开始, 运行中, 等你回答,
@@ -6406,6 +6428,11 @@ attempts.py`; `research_records.assessment_statuses`).
     When the owner is a person, only the save button shows.
   - **One primary button** (21.8): the save button (添加任务, 保存任务 when
     editing) is drawn as the primary; 保存并运行 and 清空 are the quiet ones.
+    *Amended (fix batch 3):* the page has one primary, not one per section: while
+    the writing area is on screen in edit mode (a note, a report, or the unfolded
+    plan) 保存 is it and 添加任务 is drawn as the quiet button; in preview, with no
+    document open, or with the plan folded (its writing area sits in the fold),
+    添加任务 is the primary again.
   - **Presets.** Opened by 「在这条尝试下加任务」 the form has the attempt chosen
     and 接着哪个任务 set to the attempt's last task in `after` order (none when
     it has no task); opened by a handback's 「再派一个任务」 it also has 研究上下文
@@ -6417,7 +6444,11 @@ attempts.py`; `research_records.assessment_statuses`).
   and the notices above it are empty, which gives its width to the map or the
   list, and unfolds when a row arrives. A notice (not in the team yet, a team
   file or a shared folder that cannot be read) keeps it open; so does what a
-  sync has just done. In a narrow window it is a bar under the map. The
+  sync has just done. *Amended (fix batch 3):* 项目首页's list tells what a sync
+  did as well -- the row of the official version goes with the sync, so a done
+  row (the version the working copy is at now, and what was written) stands where
+  it stood, until the desk is opened afresh; it is no row that waits and is not
+  in the count. In a narrow window it is a bar under the map. The
   blocks it had (等你批准, 我的提议, 待复核, 正式版本有更新, 连线的一端找不到了) are
   the chips of its rows; the attempt panel's part of the same name is 等你处理
   too. The PI and member differences of 12.4 and 18.3 stand: a one-person
@@ -6428,15 +6459,22 @@ attempts.py`; `research_records.assessment_statuses`).
 `workspace.js`, the list is drawn by `desk.js`).
 
 - **One function and one endpoint.** `GET /api/workspace/now` answers for the
-  open project and the person asking `{role, needs, progress}`; `?only=needs`
-  leaves `progress` out (the sidebar reads that from any page that is neither
+  open project and the person asking `{role, needs, shared, progress, home}`;
+  `shared` is `{state}` of the shared folder as the desk gives the column;
+  `?only=needs` leaves `progress` and `home` out (the sidebar reads that from any page that is neither
   the desk nor 项目首页, which read the list themselves). `needs` is also in
   `GET /api/desk` — the same function (`now_doing.needs_you`), so the column
   and the home draw one list, and nothing of what 待办 held is worked out
   twice. The endpoint asks `desk.payload` for its `light` form: the cards
   carry only their number, title, date, status and marks, and the version
   store, the git log and the decisions are not read; the shared folder is read
-  for at most the desk's few seconds, joining the desk's own job.
+  for at most the desk's few seconds, joining the desk's own job. *Amended
+  (fix batch 3):* a first read that was too slow (`shared.state` `slow`, or
+  `stale`: what it last read) leaves a notice and none of the PI's proposals in
+  the answer, so the home reads again as 研究路线 does (5 s later, three times at
+  most, while it is on screen, joining the read still in flight); `unreadable`
+  and `not_configured` are not asked again, for a later read would not change
+  them.
 - **Activity** (what 进行中的尝试 is ordered by; the amendment's choice): the
   latest of the start or end of the latest run of each of the attempt's tasks
   (`ran_at`; a run not started yet counts by when it was created), the time
@@ -6447,7 +6485,11 @@ attempts.py`; `research_records.assessment_statuses`).
   `latest.line` — are `attempt_tasks.by_attempt`'s, the route map's, never
   counted again; `ran_at` and `report_at` are two fields it now also gives each
   task. The run store and the unopened handbacks are read once for the cards
-  and the list of one answer.
+  and the list of one answer: one pass over the run store (`attempt_tasks`'s
+  `_look`, kept in `shared`) serves the latest run of each task, the handbacks
+  that wait and the 交回 rows (`handbacks.list_unopened` takes that reading), for
+  `/api/workspace/now` and `/api/desk` alike, so the rows and the states of one
+  answer cannot disagree for a handback opened between two readings.
 - **The rows**, each `{kind, key, at, attempt, attempts, …}`: `handback`
   (`handbacks.list_unopened`), `answer`, `failed` and `out_of_bounds` (from
   `attempt_tasks.attention`: the tasks whose latest run the person started and
@@ -6547,6 +6589,10 @@ As approved by the researcher on 2026-10-29:
 | — | 代理建议, 确认这个判断; history 「由 X 确认（采纳 … 的建议）」 | Suggested by the agent, Confirm this assessment |
 | — | 现在在做什么: 进行中的尝试, 等你处理 | In progress: Attempts in progress, Needs you |
 
+The row of 等你处理 for a line whose end is missing, which 项目首页 draws as well, and the route map's
+own sentences say 尝试表 (fix batch 3); the engine's sentences were renamed with 07bc263. The researcher's own
+heading in the map file (「二、尝试途径总年表」) is theirs and is not touched.
+
 In the interface 待办 is gone (21.4): the column of 研究路线, the part of the same name in an
 attempt's panel and the count beside 项目首页 say 等你处理 (“Needs you”; the count's
 hover is “{n} need you”). 14.6 and 18.3 above keep the word they introduced.
@@ -6597,7 +6643,10 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   covers the page has the same scrim and a 返回 step when it was opened from
   another panel. The route map fits all cards the first time a project's map
   is opened and says how many cards are outside the view when some are.
-  Chinese text in the interface is never smaller than 12 px.
+  Chinese text in the interface is never smaller than 12 px (*amended, fix
+  batch 3*: the state word `.status-label` -- task rows, the chips of 等你处理,
+  the assessment on a card --, `.own-mark` and `.var-chip` were 0.74rem, 11.84 px
+  at the browser's 16 px root, and are 0.75rem).
 
 ### 21.9 Acceptance
 

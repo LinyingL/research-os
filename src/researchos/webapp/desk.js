@@ -910,7 +910,7 @@
     s.head.appendChild(mk("span", "desk-what", t("#{child} 源自 #{parent}", { child: l.child_number, parent: l.parent_number })));
     const own = ownMark(l);
     if (own) s.head.appendChild(own);
-    const gone = (l.missing || []).map((end) => t("年表里没有 #{n}", { n: end === "parent" ? l.parent_number : l.child_number }));
+    const gone = (l.missing || []).map((end) => t("尝试表里没有 #{n}", { n: end === "parent" ? l.parent_number : l.child_number }));
     s.main.appendChild(metaLine(gone.concat(l.by_label || "")));
     if (l.note) s.main.appendChild(mk("p", "desk-note", l.note));
     return s.row;
@@ -1016,7 +1016,8 @@
   }
 
   // The notices a role or a shared folder that cannot be read puts above the rows, then the rows, or one quiet line.
-  // `place`: "column" is 研究路线's, which also keeps what a sync just did.
+  // `place`: "column" is 研究路线's, "home" is 项目首页's (a title there is words, not a link that marks a card). Both keep what a
+  // sync just did where the official version's row stood, until the desk is opened afresh: the row goes with the sync.
   function needsBody(needs, place) {
     const box = mk("div", "desk-needs");
     const notices = (needs && needs.notices) || [];
@@ -1028,7 +1029,7 @@
       const li = needsRow(r, place !== "column");
       if (li) { ul.appendChild(li); drawn += 1; }
     });
-    if (place === "column" && syncShown && !rows.some((r) => r.kind === "official")) {
+    if (syncShown && !rows.some((r) => r.kind === "official")) {
       ul.appendChild(syncDoneRow(lastData && lastData.column && lastData.column.sync));
       drawn += 1;
     }
@@ -1419,9 +1420,11 @@
 
   // A handback (21.2) opened from a card of the map or from an attempt's panel; from the panel it keeps the way back to
   // the attempt, which is asked for like any other opener of a panel (a half-written assessment is not thrown away).
+  // Reading or confirming the handback on 项目首页 reloads only the home, never the desk's reading the attempt's panel
+  // draws from, so the way back goes through `openAttemptAnywhere`, which reads it again when the desk is not on screen.
   function openHandback(report, attemptId) {
     if (!window.ROWorkspace || typeof window.ROWorkspace.openHandback !== "function") return null;
-    const back = attemptId ? () => { if (typeof mayReplacePanel !== "function" || mayReplacePanel()) openAttempt(attemptId); } : null;
+    const back = attemptId ? () => { if (typeof mayReplacePanel !== "function" || mayReplacePanel()) openAttemptAnywhere(attemptId); } : null;
     return window.ROWorkspace.openHandback(report, { back: back });
   }
 

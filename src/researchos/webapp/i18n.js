@@ -344,6 +344,7 @@
     "接着哪个任务": "Which task it follows",
     "请选择一条尝试": "Choose an attempt",
     "新开一条尝试…": "Start a new attempt…",
+    "全部任务": "All tasks",
     // The task form (21.4): the owner in two groups, 保存并运行 beside the save button and what came of it.
     "人员": "People",
     "保存并运行": "Save and run",
@@ -646,7 +647,7 @@
     // The route map (Section 14): a line between attempts (13.4 gains 源自), and
     // what refuses one (app.html's BLOCKING_ERROR_TEXT, 14.2).
     "源自": "Grew out of",
-    "连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试":
+    "连线的一端在尝试表里找不到了，可能刚被改了编号；请刷新后再试":
       "One end of the line is no longer in the table, perhaps just renumbered; reload and try again",
     "一个尝试不能源自它自己": "An attempt cannot grow out of itself",
     "这条连线会绕成一个圈：它要连的来处本身就源自它":
@@ -657,7 +658,7 @@
     "有改动": "Changed",
     "提议中": "Proposed",
     "提议删除": "Removal proposed",
-    "年表里还没有尝试。": "The attempt table has no attempts yet.",
+    "尝试表里还没有尝试。": "The attempt table has no attempts yet.",
     "#{child} 源自 #{parent}": "#{child} grew out of #{parent}",
     "从这里拖到另一条尝试上：那一条源自这一条": "Drag from here onto another attempt: that one grew out of this one",
     "新的连线": "New line",
@@ -675,6 +676,10 @@
     "现在没有进行中的尝试。": "No attempts in progress right now.",
     "还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。":
       "No attempt holds a task yet. Open an attempt under Research routes and choose “Add a task under this attempt”.",
+    "还没有挂着任务的尝试。全部任务下的「把这些任务归入尝试…」可以把已有的任务归到尝试里，也可以在任务表单里选「新开一条尝试…」。":
+      "No attempt holds a task yet. “Put these tasks into attempts…” under All tasks files the tasks you have under attempts, or choose “Start a new attempt…” in the task form.",
+    "还没有挂着任务的尝试。在任务表单里选「新开一条尝试…」，写下第一个任务。":
+      "No attempt holds a task yet. In the task form, choose “Start a new attempt…” and write the first task.",
     "现在没有要处理的事。": "Nothing to handle right now.",
     "没能记下你已经看过这一条。": "Could not record that you have seen this.",
     "在路线图上标出它涉及的尝试": "Mark the attempts it touches on the route map",
@@ -692,7 +697,7 @@
     "加上连线：#{child} 源自 #{parent}": "Add the line: #{child} grew out of #{parent}",
     "删去连线：#{child} 源自 #{parent}": "Remove the line: #{child} grew out of #{parent}",
     "连线的一端找不到了": "Lines with a missing end",
-    "年表里没有 #{n}": "#{n} is not in the table",
+    "尝试表里没有 #{n}": "#{n} is not in the table",
     // A judgment's link in words (12.11).
     "读取": "reads",
     "写出": "writes",

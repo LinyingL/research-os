@@ -401,6 +401,7 @@
     const open = !!planOpen && own;
     if (!!ui.planMore.open !== open) ui.planMore.open = open;
     ui.planWord.textContent = open ? t("收起") : t("展开");
+    syncPrimary();   // the writing area stands in the fold while the plan is the open document
     ui.planLead.classList.toggle("hidden", open);
     ui.planDirty.classList.toggle("hidden", open || !(own && documentDirty()));
     if (open) return;
@@ -674,6 +675,7 @@
       save.classList.toggle("hidden", ui.previewing);
       ui.attachments.classList.toggle("hidden", ui.previewing);
       previewToggle.textContent = ui.previewing ? t("编辑") : t("预览");
+      syncPrimary();
       if (ui.previewing) renderPreview();
       if (draft.kind === "result") redrawResearchRecord();
     }
@@ -1047,7 +1049,7 @@
   }
   function renderTasks() {
     const box = ui.tasks, snap = focusSnapshot(box); box.replaceChildren();
-    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
+    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("全部任务"))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
     const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
     const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
@@ -1068,9 +1070,10 @@
     // 21.8: the save button is the form's one primary button; 「保存并运行」 stands beside it while the owner is an agent
     // (`syncRunButton`) and is the quiet one, as is 清空.
     const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-primary btn-small"), "task-submit");
+    ui.taskSubmit = submit;
     const saveRun = keyed(button(t("保存并运行"), () => addTask(true)), "task-run");
     const clear = keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear");
-    ui.taskRun = saveRun; ui.taskClear = clear;
+    ui.taskRun = saveRun; ui.taskClear = clear; syncPrimary();
     // 21.1: the task's place on the route comes first -- the attempt it belongs to, and the task it continues.
     const attempt = keyed(el("select", "form-input"), "task-attempt"), after = keyed(el("select", "form-input"), "task-after");
     ui.taskAttempt = attempt; ui.taskAfter = after; fillAttemptOptions(attempt); fillAfterOptions(after);
@@ -1209,6 +1212,15 @@
     style.height = "";
     if (area.offsetWidth && area.scrollHeight > area.clientHeight) style.height = (area.scrollHeight + area.offsetHeight - area.clientHeight) + "px";
     if (holder) holder.scrollTop = top;
+  }
+  // 21.8: the page has one primary button. 保存 is it while the writing area is on screen in edit mode (a plan's writing area
+  // sits in the fold, which may be shut); the task form's save button is the quiet one then, and the primary again in preview,
+  // with no document open, or with the plan folded.
+  function syncPrimary() {
+    const submit = ui && ui.taskSubmit;
+    if (!submit) return;
+    const writing = !!draft && !!ui.save && !ui.save.classList.contains("hidden") && (draft.kind !== "overview" || !!(ui.planMore && ui.planMore.open));
+    submit.classList.toggle("btn-primary", !writing);
   }
   // 「保存并运行」 stands beside the save button while the owner chosen is an agent and the task could be run from its row (a task
   // being carried out, or waiting for the answer the person can give, cannot); like the row's 运行 it waits while the project has
@@ -2167,6 +2179,22 @@
     if (!same || !ui.now.childElementCount) renderNow();   // an answer that did not change is not drawn again
     // 报告 and 全部任务 stand in the engine's order and say its states (21.4): drawn again only when those moved
     if (regroup && data) { renderNav(); refreshTasks(); }
+    catchUpNow(mark, fresh);
+  }
+  // A shared folder too slow for the first read (14.4: slow, or stale -- what it last read) leaves a notice and none of the
+  // PI's proposals in the answer. 研究路线 reads again a little later (desk.js catchUp: 5 s, three times); so does the home,
+  // while it is on screen, which joins the read still in flight rather than starting another.
+  const CATCH_UP_MS = 5000, CATCH_UP_TRIES = 3;
+  let catchUpTimer = null, catchUpTries = 0;
+  function catchUpNow(mark, fresh) {
+    const state = fresh.shared && fresh.shared.state;
+    if (state !== "slow" && state !== "stale") { catchUpTries = 0; return; }
+    if (catchUpTimer !== null || catchUpTries >= CATCH_UP_TRIES || !onWorkspace()) return;
+    catchUpTries += 1;
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null;
+      if (live(mark) && onWorkspace()) loadNow(mark);
+    }, CATCH_UP_MS);
   }
   function renderNow() {
     if (!ui || !ui.now) return;
@@ -2182,8 +2210,7 @@
     part.append(el("h3", "ws-now-heading", t("进行中的尝试")));
     const progress = nowData.progress || { attempts: [], holding: 0 };
     if (!progress.attempts.length) {
-      part.append(el("p", "ws-empty ws-now-none", progress.holding ? t("现在没有进行中的尝试。")
-        : t("还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。")));
+      part.append(el("p", "ws-empty ws-now-none", progress.holding ? t("现在没有进行中的尝试。") : noTaskWords()));
       return part;
     }
     const cards = el("ul", "ws-now-cards");
@@ -2212,6 +2239,14 @@
     if (work.latest && work.latest.line) card.append(button(work.latest.line, () => openHandback(work.latest.report), "ws-now-line"));
     return card;
   }
+  // No attempt holds a task: the way in depends on what the project has. Tasks that belong to no attempt (Quant before its
+  // grouping) are grouped, or an attempt is started in the task form; a project with no attempt at all starts one there; a
+  // project with attempts opens one in 研究路线 and adds the task in its panel. A route map with no attempt has nothing to open.
+  function noTaskWords() {
+    if (data && hasLooseTasks()) return t("还没有挂着任务的尝试。全部任务下的「把这些任务归入尝试…」可以把已有的任务归到尝试里，也可以在任务表单里选「新开一条尝试…」。");
+    if (data && !(data.attempts || []).length) return t("还没有挂着任务的尝试。在任务表单里选「新开一条尝试…」，写下第一个任务。");
+    return t("还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。");
+  }
   function nowNeeds() {
     const part = el("section", "ws-now-part"), body = el("div", "ws-now-needs");
     part.append(el("h3", "ws-now-heading", t("等你处理")), body);
@@ -2219,14 +2254,22 @@
     return part;
   }
   // 「回答」 in 等你处理: the task's row with the reply form open and the cursor in it (the row is opened first, as for
-  // 「运行日志」). A run that cannot be answered any more only brings its row into view.
-  function answerRun(taskId) {
+  // 「运行日志」). The page's runs can be older than the list that sent the person here (the home polls only while it is on
+  // screen, so a run that asked meanwhile is still 运行中 here, and in a session's first load they are not in yet): when
+  // they do not show a run waiting for an answer they are read once more before the row is called one that cannot be
+  // answered. A run that cannot be answered any more only brings its row into view.
+  async function answerRun(taskId) {
     if (!data || !ui) return false;
+    const mark = stamp();
     const disclosure = taskDisclosures[taskId];
     taskOpen[taskId] = true;
     if (disclosure) { disclosure.open = true; if (disclosure.node) disclosure.node.open = true; }
-    const run = latestRun(taskId);
-    if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
+    const answerable = () => { const run = latestRun(taskId); return !!run && outcomeOf(run) === "needs_input" && !!run.can_reply; };
+    if (!answerable()) {
+      await syncRuns(mark, { reload: false });
+      if (!live(mark) || !data || !ui) return false;
+    }
+    if (answerable()) {
       agentState(taskId).reply = "answer"; updateAgentSections();
       focusKey(sections[taskId], "agent:" + taskId + ":reply");
     }

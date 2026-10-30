@@ -79,11 +79,12 @@ def _read_opened(file: Path) -> dict[str, dict[str, Any]]:
     return {report: entry for report, entry in opened.items() if isinstance(report, str) and isinstance(entry, dict)}
 
 
-def _handed_back(project_id: str) -> dict[str, dict[str, Any]]:
+def _handed_back(project_id: str, runs: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Each report an agent run handed back that is still handed back -- the run was not undone -- with the newest run
-    that did, by report path. At most the runs the run store keeps (17.6)."""
+    that did, by report path. At most the runs the run store keeps (17.6). `runs`: the store's runs, newest first, as a
+    caller that has read them already holds them (one answer reads the store once, 21.4); read here when not given."""
     found: dict[str, dict[str, Any]] = {}
-    for run in run_store.iter_runs(project_id):  # newest first
+    for run in (run_store.iter_runs(project_id) if runs is None else runs):  # newest first
         report = run.get("report")
         if isinstance(report, str) and report and not run.get("reverted") and report not in found:
             found[report] = run
@@ -123,7 +124,8 @@ def _predates_fields(root: Path, report: str) -> bool:
         return False
 
 
-def unopened(project_id: str | None, person: str | None, root: str | Path | None = None) -> list[str]:
+def unopened(project_id: str | None, person: str | None, root: str | Path | None = None,
+             runs: list[dict[str, Any]] | None = None) -> list[str]:
     """The handbacks `person` has not opened in the project `project_id`: the project paths of their result records
     (`research/results/<name>.md`), oldest first. `person` is the person this Mac belongs to (`proposals.role_of`'s
     `me`; None when none is set), `project_id` the project's identity (None when it has none): neither is a path
@@ -131,12 +133,13 @@ def unopened(project_id: str | None, person: str | None, root: str | Path | None
     they open it; one opened before a later run handed the report back again is unopened again. Given the project's
     `root`, a report that is gone and one written before the handback's fields existed (`_predates_fields`: its
     context holds none of the fields an agent hands back, a confirmation by the person aside) are left out, so that
-    a project's older reports do not all wait on the first day and the card and the list agree. Reads only."""
+    a project's older reports do not all wait on the first day and the card and the list agree. `runs` is `_handed_back`'s.
+    Reads only."""
     if not project_id:
         return []
     try:
         opened = _read_opened(_store_file(project_id, person))
-        found = _handed_back(project_id)
+        found = _handed_back(project_id, runs)
     except (OSError, ValueError):
         return []
     waiting = [(run["id"], report) for report, run in found.items()
@@ -164,12 +167,16 @@ def mark_opened(project_id: str, person: str | None, report: str) -> dict[str, A
     return {"report": report, "opened": True, "run": run["id"]}
 
 
-def list_unopened(root: str | Path, project_id: str | None, person: str | None) -> list[dict[str, Any]]:
+def list_unopened(root: str | Path, project_id: str | None, person: str | None, waiting: list[str] | None = None,
+                  runs: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """`unopened`, each with what a list of them says: the report, its title (the first heading, else the file name),
     the context's headline, the task it belongs to and that task's attempt, and the run that handed it back (`run`,
-    `ended`). A report that is gone, or whose task has been removed, is left out."""
+    `ended`). A report that is gone, or whose task has been removed, is left out. `waiting` and `runs`: what `unopened`
+    answered and the runs it read, when the caller has them from the same answer (21.4: the cards and the list are one
+    reading of the run store); worked out here when not given."""
     root = workspace._root(root)  # noqa: SLF001
-    waiting = unopened(project_id, person, root)
+    if waiting is None:
+        waiting = unopened(project_id, person, root, runs)
     if not waiting or not project_id:
         return []
     try:
@@ -177,7 +184,7 @@ def list_unopened(root: str | Path, project_id: str | None, person: str | None) 
     except (workspace.WorkspaceError, OSError):
         return []
     by_report = {task["report"]: task for task in tasks if task.get("report")}
-    found = _handed_back(project_id)
+    found = _handed_back(project_id, runs)
     out = []
     for report in waiting:
         task = by_report.get(report)

@@ -1537,7 +1537,8 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: that says what it is (新尝试, 待复核, 连线的一端找不到了 ...) in the place of the blocks that held them (等你批准, 我的提议,
 #: 待复核, 正式版本有更新, 连线的一端找不到了) --, a 待复核 row is one attempt's (or the judgments that belong to none), its count
 #: sentence is its own, and a column with nothing to do folds to a strip. The words of each row are the ones they were.
-_DESK_ZH_SHA256 = "3face376589f57d8997104bc63522223d52db8be0cca1e49902086576624f708"
+#: Moved again by 21.6 (fix batch 3): the row for a line whose end is missing says 尝试表, not 年表 (the digest changes by that word only).
+_DESK_ZH_SHA256 = "b61ea1afe701d06b9b3206dfe0cc3af777ef6ff0e307f021d18e5c4815d1a77f"
 
 
 @needs_node
@@ -1652,7 +1653,7 @@ def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
     if zh:
         assert meta == ["desk-link strong: #16 的研究判断从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
                         "desk-meta: Wang · 等你批准 · 2024年3月1日", ": log_ret、vol、ret",
-                        "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
+                        "desk-meta: 尝试表里没有 #20 · 尝试表里没有 #16 · 最初的研究者"]
     else:
         assert meta == ["desk-link strong: #16: change the research assessment from “Pending” to “Current” "
                         "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024",

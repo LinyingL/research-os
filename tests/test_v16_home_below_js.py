@@ -103,7 +103,7 @@ console.log(JSON.stringify({ top: pageNode.children.map((c) => c.className), col
 """)
     assert out["top"] == ["ws-notices", "ws-heading", "ws-now", "ws-plan", "ws-columns", "ws-tasks"]
     assert out["columns"] == ["ws-documents", "ws-document-slot"]       # the lists beside the open document
-    assert out["now"] == ["现在在做什么"] and out["plan"] == ["研究问题与计划"] and out["tasks"] == ["任务"]
+    assert out["now"] == ["现在在做什么"] and out["plan"] == ["研究问题与计划"] and out["tasks"] == ["全部任务"]     # 21.4, 21.9 item 1: the section is 全部任务
     assert out["groups"] == ["笔记", "报告"]                             # the plan is no longer one of the lists
 
 
@@ -421,10 +421,11 @@ def test_in_english_the_headings_and_the_states_are_english_and_what_the_researc
     out = page(root, _LOAD + r"""
 const group = groupOf('Reports'), list = cls('ws-task-list')[0];
 console.log(JSON.stringify({ groups: text('ws-group-title'), plan: text('ws-plan-title'), word: text('ws-plan-summary'),
-  heads: cls('ws-document-attempt', group).map((h) => h.textContent), taskHeads: text('ws-task-group'),
+  heads: cls('ws-document-attempt', group).map((h) => h.textContent), taskHeads: text('ws-task-group'), taskTitle: text('ws-task-title'),
   states: [...new Set(text('status-label', list))], owner: text('ws-task-owner')[0], titles: cls('ws-document', group).map((b) => b.textContent),
   notes: cls('ws-document', groupOf('Notes')).map((b) => b.textContent), hint: text('ws-slot-hint').join('') }));
 """, lang="en")
+    assert out["taskTitle"] == ["All tasks"]
     assert out["groups"] == ["Notes", "Reports"] and out["plan"] == ["Research question and plan"] and out["word"][0].startswith("Show more")
     assert out["heads"] == ["#5 Sword v0.2", "#6 Sword v0.3", "#4 Sword v0", "#9 Settled baseline", "Not in an attempt"]
     assert out["taskHeads"] == ["#5 Sword v0.2", "#6 Sword v0.3", "#4 Sword v0", "Not in an attempt"]

@@ -136,8 +136,11 @@ def _agent_rows(root: Path, project_id: str | None, person: str | None, by_id: d
     rows: list[dict[str, Any]] = []
     tasks: dict[str, dict[str, Any]] = {}
     try:
-        tasks = {task["id"]: task for task in workspace.read_tasks(root)[0]}
-        for item in handbacks.list_unopened(root, project_id, person):
+        listed = workspace.read_tasks(root)[0]
+        tasks = {task["id"]: task for task in listed}
+        # the 交回 rows come from the reading the cards and the task rows say 等你看 from (one pass over the run store)
+        waiting, runs = attempt_tasks.reading(root, project_id, person, listed, shared)
+        for item in handbacks.list_unopened(root, project_id, person, waiting, runs):
             task = tasks.get(item["task"])
             if task is None:
                 continue
@@ -349,9 +352,11 @@ def home(root: str | Path, project_id: str | None, person: str | None, attempts:
 
 def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh", timeout: float | None = None,
             only: str | None = None) -> dict[str, Any]:
-    """`GET /api/workspace/now` (DESIGN.md 21.4): `{role, needs, progress, home}` for the open project and the person this
-    Mac belongs to -- `needs` is `needs_you`'s answer, `progress` is `in_progress`'s, `home` is `home`'s. `only=needs`
-    leaves the last two out (the sidebar's count reads the list alone). The shared folder is read for at most
+    """`GET /api/workspace/now` (DESIGN.md 21.4): `{role, needs, shared, progress, home}` for the open project and the person this
+    Mac belongs to -- `needs` is `needs_you`'s answer, `progress` is `in_progress`'s, `home` is `home`'s, and `shared` is
+    `{state}` of the shared folder as the desk gives the column: a notice alone does not tell the page whether a later read
+    would help (`slow` and `stale` do, `unreadable` does not), so the home asks again after a slow first read. `only=needs`
+    leaves `progress` and `home` out (the sidebar's count reads the list alone). The shared folder is read for at most
     `desk.SHARED_TIMEOUT` seconds, as the desk's is (the same job, so the two never read it twice at once); the map's
     cards are not worked out (`light`)."""
     from researchos import desk  # noqa: PLC0415
@@ -360,7 +365,8 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh", tim
     shared: dict[str, Any] = {}
     out = desk.payload(conn, root, lang=lang, timeout=timeout, light=True, shared=shared)
     column = out.get("column") or {}
-    result: dict[str, Any] = {"role": column.get("role"), "needs": out["needs"]}
+    result: dict[str, Any] = {"role": column.get("role"), "needs": out["needs"],
+                             "shared": {"state": (column.get("shared") or {}).get("state")}}
     if only != "needs":
         got = read_identity(root)
         project_id = got.identity.id if got.state is IdentityState.PRESENT and got.identity else None

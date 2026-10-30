@@ -332,6 +332,51 @@ def test_the_rows_take_the_states_the_cards_do(root, pid):
     assert rows == {"a1": "answer", "f1": "failed", "o1": "out_of_bounds"}
 
 
+def test_a_run_that_was_undone_leaves_the_list_and_its_task_alike_on_the_cards_and_in_all_tasks(root, pid):
+    """The rows and the states are one reading (21.1, 21.4): an undone run that asked, failed or went out of bounds has no row,
+    and its task no longer reads 等你回答, 失败 or 越过了限制 -- not on the card, not in 全部任务, not in the progress line."""
+    asking(root, pid, "a1", A[5], "needs_input", reverted=True)
+    asking(root, pid, "f1", A[5], "failed", reverted=True)
+    asking(root, pid, "o1", A[5], "out_of_bounds", outcome="done", reverted=True)
+    asking(root, pid, "l1", A[5], "failed")     # one that was not undone still reads and lists as before
+    got = _now(root)
+    items = {i["id"]: i["state"] for i in attempt_tasks.by_attempt(root, pid, PERSON, [A[5]])[A[5]]["items"]}
+    assert items == {"a1": "not_started", "f1": "not_started", "o1": "not_started", "l1": "failed"}
+    assert {k: v for k, v in got["home"]["tasks"].items() if k in items} == items
+    assert {r["task"]["id"]: r["kind"] for r in got["needs"]["rows"]} == {"l1": "failed"}
+
+
+def test_the_run_store_is_read_once_for_the_cards_and_the_list_of_one_answer(root, pid, monkeypatch):
+    """21.4 (fix batch 3): the handbacks that wait, the latest run of each task and the 交回 rows are one reading of the run
+    store, for the home's answer, the sidebar's `only=needs` and the desk's -- not four passes over every run.json -- and the
+    rows and the states of one answer cannot disagree for a handback opened between two readings."""
+    handed(root, pid, "t12", A[5], _at(24), opened=False)
+    handed(root, pid, "t13", A[5], _at(23), opened=False)
+    asking(root, pid, "q1", A[6], "failed")
+    asking(root, pid, "q2", A[6], "needs_input")
+    passes: list[int] = []
+    real = runs.iter_runs
+    monkeypatch.setattr(runs, "iter_runs", lambda *a, **k: (passes.append(1), real(*a, **k))[1])
+
+    def count(read) -> int:
+        passes.clear()
+        read()
+        return len(passes)
+
+    conn = _conn(root)
+    try:
+        assert count(lambda: _now(root)) == 1
+        assert count(lambda: _now(root, only="needs")) == 1
+        assert count(lambda: desk.payload(conn, root)) == 1
+        assert count(lambda: desk.payload(conn, root, light=True)) == 1
+    finally:
+        conn.close()
+    got = _now(root)
+    assert [r["report"][-8:] for r in _of(got, "handback")] and {r["task"]["id"] for r in _of(got, "handback")} == {"t12", "t13"}
+    assert [r["kind"] for r in got["needs"]["rows"] if r["kind"] != "handback"] == ["answer", "failed"]
+    assert {t: got["home"]["tasks"][t] for t in ("t12", "t13")} == {"t12": "to_read", "t13": "to_read"}
+
+
 def test_the_rows_are_in_one_order_by_kind_and_newest_first_inside_a_kind(root, pid):
     asking(root, pid, "f1", A[5], "failed", when=_at(26))
     asking(root, pid, "f2", A[6], "failed", when=_at(28))
@@ -403,6 +448,29 @@ def test_a_shared_folder_that_cannot_be_read_is_a_notice_and_the_rest_of_the_lis
         drive.shared.rename(drive.shared.with_name("away"))
         got = _now(drive.work, lang="en")
     assert got["needs"]["notices"] == [desk.SHARED_WORDS["unreadable"][1]] and _of(got, "mine") == []
+    assert got["shared"] == {"state": "unreadable"}      # the page tells a read worth repeating (slow, stale) from one that is not
+
+
+def test_a_shared_folder_too_slow_for_the_wait_is_said_slow_so_that_the_home_can_ask_again(drive, monkeypatch):
+    """21.4: the notice alone does not tell the home whether to read again; the answer says the state the desk gives the column,
+    with the rows the slow read left out missing, and the next answer (the read has finished) is whole."""
+    import time
+
+    verdict, add, _remove = _two_people(drive)
+    with drive.pi():
+        read = desk._read_shared
+        monkeypatch.setattr(desk, "_read_shared", lambda *a: time.sleep(1) or read(*a))
+        slow = _now(drive.official, timeout=0.1)
+        assert slow["shared"] == {"state": "slow"} and slow["needs"]["notices"] == [desk.SHARED_WORDS["slow"][0]] and _of(slow, "proposal") == []
+        monkeypatch.setattr(desk, "_read_shared", read)  # (not undo(): the homes are monkeypatched too)
+        while desk._JOBS:
+            time.sleep(0.05)
+        whole = _now(drive.official)
+        assert whole["shared"] == {"state": "ok"} and whole["needs"]["notices"] == [] and len(_of(whole, "proposal")) == 3
+    alone = None
+    with drive.member():
+        alone = _now(drive.work, only="needs")
+    assert alone["shared"] == {"state": "ok"} and "progress" not in alone
 
 
 # -- the endpoint -----------------------------------------------------------------------------------------
