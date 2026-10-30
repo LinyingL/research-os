@@ -1641,7 +1641,7 @@
   // An agent that gave no draft still wrote a next step (Section 20): that is where the new attempt starts, cut to the
   // length an attempt's description is written with elsewhere (the grouping panel's 500 characters).
   const ATTEMPT_TEXT_LIMIT = 500;
-  function cutWords(text, limit) {
+  function cutAttemptText(text, limit) {
     const chars = Array.from(String(text || "").trim());
     return chars.length <= limit ? chars.join("") : chars.slice(0, limit - 1).join("").trimEnd() + "…";
   }
@@ -1649,7 +1649,7 @@
     const view = subject.view, draft = view.attempt_draft || {};
     const parents = [view.attempt.id].concat((draft.parents || []).filter((id) => id !== view.attempt.id));
     if (typeof window.ROWorkspace.onCreateAttempt !== "function") return;
-    const description = (draft.description || "").trim() ? draft.description : cutWords(view.next_step, ATTEMPT_TEXT_LIMIT);
+    const description = (draft.description || "").trim() ? draft.description : cutAttemptText(view.next_step, ATTEMPT_TEXT_LIMIT);
     window.ROWorkspace.onCreateAttempt({ description: description, result: draft.result || "", parents: parents }, () => {});
   }
   function hbOutputs(view) {
@@ -1844,15 +1844,16 @@
       subject.busy = false; subject.note = { words: errorWords(t("写入失败，文件没有被修改"), err), kind: "err" }; drawHandback(subject);
       return;
     }
-    if (!live(mark)) return;
-    if (typeof pollGeneration === "function") pollGeneration();
-    if (!here()) return;
+    if (typeof pollGeneration === "function" && live(mark)) pollGeneration();
     subject.busy = false; subject.undo = null;
     if (result.state !== "done") {
+      if (!here()) return;
       subject.note = { words: result.state === "abandons" ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"), kind: "err" };
       drawHandback(subject);
       return;
     }
+    // The cell is back. The two steps are the page's, not one write, so the second is not dropped because the panel was
+    // closed or replaced meanwhile: only drawing it depends on the panel still being the one shown.
     const view = subject.view;
     if (view.attempt && typeof back.text.verdict === "string") view.attempt.verdict = back.text.verdict;
     // the status the row is back to, said on the line that replaces 撤销
@@ -1864,21 +1865,20 @@
   // 21.2), so that the handback offers its three buttons again and does not say a person confirmed what the row no longer says.
   async function hbUnconfirm(subject) {
     const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
-    subject.busy = true; subject.note = { words: t("正在写入…") }; drawHandback(subject);
+    subject.busy = true; subject.note = { words: t("正在写入…") };
+    if (here()) drawHandback(subject);
     try {
       await apiPost("/api/workspace/handback/unconfirm", { project: mark.project, report: subject.report });
     } catch (err) {
-      if (!here()) return;
       subject.busy = false; subject.undone.kept = true;
+      if (!here()) return;
       subject.note = { words: errorWords(t("研究判断已改回，但报告的要点里没能撤销这次确认。"), err), kind: "err" };
       drawHandback(subject);
       return;
     }
-    if (!live(mark)) return;
-    if (typeof pollGeneration === "function") pollGeneration();
-    if (!here()) return;
+    if (typeof pollGeneration === "function" && live(mark)) pollGeneration();
     subject.busy = false; subject.note = null; subject.view.confirmed = null;
-    drawHandback(subject);
+    if (here()) drawHandback(subject);
   }
   // Marked opened for this person (kept on this Mac), and the cards that count what waits are drawn again.
   async function hbMarkOpened(subject) {

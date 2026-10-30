@@ -645,9 +645,19 @@ def test_quants_eighteen_tasks_make_sword_v0_v0_2_and_v0_3_with_the_nine_to_elev
     assert inside >= {f"q{n}" for n in (7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18)} and "q15" not in groups["v:sword v0.3"]["tasks"]
     assert plan["ungrouped"] == [tid for tid in numbered if tid not in inside]
     assert [(g["id"], g["attempt"]["description"], nums(g)) for g in rest] == [
-        ("t:根据目前", "四模块量化系统 v0 框架与开发指引", [1, 15]), ("t:哪些因子", "四模块候选因子设计", [2, 3]),
+        ("t:为下一步", "四模块量化系统 v0 框架与开发指引", [1, 6]), ("t:哪些因子", "四模块候选因子设计", [2, 3]),
         ("t:主要目标标普", "标普500历史因子数据源评估", [4, 5])]      # each named by the report title of its earliest task
-    assert plan["ungrouped"] == ["q6"]
+    # 根据目前 opens task 1 and task 15 alike and is no subject: the data-source survey (15) is not taken into the framework brief's group
+    assert plan["ungrouped"] == ["q15"] and not any(15 in nums(g) for g in rest)
+
+
+@pytest.mark.parametrize("opener", ["根据目前", "根据之前", "根据现有"])
+def test_an_instruction_that_opens_two_tasks_alike_is_no_shared_subject_and_groups_nothing(tmp_path, opener):
+    root = _project(tmp_path / "proj")
+    _legacy(root, [{"id": "a", "text": f"{opener}的思路写出初步框架"}, {"id": "b", "text": f"{opener}的情况调研免费数据源"}])
+    plan = task_groups.propose(root, today=TODAY)
+    assert plan["groups"] == [] and plan["ungrouped"] == ["a", "b"]
+    assert not [term for term in task_groups._terms(f"{opener}的思路给出初步的方向") if term[0] in "根据"]      # neither 根 nor 据 begins a term
 
 
 # -- the same text, given to one owner or to several --------------------------------------------------------------------

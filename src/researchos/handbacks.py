@@ -13,7 +13,8 @@ handed it back: a task sent back and handed in again is unopened again.
   their files, what is undone, what the researcher must decide, the suggestion, the outputs by kind, the report, the
   run) -- reads, except for `mark_opened`, which writes the home's store and nothing of the project. Given the
   project, `unopened` leaves out a report that is gone and one whose context holds none of the handback's fields: a
-  report written before they existed is no handback of this version, however many a project has.
+  report written before they existed is no handback of this version, however many a project has, and a person's
+  confirming it (`assessment_confirmed`, theirs and no field an agent hands back) does not make it one.
 - **Confirming.** `confirm` writes the attempt's research assessment through the write the panel uses
   (`proposals.write_directly`: only the changed cell, backup, history, conflict and abandonment rules -- 14.3 and
   18.3), puts 「由 张三 确认（采纳 Claude Code · sonnet 的建议）」 on that version in the history (a plain 「由 张三 确认」
@@ -51,6 +52,9 @@ OPENED_DIRNAME = "handbacks"
 #: The outputs the page lists, by kind, in this order (21.2: figures, tables, data, code, then the rest).
 OUTPUT_KINDS = ("figure", "table", "data", "code", "document", "literature", "variable")
 OUTPUTS_SHOWN = 200
+#: The context fields an agent hands back (21.2). `assessment_confirmed` is the person's own record, written when they
+#: confirm: that they confirmed an older report does not make it a handback of this version.
+AGENT_FIELDS = tuple(key for key in research_records.HANDBACK_FIELDS if key != "assessment_confirmed")
 _LOCK = threading.Lock()
 
 
@@ -109,12 +113,12 @@ def readable(root: Path, report: str) -> bool:
 
 
 def _predates_fields(root: Path, report: str) -> bool:
-    """Whether the report's context holds none of the handback's fields (21.2) -- a report from before they existed, with
-    a context from before them or none. A context that cannot be read is not that: the page says so itself, and the
-    handback waits."""
+    """Whether the report's context holds none of the fields an agent hands back (21.2) -- a report from before they
+    existed, with a context from before them or none, confirmed by the person or not. A context that cannot be read is
+    not that: the page says so itself, and the handback waits."""
     try:
         raw = workspace._read(root, research_records.path_for(report))  # noqa: SLF001
-        return raw is None or not any(key in research_records.parse(raw) for key in research_records.HANDBACK_FIELDS)
+        return raw is None or not any(key in research_records.parse(raw) for key in AGENT_FIELDS)
     except workspace.WorkspaceError:
         return False
 
@@ -126,8 +130,8 @@ def unopened(project_id: str | None, person: str | None, root: str | Path | None
     or a name typed on a page. A handback counts for the person who started the run that handed it back, and until
     they open it; one opened before a later run handed the report back again is unopened again. Given the project's
     `root`, a report that is gone and one written before the handback's fields existed (`_predates_fields`: its
-    context holds none of them) are left out, so that a project's older reports do not all wait on the first day and
-    the card and the list agree. Reads only."""
+    context holds none of the fields an agent hands back, a confirmation by the person aside) are left out, so that
+    a project's older reports do not all wait on the first day and the card and the list agree. Reads only."""
     if not project_id:
         return []
     try:

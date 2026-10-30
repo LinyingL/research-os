@@ -1088,3 +1088,38 @@ def test_the_unconfirm_route_takes_the_confirmation_back_for_the_page_and_refuse
     assert _post(base, "/api/workspace/handback/unconfirm", {"project": "/other", "report": report})[0] == 409
     assert _request_with_headers(base, "POST", "/api/workspace/handback/unconfirm", {"Host": base.removeprefix("http://"), "Origin": "https://example.com",
                                                                                       "Content-Length": "2"}, b"{}")[0] == 403
+
+
+# -- AF-3: confirming an older handback does not make it wait -------------------------------------------------------------
+
+
+def test_confirming_an_older_handback_does_not_make_it_wait_the_card_the_list_and_the_task_stay_as_they_were_even_after_the_undo(root, pid):
+    from researchos import attempt_tasks
+
+    report = hand_back(root, pid, context={"question": "Q"})          # written before the 21.2 fields: the Section 20 context alone, never opened
+    other = hand_back(root, pid, context={"question": "Q"}, task_id="t2", attempt=A17, by=OTHER)   # and one a colleague's run handed back
+
+    def reads() -> dict:
+        work = attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]
+        return {"unopened": handbacks.unopened(pid, PERSON, root), "listed": handbacks.list_unopened(root, pid, PERSON),
+                "theirs": handbacks.unopened(pid, OTHER, root), "card": work["unopened"], "state": work["items"][0]["state"],
+                "view": handbacks.view(root, pid, PERSON, report)["unopened"]}
+    quiet = {"unopened": [], "listed": [], "theirs": [], "card": 0, "state": "done", "view": False}
+    assert reads() == quiet
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "I checked it"})
+    assert done["context_error"] is None and _context(root, report)["assessment_confirmed"]["status"] == "现行"
+    assert reads() == quiet                                           # the person who just acted on it is not told it waits (等你看)
+    handbacks.confirm(root, {"report": other, "status": "待定", "reason": "Looks fine"})   # nor is the one whose run it was, for a confirmation made on their report
+    assert reads() == quiet and attempt_tasks.by_attempt(root, pid, PERSON, [A17])[A17]["unfinished"] == 0
+    _undo_in_the_table(root, done)
+    handbacks.unconfirm(root, {"report": report})
+    assert "assessment_confirmed" not in _context(root, report) and reads() == quiet
+    fresh = hand_back(root, pid, context={"headline": "A new answer."}, task_id="t3", attempt=A16)   # a new handback still waits, confirmed or not
+    handbacks.confirm(root, {"report": fresh, "status": "现行", "reason": "Fine"})
+    assert handbacks.unopened(pid, PERSON, root) == [fresh]
+
+
+def test_a_report_that_only_holds_a_confirmation_is_still_no_handback_of_this_version(root, pid):
+    report = hand_back(root, pid, context=None)
+    research_records.confirm_assessment(root, report, {"by": PERSON, "at": "2026-10-30T09:00:00+01:00", "status": "现行", "adopted": False})
+    assert handbacks._predates_fields(root, report) is True and handbacks.unopened(pid, PERSON, root) == []

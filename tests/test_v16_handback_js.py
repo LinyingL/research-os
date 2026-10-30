@@ -669,6 +669,36 @@ console.log(JSON.stringify({writes, line:cls('ws-hb-done')[0].textContent, now:c
 
 
 @needs_node
+@pytest.mark.parametrize("leave", ["closePanel()", "state.panelSubject={kind:'attempt'}"])
+def test_撤销_takes_the_confirmation_back_even_when_the_panel_was_closed_or_replaced_while_the_old_cell_was_being_written(root, pid, report, leave):
+    out = _run(root, pid, report, _UNDO_PAGE + r"""
+const wrapped=customPost; let hold=null, stale='✅ x';       // `hold`: a call of this path waits for its gate, as a slow disk would make it wait
+const produce=(path,body)=>path==='/api/attempts/preview'&&stale!=='✅ x'?{cells:{verdict:{was:'🕒',was_text:stale,now_text:body.fields.verdict}},reason_required:false}:wrapped(path,body);
+customPost=(path,body)=>hold&&hold.path===path?hold.gate.promise.then(()=>produce(path,body)):produce(path,body);
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('确认这个判断').click(); await sleepTick();
+const unconfirms=()=>posted.filter(p=>p[0]==='/api/workspace/handback/unconfirm').length;
+hold={path:'/api/attempts/write',gate:deferred()};
+const pending=key('hb-undo').click(); await sleepTick();            // the old cell is on its way to the file ...
+const during={writes:writes.length, unconfirms:unconfirms(), busy:state.panelSubject.busy};
+""" + leave + r""";                                                   // ... and the person closes the panel, or opens another
+hold.gate.resolve(); await pending; await sleepTick();
+const after={writes:writes.length, unconfirms:unconfirms(), posts:posted.filter(p=>p[0]==='/api/workspace/handback/unconfirm').map(p=>p[1])};
+await window.ROWorkspace.openHandback(REPORT);                      // opened again later: the record has been taken back with the cell
+const later={confirmed:cls('ws-hb-confirmed').length, buttons:pbuttons().filter(b=>['确认这个判断','改一下','先不判断'].includes(b))};
+// a row that moved meanwhile is not put back, so nothing is taken back either, wherever the person is
+VIEW.confirmed=null; await pbtn('确认这个判断').click(); await sleepTick();
+stale='⚠️ edited meanwhile'; hold={path:'/api/attempts/preview',gate:deferred()};
+const moved=key('hb-undo').click(); await sleepTick(); closePanel(); hold.gate.resolve(); await moved; await sleepTick();
+console.log(JSON.stringify({during, after, later, moved:{writes:writes.length, unconfirms:unconfirms()}}));
+""")
+    assert out["during"] == {"writes": 0, "unconfirms": 0, "busy": True}
+    assert out["after"] == {"writes": 1, "unconfirms": 1, "posts": [{"project": "/projects/study", "report": report}]}     # the cell went back, so the confirmation goes with it
+    assert out["later"] == {"confirmed": 0, "buttons": ["确认这个判断", "改一下", "先不判断"]}                                  # and the handback offers its buttons, not a stale 已确认
+    assert out["moved"] == {"writes": 1, "unconfirms": 1}                                                                  # no second write and no second request
+
+
+@needs_node
 def test_撤销_is_not_offered_for_a_member_s_write_an_abandonment_or_a_cell_that_was_not_changed(root, pid, report):
     out = _run(root, pid, report, r"""
 const base=customPost; let decision=null, written=true;

@@ -25,7 +25,7 @@ How groups are proposed -- a small rule, so that it can be said in a sentence an
    joined by this rule is in a group for the ones after it.
 4. Shared-term groups. Of the tasks left, a term is a Latin word of three letters or more that is not a common English
    word, or any run of three to eight Chinese characters that does not begin with a function character (对, 请, 一,
-   上, ...) or end with one (的, 了, 等, ...), taken from the first line of the text (120 characters) and from the
+   上, 根 and 据 of 根据目前的…, ...) or end with one (的, 了, 等, ...), taken from the first line of the text (120 characters) and from the
    report's title. A term counts once for each distinct text (the same words twice are one text, not two). The term in the most texts, at
    least two, goes first, the longer one when equal, the one met first when still equal; the tasks that have it become
    a group and leave the pool; then again, until no term is shared. A term shared by more than half of eight texts or
@@ -75,8 +75,9 @@ _SUBJECT = re.compile(r"([A-Za-z][A-Za-z0-9]*(?:[_\-][A-Za-z0-9]+)*)[ \t_\-]*\Z"
 _LATIN = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[._&\-][A-Za-z0-9]+)*")
 _CJK_RUN = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 _PUNCTUATION = " \t\u3000.,;:!?()[]{}<>\"'`-_/\\|*#~\uff0c\u3002\u3001\uff1b\uff1a\uff01\uff1f\uff08\uff09\u3010\u3011\u300a\u300b\u300c\u300d\u201c\u201d\u2018\u2019\u2026\u00b7\u2014"
-# Characters a Chinese term does not begin with (it begins a phrase: 对上一份, 请你, 把, 在) or end with (的, 了, 等).
-_NOT_A_START = set("的了和与及或对给把请在是并将从向以个份这那其之也都就而被让上下一二三四五六七八九十第本该")
+# Characters a Chinese term does not begin with (it begins a phrase: 对上一份, 请你, 把, 在; 根据目前的思路 opens with an
+# instruction, so neither 根 nor 据 starts a term) or end with (的, 了, 等).
+_NOT_A_START = set("的了和与及或对给把请在是并将从向以个份这那其之也都就而被让上下一二三四五六七八九十第本该根据")
 _NOT_AN_END = set("的了和与及或之也都就而被让等个份")
 # Words before a version that name nothing ("run v0.2", "the v0.2 report") and common English words that are no term.
 _NOT_A_SUBJECT = frozenset("a an the of in on at to for with and or vs from by as is this that new old final version ver "

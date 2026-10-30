@@ -507,3 +507,38 @@ console.log(JSON.stringify({q9:notesOf('q9'), q17:notesOf('q17')}));
     assert said[0].startswith("The same question, given to each of ") and "Codex · gpt-5" in said[0] and "Claude Code · opus" in said[0]
     assert said[0].endswith("DeepSeek Harness · deepseek-official/deepseek-v4-pro, Claude Code · opus, Codex · gpt-5") and said[1] == "Follows task 8" and out["q17"][-1] == "Follows task 16"
     assert not CJK.search(said[0] + said[1])
+
+
+@needs_node
+def test_a_task_of_several_lines_shows_its_first_line_in_the_row_the_report_line_and_the_names_of_its_buttons_and_a_long_line_is_cut_at_the_size(root):
+    from test_v16_task_groups import _report
+
+    asked = "检查上一步是否完成\n以及 QuantConnect 连接\n作为研究助理汇报"
+    _legacy(root, [{"id": "m1", "text": "Sword v0.2 全成员复算\n第二行说明", "report": _report(root, "e", "报告标题" * 15, "2026-10-02")},
+                   {"id": "m2", "text": asked}, {"id": "m3", "text": asked},                      # the same words twice: m3 can be removed
+                   {"id": "m4", "text": "这是一个很长的第一行" * 10 + "\n第二行"}])
+    out = _run(root, r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const named=(row)=>row.all().filter(e=>e.getAttribute('aria-label')).map(e=>e.getAttribute('aria-label'));
+console.log(JSON.stringify(panelBody.all().filter(e=>e.classList.contains('ws-group-task')).map(r=>({
+  text:r.all().find(e=>e.classList.contains('ws-group-task-text')).textContent,
+  quiet:r.all().filter(e=>e.classList.contains('ws-agent-quiet')).map(e=>e.textContent), names:named(r)}))));
+""")
+    assert [row["text"] for row in out if row["text"].startswith("Sword")] == ["Sword v0.2 全成员复算"]            # the first line alone, not the second
+    assert ["报告：" + "报告标题" * 12 + "报告…"] == [q for row in out for q in row["quiet"] if q.startswith("报告：")]  # the title cut at 50 characters
+    ask = [row for row in out if row["text"] == "检查上一步是否完成"]
+    assert len(ask) == 2 and all(not any("\n" in name for name in row["names"]) for row in out)               # no line break in what a screen reader says
+    assert sorted(name for row in ask for name in row["names"]) == ["移动：检查上一步是否完成", "移动：检查上一步是否完成", "移除：检查上一步是否完成"]
+    long = next(row for row in out if row["text"].startswith("这是一个很长"))
+    assert long["text"] == "这是一个很长的第一行" * 9 + "…" and long["names"] == ["移动：" + "这是一个很长的第一行" * 4 + "…"]   # 90 and 40 characters, then …
+
+
+@pytest.mark.parametrize("script", ["workspace.js", "desk.js", "routemap.js"])
+def test_no_function_is_declared_twice_in_a_page_script_so_that_the_later_one_cannot_silently_replace_the_first(script):
+    import re
+    from collections import Counter
+
+    source = (Path(task_groups.__file__).parent / "webapp" / script).read_text(encoding="utf-8")
+    names = Counter(re.findall(r"^  (?:async )?function ([A-Za-z0-9_$]+)\(", source, re.MULTILINE))    # the declarations of the script's own scope
+    assert [name for name, count in names.items() if count > 1] == []

@@ -5941,7 +5941,8 @@ renumbered by hand -- are looked at, and each lands in at most one group.
 4. **Shared-term groups**, over the tasks left. A term is a Latin word of
    three letters or more that is no common English word, or a run of three
    to eight Chinese characters that does not begin with a function character
-   (对, 请, 一, 上, …) or end with one (的, 了, 等, …), taken from the first
+   (对, 请, 一, 上, 根 and 据 of 根据目前的…, which opens an instruction and
+   names no subject, …) or end with one (的, 了, 等, …), taken from the first
    line of the text and the report's title. A term counts once per distinct
    text. The term in the most texts (two at least) goes first, the longer one
    when equal, the one met first when still equal; its tasks become a group
@@ -5972,7 +5973,8 @@ renumbered by hand -- are looked at, and each lands in at most one group.
 On Quant's 18 tasks this proposes Sword v0 (7, 8, and 9–11 after 8, the one
 question given to three agents), Sword v0.2 (12, 13, 16, and 17 after 16,
 and 18) and Sword v0.3 (14); the rest fall into shared-term groups named by
-a report title, or stay in no group.
+a report title (1 and 6, 2 and 3, 4 and 5), or stay in no group (15, the
+data-source survey: it shares only 根据目前 with task 1, which is no subject).
 
 The engine answers `GET /api/workspace/task-groups` (a read) with the tasks
 (each with `asked_of`, the owners' names when the same question went to
@@ -6000,6 +6002,9 @@ removed by the task list's own removal, with its question; a question given
 to several agents shows 「同一个问题，分别交给了 …」 and has no removal. A
 task that continues another of its group shows 「接在第 n 条之后」, and
 leaves out its `after` when the earlier task is moved out of the group.
+A task of several lines is shown by its first line, cut at 90 characters (the
+report's title at 50), and its buttons are named by that line cut at 40, with no
+line break in the name.
 The numbers the groups carry follow the table: once a group is written, the
 groups left move to the next free numbers (the greatest whole number in the
 table plus one, in the order shown), except a number the person typed, which
@@ -6105,9 +6110,12 @@ this Mac under the Research OS home, never in the project.
   what waits for this person; `POST /api/workspace/handback/opened` marks one.
   Nothing is written in the project, and a store that cannot be read says
   everything waits, not an error. A report that is gone waits for nobody, and
-  neither does one whose context holds none of the fields above: it was
-  written before they existed, is no handback of this version, and a project's
-  older reports do not all wait on its first day.
+  neither does one whose context holds none of the fields an agent hands back
+  (`assessment_confirmed` is the person's, not one of them): it was written
+  before they existed, is no handback of this version, and a project's older
+  reports do not all wait on its first day. Confirming such a report, or taking
+  that back, leaves it so: it does not begin to wait (等你看) for the person who
+  has just acted on it, nor for the one whose run it was.
 - **The number check** is 16.1's (`semantic/draft.py`): every number in the
   value occurs in the text of its file as written or as a value (0.10 is 0.1;
   a comma is read both as a thousands and a field separator); a value with
@@ -6180,7 +6188,11 @@ this Mac under the Research OS home, never in the project.
   the context byte for byte) and puts the note on the newest version of the
   attempt when that is the scan 撤销's write caused and has no note of its own;
   when the history cannot take it (`history_error`) the confirmation is taken
-  back all the same.
+  back all the same. The two requests are the page's, not one write, so the
+  second is sent whenever the cell was put back, also when the panel was closed
+  or another opened while the cell was being written; only the drawing depends
+  on the panel still being the one shown. A panel opened later then offers the
+  three buttons, not a confirmation the cell no longer says.
 
 ### 21.3 A research assessment is a choice and a reason
 
@@ -6376,8 +6388,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 ### 21.9 Acceptance
 
 1. On a copy of Quant: the grouping of 21.1 proposes Sword v0, v0.2 and
-   v0.3 and a data-source group; after confirming, the route map shows those
-   attempts with their tasks counted, and 项目首页's 进行中的尝试 shows them.
+   v0.3; the other tasks fall into shared-term groups named by a report title
+   or stay in none (the data-source tasks, 4 and 15, are not proposed as one
+   attempt: the person moves 15 into the group of 4 if they want one); after
+   confirming, the route map shows those attempts with their tasks counted,
+   and 项目首页's 进行中的尝试 shows them.
 2. A real agent run on a task under an attempt hands back a headline, key
    numbers (each found in its file), what is undone, questions and a
    suggested assessment; 「确认这个判断」 writes the cell in the file's form and
