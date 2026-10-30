@@ -1704,6 +1704,7 @@
     "没能记下这条连线确认": "Could not record this link judgment",
     "关系图": "Relationship map",
     "关系图只画脚本、数据和图表；它的关联见上面的来龙去脉。": "The relationship map shows scripts, data and figures. See this item’s links in the provenance above.",
+    "「#{number} {title}」还没有可画的文件，所以先显示全部。": "“#{number} {title}” has no files to draw yet, so the map shows all.",
     "收起关系图": "Hide relationship map",
     "打开关系图": "Open relationship map",
     "打开它的来龙去脉": "Open its provenance",

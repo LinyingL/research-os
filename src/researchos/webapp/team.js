@@ -544,7 +544,7 @@
       }
       if (item.decision && item.decision.act === "abandoned") {
         const act = mk("div", "route-actions");
-        act.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => openEvidence(item.id, item)));
+        act.appendChild(mkButton(t("当时的依据"), "ws-text-link", () => openEvidence(item.id, item)));
         const d = item.decision;
         act.appendChild(mk("span", "route-src", d.evidence_count
           ? t("放弃于 {when}，记录了 {n} 个文件的状态", { when: whenInLine(d.at), n: d.evidence_count })
@@ -699,7 +699,7 @@
     if (f.sha256) li.appendChild(mk("div", "evidence-sha mono", t("指纹 {sha}", { sha: String(f.sha256).slice(0, 16) })));
     if (f.viewable) {
       const slot = mk("div", "evidence-slot");
-      const btn = mkButton(t("查看当时的内容"), "btn btn-small", async () => {
+      const btn = mkButton(t("查看当时的内容"), "ws-text-link", async () => {
         if (slot.childElementCount) { slot.innerHTML = ""; btn.textContent = t("查看当时的内容"); btn.setAttribute("aria-expanded", "false"); return; }
         btn.disabled = true;
         try {
@@ -789,7 +789,7 @@
     if (m === "single" || !m) {
       page.appendChild(block(t("提议"), "plain"));
       page.lastChild.appendChild(line(t("这是单人项目：你的改动直接生效，不需要提议和批准。要和别人一起做，在「成员」一栏里开始协作。"), "quiet"));
-      page.lastChild.appendChild(mkButton(t("去成员一栏"), "btn btn-small", () => activateView("members")));
+      page.lastChild.appendChild(mkButton(t("去成员一栏"), "ws-text-link", () => activateView("members")));
     } else if (m === "none") {
       page.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
     } else if (m === "pi") {
@@ -1360,6 +1360,7 @@
       }
       view.compose = { kind: kind };
       await composeInto(result, body, status);
+      look.classList.toggle("btn-primary", !result.querySelector(".btn-primary"));   // 21.8: the preview's 发送提议 is the primary while it stands
     });
     form.append(look, status);
     const result = mk("div", "compose-result");
@@ -1558,9 +1559,16 @@
     other.appendChild(mkButton("从公盘加入项目…", "btn btn-small", () => openJoinDialog()));
     page.appendChild(other);
     showFlash(page, "members");
+    onePrimary(page);
     host.appendChild(page);
     host.dataset.loaded = "1";
     if (refresh) window.scrollTo(0, top);
+  }
+
+  // 21.8: a page of steps has one primary button, the first step not done yet (the sections stand in the order the steps are
+  // taken); the buttons of the later steps are quiet until the earlier ones are done.
+  function onePrimary(page) {
+    Array.from(page.querySelectorAll(".btn-primary")).slice(1).forEach((b) => b.classList.remove("btn-primary"));
   }
 
   // 我是谁: set once, on first use -- the only form of its kind (12.1).
@@ -2134,8 +2142,10 @@
     panelBody.append(shared.wrap, mine.wrap, folder.wrap);
     const status = mk("div", "notice-status");
     const result = mk("div", "join-result");
-    const look = mkButton("查看", "btn btn-primary", () => lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result,
-      mine.input.value.trim()));
+    const look = mkButton("查看", "btn btn-primary", async () => {
+      await lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result, mine.input.value.trim());
+      look.classList.toggle("btn-primary", !result.querySelector(".btn-primary"));   // 21.8: 核对无误，加入 is the primary once the folder is read
+    });
     panelBody.append(look, status, result);
   }
 

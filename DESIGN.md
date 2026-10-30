@@ -6929,12 +6929,77 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 
 ### 21.8 Presentation (amends 12.11)
 
-- **One primary action per page or panel**, drawn as the primary button;
-  other actions are the quiet outline button; links that only navigate are
-  text links. Titles, file names and statuses are never drawn as buttons.
-- **The clay colour means "something is wrong"**: errors, broken provenance,
-  out-of-bounds runs. Selection, the current section and links use ink and
-  weight. An assessment's tint is its own (12.11) and is not the error tint.
+- **One primary action per page or panel** (*amended, B5-1*): a page, a side
+  panel, a dialog and a popover are each a surface, and a surface has one
+  primary button at most, the action named below, drawn as the primary button;
+  every other action is the quiet outline button; a control that only
+  navigates -- it opens a place to look at and changes nothing, starts nothing
+  -- is a text link (ink, underlined, `ws-text-link`): 打开交回, 打开详情页, 打开结果,
+  打开定义卡, 查看文件, 修改历史, 运行日志, 当时的依据, 查看当时的内容, a proposal's 查看,
+  去成员一栏, 返回, 返回全部变量, and the name of a file or a report that opens it
+  (the path under it, 21.7). Titles, file names and statuses are never drawn as
+  buttons: a status is a tinted word (`.status-label`, `.var-chip`, `.own-mark`),
+  never an element of the button's class or one that wears a box -- the variable
+  card's 「草稿 v1」 took the border and padding of the team's draft box because its
+  tone class was `draft`; it is `is-draft` --, and the cards of a diagram (a
+  trace's, the route map's, 关系图's) are the objects drawn, not buttons. A choice
+  (the status picks, the version tabs, the filters) is not an action: the one
+  chosen is told in ink and weight. A button that opens a form is quiet while the
+  form is open, and the form's own submit is the primary (新建变量卡, the repair
+  form's 确认); a step that follows another takes the primary and the step before
+  it goes quiet (预览改动 then 保存修改, and 返回修改 gives it back; 预览这一行 then
+  保存后查看提议; 查看 then 核对无误，加入; 查看将要发送的内容 then 发送提议).
+  The primary action of each surface:
+  - **项目首页**: 添加任务 (保存任务 for one being edited); 保存 instead while a
+    note, a report or the plan is on screen in edit mode; 发送 or 确认撤回 instead
+    while a task's row asks. **研究路线** (路线图 and 列表): 新增尝试 in the top bar
+    (提议新的尝试 for a member); its rows and 等你处理 have none.
+  - **An attempt's panel**: 保存 of the 研究判断 (预览这一行 for a member). **A
+    handback**: 确认这个判断 (写下研究判断 when the agent suggested none, 保存 in the
+    chooser, 再派一个任务 after it). **新增尝试 / 编辑尝试**: 预览改动 (保存 for an
+    existing row). **A route-map line, a 关系图 link**: 确认连线, 提议这条连线, 确认标注.
+  - **图表与论断**: 设为论文正文 while no draft is the paper, none after.
+    **数据与代码** (列表 and 关系图) and **a node page**: none -- they are read --
+    but for the form a node page opens (确认 of the repair).
+  - **变量**: 新建变量卡 while there is no card (21.7), else none; **a card's page**:
+    确认这一版 on a draft; **待复核**: 全部口径未变. **文献**, **备份** and **设置**: none (the
+    设置 page is a form for each setting, each with its own quiet 保存).
+  - **成员**: the first step of the page not done yet, the page being its steps in
+    the order they are taken -- 保存 of 「我是谁」, 建立成员名单, 设为公盘, 发布 (同步
+    for a member), 添加成员, 生成我的公钥 --, the buttons of the later steps quiet
+    until the earlier are done. **加入别人的项目**: 查看, then 核对无误，加入. **A
+    proposal the PI decides**: 批准并加入. **A member's draft**: 查看将要发送的内容,
+    then 发送提议. **Without a project** the welcome page: 新建项目…. A notice (a
+    migration waiting) is a surface of its own. **The grouping panel** (把这些任务归入尝试…)
+    has none: its 确认这一组 stands once for each group, so each is quiet. The project
+    menu's dialogs (添加项目, 推送到 GitHub, 重命名, where a moved project is) and the
+    questions of a notice draw their buttons as they were: no primary one yet.
+  `tests/test_v16_presentation.py` lists where a primary button may be created;
+  `tests/test_v16_presentation_js.py` counts the primaries of each page under node
+  in both languages.
+- **The clay colour means "something is wrong"** (*amended, B5-1*): errors,
+  broken provenance, a warning 21.5 settled (the paper relies on a figure or table
+  that is broken), a run out of bounds (越过了限制) and a problem line in 备份. Every
+  other use is ink and weight: the sidebar's current item, a sub-navigation's current
+  tab and filter, the version tab of a variable card, the selected route-map card and
+  关系图 node, links, hover and focus, the member's own mark (which said 「我的改动」 in
+  clay), a deleted line of a diff. The route map's lines and a hand-drawn link of
+  关系图 -- clay in 8.2 and 14.1 -- are ink; 关系图's is told from a machine link by its
+  weight (2.25 against 1.5) and its midpoint dot. An assessment's tint is its own
+  (12.11) and stays -- 不利证据 is the one assessment in clay --, and is not the error
+  tint. A wait is not wrong: a run that waits for an answer reads 等你回答 in ochre on
+  项目首页 as it does in 等你处理 (it was clay there). `tests/test_v16_clay.py` lists every
+  selector of the style sheets that uses clay and every tone the scripts name clay,
+  each with its reason, and fails on a new one.
+- **Three carried items** (*B5-1*): 关系图 opens on the attempt 研究路线 marks current
+  and, when that attempt has nothing to draw (a thesis chapter with no file yet), on
+  全部 with one quiet line under the toolbar saying so (「#19 … 还没有可画的文件，所以先显示全部。」,
+  `fell_back_from` in the answer of `GET /api/canvas`, which only a request that names no
+  scope gets; choosing an attempt or the project changing takes the line away, and choosing the
+  empty attempt shows its empty view as before). The kind label of 图表与论断's rows (图, 表;
+  “Figure”, “Table”) has a column of 3.1rem, in both languages. A panel's title is in
+  the title font (the sans, weight 600) in both languages; the mono is only for the file
+  panel's path (`path-title`, set from the panel's subject).
 - **Numbers in tables**: a value with more than six significant digits is
   shown to four significant digits, with the value as written on hover and in
   the file view; integers and values of six digits or fewer as written.
@@ -7010,7 +7075,9 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    table and scans every string the screens show for the retired words, with a short allowlist, a reason each); *fix batch B4:* the
    scan also covers 18.2's 产出 and 没有找到生成它的脚本, the engine's English sentences (retired English such as "result record" and
    "human records") and README and the guides under `docs/`.
-7. One primary button per page; no title or status drawn as a button; the
-   clay colour appears only on problems; long numbers are shown to four
-   significant digits.
+7. One primary button per surface, the one 21.8 names (*B5-1*: counted per page and
+   panel under node, in both languages); no title or status drawn as a button and
+   what only navigates a text link; the clay colour appears only on what 21.8 lists
+   (`tests/test_v16_clay.py`); 关系图 opens on 全部, saying so, when the current
+   attempt has nothing to draw; long numbers are shown to four significant digits.
 8. The full suite passes on Python 3.11 and 3.13.

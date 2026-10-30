@@ -422,7 +422,7 @@
     const actions = mk("div", "node-actions");
     const status = mk("div", "notice-status");
     if (page.path && page.exists) {
-      actions.appendChild(mkButton(t("查看内容"), "btn btn-small", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
+      actions.appendChild(mkButton(t("查看内容"), "ws-text-link", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
       actions.appendChild(mkButton(t("打开"), "btn btn-small", () => openFile(page.path, false, status)));
       actions.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => openFile(page.path, true, status)));
     }
@@ -432,13 +432,13 @@
       const role = ROTeam.mode();
       const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");
       if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
-      if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
+      if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "ws-text-link", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
     }
     if (page.paper_item && page.paper_item.file) {
       // 21.5: a figure or table's own page puts it out of the paper, or back
       actions.appendChild(outButton({ path: page.paper_item.file, label: page.name, paper: page.paper_item }, { quiet: true }, status));
     }
-    if (page.type === "variable") actions.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
+    if (page.type === "variable") actions.appendChild(mkButton(t("打开定义卡"), "ws-text-link", () => openVariableCard(page.card || page.id.slice("variable:".length))));
     if (page.paper) {
       // 12.13: a draft's own page marks it as the paper, or no longer.
       actions.appendChild(paperButton(page.paper.draft, page.paper.marked, status));
@@ -1218,7 +1218,7 @@
     const srcEl = l.src === page.id ? mk("span", "link-self", l.src_label) : link(l.src_label, "", () => openNode(l.src));
     const dstEl = l.dst === page.id ? mk("span", "link-self", l.dst_label) : link(l.dst_label, "", () => openNode(l.dst));
     head.append(srcEl, mk("span", "link-rel", t(l.relation)), dstEl);
-    const tone = l.human ? "clay" : (l.review || l.conflict) ? "ochre" : l.status === "confirmed" ? "olive" : l.status === "rejected" ? "gray" : "plain";
+    const tone = l.human ? "plain" : (l.review || l.conflict) ? "ochre" : l.status === "confirmed" ? "olive" : l.status === "rejected" ? "gray" : "plain";
     head.appendChild(mk("span", "status-label tone-" + tone, linkStateWords(l)));
     const own = ownMark(l);
     if (own) head.appendChild(own);
@@ -1664,7 +1664,7 @@
         more.append(summary, body);
         list.appendChild(more);
       }
-      const open = mkButton(t("设为论文正文"), "btn btn-small", () => {
+      const open = mkButton(t("设为论文正文"), "btn btn-small" + (marked.length ? "" : " btn-primary"), () => {
         const shownNow = list.classList.contains("hidden");
         list.classList.toggle("hidden", !shownNow);
         open.setAttribute("aria-expanded", String(shownNow));

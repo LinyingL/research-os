@@ -214,8 +214,8 @@ body {
   cursor: pointer;
 }
 .side-item:hover { color: var(--ink); background: var(--paper); }
-.side-item:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
-.side-item[aria-current="page"] { color: var(--ink); font-weight: 600; border-left-color: var(--clay); background: var(--paper); }
+.side-item:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
+.side-item[aria-current="page"] { color: var(--ink); font-weight: 600; border-left-color: var(--ink); background: var(--paper); }
 .side-icon { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
 .side-label { flex: 1; }
 .side-count { font-size: 0.74rem; color: var(--ink-soft); font-weight: normal; }
@@ -253,7 +253,7 @@ body.no-project .side-nav, body.no-project .share-line { display: none !importan
   width: calc(100% + 0.8rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: baseline;
 }
 .project-menu-btn:hover, .project-menu-btn[aria-expanded="true"] { border-color: var(--line-strong); background: var(--paper-alt); }
-.project-menu-btn:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+.project-menu-btn:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
 .project-menu {
   position: absolute; top: calc(100% + 0.25rem); left: -0.4rem; z-index: 45; min-width: 17rem; max-width: min(26rem, 92vw);
   background: var(--paper); border: 1px solid var(--line-strong); box-shadow: 0 6px 18px rgba(38, 34, 27, 0.12);
@@ -282,7 +282,7 @@ html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }
 .pm-flag { flex: none; font-size: 0.74rem; color: var(--ink-soft); }
 .pm-row { display: flex; align-items: baseline; }
 .pm-row .pm-item { flex: 1; min-width: 0; }
-.pm-row .pm-sub { flex: none; width: auto; font-size: 0.76rem; color: var(--clay); padding: 0.32rem 0.9rem 0.32rem 0.4rem; }
+.pm-row .pm-sub { flex: none; width: auto; font-size: 0.76rem; color: var(--ink); padding: 0.32rem 0.9rem 0.32rem 0.4rem; }
 .pm-missing .pm-label { color: var(--ink-soft); }
 .pm-rule { border: none; border-top: 1px solid var(--line); margin: 0.3rem 0; }
 .pm-empty { padding: 0.32rem 0.9rem 0.32rem 1.7rem; color: var(--ink-soft); font-size: 0.8rem; }
@@ -297,11 +297,11 @@ html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }
    「从 GitHub 获取最新状态」. The state is a quiet second line. */
 .pm-github { padding: 0.32rem 0.9rem 0.1rem 1.7rem; font-size: 0.82rem; }
 .pm-github a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
-.pm-github a:hover { border-bottom-color: var(--clay); }
+.pm-github a:hover { border-bottom-color: var(--ink); }
 .pm-github-state { padding: 0 0.9rem 0.25rem 1.7rem; font-size: 0.76rem; color: var(--ink-soft); }
 .github-link-row { font-size: 0.8rem; margin: -0.3rem 0 0.7rem; color: var(--ink-soft); }
 .github-link-row a { color: var(--ink); }
-.github-link-row .github-note { margin-left: 0.6rem; color: var(--clay); }
+.github-link-row .github-note { margin-left: 0.6rem; color: var(--ink-soft); }
 
 .refresh-chip {
   font-size: 0.76rem;
@@ -315,8 +315,8 @@ html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }
 .refresh-chip.err { background: var(--clay-soft); border-color: var(--clay); cursor: help; }
 
 /* A degraded project (DESIGN.md section 8.10 rules 1-2). Clay, because in
-   this app clay means "a human did this" or "something is wrong" -- and
-   this is the second kind. Sits by the project menu, which stays usable:
+   this app clay means "something is wrong" (21.8; it once also meant "a human
+   did this") -- and this is it. Sits by the project menu, which stays usable:
    the state is about the project, not about the page. */
 .project-state {
   font-size: 0.76rem;
@@ -357,9 +357,9 @@ html[lang="en"] .pm-row .pm-sub { flex-basis: 100%; padding-left: 2.05rem; }
   background: none; border: none; cursor: pointer; font: inherit; font-size: 0.86rem; color: var(--ink-soft);
   padding: 0.2rem 0 0.45rem; border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
-.subnav-item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--clay); }
+.subnav-item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
 .subnav-item:hover { color: var(--ink); }
-.subnav-item:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.subnav-item:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 body.canvas-mode .subnav { margin: 0; padding: 0.5rem 1rem 0; }
 
 .project-line-msg { font-size: 0.78rem; color: var(--ink-soft); }
@@ -432,7 +432,6 @@ main#main { flex: 1; padding: 1.6rem 2rem 4rem; max-width: 1040px; width: 100%; 
   gap: 0.5rem;
 }
 .section-title .count { font-family: var(--font-sans); font-size: 0.78rem; color: var(--ink-soft); font-weight: normal; }
-.section-title.accent-clay { color: var(--clay); border-bottom-color: var(--clay); }
 
 .empty-note { color: var(--ink-soft); font-size: 0.86rem; padding: 0.4rem 0 1rem; }
 
@@ -442,7 +441,7 @@ details.attempt-node { border-bottom: 1px solid var(--line); }
 /* 12.11: disclosure is the platform's own control -- the summary keeps its
    native marker; the row inside it opens the record. */
 details.attempt-node > summary { display: list-item; cursor: pointer; padding: 0.55rem 0; color: var(--ink-soft); }
-details.attempt-node > summary:focus-visible, details.script-node > summary:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+details.attempt-node > summary:focus-visible, details.script-node > summary:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
 
 .row-content { cursor: pointer; display: inline-flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.1rem 0.35rem; margin: -0.1rem 0 -0.1rem 0.1rem; color: var(--ink); vertical-align: top; max-width: calc(100% - 1.5rem); }
 .row-content:hover { background: var(--paper-alt); }
@@ -463,7 +462,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .status-label.tone-plain { background: var(--paper-alt); color: var(--ink-soft); }
 .verdict-inline { display: inline-flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
 .verdict-words { color: var(--ink-soft); font-size: 0.86rem; }
-.own-mark { font-size: 0.75rem; color: var(--clay); }
+.own-mark { font-size: 0.75rem; color: var(--ink); font-weight: 600; }
 .tree-filter { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: baseline; font-size: 0.86rem; margin: 0 0 0.8rem; color: var(--ink-soft); }
 .attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
 
@@ -510,9 +509,9 @@ body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
   font: inherit; font-size: 0.88rem; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer;
   text-align: left; border-bottom: 1px solid var(--line-strong); word-break: break-all;
 }
-.desk-link:hover { border-bottom-color: var(--clay); }
+.desk-link:hover { border-bottom-color: var(--ink); }
 .desk-link.strong { font-weight: 600; word-break: normal; overflow-wrap: anywhere; }
-.desk-link:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.desk-link:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .desk-link.mono, .desk-files .mono { font-family: var(--font-mono); font-size: 0.8rem; }
 .desk-files { list-style: none; margin: 0 0 0.8rem; padding: 0; }
 .desk-files li { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
@@ -533,8 +532,6 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 
 .flow-icon.read { color: var(--olive); }
 .flow-icon.write { color: var(--ochre); }
-.orphan-dot { flex: none; width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--clay); }
-.missing-flag { color: var(--clay); font-size: 0.75rem; font-style: italic; }
 
 .clickable { cursor: pointer; }
 .clickable:hover { text-decoration: underline; }
@@ -549,8 +546,8 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
   font: inherit; font-size: inherit; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer;
   border-bottom: 1px solid var(--line-strong); text-align: left;
 }
-.node-link:hover { border-bottom-color: var(--clay); }
-.node-link:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.node-link:hover { border-bottom-color: var(--ink); }
+.node-link:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .node-link.mono { font-family: var(--font-mono); font-size: 0.8rem; }
 .node-back .node-link { font-size: 0.82rem; color: var(--ink-soft); }
 .node-icon { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -574,9 +571,9 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .trace-lines { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
 .trace-line { fill: none; stroke: var(--ink); stroke-opacity: 0.45; stroke-width: 1.5; }
 .trace-line.pending { stroke-dasharray: 5 4; }
-.trace-line.human { stroke: var(--clay); stroke-opacity: 1; stroke-width: 2.25; }
+.trace-line.human { stroke: var(--ink); stroke-opacity: 1; stroke-width: 2.25; }
 .trace-line.review { stroke: var(--ochre); stroke-opacity: 0.9; }
-.trace-dot { fill: var(--clay); }
+.trace-dot { fill: var(--ink); }
 /* Columns share the width (120-190px each); a long chain scrolls sideways. */
 .trace-col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 0.55rem; flex: 1 1 0; min-width: 0; max-width: 190px; }
 .trace-col.is-self { flex-grow: 1.2; max-width: 210px; }
@@ -587,7 +584,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
   background: var(--paper-alt); border: 1px solid var(--line-strong); border-left-width: 3px; padding: 0.35rem 0.5rem; cursor: pointer; min-width: 0;
 }
 .trace-item:hover { border-color: var(--ink-soft); }
-.trace-item:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+.trace-item:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
 .trace-item.t-dataset { border-left-color: var(--ochre); }
 .trace-item.t-script { border-left-color: var(--olive); }
 .trace-item.t-figure, .trace-item.t-section, .trace-item.t-claim { border-left-color: var(--ink); }
@@ -635,7 +632,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .diff { font-family: var(--font-mono); font-size: 0.74rem; line-height: 1.5; border: 1px solid var(--line); background: var(--paper); overflow-x: auto; padding: 0.3rem 0; }
 .dl-row { white-space: pre; padding: 0 0.6rem; min-height: 1.1em; }
 .dl-row.add { background: var(--olive-soft); }
-.dl-row.del { background: var(--clay-soft); }
+.dl-row.del { background: var(--gray-soft); }
 .dl-row.hunk, .dl-row.meta { color: var(--ink-soft); }
 .diff-more { margin: 0.35rem 0.6rem 0.1rem; font-family: var(--font-sans); }
 .node-note { margin-top: 0.9rem; max-width: 640px; display: flex; flex-direction: column; gap: 0.35rem; }
@@ -657,7 +654,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-group-file { font-size: 0.76rem; }
 .res-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .res-row { display: flex; gap: 0.9rem; align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
-.res-kind { flex: none; width: 1.6rem; font-size: 0.78rem; color: var(--ink-soft); }
+.res-kind { flex: none; width: 3.1rem; font-size: 0.78rem; color: var(--ink-soft); }
 .res-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.88rem; }
 .res-main .node-link.claim { font-size: 0.84rem; border-bottom-color: var(--line); }
 .res-path { font-size: 0.74rem; color: var(--ink-soft); word-break: break-all; }
@@ -695,13 +692,13 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-draft[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .draft-file.left-out .mono { color: var(--ink-soft); }
 .res-draft-summary:hover { background: var(--paper-alt); }
-.res-draft-summary:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
+.res-draft-summary:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
 .res-draft-body { padding: 0 0 0.8rem 1.4rem; }
 .dc-filters { display: flex; flex-wrap: wrap; gap: 1.2rem; margin: 0 0 0.9rem; }
 .dc-filter { font: inherit; font-size: 0.84rem; color: var(--ink-soft); background: none; border: none; border-bottom: 2px solid transparent; padding: 0.1rem 0 0.25rem; cursor: pointer; }
-.dc-filter[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--clay); }
+.dc-filter[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
 .dc-filter:hover { color: var(--ink); }
-.dc-filter:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.dc-filter:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .dc-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); max-width: 900px; }
 .dc-row { display: flex; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
 .dc-kind { flex: none; width: 3.6rem; display: inline-flex; gap: 0.35rem; align-items: center; font-size: 0.76rem; color: var(--ink-soft); height: 1.4rem; }
@@ -720,7 +717,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 /* 撤销 (18.3) stays in view at the top while a long list is read: the write reloads the page at the scroll the person was at. */
 .dc-undo { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.84rem; margin: 0 0 0.8rem; position: sticky; top: 0; z-index: 6; padding: 0.5rem 0; background: var(--paper); border-bottom: 1px solid var(--line); }
 .lit-ref-open { display: block; font: inherit; font-size: 0.84rem; text-align: left; background: none; border: none; padding: 0; color: var(--ink); cursor: pointer; border-bottom: 1px solid transparent; }
-.lit-ref-open:hover { border-bottom-color: var(--clay); }
+.lit-ref-open:hover { border-bottom-color: var(--ink); }
 
 .error-box { border: 1px solid var(--clay); background: var(--clay-soft); color: var(--ink); padding: 0.9rem 1.1rem; font-size: 0.88rem; }
 .error-box .error-title { font-weight: 600; color: var(--clay); margin-bottom: 0.25rem; }
@@ -728,7 +725,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
    sentence, then a 「详情」 button that reveals the engine's raw text inline
    -- one click, never a hover (renderBlockingError). */
 .err-detail-toggle {
-  font: inherit; font-family: var(--font-sans); font-size: 0.74rem; color: var(--clay);
+  font: inherit; font-family: var(--font-sans); font-size: 0.74rem; color: var(--ink);
   background: none; border: none; padding: 0; margin-left: 0.5rem;
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
 }
@@ -755,14 +752,14 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 }
 .panel-resizer { position: absolute; top: 0; bottom: 0; left: -6px; width: 12px; z-index: 1; cursor: col-resize; touch-action: none; }
 .panel-resizer::after { content: ""; position: absolute; left: 5px; top: 50%; width: 3px; height: 44px; border-radius: 2px; transform: translateY(-50%); background: var(--line-strong); }
-.panel-resizer:hover::after, .panel-resizer:focus-visible::after { background: var(--clay); }
+.panel-resizer:hover::after, .panel-resizer:focus-visible::after { background: var(--ink); }
 .panel-resizer:focus-visible { outline: none; }
-.panel-resizer:focus-visible::after { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--clay); }
+.panel-resizer:focus-visible::after { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink); }
 body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.3rem; border-bottom: 1px solid var(--line-strong); }
 .panel-head-text { min-width: 0; }
-.panel-title { font-family: var(--font-mono); font-size: 0.95rem; word-break: break-all; }
-.panel-title.plain-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; word-break: normal; }
+.panel-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; word-break: normal; }
+.panel-title.path-title { font-family: var(--font-mono); font-weight: normal; font-size: 0.95rem; word-break: break-all; }
 .panel-subtitle { font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.25rem; }
 /* 12.11: closed with the word, not a glyph. */
 .panel-close { flex: none; background: none; border: none; font: inherit; font-size: 0.82rem; line-height: 1.4; cursor: pointer; color: var(--ink-soft); padding: 0.1rem 0.2rem; white-space: nowrap; }
@@ -827,7 +824,7 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
   width: 100%;
 }
 .form-textarea { resize: vertical; min-height: 3.2em; line-height: 1.5; }
-.form-input:focus, .form-textarea:focus { outline: 1px solid var(--clay); outline-offset: 1px; }
+.form-input:focus, .form-textarea:focus { outline: 1px solid var(--ink); outline-offset: 1px; }
 .form-input:disabled { color: var(--ink-soft); cursor: not-allowed; }
 .form-mono { font-family: var(--font-mono); }
 .verdict-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
@@ -850,12 +847,12 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
 .btn-primary { background: var(--ochre-soft); border-color: var(--ochre); }
 .diff-label { font-size: 0.72rem; color: var(--ink-soft); margin: 0.6rem 0 0.2rem; } /* sentence case (13.4) */
 .diff-row { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; padding: 0.45rem 0.6rem; border: 1px solid var(--line); overflow-x: auto; white-space: pre; }
-.diff-row.old { background: var(--clay-soft); border-color: var(--clay); }
+.diff-row.old { background: var(--gray-soft); border-color: var(--line-strong); }
 .diff-row.new { background: var(--olive-soft); border-color: var(--olive); }
 .confirm-note { font-size: 0.84rem; margin: 0.7rem 0 0.4rem; }
 
 /* -- 记录 and 停止服务 (task V3 phase 4), at the sidebar's foot -- deliberately
-   quiet: small ink-soft text buttons, clay only on hover. */
+   quiet: small ink-soft text buttons, ink on hover. */
 .shutdown-btn {
   background: none;
   border: none;
@@ -865,7 +862,7 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
   color: var(--ink-soft);
   padding: 0.2rem 0;
 }
-.shutdown-btn:hover { color: var(--clay); text-decoration: underline; }
+.shutdown-btn:hover { color: var(--ink); text-decoration: underline; }
 
 .stopped-note { border: 1px solid var(--line-strong); background: var(--paper-alt); padding: 1.5rem 1.75rem; max-width: 640px; }
 .stopped-note h2 { font-family: var(--font-serif); font-size: 1.15rem; margin: 0 0 0.6rem; }
@@ -875,7 +872,7 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
 /* -- 画布 (DESIGN.md section 8.2; drawn by canvas.js) ------------------------
    Only the existing tokens: paper/ink for the ground and text, ochre /
    olive / ink as the three type colors (数据集 / 脚本 / 图表), clay kept for
-   "a human did this" or "something is wrong" -- never a type color. */
+   "something is wrong" (21.8) -- never a type color, never a selection or a human's link. */
 body.canvas-mode #app { height: 100vh; min-height: 0; }
 body.canvas-mode .workspace { height: 100vh; min-height: 0; }
 body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -892,7 +889,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-node.hover .cv-card { stroke: var(--ink-soft); }
 .cv-node.match .cv-card { stroke: var(--ink); stroke-width: 1.5; }
 .cv-node.missing .cv-card, .cv-node.ghost .cv-card { stroke-dasharray: 5 3; }
-.cv-node.selected .cv-card { stroke: var(--clay); stroke-width: 2; }
+.cv-node.selected .cv-card { stroke: var(--ink); stroke-width: 2; }
 .cv-title-sep { stroke: var(--line); stroke-width: 1; }
 .cv-node.t-dataset .cv-rule { fill: var(--ochre); }
 .cv-node.t-script .cv-rule { fill: var(--olive); }
@@ -916,9 +913,9 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-link { fill: none; }
 .cv-link.machine { stroke: var(--ink); stroke-width: 1.5; stroke-opacity: 0.45; }
 .cv-link.pending { stroke-dasharray: 6 4; }
-.cv-link.human { stroke: var(--clay); stroke-width: 2.25; }
+.cv-link.human { stroke: var(--ink); stroke-width: 2.25; }
 /* A cycle-closing link (8.4): dashed clay. A machine one turns clay at
-   1.5px; a human one stays a human link (2.25px clay + midpoint dot) and
+   1.5px; a human one stays a human link (2.25px ink + midpoint dot) and
    only gains the dash -- the two must never be confusable (8.2). */
 .cv-link.machine.cycle { stroke: var(--clay); stroke-opacity: 1; stroke-width: 1.5; stroke-dasharray: 6 4; }
 .cv-link.human.cycle { stroke-dasharray: 6 4; }
@@ -927,7 +924,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-link.optimistic { stroke-opacity: 0.6; }
 .cv-link-g.selected .cv-link.machine { stroke-opacity: 1; stroke-width: 2.25; }
 .cv-link-g.selected .cv-link.human, .cv-link-g.selected .cv-link.machine.cycle { stroke-width: 3; }
-.cv-link-dot { fill: var(--clay); }
+.cv-link-dot { fill: var(--ink); }
 .cv-node.dim, .cv-link-g.dim { opacity: 0.22; }
 
 .cv-frames { pointer-events: none; }
@@ -961,7 +958,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-btn:hover, .cv-scope:hover { border-color: var(--ink); }
 .cv-scope { max-width: 16rem; cursor: pointer; }
 .cv-search { width: 10rem; }
-.cv-scope:focus, .cv-search:focus, .cv-btn:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+.cv-scope:focus, .cv-search:focus, .cv-btn:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
 .cv-more { position: relative; }
 .cv-menu { position: absolute; top: calc(100% + 4px); right: 0; background: var(--paper); border: 1px solid var(--line-strong); box-shadow: 0 2px 8px rgba(38, 34, 27, 0.1); min-width: 7rem; }
 .cv-menu-item { display: block; width: 100%; text-align: left; font: inherit; font-size: 0.8rem; color: var(--ink); background: none; border: none; padding: 0.4rem 0.7rem; cursor: pointer; white-space: nowrap; }
@@ -971,6 +968,8 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   font-family: var(--font-mono); font-size: 0.74rem; color: var(--ink-soft);
   background: var(--paper); border: 1px solid var(--line); padding: 0.1rem 0.45rem;
 }
+/* 21.8: why the view opened on 全部 -- one quiet line under the toolbar. */
+.cv-note { position: absolute; left: 12px; top: 58px; z-index: 1; max-width: min(36rem, calc(100% - 24px)); font-size: 0.78rem; color: var(--ink-soft); background: var(--paper); padding: 0.1rem 0.45rem; pointer-events: none; }
 .cv-status {
   position: absolute; left: 72px; bottom: 12px; z-index: 4; max-width: calc(100% - 96px);
   font-size: 0.76rem; color: var(--clay); background: var(--clay-soft); border: 1px solid var(--clay); padding: 0.1rem 0.55rem;
@@ -980,24 +979,24 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   font-size: 0.76rem; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong);
   padding: 0.25rem 0.55rem; box-shadow: 0 2px 8px rgba(38, 34, 27, 0.1);
 }
-.cv-tip.human { border-color: var(--clay); }
+.cv-tip.human { border-color: var(--ink); }
 /* Link editing (phase 2b): the curve being drawn, the socket halos, the
    confirm popover, the pinned link card, the right-click menu. */
 .cv-root.on-socket .cv-svg, .cv-root.on-socket .cv-node,
 .cv-root.linking .cv-svg, .cv-root.linking .cv-node { cursor: crosshair; }
 .cv-draft { pointer-events: none; }
-.cv-draft-path { fill: none; stroke: var(--clay); stroke-width: 2.25; stroke-opacity: 0.85; }
+.cv-draft-path { fill: none; stroke: var(--ink); stroke-width: 2.25; stroke-opacity: 0.85; }
 .cv-socket-halo {
-  fill: var(--clay-soft); stroke: var(--clay); stroke-width: 1; stroke-opacity: 0.5; pointer-events: none;
+  fill: var(--paper-alt); stroke: var(--ink); stroke-width: 1; stroke-opacity: 0.5; pointer-events: none;
   transform-box: fill-box; transform-origin: center; animation: cv-pulse 1.1s ease-in-out infinite;
 }
 @keyframes cv-pulse { 0%, 100% { transform: scale(1); opacity: 0.95; } 50% { transform: scale(1.5); opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .cv-socket-halo { animation: none; } }
 .cv-node.link-no .cv-socket.in, .cv-node.link-no .cv-socket-label.in { opacity: 0.25; }
-.cv-node.link-hot .cv-socket.in { fill: var(--clay); stroke: var(--clay); }
+.cv-node.link-hot .cv-socket.in { fill: var(--ink); stroke: var(--ink); }
 .cv-pop {
   position: absolute; z-index: 4; width: 21rem; max-width: calc(100% - 16px);
-  background: var(--paper); border: 1px solid var(--clay); padding: 0.7rem 0.8rem;
+  background: var(--paper); border: 1px solid var(--ink); padding: 0.7rem 0.8rem;
   box-shadow: 0 4px 14px rgba(38, 34, 27, 0.14); user-select: text; -webkit-user-select: text;
 }
 .cv-pop-line { font-size: 0.86rem; color: var(--ink); line-height: 1.45; word-break: break-all; margin-bottom: 0.6rem; }
@@ -1009,12 +1008,12 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   font-size: 0.76rem; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong);
   padding: 0.35rem 0.6rem; box-shadow: 0 2px 8px rgba(38, 34, 27, 0.1);
 }
-.cv-linkcard.human { border-color: var(--clay); }
+.cv-linkcard.human { border-color: var(--ink); }
 .cv-linkcard-assert { word-break: break-all; }
 .cv-linkcard-hint { color: var(--ink-soft); margin-top: 0.1rem; }
 .cv-linkcard-actions { display: flex; gap: 0.8rem; margin-top: 0.3rem; }
 .cv-text-btn, .cv-status-action {
-  font: inherit; font-size: 0.74rem; color: var(--clay); background: none; border: none; padding: 0;
+  font: inherit; font-size: 0.74rem; color: var(--ink); background: none; border: none; padding: 0;
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
 }
 .cv-text-btn:hover, .cv-status-action:hover { color: var(--ink); }
@@ -1024,7 +1023,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .cv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 2rem; text-align: center; color: var(--ink-soft); font-size: 0.88rem; pointer-events: none; }
 /* V5 (9.6 "Where it shows"): a link whose old judgment waits is drawn as
    the machine link it is now, plus a small ochre ring at its midpoint --
-   never clay (clay is the human link's dot) and never invisible. */
+   never clay (a review is not a problem) and never invisible. */
 .cv-review-mark { fill: var(--paper); stroke: var(--ochre); stroke-width: 1.75; }
 .cv-tip.review, .cv-linkcard.review { border-color: var(--ochre); }
 .cv-linkcard { max-width: 25rem; user-select: text; -webkit-user-select: text; }
@@ -1032,7 +1031,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   display: block; width: 100%; margin-top: 0.35rem; font: inherit; font-size: 0.74rem; color: var(--ink);
   background: var(--paper-alt); border: 1px solid var(--line-strong); border-radius: 0; padding: 0.15rem 0.4rem;
 }
-.cv-linkcard-note:focus { outline: 1px solid var(--clay); outline-offset: 1px; }
+.cv-linkcard-note:focus { outline: 1px solid var(--ink); outline-offset: 1px; }
 .cv-linkcard-actions { flex-wrap: wrap; }
 .cv-linkcard-history { margin-top: 0.45rem; padding-top: 0.3rem; border-top: 1px solid var(--line); max-height: 13rem; overflow-y: auto; }
 .cv-linkcard-history-title { color: var(--ink-soft); font-size: 0.7rem; margin-bottom: 0.1rem; }
@@ -1047,7 +1046,7 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 
 /* -- 路线图, the desk's route map (DESIGN.md 14.1, 14.2; drawn by routemap.js) --
    The attempts are the cards, toned by their verdict's status; the 「源自」
-   lines are a human's lines (clay, 8.2); marks are quiet words. Its toolbar,
+   lines are a human's lines (ink, 21.8); marks are quiet words. Its toolbar,
    chip and popover take 关系图's classes. */
 .desk-map { position: relative; flex: 1; min-width: 0; }
 .rm-root {
@@ -1068,9 +1067,9 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .rm-card.tone-clay { border-left-color: var(--clay); }
 .rm-card.tone-gray { border-left-color: var(--gray); }
 .rm-card:hover { box-shadow: 0 0 0 1px var(--ink-soft); }
-.rm-card.selected, .rm-card.target { box-shadow: 0 0 0 2px var(--clay); }
+.rm-card.selected, .rm-card.target { box-shadow: 0 0 0 2px var(--ink); }
 .rm-card.marked { box-shadow: 0 0 0 2px var(--ochre); }
-.rm-card.target { background: var(--clay-soft); }
+.rm-card.target { background: var(--paper); }
 .rm-card.dragging { cursor: grabbing; box-shadow: 0 6px 14px rgba(38, 34, 27, 0.18); }
 .rm-card.abandoned { background: var(--paper); opacity: 0.62; }
 .rm-head, .rm-meta { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -1096,18 +1095,18 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .rm-mark { flex: none; max-width: 100%; white-space: normal; font-size: 11px; line-height: 17px; color: var(--ink-soft); background: var(--paper); padding: 0 6px; }
 .rm-handle {
   position: absolute; right: -7px; top: 37px; width: 12px; height: 12px; border-radius: 50%;
-  background: var(--paper); border: 1.5px solid var(--clay); cursor: crosshair;
+  background: var(--paper); border: 1.5px solid var(--ink); cursor: crosshair;
 }
-.rm-handle:hover { background: var(--clay-soft); }
+.rm-handle:hover { background: var(--paper-alt); }
 .rm-caption { position: absolute; font-family: var(--font-sans); font-size: 12px; line-height: 20px; color: var(--ink-soft); white-space: nowrap; pointer-events: none; }
 .rm-line-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
-.rm-line-path { fill: none; stroke: var(--clay); stroke-width: 2.25; pointer-events: none; }
+.rm-line-path { fill: none; stroke: var(--ink); stroke-width: 2.25; pointer-events: none; }
 .rm-line.pending .rm-line-path { stroke-dasharray: 6 4; }
 .rm-line.selected .rm-line-path { stroke-width: 3.5; }
-.rm-line-dot { fill: var(--clay); pointer-events: none; }
-.rm-line-label { font-family: var(--font-sans); font-size: 11px; fill: var(--clay); pointer-events: none;
+.rm-line-dot { fill: var(--ink); pointer-events: none; }
+.rm-line-label { font-family: var(--font-sans); font-size: 11px; fill: var(--ink); pointer-events: none;
   paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round; } /* legible over the dashed line */
-.rm-draft { fill: none; stroke: var(--clay); stroke-width: 2.25; stroke-opacity: 0.85; pointer-events: none; }
+.rm-draft { fill: none; stroke: var(--ink); stroke-width: 2.25; stroke-opacity: 0.85; pointer-events: none; }
 /* 提议新的尝试's 源自 (14.2): the official attempts, a short scrolling list. */
 .parent-picks { display: flex; flex-direction: column; gap: 2px; max-height: 9rem; overflow-y: auto; padding: 4px 6px;
   border: 1px solid var(--line); border-radius: 4px; background: var(--paper); }
@@ -1229,7 +1228,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
    no outlined badges. */
 .var-chip { font-size: 0.75rem; line-height: 1.5; padding: 0 0.4rem; background: var(--paper-alt); color: var(--ink-soft); white-space: nowrap; }
 .var-chip.in-use { background: var(--olive-soft); color: var(--olive); }
-.var-chip.draft { background: var(--ochre-soft); color: var(--ochre); }
+.var-chip.is-draft { background: var(--ochre-soft); color: var(--ochre); }
 .var-chip.dead { background: var(--gray-soft); color: var(--gray); }
 .var-chip.bad { background: var(--clay-soft); color: var(--clay); }
 .var-chip.wait { background: var(--ochre-soft); color: var(--ochre); }
@@ -1240,7 +1239,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .var-aliases { font-size: 0.8rem; color: var(--ink-soft); margin-bottom: 0.9rem; }
 .var-versions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1.2rem 0 0.9rem; }
 .var-version-btn { font: inherit; font-size: 0.78rem; padding: 0.22rem 0.6rem; background: var(--paper-alt); border: 1px solid var(--line-strong); cursor: pointer; color: var(--ink-soft); }
-.var-version-btn.active { color: var(--ink); border-color: var(--clay); box-shadow: inset 0 -2px 0 var(--clay); }
+.var-version-btn.active { color: var(--ink); border-color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
 .var-doc { border: 1px solid var(--line-strong); background: var(--paper); padding: 1.1rem 1.4rem; max-width: 820px; }
 .var-doc-label { font-size: 0.78rem; color: var(--ochre); margin-bottom: 0.5rem; }
 .var-block { margin: 0 0 1.1rem; }
@@ -1260,7 +1259,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .var-line.bad { color: var(--clay); }
 .var-line.soft { color: var(--ink-soft); }
 .var-line .btn-small { margin-left: 0.6rem; }
-.var-statement { font-size: 0.86rem; padding: 0.35rem 0.6rem; border-left: 2px solid var(--clay); background: var(--paper-alt); margin: 0.3rem 0; }
+.var-line .ws-text-link { margin-left: 0.6rem; }
+.var-statement { font-size: 0.86rem; padding: 0.35rem 0.6rem; border-left: 2px solid var(--ink); background: var(--paper-alt); margin: 0.3rem 0; }
 .var-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
 .var-actions .form-input { flex: 1 1 16rem; font-size: 0.8rem; }
 .var-ask { border: 1px solid var(--ochre); background: var(--ochre-soft); padding: 0.7rem 0.9rem; margin-top: 0.7rem; font-size: 0.86rem; }
@@ -1287,7 +1287,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-draft-head > span { margin-right: 0.6rem; }
 .lit-draft-head .lit-file { color: var(--ink); }
 .lit-draft-head:hover { background: var(--paper-alt); }
-.lit-draft-head:focus-visible { outline: 1px solid var(--clay); outline-offset: -1px; }
+.lit-draft-head:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
 .lit-file { font-family: var(--font-mono); font-size: 0.82rem; word-break: break-all; }
 .lit-counts { font-size: 0.78rem; color: var(--ink-soft); }
 .lit-cites { padding: 0 0 0.6rem 1.6rem; }
@@ -1301,7 +1301,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-ref-text { font-size: 0.84rem; word-break: break-word; }
 .lit-ref-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.8rem; font-size: 0.76rem; margin-top: 0.1rem; }
 .lit-how { color: var(--ink-soft); }
-.lit-link, .lit-link-btn { font: inherit; font-size: 0.76rem; color: var(--clay); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.lit-link, .lit-link-btn { font: inherit; font-size: 0.76rem; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .lit-link:hover, .lit-link-btn:hover { color: var(--ink); }
 .lit-judge { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.3rem; }
 .lit-hint { font-size: 0.76rem; color: var(--ink-soft); }
@@ -1309,15 +1309,15 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .lit-quiet-file { font-family: var(--font-mono); font-size: 0.78rem; padding: 0.1rem 0; word-break: break-all; }
 .lit-tabs { display: flex; gap: 1rem; border-bottom: 1px solid var(--line); margin-bottom: 1.2rem; }
 .lit-tab { font: inherit; color: var(--ink-soft); border: 0; border-bottom: 2px solid transparent; background: none; padding: 0.4rem 0; cursor: pointer; }
-.lit-tab.active { color: var(--ink); border-bottom-color: var(--clay); }
+.lit-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
 .lit-library-tools { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .lit-search { width: min(100%, 420px); box-sizing: border-box; font: inherit; font-size: 0.86rem; padding: 0.5rem 0.6rem; color: var(--ink); background: var(--paper-alt); border: 1px solid var(--line-strong); border-radius: 0; }
-.lit-search:focus-visible { outline: 1px solid var(--clay); outline-offset: 1px; }
+.lit-search:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
 .lit-library-grid { display: grid; grid-template-columns: minmax(230px, 34%) minmax(0, 1fr); gap: 1.8rem; align-items: start; }
 .lit-library-list { max-height: 72vh; overflow-y: auto; border-right: 1px solid var(--line); padding-right: 0.8rem; }
 .lit-library-item { display: block; width: 100%; box-sizing: border-box; font: inherit; text-align: left; color: var(--ink); background: none; border: 0; border-left: 2px solid transparent; border-bottom: 1px solid var(--line); padding: 0.8rem; cursor: pointer; }
 .lit-library-item:hover, .lit-library-item.active { background: var(--paper-alt); }
-.lit-library-item.active { border-left-color: var(--clay); }
+.lit-library-item.active { border-left-color: var(--ink); }
 .lit-library-item-title { display: block; font-family: var(--font-serif); line-height: 1.5; overflow-wrap: anywhere; }
 .lit-library-meta { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 0.35rem; overflow-wrap: anywhere; }
 .lit-reader { min-width: 0; }
@@ -1353,8 +1353,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .route-num { flex: none; min-width: 2.6rem; color: var(--ink-soft); }
 .route-date { flex: none; min-width: 4.6rem; font-size: 0.8rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .route-title { font: inherit; font-size: 0.92rem; font-weight: 500; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer; text-align: left; border-bottom: 1px solid transparent; }
-.route-title:hover { border-bottom-color: var(--clay); }
-.route-title:focus-visible { outline: 1px solid var(--clay); outline-offset: 2px; }
+.route-title:hover { border-bottom-color: var(--ink); }
+.route-title:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .route-basis { margin: 0.3rem 0 0 3.3rem; }
 .route-fact { font-size: 0.84rem; margin: 0.1rem 0; white-space: pre-wrap; word-break: break-word; }
 .route-src { font-size: 0.74rem; color: var(--ink-soft); margin-left: 0.6rem; }
@@ -1406,7 +1406,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .draft .node-sec-title { font-size: 1rem; }
 .draft-file { padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
 .draft-file label { cursor: pointer; }
-.join-fp { margin: 0.5rem 0; padding: 0.5rem 0.7rem; border-left: 2px solid var(--clay); background: var(--paper); }
+.join-fp { margin: 0.5rem 0; padding: 0.5rem 0.7rem; border-left: 2px solid var(--ink); background: var(--paper); }
 .join-fp .mono { font-size: 0.86rem; word-break: break-all; }
 .welcome-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 
@@ -1469,7 +1469,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <span id="project-state" class="project-state hidden" role="status"></span>
       <span id="refresh-chip" class="refresh-chip hidden" role="status"></span>
       <span id="scan-chip" class="scan-chip hidden" role="status" aria-live="polite"></span>
-      <button id="new-attempt-btn" class="btn new-attempt-btn hidden" type="button" data-i18n>新增尝试</button>
+      <button id="new-attempt-btn" class="btn btn-primary new-attempt-btn hidden" type="button" data-i18n>新增尝试</button>
     </header>
     <main id="main">
       <!-- V5: what the record needs from the researcher right now (a
@@ -3587,6 +3587,8 @@ const endPanelResize = (() => {
 // -- End panel resizing.
 
 function openPanel() {
+  // 21.8: a panel's title is in the title font in both languages; the mono is for a file's path (the file panel's title)
+  panelTitle.classList.toggle("path-title", !!(state.panelSubject && state.panelSubject.kind === "file"));
   panel.classList.remove("hidden");
   panelBackdrop.classList.remove("hidden");
   panel.setAttribute("aria-hidden", "false");
@@ -4567,6 +4569,7 @@ function renderAttemptForm(mode, attemptId) {
   function renderPreview(preview, body, moved) {
     previewHost.innerHTML = "";
     setFormDisabled(true); // frozen while the preview stands -- 返回修改 unfreezes
+    submitBtn.classList.remove("btn-primary"); // 21.8: the preview's confirm is the one primary button while it stands
     if (preview.old_row !== null && preview.old_row !== undefined) {
       const oldLabel = document.createElement("div");
       oldLabel.className = "diff-label";
@@ -4602,6 +4605,7 @@ function renderAttemptForm(mode, attemptId) {
     backBtn.addEventListener("click", () => {
       previewHost.innerHTML = "";
       setFormDisabled(false);
+      submitBtn.classList.add("btn-primary");
       statusEl.textContent = "";
     });
     confirmActions.append(confirmBtn, backBtn);
@@ -5616,7 +5620,7 @@ function cardChips(row) {
   if (row.state && row.state !== "ok") chips.push([row.reason === "conflict" ? "两份历史待处理" : "无法读取", "bad"]);
   if (row.abandoned) chips.push(["已弃用", "dead"]);
   else if (row.in_use != null) chips.push(["使用 v" + row.in_use, "in-use"]);
-  if (row.draft != null) chips.push(["草稿 v" + row.draft, "draft"]);
+  if (row.draft != null) chips.push(["草稿 v" + row.draft, "is-draft"]);
   if (row.in_use == null && row.draft == null && !row.abandoned && row.state === "ok") chips.push(["还没有版本", ""]);
   return chips;
 }
@@ -5816,7 +5820,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
     const head = mk("div", "registered-task-head");
     if (found.title) head.appendChild(mk("h3", "registered-task-title", found.title));
     if (found.at) head.appendChild(mk("span", "lit-hint registered-time", atText(found.at)));
-    if (found.report) head.appendChild(mkButton(t("打开结果"), "btn btn-small", () => (found.handed ? ROWorkspace.openHandback(found.report) : openResultOnHome(found.report))));
+    if (found.report) head.appendChild(mkButton(t("打开结果"), "ws-text-link", () => (found.handed ? ROWorkspace.openHandback(found.report) : openResultOnHome(found.report))));
     if (head.children.length) found.node.appendChild(head);
     box.appendChild(found.node);
     return found.node;
@@ -5826,7 +5830,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
     more.remove();
     items.slice(shown, shown + 50).forEach((item) => {
       const row = mk("div", "registered-output"), found = tasks.get(item.task || item.report || "");
-      row.appendChild(mkButton(item.title || item.path, "btn btn-small", () => openFilePanel(item.path)));
+      row.appendChild(mkButton(item.title || item.path, "ws-text-link ws-file-link", () => openFilePanel(item.path)));
       row.appendChild(mk("span", "mono lit-hint", item.path));
       if (item.agent) row.appendChild(mk("span", "lit-hint", item.agent));
       // a row made at another time than its heading says (a later run's file, a person's own registration) says so
@@ -5845,7 +5849,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
         row.appendChild(mk("span", "lit-hint", t("表格预览：最多显示 10 行、20 列。")));
       }
       if (variableDrafts && item.variable_card) {
-        row.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(item.variable_card)));
+        row.appendChild(mkButton(t("打开定义卡"), "ws-text-link", () => openVariableCard(item.variable_card)));
       } else if (variableDrafts) {
         const definition = item.definition || {};
         row.appendChild(mk("p", null, [definition.name, definition.meaning, definition.unit, definition.granularity].filter(Boolean).join(" · ")));
@@ -5997,7 +6001,7 @@ function confirmationSection(host, card, v) {
     const cls = item.result === "已核对" ? " ok" : item.result === "不符" ? " bad" : " soft";
     const line = mk("div", "var-line" + cls, checkLine(k, item));
     if (k === "script" && item.copy && !v.code_missing) {
-      line.appendChild(mkButton("查看当时的代码", "btn btn-small", () => openVariableCopy(card.id, entry, "code")));
+      line.appendChild(mkButton("查看当时的代码", "ws-text-link", () => openVariableCopy(card.id, entry, "code")));
     }
     sec.appendChild(line);
   });
@@ -6218,7 +6222,7 @@ function disputeNotice(card) {
     const line = mk("div", "var-line" + (chosen[candidateOf[e.id]] === e.id ? " chosen" : ""), cardActText(e));
     if (e.content) line.appendChild(mk("span", "var-id", " · 内容 " + String(e.content).slice(7, 15)));
     if (e.attested) line.appendChild(mk("span", "var-id", " · 说明：输出按此口径生成 — " + (ATTESTED_WORDS[e.attested] || e.attested)));
-    if (e.frozen) line.appendChild(mkButton("查看这一条的文字", "btn btn-small", () => openVariableCopy(card.id, e, "frozen")));
+    if (e.frozen) line.appendChild(mkButton("查看这一条的文字", "ws-text-link", () => openVariableCopy(card.id, e, "frozen")));
     if (candidateOf[e.id] != null && !blocked) {
       const pick = mkButton(chosen[candidateOf[e.id]] === e.id ? "已选：以这一条为准" : "以这一条为准", "btn btn-small", () => {
         chosen[candidateOf[e.id]] = e.id;
@@ -6473,7 +6477,7 @@ function renderVariableCard(host, card) {
     const line = mk("div", "var-line" + (e.in_force === false ? " off" : ""), cardActText(e) + (e.in_force === false ? "（不再生效）" : ""));
     if (e.attested) line.appendChild(mk("span", "var-id", " · 说明：输出按此口径生成 — " + (ATTESTED_WORDS[e.attested] || e.attested)));
     if (e.note) line.appendChild(mk("div", "entry-sub", "理由：" + e.note));
-    if (e.frozen) line.appendChild(mkButton("查看这一版当时的文字", "btn btn-small", () => openVariableCopy(card.id, e, "frozen")));
+    if (e.frozen) line.appendChild(mkButton("查看这一版当时的文字", "ws-text-link", () => openVariableCopy(card.id, e, "frozen")));
     hist.appendChild(line);
   });
   host.appendChild(hist);

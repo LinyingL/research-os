@@ -759,7 +759,7 @@
     const actions = mk("div", "desk-actions");
     main.appendChild(actions);
     if (!subject) {
-      actions.appendChild(mkButton(t("查看"), "btn btn-small", () => openProposal(p)));
+      actions.appendChild(mkButton(t("查看"), "ws-text-link", () => openProposal(p)));
       if (!forPi && p.state === "returned") actions.appendChild(mkButton(t("知道了"), "btn btn-small", () => sayGotIt(p)));
     } else {
       const key = (p.by || "") + "/" + p.id;
@@ -767,7 +767,7 @@
       main.appendChild(inner);
       const open = () => { subject.open.add(key); actions.textContent = ""; openInPlace(subject, p, inner); };
       if (subject.open.has(key)) open();
-      else actions.appendChild(mkButton(t("查看"), "btn btn-small", open));
+      else actions.appendChild(mkButton(t("查看"), "ws-text-link", open));
     }
     row.appendChild(main);
     return row;
@@ -841,7 +841,7 @@
     if (r.headline) s.main.appendChild(mk("p", "desk-note plain", r.headline));
     s.main.appendChild(concernLine(r));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => openHandback(r.report, null)));
+    actions.appendChild(mkButton(t("打开交回"), "ws-text-link", () => openHandback(r.report, null)));
     s.main.appendChild(actions);
     return s.row;
   }
@@ -882,7 +882,7 @@
     if (r.kind === "answer") {
       actions.appendChild(mkButton(t("回答"), "btn btn-small", () => goToRun("answer", r.task.id)));
     } else {
-      actions.appendChild(mkButton(t("运行日志"), "btn btn-small", () => goToRun("log", r.task.id)));
+      actions.appendChild(mkButton(t("运行日志"), "ws-text-link", () => goToRun("log", r.task.id)));
       const gotIt = mkButton(t("知道了"), "btn btn-small", () => setAside(r, gotIt, status));
       actions.appendChild(gotIt);
     }
@@ -1477,7 +1477,7 @@
         main.appendChild(metaLine([ownerWords(item), item.due]));
         if (item.report) {
           const actions = mk("div", "desk-actions");
-          actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => { openHandback(item.report, id); }));
+          actions.appendChild(mkButton(t("打开交回"), "ws-text-link", () => { openHandback(item.report, id); }));
           main.appendChild(actions);
         }
         li.appendChild(main);
@@ -1631,7 +1631,7 @@
     if (a.abandoned && a.reason) head.appendChild(mk("p", "desk-note", t("放弃的理由：{reason}", { reason: a.reason })));
     if (a.abandoned && a.decision) head.appendChild(metaLine([decisionWho(a.decision), whenWords(a.decision.at, now())]));
     const actions = mk("div", "desk-actions");
-    actions.appendChild(mkButton(t("打开详情页"), "btn btn-small", () => leaveTo(id)));
+    actions.appendChild(mkButton(t("打开详情页"), "ws-text-link", () => leaveTo(id)));
     head.appendChild(actions);
     return head;
   }
@@ -1970,6 +1970,7 @@
 
     function showPreview(p, b, moved) {
       freeze(true);
+      go.classList.remove("btn-primary");   // 21.8: the preview's confirm is the one primary button while it stands
       shown.textContent = "";
       if (p.old_row != null) shown.append(mk("div", "diff-label", t("原行")), mk("div", "diff-row old", p.old_row));
       shown.append(mk("div", "diff-label", t("新行")), mk("div", "diff-row new", p.new_row));
@@ -1986,7 +1987,7 @@
       const actions = mk("div", "form-actions");
       const ok = mkButton(proposing ? t("保存后查看提议") : t("保存修改"), "btn btn-primary",
         () => (moved ? saveNow(p, b) : write(b, ok, back)));
-      const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); setStatus(status, "", ""); });
+      const back = mkButton(t("返回修改"), "btn", () => { shown.textContent = ""; freeze(false); go.classList.add("btn-primary"); setStatus(status, "", ""); });
       actions.append(ok, back);
       shown.appendChild(actions);
     }

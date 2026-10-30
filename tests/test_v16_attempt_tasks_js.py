@@ -152,7 +152,7 @@ def test_the_panel_lists_the_attempts_tasks_in_after_order_with_owner_state_in_w
     assert [line for line in section if line.startswith("status-label tone-clay")] == [
         "status-label tone-clay: " + states[5], "status-label tone-clay: " + states[6]]  # what is wrong, and only that
     assert "desk-meta: Claude Code · sonnet · 2026-11-02" in section and "desk-meta: Zhang San" in section
-    assert section.count("btn btn-small: " + w("打开交回", "Open handback")) == 2 and "btn btn-small: " + w("在这条尝试下加任务", "Add a task under this attempt") in lines
+    assert section.count("ws-text-link: " + w("打开交回", "Open handback")) == 2 and "btn btn-small: " + w("在这条尝试下加任务", "Add a task under this attempt") in lines
     report = "research/results/" + "a" * 32 + ".md"
     assert out["extra"] == [report, report, {"attempt": A16, "after": "g"}]   # the form defaults to the attempt's last task in `after` order
     if lang == "en":
@@ -197,7 +197,7 @@ def test_someone_who_cannot_write_in_the_project_is_not_offered_the_way_to_add_a
       const open = panelPart('panel-body').all().find((k) => k.tag === 'BUTTON' && k.kids.join('') === '打开交回');
       open.click();
     """ % json.dumps(A16))
-    assert "btn btn-small: 在这条尝试下加任务" not in out["lines"] and "btn btn-small: 打开交回" in out["lines"]
+    assert "btn btn-small: 在这条尝试下加任务" not in out["lines"] and "ws-text-link: 打开交回" in out["lines"]
     assert out["extra"] == "research/results/" + "a" * 32 + ".md"  # nothing half typed: no question, the report opens
 
 

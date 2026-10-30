@@ -63,7 +63,10 @@ are deliberately not pulled in -- 8.7 names only the upstream direction,
 and following both would re-grow the hairball the scope exists to cut.
 The default scope is the current attempt: the one row whose verdict
 carries ✅ when exactly one does, else the most recent row by natural `#`
-order (`attempt_sort_key`); `all` only when the graph has no attempts.
+order (`attempt_sort_key`); `all` when the graph has no attempts, and
+(21.8, B5-1) when the current attempt has nothing to draw -- a request that names no
+scope is then answered with `all` and `fell_back_from`, the current attempt's own summary, so
+the page can say why in one quiet line; a request that names the attempt still gets its empty view.
 
 Layout state (sections 8.6, 9.2)
 --------------------------------
@@ -335,6 +338,7 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     if scope == SCOPE_ROUTES:
         return {"scope": scope, "visible": {a["id"] for a in db.get_nodes_by_type(conn, "attempt")}}
     gone = lineage.replaced_targets(conn)  # answered by the researcher's entry: the list does not list them (21.5)
+    asked_default = scope is None
     nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t) if n["id"] not in gone}
     edges = [
         e for t in CANVAS_EDGE_TYPES for e in db.query_edges(conn, type=t)
@@ -390,8 +394,13 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
         upstream = {e["src"] for e in edges if e["type"] == "writes" and e["dst"] in read}
         visible = own | touched | upstream
         grouped = [by_id[scope]]
+    fell_back = None
+    if asked_default and scope != SCOPE_ALL and not visible:
+        # 21.8: the current attempt has no file to draw (a thesis chapter not yet linked to anything): open on 全部, and say so
+        fell_back = by_id[scope]
+        scope, visible, grouped = SCOPE_ALL, set(nodes) | set(ghosts), attempts
     return {
-        "scope": scope, "nodes": nodes, "edges": edges, "attempts": attempts, "by_id": by_id,
+        "scope": scope, "nodes": nodes, "edges": edges, "attempts": attempts, "by_id": by_id, "fell_back": fell_back,
         "default": default, "step_ids": step_ids, "ghosts": ghosts, "visible": visible, "grouped": grouped,
     }
 
@@ -461,7 +470,7 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
     # 9.6 "Where it shows": a link whose judgment is under review or in
     # conflict carries the mark; a candidate for an old judgment the hint.
     flags = judgements.link_flags(conn)
-    return {
+    payload = {
         "nodes": node_entries,
         "links": sorted((flags.annotate(link_entry(e)) for e in links), key=lambda link: link["id"]),
         # 9.2: the arrangement record's own state -- a file Research OS cannot read
@@ -476,6 +485,9 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
             else _scope_summary(by_id[scope], labels)),
         "scopes": [dict(_scope_summary(a, labels), current=a["id"] == default_id) for a in view["attempts"]],
     }
+    if view.get("fell_back"):  # 21.8: opened on 全部 because the current attempt has nothing to draw; the page says so
+        payload["fell_back_from"] = _scope_summary(view["fell_back"], labels)
+    return payload
 
 
 # -- canvas.json (section 8.6) ---------------------------------------------------

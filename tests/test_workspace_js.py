@@ -1090,7 +1090,7 @@ STATES = [
     ({}, None, None, None, ["运行"]),
     ({}, {"state": "preparing", "can_stop": True}, "准备中", "ochre", ["停止", "运行日志"]),
     ({}, {"state": "running", "can_stop": True}, "运行中", "ochre", ["停止", "运行日志"]),
-    ({}, {"state": "needs_input", "can_reply": True, "question": "Which sample?"}, "等你回答", "clay", ["运行日志", "回答"]),
+    ({}, {"state": "needs_input", "can_reply": True, "question": "Which sample?"}, "等你回答", "ochre", ["运行日志", "回答"]),
     ({"done": True, "report": REPORT}, {"state": "done", "can_reply": True, "can_revert": True, "changes": 3, "report": REPORT},
      "已完成", "olive", ["运行日志", "打回", "撤回本次运行", "打开结果"]),
     ({}, {"state": "ended", "can_reply": True}, "未报告", "gray", ["运行", "运行日志", "打回"]),

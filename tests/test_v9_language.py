@@ -1548,7 +1548,9 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 待复核, 正式版本有更新, 连线的一端找不到了) --, a 待复核 row is one attempt's (or the judgments that belong to none), its count
 #: sentence is its own, and a column with nothing to do folds to a strip. The words of each row are the ones they were.
 #: Moved again by 21.6 (fix batch 3): the row for a line whose end is missing says 尝试表, not 年表 (the digest changes by that word only).
-_DESK_ZH_SHA256 = "b61ea1afe701d06b9b3206dfe0cc3af777ef6ff0e307f021d18e5c4815d1a77f"
+#: Moved again by 21.8 (B5-1): 打开交回, 打开详情页, 查看, 运行日志 and 当时的依据 only navigate, so they are text links (the class `ws-text-link`)
+#: and no longer `btn btn-small` (the digest changes by that class only).
+_DESK_ZH_SHA256 = "b0134594c864d96b4706ecf1f9e049fb420e5b794089126429d804d03b56c52b"
 
 
 @needs_node
@@ -1578,7 +1580,7 @@ def test_13_7_the_desk_in_english():
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in [
         "desk-column-title: Needs you", "status-label tone-plain: New attempt",
-        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024", "btn btn-small: View",
+        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024", "ws-text-link: View",
         "desk-link strong: #16: change the research assessment from “Pending” to “Abandoned”, abandoning the route, with 2 files "
         "(title: Mark the attempts it touches on the route map)",
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",

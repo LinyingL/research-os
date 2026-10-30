@@ -47,7 +47,7 @@ function el(tag, cls, text) {
     setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
     focus() { global.focused = this; },
     all() { const out = []; const walk = (n) => n.kids.forEach((k) => { if (typeof k !== "string") { out.push(k); walk(k); } }); walk(this); return out; },
-    querySelectorAll(sel) { const tags = sel.split(",").map((s) => s.trim().toUpperCase()); return this.all().filter((k) => tags.includes(k.tag)); },
+    querySelectorAll(sel) { const parts = sel.split(",").map((s) => s.trim()); return this.all().filter((k) => parts.some((s) => (s.startsWith(".") ? k.cls.has(s.slice(1)) : s.toUpperCase() === k.tag))); },
     querySelector(sel) { return this.all().find((k) => k.cls.has(sel.slice(1))) || null; },
     click() { (this.on.click || []).forEach((f) => f({ preventDefault() {}, stopPropagation() {} })); },
   };
@@ -229,7 +229,7 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
     lines = out["lines"]
     assert out["subject"] == A16 and out["backdrop"] == "hidden"
     for line in ["panel-title plain-title: #16 TopicShift 波动", "panel-subtitle: 07-26", "status-label tone-ochre: 待定",
-                 "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 研究判断与结果",
+                 "verdict-words: 先看", "dp-mark: 待复核 1", "ws-text-link: 打开详情页", "node-sec-title: 研究判断与结果",
                  "status-pick selected: 待定", "status-pick: 现行", "status-pick: 已放弃", "status-pick: 其它", "status-caption: 理由",
                  "form-textarea status-reason:  = 先看", "form-textarea:  = t=2.91",
                  "btn btn-primary: 保存", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
@@ -261,7 +261,7 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
-                 "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "status-pick: Abandoned", "status-caption: Reason",
+                 "ws-text-link: Open the details page", "node-sec-title: Research assessment and result", "status-pick: Abandoned", "status-caption: Reason",
                  "btn btn-primary: Save", "node-sec-title: Write a comment", "desk-meta: Li · 1 Mar 2024",
                  "btn btn-small: Add comment", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",

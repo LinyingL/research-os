@@ -67,7 +67,7 @@ const cards = () => cls('ws-now-card').map((card) => ({
 const needsRows = () => cls('desk-row', cls('ws-now-needs')[0]).map((row) => ({
   chip: text('status-label', row)[0], what: text('desk-what', row)[0] || null, meta: text('desk-meta', row)[0] || null,
   attempt: text('desk-link', row)[0] || null,
-  buttons: row.all().filter((e) => e.tagName === 'BUTTON' && e.classList.contains('btn')).map((b) => b.textContent) }));
+  buttons: row.all().filter((e) => e.tagName === 'BUTTON' && (e.classList.contains('btn') || e.classList.contains('ws-text-link'))).map((b) => b.textContent) }));
 const button = (label, where = root) => where.all().find((e) => e.tagName === 'BUTTON' && e.textContent === label);
 """
 

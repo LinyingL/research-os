@@ -25,7 +25,7 @@
       the meaningful tail survives, sockets on the card edge per the 8.1
       table; states selected / missing / orphan input / ghost;
     - links as horizontal-tangent cubic Béziers under the cards: machine
-      links thin ink at 45%, pending dashed; human mappings thicker clay
+      links thin ink at 45%, pending dashed; human mappings thicker ink
       with a midpoint dot -- never confusable at a glance (Section 4's
       machine annotation vs. human judgement, made visible);
     - attempt frames behind their step files, titled in the decision
@@ -80,6 +80,11 @@ window.RCECanvas = (function () {
   // The SVG namespace is an identifier, not a fetch: the page still loads
   // nothing from outside this process.
   const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // 13.6: the one pair every module that says a word of its own carries (21.8: 关系图 says why it opened on 全部; the rest of
+  // this page is still the Chinese it was).
+  function fillVars(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v && Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; }); }
+  function t(s, v) { var I = typeof window !== "undefined" && window.ROI18N; return I ? I.t(s, v) : fillVars(s, v); }
 
   // -- Geometry (8.2 / 8.4) ---------------------------------------------------
   const NODE_W = 220;
@@ -191,6 +196,8 @@ window.RCECanvas = (function () {
     // 数据与代码 view last showed, restored when the canvas goes back there;
     // nearHost the node page's container it was drawn in.
     mainScope: null, nearHost: null,
+    // 21.8: the current attempt had nothing to draw, so the view opened on 全部: {attempt, project} while that stays the view
+    fellBack: null,
   };
 
   // -- Small helpers ----------------------------------------------------------
@@ -948,9 +955,10 @@ window.RCECanvas = (function () {
     const linkCard = htmlEl("div", "cv-linkcard hidden");
     const ctxMenu = htmlEl("div", "cv-menu cv-ctx hidden");
     const notice = htmlEl("div", "cv-notice hidden");
-    root.append(s.svg, t.bar, zoom, status, tip, empty, linkCard, ctxMenu, notice);
+    const note = htmlEl("div", "cv-note hidden");
+    root.append(s.svg, t.bar, zoom, status, tip, empty, linkCard, ctxMenu, notice, note);
     container.appendChild(root);
-    cv.dom = Object.assign({ root, zoom, status, tip, empty, linkCard, ctxMenu, notice }, s, t);
+    cv.dom = Object.assign({ root, zoom, status, tip, empty, linkCard, ctxMenu, notice, note }, s, t);
     // A click on the chip dismisses it -- unless it offers an action: a
     // near miss on 「撤销」 must not silently throw the undo away.
     status.addEventListener("click", (e) => {
@@ -1038,7 +1046,7 @@ window.RCECanvas = (function () {
 
   // A cycle-closing link KEEPS its human/machine class and only adds
   // "cycle" (dashed): a human mapping on a loop must still be a human link
-  // at a glance -- thick clay, midpoint dot -- never a copy of the machine
+  // at a glance -- thicker ink, midpoint dot -- never a copy of the machine
   // style (8.2's one rule that may not bend; adversarial review of V4).
   function linkClass(link) {
     const cls = ["cv-link", link.human ? "human" : "machine"];
@@ -1191,6 +1199,14 @@ window.RCECanvas = (function () {
 
   function isNear(scope) {
     return typeof scope === "string" && scope.indexOf("near:") === 0;
+  }
+
+  // 21.8: one quiet line saying why the view opened on 全部 (the current attempt has no file to draw), while it stays the view.
+  function renderNote() {
+    if (!cv.dom) return; // nothing drawn yet (and the node tests run without a DOM)
+    const from = cv.fellBack && cv.scope === SCOPE_ALL ? cv.fellBack.attempt : null;
+    cv.dom.note.classList.toggle("hidden", !from);
+    cv.dom.note.textContent = from ? t("「#{number} {title}」还没有可画的文件，所以先显示全部。", { number: String(from.number).replace(/^#/, ""), title: from.title || "" }) : "";
   }
 
   function renderScopeSelect() {
@@ -1603,7 +1619,7 @@ window.RCECanvas = (function () {
 
   // -- Editing: drawing a link (8.3) ------------------------------------------
   // Press on an OUTPUT socket, drag, drop on an input socket. While the
-  // pointer moves, compatible inputs pulse (a --clay-soft halo) and the
+  // pointer moves, compatible inputs pulse (an ink halo) and the
   // rest dim; the curve snaps to a compatible socket under the pointer.
   // Drop on a compatible socket -> the confirm popover; on an incompatible
   // one -> its one-line refusal; anywhere else -> nothing at all. The
@@ -2585,6 +2601,8 @@ window.RCECanvas = (function () {
     mergeOptimistic(payload);
     cv.scope = payload.scope.id;
     cv.project = payload.project || null;
+    if (payload.fell_back_from) cv.fellBack = { attempt: payload.fell_back_from, project: cv.project };
+    else if (cv.fellBack && (cv.scope !== SCOPE_ALL || cv.fellBack.project !== cv.project)) cv.fellBack = null;
     cv.nodes = new Map(payload.nodes.map((n) => [n.id, n]));
     cv.positions = arrangementOf(payload.positions);
     const slot = cv.save.scope === cv.scope && cv.save.project === cv.project ? cv.save : emptySave();
@@ -2619,6 +2637,7 @@ window.RCECanvas = (function () {
     if (cv.selectedLink && !payload.links.some((l) => l.id === cv.selectedLink)) cv.selectedLink = null;
     renderScopeSelect();
     render();
+    renderNote();
     if (cv.drag && cv.drag.kind === "node") { // re-bound to the card just drawn
       cv.drag.el = cv.nodeEls.get(cv.drag.id) || cv.drag.el;
       if (cv.drag.moved) cv.drag.el.classList.add("dragging");
@@ -2729,6 +2748,7 @@ window.RCECanvas = (function () {
     cv.focus = null;
     selectLink(null);
     flushSave(); // what was moved or panned in the view being left is that view's
+    cv.fellBack = null; // the researcher chose: nothing to explain any more
     cv.scope = scope;
     if (!isNear(scope)) cv.mainScope = scope;
     if (!quiet && cv.container) load(cv.container);
@@ -2763,8 +2783,10 @@ window.RCECanvas = (function () {
       drag: null, lastClick: null, nodeEls: new Map(), linkEls: new Map(),
       selectedLink: null, optimistic: new Map(), focus: null,
       history: null, cardNote: { id: null, value: "" }, mainScope: null, nearHost: null,
+      fellBack: null,
     });
     if (cv.dom) cv.dom.notice.classList.add("hidden");
+    if (cv.dom) cv.dom.note.classList.add("hidden");
     if (cv.dom) cv.dom.linkCard.classList.add("hidden");
     if (cv.dom) {
       cv.dom.search.value = "";
@@ -2796,6 +2818,7 @@ window.RCECanvas = (function () {
     _layoutBlocked: layoutBlocked,
     _queueViewport: queueViewport,
     _showStatus: showStatus,
+    _renderNote: renderNote,
     _state: cv,
   };
 })();

@@ -662,8 +662,8 @@
     box.append(header, title, attachmentTools(), text, preview, docStatus);
     if (draft.kind === "result") box.append(researchRecordSection());
     const footer = el("div", "ws-document-footer");
-    if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
-    if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }));
+    if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }, "ws-text-link"));
+    if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }, "ws-text-link"));
     if (data.mode === "member") {
       const propose = button(t("提交修改"), async () => {
         if (documentDirty()) { status(docStatus, t("请先保存，再提交修改。")); return; }
@@ -781,7 +781,7 @@
             } catch (err) { if (live(mark) && draft === target) { importButton.disabled = false; status(feedback, errorWords(t("没能导入变量草稿。"), err), "err"); } }
           }); row.append(cardId, importButton, feedback);
         }
-        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); }));
+        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); }, "ws-text-link"));
         if (pathNote(item.path)) row.append(pathNote(item.path));
         materials.append(row);
       });
@@ -793,7 +793,7 @@
       [["description", t("尝试描述")], ["result", t("尝试结果")]].forEach(([key, label]) => {
         if (attempt[key]) { const line = el("p", "ws-research-draft", attempt[key]); line.setAttribute("aria-label", label); group.append(line); }
       });
-      (attempt.parents || []).forEach((id) => { group.append(button(id, () => { if (window.RONode) window.RONode.openNode(id); }, "btn btn-small ws-file-link")); });
+      (attempt.parents || []).forEach((id) => { group.append(button(id, () => { if (window.RONode) window.RONode.openNode(id); }, "ws-text-link ws-file-link")); });
       group.append(el("p", "ws-empty", t("尝试草稿仍需单独提交为新的尝试。"))); box.append(group);
     }
     if (editable() && (!ui.previewing || context.attempt_draft || context.method || context.finding)) {
@@ -804,7 +804,7 @@
         if (!(data.attempts || []).some((item) => item.id === attempt.id)) data.attempts.push({ id: attempt.id, label: (attempt.attrs || {}).description || attempt.id });
         redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；要点里的关联尚未保存。") : t("尝试已保存；要点里的关联尚未保存。"));
       }); }));
-      if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }));
+      if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }, "ws-text-link"));
       box.append(actions);
     }
     if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("还没有写要点。")));
@@ -1025,7 +1025,7 @@
       const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       if (task.context && task.context.report) {
         const report = (data.documents || []).find((doc) => doc.path === task.context.report);
-        words.append(keyed(button(t("报告：{title}", { title: report ? report.title : task.context.report }), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
+        words.append(keyed(button(t("报告：{title}", { title: report ? report.title : task.context.report }), () => openDocument(task.context.report), "ws-text-link ws-file-link"), "context:" + task.id));
       }
       const meta = el("span", "ws-task-meta"); setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
@@ -1227,12 +1227,15 @@
   }
   // 21.8: the page has one primary button. 保存 is it while the writing area is on screen in edit mode (a plan's writing area
   // sits in the fold, which may be shut); the task form's save button is the quiet one then, and the primary again in preview,
-  // with no document open, or with the plan folded.
+  // with no document open, or with the plan folded. A row that asks (the reply form's 发送, the undo's 确认撤回; marked
+  // `ws-ask`) has the primary while it is open and no document is being written; the task form's save button waits.
   function syncPrimary() {
     const submit = ui && ui.taskSubmit;
     if (!submit) return;
     const writing = !!draft && !!ui.save && !ui.save.classList.contains("hidden") && (draft.kind !== "overview" || !!(ui.planMore && ui.planMore.open));
-    submit.classList.toggle("btn-primary", !writing);
+    const asks = Array.from(host.querySelectorAll(".ws-ask"));
+    asks.forEach((ask) => ask.classList.toggle("btn-primary", !writing));
+    submit.classList.toggle("btn-primary", !writing && !asks.length);
   }
   // 「保存并运行」 stands beside the save button while the owner chosen is an agent and the task could be run from its row (a task
   // being carried out, or waiting for the answer the person can give, cannot); like the row's 运行 it waits while the project has
@@ -1288,7 +1291,7 @@
   // and each Chinese text is the whole argument of its own t().
   // state code -> [words, tone] (tone classes are app.html's .status-label.tone-*).
   const STATE_LABELS = {
-    preparing: [() => t("准备中"), "ochre"], running: [() => t("运行中"), "ochre"], needs_input: [() => t("等你回答"), "clay"],
+    preparing: [() => t("准备中"), "ochre"], running: [() => t("运行中"), "ochre"], needs_input: [() => t("等你回答"), "ochre"],
     done: [() => t("已完成"), "olive"], ended: [() => t("未报告"), "gray"], failed: [() => t("失败"), "clay"],
     stopped: [() => t("已停止"), "gray"], interrupted: [() => t("已中断"), "gray"], out_of_bounds: [() => t("越过了限制"), "clay"],
   };
@@ -2579,6 +2582,7 @@
       if (old.dataset.sig === agentSig(task)) return;
       replaceSection(task, old, agentSection(task));
     });
+    syncPrimary();   // a reply form or an undo question that opened or closed moves the page's primary button
   }
   function runLabel(run) {
     const partly = run.reverted && run.revert_skipped > 0;
@@ -2616,7 +2620,7 @@
     }
     if (run && run.can_stop) { const stop = keyed(named(button(t("停止"), () => stopRun(task, run)), t("停止：{task}", who)), k("stop")); stop.disabled = busy; actions.append(stop); }
     if (run) {
-      const log = keyed(named(button(t("运行日志"), () => toggleLog(task)), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
+      const log = keyed(named(button(t("运行日志"), () => toggleLog(task), "ws-text-link"), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
     if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
       const answer = keyed(named(button(t("回答"), () => toggleReply(task, "answer")), t("回答：{task}", who)), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
@@ -2630,7 +2634,7 @@
       const undo = keyed(named(button(t("撤回本次运行"), () => revertRun(task, run)), t("撤回本次运行：{task}", who)), k("undo"));
       undo.setAttribute("aria-expanded", String(!!st.undo)); undo.disabled = !allowed; actions.append(undo);
     }
-    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openResult(task)), t("打开结果：{task}", who)), k("report")));
+    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openResult(task), "ws-text-link"), t("打开结果：{task}", who)), k("report")));
     if (actions.childElementCount) box.append(actions);
     const note = agentNotes[task.id];
     if (note) box.append(noteBlock(note));
@@ -3142,7 +3146,7 @@
     const restore = open.plan.restore || [], remove = open.plan.remove || [], cannot = open.plan.cannot || [], items = undoItems(open);
     const boxes = [];
     const count = el("p", "ws-agent-quiet"), kept = el("p", "ws-agent-quiet");
-    const confirm = keyed(named(button(t("确认撤回"), () => confirmUndo(task, run, st), "btn btn-primary btn-small"), t("确认撤回：{task}", who)), k("undo-confirm"));
+    const confirm = keyed(named(button(t("确认撤回"), () => confirmUndo(task, run, st), "btn btn-primary btn-small ws-ask"), t("确认撤回：{task}", who)), k("undo-confirm"));
     // Ticking or clearing a box changes the buttons and the two lines here, not the list: a long list keeps its place.
     function sync() {
       const n = undoTicked(open).length;
@@ -3226,7 +3230,7 @@
       return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/reply", { project: project(), message: message }), {
         failed: t("没能发送。"), reload: true, after: () => closeReply(st),
       });
-    }, "btn btn-primary btn-small");
+    }, "btn btn-primary btn-small ws-ask");
     const cancel = button(t("取消"), () => { closeReply(st); updateAgentSections(); focusKey(sections[task.id], "agent:" + task.id + ":" + kind); });
     keyed(send, "agent:" + task.id + ":send"); keyed(cancel, "agent:" + task.id + ":cancel");
     named(send, t("发送：{task}", { task: task.text })); named(cancel, t("取消：{task}", { task: task.text }));

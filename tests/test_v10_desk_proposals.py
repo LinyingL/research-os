@@ -176,7 +176,7 @@ def test_14_3_the_pi_decides_a_proposal_in_the_attempts_panel():
     for line in ["status-label tone-plain: 研究判断变更", "desk-what: 放弃 16", "desk-note plain: #16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
                  "desk-meta: 王 · 2024年3月1日", "status-label tone-plain: 连线", "desk-what: 加上连线：#18 源自 #16"]:
         assert line in urgent, line
-    assert urgent.count("btn btn-small: 查看") == 2 and not any("加上数据" in line for line in before)
+    assert urgent.count("ws-text-link: 查看") == 2 and not any("加上数据" in line for line in before)
     assert f"/api/proposals/p1{FROM}" in out["gets"]
     for line in ["node-kind: 研究判断变更提议", "desk-meta: 王 · 2024年3月1日", "status-label tone-ochre: 提议中",
                  "node-sec-title: 批准以后会怎样", "diff-row old: | 16 | 待定 先看 |", "diff-row new: | 16 | ☠ 方向反了 |",
@@ -259,7 +259,7 @@ def test_14_3_a_members_own_proposal_waits_under_its_attempt_and_opens_in_place(
     assert urgent == ["node-sec-title: " + w("等你处理", "Needs you"), "status-label tone-plain: " + w("研究判断变更", "Research assessment change"),
                       "desk-what: 放弃 16", "desk-note plain: " + w("#16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
                                                                 "#16: change the research assessment from “Pending” to “Abandoned”, abandoning the route"),
-                      "desk-meta: " + w("提议中 · 2024年3月1日", "Proposed · 1 Mar 2024"), "btn btn-small: " + w("查看", "View")]
+                      "desk-meta: " + w("提议中 · 2024年3月1日", "Proposed · 1 Mar 2024"), "ws-text-link: " + w("查看", "View")]
     if lang == "en":  # the member's own sentence aside
         assert [line for line in urgent if CJK.search(re.sub("放弃 16", "", line))] == []
     assert not any(FORBIDDEN.search(line) for line in urgent)

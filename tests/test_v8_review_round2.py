@@ -568,7 +568,7 @@ def test_12_11_typography_badges_and_icons():
         return re.search(re.escape(selector) + r" \{([^}]*)\}", css).group(1)
 
     for selector in (".desk-title", ".node-sec-title", ".route-group-title.serif, .team-title", ".proposal-sentence",
-                     ".panel-title.plain-title", ".var-block-title"):
+                     ".panel-title", ".var-block-title"):
         assert "--font-serif" not in rule(selector), selector
     for selector in (".page-title", ".brand-mark", ".node-name"):
         assert "--font-serif" in rule(selector), selector

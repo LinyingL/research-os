@@ -18,7 +18,7 @@
 // on that line opens the handback, 21.2, on 「等你看」 the first one not
 // opened yet; the rest of the card opens the attempt); a card
 // with no tasks is as it was, and `after` is not drawn. The 「源自」 lines are a
-// human's lines (clay, 8.2): a parent stands left of what grew out of it,
+// human's lines (ink, 21.8; clay in 8.2): a parent stands left of what grew out of it,
 // no arrowheads; a line a proposal carries is dashed and says so. The
 // layout is a forest by generation, siblings in the map's order (by date),
 // and the attempts with no line in 「还没标来处」 below it (layoutRoutes:

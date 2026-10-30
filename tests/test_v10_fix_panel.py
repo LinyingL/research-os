@@ -132,7 +132,7 @@ def test_14_1_the_panels_head_says_each_mark_once(lang):
     i18n = None if lang == "zh" else lang
     def head(case):  # the panel's head: down to its 打开详情页
         lines = _run(case, step, lang=i18n)["lines"]
-        lines = lines[:lines.index("btn btn-small: " + w("打开详情页", "Open the details page"))]
+        lines = lines[:lines.index("ws-text-link: " + w("打开详情页", "Open the details page"))]
         return [line for line in lines if line.startswith(("dp-mark", "own-mark"))]
 
     heads = [head(pi), head(member)]
