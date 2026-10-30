@@ -6,9 +6,10 @@ sidecar adds editable context and explicit links; it makes no scientific decisio
 The handback's part of it (DESIGN.md 21.2) is the agent's own answer to the task: `headline`, `key_numbers`, `undone`,
 `decide` and `suggested_assessment`. The suggestion is only a suggestion. `assessment_confirmed` is the record that a
 person took it (or put another status in its place) -- the act that writes the attempt's research assessment -- and
-only the page's confirm path writes it (`confirm_assessment`): the agent's tool path refuses it, and the editor's save
-keeps what is stored and refuses a change to it. A field is written only when it holds something, so a context from
-before 21 reads and saves byte for byte as it was.
+only the page's confirm path writes it (`confirm_assessment`) or takes it back (`unconfirm_assessment`, when 撤销
+has put the cell back): the agent's tool path refuses it, and the editor's save keeps what is stored and refuses a
+change to it. A field is written only when it holds something, so a context from before 21 reads and saves byte for
+byte as it was.
 """
 from __future__ import annotations
 
@@ -345,6 +346,30 @@ def confirm_assessment(root: str | Path, report: str, confirmed: dict[str, Any])
         after = workspace._content(json.dumps({'version': 1, 'context': context}, ensure_ascii=False, indent=2) + '\n')
         _backup, warning = workspace._save(root, rel, before, after, pid)
     result = {'report': report, 'path': rel, 'revision': workspace._revision(after), 'context': context}
+    if warning:
+        result['history_warning'] = warning
+    return result
+
+
+def unconfirm_assessment(root: str | Path, report: str) -> dict[str, Any]:
+    """Take back the record that a person confirmed the attempt's assessment from this handback (DESIGN.md 21.2): when
+    撤销 has put the cell back, `assessment_confirmed` leaves the report's context and nothing else of it changes. The
+    other half of `confirm_assessment` and, with it, the only way the field changes: the guard, backup and history of
+    the human context write, while the agent's tool path and the editor's save still cannot touch it. `removed` says
+    whether there was a confirmation to take back; a context without one is not written."""
+    root = workspace._root(root)
+    with situation.write_guard(root, human=True):
+        pid = workspace._require_write(root)
+        _report(root, report)
+        rel = path_for(report)
+        before = workspace._read(root, rel)
+        stored = parse(before)
+        if 'assessment_confirmed' not in stored:
+            return {'report': report, 'path': rel, 'revision': workspace._revision(before), 'context': stored, 'removed': False}
+        context = normalize({key: value for key, value in stored.items() if key != 'assessment_confirmed'})
+        after = workspace._content(json.dumps({'version': 1, 'context': context}, ensure_ascii=False, indent=2) + '\n')
+        _backup, warning = workspace._save(root, rel, before, after, pid)
+    result = {'report': report, 'path': rel, 'revision': workspace._revision(after), 'context': context, 'removed': True}
     if warning:
         result['history_warning'] = warning
     return result

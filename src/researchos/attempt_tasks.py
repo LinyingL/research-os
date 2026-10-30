@@ -60,8 +60,10 @@ def state_of(task: dict[str, Any], run: dict[str, Any] | None, waiting: bool) ->
     whatever else is true; a run that went out of bounds says 越过了限制 even when the agent marked the task done
     (18.1 item 4: the done mark stays the agent's and the run is what warns -- 等你看 and 已完成 would hide it); an
     unopened handback says 等你看; a task not marked done reads from how its last run ended (失败 -- a run that
-    failed, was interrupted or ended without a report); a task the person marked done is 已完成; anything else,
-    including a run the person stopped, has not started."""
+    failed, was interrupted or ended without a report); a task the person marked done is 已完成, and so is one
+    that is not but whose `report` is in and whose latest run is the one that handed it back (state done, not
+    undone) or does not exist -- older versions did not set the done mark, and a copy of a project or another Mac
+    has no run records; anything else, including a run the person stopped, has not started."""
     state = (run or {}).get("state")
     if state in ("preparing", "running"):
         return "running"
@@ -73,7 +75,11 @@ def state_of(task: dict[str, Any], run: dict[str, Any] | None, waiting: bool) ->
         return "failed"
     if waiting:
         return "to_read"
-    return "done" if task.get("done") else "not_started"
+    if task.get("done"):
+        return "done"
+    if task.get("report") and (run is None or (state == "done" and not run.get("reverted"))):
+        return "done"
+    return "not_started"
 
 
 def owner_label(owner: str) -> str:
@@ -145,8 +151,8 @@ def _latest_runs(project_id: str | None, wanted: set[str]) -> dict[str, dict[str
 
 def by_attempt(root: str | Path, project_id: str | None, person: str | None,
                attempts: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """For each of `attempts` (node ids) that has tasks: `tasks` (how many), `unfinished` (not marked done),
-    `unopened` (its handbacks `person` has not opened, that can be read and carry the handback's fields:
+    """For each of `attempts` (node ids) that has tasks: `tasks` (how many), `unfinished` (not marked done and not
+    reading 已完成: a task whose report is in counts as finished, `state_of`), `unopened` (its handbacks `person` has not opened, that can be read and carry the handback's fields:
     `handbacks.unopened`), `latest` (the handback whose report was
     written last, `_handback`; None when no task has one) and `items`, the tasks in `after` order with their `owner`
     and its `owner_label`, `due`, `done`, `after`, `report`, `state` (`state_of`) and `unopened`. An attempt with no
@@ -186,7 +192,7 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
                 continue
             if at > newest_at:
                 newest, newest_at = item, at
-        out[attempt] = {"tasks": len(items), "unfinished": sum(1 for item in items if not item["done"]),
+        out[attempt] = {"tasks": len(items), "unfinished": sum(1 for item in items if not item["done"] and item["state"] != "done"),
                         "unopened": sum(1 for item in items if item["unopened"]),
                         "latest": _handback(root, newest["report"], newest["unopened"]) if newest else None,
                         "items": items}

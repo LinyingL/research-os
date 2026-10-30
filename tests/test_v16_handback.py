@@ -971,3 +971,120 @@ def test_a_members_confirmation_can_carry_the_record_that_says_who_confirmed_it_
         assert done["context_path"] not in [f["path"] for f in plain.data["file"]]       # a verdict change carries its row only ...
         carried = proposals.make_proposal(drive.work, "verdict_change", done["sentence"]["zh"], number="16", only=[done["context_path"]])
         assert done["context_path"] in [f["path"] for f in carried.data["file"]]         # ... unless the record is named
+
+
+# -- AF-1: a handback without the 21.2 fields, and 撤销 that takes the confirmation back --------------------------------
+
+
+OLD_STYLE = {"question": "Does Sword v0.2 hold on every member?", "finding": "Sword v0.2 beats v0.1 on all 12 members.",
+             "limits": "Only one data vendor.", "next_step": "Repeat on delisted names."}
+
+
+def test_a_report_with_a_section_20_context_and_none_of_the_21_2_fields_gives_the_page_its_finding_limits_and_next_step(root, pid):
+    report = hand_back(root, pid, context=OLD_STYLE)
+    got = handbacks.view(root, pid, PERSON, report)
+    assert (got["headline"], got["key_numbers"], got["undone"], got["decide"], got["suggested"]) == ("", [], "", [], None)
+    assert (got["finding"], got["limits"], got["next_step"]) == (OLD_STYLE["finding"], OLD_STYLE["limits"], OLD_STYLE["next_step"])
+    bare = hand_back(root, pid, context={}, task_id="t2", attempt=A17)
+    empty = handbacks.view(root, pid, PERSON, bare)
+    assert (empty["finding"], empty["limits"], empty["next_step"]) == ("", "", "")      # nothing there: the page unfolds the report instead
+    full = handbacks.view(root, pid, PERSON, hand_back(root, pid, context=FULL, task_id="t3"))
+    assert full["finding"] == FULL["finding"] and full["limits"] == "" and full["next_step"] == ""   # carried in any case; the page shows it when there is no headline
+
+
+def _undo_in_the_table(root: Path, done: dict) -> None:
+    """What the page's 撤销 does before it asks for the confirmation back: the cell goes back through the panel's own write."""
+    proposals.write_directly(root, "update", done["number"], {"verdict": done["before"]["was"]})
+
+
+def test_taking_a_confirmation_back_removes_it_from_the_context_notes_it_on_the_undo_version_and_the_buttons_can_come_back(root, pid):
+    report = hand_back(root, pid)
+    done = handbacks.confirm(root, {"report": report, "status": "不利证据", "reason": "Fails in 2008"})
+    assert _context(root, report)["assessment_confirmed"]["status"] == "不利证据"
+    _undo_in_the_table(root, done)
+    assert _cell(root).endswith("| 🕒 |")
+    back = handbacks.unconfirm(root, {"report": report}, lang="en")
+    assert back["removed"] is True and back["history_error"] is None and (back["number"], back["node"]) == ("16", A16)
+    assert back["note"] == "撤销了确认" and back["said"] == "Withdrew the confirmation"
+    stored = _context(root, report)
+    assert "assessment_confirmed" not in stored and stored["suggested_assessment"] == FULL["suggested_assessment"]   # the agent's words stay
+    assert stored["headline"] == FULL["headline"] and stored["key_numbers"] == FULL["key_numbers"]
+    shown = handbacks.view(root, pid, PERSON, report)
+    assert shown["confirmed"] is None and shown["attempt"]["status"]["status"] == "pending"          # the three buttons are due again
+    [newest, second, *_older] = _versions(pid, A16)
+    assert (newest.note, newest.who, newest.summary["verdict"]) == ("撤销了确认", PERSON, "🕒")          # the version the undo wrote
+    assert second.note == done["note"] and second.summary["verdict"] == "⚠️ Fails in 2008"              # the confirmation's own is as it was
+    assert history.versions(root, A16, "en")["versions"][0]["note"] == "Withdrew the confirmation"
+    assert history.versions(root, A16, "zh")["versions"][0]["note"] == "撤销了确认"
+    again = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member"})      # and can be confirmed afresh
+    assert again["written"] is True and _context(root, report)["assessment_confirmed"]["adopted"] is True
+
+
+def test_taking_back_a_confirmation_that_is_not_there_or_is_not_the_askers_or_while_a_run_goes_or_for_a_member_is_refused(root, pid, monkeypatch):
+    report = hand_back(root, pid)
+    with pytest.raises(workspace.WorkspaceError) as exc:
+        handbacks.unconfirm(root, {"report": report})
+    assert exc.value.code == "handback_not_confirmed" and exc.value.status == 409 and "没有可以撤销的确认" in exc.value.message_zh
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "r"})
+    kept = (root / research_records.path_for(report)).read_bytes()
+    people.write_me("李四", OTHER)                                                    # another person sits at this Mac now
+    with pytest.raises(workspace.WorkspaceError) as exc:
+        handbacks.unconfirm(root, {"report": report})
+    assert exc.value.code == "handback_not_yours" and exc.value.status == 403
+    people.write_me("张三", PERSON)
+    sent_back = _run(root, pid, task_id="t1", by=PERSON)                              # a later run of the task is going
+    with pytest.raises(workspace.WorkspaceError) as exc:
+        handbacks.unconfirm(root, {"report": report})
+    assert exc.value.code == "handback_run_active" and "还有一次运行" in exc.value.message_zh
+    runs.update_run(pid, sent_back, state="stopped")
+    with monkeypatch.context() as local:
+        local.setattr(proposals, "role_of", lambda r: ("member", PERSON, None))
+        with pytest.raises(workspace.WorkspaceError) as exc:
+            handbacks.unconfirm(root, {"report": report})
+        assert exc.value.code == "handback_unconfirm_not_offered" and exc.value.status == 403
+        local.setattr(proposals, "role_of", lambda r: ("none", None, None))
+        with pytest.raises(workspace.WorkspaceError):
+            handbacks.unconfirm(root, {"report": report})
+    for bad in (["not", "an", "object"], {"report": "research/notes/x.md"}, {}):
+        with pytest.raises(workspace.WorkspaceError):
+            handbacks.unconfirm(root, bad)
+    assert (root / research_records.path_for(report)).read_bytes() == kept and done["written"] is True    # nothing was written by a refusal
+    assert handbacks.unconfirm(root, {"report": report})["removed"] is True
+
+
+def test_the_first_researcher_with_no_me_toml_takes_a_confirmation_back_and_no_name_is_written_on_disk(root, pid):
+    people.me_path().unlink()
+    report = hand_back(root, pid, by=None)
+    done = handbacks.confirm(root, {"report": report, "status": "待定", "reason": "Needs 2008"})
+    assert "by" not in _context(root, report)["assessment_confirmed"]
+    _undo_in_the_table(root, done)
+    back = handbacks.unconfirm(root, {"report": report}, lang="en")
+    assert back["removed"] is True and back["history_error"] is None and back["said"] == "Withdrew the confirmation"
+    assert "assessment_confirmed" not in _context(root, report)
+    newest = _versions(pid, A16)[0]
+    assert (newest.note, newest.who) == ("撤销了确认", None)                         # no me.toml: no name on disk (13.1)
+
+
+def test_the_confirmation_is_taken_back_even_when_the_undo_left_no_version_of_its_own_to_note_and_no_other_version_is_marked(root, pid):
+    report = hand_back(root, pid)
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "r"})
+    notes = [v.note for v in _versions(pid, A16)]
+    back = handbacks.unconfirm(root, {"report": report})      # the table was not written back: the newest version is the confirmation's own
+    assert back["removed"] is True and back["history_error"] and "assessment_confirmed" not in _context(root, report)
+    assert [v.note for v in _versions(pid, A16)] == notes and notes[0] == done["note"]     # nothing was marked wrongly
+
+
+def test_the_unconfirm_route_takes_the_confirmation_back_for_the_page_and_refuses_the_wrong_project_and_a_foreign_origin(root, pid, served):
+    from test_webapp_server import _get, _post, _request_with_headers
+
+    base, _httpd = served
+    report = hand_back(root, pid, by=None)
+    done = _post(base, "/api/workspace/handback/confirm", {"project": str(root), "report": report, "status": "现行", "reason": "Holds on every member"})[1]
+    _undo_in_the_table(root, done)
+    status, back = _post(base, "/api/workspace/handback/unconfirm", {"project": str(root), "report": report})
+    assert status == 200 and back["removed"] is True and back["generation"] is not None and back["said"] == "撤销了确认"
+    assert _get(base, "/api/workspace/handback?report=" + report)[1]["confirmed"] is None
+    assert _post(base, "/api/workspace/handback/unconfirm", {"project": str(root), "report": report})[0] == 409     # nothing left to take back
+    assert _post(base, "/api/workspace/handback/unconfirm", {"project": "/other", "report": report})[0] == 409
+    assert _request_with_headers(base, "POST", "/api/workspace/handback/unconfirm", {"Host": base.removeprefix("http://"), "Origin": "https://example.com",
+                                                                                      "Content-Length": "2"}, b"{}")[0] == 403

@@ -105,7 +105,7 @@
   function editable() { return !!data && !foreignBlocked && !data.read_only && data.can_write !== false && ["single", "pi", "member"].includes(data.mode); }
   function tasksEditable() { return editable() && !data.tasks_error; }
   function documentDirty() { return !!draft && !!saved && (draft.title !== saved.title || draft.content !== saved.content || researchRecordDirty()); }
-  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due || taskDraft.contextReport); }
+  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due || (taskDraft.contextReport && taskDraft.contextReport !== taskDraft.presetContext)); }
   function createDirty() {
     return !!createSubject && typeof state !== "undefined" && state.panelSubject === createSubject &&
       (createSubject.name.value || createSubject.parent.value) &&
@@ -122,8 +122,9 @@
   }
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
-  // `attempt` and `after` (DESIGN.md 21.1) are choices, not writing: a draft that holds only them is not unsaved work.
-  function blankDraft(attempt) { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: "", attempt: attempt || "", after: "" }; }
+  // `attempt` and `after` (DESIGN.md 21.1) are choices, not writing: a draft that holds only them is not unsaved work, and
+  // neither is the research context a handback chose for the task it sends on (`presetContext`, 21.2).
+  function blankDraft(attempt, context) { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: context || "", presetContext: context || "", attempt: attempt || "", after: "" }; }
   function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
@@ -1233,11 +1234,11 @@
     });
   }
   // 「在这条尝试下加任务」 (the attempt's panel): the form with that attempt chosen, the way 再派一个任务 will ask for a
-  // task that continues another (`after`).
+  // task that continues another (`after`) and works from a research record (`context`, a result record's path).
   function startTask(choice) {
     if (!ui || !ui.taskText || !editable()) return false;
     if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return false;
-    taskDraft = Object.assign(blankDraft(), { attempt: (choice && choice.attempt) || "", after: (choice && choice.after) || "" });
+    taskDraft = Object.assign(blankDraft(choice && choice.attempt, choice && choice.context), { after: (choice && choice.after) || "" });
     renderTasks(); ui.taskText.focus();
     if (ui.tasks && typeof ui.tasks.scrollIntoView === "function") ui.tasks.scrollIntoView();
     return true;
@@ -1451,11 +1452,15 @@
     const tone = typeof verdictTone === "function" ? verdictTone({ status: known ? known.code : "other" }) : "plain";
     return el("span", "status-label tone-" + tone, t(word));
   }
+  function numberWords(value) { return window.RODesk && typeof window.RODesk.formatNumber === "function" ? window.RODesk.formatNumber(value) : String(value); }
   function hbNumbers(view) {
     const part = hbPart(t("关键数字")), list = el("ul", "ws-hb-numbers");
     view.key_numbers.forEach((item) => {
-      const row = el("li", "ws-hb-number");
-      row.append(el("span", "ws-hb-what", item.what), el("code", "ws-hb-value", item.value),
+      // 21.8: a long number is shown to four significant digits; the value as the agent wrote it (and as the file and the
+      // number check have it) is on hover and in the record
+      const row = el("li", "ws-hb-number"), shown = numberWords(item.value), value = el("code", "ws-hb-value", shown);
+      if (shown !== item.value) value.title = item.value;
+      row.append(el("span", "ws-hb-what", item.what), value,
         named(button(item.file, () => { if (typeof openFilePanel === "function") openFilePanel(item.file); }, "btn btn-small ws-file-link"), t("打开：{file}", { file: item.file })));
       if (item.check === "missing") row.append(el("span", "ws-status err ws-hb-flag", t("在所引文件里没找到这个数")));
       else if (item.check === "unreadable") row.append(el("span", "ws-agent-quiet ws-hb-flag", t("所引文件读不了，没法核对")));
@@ -1599,16 +1604,26 @@
   function hbNewTask(subject) {
     const view = subject.view;
     if (typeof closePanel === "function") closePanel();
-    if (typeof startTaskOnHome === "function") startTaskOnHome({ attempt: view.attempt.id, after: view.task.id });
-    else startTask({ attempt: view.attempt.id, after: view.task.id });
+    // the new task continues this one, and its research context is this handback's own record
+    const choice = { attempt: view.attempt.id, after: view.task.id, context: subject.report };
+    if (typeof startTaskOnHome === "function") startTaskOnHome(choice);
+    else startTask(choice);
   }
   // The new-attempt form (the attempt's table, 21.3), prefilled from the agent's `attempt_draft`, the new row 源自 this
   // attempt: the form writes the line with the mapping write it has always used for a parent it was given.
+  // An agent that gave no draft still wrote a next step (Section 20): that is where the new attempt starts, cut to the
+  // length an attempt's description is written with elsewhere (the grouping panel's 500 characters).
+  const ATTEMPT_TEXT_LIMIT = 500;
+  function cutWords(text, limit) {
+    const chars = Array.from(String(text || "").trim());
+    return chars.length <= limit ? chars.join("") : chars.slice(0, limit - 1).join("").trimEnd() + "…";
+  }
   function hbNewAttempt(subject) {
     const view = subject.view, draft = view.attempt_draft || {};
     const parents = [view.attempt.id].concat((draft.parents || []).filter((id) => id !== view.attempt.id));
     if (typeof window.ROWorkspace.onCreateAttempt !== "function") return;
-    window.ROWorkspace.onCreateAttempt({ description: draft.description || "", result: draft.result || "", parents: parents }, () => {});
+    const description = (draft.description || "").trim() ? draft.description : cutWords(view.next_step, ATTEMPT_TEXT_LIMIT);
+    window.ROWorkspace.onCreateAttempt({ description: description, result: draft.result || "", parents: parents }, () => {});
   }
   function hbOutputs(view) {
     const part = hbPart(t("输出")), kinds = outputKinds(), seen = [];
@@ -1635,8 +1650,19 @@
     });
     return part;
   }
-  function hbReport(subject) {
+  // A report written without the 21.2 fields still has Section 20's context: its finding stands where the headline would,
+  // then its limitations and next step when it has them, under the names the key points editor gives them.
+  function hbContext(view) {
+    return [["finding", t("发现与解释")], ["limits", t("局限与待确认")], ["next_step", t("下一步")]].filter(([key]) => view[key]).map(([key, title]) => {
+      const part = hbPart(title); part.classList.add("ws-hb-" + key.replace("_", "-"));
+      part.append(el("p", "ws-hb-text", view[key]));
+      return part;
+    });
+  }
+  // The report in full, folded -- unfolded when the handback has nothing else to read (no 21.2 field, no finding).
+  function hbReport(subject, unfolded) {
     const view = subject.view, box = el("details", "ws-hb-report");
+    box.open = !!unfolded;
     box.append(disclosureSummary(t("报告")));
     const body = el("div", "ws-preview"), keep = unchecked;
     renderMarkdown(body, view.text, view.report); unchecked = keep;
@@ -1671,6 +1697,7 @@
     if (view.context_error) body.append(el("p", "ws-status err", t("这份报告的要点读不出来。")));
     else if (empty && !view.confirmed) body.append(quiet(t("这份交回没有附上要点。")));
     if (view.headline) body.append(el("p", "ws-hb-headline", view.headline));
+    else hbContext(view).forEach((part) => body.append(part));
     if (view.key_numbers.length) body.append(hbNumbers(view));
     if (view.undone) { const part = hbPart(t("没做完的")); part.append(el("p", "ws-hb-text", view.undone)); body.append(part); }
     if (view.decide.length) {
@@ -1687,7 +1714,7 @@
     }
     if (view.confirmed) body.append(hbNext(subject));
     if (view.outputs.length) body.append(hbOutputs(view));
-    body.append(hbReport(subject));
+    body.append(hbReport(subject, (!!view.context_error || (empty && !view.confirmed)) && !view.finding));
     if (view.task && view.run) body.append(hbRunLog(subject));
     panelBody.replaceChildren(body);
     restoreFocus(panelBody, snap);
@@ -1702,7 +1729,10 @@
       box.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number} 的研究判断。提议还没有发送。", { number: response.number })));
       box.append(done.says, done.host);
     } else if (subject.undone) {
-      box.append(el("p", "ws-status ok", t("已撤销：尝试 #{number} 的研究判断改回了确认之前的样子。报告里仍记着你确认过。", { number: response.number })));
+      // the confirmation went with it (the buttons are back); only when the report's record could not be taken back is it still there
+      box.append(el("p", "ws-status ok", subject.undone.kept
+        ? t("已撤销：尝试 #{number} 的研究判断改回了确认之前的样子。报告里仍记着你确认过。", { number: response.number })
+        : t("已撤销，研究判断回到了 {status}", { status: t(subject.undone.status) })));
     } else {
       const line = el("p", "ws-status ok", response.written ? t("已写入尝试 #{number} 的研究判断。", { number: response.number }) : t("尝试 #{number} 的研究判断本来就是这样，只记下了你的确认。", { number: response.number }));
       if (subject.undo) {
@@ -1791,12 +1821,36 @@
     if (typeof pollGeneration === "function") pollGeneration();
     if (!here()) return;
     subject.busy = false; subject.undo = null;
-    if (result.state === "done") {
-      subject.note = null; subject.undone = true;
-      if (subject.view.attempt && typeof back.text.verdict === "string") subject.view.attempt.verdict = back.text.verdict;
-    } else {
+    if (result.state !== "done") {
       subject.note = { words: result.state === "abandons" ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"), kind: "err" };
+      drawHandback(subject);
+      return;
     }
+    const view = subject.view;
+    if (view.attempt && typeof back.text.verdict === "string") view.attempt.verdict = back.text.verdict;
+    // the status the row is back to, said on the line that replaces 撤销
+    const now = typeof back.text.verdict === "string" ? window.RODesk.assessment.parse(back.text.verdict, view.statuses) : null;
+    subject.undone = { status: now ? now.status : "", kept: false };
+    await hbUnconfirm(subject);
+  }
+  // 撤销 also takes the confirmation back: the report's context loses `assessment_confirmed` (the one writer is the page's,
+  // 21.2), so that the handback offers its three buttons again and does not say a person confirmed what the row no longer says.
+  async function hbUnconfirm(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    subject.busy = true; subject.note = { words: t("正在写入…") }; drawHandback(subject);
+    try {
+      await apiPost("/api/workspace/handback/unconfirm", { project: mark.project, report: subject.report });
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; subject.undone.kept = true;
+      subject.note = { words: errorWords(t("研究判断已改回，但报告的要点里没能撤销这次确认。"), err), kind: "err" };
+      drawHandback(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false; subject.note = null; subject.view.confirmed = null;
     drawHandback(subject);
   }
   // Marked opened for this person (kept on this Mac), and the cards that count what waits are drawn again.

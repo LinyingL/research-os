@@ -158,13 +158,14 @@ def test_a_handback_that_cannot_be_read_says_so_and_a_report_without_key_points_
 handbackDown=true;
 const failed=await window.ROWorkspace.openHandback(REPORT);
 const unreadable=panelBody.textContent;
-handbackDown=false; VIEW=Object.assign(VIEW,{headline:'',key_numbers:[],undone:'',decide:[],suggested:null,confirmed:null,outputs:[]});
+handbackDown=false; VIEW=Object.assign(VIEW,{headline:'',key_numbers:[],undone:'',decide:[],suggested:null,confirmed:null,outputs:[],finding:'',limits:'',next_step:''});
 await window.ROWorkspace.openHandback(REPORT);
-console.log(JSON.stringify({failed, unreadable, bare:parts(), words:cls('ws-agent-quiet').map(e=>e.textContent)}));
+console.log(JSON.stringify({failed, unreadable, bare:parts(), words:cls('ws-agent-quiet').map(e=>e.textContent), open:cls('ws-hb-report')[0].open}));
 """)
     assert out["failed"] is False and "没能读取这份交回。" in out["unreadable"]
     assert out["bare"] == ["other:ws-agent-quiet", "part:尝试 #16：TopicShift volatility (16-17)", "part:代理建议", "details:report", "button:运行日志"]
     assert out["words"][0] == "这份交回没有附上要点。" and "代理没有给出建议。" in out["words"]
+    assert out["open"] is True                       # nothing else to read: the report is unfolded, not folded away
 
 
 # -- confirming ---------------------------------------------------------------------------------------------------------
@@ -186,7 +187,7 @@ console.log(JSON.stringify({post, line:cls('ws-hb-confirmed')[0].textContent, do
     assert out["line"] == "张三 已确认：现行采纳了代理的建议" and out["done"] == "已写入尝试 #16 的研究判断。 撤销"
     assert "确认这个判断" not in out["buttons"] and "改一下" not in out["buttons"]            # the suggestion is answered
     assert out["nextPrimary"] == [True, False, False]                                        # 再派一个任务, 从这条开新尝试, 这条先到这里
-    assert out["started"] == [{"attempt": A16, "after": "t1"}] and out["closed"] == 1        # the new task: same attempt, after this one
+    assert out["started"] == [{"attempt": A16, "after": "t1", "context": report}] and out["closed"] == 1    # the new task: same attempt, after this one, from this record
 
 
 @needs_node
@@ -580,7 +581,7 @@ console.log(JSON.stringify({first, posts:posted.filter(p=>p[0]==='/api/workspace
 
 
 @needs_node
-def test_the_written_line_offers_撤销_that_writes_the_old_cell_back_and_says_what_stays_recorded(root, pid, report):
+def test_the_written_line_offers_撤销_that_writes_the_old_cell_back_and_a_row_that_moved_since_keeps_its_confirmation(root, pid, report):
     out = _run(root, pid, report, r"""
 const base=customPost, previews=[], writes=[]; let fileCell='✅ x';
 customPost=(path,body)=>{
@@ -594,28 +595,77 @@ await pbtn('确认这个判断').click(); await sleepTick();
 const written={line:cls('ws-hb-done')[0].textContent, undo:!!key('hb-undo'), now:cls('ws-hb-now')[0].textContent};
 fileCell='⚠️ edited meanwhile';
 await key('hb-undo').click(); await sleepTick();
-const moved={note:cls('ws-status').map(e=>e.textContent).join('|'), writes:writes.length, undo:!!key('hb-undo')};
+const moved={note:cls('ws-status').map(e=>e.textContent).join('|'), writes:writes.length, undo:!!key('hb-undo'), confirmed:cls('ws-hb-confirmed').length,
+  unconfirms:posted.filter(p=>p[0]==='/api/workspace/handback/unconfirm').length, next:!!pbtn('再派一个任务'), again:!!pbtn('确认这个判断')};
 console.log(JSON.stringify({written, moved}));
 """)
     assert out["written"] == {"line": "已写入尝试 #16 的研究判断。 撤销", "undo": True, "now": "现在的研究判断：现行x"}     # the row now reads as it was written
     assert "这一行之后又改过，不能撤销。" in out["moved"]["note"] and out["moved"]["writes"] == 0 and out["moved"]["undo"] is False
-    again = _run(root, pid, report, r"""
-const base=customPost, previews=[], writes=[];
+    assert (out["moved"]["confirmed"], out["moved"]["unconfirms"], out["moved"]["next"], out["moved"]["again"]) == (1, 0, True, False)   # nothing was undone: the confirmation stands
+
+
+_UNDO_PAGE = r"""
+const base=customPost, writes=[]; let unconfirmRefused=null;
 customPost=(path,body)=>{
   if(path==='/api/workspace/handback/confirm'){ const r=base(path,body); r.cell='✅ x'; r.before.now_text='✅ x'; return r; }
-  if(path==='/api/attempts/preview'){ previews.push(body); return {cells:{verdict:{was:'🕒',was_text:'✅ x',now_text:body.fields.verdict}},reason_required:false}; }
+  if(path==='/api/attempts/preview') return {cells:{verdict:{was:'🕒',was_text:'✅ x',now_text:body.fields.verdict}},reason_required:false};
   if(path==='/api/attempts/write'){ writes.push(body); return {file:'map.md',backup:'b',ingest_error:null}; }
+  if(path==='/api/workspace/handback/unconfirm'){
+    if(unconfirmRefused) { const e=new Error(unconfirmRefused); e.state='workspace_handback_run_active'; e.engineMessage=unconfirmRefused; throw e; }
+    VIEW.confirmed=null;       // the engine's view of this handback from now on
+    return {report:body.report,removed:true,note:'撤销了确认',said:'撤销了确认',node:'attempt:map.md#16',number:'16',history_error:null,generation:3};
+  }
   return base(path,body);
 };
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_撤销_takes_the_confirmation_back_too_so_the_three_buttons_return_and_a_later_opening_offers_them_as_well(root, pid, report, lang):
+    out = _run(root, pid, report, _UNDO_PAGE + r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn(T('确认这个判断')).click(); await sleepTick();
+const confirmed={line:cls('ws-hb-confirmed')[0].textContent, next:!!pbtn(T('再派一个任务'))};
+await key('hb-undo').click(); await sleepTick();
+const back={posts:posted.filter(p=>p[0]==='/api/workspace/handback/unconfirm'), writes,
+  line:cls('ws-hb-done')[0].textContent, now:cls('ws-hb-now')[0].textContent, confirmed:cls('ws-hb-confirmed').length,
+  buttons:pbuttons().filter(b=>[T('确认这个判断'),T('改一下'),T('先不判断')].includes(b)), undo:!!key('hb-undo'), next:!!pbtn(T('再派一个任务')),
+  primary:panelBody.all().filter(e=>e.tagName==='BUTTON'&&e.className.includes('btn-primary')).map(e=>e.textContent),
+  errors:cls('ws-status').filter(e=>e.className.includes('err')&&!e.className.includes('ws-hb-flag')).map(e=>e.textContent)};
+await window.ROWorkspace.openHandback(REPORT);                      // opened again later: the engine no longer holds the confirmation
+const later={confirmed:cls('ws-hb-confirmed').length, buttons:pbuttons().filter(b=>[T('确认这个判断'),T('改一下'),T('先不判断')].includes(b)), line:cls('ws-hb-done').length};
+await pbtn(T('确认这个判断')).click(); await sleepTick();           // and it can be confirmed afresh, and undone again
+const again={confirmed:cls('ws-hb-confirmed').length, undo:!!key('hb-undo'), posts:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').length};
+console.log(JSON.stringify({confirmed, back, later, again}));
+""".replace("T(", "window.ROI18N.t("), lang=lang)
+    zh = lang == "zh"
+    assert out["confirmed"]["next"] is True
+    assert out["back"]["posts"] == [["/api/workspace/handback/unconfirm", {"project": "/projects/study", "report": report}]]
+    assert out["back"]["writes"] == [{"op": "update", "number": "16", "fields": {"verdict": "🕒"}}]
+    assert out["back"]["line"] == ("已撤销，研究判断回到了 待定" if zh else "Undone: the research assessment is back to Pending")
+    assert out["back"]["now"] == ("现在的研究判断：待定" if zh else "Research assessment now:Pending")
+    assert out["back"]["confirmed"] == 0 and out["back"]["undo"] is False and out["back"]["next"] is False   # no "confirmed by", no ways on, no second 撤销
+    assert out["back"]["buttons"] == (["确认这个判断", "改一下", "先不判断"] if zh else ["Confirm this assessment", "Change it", "Decide later"])
+    assert out["back"]["primary"] == ["确认这个判断" if zh else "Confirm this assessment"] and out["back"]["errors"] == []
+    assert out["later"] == {"confirmed": 0, "buttons": out["back"]["buttons"], "line": 0}
+    assert out["again"] == {"confirmed": 1, "undo": True, "posts": 2}
+
+
+@needs_node
+def test_a_confirmation_the_engine_cannot_take_back_is_said_so_with_the_row_put_back_and_the_record_left_standing(root, pid, report):
+    out = _run(root, pid, report, _UNDO_PAGE + r"""
+unconfirmRefused='A run of this task is still going.';
 await window.ROWorkspace.openHandback(REPORT);
 await pbtn('确认这个判断').click(); await sleepTick();
 await key('hb-undo').click(); await sleepTick();
-console.log(JSON.stringify({writes, line:cls('ws-hb-done')[0].textContent, now:cls('ws-hb-now')[0].textContent, undo:!!key('hb-undo'),
-  confirmed:cls('ws-hb-confirmed').length, next:!!pbtn('再派一个任务')}));
+console.log(JSON.stringify({writes, line:cls('ws-hb-done')[0].textContent, now:cls('ws-hb-now')[0].textContent, confirmed:cls('ws-hb-confirmed').length,
+  errors:cls('ws-status').filter(e=>e.className.includes('err')&&!e.className.includes('ws-hb-flag')).map(e=>e.textContent), again:!!pbtn('确认这个判断'), next:!!pbtn('再派一个任务'), busy:pbuttons().length}));
 """)
-    assert again["writes"] == [{"op": "update", "number": "16", "fields": {"verdict": "🕒"}}]
-    assert again["line"] == "已撤销：尝试 #16 的研究判断改回了确认之前的样子。报告里仍记着你确认过。" and again["now"] == "现在的研究判断：待定"
-    assert again["undo"] is False and again["confirmed"] == 1 and again["next"] is True        # the confirmation is a record; it is not undone by this view
+    assert out["writes"] == [{"op": "update", "number": "16", "fields": {"verdict": "🕒"}}] and out["now"] == "现在的研究判断：待定"
+    assert out["line"] == "已撤销：尝试 #16 的研究判断改回了确认之前的样子。报告里仍记着你确认过。"        # honest: the record is still there
+    assert out["errors"] == ["研究判断已改回，但报告的要点里没能撤销这次确认。 A run of this task is still going."]
+    assert out["confirmed"] == 1 and out["again"] is False and out["next"] is True
 
 
 @needs_node
@@ -747,3 +797,100 @@ console.log(JSON.stringify({before, after, logText:log?log.textContent.slice(0,6
     assert out["before"] == [False, False, False, True, True, True]
     assert out["after"][0] is True and out["after"][1:] == out["before"][1:] and "LOGLINE" in out["logText"]   # only that row opened, with the log in it
     assert out["kept"][0] is True                                                                              # and it stays open when the list is drawn again
+
+
+# -- AF-1: a handback without the 21.2 fields, the way on to a new attempt, long numbers -----------------------------------
+
+
+_NO_21_2 = dict(headline="", key_numbers=[], undone="", decide=[], suggested=None, confirmed=None, outputs=[])
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_a_handback_with_no_headline_shows_the_contexts_finding_limits_and_next_step_in_its_place_and_keeps_the_note_and_the_report_folded(root, pid, report, lang):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+const shown=cls('ws-hb-part').filter(p=>p.children[1]&&p.children[1].classList.contains('ws-hb-text')).map(p=>[p.children[0].textContent,p.children[1].textContent]);
+console.log(JSON.stringify({parts:parts(), shown, words:cls('ws-agent-quiet').map(e=>e.textContent), open:cls('ws-hb-report')[0].open, headline:cls('ws-hb-headline').length}));
+""", lang=lang, finding="Sword v0.2 beats v0.1 on all 12 members.\nIn every year.", limits="Only one data vendor.", next_step="Repeat on delisted names.", **_NO_21_2)
+    zh = lang == "zh"
+    names = ["发现与解释", "局限与待确认", "下一步"] if zh else ["Findings and interpretation", "Limitations and open questions", "Next step"]
+    assert out["parts"][:5] == ["other:ws-agent-quiet", *[f"part:{n}" for n in names], "part:" + ("尝试 #16：" if zh else "Attempt #16: ") + "TopicShift volatility (16-17)"]
+    assert out["shown"] == [[names[0], "Sword v0.2 beats v0.1 on all 12 members.\nIn every year."], [names[1], "Only one data vendor."], [names[2], "Repeat on delisted names."]]
+    assert out["words"][0] == ("这份交回没有附上要点。" if zh else "This handback has no key points.")       # the one-line note stays
+    assert out["open"] is False and out["headline"] == 0                                                   # something to read above: the report stays folded
+    only = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts().slice(0,3), open:cls('ws-hb-report')[0].open}));
+""", lang=lang, finding="Only a finding.", **_NO_21_2)
+    assert only["parts"][:2] == ["other:ws-agent-quiet", f"part:{names[0]}"] and only["parts"][2].startswith("part:") and names[1] not in only["parts"][2]
+    assert only["open"] is False
+
+
+@needs_node
+def test_with_a_headline_the_handback_does_not_repeat_the_contexts_finding_and_a_report_with_nothing_to_read_but_itself_is_unfolded(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts(), open:cls('ws-hb-report')[0].open}));
+""", finding="Is in the report too.", limits="Not shown beside a headline.")
+    assert "part:发现与解释" not in out["parts"] and "part:局限与待确认" not in out["parts"] and out["parts"][0] == "headline" and out["open"] is False
+    nothing = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts(), open:cls('ws-hb-report')[0].open, text:cls('ws-preview',cls('ws-hb-report')[0])[0].textContent}));
+""", finding="", limits="", next_step="", **_NO_21_2)
+    assert nothing["open"] is True and "Sharpe: 1.82" in nothing["text"] and nothing["parts"][0] == "other:ws-agent-quiet"
+    # limits and next step alone are not a finding: the report is unfolded below them
+    partial = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({open:cls('ws-hb-report')[0].open}));
+""", finding="", limits="One vendor.", next_step="", **_NO_21_2)
+    assert partial["open"] is True
+    unreadable = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({open:cls('ws-hb-report')[0].open, words:cls('ws-status').map(e=>e.textContent)}));
+""", context_error="Cannot read research context JSON", finding="", **_NO_21_2)
+    assert unreadable["open"] is True and "这份报告的要点读不出来。" in unreadable["words"]       # the key points cannot be read: the report is what there is to read
+
+
+@needs_node
+def test_the_new_attempt_from_a_handback_starts_from_the_drafts_description_else_the_next_step_cut_to_the_limit_with_the_source_chosen(root, pid, report):
+    out = _run(root, pid, report, r"""
+const forms=[];
+for (const [draft, next] of [[{description:'Add 2008 to the sample',result:'r',parents:[]}, 'Repeat on delisted names.'],
+                              [null, 'Repeat on delisted names.'],
+                              [{description:'   ',result:'',parents:[]}, 'Repeat on delisted names.'],
+                              [null, '不到五百字的下一步。'.repeat(80)],
+                              [null, ''], [null, 'x'.repeat(500)], [null, 'y'.repeat(501)]]) {
+  VIEW.attempt_draft=draft; VIEW.next_step=next; attempts.length=0;
+  await window.ROWorkspace.openHandback(REPORT);
+  await pbtn('确认这个判断').click(); await sleepTick();
+  await pbtn('从这条开新尝试').click();
+  forms.push(attempts[0]);
+}
+console.log(JSON.stringify(forms));
+""")
+    assert out[0] == {"description": "Add 2008 to the sample", "result": "r", "parents": [A16]}                  # the draft wins
+    assert out[1] == {"description": "Repeat on delisted names.", "result": "", "parents": [A16]}                # no draft: the next step, 源自 this attempt
+    assert out[2]["description"] == "Repeat on delisted names."                                                # a draft with a blank description is none
+    assert len(out[3]["description"]) == 500 and out[3]["description"].endswith("…") and out[3]["description"].startswith("不到五百字的下一步。")
+    assert out[4]["description"] == "" and out[4]["parents"] == [A16]                                          # nothing to start from: as before
+    assert out[5]["description"] == "x" * 500 and out[6]["description"] == "y" * 499 + "…"                      # at the limit as it is, over it cut
+
+
+@needs_node
+def test_a_long_key_number_is_shown_to_four_significant_digits_with_the_value_as_written_on_hover_and_the_check_is_unchanged(root, pid, report):
+    numbers = [{"what": "p-value", "value": "9.509441061106294e-05", "file": "results/sharpe.csv", "check": "found"},
+               {"what": "Share", "value": "0.008063173780026744", "file": "results/sharpe.csv", "check": "missing"},
+               {"what": "Sharpe ratio", "value": "1.82", "file": "results/sharpe.csv", "check": "found"},
+               {"what": "Members", "value": "12", "file": "results/sharpe.csv", "check": "found"},
+               {"what": "Return", "value": "12.3456789%", "file": "results/sharpe.csv", "check": "found"},
+               {"what": "Latency", "value": "3.2345678 ms", "file": "results/sharpe.csv", "check": "unreadable"}]
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify(cls('ws-hb-number').map(r=>({what:r.children[0].textContent, shown:r.children[1].textContent, title:r.children[1].title===undefined?null:r.children[1].title,
+  flags:r.children.slice(3).map(c=>c.textContent)}))));
+""", key_numbers=numbers)
+    assert [(n["what"], n["shown"], n["title"]) for n in out] == [
+        ("p-value", "9.509e-05", "9.509441061106294e-05"), ("Share", "0.008063", "0.008063173780026744"),
+        ("Sharpe ratio", "1.82", None), ("Members", "12", None), ("Return", "12.3456789%", None), ("Latency", "3.2345678 ms", None)]   # the rest as written
+    assert [n["flags"] for n in out] == [[], ["在所引文件里没找到这个数"], [], [], [], ["所引文件读不了，没法核对"]]               # the number check is of the value as written

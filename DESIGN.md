@@ -5886,6 +5886,18 @@ Decided the same day:
 - **The attempt's panel** lists its tasks in `after` order, each with its
   owner, its state in words (未开始, 运行中, 等你回答, 等你看, 已完成, 失败,
   越过了限制) and its handback.
+- **What a task reads** (`attempt_tasks.state_of`), the first that holds:
+  运行中 and 等你回答 while its latest run goes or asks; 越过了限制 when that
+  run went out of bounds (even for a task marked done); 失败 for a task not
+  marked done whose latest run failed, was interrupted or ended without a
+  report -- beside an older report too; 等你看 while its handback is
+  unopened; 已完成 for a task marked done, and for one that is not but has its
+  `report` set while its latest run is the one that handed it back (state
+  done, not undone) or the store has no run record (older versions did not
+  set the done mark, and a copy of a project or another Mac has no run
+  records); 未开始 for the rest, a run the person stopped included.
+  「未完成 m」 counts the tasks that are not marked done and do not read
+  已完成, so a project whose tasks all handed back says 「任务 n，全部完成」.
 - **Grouping the tasks a project already has** (Quant's 16). The page offers
   「把这些任务归入尝试…」: Research OS proposes groups — tasks whose text or
   report title share a version token (`v0`, `v0.2`, `v0.3`) or a named
@@ -5980,8 +5992,9 @@ this Mac under the Research OS home, never in the project.
   The agent writes no note besides its report unless the task asks for one.
 - **What the person sees**, in this order: the headline; the key numbers,
   each with its file (a value that does not occur in the text of its cited
-  file, by the number check of 16.1, is marked 「在所引文件里没找到这个数」);
-  没做完的; 需要你决定的; the attempt it belongs to (its number and title) with
+  file, by the number check of 16.1, is marked 「在所引文件里没找到这个数」;
+  a value with more than six significant digits is shown to four, 21.8, the
+  value as written on hover); 没做完的; 需要你决定的; the attempt it belongs to (its number and title) with
   the research assessment it has now -- what confirming replaces --; 代理建议 —
   the suggested status and reason, with
   「确认这个判断」, 「改一下」 (the chooser of 21.3, prefilled) and 「先不判断」;
@@ -5991,6 +6004,13 @@ this Mac under the Research OS home, never in the project.
   of bounds after it handed in (18.1 item 4) is warned of first, in the words of
   its state, 越过了限制, and a task whose run did so reads that on the card and
   in the attempt's panel, not 等你看 or 已完成.
+- **A handback without the fields** (a report written before them, or by an
+  agent that left them out) says in one line 「这份交回没有附上要点。」 and, when
+  its Section 20 context has them, shows the context's finding in the
+  headline's place under 「发现与解释」, then 「局限与待确认」 and 「下一步」 when
+  present -- the names the key points editor gives them (20.1). A report with
+  neither the 21.2 fields nor a finding, and one whose context cannot be read,
+  is shown unfolded, so that the person reads something; any other is folded.
 - **Confirming** writes the attempt's research assessment through the same
   write as the panel (18.3: only the changed cell, backup, history, conflict
   check). The history entry reads 「由 张三 确认（采纳 Claude Code · sonnet 的
@@ -6000,8 +6020,11 @@ this Mac under the Research OS home, never in the project.
   (12.4) whose sentence says the same. Choosing 已放弃 still asks for the
   reason and freezes the basis (14.3).
 - **After it**, three ways on: 「再派一个任务」 (a new task in the same
-  attempt, `after` this one), 「从这条开新尝试」 (the new-attempt form prefilled
-  from `attempt_draft`, 源自 this attempt) and 「这条先到这里」.
+  attempt, `after` this one, with 研究上下文 already set to this handback's
+  record), 「从这条开新尝试」 (the new-attempt form prefilled from
+  `attempt_draft`'s description, else from the context's `next_step` cut to
+  500 characters -- the longest description the grouping writes -- 源自 this
+  attempt chosen) and 「这条先到这里」.
 - **What this amends.** Section 0's "humans own judgment" and 17.5 rule 1
   stand for the act: an agent still cannot write an assessment, and the
   guard is unchanged. What changes is that an agent may *propose* one, in
@@ -6027,8 +6050,9 @@ this Mac under the Research OS home, never in the project.
   stop them saving the rest of the record; the handback shows the suggestion
   as one the project no longer has. `assessment_confirmed` is refused on the
   agent's tool path (`researchos_complete_task` answers `Not written: ...`), and
-  the editor's save keeps what is stored and refuses a change to it: the one
-  writer is the confirm path.
+  the editor's save keeps what is stored and refuses a change to it: the page's
+  confirm path writes it, and the page's 撤销 of a confirmation takes it back
+  (`unconfirm`, below); nothing else changes it.
 - **The brief** asks for the fields in both languages, lists the project's
   statuses (English names in the English brief), says the suggestion is only
   a suggestion and that the agent never writes the attempt table, and that
@@ -6098,8 +6122,27 @@ this Mac under the Research OS home, never in the project.
   PI and a single researcher, as the panel's save has it: the cell goes back as
   the file held it, while the row still reads as this write left it. It is not
   offered for an abandonment, whose basis was frozen, nor for a member's write,
-  which is proposed. A confirmation is a record: the key points still say that
-  it was made, and the line says so.
+  which is proposed. 撤销 takes the confirmation back with the cell: the report's
+  context loses `assessment_confirmed`, the version 撤销 wrote in the attempt's
+  history carries the note 「撤销了确认」 (stored in Chinese, said in the
+  request's language: Withdrew the confirmation), and the handback offers 「确认
+  这个判断」, 「改一下」 and 「先不判断」 again -- also when it is opened later --
+  under the line 「已撤销，研究判断回到了 {status}」. Only when the record cannot
+  be taken back (a later run of the task is going, the file cannot be written)
+  does the line say 「报告里仍记着你确认过」, with the reason.
+- **Taking a confirmation back** (`POST /api/workspace/handback/unconfirm`
+  {report}, `handbacks.unconfirm`) comes after 撤销 has put the cell back
+  through the panel's write, so a 撤销 that cannot (the row moved since, the
+  route would be abandoned again) takes nothing back. It is for the PI and a
+  single researcher, and for the confirmation of the person asking
+  (`assessment_confirmed.by`); it is refused while a later run of the task is
+  going (as a confirmation is) and when the report holds no confirmation. It
+  removes `assessment_confirmed` through the human context write
+  (`research_records.unconfirm_assessment`: guard, backup, history; the rest of
+  the context byte for byte) and puts the note on the newest version of the
+  attempt when that is the scan 撤销's write caused and has no note of its own;
+  when the history cannot take it (`history_error`) the confirmation is taken
+  back all the same.
 
 ### 21.3 A research assessment is a choice and a reason
 
@@ -6197,7 +6240,12 @@ attempts.py`; `research_records.assessment_statuses`).
   words without being opened.
 - **The task form**: the task as several lines; 属于哪条尝试; 接着哪个任务
   (optional); 负责人, people and agents in separate groups; 日期 (optional);
-  「保存并运行」 when the owner is an agent.
+  「保存并运行」 when the owner is an agent. Opened by 「在这条尝试下加任务」 it
+  has the attempt chosen and 接着哪个任务 set to the attempt's last task in
+  `after` order (none when it has no task); opened by a handback's 「再派一个任务」
+  it also has 研究上下文 set to that handback's record. These are choices, not
+  writing: a form that holds only them is not unsaved work, and the person may
+  change each.
 - **研究路线's right-hand column** is the same 等你处理 list; it folds to a
   narrow strip when empty.
 
@@ -6268,6 +6316,19 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 - **Numbers in tables**: a value with more than six significant digits is
   shown to four significant digits, with the value as written on hover and in
   the file view; integers and values of six digits or fewer as written.
+  `RODesk.formatNumber` (desk.js) is the one formatter, for every table and
+  list of the app: it reads a plain decimal -- digits, one point, an optional
+  exponent -- counts the significant digits as written (from the first that is
+  not zero, trailing zeros after the point among them) and rounds those digits
+  half up, not a float: `9.509441061106294e-05` is `9.509e-05` (a value
+  written with an exponent keeps that form, two digits at least),
+  `0.008063173780026744` is `0.008063`, `123456.789` is `1.235e+05` (a plain
+  number whose integer part four digits cannot hold is not padded with zeros).
+  An integer, a value of six digits or fewer, and anything with a unit, a
+  percent sign, a word or a thousands separator is shown as written. The
+  caller puts the value as written in the element's `title`; the record and
+  the number check of 16.1 only ever have it as written. The handback's key
+  numbers use it; the other tables are batch 5's.
 - Every disclosure uses 12.13's chevron (文献 included). Every panel that
   covers the page has the same scrim and a 返回 step when it was opened from
   another panel. The route map fits all cards the first time a project's map

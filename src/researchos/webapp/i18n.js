@@ -413,6 +413,8 @@
     "结果（放弃一条路线时必填）": "Result (required when abandoning a route)",
     "这一行在你打开这份交回以后被改过：上面是它现在的研究判断，请看一眼再确认。": "This row changed after you opened the handback. Above is its research assessment now: look at it, then confirm.",
     "已撤销：尝试 #{number} 的研究判断改回了确认之前的样子。报告里仍记着你确认过。": "Undone: the research assessment of attempt #{number} is back as it was before you confirmed. The report’s key points still record that you confirmed.",
+    "已撤销，研究判断回到了 {status}": "Undone: the research assessment is back to {status}",
+    "研究判断已改回，但报告的要点里没能撤销这次确认。": "The research assessment is back as it was, but the report’s key points could not take the confirmation back.",
     "你是这个项目的成员：确认会先写进你的工作副本，再生成提议；PI 批准后才进入正式版本。": "You are a member of this project: confirming first writes into your working copy, then prepares a proposal. It joins the official version only when the PI approves it.",
     "{who} 已确认：": "Confirmed by {who}:",
     "采纳了代理的建议": "Adopted the agent’s suggestion",

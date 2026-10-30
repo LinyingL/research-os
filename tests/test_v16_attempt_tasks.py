@@ -174,6 +174,20 @@ def test_tasks_of_an_attempt_are_listed_in_after_order_and_a_circle_written_by_h
     ({"done": True}, {"state": "failed"}, False, "done"),
     ({"done": True}, {"state": "out_of_bounds", "outcome": "done"}, False, "out_of_bounds"),   # the done mark stays the agent's; the run is what warns (18.1 item 4)
     ({"done": True}, {"state": "out_of_bounds", "outcome": "done"}, True, "out_of_bounds"),    # and an unopened handback does not hide it
+    # a task whose report is in but that was never marked done (older versions did not set the mark): it has handed back
+    ({"report": REPORT}, None, False, "done"),                                                  # a copy or another Mac has no run records
+    ({"report": REPORT}, {"state": "done"}, False, "done"),                                     # the latest run is the one that handed it back
+    ({"report": REPORT}, {"state": "done"}, True, "to_read"),                                   # until its handback has been opened
+    ({"report": REPORT}, {"state": "done", "reverted": True}, False, "not_started"),            # a run that was undone handed nothing back
+    ({"report": REPORT}, {"state": "stopped"}, False, "not_started"),                           # the person stopped a later run: it is not the one that handed back
+    ({"report": REPORT}, {"state": "failed"}, False, "failed"),                                 # a later run that failed still reads 失败 beside an older report
+    ({"report": REPORT}, {"state": "interrupted"}, False, "failed"),
+    ({"report": REPORT}, {"state": "ended"}, False, "failed"),
+    ({"report": REPORT}, {"state": "running"}, False, "running"),
+    ({"report": REPORT}, {"state": "needs_input"}, False, "needs_answer"),
+    ({"report": REPORT}, {"state": "out_of_bounds", "outcome": "done"}, False, "out_of_bounds"),
+    ({"report": ""}, {"state": "done"}, False, "not_started"),                                   # no report in: nothing was handed back
+    ({"report": None}, None, False, "not_started"),
 ])
 def test_a_tasks_state_comes_from_its_done_mark_its_latest_run_and_whether_its_handback_waits(task, run, waiting, state):
     assert attempt_tasks.state_of({"id": "t", **task}, run, waiting) == state
@@ -287,6 +301,49 @@ def test_the_latest_run_of_each_task_is_read_from_the_run_store_newest_first(roo
     assert attempt_tasks._latest_runs(None, {"a"}) == {} and attempt_tasks._latest_runs(pid, set()) == {}
     assert {i["id"]: i["state"] for i in _work(_payload(root), A16)["items"]} == {
         "a": "needs_answer", "b": "running", "c": "not_started"}
+
+
+def _quant_like(root: Path) -> list[str]:
+    """Quant as the researcher's copy has it: five tasks under one attempt, each with its report in and none marked done
+    (older versions did not set the mark); the reports predate the handback's fields, one has a Section 20 context
+    with a finding and no 21.2 field; one more task under another attempt that was never run."""
+    reports = [_report(root, name, f"Report {name}") for name in "abcde"]
+    (root / reports[4].removesuffix(".md")).with_suffix(".context.json").write_text(
+        json.dumps({"version": 1, "context": {"finding": "Sword v0.2 on every member", "limits": "One data vendor"}}))
+    _save(root, [_task(n, attempt=A16, report=report, after=None if n == "a" else chr(ord(n) - 1)) for n, report in zip("abcde", reports)]
+          + [_task("z", attempt=A17)])
+    return reports
+
+
+def test_a_task_that_has_handed_back_reads_finished_and_the_card_counts_only_what_is_not(root):
+    # a copy or another Mac has no run records at all
+    _quant_like(root)
+    work = _work(_payload(root), A16)
+    assert (work["tasks"], work["unfinished"], work["unopened"]) == (5, 0, 0)
+    assert [i["state"] for i in work["items"]] == ["done"] * 5 and [i["done"] for i in work["items"]] == [False] * 5
+    other = _work(_payload(root), A17)
+    assert (other["tasks"], other["unfinished"]) == (1, 1) and other["items"][0]["state"] == "not_started"
+
+
+def test_with_run_records_the_latest_run_decides_whether_a_report_still_counts_as_the_tasks_answer(root):
+    from researchos.agents import runs as run_store
+    from researchos.records.identity import read_identity
+
+    pid = read_identity(root).identity.id
+    reports = _quant_like(root)
+    for n, (task, report) in enumerate(zip("abcde", reports)):   # every run in the store ended in state done
+        run_store.create_run(pid, {"id": f"r-20261029T10000{n}Z-aaaaa{n}", "task_id": task, "state": "done", "report": report})
+    work = _work(_payload(root), A16)
+    assert (work["unfinished"], [i["state"] for i in work["items"]]) == (0, ["done"] * 5)
+    # later runs: one failed, one the person stopped, one still going, one that was undone
+    run_store.create_run(pid, {"id": "r-20261029T110001Z-bbbbb1", "task_id": "b", "state": "failed"})
+    run_store.create_run(pid, {"id": "r-20261029T110002Z-bbbbb2", "task_id": "c", "state": "stopped"})
+    run_store.create_run(pid, {"id": "r-20261029T110003Z-bbbbb3", "task_id": "d", "state": "running"})
+    run_store.update_run(pid, "r-20261029T100004Z-aaaaa4", reverted=True)
+    work = _work(_payload(root), A16)
+    assert {i["id"]: i["state"] for i in work["items"]} == {"a": "done", "b": "failed", "c": "not_started", "d": "running", "e": "not_started"}
+    assert work["unfinished"] == 4                    # only what reads 已完成 is left out of 未完成
+    assert work["tasks"] == 5 and work["latest"]["report"] == reports[4]
 
 
 # -- the team: a member's task may name the member's own unproposed attempt, and proposing it carries its tasks --

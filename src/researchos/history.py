@@ -220,8 +220,15 @@ def confirmed_note(who: str, agent: str | None = None) -> str:
     return f"由 {who} 确认（采纳 {agent} 的建议）" if agent else f"由 {who} 确认"
 
 
+#: The note of the version 撤销 writes when it takes a confirmation back (21.2): stored in Chinese like the confirmation's own.
+UNCONFIRMED_NOTE = "撤销了确认"
+
+
 def confirmed_note_words(note: object, lang: str) -> str | None:
-    """`note` said in `lang` when it is a confirmation's (`confirmed_note`), else None."""
+    """`note` said in `lang` when it is a confirmation's (`confirmed_note`) or the note of taking one back
+    (`UNCONFIRMED_NOTE`), else None."""
+    if note == UNCONFIRMED_NOTE:
+        return settings.say(UNCONFIRMED_NOTE, "Withdrew the confirmation", lang)
     got = _CONFIRMED_NOTE.fullmatch(note) if isinstance(note, str) else None
     if got is None:
         return None

@@ -162,6 +162,38 @@
     return w.charAt(0).toLowerCase() + w.slice(1);
   }
 
+  // A long number as it is shown (DESIGN.md 21.8): a value with more than six significant digits to four (9.509441061106294e-05
+  // is 9.509e-05, 0.008063173780026744 is 0.008063); an integer, a value of six digits or fewer, and anything that is
+  // not a plain decimal -- with a unit, a percent sign, a word, a separator -- as written. The significant digits are
+  // the digits as written from the first that is not zero, trailing zeros after a decimal point among them; rounding
+  // is on those digits (half up), not on a float. A value written with an exponent keeps its form (e-05, two digits at
+  // least); a plain one stays plain unless four digits cannot hold its integer part. The caller shows the value as
+  // written on hover (`title`) and keeps it as written in the record. Anywhere a table or a list shows a long number
+  // uses this one function (batch 5 reuses it).
+  const NUMBER_KEEP = 6, NUMBER_SHOW = 4;
+  const PLAIN_NUMBER = /^([+-]?)(\d*)(?:\.(\d*))?(?:([eE])([+-]?)(\d+))?$/;
+  function formatNumber(value) {
+    const text = value == null ? "" : String(value);
+    const m = PLAIN_NUMBER.exec(text);
+    if (!m || (m[3] === undefined && m[4] === undefined)) return text;      // not a plain decimal, or an integer
+    const whole = m[2], all = whole + (m[3] || "");
+    const first = all.search(/[1-9]/);
+    if (first < 0) return text;
+    const digits = all.slice(first);
+    if (digits.length <= NUMBER_KEEP) return text;
+    let kept = digits.slice(0, NUMBER_SHOW), power = whole.length - 1 - first + (m[4] ? parseInt(m[5] + m[6], 10) : 0);
+    if (digits.charAt(NUMBER_SHOW) >= "5") {
+      kept = String(Number(kept) + 1);
+      if (kept.length > NUMBER_SHOW) { kept = kept.slice(0, NUMBER_SHOW); power += 1; }
+    }
+    if (m[4] !== undefined || power >= NUMBER_SHOW) {
+      const exponent = String(Math.abs(power)).padStart(2, "0");
+      return m[1] + kept.charAt(0) + "." + kept.slice(1) + (m[4] || "e") + (power < 0 ? "-" : "+") + exponent;
+    }
+    if (power < 0) return m[1] + "0." + "0".repeat(-power - 1) + kept;
+    return m[1] + kept.slice(0, power + 1) + (kept.length > power + 1 ? "." + kept.slice(power + 1) : "");
+  }
+
   function toneOf(status) {
     const s = status && status.status;
     return Object.prototype.hasOwnProperty.call(VERDICT_TONES, s) ? VERDICT_TONES[s] : "plain";
@@ -1279,7 +1311,8 @@
 
   // 任务 (21.1): what this attempt holds, in `after` order -- each with its owner, its state in words and, once it has
   // handed something back, the way to open the handback (21.2).
-  // 「在这条尝试下加任务」 writes the new task on 项目首页, whose form has this attempt chosen. The states are the
+  // 「在这条尝试下加任务」 writes the new task on 项目首页, whose form has this attempt chosen and its last task as the one the
+  // new task continues (21.4: the person may change it). The states are the
   // engine's codes (attempt_tasks.state_of); the words are the ones 项目首页 gives a run.
   const TASK_STATES = {
     not_started: [() => t("未开始"), "gray"], running: [() => t("运行中"), "ochre"], needs_answer: [() => t("等你回答"), "ochre"],
@@ -1322,8 +1355,10 @@
     const role = deskRole();
     if (role === "single" || role === "pi" || role === "member") {
       const actions = mk("div", "desk-actions");
+      // the new task continues the attempt's last one (`after` order), as 再派一个任务 does; the form lets the person change it
+      const last = items.length ? items[items.length - 1] : null;
       actions.appendChild(mkButton(t("在这条尝试下加任务"), "btn btn-small", () => {
-        if (mayLeavePanel() && typeof startTaskOnHome === "function") startTaskOnHome({ attempt: id });
+        if (mayLeavePanel() && typeof startTaskOnHome === "function") startTaskOnHome({ attempt: id, after: last ? last.id : "" });
       }));
       s.appendChild(actions);
     }
@@ -2082,6 +2117,8 @@
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
     setMode, resume, syncSwitch, listZoom, mode: routesMode, onePerson,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
+    // a long number to four significant digits, the value as written left to the caller's title and record (21.8)
+    formatNumber,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // an existing row's 研究判断 or 结果 saved at once with 撤销 (18.3): the panel's, and app.html's older form
     atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),

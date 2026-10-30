@@ -154,7 +154,7 @@ def test_the_panel_lists_the_attempts_tasks_in_after_order_with_owner_state_in_w
     assert "desk-meta: Claude Code · sonnet · 2026-11-02" in section and "desk-meta: Zhang San" in section
     assert section.count("btn btn-small: " + w("打开交回", "Open handback")) == 2 and "btn btn-small: " + w("在这条尝试下加任务", "Add a task under this attempt") in lines
     report = "research/results/" + "a" * 32 + ".md"
-    assert out["extra"] == [report, report, {"attempt": A16}]
+    assert out["extra"] == [report, report, {"attempt": A16, "after": "g"}]   # the form defaults to the attempt's last task in `after` order
     if lang == "en":
         assert not [line for line in section if CJK.search(line) and "Collect" not in line]
 
@@ -168,6 +168,18 @@ def test_an_attempt_with_no_tasks_says_so_and_still_offers_the_way_to_add_one(la
     lines = _run_panel(case, "await window.RODesk.openAttempt(%s);" % json.dumps(A16), lang=lang)["lines"]
     assert "desk-empty: " + w("这条尝试下还没有任务。", "No tasks under this attempt yet.") in lines
     assert "btn btn-small: " + w("在这条尝试下加任务", "Add a task under this attempt") in lines
+    # no task yet: nothing to continue; with one task, that task is the one the new task continues
+    def asked() -> list:
+        return _run_panel(case, """
+          await window.RODesk.openAttempt(%s);
+          global.opening = []; global.startTaskOnHome = (choice) => { opening.push(choice); };
+          panelPart('panel-body').all().find((k) => k.tag === 'BUTTON' && k.kids.join('') === %s).click();
+          global.extra = opening;
+        """ % (json.dumps(A16), json.dumps(w("在这条尝试下加任务", "Add a task under this attempt"))), lang=lang)["extra"]
+
+    assert asked() == [{"attempt": A16, "after": ""}]
+    case["desk"]["attempts"][0]["work"] = _work(tasks=1, unfinished=0, items=_items()[:1])
+    assert asked() == [{"attempt": A16, "after": "a"}]
     # a payload from an older engine (no `work` at all) draws the same
     del case["desk"]["attempts"][0]["work"]
     assert "desk-empty: " + w("这条尝试下还没有任务。", "No tasks under this attempt yet.") in _run_panel(
@@ -319,6 +331,36 @@ console.log(JSON.stringify({chosen,kept,taken:{ok:taken, text:field('任务').va
     assert out["chosen"] == {"ok": True, "value": ATTEMPT, "focus": True, "dirty": False}  # a chosen attempt is not unsaved writing
     assert out["kept"] == {"ok": False, "text": "Half a thought", "questions": 1}
     assert out["taken"] == {"ok": True, "text": "", "attempt": ATTEMPT, "after": "a"}
+
+
+@needs_node
+def test_a_task_sent_on_from_a_handback_has_that_handbacks_record_chosen_as_its_research_context_and_that_is_not_unsaved_writing():
+    out = run_workspace(r"""
+const REC='research/results/'+'a'.repeat(32)+'.md', GONE='research/results/'+'b'.repeat(32)+'.md';
+listed.documents.push({path:REC,kind:'result',title:'Recheck',excerpt:''});
+listed.tasks=TASKS; listed.tasks_revision='tasks-1';
+await window.ROWorkspace.load(root);
+const ctx=()=>field('研究上下文（可选）');
+window.ROWorkspace.startTask({attempt:ATT,after:'a'});
+const without={value:ctx().value, none:ctx().children[0].textContent};
+const sent=window.ROWorkspace.startTask({attempt:ATT,after:'b',context:REC});
+const chosen={ok:sent, value:ctx().value, shown:ctx().children.find(o=>o.value===REC).textContent, dirty:window.ROWorkspace.isDirty(), after:field('接着哪个任务').value};
+window.ROWorkspace.startTask({attempt:ATT,after:'b',context:GONE});
+const missing={value:ctx().value, option:ctx().children.some(o=>o.value===GONE)};
+window.ROWorkspace.startTask({attempt:ATT,after:'b',context:REC});
+ctx().value='research/results/'+'a'.repeat(32)+'.md'; await ctx().emit('change'); const same={dirty:window.ROWorkspace.isDirty()};
+ctx().value=''; await ctx().emit('change'); const cleared={dirty:window.ROWorkspace.isDirty()};   // the person's own choice, none, is not writing either
+window.ROWorkspace.startTask({attempt:ATT,after:'b',context:REC});
+typed(field('任务'),'Repeat on delisted names'); await find('添加任务').click(); await sleepTick();
+const added=listed.tasks.find(t=>t.text==='Repeat on delisted names');
+console.log(JSON.stringify({without,chosen,missing,same,cleared,added:{attempt:added.attempt,after:added.after,context:added.context}, then:{value:ctx().value, dirty:window.ROWorkspace.isDirty()}}));
+""".replace("ATT", json.dumps(ATTEMPT)).replace("TASKS", _TASKS))
+    assert out["without"] == {"value": "", "none": "无关联研究记录"}                       # asked for without a record: as before
+    assert out["chosen"] == {"ok": True, "value": "research/results/" + "a" * 32 + ".md", "shown": "Recheck", "dirty": False, "after": "b"}
+    assert out["missing"] == {"value": "research/results/" + "b" * 32 + ".md", "option": True}   # a record the list does not have is still the one chosen
+    assert out["same"] == {"dirty": False} and out["cleared"] == {"dirty": False}
+    assert out["added"] == {"attempt": ATTEMPT, "after": "b", "context": {"report": "research/results/" + "a" * 32 + ".md"}}
+    assert out["then"] == {"value": "", "dirty": False}                                   # the next blank form is blank again
 
 
 @needs_node

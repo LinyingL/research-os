@@ -23,6 +23,9 @@ handed it back: a task sent back and handed in again is unopened again.
   cell it showed (`was`), and a row that has moved since is refused, as the panel's own save refuses it (18.3). A
   member's write lands in their working copy and the page proposes it (12.4). Nothing of this is an agent's: the
   guard that keeps an agent from writing the attempt table is unchanged.
+- **Taking a confirmation back.** `unconfirm`: 撤销 on the written line puts the cell back through the panel's write;
+  this then removes `assessment_confirmed` from the report's context and puts 「撤销了确认」 on the version 撤销 wrote,
+  so that the handback offers its three buttons again and says the assessment is back as it was.
 
 The engine says no sentence of its own here but its refusals (13.1)."""
 
@@ -315,7 +318,9 @@ def view(root: str | Path, project_id: str | None, person: str | None, report: s
     `label`, `runner`, `model`, `by`, `by_name`, `ended`, and how it ended -- `state`, `outcome`, `violations`, the
     count of out-of-bounds changes, which the page warns of; None for a report written by hand); `run_active` (a
     later run of the task is still going, or waits for an answer: confirming waits for it); the context's
-    `headline`, `key_numbers` (with `check`, `check_numbers`), `undone`, `decide`; `suggested` (`status`, `reason`,
+    `headline`, `key_numbers` (with `check`, `check_numbers`), `undone`, `decide`, and Section 20's `finding`,
+    `limits` and `next_step`, which a report written without the 21.2 fields still has and the page shows in the
+    headline's place; `suggested` (`status`, `reason`,
     `known`, `marker`, `abandons`) and `confirmed` (`assessment_confirmed` with `by_label`); `statuses`
     (`research_records.assessment_statuses`); `outputs` by kind order; `attempt_draft`; `context_error` when the
     context cannot be read; `unopened` for `person`; `mode` (who writes: single, pi, member, none, unknown). Reads
@@ -343,7 +348,7 @@ def view(root: str | Path, project_id: str | None, person: str | None, report: s
         "mode": mode, "statuses": research_records.assessment_statuses(root),
         "unopened": report in unopened(project_id, person, root), "context_error": None,
         "headline": "", "key_numbers": [], "undone": "", "decide": [], "suggested": None, "confirmed": None,
-        "attempt_draft": None, "outputs": [],
+        "finding": "", "limits": "", "next_step": "", "attempt_draft": None, "outputs": [],
     }
     try:
         context = research_records.parse(workspace._read(root, research_records.path_for(report)))  # noqa: SLF001
@@ -351,6 +356,7 @@ def view(root: str | Path, project_id: str | None, person: str | None, report: s
         out["context_error"] = str(exc)
         context = research_records.normalize({})
     out.update(headline=context.get("headline", ""), undone=context.get("undone", ""), decide=list(context.get("decide", [])),
+               finding=context.get("finding", ""), limits=context.get("limits", ""), next_step=context.get("next_step", ""),
                attempt_draft=context.get("attempt_draft"), key_numbers=check_numbers(root, context.get("key_numbers", [])))
     suggestion = context.get("suggested_assessment")
     if suggestion is not None:
@@ -545,6 +551,74 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None, lang: str =
     except workspace.WorkspaceError as exc:
         out["context_error"] = str(exc)
     return out
+
+
+def _note_undo(root: Path, node: str, who: str | None, note: str) -> str | None:
+    """The version of the attempt that 撤销 wrote when it put the cell back carries `note` and `who`: it is the newest
+    version of the attempt, a scan that saw the row as the index holds it now and has no note of its own, and the note
+    goes on it instead of a second version being added (as `_record_history` does for the confirmation). None, or why
+    the history could not be updated (the confirmation is taken back all the same)."""
+    try:
+        identity = read_identity(root).identity
+        if identity is None:
+            return "the project has no readable identity"
+        conn = db.connect(paths.graph_db_path(root))
+        try:
+            attempt = db.get_node(conn, node)
+        finally:
+            conn.close()
+        if attempt is None:
+            return f"{node} is not in the index"
+        human = attempt.get("human_fields") or {}
+        digest = history._attempt_digest({"verdict": str(human.get("verdict") or ""), "result": str(human.get("result") or "")})  # noqa: SLF001
+        with history.Store.open(identity.id) as store:
+            latest = store.latest(node)
+            if latest is None or latest.source != "scan" or latest.note or latest.sha256 != digest:
+                return "the version 撤销 wrote is not the newest version of the attempt"
+            store.attribute(latest.seq, source="scan", who=who, note=note, approved_by=None)
+    except Exception as exc:  # noqa: BLE001 -- see `_record_history`
+        return str(exc)
+    return None
+
+
+def unconfirm(root: str | Path, body: Any, *, lang: str = "zh") -> dict[str, Any]:
+    """`POST /api/workspace/handback/unconfirm` {report}: 撤销 on the line of a written confirmation has put the attempt's cell
+    back as it was (the page's own write, `/api/attempts/write`); this takes the confirmation back too, so that the
+    report's context no longer says the person confirmed what the table no longer says. `assessment_confirmed` leaves
+    the context (`research_records.unconfirm_assessment`, the one other writer of the field) and the version 撤销
+    wrote carries the note 「撤销了确认」 (`history.UNCONFIRMED_NOTE`, stored in Chinese and said in `lang` when it is read).
+    Only for the PI and a single researcher, the cases where 撤销 is offered, and only for the confirmation of the person
+    asking; refused while a later run of the task is going (its completion is checked against the context it started
+    with, as for `confirm`) and when there is no confirmation. Answers `removed`, `note` (stored), `said` (in `lang`),
+    `report`, `number`, `node` and `history_error` (the confirmation is taken back whether or not the note could be put on
+    the history)."""
+    if not isinstance(body, dict):
+        raise _refused("invalid", "A request must be an object", "内容格式不对，请检查后重试", 400)
+    root = workspace._root(root)  # noqa: SLF001
+    report = body.get("report")
+    research_records.path_for(report)
+    mode, me, _team = proposals.role_of(root)
+    if mode not in ("single", "pi"):
+        raise _refused("handback_unconfirm_not_offered", "Only the PI or a single researcher takes a confirmation back; a member's "
+                       "confirmation is a proposal", "只有 PI 和单人项目的研究者能撤销确认；成员的确认是一份提议。", 403)
+    workspace._require_write(root)  # noqa: SLF001
+    stored = research_records.parse(workspace._read(root, research_records.path_for(report)))  # noqa: SLF001
+    confirmed = stored.get("assessment_confirmed")
+    if confirmed is None:
+        raise _refused("handback_not_confirmed", "This handback holds no confirmation to take back", "这份交回里没有可以撤销的确认。")
+    if confirmed.get("by") != me:
+        raise _refused("handback_not_yours", "Another person confirmed this assessment; only they take the confirmation back",
+                       "这个判断是别人确认的，只有他们能撤销这次确认。", 403)
+    task = _task_of(root, report)
+    if task is not None and _run_going(_project_id(root), task["id"]):
+        raise _refused("handback_run_active", "A run of this task is still going and will hand its own report back; take the "
+                       "confirmation back after it has", "这个任务还有一次运行没有结束，它会交回自己的报告。等它交回以后再撤销确认。")
+    research_records.unconfirm_assessment(root, report)
+    node = (task or {}).get("attempt")
+    note = history.UNCONFIRMED_NOTE
+    return {"report": report, "removed": True, "note": note, "said": history_note_words(note, lang), "node": node,
+            "number": node.rpartition("#")[2] if node else None,
+            "history_error": _note_undo(root, node, me, note) if node else "the task has no attempt"}
 
 
 def _is_agent(owner: Any) -> bool:

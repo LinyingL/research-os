@@ -4470,6 +4470,17 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     payload = self._workspace_api(lambda: handbacks.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock, lang=self._lang()))
                 payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
                 self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/handback/unconfirm":
+                # 21.2: 撤销 on the written line has put the cell back (the attempt write); this takes the confirmation back
+                # from the report's context and notes it on the history
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: handbacks.unconfirm(served.root, saved, lang=self._lang()))
+                payload["generation"] = self.server.watcher.record_write(set())
+                self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":
                 body = self._read_json_body_with_path()
                 requested_id = body.get("id") if isinstance(body.get("id"), str) else None
