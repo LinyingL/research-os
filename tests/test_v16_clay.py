@@ -1,6 +1,6 @@
 """Research OS V16, task B5-1 (DESIGN.md 21.8, 12.11): the clay colour means something is wrong.
 
-Clay (`--clay`, `--clay-soft`) is the colour of an error, a broken provenance, a warning 21.5 settled, a run out of bounds and a
+Clay (``, `--clay-soft`) is the colour of an error, a broken provenance, a warning 21.5 settled, a run out of bounds and a
 problem line in 备份. Selection, the current section, links, hover and focus are ink and weight; an assessment's tint is its own
 (12.11) and stays. This file lists every selector of the page's two style sheets that may use clay, with its reason, and every place
 a script hands a tone named clay to the page, and fails on a new one: a new use is either added here with the reason it is a
@@ -104,8 +104,11 @@ CLAY_TONES: list[tuple[str, str, str]] = [
     ("team.js", '"clay" : f.state === "apply"', ERROR + ": a file of a proposal that conflicts or has a problem"),
 ]
 
+#: The two colours, as red, green and blue, and the Swift form of the icon's. A colour written out -- hex (3, 4, 6 or 8 digits, any case),
+#: `rgb()` or `hsl()` with commas or spaces and an alpha, per cent or not -- is read by value, within two steps of a channel.
+CLAY_RGB = [(166, 75, 42), (241, 220, 208)]
+SWIFT_CLAY = re.compile(r"0xA64B2A|0xF1DCD0", re.IGNORECASE)
 #: Files that hold the colour written out. Only the token's definition and the application icon's chart dot may.
-LITERAL_CLAY = re.compile(r"#a64b2a|#f1dcd0|rgba?\(\s*166\s*,\s*75\s*,\s*42|rgba?\(\s*241\s*,\s*220\s*,\s*208|0xA64B2A", re.IGNORECASE)
 LITERAL_ALLOWED = {
     ("app.html", "--clay: #A64B2A;"): "the token's definition",
     ("app.html", "--clay-soft: #F1DCD0;"): "the token's definition",
@@ -151,8 +154,58 @@ def _all_rules() -> list[tuple[str, str]]:
     return _rules(_style_text(APP_HTML)) + _rules(_style_text(WORKSPACE_CSS))
 
 
+def _is_clay(rgb: tuple[float, ...]) -> bool:
+    return any(all(abs(a - b) <= 2 for a, b in zip(rgb, clay)) for clay in CLAY_RGB)
+
+
+def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[float, float, float]:
+    s, l, h = s / 100, l / 100, (h % 360) / 360
+    q = l * (1 + s) if l < 0.5 else l + s - l * s
+    p = 2 * l - q
+
+    def channel(t: float) -> float:
+        t %= 1
+        return 255 * (p + (q - p) * 6 * t if t < 1 / 6 else q if t < 1 / 2 else p + (q - p) * (2 / 3 - t) * 6 if t < 2 / 3 else p)
+
+    return channel(h + 1 / 3), channel(h), channel(h - 1 / 3)
+
+
+def _writes_clay(text: str) -> bool:
+    """`text` holds the clay colour or its soft tint written out: Swift's 0x form, a hex colour, `rgb()` or `hsl()` (commas or spaces, alpha,
+    per cent) -- whatever the case or the spelling."""
+    if SWIFT_CLAY.search(text):
+        return True
+    for digits in re.findall(r"#([0-9a-f]{3,8})(?![0-9a-z])", text, re.IGNORECASE):
+        if len(digits) in (3, 4):
+            digits = "".join(c * 2 for c in digits[:3])
+        elif len(digits) in (6, 8):
+            digits = digits[:6]
+        else:
+            continue
+        if _is_clay(tuple(int(digits[i:i + 2], 16) for i in (0, 2, 4))):
+            return True
+    for name, args in re.findall(r"\b(rgba?|hsla?)\(([^)]*)\)", text, re.IGNORECASE):
+        numbers = re.findall(r"-?\d*\.?\d+%?", args.split("/")[0])[:3]
+        if len(numbers) < 3:
+            continue
+        values = [float(n.rstrip("%")) for n in numbers]
+        if name.lower().startswith("rgb"):
+            rgb = tuple(v * 2.55 if n.endswith("%") else v for v, n in zip(values, numbers))
+        else:
+            rgb = _hsl_to_rgb(*values)
+        if _is_clay(rgb):
+            return True
+    return False
+
+
+#: A script names the tone clay, or the token, in any quote (a template string too).
+SCRIPT_CLAY = re.compile(r'["\'`]clay["\'`]|tone-clay|--clay|clay-soft')
+#: A use of the token: `var(--clay)` or `var(--clay-soft)` with a fallback or without, spaces inside the parentheses allowed.
+CLAY_VAR = re.compile(r"var\(\s*--clay(?:-soft)?(?![\w-])")
+
+
 def _uses_clay(body: str) -> bool:
-    return bool(re.search(r"var\(--clay(?:-soft)?\)", body)) or bool(LITERAL_CLAY.search(body)) or bool(re.search(r"--clay(?:-soft)?\s*:", body))
+    return bool(CLAY_VAR.search(body)) or _writes_clay(body) or bool(re.search(r"--clay(?:-soft)?\s*:", body))
 
 
 def _selectors_using_clay() -> set[str]:
@@ -264,7 +317,7 @@ def test_a_script_hands_out_the_clay_tone_only_for_what_is_wrong():
     unlisted = []
     for path in _scripts():
         for line in _script_lines(path):
-            if not re.search(r'"clay"|tone-clay|--clay|clay-soft', line):
+            if not SCRIPT_CLAY.search(line):
                 continue
             matches = [(f, s) for (f, s, _r) in CLAY_TONES if f == path.name and s in line]
             if not matches:
@@ -293,8 +346,71 @@ def test_the_colour_written_out_is_in_the_token_and_the_icon_alone():
         if path.suffix not in (".html", ".js", ".css", ".swift"):
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
-            if LITERAL_CLAY.search(line):
+            if _writes_clay(line):
                 found.append((str(path.relative_to(WEBAPP)), line.strip()))
     unlisted = [item for item in found if not any(item[0] == f and s in item[1] for (f, s) in LITERAL_ALLOWED)]
     assert unlisted == [], f"the colour is written out where only the token may: {unlisted}"
     assert {(f, s) for (f, s) in LITERAL_ALLOWED if any(f == a and s in b for a, b in found)} == set(LITERAL_ALLOWED)
+
+
+# -- an attempt with no files yet (B5 fix) ------------------------------------------------------------------------------
+
+
+def test_an_attempt_with_no_files_yet_draws_its_gap_quiet_because_the_paper_relies_on_nothing_there(tmp_path):
+    """An attempt that holds no file yet (a new one, or one whose files are not filed under it) is not broken: its page and its
+    side panel say so in the gap's box, and 21.8 keeps clay for something wrong -- `.trace-gap` is clay only for a gap the paper
+    relies on, so this one carries the tone `quiet`, which node.js `gapBox` draws as `.trace-gap.quiet`."""
+    from researchos import project as project_identity
+    from test_v16_provenance import ATTEMPTS, MAP, _page, _scan, _write
+
+    root = tmp_path / "fresh"
+    _write(root, "map.md", MAP)
+    project_identity.init_project(root)
+    _write(root, ".researchos/attempts.toml", ATTEMPTS)
+    _scan(root)
+    trace = _page(root, "attempt:map.md#1")["trace"]
+    assert [b["kind"] for b in trace["breaks"]] == ["no_files"]
+    assert trace["breaks"][0]["tone"] == "quiet" and trace["columns"][1]["gap"]["tone"] == "quiet"
+    assert 'gap.tone === "quiet" ? " quiet"' in (WEBAPP / "node.js").read_text(encoding="utf-8")
+
+
+# -- the detectors themselves (B5 fix) ----------------------------------------------------------------------------------------
+
+
+def test_the_detectors_see_the_clay_colour_however_it_is_spelled():
+    """The allowlist is only as strict as what it can see. A rule that used `var(--clay, #a00)`, `rgb(166 75 42)`, `hsl(16 60% 41%)`,
+    a short or lower-case hex of the colour, or a colour-mix of the token went by it; a script that named the tone with single quotes
+    did too. Each of these is seen now, and what only looks like clay (another token, another colour) is not."""
+    for body in ("color: var(--clay)", "color: var(--clay, #a00)", "color: var( --clay )", "background: var(--clay-soft, white)",
+                 "color: color-mix(in srgb, var(--clay) 40%, white)", "color: #A64B2A", "color: #a64b2a", "color: #A64B2AFF", "color: #f1dcd0",
+                 "color: rgb(166, 75, 42)", "color: rgb(166 75 42)", "color: rgb(166 75 42 / 50%)", "color: rgba(166,75,42,.5)",
+                 "color: rgb(65% 29% 16%)", "color: hsl(16 60% 41%)", "color: hsl(16, 60%, 41%)", "color: hsla(22, 54%, 88%, 1)",
+                 "--clay: #A64B2A", "--clay-soft: #F1DCD0"):
+        assert _uses_clay(body), body
+    for body in ("color: var(--ink)", "color: var(--clay-ish)", "color: var(--olive, #5a6b2f)", "color: #a00", "color: rgb(0 0 0)",
+                 "color: rgb(166 75 99)", "color: hsl(200 60% 41%)", "color: #A64B2", "color: #123456"):
+        assert not _uses_clay(body), body
+    assert _writes_clay("let clay = rgb(0xA64B2A)") and not _writes_clay("let ink = rgb(0x26221B)")
+
+
+def test_a_script_naming_the_tone_with_any_quote_is_read_like_one_with_double_quotes():
+    """`const t = { warned: 'clay' };` and a template string `clay` are lines the scan of the scripts has to see."""
+    for line in ("const zzTone = { warned: 'clay' };", 'const zzTone = { warned: "clay" };', "const zzTone = { warned: `clay` };",
+                 'el.className = "status-label tone-clay";', "style.color = 'var(--clay)';"):
+        assert SCRIPT_CLAY.search(line), line
+    for line in ("const ink = { warned: 'ochre' };", 'el.className = "status-label tone-olive";', "const claylike = 1;"):
+        assert not SCRIPT_CLAY.search(line), line
+
+
+def test_no_custom_property_stands_for_the_clay_tokens_so_every_use_of_the_colour_names_it():
+    """`:root { --warn: var(--clay); } .x { color: var(--warn); }` used the colour without a rule that names it, and the allowlist (which
+    lists `:root` as the place the token is defined) let it through. The tokens are defined once, as colours, and nothing else is
+    defined from them: a use is a rule that says `var(--clay)` and is listed."""
+    aliases = []
+    for head, body in _all_rules():
+        for name, value in re.findall(r"(--[\w-]+)\s*:\s*([^;}]+)", body):
+            if name in ("--clay", "--clay-soft"):
+                assert _writes_clay(value) and not CLAY_VAR.search(value), (head, name, value)    # the definition: the colour itself
+            elif CLAY_VAR.search(value) or _writes_clay(value):
+                aliases.append((head, name, value.strip()))
+    assert aliases == [], f"a custom property is defined from the clay colour; write var(--clay) where it is used, and list the rule: {aliases}"

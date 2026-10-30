@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show only the first eight files of a task's opened **Process files** group,
+  with **N more** for the rest, as every other group of files does; a task can
+  register hundreds of them.
 - Add a **Settings** page at the foot of the sidebar for this Mac: the AI
   agents, the local model for drafting, online lookup and the interface
   language each have one form there, with the storage and routes they had.

@@ -1245,13 +1245,14 @@
   // 21.8: the page has one primary button. 保存 is it while the writing area is on screen in edit mode (a plan's writing area
   // sits in the fold, which may be shut); the task form's save button is the quiet one then, and the primary again in preview,
   // with no document open, or with the plan folded. A row that asks (the reply form's 发送, the undo's 确认撤回; marked
-  // `ws-ask`) has the primary while it is open and no document is being written; the task form's save button waits.
+  // `ws-ask`) has the primary while it is open and no document is being written -- the first of them when two rows ask at once, the
+  // other is quiet until it is the only one left; the task form's save button waits.
   function syncPrimary() {
     const submit = ui && ui.taskSubmit;
     if (!submit) return;
     const writing = !!draft && !!ui.save && !ui.save.classList.contains("hidden") && (draft.kind !== "overview" || !!(ui.planMore && ui.planMore.open));
     const asks = Array.from(host.querySelectorAll(".ws-ask"));
-    asks.forEach((ask) => ask.classList.toggle("btn-primary", !writing));
+    asks.forEach((ask, i) => ask.classList.toggle("btn-primary", !writing && i === 0));   // two rows can ask at once: the first in the page
     submit.classList.toggle("btn-primary", !writing && !asks.length);
   }
   // 「保存并运行」 stands beside the save button while the owner chosen is an agent and the task could be run from its row (a task

@@ -956,7 +956,8 @@ window.RCECanvas = (function () {
     const ctxMenu = htmlEl("div", "cv-menu cv-ctx hidden");
     const notice = htmlEl("div", "cv-notice hidden");
     const note = htmlEl("div", "cv-note hidden");
-    root.append(s.svg, t.bar, zoom, status, tip, empty, linkCard, ctxMenu, notice, note);
+    t.bar.append(note);   // under the toolbar however many rows it wraps to (21.8): it is placed from the toolbar, not from the top of the view
+    root.append(s.svg, t.bar, zoom, status, tip, empty, linkCard, ctxMenu, notice);
     container.appendChild(root);
     cv.dom = Object.assign({ root, zoom, status, tip, empty, linkCard, ctxMenu, notice, note }, s, t);
     // A click on the chip dismisses it -- unless it offers an action: a

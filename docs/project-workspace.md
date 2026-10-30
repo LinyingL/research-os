@@ -119,8 +119,9 @@ repeat the task; it shows its own date only when that differs from the heading's
 under **Task outputs**, which collapses with the task's other details. The
 registered files are grouped by kind; each opens in the file panel, figures show
 small previews, and each has **Remove registration**. The **Process files**
-group is only its count until you open it; any other group of more than eight
-files shows the first eight and **N more** for the rest. What you opened stays
+group is only its count until you open it; opened, it is like every other group:
+a group of more than eight files shows the first eight and **N more** for the
+rest (a task can register hundreds of process files). What you opened stays
 open when the row is drawn again. When a run ends, Research OS
 sorts the files it created: its own records, outputs registered for the task,
 files in the process folder, caches, and the rest. If the task's runs that were

@@ -1569,7 +1569,8 @@
   }
 
   // 21.8: a page of steps has one primary button, the first step not done yet (the sections stand in the order the steps are
-  // taken); the buttons of the later steps are quiet until the earlier ones are done.
+  // taken); the buttons of the later steps are quiet until the earlier ones are done. The two-folders form a joined member keeps under
+  // a fold is an exceptional setup beside the step, drawn quiet: the first primary in the page is always one that is on screen.
   function onePrimary(page) {
     Array.from(page.querySelectorAll(".btn-primary")).slice(1).forEach((b) => b.classList.remove("btn-primary"));
   }
@@ -1941,7 +1942,7 @@
     det.append(pub.wrap, mine.wrap);
     det.appendChild(line("使用前会检查：「已发布」里有这个项目经过 PI 签名的快照；你能写入自己的提议文件夹（在里面建一个空文件，马上删掉，不留下任何东西）。只记在这台电脑的设置里。", "writes"));
     const status = mk("div", "notice-status");
-    const btn = mkButton("检查并使用这两个文件夹", "btn btn-primary", async () => {
+    const btn = mkButton("检查并使用这两个文件夹", "btn btn-small", async () => {
       const p = pub.input.value.trim(), m = mine.input.value.trim();
       if (!p || !m) { setStatus(status, "err", "请选好两个文件夹"); return; }
       btn.disabled = true;

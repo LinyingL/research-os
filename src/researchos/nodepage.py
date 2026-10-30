@@ -486,6 +486,7 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
     breaks = []
     if not members:
         breaks.append({"kind": "no_files", "node": node_id, "path": None,
+                       "tone": "quiet",  # a new attempt has none yet: nothing the paper relies on (21.5, 21.8)
                        "label": settings.say("这条尝试还没有添加任何文件", "No files have been added to this attempt yet", lang),
                        "repair": {"type": "belongs_to", "label": settings.say("添加文件", "Add files", lang), "file": None}})
         columns[1]["gap"] = breaks[0]

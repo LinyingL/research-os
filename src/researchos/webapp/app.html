@@ -507,14 +507,18 @@ body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
 .desk-actions { display: flex; gap: 0.5rem; margin-top: 0.35rem; }
 .desk-link {
   font: inherit; font-size: 0.88rem; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer;
-  text-align: left; border-bottom: 1px solid var(--line-strong); word-break: break-all;
+  text-align: left; border-bottom: 1px solid var(--line-strong); word-break: normal; overflow-wrap: anywhere;
 }
 .desk-link:hover { border-bottom-color: var(--ink); }
 .desk-link.strong { font-weight: 600; word-break: normal; overflow-wrap: anywhere; }
 .desk-link:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .desk-link.mono, .desk-files .mono { font-family: var(--font-mono); font-size: 0.8rem; }
+.desk-files .mono { overflow-wrap: anywhere; }   /* a long path in a row wraps inside the row */
+.desk-link.mono { word-break: break-all; }   /* a path has no word to keep whole */
 .desk-files { list-style: none; margin: 0 0 0.8rem; padding: 0; }
 .desk-files li { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
+/* a file beside its official copy and a member's area: the name above, what goes with it under it at the full width (a closed fold and the form it opens are not squeezed into the row's right edge) */
+.desk-files li.beside-item { flex-direction: column; align-items: stretch; gap: 0.15rem; }
 .panel-h3 { font-size: 0.8rem; color: var(--ink-soft); font-weight: normal; margin: 1rem 0 0.3rem; }
 .proposal-sentence { font-family: var(--font-sans); font-weight: 600; font-size: 0.98rem; margin: 0 0 0.6rem; }
 .placeholder { font-size: 0.9rem; color: var(--ink-soft); max-width: 560px; }
@@ -670,6 +674,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-field { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0; align-items: baseline; font-size: 0.78rem; color: var(--ink-soft); }
 .res-field-label { margin-right: 0.45rem; }
 .res-field-more { margin-left: 0.4rem; }
+.res-field-sep { white-space: pre; }   /* a flex item loses a trailing space: English's ", " would otherwise print a.md,b.md */
 .res-field .node-link { font-size: 0.78rem; }
 .res-open.warn { color: var(--clay); }
 .res-fold { margin-top: 0.8rem; }
@@ -973,8 +978,9 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-soft);
   background: var(--paper); border: 1px solid var(--line); padding: 0.1rem 0.45rem;
 }
-/* 21.8: why the view opened on 全部 -- one quiet line under the toolbar. */
-.cv-note { position: absolute; left: 12px; top: 58px; z-index: 1; max-width: min(36rem, calc(100% - 24px)); font-size: 0.78rem; color: var(--ink-soft); background: var(--paper); padding: 0.1rem 0.45rem; pointer-events: none; }
+/* 21.8: why the view opened on 全部, and how many cards are out of view -- one quiet line under the toolbar. It is a child of the toolbar,
+   placed from its lower edge, so a toolbar that wraps to a second row (a narrow window) does not cover it. */
+.cv-note { position: absolute; left: 0; top: calc(100% + 6px); z-index: 1; width: max-content; max-width: min(36rem, calc(100vw - 48px)); font-size: 0.78rem; color: var(--ink-soft); background: var(--paper); padding: 0.1rem 0.45rem; pointer-events: none; }
 .cv-status {
   position: absolute; left: 72px; bottom: 12px; z-index: 4; max-width: calc(100% - 96px);
   font-size: 0.76rem; color: var(--clay); background: var(--clay-soft); border: 1px solid var(--clay); padding: 0.1rem 0.55rem;
@@ -3680,16 +3686,33 @@ function mayReplacePanel() {
 panelBackLink.addEventListener("click", () => {
   const subject = state.panelSubject, to = subject && subject.backTo;
   if (typeof to !== "function" || !mayReplacePanel()) return;
+  // 返回 asked, and was told yes: the opener it calls does not ask again -- desk.js's openers ask too (RODesk.mayLeavePanel reads this
+  // answer), and an attempt's panel opened from another page asks only when its read of the desk is done, so the answer stands until then
   mayReplacePanel.answeredYesUntil = Date.now() + 1500;
   panelReturning = true;
-  to();
+  // the opener declined or failed (nothing opened): the panel on screen is the one 返回 was pressed in, and a panel opened from it is
+  // still "from" it, with its own 返回
+  const unchanged = () => { if (state.panelSubject === subject) panelReturning = false; };
+  let opened;
+  try { opened = to(); } catch (err) { mayReplacePanel.answeredYesUntil = 0; unchanged(); throw err; }
+  if (opened && typeof opened.then === "function") {
+    mayReplacePanel.answeredYesUntil = Date.now() + 15000;
+    const settled = () => { mayReplacePanel.answeredYesUntil = 0; unchanged(); };
+    opened.then(settled, (err) => { settled(); throw err; });
+  } else if (opened === null) {
+    unchanged();
+  }
 });
 // -- end of panel and 返回 ---------------------------------------------------------
 
 document.getElementById("panel-close").addEventListener("click", closePanel);
 // A field typed in: the desk asks before anything takes the panel's place (14.3).
 panelBody.addEventListener("input", (e) => { if (e.target && e.target.dataset) e.target.dataset.typed = "1"; });
-panelBackdrop.addEventListener("click", closePanel);
+// The scrim is a dimmed page a stray click can reach: half-typed words are asked about as when another panel takes the place (14.3, 21.8).
+panelBackdrop.addEventListener("click", () => {
+  if (window.RODesk && RODesk.mayLeavePanel && !RODesk.mayLeavePanel()) return;
+  closePanel();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !panel.classList.contains("hidden")) closePanel();
 });
@@ -6985,11 +7008,12 @@ function renderCitationAudit(host, data) {
   });
   host.appendChild(list);
   if (quiet.length) {
-    const more = mkButton((litState.quiet ? "收起" : "另有 " + quiet.length + " 份文稿没有找到引用"), "var-back", () => {
+    const more = mkButton((litState.quiet ? "收起" : "另有 " + quiet.length + " 份文稿没有找到引用"), "var-back has-chevron", () => {   // 12.13: the chevron, turned while the list is shown
       litState.quiet = !litState.quiet;
       host.innerHTML = "";
       renderLiterature(host, data);
     });
+    more.setAttribute("aria-expanded", String(!!litState.quiet));
     host.appendChild(more);
     if (litState.quiet) {
       const box = mk("div", "lit-quiet");

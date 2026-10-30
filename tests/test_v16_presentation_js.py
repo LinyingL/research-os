@@ -34,8 +34,12 @@ const clsOf = (e) => (e.cls ? Array.from(e.cls) : String(e.className).split(/\s+
 const bodyOf = (e) => e.textContent;
 // what is on screen: no `hidden` on it or above it
 const shown = (e) => { for (let n = e; n; n = n.parentNode) if (clsOf(n).includes("hidden")) return false; return true; };
+// ... and for a primary button, not under a <details> that is closed either (a summary stays): the one that is not seen is not the page's
+const folded = (e) => { for (let n = e, from = null; n; from = n, n = n.parentNode) if (tagOf(n) === "DETAILS" && !n.open && from && tagOf(from) !== "SUMMARY") return true; return false; };
 const buttonsOf = (host) => host.all().filter((e) => tagOf(e) === "BUTTON" && shown(e));
 const primaries = (host) => buttonsOf(host).filter((b) => clsOf(b).includes("btn-primary")).map(bodyOf);
+// the primaries a person sees, where the stand-in tracks what is open (the members page)
+const seenPrimaries = (host) => buttonsOf(host).filter((b) => clsOf(b).includes("btn-primary") && !folded(b)).map(bodyOf);
 // a status, a mark, a chip or a date drawn as a button
 const chipButtons = (host) => buttonsOf(host).filter((b) => clsOf(b).some((c) => ["status-label", "own-mark", "var-chip", "ws-now-date", "desk-meta", "ws-task-facts"].includes(c))).map(bodyOf);
 // words drawn as the quiet outline button, and as a text link
@@ -105,6 +109,36 @@ def test_the_home_page_has_one_primary_button_at_a_time_and_its_ways_on_are_link
     assert out["askingAgain"] == [send]
     assert out["writing"] == [save]
 
+
+
+_HOME_TWO = _HOME[:_HOME.index("const out={};")] + r"""
+const out={};
+const asks=()=>root.all().filter((e)=>e.tagName==='BUTTON'&&clsOf(e).includes('ws-ask')).map((b)=>[bodyOf(b),clsOf(b).includes('btn-primary')]);
+// a reply form of one row and the undo question of another are open together: one primary button, the first of them
+await find(T('回答')).click();await sleepTick();
+await find(T('撤回本次运行')).click();await sleepTick();
+out.both={primary:primaries(root),asks:asks()};
+// the first closes: the other is the primary then, and the task form's button still waits
+await find(T('取消'),byClass('ws-agent-undo')).click();await sleepTick();
+out.oneLeft={primary:primaries(root),asks:asks()};
+await find(T('取消'),byClass('ws-agent-reply')).click();await sleepTick();
+out.none=primaries(root);
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_two_rows_that_ask_at_once_make_one_primary_button_not_two(lang):
+    """21.8: one primary button per surface. A task's reply form and the undo question of another row can both be open (each task keeps its
+    own); both drew their button primary (发送 and 确认撤回). The first in the page is the primary and the other is quiet until it is the
+    only one open; with none open the task form's 添加任务 is the primary again."""
+    w = _w(lang)
+    out = run_workspace(_HOME_TWO.replace("REPORT", json.dumps(REPORT)), lang=lang)
+    send, confirm, add = w("发送", "Send"), w("确认撤回", "Confirm undo"), w("添加任务", "Add task")
+    assert out["both"]["primary"] == [confirm] and sorted(out["both"]["asks"]) == sorted([[send, False], [confirm, True]])
+    assert out["oneLeft"]["primary"] == [send] and out["oneLeft"]["asks"] == [[send, True]]
+    assert out["none"] == [add]
 
 # -- 研究路线: an attempt's panel ---------------------------------------------------------------------------------------------
 
@@ -300,7 +334,7 @@ const kinds = (b) => ({ cls: clsOf(b), words: bodyOf(b) });
 _MEMBERS = AUDIT + r"""
 global.clearProjectState = () => {}; window.scrollY = 0; window.scrollTo = () => {}; global.shellCan = () => false;
 const stage = (me, key, share) => { c.get["/api/me"] = me; c.get["/api/me/key"] = key; c.get["/api/share"] = share; };
-const members = async (host) => { await window.ROTeam.loadMembers(host, false); return { primary: primaries(host), buttons: buttonsOf(host).map((b) => [bodyOf(b), clsOf(b).includes("btn-primary")]) }; };
+const members = async (host) => { await window.ROTeam.loadMembers(host, false); return { primary: seenPrimaries(host), buttons: buttonsOf(host).map((b) => [bodyOf(b), clsOf(b).includes("btn-primary")]) }; };
 const out = {};
 // 1. nobody yet: the name and e-mail form comes first, the key waits
 stage({ me: null, state: "absent", path: "~/.researchos/me.toml" }, { key: null, ssh_keygen: true, path: "~/.researchos/keys/id" }, { team: [], shared: null });
@@ -312,6 +346,13 @@ views.members = el("div", "host"); out.named = await members(views.members);
 stage({ me: { id: "li@example.com", name: "Li", email: "li@example.com" } }, { key: null, ssh_keygen: true, path: "~/.researchos/keys/id" },
   { role: "pi", team: [{ id: "li@example.com", name: "Li", role: "pi", fingerprint: "SHA256:x" }], shared: "/shared", reachable: true, last_snapshot: null, pending_publish: { count: 0, files: [] } });
 views.members = el("div", "host"); out.pi = await members(views.members);
+// 4. a joined member: 同步 is the step; the two-folders form is kept under a closed fold and is no primary
+stage({ me: { id: "wang@example.com", name: "Wang", email: "wang@example.com" } }, { key: { fingerprint: "SHA256:k", public: "ssh-ed25519 AAA" }, ssh_keygen: true, path: "~/.researchos/keys/id" },
+  { role: "member", team: [{ id: "li@example.com", name: "Li", role: "pi", fingerprint: "SHA256:x" }, { id: "wang@example.com", name: "Wang", role: "member" }], shared: "/shared", reachable: true,
+    joined: { seq: 3, pi_fingerprint: "SHA256:x", synced: null, official_copies: [] }, last_snapshot: { seq: 3 }, behind: false });
+views.members = el("div", "host"); out.joined = await members(views.members);
+const fold = views.members.all().find((b) => tagOf(b) === "BUTTON" && bodyOf(b) === "检查并使用这两个文件夹");
+out.joined.fold = fold ? { classes: clsOf(fold), folded: folded(fold) } : null;
 global.extra = out;
 """
 
@@ -327,6 +368,10 @@ def test_the_members_page_has_one_primary_button_the_next_step_it_waits_for(lang
     assert out["noOne"]["primary"] == ["保存"]
     assert out["named"]["primary"] == ["建立成员名单"]
     assert out["pi"]["primary"] == ["发布"]
+    # a joined member: 同步 is the step. The two-folders form sits under a closed fold above it; its button was the first primary in the
+    # page, so 同步 went quiet and nothing showed as primary until the fold was opened -- it is the quiet button now
+    assert out["joined"]["primary"] == ["同步"]
+    assert out["joined"]["fold"] == {"classes": ["btn", "btn-small"], "folded": True}
     quiet = {"保存": False, "生成我的公钥": False, "添加成员": False, "从公盘加入项目…": False}
     for stage in out.values():
         for label, primary in stage["buttons"]:

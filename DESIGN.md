@@ -6993,6 +6993,7 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
     handback**: 确认这个判断 (写下研究判断 when the agent suggested none, 保存 in the
     chooser, 再派一个任务 after it). **新增尝试 / 编辑尝试**: 预览改动 (保存 for an
     existing row). **A route-map line, a 关系图 link**: 确认连线, 提议这条连线, 确认标注.
+    **The registering panel** (a task's 登记…): 登记所选. **The new-project panel** (新建项目…): 创建.
   - **图表与论断**: 设为论文正文 while no draft is the paper, none after.
     **数据与代码** (列表 and 关系图) and **a node page**: none -- they are read --
     but for the form a node page opens (确认 of the repair).
@@ -7002,16 +7003,24 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   - **成员**: the first step of the page not done yet, the page being its steps in
     the order they are taken -- 保存 of 「我是谁」, 建立成员名单, 设为公盘, 发布 (同步
     for a member), 添加成员, 生成我的公钥 --, the buttons of the later steps quiet
-    until the earlier are done. **加入别人的项目**: 查看, then 核对无误，加入. **A
+    until the earlier are done. A button inside a fold that is closed is not a step
+    of the page: a joined member's two-folders form (检查并使用这两个文件夹, kept under
+    a fold above 同步 for the personal OneDrive that shares two folders) is the quiet
+    button -- it was the first primary in the page, so 同步 lost the primary and the
+    page showed none until the fold was opened. **加入别人的项目**: 查看, then 核对无误，加入. **A
     proposal the PI decides**: 批准并加入. **A member's draft**: 查看将要发送的内容,
     then 发送提议. **Without a project** the welcome page: 新建项目…. A notice (a
-    migration waiting) is a surface of its own. **The grouping panel** (把这些任务归入尝试…)
+    migration waiting) is a surface of its own; its questions (继续迁移, 迁移这些记录) draw
+    their buttons as they were. **The grouping panel** (把这些任务归入尝试…)
     has none: its 确认这一组 stands once for each group, so each is quiet. The project
     menu's dialogs (添加项目, 推送到 GitHub, 重命名, where a moved project is) and the
     questions of a notice draw their buttons as they were: no primary one yet.
-  `tests/test_v16_presentation.py` lists where a primary button may be created;
-  `tests/test_v16_presentation_js.py` counts the primaries of each page under node
-  in both languages.
+  A row that asks (a task's reply form, the question before an undo) has the primary
+  while it is open; when two rows ask at once the first in the page has it and the other
+  is quiet until it is the only one. `tests/test_v16_presentation.py` lists where a
+  primary button may be created and holds every button it makes with a label to a name
+  in this list; `tests/test_v16_presentation_js.py` counts the primaries of each page
+  under node in both languages, a closed fold not counted.
 - **The clay colour means "something is wrong"** (*amended, B5-1*): errors,
   broken provenance, a warning 21.5 settled (the paper relies on a figure or table
   that is broken), a run out of bounds (越过了限制) and a problem line in 备份. Every
@@ -7025,7 +7034,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   tint. A wait is not wrong: a run that waits for an answer reads 等你回答 in ochre on
   项目首页 as it does in 等你处理 (it was clay there). `tests/test_v16_clay.py` lists every
   selector of the style sheets that uses clay and every tone the scripts name clay,
-  each with its reason, and fails on a new one.
+  each with its reason, and fails on a new one -- the colour read by value in any
+  spelling (`var(--clay, ...)`, hex, `rgb()` and `hsl()` with commas or spaces, the
+  tone in any quote), and a custom property defined from the token is not allowed.
+  An attempt with no files yet is not wrong: its gap box (`.trace-gap`, which is clay
+  where the paper relies on a gap) is `quiet`, on its page and in its panel.
 - **Three carried items** (*B5-1*): 关系图 opens on the attempt 研究路线 marks current
   and, when that attempt has nothing to draw (a thesis chapter with no file yet), on
   全部 with one quiet line under the toolbar saying so (「#19 … 还没有可画的文件，所以先显示全部。」,
@@ -7082,8 +7095,13 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   with 12.13's chevron in it (`chevronSummary` in app.html; 文献's drafts and its
   source lists, the proposals' 查看改动 and the team page's folds included), and a
   button that shows or hides more of the same thing in place -- the 「详情」 of a
-  refusal, 查看当时的内容, 运行日志, 打开关系图 -- wears `has-chevron`, which draws the same
-  shape in CSS and turns it while `aria-expanded` is true.
+  refusal, 查看当时的内容, 运行日志, 打开关系图, 「另有 n 份文稿没有找到引用」 of 文献's 引用核对,
+  「显示其余 n 行」 under a diff and 「显示全部 n 条」 under a node page's links, each
+  turning into 收起 -- wears `has-chevron`, which draws the same shape in CSS and turns it
+  while `aria-expanded` is true. A one-way button that only brings the next files
+  (「另外 N 个」, 「显示更多」) is a step of a list, not a disclosure: nothing folds again, so it
+  wears no chevron. `tests/test_v16_b52_pages_js.py` finds every button whose words flip to
+  收起 and fails on one without the class and `aria-expanded`.
 - **Panels** (*B5-2*): every panel that covers the page has the one scrim
   (`#panel-backdrop`). The desk hides it only for an attempt's or a proposal's
   panel opened on the desk, where the map stays live beside it (14.3); the same
@@ -7095,19 +7113,37 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   and a proposal's panel are where the others start and have none, and a handback keeps
   its own 返回 to the attempt in its body. A node page opened from a panel gives it back:
   the page's 返回 goes to the section the page was opened from and opens the panel again.
+  *Fix of B5:* 返回 asks once whichever panel it leads to -- the answer stands for desk.js's own
+  openers too, and while an attempt's panel is read from the desk first -- and when the opener
+  declines (nothing opened) a panel opened next from the one on screen is still "from" it and
+  has 返回. The scrim is a dimmed page a stray click reaches, so a click on it asks about words
+  half typed before it closes the panel (the 关闭 button and Escape are deliberate and close as
+  before).
 - **The route map** fits all its cards the first time a project's map is opened in this
   browser (*B5-2*; remembered per project in the browser's storage as the way the page
   is looked at is, a per-viewer convenience), forgetting a camera saved before as 适应全部
   does, and opens as the person left it after that. When cards are out of the view --
   after a pan or a zoom, or because a fit cannot hold them at the smallest zoom, 25% --
   one quiet line under the toolbar says how many (「有 n 张卡片在视野之外」, “n cards are outside
-  the view”) and is gone when none are.
+  the view”) and is gone when none are. That line and 关系图's 「…所以先显示全部」 are children of
+  the toolbar, placed from its lower edge, so a toolbar that wraps to two rows at the shell's 900 px
+  minimum does not cover them.
 - **Chinese text in the interface is never smaller than 12 px**, which is 0.75rem at
   the browser's 16 px root (*amended, B5-2*: the fix batch 3 state word, `.own-mark` and
   `.var-chip` were the first; every `font-size` of the page's style block and of
   workspace.css was read, forty-one lay between 10.9 and 11.84 px and are 0.75rem or 12px,
   the canvas measures its text at 12 px to fit its cards). `tests/test_v16_b52_pages_js.py`
-  reads every size and fails on a smaller one.
+  reads every size and fails on a smaller one: `font-size` and the `font` shorthand token by
+  token (a weight such as `600` before the size is not the size), rem, px and pt in any case, and
+  a keyword, `calc`, `var`, `clamp`, `min` or `max` fails because it cannot be read.
+- **Small fixes of B5** (checked in the browser at 1440 x 900 and at 900 x 700): the folder under a trace card
+  is wrapped in a `<bdi>` inside the span that cuts it on the left (`direction: rtl`), so
+  `00_Current/replication_v9/Data` is not drawn as `Current_00` with its leading digits at
+  the end; the separator of a row's 「包含于」 and 「尝试」 lines keeps its space (`white-space: pre`:
+  a flex item drops it, and “a.md,b.md” read as one name); an attempt named in 等你处理 wraps
+  at words (`.desk-link`: `word-break: normal; overflow-wrap: anywhere`, only a mono path
+  breaks anywhere); a row of 成员的提议区 and of a file beside its official copy is a column, the
+  name above and the fold under it at the full width, and a long path in such a row wraps inside it.
 - **Two carried items of 21.4** (*B5-2*): the fold of 研究问题与计划 shows its first
   paragraph whole -- the box of eleven rem that cut it is gone, a list that opens the plan
   gives its first item with the lines that go on with it, a lead-in ending with a colon
@@ -7176,7 +7212,9 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    attempt has nothing to draw; long numbers are shown to four significant digits
    (*B5-2*: in every table drawn from a data file and for a claim's number, the value
    as written on hover; a note's or a report's text as written); every time is this Mac's
-   local time; every disclosure has the chevron; a panel opened from a panel has 返回
-   and the scrim is on every panel that covers the page; the route map fits on its first
-   opening and says how many cards are out of the view; nothing is set under 12 px.
+   local time; every disclosure has the chevron (a button whose words flip to 收起 too); a panel opened
+   from a panel has 返回, which asks once, and the scrim is on every panel that covers the page and asks
+   about words half typed; the route map fits on its first opening and says how many cards are out of
+   the view, a line a wrapped toolbar does not cover; nothing is set under 12 px (a `font` shorthand and
+   a keyword or `calc` size read too); an attempt with no files yet draws no clay.
 8. The full suite passes on Python 3.11 and 3.13.

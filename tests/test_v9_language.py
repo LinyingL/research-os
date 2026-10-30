@@ -1374,7 +1374,7 @@ function el(tag, cls, text) {
     set textContent(v) { this.kids = v === "" ? [] : [String(v)]; },
     set innerHTML(v) { this.kids = v ? ["<html>" + v] : []; },
     appendChild(c) { this.kids.push(adopt(c)); return c; }, append(...cs) { this.kids.push(...cs.map(adopt)); },
-    addEventListener() {}, querySelectorAll() { return []; },
+    addEventListener() {}, querySelectorAll() { return []; }, setAttribute() {},   // a toggle says whether it is open (aria-expanded, 21.8)
     querySelector(sel) {
       const walk = (n) => { for (const k of n.kids) if (typeof k !== "string") {
         if (k.className.split(" ").includes(sel.slice(1))) return k; const f = walk(k); if (f) return f; } return null; };
@@ -1750,7 +1750,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
             "team-done: The official version’s data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
             ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
             *[line for line in shown if line.startswith("dl-row")],
-            "btn btn-small diff-more: Show the remaining 5 lines",
+            "btn btn-small diff-more has-chevron: Show the remaining 5 lines",
             "node-sub: The change is too long; only its beginning was compared.",
             "team-done: The official version’s figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
             ": How yours differs from the official one", "desk-note plain: S",
@@ -1768,7 +1768,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
             "你的备注和连线还在等 PI 发布，记录文件暂时留着你的。",
             "team-done: 正式版本的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
             ": 你的和正式的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
-            "btn btn-small diff-more: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
+            "btn btn-small diff-more has-chevron: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
             "team-done: 正式版本的 figs/图3.png 放在了旁边：figs/图3.official.png；你的没有动。",
             ": 你的和正式的有什么不同", "desk-note plain: S", "desk-note plain: 表格较大：只比较行和列，不逐行对比。",
             ": 你的和正式的有什么不同", "desk-note plain: 两个文件不同（不是文本，没有逐行比较）",

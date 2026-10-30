@@ -581,7 +581,13 @@
     top.append(icon(item.type), mk("span", "trace-item-name", item.label));
     el.appendChild(top);
     const where = item.path ? posixDir(item.path) : (item.file || "");
-    if (where) el.appendChild(mk("span", "trace-item-dir mono", where));
+    if (where) {
+      // the ellipsis falls on the left of a long path (direction: rtl); the <bdi> keeps the path itself left to right, so a folder
+      // named 00_Current is not drawn as Current_00 (rtl alone moves the leading digits and underscore to the end)
+      const dir = mk("span", "trace-item-dir mono");
+      dir.appendChild(mk("bdi", null, where));
+      el.appendChild(dir);
+    }
     const flags = [];
     // 21.5: on a file's page (the engine gives `tone`) a missing file or an unreadable script is the warning's
     // when a broken link names it or the paper relies on it, a plain fact otherwise.
@@ -1100,8 +1106,10 @@
       const shown = all ? rows : rows.slice(0, DIFF_SHOWN);
       shown.forEach((r) => wrap.appendChild(mk("div", "dl-row " + r.cls, r.text || " ")));
       if (rows.length > DIFF_SHOWN) {
-        wrap.appendChild(mkButton(all ? t("收起") : t("显示其余 {n} 行", { n: rows.length - DIFF_SHOWN }), "btn btn-small diff-more",
-          () => render(!all)));
+        const more = mkButton(all ? t("收起") : t("显示其余 {n} 行", { n: rows.length - DIFF_SHOWN }), "btn btn-small diff-more has-chevron",   // 12.13: the chevron, turned while the rest is shown
+          () => render(!all));
+        more.setAttribute("aria-expanded", String(all));
+        wrap.appendChild(more);
       }
       if (truncated) wrap.appendChild(mk("p", "node-sub", t("改动太长，只比较了开头的一部分。")));
     };
@@ -1209,7 +1217,9 @@
       (all ? links : links.slice(0, LINKS_SHOWN)).forEach((l) => ul.appendChild(linkRow(page, l)));
       if (links.length > LINKS_SHOWN) {
         const li = mk("li", "node-links-more");
-        li.appendChild(mkButton(all ? t("收起") : t("显示全部 {n} 条", { n: links.length }), "btn btn-small", () => render(!all)));
+        const more = mkButton(all ? t("收起") : t("显示全部 {n} 条", { n: links.length }), "btn btn-small has-chevron", () => render(!all));   // 12.13
+        more.setAttribute("aria-expanded", String(all));
+        li.appendChild(more);
         ul.appendChild(li);
       }
     };

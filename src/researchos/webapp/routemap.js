@@ -385,7 +385,8 @@
       const status = el("div", "cv-status hidden");
       const empty = el("div", "cv-empty hidden");
       const outside = el("div", "cv-note rm-outside hidden");   // 21.8: one quiet line when cards are out of view
-      root.append(world, bar, zoom, status, empty, outside);
+      bar.append(outside);   // under the toolbar, which the note follows if it wraps (21.8)
+      root.append(world, bar, zoom, status, empty);
       host.appendChild(root);
       m.dom = { root, world, links, draft, cards, zoom, status, empty, outside };
       root.addEventListener("pointerdown", onDown);

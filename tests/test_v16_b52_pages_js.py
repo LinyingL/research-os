@@ -46,28 +46,76 @@ def _styles() -> dict[str, str]:
     return {"app.html": "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S)), "workspace.css": _source("workspace.css")}
 
 
-def test_no_style_sets_text_smaller_than_twelve_pixels():
-    """21.8: Chinese text in the interface is never smaller than 12 px, which is 0.75rem at the browser's 16 px root. Every
-    `font-size` and `font` of the page's style block and of workspace.css is read (rem and px by value; em and per cent only on
-    the two inline-code rules listed above), and the sizes the scripts set on the canvas for measuring text agree with them."""
-    too_small = []
-    for name, css in _styles().items():
+#: What the `font` shorthand may hold before the size: style, weight (the keywords and the bare numbers 1 to 1000), variant and stretch.
+_FONT_BEFORE_SIZE = re.compile(r"normal|italic|oblique(?:\s+[\d.]+deg)?|small-caps|bold|bolder|lighter|(?:ultra|extra|semi)-(?:condensed|expanded)|condensed|expanded"
+                               r"|[1-9]\d{0,2}|1000", re.I)
+
+
+def _split_tokens(text: str) -> list[str]:
+    """`text` cut at the spaces that are outside parentheses (`clamp(9px, 1vw, 11px)` is one token)."""
+    tokens, depth, current = [], 0, ""
+    for ch in text.strip():
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch.isspace() and depth == 0:
+            if current:
+                tokens.append(current)
+            current = ""
+        else:
+            current += ch
+    return tokens + ([current] if current else [])
+
+
+def _sizes_of(body: str) -> list[tuple[str, str]]:
+    """(the declaration, the size it sets) for every `font-size` and every `font` shorthand of a rule's body. In the shorthand the size is the first
+    token that is not a style, weight, variant or stretch -- a numeric weight (`600 11px/1.4`) is not mistaken for it --, cut at the `/` of the line height."""
+    found = [(m.group(0).strip(), m.group(1).strip()) for m in re.finditer(r"(?<![\w-])font-size\s*:\s*([^;}]+)", body, re.I)]
+    for m in re.finditer(r"(?<![\w-])font\s*:\s*([^;}]+)", body, re.I):
+        for token in _split_tokens(m.group(1)):
+            if _FONT_BEFORE_SIZE.fullmatch(token):
+                continue
+            found.append((m.group(0).strip(), token if "(" in token else token.split("/")[0]))
+            break
+    return found
+
+
+def _too_small(name: str, selector: str, declaration: str, size: str) -> list[tuple[str, ...]]:
+    """What is wrong with one size, as a list of findings (empty when it is fine). Only a plain size in rem, px or pt is read by value -- in any case
+    (`0.7REM`); em and per cent only on the rules listed in `_RELATIVE_SIZES_OK`; `inherit`, `initial`, `unset` and `revert` say nothing about a
+    size; a keyword (`x-small`, `smaller`) and a function (`calc`, `var`, `clamp`, `min`, `max`) cannot be read, so they fail until a size is written."""
+    plain = re.fullmatch(r"([\d.]+)(rem|px|pt|em|%)", size.lower())
+    if not plain:
+        return [] if size.lower() in ("inherit", "initial", "unset", "revert") else [(name, selector, declaration, "not a plain size")]
+    value, unit = float(plain.group(1)), plain.group(2)
+    if unit in ("em", "%"):
+        return [] if selector in _RELATIVE_SIZES_OK else [(name, selector, declaration, "relative size not listed")]
+    return [(name, selector, declaration)] if value * {"rem": 16, "pt": 4 / 3, "px": 1}[unit] < 12 else []
+
+
+def _sizes_under_twelve_pixels(css_by_name: dict[str, str]) -> list[tuple[str, ...]]:
+    found: list[tuple[str, ...]] = []
+    for name, css in css_by_name.items():
         css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
         for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
-            selector, body = rule.group(1).strip(), rule.group(2)
-            for size in re.finditer(r"(?<![\w-])font-size\s*:\s*([\d.]+)(rem|px|em|pt|%)", body):
-                value, unit = float(size.group(1)), size.group(2)
-                if unit in ("em", "%"):
-                    if selector not in _RELATIVE_SIZES_OK:
-                        too_small.append((name, selector, size.group(0), "relative size not listed"))
-                    continue
-                px = value * (16 if unit == "rem" else 4 / 3 if unit == "pt" else 1)
-                if px < 12:
-                    too_small.append((name, selector, size.group(0)))
-            for shorthand in re.finditer(r"(?<![\w-])font\s*:\s*(?:[a-z-]+\s+)*([\d.]+)(rem|px)", body):
-                if float(shorthand.group(1)) * (16 if shorthand.group(2) == "rem" else 1) < 12:
-                    too_small.append((name, selector, shorthand.group(0)))
-    assert too_small == []
+            selector = rule.group(1).strip()
+            for declaration, size in _sizes_of(rule.group(2)):
+                found += _too_small(name, selector, declaration, size)
+    return found
+
+
+def test_no_style_sets_text_smaller_than_twelve_pixels():
+    """21.8: Chinese text in the interface is never smaller than 12 px, which is 0.75rem at the browser's 16 px root. Every
+    `font-size` and `font` of the page's style block and of workspace.css is read (rem, px and pt by value, in any case; em and per
+    cent only on the two inline-code rules listed above; a keyword or a calc, var, clamp, min or max fails, since it cannot be read), and
+    the sizes the scripts set on the canvas for measuring text agree with them. The reader is shown a size it must catch."""
+    caught = {
+        "font: 600 11px/1.4 sans-serif": 1, "font: italic 600 11px sans-serif": 1, "font: bold 0.7rem sans": 1, "font-size: x-small": 1, "font-size: smaller": 1,
+        "font-size: calc(0.7rem)": 1, "font-size: var(--tiny)": 1, "font-size: clamp(9px,1vw,11px)": 1, "font-size: 0.7REM": 1, "font: 600 clamp(9px, 1vw, 11px)/1.4 serif": 1,
+        "font-size: 0.7rem": 1, "font-size: 11px": 1, "font-size: 8pt": 1, "font-size: 70%": 1,
+        "font-size: 0.75rem": 0, "font-size: 12PX": 0, "font: 600 12px/1.4 sans-serif": 0, "font: .8rem/1.7 sans-serif": 0, "font-size: inherit": 0, "font: inherit": 0,
+    }
+    for text, count in caught.items():
+        assert len(_sizes_under_twelve_pixels({"probe": ".x { " + text + "; }"})) == count, text
+    assert _sizes_under_twelve_pixels(_styles()) == []
     # nothing sets a size from a script (a style attribute, style.fontSize, an SVG font-size)
     for name in SCRIPTS:
         text = _source(name)
@@ -195,6 +243,63 @@ def test_every_summary_the_scripts_make_carries_the_chevron_and_every_toggle_tha
     assert re.search(r"\.has-chevron::before \{[^}]*content: \"\"[^}]*transform: rotate\(45deg\)", css)
     assert re.search(r"\.has-chevron\[aria-expanded=\"true\"\]::before \{ transform: rotate\(135deg\); \}", css)
     assert "details[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }" in css
+
+
+def _script_text(name: str) -> str:
+    """The code of a served script, or of the script blocks of the page; a trailing `// comment` taken out so a quote in it opens nothing."""
+    text = _source(name)
+    if name == "app.html":
+        text = "\n".join(re.findall(r"<script>(.*?)</script>", text, re.S))
+    return re.sub(r"[ \t]//[ \t].*$", "", text, flags=re.M)
+
+
+def _calls(source: str, names=("mkButton", "button")):
+    """(offset, text) of every call of one of `names`, from its name to the parenthesis that closes it, quoted strings read as strings."""
+    for match in re.finditer(r"(?<![\w.$])(?:" + "|".join(names) + r")\(", source):
+        i, depth, quote = match.end(), 1, None
+        while i < len(source) and depth:
+            c = source[i]
+            if quote:
+                if c == "\\":
+                    i += 1
+                elif c == quote:
+                    quote = None
+            elif c in "\"'`":
+                quote = c
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        yield match.start(), source[match.start():i]
+
+
+def _toggles_without_the_chevron(source: str) -> list[str]:
+    """A button that hides what it shows -- its words or its handler say 收起 -- is a disclosure: it wears `has-chevron` and keeps
+    `aria-expanded` (in its call or in the statements that follow it)."""
+    bad = []
+    for start, call in _calls(source):
+        if "收起" not in call:
+            continue
+        around = call + source[start + len(call):start + len(call) + 400]
+        if "has-chevron" not in around or "aria-expanded" not in around:
+            bad.append(call[:110])
+    return bad
+
+
+def test_every_button_that_shows_more_in_place_and_hides_it_again_wears_the_chevron_and_says_whether_it_is_open():
+    """21.8: 「另有 n 份文稿没有找到引用 / 收起」 on 文献's 引用核对, 「显示其余 n 行 / 收起」 under a diff and 「显示全部 n 条 / 收起」 under the
+    links of a node page were underlined words and plain buttons beside the chevron rows. A button whose words flip to 收起 is found
+    in the scripts by its call and must have `has-chevron` and `aria-expanded`; the scan itself is shown to see a plain one. A one-way
+    step that only brings the next files (「另外 n 个」, 显示更多) is a step of a list, not a disclosure, and is not read."""
+    assert _toggles_without_the_chevron('x.appendChild(mkButton(all ? t("收起") : t("显示全部 {n} 条"), "btn btn-small", () => render(!all)));') == [
+        'mkButton(all ? t("收起") : t("显示全部 {n} 条"), "btn btn-small", () => render(!all))']
+    assert _toggles_without_the_chevron('const b = mkButton(open ? "收起" : "x", "a has-chevron", f);\nb.setAttribute("aria-expanded", String(open));') == []
+    assert len(_toggles_without_the_chevron('const b = mkButton(open ? "收起" : "x", "a has-chevron", f);')) == 1   # the chevron without aria-expanded is not enough
+    plain = {name: _toggles_without_the_chevron(_script_text(name)) for name in SCRIPTS}
+    assert {name: found for name, found in plain.items() if found} == {}
+    seen = sum(1 for name in SCRIPTS for _start, call in _calls(_script_text(name)) if "收起" in call)
+    assert seen >= 5          # the diff, the links, 打开关系图, 查看当时的内容, 文献's list: the scan reads them
 
 
 @needs_node
@@ -374,6 +479,7 @@ const calls = [];
     return !(x + w > 0 && x < 1200 && y + h > 52 && y < 800); }).length; };
   const note = () => { const n = root.querySelector(".rm-outside"); return n.cls.has("hidden") ? null : n.textContent; };
   const out = { start: view(), note: note(), outside: outside(), zoomWord: root.querySelector(".cv-zoom").textContent };
+  out.noteIn = root.querySelector(".rm-outside").parentNode.className;
   %(steps)s
   process.stdout.write(JSON.stringify(Object.assign(out, { posted, firstAsked: global.asked_ || null })));
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -419,6 +525,7 @@ def test_the_map_says_how_many_cards_are_outside_the_view_in_one_quiet_line_and_
     w = _w(lang)
     many = _map(_attempts(900), first="true", lang=lang)
     assert many["outside"] > 0 and many["zoomWord"] == "25%"
+    assert many["noteIn"] == "cv-toolbar rm-toolbar"          # the line follows the toolbar (it is placed from its lower edge)
     assert many["note"] == w(f"有 {many['outside']} 张卡片在视野之外", f"{many['outside']} cards are outside the view")
     few = _map(_attempts(80), r"""
 const fitted = { zoom: view().zoom, outside: outside(), note: note() };
@@ -448,3 +555,127 @@ process.stdout.write(JSON.stringify(out));
 """
     out = _node(script)
     assert out["sequence"] == [True, False, True, False, False] and out["off"] == [True, True]
+
+
+# -- a path under a trace card (B5 fix) ---------------------------------------------------------------------------------
+
+
+_TRACE_DIR = r"""
+(async () => {
+  const host = el("div", "host");
+  const item = (path) => ({ id: "dataset:" + path, type: "dataset", label: path.split("/").pop(), path, exists: true });
+  window.RONode.renderTrace(host, { type: "script", id: "script:x.py", path: "x.py", trace: { lines: [], breaks: [], columns: [
+    { key: "in", title: "读取的数据", items: [item("00_Current/replication_v9/Data/a.csv"), item("data/b.csv"), item("c.csv")] }] } }, { panel: true });
+  const dirs = host.all().filter((e) => e.cls.has("trace-item-dir"));
+  process.stdout.write(JSON.stringify(dirs.map((d) => ({ text: d.textContent, kids: d.kids.map((k) => (typeof k === "string" ? k : k.tag)),
+    inner: d.kids.map((k) => (typeof k === "string" ? null : k.textContent)) }))));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@needs_node
+def test_the_path_under_a_trace_card_keeps_a_leading_00_in_place_under_the_left_ellipsis():
+    """A trace card's folder is cut on the left when it is long (`direction: rtl` on `.trace-item-dir`). Under that direction the
+    bidirectional algorithm drew the researcher's own `00_Current/replication_v9/Data` as `…eplication_v9/Data_00`, the leading digits
+    and underscore moved to the end, even when nothing was cut. The path is the text of a `<bdi>` inside the span -- left to right
+    on its own -- so the span's ellipsis stays on the left and the folder reads as written; the words are the same."""
+    out = node_run(_TRACE_DIR, language=None, view="lineage")
+    assert [d["text"] for d in out] == ["00_Current/replication_v9/Data", "data"]          # a file at the top has no folder line
+    assert all(d["kids"] == ["BDI"] and d["inner"] == [d["text"]] for d in out)
+    css = _styles()["app.html"]
+    assert re.search(r"\.trace-item-dir \{[^}]*direction: rtl;[^}]*\}", css)          # the ellipsis on the left is why the bdi is there
+
+
+# -- 返回 asks once, whichever opener it calls; the scrim asks too (B5 fix) --------------------------------------------------
+
+_REAL_BACK = r"""
+parts["panel-back"] = el("button", "panel-back ws-text-link hidden");
+global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"];
+global.endPanelResize = () => {}; global.RODesk = window.RODesk;
+%(block)s
+%(scrim)s
+global.openPanel = openPanel; global.closePanel = closePanel; global.mayReplacePanel = mayReplacePanel;
+global.openSettingsPanel = () => {}; global.openFilePanel = () => {};
+const back = parts["panel-back"], body = parts["panel-body"];
+const shown = () => !back.classList.contains("hidden");
+// the settings panel, over whatever is on screen, with words typed into a field
+const settings = (typed) => {
+  const field = el("textarea"); field.value = typed ? "half typed" : ""; if (typed) field.dataset.typed = "1";
+  body.replaceChildren(field);
+  state.panelSubject = { kind: "settings" }; openPanel();
+};
+const out = {};
+global.currentView = %(view)s;
+await window.RODesk.openAttemptAnywhere(%(attempt)s);
+settings(true); asked.length = 0;
+out.fromSettings = shown();
+back.click();                                         // 返回: one question, then the attempt's panel
+await settle(); await settle();
+out.asked = asked.slice(); out.subject = state.panelSubject && state.panelSubject.id; out.window = mayReplacePanel.answeredYesUntil;
+// declined: nothing opens and the panel stays
+settings(true); asked.length = 0; answers.push(false); back.click(); await settle(); await settle();
+out.declined = { asked: asked.length, subject: state.panelSubject && state.panelSubject.kind };
+// the scrim: words half typed are asked about; declined, the panel stays; answered, it closes; with nothing typed it closes at once
+panelBackdrop.classList.remove("hidden"); asked.length = 0; answers.push(false); panelBackdrop.click();
+out.scrimDeclined = { asked: asked.length, open: !panel.classList.contains("hidden") };
+answers.push(true); panelBackdrop.click();
+out.scrimAnswered = { asked: asked.length, open: !panel.classList.contains("hidden") };
+settings(false); asked.length = 0; panelBackdrop.click();
+out.scrimQuiet = { asked: asked.length, open: !panel.classList.contains("hidden") };
+global.extra = out;
+"""
+
+
+@needs_node
+@pytest.mark.parametrize("view", ["desk", "workspace"])
+def test_return_asks_once_about_half_typed_words_when_it_leads_back_to_an_attempts_panel_and_the_scrim_asks_too(view):
+    """21.8: 返回 asks once. The opener it calls for an attempt's panel is desk.js's own, which asks about half-typed words as well --
+    the second 「这里有还没写入的内容…」 came up whether the panel was reopened on the desk or (after reading the desk again) from 项目首页.
+    The answer stands for the opener, so one question is asked and the attempt's panel opens; declined, nothing opens. The scrim a
+    panel opened off the desk has is a dimmed page a stray click can reach: it asks about half-typed words before it closes the panel."""
+    block = _app_block("// -- Panel and 返回 (DESIGN.md 21.8)", "// -- end of panel and 返回")
+    steps = _REAL_BACK % {"block": block, "scrim": _app_block("// The scrim is a dimmed page", "document.addEventListener(\"keydown\""), "view": json.dumps(view), "attempt": json.dumps(A16)}
+    out = run_desk(_case("single"), steps)["extra"]
+    question = "这里有还没写入的内容，离开它就不保存了。继续吗？"
+    assert out["fromSettings"] is True and out["asked"] == [question] and out["subject"] == A16
+    assert out["declined"] == {"asked": 1, "subject": "settings"}
+    assert out["scrimDeclined"] == {"asked": 1, "open": True}
+    assert out["scrimAnswered"] == {"asked": 2, "open": False}
+    assert out["scrimQuiet"] == {"asked": 0, "open": False}
+
+
+_RETURN_DECLINED = r"""
+parts["panel-back"] = el("button", "panel-back ws-text-link hidden");
+global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"];
+global.endPanelResize = () => {}; global.RODesk = window.RODesk;
+%(block)s
+global.openPanel = openPanel; global.closePanel = closePanel;
+const back = parts["panel-back"];
+const shown = () => !back.classList.contains("hidden");
+const open = (subject) => { state.panelSubject = subject; openPanel(); return subject; };
+global.openFilePanel = (path) => open({ kind: "file", path });
+const out = {};
+// a panel whose way back cannot open it now (it answers null, or refuses): 返回 did nothing, so a panel opened from the panel on
+// screen is still opened from it and has its own 返回
+open({ kind: "variable-copy", reopen: () => null }); const settings = open({ kind: "settings" });
+out.first = shown(); back.click(); out.afterNull = { subject: state.panelSubject.kind, flag: shown() };
+openFilePanel("a.csv"); out.fileFromSettings = shown();
+closePanel(); open({ kind: "variable-copy", reopen: () => Promise.resolve(null) }); open({ kind: "settings" });
+back.click(); await settle(); openFilePanel("b.csv"); out.fileAfterPromise = shown();
+closePanel(); open({ kind: "variable-copy", reopen: () => Promise.reject(new Error("offline")) }); open({ kind: "settings" });
+process.on("unhandledRejection", () => {}); back.click(); await settle(); openFilePanel("c.csv"); out.fileAfterRefusal = shown();
+// and a way back that does open the panel still marks it as returned to: no 返回 on the panel it leads to
+closePanel(); open({ kind: "settings" }); open({ kind: "variable-copy", reopen: () => open({ kind: "settings" }) });
+out.opens = shown(); global.extra = out;
+"""
+
+
+@needs_node
+def test_a_return_that_opened_nothing_leaves_the_next_panel_with_its_own_return():
+    """21.8: pressing 返回 sets 「this open is a return」 so the panel it opens is not itself offered a way back. When the opener
+    declined (it answered null, its promise answered null or was refused) no panel opened, the flag stayed set, and a panel opened
+    next from the one on screen lost its 返回. The flag is put down when the panel on screen is the one 返回 was pressed in."""
+    block = _app_block("// -- Panel and 返回 (DESIGN.md 21.8)", "// -- end of panel and 返回")
+    out = run_desk(_case("single"), _RETURN_DECLINED % {"block": block})["extra"]
+    assert out["first"] is True and out["afterNull"] == {"subject": "settings", "flag": True}
+    assert out["fileFromSettings"] is True and out["fileAfterPromise"] is True and out["fileAfterRefusal"] is True

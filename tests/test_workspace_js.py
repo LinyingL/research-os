@@ -2750,8 +2750,9 @@ const moreButtons=()=>blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.dataset.
 
 
 def test_the_process_files_group_is_its_count_until_opened_and_any_other_group_past_eight_files_shows_eight():
-    """19.12 item 2: in 任务输出 the 过程文件 group is only its count (a disclosure) until opened and, opened, shows every
-    file; any other group of more than 8 files shows the first 8 and 「另外 N 个」 for the rest; exactly 8 shows all."""
+    """19.12 item 2: in 任务输出 the 过程文件 group is only its count (a disclosure) until opened and, opened, lists its first 8 files and
+    「另外 N 个」 for the rest as every other group does (21.8; tests/test_v16_b52_pages_js.py opens 200); a group of more than 8 files shows the
+    first 8 and 「另外 N 个」 for the rest; exactly 8 shows all."""
     out = run(_OUTPUTS + _MANY + r"""
 await window.ROWorkspace.load(root);await sleepTick();
 const fold=processFold(), summary=fold.children[0];

@@ -1299,6 +1299,8 @@
   }
 
   function mayLeavePanel() {
+    // 返回 asked a moment ago and was told yes (app.html's mayReplacePanel keeps the answer): the opener it calls does not ask again (21.8)
+    if (typeof mayReplacePanel === "function" && Date.now() < (mayReplacePanel.answeredYesUntil || 0)) return true;
     return !halfTyped() || window.confirm(t("这里有还没写入的内容，离开它就不保存了。继续吗？"));
   }
 

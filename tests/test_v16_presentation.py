@@ -77,7 +77,7 @@ def test_a_name_that_opens_a_file_is_a_text_link_and_a_title_or_a_chip_is_never_
 
 #: Where a primary button is created, by script: how many sites. Each is one surface's primary action (DESIGN.md 21.8 lists them);
 #: a new site is a new surface, or a second primary button on one -- add it to 21.8 with its surface, or draw it quiet.
-PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "node.js": 2, "routemap.js": 1, "team.js": 13, "workspace.js": 10}
+PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "node.js": 2, "routemap.js": 1, "team.js": 12, "workspace.js": 10}
 
 
 def _primary_sites() -> dict[str, int]:
@@ -253,3 +253,109 @@ def test_the_note_is_one_quiet_line_in_the_screens_language_and_hidden_once_the_
                              "en": "“#19 Thesis chapter two” has no files to draw yet, so the map shows all."}[lang]]
     assert gone == [True, ""]
     assert _declarations(".cv-note")["color"] == "var(--ink-soft)"      # quiet: not the clay of a problem
+
+
+# -- a row that holds a name and a fold (B5 fix) ------------------------------------------------------------------------------
+
+
+def test_a_member_s_area_row_stacks_its_name_and_its_fold_so_the_fold_has_the_full_width():
+    """成员 > 成员的提议区: each row is an `li.beside-item` holding the member's head (name, path, 现在打不开) and the fold 提议区在别处.
+    `.desk-files li` is a flex row; with a long path the fold became a 67 px item at the row's right edge, its words on two lines,
+    and the form it opens a 241 px column. The row is a column, the head above and the fold under it at the full width -- the same
+    for the row of a file beside its official copy, whose difference sits under the name."""
+    assert _declarations(".desk-files li")["display"] == "flex"
+    row = _declarations(".desk-files li.beside-item")
+    assert row["flex-direction"] == "column" and row["align-items"] == "stretch"
+    assert _declarations(".desk-files .mono")["overflow-wrap"] == "anywhere"           # a long path wraps inside the row, not past it
+    team = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert team.count('mk("li", "beside-item")') == 2 and 'det.appendChild(summaryOf("提议区在别处"))' in team
+
+
+def test_the_separator_between_the_values_of_a_row_s_field_keeps_its_space_in_english():
+    """图表与论断's 「包含于」 and 「尝试」 lines put the screen's separator (「、」, English ", ") in a span between two links, and the
+    line is a flex row (`.res-field`, gap 0): a flex item drops the trailing space of its text, so two drafts read
+    `a.md,b.md` in English. The separator keeps its own space (`white-space: pre`), whatever words the table gives it."""
+    assert _declarations(".res-field")["display"] == "flex" and _declarations(".res-field")["gap"] == "0"
+    assert _declarations(".res-field-sep")["white-space"] == "pre"
+    assert '"、": ", "' in (WEBAPP / "i18n.js").read_text(encoding="utf-8")
+    assert 'mk("span", "res-field-sep", t("、"))' in (WEBAPP / "node.js").read_text(encoding="utf-8")
+
+
+def test_an_attempt_s_title_that_is_a_link_wraps_at_words_and_only_a_path_breaks_anywhere():
+    """项目首页's and 研究路线's 等你处理 name an attempt with a plain `.desk-link` (`rowLink(attemptName(...), "", ...)`). Its
+    `word-break: break-all` cut `… 200` / `8 年前后` and `ch` / `ecks` in the middle of a number and a word. The link breaks at the
+    words (Chinese at any character, as the browser does) and a word longer than the line only as a last resort; the mono
+    link of a file path, which has no word to keep whole, may break anywhere."""
+    link = _declarations(".desk-link")
+    assert link["word-break"] == "normal" and link["overflow-wrap"] == "anywhere"
+    assert _declarations(".desk-link.strong")["word-break"] == "normal"
+    assert _declarations(".desk-link.mono")["word-break"] == "break-all"
+    desk = (WEBAPP / "desk.js").read_text(encoding="utf-8")
+    assert 'rowLink(attemptName(r.attempt), "",' in desk
+
+
+# -- the one quiet line under a toolbar (B5 fix) ------------------------------------------------------------------------------
+
+
+def test_the_quiet_line_under_a_toolbar_is_placed_from_the_toolbar_so_a_wrapped_toolbar_does_not_cover_it():
+    """关系图's 「…所以先显示全部」 and the route map's 「有 n 张卡片在视野之外」 sat at a fixed `top: 58px`, which assumes a toolbar of one
+    row; at the shell's 900 px minimum the toolbar wraps to two rows (it ends at about 204 px) and covered the line completely. The
+    line is a child of the toolbar, placed from the toolbar's lower edge (`top: calc(100% + ...)` of the positioned toolbar), so
+    its place follows the toolbar however many rows it has; it is still not a flex item of the toolbar (it is absolute) and
+    takes no clicks."""
+    note, bar = _declarations(".cv-note"), _declarations(".cv-toolbar")
+    assert bar["position"] == "absolute" and note["position"] == "absolute"
+    assert note["top"].startswith("calc(100% +") and note["left"] == "0" and note["pointer-events"] == "none"
+    canvas = (WEBAPP / "canvas.js").read_text(encoding="utf-8")
+    assert "t.bar.append(note);" in canvas and not re.search(r"root\.append\([^)]*\bnote\b", canvas)
+    routemap = (WEBAPP / "routemap.js").read_text(encoding="utf-8")
+    assert "bar.append(outside);" in routemap and not re.search(r"root\.append\([^)]*\boutside\b", routemap)
+
+
+# -- the guides say what the page does (B5 fix) -------------------------------------------------------------------------------
+
+
+def test_the_guides_say_an_opened_process_files_group_shows_eight_files_and_n_more_like_every_other_group():
+    """19.12 item 2 and 21.8: the 过程文件 group is its count until opened, and opened it lists its first eight files and 「另外 N 个」 -- a
+    task had registered about 200. The guides said the group was only its count until opened and that *any other* group past eight
+    shows eight, which tells a reader the opened group shows all of them."""
+    root = WEBAPP.parents[2]
+    zh = (root / "docs" / "项目首页.md").read_text(encoding="utf-8")
+    assert "展开以后和其他组一样：超过 8 个文件的组只显示前 8 个，其余用“另外 N 个”展开" in zh and "其他超过 8 个文件的组" not in zh
+    en = (root / "docs" / "project-workspace.md").read_text(encoding="utf-8")
+    assert "opened, it is like every other group" in en and "any other group of more than eight" not in en
+    assert "first eight files of a task's opened **Process files** group" in (root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+
+#: A button made with a label and `btn-primary` whose label 21.8 does not name, and why: the questions of a notice are drawn as they were.
+UNNAMED_PRIMARY = {"继续迁移": "a notice's question, as it was (21.8)", "迁移这些记录": "a notice's question, as it was (21.8)"}
+
+
+def _design_21_8() -> str:
+    design = (WEBAPP.parents[2] / "DESIGN.md").read_text(encoding="utf-8")
+    return design[design.index("### 21.8 Presentation"):design.index("### 21.9 Acceptance")]
+
+
+def test_every_primary_button_made_with_a_label_is_named_in_21_8_and_the_two_folders_form_is_not_one():
+    """The count of `PRIMARY_SITES` says how many; this says which. Each `mkButton("label", ... "btn-primary" ...)` and
+    `button(t("label"), ..., "... btn-primary ...")` is a surface's primary action, so 21.8 names its label -- 登记所选 and 创建 were
+    made primary on their panels and left out of the section --, or it is listed above with its reason. The joined member's
+    two-folders form sits under a closed fold above 同步 and is the quiet button."""
+    section = _design_21_8()
+    unnamed = []
+    for path in _scripts():
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".html":
+            text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+        for line in text.splitlines():
+            if line.strip().startswith(("//", "/*", "*")) or "classList" in line or "querySelector" in line:
+                continue
+            if re.search(r'"(?!\.)[^"\n]*\bbtn-primary\b[^"\n]*"', line):
+                label = re.search(r'(?:mkButton|button)\(\s*(?:t\()?"([^"]+)"', line)
+                if label and label.group(1) not in section and label.group(1) not in UNNAMED_PRIMARY:
+                    unnamed.append((path.name, label.group(1)))
+    assert unnamed == [], f"a primary button 21.8 does not name: {unnamed}"
+    for name in ("登记所选", "创建", "检查并使用这两个文件夹"):
+        assert name in section, name
+    team = (WEBAPP / "team.js").read_text(encoding="utf-8")
+    assert re.search(r'mkButton\("检查并使用这两个文件夹", "btn btn-small"', team)
