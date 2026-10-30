@@ -8,32 +8,41 @@ where it is proposed as 12.4 says) and only then sets `attempt` on the group's t
 `research/tasks.json` as it was. Nothing is moved, renamed or deleted on disk. `propose` reads only.
 
 How groups are proposed -- a small rule, so that it can be said in a sentence and checked by eye. Only tasks with no
-`attempt` are looked at, and every one lands in at most one group.
+`attempt` are looked at, and every one lands in at most one group. The rules run in this order.
 
 1. A task is read by its text (whitespace collapsed) and by the title of the report it points to (the report's first
    heading). Nothing else of the task is read, and nothing is sent anywhere.
 2. Version groups. The first version token -- `v` and digits with optional `.digits` parts, in either case (v0, v0.2,
-   V1.2) -- found in the task's text, and only when the text has none in its report's title, together with the Latin
-   word right before it (`Sword v0.2`, not `a v0.2`), is the task's version. Tasks with the same version, subject
-   compared without regard to case, form a group, even a group of one: a version is one attempt. Its name is the
-   version as first written, followed by the words the group's tasks have in common, or by the first clause of the
-   task when there is one.
-3. Shared-term groups. Of the tasks left, a term is a Latin word of three letters or more that is not a common English
+   V1.2) -- that has a Latin word right before it (`Sword v0.2`, not `a v0.2`, and not a bare `v0` as in
+   `四模块量化系统 v0 框架`, which makes no version group), found in the task's text, and only when the text has none
+   in its report's title, is the task's version. Tasks with the same version, subject compared without regard to
+   case, form a group, even a group of one: a version is one attempt. Its name is the version as first written
+   (`Sword v0.2`), and nothing of any task's text.
+3. Continuation. A task that rule 2 did not place and whose first 20 characters refer to the step before (上一份,
+   上一步, 上一轮, 上一次, 上次, 前一步; in English previous, last step, the above) joins the group of the nearest
+   earlier task of the list whose text differs from its own and that is in a group, and confirming that group sets
+   its `after` to that task (`after` of the group: task id to task id). Tasks are taken in list order, so a task that
+   joined by this rule is in a group for the ones after it.
+4. Shared-term groups. Of the tasks left, a term is a Latin word of three letters or more that is not a common English
    word, or any run of three to eight Chinese characters that does not begin with a function character (对, 请, 一,
    上, ...) or end with one (的, 了, 等, ...), taken from the first line of the text (120 characters) and from the
    report's title. A term counts once for each distinct text (the same words twice are one text, not two). The term in the most texts, at
    least two, goes first, the longer one when equal, the one met first when still equal; the tasks that have it become
    a group and leave the pool; then again, until no term is shared. A term shared by more than half of eight texts or
-   more is the project's own name and tells nothing, and is skipped. The group is named by the longest words its
-   tasks' first lines have in common (the term when that is shorter).
-4. Each group carries a new attempt: the next free number (the greatest whole number in the table plus one, then one
+   more is the project's own name and tells nothing, and is skipped. The group is named by the report title of its
+   earliest task of the list, else that task's first line, cut at 40 characters (the term it shares is shown beside
+   the name, as its common ground).
+5. Each group carries a new attempt: the next free number (the greatest whole number in the table plus one, then one
    more for each further group, groups in the order of their dates), the date, the name, 待定 as its research
    assessment and an empty result. The date is the earliest of the group's tasks' dates (`due`) and the days its
    reports were written; today when it has none. It is written the way the table writes dates (`MM-DD` when any row
    of the table does, else `YYYY-MM-DD`).
-5. Duplicates: a task whose text, whitespace collapsed, is word for word that of an earlier task of the list is
-   reported with that task (`same_as`) and the place of that task in the list (`number`). A duplicate stays in its
-   group: the person decides to remove it.
+6. Same text, marked last. A task whose text, whitespace collapsed, is word for word that of an earlier task of the
+   list is a duplicate of it (`same_as`, and the place of that task in the list, `number`) when both have the same
+   owner or at most one of them has a report; it stays in its group: the person decides to remove it. The same text
+   given to different owners who each have their own report is one question deliberately asked of several agents,
+   not a duplicate: each task is reported with the agents' names (`asked_of`) and the tasks are kept together in one
+   group (the version is read for all of them from the first report title that names one).
 
 The page proposes and the person decides: the name, the number and the date can be changed, tasks moved, groups merged
 or dropped before one is confirmed. The engine says no sentence of its own here but its refusals (13.1)."""
@@ -55,6 +64,8 @@ from researchos.webapp import mapedit
 
 TEXT_READ = 300      # characters of a task's text that are searched for a version
 HEAD_READ = 120      # characters of its first line (and of a report's title) that terms are taken from
+BACK_READ = 20       # characters of a task's text that are searched for a reference to the step before
+NAME_CUT = 40        # characters a shared-term group's name is cut at
 TERM_SIZES = (3, 8)  # a Chinese term: from this many characters to that many
 GROUP_LIMIT = 30
 PENDING = "待定"
@@ -76,6 +87,8 @@ _COMMON = frozenset((
     "make build update new old all any not are was were has have can will you your our their its via per vs etc "
     "please based about each both only also than then when what which who how why").split())
 _VERSION_ONLY = re.compile(r"v\d+(?:\.\d+)*\Z")
+# A task that says it goes on from the step before (rule 3), in the first BACK_READ characters of its text.
+_BACK = re.compile("上一份|上一步|上一轮|上一次|上次|前一步|previous|last step|the above", re.IGNORECASE)
 
 
 def _squash(text: str) -> str:
@@ -100,20 +113,20 @@ def _report_facts(root: Path, rel: str) -> tuple[str | None, str | None]:
 
 def _version_of(text: str, title: str | None) -> tuple[str, str, str] | None:
     """`(key, shown, subject)` of the version a task is about: the first token of its text, else of its report's title,
-    with the Latin word before it (rule 2). `key` is for comparing (lower case), `shown` as first written."""
+    that has a Latin word right before it (rule 2); a bare `v0` is no version. `key` is for comparing (lower case),
+    `shown` as first written."""
     for source in (text[:TEXT_READ], (title or "")[:TEXT_READ]):
-        found = _VERSION.search(source)
-        if found is None:
-            continue
-        before = _SUBJECT.search(source[:found.start()])
-        subject = before.group(1) if before and before.group(1).lower() not in _NOT_A_SUBJECT else ""
-        number = "v" + found.group(1)
-        return (f"{subject.lower()} {number}".strip(), f"{subject} {number}".strip(), subject)
+        for found in _VERSION.finditer(source):
+            before = _SUBJECT.search(source[:found.start()])
+            if before is None or before.group(1).lower() in _NOT_A_SUBJECT:
+                continue
+            subject, number = before.group(1), "v" + found.group(1)
+            return (f"{subject.lower()} {number}", f"{subject} {number}", subject)
     return None
 
 
 def _terms(head: str) -> list[str]:
-    """The terms of one first line or title (rule 3), each once, in the order they are met; a Latin one lower case."""
+    """The terms of one first line or title (rule 4), each once, in the order they are met; a Latin one lower case."""
     out: dict[str, None] = {}
     for found in _LATIN.finditer(head):
         word = found.group(0).lower()
@@ -158,19 +171,6 @@ def _common(strings: list[str]) -> str:
     return ""
 
 
-def _clause(text: str) -> str:
-    """The first clause of a first line, at most 40 characters."""
-    first = re.split(r"[。！？!?；;\n]", text, maxsplit=1)[0].strip(_PUNCTUATION)
-    return first if len(first) <= 40 else first[:40].rstrip(_PUNCTUATION) + "…"
-
-
-def _without_version(head: str, subject: str, number: str) -> tuple[str, bool]:
-    """`head` without the version it names (and the subject right before it), and whether it named it."""
-    gone = (re.escape(subject) + r"[ \t_\-]*" if subject else "") + "[vV]" + re.escape(number[1:]) + r"(?![A-Za-z0-9_])"
-    cut, found = re.subn(gone, " ", head, flags=re.IGNORECASE)
-    return _squash(cut).strip(_PUNCTUATION), bool(found)
-
-
 # -- the attempt table's facts -----------------------------------------------------------------------------------
 
 
@@ -212,8 +212,10 @@ def pending_marker(root: Path) -> str:
 def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     """`GET /api/workspace/task-groups`: `tasks_revision`; `table` (whether the project has an attempt table to write
     to); `tasks`, the tasks with no attempt -- or one the table no longer has -- in the order of the list, each with `number` (its place in the whole list,
-    from 1), `text`, `owner`, `owner_label`, `due`, `report` and `report_title`; `groups`, each `id`, `basis`
-    (`version` | `term`), `term` (what the tasks share), `tasks` (their ids, in list order) and `attempt` -- the row
+    from 1), `text`, `owner`, `owner_label`, `due`, `report`, `report_title` and `asked_of` (the owners' names when the
+    same text was given to several owners who each have their own report, else empty); `groups`, each `id`, `basis`
+    (`version` | `term`), `term` (what the tasks share), `tasks` (their ids, in list order), `after` (task id to the id of
+    the task it continues: those placed by rule 3) and `attempt` -- the row
     to write: `number`, `date`, `description`, `variables`, `result` (empty) and `verdict` (the marker of 待定) --
     with `verdict_status` as the page words it; `ungrouped` (ids in no group); and `duplicates`, each `task`,
     `same_as` and `number` (the place of that task in the list). Reads only."""
@@ -231,25 +233,50 @@ def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     info = {task["id"]: {"id": task["id"], "number": n, "text": task["text"], "owner": task.get("owner", ""),
                          "owner_label": attempt_tasks.owner_label(task.get("owner", "")), "due": task.get("due", ""),
                          "report": task.get("report") or None,
-                         "report_title": reports.get(task.get("report") or "", (None, None))[0]} for n, task in loose}
+                         "report_title": reports.get(task.get("report") or "", (None, None))[0], "asked_of": []} for n, task in loose}
     squashed = {task["id"]: _squash(task["text"]) for _n, task in loose}
-    # Rule 2, then rule 3, over what is left.
+    duplicates, asked = _same_text(tasks, info, squashed)
+    versions = {task["id"]: _version_of(squashed[task["id"]], info[task["id"]]["report_title"]) for _n, task in loose}
+    for mates in asked:
+        names = [attempt_tasks.owner_label(mate.get("owner", "")) for mate in mates]
+        ours = [mate["id"] for mate in mates if mate["id"] in info]
+        for tid in ours:
+            info[tid]["asked_of"] = names
+        # one question asked of several agents is read as one, so that it lands in one group (rule 6)
+        versions.update(dict.fromkeys(ours, next((versions[tid] for tid in ours if versions[tid]), None)))
+    # Rule 2.
     found: list[dict[str, Any]] = []
-    left = []
-    by_version: dict[str, dict[str, Any]] = {}
+    by_key: dict[str, dict[str, Any]] = {}
+    home: dict[str, dict[str, Any]] = {}   # task id -> the group it is in
     for _n, task in loose:
-        version = _version_of(squashed[task["id"]], info[task["id"]]["report_title"])
-        if version is None:
-            left.append(task["id"])
+        version = versions[task["id"]]
+        if version is not None:
+            key, shown, _subject = version
+            group = by_key.setdefault(key, {"id": "v:" + key, "basis": "version", "term": shown, "tasks": [], "after": {}})
+            group["tasks"].append(task["id"])
+            home[task["id"]] = group
+    found.extend(by_key.values())
+    # Rule 3: a task that goes on from the step before joins the group of the nearest earlier task with another text.
+    left = []
+    for at, (_n, task) in enumerate(loose):
+        tid = task["id"]
+        if tid in home:
             continue
-        key, shown, subject = version
-        group = by_version.setdefault(key, {"id": "v:" + key, "basis": "version", "term": shown, "subject": subject, "tasks": []})
-        group["tasks"].append(task["id"])
-    found.extend(by_version.values())
-    found.extend(_term_groups(left, squashed, info))
+        earlier = None
+        if _BACK.search(squashed[tid][:BACK_READ]):
+            earlier = next((other["id"] for _m, other in reversed(loose[:at])
+                            if other["id"] in home and squashed[other["id"]] != squashed[tid]), None)
+        if earlier is None:
+            left.append(tid)
+            continue
+        home[tid] = home[earlier]
+        home[tid]["tasks"].append(tid)
+        if not task.get("after"):
+            home[tid]["after"][tid] = earlier
+    found.extend(_term_groups(left, squashed, info))   # rule 4
     for group in found:
         group["tasks"].sort(key=lambda tid: info[tid]["number"])
-        group["name"] = _name(group, squashed, info)
+        group["name"] = _name(group, info)
     when = {group["id"]: _earliest([info[tid] for tid in group["tasks"]], reports) for group in found}
     found.sort(key=lambda group: (when[group["id"]] or "9999-99-99", info[group["tasks"][0]]["number"]))
     marker = pending_marker(root)
@@ -257,18 +284,18 @@ def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     out = []
     for at, group in enumerate(found[:GROUP_LIMIT]):
         iso = when[group["id"]] or (today or date.today()).isoformat()
-        out.append({"id": group["id"], "basis": group["basis"], "term": group["term"], "tasks": group["tasks"],
+        out.append({"id": group["id"], "basis": group["basis"], "term": group["term"], "tasks": group["tasks"], "after": group["after"],
                     "attempt": {"number": str(facts["biggest"] + 1 + at), "date": iso[5:] if facts["short"] else iso,
                                 "description": group["name"], "variables": "", "result": "", "verdict": marker},
                     "verdict_status": attempts_ingest.verdict_status(marker, labels)})
     grouped = {tid for group in out for tid in group["tasks"]}
     return {"tasks_revision": workspace._revision(raw), "table": facts["config"],  # noqa: SLF001
             "tasks": list(info.values()), "groups": out,
-            "ungrouped": [tid for tid in info if tid not in grouped], "duplicates": _duplicates(tasks, info, squashed)}
+            "ungrouped": [tid for tid in info if tid not in grouped], "duplicates": duplicates}
 
 
 def _term_groups(left: list[str], squashed: dict[str, str], info: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rule 3 over the tasks in `left` (ids, in list order)."""
+    """Rule 4 over the tasks in `left` (ids, in list order)."""
     heads: dict[str, str] = {}
     members: dict[str, list[str]] = {}
     terms: dict[str, dict[str, None]] = {}   # in the order they are met, which breaks a tie (a set would not keep it)
@@ -296,26 +323,19 @@ def _term_groups(left: list[str], squashed: dict[str, str], info: dict[str, dict
         together = _common([heads[text] for text in chosen])
         written = re.search(re.escape(best), heads[chosen[0]], re.IGNORECASE)
         shown = together if len(together) >= len(best) else written.group(0) if written else best
-        groups.append({"id": "t:" + best, "basis": "term", "term": shown, "subject": "",
+        groups.append({"id": "t:" + best, "basis": "term", "term": shown, "after": {},
                        "tasks": [tid for text in chosen for tid in members[text]]})
     return groups
 
 
-def _name(group: dict[str, Any], squashed: dict[str, str], info: dict[str, dict[str, Any]]) -> str:
-    """What the group's attempt is called (rules 2 and 3)."""
-    if group["basis"] == "term":
+def _name(group: dict[str, Any], info: dict[str, dict[str, Any]]) -> str:
+    """What the group's attempt is called (rules 2 and 4): a version group by its version alone; a shared-term group by
+    the report title of its earliest task, else that task's first line, cut at `NAME_CUT` characters."""
+    if group["basis"] == "version":
         return group["term"]
-    shown = group["term"]
-    number = shown.rsplit(" ", 1)[-1]
-    named, others = [], []   # the first lines that say the version, and those whose version is in a report's title
-    for tid in group["tasks"]:
-        first = (info[tid]["text"].strip().splitlines() or [""])[0]
-        left, said = _without_version(_squash(first)[:HEAD_READ], group["subject"], number)
-        if left and left not in (named if said else others):
-            (named if said else others).append(left)
-    rest = named or others
-    words = _common(rest) if len(rest) > 1 else _clause(rest[0]) if rest else ""
-    return f"{shown} {words}".strip()
+    first = info[group["tasks"][0]]
+    words = _squash(first["report_title"] or "") or _squash((first["text"].strip().splitlines() or [""])[0])
+    return words if len(words) <= NAME_CUT else words[:NAME_CUT].rstrip(_PUNCTUATION) + "…"
 
 
 def _earliest(group: list[dict[str, Any]], reports: dict[str, tuple[str | None, str | None]]) -> str | None:
@@ -325,16 +345,27 @@ def _earliest(group: list[dict[str, Any]], reports: dict[str, tuple[str | None, 
     return min(days) if days else None
 
 
-def _duplicates(tasks: list[dict[str, Any]], info: dict[str, dict[str, Any]], squashed: dict[str, str]) -> list[dict[str, Any]]:
-    """Rule 5: each task with no attempt whose text is that of an earlier task of the list."""
-    first: dict[str, tuple[int, str]] = {}
-    out = []
+def _alike(one: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Whether two tasks of the same text are one task made twice (rule 6): they have the same owner, or at most one of
+    them has a report. Different owners who each have a report were each asked the question."""
+    return one.get("owner", "") == other.get("owner", "") or not (one.get("report") and other.get("report"))
+
+
+def _same_text(tasks: list[dict[str, Any]], info: dict[str, dict[str, Any]],
+               squashed: dict[str, str]) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]]]:
+    """Rule 6 over the whole list: the duplicates -- each task with no attempt that is `_alike` an earlier task of the same
+    text, reported with the first such task -- and, for each text, the tasks kept (no two of them `_alike`) when there
+    are two or more: the same question asked of several agents."""
+    kept: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    duplicates = []
     for at, task in enumerate(tasks):
-        text = squashed.get(task["id"], _squash(task["text"]))
-        if text in first and task["id"] in info:
-            out.append({"task": task["id"], "same_as": first[text][1], "number": first[text][0]})
-        first.setdefault(text, (at + 1, task["id"]))
-    return out
+        mates = kept.setdefault(squashed.get(task["id"]) or _squash(task["text"]), [])
+        twin = next(((n, other) for n, other in mates if _alike(other, task)), None)
+        if twin is None:
+            mates.append((at + 1, task))
+        elif task["id"] in info:
+            duplicates.append({"task": task["id"], "same_as": twin[1]["id"], "number": twin[0]})
+    return duplicates, [[task for _n, task in mates] for mates in kept.values() if len(mates) > 1]
 
 
 # -- confirming ----------------------------------------------------------------------------------------------------
@@ -349,12 +380,14 @@ def _invalid(message: str, message_zh: str) -> workspace.WorkspaceError:
     return workspace.WorkspaceError("invalid", message, 400, message_zh)
 
 
-def _body(body: Any) -> tuple[dict[str, str], list[str], str | None]:
-    """The attempt row's `number`, `date` and `description`, the ids of the tasks and the revision the page saw (None
+def _body(body: Any) -> tuple[dict[str, str], list[str], str | None, dict[str, str]]:
+    """The attempt row's `number`, `date` and `description`, the ids of the tasks, the revision the page saw (None
     when it sends none: the engine then reads the list under the lock, so a run that saved a report meanwhile is no
-    conflict)."""
-    if not isinstance(body, dict) or set(body) - {"attempt", "tasks", "tasks_revision"}:
-        raise _invalid("A group is an attempt, its tasks and optionally the tasks revision", "请求不完整，什么都没有改。")
+    conflict) and `after`, the tasks of the group that continue another task of it (task id to task id; empty when the
+    page sends none)."""
+    if not isinstance(body, dict) or set(body) - {"attempt", "tasks", "tasks_revision", "after"}:
+        raise _invalid("A group is an attempt, its tasks and optionally the tasks revision and which tasks follow which",
+                       "请求不完整，什么都没有改。")
     row, ids = body.get("attempt"), body.get("tasks")
     if (not isinstance(row, dict) or set(row) - {"number", "date", "description"}
             or not all(isinstance(row.get(key, ""), str) for key in ("number", "date", "description"))):
@@ -364,12 +397,16 @@ def _body(body: Any) -> tuple[dict[str, str], list[str], str | None]:
     revision = body.get("tasks_revision")
     if revision is not None and not isinstance(revision, str):
         raise _invalid("The tasks revision is text", "请求不完整，什么都没有改。")
+    follows = body.get("after", {})
+    if (not isinstance(follows, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in follows.items())
+            or set(follows) - set(ids) or set(follows.values()) - set(ids)):
+        raise _invalid("A task can only continue another task of the same group", "一个任务只能接在同一组的另一个任务后面。")
     cells = {key: " ".join(str(row.get(key, "")).split()) for key in ("number", "date", "description")}
     if not cells["number"] or not cells["description"]:
         raise _invalid("The attempt needs a number and a description", "尝试要有编号和描述。")
     if len(cells["description"]) > 500 or len(cells["date"]) > 40 or len(cells["number"]) > 40:
         raise _invalid("The attempt's cells are too long", "尝试的描述、编号或日期太长了。")
-    return cells, list(dict.fromkeys(ids)), revision
+    return cells, list(dict.fromkeys(ids)), revision, follows
 
 
 def _refused(exc: Exception, root: Path) -> workspace.WorkspaceError:
@@ -384,14 +421,16 @@ def _refused(exc: Exception, root: Path) -> workspace.WorkspaceError:
 
 def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str, Any]:
     """`POST /api/workspace/task-groups`: write the attempt row (`body["attempt"]`: `number`, `date`, `description`;
-    the assessment is 待定 and the result empty), then set `attempt` on the tasks `body["tasks"]` names. Everything
+    the assessment is 待定 and the result empty), then set `attempt` on the tasks `body["tasks"]` names and `after` on
+    those `body["after"]` names (task id to the id of the task of the group it continues). Everything
     is checked before the row is written -- who may write, that the tasks still exist and still have no attempt,
-    the revision when one is sent, the row as a dry run -- and a refused row leaves the task file untouched. Answers
-    the attempt (`id`, `number`, `label`, `file`, `date`), `moved` (the task ids), `tasks` and `tasks_revision` as
-    the task save does, and `ingest_error` when the row was written but the index could not be read again: the
-    tasks are then not moved (`linked` false), since an attempt the index lacks cannot be named."""
+    that no task follows itself or goes round in a circle, the revision when one is sent, the row as a dry run -- and
+    a refused row leaves the task file untouched. Answers the attempt (`id`, `number`, `label`, `file`, `date`),
+    `moved` (the task ids), `tasks` and `tasks_revision` as the task save does, and `ingest_error` when the row was
+    written but the index could not be read again: the tasks are then not moved (`linked` false), since an attempt
+    the index lacks cannot be named."""
     root = workspace._root(root)  # noqa: SLF001
-    cells, ids, revision = _body(body)
+    cells, ids, revision, follows = _body(body)
     with situation.write_guard(root, human=True):
         workspace._require_write(root)  # noqa: SLF001
         tasks, raw = workspace._read_tasks(root)  # noqa: SLF001
@@ -408,6 +447,14 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str
         if taken:
             raise workspace.WorkspaceError("group_task_taken", f"Task {taken[0]} already belongs to an attempt, so nothing was changed", 409,
                                            "有一个任务已经属于某条尝试了，什么都没有改。请重新打开这个面板。")
+        for start in follows:   # the file would refuse a circle only after the row was written
+            seen, step = {start}, follows[start]
+            while step:
+                if step in seen:
+                    raise workspace.WorkspaceError("group_after_cycle", "Tasks cannot follow each other in a circle, so nothing was changed", 400,
+                                                   "任务不能首尾相接绕成一圈，什么都没有改。")
+                seen.add(step)
+                step = follows[step] if step in follows else by_id.get(step, {}).get("after")
         fields = {"description": cells["description"], "date": cells["date"], "verdict": pending_marker(root)}
         try:
             mapedit.preview_edit(root, "append", cells["number"], fields)
@@ -425,7 +472,8 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str
             return out
         wanted = set(ids)
         try:
-            saved = workspace.save_tasks(root, {"tasks": [{**task, "attempt": node} if task["id"] in wanted else task for task in tasks],
+            saved = workspace.save_tasks(root, {"tasks": [{**task, "attempt": node, **({"after": follows[task["id"]]} if task["id"] in follows else {})}
+                                                          if task["id"] in wanted else task for task in tasks],
                                                 "revision": workspace._revision(raw)})  # noqa: SLF001
         except workspace.WorkspaceError as exc:
             raise workspace.WorkspaceError(

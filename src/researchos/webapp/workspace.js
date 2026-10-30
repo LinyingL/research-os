@@ -1249,8 +1249,11 @@
   // attempt row it would add, and the tasks that are word for word the same as an earlier one. The side panel lets the
   // person rename a group (and change its number and date), move tasks in or out, merge it with another or drop it;
   // nothing is written until one is confirmed, and confirming is one call (`POST` of the same path) that writes the
-  // attempt row and sets `attempt` on that group's tasks. A duplicate is removed by the task row's own removal, with its
-  // question. The panel is the folders form's kind of subject (`folderSubject`): leaving it after a change asks first.
+  // attempt row and sets `attempt` (and `after`, for a task that continues another of the group) on that group's tasks. A
+  // duplicate is removed by the task row's own removal, with its question; the same question given to several agents is
+  // not a duplicate and is only said. The numbers the groups carry follow the table: once a group is written, the others
+  // move to the next free numbers, but a number the person typed stays. The panel is the folders form's kind of subject
+  // (`folderSubject`): leaving it after a change asks first.
   // a task whose attempt is gone from the table is as loose as one with none (the list puts it under 「未归入尝试」 too)
   function hasLooseTasks() {
     const known = new Set((data.attempts || []).map((a) => a.id));
@@ -1264,6 +1267,19 @@
   function taskNumbered(subject, ids) { return ids.slice().sort((a, b) => subject.info[a].number - subject.info[b].number); }
   function cutWords(words, size) { const text = String(words).split("\n")[0]; return text.length > size ? text.slice(0, size) + "…" : text; }
   function groupWords(group) { return group.description.trim() || group.term; }
+  function wholeNumber(value) { const found = /^\s*(\d+)/.exec(String(value)); return found ? parseInt(found[1], 10) : 0; }
+  // The table has a new row, so the numbers still on offer move past it -- to the next free ones in the order shown --
+  // except a number the person typed, which is theirs (and which the others step round).
+  function renumberGroups(subject, written) {
+    subject.biggest = Math.max(subject.biggest, wholeNumber(written));
+    const used = new Set(subject.groups.filter((group) => group.typed).map((group) => group.number.trim()));
+    let next = subject.biggest + 1;
+    subject.groups.forEach((group) => {
+      if (group.typed) return;
+      while (used.has(String(next))) next += 1;
+      group.number = String(next); used.add(group.number);
+    });
+  }
   function moveGroupedTask(subject, id, to) {
     subject.groups.forEach((group) => { if (group.tasks.indexOf(id) >= 0) { group.tasks = group.tasks.filter((x) => x !== id); group.edited = true; } });
     subject.pool = subject.pool.filter((x) => x !== id);
@@ -1290,7 +1306,7 @@
     if ((data.tasks || []).some((x) => x.id === id)) return;   // the save failed: the task is still there
     subject.groups.forEach((group) => { group.tasks = group.tasks.filter((x) => x !== id); });
     subject.pool = subject.pool.filter((x) => x !== id);
-    delete subject.same[id]; delete subject.info[id];
+    delete subject.same[id]; delete subject.info[id]; delete subject.after[id];
     drawGrouping(subject);
   }
   function groupedTaskRow(subject, id, group) {
@@ -1298,6 +1314,9 @@
     const words = el("span", "ws-group-task-text", cutWords(info.text, 90)); words.title = info.text;
     row.append(el("span", "ws-group-task-n", t("第 {n} 条", { n: info.number })), words);
     if (info.report_title) row.append(el("span", "ws-agent-quiet", t("报告：{title}", { title: cutWords(info.report_title, 50) })));
+    if ((info.asked_of || []).length > 1) row.append(el("span", "ws-agent-quiet", t("同一个问题，分别交给了 {agents}", { agents: info.asked_of.map((who) => who || t("没有指定负责人")).join(t("、")) })));
+    const prior = subject.after[id];
+    if (prior && group && subject.info[prior] && group.tasks.indexOf(prior) >= 0) row.append(el("span", "ws-agent-quiet", t("接在第 {n} 条之后", { n: subject.info[prior].number })));
     if (subject.same[id]) {
       row.append(el("span", "ws-agent-quiet", t("和第 {n} 条一样", { n: subject.same[id] })));
       const remove = keyed(named(button(t("移除"), () => removeGroupedTask(subject, id)), t("移除：{task}", { task: cutWords(info.text, 40) })), "group-remove:" + id);
@@ -1322,7 +1341,7 @@
     [number, date, name].forEach((box) => { box.disabled = locked; });
     const keep = keyed(button(t("确认这一组"), () => confirmGroup(subject, group), "btn btn-small"), "group-confirm:" + group.id);
     keep.disabled = locked || !group.tasks.length;
-    number.addEventListener("input", () => { group.number = number.value; group.edited = true; });
+    number.addEventListener("input", () => { group.number = number.value; group.typed = true; group.edited = true; });
     date.addEventListener("input", () => { group.date = date.value; group.edited = true; });
     name.addEventListener("input", () => { group.description = name.value; group.edited = true; keep.disabled = subject.busy || !editable() || !group.tasks.length; });
     const head = el("div", "ws-group-head"); head.append(numberField, dateField, nameField); card.append(head);
@@ -1377,7 +1396,11 @@
     try {
       // The attempt table the first group is written into is made first, as the new-attempt form makes it (a project with none).
       if (!subject.table) { await apiPost("/api/attempts/initialize", { project: project() }); subject.table = true; }
-      response = await apiPost("/api/workspace/task-groups", { project: project(), tasks: ids, attempt: { number: number, date: group.date.trim(), description: description } });
+      const body = { project: project(), tasks: ids, attempt: { number: number, date: group.date.trim(), description: description } };
+      // a task that continues another of this group goes after it; one whose earlier task is not in the group has no `after`
+      const follows = {}; ids.forEach((id) => { if (subject.after[id] && ids.indexOf(subject.after[id]) >= 0) follows[id] = subject.after[id]; });
+      if (Object.keys(follows).length) body.after = follows;
+      response = await apiPost("/api/workspace/task-groups", body);
     } catch (err) {
       if (!here()) return;
       subject.busy = false; group.note = { words: errorWords(t("没能归入这一组。"), err), kind: "err" }; drawGrouping(subject);
@@ -1395,7 +1418,8 @@
     const moved = response.moved || [], line = el("div", "ws-group-done");
     subject.groups = subject.groups.filter((x) => x !== group);
     subject.pool = subject.pool.filter((x) => moved.indexOf(x) < 0);
-    moved.forEach((id) => { delete subject.same[id]; delete subject.info[id]; });
+    moved.forEach((id) => { delete subject.same[id]; delete subject.info[id]; delete subject.after[id]; });
+    renumberGroups(subject, number);   // the row is in the table, whether or not the tasks could be moved into it
     if (!response.linked) {
       line.append(el("p", "ws-status err", t("尝试 #{number} 已经写进尝试表，但没能重新读取它，任务还没有归入。稍后在任务的「属于哪条尝试」里选这一条。", { number: number })));
     } else if (member) {
@@ -1414,7 +1438,7 @@
     if (!editable() || !mayReplacePanel()) return;
     const mark = stamp();
     // Unsaved work: a group typed in or rearranged and not confirmed yet, or a group dropped (agreeing to leave clears it).
-    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, groups: [], pool: [], done: [], dropped: false,
+    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, after: {}, biggest: 0, groups: [], pool: [], done: [], dropped: false,
       get dirty() { return this.dropped || this.groups.some((group) => group.edited); },
       set dirty(on) { if (!on) { this.dropped = false; this.groups.forEach((group) => { group.edited = false; }); } } };
     folderSubject = subject; state.panelSubject = subject;
@@ -1427,7 +1451,10 @@
       (plan.tasks || []).forEach((task) => { subject.info[task.id] = task; });
       (plan.duplicates || []).forEach((pair) => { subject.same[pair.task] = pair.number; });
       subject.groups = (plan.groups || []).map((group) => ({ id: group.id, term: group.term, number: group.attempt.number, date: group.attempt.date,
-        description: group.attempt.description, verdictWord: (group.verdict_status || {}).label || "", tasks: group.tasks.slice(), sentence: "", note: null, edited: false }));
+        description: group.attempt.description, verdictWord: (group.verdict_status || {}).label || "", tasks: group.tasks.slice(), sentence: "", note: null, edited: false, typed: false }));
+      (plan.groups || []).forEach((group) => Object.assign(subject.after, group.after || {}));
+      // the first group carries the next free number of the table (the engine numbers them from there)
+      if (subject.groups.length) subject.biggest = Math.max(0, wholeNumber(subject.groups[0].number) - 1);
       subject.pool = (plan.ungrouped || []).slice();
       drawGrouping(subject);
     } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取任务的分组。"), err), "err"); }

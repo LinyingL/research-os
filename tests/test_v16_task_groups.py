@@ -40,7 +40,7 @@ QUANT_TASKS = [
 
 
 def _report(root: Path, name: str, title: str, day: str) -> str:
-    rel = f"research/results/{name * 32}.md"
+    rel = f"research/results/{(name * 32)[:32]}.md"
     (root / rel).parent.mkdir(parents=True, exist_ok=True)
     (root / rel).write_text(f"# {title}\n\nBody\n")
     stamp = time.mktime(date.fromisoformat(day).timetuple()) + 3600  # one o'clock: the same local day anywhere
@@ -85,17 +85,18 @@ def _confirm(root: Path, group: dict, **changes) -> dict:
 def test_tasks_shaped_like_quants_are_proposed_as_three_versions_and_a_data_source_group_with_the_duplicates_named(root):
     plan = task_groups.propose(root, today=TODAY)
     assert [(g["id"], g["basis"], g["tasks"]) for g in plan["groups"]] == [
-        ("v:sword v0", "version", ["t1"]), ("v:sword v0.2", "version", ["t2", "t3", "t4"]),
+        ("v:sword v0", "version", ["t1"]), ("v:sword v0.2", "version", ["t2", "t3", "t4", "t6"]),   # t6 continues the step before: t3's group
         ("v:sword v0.3", "version", ["t5", "t7"]), ("t:美股历史数据源", "term", ["t8", "t9"])]
     # the table is the project's own: its row 16 is dated MM-DD, so the next rows are numbered 17 on and dated the same way
     assert [(g["term"], g["attempt"]) for g in plan["groups"]] == [
-        ("Sword v0", {"number": "17", "date": "08-02", "description": "Sword v0 基线：用全部成员跑一遍回测，输出收益表",
-                      "variables": "", "result": "", "verdict": "🕒"}),
-        ("Sword v0.2", {"number": "18", "date": "09-01", "description": "Sword v0.2 全成员复算，核对", "variables": "", "result": "", "verdict": "🕒"}),
-        ("Sword v0.3", {"number": "19", "date": "10-05", "description": "Sword v0.3 新增行业中性约束", "variables": "", "result": "", "verdict": "🕒"}),
-        ("美股历史数据源", {"number": "20", "date": "10-29", "description": "美股历史数据源", "variables": "", "result": "", "verdict": "🕒"})]
+        ("Sword v0", {"number": "17", "date": "08-02", "description": "Sword v0", "variables": "", "result": "", "verdict": "🕒"}),
+        ("Sword v0.2", {"number": "18", "date": "09-01", "description": "Sword v0.2", "variables": "", "result": "", "verdict": "🕒"}),
+        ("Sword v0.3", {"number": "19", "date": "10-05", "description": "Sword v0.3", "variables": "", "result": "", "verdict": "🕒"}),
+        # a shared-term group with no report title is named by its earliest task's first line
+        ("美股历史数据源", {"number": "20", "date": "10-29", "description": "调查美股历史数据源：Yahoo Finance 的复权口径",
+                            "variables": "", "result": "", "verdict": "🕒"})]
     assert all(g["verdict_status"]["status"] == "pending" and g["verdict_status"]["label"] == "待定" for g in plan["groups"])
-    assert plan["ungrouped"] == ["t6", "t10", "t11"]
+    assert plan["ungrouped"] == ["t10", "t11"]
     assert plan["duplicates"] == [{"task": "t5", "same_as": "t4", "number": 4}, {"task": "t6", "same_as": "t4", "number": 4}]
     assert plan["table"] is True and plan["tasks_revision"] == workspace.read_tasks(root)[1]
     shown = {t["id"]: t for t in plan["tasks"]}
@@ -118,16 +119,20 @@ def test_only_tasks_with_no_attempt_are_looked_at_and_a_twin_that_is_in_an_attem
     plan = task_groups.propose(root, today=TODAY)
     assert "t1" not in {t["id"] for t in plan["tasks"]} and all("t1" not in g["tasks"] for g in plan["groups"])
     assert {"task": "t3", "same_as": "t1", "number": 1} in plan["duplicates"]
-    assert _group(plan, "v:sword v0")["tasks"] == ["t3"]  # t3 now reads as Sword v0, wherever t1 is
+    assert _group(plan, "v:sword v0")["tasks"] == ["t3", "t6"]  # t3 now reads as Sword v0, wherever t1 is; t6 continues the step before it
 
 
 @pytest.mark.parametrize("text, title, expected", [
     ("Sword v0.2 全成员复算", None, ("sword v0.2", "Sword v0.2", "Sword")),
     ("sword V0.2 recheck", None, ("sword v0.2", "sword v0.2", "sword")),
     ("Rerun Sword-v1.2.3 now", None, ("sword v1.2.3", "Sword v1.2.3", "Sword")),
-    ("Run v0.2 once more", None, ("v0.2", "v0.2", "")),
-    ("the v3 report", None, ("v3", "v3", "")),
-    ("策略 v2 复算", None, ("v2", "v2", "")),
+    ("Run v0.2 once more", None, None),      # a bare version names no subject, so it makes no version group
+    ("the v3 report", None, None),
+    ("策略 v2 复算", None, None),
+    ("四模块量化系统 v0 框架与开发指引", None, None),
+    ("v0 first, then Sword v0.2", None, ("sword v0.2", "Sword v0.2", "Sword")),        # a bare token is passed over for a later one
+    ("没有版本号", "Sword 构建指引：已有研究梳理与 v0 路线", None),                       # Sword is in the title, but not right before v0
+    ("没有版本号", "四模块量化系统 v0 框架 / Sword v1 复算", ("sword v1", "Sword v1", "Sword")),
     ("对上一份审查报告给出回应", "Sword v0.3 审查回应", ("sword v0.3", "Sword v0.3", "Sword")),
     ("Sword v0.2 in the text", "Sword v0.3 in the title", ("sword v0.2", "Sword v0.2", "Sword")),  # the text wins
     ("rev2 and dev3 and v", None, None),
@@ -142,18 +147,16 @@ def test_a_version_is_one_attempt_even_with_one_task_and_the_subject_is_compared
     _legacy(root, [{"id": "a", "text": "Sword v0.2 first"}, {"id": "b", "text": "SWORD V0.2 second"}, {"id": "c", "text": "Other v0.2 third"},
                    {"id": "d", "text": "v0.2 with no subject"}, {"id": "e", "text": "Sword v9 alone"}])
     plan = task_groups.propose(root, today=TODAY)
-    assert sorted((g["term"], g["tasks"]) for g in plan["groups"]) == [
-        ("Other v0.2", ["c"]), ("Sword v0.2", ["a", "b"]), ("Sword v9", ["e"]), ("v0.2", ["d"])]
-    assert plan["ungrouped"] == []
+    assert sorted((g["term"], g["tasks"]) for g in plan["groups"]) == [("Other v0.2", ["c"]), ("Sword v0.2", ["a", "b"]), ("Sword v9", ["e"])]
+    assert plan["ungrouped"] == ["d"]     # a version with no word before it makes no group
 
 
-def test_a_version_only_a_report_title_names_still_groups_its_task_and_the_name_uses_the_tasks_that_say_it_themselves(root):
+def test_a_version_only_a_report_title_names_still_groups_its_task_and_the_name_is_the_version_alone(root):
     plan = task_groups.propose(root, today=TODAY)
     v02 = _group(plan, "v:sword v0.2")
     assert "t4" in v02["tasks"]  # its text names no version; its report is titled Sword v0.2
-    assert v02["attempt"]["description"] == "Sword v0.2 全成员复算，核对"  # the words t2 and t3 share, not t4's
-    alone = _group(plan, "v:sword v0.3")["attempt"]["description"]
-    assert alone == "Sword v0.3 新增行业中性约束"  # one task that says it: its first clause
+    assert v02["attempt"]["description"] == "Sword v0.2"  # the version alone, no words of any task glued on
+    assert _group(plan, "v:sword v0.3")["attempt"]["description"] == "Sword v0.3"
 
 
 def test_the_same_words_twice_are_one_text_for_a_shared_term_and_a_term_in_most_texts_goes_first(root):
@@ -262,11 +265,11 @@ def test_confirming_a_group_writes_its_row_through_the_attempt_write_then_sets_a
     done = _confirm(root, group)
     node = "attempt:map.md#18"
     assert done["attempt"] == {"id": node, "number": "18", "label": "Sword v0.2 全成员复算", "file": "map.md", "date": "09-01"}
-    assert done["moved"] == ["t2", "t3", "t4"] and done["linked"] is True and done["ingest_error"] is None and done["mode"] == "single"
+    assert done["moved"] == ["t2", "t3", "t4", "t6"] and done["linked"] is True and done["ingest_error"] is None and done["mode"] == "single"
     assert "| 18 | 09-01 | Sword v0.2 全成员复算 |  |  | 🕒 |" in (root / "map.md").read_text()
     tasks = workspace.read_tasks(root)[0]
-    assert {t["id"]: t.get("attempt") for t in tasks} == {"t2": node, "t3": node, "t4": node} | {
-        f"t{n}": None for n in (1, 5, 6, 7, 8, 9, 10, 11)}
+    assert {t["id"]: t.get("attempt") for t in tasks} == {"t2": node, "t3": node, "t4": node, "t6": node} | {
+        f"t{n}": None for n in (1, 5, 7, 8, 9, 10, 11)}
     assert done["tasks"] == tasks and done["tasks_revision"] == workspace.read_tasks(root)[1]
     assert node in {row["id"] for row in workspace._attempts(root)}  # the index has it: the row was read back
     assert done["backup"] and (root / done["backup"]).is_file()
@@ -278,7 +281,7 @@ def test_confirming_a_group_writes_its_row_through_the_attempt_write_then_sets_a
     # asked again, the plan no longer offers those tasks, and what is left keeps its number
     again = task_groups.propose(root, today=TODAY)
     assert [(g["id"], g["attempt"]["number"]) for g in again["groups"]] == [("v:sword v0", "19"), ("v:sword v0.3", "20"), ("t:美股历史数据源", "21")]
-    assert all(t not in {x["id"] for x in again["tasks"]} for t in ("t2", "t3", "t4"))
+    assert all(t not in {x["id"] for x in again["tasks"]} for t in ("t2", "t3", "t4", "t6"))
 
 
 def test_a_task_save_that_follows_keeps_the_other_fields_of_every_task_as_they_were(root):
@@ -388,7 +391,7 @@ def test_the_row_a_group_writes_reads_back_as_a_pending_attempt_with_no_result(r
     _confirm(root, group)
     rows = attempts_ingest.parse_attempts_table((root / "map.md").read_text(), "Attempt timeline", attempts_ingest.load_config(root).columns)
     row = next(r for r in rows if r.number == "20")
-    assert (row.description, row.date, row.result) == ("美股历史数据源", "10-29", "") and "🕒" in row.verdict
+    assert (row.description, row.date, row.result) == ("调查美股历史数据源：Yahoo Finance 的复权口径", "10-29", "") and "🕒" in row.verdict
 
 
 def test_a_name_with_a_pipe_or_a_line_break_is_written_as_one_cell_and_reads_back_the_same(root):
@@ -465,12 +468,15 @@ def test_the_page_reads_the_proposal_and_confirms_a_group_over_http_and_the_othe
     group = plan["groups"][1]
     before = _asked(base, "GET", "/api/generation")[1]["generation"]
     status, done = _asked(base, "POST", "/api/workspace/task-groups", {
-        "project": str(root), "tasks": group["tasks"], "attempt": {k: group["attempt"][k] for k in ("number", "date", "description")}})
+        "project": str(root), "tasks": group["tasks"], "after": group["after"],
+        "attempt": {k: group["attempt"][k] for k in ("number", "date", "description")}})
     assert status == 200, done
-    assert done["attempt"]["id"] == "attempt:map.md#18" and done["moved"] == ["t2", "t3", "t4"] and done["linked"] is True
+    assert group["after"] == {"t6": "t3"}
+    assert done["attempt"]["id"] == "attempt:map.md#18" and done["moved"] == ["t2", "t3", "t4", "t6"] and done["linked"] is True
     assert done["tasks_officialness"] and done["generation"] > before
     home = _asked(base, "GET", "/api/workspace")[1]
-    assert {t["id"] for t in home["tasks"] if t.get("attempt") == "attempt:map.md#18"} == {"t2", "t3", "t4"}
+    assert {t["id"] for t in home["tasks"] if t.get("attempt") == "attempt:map.md#18"} == {"t2", "t3", "t4", "t6"}
+    assert {t["id"]: t["after"] for t in home["tasks"] if t.get("after")} == {"t6": "t3"}
     assert "attempt:map.md#18" in {a["id"] for a in home["attempts"]}
     rows = _asked(base, "GET", "/api/attempts")[1]["attempts"]
     assert "18" in {a["attrs"]["number"] for a in rows}
@@ -541,9 +547,10 @@ def test_a_task_whose_report_is_gone_or_cannot_be_read_is_still_grouped_by_its_t
     plan = task_groups.propose(root, today=TODAY)
     shown = {t["id"]: t for t in plan["tasks"]}
     assert shown["t4"]["report_title"] is None and shown["t5"]["report_title"] is None
-    # their versions were only in the titles of those reports: with no title they read as tasks of no version
-    assert _group(plan, "v:sword v0.2")["tasks"] == ["t2", "t3"] and _group(plan, "v:sword v0.3")["tasks"] == ["t7"]
-    assert {"t4", "t5"} <= set(plan["ungrouped"])
+    # their versions were only in the titles of those reports: with no title they read as tasks of no version -- but they say
+    # they answer the step before, so they (and t6, who says the same) go with the nearest group before them, Sword v0.2's
+    assert _group(plan, "v:sword v0.2")["tasks"] == ["t2", "t3", "t4", "t5", "t6"] and _group(plan, "v:sword v0.3")["tasks"] == ["t7"]
+    assert {"t4", "t5"}.isdisjoint(plan["ungrouped"])
 
 
 def test_a_task_whose_attempt_row_has_gone_is_proposed_for_grouping_like_one_with_none_and_one_in_the_table_is_not(root):
@@ -566,3 +573,250 @@ def test_a_taken_number_and_a_missing_table_are_said_with_the_attempt_table_not_
         _confirm(root, group, attempt={"number": "16", "date": group["attempt"]["date"], "description": "Again"})
     assert taken.value.code == "group_duplicate" and "尝试表" in taken.value.message_zh and "年表" not in taken.value.message_zh
     assert all("年表" not in sentence for sentence in task_groups._ATTEMPT_WORDS.values())    # 21.6 renames it; no screen uses the old word
+
+
+# -- the tasks of the researcher's real Quant project (acceptance of V16, round AF-2) ---------------------------------
+
+SONNET, DEEPSEEK, OPUS, CODEX = ("agent:claude-code:sonnet", "agent:deepseek-harness:deepseek-official/deepseek-v4-pro",
+                                 "agent:claude-code:opus", "agent:codex:gpt-5")
+ASKED = "对上一份审查报告给出回应，以基金经理的角度，因子选择是否正确？"
+# (text, title of the report, owner): Quant's 18 tasks in list order, each with its own report and not marked done
+QUANT_18 = [
+    ("根据目前的思路给出初步的方向和框架，为下一步Coding Agent提供指导", "四模块量化系统 v0 框架与开发指引", SONNET),
+    ("根据初步的框架设计量化算法，哪些因子应当被考虑？", "四模块候选因子设计", SONNET),
+    ("研究Openstock（https://github.com/example/openstock），哪些因子可以使用？可以进行回测吗？", "OpenStock 因子与回测能力核查", SONNET),
+    ("目前缺少历史因子数据，寻找可用美股的数据来源用于回测，主要目标标普500，需要覆盖历史成分股", "标普500历史因子数据源评估", SONNET),
+    ("量化算法主要目标标普500，搜索文献，梳理已有的因子与框架", "标普500四模块文献综述：9 类框架与 48 个因子族", SONNET),
+    ("梳理总结目前已有的研究结果，为下一步构建最强的Sword提供指引", "Sword 构建指引：已有研究梳理与 v0 路线", SONNET),
+    ("根据之前的指引，构建Sword模块的算法", "Sword v0 算法实现与测试", SONNET),
+    ("审查代码是否符合目的意图，并做回测", "Sword v0 审查与回测：本样本未见 Alpha", SONNET),
+    (ASKED, "基金经理对 Sword 审查的回应", DEEPSEEK),
+    (ASKED, "基金经理第二意见：Sword 缺的是风险中性化", OPUS),
+    (ASKED, "基金经理审查回应与核查", CODEX),
+    ("执行r-20261024T113851Z-e4ca6d的改进", "Sword v0.2 改进实现与回测", SONNET),
+    ("审查代码改进是否符合意见，并回测", "Sword v0.2 审查：意见部分落实，仍未见 Alpha", SONNET),
+    ("根据最新的Sword v0.3 实施方向提供方案", "Sword v0.3 实施方案与跑输大盘诊断", SONNET),
+    ("根据目前的情况，我判断需要更好的数据用于回测，请调研免费与低价的数据源", "免费与 10 欧以内回测数据源实测评估", SONNET),
+    ("先走 A，在含退市股的数据上复现 Sword v0.2，看 +1.25%/年 的股票池偏差还剩多少；然后补 Tiingo 数据", "含退市股后池偏差 +1.25 → +0.71，Tiingo 下载进行中", SONNET),
+    ("检查上一步是否完成，以及Quant Connect连接，作为研究助理汇报", "上一步核对与 QuantConnect 连接状态", SONNET),
+    ("完成未完成的任务", "全成员 Sword v0.2 复算与数据层刷新", SONNET),
+]
+
+
+@pytest.fixture
+def quant(tmp_path: Path) -> Path:
+    root = _project(tmp_path / "quant")
+    rows = []
+    for n, (text, title, owner) in enumerate(QUANT_18, 1):
+        rel = _report(root, f"{n:02x}", title, f"2026-10-{n:02d}")
+        rows.append({"id": f"q{n}", "text": text, "owner": owner, "report": rel})
+    _legacy(root, rows)
+    return root
+
+
+def test_quants_eighteen_tasks_make_sword_v0_v0_2_and_v0_3_with_the_nine_to_eleven_kept_as_one_question_and_no_broken_names(quant):
+    plan = task_groups.propose(quant, today=TODAY)
+    numbered = {t["id"]: t["number"] for t in plan["tasks"]}
+    groups = {g["id"]: g for g in plan["groups"]}
+
+    def nums(group):
+        return [numbered[tid] for tid in group["tasks"]]
+    assert nums(groups["v:sword v0"]) == [7, 8, 9, 10, 11] and nums(groups["v:sword v0.2"]) == [12, 13, 16, 17, 18]
+    assert nums(groups["v:sword v0.3"]) == [14]
+    # a version group is named by the version alone, never with a piece of a task's text
+    assert [(g["term"], g["attempt"]["description"]) for g in plan["groups"] if g["basis"] == "version"] == [
+        ("Sword v0", "Sword v0"), ("Sword v0.2", "Sword v0.2"), ("Sword v0.3", "Sword v0.3")]
+    # 9-11 and 17 continue the step before: confirming the group sets their `after`
+    assert groups["v:sword v0"]["after"] == {"q9": "q8", "q10": "q8", "q11": "q8"} and groups["v:sword v0.2"]["after"] == {"q17": "q16"}
+    assert all(not g["after"] for g in plan["groups"] if g["basis"] == "term")
+    # the same question given to three agents, each with its own report: not duplicates, shown with the agents' names
+    assert plan["duplicates"] == []
+    asked = ["Claude Code · opus", "Codex · gpt-5", "DeepSeek Harness · deepseek-official/deepseek-v4-pro"]
+    shown = {t["id"]: t for t in plan["tasks"]}
+    assert all(sorted(shown[f"q{n}"]["asked_of"]) == sorted(asked) for n in (9, 10, 11))
+    assert all(shown[f"q{n}"]["asked_of"] == [] for n in range(1, 9)) and shown["q17"]["asked_of"] == []
+    # the rest: in shared-term groups named by a report title, or in none; none is named by a fragment of a sentence
+    rest = [g for g in plan["groups"] if g["basis"] == "term"]
+    titles = {title for _text, title, _owner in QUANT_18}
+    firsts = {text for text, _title, _owner in QUANT_18}
+    assert rest and all(g["attempt"]["description"] in titles for g in rest), [g["attempt"]["description"] for g in rest]
+    assert not {g["attempt"]["description"] for g in rest} & firsts
+    inside = {tid for g in plan["groups"] for tid in g["tasks"]}
+    assert inside >= {f"q{n}" for n in (7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18)} and "q15" not in groups["v:sword v0.3"]["tasks"]
+    assert plan["ungrouped"] == [tid for tid in numbered if tid not in inside]
+    assert [(g["id"], g["attempt"]["description"], nums(g)) for g in rest] == [
+        ("t:根据目前", "四模块量化系统 v0 框架与开发指引", [1, 15]), ("t:哪些因子", "四模块候选因子设计", [2, 3]),
+        ("t:主要目标标普", "标普500历史因子数据源评估", [4, 5])]      # each named by the report title of its earliest task
+    assert plan["ungrouped"] == ["q6"]
+
+
+# -- the same text, given to one owner or to several --------------------------------------------------------------------
+
+
+def _twins(root: Path, *owners_and_reports: tuple[str, bool], text: str = "核对夏普比率的口径") -> dict:
+    """Tasks of one text, each with an owner and, when asked, a report of its own."""
+    rows = []
+    for n, (owner, has_report) in enumerate(owners_and_reports, 1):
+        row = {"id": f"s{n}", "text": text, "owner": owner}
+        if has_report:
+            row["report"] = _report(root, f"{n:x}", f"Report {n}", f"2026-10-0{n}")
+        rows.append(row)
+    _legacy(root, rows)
+    return task_groups.propose(root, today=TODAY)
+
+
+@pytest.mark.parametrize("tasks, duplicates", [
+    # the same owner: made twice, whatever the reports
+    ((("agent:codex:gpt-5", True), ("agent:codex:gpt-5", True)), [("s2", "s1")]),
+    ((("", True), ("", True)), [("s2", "s1")]),
+    # different owners, at most one with a report: the one without is the copy
+    ((("agent:codex:gpt-5", True), ("agent:claude-code:opus", False)), [("s2", "s1")]),
+    ((("agent:codex:gpt-5", False), ("agent:claude-code:opus", True)), [("s2", "s1")]),
+    ((("agent:codex:gpt-5", False), ("agent:claude-code:opus", False)), [("s2", "s1")]),
+    # different owners who each have a report: one question given to two agents
+    ((("agent:codex:gpt-5", True), ("agent:claude-code:opus", True)), []),
+    # a third task of the first owner is a copy of the first; the second stays
+    ((("agent:codex:gpt-5", True), ("agent:claude-code:opus", True), ("agent:codex:gpt-5", True)), [("s3", "s1")]),
+    # a third with another owner and no report of its own is a copy of the first, whose report is the one that counts
+    ((("agent:codex:gpt-5", True), ("agent:claude-code:opus", True), ("agent:deepseek-harness:deepseek-official/deepseek-v4-pro", False)), [("s3", "s1")]),
+])
+def test_the_same_text_is_a_duplicate_only_for_one_owner_or_when_at_most_one_of_them_has_a_report(root, tasks, duplicates):
+    plan = _twins(root, *tasks)
+    assert [(d["task"], d["same_as"]) for d in plan["duplicates"]] == duplicates
+
+
+def test_the_same_question_given_to_different_agents_is_shown_with_their_names_on_each_task_and_kept_together_in_one_group(root):
+    one, two, three = "agent:codex:gpt-5", "agent:claude-code:opus", "agent:deepseek-harness:deepseek-official/deepseek-v4-pro"
+    plan = _twins(root, (one, True), (two, True), (three, True))
+    assert plan["duplicates"] == []    # nothing to remove: three distinct pieces of work
+    names = ["Codex · gpt-5", "Claude Code · opus", "DeepSeek Harness · deepseek-official/deepseek-v4-pro"]
+    assert [t["asked_of"] for t in plan["tasks"]] == [names] * 3
+    # a copy by one of the owners is a duplicate and is not counted among the agents
+    plan = _twins(root, (one, True), (two, True), (one, True))
+    assert [t["asked_of"] for t in plan["tasks"]] == [names[:2]] * 2 + [[]] and [d["task"] for d in plan["duplicates"]] == ["s3"]
+    # a task asked of only one agent says nothing of the kind
+    assert [t["asked_of"] for t in _twins(root, (one, True), (two, False))["tasks"]] == [[], []]
+
+
+def test_tasks_of_one_question_asked_of_several_agents_land_in_one_group_even_when_only_one_report_title_names_the_version(root):
+    one, two = "agent:codex:gpt-5", "agent:claude-code:opus"
+    rows = [{"id": "a", "text": "对上一份报告回应", "owner": one, "report": _report(root, "a", "Sword v0.2 回应", "2026-10-01")},
+            {"id": "b", "text": "对上一份报告回应", "owner": two, "report": _report(root, "b", "第二意见", "2026-10-02")},
+            {"id": "c", "text": "对上一份报告回应", "owner": two, "report": _report(root, "c", "Sword v0.3 第二意见的复核", "2026-10-03")}]
+    _legacy(root, rows)
+    plan = task_groups.propose(root, today=TODAY)
+    # a and b were asked, each by another agent: b is read with a's version. c is b's copy and keeps the version its own report names
+    assert [(g["id"], g["tasks"]) for g in plan["groups"]] == [("v:sword v0.2", ["a", "b"]), ("v:sword v0.3", ["c"])]
+    assert [(d["task"], d["same_as"]) for d in plan["duplicates"]] == [("c", "b")]
+
+
+# -- names -----------------------------------------------------------------------------------------------------------
+
+
+def test_a_shared_term_group_is_named_by_the_report_title_of_its_earliest_task_else_its_first_line_cut_at_forty_characters(root):
+    long_first = "整理供应商调研记录，" + "并且逐条核对每一项的来源和口径" * 4
+    title = _report(root, "a", "供应商调研记录：第一轮", "2026-09-01")
+    _legacy(root, [{"id": "a", "text": "整理供应商调研记录", "report": title}, {"id": "b", "text": "补充供应商调研结论"}])
+    group = task_groups.propose(root, today=TODAY)["groups"][0]
+    assert group["term"] == "供应商调研" and group["attempt"]["description"] == "供应商调研记录：第一轮"   # the shared term stays 共同点
+    # the earliest task has no report: its first line, though a later task's report has a title
+    _legacy(root, [{"id": "a", "text": long_first + "\n第二行不用"}, {"id": "b", "text": "补充供应商调研结论", "report": title}])
+    named = task_groups.propose(root, today=TODAY)["groups"][0]["attempt"]["description"]
+    assert named == long_first[:40].rstrip("，") + "…" and len(named) <= 41 and "第二行" not in named
+    # a task short enough is the name whole
+    _legacy(root, [{"id": "a", "text": "整理供应商调研记录"}, {"id": "b", "text": "补充供应商调研结论"}])
+    assert task_groups.propose(root, today=TODAY)["groups"][0]["attempt"]["description"] == "整理供应商调研记录"
+
+
+# -- a task that goes on from the step before ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, joins", [
+    ("对上一份审查报告给出回应", True), ("检查上一步是否完成", True), ("按上一轮的意见改", True), ("重做上一次的回测", True),
+    ("看看上次的结果", True), ("接着前一步继续", True),
+    ("Review the previous report", True), ("Redo the last step", True), ("Fix the above", True), ("FOLLOW THE ABOVE notes", True),
+    ("根据目前所有的指引和之前的全部结论，再构建上一份报告提到的模块", False),         # the reference is past the first 20 characters
+    ("Please respond to the previous report", False),         # so is this one
+    ("为下一步构建算法", False), ("下一轮再说", False),            # the step after is no step before
+])
+def test_a_task_whose_first_twenty_characters_refer_to_the_step_before_joins_the_group_of_the_nearest_earlier_task(root, text, joins):
+    _legacy(root, [{"id": "a", "text": "Sword v0.2 recheck"}, {"id": "b", "text": text}])
+    plan = task_groups.propose(root, today=TODAY)
+    assert [(g["id"], g["tasks"]) for g in plan["groups"]] == [("v:sword v0.2", ["a", "b"] if joins else ["a"])]
+    assert plan["groups"][0]["after"] == ({"b": "a"} if joins else {})
+
+
+def test_a_continuing_task_goes_after_the_nearest_earlier_task_that_is_in_a_group_and_has_other_words(root):
+    _legacy(root, [{"id": "a", "text": "Sword v0.2 first"}, {"id": "b", "text": "Other v1 first"}, {"id": "c", "text": "unrelated task one"},
+                   {"id": "d", "text": "对上一份报告回应"}, {"id": "e", "text": "对上一份报告回应"},          # e: the same words as d, so not d
+                   {"id": "f", "text": "检查上一步是否完成"}, {"id": "g", "text": "Sword v0.2 once more"}, {"id": "h", "text": "上次的结果再看一遍"}])
+    plan = task_groups.propose(root, today=TODAY)
+    groups = {g["id"]: g for g in plan["groups"]}
+    # d and e go after b: c is in no group, and e does not follow d, whose words are its own. f goes after e, which joined by this
+    # rule and is in a group for the ones after it; h after g
+    assert groups["v:other v1"]["tasks"] == ["b", "d", "e", "f"] and groups["v:other v1"]["after"] == {"d": "b", "e": "b", "f": "e"}
+    assert groups["v:sword v0.2"]["tasks"] == ["a", "g", "h"] and groups["v:sword v0.2"]["after"] == {"h": "g"}
+    assert plan["ungrouped"] == ["c"]
+
+
+def test_a_continuing_task_with_nothing_before_it_in_a_group_is_left_to_the_shared_terms_and_a_task_that_has_its_own_after_keeps_it(root):
+    _legacy(root, [{"id": "a", "text": "对上一份报告回应", "report": _report(root, "a", "供应商调研记录", "2026-10-01")},
+                   {"id": "b", "text": "写出供应商调研结论"}, {"id": "c", "text": "Sword v0.2 x"}, {"id": "d", "text": "检查上一步是否完成", "after": "c"}])
+    plan = task_groups.propose(root, today=TODAY)
+    groups = {g["id"]: g for g in plan["groups"]}
+    assert groups["t:供应商调研"]["tasks"] == ["a", "b"] and groups["t:供应商调研"]["after"] == {}    # nothing before a was in a group
+    assert groups["v:sword v0.2"]["tasks"] == ["c", "d"] and groups["v:sword v0.2"]["after"] == {}     # d already has an after: left as it is
+
+
+# -- confirming a group with its `after` -------------------------------------------------------------------------------
+
+
+def test_confirming_a_group_sets_after_on_the_tasks_that_continue_another_and_leaves_the_others_as_they_were(quant):
+    plan = task_groups.propose(quant, today=TODAY)
+    group = _group(plan, "v:sword v0")
+    done = _confirm(quant, group, after=group["after"])
+    assert done["moved"] == [f"q{n}" for n in (7, 8, 9, 10, 11)] and done["linked"] is True
+    saved = {t["id"]: t for t in workspace.read_tasks(quant)[0]}
+    assert {tid: t.get("after") for tid, t in saved.items() if t.get("after")} == {"q9": "q8", "q10": "q8", "q11": "q8"}
+    assert saved["q9"]["attempt"] == saved["q8"]["attempt"] == done["attempt"]["id"] and "after" not in saved["q12"]
+    # the attempt's tasks are read in the order of `after`: 8, then the three that answer it
+    from researchos import attempt_tasks
+
+    assert [t["id"] for t in attempt_tasks.ordered([saved[f"q{n}"] for n in (7, 8, 9, 10, 11)])] == ["q7", "q8", "q9", "q10", "q11"]
+
+
+@pytest.mark.parametrize("after", [
+    {"q9": "q9"},                          # a task cannot follow itself
+    {"q9": "q10", "q10": "q9"},            # nor can two follow each other
+    {"q9": "q10", "q10": "q11", "q11": "q9"},
+    {"q9": "q12"},                         # a task of another group
+    {"q12": "q9"},                         # or a task that is not in this one at all
+    {"q9": "nope"},
+])
+def test_an_after_that_is_not_inside_the_group_or_goes_round_refuses_the_group_before_anything_is_written(quant, after):
+    group = _group(task_groups.propose(quant, today=TODAY), "v:sword v0")
+    before = _state(quant)
+    with pytest.raises(workspace.WorkspaceError) as refused:
+        _confirm(quant, group, after=after)
+    assert refused.value.code in ("invalid", "group_after_cycle") and refused.value.message_zh.endswith("。") and str(refused.value)
+    assert _state(quant) == before
+
+
+@pytest.mark.parametrize("after", ["q8", ["q8"], {"q9": 8}, {8: "q8"}])
+def test_an_after_that_is_not_a_map_of_task_ids_is_refused(quant, after):
+    group = _group(task_groups.propose(quant, today=TODAY), "v:sword v0")
+    before = _state(quant)
+    with pytest.raises(workspace.WorkspaceError) as refused:
+        _confirm(quant, group, after=after)
+    assert refused.value.code == "invalid" and _state(quant) == before
+
+
+def test_a_cycle_through_an_after_a_task_already_has_is_refused_too(quant):
+    tasks = workspace.read_tasks(quant)[0]
+    tasks[7]["after"] = "q9"       # q8 already continues q9, which is not in the attempt table yet either
+    (quant / workspace.TASKS_PATH).write_text(json.dumps(tasks, ensure_ascii=False))
+    group = _group(task_groups.propose(quant, today=TODAY), "v:sword v0")
+    before = _state(quant)
+    with pytest.raises(workspace.WorkspaceError) as refused:
+        _confirm(quant, group, after={"q9": "q8"})
+    assert refused.value.code == "group_after_cycle" and _state(quant) == before

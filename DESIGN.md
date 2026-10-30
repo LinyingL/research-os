@@ -5898,16 +5898,20 @@ Decided the same day:
   records); 未开始 for the rest, a run the person stopped included.
   「未完成 m」 counts the tasks that are not marked done and do not read
   已完成, so a project whose tasks all handed back says 「任务 n，全部完成」.
-- **Grouping the tasks a project already has** (Quant's 16). The page offers
-  「把这些任务归入尝试…」: Research OS proposes groups — tasks whose text or
-  report title share a version token (`v0`, `v0.2`, `v0.3`) or a named
-  subject the researcher already uses; each proposed group comes with a
-  prefilled new attempt (description from the group's common words, date from
-  its earliest task, assessment 待定, empty result). The researcher keeps,
-  renames, merges, splits or drops each group; nothing is written until they
-  confirm a group, and no file moves. Tasks whose text is word for word the
-  same as another's are marked 「和第 n 条一样」 so the researcher can remove
-  the duplicates.
+- **Grouping the tasks a project already has** (Quant's 16, later 18). The
+  page offers 「把这些任务归入尝试…」: Research OS proposes groups — tasks
+  whose text or report title share a version (`Sword v0.2`), tasks that say
+  they go on from the step before, or tasks that share a named subject the
+  researcher already uses; each proposed group comes with a prefilled new
+  attempt (description the version, or the report title of the group's
+  earliest task; date from its earliest task, assessment 待定, empty result).
+  The researcher keeps, renames, merges, splits or drops each group; nothing
+  is written until they confirm a group, and no file moves. Tasks whose text
+  is word for word the same as another's, with the same owner or at most one
+  report between them, are marked 「和第 n 条一样」 so the researcher can
+  remove the duplicates; the same text given to different agents who each
+  handed back their own report is one question deliberately asked of several
+  agents, and says so instead (「同一个问题，分别交给了 …」, no removal).
 
 **How groups are proposed.** A small rule, so that it can be said in a
 sentence and checked by eye (`src/researchos/task_groups.py`). Only tasks
@@ -5918,15 +5922,23 @@ renumbered by hand -- are looked at, and each lands in at most one group.
    the report it points to (the report's first heading); nothing else of it,
    and nothing is sent anywhere.
 2. **Version groups.** The first version token — `v` and digits with optional
-   `.digits` parts, in either case (`v0`, `v0.2`, `V1.2`) — in the task's
-   text, else in its report's title, together with the Latin word right
-   before it (`Sword v0.2`; a word like “run” or “the” is no subject), is the
-   task's version. Tasks of the same version (the subject compared without
-   regard to case) form a group, a group of one too: a version is one
-   attempt. Its name is the version as first written and the words the
-   tasks that say it themselves have in common, or the first clause of the
-   task when there is one.
-3. **Shared-term groups**, over the tasks left. A term is a Latin word of
+   `.digits` parts, in either case (`v0`, `v0.2`, `V1.2`) — that has a Latin
+   word right before it (`Sword v0.2`; a word like “run” or “the” is no
+   subject), in the task's text, else in its report's title, is the task's
+   version. A bare version (`四模块量化系统 v0 框架`, `已有研究梳理与 v0
+   路线`) is no version and makes no group. Tasks of the same version (the
+   subject compared without regard to case) form a group, a group of one
+   too: a version is one attempt. Its name is the version as first written
+   (`Sword v0.2`) and nothing of any task's text.
+3. **Continuation.** A task that rule 2 did not place and whose first 20
+   characters refer to the step before (上一份, 上一步, 上一轮, 上一次, 上次,
+   前一步; in English “previous”, “last step”, “the above”) joins the group
+   of the nearest earlier task in the list whose text differs from its own
+   and that is in a group; a task that joined this way counts as in a group
+   for the ones after it. Confirming that group sets the task's `after` to
+   that earlier task (when the earlier task is still in the group and the
+   task has no `after` of its own), and the page says 「接在第 n 条之后」.
+4. **Shared-term groups**, over the tasks left. A term is a Latin word of
    three letters or more that is no common English word, or a run of three
    to eight Chinese characters that does not begin with a function character
    (对, 请, 一, 上, …) or end with one (的, 了, 等, …), taken from the first
@@ -5935,40 +5947,66 @@ renumbered by hand -- are looked at, and each lands in at most one group.
    when equal, the one met first when still equal; its tasks become a group
    and leave the pool, and so on until no term is shared. A term in more than
    half of eight texts or more is the project's own name and is skipped. The
-   group is named by the longest words its tasks' first lines have in common.
-4. **The attempt each group carries.** The next free number (the greatest
+   group is named by the report title of its earliest task in the list, else
+   that task's first line, cut at 40 characters; 「共同点」 keeps showing the
+   shared term, so the name and the term are two things.
+5. **The attempt each group carries.** The next free number (the greatest
    whole number in the table plus one — “14a” counts as 14 — and one more for
    each further group, groups in the order of their dates); the date, the
    earliest of the group's tasks' dates (`due`) and the days its reports were
    written, today when it has none, written as the table writes its dates
    (`MM-DD` if any row does); the name; the research assessment 待定 (the
    project's own marker for it, else 🕒) and an empty result.
-5. **Duplicates.** A task whose text, whitespace collapsed, is word for word
-   an earlier task's is reported with that task (`same_as`) and its place in
-   the list (`number`); the page marks it 「和第 n 条一样」. It stays in its
-   group: the person decides to remove it.
+6. **Same text, marked last.** A task whose text, whitespace collapsed, is
+   word for word an earlier task's is a duplicate of it when both have the
+   same owner or at most one of them has a report: it is reported with that
+   task (`same_as`) and its place in the list (`number`), and the page marks
+   it 「和第 n 条一样」. It stays in its group: the person decides to remove
+   it. The same text given to different owners who each have their own report
+   is not a duplicate: each of those tasks is reported with the agents'
+   names (`asked_of`) and the page says 「同一个问题，分别交给了 {agents}」
+   on each, without 移除. They are kept together in one group (they are read
+   as one text, so rules 2 to 4 place them together; the version, if only
+   one of their report titles names one, is that one).
 
-The engine answers `GET /api/workspace/task-groups` (a read) with the tasks,
-the groups with their prefilled attempt, the tasks in no group and the
-duplicates. `POST /api/workspace/task-groups` takes one group the person
-kept — the attempt's number, date and name, and the ids of its tasks — and
-writes the row through the write the new-attempt form uses
-(`proposals.write_directly`: the dry run, the conflict rules, the backup, the
-re-ingest; a member's row lands in the working copy and is proposed as in
-12.4, the tasks travelling with it) and only then sets `attempt` on those
-tasks. A refused row — a taken number, no attempt table, a task that has
-since gone or found an attempt, a revision that moved when the page sent
-one — leaves `research/tasks.json` as it was; a row written whose tasks then
-cannot be moved says so and where to choose the attempt. No file moves.
+On Quant's 18 tasks this proposes Sword v0 (7, 8, and 9–11 after 8, the one
+question given to three agents), Sword v0.2 (12, 13, 16, and 17 after 16,
+and 18) and Sword v0.3 (14); the rest fall into shared-term groups named by
+a report title, or stay in no group.
+
+The engine answers `GET /api/workspace/task-groups` (a read) with the tasks
+(each with `asked_of`, the owners' names when the same question went to
+several agents), the groups with their prefilled attempt and their `after`
+(task id to the id of the task it continues, from rule 3), the tasks in no
+group and the duplicates. `POST /api/workspace/task-groups` takes one group
+the person kept — the attempt's number, date and name, the ids of its tasks
+and optionally `after` — and writes the row through the write the
+new-attempt form uses (`proposals.write_directly`: the dry run, the conflict
+rules, the backup, the re-ingest; a member's row lands in the working copy
+and is proposed as in 12.4, the tasks travelling with it) and only then sets
+`attempt` on those tasks, and `after` on those `after` names. A refused row
+— a taken number, no attempt table, a task that has since gone or found an
+attempt, an `after` that names a task outside the group or goes round in a
+circle, a revision that moved when the page sent one — leaves
+`research/tasks.json` as it was; a row written whose tasks then cannot be
+moved says so and where to choose the attempt. No file moves.
 
 The panel opened by 「把这些任务归入尝试…」 (in the task header and under
 「未归入尝试」) lists the proposed groups: each can be renamed (with its
 number and date), have tasks moved in or out, be merged into another or
 dropped, and is written only when confirmed; the tasks in no group are
 listed below with the same move. A duplicate shows 「和第 n 条一样」 and is
-removed by the task list's own removal, with its question. Leaving the panel
-after a change asks first, as the other forms of the home do. In a project
-with no attempt table the first group confirmed makes the table first, as the
+removed by the task list's own removal, with its question; a question given
+to several agents shows 「同一个问题，分别交给了 …」 and has no removal. A
+task that continues another of its group shows 「接在第 n 条之后」, and
+leaves out its `after` when the earlier task is moved out of the group.
+The numbers the groups carry follow the table: once a group is written, the
+groups left move to the next free numbers (the greatest whole number in the
+table plus one, in the order shown), except a number the person typed, which
+stays and which the others step round — so confirming the next group is not
+refused for a number the one before has just taken. Leaving the panel after
+a change asks first, as the other forms of the home do. In a project with no
+attempt table the first group confirmed makes the table first, as the
 new-attempt form does.
 
 ### 21.2 The handback

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from researchos import task_groups, workspace
-from test_v16_task_groups import TODAY, _legacy, root  # noqa: F401 -- `root` is the fixture of the engine tests
+from test_v16_task_groups import TODAY, _legacy, quant, root  # noqa: F401 -- `root` and `quant` are fixtures of the engine tests
 from test_v8_phase2 import _project
 from test_v9_language import CJK, needs_node
 from test_workspace_js import run
@@ -110,12 +110,12 @@ console.log(JSON.stringify({title:panelTitle.textContent, intro:panelBody.all().
     assert out["title"] == "把这些任务归入尝试" and "文件不会移动" in out["intro"] and out["posted"] == 0 and out["dirty"] is False
     assert out["subject"] == "task-groups"
     assert [(g["number"], g["date"], g["name"]) for g in out["groups"]] == [
-        ("17", "08-02", "Sword v0 基线：用全部成员跑一遍回测，输出收益表"), ("18", "09-01", "Sword v0.2 全成员复算，核对"),
-        ("19", "10-05", "Sword v0.3 新增行业中性约束"), ("20", "10-29", "美股历史数据源")]
-    assert [len(g["rows"]) for g in out["groups"]] == [1, 3, 2, 2]
+        ("17", "08-02", "Sword v0"), ("18", "09-01", "Sword v0.2"), ("19", "10-05", "Sword v0.3"),
+        ("20", "10-29", "调查美股历史数据源：Yahoo Finance 的复权口径")]
+    assert [len(g["rows"]) for g in out["groups"]] == [1, 4, 2, 2]
     assert out["groups"][1]["rows"][2].startswith("对上一份审查报告给出回应")
     assert out["groups"][1]["notes"][:2] == ["共同点：Sword v0.2", "研究判断：待定，结果先留空"]
-    assert out["pooled"] == "没有分到组的任务" and len(out["pool"]) == 3
+    assert out["pooled"] == "没有分到组的任务" and len(out["pool"]) == 2
     assert out["dup"] == [["移除"], ["移除"]]  # t5 and t6 are the same as task 4
     assert "第 1 条" in out["nums"] and "第 11 条" in out["nums"]
 
@@ -175,11 +175,11 @@ console.log(JSON.stringify({calm,asked,moved:{g1:moved.g1,g2:moved.g2,pool:moved
 """)
     assert out["calm"] == {"posted": 0, "dirty": False, "leave": True}
     assert out["asked"]["leave"] is False and out["asked"]["questions"] == ["有未保存的内容，仍要离开吗？"]
-    assert out["moved"] == {"g1": 1, "g2": 3, "pool": 4}  # t4 stays in v0.2; v0.3 has t3 as well; t2 and the three leftovers wait
+    assert out["moved"] == {"g1": 2, "g2": 3, "pool": 3}  # t4 and t6 stay in v0.2; v0.3 has t3 as well; t2 and the two leftovers wait
     assert out["last"] == 3  # the data-source group took t2 from the pool
     assert out["merged"]["count"] == 3 and out["merged"]["date"] == "08-02" and out["merged"]["rows"] == 4
-    assert [o[0] for o in out["merged"]["options"]] == ["合并到…", "Sword v0.2 全成员复算", "美股历史数据源"]
-    assert out["dropped"] == {"groups": 2, "pool": 6} and out["posted"] == 0 and out["dirty"] is True  # nothing was written; the changes are unsaved
+    assert [o[0] for o in out["merged"]["options"]] == ["合并到…", "Sword v0.2 全成员复算", "调查美股历史数据源：Yahoo Finance 的复权口径"]
+    assert out["dropped"] == {"groups": 2, "pool": 5} and out["posted"] == 0 and out["dirty"] is True  # nothing was written; the changes are unsaved
 
 
 @needs_node
@@ -216,9 +216,11 @@ const line=panelBody.all().filter(e=>e.classList.contains('ws-group-done')).map(
 console.log(JSON.stringify({sent, line, others:posted.length, groups:cards().length,
   heads:heads(), homeRows:byClass('ws-task-list').children.filter(e=>e.tagName==='DIV').length, dirty:window.ROWorkspace.isDirty(),}));
 """)
-    assert out["sent"] == [["/api/workspace/task-groups", {"project": "/projects/study", "tasks": ["t2", "t3", "t4"],
-                                                              "attempt": {"number": "18", "date": "09-01", "description": "Sword v0.2 全成员复算"}}]]
-    assert out["line"] == ["已新增尝试 #18，3 个任务归入了它。"] and out["others"] == 1
+    # t6 says it goes on from the step before and stands after t3, in the same group: confirming sets its `after`
+    assert out["sent"] == [["/api/workspace/task-groups", {"project": "/projects/study", "tasks": ["t2", "t3", "t4", "t6"],
+                                                              "attempt": {"number": "18", "date": "09-01", "description": "Sword v0.2 全成员复算"},
+                                                              "after": {"t6": "t3"}}]]
+    assert out["line"] == ["已新增尝试 #18，4 个任务归入了它。"] and out["others"] == 1
     assert out["groups"] == 4  # the other three groups and the card of the tasks in no group stay on offer
     assert out["heads"] == ["#18 Sword v0.2 全成员复算", "未归入尝试"]  # the attempt stands first, with its tasks, the rest under 未归入尝试
     assert out["homeRows"] == 11 and out["dirty"] is False
@@ -237,7 +239,7 @@ console.log(JSON.stringify({line:panelBody.all().filter(e=>e.classList.contains(
   rest:panelBody.all().filter(e=>e.tagName==='H3').map(e=>e.textContent), sent:posted.map(p=>p[0])}));
 """, lang="en")
     assert out["line"] == ["Added attempt #17; 2 tasks are now in it."]
-    assert out["heads"] == ["#17 Sword v0.2 recheck", "Not in an attempt"] and out["rest"] == ["Tasks in no group"] and out["sent"] == ["/api/workspace/task-groups"]
+    assert out["heads"] == ["#17 Sword v0.2", "Not in an attempt"] and out["rest"] == ["Tasks in no group"] and out["sent"] == ["/api/workspace/task-groups"]
     assert not CJK.search(json.dumps(out["line"] + out["rest"]))
 
 
@@ -271,7 +273,7 @@ console.log(JSON.stringify({refused, sent:posted.filter(p=>p[0]==='/api/workspac
 """)
     assert out["refused"]["says"] == [["ws-status err", "没能归入这一组。 这个编号已经在尝试表里了，请换一个编号。什么都没有改。"]]
     assert out["refused"]["name"] == "Sword v0.2 全成员复算" and out["refused"]["locked"] is False and out["refused"]["tasks"] == 0
-    assert out["sent"][-1] == {"number": "31", "date": "09-01", "description": "Sword v0.2 全成员复算"} and out["done"] == ["t2", "t3", "t4"]
+    assert out["sent"][-1] == {"number": "31", "date": "09-01", "description": "Sword v0.2 全成员复算"} and out["done"] == ["t2", "t3", "t4", "t6"]
 
 
 @needs_node
@@ -303,7 +305,7 @@ console.log(JSON.stringify({before, composed, line:panelBody.all().filter(e=>e.c
 """)
     assert out["before"] == {"sentence": "把已有的任务归入新尝试 #18", "member": True}
     assert out["composed"] == [{"kind": "attempt_new", "sentence": "Put the v0.2 tasks under one attempt", "number": "18"}]
-    assert out["line"][0].startswith("已写进你的工作副本：尝试 #18，3 个任务归入了它。提议还没有发送。") and out["line"][0].endswith("PROPOSAL")
+    assert out["line"][0].startswith("已写进你的工作副本：尝试 #18，4 个任务归入了它。提议还没有发送。") and out["line"][0].endswith("PROPOSAL")
     assert out["sent"] == ["/api/workspace/task-groups"]
 
 
@@ -373,3 +375,135 @@ const where=()=>byClass('ws-tasks').all().filter(e=>e.tagName==='BUTTON'&&e.text
 console.log(JSON.stringify({where:where().map(b=>b.dataset.key), heads:heads()}));
 """)
     assert out == {"where": ["group-tasks", "group-tasks-loose"], "heads": ["未归入尝试"]}      # the heading is there, and so is the way out of it
+
+
+# -- the numbers follow the table (round AF-2, item 3) ----------------------------------------------------------------
+
+_TAKES_NUMBERS = r"""
+// the stand-in of the attempt table: rows 1 to 16 are there, and a number that is taken is refused as the engine refuses it
+const taken=new Set(Array.from({length:16},(_,n)=>String(n+1)));
+customPost=((was)=>(path,body)=>{
+  if(path==='/api/workspace/task-groups') {
+    if(taken.has(body.attempt.number)) { const e=new Error('x'); e.state='workspace_group_duplicate'; e.engineMessage='这个编号已经在尝试表里了，请换一个编号。什么都没有改。'; throw e; }
+    taken.add(body.attempt.number);
+  }
+  return was(path,body);
+})(customPost);
+const cardOfId=(id)=>cards().find(c=>c.dataset&&c.dataset.group===id);
+const boxOf=(id,what)=>{ const card=cardOfId(id); return card?text(card,'group-'+what+':'+id):null; };
+const numbers=()=>PLAN.groups.map(g=>{ const box=boxOf(g.id,'number'); return box?box.value:null; });
+const confirm=async(id)=>{ await boxOf(id,'confirm').click(); await sleepTick(); };
+const refusals=()=>panelBody.all().filter(e=>e.classList.contains('ws-status')&&e.classList.contains('err')).length;
+const sentNumbers=()=>posted.filter(p=>p[0]==='/api/workspace/task-groups').map(p=>p[1].attempt.number);
+"""
+
+
+@needs_node
+def test_after_a_group_is_confirmed_the_others_move_to_the_next_free_numbers_so_the_next_one_is_not_refused(root):
+    out = _run(root, _TAKES_NUMBERS + r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const ids=PLAN.groups.map(g=>g.id), shown=[numbers()];
+// the first group is typed over with the number the second one carries: confirming it takes 18 from the second
+typed(boxOf(ids[0],'number'),'18');
+await confirm(ids[0]); shown.push(numbers());
+await confirm(ids[1]); shown.push(numbers());
+// the last group before the one left: the one left follows it
+await confirm(ids[3]); shown.push(numbers());
+await confirm(ids[2]);
+console.log(JSON.stringify({shown, sent:sentNumbers(), refused:refusals(), left:cards().filter(c=>c.dataset&&c.dataset.group).length}));
+""")
+    assert out["shown"] == [["17", "18", "19", "20"], [None, "19", "20", "21"], [None, None, "20", "21"], [None, None, "22", None]]
+    assert out["sent"] == ["18", "19", "21", "22"] and out["refused"] == 0 and out["left"] == 0
+
+
+@needs_node
+def test_a_number_the_person_typed_stays_and_the_others_step_round_it(root):
+    out = _run(root, _TAKES_NUMBERS + r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const ids=PLAN.groups.map(g=>g.id);
+typed(boxOf(ids[2],'number'),'19a');     // the person's own number
+typed(boxOf(ids[3],'number'),'20');      // typed, though it is what it was
+await confirm(ids[1]);
+const after=numbers();
+await confirm(ids[0]);
+console.log(JSON.stringify({after, last:numbers(), sent:sentNumbers(), refused:refusals()}));
+""")
+    # 18 is written; the first group moves to the next free number, 19 (19a is another label); 19a and 20 stay as typed
+    assert out["after"] == ["19", None, "19a", "20"] and out["last"] == [None, None, "19a", "20"]
+    assert out["sent"] == ["18", "19"] and out["refused"] == 0
+
+
+@needs_node
+def test_a_group_written_but_not_read_back_still_moves_the_others_past_its_number(root):
+    out = _run(root, _TAKES_NUMBERS + r"""
+customPost=((was)=>(path,body)=>path==='/api/workspace/task-groups'?(taken.add(body.attempt.number), {attempt:{id:'attempt:map.md#'+body.attempt.number,number:body.attempt.number,label:'x',file:'map.md',date:'08-02'},
+  moved:[],linked:false,tasks:clone(listed.tasks),tasks_revision:listed.tasks_revision,ingest_error:'disk is full',mode:'single'}):was(path,body))(customPost);
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const ids=PLAN.groups.map(g=>g.id);
+typed(boxOf(ids[0],'number'),'18');
+await confirm(ids[0]);
+console.log(JSON.stringify({numbers:numbers()}));
+""")
+    assert out["numbers"] == [None, "19", "20", "21"]
+
+
+# -- the same question to several agents, and the task that goes on from the one before (round AF-2, items 1 and 4) -----
+
+_QUANT_ROWS = r"""
+const rowOf=(id)=>panelBody.all().find(e=>e.classList.contains('ws-group-task')&&e.all().some(x=>x.dataset&&x.dataset.key==='group-move:'+id));
+const notesOf=(id)=>rowOf(id).all().filter(e=>e.classList.contains('ws-agent-quiet')).map(e=>e.textContent);
+const buttonsOfRow=(id)=>rowOf(id).all().filter(e=>e.tagName==='BUTTON').map(b=>b.textContent);
+const card=(gid)=>cards().find(c=>c.dataset&&c.dataset.group===gid);
+"""
+_AGENTS = "DeepSeek Harness · deepseek-official/deepseek-v4-pro、Claude Code · opus、Codex · gpt-5"     # the owners of 9, 10 and 11, in list order
+
+
+@needs_node
+def test_quants_nine_to_eleven_are_one_question_to_three_agents_after_task_eight_with_no_removal_offered(quant):
+    out = _run(quant, _QUANT_ROWS + r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const v0=card('v:sword v0'), v02=card('v:sword v0.2');
+console.log(JSON.stringify({v0:rowsOf(v0).length, notes:{q8:notesOf('q8'), q9:notesOf('q9'), q10:notesOf('q10'), q11:notesOf('q11'), q17:notesOf('q17'), q16:notesOf('q16')},
+  buttons:{q9:buttonsOfRow('q9'), q10:buttonsOfRow('q10'), q11:buttonsOfRow('q11')}, removals:panelBody.all().filter(e=>e.dataset&&String(e.dataset.key).startsWith('group-remove:')).length,
+  names:PLAN.groups.map(g=>text(card(g.id),'group-name:'+g.id).value)}));
+""")
+    assert out["v0"] == 5 and out["removals"] == 0 and out["buttons"] == {"q9": [], "q10": [], "q11": []}
+    for q in ("q9", "q10", "q11"):
+        assert out["notes"][q][-2:] == ["同一个问题，分别交给了 " + _AGENTS, "接在第 8 条之后"], out["notes"][q]
+    assert out["notes"]["q17"][-1] == "接在第 16 条之后" and len(out["notes"]["q8"]) == 1 and len(out["notes"]["q16"]) == 1   # only the report line
+    assert out["names"] == ["四模块量化系统 v0 框架与开发指引", "四模块候选因子设计", "标普500历史因子数据源评估", "Sword v0", "Sword v0.2", "Sword v0.3"]
+
+
+@needs_node
+def test_confirming_the_group_sends_the_after_of_the_tasks_that_continue_another_of_it_and_nothing_for_one_whose_earlier_task_left(quant):
+    out = _run(quant, _QUANT_ROWS + r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const move=(id)=>panelBody.all().find(e=>e.dataset&&e.dataset.key==='group-move:'+id);
+// task 8 leaves Sword v0: 9, 10 and 11 follow a task that is no longer in the group
+move('q8').value='\u0000none'; await move('q8').emit('change');
+const noted=notesOf('q9');
+await text(card('v:sword v0'),'group-confirm:v:sword v0').click(); await sleepTick();
+await text(card('v:sword v0.2'),'group-confirm:v:sword v0.2').click(); await sleepTick();
+const sent=posted.filter(p=>p[0]==='/api/workspace/task-groups').map(p=>[p[1].tasks, p[1].after||null]);
+console.log(JSON.stringify({noted, sent}));
+""")
+    assert not any("接在" in note for note in out["noted"])
+    assert out["sent"] == [[["q7", "q9", "q10", "q11"], None], [["q12", "q13", "q16", "q17", "q18"], {"q17": "q16"}]]
+
+
+@needs_node
+def test_the_same_question_to_several_agents_and_the_task_it_follows_are_said_in_english(quant):
+    out = _run(quant, _QUANT_ROWS + r"""
+await window.ROWorkspace.load(root);
+await find(window.ROI18N.t('把这些任务归入尝试…')).click();
+console.log(JSON.stringify({q9:notesOf('q9'), q17:notesOf('q17')}));
+""", lang="en")
+    said = out["q9"][-2:]
+    assert said[0].startswith("The same question, given to each of ") and "Codex · gpt-5" in said[0] and "Claude Code · opus" in said[0]
+    assert said[0].endswith("DeepSeek Harness · deepseek-official/deepseek-v4-pro, Claude Code · opus, Codex · gpt-5") and said[1] == "Follows task 8" and out["q17"][-1] == "Follows task 16"
+    assert not CJK.search(said[0] + said[1])
