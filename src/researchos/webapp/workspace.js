@@ -150,7 +150,7 @@
     stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
 
-  function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("结果记录") : t("笔记", { n: 1 }); }
+  function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("报告", { n: 1 }) : t("笔记", { n: 1 }); }
   function fallbackPath(kind) { return kind === "overview" ? "research/overview.md" : "research/" + (kind === "result" ? "results" : "notes") + "/draft.md"; }
   function relativePath(from, to) {
     const a = String(from).split("/").slice(0, -1), b = String(to).split("/");
@@ -351,7 +351,7 @@
     heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")));
     const actions = el("div", "ws-actions");
     const note = button(t("新建笔记"), () => newDocument("note"));
-    const result = button(t("记录结果"), () => newDocument("result"));
+    const result = button(t("写报告"), () => newDocument("result"));
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
     // 21.4: the page reads from the top -- 现在在做什么, 研究问题与计划, 笔记与报告 (the lists beside the open document, or above it
@@ -561,7 +561,7 @@
       const doc = await apiGet("/api/workspace/document?path=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(project()));
       if (doc.kind === "result") {
         try { doc.research_record = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(mark.project)); }
-        catch (err) { doc.research_record = { error: errorWords(t("没能读取研究记录。"), err) }; }
+        catch (err) { doc.research_record = { error: errorWords(t("没能读取要点。"), err) }; }
       }
       if (!live(mark) || token !== docRequest || (doc.project && doc.project !== mark.project)) return;
       if (draft === leaving && draft && (draft.title !== leavingTitle || draft.content !== leavingContent || JSON.stringify(draft.researchContext) !== leavingResearch)) {
@@ -666,7 +666,7 @@
     }
     // The PI changes the official version directly, so a note or a result record is already theirs to publish: it goes
     // to the members with the next 发布 (DESIGN.md 18.3).
-    if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和结果记录会随下一次发布交给成员。")));
+    if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和报告会随下一次发布交给成员。")));
     box.append(footer);
     function showMode() {
       title.classList.toggle("hidden", ui.previewing);
@@ -691,7 +691,7 @@
   function researchRecordDirty() { return !!draft && !!saved && JSON.stringify(draft.researchContext) !== JSON.stringify(saved.researchContext); }
   function researchRecordSection() {
     const box = el("details", "ws-research-record"); box.open = !!draft.researchOpen;
-    box.append(disclosureSummary(t("研究记录")));
+    box.append(disclosureSummary(t("要点")));
     box.addEventListener("toggle", () => { draft.researchOpen = box.open; });
     const context = draft.researchContext;
     if (draft.researchRecord.error) { box.append(el("p", "ws-status err", draft.researchRecord.error)); ui.researchRecord = box; return box; }
@@ -788,17 +788,17 @@
         if (!attempt || !attempt.id || !draft || draft.researchContext !== context) return;
         if (!context.attempts.includes(attempt.id)) context.attempts.push(attempt.id);
         if (!(data.attempts || []).some((item) => item.id === attempt.id)) data.attempts.push({ id: attempt.id, label: (attempt.attrs || {}).description || attempt.id });
-        redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；研究记录中的关联尚未保存。") : t("尝试已保存；研究记录中的关联尚未保存。"));
+        redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；要点里的关联尚未保存。") : t("尝试已保存；要点里的关联尚未保存。"));
       }); }));
       if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }));
       box.append(actions);
     }
-    if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("尚未补充研究记录。")));
+    if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("还没有写要点。")));
     const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
     if (editable() && (!ui.previewing || researchRecordDirty())) {
-      const save = button(t("保存研究记录"), () => saveResearchRecord(feedback, save), "btn btn-small ws-record-save");
+      const save = button(t("保存要点"), () => saveResearchRecord(feedback, save), "btn btn-small ws-record-save");
       save.disabled = !draft.path || draft.researchBusy || !researchRecordDirty(); box.append(save);
-      if (!draft.path) box.append(el("p", "ws-empty", t("先保存结果文档，再保存研究记录。")));
+      if (!draft.path) box.append(el("p", "ws-empty", t("先保存报告，再保存要点。")));
     }
     box.append(feedback); ui.researchRecord = box; return box;
   }
@@ -815,19 +815,19 @@
         Object.keys(draft.researchContext).forEach((key) => { if (!(key in normalized)) delete draft.researchContext[key]; });
         Object.assign(draft.researchContext, normalized);
       }
-      status(feedback, response.history_warning ? t("研究记录已保存，但修改历史暂时未能记录。") : researchRecordDirty() ? t("已保存；之后输入的内容尚未保存。") : t("研究记录已保存。"), response.history_warning ? "" : "ok");
+      status(feedback, response.history_warning ? t("要点已保存，但修改历史暂时未能记录。") : researchRecordDirty() ? t("已保存；之后输入的内容尚未保存。") : t("要点已保存。"), response.history_warning ? "" : "ok");
       control.disabled = !researchRecordDirty(); if (ui.previewing && !researchRecordDirty()) control.classList.add("hidden"); status(ui.docStatus, documentDirty() ? t("尚未保存") : "");
     } catch (err) {
       if (!live(mark) || draft !== target) return;
       draft.researchBusy = false; control.disabled = false;
-      status(feedback, errorWords(t("没能保存研究记录，当前填写已保留。"), err), "err");
-      if (/conflict|revision|changed/.test(err.state || "")) feedback.append(button(t("重新载入研究记录"), async () => {
-        if (!window.confirm(t("重新载入会放弃尚未保存的研究记录，继续吗？"))) return;
+      status(feedback, errorWords(t("没能保存要点，当前填写已保留。"), err), "err");
+      if (/conflict|revision|changed/.test(err.state || "")) feedback.append(button(t("重新载入要点"), async () => {
+        if (!window.confirm(t("重新载入会放弃尚未保存的要点，继续吗？"))) return;
         try {
           const response = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(target.path) + "&project=" + encodeURIComponent(mark.project));
           if (!live(mark) || draft !== target) return;
           draft.researchRecord = response; draft.researchContext = emptyResearchContext(response.context); saved.researchContext = emptyResearchContext(response.context); redrawResearchRecord();
-        } catch (readError) { if (live(mark) && draft === target) status(feedback, errorWords(t("没能读取研究记录。"), readError), "err"); }
+        } catch (readError) { if (live(mark) && draft === target) status(feedback, errorWords(t("没能读取要点。"), readError), "err"); }
       }));
     }
   }
@@ -992,7 +992,7 @@
         // now, not the row as drawn: the row is kept while a reply is typed). Declined, the box is ticked again and
         // nothing is saved. Ticking never asks.
         const now = (data.tasks || []).find((x) => x.id === task.id) || task;
-        if (!check.checked && now.report && !window.confirm(t("这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"))) {
+        if (!check.checked && now.report && !window.confirm(t("这项任务已经有报告。改回未完成后可以再次运行，再次运行会改写同一份报告。改回未完成吗？"))) {
           check.checked = true;
           return;
         }
@@ -1011,7 +1011,7 @@
       const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       if (task.context && task.context.report) {
         const report = (data.documents || []).find((doc) => doc.path === task.context.report);
-        words.append(keyed(button(t("研究记录") + ": " + (report ? report.title : task.context.report), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
+        words.append(keyed(button(t("报告：{title}", { title: report ? report.title : task.context.report }), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
       }
       const meta = el("span", "ws-task-meta"); setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
@@ -1093,7 +1093,7 @@
     form.append(attemptField, textField, afterField, ownerField);
     if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
     const context = keyed(el("select", "form-input"), "task-context");
-    const noContext = el("option", null, t("无关联研究记录")); noContext.value = ""; context.append(noContext);
+    const noContext = el("option", null, t("不关联报告")); noContext.value = ""; context.append(noContext);
     const records = (data.documents || []).filter((doc) => doc.kind === "result");
     records.forEach((doc) => { const option = el("option", null, doc.title || doc.path); option.value = doc.path; context.append(option); });
     if (taskDraft.contextReport && !records.some((doc) => doc.path === taskDraft.contextReport)) { const option = el("option", null, taskDraft.contextReport); option.value = taskDraft.contextReport; context.append(option); }
@@ -1256,7 +1256,7 @@
 
   // -- AI agents carry out tasks (DESIGN.md Section 17) ---------------------------------------
   // A task whose owner is an agent on this Mac gets its run in the row: 运行, then the state in
-  // words (17.9), 停止, 运行记录, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
+  // words (17.9), 停止, 运行日志, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
   // engine and follows a run by polling; what an agent may not do is held there (17.5).
   const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex", "deepseek-harness": "DeepSeek Harness" };
   const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
@@ -1281,7 +1281,7 @@
   };
   const VIOLATION_WORDS = {
     data_changed: () => t("改动了运行前就有的数据文件"), data_deleted: () => t("删除了运行前就有的数据文件"),
-    record_changed: () => t("改动了研究记录"), record_deleted: () => t("删除了研究记录"),
+    record_changed: () => t("改动了尝试表、任务或报告的记录文件"), record_deleted: () => t("删除了尝试表、任务或报告的记录文件"),
     researchos_changed: () => t("改动了 Research OS 自己的记录文件夹"), git_changed: () => t("改变了 git 的状态"),
     git_hooks_changed: () => t("改动了 git 的钩子（git 会自动运行的程序）"), git_config_changed: () => t("改动了 git 的配置"),
     backup_deleted: () => t("删除了 Research OS 的备份"),
@@ -2582,7 +2582,7 @@
     }
     if (line.childElementCount) live.append(line);
     if (run && outcomeOf(run) === "needs_input" && run.question) live.append(el("p", "ws-agent-question", run.question));
-    if (run && run.violations > 0) live.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动，详见运行记录。", { n: run.violations })));
+    if (run && run.violations > 0) live.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动，详见运行日志。", { n: run.violations })));
     if (run && run.error) live.append(errorBlock(run, st));
     box.append(live);
     const actions = el("div", "ws-agent-actions");
@@ -2594,7 +2594,7 @@
     }
     if (run && run.can_stop) { const stop = keyed(named(button(t("停止"), () => stopRun(task, run)), t("停止：{task}", who)), k("stop")); stop.disabled = busy; actions.append(stop); }
     if (run) {
-      const log = keyed(named(button(t("运行记录"), () => toggleLog(task)), t("运行记录：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
+      const log = keyed(named(button(t("运行日志"), () => toggleLog(task)), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
     if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
       const answer = keyed(named(button(t("回答"), () => toggleReply(task, "answer")), t("回答：{task}", who)), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
@@ -2721,7 +2721,7 @@
     const run = latestRun(task.id), locked = !editable() || !!outputBusy[task.id] || (!!run && isActiveState(run.state));
     const box = el("div", "ws-outputs");
     box.append(el("h3", "ws-outputs-title", t("任务输出")));
-    if (info.error) box.append(el("p", "ws-status err", t("输出清单暂时无法读取。")));
+    if (info.error) box.append(el("p", "ws-status err", t("输出列表暂时无法读取。")));
     else if (!entries.length) box.append(quiet(t("还没有登记的文件。")));
     const kinds = outputKinds();
     Object.keys(kinds).forEach((kind) => {
@@ -3230,7 +3230,7 @@
     const box = el("div", "ws-run-details");
     if (!loaded) { box.append(el("p", "ws-status", t("正在读取…"))); return box; }
     if (loaded.error || !loaded.data) {
-      box.append(el("p", "ws-status err", errorWords(t("没能读取运行记录。"), loaded.error)));
+      box.append(el("p", "ws-status err", errorWords(t("没能读取运行日志。"), loaded.error)));
       const again = keyed(button(t("重试"), () => { delete details[run.id]; fetchDetail(run, stamp()); updateAgentSections(); }), "agent:" + (task ? task.id : run.task_id) + ":retry");
       box.append(again);
       return box;
@@ -3597,7 +3597,7 @@
     if (info.converting) slot.append(el("p", "ws-status", t("正在整理撤回备份…")));
     else {
       const rows = el("div", "ws-store-rows");
-      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行记录"), info.records]].forEach(([name, bytes]) => {
+      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行日志"), info.records]].forEach(([name, bytes]) => {
         const row = el("div", "ws-store-row");
         row.append(el("span", null, name), el("span", "ws-store-size", storeSize(bytes || 0)));
         rows.append(row);
@@ -3805,7 +3805,7 @@
 
   function renderResearchLinks(target, records, label) {
     if (!records || !records.length) return;
-    const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("关联研究记录")));
+    const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("提到它的笔记与报告")));
     records.forEach((record) => {
       const row = el("div", "ws-related-record");
       row.append(button(record.title || record.report, () => openResearchRecord(record.report), "btn btn-small ws-file-link"));

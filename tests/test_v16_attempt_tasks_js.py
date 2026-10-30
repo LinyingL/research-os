@@ -393,7 +393,7 @@ typed(field('任务'),'Repeat on delisted names'); await find('添加任务').cl
 const added=listed.tasks.find(t=>t.text==='Repeat on delisted names');
 console.log(JSON.stringify({without,chosen,missing,same,cleared,added:{attempt:added.attempt,after:added.after,context:added.context}, then:{value:ctx().value, dirty:window.ROWorkspace.isDirty()}}));
 """.replace("ATT", json.dumps(ATTEMPT)).replace("TASKS", _TASKS))
-    assert out["without"] == {"value": "", "none": "无关联研究记录"}                       # asked for without a record: as before
+    assert out["without"] == {"value": "", "none": "不关联报告"}                       # asked for without a record: as before
     assert out["chosen"] == {"ok": True, "value": "research/results/" + "a" * 32 + ".md", "shown": "Recheck", "dirty": False, "after": "b"}
     assert out["missing"] == {"value": "research/results/" + "b" * 32 + ".md", "option": True}   # a record the list does not have is still the one chosen
     assert out["same"] == {"dirty": False} and out["cleared"] == {"dirty": False}

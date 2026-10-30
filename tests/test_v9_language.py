@@ -1091,14 +1091,14 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                                            "Data & code", "Proposals", "Members"]
     # 18.3: 研究路线's switch.
     assert _words(after, "subnav-item") == ["Route map", "List"]
-    assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
+    assert _words(after, "shutdown-btn") == ["Backups", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Project home"]
     assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
     labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
               for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn",
                                                            "project-menu", "welcome")}
     assert labels == {"sidebar": ("Project and sections", None), "side-nav": ("Sections", None),
-                      "records-btn": (None, "See where this project’s human records are kept"),
+                      "records-btn": (None, "See what records you have and when they were last backed up"),
                       "shutdown-btn": (None, "Stop the local service process"),
                       "project-menu": ("Project", None), "welcome": ("No project yet", None)}
     welcome = [el["text"].strip() for el in after if el["tag"] in ("p", "button") and el["text"].strip()
@@ -1107,7 +1107,7 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                and "subnav-item" not in el["attrs"].get("class", "")]
     assert welcome == [
         "Start with a research question and a plan, then write notes and bring results together here.",
-        "Keep using your own tools for code and analysis. Link their files to your research records whenever you need them.",
+        "Keep using your own tools for code and analysis. Link their files to your notes and reports whenever you need them.",
         "New project…", "Add project…", "Join a project from the shared folder…", "A project is the folder that holds one study."]
 
 
@@ -1123,7 +1123,7 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "subnav-item") == ["路线图", "列表"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
-    assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
+    assert _words(after, "shutdown-btn") == ["备份", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
     assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-create-btn", "welcome-add-btn", "welcome-join-btn")] == [
         "新建项目…", "添加项目…", "从公盘加入项目…"]
@@ -2321,7 +2321,7 @@ GUIDE_EN_EMPHASIS = ("0.5.0",)
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.
 _GUIDE_EN_SAME_WORDS = {
-    "记录": "page", "停止服务": "page", "同步": "page", "发布": "shell",
+    "备份": "page", "停止服务": "page", "同步": "page", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
 _GUIDE_EN_SENTENCE_STARTS = ("指纹：",)
@@ -2389,7 +2389,7 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     # Chinese labels: what a page still in Chinese shows, whole (a message by its first words).
     still = _still_chinese_texts()
     for label in GUIDE_EN_CHINESE_LABELS:
-        if label in ("记录", "停止服务"):
+        if label in ("备份", "停止服务"):
             continue  # the switch's neighbours, quoted for the Chinese screen; their meaning is checked below
         if label in _GUIDE_EN_SENTENCE_STARTS:
             assert any(s.startswith(label) for s in still), label
@@ -2829,7 +2829,7 @@ def test_18_2_this_mac_is_never_this_computer_in_english():
 @needs_node
 def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
     """The kind MLflow and W&B bring is 实验 "Experiment" on the node page, in a link's words and in
-    English; 实验记录 and "Run record" are gone (运行记录 is an agent run's log and stays)."""
+    English; 实验记录 and "Run record" are gone (运行日志 is an agent run's log and stays)."""
     from researchos import nodepage
 
     table = english_table()
@@ -2837,7 +2837,7 @@ def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
     assert "实验记录" not in table
     assert [(key, text) for key, text in _english_forms(table) if re.search(r"run record", text, re.I)] == []
     assert 'experiment: "实验"' in APP_HTML.read_text(encoding="utf-8")
-    assert table["运行记录"] == "Run log"
+    assert table["运行日志"] == "Run log"
     left = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html", ".py"}
             and "实验记录" in path.read_text(encoding="utf-8")]
     assert left == [] and "实验记录" not in Path(nodepage.__file__).read_text(encoding="utf-8")
@@ -2877,7 +2877,7 @@ def test_18_2_no_english_entry_is_kept_that_no_key_uses():
 def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     """输出 "Outputs" is a script's outputs (the node page's column is built with it); 成果 "Outputs"
     is the page 图表与论断 "Figures and claims", and no other key says "Outputs"; 项目首页's section
-    is 报告 "Reports" (21.4; its writing area is still 结果记录 "Result records"), the attempt's cell 结果 stays "Result"."""
+    is 报告 "Reports" (21.4; its writing area is 报告 "Report" too, 21.6), the attempt's cell 结果 stays "Result"."""
     table = english_table()
     assert table["输出"] == "Outputs" and table["图表与论断"] == "Figures and claims"
     assert "成果" not in table and "依据变了的成果" not in table
@@ -2886,8 +2886,9 @@ def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     assert table["图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——"].startswith(
         "Figures and claims lists claims")
     assert table["已设为论文正文：它的论断会出现在图表与论断里。"] == "Set as the paper. Its claims will appear in Figures and claims."
-    # 21.4: 项目首页's second list is headed 报告 and says 「还没有报告。」 when empty; 结果记录 stays the writing area's label until the words batch
-    assert (table["结果记录"], table["还没有报告。"], table["结果"]) == ("Result records", "No reports yet.", "Result")
+    # 21.4: 项目首页's second list is headed 报告 and says 「还没有报告。」 when empty; 21.6: the writing area's label is the same word
+    assert (table["报告"], table["还没有报告。"], table["结果"]) == ({"one": "Report", "other": "Reports"}, "No reports yet.", "Result")
+    assert "结果记录" not in table and table["写报告"] == "Write a report"
     names = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html"} and "成果" in path.read_text(encoding="utf-8")]
     assert names == []
     # What stays 产出 is the link word "produces" (an experiment produces a figure): 输出 is taken by the noun,
@@ -2932,8 +2933,13 @@ def test_18_2_a_comment_on_an_object_is_备注_and_a_note_is_only_a_document_in_
     # engine says about a comment uses it.
     for relative in ("node.js", "desk.js", "routemap.js", "team.js", "canvas.js", "node_api.py", "server.py"):
         assert "笔记" not in (WEBAPP / relative).read_text(encoding="utf-8"), relative
+    # 21.6 (c): the notes and reports that mention a file are 笔记与报告 -- the documents of 项目首页 -- in the welcome sentence and
+    # over the list under a reference file of 文献; neither is about a comment.
     assert [line.strip() for line in APP_HTML.read_text(encoding="utf-8").splitlines() if "笔记" in line] == [
-        '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>']
+        '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>',
+        '<p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到笔记与报告。</p>',
+        'if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], '
+        't("提到这个文件的笔记与报告"));']
     assert 'notes: "备注",' in APP_HTML.read_text(encoding="utf-8") and ' 条备注，写在 ' in APP_HTML.read_text(encoding="utf-8")
     workspace_js = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
     assert 't("笔记", { n: 1 })' in workspace_js and "备注" not in workspace_js

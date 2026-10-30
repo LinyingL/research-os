@@ -13,7 +13,7 @@ project leads follow Part 3.
 ## Interface language
 
 To switch to English, click **English** at the bottom of the sidebar,
-next to **记录** (Records) and **停止服务** (Stop service). Click **中文**
+next to **备份** (Backups) and **停止服务** (Stop service). Click **中文**
 to switch back. Some forms and messages are still in Chinese; their labels
 appear below in bold, followed by a translation.
 

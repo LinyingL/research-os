@@ -60,7 +60,7 @@ Endpoints (all GET unless noted):
                             (`researchos.githubpush.plan`): branch, unpushed
                             commits, uncommitted files, the records, the
                             refusals, a `token`. Reads only; no network.
-    POST /api/github/commit-records -- 11.3 「先把人工记录提交一次」: commits
+    POST /api/github/commit-records -- 11.3 「先把你的记录提交一次」: commits
                             exactly the changed `.researchos/` files. Body `{}`.
     POST /api/github/create-repo -- 11.3, no remote: `{name, token}` -> a
                             PRIVATE repository via `gh`, added as origin.
@@ -4576,7 +4576,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._read_json_object()
                 self._send_json(200, github_fetch_payload(self._served(), lang=self._lang()))
             elif parsed.path == "/api/github/commit-records":
-                # 11.3 「先把人工记录提交一次」: the `.researchos/` files only.
+                # 11.3 「先把你的记录提交一次」: the `.researchos/` files only.
                 self._send_json(200, github_commit_records_payload(self._served(), self._read_json_object()))
             elif parsed.path == "/api/github/create-repo":
                 # 11.3: a PRIVATE repository via gh, only on this click.

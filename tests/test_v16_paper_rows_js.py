@@ -351,7 +351,7 @@ global.apiGet = async (path) => (path === "/api/results" ? results : path === "/
   process.stdout.write(JSON.stringify([figures, codes].map((h) => [byClass(h, "err").map(text), byClass(h, "res-row").length + byClass(h, "dc-row").length])));
 })().catch((e) => { console.error(e); process.exit(1); });
 """ % {"results": _json(results), "data": _json(data)}, language=None, view="results")
-    line = "输出清单暂时无法读取。 " + outputs.catalog_path(REPORT)  # the sentence, and the catalog it is about
+    line = "输出列表暂时无法读取。 " + outputs.catalog_path(REPORT)  # the sentence, and the catalog it is about
     assert out[0][0] == [line] and out[1][0] == [line] and out[0][1] > 0 and out[1][1] > 0
 
 

@@ -95,9 +95,9 @@ TERMS_OF_18_2 = {
     "连线确认": "Link judgments", "关系图": "Relationship map", "研究判断": "Research assessment",
     "补上来源": "Add a source", "缺尝试": "Missing attempt",
     "正式版本": "Official version", "改动与备注": "Changes and comments", "备注": "Comment", "笔记": "Note",
-    "图表与论断": "Figures and claims", "结果记录": "Result records", "输出": "Outputs", "实验": "Experiment",
+    "图表与论断": "Figures and claims", "输出": "Outputs", "实验": "Experiment",
     "本机": "This Mac", "项目首页": "Project home", "负责人": "Owner", "任务": "Task",
-    "未识别生成脚本": "No generating script identified", "中间数据": "Intermediate data", "同名文件": "Same-name files",
+    "中间数据": "Intermediate data", "同名文件": "Same-name files",
 }
 
 #: 19.9's words (with 19.12 item 1's 过程文件夹), in the order the design writes them: they are in a list, not in the
@@ -233,7 +233,7 @@ def test_19_9s_words_are_the_ones_the_design_gives_and_the_page_holds_those_that
 NAMED_IN_SENTENCES = {
     "研究判断": "research assessment", "连线确认": "link judgment", "正式版本": "official",
     "关系图": "relationship map", "图表与论断": "figures and claims", "改动与备注": "changes and comments",
-    "项目首页": "project home", "结果记录": "result record", "同名文件": "same-name file",
+    "项目首页": "project home", "报告": "report", "同名文件": "same-name file",
     "备注": "comment", "笔记": "note", "任务": "task", "实验": "experiment", "输出": "output",
     "本机": "this mac", "公盘": "shared folder", "工作副本": "working copy", "来龙去脉": "provenance",
     "研究路线": "research route",
@@ -340,6 +340,19 @@ global.extra={labels:panelBody.all().filter(node=>node.tag==="LABEL").map(node=>
 ''', lang=lang)
         assert assessment in shown["extra"]["labels"]
         assert "结论" not in shown["extra"]["labels"]
+    # 21.6: the table's own header for the column (「状态」 in the Quant table) only finds it; the form, new row or existing
+    # row, calls the cell 研究判断 as the attempt panel does.
+    from test_v10_desk_panel import A16
+
+    for lang, assessment in [("zh", "研究判断"), ("en", "Research assessment")]:
+        for call in ('renderAttemptForm("append");', f'renderAttemptForm("update", {A16!r});'):
+            shown = _form_run('''
+state.attemptsConfig.columns.verdict = "状态";
+''' + call + '''
+global.extra={labels:panelBody.all().filter(node=>node.tag==="LABEL").map(node=>node.textContent)};
+''', lang=lang)
+            assert assessment in shown["extra"]["labels"], (lang, call)
+            assert "状态" not in shown["extra"]["labels"], (lang, call)
 
 
 @needs_node
@@ -408,3 +421,246 @@ def test_21_5s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_w
     for name in ("node.js", "desk.js", "app.html", "team.js", "workspace.js"):
         shown = (WEBAPP / name).read_text(encoding="utf-8")
         assert not re.search(r"""t\(["'](未识别生成脚本|没有找到生成它的脚本|补上来源|关联文件|没能关联文件)["']""", shown), name
+
+
+# -- 21.6 on every screen (task V16 B4-1) ----------------------------------------------------------------------
+
+#: 21.6's table, row by row, in the order the design writes them: the Chinese words the screens carry for the row and the
+#: English each has. `{n}` stands for the row's "n". A word that is a key of the page's English table carries exactly that
+#: English (a counted word, one of its two forms); a word that lives only inside sentences (尝试表) is held by the checks
+#: of `test_the_attempt_table_is_said_in_both_languages_and_the_old_word_is_nowhere`.
+ROWS_OF_21_6: list[dict[str, str]] = [
+    {"报告": "Report", "写报告": "Write a report"},
+    {"要点": "Key points"},
+    {"交回": "Handback"},
+    {"等你处理": "Needs you"},
+    {"备份": "Backups", "你的记录与备份": "Your records and backups"},
+    {"运行日志": "Run log"},
+    {"归入尝试": "File under an attempt"},
+    {"添加文件": "Add files"},
+    {"尝试表": "Attempt table"},
+    {"列表": "List"},
+    {"缺生成脚本": "No generating script"},
+    {"指定生成它的脚本": "Assign a generating script"},
+    {"没有生成脚本": "No script writes it"},
+    {"是这个吗？": "Is it this one?", "其他同名文件 {n} 个": "{n} other same-name files"},
+    {"代理建议": "Suggested by the agent", "确认这个判断": "Confirm this assessment"},
+    {"现在在做什么": "In progress", "进行中的尝试": "Attempts in progress", "等你处理": "Needs you"},
+]
+#: The words 21.6 retires (the lead's list for B4-1), each of which the "Old" column of some row names or whose row says it
+#: is gone. 清单 is retired on 数据与代码 only (the undo's plan, a task's catalogue and a run's list of changes are other
+#: lists), so it has a scope of its own below.
+RETIRED_WORDS = ("结果记录", "记录结果", "研究记录", "人工记录", "运行记录", "年表", "待办", "未识别生成脚本", "关联文件")
+#: The files that show 数据与代码, 图表与论断 and the pages around them; 清单 is retired in their strings.
+LIST_WORD_SCOPE = ("node.js", "app.html", "desk.js", "routemap.js", "canvas.js", "team.js", "canvas.py", "node_api.py", "nodepage.py",
+                   "kind_rows.py", "provenance.py", "trace.py")
+#: English the retired words had, matched in the page's English table (a plural, a hyphen or a "the" does not hide it).
+RETIRED_ENGLISH = (r"\bresearch records?\b", r"\bresult records?\b", r"\brecord results?\b", r"\brun records?\b",
+                   r"\bhuman records?\b", r"\blink files\b", r"\bto-?do\b", r"\bgenerating script identified\b", r"\bchronolog")
+#: What must stay, each with why: (file, the text kept, reason). The scan takes the kept text out of a string before it looks
+#: for a retired word in what is left, so an entry excuses that text and nothing else in the string.
+ALLOWED_RETIRED: list[tuple[str, str, str]] = [
+    ("app.html", "Research OS：人工记录", "the git commit message the app writes (13.1: on disk, never renamed); the tick under 推送 tells the "
+                                         "person what the commit will be called"),
+    ("githubpush.py", "Research OS：人工记录", "the same commit message, the constant that writes it"),
+    ("workspace.py", "结果记录", "_RETIRED_TITLES: the title a headingless report had before 21.6, read back as 'no title typed' (a page that "
+                              "read the file earlier sends it; 13.1: no file depends on the screen's words)"),
+    ("attempts.py", "二、尝试途径总年表", "the researcher's own heading in the map file, which the reader finds the table by (21.6, last paragraph)"),
+    ("identity.py", "人工记录", "the header comment written into .researchos/identity: on disk (13.1)"),
+]
+#: Python files whose strings are not on a screen: the command line is a developer surface that keeps its words (13.1, 21.6).
+NOT_ON_A_SCREEN = {"cli.py": "the command line (13.1): its help and its printed lines keep their words"}
+
+
+def rows_of_21_6() -> list[tuple[str, str, str]]:
+    """21.6's table as written: (Old, New, English) per row, the header and the rule line left out."""
+    text = DESIGN.read_text(encoding="utf-8")
+    six = text[text.index("### 21.6"):text.index("### 21.7")]
+    rows = re.findall(r"^\| (.+?) \| (.+?) \| (.+?) \|$", six, re.M)
+    assert rows[0] == ("Old", "New", "English")
+    return rows[1:]
+
+
+@needs_node
+def test_every_row_of_21_6_is_on_the_page_as_the_design_writes_it():
+    """DESIGN 21.6 (task V16 B4-1): the table has the sixteen rows this test knows; each Chinese word of a row is in the row's
+    "New" column and its English in the row's English column; and each word that is a key of the page's English table carries
+    exactly that English (a counted word, one of its two forms)."""
+    rows = rows_of_21_6()
+    assert len(rows) == len(ROWS_OF_21_6) == 16
+    table = english_table()
+    compared = 0
+    for number, ((_old, new, english), words) in enumerate(zip(rows, ROWS_OF_21_6), start=1):
+        for zh, en in words.items():
+            assert zh.replace("{n}", "n") in new, f"row {number}: {zh!r} is not in the New column {new!r}"
+            assert en.replace("{n}", "n") in english, f"row {number}: {en!r} is not in the English column {english!r}"
+            if zh not in table:
+                continue
+            compared += 1
+            forms = {form.replace("{n}", "n") for form in entry_forms(table[zh])}
+            assert en.replace("{n}", "n") in forms or en in entry_forms(table[zh]) or any(form.endswith(en) for form in entry_forms(table[zh])), \
+                f"row {number}: {zh!r} is {table[zh]!r} on the page, {en!r} in the design"
+    assert compared >= 14, compared
+    # the words that are keys of their own, one by one (a word the design keeps as one English is one key)
+    assert {zh: table[zh] for zh in ("备份", "你的记录与备份", "要点", "写报告", "运行日志", "列表")} == {
+        "备份": "Backups", "你的记录与备份": "Your records and backups", "要点": "Key points", "写报告": "Write a report",
+        "运行日志": "Run log", "列表": "List"}
+    assert table["报告"] == {"one": "Report", "other": "Reports"}
+    assert table["其他同名文件 {n} 个"] == {"one": "{n} other same-name file", "other": "{n} other same-name files"}
+
+
+@needs_node
+def test_the_retired_words_are_keys_of_the_english_table_no_more():
+    """DESIGN 21.6 (task V16 B4-1): a retired Chinese string is not a key of /i18n.js -- not the word alone and not a sentence
+    that carries it -- so its English cannot outlive it. (清单 is looked at in the scope the design gives it.)"""
+    table = english_table()
+    assert [key for key in table if any(word in key for word in RETIRED_WORDS)] == []
+    assert [key for key in table if "清单" in key and "数据与代码" in key] == []
+    for key in ("记录结果", "结果记录", "研究记录", "运行记录", "无关联研究记录", "保存研究记录", "输出清单暂时无法读取。", "关联研究记录",
+                "此文献文件关联的研究记录", "改动了研究记录", "删除了研究记录", "尚未补充研究记录。", "运行记录：{task}"):
+        assert key not in table, key
+
+
+@needs_node
+def test_the_attempt_table_is_said_in_both_languages_and_the_old_word_is_nowhere():
+    """DESIGN 21.6: 年表 is 尝试表, "Attempt table" -- a word inside the sentences of the page, so the English of every key that
+    says it is held to the word, and none says the old word's English. 尝试表 is said by at least a dozen keys."""
+    table = english_table()
+    keys = [key for key in table if "尝试表" in key]
+    assert len(keys) >= 12, len(keys)
+    saying = [key for key in keys if any("attempt table" in form.lower() for form in entry_forms(table[key]))]
+    assert len(saying) >= 10, len(saying)
+    assert [(key, form) for key in table for form in entry_forms(table[key]) if re.search(r"chronolog|timeline", form, re.I)] == []
+    assert table["尝试表里还没有尝试。"] == "The attempt table has no attempts yet."
+
+
+def _kept_out(where: str, text: str) -> str:
+    """`text` without the strings ALLOWED_RETIRED keeps for the file `where`."""
+    for name, kept, _why in ALLOWED_RETIRED:
+        if name == where:
+            text = text.replace(kept, "")
+    return text
+
+
+def _retired_in(where: str, text: str) -> list[str]:
+    """The retired words a string shows once what the allowlist keeps is taken out of it (清单 only in LIST_WORD_SCOPE)."""
+    left = _kept_out(where, text)
+    words = [word for word in RETIRED_WORDS if word in left]
+    if "清单" in left and where in LIST_WORD_SCOPE:
+        words.append("清单")
+    return words
+
+
+def _markup_strings(markup: str) -> list[str]:
+    """What app.html's markup shows: its text nodes (not scripts, styles or comments) and the attributes a screen reads."""
+    from html.parser import HTMLParser
+
+    found: list[str] = []
+
+    class Reader(HTMLParser):
+        skip = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style"):
+                self.skip += 1
+            found.extend(v for k, v in attrs if k in ("title", "aria-label", "placeholder", "alt", "value") and v)
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style"):
+                self.skip -= 1
+
+        def handle_data(self, data):
+            if not self.skip and data.strip():
+                found.append(data.strip())
+
+    Reader(convert_charrefs=True).feed(markup)
+    return found
+
+
+def _python_strings(path: Path) -> list[str]:
+    """Every string constant of a module that is not a docstring or another bare string statement (comments and docstrings
+    are the developer's, not the screen's)."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bare = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)}
+    return [node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in bare]
+
+
+def retired_words_on_screens() -> tuple[list[str], set[tuple[str, str]], int]:
+    """(what is found, the allowlist entries that excused something, how many strings were read). Read: app.html's markup, every
+    string literal of its scripts and of each served script (so every t() argument, every table of words and the English
+    table itself), every string constant of the engine's Python modules, and the shell's Swift lines."""
+    from test_v9_language import _scripts_of, _served_scripts, _unescape, js_literals
+
+    found, used, read = [], set(), 0
+
+    def check(where: str, text: str, how: str) -> None:
+        nonlocal read
+        read += 1
+        for name, kept, _why in ALLOWED_RETIRED:
+            if name == where and kept in text:
+                used.add((name, kept))
+        found.extend(f"{where} {how}: {word} in {text.strip()[:90]!r}" for word in _retired_in(where, text))
+
+    for text in _markup_strings(APP_HTML.read_text(encoding="utf-8")):
+        check("app.html", text, "markup")
+    for path in [APP_HTML, *_served_scripts()]:
+        for _start, _quote, raw in js_literals(_scripts_of(path)):
+            check(path.name, _unescape(raw), "string")
+    for path in sorted(WEBAPP.parent.rglob("*.py")):
+        if path.name in NOT_ON_A_SCREEN:
+            continue
+        for text in _python_strings(path):
+            check(path.name, text, "string")
+    for path in sorted((WEBAPP / "shell").glob("*.swift")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.lstrip().startswith("//"):
+                check(path.name, line, "line")
+    return found, used, read
+
+
+def test_no_screen_shows_a_retired_word_of_21_6():
+    """DESIGN 21.6, 21.9 item 6 (task V16 B4-1): in everything the app can show -- app.html's text and attributes, every string
+    of every script it serves (a t() argument, a table of words, the English table), every string of the engine's modules (a
+    sentence it composes, a say() pair) and the shell -- none of 结果记录, 记录结果, 研究记录, 人工记录, 运行记录, 年表, 待办, 未识别生成脚本,
+    关联文件, nor 清单 on 数据与代码 and its neighbours. What must stay is ALLOWED_RETIRED, each with its reason; an entry that
+    excuses nothing is stale and is reported."""
+    found, used, read = retired_words_on_screens()
+    assert found == []
+    assert used == {(name, kept) for name, kept, _why in ALLOWED_RETIRED}, "an allowlist entry excuses nothing any more"
+    assert read > 5000, read                                  # the scan reads the page, not nothing
+
+
+def test_the_scan_for_retired_words_finds_a_word_and_excuses_only_what_is_listed():
+    """The check itself: a retired word in a string is found; the git commit message in app.html is excused but the same words
+    elsewhere in that string are not, and the same text in another file is not excused; 清单 is retired in node.js and not in
+    workspace.js (where it names an undo's plan); a docstring and a comment are not read."""
+    assert _retired_in("workspace.js", "改动了研究记录") == ["研究记录"]
+    assert _retired_in("app.html", "提交说明「Research OS：人工记录」") == []
+    assert _retired_in("app.html", "提交说明「Research OS：人工记录」，你的人工记录") == ["人工记录"]
+    assert _retired_in("node.js", "Research OS：人工记录") == ["人工记录"]
+    assert _retired_in("node.js", "输出清单暂时无法读取。") == ["清单"] and _retired_in("workspace.js", "没能读出撤回的清单。") == []
+    assert _markup_strings('<button title="查看年表">记录</button><script>"年表"</script><!-- 年表 --><p> 年表 </p>') == ["查看年表", "记录", "年表"]
+    sample = Path(__file__).parent / "_scratch_retired_docstring.py"
+    try:
+        sample.write_text('"""年表 in a docstring."""\nNAME = "尝试表"\nTITLE = "年表"\n', encoding="utf-8")
+        assert _python_strings(sample) == ["尝试表", "年表"]
+    finally:
+        sample.unlink(missing_ok=True)
+
+
+@needs_node
+def test_the_page_shows_no_retired_english_either():
+    """English mode shows the new words (21.9 item 6): no entry of the page's English table says what a retired word said --
+    a research record, a result record, Record results, a run record, a human record, Link files, a to-do, 'No generating
+    script identified' -- and the entries that replaced them say the design's English."""
+    table = english_table()
+    assert [(key, form) for key, value in table.items() for form in entry_forms(value)
+            if any(re.search(pattern, form, re.I) for pattern in RETIRED_ENGLISH)] == []
+    assert table["写报告"] == "Write a report" and table["要点"] == "Key points" and table["备份"] == "Backups"
+    assert table["不关联报告"] == "No linked report" and table["报告：{title}"] == "Report: {title}"
+    assert table["提到这个文件的笔记与报告"] == "Notes and reports that mention this file"
+    assert table["运行日志：{task}"] == "Run log: {task}"
+    assert table["有 {n} 处越界改动，详见运行日志。"]["other"] == "There are {n} out-of-bounds changes. See the run log."

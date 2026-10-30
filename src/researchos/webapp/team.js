@@ -986,7 +986,7 @@
 
   function renderResearchRecords(host, records) {
     records.forEach((record) => {
-      const s = sec(t("研究记录"));
+      const s = sec(t("要点"));
       s.appendChild(mk("p", "desk-meta mono", record.path));
       const context = record.context || {};
       [["question", "研究问题"], ["method", "方法"],

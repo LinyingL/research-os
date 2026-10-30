@@ -177,7 +177,7 @@ def test_plan_lists_exactly_the_unpushed_commits_and_the_uncommitted_files(stand
     assert plan["uncommitted"] == 2
     assert plan["uncommitted_message"] == "另有 2 个文件的改动还没有提交，推送不包括它们"
     assert plan["records"]["changed"] == [".researchos/judgements.toml"] and not plan["records"]["committed"]
-    assert plan["records"]["message"] == "人工记录（.researchos/）有 1 个文件还没有提交"
+    assert plan["records"]["message"] == "你的记录（.researchos/）有 1 个文件还没有提交"
     assert plan["blockers"] == [] and plan["can_push"] and not plan["set_upstream"] and not plan["needs_repo"]
     assert _pushes(recorded) == []  # planning never runs a push
 
@@ -205,7 +205,7 @@ def test_push_pushes_the_planned_commits_and_the_github_line_is_in_step(stand_in
 
 
 def test_commit_records_commits_only_rce_files_with_other_changes_staged(stand_in, linked):
-    """11.5 scenario 3: 「先把人工记录提交一次」 commits only `.researchos/` files,
+    """11.5 scenario 3: 「先把你的记录提交一次」 commits only `.researchos/` files,
     with the message 「Research OS：人工记录」, even with the researcher's own
     changes staged and unstaged -- those are left exactly as they were."""
     rce = linked / ".researchos"
@@ -239,7 +239,7 @@ def test_commit_records_commits_only_rce_files_with_other_changes_staged(stand_i
     assert _git(linked, "diff", "--cached", "--name-only").split() == ["a.py", "new.py"]
     assert result["plan"]["records"]["committed"] and result["plan"]["records"]["changed"] == []
     again = githubpush.commit_records(linked)
-    assert again["committed"] is False and again["message"] == "人工记录都已提交，没有要提交的"
+    assert again["committed"] is False and again["message"] == "你的记录都已提交，没有要提交的"
 
 
 def test_commit_records_in_a_project_below_the_repository_top(stand_in, tmp_path):
@@ -723,7 +723,7 @@ def test_page_shows_the_plan_in_plain_chinese_and_only_a_clean_plan_can_be_pushe
     assert lines[0] == {"text": "把分支 main 推送到 origin/main", "tone": ""}  # 12.11: in words
     assert lines[1]["text"] == "GitHub 还没有的提交：1 个" and lines[1]["commits"][0]["subject"] == "Add b"
     assert {"text": "另有 1 个文件的改动还没有提交，推送不包括它们。", "tone": "warn"} in lines
-    assert {"text": "人工记录（.researchos/）有 1 个文件还没有提交。", "tone": "warn"} in lines
+    assert {"text": "你的记录（.researchos/）有 1 个文件还没有提交。", "tone": "warn"} in lines
     assert out[1] is True and out[2] is False and out[3] is True
     assert {"text": "gh 还没有登录 GitHub，请在终端里运行：gh auth login。", "tone": "bad", "command": "gh auth login"} in out[4]
     assert out[5] is False
@@ -744,7 +744,7 @@ def test_page_menu_opens_the_push_panel_and_only_its_push_button_pushes():
     assert 'pmItem(t("推送到 GitHub…"), () => { closeProjectMenu(false); openPushDialog(); }, { disabled: state.noProject })' in menu
     assert 'apiGet("/api/github/push-plan")' in _function("loadPushPlan")
     render = _function("renderPushPlan")
-    assert "先把人工记录提交一次" in render and 'mkButton(pushDialog.busy ? "正在推送…" : "推送", "btn", () => sendPush(subject, go))' in render
+    assert "先把你的记录提交一次" in render and 'mkButton(pushDialog.busy ? "正在推送…" : "推送", "btn", () => sendPush(subject, go))' in render
     step = _function("renderCreateRepoStep")
     assert "私有仓库" in step and "Research OS 不会创建公开仓库" in step and 'input.id = "push-name";' in step
     assert 'apiPost("/api/github/create-repo", { name: name, token: pushDialog.plan.token })' in _function("createRepo")

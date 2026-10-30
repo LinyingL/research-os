@@ -1426,7 +1426,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <div id="share-line" class="share-line hidden" role="status"></div>
       <div id="me-line" class="me-line"></div>
       <div class="side-tools">
-        <button id="records-btn" class="shutdown-btn" type="button" title="查看这个项目的人工记录放在哪里" data-i18n-attr="title" data-i18n>记录</button>
+        <button id="records-btn" class="shutdown-btn" type="button" title="查看你的记录有哪些，以及最近一次备份的时间" data-i18n-attr="title" data-i18n>备份</button>
         <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程" data-i18n-attr="title" data-i18n>停止服务</button>
         <button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" data-i18n-attr="title" data-i18n-switch>English</button>
       </div>
@@ -1449,7 +1449,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <!-- DESIGN.md 10.1: no project yet -- every section shows only this. -->
       <section id="welcome" class="welcome" aria-label="还没有项目" data-i18n-attr="aria-label">
         <p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>
-        <p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到研究记录。</p>
+        <p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到笔记与报告。</p>
         <div class="welcome-actions">
           <button id="welcome-create-btn" class="btn btn-primary" type="button" data-i18n>新建项目…</button>
           <button id="welcome-add-btn" class="btn" type="button" data-i18n>添加项目…</button>
@@ -1871,11 +1871,11 @@ function reviewHoverText(j) {
 // (the refresh chip, the project state chip) keep their hover titles.
 const BLOCKING_ERROR_TEXT = {
   // the attempt form's own refusals (researchos/webapp/mapedit.py's codes)
-  attempt_duplicate: "这个编号已经在年表里了，请换一个编号。",
-  attempt_not_found: "年表里找不到这个编号，可能刚在文件里被改掉了。",
+  attempt_duplicate: "这个编号已经在尝试表里了，请换一个编号。",
+  attempt_not_found: "尝试表里找不到这个编号，可能刚在文件里被改掉了。",
   attempt_line_break: "有一格里含有看不见的换行字符（常见于从 PDF 复制的文字），请删掉它；需要换行时写 <br>。",
-  attempt_table_missing: "找不到尝试年表了：年表文件、它的标题或 .researchos/attempts.toml 已经不在。",
-  attempt_unknown_field: "表单里有一栏年表已经没有了，请刷新页面后再试。",
+  attempt_table_missing: "找不到尝试表了：尝试表文件、它的标题或 .researchos/attempts.toml 已经不在。",
+  attempt_unknown_field: "表单里有一栏尝试表已经没有了，请刷新页面后再试。",
   attempt_reason_required: "放弃一条路线时必须写明理由：它会写进结果一栏，这条路线当时的依据也会冻结下来。",
   // the canvas's refusals, in the wording 8.5 already gave them
   mapping_exists: "这条映射已存在",
@@ -2601,7 +2601,7 @@ async function fetchGitHub(statusEl, button) {
 // which reads only and touches no network -- in plain Chinese: the branch,
 // the commits GitHub does not have yet (their first lines), the uncommitted
 // files a push does not carry, whether the human records (.researchos/) are
-// committed with the one tick 「先把人工记录提交一次」, every refusal with its
+// committed with the one tick 「先把你的记录提交一次」, every refusal with its
 // sentence (and the command to run, when there is one), and -- without a
 // remote -- the PRIVATE repository to create, its name editable. 「推送」 is
 // the only control that pushes (POST /api/github/push with the plan's
@@ -2743,7 +2743,7 @@ function renderPushPlan(subject) {
       const go = document.getElementById("push-go");
       if (go) go.disabled = pushDialog.busy || !pushCanSend(pushDialog.plan, pushDialog.tick);
     });
-    tick.append(box, "先把人工记录提交一次（只提交 .researchos/ 里的 " + rec.changed.length + " 个文件，提交说明「Research OS：人工记录」）");
+    tick.append(box, "先把你的记录提交一次（只提交 .researchos/ 里的 " + rec.changed.length + " 个文件，提交说明「Research OS：人工记录」）");
     result.appendChild(tick);
   }
   if (plan.git && plan.needs_repo) result.appendChild(renderCreateRepoStep(subject, plan));
@@ -3418,9 +3418,9 @@ function renderGuideCard() {
   const card = document.createElement("div");
   card.className = "guide-card";
   const h2 = document.createElement("h2");
-  h2.textContent = "还没有配置尝试年表";
+  h2.textContent = "还没有配置尝试表";
   const p1 = document.createElement("p");
-  p1.textContent = "在 .researchos/attempts.toml 里配置尝试年表，再运行 researchos attempts 把它读入图谱。";
+  p1.textContent = "在 .researchos/attempts.toml 里配置尝试表，再运行 researchos attempts 把它读入图谱。";
   const p2 = document.createElement("p");
   p2.textContent = "示例 .researchos/attempts.toml：";
   const pre = document.createElement("pre");
@@ -4253,7 +4253,7 @@ function renderAttemptForm(mode, attemptId) {
   if (mode === "update" && !record) {
     panelTitle.textContent = "编辑尝试";
     panelSubtitle.textContent = "";
-    panelBody.appendChild(panelErrorBoxCn("年表里已经没有这条尝试了，可能刚在文件里被改掉。"));
+    panelBody.appendChild(panelErrorBoxCn("尝试表里已经没有这条尝试了，可能刚在文件里被改掉。"));
     openPanel();
     return;
   }
@@ -4316,7 +4316,9 @@ function renderAttemptForm(mode, attemptId) {
   // (the project's word for it, else 其它); an existing one is read from its cell and written back untouched until changed.
   const statuses = state.attemptStatuses || [];
   const pending = statuses.find((s) => s.code === "pending");
-  const verdictLabelText = config.columns.verdict || t("研究判断");
+  // The panel calls the cell 研究判断 (21.3) and so does the form (21.6), whatever the table's own header says (「状态」 in
+  // a researcher's table): the header only finds the column. The other fields keep the table's header below.
+  const verdictLabelText = t("研究判断");
   const chooser = RODesk.statusChooser(mode === "append"
     ? { statuses: statuses, status: pending ? pending.status : "", reason: "", label: verdictLabelText }
     : { statuses: statuses, cell: record.verdict || "", label: verdictLabelText });
@@ -4683,7 +4685,7 @@ function renderAttemptForm(mode, attemptId) {
       }
       if (association && (association.missing || association.failures.length)) {
         previewHost.replaceChildren();
-        setFormStatus(statusEl, "err", association.missing ? t("尝试已保存，但尚未读到新尝试，研究记录关联未更新。") : t("尝试已保存，部分来源关联未成功。可在研究路线中补充关联。"), association.failures && association.failures[0]);
+        setFormStatus(statusEl, "err", association.missing ? t("尝试已保存，但尚未读到新尝试，要点里的关联未更新。") : t("尝试已保存，部分来源关联未成功。可在研究路线中补充关联。"), association.failures && association.failures[0]);
         previewHost.appendChild(mkButton(t("关闭"), "btn", closePanel)); pollGeneration(); return;
       }
       closePanel(); // success -- the auto-refresh renders the new state
@@ -5057,7 +5059,7 @@ const RECORD_KIND_WORDS = {
   judgements: "对机器连线的确认与否决",
   mappings: "手工连线与备注",
   attempts: "尝试的研究判断",
-  attempts_config: "尝试年表配置",
+  attempts_config: "尝试表配置",
   canvas: "关系图位置",
   variables: "变量定义卡",
   legacy: "旧版本索引里的连线确认",
@@ -5086,7 +5088,7 @@ function recordCountText(row) {
       return f.state === "absent" ? "还没有" : "无法读取";
     case "attempts":
       if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有研究判断";
-      return { not_configured: "还没有配置尝试年表", unusable: "年表配置无法使用", table_missing: "找不到年表" }[f.state] || "无法读取";
+      return { not_configured: "还没有配置尝试表", unusable: "尝试表配置无法使用", table_missing: "找不到尝试表" }[f.state] || "无法读取";
     case "attempts_config":
       return f.exists ? "已配置" : "没有";
     case "canvas":
@@ -5136,7 +5138,7 @@ function recordIssueText(row) {
 async function openRecordsPanel() {
   const subject = { kind: "records" };
   state.panelSubject = subject;
-  panelTitle.textContent = "人工记录";
+  panelTitle.textContent = t("你的记录与备份");
   panelTitle.title = "";
   panelSubtitle.textContent = t("项目记录与备份");
   panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
@@ -5445,7 +5447,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
   const box = mk("section", "registered-outputs");
   box.appendChild(mk("h2", "section-title", variableDrafts ? t("待确认的变量草稿") : t("任务输出")));
   if (bundle.error) {  // 19.6: the other catalogs' rows still show below; the line names the catalogs it is about
-    const line = mk("p", "notice-status err", t("输出清单暂时无法读取。"));
+    const line = mk("p", "notice-status err", t("输出列表暂时无法读取。"));
     (bundle.broken || []).slice(0, 3).forEach((file) => line.appendChild(mk("span", "mono lit-hint", " " + file)));
     box.appendChild(line);
   }
@@ -6457,7 +6459,7 @@ function renderLiteratureReader(host, item, data) {
     sources.appendChild(mk("summary", null, t("项目中的文献文件")));
     item.files.forEach((file) => {
       const source = mk("div", "lit-reader-source"); source.appendChild(mkButton(file, "lit-link-btn", () => openFilePanel(file)));
-      if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], t("此文献文件关联的研究记录"));
+      if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], t("提到这个文件的笔记与报告"));
       sources.appendChild(source);
     });
     host.appendChild(sources);

@@ -300,7 +300,7 @@ console.log(JSON.stringify({ note, report }));
 """.replace("REPORT7", json.dumps(reports[7])).replace("LONGTITLE", json.dumps(LONG, ensure_ascii=False)))
     assert out["note"] == {"preview": "IdeasOne.", "current": True, "aria": "page"}
     assert out["report"]["preview"] == f"{LONG}Body of the report." and out["report"]["inSlot"] and out["report"]["current"]
-    assert out["report"]["scrolled"] == ["ws-editor-host"] and out["report"]["kind"] == "结果记录"
+    assert out["report"]["scrolled"] == ["ws-editor-host"] and out["report"]["kind"] == "报告"
 
 
 # -- 全部任务 ------------------------------------------------------------------------------------------------------------------

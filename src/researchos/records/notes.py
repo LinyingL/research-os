@@ -86,7 +86,7 @@ _HEADER = "# 节点上的笔记。Research OS 只追加、不改写；撤回一�
 #: Product language (8.8) for each trust reason, for notes.
 MESSAGES = {
     "no_identity": "项目身份文件无法读取",
-    "migrating": "项目正在迁移，迁移完成前不能写入人工记录",
+    "migrating": "项目正在迁移，迁移完成前不能写入你的记录",
     "missing": "备注记录文件当前无法读取，请先恢复它",
     "dataless": "记录文件正在从云端下载…",
     "unreadable": "备注记录文件当前无法读取，请先恢复它",

@@ -449,7 +449,7 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
         _path(root, rel)
         if _is_record(rel):
             raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}",
-                       f"“{rel}”是笔记、结果记录或应用自己的记录文件，只能由 Research OS 写入，不能登记。")
+                       f"“{rel}”是笔记、报告或应用自己的记录文件，只能由 Research OS 写入，不能登记。")
         if not anywhere and not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}",
                        f"“{rel}”不在“{locations[kind]}”里：请把{KIND_ZH[kind]}放进这个目录，再报告它的新路径。")
@@ -531,7 +531,7 @@ def _owner(root: Path, report: Any) -> dict[str, Any]:
     tasks, _revision = workspace.read_tasks(root)
     task = next((t for t in tasks if t.get("report") == report), None)
     if task is None or workspace._read(root, report) is None:  # noqa: SLF001
-        raise _bad(f"No task owns the result record {report}", "没有哪项任务的结果记录是这一份，不能给它登记文件。")
+        raise _bad(f"No task owns the result record {report}", "没有哪项任务的报告是这一份，不能给它登记文件。")
     return task
 
 

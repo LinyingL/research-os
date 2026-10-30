@@ -126,9 +126,9 @@ ANSWER_LABELS = {
 _MESSAGES = {
     Situation.COPY: "这个文件夹是另一个文件夹中项目的副本（两处带着同一个项目身份）。请选择如何继续。",
     Situation.CANNOT_CHECK: "无法确认原位置的项目是否还在（可能所在磁盘未连接或文件仍在云端），分不清是移动还是复制。",
-    Situation.LOST_ID: "项目身份文件不见了，但 .researchos/ 里还有人工记录。Research OS 不会悄悄给它新身份。",
+    Situation.LOST_ID: "项目身份文件不见了，但 .researchos/ 里还有你的记录。Research OS 不会悄悄给它新身份。",
     Situation.UNREADABLE_ID: "项目身份文件无法读取",
-    Situation.LEGACY: "此项目来自 V5 之前的版本：可以浏览，人工记录需先迁移后才能保存。",
+    Situation.LEGACY: "此项目来自 V5 之前的版本：可以浏览，你的记录需先迁移后才能保存。",
 }
 
 

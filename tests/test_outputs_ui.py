@@ -444,7 +444,7 @@ console.log(JSON.stringify({ named: lines(named), namedRows: rows(named), alone:
 
 def test_the_views_error_line_names_the_catalogs_it_is_about_and_the_other_rows_still_show():
     zh = _home_run(_ERROR_LINE)
-    assert zh["named"] == ["输出清单暂时无法读取。 research/results/a.outputs.json research/results/b.outputs.json"]
-    assert zh["namedRows"] == 1 and zh["alone"] == ["输出清单暂时无法读取。"] and zh["clean"] == []
+    assert zh["named"] == ["输出列表暂时无法读取。 research/results/a.outputs.json research/results/b.outputs.json"]
+    assert zh["namedRows"] == 1 and zh["alone"] == ["输出列表暂时无法读取。"] and zh["clean"] == []
     en = _home_run(_ERROR_LINE, lang="en")
     assert en["named"] == ["The output list could not be read. research/results/a.outputs.json research/results/b.outputs.json"]

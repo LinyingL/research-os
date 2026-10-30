@@ -37,7 +37,7 @@ AGENT_CONFIRMED = 'An agent cannot confirm an assessment: leave assessment_confi
 
 
 def _bad(message: str) -> workspace.WorkspaceError:
-    return workspace.WorkspaceError('research_record', message, 409, '研究记录的内容或关联无效，请检查后重试。')
+    return workspace.WorkspaceError('research_record', message, 409, '要点的内容或关联无效，请检查后重试。')
 
 
 def path_for(report: str) -> str:
@@ -273,7 +273,7 @@ def read(root: str | Path, report: str) -> dict[str, Any]:
         # context save into an error while building its response.
         entries = []
         notices.append({'kind': 'outputs_unavailable', 'message': 'Cannot read the registered outputs: ' + str(exc),
-                        'message_zh': '已登记的产出暂时无法读取；研究记录仍可查看和保存。'})
+                        'message_zh': '已登记的产出暂时无法读取；要点仍可查看和保存。'})
     drafts = []
     for item in entries:
         if item['kind'] != 'variable':

@@ -3198,7 +3198,7 @@ unaffected.
 
 ### 13.3 The switch
 
-A quiet text button in the sidebar's tool row beside 记录 and 停止服务,
+A quiet text button in the sidebar's tool row beside 备份 (21.6; it was 记录) and 停止服务,
 named in the language it switches to: 「English」 on a Chinese screen,
 「中文」 on an English one. No flag, no globe, no icon. One click saves the
 choice, tells the shell, and reloads the page on the same section (the
@@ -3249,7 +3249,7 @@ has 「 」.
 | 尝试 / 研究判断 / 结果 | Attempt / Research assessment / Result |
 | 待复核 | Needs review |
 | 缺来源 / 补上来源 | Missing source / Add a source |
-| 缺尝试 / 关联文件 | Missing attempt / Link files |
+| 缺尝试 / 归入尝试 | Missing attempt / File under an attempt |
 | 公盘 | Shared folder |
 | 正式版本 | Official version |
 | 工作副本 | Working copy |
@@ -3264,17 +3264,18 @@ has 「 」.
 | 任务 | Task |
 | 笔记 | Note |
 | 备注 | Comment |
-| 结果记录 | Result records |
+| 报告 | Report |
 | 实验 | Experiment |
 | 输出 | Outputs |
-| 未识别生成脚本 | No generating script identified |
+| 缺生成脚本 | No generating script |
 | 中间数据 | Intermediate data |
 | 同名文件 | Same-name files |
 | 含义 / 输入 / 构建口径 | Meaning / Inputs / Construction |
 | 实现依据 / 人工决策 | Implementation / Human decision |
 | 草稿 / 确认这一版 | Draft / Confirm this version |
 
-This table is kept as the page speaks (amended by 18.2, task V14). A row
+This table is kept as the page speaks (amended by 18.2, task V14, and by 21.6, task V16: 报告 for 结果记录, 缺生成脚本 for
+未识别生成脚本, 归入尝试 for 关联文件, and 备份 for the sidebar's 记录 in the list below). A row
 written `A / B / C` gives three words in the order written. A counted word
 (13.5) is given in one form, and the page's entry holds both.
 `tests/test_glossary.py` reads this table and the lists of words below it
@@ -3294,7 +3295,7 @@ as written (status `labelled`), in either language.
 Fixed for the desk and the frame (first increment): 等你批准 "Awaiting your
 approval"; 我的提议 "My proposals"; 你上次查看以来的改动 "Changes since you
 last looked"; 依据变了的图表与论断 "Figures and claims whose basis changed"; 已放弃的路线
-"Abandoned routes"; 记录 "Records"; 停止服务 "Stop service"; 研究脉络 (the
+"Abandoned routes"; 备份 "Backups"; 停止服务 "Stop service"; 研究脉络 (the
 brand's subtitle) "Research provenance"; PI stays "PI"; 成员 as a role
 "Member"; 同步 "Sync"; 发布 "Publish".
 
@@ -6379,8 +6380,8 @@ attempts.py`; `research_records.assessment_statuses`).
     the order of 进行中的尝试 (newest activity first), 「未归入尝试」 last; where no
     report belongs to an attempt they are one list with no heading. The open
     document's row is told by ink and weight (21.8). The lists' headings are
-    笔记 and 报告; the writing area keeps calling a report 结果记录 and the button
-    记录结果 until the words of 21.6 reach them.
+    笔记 and 报告; the writing area calls a report 报告 too and the button is
+    「写报告」 (21.6, B4-1).
   - **全部任务** (the section's heading; English “All tasks”, it was 任务),
     grouped by attempt in the same order, 「未归入尝试」 last (with
     「把这些任务归入尝试…」 under it, as before). A row's summary says the task's
@@ -6782,12 +6783,48 @@ hover is “{n} need you”). 14.6 and 18.3 above keep the word they introduced.
 *Fix batch B3*: an attempt's page says 「添加文件」 (“Add files”) -- the button, its failure sentence and the
 engine's gap (「这条尝试还没有添加任何文件」) -- and the two guides name it so; no screen says 「关联文件」.
 
+*Fix batch B4-1 (the words on every screen)*: each row above is on every screen, in both languages.
+
+- **报告 / 写报告.** 项目首页's header button is 「写报告」 (“Write a report”); a document of that kind is 报告 (“Report”)
+  in the kind label, in the confirm sentence of the done mark, in the PI's footer (「笔记和报告会随下一次发布交给成员。」)
+  and as the title the engine gives a report with no heading (`workspace._title`: 报告 / Report; the pre-21.6 words
+  stand for "no title typed" too, so a page that read the file earlier writes no heading). The agent's instruction says
+  report as well (`agents/brief.py`).
+- **研究记录 had three meanings, and each has its word.** (a) A report's Section 20 context is 要点 (“Key points”): the
+  disclosure of the report editor, 「保存要点」, 「还没有写要点。」, 「没能读取要点。」, 「重新载入要点」, the notices
+  that follow a save, the section of a proposal's page, and the engine's sentences about it (`research_records.py`).
+  (b) A reference to one report is 报告: the task form's 「不关联报告」 and the task row's 「报告：<title>」 (both hold
+  `task.context.report`). (c) The documents that mention a file are 笔记与报告: 「提到这个文件的笔记与报告」 under a
+  reference file of 文献, 「提到它的笔记与报告」 on a node page and a variable card, and the welcome sentence 「相关文件可以
+  随时关联到笔记与报告」 (today only reports carry links, so those lists hold reports). The run's out-of-bounds
+  word `record_changed` / `record_deleted` is none of the three -- it covers the attempt table, `research/tasks.json`
+  and a report's context and catalog -- and says 「改动了尝试表、任务或报告的记录文件」 (“Changed the attempt table, the tasks
+  or a report's record files”).
+- **备份 / 你的记录与备份.** The sidebar's foot says 备份 (“Backups”), with the hover 「查看你的记录有哪些，以及最近一次备份的
+  时间」; the panel it opens is titled 「你的记录与备份」; the commit tick reads 「先把你的记录提交一次」 and the engine's
+  sentences about those files (the GitHub plan, the migration refusals) say 你的记录. What is written to git is not
+  renamed: the commit message stays 「Research OS：人工记录」, and the tick, which tells the person what the commit will be
+  called, quotes it.
+- **运行日志.** The run's button and its name (「运行日志：<task>」), the failure sentence, the 越界 sentence and the line of
+  the run store's list in agent settings.
+- **尝试表** on every screen: the page's own refusals (「这个编号已经在尝试表里了」), the guide card for a project with no
+  table and the records panel. The researcher's own heading in the map file stays theirs.
+- **列表.** 「输出列表暂时无法读取。」 (it was 清单) on 图表与论断, 数据与代码, a task's row and the drafts page. 清单 stays where it names
+  another thing: the plan of an undo, the catalogue a task registers files in, the list of a run's changes.
+- **The attempt form says 研究判断**, as the panel does, whatever the table's own header for the column is (「状态」 in
+  the Quant table); the header only finds the column.
+
+What stays, each with its reason (the test that scans the screens lists them): the commit message above (on disk, 13.1);
+`二、尝试途径总年表`, the heading the map file is read by; the header comment `identity` writes into `.researchos/`;
+and the command line, which keeps its words (`researchos github push --commit-records` still names the commit message; the help of
+`researchos link` still names 补上来源 and 关联文件).
+
 Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 `.context.json`, `judgements.toml` keep their names.
 
 ### 21.7 Storage and engine details stay out of the way (amends 8.8)
 
-- **你的记录与备份** says in words what is kept — research assessments, link
+- **你的记录与备份** (opened by the sidebar's 备份, 21.6) says in words what is kept — research assessments, link
   judgments, hand-drawn links, the route map's layout, variable cards, the
   attempt table — each with when it was last backed up and 「在 Finder 中显
   示」; file names and snapshot names are under 「详情」.
@@ -6879,7 +6916,8 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    缺尝试; the
    任务输出 block is gone from both pages.
 6. No screen uses a retired word of 21.6; the glossary test covers the new
-   rows; English mode shows the new words.
+   rows; English mode shows the new words (*B4-1*: `tests/test_glossary.py` holds every row of 21.6 to the page's English
+   table and scans every string the screens show for the retired words, with a short allowlist, a reason each).
 7. One primary button per page; no title or status drawn as a button; the
    clay colour appears only on problems; long numbers are shown to four
    significant digits.

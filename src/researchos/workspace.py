@@ -63,7 +63,7 @@ class WorkspaceError(Exception):
         self.status = status
         self.message_zh = message_zh or {
             "invalid": "内容格式不对，请检查后重试",
-            "path": "只能编辑项目中的研究方案、笔记和结果记录",
+            "path": "只能编辑项目中的研究方案、笔记和报告",
             "not_found": "这份记录已不存在，请刷新后重试",
             "conflict": "文件已在别处修改，请重新打开后合并内容",
             "cloud": "文件还在云端，请下载到本机后再打开",
@@ -85,14 +85,19 @@ def _root(value: str | Path) -> Path:
 
 
 def _title(kind: str, lang: str = "zh") -> str:
-    return ({"overview": "Research question and plan", "note": "Note", "result": "Result record"}
-            if lang == "en" else {"overview": "研究问题与计划", "note": "笔记", "result": "结果记录"})[kind]
+    return ({"overview": "Research question and plan", "note": "Note", "result": "Report"}
+            if lang == "en" else {"overview": "研究问题与计划", "note": "笔记", "result": "报告"})[kind]
+
+
+#: What a report without a heading was titled before 21.6 (结果记录): a page that read the file under the old words still
+#: sends them back as "no title typed", so they stand for it too.
+_RETIRED_TITLES = {"result": ("结果记录", "Result record")}
 
 
 def _default_titles(kind: str) -> frozenset[str]:
     """The title a document without a heading shows, in either language: what the page holds in its title field
     whichever language the screen was in when it read the file (13.1: the file never depends on the screen)."""
-    return frozenset({_title(kind, "zh"), _title(kind, "en")})
+    return frozenset({_title(kind, "zh"), _title(kind, "en"), *_RETIRED_TITLES.get(kind, ())})
 
 
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)

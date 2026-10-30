@@ -472,8 +472,8 @@ def test_a_member_s_save_releases_the_project_lock_before_the_marks_read_the_sha
     assert "An open question" in (drive.work / answer["body"]["path"]).read_text(encoding="utf-8")
 
 
-def test_a_result_document_without_a_heading_is_titled_result_record_not_the_attempt_cells_word(root):
-    """DESIGN.md 18.2: 结果记录 / "Result record" is a document in 项目首页, 结果 /
+def test_a_report_without_a_heading_is_titled_report_not_the_attempt_cells_word(root):
+    """DESIGN.md 18.2, 21.6: 报告 / "Report" is a document in 项目首页, 结果 /
     "Result" the attempt's cell. A result document whose heading was deleted
     (in the writing area, or by an agent) is listed and opened under the
     document's word in both languages; a note keeps its own."""
@@ -481,12 +481,12 @@ def test_a_result_document_without_a_heading_is_titled_result_record_not_the_att
     note = _new(root, "note", "# Reading list\n")
     (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
     (root / note["path"]).write_text("Only a thought.\n", encoding="utf-8")
-    assert workspace.document(root, result["path"], lang="en")["title"] == "Result record"
-    assert workspace.document(root, result["path"])["title"] == "结果记录"
+    assert workspace.document(root, result["path"], lang="en")["title"] == "Report"
+    assert workspace.document(root, result["path"])["title"] == "报告"
     assert workspace.document(root, note["path"], lang="en")["title"] == "Note"
     assert workspace.document(root, note["path"])["title"] == "笔记"
     listed = {doc["path"]: doc["title"] for doc in workspace.overview(root, lang="en")["documents"]}
-    assert listed[result["path"]] == "Result record" and listed[note["path"]] == "Note"
+    assert listed[result["path"]] == "Report" and listed[note["path"]] == "Note"
 
 
 # -- 项目首页 (DESIGN.md 18.3) --------------------------------------------------------------------------------
@@ -532,12 +532,13 @@ def test_a_title_the_person_did_not_type_never_writes_a_heading_in_either_langua
     that word back is no title typed, whichever screen it came from (13.1). A real title still writes one."""
     result = _new(root, "result", "# Fit results\n\nIt worked.\n")
     (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
-    for default in ("Result record", "结果记录"):
+    # the last two are what a page that read the file before 21.6 sends back (workspace._RETIRED_TITLES)
+    for default in ("Report", "报告", "Result record", "结果记录"):
         shown = workspace.document(root, result["path"])
         saved = workspace.save_document(root, {"path": result["path"], "title": default,
                                                "content": shown["content"] + "x", "revision": shown["revision"]}, lang="en")
         assert saved["content"] == "It worked, no heading.\nx" and not saved["content"].startswith("#")
-        assert saved["title"] == "Result record"  # the answer is in the screen's language
+        assert saved["title"] == "Report"  # the answer is in the screen's language
         (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
     shown = workspace.document(root, result["path"])
     typed = workspace.save_document(root, {"path": result["path"], "title": "A real title", "content": shown["content"],

@@ -671,7 +671,7 @@ def test_blocking_error_shows_coded_sentence_and_a_collapsed_detail_button():
     coded = out["coded"]
     assert coded["title"] == ""  # never hover-only
     text, toggle, detail = coded["children"]
-    assert text["text"] == "这个编号已经在年表里了，请换一个编号。"
+    assert text["text"] == "这个编号已经在尝试表里了，请换一个编号。"
     assert toggle == {"tag": "button", "cls": "err-detail-toggle", "text": "详情", "type": "button", "expanded": "false"}
     assert detail["cls"] == "err-detail hidden" and "already exists" in detail["text"]
     assert out["opened"]["stopped"] is True

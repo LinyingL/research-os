@@ -93,6 +93,6 @@ data.research_records_by_file={'sources.bib':[{report:'research/results/manual.m
 const reader=byClass('lit-reader');reader.replaceChildren();renderLiteratureReader(reader,a,data);
 console.log(JSON.stringify({words:reader.textContent,source:byClass('lit-reader-sources').textContent}));
 """)
-    assert 'Research records linked to this reference file' in shown['source']
+    assert 'Notes and reports that mention this file' in shown['source']
     assert 'Background candidates only' in shown['source']
     assert 'Fictional reading check' in shown['source']

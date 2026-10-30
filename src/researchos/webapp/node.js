@@ -1462,7 +1462,7 @@
   // the unreadable catalogs would have given.
   function registeredNote(registered) {
     if (!registered || !registered.error) return null;
-    const line = mk("p", "notice-status err", t("输出清单暂时无法读取。"));
+    const line = mk("p", "notice-status err", t("输出列表暂时无法读取。"));
     (registered.broken || []).slice(0, 3).forEach((file) => line.appendChild(mk("span", "mono lit-hint", " " + file)));
     return line;
   }

@@ -35,7 +35,7 @@ def freeze(root: Path, task: dict[str, Any]) -> dict[str, Any]:
                             'report_content': '', 'report_sha': None, 'report_truncated': False,
                             'variable_inputs': [],
                             'notices': [{'kind': 'missing_context',
-                                         'message': '作为背景的结果记录已缺失：' + report}]}
+                                         'message': '作为背景的报告已缺失：' + report}]}
         return result
     loaded = research_records.read(root, report)
     record = copy.deepcopy({key: loaded.get(key) for key in

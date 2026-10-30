@@ -97,7 +97,7 @@ _HEADER = "# 设为论文正文的文稿，和不属于论文的图表与表：�
 
 MESSAGES = {
     "no_identity": "项目身份文件无法读取",
-    "migrating": "项目正在迁移，迁移完成前不能写入人工记录",
+    "migrating": "项目正在迁移，迁移完成前不能写入你的记录",
     "missing": "论文正文记录文件（papers.toml）当前无法读取，请先恢复它",
     "dataless": "记录文件正在从云端下载…",
     "unreadable": "论文正文记录文件（papers.toml）当前无法读取，请先恢复它",
