@@ -296,7 +296,7 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
         "记录文件比图谱少了 ", "以文件为准", "把缺少的补回文件",
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",
         "迁移这些记录", "这不是这个项目的", "迁移后才能记录连线确认", " 条里有 ", " 条的两端能在这个文件夹里扫到",
-        "原位置暂时无法确认", "项目身份文件无法读取", "你的记录与备份", "在 Finder 中显示", "最新快照：",
+        "原位置暂时无法确认", "项目身份文件无法读取", "你的记录与备份", "在 Finder 中显示", "最近一次备份：",
         "关系图位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
     ):
         assert copy in html, copy
@@ -312,7 +312,7 @@ def test_review_wording_never_says_something_no_longer_exists():
     html = APP_HTML.read_text(encoding="utf-8")
     start = html.index("// -- Judgment wording (pure")
     wording = html[start:html.index("// -- end of judgment wording")]
-    review = html[html.index("// -- 待复核 (9.6)"):html.index("// -- 记录 (9.2")]
+    review = html[html.index("// -- 待复核 (9.6)"):html.index("// -- 你的记录与备份 (9.2")]
     for text in (wording, review):
         for phrase in ("不再存在", "已不存在", "已删除", "被删除了"):
             assert phrase not in text, phrase

@@ -344,7 +344,7 @@ Endpoints (all GET unless noted):
                             for one link, in order (9.9 #12), each with
                             the basis it was made on.
     GET  /api/records   -- the 9.2 inventory (`researchos records`) for the app's
-                            「记录」 panel (see `records_payload`).
+                            「你的记录与备份」 panel (see `records_payload`).
     POST /api/project/reopen -- no body: the identity check again on the
                             served folder (「重新打开」; see
                             `reopen_payload`).
@@ -3207,9 +3207,9 @@ def variables_get(served: ServedProject, path: str, query: dict[str, list[str]],
 
 def records_payload(served: ServedProject) -> dict[str, Any]:
     """`GET /api/records`: the inventory of 9.2 -- what `researchos records`
-    prints -- for the app's 「记录」 panel: each kind of human record, where
+    prints -- for the app's 「你的记录与备份」 panel (21.7): each kind of human record, where
     it lives (project-relative when inside the project), how many, the
-    newest snapshot and any problem, each row with its machine-readable
+    newest backup with the time in its name (`backed_up_at`) and any problem, each row with its machine-readable
     `code` and `facts` (the page words them in Chinese; `problems` stays
     the engine's English for 「详情」). Reads only. The index is consulted
     for the shrink check when it can be opened; a blocked project, or one

@@ -657,6 +657,10 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.88rem; }
 .res-main .node-link.claim { font-size: 0.84rem; border-bottom-color: var(--line); }
 .res-path { font-size: 0.74rem; color: var(--ink-soft); word-break: break-all; }
+/* 21.7: a path is the quiet second line under its title, never the line itself. */
+.res-main > .res-path { flex: 0 0 100%; margin-top: -0.4rem; font-size: 0.75rem; }
+.dc-path { margin-top: 0.05rem; font-size: 0.75rem; }
+.dc-broken-path { margin: -0.05rem 0 0.2rem; font-size: 0.75rem; }
 .res-cause { font-size: 0.78rem; color: var(--ink-soft); }
 .res-cause.warn { color: var(--clay); }
 .res-repair { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
@@ -1182,11 +1186,19 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 .review-quiet { font-size: 0.8rem; color: var(--ink-soft); padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
 .review-quiet .review-link { color: var(--ink); }
 
+.records-intro { font-size: 0.8rem; color: var(--ink-soft); margin: 0 0 0.4rem; }
 .records-row { border-bottom: 1px solid var(--line); padding: 0.7rem 0; }
+.records-head { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; justify-content: space-between; }
 .records-kind { font-weight: 600; font-size: 0.88rem; }
-.records-path { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; margin-top: 0.2rem; }
 .records-count { font-size: 0.84rem; margin-top: 0.15rem; }
+.records-backup { font-size: 0.8rem; color: var(--ink-soft); margin-top: 0.15rem; }
 .records-problem { font-size: 0.8rem; color: var(--clay); margin-top: 0.2rem; }
+/* 12.13: the file names and the engine's own words, folded. */
+.records-fold { margin-top: 0.2rem; }
+.records-fold > .res-draft-summary { padding: 0.15rem 0; font-size: 0.8rem; color: var(--ink-soft); }
+.records-fold[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.records-detail { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; font-size: 0.75rem; color: var(--ink-soft); padding: 0.1rem 0 0.1rem 1.1rem; overflow-wrap: anywhere; }
+.records-engine { white-space: pre-wrap; }
 
 /* -- 变量 (DESIGN.md 9.11, task V5 phase 9): the cards, set as a readable
    document. Ochre = waits for you (a question, a review), clay = wrong,
@@ -5053,65 +5065,107 @@ async function renderReviewPanel(subject) {
   }
 }
 
-// -- 记录 (9.2: what `researchos records` prints) -------------------------------------
+// -- 你的记录与备份 (9.2: what `researchos records` prints; DESIGN.md 21.7) ---------------
+// What Research OS keeps for this project, one line each in words, with when it was last backed up (the time in the
+// newest backup's own name, the engine's `backed_up_at`) and 「在 Finder 中显示」. The file's name and the backup's
+// name are folded under 「详情」, with the engine's own English for a problem.
 
-const RECORD_KIND_WORDS = {
-  judgements: "对机器连线的确认与否决",
-  mappings: "手工连线与备注",
-  attempts: "尝试的研究判断",
-  attempts_config: "尝试表配置",
-  canvas: "关系图位置",
-  variables: "变量定义卡",
-  legacy: "旧版本索引里的连线确认",
-  notes: "备注",
-  decisions: "经 PI 批准的决定",
-  stata: "Stata 全局变量指向的项目里的文件夹",
-  history: "版本历史（保存的材料，不是记录）",
-};
+// A kind of record in words (13.4: 连线确认 is "Link judgments" and 备注 is "Comments" wherever the page says them).
+function recordKindWord(row) {
+  switch (row.code) {
+    case "attempts": return t("研究判断");
+    case "attempts_config": return t("尝试表");
+    case "judgements": return t("连线确认");
+    case "mappings": return t("手画的连线");
+    case "canvas": return t("研究路线的布局");
+    case "variables": return t("变量卡");
+    case "notes": return t("备注", { n: 2 });
+    case "decisions": return t("经 PI 批准的决定");
+    case "papers": return t("论文正文与不属于论文");
+    case "tasks": return t("任务列表");
+    case "stata": return t("Stata 全局变量指向的文件夹");
+    case "history": return t("版本历史（保存的材料，不是记录）");
+    case "legacy": return t("旧版本留下的连线确认");
+    default: return row.kind;
+  }
+}
 
-const RECORD_ISSUE_WORDS = {
-  dataless: "正在从云端下载", unreadable: "无法读取", conflict_copy: "旁边有同步冲突副本",
-  invalid: "内容无法解析", refused_entries: "有条目没有被采用（运行 researchos mappings 查看）",
-  migration_unfinished: "上次迁移没有完成", needs_migration: "等待迁移",
-};
+function recordIssueWord(code, f) {
+  switch (code) {
+    case "dataless": return t("正在从云端下载");
+    case "unreadable": return t("无法读取");
+    case "conflict_copy": return t("旁边有同步冲突副本");
+    case "invalid": return f.line ? t("第 {n} 行无法解析", { n: f.line }) : t("内容无法解析");
+    case "refused_entries": return t("有几条连线没有被采用");
+    case "migration_unfinished": return t("上次迁移没有完成");
+    case "needs_migration": return t("等待迁移");
+    // why the engine will not trust or write a record (9.3), in the page's own words; a reason it has no sentence for says
+    // what the engine said in Chinese, and only in Chinese
+    case "missing": return t("文件找不到了，但留有它的备份");
+    case "empty_but_expected": return t("文件是空的，但此前有过内容");
+    case "shrunk": return t("文件里的记录比 Research OS 记得的少了几条，需要你先确认以哪一份为准");
+    case "no_identity": return t("项目身份文件无法读取");
+    case "migrating": return t("项目正在迁移");
+    case "refuse_writes": return t("现在不能写入");
+    case "edited_after_confirmation": return t("确认之后又改过");
+    case "copy_missing": return t("留存的副本不见了");
+    default: return f.trust_message && uiLang() !== "en" ? f.trust_message : t("需要处理");
+  }
+}
 
 function recordCountText(row) {
   const f = row.facts || {};
+  const none = () => (f.file_state === "absent" || f.state === "absent" ? t("还没有") : t("无法读取"));
   switch (row.code) {
-    case "judgements":
-      if (typeof f.entries === "number") {
-        return f.entries + " 条记录，其中 " + f.standing + " 条连线确认生效中" + (f.conflicts ? "，" + f.conflicts + " 条记录冲突" : "");
-      }
-      return f.file_state === "absent" ? "还没有" : "无法读取";
+    case "judgements": {
+      if (typeof f.entries !== "number") return none();
+      const parts = [t("{n} 条记录，其中 {standing} 条正在生效", { n: f.entries, standing: f.standing })];
+      if (f.conflicts) parts.push(t("{n} 条记录互相冲突", { n: f.conflicts }));
+      return parts.join(t("，"));
+    }
     case "mappings":
-      if (f.state === "present") return f.links + " 条手工连线，其中 " + f.with_note + " 条带备注";
-      return f.state === "absent" ? "还没有" : "无法读取";
+      if (f.state === "present") return t("{n} 条手画的连线，其中 {noted} 条带备注", { n: f.links, noted: f.with_note });
+      return none();
     case "attempts":
-      if (f.state === "present") return f.attempts + " 条尝试，其中 " + f.with_verdict + " 条有研究判断";
-      return { not_configured: "还没有配置尝试表", unusable: "尝试表配置无法使用", table_missing: "找不到尝试表" }[f.state] || "无法读取";
+      if (f.state === "present") return t("{n} 条尝试，其中 {judged} 条有研究判断", { n: f.attempts, judged: f.with_verdict });
+      if (f.state === "not_configured") return t("还没有设置尝试表");
+      if (f.state === "unusable") return t("尝试表的设置无法使用");
+      if (f.state === "table_missing") return t("找不到尝试表");
+      return t("无法读取");
     case "attempts_config":
-      return f.exists ? "已配置" : "没有";
+      return f.exists ? t("已设置：说明哪个文件是尝试表、每一列是什么") : t("还没有设置");
     case "canvas":
       if (f.state === "ok" || f.state === "legacy") {
-        return f.views + " 个视图，其中 " + f.arranged + " 个摆放过" + (f.state === "legacy" ? "（还在索引旁，尚未移入项目）" : "");
+        const views = t("{n} 个视图，其中 {arranged} 个摆放过", { n: f.views, arranged: f.arranged });
+        return f.state === "legacy" ? views + t("（还放在项目外，尚未移入项目）") : views;
       }
-      return f.state === "absent" ? "还没有摆放过" : f.state === "dataless" ? "正在从云端下载…" : "无法读取";
+      return f.state === "absent" ? t("还没有摆放过") : f.state === "dataless" ? t("正在从云端下载…") : t("无法读取");
     case "variables":
-      return f.exists ? f.cards + " 张卡片" : "还没有";
-    case "legacy":
-      return f.waiting + " 个旧索引等待迁移";
-    case "notes":
-      if (typeof f.notes === "number") return f.notes + " 条备注，写在 " + f.nodes + " 处" + (f.withdrawn ? "，" + f.withdrawn + " 条已撤回" : "");
-      return f.file_state === "absent" ? "还没有" : "无法读取";
+      return f.exists ? t("{n} 张卡片", { n: f.cards }) : t("还没有");
+    case "notes": {
+      if (typeof f.notes !== "number") return none();
+      const parts = [t("{n} 条备注", { n: f.notes }), t("写在 {n} 处", { n: f.nodes })];
+      if (f.withdrawn) parts.push(t("{n} 条已撤回", { n: f.withdrawn }));
+      return parts.join(t("，"));
+    }
     case "decisions":
-      if (typeof f.entries === "number") return f.entries + " 条决定，其中 " + f.abandoned + " 条是放弃的路线";
-      return f.file_state === "absent" ? "还没有" : "无法读取";
+      if (typeof f.entries === "number") return t("{n} 条决定，其中 {abandoned} 条是放弃的路线", { n: f.entries, abandoned: f.abandoned });
+      return none();
+    case "papers":
+      if (typeof f.marked === "number") return t("{n} 份文稿设为论文正文，不属于论文的图和表：{out}", { n: f.marked, out: f.out });
+      return none();
+    case "tasks":
+      if (typeof f.tasks === "number") return t("{n} 项任务，其中 {done} 项已完成", { n: f.tasks, done: f.done });
+      return f.exists ? t("无法读取") : t("还没有");
     case "stata":
-      if (typeof f.globals === "number") return f.globals + " 个全局变量已回答，其中 " + f.folders + " 个指向项目里的文件夹";
-      return f.file_state === "absent" ? "还没有" : "无法读取";
+      if (typeof f.globals === "number") return t("{n} 个全局变量已回答，其中 {folders} 个指向项目里的文件夹", { n: f.globals, folders: f.folders });
+      return none();
     case "history":
-      if (!f.exists) return "还没有";
-      return f.versions + " 个版本，共 " + recordBytesText(f.bytes) + "；存放在索引旁，不在项目里：删掉索引所在的文件夹会一并删掉";
+      if (!f.exists) return t("还没有");
+      return t("{n} 个版本，共 {size}。保存在 Research OS 自己的数据文件夹里，不在项目里：删掉那个文件夹，这些版本就没有了。",
+        { n: f.versions, size: recordBytesText(f.bytes) });
+    case "legacy":
+      return t("{n} 份旧版本留下的数据等待迁移", { n: f.waiting });
     default:
       return row.count || "";
   }
@@ -5122,17 +5176,85 @@ function recordBytesText(bytes) {
   if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
   if (n >= 1024) return Math.round(n / 1024) + " KB";
-  return n + " 字节";
+  return t("{n} 字节", { n: n });
 }
 
 function recordIssueText(row) {
   const f = row.facts || {};
-  const words = (f.issues || []).map((code) => {
-    if (code === "invalid" && f.line) return "第 " + f.line + " 行无法解析";
-    if (Object.prototype.hasOwnProperty.call(RECORD_ISSUE_WORDS, code)) return RECORD_ISSUE_WORDS[code];
-    return f.trust_message || "需要处理";
+  const words = (f.issues || []).map((code) => recordIssueWord(code, f));
+  return Array.from(new Set(words)).join(t("；"));
+}
+
+// A record is backed up when it is a file of the project's: the version store (kept beside the index, never copied,
+// 12.12) and the old indexes waiting to be migrated are not.
+function recordIsBackedUp(row) {
+  return row.code !== "history" && row.code !== "legacy" && !!row.path && row.path !== "-";
+}
+
+// When it was last backed up, from the backup store; 「还没有备份过」 when nothing has been copied.
+function recordBackupText(row) {
+  if (!recordIsBackedUp(row)) return "";
+  if (!row.backed_up_at) return t("还没有备份过");
+  const D = window.RODesk;
+  const when = (D && D.whenWords && D.whenWords(row.backed_up_at, new Date())) || row.backed_up_at;
+  return t("最近一次备份：{when}", { when: when.charAt(0).toLowerCase() + when.slice(1) });
+}
+
+// 「详情」, folded (12.13): the file's name and the newest backup's name, and what the engine said of a problem.
+function recordDetails(row) {
+  const lines = [];
+  if (row.path && row.path !== "-") lines.push([t("存放位置"), row.path]);
+  if (recordIsBackedUp(row) && row.snapshot) lines.push([t("最新备份"), row.snapshot]);
+  const engine = (row.problems || []).join("\n");
+  if (!lines.length && !engine) return null;
+  const fold = mk("details", "records-fold");
+  const summary = mk("summary", "res-draft-summary");
+  summary.append(chevronIcon(), mk("span", null, t("详情")));
+  fold.appendChild(summary);
+  lines.forEach(([label, value]) => {
+    const line = mk("div", "records-detail");
+    line.append(mk("span", "records-detail-label", label), mk("span", "mono", value));
+    fold.appendChild(line);
   });
-  return Array.from(new Set(words)).join("；");
+  if (engine) fold.appendChild(mk("div", "records-detail records-engine", engine));
+  return fold;
+}
+
+// 在 Finder 中显示: the existing /api/open route reveals it, and refuses a path outside the project.
+async function revealRecord(path, statusEl) {
+  statusEl.className = "panel-status";
+  statusEl.textContent = t("处理中…");
+  try {
+    await apiPost("/api/open", { path: path, reveal: true });
+    statusEl.className = "panel-status ok";
+    statusEl.textContent = t("已在 Finder 中显示。");
+    statusEl.title = "";
+  } catch (err) {
+    statusEl.className = "panel-status err";
+    renderBlockingError(statusEl, t("无法在 Finder 中显示"), err);
+  }
+}
+
+function recordRow(row) {
+  const f = row.facts || {};
+  const div = mk("div", "records-row");
+  div.dataset.code = row.code;
+  const status = mk("div", "panel-status");
+  const head = mk("div", "records-head");
+  head.appendChild(mk("div", "records-kind", recordKindWord(row)));
+  // only a record the project holds; the file itself, or the folder of the variable cards
+  if (recordIsBackedUp(row) && f.exists && row.path.charAt(0) !== "/") {
+    head.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => revealRecord(row.path, status)));
+  }
+  div.append(head, mk("div", "records-count", recordCountText(row)));
+  const backup = recordBackupText(row);
+  if (backup) div.appendChild(mk("div", "records-backup", backup));
+  const problem = recordIssueText(row);
+  if (problem) div.appendChild(mk("div", "records-problem", problem));
+  const details = recordDetails(row);
+  if (details) div.appendChild(details);
+  div.appendChild(status);
+  return div;
 }
 
 async function openRecordsPanel() {
@@ -5141,7 +5263,7 @@ async function openRecordsPanel() {
   panelTitle.textContent = t("你的记录与备份");
   panelTitle.title = "";
   panelSubtitle.textContent = t("项目记录与备份");
-  panelBody.innerHTML = '<p class="empty-note">载入中…</p>';
+  panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderRecordsPanel(subject);
 }
@@ -5157,29 +5279,8 @@ async function renderRecordsPanel(subject) {
   }
   if (state.panelSubject !== subject) return;
   panelBody.innerHTML = "";
-  (data.rows || []).forEach((row) => {
-    const div = mk("div", "records-row");
-    div.appendChild(mk("div", "records-kind", RECORD_KIND_WORDS[row.code] || row.kind));
-    const where = mk("div", "records-path");
-    where.appendChild(mk("span", "mono", row.path));
-    const status = mk("div", "panel-status");
-    const inside = row.code !== "legacy" && row.path && row.path !== "-" && row.path.charAt(0) !== "/";
-    if (inside) {
-      // 在 Finder 中显示: the file itself, or the .researchos/ folder it will live in.
-      const target = (row.facts && row.facts.exists) ? row.path : ".researchos";
-      where.appendChild(mkButton("在 Finder 中显示", "err-detail-toggle", () => runOpenAction(target, true, status)));
-    }
-    div.append(where, mk("div", "records-count", recordCountText(row)));
-    // The version store is kept material beside the index, never snapshotted (12.12).
-    if (row.code !== "history") div.appendChild(mk("div", "fact-line", row.snapshot ? "最新快照：" + row.snapshot : "还没有快照"));
-    if (row.problems && row.problems.length) {
-      const problem = mk("div", "records-problem");
-      renderBlockingError(problem, recordIssueText(row) || "需要处理", row.problems.join("\n"));
-      div.appendChild(problem);
-    }
-    div.appendChild(status);
-    panelBody.appendChild(div);
-  });
+  panelBody.appendChild(mk("p", "records-intro", t("Research OS 为这个项目保存了这些记录，并在它们变化时备份。")));
+  (data.rows || []).forEach((row) => panelBody.appendChild(recordRow(row)));
 }
 
 document.getElementById("records-btn").addEventListener("click", () => { if (mayReplacePanel()) openRecordsPanel(); });

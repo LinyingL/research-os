@@ -90,7 +90,7 @@ def test_the_handback_opens_in_the_panel_in_the_order_of_21_2_with_each_part_as_
     out = _run(root, pid, report, r"""
 const T=window.ROI18N.t;
 await window.ROWorkspace.openHandback(REPORT);
-const num=cls('ws-hb-number').map(r=>({what:r.children[0].textContent,value:r.children[1].textContent,file:r.children[2].textContent,flag:r.children.slice(3).map(c=>c.textContent)}));
+const num=cls('ws-hb-number').map(r=>({what:r.children[0].textContent,value:r.children[1].textContent,file:r.children[2].textContent,link:r.children[2].tagName+'|'+r.children[2].className,path:r.children.filter(c=>c.classList.contains('ws-output-path')).map(c=>c.textContent),flag:r.children.filter(c=>c.classList.contains('ws-hb-flag')).map(c=>c.textContent)}));
 const outs=cls('ws-hb-outputs').map(g=>({kind:g.children[0].textContent,rows:cls('ws-hb-output',g).map(li=>({name:li.children[0].textContent,path:li.children.filter(c=>c.tagName==='CODE').map(c=>c.textContent),img:cls('ws-output-figure',li).map(i=>i.src)}))}));
 console.log(JSON.stringify({title:panelTitle.textContent,subtitle:panelSubtitle.textContent,parts:parts(),headline:cls('ws-hb-headline')[0].textContent,num,
   undone:cls('ws-hb-text')[0].textContent,decide:cls('ws-hb-decide')[0].children.map(c=>c.textContent),
@@ -103,9 +103,11 @@ console.log(JSON.stringify({title:panelTitle.textContent,subtitle:panelSubtitle.
     assert out["parts"] == ["headline", "part:关键数字", "part:没做完的", "part:需要你决定的", "part:尝试 #16：TopicShift volatility (16-17)", "part:代理建议",
                             "part:输出", "details:report", "button:运行日志"]   # the attempt it belongs to, with its assessment now, stands above the suggestion
     assert out["headline"] == FULL["headline"]
-    assert [(n["what"], n["value"], n["file"]) for n in out["num"]] == [
-        ("Sharpe ratio", "1.82", "results/sharpe.csv"), ("Members", "12", "results/sharpe.csv"),
-        ("Alpha", "9.99", "results/sharpe.csv"), ("Beta", "0.5", "results/gone.csv")]
+    # 21.7: each file by its name, opening as a text link (not a box), its path the quiet text under it
+    assert [(n["what"], n["value"], n["file"], n["path"]) for n in out["num"]] == [
+        ("Sharpe ratio", "1.82", "sharpe.csv", ["results/sharpe.csv"]), ("Members", "12", "sharpe.csv", ["results/sharpe.csv"]),
+        ("Alpha", "9.99", "sharpe.csv", ["results/sharpe.csv"]), ("Beta", "0.5", "gone.csv", ["results/gone.csv"])]
+    assert {n["link"] for n in out["num"]} == {"BUTTON|ws-text-link ws-file-link"}
     assert [n["flag"] for n in out["num"]] == [[], [], ["在所引文件里没找到这个数"], ["所引文件读不了，没法核对"]]   # found, found, missing, unreadable
     assert out["undone"] == FULL["undone"] and out["decide"] == FULL["decide"]
     assert out["chip"] == "现行|status-label tone-olive" and out["reason"] == "Holds on every member"
@@ -950,7 +952,7 @@ def test_a_long_key_number_is_shown_to_four_significant_digits_with_the_value_as
     out = _run(root, pid, report, r"""
 await window.ROWorkspace.openHandback(REPORT);
 console.log(JSON.stringify(cls('ws-hb-number').map(r=>({what:r.children[0].textContent, shown:r.children[1].textContent, title:r.children[1].title===undefined?null:r.children[1].title,
-  flags:r.children.slice(3).map(c=>c.textContent)}))));
+  flags:r.children.filter(c=>c.classList.contains('ws-hb-flag')).map(c=>c.textContent)}))));
 """, key_numbers=numbers)
     assert [(n["what"], n["shown"], n["title"]) for n in out] == [
         ("p-value", "9.509e-05", "9.509441061106294e-05"), ("Share", "0.008063", "0.008063173780026744"),

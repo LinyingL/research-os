@@ -716,13 +716,13 @@ _GLOSSARY_ENGLISH = (
     "Orphan inputs", "Orphan input",
     "Read by", "READ BY", "Written by", "WRITTEN BY",
     "Lineage chains", "Chains",
-    "Broken links", "not found)",
+    "Broken links", "(reads, not found)", "(writes, not found)",
     "Duplicate copies", "Other copies", "OTHER COPIES",
     "Open", "Reveal in Finder", "Close", "Loading",
 )
 _GLOSSARY_CHINESE = (
     "读取", "写出", "未识别到读写关联", "缺生成脚本", "被这些脚本读取",
-    "由这些脚本写出", "中间数据", "断链", "（读取，文件不存在）", "（写出，文件不存在）",
+    "由这些脚本写出", "中间数据", "断链", "断链：读取 {target}，文件不存在", "断链：写出 {target}，文件不存在",
     "同名文件", "其他同名文件", "打开", "在 Finder 中显示", "关闭", "载入中…",
 )
 

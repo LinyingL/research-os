@@ -2678,7 +2678,7 @@ answers.push(true);
 await lost.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
 console.log(JSON.stringify(Object.assign(state,{posted,asked:confirmQuestions,after:blockOf().all().filter(e=>e.classList.contains('ws-output')).map(e=>e.children[0].textContent)})));
 """)
-    assert out["lost"] == "Lost" + "tables/lost.csv" + "文件已不在" + "移除登记"
+    assert out["lost"] == "Lost" + "文件已不在" + "移除登记" + "tables/lost.csv"   # 21.7: the path is the quiet line after the title's own line
     assert out["lostWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0   # nothing to open, nothing to preview
     assert out["fitWords"] == ["Fit", "移除登记"] and out["fitImages"] == 1 and out["opened"] == 0
     assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]            # the gone ones are counted where they are listed
@@ -2687,7 +2687,7 @@ console.log(JSON.stringify(Object.assign(state,{posted,asked:confirmQuestions,af
     english = run(_OUTPUTS + _GONE + r"""
 console.log(JSON.stringify({text:lost.textContent, words:words(lost), label:lost.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
 """, lang="en")
-    assert english == {"text": "Lost" + "tables/lost.csv" + "File no longer there" + "Remove registration",
+    assert english == {"text": "Lost" + "File no longer there" + "Remove registration" + "tables/lost.csv",
                        "words": ["Remove registration"], "label": "Remove registration: Lost"}
 
 
@@ -2711,14 +2711,14 @@ answers.push(true);
 await far.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
 console.log(JSON.stringify(Object.assign(state,{posted})));
 """)
-    assert out["far"] == "Far" + "tables/far.csv" + "文件只在云端" + "移除登记" and "文件已不在" not in out["far"]
+    assert out["far"] == "Far" + "文件只在云端" + "移除登记" + "tables/far.csv" and "文件已不在" not in out["far"]
     assert out["farWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0 and out["opened"] == 0
     assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]          # counted where they are listed
     assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "tables/far.csv"}]]
     english = run(_OUTPUTS + _CLOUD + r"""
 console.log(JSON.stringify({text:far.textContent, words:words(far), label:far.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
 """, lang="en")
-    assert english == {"text": "Far" + "tables/far.csv" + "The file is only in the cloud" + "Remove registration",
+    assert english == {"text": "Far" + "The file is only in the cloud" + "Remove registration" + "tables/far.csv",
                        "words": ["Remove registration"], "label": "Remove registration: Far"}
 
 

@@ -542,7 +542,7 @@
     const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
     other.forEach((b) => s.appendChild(mk("p", "trace-break" + (b.tone === "quiet" ? " quiet" : ""), b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
     // 21.5: a script that names a file that is not there -- always a warning, with the file it may mean beside it.
-    (tr.broken || []).forEach((b) => s.appendChild(brokenLine(b, { bare: !!o.panel, refresh: refresh })));
+    (tr.broken || []).forEach((b) => s.appendChild(brokenLine(b, { bare: !!o.panel, refresh: refresh, here: page.path })));
     host.appendChild(s);
     return s;
   }
@@ -592,6 +592,12 @@
     const own = ownMark(item);
     if (own) el.appendChild(own);
     return el;
+  }
+
+  // A file's name: the last step of its project-relative path.
+  function fileName(path) {
+    const i = String(path).lastIndexOf("/");
+    return i >= 0 ? String(path).slice(i + 1) : String(path);
   }
 
   function posixDir(path) {
@@ -764,11 +770,15 @@
   // the actions out (the desk's side panel).
   function brokenLine(entry, ctx) {
     const box = mk("div", "dc-broken");
-    // 8.8's glossary: the brackets read 「（写出，文件不存在）」 or 「（读取，文件不存在）」, by the code (13.6).
-    const words = { script: entry.script || "", relation: t(entry.relation), target: entry.target || "" };
-    box.appendChild(mk("div", "dc-rel bad", entry.type === "writes"
-      ? t("断链：{script} {relation} {target}（写出，文件不存在）", words)
-      : t("断链：{script} {relation} {target}（读取，文件不存在）", words)));
+    // 21.7: on the script's own row (`ctx.here`, the path of the row or page the line sits on) the line does not name the
+    // script again and says 读取 / 写出 once; where the line is about another script it names it by its file name, and the
+    // path stands under it as quiet text. One sentence per direction and per case (13.6).
+    const writes = entry.type === "writes", own = !!ctx && !!ctx.here && entry.script === ctx.here;
+    const words = { script: fileName(entry.script || ""), target: entry.target || "" };
+    box.appendChild(mk("div", "dc-rel bad", own
+      ? (writes ? t("断链：写出 {target}，文件不存在", words) : t("断链：读取 {target}，文件不存在", words))
+      : (writes ? t("断链：{script} 写出 {target}，文件不存在", words) : t("断链：{script} 读取 {target}，文件不存在", words))));
+    if (!own && entry.script) box.appendChild(mk("div", "res-path dc-broken-path mono", entry.script));
     const candidates = entry.candidates || [];
     if (!candidates.length || (ctx && ctx.bare)) return box;
     const status = mk("div", "notice-status");
@@ -1413,10 +1423,11 @@
     const main = mk("div", "res-main");
     const name = link(item.title || item.label, "", () => openNode(item.id), t("打开它的来龙去脉"));
     main.appendChild(name);
-    if (item.path) main.appendChild(mk("span", "res-path mono", item.path));
     if (item.exists === false) main.appendChild(mk("span", "status-label tone-" + (item.in_paper ? "clay" : "plain"), t("文件不存在")));
     const own = ownMark(item);
     if (own) main.appendChild(own);
+    // 21.7: the path is the quiet second line under the name, never the line itself
+    if (item.path) main.appendChild(mk("span", "res-path mono", item.path));
     const cause = causeLine(item.trace);
     if (cause) main.appendChild(cause);
     const drafts = ctx && draftsLine(item, ctx);
@@ -1785,9 +1796,9 @@
     kind.append(icon(f.type), mk("span", null, t(f.type_label)));
     const main = mk("div", "dc-main");
     const head = mk("div", "dc-head");
-    // 21.5: a file an agent or a person registered shows the title it was registered with, its path beside it
-    if (f.title) head.append(link(f.title, "", () => openNode(f.id), t("打开它的来龙去脉")), mk("span", "res-path mono", f.path));
-    else head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
+    // 21.5, 21.7: a file is titled by the title an agent or a person registered it with, else by its file name; its path is
+    // the quiet second line under the title (below, after the marks), never the line itself
+    head.appendChild(link(f.title || fileName(f.path), "", () => openNode(f.id), t("打开它的来龙去脉")));
     // 21.5: a file that is not there, or a script that cannot be read, is a plain fact; the script that names the
     // missing file carries the warning.
     if (f.exists === false) head.appendChild(mk("span", "status-label tone-plain", t("文件不存在")));
@@ -1802,11 +1813,12 @@
     const own = ownMark(f);
     if (own) head.appendChild(own);
     main.appendChild(head);
+    main.appendChild(mk("div", "res-path dc-path mono", f.path));
     fileRelations(f).forEach((line) => main.appendChild(mk("div", "dc-rel", line)));
     const attempts = attemptsLine(f.attempts, ctx && ctx.labels);  // 21.5: the attempt it belongs to, if it has one
     if (attempts) main.appendChild(attempts);
     if (f.no_generator && ctx) main.appendChild(noGenerator(f, ctx));
-    (f.broken || []).forEach((b) => main.appendChild(brokenLine(b, ctx)));
+    (f.broken || []).forEach((b) => main.appendChild(brokenLine(b, Object.assign({}, ctx, { here: f.path }))));
     if (f.paper && ctx) {  // a table the paper includes, or one put out of it (21.5)
       const status = mk("div", "notice-status");
       const put = mk("div", "res-repair");

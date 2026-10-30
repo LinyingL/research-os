@@ -103,7 +103,7 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("app.html", "function refEndName(id, title) {", "\n}\n"),
     ("app.html", "function linkText(key) {", "\n}\n"),
     ("app.html", "function historyEntryText(entry) {", "\n}\n"),
-    ("app.html", "// -- 待复核 (9.6)", "// -- 记录 (9.2"),
+    ("app.html", "// -- 待复核 (9.6)", "// -- 你的记录与备份 (9.2"),
     ("app.html", "function coverageLine(item, kind) {", "\n}\n"),
     ("app.html", "async function variableAction(", "\n}\n"),
     ("app.html", "function cardReviewMember(review, standalone) {", "\n}\n"),
@@ -125,6 +125,8 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", "function verdictMove(prev, cur) {", "\n  }\n"),
     ("node.js", "function sourceWords(v) {", "\n  }\n"),
     # V11 (15.4, 15.5): a Stata .dta file in the panel -- rows by variables, its label, the table.
+    # 21.7: 你的记录与备份 -- what Research OS keeps, each with its last backup, and the folded 详情.
+    ("app.html", "// -- 你的记录与备份 (9.2", 'document.getElementById("records-btn")'),
     ("app.html", "function dtaPreview(info) {", "\n}\n"),
     # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock, llmSettingBox (「模型服务」) and their helpers
     # (the language, what became of each cell, the refusals in words, the chevron).
@@ -2940,7 +2942,9 @@ def test_18_2_a_comment_on_an_object_is_备注_and_a_note_is_only_a_document_in_
         '<p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到笔记与报告。</p>',
         'if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], '
         't("提到这个文件的笔记与报告"));']
-    assert 'notes: "备注",' in APP_HTML.read_text(encoding="utf-8") and ' 条备注，写在 ' in APP_HTML.read_text(encoding="utf-8")
+    # 21.7: the 你的记录与备份 panel says the notes' record as 备注 ("Comments") and counts them with the same counted word
+    assert 'case "notes": return t("备注", { n: 2 });' in APP_HTML.read_text(encoding="utf-8")
+    assert 't("{n} 条备注", { n: f.notes })' in APP_HTML.read_text(encoding="utf-8")
     workspace_js = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
     assert 't("笔记", { n: 1 })' in workspace_js and "备注" not in workspace_js
     # The engine's sentences for the page.

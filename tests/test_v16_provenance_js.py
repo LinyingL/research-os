@@ -37,7 +37,8 @@ global.settle = () => new Promise((r) => setTimeout(r, 0));
 global.text = (e) => e.textContent;
 global.byClass = (host, c) => host.all().filter((k) => k.cls.has(c));
 global.buttons = (host, label) => host.all().filter((k) => k.tag === "BUTTON" && k.textContent === label);
-global.rowOf = (host, cls, path) => host.all().find((e) => e.cls.has(cls) && e.all().some((k) => k.cls.has("node-link") && k.textContent === path));
+// a row is found by its path, which stands as the quiet second line under its title (21.7)
+global.rowOf = (host, cls, path) => host.all().find((e) => e.cls.has(cls) && e.all().some((k) => k.cls.has("res-path") && !k.cls.has("dc-broken-path") && k.textContent === path));
 global.toggle = (details) => { details.open = !details.open; (details.on.toggle || []).forEach((f) => f()); };
 %(node)s
 global.RONode = window.RONode;
@@ -140,8 +141,8 @@ def test_data_code_shows_a_download_quietly_a_broken_link_as_the_warning_with_th
     assert out["raw"]["lines"][1:] == [("没有生成脚本" if zh else "No script writes it") + words["assign"]]
     assert out["raw"]["tags"] == [] and out["raw"]["clay"] is False and out["raw"]["action"] == 1
     # the broken link: the line, the nearest candidate, and the rest folded
-    line = (f"断链：{CHECK} 读取 environment/R_packages.lock.csv（读取，文件不存在）" if zh else
-            f"Broken link: {CHECK} reads environment/R_packages.lock.csv (file not found)")
+    line = ("断链：读取 environment/R_packages.lock.csv，文件不存在" if zh else
+            "Broken link: reads environment/R_packages.lock.csv, file not found")
     assert out["check"]["bad"] == [line] and out["checkBadClay"] == ["dc-rel bad"]
     assert out["check"]["maybe"] == [("是这个吗？" if zh else "Is it this one?") + LOCK + words["yes"]]
     assert out["check"]["yes"] == 4  # the nearest, and the three others folded under it
@@ -182,7 +183,7 @@ global.apiPost = async () => ({ ok: true });
     tags: byClass(row, "status-label").map((e) => [text(e), e.className]), action: buttons(row, "指定生成它的脚本").length,
     quietTags: byClass(quiet, "status-label").length, quietText: byClass(quiet, "dc-nogen").map(text) };
   byClass(host, "dc-filter")[1].click();
-  out.shown = byClass(host, "dc-row").map((r) => text(byClass(r, "node-link")[0]));
+  out.shown = byClass(host, "dc-row").map((r) => text(byClass(r, "dc-path")[0]));
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """ % {"data": _json(data), "raw": _json(RAW), "fallback": _json(FALLBACK)}, language=None)
@@ -334,8 +335,8 @@ def test_a_node_page_draws_its_gaps_in_the_tone_the_paper_gives_them_and_a_broke
     # a script in no attempt: quiet, with 归入尝试
     assert out["check"]["gaps"] == [["trace-gap wide quiet", ["还没有归入任何尝试" if zh else "Not linked to an attempt yet"], [], [attempt]]]
     # its broken link, always a warning, with the nearest file it may mean; the file it names is a plain fact in its column
-    assert out["check"]["bad"] == [f"断链：{CHECK} 读取 environment/R_packages.lock.csv（读取，文件不存在）" if zh else
-                                   f"Broken link: {CHECK} reads environment/R_packages.lock.csv (file not found)"]
+    assert out["check"]["bad"] == ["断链：读取 environment/R_packages.lock.csv，文件不存在" if zh else
+                                   "Broken link: reads environment/R_packages.lock.csv, file not found"]
     assert out["check"]["maybe"] == [("是这个吗？" if zh else "Is it this one?") + LOCK + ("是" if zh else "Yes")]
     assert out["check"]["yes"] == 4
     assert [f for f in out["check"]["flags"] if f[0] == ("文件不存在" if zh else "File not found")] == [

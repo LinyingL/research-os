@@ -49,6 +49,7 @@ import json
 import os
 import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterable
@@ -171,7 +172,8 @@ class Row:
     problems: tuple[str, ...] = ()
     #: For the app, which words a row in its own language (8.8): a stable
     #: name for the kind (`judgements`, `mappings`, `attempts`,
-    #: `attempts_config`, `canvas`, `variables`, `legacy`), the numbers and
+    #: `attempts_config`, `canvas`, `variables`, `notes`, `decisions`,
+    #: `papers`, `tasks`, `stata`, `history`, `legacy`), the numbers and
     #: states behind `count`, and `issues` -- machine-readable names of
     #: `problems` (`dataless`, `unreadable`, `conflict_copy`, `invalid`,
     #: `refused_entries`, `migration_unfinished`, `needs_migration`, or a
@@ -182,8 +184,16 @@ class Row:
     def payload(self) -> dict[str, Any]:
         return {
             "kind": self.kind, "path": self.path, "count": self.count, "snapshot": self.snapshot,
+            "backed_up_at": backup_time(self.snapshot),
             "problems": list(self.problems), "code": self.code, "facts": dict(self.facts),
         }
+
+
+def backup_time(snapshot: str | None) -> str | None:
+    """When the newest backup of a record was taken (21.7), as the page reads it: the UTC time in the backup's own name
+    (`records.files.snapshot_time`), written `2026-10-30T09:15:02.123Z`. None when it has no backup."""
+    taken = record_files.snapshot_time(snapshot) if snapshot else None
+    return None if taken is None else taken.strftime("%Y-%m-%dT%H:%M:%S.") + f"{taken.microsecond // 1000:03d}Z"
 
 
 def _shown(path: Path, root: Path) -> str:
@@ -197,6 +207,11 @@ def _snapshot(root: Path, path: Path) -> str | None:
     """The latest backup of `path`: a daily snapshot or a copy taken before a write."""
     newest = record_files.newest_snapshot(root, path, writes=True)
     return newest.name if newest is not None else None
+
+
+def _taken(name: str) -> tuple[datetime, str]:
+    """A backup's sort key: when it was taken (`records.files.snapshot_time`), then its name."""
+    return record_files.snapshot_time(name) or datetime.min.replace(tzinfo=timezone.utc), name
 
 
 def _file_problems(path: Path, issues: list[str] | None = None) -> list[str]:
@@ -404,7 +419,8 @@ def _variables_row(conn: Connection | None, root: Path) -> Row:
     for card in found:
         snap = record_files.newest_snapshot(root, directory / card["id"] / variables_mod.LOG_FILENAME,
                                             variables_mod.snapshot_subdir(card["id"]))
-        if snap is not None and (newest is None or snap.name > newest):
+        # the newest by the time in the name: names of different cards, or of a log and a version file, do not sort by it
+        if snap is not None and (newest is None or _taken(snap.name) > _taken(newest)):
             newest = snap.name
     return Row("Variable definition cards", shown, count, newest, tuple(dict.fromkeys(problems)), code="variables",
                facts={"exists": True, "cards": len(found), "drafts": drafts, "issues": list(dict.fromkeys(issues))})
@@ -471,6 +487,62 @@ def _decisions_row(root: Path) -> Row:
     facts["issues"] = [decision.reason] if decision.reason else []
     return Row("Approved decisions", _shown(path, root), count, _snapshot(root, path), problems,
                code="decisions", facts=facts)
+
+
+def _papers_row(root: Path) -> Row:
+    """12.13/21.5's marks: the drafts set as the paper and the figures and tables put out of it, in the one file
+    `papers.toml`, and what stands between Research OS and trusting it (9.3's rules, `records.papers`)."""
+    from researchos.records import papers as papers_mod  # noqa: PLC0415 -- leaf use
+
+    path = papers_mod.papers_path(root)
+    drafts, decision = papers_mod.assess(root)
+    files, _same = papers_mod.assess_files(root)
+    facts: dict[str, Any] = {"file_state": drafts.state.value, "exists": path.exists()}
+    if drafts.ledger is not None and files.ledger is not None:
+        marked, out = len(papers_mod.marked_from(drafts)), len(papers_mod.excluded_from(files))
+        count = f"{marked} draft(s) set as the paper, {out} figure(s) or table(s) put out of it"
+        facts.update(marked=marked, out=out)
+    elif drafts.state is RecordState.ABSENT:
+        count = "none yet"
+    else:
+        count = drafts.state.value
+    problems = () if decision.reason is None else (f"{decision.reason}: {decision.detail or drafts.error or ''}".rstrip(": "),)
+    facts["issues"] = [decision.reason] if decision.reason else []
+    return Row("Paper drafts and files not in the paper", _shown(path, root), count, _snapshot(root, path), problems,
+               code="papers", facts=facts)
+
+
+def _tasks_row(root: Path) -> Row:
+    """The task list of 项目首页 (`research/tasks.json`): how many tasks, how many are done. The file is the
+    project's, not under `.researchos/`; its backups are the ones `workspace` takes before it writes."""
+    from researchos import workspace  # noqa: PLC0415 -- the webapp-side module imports this one's callers
+
+    path = root / workspace.TASKS_PATH
+    issues: list[str] = []
+    problems = _file_problems(path, issues)
+    facts: dict[str, Any] = {"exists": path.exists(), "issues": issues}
+    got = record_files.read_record(path)
+    if got.state is RecordState.PRESENT:
+        try:
+            found = json.loads(got.text or "")
+            tasks = found if isinstance(found, list) else None
+        except ValueError:
+            tasks = None
+        if tasks is None:
+            count = "not valid task data"
+            problems.append("research/tasks.json is not a list of tasks")
+            issues.append("invalid")
+        else:
+            done = sum(1 for task in tasks if isinstance(task, dict) and task.get("done") is True)
+            count = f"{len(tasks)} task(s), {done} done"
+            facts.update(tasks=len(tasks), done=done)
+    elif got.state is RecordState.ABSENT:
+        count = "none yet"
+    else:
+        count = got.state.value
+    facts["issues"] = list(dict.fromkeys(issues))
+    return Row("Task list", _shown(path, root), count, _snapshot(root, path), tuple(dict.fromkeys(problems)),
+               code="tasks", facts=facts)
 
 
 def _stata_row(root: Path) -> Row | None:
@@ -622,7 +694,7 @@ def inventory(conn: Connection | None, root: Path) -> list[Row]:
     root = Path(root)
     rows = [
         _judgement_row(conn, root), _mapping_row(root), *_attempt_rows(root), _canvas_row(root),
-        _variables_row(conn, root), _notes_row(conn, root), _decisions_row(root),
+        _variables_row(conn, root), _notes_row(conn, root), _decisions_row(root), _papers_row(root), _tasks_row(root),
     ]
     stata_row = _stata_row(root)
     if stata_row is not None:

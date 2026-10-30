@@ -295,9 +295,9 @@ _BLOCK = r"""
   out.block = [figures, data].map((h) => [byClass(h, "registered-outputs").length, words.some((w) => h.all().some((e) => text(e) === w))]);
   out.figureRows = Object.fromEntries(figures.all().filter((e) => e.cls.has("res-row")).map((r) => [text(byClass(r, "res-path")[0]),
     [text(r.all().find((k) => k.cls.has("node-link"))), byClass(r, "res-attempts").map(text)]]));
-  // a row is named by its head: the title it was registered with and its path, or its path alone
+  // a row is named by its title -- the one it was registered with, else its file name -- and the path under it (21.7)
   out.dataRows = Object.fromEntries(data.all().filter((e) => e.cls.has("dc-row")).map((r) => [
-    byClass(r, "dc-head")[0].kids.filter((k) => typeof k !== "string" && (k.cls.has("node-link") || k.cls.has("res-path"))).map(text).join(" | "),
+    text(byClass(byClass(r, "dc-head")[0], "node-link")[0]) + " | " + text(byClass(r, "dc-path")[0]),
     byClass(r, "res-attempts").map(text)]));
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -330,9 +330,9 @@ global.apiPost = async () => ({ ok: true });
     assert rows["Cleaning script | agent_out/clean.py"] == [attempt + a2]
     assert rows["Cleaned data | agent_out/clean.csv"] == [attempt + a2]
     assert rows[f"The panel | {PKG}/Data/panel_clean.csv"] == [attempt + a2]
-    assert rows[f"{PKG}/code/03-stray.py"] == [attempt + a1]  # filed under an attempt by the researcher
-    assert rows[f"{PKG}/code/02-plots.py"] == [attempt + a1]  # the step number its attempt names
-    assert rows[f"{PKG}/Data/unused.csv"] == []
+    assert rows[f"03-stray.py | {PKG}/code/03-stray.py"] == [attempt + a1]  # filed under an attempt by the researcher
+    assert rows[f"02-plots.py | {PKG}/code/02-plots.py"] == [attempt + a1]  # the step number its attempt names
+    assert rows[f"unused.csv | {PKG}/Data/unused.csv"] == []
 
 
 @needs_node

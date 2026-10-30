@@ -68,6 +68,12 @@
   function restoreFocus(root, snap) { return !!snap && focusKey(root, snap.key, snap); }
   // A control named by the task it belongs to: the same visible words, a longer accessible name (12.11).
   function named(node, words) { node.setAttribute("aria-label", words); return node; }
+  // A file's name, the last step of its project-relative path, and the path as the quiet second line under it (DESIGN.md
+  // 21.7): a path is never the line itself. A file at the project's root has no second line to say.
+  function fileName(path) { const i = String(path).lastIndexOf("/"); return i >= 0 ? String(path).slice(i + 1) : String(path); }
+  function pathNote(path) { return String(path) !== fileName(path) ? el("code", "ws-output-path", path) : null; }
+  // Opening a file or a record: a text link, as 21.8 draws what only navigates -- never a box.
+  function openLink(words, action) { return button(words, action, "ws-text-link ws-file-link"); }
 
   let epoch = 0, request = 0, docRequest = 0, createRequest = 0;
   // Paths a document names that are not among the listed files (the list stops at the engine's limit), and what the
@@ -717,7 +723,9 @@
       const group = el("div", "ws-research-group"); group.append(el("h3", null, label));
       (context[key] || []).forEach((value) => {
         const row = el("div", "ws-research-link"), choice = choices.find((item) => item.id === valueKey(value));
-        const view = button(choice ? choice.label : valueKey(value), () => open(value), "btn btn-small ws-file-link"); row.append(view);
+        // a file is named by its file name and its path is the quiet line under it (21.7); the others by their label
+        const isFile = key === "materials" || key === "references";
+        const view = openLink(isFile ? fileName(valueKey(value)) : (choice ? choice.label : valueKey(value)), () => open(value)); row.append(view);
         if (!ui.previewing && editable()) row.append(named(button(t("移除"), () => { context[key] = context[key].filter((item) => valueKey(item) !== valueKey(value)); if ((key === "references" || key === "materials") && !context.references.includes(value) && !context.materials.includes(value)) delete context.purposes[value]; changed(); redrawResearchRecord(); }), t("移除：{task}", { task: choice ? choice.label : valueKey(value) })));
         if (key === "references" || key === "materials") {
           if (ui.previewing) { if (context.purposes[value]) row.append(el("span", "ws-research-purpose", context.purposes[value])); }
@@ -726,6 +734,7 @@
             purpose.setAttribute("aria-label", t("用途：{path}", { path: value })); purpose.addEventListener("input", () => { context.purposes[value] = purpose.value; changed(); }); row.append(purpose);
           }
         }
+        if (isFile && pathNote(valueKey(value))) row.append(pathNote(valueKey(value)));
         group.append(row);
       });
       if (!ui.previewing && editable()) {
@@ -746,7 +755,7 @@
       const materials = el("div", "ws-research-group"); materials.append(el("h3", null, t("相关输出")));
       const paths = new Set(); outputs.concat(variables).forEach((item) => {
         if (!item.path || paths.has(item.path)) return; paths.add(item.path);
-        const row = el("div", "ws-research-link"); row.append(button(item.path, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }, "btn btn-small ws-file-link"));
+        const row = el("div", "ws-research-link"); row.append(openLink(fileName(item.path), () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }));
         if (!item.variable_card && variables.some((value) => value.path === item.path) && editable()) {
           const cardId = keyed(input("text", t("变量 ID")), "research-import:" + item.path); cardId.setAttribute("aria-label", t("变量 ID"));
           const feedback = el("span", "ws-status");
@@ -769,7 +778,9 @@
             } catch (err) { if (live(mark) && draft === target) { importButton.disabled = false; status(feedback, errorWords(t("没能导入变量草稿。"), err), "err"); } }
           }); row.append(cardId, importButton, feedback);
         }
-        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); })); materials.append(row);
+        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); }));
+        if (pathNote(item.path)) row.append(pathNote(item.path));
+        materials.append(row);
       });
       if (variables.length) materials.append(el("p", "ws-empty", t("变量草稿仍需单独审阅和确认。")));
       box.append(materials);
@@ -1736,7 +1747,8 @@
       const row = el("li", "ws-hb-number"), shown = numberWords(item.value), value = el("code", "ws-hb-value", shown);
       if (shown !== item.value) value.title = item.value;
       row.append(el("span", "ws-hb-what", item.what), value,
-        named(button(item.file, () => { if (typeof openFilePanel === "function") openFilePanel(item.file); }, "btn btn-small ws-file-link"), t("打开：{file}", { file: item.file })));
+        named(openLink(fileName(item.file), () => { if (typeof openFilePanel === "function") openFilePanel(item.file); }), t("打开：{file}", { file: item.file })));
+      if (pathNote(item.file)) row.append(pathNote(item.file));   // 21.7: the file's name opens it; its path is the quiet line under
       if (item.check === "missing") row.append(el("span", "ws-status err ws-hb-flag", t("在所引文件里没找到这个数")));
       else if (item.check === "unreadable") row.append(el("span", "ws-agent-quiet ws-hb-flag", t("所引文件读不了，没法核对")));
       list.append(row);
@@ -1907,13 +1919,14 @@
       const group = el("div", "ws-hb-outputs"), list = el("ul", "ws-outputs-files");
       group.append(el("h4", "ws-outputs-kind", kinds[kind] || kind));
       view.outputs.filter((item) => item.kind === kind).forEach((item) => {
-        const li = el("li", "ws-hb-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+        // 21.2, 21.7: each by its title (else its file name), opening as a text link, the path the quiet line under it
+        const li = el("li", "ws-hb-output"), name = item.title || fileName(item.path), gone = item.state === "gone", cloud = item.state === "cloud";
         if (gone || cloud) li.append(el("span", null, name));
-        else li.append(named(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }, "btn btn-small ws-file-link"), t("打开：{file}", { file: item.path })));
-        if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+        else li.append(named(openLink(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), t("打开：{file}", { file: item.path })));
         if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
         if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
         if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
+        if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
         if (!gone && !cloud && kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
           const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
           image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
@@ -2674,17 +2687,18 @@
       (opened && opened.all) || {}]);
   }
   function outputRow(task, item, locked) {
-    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+    // 21.7: by its title, else its file name; opening is a text link and the path is the quiet line under the title
+    const li = el("li", "ws-output"), name = item.title || fileName(item.path), gone = item.state === "gone", cloud = item.state === "cloud";
     // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview;
     // so does one whose file is there but only in the cloud, which cannot be read on this Mac
     if (gone || cloud) li.append(el("span", null, name));
-    else li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
-    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+    else li.append(keyed(openLink(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
     if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
     if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
     if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
     const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
     remove.disabled = locked; li.append(remove);
+    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
     if (!gone && !cloud && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
       const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
       image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
@@ -3808,9 +3822,14 @@
     const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("提到它的笔记与报告")));
     records.forEach((record) => {
       const row = el("div", "ws-related-record");
-      row.append(button(record.title || record.report, () => openResearchRecord(record.report), "btn btn-small ws-file-link"));
+      row.append(openLink(record.title || t("报告", { n: 1 }), () => openResearchRecord(record.report)));
       if (record.question) row.append(el("p", null, record.question));
-      (record.matches || []).forEach((match) => { const line = el("p", "ws-research-purpose"); line.append(el("span", "mono", match.path)); if (match.purpose) line.append(" — " + match.purpose); row.append(line); });
+      // 21.7: a file the document mentions by its file name and what it is for; the path is the quiet line under
+      (record.matches || []).forEach((match) => {
+        const line = el("p", "ws-research-purpose"), where = pathNote(match.path);
+        line.append(el("span", "mono", fileName(match.path))); if (match.purpose) line.append(" — " + match.purpose);
+        row.append(line); if (where) row.append(where);
+      });
       (record.variables || []).forEach((ref) => row.append(el("p", null, t("所用变量版本：{id} v{version}", ref))));
       box.append(row);
     }); target.append(box);

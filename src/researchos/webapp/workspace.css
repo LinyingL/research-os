@@ -221,7 +221,10 @@
 .ws-outputs-files { list-style: none; margin: 0; padding: 0; }
 .ws-outputs-process > .ws-outputs-files { padding-left: 1.2rem; }
 .ws-output { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .6rem; padding: .1rem 0; overflow-wrap: anywhere; }
-.ws-output-path { font-family: var(--font-mono); font-size: .74rem; color: var(--ink-soft); }
+.ws-output-path { font-family: var(--font-mono); font-size: .75rem; color: var(--ink-soft); overflow-wrap: anywhere; }
+/* 21.7: a path is the quiet second line under the title of its row, never the line itself. */
+.ws-output > .ws-output-path, .ws-hb-number > .ws-output-path, .ws-research-link > .ws-output-path { flex: 0 0 100%; }
+.ws-related-record > .ws-output-path { display: block; margin: -.15rem 0 .3rem; }
 .ws-output-preview { flex: 0 0 100%; }
 .ws-output-figure { display: block; max-width: 160px; max-height: 110px; object-fit: contain; }
 .ws-outputs-line { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; overflow-wrap: anywhere; }
@@ -300,7 +303,7 @@
 .ws-hb-choose { display: flex; flex-direction: column; gap: .4rem; }
 .ws-hb-choose .form-input { width: 100%; box-sizing: border-box; }
 .ws-hb-output { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .2rem 0; }
-.ws-hb-output .ws-output-path { flex: 0 0 100%; color: var(--ink-soft); font-size: .76rem; overflow-wrap: anywhere; }
+.ws-hb-output .ws-output-path { flex: 0 0 100%; color: var(--ink-soft); font-size: .75rem; overflow-wrap: anywhere; }
 .ws-hb-outputs .ws-outputs-kind { margin: .3rem 0 0; }
 .ws-hb-report > .res-draft-summary { font-size: inherit; padding: .2rem 0; gap: .45rem; }
 .ws-hb-report[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
@@ -309,6 +312,9 @@
 .ws-hb > .ws-hb-link { align-self: flex-start; }
 .ws-hb-link { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .ws-hb-link:hover { color: var(--ink-soft); }
+/* Opening a file or a record is a text link (21.8), the handback's own style wherever the page opens something. */
+.ws-text-link { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; overflow-wrap: anywhere; text-align: left; min-width: 0; }
+.ws-text-link:hover { color: var(--ink-soft); }
 
 /* 现在在做什么 (DESIGN.md 21.4): the top of 项目首页 -- the attempts in progress and the one list of what waits for the
    person, side by side at desktop width and stacked when narrow. Ink and weight, no boxes; the warning colour stays on what

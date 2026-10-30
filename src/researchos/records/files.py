@@ -512,3 +512,19 @@ def newest_snapshot(project_root: str | Path, path: str | Path, subdir: str | No
         found = sorted(found + _snapshots_of(backups, path.name, path.suffix, writes=True),
                        key=lambda item: (item[0], item[1].name))
     return found[-1][1] if found else None
+
+
+_STAMP_IN_NAME = re.compile(rf"\.{_STAMP_RE}(?:\.write)?(?:\.[^./]*)?$")
+
+
+def snapshot_time(name: str | Path) -> datetime | None:
+    """When a backup was taken, from the stamp its name carries (the UTC time `_write_snapshot` and the pre-write
+    copies of `mapedit.write_backup_bytes` write into it) -- the backup store's own record, never the file's modified
+    time, which a sync or a restore moves. None for a name that carries no stamp."""
+    found = _STAMP_IN_NAME.search(Path(name).name)
+    if found is None:
+        return None
+    try:
+        return datetime.strptime(found.group(1), "%Y%m%dT%H%M%S%f").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None

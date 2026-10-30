@@ -1124,7 +1124,7 @@ Binding glossary (one term per concept, everywhere it appears):
 | WRITTEN BY | 由这些脚本写出 |
 | Lineage chains | 血缘链 |
 | Broken links | 断链 |
-| (reads, not found) / (writes, not found) | （读取，文件不存在）/（写出，文件不存在） |
+| (reads, not found) / (writes, not found) | 断链：读取 X，文件不存在 / 断链：写出 X，文件不存在（21.7；曾是（读取，文件不存在）/（写出，文件不存在）） |
 | Duplicate copies | 同名拷贝 |
 | OTHER COPIES | 其它拷贝 |
 | Open | 打开 |
@@ -6802,7 +6802,7 @@ engine's gap (「这条尝试还没有添加任何文件」) -- and the two guid
   or a report's record files”).
 - **备份 / 你的记录与备份.** The sidebar's foot says 备份 (“Backups”), with the hover 「查看你的记录有哪些，以及最近一次备份的
   时间」; the panel it opens is titled 「你的记录与备份」; the commit tick reads 「先把你的记录提交一次」 and the engine's
-  sentences about those files (the GitHub plan, the migration refusals) say 你的记录. What is written to git is not
+  sentences about those files (the GitHub plan, the migration refusals) say 你的记录; the panel's lines are 21.7's. What is written to git is not
   renamed: the commit message stays 「Research OS：人工记录」, and the tick, which tells the person what the commit will be
   called, quotes it.
 - **运行日志.** The run's button and its name (「运行日志：<task>」), the failure sentence, the 越界 sentence and the line of
@@ -6824,12 +6824,32 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 
 ### 21.7 Storage and engine details stay out of the way (amends 8.8)
 
-- **你的记录与备份** (opened by the sidebar's 备份, 21.6) says in words what is kept — research assessments, link
-  judgments, hand-drawn links, the route map's layout, variable cards, the
-  attempt table — each with when it was last backed up and 「在 Finder 中显
-  示」; file names and snapshot names are under 「详情」.
-- Paths are a quiet second line under a title, never the line itself; an
-  agent and model are named once per handback, not under every file.
+- **你的记录与备份** (opened by the sidebar's 备份, 21.6) says in words what is kept, one line per record (*B4-2*): 研究判断,
+  尝试表 (which file it is and what its columns are), 连线确认 (the link judgments of 13.4), 手画的连线, 研究路线的布局, 变量卡,
+  备注, 经 PI 批准的决定, 论文正文与不属于论文 (`papers.toml`), 任务列表 (`research/tasks.json`), Stata 全局变量指向的文件夹
+  when the project has the file, and 版本历史 (kept material beside the index, not a record); the marks of the paper and the
+  task list are rows of the inventory (`researchos records` lists them too). A line is its title, what the
+  file holds (「3 条尝试，其中 2 条有研究判断」), 「最近一次备份：今天 14:02」 and 「在 Finder 中显示」; the file's place, the
+  newest backup's name and the engine's own English for a problem are folded under 「详情」 (12.13's chevron).
+  - *When it was last backed up* is the time in the newest backup's own name in `.researchos/backups/` (a daily snapshot or
+    the copy taken before a write, whichever is later; `inventory.backup_time`, the API's `backed_up_at`) — never a file's
+    modified time —, said as the desk says a time (今天 14:02, 10月4日, 2025年3月4日). A record never copied says
+    「还没有备份过」; the version store is not copied and says neither.
+  - *A problem* keeps its sentence in words on its line, in clay (内容无法解析, 旁边有同步冲突副本, …), not behind 「详情」.
+  - *「在 Finder 中显示」* is offered for a record the project holds and goes through the existing `/api/open` route, which
+    refuses a path outside the project (`..`, an absolute path, a link that leads out) before anything runs. The tick
+    「先把你的记录提交一次」 is unchanged.
+- **Paths are a quiet second line under a title, never the line itself** (*B4-2*). On 数据与代码 a row is titled by the title
+  an agent or a person registered the file with, else by its file name; its path is the small quiet line under the title
+  (the filters read the engine's data, so they still count it). 图表与论断's rows put the path under the name. In a handback
+  each key number's file and each output is titled by its registered title, else by its file name, and that title opens it as
+  a text link, never a box, with the path under it; the agent and model are named once, in the panel's head. The same goes for
+  the files a task lists on 项目首页, the files of a report's 要点 (研究材料, 文献文件, 相关输出), the files a document
+  mentions on a node page and the files changed in an attempt's panel.
+- **A 断链 line** does not say its row's path or its direction twice: on the script's own row or page it reads 「断链：读取 X，
+  文件不存在」 (写出 for a write; “Broken link: reads X, file not found”); where it is about another script it names it by its
+  file name, 「断链：复核诊断.R 读取 X，文件不存在」, with the script's path as quiet text under the line. (This replaces 8.8's
+  glossary row for “(reads, not found)”.)
 - **变量** gets 「新建变量卡」, which creates the draft through the same code as
   `researchos variable new`; the page no longer tells the person to use a
   terminal.

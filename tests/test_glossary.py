@@ -317,19 +317,22 @@ def test_history_says_research_assessment_where_an_attempts_assessment_did_not_c
 
 @needs_node
 def test_the_records_panel_and_the_attempt_form_call_the_verdict_cell_the_research_assessment():
-    """DESIGN 13.4 / 18.2: the 记录 panel lists the attempts record as 尝试的研究判断
-    and counts the rows that have one as 有研究判断 -- not 结论 -- and the attempt
-    form's label for the cell, where the project's header is missing, is 研究判断
-    too (app.html's own code, under node)."""
-    src = APP_HTML.read_text(encoding="utf-8")
-    start = src.index("const RECORD_KIND_WORDS = {")
-    kinds = src[start:src.index("const RECORD_ISSUE_WORDS", start)]
-    count = src[src.index("function recordCountText(row) {"):]
-    count = count[:count.index("\n}\n") + 3]
-    script = (kinds + count + "\nprocess.stdout.write(JSON.stringify([RECORD_KIND_WORDS.attempts, "
-              'recordCountText({ code: "attempts", facts: { state: "present", attempts: 7, with_verdict: 5 } })]));\n')
-    assert _node(script) == ["尝试的研究判断", "7 条尝试，其中 5 条有研究判断"]
-    assert "结论" not in kinds + count
+    """DESIGN 13.4 / 18.2 / 21.7: the 你的记录与备份 panel lists the attempts record as 研究判断 (21.7 names it so; it was
+    尝试的研究判断) and counts the rows that have one as 有研究判断 -- not 结论 -- in both languages, and the attempt
+    form's label for the cell, where the project's header is missing, is 研究判断 too (app.html's own code, under
+    node)."""
+    from test_v9_language import FILL_VARS_LINE, T_LINE, _app_function, _i18n_source
+
+    shown_code = "".join(_app_function(head) for head in ("function recordKindWord(row) {", "function recordCountText(row) {",
+                                                          "function recordBytesText(bytes) {"))
+    for language, expected in ((None, ["研究判断", "7 条尝试，其中 5 条有研究判断"]),
+                               ("en", ["Research assessment", "7 attempts, 5 with a research assessment"])):
+        i18n = "global.window = {};\n" + (f'window.ROI18N_SAVED = "{language}";\n' + _i18n_source() if language else "")
+        script = (i18n + FILL_VARS_LINE + "\n" + T_LINE + "\n" + shown_code
+                  + '\nprocess.stdout.write(JSON.stringify([recordKindWord({ code: "attempts" }), '
+                    'recordCountText({ code: "attempts", facts: { state: "present", attempts: 7, with_verdict: 5 } })]));\n')
+        assert _node(script) == expected
+    assert "结论" not in shown_code
     from test_v10_desk_panel import _form_run
 
     for lang, assessment in [("zh", "研究判断"), ("en", "Research assessment")]:

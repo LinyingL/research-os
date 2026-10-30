@@ -566,7 +566,7 @@ process.stdout.write(JSON.stringify([
     assert out == [True, False, True, False]
     item = html[html.index("function renderReviewItem("):html.index("function sourceFiles(")]
     assert "candidateApplied(c, item.verdict)" in item and "已用到这条关联上" in item
-    panel = html[html.index("async function renderReviewPanel("):html.index("// -- 记录 (9.2")]
+    panel = html[html.index("async function renderReviewPanel("):html.index("// -- 你的记录与备份 (9.2")]
     assert "offer.origin" in panel and "scrollIntoView" in panel
 
 

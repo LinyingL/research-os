@@ -1524,8 +1524,11 @@
         main.appendChild(mk("div", "tl-what", t("这一行有改动")));
       } else {
         const what = mk("div", "tl-what");
-        what.appendChild(rowLink(e.file.path || e.file.node, "mono", () => leaveTo(e.file.node), t("打开它的详情页")));
-        main.append(what, mk("div", "tl-meta", t("文件有改动")));
+        // 21.7: the file's name is the title and opens its page; its path is the quiet line under it
+        what.appendChild(rowLink(e.file.path ? e.file.path.split("/").pop() : e.file.node, "", () => leaveTo(e.file.node), t("打开它的详情页")));
+        main.appendChild(what);
+        if (e.file.path && e.file.path.indexOf("/") >= 0) main.appendChild(mk("div", "tl-meta mono", e.file.path));
+        main.appendChild(mk("div", "tl-meta", t("文件有改动")));
       }
       li.appendChild(main);
       ul.appendChild(li);
