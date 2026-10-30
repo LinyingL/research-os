@@ -155,9 +155,13 @@ class CardRefused(V.VariableError):
     question_open, copy_missing, nothing_confirmed, already_abandoned,
     not_abandoned, would_lose, question_changed, changed, region_missing."""
 
-    def __init__(self, code: str, message: str, *, message_zh: str | None = None, decision: TrustDecision | None = None) -> None:
+    def __init__(self, code: str, message: str, *, message_zh: str | None = None, decision: TrustDecision | None = None,
+                 reason: str | None = None, values: dict[str, str] | None = None) -> None:
         super().__init__(code, message, message_zh=message_zh)
         self.decision = decision
+        #: a finer cause the page words itself (`new_card`'s: `id_length`, `taken`, ...) and the values it names
+        self.reason = reason
+        self.values = values or {}
 
 
 # -- small helpers -----------------------------------------------------------------------
@@ -524,20 +528,21 @@ def new_card(project_root: str | Path, card_id: str, *, expected_id: Any = READ_
     `v1.toml` from the commented template. Refuses an id already present --
     up to letter case -- in `.researchos/variables/`, in the index's copy, or in
     the snapshots (`.researchos/backups/variables/`)."""
-    problem = V.id_problem(card_id)
-    if problem:
-        raise CardRefused("invalid", f"{card_id!r}: {problem}")
+    fault = V.id_fault(card_id)
+    if fault:
+        raise CardRefused("invalid", f"{card_id!r}: {fault[1]}", reason=fault[0], values=fault[2])
     root = Path(project_root)
     key = V.card_key(card_id)
     with write_guard(root, expected_id, human=True, timeout=timeout):
         identity = _identity_now(root)
         if identity is None:
-            raise CardRefused("untrusted", f"{root} has no readable project identity -- nothing written")
+            raise CardRefused("untrusted", f"{root} has no readable project identity -- nothing written", reason="no_identity")
         if V.card_dirs(root) is None:
-            raise CardRefused("untrusted", f"{V.variables_dir(root)} cannot be listed -- nothing written")
+            raise CardRefused("untrusted", f"{V.variables_dir(root)} cannot be listed -- nothing written", reason="unlistable")
         taken = [p.name for p in V.find_card_dirs(root, card_id)]
         if taken:
-            raise CardRefused("exists", f"a variable card {taken[0]!r} already exists (ids compare case-folded)")
+            raise CardRefused("exists", f"a variable card {taken[0]!r} already exists (ids compare case-folded)",
+                              reason="taken", values={"id": taken[0]})
         index = index_db_path(identity.id)
         if index.exists():
             conn = db.connect(index)
@@ -546,18 +551,20 @@ def new_card(project_root: str | Path, card_id: str, *, expected_id: Any = READ_
             finally:
                 conn.close()
             if known is not None:
-                raise CardRefused("exists", f"the index still holds a variable card {known['id']!r}; answer its question first")
+                raise CardRefused("exists", f"the index still holds a variable card {known['id']!r}; answer its question first",
+                                  reason="index_holds", values={"id": str(known["id"])})
         snaps = paths.project_dir(root) / files.BACKUPS_DIRNAME / V.SNAPSHOT_SUBDIR
         if snaps.is_dir() and any(V.card_key(p.name) == key for p in snaps.iterdir()):
-            raise CardRefused("exists", f"snapshots of a variable card {card_id!r} exist in {snaps}; that id was used")
+            raise CardRefused("exists", f"snapshots of a variable card {card_id!r} exist in {snaps}; that id was used",
+                              reason="snapshots", values={"id": card_id})
         try:
             files.ensure_dir_within(root, V.variables_dir(root))
             directory = V.variables_dir(root) / card_id
             directory.mkdir()
         except FileExistsError as exc:
-            raise CardRefused("exists", f"{card_id!r} already exists") from exc
+            raise CardRefused("exists", f"{card_id!r} already exists", reason="taken", values={"id": card_id}) from exc
         except files.RecordFileError as exc:
-            raise CardRefused("invalid", str(exc)) from exc
+            raise CardRefused("invalid", str(exc), reason="unsafe") from exc
         path = directory / "v1.toml"
         _create_exclusively(path, template(1))
         return path

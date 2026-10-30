@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add a **Settings** page at the foot of the sidebar for this Mac: the AI
+  agents, the local model for drafting, online lookup and the interface
+  language each have one form there, with the storage and routes they had.
+  Project home, Literature and the attempt form link to it instead of holding
+  a form of their own.
+- Add **New variable card** to the Variables page. It makes the draft with
+  the code `researchos variable new` runs, says the id rules in words and
+  opens the new card; the page no longer sends anyone to a terminal.
+- Make **Stop service** name the AI agent runs that are still going, with the
+  task, agent and model, and say what stopping does to them: their programs
+  are ended, the runs are recorded as interrupted, and their changes stay.
+- List the researcher as an owner in a project of one person, so a task can be
+  given to oneself when no name is set.
 - Add optional research context to existing result records, whether written
   by a person or an AI agent: question, method, finding, limits, next step,
   explicit attempt and variable-version links, and file purposes.

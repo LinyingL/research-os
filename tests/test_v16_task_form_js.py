@@ -212,9 +212,10 @@ window.ROWorkspace.reset(); agentsInfo=null;
 await window.ROWorkspace.load(root); await sleepTick();
 console.log(JSON.stringify({none,unknown:shape(field('负责人'))}));
 """)
-    assert out["none"] == [{"option": ["不指定", ""]}, {"group": "人员", "options": [["其他人…", "\u0000other"]]},
+    # 21.7: with no name set the researcher is among the people as 我 (written to tasks.json as 我, whatever the screen says)
+    assert out["none"] == [{"option": ["不指定", ""]}, {"group": "人员", "options": [["我", "我"], ["其他人…", "\u0000other"]]},
                            {"group": "这台电脑上的 AI 执行者", "options": [["设置 AI 执行者…", "\u0000settings"]]}]
-    assert out["unknown"] == [{"option": ["不指定", ""]}, {"group": "人员", "options": [["其他人…", "\u0000other"]]}]
+    assert out["unknown"] == [{"option": ["不指定", ""]}, {"group": "人员", "options": [["我", "我"], ["其他人…", "\u0000other"]]}]
 
 
 @needs_node
@@ -230,8 +231,8 @@ const person=groupsOf(field('负责人'));
 await find('编辑',rows()[1]).click();
 console.log(JSON.stringify({person,agent:groupsOf(field('负责人')),value:field('负责人').value}));
 """)
-    assert out["person"] == [["人员", ["Lin", "其他人…"]], ["这台电脑上的 AI 执行者", ["Claude Code · sonnet"]]]
-    assert out["agent"] == [["人员", ["其他人…"]], ["这台电脑上的 AI 执行者", ["Claude Code · sonnet", "OpenCode · lmstudio/qwen3-coder"]]]
+    assert out["person"] == [["人员", ["我", "Lin", "其他人…"]], ["这台电脑上的 AI 执行者", ["Claude Code · sonnet"]]]
+    assert out["agent"] == [["人员", ["我", "其他人…"]], ["这台电脑上的 AI 执行者", ["Claude Code · sonnet", "OpenCode · lmstudio/qwen3-coder"]]]
     assert out["value"] == "agent:opencode:lmstudio/qwen3-coder"
 
 
@@ -460,3 +461,44 @@ console.log(JSON.stringify(seen));
     add, save = "添加任务", "保存"
     assert out["start"] == [add] and out["note"] == [save] and out["preview"] == [add] and out["again"] == [save]
     assert out["plan"] == [add] and out["planEdit"] == [save] and out["folded"] == [add]
+
+
+# -- the owner when nobody is named: the researcher can give a task to themselves (21.7) ----------------------------------
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_in_a_project_of_one_person_with_no_name_set_the_researcher_is_among_the_people_and_the_task_is_written_to_them(lang):
+    """A project of one person had an empty 人员 group: no one to give a task to. With no name set (no me.toml) the researcher is
+    listed as 「我」 (“Me”) and chosen like a named person: the owner written to tasks.json is the text 「我」, whatever the
+    screen's language is, and the row reads it in the screen's language."""
+    w = _w(lang)
+    out = run_workspace(_js(r"""
+const T=window.ROI18N.t;
+listed.mode='single'; listed.attempts=[{id:ATT,label:'First check'}]; listed.tasks=[]; listed.tasks_revision='tasks-0';
+agentsInfo=agentFixture();
+await window.ROWorkspace.load(root); await sleepTick();
+const groupsOf=select=>select.children.filter(g=>g.tagName==='OPTGROUP').map(g=>[g.label,g.children.map(o=>[o.textContent,o.value])]);
+const groups=groupsOf(field(T('负责人')));
+await pickOwner(T('我'), T('负责人'));
+const chosen=field(T('负责人')).value;
+const s=field(T('属于哪条尝试')); s.value=ATT; await s.emit('change');
+typed(field(T('任务',{n:1})),'Read the three papers'); await find(T('添加任务')).click(); await sleepTick();
+const row=byClass('ws-task');
+console.log(JSON.stringify({groups,chosen,saved:listed.tasks.map(t=>t.owner),shown:byClass('ws-task-facts',row)?byClass('ws-task-facts',row).textContent:row.textContent,gets:gets.filter(g=>g==='/api/share')}));
+"""), lang=lang)
+    assert out["groups"][0] == [w("人员", "People"), [[w("我", "Me"), "我"], [w("其他人…", "Someone else…"), "\u0000other"]]]
+    assert out["chosen"] == "我" and out["saved"] == ["我"] and out["gets"] == []   # on disk: the one word, in Chinese, as a named person is written
+    assert w("我", "Me") in out["shown"]
+
+
+@needs_node
+def test_with_a_name_set_the_researcher_is_listed_by_it_and_there_is_no_second_entry_for_them():
+    """me.toml names the researcher: 「Lin Ying（我）」 as before, written as the name; no separate 「我」 beside it."""
+    out = run_workspace(_js(r"""
+listed.mode='single'; meInfo={state:'present',me:{id:'m-lin',name:'Lin Ying',email:'l@x.org'}};
+await window.ROWorkspace.load(root); await sleepTick();
+const people=flatOptions(field('负责人')).map(o=>[o.textContent,o.value]);
+console.log(JSON.stringify({people}));
+"""))
+    assert out["people"] == [["不指定", ""], ["Lin Ying（我）", "Lin Ying"], ["其他人…", "\u0000other"]]

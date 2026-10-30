@@ -155,8 +155,9 @@ and abstract. The library reads indexed BibTeX files and reference exports
 such as `references.csv` and `references.json`, and uses matching DOIs to
 add information from a local Zotero library.
 
-For missing abstracts, enable **Look up references online by DOI** under
-**Online lookup settings**. Click **Fetch abstract** for one reference or
+For missing abstracts, enable **Look up references online by DOI** in
+**Settings** (at the foot of the sidebar; the setting belongs to this Mac, so every
+project shares it). Click **Fetch abstract** for one reference or
 **Fetch missing abstracts** for the project. Research OS checks Crossref,
 then OpenAlex when needed, matches the exact DOI, and shows the abstract's
 source. Results are cached on this Mac; opening the library itself makes
@@ -275,8 +276,9 @@ researchos app
 
 From a checkout, use `python -m pip install -e ".[mcp]"`.
 
-In **Project home**, open **AI agent** in the task area and add the program
-and model version. Select it as a task's **Owner**, save, and click **Run**. The agent
+Open **Settings** at the foot of the sidebar (or **Change in Settings** beside
+**AI agent** in the task area of **Project home**) and add the program
+and model version in its **AI agent** section. Select it as a task's **Owner**, save, and click **Run**. The agent
 works in the project folder: it can read files, write code, run analysis,
 and write notes. Its completion report becomes a result record linked to
 the task.

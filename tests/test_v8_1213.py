@@ -636,7 +636,7 @@ GUIDE_LABELS_NOW_ENGLISH = ("添加项目…", "从公盘加入项目…", "已�
 #: Every Chinese label the English guide quotes from a screen still in Chinese, each written
 #: **label** (meaning), so that a reader who does not read Chinese can match it on screen.
 GUIDE_EN_CHINESE_LABELS = (
-    "备份", "停止服务", "1. 我是谁", "我是谁", "名字", "邮箱", "保存", "2. 我的公钥", "我的公钥", "生成我的公钥",
+    "备份", "设置", "停止服务", "1. 我是谁", "我是谁", "名字", "邮箱", "保存", "2. 我的公钥", "我的公钥", "生成我的公钥",
     "复制", "请手动选中复制", "关闭", "3. 公盘和工作副本", "选择…", "公盘文件夹，或 PI 共享给你的「已发布」文件夹",
     "你自己的提议文件夹（PI 单独共享给你时才选；也可以以后在「成员」里选）", "工作副本放在哪里（一个新的或空的文件夹）", "查看", "PI 公钥指纹", "核对无误，加入", "公盘与同步", "同步",
     "团队", "选择文件夹…", "加入并扫描", "开始协作", "建立成员名单", "公盘", "设为公盘", "发布",

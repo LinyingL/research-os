@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 def run(scenario):
     code = DOM + '\nwindow.ROI18N_SAVED="en";\n' + _i18n_source()
     code += '\nfunction t(s,v){return window.ROI18N.t(s,v);}\n'
-    code += _app_function("function mk(") + _app_function("function mkButton(")
+    code += _app_function("function mk(") + _app_function("function mkButton(") + _app_function("function settingsPageLink(")
     code += (Path(__file__).parents[1] / 'src/researchos/webapp/workspace.js').read_text()
     code += _app_block("// -- 文献 (DESIGN.md 11.4", "// -- end of the 文献 view")
     code += r'''

@@ -161,19 +161,26 @@ def card_key(card_id: str) -> str:
     return unicodedata.normalize("NFC", card_id).casefold()
 
 
-def id_problem(card_id: str) -> str | None:
-    """Why `card_id` cannot be a card's id (it becomes a directory name and
-    the head of a reference `id@v2·hash`), or None."""
+def id_fault(card_id: str) -> tuple[str, str, dict[str, str]] | None:
+    """What is wrong with `card_id` as a card's id (it becomes a directory name and the head of a
+    reference `id@v2·hash`): a code (`id_length`, `id_start`, `id_char`, `id_dots`), the engine's sentence
+    and the values the page words it with; None when the id is fine."""
     if not card_id or len(card_id) > 64:
-        return "an id is 1 to 64 characters"
+        return "id_length", "an id is 1 to 64 characters", {}
     if card_id.startswith(("_", ".", "-")):
-        return "an id may not start with '_', '.' or '-'"
+        return "id_start", "an id may not start with '_', '.' or '-'", {}
     for ch in card_id:
         if not (ch.isalnum() or ch in "_-."):
-            return f"an id holds letters, digits, '_', '-' and '.' only (not {ch!r})"
+            return "id_char", f"an id holds letters, digits, '_', '-' and '.' only (not {ch!r})", {"char": ch}
     if ".." in card_id:
-        return "an id may not contain '..'"
+        return "id_dots", "an id may not contain '..'", {}
     return None
+
+
+def id_problem(card_id: str) -> str | None:
+    """Why `card_id` cannot be a card's id, or None (`id_fault`'s sentence)."""
+    fault = id_fault(card_id)
+    return fault[1] if fault else None
 
 
 def variables_dir(project_root: str | Path) -> Path:

@@ -65,6 +65,14 @@ global.panelTitle = new Element('h2'); global.panelSubtitle = new Element('p'); 
 global.openPanel = ()=>panel.classList.remove('hidden');
 global.closePanel = ()=>{ panel.classList.add('hidden'); state.panelSubject=null; };
 global.mayReplacePanel = ()=>true;
+// 21.7: the 设置 page (app.html) gives the AI agents' form a box in the side panel; here the box stands in the page's root, so the
+// scenarios find it as they found it when 项目首页 drew it. Opening again draws a fresh box, as the page does.
+const settingsOpened=[];
+global.openSettingsPanel=section=>{
+  settingsOpened.push(section); root.all().filter(e=>e.classList.contains('ws-agent-settings')).forEach(e=>e.remove());
+  const host=new Element('div'); host.className='ws-agent-settings'; const subject={kind:'settings'};
+  state.panelSubject=subject; panel.classList.remove('hidden'); root.append(host); window.ROWorkspace.mountSettings(host,subject);
+};
 global.chevronIcon = ()=>{ const e = new Element('svg'); e.className = 'res-chevron'; return e; };
 global.uiLang = ()=>window.ROI18N ? window.ROI18N.lang : 'zh';
 let generations = 0;
@@ -1037,7 +1045,8 @@ const options=optionsOf(field('负责人'));
 await pickAttempt();typed(field('任务'),'Read papers');await find('添加任务').click();
 console.log(JSON.stringify({options,tasks:listed.tasks,gets,agentRow:!!byClass('ws-agent')}));
 """)
-    assert [text for text, _ in out["options"]] == ["不指定", "其他人…"]
+    # 21.7: with no name set the researcher is still an owner they can pick, as 我
+    assert [text for text, _ in out["options"]] == ["不指定", "我", "其他人…"]
     assert "/api/share" not in out["gets"]
     assert out["tasks"][0]["owner"] == "" and not out["agentRow"]
 
@@ -1047,12 +1056,13 @@ def test_without_a_configured_agent_the_owner_control_leads_to_the_settings():
 agentsInfo=agentFixture();agentsInfo.agents=[];
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
-const closed=byClass('ws-agent-settings').classList.contains('hidden');
+const closed=byClass('ws-agent-settings')===undefined;
 await pickOwner('设置 AI 执行者…');
-console.log(JSON.stringify({options,closed,open:!byClass('ws-agent-settings').classList.contains('hidden'),owner:field('负责人').value,words:byClass('ws-agent-settings').textContent}));
+console.log(JSON.stringify({options,closed,open:byClass('ws-agent-settings')!==undefined,opened:settingsOpened,owner:field('负责人').value,words:byClass('ws-agent-settings').textContent}));
 """)
     assert [text for text, _ in out["options"]][-1] == "设置 AI 执行者…"
-    assert out["closed"] and out["open"] and out["owner"] == ""
+    # 21.7: the option opens the 设置 page at the AI 执行者 section (the form is not on 项目首页 any more)
+    assert out["closed"] and out["open"] and out["opened"] == ["agents"] and out["owner"] == ""
     assert "Claude Code" in out["words"]
 
 
@@ -1454,7 +1464,7 @@ def test_settings_show_where_each_program_is_and_save_a_path_for_one_not_found()
     out = run(r"""
 agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=byClass('ws-agent-settings'),runners=box.all().filter(e=>e.classList.contains('ws-runner'));
 const found=runners[0].textContent,missing=runners[1].textContent;
 const hasPathInput=r=>r.all().some(e=>e.tagName==='INPUT');
@@ -1464,7 +1474,7 @@ await find('保存',runners[1]).click();
 const empty=posted.length;
 typed(pathBox,'/opt/tools/opencode');await find('保存',runners[1]).click();await sleepTick();
 const after=byClass('ws-agent-settings').all().filter(e=>e.classList.contains('ws-runner'))[1].textContent;
-console.log(JSON.stringify({found,missing,inputs,empty,posted,after,pressed:find('AI 执行者').getAttribute('aria-pressed')}));
+console.log(JSON.stringify({found,missing,inputs,empty,posted,after,opened:settingsOpened}));
 """)
     assert "/usr/local/bin/claude" in out["found"] and "版本 2.1.0" in out["found"]
     assert "Anthropic" in out["found"]
@@ -1473,7 +1483,7 @@ console.log(JSON.stringify({found,missing,inputs,empty,posted,after,pressed:find
     assert out["inputs"] == [False, True] and out["empty"] == 0
     assert out["posted"] == [["/api/settings/agents", {"commands": {"opencode": "/opt/tools/opencode"}}]]
     assert "/opt/tools/opencode" in out["after"] and "版本 0.9.0" in out["after"]
-    assert out["pressed"] == "true"
+    assert out["opened"] == ["agents"]   # the link opened the 设置 page at the AI 执行者 section
 
 
 def test_settings_add_and_remove_an_agent_and_set_the_time_limit():
@@ -1481,7 +1491,7 @@ def test_settings_add_and_remove_an_agent_and_set_the_time_limit():
 agentsInfo=agentFixture();modelsList=['lmstudio/qwen3-coder','ollama/llama3'];
 Object.assign(agentsInfo.runners[1],{path:'/opt/opencode',version:'0.9.0',problem:null,found:true});
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),add=()=>byClass('ws-agent-add',box()).parentNode;
 const suggestions=()=>field('模型版本',box()).children.map(o=>o.value).filter(v=>v&&v!=='__custom__');
 const claude=suggestions();
@@ -1514,7 +1524,7 @@ def test_reasoning_picker_follows_model_and_preserves_saved_settings():
     out = run(r"""
 agentsInfo=agentFixture();
 customGet=path=>path==='/api/agents/models?runner=codex'?{models:['gpt-test'],reasoning_efforts:{'gpt-test':['medium','high']}}:undefined;
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),form=()=>byClass('ws-agent-add',byClass('ws-agent-list'));
 const model=()=>field('模型版本',form()),effort=()=>field('推理强度',form());
 model().value='claude-sonnet-5-5';await model().emit('change');
@@ -1563,7 +1573,7 @@ console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():
     out = run(r"""
 agentsInfo=agentFixture();
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),versions=()=>field('模型版本',box());
 const offered=optionsOf(versions());
 versions().value='claude-sonnet-5-5';await versions().emit('change');
@@ -1583,7 +1593,7 @@ console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/setting
 def test_codex_version_selection_custom_id_and_separate_catalogs():
     out = run(r"""
 agentsInfo=agentFixture();modelsList=['gpt-6.1-sol','gpt-6-luna'];
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings');
 const runner=field('程序',box());runner.value='codex';await runner.emit('change');await sleepTick();
 const versions=()=>field('模型版本',box());
@@ -1593,7 +1603,7 @@ versions().value='__custom__';await versions().emit('change');
 const custom=field('完整模型 ID',box());typed(custom,'gpt-5.5');await find('添加',box()).click();await sleepTick();
 Object.assign(agentsInfo.runners[1],{found:true,path:'/opt/opencode',problem:null});
 modelsList=['openai/gpt-6.1-sol'];
-await find('AI 执行者').click();await find('AI 执行者').click();await sleepTick();
+await find('在设置里修改').click();await find('在设置里修改').click();await sleepTick();
 const provider=field('程序',box());provider.value='opencode';await provider.emit('change');await sleepTick();
 const other=optionsOf(versions());provider.value='codex';await provider.emit('change');await sleepTick();
 console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:posted.filter(p=>p[0]==='/api/settings/agents'),gets:gets.filter(g=>g.includes('/models?'))}));
@@ -1609,7 +1619,7 @@ console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:post
 def test_harness_model_selection_distinguishes_authentication_and_preserves_full_id():
     out = run(r"""
 agentsInfo=agentFixture();
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings');
 const runner=field('程序',box());runner.value='deepseek-harness';await runner.emit('change');await sleepTick();
 const versions=field('模型版本',box()),offered=optionsOf(versions);
@@ -1628,7 +1638,7 @@ def test_settings_warn_about_the_missing_mcp_extra_and_a_failed_save_keeps_the_f
     out = run(r"""
 agentsInfo=agentFixture();agentsInfo.mcp=false;
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=byClass('ws-agent-settings');
 const commands=box.all().filter(e=>e.classList.contains('ws-install-cmd')).map(e=>e.textContent);
 customPost=()=>Promise.reject(Object.assign(Error('bad'),{state:'agent_invalid',engineMessage:'模型名不对'}));
@@ -1644,7 +1654,7 @@ def test_a_failed_agent_listing_says_so_and_can_be_retried():
 let fail=true;customGet=path=>path==='/api/agents'&&fail?Promise.reject(Error('boom')):undefined;
 agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const failed=byClass('ws-agent-settings').textContent;
 fail=false;await find('重试').click();await sleepTick();
 console.log(JSON.stringify({failed,words:byClass('ws-agent-settings').textContent}));
@@ -1669,7 +1679,7 @@ const boxes=()=>root.all().filter(e=>e.classList.contains('ws-agent'));
 await find('Answer',boxes()[0]).click();
 await find('Run log',boxes()[1]).click();await sleepTick();
 const rows=boxes().map(b=>buttonsIn(b));
-await find('AI agent').click();
+await find('Change in Settings').click();
 await pickOwner('Someone else…','Owner');
 const all=root.textContent+root.all().map(e=>(e.placeholder||'')+(e.getAttribute('aria-label')||'')+(e.title||'')).join(' ');
 console.log(JSON.stringify({all,rows}));
@@ -1927,7 +1937,7 @@ agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
 const slow=deferred();let slowed=false;
 customGet=path=>{ if(path==='/api/agents'&&!slowed){slowed=true;return slow.promise;} };
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),model=field('完整模型 ID',box());
 typed(model,'son');model.focus();
 agentsInfo.timeout_minutes=90;
@@ -2020,7 +2030,7 @@ customPost=path=>path==='/api/agents/runs'?Promise.reject(Object.assign(Error('n
 await window.ROWorkspace.load(root);await sleepTick();
 const go=find('运行',byClass('ws-agent'));go.focus();await go.click();await sleepTick();
 const note=byClass('ws-agent-note');
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const path=root.all().find(e=>e.tagName==='INPUT'&&e.dataset.key==='set-path:opencode');
 console.log(JSON.stringify({note:{role:note.getAttribute('role'),words:note.textContent},path:path.getAttribute('aria-label'),
   focusBack:document.activeElement&&document.activeElement.dataset.key}));
@@ -2035,7 +2045,7 @@ def test_buttons_carry_the_task_in_their_english_accessible_names():
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'done',can_reply:true,can_revert:true})]);
 await window.ROWorkspace.load(root);await sleepTick();
 const names=root.all().filter(e=>e.tagName==='BUTTON'&&e.getAttribute('aria-label')).map(e=>e.getAttribute('aria-label'));
-await find('AI agent').click();
+await find('Change in Settings').click();
 const path=root.all().find(e=>e.dataset&&e.dataset.key==='set-path:opencode');
 console.log(JSON.stringify({names,path:path.getAttribute('aria-label')}));
 """, lang="en")
@@ -2122,7 +2132,7 @@ def test_the_budget_setting_posts_max_budget_usd_and_empty_removes_it():
     out = run(r"""
 agentsInfo=agentFixture();agentsInfo.max_budget_usd=5;
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),usd=()=>field('每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）',box());
 const shown=usd().value;
 typed(usd(),'12.5');await find('保存',usd().parentNode.parentNode).click();await sleepTick();
@@ -3419,7 +3429,7 @@ storeInfo=Object.assign(storeInfo,{backups:Math.round(1.5*GB),moved:250*MB,recor
   moved_runs:[{run:'r-1',task:'Compare models',task_removed:false,date:'2026-10-21T09:40:03+02:00',size:200*MB,files:1497},
               {run:'r-2',task:'Old task',task_removed:true,date:'2026-10-19T18:02:00+02:00',size:50*MB,files:1}]});
 await window.ROWorkspace.load(root);await sleepTick();
-await find(T('AI 执行者')).click();await sleepTick();
+await find(T('在设置里修改')).click();await sleepTick();
 const store=()=>byClass('ws-store');
 const rows=()=>byClass('ws-store-rows').children.map(r=>r.children.map(c=>c.textContent));
 const runRows=()=>(byClass('ws-store-runs')?byClass('ws-store-runs').children:[]).map(li=>li.children.map(c=>c.textContent));
@@ -3459,19 +3469,19 @@ console.log(JSON.stringify({heading:store().children[0].textContent,rows:rows(),
 
 def test_the_space_panel_says_so_when_the_files_moved_away_alone_pass_the_limit():
     out = run(STORE_SCENE + r"""
-storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({words:store().textContent,err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """)
     assert out["err"] == ["撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。"
                           "在你删除它们之前，每次新运行的撤回备份会在运行结束时立刻释放，所以新的运行不能撤回。"]    # 19.12 item 8
     english = run(STORE_SCENE + r"""
-storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """, lang="en")
     assert english["err"] == ["Files moved away by undo are over the limit. They are never cleaned up automatically; only you can delete them. "
                               "Until you delete them, each new run's undo backup is released as soon as the run ends, so new runs cannot be undone."]
     quiet = run(STORE_SCENE + r"""
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """)
     assert quiet["err"] == []                                                          # said only when the moved-away files alone pass the limit
@@ -3480,7 +3490,7 @@ console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('er
 def test_the_space_panel_says_the_engine_is_tidying_asks_again_and_then_shows_the_sizes():
     out = run(STORE_SCENE.replace("moved_runs:[", "converting:true,moved_runs:[") + r"""
 Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 const during={words:store().textContent,rows:byClass('ws-store-rows')===undefined,waiting:waiting(),release:find(T('释放所有撤回备份'),store()).disabled};
 Object.assign(storeInfo,{converting:false,backups:5*MB,moved:0,records:MB,total:6*MB});
 await tick();
@@ -3496,7 +3506,7 @@ console.log(JSON.stringify({during,words:store().textContent,rows:rows(),waiting
 def test_the_space_panel_in_english_says_tidying():
     out = run(STORE_SCENE + r"""
 Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({words:store().textContent}));
 """, lang="en")
     assert "Tidying undo backups…" in out["words"] and not re.search(r"[㐀-鿿]", out["words"])
@@ -3548,7 +3558,7 @@ console.log(JSON.stringify({declined,posted:posted.filter(p=>p[0].includes('/sto
 def test_a_failed_read_or_action_on_the_space_panel_says_so_and_a_read_can_be_retried():
     out = run(STORE_SCENE + r"""
 let fail=true; customGet=path=>path.startsWith('/api/agents/store')&&fail?Promise.reject(Error('boom')):undefined;
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 const failed=store().textContent;
 fail=false; await find(T('重试'),store()).click(); await sleepTick();
 customPost=path=>path.includes('/store/')?Promise.reject(Error('no')):undefined;
@@ -3581,7 +3591,7 @@ def test_the_space_panel_is_not_drawn_into_a_project_that_was_left_meanwhile():
     out = run(STORE_SCENE + r"""
 const slow=deferred(); let seen=0;
 customGet=path=>{ if(path.startsWith('/api/agents/store')&&++seen===1) return slow.promise; };
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click();   // closed, opened again: a read is pending
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click();   // closed, opened again: a read is pending
 state.currentPath='/projects/other'; window.ROWorkspace.reset && window.ROWorkspace.reset();
 slow.resolve(Object.assign({},storeInfo,{backups:9*GB}));
 await sleepTick();

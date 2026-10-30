@@ -531,6 +531,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),
+    "/api/settings/lookup": ("read", "/api/settings/lookup"),
     "/api/attempts": ("read", "/api/attempts"),
     "/api/tree": ("read", "/api/tree"),
     "/api/lineage": ("read", "/api/lineage"),
@@ -565,6 +566,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/share/sync-preview": ("read", "/api/share/sync-preview"),
     "/api/agents": ("probe", "/api/agents"),
     "/api/agents/models": ("probe", "/api/agents/models?runner=opencode"),
+    "/api/agents/going": ("read", "/api/agents/going"),   # the runs this engine carries out now, for 停止服务 (21.7)
     "/api/agents/runs": ("recovers", "/api/agents/runs"),
     "/api/agents/runs/": ("read", "/api/agents/runs/r-nothing"),   # one run, and its /revert-plan (18.1 item 5)
     "/api/agents/large-files": ("read", "/api/agents/large-files"),

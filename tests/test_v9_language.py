@@ -105,6 +105,9 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("app.html", "function historyEntryText(entry) {", "\n}\n"),
     ("app.html", "// -- 待复核 (9.6)", "// -- 你的记录与备份 (9.2"),
     ("app.html", "function coverageLine(item, kind) {", "\n}\n"),
+    # 21.7: 「新建变量卡」 on the 变量 page, and the 设置 page for this Mac (its model, online lookup and language forms)
+    ("app.html", "function newCardBlock(", "\n}\n"),
+    ("app.html", "// -- 设置 (DESIGN.md 21.7)", 'document.getElementById("settings-btn")'),
     ("app.html", "async function variableAction(", "\n}\n"),
     ("app.html", "function cardReviewMember(review, standalone) {", "\n}\n"),
     ("app.html", "function renderCardReviewGroups(host, cardItems) {", "\n}\n"),
@@ -128,7 +131,7 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     # 21.7: 你的记录与备份 -- what Research OS keeps, each with its last backup, and the folded 详情.
     ("app.html", "// -- 你的记录与备份 (9.2", 'document.getElementById("records-btn")'),
     ("app.html", "function dtaPreview(info) {", "\n}\n"),
-    # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock, llmSettingBox (「模型服务」) and their helpers
+    # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock (where a draft goes, and 「在设置里修改」, 21.7) and its helpers
     # (the language, what became of each cell, the refusals in words, the chevron).
     ("app.html", "// -- 「根据所选文件生成草稿」 (DESIGN.md 16)", "// Builds the form from the (now current) records and config."),
     # 18.2 text rules: 项目首页 joins the converted surfaces -- every Chinese literal in workspace.js that reaches
@@ -156,6 +159,9 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
 _ERROR = "13.7: an error sentence -- errors everywhere are converted in their own increment"
 ALLOWED_CHINESE: dict[str, str] = {
     "停止服务失败": _ERROR,
+    # 21.7: the owner text on disk for the researcher when no name is set; the screen reads it as Me (ownerLabel)
+    "我": "21.7/13.1: the owner written to tasks.json for the researcher with no name set, Chinese whatever the screen says",
+    "中文": "13.3: a language's own name, named in itself (the 设置 page's choice of the interface language)",
     # The project menu's error framings (8.8 "Errors"), shown before the engine's own text.
     "没能从 GitHub 获取": _ERROR,
     "切换项目失败": _ERROR,
@@ -664,7 +670,7 @@ def test_13_3_the_switch_sits_beside_records_and_stop_service():
     named in the language it switches to; its title is marked for /i18n.js."""
     html = APP_HTML.read_text(encoding="utf-8")
     tools = html[html.index('<div class="side-tools">'):html.index("</div>", html.index('<div class="side-tools">'))]
-    assert re.findall(r'<button id="([\w-]+)" class="shutdown-btn"', tools) == ["records-btn", "shutdown-btn", "lang-btn"]
+    assert re.findall(r'<button id="([\w-]+)" class="shutdown-btn"', tools) == ["records-btn", "settings-btn", "shutdown-btn", "lang-btn"]
     assert ('<button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" '
             'data-i18n-attr="title" data-i18n-switch>English</button>') in tools
 
@@ -1093,7 +1099,7 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                                            "Data & code", "Proposals", "Members"]
     # 18.3: 研究路线's switch.
     assert _words(after, "subnav-item") == ["Route map", "List"]
-    assert _words(after, "shutdown-btn") == ["Backups", "Stop service", "中文"]
+    assert _words(after, "shutdown-btn") == ["Backups", "Settings", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Project home"]
     assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
     labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
@@ -1125,7 +1131,7 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "subnav-item") == ["路线图", "列表"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
-    assert _words(after, "shutdown-btn") == ["备份", "停止服务", "English"]
+    assert _words(after, "shutdown-btn") == ["备份", "设置", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
     assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-create-btn", "welcome-add-btn", "welcome-join-btn")] == [
         "新建项目…", "添加项目…", "从公盘加入项目…"]
@@ -1188,12 +1194,14 @@ def test_13_7_the_stopped_page_and_its_question(saved):
         "global.document = { getElementById: (id) => id === 'app' ? appEl : id === 'shutdown-btn'"
         " ? { addEventListener: (e, fn) => { handlers[e] = fn; } } : null };\n"
         "let pollTimer = null, generationLive = true; function stopGenerationPoll() {} function closePanel() {}\n"
+        # 21.7: the question is asked after the engine was asked who is still working (nobody here)
+        "global.apiGet = async () => ({ runs: [] }); global.apiPost = async () => ({});\n"
     )
-    expr = f"(function () {{ {code} renderStoppedState(); handlers.click(); return [appEl.innerHTML, asked]; }})()"
-    if saved is None:
-        page, asked = _node("global.window = {};\n" + prelude + f"process.stdout.write(JSON.stringify({expr}));\n")
-    else:
-        page, asked = _with_i18n(expr, saved=saved, prelude=prelude)
+    # the click handler is async now (it reads /api/agents/going first): the page is read once it has answered
+    body = f"{code} renderStoppedState(); const page = appEl.innerHTML; await handlers.click(); process.stdout.write(JSON.stringify([page, asked]));"
+    head = "global.window = {};\nObject.defineProperty(globalThis, 'navigator', {value: undefined, configurable: true});\n"
+    loaded = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source() + "\n"
+    page, asked = _node(head + prelude + loaded + f"(async () => {{ {body} }})();\n")
     if saved == "en":
         assert page == ('<main id="main"><div class="stopped-note"><h2>Service stopped</h2>'
                         "<p>The local service has stopped. You can close this page.</p>"
@@ -2323,7 +2331,7 @@ GUIDE_EN_EMPHASIS = ("0.5.0",)
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.
 _GUIDE_EN_SAME_WORDS = {
-    "备份": "page", "停止服务": "page", "同步": "page", "发布": "shell",
+    "备份": "page", "设置": "page", "停止服务": "page", "同步": "page", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
 _GUIDE_EN_SENTENCE_STARTS = ("指纹：",)
@@ -2391,7 +2399,7 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     # Chinese labels: what a page still in Chinese shows, whole (a message by its first words).
     still = _still_chinese_texts()
     for label in GUIDE_EN_CHINESE_LABELS:
-        if label in ("备份", "停止服务"):
+        if label in ("备份", "设置", "停止服务"):
             continue  # the switch's neighbours, quoted for the Chinese screen; their meaning is checked below
         if label in _GUIDE_EN_SENTENCE_STARTS:
             assert any(s.startswith(label) for s in still), label
@@ -2416,7 +2424,7 @@ def _draft_run(saved: str | None, body: str) -> Any:
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     return _node("global.window = {};\n" + i18n
                  + _app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
-                 + _app_block(*_DRAFT_BLOCK) + "\n" + body)
+                 + _app_block(*_DRAFT_BLOCK) + "\n" + _app_function("function settingsPageLink(") + "\n" + body)
 
 
 def _rows(*cells: tuple[str, str]) -> list[dict[str, Any]]:
@@ -2510,7 +2518,7 @@ def test_16_2_a_refused_draft_names_the_file_or_the_remedy(saved):
         assert not CJK.search(json.dumps(got, ensure_ascii=False))
 
 
-#: Just enough DOM for attemptDraftBlock and llmSettingBox: elements with children, values, datasets,
+#: Just enough DOM for attemptDraftBlock and the 设置 page's model form: elements with children, values, datasets,
 #: listeners one can fire, `after` and `remove`; the page's mk/mkButton/formFieldEl/setFormStatus stood in.
 _DRAFT_DOM = r"""
 function el(tag, cls, text) {
@@ -2540,6 +2548,9 @@ const find = (root, pred) => all(root, pred)[0];
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const key = (k, composing) => ({ key: k, isComposing: !!composing, keyCode: composing ? 229 : 13, prevented: false,
   preventDefault() { this.prevented = true; } });
+global.opened = [];
+global.mayReplacePanel = () => true;
+global.openSettingsPanel = (section) => { global.opened.push(section); };
 """
 
 _DRAFT_FORM = r"""
@@ -2567,17 +2578,18 @@ global.apiPost = async (path, body) => {
   const block = attemptDraftBlock({ description: desc, result: result }, [{ attrs: { description: "面板回归" }, result: "系数 0.3" }],
     false, { description: "做了什么" });
   const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const where = block.el.children[1], status = block.el.children[3];
-  const details = find(block.el, (n) => n.tag === "details");
-  const [url, model] = all(details, (n) => n.tag === "input");
-  const save = find(details, (n) => n.tag === "button" && n.textContent === "保存");
+  const where = block.el.children[1], status = block.el.children[4];
+  const link = find(block.el, (n) => n.tag === "button" && n.textContent === "在设置里修改");
   const path = all(block.el, (n) => n.tag === "input")[0];
   const addBtn = find(block.el, (n) => n.tag === "button" && n.textContent === "加入");
   out.goBeforeTheSetting = go.disabled;
   await tick();
   out.where = [where.className, where.textContent, go.disabled];
-  out.summary = details.children[0].className + " " + details.children[0].children.map((c) => c.className || c.textContent).join("|");
-  out.setting = [url.value, url.placeholder, model.value, model.placeholder, url.dataset.initial, model.dataset.initial];
+  // 21.7: no form here, a text link to the 设置 page, which opens at the model section
+  out.link = [link.className, link.tag, block.el.children[2].className];
+  await link.fire("click");
+  out.opened = global.opened.slice();
+  out.noForm = [find(block.el, (n) => n.tag === "details") === undefined, all(block.el, (n) => n.tag === "input").length];
   const datalist = find(block.el, (n) => n.tag === "datalist");
   const asked = () => [datalist.children.map((o) => o.value), calls.filter((c) => c[1] === "/api/canvas?scope=all").length];
   out.suggestions = [];
@@ -2615,20 +2627,14 @@ global.apiPost = async (path, body) => {
   pending = go.fire("click");
   await tick();
   block.setFrozen(true);
-  out.frozen = [go.disabled, path.disabled, addBtn.disabled, chips.children.map((c) => c.disabled), url.disabled, model.disabled, save.disabled];
+  out.frozen = [go.disabled, path.disabled, addBtn.disabled, chips.children.map((c) => c.disabled), link.disabled];
   release();
   await pending;
   out.late = [desc.value, status.className, status.textContent, go.disabled];
   block.setFrozen(false);
-  out.unfrozen = [go.disabled, path.disabled, save.disabled];
-  // Enter in 模型 saves both fields (never previews the row); the line above 生成草稿 follows.
-  model.value = "m2";
-  model.dataset.typed = "1";
-  e = key("Enter");
-  await model.fire("keydown", e);
-  await tick();
-  out.saved = [e.prevented, calls.filter((c) => c[0] === "POST" && c[1] === "/api/settings/llm").map((c) => c[2]),
-    model.dataset.typed || null, model.dataset.initial, where.className, where.textContent];
+  out.unfrozen = [go.disabled, path.disabled];
+  // the block never writes the setting: the model form is on the 设置 page
+  out.posted = calls.filter((c) => c[0] === "POST" && c[1] === "/api/settings/llm").length;
   // A refusal names the file (apiError carries it from the body); the engine's text goes behind 「详情」.
   global.apiPost = async (path) => { throw apiError(path, { status: 404 },
     { error: "no such file: code/rnu.py", state: "draft_file_missing", file: "code/rnu.py" }); };
@@ -2645,18 +2651,12 @@ global.apiPost = async (path, body) => {
   release();
   await pending;
   out.written = [desc.value, status.className, status.textContent, go.disabled, path.disabled];
-  // The setting cannot be read: 生成草稿 stays off; opening 模型服务 asks again.
+  // The setting cannot be read: 生成草稿 stays off, and the way to the 设置 page is still there.
   settingFails = true;
   const other = attemptDraftBlock({ description: el("textarea"), result: el("textarea") }, [], true, {});
   const go2 = find(other.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const details2 = find(other.el, (n) => n.tag === "details");
   await tick();
-  out.unread = [other.el.children[1].textContent, go2.disabled];
-  settingFails = false;
-  details2.open = true;
-  await details2.fire("toggle");
-  await tick();
-  out.reread = [other.el.children[1].textContent, go2.disabled];
+  out.unread = [other.el.children[1].textContent, go2.disabled, !!find(other.el, (n) => n.textContent === "在设置里修改")];
   process.stdout.write(JSON.stringify(out));
 })();
 """
@@ -2664,21 +2664,21 @@ global.apiPost = async (path, body) => {
 
 @needs_node
 def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
-    """attemptDraftBlock and 「模型服务」 under node: where a draft goes is said
-    before anything is sent (and 生成草稿 waits for it); suggestions are asked
-    until one answer; Enter while composing adds nothing; the request carries
-    the files and the table's language, never example rows; a typed cell is
-    kept, an empty one filled, marked typed for the leave guard, with the
-    model's own claim beside it until edited; a draft that lands while the
-    preview stands fills nothing; the frozen form freezes the block; Enter in
-    the setting saves both fields; a refusal names the file; an unread
-    setting keeps 生成草稿 off until 模型服务 reads it."""
+    """attemptDraftBlock under node: where a draft goes is said before anything
+    is sent (and 生成草稿 waits for it) with a text link to the 设置 page, which
+    holds the model's one form (21.7); suggestions are asked until one answer;
+    Enter while composing adds nothing; the request carries the files and the
+    table's language, never example rows; a typed cell is kept, an empty one
+    filled, marked typed for the leave guard, with the model's own claim beside
+    it until edited; a draft that lands while the preview stands fills nothing;
+    the frozen form freezes the block; a refusal names the file; an unread
+    setting keeps 生成草稿 off and the link in place."""
     out = _draft_run(None, _DRAFT_DOM + _app_function("function apiError(") + _DRAFT_FORM)
     assert out["goBeforeTheSetting"] is True
     assert out["where"] == ["attempt-draft-where warn", "所选文件将发送至 studio.local · 模型：qwen", False]
-    assert out["summary"] == "res-draft-summary res-chevron|模型服务"
-    assert out["setting"] == ["http://studio.local:1234/v1", "http://studio.local:1234/v1", "", "qwen",
-                              "http://studio.local:1234/v1", ""]
+    # 21.7: a text link to the 设置 page (opening at the model section), no form of its own
+    assert out["link"] == ["ws-text-link", "button", "attempt-draft-setting-link"] and out["opened"] == ["llm"]
+    assert out["noForm"] == [True, 1]
     # Asked again after a failed answer, never after a good one; only files a draft can read.
     assert out["suggestions"] == [[[], 1], [["code/run.py", "out/t.csv"], 2], [["code/run.py", "out/t.csv"], 2]]
     assert out["help"] == "仅填写空白的「做了什么」和「结果」。"
@@ -2690,15 +2690,12 @@ def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
     assert out["form"] == ["textarea", "textarea", "模型：qwen-27b · 参考文件：code/run.py、out/t.csv"]
     assert out["status"] == ["panel-status ok", "「做了什么」原本有内容，没有改。 已填入「结果」。 较长的文件只读了开头。", False]
     assert out["afterAnEdit"] == ["textarea", "textarea"]
-    assert out["frozen"] == [True, True, True, [True, True], True, True, True]
+    assert out["frozen"] == [True, True, True, [True, True], False]
     assert out["late"] == ["", "panel-status err", "预览已经生成，草稿没有填入：先返回修改，再生成草稿", True]
-    assert out["unfrozen"] == [False, False, False]
-    assert out["saved"] == [True, [{"base_url": "http://studio.local:1234/v1", "model": "m2"}], None, "m2",
-                            "attempt-draft-where", "本地模型：m2"]
+    assert out["unfrozen"] == [False, False] and out["posted"] == 0
     assert out["refused"] == ["项目里找不到 code/rnu.py", "draft_file_missing", False]
     assert out["written"] == ["", "panel-status ", "这一行已经写进工作副本，草稿没有用上", True, True]
-    assert out["unread"] == ["没能读到模型设置，先不能起草", True]
-    assert out["reread"] == ["所选文件将发送至 studio.local · 模型：qwen", False]
+    assert out["unread"] == ["没能读到模型设置，先不能起草", True, True]
 
 
 _DRAFT_WORD = r"""
@@ -2714,7 +2711,7 @@ global.apiPost = async (path, body) => { sent.push(body); return reply(); };
   form.append(desc, result);
   const block = attemptDraftBlock({ description: desc, result: result }, [], false, { description: "做了什么" });
   const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const path = all(block.el, (n) => n.tag === "input")[0], status = block.el.children[3];
+  const path = all(block.el, (n) => n.tag === "input")[0], status = block.el.children[4];
   const chips = find(block.el, (n) => n.className === "verdict-chips");
   await tick();
   path.value = "/Users/me/论文重建/Currency_Resilience_EN_IREF.docx";

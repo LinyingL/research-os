@@ -101,10 +101,14 @@
   page's words go through t() (the Chinese is the key), apiGet/apiPost name
   the language on every request (X-ResearchOS-Lang), and the quiet switch
   beside 停止服务 (「English」 / 「中文」) saves the choice
-  (POST /api/settings/language), tells the shell and reloads.
+  (POST /api/settings/language), tells the shell and reloads. The 设置 page (DESIGN.md
+  21.7), opened from the same foot, holds the one form of each setting of this Mac --
+  AI 执行者, 本地模型, 联网查询, 界面语言 -- and the places that used to hold one link
+  to it (「在设置里修改」).
 
   Stopping the server (task V3 phase 4): a quiet 停止服务 text button in
-  the page footer, behind an explicit Chinese window.confirm. Confirming
+  the page footer, behind an explicit window.confirm that names the agent runs
+  still going (21.7). Confirming
   POSTs /api/shutdown; on success the whole page is replaced by a plain
   "服务已停止" state (the generation poll stops too -- the server is gone,
   so continuing to poll would only spray connection errors). A failure
@@ -1115,7 +1119,6 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .attempt-draft .form-actions > .btn { flex: none; white-space: nowrap; } /* 加入 never wraps letter by letter */
 .attempt-draft-where { font-size: 0.82rem; color: var(--ink-soft); margin: 0.4rem 0 0; overflow-wrap: anywhere; }
 .attempt-draft-where.warn { color: var(--ink); border-left: 2px solid var(--ochre); padding-left: 0.6rem; }
-.attempt-draft-setting[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .rm-pop-sub { margin: -0.3rem 0 0.55rem; font-size: 0.78rem; color: var(--ink-soft); }
 
 /* -- V5: the human record's surfaces (DESIGN.md 9.3-9.6, task V5 phase 7) --
@@ -1204,6 +1207,20 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
    document. Ochre = waits for you (a question, a review), clay = wrong,
    olive = 已核对; the formula in mono; long text wraps. */
 .var-intro { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 1rem; max-width: 720px; }
+.var-new { margin: 0 0 1.1rem; }
+.var-new-form { margin: 0.7rem 0 0; max-width: 640px; border: 1px solid var(--line-strong); background: var(--paper-alt); padding: 0.8rem 1rem; }
+.var-new-label { display: block; font-size: 0.82rem; color: var(--ink-soft); margin: 0 0 0.3rem; }
+.var-new-rules { font-size: 0.8rem; color: var(--ink-soft); margin: 0.45rem 0 0; }
+.var-new-actions { display: flex; gap: 0.5rem; margin: 0.8rem 0 0; }
+
+/* -- 设置 (DESIGN.md 21.7): this Mac's settings in the side panel, one section each -- */
+.settings-section { margin: 0 0 1.6rem; }
+.settings-title { font-family: var(--font-serif); font-size: 1rem; font-weight: normal; margin: 0 0 0.4rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--line); }
+.settings-note { font-size: 0.8rem; color: var(--ink-soft); margin: 0.3rem 0 0.6rem; }
+.settings-section .ws-agent-settings { margin: 0; padding: 0; background: none; }
+.settings-llm .form-field { margin: 0 0 0.6rem; }
+.attempt-draft-setting-link { font-size: 0.8rem; margin: 0.2rem 0 0.4rem; }
+.lit-setting-line { font-size: 0.82rem; color: var(--ink-soft); margin: 0 0 0.9rem; }
 .var-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; padding: 0.65rem 0.35rem; margin: 0 -0.35rem; border-bottom: 1px solid var(--line); cursor: pointer; }
 .var-row:hover { background: var(--paper-alt); }
 .var-name { font-family: var(--font-serif); font-size: 1.02rem; }
@@ -1439,6 +1456,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <div id="me-line" class="me-line"></div>
       <div class="side-tools">
         <button id="records-btn" class="shutdown-btn" type="button" title="查看你的记录有哪些，以及最近一次备份的时间" data-i18n-attr="title" data-i18n>备份</button>
+        <button id="settings-btn" class="shutdown-btn" type="button" title="这台电脑上的设置：AI 执行者、本地模型、联网查询和界面语言" data-i18n-attr="title" data-i18n>设置</button>
         <button id="shutdown-btn" class="shutdown-btn" type="button" title="停止本地服务进程" data-i18n-attr="title" data-i18n>停止服务</button>
         <button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" data-i18n-attr="title" data-i18n-switch>English</button>
       </div>
@@ -4084,25 +4102,32 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
   const where = mk("div", "attempt-draft-where");
   const addBtn = mkButton(t("加入"), "btn btn-small", add);
   const go = mkButton(t("生成草稿"), "btn btn-small", draft);
-  const setting = llmSettingBox((s, err) => {
-    ready = !!s;
-    if (!s) {
+  // 21.7: the model server is set on the 设置 page; this block reads the setting to say where a draft goes, and links there.
+  const settingLine = mk("div", "attempt-draft-setting-link");
+  settingLine.appendChild(settingsPageLink("llm"));
+  async function readSetting() {
+    let s;
+    try {
+      s = await apiGet("/api/settings/llm");
+    } catch (err) {
+      ready = false;
       setFormStatus(where, "err", t("没能读到模型设置，先不能起草"), err);
-    } else {
-      where.className = "attempt-draft-where" + (s.where === "this_mac" ? "" : " warn");
-      where.title = "";
-      where.textContent = s.where === "this_mac"
-        ? t("本地模型：{model}", { model: s.model })
-        : t("所选文件将发送至 {host} · 模型：{model}", { host: s.host, model: s.model });
+      sync();
+      return;
     }
+    ready = true;
+    where.className = "attempt-draft-where" + (s.where === "this_mac" ? "" : " warn");
+    where.title = "";
+    where.textContent = s.where === "this_mac"
+      ? t("本地模型：{model}", { model: s.model })
+      : t("所选文件将发送至 {host} · 模型：{model}", { host: s.host, model: s.model });
     sync();
-  });
+  }
   function sync() {
     go.disabled = frozen || busy || !ready;
     pathInput.disabled = frozen;
     addBtn.disabled = frozen;
     Array.from(list.children).forEach((chip) => { chip.disabled = frozen; });
-    setting.setFrozen(frozen);
   }
   function drawChosen() {
     list.innerHTML = "";
@@ -4172,78 +4197,10 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
     t("仅填写空白的「{description}」和「{result}」。", names)));
   const actions = mk("div", "form-actions");
   actions.appendChild(go);
-  box.append(field, where, actions, status, setting.el);
+  box.append(field, where, settingLine, actions, status);
   sync();
-  setting.load();
+  readSetting();
   return { el: box, setFrozen(f) { frozen = f; sync(); }, markWritten() { written = frozen = true; sync(); } };
-}
-
-// 「模型服务」 (16.2): this Mac's model server. Each field shows the value
-// saved here (empty: none saved) with the one in effect as its placeholder;
-// 保存 sends both, an empty one returning to the default. `onSetting(s, err)`
-// hears every reading: the setting, or null and the error. Returns
-// { el, load, setFrozen }.
-function llmSettingBox(onSetting) {
-  const box = mk("details", "attempt-draft-setting");
-  const summary = mk("summary", "res-draft-summary"); // 12.13: the quiet chevron, not the browser's triangle
-  summary.append(chevronIcon(), mk("span", null, t("模型服务")));
-  box.appendChild(summary);
-  const url = mk("input", "form-input form-mono");
-  const model = mk("input", "form-input form-mono");
-  const status = mk("div", "panel-status");
-  const save = mkButton(t("保存"), "btn btn-small", doSave);
-  let loaded = false, saving = false, frozen = false;
-  function sync() {
-    url.disabled = frozen;
-    model.disabled = frozen;
-    save.disabled = frozen || saving || !loaded;
-  }
-  function show(s) {
-    const saved = s.saved || {};
-    url.value = saved.base_url || "";
-    model.value = saved.model || "";
-    url.placeholder = s.base_url || "";
-    model.placeholder = s.model || "";
-    // The leave guard (14.3) counts only words not saved yet.
-    [url, model].forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
-    loaded = true;
-    sync();
-  }
-  async function load() {
-    let s;
-    try {
-      s = await apiGet("/api/settings/llm");
-    } catch (err) {
-      onSetting(null, err);
-      return;
-    }
-    show(s);
-    onSetting(s, null);
-  }
-  async function doSave() {
-    if (save.disabled) return;
-    saving = true;
-    sync();
-    try {
-      const s = await apiPost("/api/settings/llm", { base_url: url.value.trim(), model: model.value.trim() });
-      show(s);
-      onSetting(s, null);
-      setFormStatus(status, "ok", t("已保存"));
-    } catch (err) {
-      setFormStatus(status, "err", err && err.state === "draft_bad_setting"
-        ? t("服务地址要用 http 或 https，写明主机，不带用户名和密码") : t("设置没有保存"), err);
-    }
-    saving = false;
-    sync();
-  }
-  // Inside the attempt form, Enter saves the setting; it never previews the row.
-  [url, model].forEach((f) => f.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSave(); }
-  }));
-  box.addEventListener("toggle", () => { if (box.open && !loaded) load(); });
-  box.append(formFieldEl(t("服务地址"), url), formFieldEl(t("模型"), model), save, status);
-  sync();
-  return { el: box, load, setFrozen(f) { frozen = f; sync(); } };
 }
 
 // Builds the form from the (now current) records and config.
@@ -5285,6 +5242,181 @@ async function renderRecordsPanel(subject) {
 
 document.getElementById("records-btn").addEventListener("click", () => { if (mayReplacePanel()) openRecordsPanel(); });
 
+// -- 设置 (DESIGN.md 21.7) ---------------------------------------------------------------------
+// One page for this Mac, opened from the sidebar's foot: AI 执行者 (the form 项目首页 used to carry, drawn by workspace.js into
+// the box this page gives ROWorkspace.mountSettings), 本地模型（辅助填写）, 联网查询 and 界面语言. Every setting has this one
+// form, with the storage and the routes it always had; the places that held a form say 「在设置里修改」 and open this page.
+// All four are this Mac's, so the page needs no project. What belongs to one project stays in the project menu.
+
+function settingsSection(key, title, note) {
+  const section = mk("section", "settings-section");
+  section.dataset.section = key;
+  section.appendChild(mk("h3", "settings-title", title));
+  if (note) section.appendChild(mk("p", "settings-note", note));
+  return section;
+}
+
+// 「本地模型（辅助填写）」 (16.2): this Mac's model server for 新增尝试's 生成草稿. Each field shows the value saved here (empty:
+// none saved) with the one in effect as its placeholder; 保存 sends both, an empty one returning to the default. The
+// attempt form's 辅助填写 reads the setting to say where a draft goes and links here; this is the one form. Returns { el, load }.
+function llmSettingForm() {
+  const box = mk("div", "settings-llm");
+  const url = mk("input", "form-input form-mono");
+  const model = mk("input", "form-input form-mono");
+  const status = mk("div", "panel-status");
+  const save = mkButton(t("保存"), "btn btn-small", doSave);
+  let loaded = false, saving = false;
+  function sync() { save.disabled = saving || !loaded; }
+  function show(s) {
+    const saved = s.saved || {};
+    url.value = saved.base_url || "";
+    model.value = saved.model || "";
+    url.placeholder = s.base_url || "";
+    model.placeholder = s.model || "";
+    // The leave guard (14.3) counts only words not saved yet.
+    [url, model].forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+    loaded = true;
+    sync();
+  }
+  async function load() {
+    let s;
+    try {
+      s = await apiGet("/api/settings/llm");
+    } catch (err) {
+      setFormStatus(status, "err", t("没能读到模型设置"), err);
+      return;
+    }
+    show(s);
+  }
+  async function doSave() {
+    if (save.disabled) return;
+    saving = true;
+    sync();
+    try {
+      show(await apiPost("/api/settings/llm", { base_url: url.value.trim(), model: model.value.trim() }));
+      setFormStatus(status, "ok", t("已保存"));
+    } catch (err) {
+      setFormStatus(status, "err", err && err.state === "draft_bad_setting"
+        ? t("服务地址要用 http 或 https，写明主机，不带用户名和密码") : t("设置没有保存"), err);
+    }
+    saving = false;
+    sync();
+  }
+  // Enter saves the setting, except the Enter that ends an input method's composition.
+  [url, model].forEach((f) => f.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSave(); }
+  }));
+  box.append(formFieldEl(t("服务地址"), url), formFieldEl(t("模型"), model), save, status);
+  sync();
+  return { el: box, load };
+}
+
+// 「联网查询」 (11.4, 21.7): whether DOIs may be looked up on Crossref and OpenAlex. It is stored per Mac (settings.json), so every
+// project shares it; the 文献 page says where it stands and links here. Read by GET /api/settings/lookup, written by the
+// route the 文献 page always used (POST /api/citations/lookup-setting).
+function lookupSettingForm() {
+  const box = mk("div", "lit-setting");
+  const label = mk("label", "lit-setting-label");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.id = "settings-lookup";
+  input.disabled = true;
+  label.append(input, mk("span", null, t("用 DOI 联网查文献信息")));
+  box.appendChild(label);
+  box.appendChild(mk("div", "lit-setting-note", t("只发送 DOI，不发送文稿内容。按需从 Crossref 和 OpenAlex 查询文献信息与摘要，结果保存在本机。")));
+  const status = mk("div", "panel-status");
+  box.appendChild(status);
+  (async () => {
+    try {
+      input.checked = !!((await apiGet("/api/settings/lookup")).lookup || {}).enabled;
+      input.disabled = false;
+    } catch (err) {
+      setFormStatus(status, "err", t("没能读到这个设置"), err);
+    }
+  })();
+  input.addEventListener("change", async () => {
+    const wanted = input.checked;
+    input.disabled = true;
+    delete input.dataset.typed; // a tick saves at once: it is never words waiting to be written (the leave guard, 14.3)
+    setFormStatus(status, "", t("正在保存…"));
+    try {
+      const res = await apiPost("/api/citations/lookup-setting", { on: wanted });
+      input.checked = !!(res && res.lookup && res.lookup.enabled);
+      setFormStatus(status, "ok", input.checked ? t("已打开：下次扫描时查询") : t("已关闭：不会联网查询"));
+      // the 文献 page, if it holds the project's answer, follows the setting
+      if (litState.data) {
+        litState.data.lookup = res.lookup;
+        if (litState.tab === "library" && currentView === "literature") {
+          views.literature.replaceChildren();
+          renderLiterature(views.literature, litState.data);
+        }
+      }
+    } catch (err) {
+      input.checked = !wanted;
+      setFormStatus(status, "err", t("没能保存这个设置"), err);
+    }
+    input.disabled = false;
+  });
+  return box;
+}
+
+// 「界面语言」 (13.2, 13.3): the same setting the foot's English / 中文 switch saves, which stays as a shortcut. Each language is
+// named in itself (13.3). Choosing one saves it on this Mac, tells the shell and reloads, as the switch does.
+function languageSettingForm() {
+  const box = mk("div", "settings-language");
+  const select = mk("select", "form-input");
+  [["zh", "中文", "zh-CN"], ["en", "English", "en"]].forEach(([value, name, tag]) => {
+    const option = mk("option", null, name);
+    option.value = value;
+    option.setAttribute("lang", tag);
+    select.appendChild(option);
+  });
+  select.value = uiLang();
+  select.setAttribute("aria-label", t("界面语言"));
+  const status = mk("div", "panel-status");
+  select.addEventListener("change", () => {
+    switchInterfaceLanguage(select.value, [select, document.getElementById("lang-btn")], (err) => {
+      select.value = uiLang();
+      setFormStatus(status, "err", t("没能切换界面语言"), err);
+    });
+  });
+  box.append(select, mk("p", "settings-note", t("侧栏下方的「English」和「中文」是同一个设置的快捷方式。")), status);
+  return box;
+}
+
+// 「在设置里修改」: the text link the places that used to hold a form carry. `section` names the part of the page to show.
+function settingsPageLink(section) {
+  return mkButton(t("在设置里修改"), "ws-text-link", () => { if (mayReplacePanel()) openSettingsPanel(section); });
+}
+
+function openSettingsPanel(focus) {
+  const subject = { kind: "settings" };
+  state.panelSubject = subject;
+  panelTitle.textContent = t("设置");
+  panelTitle.title = "";
+  panelSubtitle.textContent = t("这台电脑上的设置，所有项目共用");
+  panelBody.innerHTML = "";
+  const agents = settingsSection("agents", t("AI 执行者"));
+  const agentBox = mk("div", "ws-agent-settings");
+  agents.appendChild(agentBox);
+  const llm = settingsSection("llm", t("本地模型（辅助填写）"), t("新增尝试里的「生成草稿」用它读你选的文件、起草描述和结果。地址不在这台电脑上时，所选文件会发送过去。"));
+  const llmForm = llmSettingForm();
+  llm.appendChild(llmForm.el);
+  const lookup = settingsSection("lookup", t("联网查询"), t("这是这台电脑的设置，所有项目共用。"));
+  lookup.appendChild(lookupSettingForm());
+  const language = settingsSection("language", t("界面语言"));
+  language.appendChild(languageSettingForm());
+  panelBody.append(agents, llm, lookup, language);
+  panelBody.appendChild(mk("p", "settings-note", t("每个项目自己的设置在侧栏顶部的项目菜单里。")));
+  openPanel();
+  if (window.ROWorkspace && ROWorkspace.mountSettings) ROWorkspace.mountSettings(agentBox, subject);
+  llmForm.load();
+  const target = Array.from(panelBody.querySelectorAll("section")).find((section) => section.dataset.section === focus);
+  if (target && typeof target.scrollIntoView === "function") target.scrollIntoView();
+}
+
+document.getElementById("settings-btn").addEventListener("click", () => { if (mayReplacePanel()) openSettingsPanel(); });
+
 // -- 变量 (9.11 "In the app"; task V5 phase 9) ------------------------------------
 // The cards, the version in use set as a readable document, the history
 // from the log, each check with its result, what is under review, the kept
@@ -5465,16 +5597,74 @@ function cardChips(row) {
   return chips;
 }
 
+// 「新建变量卡」 (DESIGN.md 21.7): the draft card is made by the engine's own code for `researchos variable new`
+// (POST /api/variables/new), so the page asks for the id and says the command's rules in words. Nothing of the
+// researcher's text is written: the card begins as the commented template, and its definition is written in the editor.
+// A member's card is made in their working copy, as it is today, and goes to the PI as a proposal (12.4).
+function newCardBlock(onlyAction) {
+  const box = mk("div", "var-new");
+  const blocked = humanRecordsBlocked();
+  if (blocked) {
+    box.appendChild(mk("span", "review-note", blocked));
+    return box;
+  }
+  const form = mk("form", "var-new-form hidden");
+  const id = mk("input", "form-input form-mono");
+  id.setAttribute("aria-label", t("变量编号"));
+  id.placeholder = t("例如 topicshift");
+  id.setAttribute("autocomplete", "off");
+  const rules = mk("p", "var-new-rules", t("编号是这张卡的名字：1 到 64 个字符，只能用字母、数字、下划线、短横线和点，不能以下划线、点或短横线开头，也不能有连续的两个点；不分大小写，不能和已有的卡重名。"));
+  const after = mk("p", "var-new-rules", t("创建以后会打开这张卡的草稿：它从带说明的模板开始，定义由你在编辑器里写，写好后在卡片页确认。"));
+  const status = mk("div", "notice-status");
+  const make = mkButton(t("创建"), "btn btn-primary btn-small");
+  make.type = "submit";
+  const cancel = mkButton(t("取消"), "btn btn-small", () => { form.classList.add("hidden"); status.textContent = ""; });
+  const actions = mk("div", "var-new-actions");
+  actions.append(make, cancel);
+  form.append(mk("label", "var-new-label", t("变量编号")), id, rules);
+  if (window.ROTeam && ROTeam.mode() === "member") {
+    form.appendChild(mk("p", "var-new-rules", t("你是这个项目的成员：新建的卡先写进你的工作副本。写好定义后，在「提议」里选「变量定义」，把它交给 PI。")));
+  }
+  form.append(after, actions, status);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const epoch = state.dataEpoch, wanted = id.value.trim();
+    make.disabled = cancel.disabled = true;
+    setStatus(status, "", t("正在创建…"));
+    let res;
+    try {
+      res = await apiPost("/api/variables/new", { id: wanted });
+    } catch (err) {
+      if (epoch !== state.dataEpoch) return;
+      make.disabled = cancel.disabled = false;
+      setStatus(status, "err", t("没能新建变量卡"), err);
+      return;
+    }
+    if (epoch !== state.dataEpoch) return;
+    if (res && typeof res.generation === "number") lastGeneration = res.generation;
+    openVariableCard(res.id);
+  });
+  const open = mkButton(t("新建变量卡"), onlyAction ? "btn btn-primary" : "btn btn-small", () => {
+    form.classList.remove("hidden");
+    id.focus();
+  });
+  box.append(open, form);
+  return box;
+}
+
 function renderVariableList(host, data) {
   if (data.outputs) renderRegisteredOutputs(host, data.outputs, true);
   const rows = data.cards || [];
-  if (!rows.length && data.outputs && (data.outputs.items || []).length) return;
+  const registered = !!(data.outputs && (data.outputs.items || []).length);
   host.appendChild(mk("h2", "section-title", t("变量定义卡")));
+  host.appendChild(newCardBlock(!rows.length && !registered));
   if (!rows.length) {
+    if (registered) return; // the registered drafts above are what there is to do
     const card = mk("div", "guide-card");
-    card.appendChild(mk("h2", null, "还没有变量定义卡"));
-    (data.empty_help.lines || []).forEach((l) => card.appendChild(mk("p", null, l)));
-    card.appendChild(mk("pre", null, data.empty_help.command));
+    card.appendChild(mk("h2", null, t("还没有变量定义卡")));
+    card.appendChild(mk("p", null, t("变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。")));
+    card.appendChild(mk("p", null, t("卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。")));
+    card.appendChild(mk("p", null, t("为真正进入模型、图表或论断的变量建卡。点上面的「新建变量卡」创建第一张。")));
     host.appendChild(card);
     return;
   }
@@ -6440,10 +6630,7 @@ function renderLiteratureLibrary(host, data) {
     library.warnings.forEach((item) => warning.appendChild(mk("p", null, item.file + ": " + item.detail)));
     host.appendChild(warning);
   }
-  const setting = mk("details", "lit-reader-sources");
-  setting.appendChild(mk("summary", null, t("联网查询设置")));
-  setting.appendChild(renderLookupSetting(data.lookup || {}));
-  host.appendChild(setting);
+  host.appendChild(lookupSettingLine(data.lookup || {}));
   if (data.outputs) renderRegisteredOutputs(host, data.outputs);
 }
 
@@ -6552,7 +6739,7 @@ function renderLiteratureReader(host, item, data) {
       });
       button.disabled = !(data.lookup && data.lookup.enabled) || !!(litState.abstractBatch && litState.abstractBatch.running);
       host.appendChild(button);
-      if (!(data.lookup && data.lookup.enabled)) host.appendChild(mk("p", "lit-hint", t("开启下方的联网查询后，可按 DOI 获取摘要。")));
+      if (!(data.lookup && data.lookup.enabled)) host.appendChild(mk("p", "lit-hint", t("在设置里开启联网查询后，可按 DOI 获取摘要。")));
     }
   }
   if ((item.files || []).length) {
@@ -6569,7 +6756,7 @@ function renderLiteratureReader(host, item, data) {
 
 function renderCitationAudit(host, data) {
   // The page title above says 文献 (12.9); the view starts with its content.
-  host.appendChild(renderLookupSetting(data.lookup || {}));
+  host.appendChild(lookupSettingLine(data.lookup || {}));
   const zline = mk("p", "lit-zotero", litZoteroText(data.zotero));
   if (data.zotero && data.zotero.data_dir) zline.title = data.zotero.data_dir;
   if (data.zotero && data.zotero.status === "unreadable" && data.zotero.reason) {
@@ -6631,41 +6818,11 @@ function litEmpty(title, lines) {
   return card;
 }
 
-function renderLookupSetting(lookup) {
-  const box = mk("div", "lit-setting");
-  const label = mk("label", "lit-setting-label");
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.id = "lit-lookup";
-  input.checked = !!lookup.enabled;
-  label.append(input, mk("span", null, t("用 DOI 联网查文献信息")));
-  box.appendChild(label);
-  box.appendChild(mk("div", "lit-setting-note", t("只发送 DOI，不发送文稿内容。按需从 Crossref 和 OpenAlex 查询文献信息与摘要，结果保存在本机。")));
-  const status = mk("div", "notice-status");
-  box.appendChild(status);
-  input.addEventListener("change", async () => {
-    const epoch = state.dataEpoch;
-    const wanted = input.checked;
-    input.disabled = true;
-    setStatus(status, "", t("正在保存…"));
-    try {
-      const res = await apiPost("/api/citations/lookup-setting", { on: wanted });
-      if (epoch !== state.dataEpoch) return;
-      input.checked = !!(res && res.lookup && res.lookup.enabled);
-      if (litState.data) litState.data.lookup = res.lookup;
-      setStatus(status, "ok", input.checked ? t("已打开：下次扫描时查询") : t("已关闭：不会联网查询"));
-      if (litState.tab === "library" && currentView === "literature" && litState.data) {
-        views.literature.replaceChildren();
-        renderLiterature(views.literature, litState.data);
-      }
-    } catch (err) {
-      if (epoch !== state.dataEpoch) return;
-      input.checked = !wanted;
-      setStatus(status, "err", t("没能保存这个设置"), err);
-    }
-    input.disabled = false;
-  });
-  return box;
+// 21.7: the online lookup is this Mac's setting and has its one form on the 设置 page; the 文献 page says where it stands and links there.
+function lookupSettingLine(lookup) {
+  const line = mk("p", "lit-setting-line");
+  line.append(mk("span", null, lookup.enabled ? t("联网查询：已打开") : t("联网查询：已关闭")), " ", settingsPageLink("lookup"));
+  return line;
 }
 
 // 12.11: a draft opens with the platform's own disclosure (<details>), its
@@ -7884,10 +8041,49 @@ function renderStoppedState() {
     "</div></main>";
 }
 
+// What stopping the service does to the agents that are still working (DESIGN.md 21.7). The engine carries the runs out in
+// its own threads and `AgentManager.shutdown` ends them with the service: the program and everything it started are ended, the
+// run is recorded 已中断, and what it had changed stays changed. So the question names each run -- the task, the agent and its
+// model -- and says that, before it is asked. `runs` is what GET /api/agents/going answered (every project's runs), or null when
+// it could not be read: then the question does not claim there are none.
+async function goingRuns() {
+  try {
+    const answer = await apiGet("/api/agents/going");
+    return Array.isArray(answer && answer.runs) ? answer.runs : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function goingRunLine(run) {
+  const first = String(run.task || "").split("\n")[0].trim();
+  const vars = {
+    task: first.length > 60 ? first.slice(0, 60) + "…" : first,
+    agent: run.label || [run.runner, run.model].filter(Boolean).join(" · "),
+    project: run.project || "",
+  };
+  return run.here || !vars.project ? t("「{task}」（{agent}）", vars) : t("「{task}」（{agent}，项目 {project}）", vars);
+}
+
+function stopServiceQuestion(runs) {
+  const ask = t("确定要停止本地服务吗？停止后这个页面将无法继续使用。");
+  if (runs === null) return t("没能查看是否还有 AI 执行者在运行。") + "\n\n" + ask;
+  if (!runs.length) return ask;
+  return [
+    t("还有 {n} 个 AI 执行者正在运行：", { n: runs.length }),
+    runs.map(goingRunLine).join("\n"),
+    t("停止服务会结束它们的程序，以及程序启动的所有进程。这些运行会记为「已中断」。它们已经改动的文件不会自动撤回；下次打开 Research OS 后，能撤回的运行在任务那一行里有「撤回本次运行」。"),
+    ask,
+  ].join("\n\n");
+}
+
 document.getElementById("shutdown-btn").addEventListener("click", async () => {
   if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
-  if (!window.confirm(t("确定要停止本地服务吗？停止后这个页面将无法继续使用。"))) return;
   const btn = document.getElementById("shutdown-btn");
+  btn.disabled = true;   // while the engine is asked who is still working
+  const runs = await goingRuns();
+  btn.disabled = false;
+  if (!window.confirm(stopServiceQuestion(runs))) return;
   btn.disabled = true;
   try {
     await apiPost("/api/shutdown", {});
@@ -7903,21 +8099,24 @@ document.getElementById("shutdown-btn").addEventListener("click", async () => {
 // Named in the language it switches to (i18n.js names it on an English
 // screen). One click saves the choice on this Mac, tells the shell -- which
 // re-reads settings.json itself -- and reloads on the same section (the
-// remembered view). A refusal leaves everything as it was and says so.
-document.getElementById("lang-btn").addEventListener("click", async () => {
+// remembered view). A refusal leaves everything as it was and says so: in
+// the header line, or where the caller (the 设置 page's own choice, 21.7) says.
+async function switchInterfaceLanguage(language, controls, onError) {
   if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
-  const btn = document.getElementById("lang-btn");
-  btn.disabled = true;
+  controls.forEach((control) => { control.disabled = true; });
   try {
-    await apiPost("/api/settings/language", { language: uiLang() === "en" ? "zh" : "en" });
+    await apiPost("/api/settings/language", { language: language });
   } catch (err) {
-    btn.disabled = false;
-    showHeaderError(t("没能切换界面语言"), err);
+    controls.forEach((control) => { control.disabled = false; });
+    (onError || ((e) => showHeaderError(t("没能切换界面语言"), e)))(err);
     return;
   }
   postShellLanguage();
   window.location.reload();
-});
+}
+
+document.getElementById("lang-btn").addEventListener("click", () =>
+  switchInterfaceLanguage(uiLang() === "en" ? "zh" : "en", [document.getElementById("lang-btn")]));
 
 // -- Native shell bridge (DESIGN.md section 8.9, task V4 phase 3) ----------
 // Research OS.app is a native window around this same page. Its menus reach the

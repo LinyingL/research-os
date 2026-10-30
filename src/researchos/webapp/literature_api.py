@@ -12,7 +12,10 @@ task V7 phase D). Routed by `researchos.webapp.server`, whose handler runs
     POST /api/citations/lookup-setting   {on: bool} -- 「用 DOI 联网查文献信息」
                                          (a machine setting under the Research OS home;
                                          nothing is asked here, the next scan
-                                         asks, and only the DOIs)
+                                         asks, and only the DOIs); the 设置 page
+                                         (21.7) writes it, with no project
+                                         served too, and reads it by
+                                         GET /api/settings/lookup
     POST /api/literature/abstract        {doi, refresh?} -- fetch/cache an abstract
                                          when online DOI lookup is enabled
     POST /api/zotero/open-attachment     {item_key, attachment_key?} -- 「打开 PDF」
@@ -190,6 +193,12 @@ def abstract_payload(body: dict[str, Any]) -> dict[str, Any]:
         raise LiteratureRefused("lookup_failed", 502, "暂时无法获取摘要，请稍后重试", str(exc)) from exc
     return {"doi": doi, "abstract": meta.get("abstract"), "source": meta.get("abstract_source"),
             "source_url": meta.get("source_url"), "checked": True}
+
+
+def lookup_setting_read() -> dict[str, Any]:
+    """`GET /api/settings/lookup`: whether the online lookup is on -- the machine setting the 设置 page shows (21.7),
+    read from the same place `lookup_setting_payload` writes."""
+    return {"lookup": {"enabled": literature.doi_lookup_enabled()}}
 
 
 def lookup_setting_payload(body: dict[str, Any]) -> dict[str, Any]:

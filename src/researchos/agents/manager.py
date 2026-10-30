@@ -1848,6 +1848,17 @@ class AgentManager:
             act = self._active.get(project_id)
             return act.run_id if act is not None else None
 
+    def going(self) -> list[dict]:
+        """The runs this manager is carrying out now, in every project, oldest first: what `shutdown` would end (21.7,
+        the question before 停止服务). Each is the identifying part of its summary (`task_text`, `label`, `runner`,
+        `model`, `started`) with the project's folder name; a run another engine carries is not listed."""
+        with self._lock:
+            actives = list(self._active.values())
+        out = [{"run": act.run_id, "task": act.run.get("task_text"), "label": act.run.get("label"), "runner": act.runner,
+                "model": act.run.get("model"), "started": act.run.get("started") or act.run.get("created"),
+                "project": act.root.name, "root": str(act.root)} for act in actives]
+        return sorted(out, key=lambda item: item["run"])
+
     def _summary_of(self, project_id: str, run: dict) -> dict:
         # the newest run of the task: the listing is read newest first and no further than that run (18.4 item 2)
         latest = next((r for r in run_store.iter_runs(project_id) if r.get("task_id") == run.get("task_id")), None)

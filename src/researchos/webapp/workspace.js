@@ -102,7 +102,10 @@
   // 过程文件 group is open, all: { kind: true } for a group shown past its first files }.
   let outputNodes = {}, outputBusy = {}, outputNotes = {}, outputOpen = {};
   let offline = false;
-  let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  let settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  // The 设置 page (app.html, DESIGN.md 21.7) hands this module the box the AI agents' form is drawn in, the subject that page
+  // holds the side panel by, and the form's own slots (`sui`); the form lives while that page is the panel on screen.
+  let settingsHost = null, settingsSubject = null, sui = {};
   // 运行占用的空间 (DESIGN.md 19.8): what the engine says of the open project's run store, the sentence for a read or an
   // action that failed, the action in progress and the timer that asks again while the engine tidies an old store.
   let storeInfo = null, storeError = null, storeBusy = false, storeNote = null, storeTimer = null;
@@ -152,7 +155,7 @@
     agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; factNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
     outputNodes = {}; outputBusy = {}; outputNotes = {}; outputOpen = {};
     nowData = null; nowRequest += 1; runsSeen = false; runsMoved = false;
-    settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
+    settingsHost = null; settingsSubject = null; sui = {}; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
     stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
 
@@ -1062,11 +1065,10 @@
     const box = ui.tasks, snap = focusSnapshot(box); box.replaceChildren();
     const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("全部任务"))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
-    const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
+    header.append(settingsLink());   // 21.7: the AI agents are set on the 设置 page; here is only the way to it
     const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
     if (hasLooseTasks()) header.append(openGroupingButton("group-tasks"));
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
-    ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
     ui.taskError = el("div"); box.append(ui.taskError);
     renderTaskList();
@@ -1125,12 +1127,11 @@
         if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(["research/tasks.json"].concat(data.changed_task_reports || []));
       }); propose.disabled = !tasksEditable(); box.append(propose);
     }
-    renderSettings(true);
     restoreFocus(box, snap);
   }
   // The page refreshes on every change of the project's files, which an agent moves about every 2 s. What the person is
   // typing is never rebuilt under them (the draft lives outside data.tasks): a reply is patched in place, the rows
-  // beside the task form are drawn again, and the settings keep their inputs.
+  // beside the task form are drawn again.
   function refreshTasks() {
     if (!ui.taskText) { renderTasks(); return; }
     const typing = activeIn(ui.tasks);
@@ -1272,6 +1273,9 @@
   const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex", "deepseek-harness": "DeepSeek Harness" };
   const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
   const OWNER_OTHER = "\u0000other", OWNER_SETTINGS = "\u0000settings";
+  // 21.7: the owner written for the researcher when no name is set (a project of one person). Like a name typed by hand it is
+  // the owner text as it is on disk, so it stays 「我」 whatever the screen says; the screen reads it as Me (`ownerLabel`).
+  const OWNER_ME = "我";
   const POLL_MS = 2000, POLL_MAX_MS = 30000;
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
   // How the mcp package is added: to the uv tool install (the documented route), or to a source checkout (README).
@@ -1349,6 +1353,7 @@
   // The owner as people read it: an agent by its label, never by the raw agent: value.
   function ownerLabel(owner) {
     if (!owner) return "";
+    if (owner === OWNER_ME) return t("我");
     const known = agentInfo && (agentInfo.agents || []).find((a) => a.owner === owner);
     if (known && known.label) return known.label;
     const parsed = parseAgent(owner);
@@ -2316,6 +2321,7 @@
   function ownerChoices() {
     const list = [{ value: "", words: t("不指定") }];
     if (people.me) list.push({ value: people.me, words: t("{name}（我）", { name: people.me }) });
+    else if (people.loaded) list.push({ value: OWNER_ME, words: t("我") });
     people.team.forEach((name) => { if (!list.some((c) => c.value === name)) list.push({ value: name, words: name }); });
     return list;
   }
@@ -3305,17 +3311,28 @@
     return box;
   }
 
-  // -- 设置: this Mac's agents (17.1) -----------------------------------------------------------------
-  function toggleSettings() {
-    if (settingsOpen) { settingsOpen = false; stopStoreTimer(); renderTasks(); return; }
-    openSettings();
+  // -- 设置: this Mac's agents (17.1; DESIGN.md 21.7) --------------------------------------------------
+  // The form is on the 设置 page (app.html), the one place this Mac's settings are changed: 项目首页 keeps a text link to it
+  // and the owner control a way to it, and the page gives `mountSettings` the box to draw in.
+  function settingsLink() {
+    const line = el("span", "ws-settings-line");
+    line.append(el("span", "ws-agent-quiet", t("AI 执行者")), " ", keyed(openLink(t("在设置里修改"), openSettings), "settings-link"));
+    return line;
   }
   function openSettings() {
-    settingsOpen = true; renderTasks();
+    if (typeof mayReplacePanel === "function" && !mayReplacePanel()) return;
+    if (typeof openSettingsPanel === "function") openSettingsPanel("agents");
+  }
+  function settingsLive() {
+    return !!settingsHost && !!settingsSubject && typeof state !== "undefined" && state.panelSubject === settingsSubject &&
+      typeof panel !== "undefined" && !panel.classList.contains("hidden");
+  }
+  function mountSettings(box, subject) {
+    settingsHost = box; settingsSubject = subject; sui = {}; settingsNote = null;
+    renderSettings(true);
     // The programs may have been installed since the page opened.
-    if (agentInfo) loadAgentInfo(stamp(), true);
+    loadAgentInfo(stamp(), true);
     loadStore(stamp());
-    if (ui && ui.settings && typeof ui.settings.scrollIntoView === "function") ui.settings.scrollIntoView();
   }
   async function saveAgentSettings(body, doneWords, onDone) {
     if (settingsBusy) return;
@@ -3360,10 +3377,10 @@
     return control;
   }
   function fillEffortList() {
-    if (!ui || !ui.effortSlot) return;
-    ui.effortSlot.classList.toggle("hidden", !effortLevels(settingsInputs.runner, settingsInputs.model).length);
+    if (!sui.effortSlot) return;
+    sui.effortSlot.classList.toggle("hidden", !effortLevels(settingsInputs.runner, settingsInputs.model).length);
     if (!effortLevels(settingsInputs.runner, settingsInputs.model).includes(settingsInputs.effort)) settingsInputs.effort = "";
-    ui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
+    sui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
   }
   function quiet(words) { return el("p", "ws-agent-quiet", words); }
   function runnerBlock(r) {
@@ -3397,25 +3414,25 @@
     return row;
   }
   function fillModelList() {
-    if (!ui || !ui.modelList) return;
+    if (!sui.modelList) return;
     const runner = settingsInputs.runner;
     const catalog = modelsState[runner] || {};
     const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || [])
       : runner === "deepseek-harness" ? ((agentInfo && agentInfo.harness_models) || []) : (catalog.list || []);
     const placeholder = el("option", null, t("选择模型版本…")); placeholder.value = "";
     const custom = el("option", null, t("手动填写完整 ID…")); custom.value = "__custom__";
-    ui.modelList.replaceChildren(placeholder, ...names.map((name) => {
+    sui.modelList.replaceChildren(placeholder, ...names.map((name) => {
       const match = runner === "claude-code" && /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(name);
       const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name
         : runner === "deepseek-harness" ? (name.startsWith("deepseek-account/") ? t("账户") : "API Key") + " · " + name : name;
       const option = el("option", null, label); option.value = name; return option;
     }), custom);
     const manual = settingsInputs.customModel || (!!settingsInputs.model && !names.includes(settingsInputs.model));
-    ui.modelList.value = manual ? "__custom__" : settingsInputs.model;
-    ui.modelCustom.classList.toggle("hidden", !manual);
-    ui.modelInput.value = settingsInputs.model;
-    if (ui.modelNote) {
-      ui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
+    sui.modelList.value = manual ? "__custom__" : settingsInputs.model;
+    sui.modelCustom.classList.toggle("hidden", !manual);
+    sui.modelInput.value = settingsInputs.model;
+    if (sui.modelNote) {
+      sui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
         : catalog.loading ? t("正在读取…") : "";
     }
     fillEffortList();
@@ -3462,15 +3479,15 @@
     const form = el("div", "ws-agent-add"), runner = keyed(el("select", "form-input"), "set-runner"), model = keyed(input("text", t("模型名")), "set-model");
     (agentInfo.runners || []).forEach((r) => { const option = el("option", null, RUNNER_NAMES[r.runner] || r.label || r.runner); option.value = r.runner; runner.append(option); });
     runner.value = settingsInputs.runner; model.value = settingsInputs.model; model.className += " form-mono";
-    ui.modelInput = model;
-    ui.modelList = keyed(el("select", "form-input form-mono"), "set-model-version");
-    ui.modelList.id = "ws-model-list"; ui.modelList.disabled = settingsBusy;
-    ui.modelCustom = field(t("完整模型 ID"), model);
-    ui.modelNote = el("p", "ws-agent-quiet");
-    ui.effortSlot = el("div", "ws-agent-effort");
-    ui.modelList.addEventListener("change", () => {
-      settingsInputs.customModel = ui.modelList.value === "__custom__";
-      settingsInputs.model = settingsInputs.customModel ? "" : ui.modelList.value;
+    sui.modelInput = model;
+    sui.modelList = keyed(el("select", "form-input form-mono"), "set-model-version");
+    sui.modelList.id = "ws-model-list"; sui.modelList.disabled = settingsBusy;
+    sui.modelCustom = field(t("完整模型 ID"), model);
+    sui.modelNote = el("p", "ws-agent-quiet");
+    sui.effortSlot = el("div", "ws-agent-effort");
+    sui.modelList.addEventListener("change", () => {
+      settingsInputs.customModel = sui.modelList.value === "__custom__";
+      settingsInputs.model = settingsInputs.customModel ? "" : sui.modelList.value;
       fillModelList(); if (settingsInputs.customModel) model.focus();
     });
     runner.addEventListener("change", () => {
@@ -3489,8 +3506,8 @@
     const suggested = () => runner.value === "claude-code" || runner.value === "deepseek-harness";
     refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", suggested());
     runner.addEventListener("change", () => refresh.classList.toggle("hidden", suggested()));
-    form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, ui.effortSlot, add, refresh);
-    box.append(form, ui.modelNote);
+    form.append(field(t("程序"), runner), field(t("模型版本"), sui.modelList), sui.modelCustom, sui.effortSlot, add, refresh);
+    box.append(form, sui.modelNote);
     fillModelList();
     return box;
   }
@@ -3552,10 +3569,10 @@
   // While the engine tidies an old store it says so; the panel asks again until it has finished.
   function scheduleStore() {
     stopStoreTimer();
-    if (settingsOpen && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
+    if (settingsLive() && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
   }
   async function loadStore(mark) {
-    if (!settingsOpen || !project()) return;
+    if (!settingsLive() || !project()) return;
     try {
       const info = await apiGet("/api/agents/store?project=" + encodeURIComponent(project()));
       if (!live(mark)) return;
@@ -3594,7 +3611,7 @@
     return li;
   }
   function drawStore() {
-    const slot = ui && ui.storeSlot;
+    const slot = sui.storeSlot;
     if (!slot) return;
     const snap = focusSnapshot(slot);
     slot.replaceChildren();
@@ -3638,20 +3655,18 @@
   function storeBlock() {
     const box = el("div", "ws-agent-list ws-store");
     box.append(el("h4", "ws-runner-name", t("运行占用的空间")));
-    ui.storeSlot = el("div", "ws-store-body"); box.append(ui.storeSlot);
+    sui.storeSlot = el("div", "ws-store-body"); box.append(sui.storeSlot);
     drawStore();
     return box;
   }
   // `fresh`: the settings box was just made (or the person asked for the redraw). Otherwise an input the person is
   // typing in is not rebuilt: the program list and statuses of the next redraw wait, only the note is patched.
   function renderSettings(fresh) {
-    if (!ui || !ui.settings) return;
-    const box = ui.settings, typing = activeIn(box);
+    if (!settingsLive()) return;
+    const box = settingsHost, typing = activeIn(box);
     if (!fresh && typing && isTyping(typing)) { showSettingsNote(); return; }
     const snap = focusSnapshot(box);
-    box.replaceChildren(); box.classList.toggle("hidden", !settingsOpen);
-    if (!settingsOpen) return;
-    box.append(el("h3", "ws-agent-heading", t("AI 执行者")));
+    box.replaceChildren(); sui = {};   // the page gives the heading; the box is the form
     box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。")));
     if (!agentInfo) {
       if (agentInfoError) {
@@ -3662,16 +3677,17 @@
     }
     if (agentInfo.mcp === false) { const warn = el("div", "ws-agent-warn"); warn.append(el("p", "ws-status err", mcpWords()), installBlock()); box.append(warn); }
     (agentInfo.runners || []).forEach((r) => box.append(runnerBlock(r)));
-    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock(), storeBlock());
-    ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
+    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock());
+    if (project()) box.append(storeBlock());   // the open project's run store: nothing to show with no project
+    sui.note = el("p"); sui.note.setAttribute("role", "status"); box.append(sui.note); showSettingsNote();
     restoreFocus(box, snap);
     loadModels(settingsInputs.runner);
     (agentInfo.agents || []).forEach((agent) => loadModels(agent.runner));
   }
   function showSettingsNote() {
-    if (!ui || !ui.settingsNote) return;
-    ui.settingsNote.textContent = settingsNote ? settingsNote.words : "";
-    ui.settingsNote.className = settingsNote ? "ws-status " + settingsNote.kind : "hidden";
+    if (!sui.note) return;
+    sui.note.textContent = settingsNote ? settingsNote.words : "";
+    sui.note.className = settingsNote ? "ws-status " + settingsNote.kind : "hidden";
   }
 
   async function load(target, refresh) {
@@ -3840,6 +3856,6 @@
     if (typeof activateView === "function") activateView("workspace");
     if (ui) openDocument(path, false, true);
   }
-  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, answerRun: answerRun, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, answerRun: answerRun, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood, mountSettings: mountSettings };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

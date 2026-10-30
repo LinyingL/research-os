@@ -6410,7 +6410,14 @@ attempts.py`; `research_records.assessment_statuses`).
     「Claude Code · sonnet」, as the rows name it; 「设置 AI 执行者…」 when this
     Mac has none). A name typed by hand stays among the people, and an agent this
     Mac lacks among the agents, while it is the value. Nothing about the owner
-    on disk changes.
+    on disk changes. *Amended, B4-3:* in a project of one person with no name set
+    (no `me.toml`) the group held only 「其他人…」 and the researcher could not give
+    a task to themselves; they are listed as 「我」 (“Me”) once the page knows there
+    is no name, and chosen like a named person: the owner written to
+    `tasks.json` is the text 「我」 whatever the screen's language is (nothing on
+    disk depends on it, 13.1), and a row reads it as “Me” on an English screen.
+    With a name set the entry is 「<name>（我）」, written as the name, and there is
+    no second one.
   - **日期** is optional and empty by default -- nothing fills it with today.
     It is the task's existing `due`, which stays `""` when no date was given,
     as it always did: no new field on disk, and the engine's validation (empty,
@@ -6850,12 +6857,45 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   文件不存在」 (写出 for a write; “Broken link: reads X, file not found”); where it is about another script it names it by its
   file name, 「断链：复核诊断.R 读取 X，文件不存在」, with the script's path as quiet text under the line. (This replaces 8.8's
   glossary row for “(reads, not found)”.)
-- **变量** gets 「新建变量卡」, which creates the draft through the same code as
-  `researchos variable new`; the page no longer tells the person to use a
-  terminal.
-- **One 设置 page** for this Mac — AI 执行者, 本地模型 (辅助填写), 联网查询,
-  界面语言 — opened from the sidebar's foot; per-project settings stay in the
-  project menu. 停止服务 names any agent still running before it stops.
+- **变量 gets 「新建变量卡」** (*B4-3*), which makes the draft through the code `researchos variable new` runs, and the page no
+  longer tells anyone to use a terminal. It is a button under the section's heading (the page's one primary button while there
+  are no cards and no registered drafts, else the quiet one; a read-only or not-yet-migrated project offers the sentence 9.10
+  gives instead) that opens a small form: the id, the command's rules in words (1 to 64 characters; letters, digits, `_`, `-`
+  and `.`; not beginning with `_`, `.` or `-`; no `..`; not case-sensitive; not the id of a card that exists, whose log the
+  index still holds or whose backups remain), what follows (the new draft opens; its definition is written in the editor and
+  confirmed on the card's page), 创建 and 取消. The id is the command's only argument (its other, the project's path, is the
+  open project), and is sent trimmed. `POST /api/variables/new {id}` calls `cards.new_card`, the function the command calls:
+  the same id validation, the same exclusive creation of `.researchos/variables/<id>/v1.toml` from the commented template, the
+  same lack of a log entry (the log begins at the draft's confirmation, 9.11), the same project lock: on the same project the
+  command and the route leave the same files, the one `v1.toml` being new. A refusal comes back as a
+  sentence in words in the request's language (`variables_api.NEW_REFUSED`: a length, a first character, a character, two
+  dots, a taken id up to letter case, an id the index still holds or whose backups remain, an identity or folder that cannot
+  be read), the engine's English being the error's own message, behind 「详情」. **A member** makes the card in their working
+  copy, as the command does there (12.4: a variable's new definition version is a proposal); the form adds one sentence, that
+  it reaches the PI by 提议 of the kind 变量定义. The empty page says what a card is and points at the button; `empty_help`
+  (a sentence and the command to type) is gone from `GET /api/variables`, and no string of the 变量 view names a command.
+- **One 设置 page** for this Mac, opened by 「设置」 in the sidebar's foot (between 备份 and 停止服务, shown with no project
+  too; *B4-3*). It is the side panel, one section each, and needs no project. **AI 执行者**: the form 项目首页 carried --
+  the programs and their paths, the agents by model and reasoning effort, the time limit, the spending cap, the run space
+  limit and, when a project is open, its run store -- drawn by `workspace.js` into the box the page hands over
+  (`ROWorkspace.mountSettings`), with the same keys of `settings.json` and the same `POST /api/settings/agents`. **本地模型
+  （辅助填写）**: the address and the model of `POST /api/settings/llm`. **联网查询**: `doi_online_lookup` in
+  `~/.researchos/settings.json` -- **a setting of this Mac, not of a project**, so it is here and not in the project menu --,
+  read by `GET /api/settings/lookup` and written by the route the 文献 page always used, `POST /api/citations/lookup-setting`,
+  which now answers with no project too. **界面语言**: 中文 or English by `POST /api/settings/language`; the foot's switch stays
+  as the shortcut, and both run `switchInterfaceLanguage`. Nothing is stored anew. Every setting has this one form; the places
+  that held one keep a text link 「在设置里修改」 and, where the setting is read, its state: 项目首页's header (「AI 执行者」 and
+  the link; the owner control's 「设置 AI 执行者…」 opens the page too), 文献 (「联网查询：已打开 / 已关闭」 and the link, where a
+  fold and a checkbox were) and the attempt form's 辅助填写 (where a draft goes, and the link). Per-project settings stay in the
+  project menu, and the page says so. Opening it over a panel with half-typed words asks first (14.3), and words typed in its
+  fields and not saved count for that.
+- **停止服务 names what it ends** (*B4-3*). Before it asks, the page reads `GET /api/agents/going` -- the runs this engine
+  carries out now, in every project (`AgentManager.going`; it answers with no project too) -- and, when there are any, the
+  question names each by task (its first line), agent and model, and a run of another project by that project's folder, then
+  says what stopping does, which is what `AgentManager.shutdown` does: the programs and everything they started are ended, each
+  run is recorded 已中断 (`interrupted`, code `shutdown`), and what they had changed is **not** undone -- after the next start a
+  run that can be undone has 「撤回本次运行」 in its task row. With none going the question is the old one; when the list
+  cannot be read the question says so (“Could not check whether an AI agent is still running.”) and does not claim there are none.
 
 ### 21.8 Presentation (amends 12.11)
 

@@ -21,6 +21,8 @@ these actions do not write definitions. A separate human action,
 new card draft; confirmation still uses the existing human action below.
 
     /api/variables/confirm      {id, attested: yes|no|unknown, content_hash}
+    /api/variables/new          {id}                       「新建变量卡」: the same code as `researchos variable new`
+                                (`cards.new_card`), the draft v1.toml from the template; the 21.7 refusals worded
     /api/variables/revise       {id}                       (also 「口径已变」)
     /api/variables/reaffirm     {items: [{id, version, signature, data_version?}], note?}
                                 「口径未变」 / 「全部口径未变」: one entry per card
@@ -52,6 +54,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
+from researchos import settings
 from researchos.records import cards
 from researchos.records import implementation
 from researchos.records import variables as V
@@ -60,13 +63,24 @@ from researchos.records.identity import IdentityState, read_identity
 #: Above this a kept copy is cut (and the page says so); scripts are small.
 TEXT_LIMIT = 1024 * 1024
 
-EMPTY_HELP = {
-    "lines": [
-        "变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。",
-        "卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。",
-        "为真正进入模型、图表或论断的变量建卡。在终端运行下面的命令创建第一张：",
-    ],
-    "command": "researchos variable new <id>",
+# 21.7 「新建变量卡」: the reasons `researchos variable new` refuses with (`cards.new_card`'s `reason`), each worded in
+# the request's language (13.6) as (zh, en); the engine's own sentence stays behind 「详情」.
+NEW_REFUSED = {
+    "id_length": ("编号要有 1 到 64 个字符。", "An id is 1 to 64 characters long."),
+    "id_start": ("编号不能以下划线、点或短横线开头。", "An id may not start with an underscore, a dot or a hyphen."),
+    "id_char": ("编号只能用字母、数字、下划线、短横线和点，不能含「{char}」。",
+                "An id may hold only letters, digits, underscores, hyphens and dots, not “{char}”."),
+    "id_space": ("编号里不能有空格。", "An id may not hold a space."),
+    "id_dots": ("编号里不能有连续的两个点。", "An id may not hold two dots in a row."),
+    "taken": ("已经有一张叫「{id}」的变量卡了（编号不分大小写）。", "A variable card called “{id}” already exists (ids are not case-sensitive)."),
+    "index_holds": ("索引里还留着变量卡「{id}」，请先回答它的问题，再用这个编号。",
+                    "The index still holds a variable card called “{id}”. Answer its question first, then use the id."),
+    "snapshots": ("「{id}」这个编号以前用过，留有备份，不能再用。", "The id “{id}” was used before and its backups remain, so it cannot be used again."),
+    "no_identity": ("项目的身份文件读不出来，什么都没有写。请先恢复它。",
+                    "The identity file of the project cannot be read, so nothing was written. Restore it first."),
+    "unlistable": ("变量卡所在的文件夹读不了，什么都没有写。", "The folder of the variable cards cannot be listed, so nothing was written."),
+    "unsafe": ("没能在项目里建变量卡的文件夹（项目文件夹不在了，或者那个位置不是文件夹、指向了项目之外），什么都没有写。",
+               "The folder for variable cards could not be made in the project (the project folder is gone, or that place is not a folder or leads outside the project), so nothing was written."),
 }
 
 # 8.8: the sentence for each refusal code that carries no sentence of its own.
@@ -218,7 +232,7 @@ def list_payload(conn: Connection | None, root: Path) -> dict[str, Any]:
     pending = outputs.catalog(root, {"variable"})
     known = {r["id"].casefold() for r in rows}
     pending["items"] = [i for i in pending["items"] if str(i.get("variable_card") or "").casefold() not in known]
-    return {"cards": rows, "empty_help": EMPTY_HELP, "outputs": pending}
+    return {"cards": rows, "outputs": pending}
 
 
 def _open(root: Path, card_id: str) -> V.Card:
@@ -285,7 +299,7 @@ def frozen_payload(root: Path, card_id: str, entry_id: str) -> dict[str, Any]:
 
 # -- writes ------------------------------------------------------------------------------------
 
-ACTIONS = ("confirm", "revise", "reaffirm", "abandon", "revive", "answer", "full-compare", "settle")
+ACTIONS = ("new", "confirm", "revise", "reaffirm", "abandon", "revive", "answer", "full-compare", "settle")
 
 
 def _note(body: dict[str, Any], *, required: bool) -> str | None:
@@ -307,13 +321,15 @@ def _shown(body: dict[str, Any]) -> str | None:
     return shown
 
 
-def act(root: Path, project_id: str | None, action: str, body: dict[str, Any]) -> dict[str, Any]:
-    """One POST action (module docstring). The caller holds the server's
-    write guard; every write takes the project lock itself as well."""
+def act(root: Path, project_id: str | None, action: str, body: dict[str, Any], lang: str = "zh") -> dict[str, Any]:
+    """One POST action (module docstring), its refusals worded in `lang` where the engine words them (`new`). The
+    caller holds the server's write guard; every write takes the project lock itself as well."""
     if action not in ACTIONS:
         raise CardActionRefused(f"no such action: {action}", "invalid", None)
     common = {"expected_id": project_id, "timeout": 10.0}
     try:
+        if action == "new":
+            return _new(root, body, common, lang)
         if action == "reaffirm":
             return _reaffirm(root, body, common)
         card_id = _card_id(body.get("id"))
@@ -347,6 +363,24 @@ def act(root: Path, project_id: str | None, action: str, body: dict[str, Any]) -
         return _answer(root, card_id, body, common)
     except V.VariableError as exc:
         raise _refused(exc) from exc
+
+
+def _new(root: Path, body: dict[str, Any], common: dict[str, Any], lang: str) -> dict[str, Any]:
+    """「新建变量卡」 (21.7): `cards.new_card`, the one function `researchos variable new` calls, with the same id
+    rules and the same exclusive creation; a refusal is worded in `lang`. The card's log gets no entry: it begins at
+    the draft's confirmation, as it does for the command."""
+    card_id = body.get("id")
+    if not isinstance(card_id, str):
+        raise _bad("'id' must be the new card's id")
+    try:
+        path = cards.new_card(root, card_id, **common)
+    except cards.CardRefused as exc:
+        reason = "id_space" if exc.reason == "id_char" and exc.values.get("char", "").isspace() else exc.reason or ""
+        words = NEW_REFUSED.get(reason)
+        if words is None:
+            raise
+        raise CardActionRefused(str(exc), exc.code, settings.say(*words, lang, **exc.values)) from exc
+    return {"ok": True, "id": card_id, "file": path.relative_to(root).as_posix(), "version": 1}
 
 
 def _reaffirm(root: Path, body: dict[str, Any], common: dict[str, Any]) -> dict[str, Any]:

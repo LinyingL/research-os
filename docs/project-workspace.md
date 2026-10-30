@@ -56,7 +56,9 @@ reached through OpenCode. The agent does the task itself, not a draft of it.
 **Set up.** Install your chosen program and sign in to it. Install
 Research OS with the optional MCP extra (see the
 [README](../README.md#optional-ai-agents)); without it, **Run** says what is
-missing. In the task area open **AI agent**. Research OS shows whether it
+missing. Open **Settings** at the foot of the sidebar (the task area of
+**Project home** has **Change in Settings** beside **AI agent**), to its **AI agent**
+section. Research OS shows whether it
 found each program and its version; if not, enter the program's full path.
 Add an agent by choosing the program and **Model version**. Codex's list
 shows full IDs such as `gpt-6.1-sol`; **Refresh models** reads the current
@@ -303,7 +305,7 @@ twice.
 distinct content, shared by the runs that need it, so a file that is the same in
 several runs is stored once. A project's undo backups, files moved away by
 undo, and run logs may take up to 5 GB; change the **Space limit** (1 to 100
-GB) in the AI agent area, where the time limit is. When they pass the limit,
+GB) in the AI agent section of **Settings**, where the time limit is. When they pass the limit,
 Research OS releases the oldest run's backup first, then the next, and those
 runs can no longer be undone; a run that is going, or waiting for its changes
 to be compared, keeps its own. Files moved away by undo are never removed
