@@ -204,21 +204,26 @@ def _validate_links(root: Path, context: dict[str, Any]) -> None:
 
 def assessment_statuses(root: str | Path) -> list[dict[str, Any]]:
     """The statuses an assessment can have in this project (21.3): the default words and any the researcher named in
-    `[verdict_labels]`, each once, with the first marker the table writes for it, whether that marker abandons the
-    route (14.3), and 其它 last, which has no marker. A status is its word as written; the words are the project's, so
-    a suggestion that names one is the same on disk in either interface language (13.1)."""
+    `[verdict_labels]`, each once, in the order the chooser offers them (`attempts.STATUS_ORDER`: 现行, 待定, 不利证据,
+    已放弃, 被否, 归档, then the researcher's own), with the first marker the table writes for it (`marker`; `markers`
+    are all that name it, for reading a cell the researcher wrote with another), whether that marker abandons the route
+    (14.3), and 其它 last, which has no marker. A status is its word as written; the words are the project's, so a
+    suggestion that names one is the same on disk in either interface language (13.1)."""
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
 
     root = workspace._root(root)
     labels, markers = attempts_ingest.verdict_labels(root), proposals.abandon_markers(root)
     out: list[dict[str, Any]] = []
     for marker, word in labels.items():
-        if any(item['status'] == word for item in out):
+        same = next((item for item in out if item['status'] == word), None)
+        if same is not None:
+            same['markers'].append(marker)
             continue
         route = attempts_ingest.route_status(marker, labels, markers)
-        out.append({'status': word, 'marker': marker, 'abandons': route['status'] == 'abandoned', 'other': False,
-                    'code': route['status']})
-    out.append({'status': OTHER_STATUS, 'marker': '', 'abandons': False, 'other': True, 'code': 'other'})
+        out.append({'status': word, 'marker': marker, 'markers': [marker], 'abandons': route['status'] == 'abandoned',
+                    'other': False, 'code': route['status']})
+    out.sort(key=lambda item: attempts_ingest.status_rank(item['marker']))
+    out.append({'status': OTHER_STATUS, 'marker': '', 'markers': [], 'abandons': False, 'other': True, 'code': 'other'})
     return out
 
 

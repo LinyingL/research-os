@@ -108,7 +108,7 @@ async function openDesk(c) {
     if (answer && answer.refuse) throw Object.assign(new Error("refused"), { state: answer.refuse });
     return typeof answer === "function" ? answer(body) : answer || { ok: true };
   };
-  global.fetchAttemptRecords = async () => { state.attemptsById = new Map((c.records || []).map((r) => [r.id, r])); return true; };
+  global.fetchAttemptRecords = async () => { state.attemptsById = new Map((c.records || []).map((r) => [r.id, r])); state.attemptStatuses = c.statuses || []; return true; };
   views.desk = el("div", "host");
   await window.RODesk.loadDesk(views.desk, false);
 }
@@ -117,6 +117,17 @@ async function openDesk(c) {
 
 def _st(status: str, label: str, words: str = "") -> dict:
     return {"status": status, "label": label, "words": words}
+
+
+def _status(word: str, marker: str, code: str, abandons: bool = False) -> dict:
+    return {"status": word, "marker": marker, "markers": [marker], "abandons": abandons, "other": False, "code": code}
+
+
+#: The statuses of a project with no [verdict_labels] as `research_records.assessment_statuses` lists them (21.3), in the
+#: order the chooser offers them; tests/test_v16_assessment.py holds this list to the engine's own answer.
+STATUSES = [_status("现行", "✅", "current"), _status("待定", "🕒", "pending"), _status("不利证据", "⚠️", "adverse"),
+            _status("已放弃", "☠️", "abandoned", True), _status("被否", "⛔", "rejected"), _status("归档", "📋", "archived"),
+            {"status": "其它", "marker": "", "markers": [], "abandons": False, "other": True, "code": "other"}]
 
 
 def _case(role: str, lang: str = "zh") -> dict:
@@ -150,7 +161,7 @@ def _case(role: str, lang: str = "zh") -> dict:
                        "notice": None if role != "none" else w("你还不是这个项目的成员", "Not a member yet"),
                        "waiting": [], "mine": [], "review": {"count": 0, "groups": [], "none": {"items": [], "cards": []}}, "sync": None}}
     page = {"id": A16, "type": "attempt", "name": "#16 TopicShift 波动", "path": None, "file": "map.md",
-            "details": {"number": "16", "date": "07-26", "description": "TopicShift 波动", "verdict": "待定 先看",
+            "details": {"number": "16", "date": "07-26", "description": "TopicShift 波动", "verdict": "🕒 先看",
                         "verdict_status": _st("pending", "待定", "先看"), "result": "t=2.91"},
             "trace": {"columns": [
                 {"key": "in", "title": w("读取的数据", "Data read"), "items": [
@@ -167,9 +178,9 @@ def _case(role: str, lang: str = "zh") -> dict:
     notes = {"notes": [{"id": "n1", "node": A16, "at": "2024-03-01T12:00:00", "by": "li@example.com", "label": "Li", "text": "这里的缺失值要先处理"},
                        {"id": "n2", "node": A16, "at": "2024-03-01T09:00:00", "by": "x", "label": "X", "text": "撤回了", "withdrawn": True}],
              "trusted": True}
-    records = [{"id": A16, "verdict": "待定 先看", "verdict_status": _st("pending", "待定", "先看")},
+    records = [{"id": A16, "verdict": "🕒 先看", "verdict_status": _st("pending", "待定", "先看")},
                {"id": A17, "verdict": "☠ 方向反了", "verdict_status": _st("abandoned", "已放弃", "方向反了")}]
-    return {"desk": desk, "records": records, "get": {
+    return {"desk": desk, "records": records, "statuses": STATUSES, "get": {
         "/api/me": {"me": {"id": "li@example.com", "name": "Li"}}, "/api/proposals": {"role": role, "proposals": []}, "/api/share": {},
         f"/api/node?node={A16.replace(':', '%3A').replace('#', '%23')}": page,
         f"/api/notes?node={A16.replace(':', '%3A').replace('#', '%23')}": notes}}
@@ -203,7 +214,8 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
     assert out["subject"] == A16 and out["backdrop"] == "hidden"
     for line in ["panel-title plain-title: #16 TopicShift 波动", "panel-subtitle: 07-26", "status-label tone-ochre: 待定",
                  "verdict-words: 先看", "dp-mark: 待复核 1", "btn btn-small: 打开详情页", "node-sec-title: 研究判断与结果",
-                 "form-input:  = 待定 先看", "chip: 已放弃", "form-textarea:  = t=2.91",
+                 "status-pick selected: 待定", "status-pick: 现行", "status-pick: 已放弃", "status-pick: 其它", "status-caption: 理由",
+                 "form-textarea status-reason:  = 先看", "form-textarea:  = t=2.91",
                  "btn btn-primary: 保存", "node-sec-title: 写备注", "tl-note: 这里的缺失值要先处理", "desk-meta: Li · 2024年3月1日",
                  "form-textarea:  =  (写一条备注：为什么这样做、要注意什么)", "btn btn-small: 添加备注",
                  "node-sec-title: 来龙去脉", "trace-col-title: 读取的数据", "trace-item-name: raw.csv", "status-label tone-plain: 原始数据",
@@ -211,9 +223,12 @@ def test_14_3_a_card_opens_its_attempt_in_the_side_panel_in_chinese():
                  "node-sec-title: 源自", "desk-empty: 还没标来处", "node-sec-title: 由它而来", "desk-link: #17 事件轴",
                  "status-label tone-gray: 已放弃", "desk-note: 换轴", "desk-meta: 最初的研究者 · 2024年10月12日", "btn btn-small: 删除这条连线"]:
         assert line in lines, line
-    # Re-baselined at acceptance (2026-10-13): one chip per status a cell leads with a marker --
-    # 「☠ 方向反了」 gives 已放弃; 「待定 先看」 leads with none, so 待定 is not offered.
-    assert [line for line in lines if line.startswith("chip: ")] == ["chip: 已放弃"]
+    # 21.3: the assessment is a button per status of the project, in the order 21.3 names them, the cell's own status
+    # pressed and its words in the reason field; the cell's marker (🕒) is in no field (12.11).
+    assert [line for line in lines if line.startswith("status-pick")] == [
+        "status-pick: 现行", "status-pick selected: 待定", "status-pick: 不利证据", "status-pick: 已放弃", "status-pick: 被否",
+        "status-pick: 归档", "status-pick: 其它"]
+    assert not any("🕒" in line for line in lines)
     assert not any("撤回了" in line for line in lines)  # a withdrawn note is not shown
     assert not any("关联文件" in line or "还有文件属于" in line for line in lines)  # the node page's repairs stay there
     reason = [line for line in lines if "放弃的理由（必填）" in line]
@@ -230,7 +245,7 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in ["status-label tone-ochre: Pending", "dp-mark: Awaiting your approval", "dp-mark: Needs review: 1",
-                 "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "chip: Abandoned",
+                 "btn btn-small: Open the details page", "node-sec-title: Research assessment and result", "status-pick: Abandoned", "status-caption: Reason",
                  "btn btn-primary: Save", "node-sec-title: Write a comment", "desk-meta: Li · 1 Mar 2024",
                  "btn btn-small: Add comment", "node-sec-title: Provenance", "trace-col-title: Data read",
                  "status-label tone-plain: Raw data", "status-label tone-plain: Step script", "status-label tone-clay: File not found",
@@ -238,7 +253,9 @@ def test_14_6_the_panel_in_english_carries_no_chinese_but_the_researchers():
                  # 13.5 (V10 review, finding 20): a line's date in the screen's form, re-baselined from its ISO day.
                  "desk-meta: Original researcher · 12 Oct 2024", "btn btn-small: Delete this line"]:
         assert line in lines, line
-    assert [line for line in lines if line.startswith("chip: ")] == ["chip: Abandoned"]
+    assert [line for line in lines if line.startswith("status-pick")] == [
+        "status-pick: Current", "status-pick selected: Pending", "status-pick: Adverse evidence", "status-pick: Abandoned",
+        "status-pick: Rejected", "status-pick: Archived", "status-pick: Other"]
     assert not any("节点" in line or "画布" in line for line in out["lines"])
 
 
@@ -273,7 +290,7 @@ def test_14_3_an_abandoned_cards_panel_says_who_abandoned_it(lang):
 #: #16's (`c.get[...]`), `refuse` a state the write is refused with, `moved` a cell the file holds that the
 #: panel did not show.
 _ENGINE = r"""
-global.file = { verdict: "待定 先看", result: "**t=2.91**" };
+global.file = { verdict: "🕒 先看", result: "**t=2.91**" };
 global.refuse = null;
 const plain = (raw) => raw.replace(/\*\*/g, "").replace(/<br>/g, "\n");
 const node = "/api/node?node=" + encodeURIComponent(%(id)s);
@@ -295,8 +312,11 @@ c.post = {
   },
 };
 global.flush = async () => { for (let i = 0; i < 8; i++) await settle(); };
-global.resultField = () => fields().find((f) => f.tag === "TEXTAREA" && !f.placeholder);
-global.verdictField = () => fields().find((f) => f.tag === "INPUT");
+global.resultField = () => fields().find((f) => f.tag === "TEXTAREA" && !f.placeholder && !f.cls.has("status-reason"));
+// 21.3: the research assessment is a button per status (the pressed one chosen) and a reason field, not a text box
+global.pick = (word) => panelPart("panel-body").all().find((k) => k.tag === "BUTTON" && k.dataset.status === word);
+global.verdictReason = () => fields().find((f) => f.cls.has("status-reason"));
+global.chosen = () => panelPart("panel-body").all().filter((k) => k.cls.has("status-pick") && k.cls.has("selected")).map((k) => k.dataset.status);
 """
 
 
@@ -337,7 +357,7 @@ def test_18_3_a_change_of_the_result_saves_at_once_and_撤销_writes_the_old_cel
     extra = out["extra"]
     assert extra["shown"] == [False, False]  # no row, no confirmation, no way back to a preview
     assert not any(line.startswith("diff-row") or line.startswith("diff-label") for line in extra["saved"])
-    assert extra["savedFile"]["result"] == "t=3.10" and extra["file"] == {"verdict": "待定 先看", "result": "**t=2.91**"}
+    assert extra["savedFile"]["result"] == "t=3.10" and extra["file"] == {"verdict": "🕒 先看", "result": "**t=2.91**"}
     assert f": {w('已保存', 'Saved')}" in extra["saved"] and f"err-detail-toggle: {w('撤销', 'Undo')}" in extra["saved"]
     assert extra["field"] == ["t=3.10", "t=2.91"] and extra["offered"] is False
     assert f"notice-status ok: {w('撤销了上一步', 'Undid the last step')}" in extra["undone"]
@@ -357,7 +377,7 @@ def test_18_3_a_second_edit_replaces_the_offer_and_a_row_that_changed_again_is_n
     steps = head + """
       type(resultField(), "t=3.10");
       find("保存", "BUTTON").click(); await flush();
-      type(verdictField(), "现行 主线");
+      pick("现行").click(); type(verdictReason(), "主线");
       find("保存", "BUTTON").click(); await flush();
       const twice = posted.length;
       await window.RODesk.revalidatePanel(state.panelSubject); await flush();
@@ -379,12 +399,12 @@ def test_18_3_a_second_edit_replaces_the_offer_and_a_row_that_changed_again_is_n
     case["get"]["/api/notes?node=" + A18.replace(":", "%3A").replace("#", "%23")] = {"notes": [], "trusted": True}
     out = _run(case, steps)
     posted = out["posted"]
-    assert posted[3] == ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "现行 主线"}}]
+    assert posted[3] == ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "✅ 主线"}}]
     assert out["extra"]["twice"] == 4 and out["extra"]["kept"] is True
     # 撤销 after the second save undid that step only: the verdict is back, the first save's result stays.
-    assert posted[4:6] == [["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "待定 先看"}}],
-                           ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "待定 先看"}}]]
-    assert out["extra"]["afterUndo"] == {"verdict": "待定 先看", "result": "t=3.10"}
+    assert posted[4:6] == [["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "🕒 先看"}}],
+                           ["/api/attempts/write", {"op": "update", "number": "16", "fields": {"verdict": "🕒 先看"}}]]
+    assert out["extra"]["afterUndo"] == {"verdict": "🕒 先看", "result": "t=3.10"}
     assert out["extra"]["gone"] is True and out["extra"]["reopened"] is True
 
 
@@ -404,7 +424,7 @@ def test_18_3_撤销_is_refused_in_place_when_the_row_moved_on_or_would_abandon_
       // The same for a route un-abandoned: the old verdict would abandon it again.
       file.verdict = "☠ 方向反了"; file.result = "t=2.91"; sync();
       await window.RODesk.revalidatePanel(state.panelSubject); await flush();
-      type(verdictField(), "待定 再看");
+      pick("待定").click(); type(verdictReason(), "再看");
       find("保存", "BUTTON").click(); await flush();
       find("撤销", "BUTTON").click(); await flush();
       global.extra = { moved, writes, abandons: panelLines().filter((l) => l.startsWith("notice-status")),
@@ -414,7 +434,7 @@ def test_18_3_撤销_is_refused_in_place_when_the_row_moved_on_or_would_abandon_
     extra = out["extra"]
     assert extra["moved"] == ["notice-status err: 这一行之后又改过，不能撤销。"] and extra["writes"] == 1
     assert extra["abandons"] == ["notice-status err: 撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。"]
-    assert extra["writesAfter"] == 2 and extra["verdict"] == "待定 再看"  # the second save only; both undos wrote nothing
+    assert extra["writesAfter"] == 2 and extra["verdict"] == "🕒 再看"  # the second save only; both undos wrote nothing
 
 
 @needs_node
@@ -444,7 +464,7 @@ def test_18_3_a_file_that_changed_meanwhile_and_a_refused_write_are_not_saved_ov
     for line in ["diff-row old: | 16 | old |", "diff-row new: | 16 | new |", "btn btn-primary: 保存修改", "btn: 返回修改",
                  "confirm-note: 这一行在你打开它以后被改过：上面的原行是文件里现在的样子。"]:
         assert line in extra["held"]["lines"], line
-    assert extra["written"] == {"file": {"verdict": "待定 先看", "result": "t=3.10"}, "offered": True}
+    assert extra["written"] == {"file": {"verdict": "🕒 先看", "result": "t=3.10"}, "offered": True}
     assert extra["refused"] == ["notice-status err: 写入失败，文件没有被修改"] and extra["typed"] == "t=4.00"
     assert extra["fields"] >= 3  # the form is open again, not frozen
 
@@ -476,8 +496,8 @@ def test_14_3_abandoning_is_previewed_and_asks_why_before_anything_is_written():
     # before anything is shown), then with it: previewed, written on the confirmation.
     assert posted[0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"result": "t=3.10"}}]
     assert posted[1] == ["/api/attempts/write", posted[0][1]]
-    assert posted[2] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"}}]
-    assert posted[3] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"},
+    assert posted[2] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠️ 先看"}}]
+    assert posted[3] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠️ 先看"},
                                                    "reason": "残差不平稳"}]
     assert posted[4] == ["/api/attempts/write", posted[3][1]] and len(posted) == 5
     extra = out["extra"]
@@ -513,7 +533,7 @@ def test_14_3_a_members_change_becomes_a_verdict_change_proposal():
       global.extra = { noSentence, before };
     """ % {"id": json.dumps(A16)}
     out = _run(case, steps)
-    assert out["posted"][0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠ 待定 先看"}}]
+    assert out["posted"][0] == ["/api/attempts/preview", {"op": "update", "number": "16", "fields": {"verdict": "☠️ 先看"}}]
     assert out["posted"][1] == ["/api/attempts/write", out["posted"][0][1]]  # the reason goes with the proposal, not the row
     assert out["composed"] == [{"kind": "verdict_change", "sentence": "放弃 16", "number": "16", "reason": "残差不平稳"}]
     assert out["posted"][2] == ["/api/proposals", {"kind": "route_link", "op": "remove", "child": A17, "parent": A16, "write": True}]
@@ -581,10 +601,10 @@ def _form_run(steps: str, lang: str | None = None, role: str = "single") -> dict
     what was posted and what `steps` left in `extra`."""
     i18n = "" if lang is None else f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
     helpers = "\n".join(_app_function(head) for head in (
-        "function defaultNewNumber(", "function defaultDateValue(", "function distinctVerdicts(", "function setFormStatus(",
+        "function defaultNewNumber(", "function defaultDateValue(", "function setFormStatus(",
         "function renderAttemptForm("))
     record = {"id": A16, "attrs": {"number": "16", "date": "07-26", "description": "TopicShift 波动", "variables": "TopicShift->RV"},
-              "verdict": "待定 先看", "result": "t=2.91"}
+              "verdict": "🕒 先看", "result": "t=2.91"}
     script = ("global.window = {};\n" + i18n + _PANEL_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8") + "\n" + helpers + "\n"
               + "global.panelTitle = panelPart('panel-title'); global.panelSubtitle = panelPart('panel-subtitle');\n"
               "global.panelBody = panelPart('panel-body');\n"
@@ -598,6 +618,8 @@ def _form_run(steps: str, lang: str | None = None, role: str = "single") -> dict
               "global.mayReplacePanel = () => true;\n"
               f"state.attemptsById = new Map([[{json.dumps(A16)}, {json.dumps(record, ensure_ascii=False)}]]);\n"
               "state.attemptsConfig = { file: 'map.md', columns: { date: '日期', description: '描述', variables: '变量', result: '结果', verdict: '研究判断' } };\n"
+              f"state.attemptStatuses = {json.dumps(STATUSES, ensure_ascii=False)};\n"
+              "global.chevronIcon = () => el('svg', 'res-chevron');\n"
               "const c = { post: {}, get: {} };\n"
               "global.apiPost = async (path, body) => { posted.push([path, body]); const a = c.post[path];\n"
               "  if (a && a.refuse) throw Object.assign(new Error('refused'), { state: a.refuse }); return typeof a === 'function' ? a(body) : a || { ok: true }; };\n"
@@ -645,7 +667,7 @@ def test_18_3_the_older_form_saves_a_changed_result_at_once_and_撤销_puts_it_b
     assert [l for l in extra["saved"] if l.startswith("err-detail")] == [f"err-detail-toggle: {w('撤销', 'Undo')}"]
     assert f": {w('已保存', 'Saved')}" in extra["saved"] and extra["file"]["result"] == "t=3.10"
     assert extra["undone"] == [f"panel-status ok: {w('撤销了上一步', 'Undid the last step')}"]
-    assert extra["field"] == "t=2.91" and extra["fileBack"] == {"verdict": "待定 先看", "result": "**t=2.91**"}
+    assert extra["field"] == "t=2.91" and extra["fileBack"] == {"verdict": "🕒 先看", "result": "**t=2.91**"}
     assert out["closed"] == 0  # the form stays: 已保存 and 撤销 are in it
     # Other cells with it: the preview and its confirmation, nothing written yet.
     assert extra["mixed"] == {"writes": 2, "confirm": True, "rows": 2}
@@ -714,7 +736,7 @@ def test_18_3_the_older_form_still_previews_abandoning_a_new_row_and_a_members_c
     steps = """
       renderAttemptForm("update", %(id)s);
       let [number, date, description, variables, result, verdict] = formFields();
-      verdict.value = "☠ 方向反了";
+      find("已放弃", "BUTTON").click();
       await submit();
       const asked = { writes: posted.filter(([path]) => path === "/api/attempts/write").length,
                       lines: panelLines().filter((l) => l.includes("放弃的理由") || l.startsWith("panel-status")) };
@@ -772,7 +794,7 @@ def test_18_3_the_older_form_shows_the_row_when_the_file_moved_and_says_why_撤�
     out = _form_run(steps)
     extra = out["extra"]
     assert extra["held"] == {"writes": 0, "note": True}
-    assert extra["written"] == {"file": {"verdict": "待定 先看", "result": "t=3.10"}, "offered": True, "closed": 0}
+    assert extra["written"] == {"file": {"verdict": "🕒 先看", "result": "t=3.10"}, "offered": True, "closed": 0}
     assert extra["refused"] == ["panel-status err: 这一行之后又改过，不能撤销。"]
     assert extra["failed"] == ["panel-status err: 写入失败，文件没有被修改 (title: attempt_not_found)"] and extra["typed"] == "t=5"
     assert extra["writes"] == ["t=3.10", "t=5"]  # the first save, and the refused one -- not the 撤销
@@ -786,11 +808,12 @@ state.panelSubject={researchSource:{prefill:{description:'Compare fictional samp
 renderAttemptForm('append');
 const fields=formFields();
 const offset=ROTeam.mode()==='member'?1:0;
-global.extra={description:fields[2+offset].value,result:fields[4+offset].value,verdict:fields[5+offset].value,posts:posted.length};
+global.extra={description:fields[2+offset].value,result:fields[4+offset].value,verdict:fields[5+offset].value,reason:fields[6+offset].value,posts:posted.length};
 ''', role=role, lang='en')
     assert shown['extra']['description'] == 'Compare fictional samples'
     assert shown['extra']['result'] == 'A tentative difference'
-    assert shown['extra']['verdict'] == '' and shown['extra']['posts'] == 0
+    # 21.3: a prefill never carries an assessment: the chooser starts as 待定 (Pending on this English screen) with no reason, as any new row does
+    assert shown['extra']['verdict'] == 'Pending' and shown['extra']['reason'] == '' and shown['extra']['posts'] == 0
 
 
 @needs_node

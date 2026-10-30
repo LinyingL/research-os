@@ -139,7 +139,7 @@ def test_the_limits_of_the_handback_are_the_design_s_and_they_are_inclusive():
 
 def test_a_suggested_status_must_be_one_of_the_projects_statuses_default_words_and_its_own(root):
     default = [item["status"] for item in research_records.assessment_statuses(root)]
-    assert default == ["现行", "已放弃", "待定", "不利证据", "被否", "归档", "其它"]
+    assert default == ["现行", "待定", "不利证据", "已放弃", "被否", "归档", "其它"]   # 21.3 names the order the chooser offers them in
     for word in default:
         research_records.validate_context(root, {"suggested_assessment": {"status": word, "reason": ""}})
     with pytest.raises(workspace.WorkspaceError) as exc:
@@ -152,7 +152,7 @@ def test_a_suggested_status_must_be_one_of_the_projects_statuses_default_words_a
     (root / ".researchos" / "attempts.toml").write_text(
         (root / ".researchos" / "attempts.toml").read_text() + '[verdict_labels]\n"🧪" = "待重复"\n"✅" = "成立"\n')
     named = research_records.assessment_statuses(root)
-    assert [item["status"] for item in named] == ["成立", "已放弃", "待定", "不利证据", "被否", "归档", "待重复", "其它"]
+    assert [item["status"] for item in named] == ["成立", "待定", "不利证据", "已放弃", "被否", "归档", "待重复", "其它"]
     assert {item["status"]: item["marker"] for item in named}["待重复"] == "🧪"
     research_records.validate_context(root, {"suggested_assessment": {"status": "待重复", "reason": ""}})
     with pytest.raises(workspace.WorkspaceError):

@@ -4241,6 +4241,9 @@ Added by 21.2 (the handback; the table of 21.6 has them too): 交回 "Handback";
 确认这个判断 "Confirm this assessment"; 报告 "Report"; 运行日志 "Run log" (21.6 renames 运行记录 to it; the page changes the
 word where it converts that screen).
 
+Added by 21.3 (the assessment as a choice): 用本地模型辅助填写 "Draft with a local model" (the folded block of the new-attempt
+form; 辅助填写 stays the name of the field inside it).
+
 ### 17.10 Acceptance
 
 1. A task assigned to 「Claude Code · sonnet」 runs from the task row; the
@@ -6058,9 +6061,8 @@ this Mac under the Research OS home, never in the project.
   row of a run opens its record as a handback too; `编辑报告` in the handback
   goes to the writing area. The outputs are headed 「输出」 (13.4), not the
   retired 产出. Without a suggestion the person writes the assessment in the
-  chooser, prefilled with the one the attempt has. The chooser here is the
-  minimal one (the project's statuses and the researcher's words); 21.3's
-  replaces it. 撤销 (18.3) stays in the attempt's panel: a confirmation is
+  chooser, prefilled with the one the attempt has. The chooser here is
+  21.3's. 撤销 (18.3) stays in the attempt's panel: a confirmation is
   a record and is not undone by this view.
 
 ### 21.3 A research assessment is a choice and a reason
@@ -6079,6 +6081,66 @@ this Mac under the Research OS home, never in the project.
   the person may change), drops 「日期（日期）」 for 「日期」, keeps the local
   model's draft (Section 16) folded below the main fields, and does not show
   the file it writes to except under 「详情」.
+
+**How it is kept and read** (`RODesk.statusChooser` in `desk.js`; `ingest/
+attempts.py`; `research_records.assessment_statuses`).
+
+- **The statuses.** The engine lists them (`assessment_statuses`) in the
+  order above — 现行, 待定, 不利证据, 已放弃, 被否, 归档, the researcher's
+  own in the order their `[verdict_labels]` names them, 其它 last — each with
+  its `marker` (the first that names it) and `markers` (all of them: a
+  researcher may write 现行 with two), whether the marker abandons the route
+  (14.3) and its `code`. A default word the researcher renamed (✅ named 成立)
+  keeps its place. A status is its word as written, so the file is the same
+  in either interface language (13.1); the screen says the default words in
+  its language and the researcher's own as written. They ride with the
+  records the form is drawn for (`GET /api/attempts` answers `statuses`; the
+  page keeps them in `state.attemptStatuses`) and in the handback's view.
+- **Reading and writing a cell.** `parseAssessment` reads a cell as the
+  engine's `verdict_status` does: the first known marker (the earliest; the
+  longer when two start together; with or without the emoji variation
+  selector, leading or not) is the status and the rest — the words before it
+  and the words after, joined by a space — is the reason; the marker the cell
+  wrote the status with is kept. A cell with no known marker, an empty one and
+  one led by a symbol nobody named read as 其它 with **all of the cell** as
+  the reason. `composeAssessment` (`attempts.compose_verdict` in the engine,
+  which the handback's confirmation writes with) is the status's marker, a
+  space and the reason trimmed; the marker alone with no reason; the reason
+  alone for 其它. When the status is the one the cell was read with, the
+  cell's own marker is written again, not the status's first. The two are
+  held to the same answers by a test over every default marker, a
+  `[verdict_labels]` name, two markers for one word, a cell with none, an
+  empty reason and a symbol nobody named.
+- **Nothing changed, nothing written.** The chooser hands back the cell as it
+  was read for as long as neither the status nor the reason differs from what
+  was read, and `changed()` is false when what they compose is that cell
+  (picking another status and then the first again, or spaces added at an
+  end). In an existing row the panel and the form send a cell only when it
+  changed, so a cell with no known marker, a decoration or two lines is never
+  rewritten by looking at it. After a save or 撤销 it reads the cell again.
+- **The chooser.** One component: a button for each status, the chosen one
+  pressed (`aria-pressed`, the `selected` class: ink and weight, not the
+  clay of a problem, 21.8) and a reason field captioned 理由. Its two
+  fields are an `<input type="hidden">` holding the status word and the
+  reason's `<textarea>`, so that a half-made choice is guarded like typed
+  words (14.3's question before the panel is left). The side panel's 研究判断与结果
+  (also a member's proposal and the abandonment's reason and preview, 14.3,
+  12.4), the node page's 编辑这一行, the new-attempt form and the handback's
+  「改一下」 use it; the verdict chips and the free-text field are gone.
+  A status the project no longer has (an old suggestion) leaves nothing
+  pressed and the handback's 保存 waits for a choice.
+- **Where it starts.** From the cell for an existing row; from 待定 (the
+  project's word for it, else 其它) for a new row; from the agent's
+  suggestion in the handback, and without one from the attempt's own cell.
+- **The new-attempt form.** The number is filled with the next free one and
+  stays editable; the date's label is 日期, with the table's own header
+  after it only when that names the column differently (日期（时间）); the
+  local model's draft is a folded block 「用本地模型辅助填写」 below the main
+  fields (it fills the description and the result as 16.1 says); and 「详情」,
+  folded at the foot, says which file the row is written to (for a member,
+  the copy in their working copy) — the top of the panel no longer does. The
+  preview step of a new row (16, 12.4) keeps its own sentence saying where it
+  will be saved.
 
 ### 21.4 项目首页: what is going on
 

@@ -789,6 +789,19 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
 .verdict-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
 .chip { font: inherit; font-size: 0.76rem; padding: 0.12rem 0.5rem; background: var(--paper-alt); border: 1px solid var(--line); cursor: pointer; color: var(--ink); }
 .chip:hover { border-color: var(--ink); }
+/* 研究判断 as a choice and a reason (21.3): a button per status, the chosen one pressed -- shown in ink and weight, never
+   the clay of a problem (21.8) --, then the reason. Used by the side panel, the attempt form and the handback. */
+.status-chooser { display: flex; flex-direction: column; gap: 0.45rem; }
+.status-picks { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.status-pick { font: inherit; font-size: 0.8rem; padding: 0.15rem 0.6rem; background: var(--paper-alt); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+.status-pick:hover:not(:disabled) { border-color: var(--ink); }
+.status-pick:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
+.status-pick[aria-pressed="true"] { background: var(--paper); border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 600; }
+.status-pick:disabled { color: var(--ink-soft); cursor: not-allowed; }
+.status-caption { display: block; font-size: 0.78rem; color: var(--ink-soft); }
+/* the attempt form's folds (21.3): the local model's draft, and 详情 */
+.attempt-fold[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.attempt-fold > .res-draft-summary { padding-left: 0; }
 .form-actions { display: flex; gap: 0.6rem; margin-top: 0.3rem; }
 .btn-primary { background: var(--ochre-soft); border-color: var(--ochre); }
 .diff-label { font-size: 0.72rem; color: var(--ink-soft); margin: 0.6rem 0 0.2rem; } /* sentence case (13.4) */
@@ -1490,6 +1503,7 @@ function uiLang() { return typeof window !== "undefined" && window.ROI18N && win
 // An open edit form is left alone entirely -- yanking a half-typed form
 // out from under the user is never acceptable, and the write path
 // re-validates against the file's real state server-side anyway.
+// attemptStatuses are /api/attempts' `statuses` (DESIGN.md 21.3), read with the records: what the status chooser offers.
 // attemptsConfig is /api/summary's echo of .researchos/attempts.toml (file +
 // [columns] names, task V3 phase 3) -- the edit form is built from these,
 // never from hardcoded column labels; null means no usable config.
@@ -1500,6 +1514,7 @@ function uiLang() { return typeof window !== "undefined" && window.ROI18N && win
 // previous project never lands in this one -- see "Attempt records" below.
 const state = {
   attemptsById: new Map(), projectLabel: "", panelSubject: null,
+  attemptStatuses: [], // the statuses a research assessment can have here (21.3), with /api/attempts' records
   attemptsConfig: null, projectState: null,
   dataEpoch: 0,
   headerError: false, // the header line holds a blocking error (showHeaderError)
@@ -3019,6 +3034,7 @@ async function reloadAllViews(opts) {
   ROWorkspace.reset();
   state.attemptsById = new Map();
   state.attemptsConfig = null;
+  state.attemptStatuses = [];
   state.summary = null;
   state.migrationInfo = null;
   state.projectMoved = false;
@@ -3755,7 +3771,7 @@ const EDITABLE_KEYS = ["date", "description", "variables", "result", "verdict"];
 // exists and left out new verdict choices. Two small requests per form
 // opening cost nothing a researcher can notice.
 // Everything from here to toCellText is loaded into node by
-// tests/test_webapp_canvas_js.py; the first three functions are pure.
+// tests/test_webapp_canvas_js.py; the first two functions are pure.
 
 // `attempts`: any iterable of /api/attempts records.
 function defaultNewNumber(attempts) {
@@ -3780,17 +3796,6 @@ function defaultDateValue(attempts, now) {
   return short ? mm + "-" + dd : now.getFullYear() + "-" + mm + "-" + dd;
 }
 
-function distinctVerdicts(attempts) {
-  // Quick choices = verdict values already present in this project's own
-  // data -- never an invented vocabulary (the researcher owns the markers).
-  const seen = new Set();
-  for (const a of attempts) {
-    const v = (a.verdict || "").trim();
-    if (v && v.indexOf("\n") === -1) seen.add(v);
-  }
-  return Array.from(seen).slice(0, 8);
-}
-
 // The ONE path that fills state.attemptsById (the tree view loads through
 // it too). Resolves true when the records were stored, false when the
 // project was switched while the request was out (they are dropped);
@@ -3800,6 +3805,7 @@ async function fetchAttemptRecords() {
   const data = await apiGet("/api/attempts");
   if (epoch !== state.dataEpoch) return false;
   state.attemptsById = new Map((data.attempts || []).map((a) => [a.id, a]));
+  state.attemptStatuses = data.statuses || [];
   return true;
 }
 
@@ -4234,9 +4240,8 @@ function renderAttemptForm(mode, attemptId) {
   }
   panelTitle.textContent = proposing ? (mode === "append" ? t("提议新的尝试") : t("提议修改研究判断 #{number}", { number }))
     : (mode === "append" ? t("新增尝试") : t("编辑尝试 #{number}", { number }));
-  panelSubtitle.textContent = proposing
-    ? "先写进你的工作副本里的 " + config.file + "，再生成提议；PI 批准以后才进入正式版本"
-    : t("将写入 {file}", { file: config.file });
+  // 21.3: the file it writes is under 「详情」 at the foot of the form, not a line of its own at the top.
+  panelSubtitle.textContent = proposing ? t("先写进你的工作副本，再生成提议；PI 批准以后才进入正式版本") : "";
 
   const form = document.createElement("form");
   form.className = "attempt-form";
@@ -4264,18 +4269,31 @@ function renderAttemptForm(mode, attemptId) {
   }
   // 16: a new row may start from a draft of its description and result.
   const draftBlock = mode === "append" ? attemptDraftBlock(inputs, attempts, proposing, config.columns) : null;
-  if (draftBlock) form.appendChild(draftBlock.el);
+
+  // 21.3: 日期, and the table's own header only when it names the column differently (not 「日期（日期）」).
+  const dateColumn = config.columns.date ? String(config.columns.date).trim() : "";
+  const dateLabel = !dateColumn || [t("日期"), "日期", "Date"].some((w) => w.toLowerCase() === dateColumn.toLowerCase())
+    ? t("日期") : t("日期（{column}）", { column: dateColumn });
+  // 21.3: the research assessment is a status chosen and a reason written, not the cell's text. A new row starts as 待定
+  // (the project's word for it, else 其它); an existing one is read from its cell and written back untouched until changed.
+  const statuses = state.attemptStatuses || [];
+  const pending = statuses.find((s) => s.code === "pending");
+  const verdictLabelText = config.columns.verdict || t("研究判断");
+  const chooser = RODesk.statusChooser(mode === "append"
+    ? { statuses: statuses, status: pending ? pending.status : "", reason: "", label: verdictLabelText }
+    : { statuses: statuses, cell: record.verdict || "", label: verdictLabelText });
 
   // Field labels come from the project's OWN [columns] header text -- the
   // researcher's words, not this tool's.
   const defs = [
-    { key: "date", label: config.columns.date ? t("日期（{column}）", { column: config.columns.date }) : t("日期"), mono: true },
+    { key: "date", label: dateLabel, mono: true },
     { key: "description", label: config.columns.description || t("描述"), multiline: true },
     { key: "variables", label: config.columns.variables || t("变量"), multiline: true },
     { key: "result", label: config.columns.result || t("结果"), multiline: true },
-    { key: "verdict", label: config.columns.verdict || t("研究判断") },
+    { key: "verdict", label: verdictLabelText },
   ];
   defs.forEach((def) => {
+    if (def.key === "verdict") { form.appendChild(formFieldEl(def.label, chooser.el)); return; }
     let input;
     if (def.multiline) {
       input = document.createElement("textarea");
@@ -4288,40 +4306,17 @@ function renderAttemptForm(mode, attemptId) {
     if (mode === "append") {
       input.value = def.key === "date" ? defaultDateValue(attempts, new Date()) : (["description", "result"].includes(def.key) && typeof prefill[def.key] === "string" ? prefill[def.key] : "");
     } else {
-      input.value = def.key === "verdict" ? (record.verdict || "")
-        : def.key === "result" ? (record.result || "")
-        : (attrs[def.key] || "");
+      input.value = def.key === "result" ? (record.result || "") : (attrs[def.key] || "");
     }
     inputs[def.key] = input;
     initial[def.key] = input.value;
     // 提议修改研究判断 carries the verdict and the result only (12.4).
-    if (proposing && mode === "update" && def.key !== "verdict" && def.key !== "result") {
+    if (proposing && mode === "update" && def.key !== "result") {
       input.disabled = true;
       input.dataset.fixed = "1";
       input.title = "修改研究判断的提议只带研究判断和结果；其它格子的改动不会随提议发送";
     }
-    const fieldEl = formFieldEl(def.label, input);
-    if (def.key === "verdict") {
-      const verdicts = distinctVerdicts(attempts);
-      if (verdicts.length) {
-        const chips = document.createElement("div");
-        chips.className = "verdict-chips";
-        const statusOf = new Map(attempts.map((a) => [(a.verdict || "").trim(), a.verdict_status]));
-        verdicts.forEach((v) => {
-          const chip = document.createElement("button");
-          chip.type = "button";
-          chip.className = "chip";
-          // 12.11: the chip reads as the status and the words; clicking it
-          // puts the cell's own text (marker included) into the field.
-          const vs = statusOf.get(v);
-          chip.textContent = vs ? (vs.label + (vs.words ? " " + vs.words : "")) : v;
-          chip.addEventListener("click", () => { input.value = v; });
-          chips.appendChild(chip);
-        });
-        fieldEl.appendChild(chips);
-      }
-    }
-    form.appendChild(fieldEl);
+    form.appendChild(formFieldEl(def.label, input));
   });
   if (proposing && mode === "update") {
     reasonInput = document.createElement("textarea");
@@ -4354,6 +4349,14 @@ function renderAttemptForm(mode, attemptId) {
       parentField.appendChild(mk("div", "team-help", proposing ? t("它源自的正式尝试；PI 批准后，这些连线画到路线图上") : t("保存尝试后，按所选来源建立关联。")));
       form.appendChild(parentField);
     }
+  }
+  // 16, 21.3: the local model's draft is folded below the main fields; it fills description and result when asked.
+  if (draftBlock) {
+    const fold = mk("details", "attempt-fold");
+    const summary = mk("summary", "res-draft-summary"); // 12.13: the quiet chevron
+    summary.append(chevronIcon(), mk("span", null, t("用本地模型辅助填写")));
+    fold.append(summary, draftBlock.el);
+    form.appendChild(fold);
   }
   // 12.4 / 14.3: a member's new row abandoned from the start asks the same as
   // abandoning one later -- its result and a reason, shown once the preview
@@ -4404,8 +4407,18 @@ function renderAttemptForm(mode, attemptId) {
   cancelBtn.addEventListener("click", closePanel);
   actionsEl.append(submitBtn, cancelBtn);
   form.appendChild(actionsEl);
+  // 21.3: which file the row is written to is said here, under 「详情」, and nowhere else on the form.
+  const detail = mk("details", "attempt-fold");
+  const detailSummary = mk("summary", "res-draft-summary");
+  detailSummary.append(chevronIcon(), mk("span", null, t("详情")));
+  detail.append(detailSummary, mk("p", "team-help", proposing ? t("工作副本里的 {file}", { file: config.file }) : t("将写入 {file}", { file: config.file })));
+  form.appendChild(detail);
 
   const previewHost = document.createElement("div");
+
+  // A cell's text as the form would write it: the chooser's (21.3) for the research assessment, the box's own for the rest.
+  const cellOf = (key) => (key === "verdict" ? chooser.cell() : inputs[key].value);
+  const isChanged = (key) => (key === "verdict" ? chooser.changed() : inputs[key].value !== initial[key]);
 
   function collectBody() {
     const num = mode === "append" ? numberInput.value.trim() : number;
@@ -4415,15 +4428,15 @@ function renderAttemptForm(mode, attemptId) {
     }
     const fields = {};
     if (mode === "append") {
-      EDITABLE_KEYS.forEach((key) => { fields[key] = toCellText(inputs[key].value); });
+      EDITABLE_KEYS.forEach((key) => { fields[key] = toCellText(cellOf(key)); });
     } else {
       // Dirty fields only (section comment above): an untouched cell must
       // never be round-tripped through its cleaned prefill.
       EDITABLE_KEYS.forEach((key) => {
-        if (inputs[key].value !== initial[key]) fields[key] = toCellText(inputs[key].value);
+        if (isChanged(key)) fields[key] = toCellText(cellOf(key));
       });
       if (Object.keys(fields).length === 0) {
-        setFormStatus(statusEl, "", "没有需要写入的改动");
+        setFormStatus(statusEl, "", t("没有需要写入的改动"));
         return null;
       }
     }
@@ -4436,7 +4449,8 @@ function renderAttemptForm(mode, attemptId) {
 
   function setFormDisabled(disabled) {
     numberInput.disabled = disabled || mode === "update";
-    EDITABLE_KEYS.forEach((key) => { inputs[key].disabled = disabled || inputs[key].dataset.fixed === "1"; });
+    Object.keys(inputs).forEach((key) => { inputs[key].disabled = disabled || inputs[key].dataset.fixed === "1"; });
+    chooser.setDisabled(disabled);
     if (sentenceInput) sentenceInput.disabled = disabled;
     if (reasonInput) reasonInput.disabled = disabled;
     (parentPicks || []).forEach((cb) => { cb.disabled = disabled; });
@@ -4447,11 +4461,12 @@ function renderAttemptForm(mode, attemptId) {
   // 18.3: changing only the 研究判断 or 结果 of an existing row writes at once (the preview was asked for its
   // guards, not shown), then 已保存 and 撤销, which writes the old cells back the same way (desk.js, shared
   // with the side panel). What the form showed is its fields' text when it was drawn or last saved.
-  const shownCells = () => ({ verdict: initial.verdict, result: initial.result });
+  const shownCells = () => ({ verdict: chooser.shown(), result: initial.result });
 
   // The field holds what the file holds now (after a save, after 撤销): nothing typed in it is unwritten, so
   // opening another panel does not ask (desk.js halfTyped, as the side panel's own save does).
   function fieldIsWritten(key) {
+    if (key === "verdict") { chooser.markWritten(); return; }
     initial[key] = inputs[key].value;
     inputs[key].dataset.initial = inputs[key].value;
     delete inputs[key].dataset.typed;
@@ -4507,7 +4522,11 @@ function renderAttemptForm(mode, attemptId) {
       setFormStatus(statusEl, "err", t("已写入并备份，但重扫失败"), done.res.ingest_error);
       return;
     }
-    Object.keys(undo.was).forEach((key) => { inputs[key].value = undo.text[key]; fieldIsWritten(key); });
+    Object.keys(undo.was).forEach((key) => {
+      if (key === "verdict") { chooser.set(undo.text[key]); return; }
+      inputs[key].value = undo.text[key];
+      fieldIsWritten(key);
+    });
     setFormStatus(statusEl, "ok", t("撤销了上一步"));
   }
 

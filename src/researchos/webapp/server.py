@@ -24,7 +24,9 @@ Endpoints (all GET unless noted):
                             column names, never hardcoded ones (see
                             `summary_payload`).
     GET  /api/attempts  -- attempt nodes (human_fields verdict/result plus
-                            every attrs field); `{"attempts": [], "hint":
+                            every attrs field) and `statuses`, the statuses
+                            a research assessment can have in the project
+                            (the chooser's); `{"attempts": [], "hint":
                             ...}` when the graph has none (see
                             `attempts_payload`).
     GET  /api/tree      -- the decision-tree view, this app's own reason to
@@ -1594,9 +1596,13 @@ def _sorted_attempt_nodes(conn: Connection) -> list[dict[str, Any]]:
 
 
 def attempts_payload(conn: Connection, project_root: Path | None = None) -> dict[str, Any]:
+    """`GET /api/attempts`: the attempts with their cells, and (given the project) `statuses`, the statuses the
+    research assessment can have in it (`research_records.assessment_statuses`, DESIGN.md 21.3) -- what the page's
+    status chooser offers and reads a cell by, loaded with the records it is drawn for."""
     nodes = _sorted_attempt_nodes(conn)
+    statuses = {"statuses": research_records.assessment_statuses(project_root)} if project_root is not None else {}
     if not nodes:
-        return {"attempts": [], "hint": _NO_ATTEMPTS_HINT}
+        return {"attempts": [], "hint": _NO_ATTEMPTS_HINT, **statuses}
     labels = attempts_ingest.verdict_labels(project_root)
     attempts = [
         {
@@ -1609,7 +1615,7 @@ def attempts_payload(conn: Connection, project_root: Path | None = None) -> dict
         }
         for node in nodes
     ]
-    return {"attempts": attempts}
+    return {"attempts": attempts, **statuses}
 
 
 # -- /api/tree: the decision-tree view (task V1's core endpoint) -------------

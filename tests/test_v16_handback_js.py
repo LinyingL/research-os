@@ -73,6 +73,7 @@ const pbuttons=()=>buttonsIn(panelBody);
 const pbtn=(label)=>panelBody.all().find(e=>e.tagName==='BUTTON'&&e.textContent===label);
 const key=(k)=>panelBody.all().find(e=>e.dataset&&e.dataset.key===k);
 const cls=(c,where=panelBody)=>where.all().filter(e=>e.classList.contains(c));
+const pick=(word)=>cls('status-pick').find(b=>b.textContent===word);
 """
 
 
@@ -206,9 +207,9 @@ def test_change_it_opens_the_chooser_prefilled_and_saving_another_status_or_reas
     out = _run(root, pid, report, r"""
 await window.ROWorkspace.openHandback(REPORT);
 await pbtn('改一下').click();
-const prefilled={status:key('hb-status').value, reason:key('hb-reason').value, options:optionsOf(key('hb-status')).map(o=>o[0]), abandonHidden:cls('ws-hb-abandon')[0].classList.contains('hidden'),
+const prefilled={status:key('hb-status').value, reason:key('hb-reason').value, picks:cls('status-pick').map(b=>[b.textContent,b.getAttribute('aria-pressed')]), abandonHidden:cls('ws-hb-abandon')[0].classList.contains('hidden'),
   buttons:pbuttons(), dirty:window.ROWorkspace.isDirty()};
-key('hb-status').value='待定'; await key('hb-status').emit('change'); typed(key('hb-reason'),'Needs 2008');
+await pick('待定').click(); typed(key('hb-reason'),'Needs 2008');
 const edited={dirty:window.ROWorkspace.isDirty(), asked:confirmQuestions.length};
 answers.push(false); const stays=window.ROWorkspace.mayLeavePanel(); const asked=confirmQuestions.length;
 await key('hb-save').click(); await sleepTick();
@@ -216,7 +217,9 @@ console.log(JSON.stringify({prefilled, edited, stays, asked, post:posted.filter(
   line:cls('ws-hb-confirmed')[0].textContent, dirty:window.ROWorkspace.isDirty()}));
 """)
     assert out["prefilled"]["status"] == "现行" and out["prefilled"]["reason"] == "Holds on every member"
-    assert out["prefilled"]["options"] == ["现行", "已放弃", "待定", "不利证据", "被否", "归档", "其它"] and out["prefilled"]["abandonHidden"] is True
+    # 21.3: a button per status of the project in the order 21.3 names them, the suggested one pressed
+    assert out["prefilled"]["picks"] == [["现行", "true"], ["待定", "false"], ["不利证据", "false"], ["已放弃", "false"], ["被否", "false"],
+                                         ["归档", "false"], ["其它", "false"]] and out["prefilled"]["abandonHidden"] is True
     assert "保存" in out["prefilled"]["buttons"] and "取消" in out["prefilled"]["buttons"] and out["prefilled"]["dirty"] is False
     assert not {"确认这个判断", "改一下", "先不判断"} & set(out["prefilled"]["buttons"])         # while the chooser is open, only it asks
     assert out["edited"]["dirty"] is True and out["stays"] is False and out["asked"] == 1       # leaving a half-made assessment asks first
@@ -471,3 +474,58 @@ for (const group of groupsOn(host)) { const button = find('打开结果', group)
 console.log(JSON.stringify({ handed, opened }));
 """)
     assert out == {"handed": ["research/results/a.md"], "opened": ["research/results/b.md", "research/results/c.md"]}
+
+
+# -- 21.3: the chooser of 「改一下」 is the shared one -------------------------------------------------------------------------------
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_21_3_the_handbacks_chooser_is_a_button_per_status_with_the_suggested_one_pressed_in_both_languages(root, pid, report, lang):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn(window.ROI18N.t('改一下')).click();
+const picks=()=>cls('status-pick').map(b=>[b.textContent,b.getAttribute('aria-pressed'),b.classList.contains('selected')]);
+const first=picks();
+await pick(window.ROI18N.t('已放弃')).click();
+const abandon={picks:picks(), status:key('hb-status').value, visible:!cls('ws-hb-abandon')[0].classList.contains('hidden')};
+await pick(window.ROI18N.t('归档')).click();
+console.log(JSON.stringify({first, abandon, after:picks().filter(p=>p[1]==='true'), hidden:cls('ws-hb-abandon')[0].classList.contains('hidden'),
+  caption:cls('status-caption').map(e=>e.textContent), primary:panelBody.all().filter(e=>e.tagName==='BUTTON'&&e.className.includes('btn-primary')).map(e=>e.textContent),
+  raw:panelBody.textContent.includes('✅')}));
+""", lang=lang)
+    w = (lambda zh, en: en if lang == "en" else zh)
+    names = [w("现行", "Current"), w("待定", "Pending"), w("不利证据", "Adverse evidence"), w("已放弃", "Abandoned"), w("被否", "Rejected"),
+             w("归档", "Archived"), w("其它", "Other")]
+    assert out["first"] == [[n, "true" if i == 0 else "false", i == 0] for i, n in enumerate(names)]   # 现行 was suggested
+    assert out["abandon"] == {"picks": [[n, "true" if i == 3 else "false", i == 3] for i, n in enumerate(names)], "status": w("已放弃", "Abandoned"), "visible": True}
+    assert out["after"] == [[w("归档", "Archived"), "true", True]] and out["hidden"] is True   # the hidden field says the status as the screen does; the post below carries the word on disk
+    assert out["caption"] == [w("理由", "Reason")] and out["primary"] == [w("保存", "Save")]         # one primary action in the panel
+    assert out["raw"] is False                                                                        # the marker is in no field (12.11)
+
+
+@needs_node
+def test_21_3_a_suggestion_with_a_status_the_project_no_longer_has_leaves_nothing_pressed_and_saving_waits_for_a_choice(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('改一下').click();
+const first={pressed:cls('status-pick').filter(b=>b.getAttribute('aria-pressed')==='true').length, status:key('hb-status').value, save:key('hb-save').disabled, reason:key('hb-reason').value};
+await pick('待定').click();
+console.log(JSON.stringify({first, then:{pressed:cls('status-pick').filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.textContent), save:key('hb-save').disabled}}));
+""", suggested={"status": "成立", "reason": "r", "known": False, "marker": "", "abandons": False})
+    assert out["first"] == {"pressed": 0, "status": "", "save": True, "reason": "r"}   # the agent's reason is offered, a status is for the person to pick
+    assert out["then"] == {"pressed": ["待定"], "save": False}
+
+
+@needs_node
+def test_21_3_without_a_suggestion_the_chooser_reads_the_attempts_own_cell_and_a_cell_with_no_known_marker_is_other_with_all_of_it_the_reason(root, pid, report):
+    own = {"id": A16, "number": "16", "label": "#16", "verdict": "待补：等 2008 年的数据", "status": {"status": "other", "label": "其它", "words": "待补：等 2008 年的数据"}}
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('写下研究判断').click();
+const first={status:key('hb-status').value, reason:key('hb-reason').value};
+await key('hb-save').click(); await sleepTick();
+console.log(JSON.stringify({first, post:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').map(p=>p[1])}));
+""", suggested=None, attempt=own)
+    assert out["first"] == {"status": "其它", "reason": "待补：等 2008 年的数据"}
+    assert out["post"][0]["status"] == "其它" and out["post"][0]["reason"] == "待补：等 2008 年的数据"   # the engine writes the reason alone: the cell as it was

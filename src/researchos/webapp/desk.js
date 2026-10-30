@@ -1474,68 +1474,150 @@
     return f;
   }
 
-  // The verdict field's quick picks (14.3, 12.11): one chip per status the
-  // table holds, said by its word alone -- never the researcher's long cells.
-  // Each carries the researcher's own marker for that status: the leading
-  // token its cells use most, counted only when it is a marker (no letter,
-  // digit or CJK). A status no cell leads with a marker offers no chip; one
-  // the researcher named in [verdict_labels] is a chip per word, before 其它.
-  const CHIP_ORDER = ["current", "pending", "adverse", "archived", "rejected", "abandoned", "labelled", "other"];
-  const NOT_A_MARKER = /[\p{L}\p{N}\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/u;
+  // -- 研究判断 as a choice and a reason (DESIGN.md 21.3) ---------------------------------------------------------
+  // The research assessment is one cell of the attempt table: the researcher's marker for a status and their own
+  // words ("🕒 活跃候选"). The page shows the two apart -- a status chosen from the project's (`statuses`, as the engine
+  // lists them: the default words and any the researcher named in [verdict_labels], each with its marker or markers,
+  // 其它 last) and a 理由 field with the words -- and the marker itself is never in a field (12.11). Reading splits a
+  // cell as the engine's verdict_status does: the first known marker (the earliest; the longer when two start together)
+  // is the status and what is left is the reason; a cell with no known marker is 其它 and all of it the reason.
+  // Writing is the status's marker, a space and the reason (the reason alone for 其它; the marker the cell already
+  // had when its status is not changed). A cell nothing was changed in is written back byte for byte: it is not
+  // written at all -- `cell()` hands the original text back. attempts.compose_verdict is the engine's twin of
+  // composeAssessment; the tests hold the two to the same answers.
+  const OTHER_WORD = defaultVerdict("other")[0]; // the word a status with no marker has (13.4), as the engine writes it
+  const SELECTOR_CHARS = /[\ufe0e\ufe0f]/;
+  let chooserSeq = 0;
 
-  function leadingMarker(text) {
-    const m = /^\s*(\S+)/.exec(String(text == null ? "" : text));
-    return m && !NOT_A_MARKER.test(m[1]) ? m : null;
+  function markersOf(s) { return s && s.markers && s.markers.length ? s.markers : s && s.marker ? [s.marker] : []; }
+
+  // The statuses the engine listed, 其它 last and always there: a page that was given none still reads a cell as 其它.
+  function chooserStatuses(list) {
+    const all = Array.isArray(list) ? list.filter((s) => s && typeof s.status === "string") : [];
+    const other = all.find((s) => s.other) || { status: OTHER_WORD, marker: "", markers: [], other: true, code: "other", abandons: false };
+    return all.filter((s) => !s.other).concat([other]);
   }
 
-  // `rows`: [{verdict, status}], the status as the payload says it.
-  function verdictChoices(rows) {
-    const groups = new Map();
-    (rows || []).forEach((r) => {
-      const s = r && r.status;
-      const lead = s && CHIP_ORDER.indexOf(s.status) >= 0 ? leadingMarker(r.verdict) : null;
-      if (!lead) return;
-      const key = s.status === "labelled" ? "labelled " + s.label : s.status;
-      if (!groups.has(key)) groups.set(key, { code: s.status, markers: new Map() });
-      const seen = groups.get(key).markers;
-      const one = seen.get(lead[1]) || { n: 0, status: s };
-      one.n += 1;
-      seen.set(lead[1], one);
+  // `cell` split into the status (its word), the reason and the marker the cell wrote the status with.
+  function parseAssessment(cell, statuses) {
+    const text = String(cell == null ? "" : cell);
+    const list = chooserStatuses(statuses);
+    const kept = [], where = [];
+    for (let i = 0; i < text.length; i++) if (!SELECTOR_CHARS.test(text[i])) { kept.push(text[i]); where.push(i); }
+    const bare = kept.join("");
+    let best = null;
+    list.forEach((s) => {
+      if (s.other) return;
+      markersOf(s).forEach((marker) => {
+        const key = String(marker).replace(/[\ufe0e\ufe0f]/g, "").trim();
+        const at = key ? bare.indexOf(key) : -1;
+        if (at >= 0 && (best === null || at < best.at || (at === best.at && key.length > best.length))) best = { at: at, length: key.length, status: s, marker: marker };
+      });
     });
-    return Array.from(groups.values()).map((g) => {
-      let best = null; // the most used; on a tie, the first the table has
-      g.markers.forEach((one, marker) => { if (!best || one.n > best.n) best = { n: one.n, marker: marker, status: one.status }; });
-      return { code: g.code, marker: best.marker, status: best.status, word: verdictWord(best.status) };
-    }).sort((x, y) => CHIP_ORDER.indexOf(x.code) - CHIP_ORDER.indexOf(y.code));
+    if (best === null) return { status: list[list.length - 1].status, reason: text, marker: "" };
+    const start = where[best.at];
+    let end = where[best.at + best.length - 1] + 1;
+    while (end < text.length && SELECTOR_CHARS.test(text[end])) end += 1;
+    const reason = (text.slice(0, start).replace(/\s+$/, "") + " " + text.slice(end).replace(/^\s+/, "")).trim();
+    return { status: best.status.status, reason: reason, marker: best.marker };
   }
 
-  // A chip's click: the field's leading marker, if it has one, becomes the
-  // status's marker; the researcher's words after it stay as written.
-  function withMarker(text, marker) {
-    const s = String(text == null ? "" : text);
-    const lead = leadingMarker(s);
-    if (lead) return marker + s.slice(lead[0].length);
-    const words = s.replace(/^\s+/, "");
-    return words ? marker + " " + words : marker;
+  // The cell for `status` (its word) and `reason`; `own`, the marker the cell was read with, stays when it names the status.
+  function composeAssessment(status, reason, statuses, own) {
+    const entry = chooserStatuses(statuses).find((s) => s.status === status);
+    const words = String(reason == null ? "" : reason).trim();
+    const marker = entry && !entry.other ? (own && markersOf(entry).indexOf(own) >= 0 ? own : entry.marker) : "";
+    return marker ? (words ? marker + " " + words : marker) : words;
   }
 
-  // The table's rows as the map reads them: a card's route_status (so
-  // [abandoned_verdicts] counts, 14.1), else the row's verdict_status.
-  function verdictChips(field) {
-    const records = state.attemptsById ? Array.from(state.attemptsById.values()) : [];
-    const choices = verdictChoices(records.map((r) => {
-      const card = attemptOf(r.id);
-      return { verdict: r.verdict, status: (card && card.route_status) || r.verdict_status };
-    }));
-    if (!choices.length) return null;
-    const chips = mk("div", "verdict-chips");
-    choices.forEach((c) => {
-      chips.appendChild(mkButton(c.word, "chip", () => {
-        field.value = withMarker(field.value, c.marker);
-        field.dataset.typed = "1";
-      }));
+  // A status as the screen says it: a default word in the screen's language (13.4), the researcher's own as written.
+  function statusWord(s) { return verdictWord({ status: s.code, label: s.status }); }
+
+  // The chooser (21.3): one button per status with the chosen one pressed, and a 理由 field with the researcher's
+  // words. `opts`: `statuses`; the start, either `cell` (the table's text: read, and kept to write back unchanged) or
+  // `status` and `reason` (a new one, or one prefilled); `label` (what the group is called); `onChange(chooser)`. A
+  // status that is not among `statuses` leaves nothing chosen. Its two fields are an <input type="hidden"> holding the
+  // status word and the reason's <textarea>, so that a half-made choice is guarded like any typed words (halfTyped).
+  // Returns { el, status(), reason(), cell(), changed(), shown(), set(cell), markWritten(), setDisabled(on),
+  // focusReason(), reasonEl, statusEl, picks }.
+  function statusChooser(opts) {
+    const o = opts || {};
+    const list = chooserStatuses(o.statuses);
+    const made = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    let original = null, own = "", status = "", locked = false, initial = { status: "", reason: "" };
+    const seq = ++chooserSeq;
+
+    const root = made("div", "status-chooser");
+    root.setAttribute("role", "group");
+    if (o.label) root.setAttribute("aria-label", o.label);
+    const row = made("div", "status-picks");
+    const value = made("input", "status-value");
+    value.type = "hidden";
+    const caption = made("label", "status-caption", t("理由"));
+    const reason = made("textarea", "form-textarea status-reason");
+    reason.rows = 2;
+    reason.id = "status-reason-" + seq;
+    caption.htmlFor = reason.id;
+    const picks = list.map((s) => {
+      const b = made("button", "status-pick", statusWord(s));
+      b.type = "button";
+      b.dataset.status = s.status;
+      b.setAttribute("aria-pressed", "false");
+      b.addEventListener("click", () => { if (!locked) choose(s.status, true); });
+      row.appendChild(b);
+      return b;
     });
-    return chips;
+    root.append(row, value, caption, reason);
+
+    // the hidden field holds the status as the screen says it (13.4), so that nothing on an English screen is Chinese; the word on disk is `status()`
+    const said = () => { const s = list.find((x) => x.status === status); return s ? statusWord(s) : ""; };
+    function paint() {
+      value.value = said();
+      picks.forEach((b) => {
+        const on = b.dataset.status === status;
+        b.classList.toggle("selected", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    function choose(word, byPerson) {
+      status = list.some((s) => s.status === word) ? word : "";
+      if (byPerson) value.dataset.typed = "1";
+      paint();
+      if (byPerson && typeof o.onChange === "function") o.onChange(api);
+    }
+    // The start, or the cell read again (after a write or 撤销).
+    function begin(cell, st, why) {
+      if (cell !== null && cell !== undefined) {
+        original = String(cell);
+        const p = parseAssessment(original, list);
+        st = p.status; why = p.reason; own = p.marker;
+      } else { original = null; own = ""; if (!st) st = list[list.length - 1].status; } // nothing named: 其它, which has no marker
+      reason.value = why || "";
+      choose(st || "", false);
+      initial = { status: status, reason: reason.value };
+      value.dataset.initial = said();
+      reason.dataset.initial = reason.value;
+      delete value.dataset.typed;
+      delete reason.dataset.typed;
+    }
+    const touched = () => status !== initial.status || reason.value !== initial.reason;
+    function cell() { return original !== null && !touched() ? original : composeAssessment(status, reason.value, list, own); }
+    reason.addEventListener("input", () => { if (typeof o.onChange === "function") o.onChange(api); });
+
+    const api = {
+      el: root, reasonEl: reason, statusEl: value, picks: picks,
+      status: () => status, reason: () => reason.value, cell: cell,
+      // whether writing it would change the cell the table holds (a new one is always to be written)
+      changed: () => (original === null ? touched() : cell() !== original),
+      shown: () => original,
+      set: (text) => begin(text),
+      // what is shown is now what the table holds
+      markWritten: () => { begin(original === null ? null : cell(), original === null ? status : "", reason.value); },
+      setDisabled: (on) => { locked = !!on; picks.forEach((b) => { b.disabled = locked; }); reason.disabled = locked; },
+      focusReason: () => reason.focus(),
+    };
+    begin(o.cell, o.status, o.reason);
+    return api;
   }
 
   // -- an existing row's 研究判断 or 结果 saves at once (18.3) ---------------------------------
@@ -1643,12 +1725,10 @@
       return s;
     }
     const number = String(d.number || a.number || ""); // the row's identity, as the table writes it
-    const verdict = typedField("input", d.verdict || "");
+    // 21.3: a status and a reason, not the cell's text; the table's own cell is written back untouched until one of them is changed
+    const verdict = statusChooser({ statuses: state.attemptStatuses, cell: d.verdict || "", label: t("研究判断") });
     const result = typedField("textarea", d.result || "");
-    const verdictField = formFieldEl(t("研究判断"), verdict);
-    const chips = verdictChips(verdict);
-    if (chips) verdictField.appendChild(chips);
-    s.append(verdictField, formFieldEl(t("结果"), result));
+    s.append(formFieldEl(t("研究判断"), verdict.el), formFieldEl(t("结果"), result));
     let sentence = null;
     if (proposing) {
       sentence = typedField("textarea", "", t("用你自己的话说明这份提议：PI 会先看到这句话"));
@@ -1665,9 +1745,9 @@
     const row = mk("div", "form-actions");
     row.appendChild(go);
     s.append(row, status, shown);
-    const fields = [verdict, result, reason].concat(sentence ? [sentence] : []);
-    const freeze = (on) => { fields.forEach((f) => { f.disabled = on; }); go.disabled = on; subject.hold = on; };
-    const shownText = () => ({ verdict: verdict.dataset.initial, result: result.dataset.initial });
+    const fields = [result, reason].concat(sentence ? [sentence] : []);
+    const freeze = (on) => { fields.forEach((f) => { f.disabled = on; }); verdict.setDisabled(on); go.disabled = on; subject.hold = on; };
+    const shownText = () => ({ verdict: verdict.shown(), result: result.dataset.initial });
 
     // 18.3: 已保存 and 撤销 while the row still reads as the last save left it; a
     // row that changed again (a refresh found it so) is not offered back.
@@ -1680,7 +1760,7 @@
 
     function body() {
       const changed = {};
-      if (verdict.value !== verdict.dataset.initial) changed.verdict = toCellText(verdict.value);
+      if (verdict.changed()) changed.verdict = toCellText(verdict.cell());
       if (result.value !== result.dataset.initial) changed.result = toCellText(result.value);
       if (!Object.keys(changed).length) return null;
       const b = { op: "update", number: number, fields: changed };
@@ -1780,6 +1860,7 @@
       reason.value = "";
       reasonField.classList.add("hidden");
       fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+      verdict.markWritten();
       shown.textContent = "";
       freeze(false);
       subject.undo = null; // the frozen basis is not written back by 撤销: an abandonment is not offered
@@ -1811,6 +1892,7 @@
       reason.value = "";
       reasonField.classList.add("hidden");
       fields.forEach((f) => { f.dataset.initial = f.value; delete f.dataset.typed; });
+      verdict.markWritten();
       subject.undo = u;
       panelSaid = null;
       offer(u);
@@ -1843,11 +1925,11 @@
         setStatus(status, "err", t("已写入并备份，但重扫失败"), r.res.ingest_error);
         return;
       }
-      const fieldOf = { verdict: verdict, result: result };
       Object.keys(u.was).forEach((k) => {
-        fieldOf[k].value = u.text[k];
-        fieldOf[k].dataset.initial = u.text[k];
-        delete fieldOf[k].dataset.typed;
+        if (k === "verdict") { verdict.set(u.text[k]); return; }
+        result.value = u.text[k];
+        result.dataset.initial = u.text[k];
+        delete result.dataset.typed;
       });
       panelSaid = { id: subject.id, text: t("撤销了上一步") };
       setStatus(status, "ok", panelSaid.text);
@@ -2003,9 +2085,9 @@
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // an existing row's 研究判断 or 结果 saved at once with 撤销 (18.3): the panel's, and app.html's older form
     atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),
+    statusChooser: statusChooser, assessment: Object.freeze({ parse: parseAssessment, compose: composeAssessment }),
     // pure, for tests/test_v8_u2.py
     _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _modeKey: modeKey, _toneOf: toneOf,
-    _verdictChoices: verdictChoices, _withMarker: withMarker,
   });
 })();

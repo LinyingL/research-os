@@ -1460,36 +1460,47 @@
     part.append(list);
     return part;
   }
-  // The chooser of the assessment (a minimal one: the project's statuses and the researcher's words), prefilled.
+  // The chooser of the assessment (21.3): the project's statuses as buttons with the chosen one pressed, and the
+  // reason -- the shared one (RODesk.statusChooser), prefilled --, and beside it the reason 14.3 asks when the status
+  // turns the route abandoned. A suggestion whose status the project no longer has leaves nothing chosen, and 保存 waits.
   function hbChooser(subject) {
     const view = subject.view, choose = subject.choose, box = el("div", "ws-hb-choose"), locked = subject.busy;
-    const select = keyed(el("select", "form-input"), "hb-status"), reason = keyed(el("textarea", "form-input"), "hb-reason");
-    view.statuses.forEach((item) => { const option = el("option", null, t(item.status)); option.value = item.status; select.append(option); });
-    select.value = choose.status; reason.rows = 2; reason.value = choose.reason; select.disabled = locked; reason.disabled = locked;
     const abandons = () => (view.statuses.find((item) => item.status === choose.status) || {}).abandons === true;
     const abandonBox = el("div", "ws-hb-abandon"), abandon = keyed(el("textarea", "form-input"), "hb-abandon");
     abandon.rows = 2; abandon.value = choose.abandon; abandon.disabled = locked;
     abandonBox.append(field(view.mode === "member" ? t("理由（放弃一条路线时必填）") : t("放弃的理由（必填）"), abandon),
       quiet(t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
     abandonBox.classList.toggle("hidden", !abandons());
-    select.addEventListener("change", () => { choose.status = select.value; choose.edited = true; abandonBox.classList.toggle("hidden", !abandons()); });
-    reason.addEventListener("input", () => { choose.reason = reason.value; choose.edited = true; });
-    abandon.addEventListener("input", () => { choose.abandon = abandon.value; choose.edited = true; });
     const save = keyed(button(t("保存"), () => {
       if (abandons() && !choose.abandon.trim()) { subject.note = { words: t("放弃一条路线时必须写明理由"), kind: "err" }; drawHandback(subject); return; }
       confirmHandback(subject, choose.status, choose.reason, abandons() ? choose.abandon : "");
     }, "btn btn-primary btn-small"), "hb-save");
-    save.disabled = locked;
+    const picker = window.RODesk.statusChooser({ statuses: view.statuses, status: choose.status, reason: choose.reason, label: t("研究判断"),
+      onChange: (now) => {
+        choose.status = now.status(); choose.reason = now.reason(); choose.edited = true;
+        abandonBox.classList.toggle("hidden", !abandons());
+        save.disabled = subject.busy || !choose.status;
+      } });
+    keyed(picker.statusEl, "hb-status"); keyed(picker.reasonEl, "hb-reason");
+    picker.picks.forEach((pick) => keyed(pick, "hb-pick-" + pick.dataset.status));
+    picker.setDisabled(locked);
+    choose.status = picker.status(); // a status the project has since taken out is none chosen: the person picks one
+    abandonBox.classList.toggle("hidden", !abandons());
+    abandon.addEventListener("input", () => { choose.abandon = abandon.value; choose.edited = true; });
+    save.disabled = locked || !choose.status;
     const cancel = keyed(button(t("取消"), () => { subject.choose = null; subject.note = null; drawHandback(subject); }), "hb-cancel");
     cancel.disabled = locked;
     const actions = el("div", "ws-agent-actions"); actions.append(save, cancel);
-    box.append(field(t("研究判断"), select), field(t("理由"), reason), abandonBox, actions);
+    const group = el("div", "ws-field"); group.append(el("span", "ws-field-label", t("研究判断")), picker.el);
+    box.append(group, abandonBox, actions);
     return box;
   }
   function hbOpenChooser(subject, abandoning) {
-    const view = subject.view, now = view.attempt && view.attempt.status ? view.attempt.status : null, sug = view.suggested;
+    const view = subject.view, now = view.attempt && view.attempt.verdict != null ? view.attempt : null, sug = view.suggested;
+    // without a suggestion: the assessment the attempt has, read from its cell (a cell with no known marker is 其它, all of it the reason)
+    const have = now ? window.RODesk.assessment.parse(now.verdict, view.statuses) : { status: (view.statuses.find((item) => item.other) || view.statuses[0]).status, reason: "" };
     subject.choose = sug ? { status: sug.status, reason: sug.reason, abandon: abandoning ? sug.reason : "", edited: false }
-      : { status: now && view.statuses.some((item) => item.status === now.label) ? now.label : (view.statuses.find((item) => item.other) || view.statuses[0]).status, reason: now ? now.words : "", abandon: "", edited: false };
+      : { status: have.status, reason: have.reason, abandon: "", edited: false };
     subject.note = null; drawHandback(subject); focusKey(panelBody, "hb-reason");
   }
   // What the assessment part says once a person has confirmed (now, or before): who, which status, and how it came.

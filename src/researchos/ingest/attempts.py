@@ -275,6 +275,9 @@ DEFAULT_VERDICT_LABELS = {"✅": "现行", "☠️": "已放弃", "🕒": "待�
 VERDICT_STATUSES = {"现行": "current", "已放弃": "abandoned", "待定": "pending", "不利证据": "adverse",
                     "被否": "rejected", "归档": "archived"}
 OTHER_VERDICT_LABEL = "其它"
+#: The order the interface offers the statuses in (21.3): the default markers' statuses in this order, the researcher's own
+#: after them in the order their file names them, 其它 last.
+STATUS_ORDER = ("✅", "🕒", "⚠️", "☠️", "⛔", "📋")
 #: The English name 13.4 gives each default status, by its word. An agent that writes in English may name a status by it
 #: (`research_records`: a suggested assessment); the file keeps the word (13.1).
 VERDICT_ENGLISH = {"现行": "Current", "已放弃": "Abandoned", "待定": "Pending", "不利证据": "Adverse evidence", "被否": "Rejected",
@@ -379,6 +382,23 @@ def route_status(verdict: str | None, labels: dict[str, str] | None, abandon_mar
         label = status["label"] if status["status"] == "labelled" else DEFAULT_VERDICT_LABELS["☠️"]
         return {**status, "status": "abandoned", "label": label}
     return status
+
+
+def status_rank(marker: str) -> int:
+    """Where a status whose marker is `marker` stands in the order of `STATUS_ORDER` (21.3); one of the researcher's own
+    stands after them all."""
+    bare = _bare(marker)[0].strip()
+    return next((i for i, known in enumerate(STATUS_ORDER) if _bare(known)[0] == bare), len(STATUS_ORDER))
+
+
+def compose_verdict(marker: str, reason: str) -> str:
+    """The cell for a status and the researcher's reason (21.3): the status's marker, a space, the reason; the marker
+    alone with no reason; the reason alone for a status that has no marker (其它), so that words with no known marker
+    are written as they are. The page's chooser (`RODesk.statusChooser`) composes the same way."""
+    words = str(reason or "").strip()
+    if not marker:
+        return words
+    return f"{marker} {words}" if words else marker
 
 
 # -- Markdown table location + cell cleanup ---------------------------------

@@ -384,7 +384,7 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str
     if chosen is None:
         raise _refused("handback_status_unknown", f"{status!r} is not one of this project's statuses",
                        "这个研究判断的状态不在这个项目的选项里。", 400)
-    cell = reason if chosen["other"] else (f"{chosen['marker']} {reason}" if reason else chosen["marker"])
+    cell = attempts_ingest.compose_verdict(chosen["marker"], reason)
     if not cell:
         raise _refused("handback_reason_needed", "A status of Other needs the researcher's words", "选「其它」时，请写下你自己的话。", 400)
     task = _task_of(root, report)

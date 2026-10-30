@@ -932,6 +932,8 @@ def test_http_attempts_endpoint_empty_hint(live_server):
     assert status == 200
     # 12.12: every view's payload says whose version it shows.
     assert payload.pop("officialness_mode")["mode"] == "official"
+    # 21.3: and the statuses a research assessment can have here, for the page's chooser (其它 last).
+    assert [s["status"] for s in payload.pop("statuses")] == ["现行", "待定", "不利证据", "已放弃", "被否", "归档", "其它"]
     assert payload == {"attempts": [], "hint": server._NO_ATTEMPTS_HINT}
 
 
