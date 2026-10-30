@@ -138,6 +138,7 @@
     runsInfo = { runs: [], active: null }; details = {}; detailPending = {};
     agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
     outputNodes = {}; outputBusy = {}; outputNotes = {}; outputOpen = {};
+    nowData = null; nowRequest += 1;
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
     stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
@@ -347,9 +348,9 @@
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
     const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
-    const notices = el("div", "ws-notices");
-    columns.append(rail, editor); page.append(notices, top, columns, tasks);
-    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result, notices: notices };
+    const notices = el("div", "ws-notices"), now = el("section", "ws-now hidden");
+    columns.append(rail, editor); page.append(notices, top, now, columns, tasks);
+    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result, notices: notices, now: now };
     renderNotices();
   }
   // What the page has to say about the project as a whole, drawn again with every read of it: why it cannot be
@@ -1917,6 +1918,89 @@
     }
     return true;
   }
+  // -- 现在在做什么 (DESIGN.md 21.4) ------------------------------------------------------------
+  // The top of the page: the attempts in progress as cards (the figures of the route map's cards, the engine's
+  // `attempt_tasks.by_attempt` reading, not counted here) and 等你处理, the one list desk.js draws and counts for
+  // the sidebar. Both come from one read of `/api/workspace/now`; the section is left out until that has answered, and
+  // a read that fails leaves what was last drawn.
+  let nowData = null, nowRequest = 0;
+  async function loadNow(mark) {
+    const token = ++nowRequest;
+    let fresh;
+    try { fresh = await apiGet("/api/workspace/now"); } catch (err) { return; }
+    if (!live(mark) || token !== nowRequest || !fresh || fresh.project !== project()) return;
+    const same = !!nowData && JSON.stringify(nowData) === JSON.stringify(fresh);
+    nowData = fresh;
+    if (window.RODesk && typeof window.RODesk.noteNeeds === "function") window.RODesk.noteNeeds(fresh.needs);
+    if (!same || !ui.now.childElementCount) renderNow();   // an answer that did not change is not drawn again
+  }
+  function renderNow() {
+    if (!ui || !ui.now) return;
+    const box = ui.now; box.replaceChildren();
+    box.classList.toggle("hidden", !nowData);
+    if (!nowData) return;
+    const parts = el("div", "ws-now-parts");
+    parts.append(nowAttempts(), nowNeeds());
+    box.append(el("h2", "ws-now-title", t("现在在做什么")), parts);
+  }
+  function nowAttempts() {
+    const part = el("section", "ws-now-part");
+    part.append(el("h3", "ws-now-heading", t("进行中的尝试")));
+    const progress = nowData.progress || { attempts: [], holding: 0 };
+    if (!progress.attempts.length) {
+      part.append(el("p", "ws-empty ws-now-none", progress.holding ? t("现在没有进行中的尝试。")
+        : t("还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。")));
+      return part;
+    }
+    const cards = el("ul", "ws-now-cards");
+    progress.attempts.forEach((attempt) => cards.append(nowCard(attempt)));
+    part.append(cards);
+    return part;
+  }
+  // A card: the attempt (opened in the side panel, as the route map's cards open it), its assessment, the progress line
+  // 「任务 n，未完成 m」 or 「任务 n，全部完成」, 「等你看 n」 when a handback waits (it opens the first of them) and the first line of
+  // the latest handback (it opens that one).
+  function nowCard(attempt) {
+    const card = el("li", "ws-now-card"), work = attempt.work || {};
+    const open = el("button", "ws-now-open");
+    open.type = "button";
+    open.append(el("span", "ws-now-num", "#" + String(attempt.number).replace(/^#/, "")), el("span", "ws-now-name", attempt.title || ""));
+    open.addEventListener("click", () => { if (window.RODesk && window.RODesk.openAttemptAnywhere) window.RODesk.openAttemptAnywhere(attempt.id); });
+    const meta = el("div", "ws-now-meta"), status = attempt.route_status || {};
+    const word = window.RODesk && window.RODesk.verdictWord ? window.RODesk.verdictWord(status) : status.label;
+    meta.append(el("span", "status-label tone-" + (attempt.tone || "plain"), word));
+    if (attempt.date) meta.append(el("span", "ws-now-date", attempt.date));
+    const progress = el("div", "ws-now-work"), unfinished = work.unfinished || 0;
+    progress.append(el("span", "ws-now-tasks", unfinished ? t("任务 {n}，未完成 {open}", { n: work.tasks, open: unfinished }) : t("任务 {n}，全部完成", { n: work.tasks })));
+    const waiting = (work.items || []).find((item) => item.unopened && item.report);
+    if (work.unopened > 0 && waiting) progress.append(button(t("等你看 {n}", { n: work.unopened }), () => openHandback(waiting.report), "ws-now-look"));
+    card.append(open, meta, progress);
+    if (work.latest && work.latest.line) card.append(button(work.latest.line, () => openHandback(work.latest.report), "ws-now-line"));
+    return card;
+  }
+  function nowNeeds() {
+    const part = el("section", "ws-now-part"), body = el("div", "ws-now-needs");
+    part.append(el("h3", "ws-now-heading", t("等你处理")), body);
+    if (window.RODesk && typeof window.RODesk.needsList === "function") window.RODesk.needsList(body, () => (nowData && nowData.needs) || null);
+    return part;
+  }
+  // 「回答」 in 等你处理: the task's row with the reply form open and the cursor in it (the row is opened first, as for
+  // 「运行日志」). A run that cannot be answered any more only brings its row into view.
+  function answerRun(taskId) {
+    if (!data || !ui) return false;
+    const disclosure = taskDisclosures[taskId];
+    taskOpen[taskId] = true;
+    if (disclosure) { disclosure.open = true; if (disclosure.node) disclosure.node.open = true; }
+    const run = latestRun(taskId);
+    if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
+      agentState(taskId).reply = "answer"; updateAgentSections();
+      focusKey(sections[taskId], "agent:" + taskId + ":reply");
+    }
+    const row = rowNodes[taskId];
+    if (row && typeof row.scrollIntoView === "function") row.scrollIntoView();
+    return true;
+  }
+
   // 「运行日志」 (the link at the foot of a handback): the task's row on 项目首页 with its run's log open.
   function showRunLog(taskId) {
     if (!data || !ui) return false;
@@ -3314,6 +3398,8 @@
       if (draft) redrawAttachments();
       ui.note.disabled = ui.result.disabled = !editable(); target.dataset.loaded = "1";
       loadAgentContext(current);
+      if (nowData && !ui.now.childElementCount) renderNow();
+      loadNow(current);
       if (!draft) {
         const overview = data.documents.find((doc) => doc.kind === "overview");
         if (overview) await openDocument(overview.path, true);
@@ -3444,6 +3530,6 @@
     if (typeof activateView === "function") activateView("workspace");
     if (ui) openDocument(path, false, true);
   }
-  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, answerRun: answerRun, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

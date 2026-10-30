@@ -181,7 +181,7 @@ def list_unopened(root: str | Path, project_id: str | None, person: str | None) 
     out = []
     for report in waiting:
         task = by_report.get(report)
-        if task is None:
+        if task is None or report not in found:   # (a run pruned between the two readings hands nothing back any more)
             continue
         try:
             raw = workspace._read(root, report)  # noqa: SLF001

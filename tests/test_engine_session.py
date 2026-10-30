@@ -524,6 +524,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/workspace/task-groups": ("read", "/api/workspace/task-groups"),
     "/api/workspace/handback": ("read", "/api/workspace/handback?report=research/results/pilot.md"),
     "/api/workspace/handbacks": ("read", "/api/workspace/handbacks"),
+    "/api/workspace/now": ("read", "/api/workspace/now"),
     "/api/workspace/research-record": ("read", "/api/workspace/research-record?report=research/results/pilot.md"),
     "/api/workspace/research-records": ("read", "/api/workspace/research-records?path=map.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),

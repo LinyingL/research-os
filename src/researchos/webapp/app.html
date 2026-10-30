@@ -18,7 +18,7 @@
   project's sections 项目首页 / 研究路线 / 图表与论断 / 变量 / 文献 / 数据与代码 /
   提议 / 成员, and at the bottom the shared drive's line, who I am, 记录 and
   停止服务 -- beside a workspace whose serif title names the section. 研究路线
-  (18.3: the route map of Section 14 or the grouped list, with 待办 beside
+  (18.3: the route map of Section 14 or the grouped list, with 等你处理 beside
   either) and the sidebar's live lines are the third served
   file, /desk.js (window.RODesk; GET /api/desk, /api/proposals, /api/share,
   /api/me). The node page, 图表与论断 and 数据与代码's list are the fourth,
@@ -464,7 +464,7 @@ details.attempt-node > summary:focus-visible, details.script-node > summary:focu
 .attempt-reason { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.5rem 1.9rem; }
 
 /* -- 研究路线 (DESIGN.md 14, 18.3): the route map -- or the grouped list in a
-   pane of its own -- with the 待办 column beside it, the whole window below
+   pane of its own -- with the 等你处理 column beside it, the whole window below
    the header (canvas-mode); lists, not dashboards. -- */
 body.canvas-mode #view-desk { flex: 1; min-height: 0; display: flex; }
 body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
@@ -476,6 +476,10 @@ body.canvas-mode #view-desk > :not(.desk-layout) { margin: 1.6rem 2rem; }
 .routes-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 1.4rem 2rem 3rem; }
 .route-row.picked { background: var(--paper-alt); box-shadow: -0.5rem 0 0 var(--paper-alt), 0.5rem 0 0 var(--paper-alt); }
 .desk-column-title { font-family: var(--font-sans); font-size: 0.78rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 -0.8rem; }
+/* Nothing waits (DESIGN.md 21.4): the column folds to a strip that gives its width to the map or the list, and opens
+   again when a row arrives. */
+.desk-column.folded { width: 2.4rem; padding: 1.1rem 0.3rem; align-items: center; overflow: hidden; }
+.desk-column.folded .desk-column-title { margin: 0; writing-mode: vertical-rl; letter-spacing: 0.08em; white-space: nowrap; }
 .desk-title { font-family: var(--font-sans); font-weight: 600; font-size: 1rem; margin: 0 0 0.35rem; }
 .desk-sub { font-size: 0.84rem; color: var(--ink-soft); margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
 .desk-row.picked { background: var(--paper-alt); box-shadow: -0.5rem 0 0 var(--paper-alt), 0.5rem 0 0 var(--paper-alt); }
@@ -1356,6 +1360,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
   .desk-map { flex: none; height: 62vh; }
   .routes-pane { flex: none; overflow-y: visible; }
   .desk-column { width: auto; overflow-y: visible; border-left: none; border-top: 1px solid var(--line-strong); }
+  .desk-column.folded { width: auto; padding: 0.6rem 2rem; align-items: flex-start; }
+  .desk-column.folded .desk-column-title { writing-mode: horizontal-tb; letter-spacing: 0; }
 }
 </style>
 </head>
@@ -1375,8 +1381,8 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       </span>
     </div>
     <nav class="side-nav" id="side-nav" data-team="single" aria-label="栏目" data-i18n-attr="aria-label">
-      <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span></button>
-      <button type="button" class="side-item" data-section="routes" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span><span class="side-count" id="side-count-routes"></span></button>
+      <button type="button" class="side-item" data-section="workspace" data-view="workspace"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h10v11H3zM5 5h6M5 8h6M5 11h4"/></svg><span class="side-label" data-i18n>项目首页</span><span class="side-count" id="side-count-home"></span></button>
+      <button type="button" class="side-item" data-section="routes" data-view="desk"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11M4.5 7.5c0-2 1.5-3 3.5-3h4.5M4.5 10.5c1.5 0 3 .5 3 2.5"/></svg><span class="side-label" data-i18n>研究路线</span></button>
       <button type="button" class="side-item" data-section="results" data-view="results"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h11v9h-11zM4.5 10.5l2.5-3 2 2 1.5-1.5 1.5 2.5"/></svg><span class="side-label" data-i18n>图表与论断</span></button>
       <button type="button" class="side-item" data-section="variables" data-view="variables"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.5 2.5c-1.5 0-2 .8-2 2v1.5c0 1-.5 2-1.5 2 1 0 1.5 1 1.5 2v1.5c0 1.2.5 2 2 2M10.5 2.5c1.5 0 2 .8 2 2v1.5c0 1 .5 2 1.5 2-1 0-1.5 1-1.5 2v1.5c0 1.2-.5 2-2 2"/></svg><span class="side-label" data-i18n>变量</span></button>
       <button type="button" class="side-item" data-section="literature" data-view="literature"><svg class="side-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 3h4a1.5 1.5 0 0 1 1.5 1.5V13a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3h-4A1.5 1.5 0 0 0 8 4.5V13a1.5 1.5 0 0 1 1.5-1.5h4z"/></svg><span class="side-label" data-i18n>文献</span></button>
@@ -1426,7 +1432,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
         <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
       <!-- 研究路线 (18.3): the route map or the grouped list, one page with
-           the same 待办 column; kept per project (desk.js). -->
+           the same 等你处理 column; kept per project (desk.js). -->
       <div id="routes-switch" class="subnav hidden" role="tablist" aria-label="研究路线" data-i18n-attr="aria-label">
         <button type="button" class="subnav-item" role="tab" data-mode="map" aria-selected="true" data-i18n>路线图</button>
         <button type="button" class="subnav-item" role="tab" data-mode="list" aria-selected="false" data-i18n>列表</button>
@@ -2012,7 +2018,7 @@ function renderViewFailure(container, err) {
 
 // DESIGN.md 12.9: the views are shown through the sidebar's sections.
 // 研究路线 (18.3) is one view, "desk" -- the name Section 14 gave the route
-// map's page --, showing the route map or the grouped list beside 待办;
+// map's page --, showing the route map or the grouped list beside 等你处理;
 // 数据与代码 is the lineage report with 关系图 (the canvas) beside it.
 const views = {
   workspace: document.getElementById("view-workspace"),
@@ -5378,6 +5384,17 @@ async function startTaskOnHome(choice) {
   if (loading) await loading;
   if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
   ROWorkspace.startTask(choice);
+}
+
+// 「回答」 on a run waiting for an answer, in 等你处理 (DESIGN.md 21.4): the task's row on 项目首页 with the reply form open, shown
+// the way 「运行日志」 below is.
+async function answerRunOnHome(taskId) {
+  const epoch = state.dataEpoch;
+  const loading = activateView("workspace");
+  if (currentView !== "workspace") return;
+  if (loading) await loading;
+  if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
+  ROWorkspace.answerRun(taskId);
 }
 
 // 「运行日志」 on a handback (DESIGN.md 21.2): the task's row on 项目首页 with its run's log open -- the home is shown by the

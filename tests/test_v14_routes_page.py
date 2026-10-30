@@ -1,10 +1,10 @@
 """Research OS V14, task G3-1 (DESIGN.md 18.3): 研究路线 is one page. The route
 map of Section 14 and the grouped list that 12.9 called 研究路线 are two ways
 of looking at the same attempts, switched by 路线图 / 列表 in the page's
-header, with the same 待办 column beside either; an attempt opened from the
-list opens the desk's side panel; the way of looking is kept per project in
-the browser; the sidebar has one item for it, with the count of 待办 beside
-it in a team project; everything that opened 工作台 or the old list opens it.
+header, with the same 等你处理 column (21.4; it was 待办) beside either, folded to a strip when nothing waits; an
+attempt opened from the list opens the desk's side panel; the way of looking is kept per project in
+the browser; the sidebar has one item for it; everything that opened 工作台 or the old list opens it. The count of
+what waits shows beside 项目首页, in a project of one too (21.4).
 desk.js, team.js and node.js run under node with the stand-in DOM of the
 desk's other tests; app.html is read as source where it is the thing under
 test. Every test names its scenario."""
@@ -17,7 +17,7 @@ import re
 import pytest
 
 from test_v9_language import APP_HTML, WEBAPP, _app_function, _node, needs_node
-from test_v10_desk_panel import A16, A17, A18, _case, _st
+from test_v10_desk_panel import A16, A17, A18, _case, _st, with_needs
 from test_v10_desk_proposals import _run_team, _team_case
 
 
@@ -98,7 +98,8 @@ def test_18_3_the_list_stands_beside_the_same_column_and_the_map_is_kept_while_i
     grouped list -- by status, the abandoned route with its result and
     reason -- is in a pane between it and the column, which is the same
     element; switched back, the list is hidden and the map shown. A refresh
-    of the page reads the list again in place."""
+    of the page reads the list again in place. With nothing waiting the column is
+    the folded strip (21.4): its title, 等你处理, and the sentence on hover."""
     out = _run(_case("single"), r"""
       global.extra = { map: kinds(), mapReads: reads("/api/routes") };
       const column = layout().kids[layout().kids.length - 1];
@@ -110,20 +111,20 @@ def test_18_3_the_list_stands_beside_the_same_column_and_the_map_is_kept_while_i
       extra.rows = rows().map((k) => k.dataset.node);
       extra.facts = layout().all().filter((k) => k.cls.has("route-fact")).map((k) => k.textContent);
       extra.columnTitle = column.all().filter((k) => k.cls.has("desk-column-title")).map((k) => k.textContent);
-      extra.empty = column.all().filter((k) => k.cls.has("desk-empty")).map((k) => k.textContent);
+      extra.empty = [column.title, column.all().filter((k) => k.cls.has("desk-empty")).length];
       await window.RODesk.loadDesk(views.desk, true); await settle();
       extra.afterRefresh = [reads("/api/routes"), kinds()];
       window.RODesk.setMode("map"); await settle();
       extra.back = kinds();
     """)["extra"]
-    assert out["map"] == ["desk-map", "desk-column"] and out["mapReads"] == 0
-    assert out["list"] == ["desk-map hidden", "routes-pane", "desk-column"] and out["sameColumn"] is True
+    assert out["map"] == ["desk-map", "desk-column folded"] and out["mapReads"] == 0
+    assert out["list"] == ["desk-map hidden", "routes-pane", "desk-column folded"] and out["sameColumn"] is True
     assert out["listReads"] == 1
     assert out["groups"] == ["现行", "已放弃"] and out["rows"] == [A16, A18, A17]
     assert out["facts"] == ["结果：t=2.91", "理由：无信号"]
-    assert out["columnTitle"] == ["待办"] and out["empty"] == ["现在没有要处理的事。"]
-    assert out["afterRefresh"] == [2, ["desk-map hidden", "routes-pane", "desk-column"]]
-    assert out["back"] == ["desk-map", "routes-pane hidden", "desk-column"]
+    assert out["columnTitle"] == ["等你处理"] and out["empty"] == ["现在没有要处理的事。", 0]
+    assert out["afterRefresh"] == [2, ["desk-map hidden", "routes-pane", "desk-column folded"]]
+    assert out["back"] == ["desk-map", "routes-pane hidden", "desk-column folded"]
 
 
 @needs_node
@@ -156,7 +157,7 @@ def test_18_3_an_attempt_opened_from_the_list_opens_the_same_side_panel_as_the_m
 
 @needs_node
 def test_18_3_a_picked_row_of_the_column_marks_its_attempts_in_the_list_not_on_the_hidden_map():
-    """In list mode, picking a row of 待办 marks the rows of the attempts it
+    """In list mode, picking a row of 等你处理 marks the rows of the attempts it
     touches (picked again, unmarks them) and leaves the hidden map alone;
     the hint on the row names the list, not the route map. The row stays
     marked when the list is read again."""
@@ -200,8 +201,8 @@ def test_18_3_a_page_set_to_the_list_while_another_view_shows_is_drawn_as_the_li
       await window.RODesk.resume(); await settle();
       extra.again = reads("/api/routes");
     """)["extra"]
-    assert out["away"] == ["desk-map", "desk-column"] and out["reads"] == 0
-    assert out["back"] == ["desk-map hidden", "routes-pane", "desk-column"] and out["readsBack"] == 1
+    assert out["away"] == ["desk-map", "desk-column folded"] and out["reads"] == 0
+    assert out["back"] == ["desk-map hidden", "routes-pane", "desk-column folded"] and out["readsBack"] == 1
     assert out["again"] == 1  # drawn already for this project: not read again for coming back
 
 
@@ -220,15 +221,15 @@ def test_18_3_the_text_zoom_reaches_the_list_even_when_it_is_made_after_the_zoom
     assert out == {"made": "1.1", "reset": ""}
 
 
-# -- the sidebar's count of 待办 -----------------------------------------------------------------------
+# -- the sidebar's count of 等你处理 (DESIGN.md 21.4) ----------------------------------------------------
 
 
 _SIDEBAR_STEPS = r"""
 function fake() { return { textContent: "", title: "", kids: [], dataset: {}, hidden: false, classList: { toggle() {} }, append(...xs) { this.kids.push(...xs); } }; }
-global.shown = { "side-count-proposals": fake(), "side-count-routes": fake(), "share-line": fake(), "me-line": fake(), "new-attempt-btn": fake() };
+global.shown = { "side-count-proposals": fake(), "side-count-home": fake(), "side-count-routes": fake(), "share-line": fake(), "me-line": fake(), "new-attempt-btn": fake() };
 const parts0 = document.getElementById;
 document.getElementById = (id) => shown[id] || parts0(id);
-const count = () => [shown["side-count-routes"].textContent, shown["side-count-routes"].title, shown["side-count-proposals"].textContent];
+const count = () => [shown["side-count-home"].textContent, shown["side-count-home"].title, shown["side-count-proposals"].textContent];
 await window.RODesk.ensureContext();
 window.RODesk.renderSidebar();
 """
@@ -238,82 +239,121 @@ def _sidebar(case: dict, lang: str | None = None, after: str = "") -> dict:
     return _run(case, _SIDEBAR_STEPS + "global.extra = { count: count() };\n" + after, lang=lang)["extra"]
 
 
+_REVIEWED = {"src": "script:steps/16-build.py", "dst": "dataset:data/panel.csv", "type": "reads", "extractor": "python-ast",
+             "outcome": "review", "reason": "basis_changed", "label": "依据已变化", "src_label": "16-build.py", "dst_label": "panel.csv"}
+
+
+def _with_review(case: dict) -> dict:
+    """A judgment to review under #16 and one that belongs to no attempt: two rows of 等你处理."""
+    case["desk"]["column"]["review"] = {
+        "count": 2, "groups": [{"id": A16, "items": [{**_REVIEWED, "attempts": [A16]}], "officialness": {"state": "official"}}],
+        "none": {"items": [{**_REVIEWED, "src": "script:other.py", "attempts": []}], "cards": []}}
+    return case
+
+
 def _with_work(case: dict) -> dict:
-    """The PI's column with 3 proposals waiting, 2 judgments to review and a line with a missing end."""
-    case["desk"]["column"]["review"] = {"count": 2, "groups": [], "none": {"items": [], "cards": []}}
+    """The PI's column with 3 proposals waiting, a judgment to review under #16, one that belongs to no attempt and a line with
+    a missing end: six rows."""
+    _with_review(case)
     case["desk"]["lines_missing"] = [{"child": A18, "parent": A16, "child_number": "20", "parent_number": "16", "missing": ["child"],
                                       "note": "", "by_label": "x", "officialness": {"state": "official"}}]
-    return case
+    return with_needs(case)
 
 
 @needs_node
 @pytest.mark.parametrize("lang", ["zh", "en"])
-def test_18_3_the_count_of_todo_shows_beside_research_routes_in_a_team_project(lang):
-    """The PI's column lists 3 proposals, 2 judgments to review and a line with a
-    missing end: the sidebar's 研究路线 reads 6, with the hover title in the
-    screen's language, beside the 提议 count (3) which stays."""
-    out = _sidebar(_with_work(_team_case("pi", lang)), lang=None if lang == "zh" else lang)
-    assert out["count"] == ["6", "6 项待办" if lang == "zh" else "6 to handle", "3"]
+def test_21_4_the_count_of_what_waits_shows_beside_project_home_in_a_team_project(lang):
+    """The PI's list holds 3 proposals, 2 rows of judgments to review and a line with a missing end: the sidebar's 项目首页 reads
+    6, with the hover title in the screen's language, beside the 提议 count (3) which stays; 研究路线 carries no count of its own
+    (18.3's is gone: one count, not two)."""
+    out = _sidebar(_with_work(_team_case("pi", lang)), lang=None if lang == "zh" else lang, after="extra.routes = shown['side-count-routes'].textContent;")
+    assert out["count"] == ["6", "6 项等你处理" if lang == "zh" else "6 need you", "3"] and out["routes"] == ""
 
 
 @needs_node
-def test_18_3_a_members_count_is_their_own_waiting_proposals_the_review_and_a_newer_official_version():
-    """A member: their own proposals that wait (1), the judgments to review
-    (2) and a newer official version to sync (1) -- 4. Their proposals
-    answered and said 「知道了」 to leave the count as they leave the column."""
-    case = _with_work(_team_case("member"))
-    case["desk"]["lines_missing"] = []
+def test_21_4_a_members_count_is_their_own_waiting_proposals_the_review_and_a_newer_official_version():
+    """A member: their own proposal that waits (1), the two rows of judgments to review and a newer official version to sync (1) --
+    4. A proposal of theirs the PI returned counts until they say 「知道了」, then leaves the count as it leaves the list."""
+    case = _with_review(_team_case("member"))
+    returned = {**case["desk"]["column"]["mine"][0], "id": "p9", "state": "returned", "reason": "先补数据", "touches": [A16],
+                "outcomes": [{"act": "returned", "text": "先补数据"}]}
+    case["desk"]["column"]["mine"].append(returned)
     case["desk"]["column"]["sync"] = {"shared": "/x", "reachable": True, "behind": True,
                                       "last_snapshot": {"at": "2024-03-01T12:00:00", "seq": 3, "note": ""}}
-    out = _sidebar(case)
-    assert out["count"] == ["4", "4 项待办", ""]
+    out = _sidebar(with_needs(case), after=r"""
+      extra.listed = views.desk.all().filter((k) => k.tag === "BUTTON" && k.kids.join("") === "知道了").length;
+      views.desk.all().find((k) => k.tag === "BUTTON" && k.kids.join("") === "知道了").click();
+      extra.afterGotIt = count();
+    """)
+    assert out["count"] == ["5", "5 项等你处理", ""] and out["listed"] == 1
+    assert out["afterGotIt"] == ["4", "4 项等你处理", ""]
 
 
 @needs_node
-def test_18_3_no_count_in_a_project_of_one_person_and_none_when_nothing_waits():
-    """One person (no team file): the sidebar shows no count, whatever the
-    column lists -- the count is for a team project. A team project with
-    nothing to handle shows none either."""
-    single = _case("single")
-    single["desk"]["column"]["review"] = {"count": 4, "groups": [], "none": {"items": [], "cards": []}}
-    assert _sidebar(single)["count"] == ["", "", ""]
+def test_21_4_a_project_of_one_person_shows_the_count_too_and_a_team_project_with_nothing_waiting_shows_none():
+    """One person (no team file): the count is there -- the judgments to review are theirs to handle; the list is the same
+    list, not a team's. A team project with nothing to handle shows none; a team project this Mac is not part of shows what it
+    holds."""
+    single = _with_review(_case("single"))
+    assert _sidebar(with_needs(single))["count"] == ["2", "2 项等你处理", ""]
+    one = _sidebar(with_needs(_with_review(_case("single"))), lang="en")
+    assert one["count"] == ["2", "2 need you", ""]
     pi = _team_case("pi")
     pi["desk"]["column"]["waiting"] = []
     pi["get"]["/api/proposals"] = {"role": "pi", "proposals": []}
-    assert _sidebar(pi)["count"] == ["", "", ""]
-    none = _case("none")
-    none["desk"]["column"]["review"] = {"count": 1, "groups": [], "none": {"items": [], "cards": []}}
-    assert _sidebar(none)["count"] == ["1", "1 项待办", ""]  # a team project this Mac is not part of shows it
+    assert _sidebar(with_needs(pi))["count"] == ["", "", ""]
+    none = _with_review(_case("none"))
+    none["desk"]["column"]["review"]["groups"] = []
+    assert _sidebar(with_needs(none))["count"] == ["1", "1 项等你处理", ""]
+    en_one = _with_review(_case("single"))
+    en_one["desk"]["column"]["review"]["groups"] = []
+    assert _sidebar(with_needs(en_one), lang="en")["count"] == ["1", "1 needs you", ""]
 
 
 @needs_node
-def test_18_3_from_another_section_the_count_is_read_with_the_desk_and_not_on_the_page_itself():
-    """In a team project, with another section showing, refreshing the
-    sidebar reads /api/desk once (and keeps the page's 'last visit' alone);
-    on the page itself the page's own reading sets the count and nothing
-    more is read; a project of one reads nothing."""
-    case = _with_work(_team_case("pi"))
-    out = _sidebar(case, after=r"""
-      shown["side-count-routes"].textContent = ""; shown["side-count-routes"].title = "";
-      const since = Array.from(store.keys());
-      global.currentView = "results";
-      const before = reads("/api/desk");
-      await window.RODesk.refreshSidebar(); await settle();
-      extra.elsewhere = [reads("/api/desk") - before, count()[0]];
-      global.currentView = "desk";
-      const mid = reads("/api/desk");
-      await window.RODesk.refreshSidebar(); await settle();
-      extra.onPage = reads("/api/desk") - mid;
-      extra.keys = Array.from(store.keys()).filter((k) => !since.includes(k));
+def test_21_4_from_another_section_the_count_is_read_with_the_list_alone_and_not_on_the_desk_or_the_home():
+    """With another section showing, refreshing the sidebar reads /api/workspace/now?only=needs once (never /api/desk, and the
+    page's 'last visit' is left alone); on the desk its own reading sets the count and on 项目首页 the home's does, so nothing
+    more is read there; a project of one person reads it too."""
+    for case in (_with_work(_team_case("pi")), with_needs(_with_review(_case("single")))):
+        case["get"]["/api/workspace/now?only=needs"] = {"needs": case["desk"]["needs"], "role": case["desk"]["role"]}
+        out = _sidebar(case, after=r"""
+          shown["side-count-home"].textContent = ""; shown["side-count-home"].title = "";
+          const since = Array.from(store.keys());
+          const nowReads = () => reads("/api/workspace/now?only=needs");
+          global.currentView = "results";
+          const before = nowReads(), deskBefore = reads("/api/desk");
+          await window.RODesk.refreshSidebar(); await settle();
+          extra.elsewhere = [nowReads() - before, reads("/api/desk") - deskBefore, count()[0]];
+          global.currentView = "desk";
+          const mid = nowReads();
+          await window.RODesk.refreshSidebar(); await settle();
+          extra.onDesk = nowReads() - mid;
+          global.currentView = "workspace";
+          await window.RODesk.refreshSidebar(); await settle();
+          extra.onHome = nowReads() - mid;
+          extra.keys = Array.from(store.keys()).filter((k) => !since.includes(k));
+        """)
+        assert out["elsewhere"] == [1, 0, "6" if case["desk"]["role"] == "pi" else "2"], case["desk"]["role"]
+        assert out["onDesk"] == 0 and out["onHome"] == 0 and out["keys"] == []
+
+
+@needs_node
+def test_21_4_the_home_hands_the_list_it_read_to_the_sidebar_and_the_count_follows_an_act_without_a_reload():
+    """项目首页 reads the list itself and gives it to `RODesk.noteNeeds`: the count follows at once. A second list handed in (a
+    handback opened, a run answered, a proposal approved: the home reads again) replaces it."""
+    case = _with_review(_case("single"))
+    out = _sidebar(with_needs(case), after=r"""
+      const rows = c.desk.needs.rows;
+      global.currentView = "workspace";
+      window.RODesk.noteNeeds({ rows: rows.slice(0, 1) });
+      extra.one = count();
+      window.RODesk.noteNeeds({ rows: [] });
+      extra.none = count();
+      window.RODesk.noteNeeds({ rows: rows.concat(rows) });
+      extra.four = count();
     """)
-    assert out["elsewhere"] == [1, "6"] and out["onPage"] == 0 and out["keys"] == []
-    single = _sidebar(_case("single"), after=r"""
-      global.currentView = "results";
-      const before = reads("/api/desk");
-      await window.RODesk.refreshSidebar(); await settle();
-      extra.single = reads("/api/desk") - before;
-    """)
-    assert single["single"] == 0
+    assert out["one"] == ["1", "1 项等你处理", ""] and out["none"] == ["", "", ""] and out["four"] == ["4", "4 项等你处理", ""]
 
 
 # -- app.html: the one item, the switch, the callers ---------------------------------------------------------
@@ -322,13 +362,16 @@ def test_18_3_from_another_section_the_count_is_read_with_the_desk_and_not_on_th
 def test_18_3_the_sidebar_has_one_item_for_the_page_and_the_old_view_is_gone():
     """工作台 and 研究路线 were two items on two views; now `research routes`
     is one item on the view `desk` (Section 14's name for the page), 项目首页
-    stays first, and nothing of the old `tree` view is left in the page."""
+    stays first, and nothing of the old `tree` view is left in the page. The count of what waits (21.4) is beside 项目首页
+    (the home's item) and not beside 研究路线, whose 18.3 count is gone."""
     html = APP_HTML.read_text(encoding="utf-8")
     nav = html[html.index('<nav class="side-nav"'):html.index("</nav>")]
     assert nav.count('class="side-item"') == 8
     assert "工作台" not in nav and nav.count("研究路线") == 1
-    assert re.search(r'data-section="routes" data-view="desk"><svg[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>研究路线</span>'
-                     r'<span class="side-count" id="side-count-routes"></span></button>', nav)
+    assert re.search(r'data-section="routes" data-view="desk"><svg[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>研究路线</span></button>', nav)
+    assert re.search(r'data-section="workspace" data-view="workspace"><svg[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>项目首页</span>'
+                     r'<span class="side-count" id="side-count-home"></span></button>', nav)
+    assert "side-count-routes" not in html
     assert nav.index('data-section="workspace"') < nav.index('data-section="routes"') < nav.index('data-section="results"')
     for old in ('id="view-tree"', 'views.tree', 'loadTreeView', '"tree"]', 'currentView === "tree"'):
         assert old not in html.replace('stored === "tree" ? "desk"', "").replace('"tree": () => showRoutes("list")', ""), old

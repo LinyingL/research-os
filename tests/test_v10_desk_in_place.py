@@ -20,7 +20,7 @@ from researchos import desk
 
 from test_v10_desk_language import DATA, SCRIPT, _page_helpers, _review
 from test_v10_desk_language import _THEIRS as _REVIEW_THEIRS
-from test_v10_desk_panel import _PANEL_DOM, A16, A17, _case
+from test_v10_desk_panel import _PANEL_DOM, A16, A17, _case, with_needs
 from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import FORBIDDEN, _backdate, _card, _desk
 from test_v9_language import CJK, WEBAPP, _i18n_source, _node, needs_node
@@ -89,7 +89,7 @@ def _reviewing(lang: str) -> dict:
     case["desk"]["column"]["review"] = {"count": 3, "groups": [{"id": A16, "items": mine}],
                                         "none": {"items": [review["review"][1]], "cards": []}}
     case["get"]["/api/review"] = review
-    return case
+    return with_needs(case)
 
 
 _JUDGE = """
@@ -98,7 +98,10 @@ _JUDGE = """
   await settle(); await settle(); await settle();
   global.extra = { first: panelLines(), scrolled: scrolled.slice() };
   c.post = { "/api/judgements": (body) => {
-    if (body.verdict !== "undone") { c.desk.column.review.groups[0].items.shift(); c.get["/api/review"].review.shift(); }
+    if (body.verdict !== "undone") {   // the judgment leaves the column and its row of 等你处理 (the engine's list)
+      c.desk.column.review.groups[0].items.shift(); c.desk.needs.rows.find((r) => r.key === "r:" + %(a16)s).items.shift();
+      c.get["/api/review"].review.shift();
+    }
     return { ok: true, generation: 5 };
   } };
   type(field(%(note)s), "复查过");
@@ -257,13 +260,13 @@ def _returned(lang: str = "zh") -> dict:
                             "new_status": {"status": "abandoned", "label": "已放弃"}, "abandons": True}}
     pending = {**returned, "id": "p4", "state": "pending", "sentence": "16 改回", "reason": None, "outcomes": []}
     case["desk"]["column"]["mine"] = [returned, pending]
-    return case
+    return with_needs(case)
 
 
 @needs_node
 def test_14_4_a_returned_proposal_stays_in_my_proposals_until_got_it():
     """A member's returned proposal stays in 我的提议 with its reason, and
-    in #16's 待办, until 「知道了」: then it leaves both, remembered for
+    in #16's 等你处理, until 「知道了」: then it leaves both, remembered for
     this person and project in the browser; the pending one stays. Opened
     again (a new page), it is still put away."""
     steps = """

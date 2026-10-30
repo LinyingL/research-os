@@ -3494,7 +3494,10 @@ Beside the map, newest first:
 - **正式版本有更新** and 同步 (a member), as the desk had it.
 - Lines with a missing end (14.2).
 
-With nothing to do the column says so in one quiet line.
+With nothing to do the column says so in one quiet line. *(21.4 amends this
+section: the column is 等你处理, one list with the person's handbacks and
+runs, its blocks are the chips of its rows, and with nothing to do it folds
+to a strip.)*
 
 ### 14.5 Where the old desk went (12.0 amended)
 
@@ -4759,7 +4762,9 @@ does not add.
     `routes`, stay valid names and open the same page).
   - In a team project, 待办's count (the rows the column lists) shows beside
     研究路线 in the sidebar when it is not zero. A one-person project shows
-    none.
+    none. *(Replaced by 21.4: the column is 等你处理, and the one count of its
+    rows shows beside 项目首页 in every project, a project of one person
+    included; there is none beside 研究路线.)*
   - The Mac menu has one item for it, ⌘2; 项目首页 is ⌘1, and the shortcuts
     follow the sidebar's order (⌘1 to ⌘8).
 - **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
@@ -6285,16 +6290,39 @@ attempts.py`; `research_records.assessment_statuses`).
 
 ### 21.4 项目首页: what is going on
 
-- **At the top, 「现在在做什么」**, two parts:
+- **At the top, 「现在在做什么」**, two parts, side by side at desktop width and
+  stacked when the window is narrow:
   - **进行中的尝试**: every attempt whose assessment is 现行 or 待定 and that
-    has an unfinished task or an unopened handback, as cards with the 21.1
-    progress line, newest activity first; each opens the attempt's panel.
-  - **等你处理**: one list for the project — unopened handbacks, runs waiting
-    for an answer, failed or out-of-bounds runs, and what 待办 held (PI:
-    proposals awaiting approval; member: returned proposals and a newer
-    official version; 待复核 link judgments; lines with a missing end). Each
-    row opens the place that handles it. Its count shows beside 项目首页 in
-    the sidebar, in a one-person project too.
+    holds at least one task (an unopened handback implies a task), as cards
+    with the 21.1 progress line (「任务 n，未完成 m」, or 「任务 n，全部完成」),
+    「等你看 n」 and the first line of the latest handback, newest activity
+    first; a card opens the attempt's panel as the route map's cards do, its
+    headline opens that handback and 「等你看 n」 the first that waits.
+    *Amended (B2-1):* this said "that has an unfinished task or an unopened
+    handback". Batch 1 made a task that has handed back read 已完成, so on
+    Quant no attempt would have been listed; a 待定 attempt whose tasks have
+    all handed back is waiting for the person's assessment, which is what is
+    going on. An attempt assessed 不利证据, 被否, 已放弃 or 归档 (or with a
+    status of the researcher's own) is not listed, nor is one with no task.
+    A project in which no attempt holds a task says so in one quiet sentence
+    with the way in (「还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条
+    尝试下加任务」。」); one whose attempts hold tasks but none is in progress
+    says 「现在没有进行中的尝试。」
+  - **等你处理**: one list for the project and the person — unopened
+    handbacks (theirs: the run was started by them), runs they started that
+    wait for an answer, failed or out-of-bounds runs they started, and what
+    待办 held (PI: proposals awaiting approval; member: their own proposals
+    that wait, a returned one until 「知道了」, and a newer official version;
+    待复核 link judgments; lines with a missing end). Each row says in a chip
+    what it is, which attempt (opened in the panel) and task it concerns,
+    and has the one action that handles it: 打开交回; 回答 (the task's row
+    with its reply form open); 运行日志 and 「知道了」; 查看 (a proposal, in
+    the panel); 复核 (the attempt's 待复核, or the review panel for the
+    judgments that belong to no attempt); 同步. A line with a missing end has
+    no action: it is said, never dropped (14.2). Its count shows beside 项目首页
+    in the sidebar, in a one-person project too, and is the number of rows
+    (the old count beside 研究路线 is gone: one count, not two).
+
 - **Below**: 研究问题与计划, shown to its first paragraph with 「展开」; 笔记 and
   报告 in a wider column, each with its date as a separate quiet field (the
   title is not changed), reports grouped by attempt; 全部任务, grouped by
@@ -6308,9 +6336,66 @@ attempts.py`; `research_records.assessment_statuses`).
   it also has 研究上下文 set to that handback's record. These are choices, not
   writing: a form that holds only them is not unsaved work, and the person may
   change each.
-- **研究路线's right-hand column** is the same 等你处理 list; it folds to a
-  narrow strip when empty.
+- **研究路线's right-hand column** is the same 等你处理 list, under that title
+  (it was 待办; English “Needs you”); it folds to a narrow strip (its title,
+  set upright, and the sentence 「现在没有要处理的事。」 on hover) when the list
+  and the notices above it are empty, which gives its width to the map or the
+  list, and unfolds when a row arrives. A notice (not in the team yet, a team
+  file or a shared folder that cannot be read) keeps it open; so does what a
+  sync has just done. In a narrow window it is a bar under the map. The
+  blocks it had (等你批准, 我的提议, 待复核, 正式版本有更新, 连线的一端找不到了) are
+  the chips of its rows; the attempt panel's part of the same name is 等你处理
+  too. The PI and member differences of 12.4 and 18.3 stand: a one-person
+  project has no proposal and no official version, a PI has the proposals to
+  decide, a member their own.
 
+**How the top is worked out** (`src/researchos/now_doing.py`; the page is
+`workspace.js`, the list is drawn by `desk.js`).
+
+- **One function and one endpoint.** `GET /api/workspace/now` answers for the
+  open project and the person asking `{role, needs, progress}`; `?only=needs`
+  leaves `progress` out (the sidebar reads that from any page that is neither
+  the desk nor 项目首页, which read the list themselves). `needs` is also in
+  `GET /api/desk` — the same function (`now_doing.needs_you`), so the column
+  and the home draw one list, and nothing of what 待办 held is worked out
+  twice. The endpoint asks `desk.payload` for its `light` form: the cards
+  carry only their number, title, date, status and marks, and the version
+  store, the git log and the decisions are not read; the shared folder is read
+  for at most the desk's few seconds, joining the desk's own job.
+- **Activity** (what 进行中的尝试 is ordered by; the amendment's choice): the
+  latest of the start or end of the latest run of each of the attempt's tasks
+  (`ran_at`; a run not started yet counts by when it was created), the time
+  each of its handbacks' reports was written (`report_at`, the file's time),
+  and the date of its row where the table's days can be read (`date_year`,
+  `date_key`). An attempt with none of these comes after the others, in the
+  table's order. The figures on a card — `tasks`, `unfinished`, `unopened`,
+  `latest.line` — are `attempt_tasks.by_attempt`'s, the route map's, never
+  counted again; `ran_at` and `report_at` are two fields it now also gives each
+  task. The run store and the unopened handbacks are read once for the cards
+  and the list of one answer.
+- **The rows**, each `{kind, key, at, attempt, attempts, …}`: `handback`
+  (`handbacks.list_unopened`), `answer`, `failed` and `out_of_bounds` (from
+  `attempt_tasks.attention`: the tasks whose latest run the person started and
+  that read 等你回答, 失败 or 越过了限制 in `state_of` — one notion of a task's
+  state — except a run that was undone), `proposal` (the PI's), `mine` (a
+  member's own), `official`, `review` (one per attempt that holds a judgment
+  to review, and one for those that belong to none) and `line_missing`. They
+  stand in this order, and newest first inside a kind (rows with no time keep
+  the order they were found in): `answer`, `handback`, `out_of_bounds`, `failed`,
+  `proposal`, `mine`, `official`, `review`, `line_missing`. A task run again
+  has a new run, so the row of the old one is gone; so is the row of a task
+  that was removed.
+- **「知道了」 on a failed or out-of-bounds run** is kept per person on this Mac
+  under the Research OS home, in `<home>/handbacks/<project id>/<key>.aside.json`
+  beside the store of opened handbacks, never in the project; `POST
+  /api/workspace/run/aside` takes `{run}`, only for a run the person started
+  (`now_doing.set_aside`), and keeps only runs the run store still has.
+  Another person on the same Mac is not affected. A returned proposal's
+  「知道了」 stays where 18.3 kept it, in the browser.
+- **After an act** the page reads again by the paths it already had: opening a
+  handback (`hbMarkOpened`) and answering a run (`reloadAfterRun`) reload the
+  home, a proposal answered in the panel, 「知道了」 and 同步 read the desk or the
+  home again, and the count follows; nothing is reloaded by hand.
 ### 21.5 The paper and its provenance
 
 - **A warning appears only where it can be acted on, with the action beside
@@ -6348,6 +6433,10 @@ As approved by the researcher on 2026-10-29:
 | 未识别生成脚本, 没有找到生成它的脚本 | 缺生成脚本 (缺来源 stays the figures' umbrella) | No generating script |
 | — | 代理建议, 确认这个判断; history 「由 X 确认（采纳 … 的建议）」 | Suggested by the agent, Confirm this assessment |
 | — | 现在在做什么: 进行中的尝试, 等你处理 | In progress: Attempts in progress, Needs you |
+
+In the interface 待办 is gone (21.4): the column of 研究路线, the part of the same name in an
+attempt's panel and the count beside 项目首页 say 等你处理 (“Needs you”; the count's
+hover is “{n} need you”). 14.6 and 18.3 above keep the word they introduced.
 
 Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 `.context.json`, `judgements.toml` keep their names.
@@ -6404,7 +6493,8 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    or stay in none (the data-source tasks, 4 and 15, are not proposed as one
    attempt: the person moves 15 into the group of 4 if they want one); after
    confirming, the route map shows those attempts with their tasks counted,
-   and 项目首页's 进行中的尝试 shows them. Confirmed in that order, on a table
+   and 项目首页's 进行中的尝试 shows them (every task reads 已完成, each attempt is
+   assessed 待定, and they stand v0.2, v0.3, v0 -- the newest report first). Confirmed in that order, on a table
    with no rows, they are written as #4, #5 and #6, the groups still shown
    keeping 1, 2 and 3.
 2. A real agent run on a task under an attempt hands back a headline, key

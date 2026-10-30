@@ -17,6 +17,8 @@ import re
 
 import pytest
 
+from researchos import now_doing
+
 from test_v8_phase2 import _call, _project
 from test_v8_phase3 import _serve
 from test_v8_u2 import FORBIDDEN
@@ -130,6 +132,20 @@ STATUSES = [_status("现行", "✅", "current"), _status("待定", "🕒", "pend
             {"status": "其它", "marker": "", "markers": [], "abandons": False, "other": True, "code": "other"}]
 
 
+def desk_with_needs(desk: dict) -> dict:
+    """`desk` with the `needs` the engine would send for its column (a desk that a test serves after an act)."""
+    return {**desk, "needs": now_doing.assemble(desk)}
+
+
+def with_needs(case: dict) -> dict:
+    """`case`'s desk payload with the `needs` the engine adds to it (DESIGN.md 21.4): the rows of 等你处理 worked out by the
+    engine's own `now_doing.assemble` from the column, the lines and the cards the case holds, so that the page is held
+    to what the engine sends and a case that changes its column draws its rows again by calling this. A case has no handbacks
+    or runs of its own; the tests of 21.4 add them as rows."""
+    case["desk"]["needs"] = now_doing.assemble(case["desk"], case.get("agent_rows"))
+    return case
+
+
 def _case(role: str, lang: str = "zh") -> dict:
     """The desk and the pages the panel reads for #16 TopicShift 波动, which
     #17 grew out of: one person, the PI, a member (whose own proposed line
@@ -180,10 +196,10 @@ def _case(role: str, lang: str = "zh") -> dict:
              "trusted": True}
     records = [{"id": A16, "verdict": "🕒 先看", "verdict_status": _st("pending", "待定", "先看")},
                {"id": A17, "verdict": "☠ 方向反了", "verdict_status": _st("abandoned", "已放弃", "方向反了")}]
-    return {"desk": desk, "records": records, "statuses": STATUSES, "get": {
+    return with_needs({"desk": desk, "records": records, "statuses": STATUSES, "get": {
         "/api/me": {"me": {"id": "li@example.com", "name": "Li"}}, "/api/proposals": {"role": role, "proposals": []}, "/api/share": {},
         f"/api/node?node={A16.replace(':', '%3A').replace('#', '%23')}": page,
-        f"/api/notes?node={A16.replace(':', '%3A').replace('#', '%23')}": notes}}
+        f"/api/notes?node={A16.replace(':', '%3A').replace('#', '%23')}": notes}})
 
 
 def _run(case: dict, steps: str, lang: str | None = None) -> dict:

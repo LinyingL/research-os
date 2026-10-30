@@ -1,7 +1,7 @@
 """Research OS V10, increment D2 (DESIGN.md 14.3, 14.4): proposals decided
 in place on the desk. team.js draws one proposal into any host
 (ROTeam.renderProposalInto) -- the 提议 page is its back bar plus that --; the
-desk's panel lists the proposals touching an attempt under 待办, each opened
+desk's panel lists the proposals touching an attempt under 等你处理 (21.6; it was 待办), each opened
 in place; the column's 查看 opens a proposal in the panel as its own subject
 and marks the cards it touches; deciding draws the map, the column and the
 panel again in place. GET /api/proposals/<id> takes `from`, as the acts do,
@@ -21,7 +21,7 @@ from test_v8_phase3 import MEMBER, TEAM, Team, _serve
 from test_v8_review_round import OTHER, _copy_as
 from test_v8_u2 import FORBIDDEN
 from test_v9_language import CJK, WEBAPP, _i18n_source, _node, needs_node
-from test_v10_desk_panel import _PANEL_DOM, A16, A18, _case, _st
+from test_v10_desk_panel import _PANEL_DOM, A16, A18, _case, _st, desk_with_needs, with_needs
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ def _team_case(role: str, lang: str = "zh") -> dict:
     case["get"]["/api/proposals"] = {"role": role, "proposals": listed}
     for pid, page in full.items():
         case["get"][f"/api/proposals/{pid}{FROM}"] = page
-    return case
+    return with_needs(case)
 
 
 def _run_team(case: dict, steps: str, lang: str | None = None) -> dict:
@@ -152,14 +152,14 @@ def _run_team(case: dict, steps: str, lang: str | None = None) -> dict:
 
 @needs_node
 def test_14_3_the_pi_decides_a_proposal_in_the_attempts_panel():
-    """The PI clicks #16: under 待办 its panel lists the proposals touching
+    """The PI clicks #16: under 等你处理 its panel lists the proposals touching
     it (p1 changes its verdict, p3 draws a line to it; p2 touches no
     attempt), each with 查看. 查看 opens p1 in place, by whose it is: what
     approving does (the row before and after) and the three answers.
     Returned with a reason: the map and the column are read again, the
     panel says what the answer did and p1 is no longer listed."""
     case = _team_case("pi")
-    case["after"] = {**case["desk"], "column": {**case["desk"]["column"], "waiting": case["desk"]["column"]["waiting"][1:]}}
+    case["after"] = desk_with_needs({**case["desk"], "column": {**case["desk"]["column"], "waiting": case["desk"]["column"]["waiting"][1:]}})
     steps = """
       await window.RODesk.openAttempt(%(a16)s);
       global.extra = { before: panelLines() };
@@ -172,7 +172,7 @@ def test_14_3_the_pi_decides_a_proposal_in_the_attempts_panel():
     """ % {"a16": json.dumps(A16)}
     out = _run_team(case, steps)
     before, opened, after = out["extra"]["before"], out["extra"]["opened"], out["lines"]
-    urgent = before[before.index("node-sec-title: 待办"):]
+    urgent = before[before.index("node-sec-title: 等你处理"):]
     for line in ["status-label tone-plain: 研究判断变更", "desk-what: 放弃 16", "desk-note plain: #16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
                  "desk-meta: 王 · 2024年3月1日", "status-label tone-plain: 连线", "desk-what: 加上连线：#18 源自 #16"]:
         assert line in urgent, line
@@ -201,7 +201,7 @@ def test_14_4_the_columns_view_opens_a_proposal_in_the_panel_and_marks_its_cards
     did over the proposal as it now stands."""
     case = _team_case("pi")
     listed = case["desk"]["column"]["waiting"]
-    case["after"] = {**case["desk"], "column": {**case["desk"]["column"], "waiting": listed[:2]}}
+    case["after"] = desk_with_needs({**case["desk"], "column": {**case["desk"]["column"], "waiting": listed[:2]}})
     approved = {**case["get"][f"/api/proposals/p3{FROM}"], "state": "approved",
                 "outcomes": [{"act": "approved", "by": "li@example.com", "at": "2024-03-02T09:00:00"}]}
     approved.pop("changes")
@@ -244,8 +244,8 @@ def test_14_3_a_members_own_proposal_waits_under_its_attempt_and_opens_in_place(
     """A member's panel for #16 lists their own waiting proposal (我的提议
     filtered as the column is, through what it touches) with how it stands;
     opened in place by its author it shows what it carries -- no answers to
-    give. In English the desk's own words are English (13.4: 待办 "To
-    handle", 提议中 "Proposed"); the proposal drawn by team.js is D3's."""
+    give. In English the desk's own words are English (13.4, 21.6: 等你处理 "Needs
+    you", 提议中 "Proposed"); the proposal drawn by team.js is D3's."""
     case = _team_case("member", lang)
     steps = """
       await window.RODesk.openAttempt(%(a16)s);
@@ -254,9 +254,9 @@ def test_14_3_a_members_own_proposal_waits_under_its_attempt_and_opens_in_place(
     """ % {"a16": json.dumps(A16), "view": json.dumps("View" if lang == "en" else "查看")}
     out = _run_team(case, steps, lang=None if lang == "zh" else lang)
     before = out["extra"]["before"]
-    urgent = before[before.index("node-sec-title: " + ("To handle" if lang == "en" else "待办")):]
+    urgent = before[before.index("node-sec-title: " + ("Needs you" if lang == "en" else "等你处理")):]
     w = (lambda zh, en: en if lang == "en" else zh)
-    assert urgent == ["node-sec-title: " + w("待办", "To handle"), "status-label tone-plain: " + w("研究判断变更", "Research assessment change"),
+    assert urgent == ["node-sec-title: " + w("等你处理", "Needs you"), "status-label tone-plain: " + w("研究判断变更", "Research assessment change"),
                       "desk-what: 放弃 16", "desk-note plain: " + w("#16 的研究判断从「待定」改为「已放弃」，放弃这条路线",
                                                                 "#16: change the research assessment from “Pending” to “Abandoned”, abandoning the route"),
                       "desk-meta: " + w("提议中 · 2024年3月1日", "Proposed · 1 Mar 2024"), "btn btn-small: " + w("查看", "View")]

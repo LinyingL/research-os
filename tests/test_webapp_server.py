@@ -597,8 +597,8 @@ def test_http_root_returns_spa_shell_with_key_mount_points(live_server):
         # DESIGN.md 12.9 (V8 U2): the sidebar's sections route to the views;
         # the canvas is 关系图 inside 数据与代码.
         'data-view="desk"', 'data-view="lineage"', 'data-subview="canvas"', 'id="view-canvas"',
-        # 18.3: 研究路线 is one page; its switch and the count of 待办 beside it.
-        'id="routes-switch"', 'data-mode="map"', 'data-mode="list"', 'id="side-count-routes"',
+        # 18.3: 研究路线 is one page; its switch. 21.4: the count of 等你处理 beside 项目首页.
+        'id="routes-switch"', 'data-mode="map"', 'data-mode="list"', 'id="side-count-home"',
         'id="sidebar"',
     ):
         assert mount_point in html, f"missing mount point in served app.html: {mount_point}"

@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from test_v9_language import APP_HTML, CJK, FORBIDDEN, _node, english_table, needs_node
+from test_v9_language import APP_HTML, CJK, FORBIDDEN, WEBAPP, _node, english_table, needs_node
 
 DESIGN = Path(__file__).parents[1] / "DESIGN.md"
 
@@ -355,3 +355,27 @@ def test_21_2s_handback_words_are_listed_in_17_9_and_21_6_and_the_page_holds_the
         assert en in english_column, f"{zh}: {en!r} is not in 21.6's English column"
     table = english_table()
     assert {zh: table[zh] for zh in TERMS_OF_21_2} == TERMS_OF_21_2
+
+
+#: 21.4 / 21.6's words for the top of 项目首页 and the column: the table's English column gives 「In progress: Attempts in progress,
+#: Needs you」 for 现在在做什么 with its two parts, and 「Needs you」 for 待办's new word.
+TERMS_OF_21_4 = {"现在在做什么": "In progress", "进行中的尝试": "Attempts in progress", "等你处理": "Needs you"}
+
+
+@needs_node
+def test_21_4s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_writes_them_and_the_old_word_is_gone():
+    """DESIGN 21.4 / 21.6 (task V16 B2-1): the three words are in 21.6's English column and are keys of the page's English
+    table with exactly that English; 待办 is a key no more, and no screen string says it (the design's lists keep it as the
+    word 14.6 introduced, which 21.6 replaces)."""
+    text = DESIGN.read_text(encoding="utf-8")
+    six = text[text.index("### 21.6"):text.index("### 21.7")]
+    english_column = " ".join(re.findall(r"^\| .+? \| .+? \| (.+?) \|$", six, re.M))
+    for zh, en in TERMS_OF_21_4.items():
+        assert en in english_column, f"{zh}: {en!r} is not in 21.6's English column"
+    table = english_table()
+    assert {zh: table[zh] for zh in TERMS_OF_21_4} == TERMS_OF_21_4
+    assert "待办" not in table and "{n} 项待办" not in table
+    assert table["{n} 项等你处理"] == {"one": "{n} needs you", "other": "{n} need you"}
+    for name in ("desk.js", "workspace.js", "app.html", "team.js"):
+        shown = (WEBAPP / name).read_text(encoding="utf-8")
+        assert not re.search(r"""t\(["']待办["']""", shown), name

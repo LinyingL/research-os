@@ -1415,6 +1415,7 @@ def _desk_cases(lang: str) -> list[dict]:
     one person -- with /api/desk's column and words as the engine sends them
     in `lang`."""
     from researchos import desk as engine
+    from researchos import now_doing
 
     def w(zh: str, en: str) -> str:
         return en if lang == "en" else zh
@@ -1470,11 +1471,13 @@ def _desk_cases(lang: str) -> list[dict]:
 
     def desk(role: str, **column) -> dict:
         shared = column.pop("shared", "ok" if role in ("pi", "member") else "not_needed")
-        return {"role": role, "attempts": attempts, "lines": [], "lines_missing": column.pop("missing", []), "column": {
+        out = {"role": role, "attempts": attempts, "lines": [], "lines_missing": column.pop("missing", []), "column": {
             "role": role, "me": "li@example.com", "notice": w(*engine.ROLE_WORDS[role]) if role in engine.ROLE_WORDS else None,
             "shared": {"state": shared, "message": w(*engine.SHARED_WORDS[shared]) if shared in engine.SHARED_WORDS else None},
             "waiting": [], "mine": [], "review": {"count": 0, "groups": [], "none": {"items": [], "cards": []}}, "sync": None,
             **column}}
+        out["needs"] = now_doing.assemble(out)   # 21.4: the rows of 等你处理, as the engine works them out from the column
+        return out
 
     me = {"me": {"id": "li@example.com", "name": "Li"}}
     team = [{"id": "wang@example.com", "name": "Wang"}]
@@ -1530,7 +1533,11 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 判断 (two rows) -- checked by putting the old word back: the old digest.
 #: Moved again for the finding that the count also holds variable cards: the same sentence says
 #: 项 (「1497 项的依据变了」), not 连线确认 -- checked by putting the old sentence back: the digest e7250298...
-_DESK_ZH_SHA256 = "b096158f2637bdcff2bc7de4edfe0ba7a62a1015a4bd0db04bb2144280c4dda4"
+#: Moved on purpose by DESIGN.md 21.4 and 21.6 (task V16 B2-1): the column is 等你处理, one list of rows -- each with a chip
+#: that says what it is (新尝试, 待复核, 连线的一端找不到了 ...) in the place of the blocks that held them (等你批准, 我的提议,
+#: 待复核, 正式版本有更新, 连线的一端找不到了) --, a 待复核 row is one attempt's (or the judgments that belong to none), its count
+#: sentence is its own, and a column with nothing to do folds to a strip. The words of each row are the ones they were.
+_DESK_ZH_SHA256 = "3face376589f57d8997104bc63522223d52db8be0cca1e49902086576624f708"
 
 
 @needs_node
@@ -1540,8 +1547,9 @@ def test_13_8_the_desk_in_chinese_is_as_before(saved):
 
     desks = _desks(saved)
     assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
-    assert desks[0][:2] == ["desk-column-title: 待办", "desk-title: 等你批准"]
-    assert "desk-sub: 1497 项的依据变了，等你复核。[desk-link]" in desks[0]
+    assert desks[0][:3] == ["desk-column-title: 等你处理", "status-label tone-plain: 新尝试", "desk-link strong: 新增尝试 #18：新路线，附带 1 个文件"]
+    assert "desk-meta: Wang · 等你批准 · 2024年3月1日" in desks[0]
+    assert "desk-sub: 2 项的依据变了，等你复核。" in desks[0] and "desk-sub: 4 项的依据变了，等你复核。" in desks[0]
     assert "desk-link strong: 加上连线：#18 源自 #17 (title: 在路线图上标出它涉及的尝试)" in desks[0]
 
 
@@ -1558,32 +1566,33 @@ def test_13_7_the_desk_in_english():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in [
-        "desk-column-title: To handle", "desk-title: Awaiting your approval", "status-label tone-plain: New attempt",
-        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · 1 Mar 2024", "btn btn-small: View",
+        "desk-column-title: Needs you", "status-label tone-plain: New attempt",
+        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024", "btn btn-small: View",
         "desk-link strong: #16: change the research assessment from “Pending” to “Abandoned”, abandoning the route, with 2 files "
         "(title: Mark the attempts it touches on the route map)",
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
         "(title: Mark the attempts it touches on the route map)",
-        "desk-title: Needs review", "desk-sub: The basis of 1,497 items changed; they await your review.[desk-link]",
+        "status-label tone-ochre: Needs review", "desk-sub: The basis of 2 items changed; they await your review.",
         "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark this attempt on the route map)",
         ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
-        "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
+        "own-mark: My change, not yet proposed", "desk-what: Not part of any attempt",
         ": [desk-reason]other.py generates figs/图3.png", "desk-reason: The machine no longer finds this link",
         ": [desk-reason]other.py is linked to x.md", ": [mono] This script’s change touches 2 variables", ": log_ret, vol",
-        "desk-title: Lines with a missing end", "desk-what: #20 grew out of #16",
+        "status-label tone-clay: Lines with a missing end", "desk-what: #20 grew out of #16",
         "desk-meta: #20 is not in the table · Original researcher",
     ]:
         assert line in desks[0], line
     # A judgment two attempts hold is under both, and the count says it once (the engine's).
     assert desks[0].count(": [desk-reason]steps/16-build.py reads data/panel.csv") == 2
-    assert desks[1] == ["desk-column-title: To handle", "desk-empty: Nothing to handle right now."]
-    for line in ["desk-title: My proposals", "desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
+    # 21.4: with nothing waiting the column folds to a strip: its title, the sentence on hover
+    assert desks[1] == ["desk-column: [desk-column-title] (title: Nothing to handle right now.)", "desk-column-title: Needs you"]
+    for line in ["desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
                  "desk-note plain: Variable log_ret: definition version 2", "desk-meta: Returned: redo it · 1 Mar 2024",
                  "desk-link strong: 3 files: 1.py, 2.py and others", "desk-meta: Approved, awaiting sync · 1 Mar 2024",
                  "desk-link strong: #17: change the research assessment from “Current” to “成立” "
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
-                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
+                 "desk-meta: Proposed · 1 Mar 2024", "status-label tone-ochre: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "team-line writes: Syncing first writes what you have not sent yet (1 comment, 2 link judgments, "
                  "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
@@ -1601,12 +1610,12 @@ def test_13_7_the_desk_in_english():
     assert not any("Replaced by your later proposal" in line for line in desks[2])
     for i in (3, 4):  # a member up to date, or before any publish: nothing to handle
         assert desks[i] == desks[1], i
-    assert desks[5] == ["desk-column-title: To handle", "desk-alone: The shared folder cannot be opened right now: "
+    assert desks[5] == ["desk-column-title: Needs you", "desk-alone: The shared folder cannot be opened right now: "
                         "proposals and sync cannot be shown"]  # never 「同步」 while it cannot be opened
     assert "desk-alone: This project is not connected to a shared folder: proposals and sync cannot be shown" in desks[6]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
     assert "desk-alone: The members file (team.toml) cannot be read right now, so who the PI is cannot be told" in desks[8]
-    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 item changed; it awaits your review.[desk-link]"]
+    assert "desk-sub: The basis of 2 items changed; they await your review." in desks[9]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
 
 
@@ -1629,19 +1638,24 @@ def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
             "missing": ["child", "parent"], "by_label": first}
     cards = {"key": "card:x", "script": None, "cards": ["log_ret", "vol", "ret"], "counted": True, "words": None}
     review = {"count": 1, "groups": [], "none": {"items": [], "cards": [cards]}}
+    from researchos import now_doing
+
+    desk_payload = {"role": "pi", "attempts": [], "lines_missing": [line], "column": {
+        "role": "pi", "shared": {"state": "ok", "message": None}, "waiting": [verdict], "review": review}}
+    desk_payload["needs"] = now_doing.assemble(desk_payload)
     case = {"me": {"me": {"id": "li@example.com", "name": "Li"}}, "proposals": {"role": "pi", "proposals": [verdict]},
-            "share": {}, "desk": {"role": "pi", "attempts": [], "lines_missing": [line], "column": {
-                "role": "pi", "shared": {"state": "ok", "message": None}, "waiting": [verdict], "review": review}}}
+            "share": {}, "desk": desk_payload}
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     desk = _node("global.window = {};\n" + i18n + _DESK_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8")
                  + f"\n(async () => process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case)}))))();\n")
     meta = [line for line in desk if line.startswith(("desk-meta", "desk-link strong", ": log_ret"))]
     if zh:
         assert meta == ["desk-link strong: #16 的研究判断从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
-                        "desk-meta: Wang · 2024年3月1日", ": log_ret、vol、ret", "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
+                        "desk-meta: Wang · 等你批准 · 2024年3月1日", ": log_ret、vol、ret",
+                        "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
     else:
         assert meta == ["desk-link strong: #16: change the research assessment from “Pending” to “Current” "
-                        "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · 1 Mar 2024",
+                        "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024",
                         ": log_ret, vol, ret",
                         "desk-meta: #20 is not in the table · #16 is not in the table · Original researcher"]
 

@@ -274,3 +274,28 @@
 .ws-hb > .ws-hb-link { align-self: flex-start; }
 .ws-hb-link { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .ws-hb-link:hover { color: var(--ink-soft); }
+
+/* 现在在做什么 (DESIGN.md 21.4): the top of 项目首页 -- the attempts in progress and the one list of what waits for the
+   person, side by side at desktop width and stacked when narrow. Ink and weight, no boxes; the warning colour stays on what
+   is wrong (21.8). */
+.ws-now { margin: 0 0 2rem; padding: 0 0 1.4rem; border-bottom: 1px solid var(--line-strong); }
+.ws-now-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0 0 .9rem; }
+.ws-now-parts { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
+.ws-now-part { min-width: 0; }
+.ws-now-heading { font-size: .76rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 .5rem; }
+.ws-now-none { margin: .2rem 0 0; }
+.ws-now-cards { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.ws-now-card { padding: .6rem 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; }
+.ws-now-open { appearance: none; background: transparent; border: 0; padding: 0; text-align: left; font: inherit; font-size: .9rem; font-weight: 600; color: var(--ink); cursor: pointer; display: flex; gap: .5rem; overflow-wrap: anywhere; }
+.ws-now-open:hover .ws-now-name { text-decoration: underline; }
+.ws-now-num { flex: none; }
+.ws-now-meta { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; font-size: .76rem; color: var(--ink-soft); }
+.ws-now-work { display: flex; flex-wrap: wrap; gap: .2rem .8rem; align-items: baseline; font-size: .8rem; }
+.ws-now-look, .ws-now-line { appearance: none; background: transparent; border: 0; padding: 0; font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
+.ws-now-look { font-weight: 600; }
+.ws-now-line { font-size: .84rem; color: var(--ink-soft); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ws-now-look:hover, .ws-now-line:hover { text-decoration: underline; }
+.ws-now-needs .desk-list { margin: 0; }
+@media (max-width: 1000px) {
+  .ws-now-parts { grid-template-columns: minmax(0, 1fr); gap: 1.4rem; }
+}

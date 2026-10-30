@@ -463,10 +463,12 @@ def _lines(root: Path, cards: set[str], team: people.TeamRead | None, lang: str)
 
 
 def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", seen: Any = None,
-              timeout: float | None = None) -> dict[str, Any]:
+              timeout: float | None = None, light: bool = False, shared: dict[str, Any] | None = None) -> dict[str, Any]:
     """The desk's route map and its column (14.1, 14.3-14.5), in one pass;
     see `payload`. `seen`: the officialness view, whose pending proposals
-    are read with the shared folder and merged in."""
+    are read with the shared folder and merged in. `light`: for 项目首页 (21.4), which needs what waits and which
+    attempts are in progress, not the map -- the cards carry only their number, title, date, status and marks (no
+    `work`, `changed`, result, reason or decision), and the version store, the git log and the decisions are not read. `shared`: `attempt_tasks`' keep of one reading, handed on to the list of 等你处理."""
     from researchos import attempt_tasks, officialness, proposals  # noqa: PLC0415
     from researchos import trace as trace_mod  # noqa: PLC0415
     from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
@@ -491,14 +493,24 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
         for f in files:
             holders.setdefault(f, []).append(attempt_id)
     got = read_identity(root)
+    project_id = got.identity.id if got.state is IdentityState.PRESENT and got.identity else None
     shown = {n["id"] for n in nodes}.union(*members.values())  # the nodes whose changes the cards say
-    times = _change_times(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None, shown)
-    abandoned = {a["id"]: a for a in _abandoned(conn, labels, root, team_known, lang)}
+    times = {} if light else _change_times(root, project_id, shown)
+    abandoned = {} if light else {a["id"]: a for a in _abandoned(conn, labels, root, team_known, lang)}
     attempts = []
     for n in nodes:
         attrs, human = n.get("attrs") or {}, n.get("human_fields") or {}
         status = attempts_ingest.route_status(human.get("verdict", ""), labels, markers)
         gone = abandoned.get(n["id"])
+        if light:
+            attempts.append({
+                "id": n["id"], "number": str(attrs.get("number") or ""),
+                "title": attrs.get("description") or n.get("title") or "", "date": str(attrs.get("date") or ""),
+                "date_key": _date_key(attrs.get("date"), config.date_year if config is not None else None),
+                "route_status": status, "tone": TONES.get(status["status"], "plain"),
+                "marks": {"proposals": [], "review": None}, "_source": attrs.get("source_file", ""),
+            })
+            continue
         changed = sorted(((times[i], i) for i in (n["id"], *members.get(n["id"], {})) if i in times), reverse=True)
         attempts.append({
             "id": n["id"], "number": str(attrs.get("number") or ""),
@@ -518,10 +530,10 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
     for i, a in enumerate(attempts):
         a["order"] = i
     # 21.1: the tasks an attempt holds and what its latest handback says, for the card and the panel.
-    work = attempt_tasks.by_attempt(root, got.identity.id if got.state is IdentityState.PRESENT and got.identity else None,
-                                    me, list(by_id))
-    for a in attempts:
-        a["work"] = work.get(a["id"]) or {**NO_WORK, "items": []}
+    if not light:
+        work = attempt_tasks.by_attempt(root, project_id, me, list(by_id), shared)
+        for a in attempts:
+            a["work"] = work.get(a["id"]) or {**NO_WORK, "items": []}
     lines, missing, lines_problem = _lines(root, set(by_id), team_known, lang)
     review = _review(conn, holders, list(by_id), lang)
     for group in review["groups"]:
@@ -607,7 +619,7 @@ def route_map(conn: Connection, project_root: str | Path, *, lang: str = "zh", s
 
 
 def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
-            timeout: float | None = None) -> dict[str, Any]:
+            timeout: float | None = None, light: bool = False, shared: dict[str, Any] | None = None) -> dict[str, Any]:
     """`GET /api/desk` (DESIGN.md 14.1, 14.3-14.5), the route map:
 
     - **attempts** -- the cards, in the map's order (`order`: by the date
@@ -638,6 +650,9 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
       `shared`: whether the shared folder could be read -- the map never
       waits on it longer than SHARED_TIMEOUT.
 
+    - **needs** -- 等你处理 (DESIGN.md 21.4): the one list the column and 项目首页 both show, worked out from the above and from
+      this person's handbacks and runs (`researchos.now_doing.needs_you`); `light` is `route_map`'s.
+
     Every attempt, line and review group carries `officialness` (12.12);
     every sentence composed here is in `lang` (13.6)."""
     from researchos import officialness  # noqa: PLC0415
@@ -648,10 +663,14 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh",
     except Exception:  # noqa: BLE001 -- contained, as every view's officialness is
         logger.exception("officialness not added to the desk")
         seen = None
-    out = route_map(conn, root, lang=lang, seen=seen, timeout=timeout)
+    shared = {} if shared is None else shared   # the run store is read once for the cards and for 等你处理
+    out = route_map(conn, root, lang=lang, seen=seen, timeout=timeout, light=light, shared=shared)
     if seen is not None:
         try:
             officialness.annotate_desk(seen, out, lang)
         except Exception:  # noqa: BLE001
             logger.exception("officialness not added to the desk")
+    from researchos import now_doing  # noqa: PLC0415
+
+    out["needs"] = now_doing.needs_you(root, out, shared)
     return out

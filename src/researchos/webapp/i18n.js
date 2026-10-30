@@ -659,16 +659,23 @@
     "确认连线": "Confirm line",
     "提议这条连线": "Propose this line",
     "取消": "Cancel",
-    // The column beside the map (14.4; 14.6 adds 待办), a proposal of a line, a line with a missing end.
-    "待办": "To handle",
+    // The column beside the map (14.4), a proposal of a line, a line with a missing end; 21.4 and 21.6 name the column 等你处理
+    // (it was 待办) and put it, with 进行中的尝试, under 现在在做什么 at the top of 项目首页.
+    "等你处理": "Needs you",
+    "现在在做什么": "In progress",
+    "进行中的尝试": "Attempts in progress",
+    "现在没有进行中的尝试。": "No attempts in progress right now.",
+    "还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。":
+      "No attempt holds a task yet. Open an attempt under Research routes and choose “Add a task under this attempt”.",
     "现在没有要处理的事。": "Nothing to handle right now.",
+    "没能记下你已经看过这一条。": "Could not record that you have seen this.",
     "在路线图上标出它涉及的尝试": "Mark the attempts it touches on the route map",
     "在路线图上标出这条尝试": "Mark this attempt on the route map",
-    // 研究路线 as a list (18.3): the switch 路线图 / 列表, the hints of the column's rows, the sidebar's count of 待办.
+    // 研究路线 as a list (18.3): the switch 路线图 / 列表, the hints of the column's rows, the sidebar's count of 等你处理 (21.4).
     "列表": "List",
     "在列表中标出它涉及的尝试": "Mark the attempts it touches in the list",
     "在列表中标出这条尝试": "Mark this attempt in the list",
-    "{n} 项待办": "{n} to handle",
+    "{n} 项等你处理": { one: "{n} needs you", other: "{n} need you" },
     "提议中 · PI 说：{text}": "Proposed · The PI says: {text}",
     "已批准，待同步": "Approved, awaiting sync",
     "待复核": "Needs review",

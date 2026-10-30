@@ -1,7 +1,8 @@
 // The sidebar's live lines and the page 研究路线 -- DESIGN.md 12.9, 12.11,
-// Section 14 (task V10: the route map and the column beside it) and 18.3
-// (one page: the map or the grouped list, with the same 待办 column; the
-// old 工作台 is retired, this module keeps the name "desk"). Served verbatim at
+// Section 14 (task V10: the route map and the column beside it), 18.3
+// (one page: the map or the grouped list, with the same column; the
+// old 工作台 is retired, this module keeps the name "desk") and 21.4 (the
+// column is 等你处理, the one list 项目首页 shows too). Served verbatim at
 // /desk.js by the same process and loaded by app.html with a plain
 // same-origin <script src>, exactly as /canvas.js is: zero build, zero
 // external resources, same origin check.
@@ -20,20 +21,25 @@
 //   /api/desk       -- the route map's cards, lines and arrangement, and the
 //                      column beside it (researchos.desk.payload), and what
 //                      each attempt holds: its tasks and its latest handback
-//                      (DESIGN.md 21.1);
+//                      (DESIGN.md 21.1); its `needs` are the rows of 等你处理;
+//   /api/workspace/now?only=needs -- the same rows, for the sidebar's count
+//                      when the page on screen is neither the desk nor 项目首页;
 //   /api/review     -- an attempt's 待复核, judged in its panel (14.3);
 //   /api/history    -- how its row moved, for the panel's timeline (14.5).
-// and the one write: POST /api/share/sync, 「同步」 a member's working copy.
+// and two writes: POST /api/share/sync, 「同步」 a member's working copy, and
+// POST /api/workspace/run/aside, 「知道了」 on a failed run.
 //
 // 研究路线 is the route map with what waits for me beside it (14.1, 14.4)
 // or, by the switch 路线图 / 列表 (18.3), the grouped list that team.js
 // draws, with the same column beside it:
-// the PI's 等你批准, a member's 我的提议, 待复核 under the attempt it
-// belongs to, a member's 正式版本有更新 with 同步, the lines with a missing
-// end -- or one quiet line. What changed since I last looked is 「有改动」
+// 等你处理 (21.4): my unopened handbacks, the runs I started that wait,
+// failed or went out of bounds, the PI's proposals to decide, a member's own,
+// 待复核 under the attempt it belongs to, a member's 正式版本有更新 with
+// 同步, the lines with a missing end -- folded to a strip when there is
+// nothing. What changed since I last looked is 「有改动」
 // on the cards, abandoned routes are the quieter cards (14.5). No
 // statistics, no charts, no counters for their own sake (the one count is
-// the sidebar's 待办 beside 研究路线 in a team project, 18.3). Nothing typed on
+// the sidebar's, beside 项目首页, 21.4). Nothing typed on
 // the page ever becomes a filesystem path: every path shown comes from the
 // server.
 //
@@ -297,7 +303,7 @@
   // -- runtime --------------------------------------------------------------------
 
   const ctx = { me: null, share: null, proposals: null, mode: null, single: false, project: null, epoch: -1 };
-  let todo = { project: null, n: 0 }; // how many rows the 待办 column lists, for the sidebar (18.3)
+  let needsState = { project: null, rows: [] }; // the rows of 等你处理 (21.4): the sidebar counts them, two lists draw them
   const sessionSince = new Map(); // project key -> the last-seen time this page session shows from
   const gotItNow = new Map();     // gotItKey -> the returned proposals said 「知道了」 to (storage may be off)
   const GOT_IT_KEPT = 200;
@@ -401,13 +407,7 @@
       /* the lines keep what they last said */
     }
     renderSidebar();
-    readTodo();
-  }
-
-  // A project with a team: someone is the PI, a member, or not yet in it (the
-  // roles /api/proposals names; "single" is a project of one person).
-  function teamProject() {
-    return !state.noProject && (ctx.mode === "pi" || ctx.mode === "member" || ctx.mode === "none");
+    readNeeds();
   }
 
   // A project of one person (12.1, 18.3): the engine said "single" for the open project and no team file
@@ -425,47 +425,46 @@
     return ctx.mode === "pi" || ctx.mode === "member" ? ctx.mode : "none";
   }
 
-  // 待办's count (18.3) is what the column lists: the PI's proposals waiting,
-  // a member's own that wait, the judgments to review, a member's newer
-  // official version, the lines with a missing end.
-  function todoCount(data) {
-    const c = (data && data.column) || {};
-    const role = c.role || (data && data.role);
-    let n = 0;
-    if (role === "pi") n += (c.waiting || []).length;
-    if (role === "member") n += (c.mine || []).filter(waits).length;
-    n += (c.review && c.review.count) || 0;
-    const sync = c.sync;
-    if (role === "member" && sync && sync.shared && sync.reachable && sync.behind && sync.last_snapshot) n += 1;
-    return n + ((data && data.lines_missing) || []).length;
+  // 等你处理 (21.4) is one list the engine works out (researchos.now_doing.needs_you): the person's unopened
+  // handbacks, the runs waiting for an answer or failed, the PI's proposals to decide, a member's own, a newer official
+  // version, the judgments to review, the lines with a missing end. A returned proposal its author said 「知道了」 to
+  // (kept in this browser, 18.3) has left it. The sidebar counts its rows beside 项目首页, in a project of one too.
+  function waitingRows(rows) {
+    return (rows || []).filter((r) => !(r.kind === "mine" && r.proposal && r.proposal.state === "returned" && gotIt().has(String(r.proposal.id))));
   }
 
-  function setTodo(data) {
-    todo = { project: projectKey(), n: todoCount(data) };
+  function needsCount() {
+    return needsState.project === projectKey() ? waitingRows(needsState.rows).length : 0;
   }
 
-  // On the page the column's own reading sets the count; from any other page
-  // it is read here, in a project with a team only (it is not shown in a
-  // project of one): /api/desk, not touching the last visit the page keeps,
-  // one request at a time -- a refresh that came meanwhile reads once more.
-  let todoBusy = false;
-  let todoAgain = false;
-  async function readTodo() {
-    if (onDesk() || !teamProject()) return;
-    if (todoBusy) { todoAgain = true; return; }
-    todoBusy = true;
+  function setNeeds(needs) {
+    needsState = { project: projectKey(), rows: (needs && needs.rows) || [] };
+  }
+
+  // What reads the list takes it in here: the page's own reading sets the count (the desk's, 项目首页's); from any
+  // other page it is read here, `only=needs`, one request at a time -- a refresh that came meanwhile reads once more.
+  function noteNeeds(needs) {
+    setNeeds(needs);
+    renderSidebar();
+  }
+
+  function onHome() { return typeof currentView !== "undefined" && currentView === "workspace"; }
+
+  let needsBusy = false;
+  let needsAgain = false;
+  async function readNeeds() {
+    if (onDesk() || onHome() || state.noProject) return;
+    if (needsBusy) { needsAgain = true; return; }
+    needsBusy = true;
     const epoch = state.dataEpoch;
     try {
-      const data = await apiGet("/api/desk");
-      if (epoch === state.dataEpoch && !onDesk()) {
-        setTodo(data);
-        renderSidebar();
-      }
+      const data = await apiGet("/api/workspace/now?only=needs");
+      if (epoch === state.dataEpoch && !onDesk() && !onHome()) noteNeeds(data.needs);
     } catch (err) {
       /* the count keeps what it last said */
     } finally {
-      todoBusy = false;
-      if (todoAgain) { todoAgain = false; readTodo(); }
+      needsBusy = false;
+      if (needsAgain) { needsAgain = false; readNeeds(); }
     }
   }
 
@@ -491,12 +490,12 @@
     const n = state.noProject ? 0 : waitingForMe();
     count.textContent = n > 0 ? String(n) : "";
     count.title = n > 0 ? t("{n} 条提议等你批准", { n: n }) : "";
-    // 18.3: the 待办 column's count beside 研究路线, in a project with a team.
-    const routes = document.getElementById("side-count-routes");
-    if (routes) {
-      const todos = teamProject() && todo.project === projectKey() ? todo.n : 0;
-      routes.textContent = todos > 0 ? String(todos) : "";
-      routes.title = todos > 0 ? t("{n} 项待办", { n: todos }) : "";
+    // 21.4: the count of 等你处理 beside 项目首页 (one count, in a project of one person too).
+    const home = document.getElementById("side-count-home");
+    if (home) {
+      const waiting = state.noProject ? 0 : needsCount();
+      home.textContent = waiting > 0 ? String(waiting) : "";
+      home.title = waiting > 0 ? t("{n} 项等你处理", { n: waiting }) : "";
     }
     const line = state.noProject ? "" : shareLineText(ctx.share, now());
     shareLine.textContent = line;
@@ -532,12 +531,6 @@
   // selection and a drag in progress, and the column its scroll. Without
   // /routemap.js (this file run alone) the column alone.
 
-  function block(title, cls) {
-    const sec = mk("section", "desk-block" + (cls ? " " + cls : ""));
-    sec.appendChild(mk("h2", "desk-title", title));
-    return sec;
-  }
-
   function emptyLine(text) {
     return mk("p", "desk-empty", text);
   }
@@ -569,7 +562,7 @@
   const drawnKeys = new Set();  // the rows the column shows now
 
   // -- 路线图 or 列表 (DESIGN.md 18.3) ----------------------------------------------------
-  // One page, one 待办 column; beside it the route map or the grouped list
+  // One page, one 等你处理 column; beside it the route map or the grouped list
   // (team.js loadRoutes, in a pane of its own). The choice is kept per project
   // in this browser -- the map until the researcher picks the list -- and the
   // switch in the page's header (app.html #routes-switch) shows it.
@@ -589,6 +582,9 @@
   function listShown() { return routesMode() === "list"; }
 
   function onDesk() { return typeof currentView !== "undefined" && currentView === "desk"; }
+
+  // Another page is on screen (a page that knows no views is taken for the desk, as the desk's own tests run it).
+  function offDesk() { return typeof currentView !== "undefined" && currentView !== "desk"; }
 
   // The switch's buttons marked as the other switches mark theirs.
   function syncSwitch() {
@@ -688,7 +684,7 @@
   // opened in the panel).
   function pick(key, ids, on) {
     picked = on || !(picked && picked.key === key) ? { key: key, ids: ids } : null;
-    columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
+    if (columnEl) columnEl.querySelectorAll("[data-pick]").forEach((r) => r.classList.toggle("picked", !!picked && r.dataset.pick === picked.key));
     if (listShown()) markListRows(picked ? picked.ids : [], true);
     else if (routeMap) routeMap.highlight(picked ? picked.ids : []);
   }
@@ -703,16 +699,6 @@
     return rowLink(text, "strong", () => pick(key, ids), ids.length ? hint : "");
   }
 
-  function listBlock(host, title, rows) {
-    if (!rows.length) return false;
-    const sec = block(title);
-    const ul = mk("ul", "desk-list");
-    rows.forEach((r) => ul.appendChild(r));
-    sec.appendChild(ul);
-    host.appendChild(sec);
-    return true;
-  }
-
   // How a member's own proposal stands (14.4): 提议中 (with what the PI
   // said), 已退回 with the reason, 已批准，待同步.
   function mineState(p) {
@@ -722,14 +708,6 @@
     }
     if (p.state === "returned") return p.reason ? t("已退回：{reason}", { reason: p.reason }) : t("已退回");
     return p.state === "approved" ? t("已批准，待同步") : stateWord(p.state);
-  }
-
-  // What waits in 我的提议: a proposal pending, returned (its reason stays
-  // until its author says 「知道了」), or approved while something it carries
-  // is not synced yet.
-  function waits(p) {
-    if (p.state === "returned") return !gotIt().has(String(p.id));
-    return p.state === "pending" || p.state === "conflict" || !!p.awaiting_sync;
   }
 
   function gotIt() {
@@ -742,14 +720,14 @@
     return gotItNow.get(key);
   }
 
-  // 「知道了」 on a returned proposal: it leaves 我的提议 and the panel's 待办.
+  // 「知道了」 on a returned proposal: it leaves 等你处理 and the attempt panel's part of it.
   function sayGotIt(p) {
     const ids = gotIt();
     ids.add(String(p.id));
     storageSet(gotItKey(projectKey(), meId()), JSON.stringify(Array.from(ids).slice(-GOT_IT_KEPT)));
-    setTodo(lastData);
     renderSidebar();
-    renderColumn(columnEl, lastData);
+    if (columnEl && lastData) renderColumn(columnEl, lastData);
+    redrawLists();
     const s = state.panelSubject;
     return s && s.kind === "desk-attempt" && panelShown() ? drawPanel(s) : null;
   }
@@ -758,18 +736,18 @@
   // when -- or, for its author, how it stands. Its title marks the attempts
   // it touches; 「查看」 opens it in the panel (14.3). In an attempt's panel
   // (`subject`), 「查看」 opens it in place, under its row.
-  function proposalRow(p, forPi, subject) {
+  function proposalRow(p, forPi, subject, plain) {
     const row = mk("li", "desk-row");
     const main = mk("div", "desk-main");
     const head = mk("div", "desk-head");
     const what = proposalWhat(p);
     const name = p.sentence || what || p.id;
     head.appendChild(mk("span", "status-label tone-plain", kindWord(p.kind) || t("提议", { n: 1 })));
-    head.appendChild(subject ? mk("span", "desk-what", name) : pickLink(row, name, "p:" + p.id, p.touches || []));
+    head.appendChild(subject || plain ? mk("span", "desk-what", name) : pickLink(row, name, "p:" + p.id, p.touches || []));
     main.appendChild(head);
     if (what && p.sentence) main.appendChild(mk("p", "desk-note plain", what));
     const state = forPi ? (p.state === "conflict" ? stateWord(p.state) : "") : mineState(p);
-    main.appendChild(metaLine([forPi ? p.by_label || p.by : "", state, whenWords(p.at, now())]));
+    main.appendChild(metaLine([forPi ? p.by_label || p.by : "", state || (forPi && !subject ? t("等你批准") : ""), whenWords(p.at, now())]));
     const actions = mk("div", "desk-actions");
     main.appendChild(actions);
     if (!subject) {
@@ -824,58 +802,118 @@
     return ul;
   }
 
-  // 待复核 (14.4): the judgments whose basis changed, under the attempt each
-  // belongs to (14.3's membership rule), else under 「不属于任何尝试」; one
-  // two attempts hold is under both and counted once (the engine's count).
-  function renderReview(host, review, byId) {
-    if (!review || !review.count) return false;
-    const sec = block(t("待复核"));
-    const sub = mk("p", "desk-sub", t("{n} 项的依据变了，等你复核。", { n: numberText(review.count) }));
-    sub.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
-    sec.appendChild(sub);
-    const ul = mk("ul", "desk-list");
-    (review.groups || []).forEach((g) => {
-      const row = mk("li", "desk-row");
-      const main = mk("div", "desk-main");
-      const head = mk("div", "desk-head");
-      head.appendChild(pickLink(row, attemptName(byId.get(g.id) || {}) || g.id, "r:" + g.id, [g.id], listShown() ? t("在列表中标出这条尝试") : t("在路线图上标出这条尝试")));
-      const own = ownMark(g);
-      if (own) head.appendChild(own);
-      if (g.items.length) head.appendChild(rowLink(t("复核"), "", () => openAttempt(g.id, true))); // judged in its panel (14.3)
-      main.append(head, reviewItems(g.items, []));
-      row.appendChild(main);
-      ul.appendChild(row);
-    });
-    const none = review.none || {};
-    if ((none.items || []).length || (none.cards || []).length) {
-      const row = mk("li", "desk-row");
-      const main = mk("div", "desk-main");
-      main.append(mk("div", "desk-head", t("不属于任何尝试")), reviewItems(none.items || [], none.cards || []));
-      row.appendChild(main);
-      ul.appendChild(row);
-    }
-    sec.appendChild(ul);
-    host.appendChild(sec);
-    return true;
+  // -- 等你处理 (DESIGN.md 21.4) ------------------------------------------------------------------
+  // One list, drawn here for 研究路线's column and, through `needsList`, for 项目首页 (workspace.js): the engine's rows
+  // (researchos.now_doing.needs_you), each saying in a chip what it is, which attempt and task it concerns, and the
+  // one action that handles it. Proposals, 待复核 judgments, a newer official version and a line with a missing end
+  // are what the column held (14.4); the person's unopened handbacks and their runs that wait, failed or went out of
+  // bounds are the rest (21.2). Nothing is counted for its own sake: a row is a thing to do.
+
+  function rowShell(chip, tone) {
+    const row = mk("li", "desk-row");
+    const main = mk("div", "desk-main");
+    const head = mk("div", "desk-head");
+    head.appendChild(mk("span", "status-label tone-" + tone, chip));
+    main.appendChild(head);
+    row.appendChild(main);
+    return { row: row, main: main, head: head };
   }
 
-  // 「连线的一端找不到了」 (14.2): a line whose end the table no longer has
-  // (a renumbered row) waits in the record; it is said here, never dropped.
-  function renderMissing(host, missing) {
-    return listBlock(host, t("连线的一端找不到了"), (missing || []).map((l) => {
-      const row = mk("li", "desk-row");
-      const main = mk("div", "desk-main");
-      const head = mk("div", "desk-head");
-      head.appendChild(mk("span", "desk-what", t("#{child} 源自 #{parent}", { child: l.child_number, parent: l.parent_number })));
-      const own = ownMark(l);
-      if (own) head.appendChild(own);
-      main.appendChild(head);
-      const gone = (l.missing || []).map((end) => t("年表里没有 #{n}", { n: end === "parent" ? l.parent_number : l.child_number }));
-      main.appendChild(metaLine(gone.concat(l.by_label || "")));
-      if (l.note) main.appendChild(mk("p", "desk-note", l.note));
-      row.appendChild(main);
-      return row;
-    }));
+  // Which attempt (opened in the panel, as a card of the map opens it) and which task a row is about.
+  function concernLine(r) {
+    const meta = mk("div", "desk-meta");
+    if (r.attempt) meta.appendChild(rowLink(attemptName(r.attempt), "", () => openAttemptAnywhere(r.attempt.id)));
+    if (r.task && r.task.text) meta.appendChild(mk("span", "desk-task", (r.attempt ? " · " : "") + r.task.text));
+    return meta;
+  }
+
+  function handbackRow(r) {
+    const s = rowShell(t("交回"), "ochre");
+    s.head.appendChild(mk("span", "desk-what", r.title));
+    if (r.headline) s.main.appendChild(mk("p", "desk-note plain", r.headline));
+    s.main.appendChild(concernLine(r));
+    const actions = mk("div", "desk-actions");
+    actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => openHandback(r.report, null)));
+    s.main.appendChild(actions);
+    return s.row;
+  }
+
+  // The states of a run that ask the person who started it (attempt_tasks.ATTENTION): the words are the task row's.
+  const RUN_CHIPS = {
+    answer: [() => t("等你回答"), "ochre"], failed: [() => t("失败"), "clay"], out_of_bounds: [() => t("越过了限制"), "clay"],
+  };
+
+  // The place that handles a run is its task's row on 项目首页: shown the way 「运行日志」 on a handback shows it.
+  function goToRun(how, taskId) {
+    const home = typeof currentView === "undefined" || currentView === "workspace";
+    if (home && window.ROWorkspace) return how === "answer" ? window.ROWorkspace.answerRun(taskId) : window.ROWorkspace.showRunLog(taskId);
+    if (how === "answer" && typeof answerRunOnHome === "function") return answerRunOnHome(taskId);
+    return typeof openRunLogOnHome === "function" ? openRunLogOnHome(taskId) : null;
+  }
+
+  // 「知道了」 on a failed run (kept on this Mac, in the Research OS home, not in the project): its row leaves the list.
+  async function setAside(r, btn, status) {
+    btn.disabled = true;
+    try {
+      await apiPost("/api/workspace/run/aside", { project: state.currentPath, run: r.run });
+    } catch (err) {
+      btn.disabled = false;
+      setStatus(status, "err", t("没能记下你已经看过这一条。"), err);
+      return;
+    }
+    await refreshAfterAct();
+  }
+
+  function runRow(r) {
+    const chip = RUN_CHIPS[r.kind];
+    const s = rowShell(chip[0](), chip[1]);
+    if (r.kind === "answer" && r.question) s.head.appendChild(mk("span", "desk-what", r.question));
+    s.main.appendChild(concernLine(r));
+    const actions = mk("div", "desk-actions");
+    const status = mk("div", "notice-status");
+    if (r.kind === "answer") {
+      actions.appendChild(mkButton(t("回答"), "btn btn-small", () => goToRun("answer", r.task.id)));
+    } else {
+      actions.appendChild(mkButton(t("运行日志"), "btn btn-small", () => goToRun("log", r.task.id)));
+      const gotIt = mkButton(t("知道了"), "btn btn-small", () => setAside(r, gotIt, status));
+      actions.appendChild(gotIt);
+    }
+    s.main.append(actions, status);
+    return s.row;
+  }
+
+  // 待复核 (14.4): the judgments whose basis changed, a row for each attempt that holds one (14.3's membership rule) and
+  // one for those that belong to none (claims, variable cards, files no attempt holds).
+  function reviewRow(r, plain) {
+    const s = rowShell(t("待复核"), "ochre");
+    if (r.attempt) {
+      const name = attemptName(r.attempt);
+      s.head.appendChild(plain ? mk("span", "desk-what", name)
+        : pickLink(s.row, name, r.key, r.attempts || [], listShown() ? t("在列表中标出这条尝试") : t("在路线图上标出这条尝试")));
+      const own = ownMark(r);
+      if (own) s.head.appendChild(own);
+      s.head.appendChild(rowLink(t("复核"), "", () => openAttemptAnywhere(r.attempt.id, true))); // judged in its panel (14.3)
+    } else {
+      s.head.appendChild(mk("span", "desk-what", t("不属于任何尝试")));
+      s.head.appendChild(rowLink(t("复核"), "", () => { if (mayLeavePanel()) openReviewPanel(null); }));
+    }
+    s.main.appendChild(mk("p", "desk-sub", t("{n} 项的依据变了，等你复核。", { n: numberText(r.n) })));
+    s.main.appendChild(reviewItems(r.items || [], r.cards || []));
+    return s.row;
+  }
+
+  // 「连线的一端找不到了」 (14.2): a line whose end the table no longer has (a renumbered row) waits in the record; it is
+  // said here, never dropped.
+  function missingRow(r) {
+    const l = r.line || {};
+    const s = rowShell(t("连线的一端找不到了"), "clay");
+    s.head.appendChild(mk("span", "desk-what", t("#{child} 源自 #{parent}", { child: l.child_number, parent: l.parent_number })));
+    const own = ownMark(l);
+    if (own) s.head.appendChild(own);
+    const gone = (l.missing || []).map((end) => t("年表里没有 #{n}", { n: end === "parent" ? l.parent_number : l.child_number }));
+    s.main.appendChild(metaLine(gone.concat(l.by_label || "")));
+    if (l.note) s.main.appendChild(mk("p", "desk-note", l.note));
+    return s.row;
   }
 
   // What the last 同步 from the desk did: kept on the desk until it is
@@ -897,34 +935,34 @@
   // will write is said first (the engine's sync-preview), and the button
   // waits for it; after a sync, what it did. A shared folder not set or not
   // open is the column's notice instead.
-  function renderOfficial(host, sync) {
+  function officialRow(last) {
+    const s = rowShell(t("正式版本有更新"), "ochre");
+    s.main.appendChild(mk("p", "desk-sub", publishedWords(last, whenInLine(last.at, now()))));
+    const writes = mk("p", "team-line writes", t("正在查看同步会写入什么…"));
+    const status = mk("div", "notice-status");
+    const btn = mkButton(t("同步"), "btn", () => syncNow(btn, status));
+    btn.disabled = true;
+    const actions = mk("div", "desk-actions");
+    actions.append(btn);
+    s.main.append(writes, actions, status);
+    renderSyncShown(s.main);
+    apiGet("/api/share/sync-preview").then((p) => {
+      writes.textContent = ROTeam.syncWrites(p);
+      btn.disabled = !!p.untrusted;
+    }).catch((err) => {
+      setStatus(writes, "err", t("没能查看同步会写入什么"), err);
+      btn.disabled = false;
+    });
+    return s.row;
+  }
+
+  // After a sync, until the desk is opened afresh: the official version, up to date, and what the sync did.
+  function syncDoneRow(sync) {
     const last = sync && sync.last_snapshot;
-    const behind = !!(sync && sync.shared && sync.reachable && sync.behind && last);
-    if (!behind && !syncShown) return false;
-    const sec = block(behind ? t("正式版本有更新") : t("正式版本"));
-    if (behind) {
-      const when = whenInLine(last.at, now());
-      sec.appendChild(mk("p", "desk-sub", publishedWords(last, when)));
-      const writes = mk("p", "team-line writes", t("正在查看同步会写入什么…"));
-      const status = mk("div", "notice-status");
-      const btn = mkButton(t("同步"), "btn", () => syncNow(btn, status));
-      btn.disabled = true;
-      const actions = mk("div", "desk-actions");
-      actions.append(btn);
-      sec.append(writes, actions, status);
-      apiGet("/api/share/sync-preview").then((p) => {
-        writes.textContent = ROTeam.syncWrites(p);
-        btn.disabled = !!p.untrusted;
-      }).catch((err) => {
-        setStatus(writes, "err", t("没能查看同步会写入什么"), err);
-        btn.disabled = false;
-      });
-    } else if (last) {
-      sec.appendChild(emptyLine(t("你的工作副本已经是最新的正式版本（第 {seq} 版）。", { seq: numberText(last.seq) })));
-    }
-    renderSyncShown(sec);
-    host.appendChild(sec);
-    return true;
+    const s = rowShell(t("正式版本"), "olive");
+    if (last) s.main.appendChild(emptyLine(t("你的工作副本已经是最新的正式版本（第 {seq} 版）。", { seq: numberText(last.seq) })));
+    renderSyncShown(s.main);
+    return s.row;
   }
 
   // What the PI's last publish says (13.6: Research OS's own note -- one
@@ -958,33 +996,82 @@
     // .official copy with its difference; the desk is drawn again with it.
     syncShown = ROTeam.syncFlash(res);
     if (typeof markViewsStale === "function") markViewsStale();
-    await loadDesk(views.desk, true);
-    const shown = views.desk.querySelector(".desk-sync-done");
+    await reloadDesk();
+    const shown = !offDesk() ? views.desk.querySelector(".desk-sync-done") : null;
     if (shown && typeof shown.scrollIntoView === "function") shown.scrollIntoView({ block: "center" });
   }
 
-  // The column (14.4), newest first in each part: who I am not yet (or a
-  // team file that cannot be read) and a shared folder that cannot be read,
-  // said first; the PI's 等你批准 or a member's 我的提议; 待复核; a member's
-  // 正式版本有更新; the lines with a missing end -- or one quiet line.
+  // A row as its kind draws it. `plain`: on 项目首页 there is no map to mark, so a title is words, not a link that marks.
+  function needsRow(r, plain) {
+    switch (r.kind) {
+      case "handback": return handbackRow(r);
+      case "answer": case "failed": case "out_of_bounds": return runRow(r);
+      case "proposal": return proposalRow(r.proposal, true, null, plain);
+      case "mine": return proposalRow(r.proposal, false, null, plain);
+      case "official": return officialRow(r.snapshot || {});
+      case "review": return reviewRow(r, plain);
+      case "line_missing": return missingRow(r);
+      default: return null;
+    }
+  }
+
+  // The notices a role or a shared folder that cannot be read puts above the rows, then the rows, or one quiet line.
+  // `place`: "column" is 研究路线's, which also keeps what a sync just did.
+  function needsBody(needs, place) {
+    const box = mk("div", "desk-needs");
+    const notices = (needs && needs.notices) || [];
+    notices.forEach((n) => box.appendChild(mk("p", "desk-alone", n)));
+    const ul = mk("ul", "desk-list");
+    let drawn = 0;
+    const rows = waitingRows(needs && needs.rows);
+    rows.forEach((r) => {
+      const li = needsRow(r, place !== "column");
+      if (li) { ul.appendChild(li); drawn += 1; }
+    });
+    if (place === "column" && syncShown && !rows.some((r) => r.kind === "official")) {
+      ul.appendChild(syncDoneRow(lastData && lastData.column && lastData.column.sync));
+      drawn += 1;
+    }
+    if (drawn) box.appendChild(ul);
+    else if (!notices.length) box.appendChild(emptyLine(t("现在没有要处理的事。")));
+    return box;
+  }
+
+  // 项目首页 draws the same list in `host` (workspace.js): `get` hands it the engine's answer each time it is drawn, and
+  // an act that changes the list here (a returned proposal said 「知道了」 to) draws it again.
+  const drawnLists = new Set();
+
+  function drawList(entry) {
+    entry.host.textContent = "";
+    entry.host.appendChild(needsBody(entry.get(), "home"));
+  }
+
+  function needsList(host, get) {
+    const entry = Array.from(drawnLists).find((e) => e.host === host) || { host: host, get: get };
+    entry.get = get;
+    drawnLists.add(entry);
+    drawList(entry);
+  }
+
+  function redrawLists() {
+    drawnLists.forEach((entry) => {
+      if (entry.host.isConnected === false) drawnLists.delete(entry);
+      else drawList(entry);
+    });
+  }
+
+  // The column (21.4): the same list, under 等你处理; with nothing waiting it folds to a strip that gives its width to
+  // the map or the list, and it opens when a row arrives. A sync just done keeps it open to say what it did.
   function renderColumn(col, data) {
-    const c = data.column || {};
-    const byId = new Map((data.attempts || []).map((a) => [a.id, a]));
+    const needs = (data && data.needs) || { rows: [], notices: [] };
     const top = col.scrollTop;
     col.textContent = "";
     drawnKeys.clear();
-    col.appendChild(mk("h2", "desk-column-title", t("待办")));
-    const notices = [c.role === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步") : c.notice,
-      c.shared && c.shared.message].filter(Boolean);
-    notices.forEach((n) => col.appendChild(mk("p", "desk-alone", n)));
-    const shown = [
-      listBlock(col, t("等你批准"), c.role === "pi" ? (c.waiting || []).map((p) => proposalRow(p, true)) : []),
-      listBlock(col, t("我的提议"), c.role === "member" ? (c.mine || []).filter(waits).map((p) => proposalRow(p, false)) : []),
-      renderReview(col, c.review, byId),
-      c.role === "member" && renderOfficial(col, c.sync),
-      renderMissing(col, data.lines_missing),
-    ].some(Boolean);
-    if (!shown && !notices.length) col.appendChild(emptyLine(t("现在没有要处理的事。")));
+    const folded = !waitingRows(needs.rows).length && !(needs.notices || []).length && !syncShown;
+    col.classList.toggle("folded", folded);
+    col.title = folded ? t("现在没有要处理的事。") : "";
+    col.appendChild(mk("h2", "desk-column-title", t("等你处理")));
+    if (!folded) col.appendChild(needsBody(needs, "column"));
     if (picked && !drawnKeys.has(picked.key)) { // its row is gone: nothing stays marked
       picked = null;
       if (routeMap) routeMap.highlight([]);
@@ -1060,7 +1147,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     if (drawnEpoch !== epoch) picked = null;
-    setTodo(data);
+    setNeeds(data.needs);
     if (ctx.epoch === epoch) renderSidebar();
     lastData = data;
     lastChanged = changedSince(since);
@@ -1072,6 +1159,37 @@
     showMode();
     loadList(refresh || drawn); // 列表 only: the grouped list beside the same column (18.3)
     catchUp(data, epoch);
+  }
+
+  // The desk's reading taken in without drawing the desk: for the attempt panel and the list of 等你处理 when the page on
+  // screen is 项目首页 (which asks for an attempt's panel, and answers a proposal in it). False when the project moved on.
+  async function readDeskOffScreen() {
+    const epoch = state.dataEpoch;
+    if (!ctx.me || ctx.project !== projectKey()) ctx.me = await apiGet("/api/me").catch(() => null);
+    const since = deskSince();
+    const data = await apiGet("/api/desk");
+    if (epoch !== state.dataEpoch) return false;
+    lastData = data;
+    lastChanged = changedSince(since);
+    lastFrom = sinceTime(since);
+    setNeeds(data.needs);
+    if (ctx.epoch === epoch) renderSidebar();
+    return true;
+  }
+
+  // An act that changes what waits (a run's 「知道了」, a proposal answered, a sync): the page on screen is read again, the
+  // desk when it is that, and with it the count beside 项目首页.
+  function refreshAfterAct() {
+    if (!offDesk()) return loadDesk(views.desk, true);
+    return typeof refreshCurrentView === "function" ? refreshCurrentView() : null;
+  }
+
+  // ... and, from 项目首页, the desk's own reading first: the attempt's panel draws from it.
+  async function reloadDesk() {
+    if (offDesk()) {
+      try { await readDeskOffScreen(); } catch (err) { /* the panel keeps what it had */ }
+    }
+    return refreshAfterAct();
   }
 
   // A shared folder too slow for the desk's wait (14.4: slow, or stale --
@@ -1099,7 +1217,7 @@
   // saved at once through the map file's write with 撤销 (18.3), dirty cells
   // only; a member's change becomes a verdict-change proposal (12.4); turning
   // a route abandoned asks its reason and is previewed first --, 写备注,
-  // 来龙去脉 (the node page's trace), 源自 and 由它而来 with remove, 待办
+  // 来龙去脉 (the node page's trace), 源自 and 由它而来 with remove, 等你处理
   // (the proposals touching it, each opened in place and answered there),
   // its 待复核 judged in place, what changed since the last visit (14.5),
   // 打开详情页. The column's 查看 opens a proposal there as its own subject
@@ -1215,7 +1333,7 @@
   // column and the panel are drawn again in place.
   async function answered(subject, key, said) {
     panelSaid = { id: key, text: said.text };
-    await loadDesk(views.desk, true);
+    await reloadDesk();
     if (state.panelSubject !== subject) return;
     await (subject.kind === "desk-proposal" ? drawProposal(subject) : drawPanel(subject));
   }
@@ -1231,18 +1349,16 @@
     inner.appendChild(host);
   }
 
-  // 待办 (14.3: its urgent work): the proposals touching this attempt -- the
-  // PI's waiting ones, a member's own still waiting (14.4) --, each opened in
-  // place with the full 「批准以后会怎样」 and its answers.
+  // 等你处理 (14.3: its urgent work; it was 待办): the proposals touching this attempt -- the
+  // PI's waiting ones, a member's own still waiting (14.4) --, which are the rows of the list (21.4) that name it,
+  // each opened in place with the full 「批准以后会怎样」 and its answers.
   function urgentPart(subject, id) {
-    const c = (lastData && lastData.column) || {};
-    const role = deskRole();
-    const list = role === "pi" ? c.waiting || [] : role === "member" ? (c.mine || []).filter(waits) : [];
-    const touching = list.filter((p) => (p.touches || []).indexOf(id) >= 0);
-    if (!touching.length) return null;
-    const s = part(t("待办"));
+    const rows = waitingRows(((lastData && lastData.needs) || {}).rows)
+      .filter((r) => (r.kind === "proposal" || r.kind === "mine") && (r.attempts || []).indexOf(id) >= 0);
+    if (!rows.length) return null;
+    const s = part(t("等你处理"));
     const ul = mk("ul", "desk-list");
-    touching.forEach((p) => ul.appendChild(proposalRow(p, role === "pi", subject)));
+    rows.forEach((r) => ul.appendChild(proposalRow(r.proposal, r.kind === "proposal", subject)));
     s.appendChild(ul);
     return s;
   }
@@ -2081,7 +2197,7 @@
     }
     panelSaid = { id: subject.id, text: proposing ? t("已把删除这条连线作为提议交给 PI。") : t("这条连线已删去。") };
     setStatus(status, "ok", panelSaid.text);
-    await loadDesk(views.desk, true); // the map without it (or marked), then the panel
+    await reloadDesk(); // the map without it (or marked), then the panel
     await drawPanel(subject);
   }
 
@@ -2103,6 +2219,17 @@
     return subject && subject.kind === "desk-proposal" ? drawProposal(subject) : null;
   }
 
+  // An attempt's panel from a row of 等你处理 or a card of 项目首页, wherever the page is: the panel draws from the desk's
+  // reading, which is taken first when the desk is not the page on screen. `toReview`: brought to its 待复核.
+  async function openAttemptAnywhere(id, toReview) {
+    if (offDesk() || !lastData) {
+      let ok = false;
+      try { ok = await readDeskOffScreen(); } catch (err) { ok = !!lastData; }
+      if (!ok) return null;
+    }
+    return openAttempt(id, toReview);
+  }
+
   // The context's freshness: fetched again once the project (epoch) moved.
   async function ensureContext() {
     if (ctx.epoch !== state.dataEpoch || ctx.project !== projectKey() || ctx.mode === null) {
@@ -2120,6 +2247,8 @@
     // a long number to four significant digits, the value as written left to the caller's title and record (21.8)
     formatNumber,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
+    // 等你处理 (21.4): the list the engine works out, taken in for the sidebar's count, drawn on 项目首页 and in the column
+    noteNeeds, needsCount, needsList, openAttemptAnywhere,
     // an existing row's 研究判断 or 结果 saved at once with 撤销 (18.3): the panel's, and app.html's older form
     atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),
     statusChooser: statusChooser, assessment: Object.freeze({ parse: parseAssessment, compose: composeAssessment }),

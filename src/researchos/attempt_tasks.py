@@ -12,6 +12,7 @@ page words them (未开始, 运行中, 等你回答, 等你看, 已完成, 失�
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -19,6 +20,31 @@ from researchos import handbacks, workspace
 from researchos.agents import labels as agent_labels
 
 HEADLINE_LIMIT = 200
+#: The states that ask the person who started the run for something (21.4, 等你处理): the code of `state_of`, and
+#: the kind of row each makes.
+ATTENTION = {"needs_answer": "answer", "failed": "failed", "out_of_bounds": "out_of_bounds"}
+
+
+def parse_time(value: Any) -> datetime | None:
+    """A time as the run store and the engine write it (an ISO string, `Z` or an offset or neither, the last read as
+    local time); None for anything else."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else when.astimezone()
+
+
+def _ran_at(run: dict[str, Any] | None) -> str | None:
+    """When the run last did something of its own, as the run store wrote it: the later of its start and its end, else
+    (a run not started yet) its creation."""
+    found = [(when, value) for value in ((run or {}).get("started"), (run or {}).get("ended")) if (when := parse_time(value))]
+    if not found:
+        value = (run or {}).get("created")
+        return value if parse_time(value) else None
+    return max(found, key=lambda pair: pair[0])[1]
 
 
 def ordered(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -149,14 +175,55 @@ def _latest_runs(project_id: str | None, wanted: set[str]) -> dict[str, dict[str
     return found
 
 
+def _look(root: Path, project_id: str | None, person: str | None, tasks: list[dict[str, Any]],
+          shared: dict[str, Any] | None) -> tuple[set[str], dict[str, dict[str, Any]]]:
+    """What the states of `tasks` are read from: the handbacks `person` has not opened and the latest run of each task
+    that may need one -- a task not marked done, one whose handback waits, and a task an agent finished, for its run may
+    have gone out of bounds, which 已完成 must not hide (18.1). `shared`, a dict the caller hands to every function of
+    one answer, keeps the reading, so that the cards and 等你处理 of one desk payload read the run store once."""
+    if shared is not None and "look" in shared:
+        return shared["look"]
+    waiting = set(handbacks.unopened(project_id, person, root))
+    runs = _latest_runs(project_id, {task["id"] for task in tasks
+                                     if not task.get("done") or task.get("report") in waiting or _agent_owned(task)})
+    if shared is not None:
+        shared["look"] = (waiting, runs)
+    return waiting, runs
+
+
+def attention(root: str | Path, project_id: str | None, person: str | None,
+              shared: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """The tasks whose latest run `person` started and that read 等你回答, 失败 or 越过了限制 in `state_of` -- the
+    one reading of a task's state, so 等你处理 and the cards never disagree --, each `{task, run, kind}` with the kind
+    `ATTENTION` names (`answer`, `failed`, `out_of_bounds`), in the order of the task list. A run that was undone
+    (`reverted`) has been dealt with and is left out, and so is a task the list no longer has."""
+    root = Path(root)
+    try:
+        tasks, _revision = workspace.read_tasks(root)
+    except (workspace.WorkspaceError, OSError):
+        return []
+    waiting, runs = _look(root, project_id, person, tasks, shared)
+    out = []
+    for task in tasks:
+        run = runs.get(task["id"])
+        if run is None or run.get("reverted") or not handbacks._mine(run, person):  # noqa: SLF001
+            continue
+        kind = ATTENTION.get(state_of(task, run, bool(task.get("report")) and task["report"] in waiting))
+        if kind:
+            out.append({"task": task, "run": run, "kind": kind})
+    return out
+
+
 def by_attempt(root: str | Path, project_id: str | None, person: str | None,
-               attempts: Iterable[str]) -> dict[str, dict[str, Any]]:
+               attempts: Iterable[str], shared: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     """For each of `attempts` (node ids) that has tasks: `tasks` (how many), `unfinished` (not marked done and not
     reading 已完成: a task whose report is in counts as finished, `state_of`), `unopened` (its handbacks `person` has not opened, that can be read and carry the handback's fields:
     `handbacks.unopened`), `latest` (the handback whose report was
     written last, `_handback`; None when no task has one) and `items`, the tasks in `after` order with their `owner`
-    and its `owner_label`, `due`, `done`, `after`, `report`, `state` (`state_of`) and `unopened`. An attempt with no
-    tasks has no entry, and a task naming an attempt that is not in `attempts` is left out."""
+    and its `owner_label`, `due`, `done`, `after`, `report`, `state` (`state_of`) and `unopened`, and the two times
+    21.4 orders 进行中的尝试 by: `ran_at` (its latest run's start or end, `_ran_at`) and `report_at` (when its report
+    was written, the file's time; None without one). An attempt with no tasks has no entry, and a task naming an
+    attempt that is not in `attempts` is left out. `shared` is `_look`'s."""
     root = Path(root)
     wanted = set(attempts)
     try:
@@ -166,10 +233,7 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
     mine = [task for task in tasks if task.get("attempt") in wanted]
     if not mine:
         return {}
-    waiting = set(handbacks.unopened(project_id, person, root))
-    # a task an agent finished is looked at too: its run may have gone out of bounds, which 已完成 must not hide (18.1)
-    runs = _latest_runs(project_id, {task["id"] for task in mine
-                                     if not task.get("done") or task.get("report") in waiting or _agent_owned(task)})
+    waiting, runs = _look(root, project_id, person, tasks, shared)
     out: dict[str, dict[str, Any]] = {}
     for attempt in wanted:
         own = ordered([task for task in mine if task["attempt"] == attempt])
@@ -181,7 +245,8 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
             items.append({"id": task["id"], "text": task["text"], "owner": task.get("owner", ""),
                           "owner_label": owner_label(task.get("owner", "")), "due": task.get("due", ""),
                           "done": bool(task.get("done")), "after": task.get("after"), "report": task.get("report"),
-                          "state": state_of(task, runs.get(task["id"]), unopened), "unopened": unopened})
+                          "state": state_of(task, runs.get(task["id"]), unopened), "unopened": unopened,
+                          "ran_at": _ran_at(runs.get(task["id"])), "report_at": None})
         newest, newest_at = None, -1.0
         for item in items:
             if not item["report"]:
@@ -190,6 +255,7 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
                 at = (root / item["report"]).stat().st_mtime
             except OSError:
                 continue
+            item["report_at"] = datetime.fromtimestamp(at, timezone.utc).isoformat(timespec="seconds")
             if at > newest_at:
                 newest, newest_at = item, at
         out[attempt] = {"tasks": len(items), "unfinished": sum(1 for item in items if not item["done"] and item["state"] != "done"),

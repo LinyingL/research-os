@@ -179,8 +179,10 @@ console.log(JSON.stringify({wasHidden, view: currentView, shown: shownView(), ti
     assert out["wasHidden"] is True
     assert out["view"] == "workspace" and out["shown"] == ["workspace"] and out["title"] == "项目首页"
     assert out["loaded"] == "1"
-    # the home was read, its own first document opened, and then the record: the record is what is left on screen
-    assert out["order"] == ["/api/workspace", "research/overview.md", "research/results/a.md", "/api/workspace/research-record?report=research/results/a.md"]
+    # the home was read (and, from 21.4 on, 现在在做什么 beside it: /api/workspace/now), its own first document opened, and then the
+    # record: the record is what is left on screen
+    assert out["order"] == ["/api/workspace", "/api/workspace/now", "research/overview.md", "research/results/a.md",
+                            "/api/workspace/research-record?report=research/results/a.md"]
     assert out["reading"] is True and out["writing"] is True and "The estimate is 0.42." in out["words"]
 
 

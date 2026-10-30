@@ -694,7 +694,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, task_groups, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, now_doing, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
 from researchos import research_records
 from researchos.agents import labels as agent_labels
@@ -4099,6 +4099,18 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     self._workspace_target({"project": query["project"][0]})
                 listed = self._workspace_api(lambda: handbacks.list_unopened(served.root, served.project_id, handbacks.person_of()))
                 self._send_json(200, {"unopened": listed, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/now":
+                # 21.4: 现在在做什么 -- the attempts in progress and the one list of what waits for this person (等你处理),
+                # a read; `only=needs` is the list alone (the sidebar's count). The shared folder is read for at most a few
+                # seconds, as the desk's is, and the desk's own job is joined, not started twice.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                only = (query.get("only") or [None])[0]
+                lang = self._lang()
+                def now_payload(conn: Connection) -> dict[str, Any]:
+                    return {**now_doing.payload(conn, served.root, lang=lang, only=only), "project": str(served.root), "id": served.project_id}
+                self._json_from_conn(now_payload)
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4459,6 +4471,17 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(report, str) or not served.project_id:
                     raise MissingParamError("request body must carry the 'report' of the handback")
                 self._send_json(200, handbacks.mark_opened(served.project_id, handbacks.person_of(), report))
+            elif parsed.path == "/api/workspace/run/aside":
+                # 21.4: 「知道了」 on a failed or out-of-bounds run -- kept on this Mac under the Research OS home, not in the project
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                run = body.get("run")
+                if not isinstance(run, str) or not served.project_id:
+                    raise MissingParamError("request body must carry the 'run' to set aside")
+                try:
+                    self._send_json(200, now_doing.set_aside(served.project_id, handbacks.person_of(), run))
+                except ValueError as exc:
+                    raise MissingParamError(str(exc)) from exc
             elif parsed.path == "/api/workspace/handback/confirm":
                 # 21.2: the assessment of the handback's attempt, through the attempt write (under the watcher's ingest lock,
                 # as /api/attempts/write), then the record of it in the report's context
