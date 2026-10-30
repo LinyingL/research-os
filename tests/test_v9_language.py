@@ -2876,7 +2876,7 @@ def test_18_2_no_english_entry_is_kept_that_no_key_uses():
 def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     """输出 "Outputs" is a script's outputs (the node page's column is built with it); 成果 "Outputs"
     is the page 图表与论断 "Figures and claims", and no other key says "Outputs"; 项目首页's section
-    is 结果记录 "Result records", the attempt's cell 结果 stays "Result"."""
+    is 报告 "Reports" (21.4; its writing area is still 结果记录 "Result records"), the attempt's cell 结果 stays "Result"."""
     table = english_table()
     assert table["输出"] == "Outputs" and table["图表与论断"] == "Figures and claims"
     assert "成果" not in table and "依据变了的成果" not in table
@@ -2885,7 +2885,8 @@ def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     assert table["图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——"].startswith(
         "Figures and claims lists claims")
     assert table["已设为论文正文：它的论断会出现在图表与论断里。"] == "Set as the paper. Its claims will appear in Figures and claims."
-    assert (table["结果记录"], table["还没有结果记录。"], table["结果"]) == ("Result records", "No result records yet.", "Result")
+    # 21.4: 项目首页's second list is headed 报告 and says 「还没有报告。」 when empty; 结果记录 stays the writing area's label until the words batch
+    assert (table["结果记录"], table["还没有报告。"], table["结果"]) == ("Result records", "No reports yet.", "Result")
     names = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html"} and "成果" in path.read_text(encoding="utf-8")]
     assert names == []
     # What stays 产出 is the link word "produces" (an experiment produces a figure): 输出 is taken by the noun,

@@ -354,7 +354,9 @@ def test_21_2s_handback_words_are_listed_in_17_9_and_21_6_and_the_page_holds_the
     for zh, en in TERMS_OF_21_2.items():
         assert en in english_column, f"{zh}: {en!r} is not in 21.6's English column"
     table = english_table()
-    assert {zh: table[zh] for zh in TERMS_OF_21_2} == TERMS_OF_21_2
+    # 21.4: 报告 also heads the list of reports, so its entry has a plural; the word 21.6 gives is its singular
+    singular = lambda en: en["one"] if isinstance(en, dict) else en
+    assert {zh: singular(table[zh]) for zh in TERMS_OF_21_2} == TERMS_OF_21_2
 
 
 #: 21.4 / 21.6's words for the top of 项目首页 and the column: the table's English column gives 「In progress: Attempts in progress,

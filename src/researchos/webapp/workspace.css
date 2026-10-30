@@ -20,15 +20,38 @@
 .ws-project-name { font-family: var(--font-serif); font-size: 1.65rem; font-weight: normal; line-height: 1.4; margin: 0 0 .45rem; overflow-wrap: anywhere; }
 .ws-actions { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
 .ws-heading > .ws-actions { flex-shrink: 0; padding-top: .2rem; }
-.ws-columns { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 1.65rem; }
+/* DESIGN.md 21.4: 研究问题与计划, then 笔记 and 报告 -- the lists in a column wide enough for a title of a line or two, beside the
+   open document (above it when the window is narrow). */
+.ws-plan { margin: 0 0 2rem; padding: 0 0 1.2rem; border-bottom: 1px solid var(--line-strong); }
+.ws-plan-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0 0 .7rem; }
+.ws-plan-lead { max-width: 46rem; max-height: 11rem; overflow: hidden; overflow-wrap: anywhere; font-size: .92rem; line-height: 1.85; }
+.ws-plan-lead p, .ws-plan-lead blockquote { white-space: pre-wrap; margin: 0 0 .4rem; }
+.ws-plan-lead h1, .ws-plan-lead h2, .ws-plan-lead h3 { font-family: var(--font-serif); font-weight: normal; line-height: 1.5; margin: 0 0 .4rem; font-size: 1.1rem; }
+.ws-plan-lead ul, .ws-plan-lead ol { margin: 0 0 .4rem; }
+.ws-plan-lead .ws-empty { margin: 0; }
+.ws-plan-more > .res-draft-summary { font-size: .8rem; padding: .25rem 0; gap: .45rem; color: var(--ink-soft); width: max-content; }
+.ws-plan-more[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.ws-plan-dirty { color: var(--ink-soft); font-size: .76rem; }
+.ws-plan-body { padding-top: .5rem; }
+.ws-plan-body .ws-kind:empty { display: none; }
+.ws-editor-header > .ws-actions { margin-left: auto; }
+.ws-plan-body .ws-kind > .ws-officialness { margin-left: 0; }
+.ws-columns { display: grid; grid-template-columns: minmax(15rem, 24rem) minmax(24rem, 1fr); gap: 1.65rem; }
 .ws-documents { border-right: 1px solid var(--line); padding-right: 1rem; min-width: 0; }
 .ws-document-group { margin: 0 0 1.5rem; }
 .ws-group-title { margin: 0 0 .6rem; color: var(--ink-soft); font-weight: 500; font-size: .76rem; }
-.ws-document { appearance: none; display: block; width: 100%; padding: .45rem .55rem; margin: .1rem 0; background: transparent; border: 0; border-left: 2px solid transparent; text-align: left; color: var(--ink); font: inherit; font-size: .84rem; cursor: pointer; overflow-wrap: anywhere; }
-.ws-document:hover { background: var(--paper-alt); }
-.ws-document[aria-current="page"] { border-left-color: var(--clay); background: var(--paper-alt); }
+/* A row is a title and, apart from it, a quiet date; the title wraps in its own column and is never cut (21.4). The open one
+   is told by ink and weight (21.8), not the clay of a problem. */
+.ws-document-row { display: flex; align-items: baseline; gap: .6rem; margin: .1rem 0; border-left: 2px solid transparent; }
+.ws-document-row:hover { background: var(--paper-alt); }
+.ws-document-row.current { border-left-color: var(--ink); background: var(--paper-alt); }
+.ws-document-row.current .ws-document { font-weight: 600; }
+.ws-document { appearance: none; display: block; flex: 1 1 auto; min-width: 0; padding: .45rem .3rem .45rem .55rem; background: transparent; border: 0; text-align: left; color: var(--ink); font: inherit; font-size: .84rem; line-height: 1.55; cursor: pointer; overflow-wrap: anywhere; }
+.ws-document-date { flex: none; padding-right: .55rem; color: var(--ink-soft); font-size: .72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ws-document-attempt { margin: 1rem 0 .15rem; padding-left: .55rem; font-size: .76rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.ws-document-attempt:first-of-type { margin-top: 0; }
 .ws-empty { color: var(--ink-soft); font-size: .78rem; line-height: 1.7; margin: .3rem 0 .7rem; }
-.ws-editor-host { min-width: 0; }
+.ws-document-slot, .ws-editor-host { min-width: 0; }
 .ws-editor-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--line); padding-bottom: .7rem; }
 .ws-kind { font-size: .76rem; color: var(--ink-soft); }
 .ws-title-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 1.15rem 0 .8rem; margin: 0; color: var(--ink); font-family: var(--font-serif); font-size: 1.55rem; outline-offset: 3px; }
@@ -76,6 +99,13 @@
 .ws-task-details > .ws-task-summary { align-items: flex-start; padding: 0; font-size: inherit; gap: .45rem; }
 .ws-task-summary > .res-chevron { margin-top: .3rem; }
 .ws-task-details[open] > .ws-task-summary .res-chevron { transform: rotate(90deg); }
+/* DESIGN.md 21.4: a row says its owner and its state in words without being opened, so none is open by default; a closed row
+   keeps two lines of the task's words, an open one all of them. */
+.ws-task-details > .ws-task-summary { flex-wrap: wrap; }
+.ws-task-summary > .ws-task-text { flex: 1 1 16rem; min-width: 0; }
+.ws-task-details:not([open]) .ws-task-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ws-task-facts { flex: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; margin-left: auto; font-size: .75rem; color: var(--ink-soft); }
+.ws-task-owner { overflow-wrap: anywhere; }
 .ws-task-body { display: flex; flex-wrap: wrap; gap: .6rem; padding: .25rem 0 0 calc(12px + .45rem); }
 .ws-task-actions { display: flex; align-items: flex-start; gap: .6rem; }
 .ws-task-words { min-width: 0; flex: 1; }
@@ -97,14 +127,17 @@
 .ws-create { display: flex; flex-direction: column; gap: .9rem; }
 .ws-create .form-input { width: 100%; box-sizing: border-box; }
 .ws-create > .btn { align-self: flex-start; }
+@media (max-width: 960px) {
+  /* what is left of the window after the sidebar and the margins (about 660px here) cannot hold the lists and the writing area
+     side by side: the lists go above the open document, in a box of their own that scrolls, so that the document is not pushed
+     far down (the desk stacks at the same width) */
+  .ws-columns { display: block; }
+  .ws-documents { max-height: 18rem; overflow-y: auto; border-right: none; border-bottom: 1px solid var(--line); padding: 0 .5rem .5rem 0; margin-bottom: 1rem; }
+}
 @media (max-width: 1000px) {
-  .ws-columns { grid-template-columns: 150px minmax(0, 1fr); gap: 1rem; }
   .ws-heading { flex-direction: column; gap: .8rem; }
 }
 @media (max-width: 700px) {
-  .ws-columns { display: block; }
-  .ws-documents { display: flex; overflow-x: auto; gap: 1rem; border-right: none; border-bottom: 1px solid var(--line); padding-bottom: .5rem; margin-bottom: 1rem; }
-  .ws-document-group { flex: 0 0 150px; margin-bottom: .3rem; }
   .ws-writing, .ws-preview { min-height: 300px; }
   .ws-task-form { gap: .6rem; }
 }

@@ -810,7 +810,7 @@ console.log(JSON.stringify({buttons:pbuttons().filter(b=>['确认这个判断','
 
 
 @needs_node
-def test_the_run_log_link_opens_the_row_of_a_task_that_is_not_among_the_newest_three_so_the_log_is_there_to_read():
+def test_the_run_log_link_opens_the_row_of_a_task_so_the_log_is_there_to_read():
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=Array.from({length:6},(_,i)=>agentTask({id:'t'+i,text:'Task '+i}));
 const r0=mkRun({task_id:'t0',state:'done'});
@@ -824,7 +824,7 @@ const after=boxes().map(e=>e.open), log=byClass('ws-run-details');
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({before, after, logText:log?log.textContent.slice(0,60):null, kept:boxes().map(e=>e.open)}));
 """)
-    assert out["before"] == [False, False, False, True, True, True]
+    assert out["before"] == [False] * 6                                                                       # 21.4: no row is open by default
     assert out["after"][0] is True and out["after"][1:] == out["before"][1:] and "LOGLINE" in out["logText"]   # only that row opened, with the log in it
     assert out["kept"][0] is True                                                                              # and it stays open when the list is drawn again
 

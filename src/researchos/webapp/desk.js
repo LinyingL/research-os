@@ -1436,9 +1436,15 @@
     out_of_bounds: [() => t("越过了限制"), "clay"],
   };
 
-  function taskState(code) {
+  // The words and tone of a state code; a code this page does not know reads as 未开始. 项目首页 says its tasks' states
+  // with these words too (21.4), so the table is kept once.
+  function taskStateWords(code) {
     const known = Object.prototype.hasOwnProperty.call(TASK_STATES, code) ? TASK_STATES[code] : TASK_STATES.not_started;
-    return mk("span", "status-label tone-" + known[1], known[0]());
+    return { words: known[0](), tone: known[1] };
+  }
+  function taskState(code) {
+    const known = taskStateWords(code);
+    return mk("span", "status-label tone-" + known.tone, known.words);
   }
 
   function tasksPart(a, id) {
@@ -2244,6 +2250,8 @@
     loadDesk, refreshSidebar, renderSidebar, verdictInline, statusLabel, ensureContext, context, mapZoom,
     setMode, resume, syncSwitch, listZoom, mode: routesMode, onePerson,
     kindWord, stateWord, verdictWord, proposalWhat, proposalStateText, nameOf, whenWords, dayWords, relationWord,
+    // a task's state code in words and tone (21.1), the attempt's panel and 项目首页's 全部任务 say it alike
+    taskStateWords,
     // a long number to four significant digits, the value as written left to the caller's title and record (21.8)
     formatNumber,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,

@@ -214,6 +214,23 @@ def attention(root: str | Path, project_id: str | None, person: str | None,
     return out
 
 
+def task_states(root: str | Path, project_id: str | None, person: str | None,
+                shared: dict[str, Any] | None = None) -> dict[str, str]:
+    """The state (`state_of`) of every task, by task id -- also of the tasks that belong to no attempt (or to one the
+    table no longer has), which `by_attempt` leaves out: 项目首页's 全部任务 says each row's state without opening it
+    (21.4). The same reading as the cards', over the same `shared` keep of the run store; {} when the task list cannot be
+    read."""
+    root = Path(root)
+    try:
+        tasks, _revision = workspace.read_tasks(root)
+    except (workspace.WorkspaceError, OSError):
+        return {}
+    if not tasks:
+        return {}
+    waiting, runs = _look(root, project_id, person, tasks, shared)
+    return {task["id"]: state_of(task, runs.get(task["id"]), bool(task.get("report")) and task["report"] in waiting) for task in tasks}
+
+
 def by_attempt(root: str | Path, project_id: str | None, person: str | None,
                attempts: Iterable[str], shared: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     """For each of `attempts` (node ids) that has tasks: `tasks` (how many), `unfinished` (not marked done and not

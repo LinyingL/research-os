@@ -6323,11 +6323,50 @@ attempts.py`; `research_records.assessment_statuses`).
     in the sidebar, in a one-person project too, and is the number of rows
     (the old count beside 研究路线 is gone: one count, not two).
 
-- **Below**: 研究问题与计划, shown to its first paragraph with 「展开」; 笔记 and
-  报告 in a wider column, each with its date as a separate quiet field (the
-  title is not changed), reports grouped by attempt; 全部任务, grouped by
-  attempt with 「未归入尝试」 last, each row showing its owner and state in
-  words without being opened.
+- **Below**, reading on from the top (*amended, B2-2*: this was one sentence;
+  it says what the page does now):
+  - **研究问题与计划**, under its own title: its first paragraph and 「展开」
+    with 12.13's chevron (「收起」 once open). The first paragraph is the first
+    block of text that is no heading (a fenced block is one block; a plan of
+    headings only gives its first line), drawn as the preview draws it and
+    kept to eleven rem, the rest only on unfolding. Unfolded, the plan is the
+    writing area itself, opened as every existing document is -- preview, 编辑,
+    保存 (18.3) --, not a copy of it: the writing area is one, and stands in the
+    plan while the plan is the open document and beside the lists for any
+    other. Opening a note or a report folds the plan (its first paragraph stays: the
+    plan as last read, read again when the listing says its file changed);
+    unfolding it opens it in the writing area, and asks first, as opening any
+    document does, when another holds unsaved words. A plan with no words yet
+    starts unfolded, to be written in; a folded plan that holds unsaved words
+    says 「尚未保存」 beside 「展开」.
+  - **笔记 and 报告**, two lists in a column of 15 to 24rem (384px at 1440 wide,
+    where the page is 976px) beside the open document; at 960px or less the
+    window cannot hold both, and the lists stand above the open document in
+    a box of their own that scrolls (the width 研究路线 stacks at). A row is the
+    title as written -- never cut, never rewritten, wrapping to a second or
+    third line -- and, apart from it, its date as a quiet field. The date is
+    the one the file's name begins with (a note named `2026-03-12-meeting.md`:
+    the engine names its own files by a hash, so this is for the files the
+    researcher names), else the day the file last changed on this Mac, written
+    `YYYY-MM-DD`; a date inside a title stays in the title. Notes are one list,
+    newest date first (then by last change). Reports stand under the attempt each
+    belongs to, each under that attempt's 「#n 描述」, the attempts in
+    the order of 进行中的尝试 (newest activity first), 「未归入尝试」 last; where no
+    report belongs to an attempt they are one list with no heading. The open
+    document's row is told by ink and weight (21.8). The lists' headings are
+    笔记 and 报告; the writing area keeps calling a report 结果记录 and the button
+    记录结果 until the words of 21.6 reach them.
+  - **全部任务**, grouped by attempt in the same order, 「未归入尝试」 last (with
+    「把这些任务归入尝试…」 under it, as before). A row's summary says the task's
+    words (two lines of them while the row is shut), its owner -- the person,
+    or the agent and its model -- and its state in words (未开始, 运行中, 等你回答,
+    等你看, 已完成, 失败, 越过了限制, in the tones of the attempt's panel: gray,
+    ochre, olive or clay), so none needs opening to be read. *Amended:* the newest three
+    rows are no longer open by default; none is, and the row opens to read the
+    rest -- its date, the run and the actions that were there (运行, 打开交回 /
+    打开结果, 编辑, 移除) and 任务输出, the long block, which is therefore shown only when
+    the row is opened. A row opened by hand stays open through the page's
+    refreshes; 回答 and 运行日志 in 等你处理 open theirs.
 - **The task form**: the task as several lines; 属于哪条尝试; 接着哪个任务
   (optional); 负责人, people and agents in separate groups; 日期 (optional);
   「保存并运行」 when the owner is an agent. Opened by 「在这条尝试下加任务」 it
@@ -6396,6 +6435,44 @@ attempts.py`; `research_records.assessment_statuses`).
   handback (`hbMarkOpened`) and answering a run (`reloadAfterRun`) reload the
   home, a proposal answered in the panel, 「知道了」 and 同步 read the desk or the
   home again, and the count follows; nothing is reloaded by hand.
+
+**How the lower part is worked out** (B2-2; `now_doing.home`, the page is
+`workspace.js`).
+
+- **One more key in the same answer.** `GET /api/workspace/now` also answers
+  `home: {attempts, tasks, reports}` (left out by `?only=needs`, as `progress`
+  is): `attempts` the ids of the attempts, of any status, that hold at least
+  one task or one report, newest activity first; `tasks` every task's state
+  code by task id; `reports` the attempt each report belongs to by report path.
+  `progress` and `home` take their figures from one `attempt_tasks.by_attempt`
+  reading and one reading of the run store (`shared`); nothing about a task's
+  state or an attempt's activity is worked out on the page.
+- **One order.** `home.attempts` is ordered by the activity rule above
+  (`_activity`, `_newest_activity_first`, shared with 进行中的尝试): an attempt
+  that holds only a report has the date of its row, or none and comes after
+  the others in the table's order. The page puts the attempts of the table the
+  answer does not list (a task added a moment ago) after them, in the table's
+  order, and what belongs to none under 「未归入尝试」, last.
+- **Which attempt a report belongs to** (`placed_reports`): the attempt of the
+  task whose `report` it is (the first such task in the list, when that
+  attempt is in the table), else the first attempt of its research context's
+  `attempts` (20) that the table has. A report in one attempt is not also in
+  another: the rows are a partition. The context's sidecar is read as the JSON it
+  is, as a handback's headline is, so one with a field this version does not
+  know still places its report; a damaged one places nothing and breaks
+  nothing; at most 500 are read and none for a report a task placed already.
+- **A task's state** is `attempt_tasks.state_of` for every task
+  (`attempt_tasks.task_states`: also the tasks that belong to no attempt, which
+  the cards do not read), said by the words the attempt's panel uses
+  (`RODesk.taskStateWords`, one table). The state is the engine's reading of
+  the task's latest run, so when a run starts, ends or changes state after the
+  page first read the runs, the page asks `/api/workspace/now` again and the
+  rows say the new state.
+- **Before the engine has answered** (or when it cannot): reports are one list
+  with no headings, 全部任务 stands in the table's order with each owner and no
+  state, and nothing is dropped; the answer redraws the lists when it changes
+  `home`, not otherwise.
+
 ### 21.5 The paper and its provenance
 
 - **A warning appears only where it can be acted on, with the action beside
@@ -6496,7 +6573,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    and 项目首页's 进行中的尝试 shows them (every task reads 已完成, each attempt is
    assessed 待定, and they stand v0.2, v0.3, v0 -- the newest report first). Confirmed in that order, on a table
    with no rows, they are written as #4, #5 and #6, the groups still shown
-   keeping 1, 2 and 3.
+   keeping 1, 2 and 3. Below them the page reads 研究问题与计划 (its first
+   paragraph), 笔记 and 报告 (the reports under #5, #6 and #4 in that order, a
+   title such as 「Sword v0 审查与回测：…（2026-10-24）」 whole on at most three lines
+   at 1440x900, its date beside it) and 全部任务 under the same attempts, every
+   row saying its agent and model and 已完成 (or 等你看) with none opened.
 2. A real agent run on a task under an attempt hands back a headline, key
    numbers (each found in its file), what is undone, questions and a
    suggested assessment; 「确认这个判断」 writes the cell in the file's form and

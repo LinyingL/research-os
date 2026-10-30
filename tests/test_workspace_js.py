@@ -268,7 +268,7 @@ console.log(JSON.stringify({initial,note,result:byClass('ws-writing').placeholde
 """)
     assert out["initial"]["plan"] == "研究问题、思路与计划"
     assert "还没有笔记。" in out["initial"]["words"]
-    assert "还没有结果记录。" in out["initial"]["words"]
+    assert "还没有报告。" in out["initial"]["words"]    # 21.4: the second list is 报告
     assert not out["initial"]["intro"] and not out["initial"]["path"]
     assert "查看文件" in out["initial"]["words"] and "修改历史" in out["initial"]["words"]
     assert out["note"] == "写笔记…"
@@ -288,7 +288,9 @@ const path=DOC_PATH,kind=DOC_KIND;
 listed.documents=[{path,kind,title:'Read this'}];
 docs[path]={path,kind,title:'Read this',content:'# Read this\nAn observation.',revision:'existing'};
 await window.ROWorkspace.load(root);
-await find('Read this',byClass('ws-documents')).click();
+// 21.4: the plan is no longer among the lists; it is opened by unfolding it (the writing area stands in it)
+if(kind==='overview'){const more=byClass('ws-plan-more');more.open=true;await more.emit('toggle');}
+else await find('Read this',byClass('ws-documents')).click();
 const initial={preview:!byClass('ws-preview').classList.contains('hidden'),
   writing:!byClass('ws-writing').classList.contains('hidden'),title:!byClass('ws-title-input').classList.contains('hidden'),
   save:!find('保存').classList.contains('hidden'),attachments:!byClass('ws-attachments').classList.contains('hidden'),words:byClass('ws-preview').textContent};
@@ -596,16 +598,19 @@ console.log(JSON.stringify({content:byClass('ws-writing').value,status:byClass('
 
 
 @pytest.mark.parametrize("count", [0, 2, 6])
-def test_only_the_three_newest_tasks_show_their_details_by_default(count):
+def test_no_task_row_is_open_by_default_because_each_says_who_has_it_without_being_opened(count):
+    """21.4 (it was: the newest three open by default): a row's summary carries the owner, so none needs opening to be read; the
+    task's words, the run and the outputs are in the row, which opens on request."""
     out = run(r"""
 listed.tasks=Array.from({length:COUNT},(_,i)=>agentTask({id:'t'+i,text:'Task '+i}));
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({rows:root.all().filter(e=>e.classList.contains('ws-task')).map(row=>({
-  title:byClass('ws-task-summary',row).textContent,open:byClass('ws-task-details',row).open,
+  title:byClass('ws-task-text',row).textContent,owner:byClass('ws-task-owner',row).textContent,open:byClass('ws-task-details',row).open,
   check:row.children[0].type,actions:buttonsIn(byClass('ws-task-body',row))})),posted}));
 """.replace("COUNT", str(count)))
     assert [row["title"] for row in out["rows"]] == [f"Task {i}" for i in range(count)]
-    assert [row["open"] for row in out["rows"]] == [i >= count - 3 for i in range(count)]
+    assert [row["open"] for row in out["rows"]] == [False] * count
+    assert [row["owner"] for row in out["rows"]] == ["Claude Code · sonnet"] * count
     assert all(row["check"] == "checkbox" and "编辑" in row["actions"] for row in out["rows"])
     assert out["posted"] == []
 
@@ -627,13 +632,13 @@ const closed=boxes()[0].open;
 boxes()[0].open=true;await boxes()[0].emit('toggle');
 console.log(JSON.stringify({afterRefresh,closed,reply:byClass('ws-agent-reply').children[0].value,dirty:window.ROWorkspace.isDirty(),posted}));
 """)
-    assert out["afterRefresh"] == [True, False, False, True, True, False]
+    assert out["afterRefresh"] == [True, False, False, False, False, False]    # 21.4: none is open by default; the one opened by hand stays
     assert not out["closed"]
     assert out["reply"] == "Keep the balanced sample."
     assert out["dirty"] and out["posted"] == []
 
 
-def test_adding_a_task_updates_default_disclosures_without_resetting_manual_choices():
+def test_adding_a_task_keeps_the_rows_closed_without_resetting_manual_choices():
     out = run(r"""
 listed.tasks=Array.from({length:6},(_,i)=>({id:'t'+i,text:'Task '+i,owner:'Demo'}));
 await window.ROWorkspace.load(root);await sleepTick();
@@ -644,10 +649,10 @@ const added=boxes().map(e=>e.open);
 window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({added,reopened:boxes().map(e=>e.open),tasks:listed.tasks.length}));
 """)
-    # 21.1: the new task stands first, under its attempt; the six without one follow under 「未归入尝试」. The newest three are
-    # open by default (the new one, the last two before it); the one opened by hand stays open until the page is read again.
-    assert out["added"] == [True, True, False, False, False, True, True]
-    assert out["reopened"] == [True, False, False, False, False, True, True]
+    # 21.1: the new task stands first, under its attempt; the six without one follow under 「未归入尝试」. 21.4: none is open by
+    # default; the one opened by hand stays open until the page is read again.
+    assert out["added"] == [False, True, False, False, False, False, False]
+    assert out["reopened"] == [False] * 7
     assert out["tasks"] == 7
 
 
@@ -790,8 +795,9 @@ await writeDocument('# Oldest\n\nEdited');
 await find('保存').click();
 console.log(JSON.stringify({before,after:names()}));
 """)
-    assert out["before"] == ["Research question", "Newest", "Middle", "Oldest", "Unknown time"]
-    assert out["after"] == ["Research question", "Oldest", "Newest", "Middle", "Unknown time"]
+    # 21.4: the plan is no longer one of the lists' rows; it has its own place above them
+    assert out["before"] == ["Newest", "Middle", "Oldest", "Unknown time"]
+    assert out["after"] == ["Oldest", "Newest", "Middle", "Unknown time"]
 
 
 def test_typing_during_a_save_keeps_the_title_the_engine_wrote_into_a_new_document():
@@ -1058,12 +1064,12 @@ await find('编辑',rows()[0]).click();
 const typedName={options:optionsOf(field('负责人')),value:field('负责人').value};
 await find('编辑',rows()[1]).click();
 const unknown={options:optionsOf(field('负责人')),value:field('负责人').value};
-console.log(JSON.stringify({typedName,unknown,meta:rows().map(r=>byClass('ws-task-meta',r).textContent)}));
+console.log(JSON.stringify({typedName,unknown,meta:rows().map(r=>byClass('ws-task-owner',r).textContent)}));
 """)
     assert ["Lin", "Lin"] in out["typedName"]["options"] and out["typedName"]["value"] == "Lin"
     assert ["OpenCode · lmstudio/qwen3-coder", "agent:opencode:lmstudio/qwen3-coder"] in out["unknown"]["options"]
     assert out["unknown"]["value"] == "agent:opencode:lmstudio/qwen3-coder"
-    assert out["meta"] == ["Lin", "OpenCode · lmstudio/qwen3-coder"]
+    assert out["meta"] == ["Lin", "OpenCode · lmstudio/qwen3-coder"]       # 21.4: the owner is said in the row's summary (it was in the opened row)
     assert not any("agent:" in m for m in out["meta"])
 
 

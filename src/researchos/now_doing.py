@@ -12,6 +12,10 @@ the shared folder):
   with an end missing). 研究路线's column and 项目首页 both draw this list, and the sidebar counts its rows: there is no
   second copy of what waits.
 
+A third part is the arrangement of what 项目首页 shows below (`home`): the attempts that hold a task or a report in the
+same newest-activity order, every task's state and the attempt each report belongs to -- the page groups 报告 and 全部任务
+by it and never works any of it out again.
+
 `payload` answers `GET /api/workspace/now`; `desk.payload` carries `needs` for the column. The engine says no sentence
 of its own here but the notices `desk` already composed (13.1, 13.6): a row is a code and the data it points at, and the
 page words it.
@@ -21,6 +25,7 @@ opened handbacks (`handbacks`): per person on this Mac, never in the project."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -41,6 +46,9 @@ IN_PROGRESS = ("current", "pending")
 #: first (`at`), and rows with no time (a judgment, a line) in the order they were found.
 KIND_ORDER = ("answer", "handback", "out_of_bounds", "failed", "proposal", "mine", "official", "review", "line_missing")
 TEXT_LINE = 90
+#: How many research-context sidecars `placed_reports` reads, and how many entries of the results folder it looks at.
+CONTEXT_READS = 500
+FOLDER_ENTRIES = 2000
 _READS = (OSError, ValueError, workspace.WorkspaceError)
 
 
@@ -236,8 +244,19 @@ def _activity(attempt: dict[str, Any], work: dict[str, Any]) -> str | None:
     return max(found).isoformat(timespec="seconds") if found else None
 
 
+def _newest_activity_first(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`items` (each with `activity`, an ISO time or None, and the table's `order`) newest activity first; one with no
+    time after the others, in the table's order. The one order 进行中的尝试, 报告 and 全部任务 stand in (21.4)."""
+    def key(item: dict[str, Any]) -> tuple[int, float, int]:
+        when = attempt_tasks.parse_time(item["activity"])
+        return (0, -when.timestamp(), item["order"]) if when else (1, 0.0, item["order"])
+
+    return sorted(items, key=key)
+
+
 def in_progress(root: str | Path, project_id: str | None, person: str | None,
-                attempts: list[dict[str, Any]], shared: dict[str, Any] | None = None) -> dict[str, Any]:
+                attempts: list[dict[str, Any]], shared: dict[str, Any] | None = None,
+                work: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """进行中的尝试: `{attempts, holding}`. `attempts` are those of `attempts` (the desk's cards) whose assessment is
     现行 or 待定 (`IN_PROGRESS`) and that hold at least one task -- an unopened handback implies a task --, newest
     `activity` first (`_activity`; an attempt with no time at all after the others, in the table's order), each with its
@@ -245,8 +264,11 @@ def in_progress(root: str | Path, project_id: str | None, person: str | None,
     `unopened`, the first line of the latest handback is `latest.line`). An attempt assessed 不利证据, 被否, 已放弃 or
     归档, one the person's own words mark with a status of their own, and one with no task are not listed -- a 待定
     attempt whose tasks are all finished is, because it waits for the person's assessment. `holding` counts the
-    attempts of any status that hold a task: 0 means the project has none, which the page says with the way in."""
-    work = attempt_tasks.by_attempt(root, project_id, person, [a["id"] for a in attempts], shared)
+    attempts of any status that hold a task: 0 means the project has none, which the page says with the way in. `work`
+    is `attempt_tasks.by_attempt`'s reading of all `attempts` when the caller has it already (`payload` reads it once
+    for this and for `home`)."""
+    if work is None:
+        work = attempt_tasks.by_attempt(root, project_id, person, [a["id"] for a in attempts], shared)
     listed = []
     for attempt in attempts:
         figures = work.get(attempt["id"])
@@ -254,12 +276,72 @@ def in_progress(root: str | Path, project_id: str | None, person: str | None,
             listed.append({"id": attempt["id"], "number": attempt["number"], "title": attempt["title"], "date": attempt["date"],
                            "route_status": attempt["route_status"], "tone": attempt.get("tone"), "work": figures,
                            "activity": _activity(attempt, figures), "order": attempt.get("order", 0)})
+    return {"attempts": _newest_activity_first(listed), "holding": len(work)}
 
-    def key(item: dict[str, Any]) -> tuple[int, float, int]:
-        when = attempt_tasks.parse_time(item["activity"])
-        return (0, -when.timestamp(), item["order"]) if when else (1, 0.0, item["order"])
 
-    return {"attempts": sorted(listed, key=key), "holding": len(work)}
+# -- below it: 报告 and 全部任务 by attempt ---------------------------------------------------------------------------
+
+
+def placed_reports(root: Path, attempt_ids: set[str], tasks: list[dict[str, Any]]) -> dict[str, str]:
+    """The attempt each report belongs to (21.4), `{report path: attempt id}`: the attempt of the task whose `report` it
+    is (the first such task in the list, when the attempt is in `attempt_ids`), else the first attempt its research
+    context links (20: the sidecar's `attempts`) that the table has. A report that neither a task nor a link places is
+    not in the answer. The sidecars are read as the JSON they are, as a handback's headline is, so one with a field this
+    version does not know still places its report; at most `CONTEXT_READS` of them, and none for a report a task
+    placed already."""
+    placed: dict[str, str] = {}
+    for task in tasks:
+        report, attempt = task.get("report"), task.get("attempt")
+        if isinstance(report, str) and report and attempt in attempt_ids and report not in placed:
+            placed[report] = attempt
+    try:
+        base = workspace._confined(root, "research/results")  # noqa: SLF001
+        names = sorted(entry.name for entry in itertools.islice(base.iterdir(), FOLDER_ENTRIES)
+                       if entry.name.endswith(".context.json") and not entry.name.startswith("."))
+    except (OSError, workspace.WorkspaceError):
+        return placed
+    reads = 0
+    for name in names:
+        report = "research/results/" + name.removesuffix(".context.json") + ".md"
+        if report in placed:
+            continue
+        if reads >= CONTEXT_READS:
+            break
+        reads += 1
+        try:
+            raw = workspace._read(root, "research/results/" + name)  # noqa: SLF001
+            linked = json.loads(raw)["context"]["attempts"] if raw else []
+        except (*_READS, KeyError, TypeError):
+            continue
+        found = next((ref for ref in linked if isinstance(ref, str) and ref in attempt_ids), None) if isinstance(linked, list) else None
+        if found:
+            placed[report] = found
+    return placed
+
+
+def home(root: str | Path, project_id: str | None, person: str | None, attempts: list[dict[str, Any]],
+         work: dict[str, dict[str, Any]], shared: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What 项目首页 groups below 现在在做什么 by (21.4): `{attempts, tasks, reports}`.
+
+    - `attempts`: the ids of the attempts (any status) that hold at least one task or one report, newest activity first
+      -- `_activity` and the order of 进行中的尝试, so the three lists never disagree. An attempt with neither is left
+      out; the page puts what belongs to none under 「未归入尝试」, last.
+    - `tasks`: every task's state code (`attempt_tasks.task_states`, the cards' reading), by task id.
+    - `reports`: `placed_reports`.
+
+    `work` is `attempt_tasks.by_attempt`'s reading of all `attempts` (the same `shared` keep of the run store)."""
+    root = Path(root)
+    ids = {a["id"] for a in attempts}
+    try:
+        tasks = workspace.read_tasks(root)[0]
+    except _READS:
+        tasks = []
+    reports = placed_reports(root, ids, tasks)
+    holding = set(work) | set(reports.values())
+    listed = [{"id": a["id"], "activity": _activity(a, work.get(a["id"]) or {}), "order": a.get("order", 0)}
+              for a in attempts if a["id"] in holding]
+    return {"attempts": [item["id"] for item in _newest_activity_first(listed)],
+            "tasks": attempt_tasks.task_states(root, project_id, person, shared), "reports": reports}
 
 
 # -- the endpoint -----------------------------------------------------------------------------------------
@@ -267,10 +349,11 @@ def in_progress(root: str | Path, project_id: str | None, person: str | None,
 
 def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh", timeout: float | None = None,
             only: str | None = None) -> dict[str, Any]:
-    """`GET /api/workspace/now` (DESIGN.md 21.4): `{role, needs, progress}` for the open project and the person this Mac
-    belongs to -- `needs` is `needs_you`'s answer, `progress` is `in_progress`'s. `only=needs` leaves `progress` out (the
-    sidebar's count reads the list alone). The shared folder is read for at most `desk.SHARED_TIMEOUT` seconds, as the
-    desk's is (the same job, so the two never read it twice at once); the map's cards are not worked out (`light`)."""
+    """`GET /api/workspace/now` (DESIGN.md 21.4): `{role, needs, progress, home}` for the open project and the person this
+    Mac belongs to -- `needs` is `needs_you`'s answer, `progress` is `in_progress`'s, `home` is `home`'s. `only=needs`
+    leaves the last two out (the sidebar's count reads the list alone). The shared folder is read for at most
+    `desk.SHARED_TIMEOUT` seconds, as the desk's is (the same job, so the two never read it twice at once); the map's
+    cards are not worked out (`light`)."""
     from researchos import desk  # noqa: PLC0415
 
     root = Path(project_root)
@@ -281,5 +364,8 @@ def payload(conn: Connection, project_root: str | Path, *, lang: str = "zh", tim
     if only != "needs":
         got = read_identity(root)
         project_id = got.identity.id if got.state is IdentityState.PRESENT and got.identity else None
-        result["progress"] = in_progress(root, project_id, column.get("me"), out.get("attempts") or [], shared)
+        cards = out.get("attempts") or []
+        work = attempt_tasks.by_attempt(root, project_id, column.get("me"), [a["id"] for a in cards], shared)
+        result["progress"] = in_progress(root, project_id, column.get("me"), cards, shared, work)
+        result["home"] = home(root, project_id, column.get("me"), cards, work, shared)
     return result

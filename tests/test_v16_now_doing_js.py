@@ -105,7 +105,7 @@ const page = cls('ws-page')[0];
 console.log(JSON.stringify({ top: page.children.map((c) => c.className), title: text('ws-now-title'), headings: text('ws-now-heading'),
   cards: cards(), rows: needsRows(), count: sidebar['side-count-home'].textContent, hidden: cls('ws-now')[0].classList.contains('hidden') }));
 """)
-    assert out["top"] == ["ws-notices", "ws-heading", "ws-now", "ws-columns", "ws-tasks"] and out["hidden"] is False
+    assert out["top"] == ["ws-notices", "ws-heading", "ws-now", "ws-plan", "ws-columns", "ws-tasks"] and out["hidden"] is False   # 21.4: the plan stands under 现在在做什么
     assert out["title"] == ["现在在做什么"] and out["headings"] == ["进行中的尝试", "等你处理"]
     # newest activity first: #5 (its report of the 24th), #6 (a failed run on the 26th), #4 (the 20th), #9 by the date of its row
     assert [c["name"] for c in out["cards"]] == ["#6Sword v0.3", "#5Sword v0.2", "#4Sword v0", "#9Settled baseline"]

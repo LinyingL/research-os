@@ -74,6 +74,9 @@
   // engine said of each: true when it is a file the document may link to (DESIGN.md 18.3).
   let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
+  // The research plan on 项目首页 is shown to its first paragraph and unfolded on request (DESIGN.md 21.4): `planOpen` is
+  // the person's choice (null: not chosen yet), `planSnap` the plan as last read, kept while another document is open.
+  let planOpen = null, planSnap = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
   let taskOpen = {}, taskDisclosures = {};
   let createSubject = null, folderSubject = null, foreignBlocked = false;
@@ -84,7 +87,10 @@
   let agentInfo = null, agentInfoError = null, agentInfoLoading = false;
   let people = { loaded: false, loading: false, me: null, team: [] };
   let runsInfo = { runs: [], active: null }, details = {}, detailPending = {};
-  let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, metaNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
+  // A task's state (运行中, 等你回答, ...) is the engine's reading of its latest run (21.4): when a run starts, ends or changes
+  // state after the first reading of them, `runsMoved` makes `syncRuns` ask the engine again and the rows say the new state.
+  let runsSeen = false, runsMoved = false;
+  let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, factNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
   // 任务输出 in a task's row (DESIGN.md 19.6): the place it is drawn in, the removal in progress and the sentence that
   // says it failed, each by task id; and what the person opened, which a redraw keeps (19.12 item 2): { process: the
   // 过程文件 group is open, all: { kind: true } for a group shown past its first files }.
@@ -129,6 +135,7 @@
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
+    planOpen = null; planSnap = null;
     foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
     taskOpen = {}; taskDisclosures = {};
@@ -136,9 +143,9 @@
     agentInfo = null; agentInfoError = null; agentInfoLoading = false;
     people = { loaded: false, loading: false, me: null, team: [] };
     runsInfo = { runs: [], active: null }; details = {}; detailPending = {};
-    agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; factNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
     outputNodes = {}; outputBusy = {}; outputNotes = {}; outputOpen = {};
-    nowData = null; nowRequest += 1;
+    nowData = null; nowRequest += 1; runsSeen = false; runsMoved = false;
     settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
     stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
@@ -339,7 +346,7 @@
   function buildPage() {
     host.replaceChildren();
     const page = el("div", "ws-page"), top = el("div", "ws-heading"), rail = el("nav", "ws-documents");
-    rail.setAttribute("aria-label", t("方案、笔记与结果"));
+    rail.setAttribute("aria-label", t("笔记与报告"));
     const heading = el("div");
     heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")));
     const actions = el("div", "ws-actions");
@@ -347,11 +354,93 @@
     const result = button(t("记录结果"), () => newDocument("result"));
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
-    const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
-    const notices = el("div", "ws-notices"), now = el("section", "ws-now hidden");
-    columns.append(rail, editor); page.append(notices, top, now, columns, tasks);
-    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result, notices: notices, now: now };
+    // 21.4: the page reads from the top -- 现在在做什么, 研究问题与计划, 笔记与报告 (the lists beside the open document, or above it
+    // when the window is narrow), 全部任务.
+    const columns = el("div", "ws-columns"), slot = el("div", "ws-document-slot"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
+    const hint = el("p", "ws-empty ws-slot-hint hidden", t("选一份笔记或报告来阅读，或新建一份。"));
+    const notices = el("div", "ws-notices"), now = el("section", "ws-now hidden"), plan = buildPlan();
+    slot.append(hint, editor); columns.append(rail, slot); page.append(notices, top, now, plan.box, columns, tasks);
+    host.append(page);
+    ui = { rail: rail, editor: editor, slot: slot, hint: hint, tasks: tasks, note: note, result: result, notices: notices, now: now,
+      plan: plan.box, planLead: plan.lead, planMore: plan.more, planBody: plan.body, planWord: plan.word, planDirty: plan.dirty };
     renderNotices();
+  }
+  // 研究问题与计划 (DESIGN.md 21.4): its title, its first paragraph and 「展开」 with 12.13's chevron. Unfolded, the plan is the
+  // writing area itself, the one a note or a report opens in, which stands here while the plan is the open document.
+  function buildPlan() {
+    const box = el("section", "ws-plan"), lead = el("div", "ws-plan-lead"), more = el("details", "ws-plan-more"), body = el("div", "ws-plan-body");
+    const summary = disclosureSummary(t("展开")), word = summary.lastChild, dirty = el("span", "ws-plan-dirty hidden", t("尚未保存"));
+    summary.className += " ws-plan-summary"; summary.append(dirty);
+    more.append(summary, body); more.addEventListener("toggle", planToggled);
+    box.append(el("h2", "ws-plan-title", t("研究问题与计划")), lead, more);
+    return { box: box, lead: lead, more: more, body: body, word: word, dirty: dirty };
+  }
+  // The text of the plan the page shows: the open document while it is the plan, else the plan as last read.
+  function planContent() { return draft && draft.kind === "overview" ? draft.content : planSnap ? planSnap.content : ""; }
+  function overviewEntry() { return ((data && data.documents) || []).find((doc) => doc.kind === "overview") || null; }
+  // The first paragraph of a document: its first block of text that is no heading (a fenced block is one block); a document
+  // of headings only gives its first line, one with no text "".
+  function firstParagraph(text) {
+    const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), heading = (line) => /^#{1,6}\s/.test(line);
+    let at = lines.findIndex((line) => line.trim() && !heading(line));
+    if (at < 0) return (lines.find((line) => line.trim()) || "").trim();
+    const block = [lines[at]];
+    if (/^\s*```/.test(lines[at])) {
+      for (at += 1; at < lines.length; at += 1) { block.push(lines[at]); if (/^\s*```/.test(lines[at])) break; }
+      return block.join("\n");
+    }
+    for (at += 1; at < lines.length && lines[at].trim() && !heading(lines[at]); at += 1) block.push(lines[at]);
+    return block.join("\n");
+  }
+  // Drawn with every change of the documents: the plan folded to its first paragraph, or unfolded (the writing area is in
+  // it) when the person asked and the plan is the open document. A plan with no words yet starts unfolded, to be written in.
+  function renderPlan() {
+    if (!ui || !ui.plan) return;
+    const own = !!draft && draft.kind === "overview";
+    if (planOpen === null && own) planOpen = !planContent().trim();
+    const open = !!planOpen && own;
+    if (!!ui.planMore.open !== open) ui.planMore.open = open;
+    ui.planWord.textContent = open ? t("收起") : t("展开");
+    ui.planLead.classList.toggle("hidden", open);
+    ui.planDirty.classList.toggle("hidden", open || !(own && documentDirty()));
+    if (open) return;
+    // drawn again only when its words changed, so that a page that refreshes every couple of seconds does not take a selection away
+    const block = firstParagraph(planContent()), key = block + "\u0000" + (data.files || []).length;
+    if (ui.planLead.dataset.drawn === key) return;
+    ui.planLead.dataset.drawn = key;
+    if (!block) { ui.planLead.replaceChildren(el("p", "ws-empty", t("还没有研究方案。"))); return; }
+    const keep = unchecked; renderMarkdown(ui.planLead, block, "research/overview.md"); unchecked = keep;
+  }
+  function planToggled() {
+    const own = !!draft && draft.kind === "overview", want = !!ui.planMore.open;
+    if (want === (!!planOpen && own)) return;   // the page's own change
+    planOpen = want;
+    if (want && !own) openPlan(); else renderPlan();
+  }
+  // Unfolding the plan opens it in the writing area, which asks first when another document holds unsaved writing; if it
+  // stays shut, so does the plan.
+  async function openPlan() {
+    const entry = overviewEntry();
+    await openDocument(entry ? entry.path : "research/overview.md");
+    if (!draft || draft.kind !== "overview") { planOpen = false; renderPlan(); }
+  }
+  // While another document is open the plan's first paragraph follows the file: read again when the listing says it changed.
+  async function refreshPlan(mark) {
+    const entry = overviewEntry();
+    if (!entry || (draft && draft.kind === "overview") || (planSnap && planSnap.modified === (entry.modified || null))) return;
+    try {
+      const doc = await apiGet("/api/workspace/document?path=" + encodeURIComponent(entry.path) + "&project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || (draft && draft.kind === "overview")) return;
+      planSnap = { content: doc.content || "", modified: entry.modified || null };
+      renderPlan();
+    } catch (err) { /* the first paragraph stays as it was */ }
+  }
+  // The writing area is one: it stands in 研究问题与计划 while the plan is the open document, and beside the lists of notes and
+  // reports for any other (a note, a report, a new one).
+  function placeEditor() {
+    const own = !!draft && draft.kind === "overview", where = own ? ui.planBody : ui.slot;
+    if (ui.editor.parentNode !== where) { ui.editor.remove(); where.append(ui.editor); }
+    ui.hint.classList.toggle("hidden", !own);
   }
   // What the page has to say about the project as a whole, drawn again with every read of it: why it cannot be
   // written (a Mac that is not a member of a team project says so, DESIGN.md 18.3), a project identity that cannot be
@@ -364,31 +453,79 @@
     if (data.identity_error) box.append(el("p", "ws-status err", data.identity_error.message));
     if ((data.errors || []).length) box.append(el("p", "ws-status err", t("部分文档暂时无法读取，其他内容仍可使用。")));
   }
-  // Notes and result records by their last change, newest first (DESIGN.md 18.3); the engine's order stands for
-  // documents that changed together or whose time is not known.
-  function changeOrder(documents) {
-    const when = (doc) => { const n = Date.parse(doc.modified || ""); return isNaN(n) ? -Infinity : n; };
-    return documents.map((doc, index) => [doc, index]).sort((a, b) => (when(b[0]) - when(a[0])) || (a[1] - b[1])).map((pair) => pair[0]);
+  // The day a note or a report is dated by (21.4), as a quiet field beside its title -- never a part of the title, which is shown
+  // as written even when it holds a date: the date its file name begins with (a note named 2026-03-12-meeting.md), else the day
+  // its file last changed, on this Mac's calendar. "" when it has neither.
+  function documentDay(doc) {
+    const named = /^(\d{4})[-_.](\d{2})[-_.](\d{2})(?!\d)/.exec(String(doc.path || "").split("/").pop());
+    if (named) {
+      const when = new Date(Number(named[1]), Number(named[2]) - 1, Number(named[3]));
+      if (when.getFullYear() === Number(named[1]) && when.getMonth() === Number(named[2]) - 1 && when.getDate() === Number(named[3])) return named[1] + "-" + named[2] + "-" + named[3];
+    }
+    const at = Date.parse(doc.modified || "");
+    if (isNaN(at)) return "";
+    const day = new Date(at), two = (n) => (n < 10 ? "0" : "") + n;
+    return day.getFullYear() + "-" + two(day.getMonth() + 1) + "-" + two(day.getDate());
   }
+  // Notes and reports by the day they are dated, newest first, then by their last change (DESIGN.md 18.3); the engine's order
+  // stands for documents that changed together or whose time is not known.
+  function newestFirst(documents) {
+    const when = (doc) => { const n = Date.parse(doc.modified || ""); return isNaN(n) ? -Infinity : n; };
+    return documents.map((doc, index) => [doc, index]).sort((a, b) => {
+      const x = documentDay(a[0]), y = documentDay(b[0]);
+      return (x === y ? 0 : x < y ? 1 : -1) || (when(b[0]) - when(a[0])) || (a[1] - b[1]);
+    }).map((pair) => pair[0]);
+  }
+  // The attempts in the order 项目首页 groups by (21.4): those the engine lists first, newest activity first, then the rest of the
+  // table in its order. Before the engine has answered, the table's order.
+  function attemptOrder() {
+    const attempts = data.attempts || [], known = new Set(attempts.map((a) => a.id));
+    const first = ((nowData && nowData.home && nowData.home.attempts) || []).filter((id) => known.has(id));
+    return first.concat(attempts.filter((a) => first.indexOf(a.id) < 0).map((a) => a.id));
+  }
+  // Reports under the attempt each belongs to (`home.reports`: the task whose report it is, else an attempt its research context
+  // links), each under that attempt's 「#n 描述」, 「未归入尝试」 last. Before the engine has answered, or when no report belongs
+  // to an attempt, one list with no headings.
+  function reportGroups(reports) {
+    const home = nowData && nowData.home;
+    if (!home) return [{ title: "", documents: reports }];
+    const attempts = new Map((data.attempts || []).map((a) => [a.id, a])), by = new Map(), loose = [];
+    reports.forEach((doc) => {
+      const id = (home.reports || {})[doc.path];
+      if (id && attempts.has(id)) { if (!by.has(id)) by.set(id, []); by.get(id).push(doc); } else loose.push(doc);
+    });
+    const parts = attemptOrder().filter((id) => by.has(id)).map((id) => ({ title: attemptLabel(attempts.get(id)), documents: by.get(id) }));
+    if (loose.length) parts.push({ title: parts.length ? t("未归入尝试") : "", documents: loose });
+    return parts;
+  }
+  function documentRow(doc, kind) {
+    const current = !!draft && draft.path === doc.path, row = el("div", "ws-document-row" + (current ? " current" : ""));
+    const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
+    // Authored titles are never translated as UI strings, nor cut.
+    b.textContent = doc.title || kindLabel(kind);
+    b.setAttribute("aria-current", current ? "page" : "false");
+    if (doc.excerpt) b.title = doc.excerpt;
+    if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
+    row.append(b);
+    const day = documentDay(doc);
+    if (day) row.append(el("span", "ws-document-date", day));
+    return row;
+  }
+  function documentGroup(kind) {
+    const group = el("div", "ws-document-group"), documents = newestFirst((data.documents || []).filter((d) => d.kind === kind));
+    group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : t("报告", { n: 2 })));
+    if (!documents.length) { group.append(el("p", "ws-empty", kind === "note" ? t("还没有笔记。") : t("还没有报告。"))); return group; }
+    (kind === "note" ? [{ title: "", documents: documents }] : reportGroups(documents)).forEach((part) => {
+      if (part.title) group.append(el("h4", "ws-document-attempt", part.title));
+      part.documents.forEach((doc) => group.append(documentRow(doc, kind)));
+    });
+    return group;
+  }
+  // 笔记 and 报告 (21.4): the lists beside the open document. The plan is no longer among them: it has its own place above.
   function renderNav() {
     if (!ui) return;
-    ui.rail.replaceChildren();
-    ["overview", "note", "result"].forEach((kind) => {
-      const group = el("div", "ws-document-group");
-      group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : kindLabel(kind)));
-      const documents = changeOrder((data.documents || []).filter((d) => d.kind === kind));
-      documents.forEach((doc) => {
-        const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
-        // Authored titles are never translated as UI strings.
-        b.textContent = doc.title || kindLabel(kind);
-        b.setAttribute("aria-current", draft && draft.path === doc.path ? "page" : "false");
-        if (doc.excerpt) b.title = doc.excerpt;
-        if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
-        group.append(b);
-      });
-      if (!documents.length) group.append(el("p", "ws-empty", kind === "overview" ? t("还没有研究方案。") : kind === "note" ? t("还没有笔记。") : t("还没有结果记录。")));
-      ui.rail.append(group);
-    });
+    ui.rail.replaceChildren(documentGroup("note"), documentGroup("result"));
+    renderPlan();
   }
   // The officialness words of a document: the engine's answer for it, or the list's.
   function officialnessOf(doc) {
@@ -404,6 +541,12 @@
     if (draft.officialness && draft.officialness.label) ui.kindLabel.append(el("span", "ws-officialness", draft.officialness.label));
   }
   function setDraft(doc, previewing) {
+    // the plan keeps its first paragraph while another document is open, and folds (21.4)
+    const entry = overviewEntry();
+    if ((doc.kind || "note") !== "overview") {
+      if (draft && draft.kind === "overview" && saved) planSnap = { content: saved.content, modified: entry ? entry.modified || null : null };
+      planOpen = false;
+    }
     draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc), researchRecord: doc.research_record || {}, researchContext: emptyResearchContext(doc.research_record && doc.research_record.context), researchOpen: doc.kind === "result" && doc.revision != null };
     saved = { title: draft.title, content: draft.content, researchContext: emptyResearchContext(draft.researchContext) };
     renderEditor(previewing == null ? draft.revision != null || !editable() : previewing); renderNav();
@@ -474,8 +617,10 @@
   }
   function renderEditor(previewing) {
     ui.previewing = !editable() || (previewing == null ? !!ui.previewing : previewing);
+    placeEditor();
     const box = ui.editor; box.replaceChildren();
-    const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", kindLabel(draft.kind));
+    // the plan's own title stands above it (21.4): its writing area names only what is not already said there
+    const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", draft.kind === "overview" ? "" : kindLabel(draft.kind));
     const tools = el("div", "ws-actions"), save = button(t("保存"), saveDocument, "btn btn-primary btn-small");
     save.disabled = !editable();
     const previewToggle = button("", () => {
@@ -821,13 +966,12 @@
     // A native toggle can be queued just before a refresh; read it before replacing the row.
     Object.values(taskDisclosures).forEach((view) => view.remember());
     list.replaceChildren();
-    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
+    sections = {}; factNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
     taskDisclosures = {};
-    // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
-    const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
     showTaskError();
     // 21.1: the tasks stand under the attempt they belong to, in `after` order; those without one (or whose attempt is
-    // gone from the table) under 「未归入尝试」, last.
+    // gone from the table) under 「未归入尝试」, last. 21.4: the attempts stand newest activity first, and a row says its owner
+    // and its state without being opened; it is opened to read the rest (the run, the outputs), so none is open by default.
     const sequence = [];
     taskGroups().forEach((group) => { sequence.push({ heading: group }); group.tasks.forEach((task) => sequence.push({ task: task })); });
     sequence.forEach((entry) => {
@@ -853,7 +997,7 @@
         return mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x));
       });
       const disclosure = el("details", "ws-task-details");
-      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
+      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : false;
       const view = { open: disclosure.open, node: disclosure, remember: () => {
         if (view.open !== disclosure.open) { view.open = disclosure.open; taskOpen[task.id] = disclosure.open; }
       } };
@@ -861,12 +1005,13 @@
       disclosure.addEventListener("toggle", () => { if (taskDisclosures[task.id] === view) view.remember(); });
       const summary = keyed(disclosureSummary(task.text), "task-details:" + task.id);
       summary.className += " ws-task-summary"; summary.lastChild.className = "ws-task-text";
+      const facts = el("span", "ws-task-facts"); factNodes[task.id] = facts; setFacts(task, facts); summary.append(facts);
       const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       if (task.context && task.context.report) {
         const report = (data.documents || []).find((doc) => doc.path === task.context.report);
         words.append(keyed(button(t("研究记录") + ": " + (report ? report.title : task.context.report), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
       }
-      const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
+      const meta = el("span", "ws-task-meta"); setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
       outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
@@ -978,6 +1123,7 @@
   function syncRowMarks() {
     (data.tasks || []).forEach((task) => {
       const controls = rowControls[task.id], row = rowNodes[task.id];
+      if (factNodes[task.id]) setFacts(task, factNodes[task.id]);
       if (controls) controls[0].checked = !!task.done;
       if (row) row.className = "ws-task" + (task.done ? " done" : "");
     });
@@ -1123,9 +1269,24 @@
     if (parsed) return parsed.label;
     return /^agent:/.test(owner) ? t("AI 执行者") : owner;
   }
+  // Inside the opened row: the date, if the task has one. Its owner is said in the row's summary (21.4, `setFacts`).
   function setMeta(task, node) {
-    const words = [ownerLabel(task.owner), task.due].filter(Boolean).join(" · ");
+    const words = task.due || "";
     node.textContent = words; node.classList.toggle("hidden", !words);
+  }
+  // What a task's row says without being opened (21.4): its owner (a person, or the agent and its model) and its state in words.
+  // The state is the engine's (`home.tasks`, attempt_tasks.state_of), worded as the attempt's panel words it; before the engine
+  // has answered a row says its owner only.
+  function taskStateCode(id) {
+    const states = nowData && nowData.home && nowData.home.tasks;
+    return states && Object.prototype.hasOwnProperty.call(states, id) ? states[id] : null;
+  }
+  function setFacts(task, node) {
+    node.replaceChildren();
+    const who = ownerLabel(task.owner), code = taskStateCode(task.id), known = code && window.RODesk && window.RODesk.taskStateWords ? window.RODesk.taskStateWords(code) : null;
+    if (who) node.append(el("span", "ws-task-owner", who));
+    if (known) node.append(el("span", "status-label tone-" + known.tone, known.words));
+    node.classList.toggle("hidden", !node.childElementCount);
   }
   function isActiveState(value) { return value === "preparing" || value === "running"; }
   // How a run ended apart from the warning (17.9): an out-of-bounds run reads 越过了限制, and what it would have read
@@ -1181,13 +1342,14 @@
     roots.forEach(walk); tasks.forEach(walk);
     return out;
   }
+  // 全部任务 by attempt, in the order reports stand in (`attemptOrder`: newest activity first), 「未归入尝试」 last (21.4).
   function taskGroups() {
-    const attempts = data.attempts || [], known = new Set(attempts.map((a) => a.id)), by = new Map(), loose = [];
+    const attempts = new Map((data.attempts || []).map((a) => [a.id, a])), by = new Map(), loose = [];
     (data.tasks || []).forEach((task) => {
-      if (task.attempt && known.has(task.attempt)) { if (!by.has(task.attempt)) by.set(task.attempt, []); by.get(task.attempt).push(task); }
+      if (task.attempt && attempts.has(task.attempt)) { if (!by.has(task.attempt)) by.set(task.attempt, []); by.get(task.attempt).push(task); }
       else loose.push(task);
     });
-    const groups = attempts.filter((a) => by.has(a.id)).map((a) => ({ id: a.id, title: attemptLabel(a), tasks: orderedTasks(by.get(a.id)) }));
+    const groups = attemptOrder().filter((id) => by.has(id)).map((id) => ({ id: id, title: attemptLabel(attempts.get(id)), tasks: orderedTasks(by.get(id)) }));
     if (loose.length) groups.push({ id: null, title: t("未归入尝试"), tasks: orderedTasks(loose) });
     return groups;
   }
@@ -1696,7 +1858,7 @@
   function hbReport(subject, unfolded) {
     const view = subject.view, box = el("details", "ws-hb-report");
     box.open = !!unfolded;
-    box.append(disclosureSummary(t("报告")));
+    box.append(disclosureSummary(t("报告", { n: 1 })));
     const body = el("div", "ws-preview"), keep = unchecked;
     renderMarkdown(body, view.text, view.report); unchecked = keep;
     box.append(body);
@@ -1930,9 +2092,12 @@
     try { fresh = await apiGet("/api/workspace/now"); } catch (err) { return; }
     if (!live(mark) || token !== nowRequest || !fresh || fresh.project !== project()) return;
     const same = !!nowData && JSON.stringify(nowData) === JSON.stringify(fresh);
+    const regroup = !nowData || JSON.stringify(nowData.home) !== JSON.stringify(fresh.home);
     nowData = fresh;
     if (window.RODesk && typeof window.RODesk.noteNeeds === "function") window.RODesk.noteNeeds(fresh.needs);
     if (!same || !ui.now.childElementCount) renderNow();   // an answer that did not change is not drawn again
+    // 报告 and 全部任务 stand in the engine's order and say its states (21.4): drawn again only when those moved
+    if (regroup && data) { renderNav(); refreshTasks(); }
   }
   function renderNow() {
     if (!ui || !ui.now) return;
@@ -2042,7 +2207,7 @@
   }
   function refreshOwnerOptions() {
     if (ui && ui.ownerSelect) fillOwnerOptions(ui.ownerSelect);
-    Object.keys(metaNodes).forEach((id) => { const task = data && (data.tasks || []).find((x) => x.id === id); if (task) setMeta(task, metaNodes[id]); });
+    Object.keys(factNodes).forEach((id) => { const task = data && (data.tasks || []).find((x) => x.id === id); if (task) setFacts(task, factNodes[id]); });
   }
   function chooseOwner(select) {
     const value = select.value, wasCustom = taskDraft.custom;
@@ -2115,11 +2280,16 @@
       people.loaded = true; refreshOwnerOptions();
     } finally { if (live(mark)) people.loading = false; }
   }
+  function runsSig() { return runsInfo.runs.map((r) => r.id + ":" + r.state + (r.reverted ? ":r" : "")).join("|"); }
   function applyRuns(fresh) {
+    const was = runsSig();
     runsInfo = { runs: Array.isArray(fresh && fresh.runs) ? fresh.runs : [], active: (fresh && fresh.active) || null };
+    if (runsSeen && runsSig() !== was) runsMoved = true;
+    runsSeen = true;
   }
   function mergeRun(run) {
     if (!run || !run.id) return;
+    runsMoved = true;   // a run this page just started, stopped or answered is a move
     const index = runsInfo.runs.findIndex((r) => r.id === run.id);
     if (index < 0) runsInfo.runs.unshift(run); else runsInfo.runs[index] = run;
     if (isActiveState(run.state)) runsInfo.active = run.id; else if (runsInfo.active === run.id) runsInfo.active = null;
@@ -2138,6 +2308,7 @@
     }
     if (!live(mark)) return false;
     pollFails = 0; offline = false; showConnection(); applyRuns(fresh);
+    if (runsMoved && nowData) { runsMoved = false; loadNow(mark); }
     const ended = before.some((id) => !activeIds().includes(id));
     ensureDetails(mark); updateAgentSections();
     const reload = opts && opts.reload;
@@ -3400,6 +3571,7 @@
       loadAgentContext(current);
       if (nowData && !ui.now.childElementCount) renderNow();
       loadNow(current);
+      if (draft && draft.kind !== "overview") refreshPlan(current);
       if (!draft) {
         const overview = data.documents.find((doc) => doc.kind === "overview");
         if (overview) await openDocument(overview.path, true);
