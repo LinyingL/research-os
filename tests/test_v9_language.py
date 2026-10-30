@@ -1596,7 +1596,7 @@ def test_13_7_the_desk_in_english():
                  "desk-meta: Proposed · 1 Mar 2024", "status-label tone-ochre: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "team-line writes: Syncing first writes what you have not sent yet (1 comment, 2 link judgments, "
-                 "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
+                 "1 paper mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
                  "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
                  "the official version deleted; keep your version of 1 file changed on both sides and put the official "
@@ -1756,7 +1756,7 @@ def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
     """13.8 #1: the desk's 「正式版本有更新」, drawn with the real team.js,
     says what 同步 will write in the words 成员 always used."""
     desks = _desks(saved, team=True)
-    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
+    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处论文标记、增加 1 条连线写进公盘的"
             "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
             "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）；备注、连线确认和手工连线的记录文件："
             "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]

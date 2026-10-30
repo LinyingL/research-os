@@ -237,6 +237,11 @@ def _alone(monkeypatch) -> None:
     monkeypatch.setattr(trace, "chain", alone)
 
 
+def _rows(page: dict) -> list[dict]:
+    """The figure and table rows of 图表与论断, whichever of its four lists they stand in (21.5, B3-2)."""
+    return [i for key in ("items", "other", "loose", "excluded") for i in page[key]]
+
+
 def _payloads(root: Path) -> tuple[str, str]:
     conn = _conn(root)
     try:
@@ -253,12 +258,13 @@ def test_the_results_payload_is_byte_identical_to_tracing_each_figure_on_its_own
     _alone(monkeypatch)
     assert _payloads(root) == shared_way
     page, claims = (json.loads(text) for text in shared_way)
-    states = {i["trace"]["label"] for g in page["sections"] for i in g["items"]} | {i["trace"]["label"] for i in page["loose"]}
+    states = {i["trace"]["label"] for i in _rows(page)}
     assert states == {"完整", "缺来源"}
     assert [c["trace"]["label"] for g in claims["sections"] for c in g["claims"]] == ["完整", "缺尝试", "缺来源", "缺尝试"]
 
 
-def test_a_figure_two_sections_include_is_traced_once_and_each_item_has_a_state_of_its_own(tmp_path, monkeypatch):
+def test_a_figure_two_sections_include_is_one_row_traced_once_and_the_states_are_not_shared_between_rows(tmp_path, monkeypatch):
+    """21.5 (B3-2): a figure several sections or drafts include is one row naming its drafts, and it is traced once."""
     root = _traced_project(tmp_path / "proj")
     original, traced = trace.chain, []
 
@@ -272,16 +278,13 @@ def test_a_figure_two_sections_include_is_traced_once_and_each_item_has_a_state_
         page = nodepage.results(conn, root)
     finally:
         conn.close()
-    items = [i for g in page["sections"] for i in g["items"]] + page["loose"]
+    items = _rows(page)
     ids = [i["id"] for i in items]
-    assert len(ids) == len(set(ids)) + 1 and len(traced) == len(set(ids))  # p0f0 is in two sections, traced once
-    assert sorted(traced) == sorted(set(ids))
-    twice = [i for i in items if i["id"] == "figure:figs/p0f0.png"]
-    assert len(twice) == 2 and twice[0]["trace"] == twice[1]["trace"]
-    assert twice[0]["trace"] is not twice[1]["trace"] and twice[0]["trace"]["breaks"] is not twice[1]["trace"]["breaks"]
-    twice[0]["trace"]["breaks"].append("written in place, as officialness.annotate does")
-    twice[0]["trace"]["officialness"] = {"state": "official"}
-    assert twice[1]["trace"]["breaks"] == [] and "officialness" not in twice[1]["trace"]
+    assert len(ids) == len(set(ids)) and sorted(traced) == sorted(ids)  # one row per figure, traced once (p0f0 is in two sections)
+    row = next(i for i in items if i["id"] == "figure:figs/p0f0.png")
+    assert row["drafts"] == ["paper.md"]
+    a, b = (i["trace"] for i in items[:2])
+    assert a is not b and a["breaks"] is not b["breaks"]  # a row's state is its own: officialness.annotate writes into it in place
 
 
 def test_a_request_reads_the_flags_the_configuration_the_attempts_and_the_cards_once_not_once_per_figure(tmp_path, monkeypatch):
@@ -306,7 +309,7 @@ def test_a_request_reads_the_flags_the_configuration_the_attempts_and_the_cards_
     try:
         page = nodepage.results(conn, root)
         claims = nodepage.results(conn, root, "paper.md")
-        figures = sum(len(g["items"]) for g in page["sections"]) + len(page["loose"])
+        figures = len(_rows(page))
         assert figures >= 10 and claims["shown"] == 4
         # Each call of the page: one read of each, whatever it traces; the cards not at all (the
         # states read the breaks and the attempts only).
@@ -340,7 +343,7 @@ def test_an_attempts_file_that_does_not_parse_reads_as_none_and_the_page_is_the_
     assert broken != good
     def states(text: str) -> dict[str, str]:
         page = json.loads(text)
-        return {i["path"]: i["trace"]["label"] for g in page["sections"] for i in g["items"]}
+        return {i["path"]: i["trace"]["label"] for i in _rows(page)}
 
     # p0f0 belonged to attempt 16 by its step numbers; without the steps directory nothing says so. p2f0 was
     # attached to attempt 18 by hand and still is.
@@ -446,7 +449,7 @@ def test_18_5_7_the_results_page_of_400_figures_and_10_variable_cards_answers_in
             began = time.perf_counter()
             page = nodepage.results(conn, root)
             best = min(best, time.perf_counter() - began)
-        figures = sum(len(g["items"]) for g in page["sections"]) + len(page["loose"])
+        figures = len(_rows(page))
     finally:
         conn.close()
     assert figures >= 400 and len(variables_mod.read_cards(root)) == 10
@@ -489,9 +492,10 @@ global.calls = [];
 global.apiGet = async (path) => {
   calls.push("GET " + path);
   if (path === "/api/generation") return { generation: serverGeneration, refreshing: false };
-  if (path === "/api/results") return { sections: [], loose: [], claims: [], states: {},
-    drafts: [{ file: "paper.md", marked: DRAFT.marked, claims: 2, node: "file:paper.md" }],
-    papers: { marked: DRAFT.marked ? ["paper.md"] : [], trusted: true, message: null, path: ".researchos/papers.toml" } };
+  if (path === "/api/results") return { items: [], other: [], loose: [], excluded: [], counts: { open: 0, other: 0, loose: 0, excluded: 0 }, claims: [], states: {},
+    attempt_labels: {}, where: { drafts: {} }, registered: { error: null, broken: [] },
+    drafts: [{ file: "paper.md", marked: DRAFT.marked, claims: 2, node: "file:paper.md", modified: "2026-10-28" }],
+    papers: { marked: DRAFT.marked ? ["paper.md"] : [], recent: DRAFT.marked ? [] : ["paper.md"], shown: 5, trusted: true, message: null, path: ".researchos/papers.toml" } };
   if (path.startsWith("/api/node?")) return { id: "file:paper.md", type: "file", type_label: "文件", name: "paper.md", path: "paper.md",
     exists: true, in_index: true, details: {}, links: [], paper: { draft: "paper.md", marked: DRAFT.marked },
     trace: { columns: [], lines: [], breaks: [], attempts: [], variables: [] } };
@@ -516,6 +520,7 @@ global.apiPost = async (path, body) => {
   const press = (label) => host.all().find((k) => k.tag === "BUTTON" && k.kids.join("") === label);
   const button = press(%(label)s);
   button.click();
+  if (%(picker)s) { await settle(); press("paper.md").click(); }  // 21.5: on 图表与论断 the one control opens the picker; the draft chosen in it is written
   await settle();
   const written = calls.slice(start);
   const tick = calls.length;
@@ -539,6 +544,7 @@ def _mark_run(view: str, *, marked: bool = False, refused: bool = False) -> dict
         "node": (WEBAPP / "node.js").read_text(encoding="utf-8"),
         "draft": json.dumps({"marked": marked}),
         "refused": "true" if refused else "false",
+        "picker": "true" if view == "results" and not marked else "false",
         "label": json.dumps("不再作为论文正文" if marked else "设为论文正文"),
         "flipped": json.dumps("设为论文正文" if marked else "不再作为论文正文"),
     }

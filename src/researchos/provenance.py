@@ -7,16 +7,16 @@ the rule and the few facts it needs, the pages only ask.
 A warning is:
 
 - a figure or a table the chosen paper includes -- a section of a draft marked 「设为论文正文」 includes it (with no
-  draft chosen yet, any draft stands for the paper: nothing says which one is not) -- whose source is missing or
-  broken (缺来源: no generating script, a script or a file of its chain not there, a script that cannot be read)
-  or that no attempt holds (缺尝试);
+  draft chosen yet, any draft stands for the paper: nothing says which one is not) and the researcher has not put out
+  of the paper with 「不属于论文」 -- whose source is missing or broken (缺来源: no generating script, a script or a
+  file of its chain not there, a script that cannot be read) or that no attempt holds (缺尝试);
 - a claim of the paper with nothing behind it, or whose result's chain is broken;
 - a broken link: a script names a file that is not there (断链), whatever the file is for.
 
 Everything else is quiet text, in no colour: a file no script writes that is only read (a download in `raw/`), a
 script that belongs to no attempt, a file nothing reads, a script with no reads or writes found, a figure or table
-of a draft the paper does not include. A warning comes with its action beside it: 缺生成脚本 and 缺来源 for a
-missing generator, 「指定生成它的脚本」 (a `generates` or `writes` entry, the write 补上来源 makes); 缺尝试,
+of a draft the paper does not include, a figure or table put out of the paper. A warning comes with its action
+beside it: 缺生成脚本 and 缺来源 for a missing generator, 「指定生成它的脚本」 (a `generates` or `writes` entry, the write 补上来源 makes); 缺尝试,
 「归入尝试」 (a `belongs_to` entry); a broken link whose file exists elsewhere, 「是这个吗？」 (`candidates`: a
 `reads`, `writes` or `generates` entry from that file to the script). A quiet state offers the same action, quietly,
 where there is one to take. Nothing is written without the person's click.
@@ -70,20 +70,36 @@ def section_file(node_id: str) -> str | None:
 
 class Paper:
     """The figures and tables the chosen paper includes: the targets of the `includes` links of sections of the drafts
-    marked 「设为论文正文」 (`drafts`), or of every draft while none is marked. Read once for a request."""
+    marked 「设为论文正文」 (`drafts`), or of every draft while none is marked -- except those the researcher put out of
+    the paper with 「不属于论文」 (`excluded`, the files, 21.5): a by-product is not what the paper relies on, whatever
+    a draft cites. Read once for a request.
 
-    def __init__(self, conn: Connection, drafts: Iterable[str]) -> None:
+    `drafts_of` is every draft that includes a target, marked or not, as `{target: [draft, ...]}`: the rows of
+    图表与论断 name them, and the request reads the links once for both."""
+
+    def __init__(self, conn: Connection, drafts: Iterable[str], excluded: Iterable[str] = ()) -> None:
         wanted = set(drafts)
+        self.excluded = set(excluded)
         self.included: set[str] = set()
+        self.drafts_of: dict[str, list[str]] = {}
         for edge in db.query_edges(conn, type="includes"):
             if edge["status"] == "rejected":
                 continue
             draft = section_file(edge["src"])
-            if draft is not None and (not wanted or draft in wanted):
+            if draft is None:
+                continue
+            named = self.drafts_of.setdefault(edge["dst"], [])
+            if draft not in named:
+                named.append(draft)
+            if not wanted or draft in wanted:
                 self.included.add(edge["dst"])
 
     def has(self, node_id: str) -> bool:
-        return node_id in self.included
+        return node_id in self.included and not self.out(node_id)
+
+    def out(self, node_id: str) -> bool:
+        """Whether the researcher put the file of `node_id` (`type:path`) out of the paper."""
+        return node_id.partition(":")[2] in self.excluded
 
 
 def from_word(path: str | None) -> bool:

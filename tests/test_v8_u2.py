@@ -399,7 +399,7 @@ def test_12_0_results_that_lost_their_evidence(tmp_path):
             got = nodepage.results(conn, root)
         finally:
             conn.close()
-        return {i["path"]: (g["file"], i["trace"]) for g in got["sections"] for i in g["items"]}
+        return {i["path"]: (i["drafts"][0], i["trace"]) for i in got["items"]}  # (21.5: one row per figure, naming its drafts)
 
     found = traces()
     assert found["figs/fig1.png"][0] == "paper.md" and found["figs/fig1.png"][1]["state"] == "no_source"

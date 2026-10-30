@@ -171,14 +171,14 @@ def test_12_9_results_lists_the_drafts_figures_by_section_with_their_trace_state
         claims = nodepage.results(conn, root, "paper.md")
     finally:
         conn.close()
-    group = out["sections"][0]
-    assert group["section"] == "section:paper.md#main-figure" and group["file"] == "paper.md"
-    states = {i["path"]: i["trace"]["label"] for i in group["items"]}
-    assert states == {"figs/fig1.png": "缺来源", "figs/fig2.png": "完整"}
+    # 21.5: one row per figure, naming the drafts that include it; with no draft marked every draft stands for the paper
+    assert out["other"] == [] and out["excluded"] == []
+    states = {i["path"]: i["trace"]["label"] for i in out["items"]}
+    assert states == {"figs/fig1.png": "缺来源", "figs/fig2.png": "完整"} and all(i["drafts"] == ["paper.md"] for i in out["items"])
     assert [(i["path"], i["trace"]["label"]) for i in out["loose"]] == [("figs/loose.png", "缺尝试")]
     # 12.13: claims only from a draft marked 「设为论文正文」 -- none yet; every draft is offered.
     assert out["claims"] == [] and out["papers"]["marked"] == []
-    assert {"file": "paper.md", "marked": False, "claims": 1, "node": "file:paper.md"} in out["drafts"]
+    assert {"file": "paper.md", "marked": False, "claims": 1, "node": "file:paper.md"}.items() <= next(d for d in out["drafts"] if d["file"] == "paper.md").items()  # 21.5 adds `modified` (the picker's day)
     from researchos.records import papers
 
     assert papers.set_marked(root, "paper.md", True, via="cli")["changed"]

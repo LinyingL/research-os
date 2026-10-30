@@ -386,14 +386,14 @@ console.log(JSON.stringify({title: host.all().filter((e) => e.tagName === 'H2').
     assert out["import"].count("打开结果") == 1 and "导入为变量草稿" in out["import"]
 
 
-def test_the_four_views_draw_their_registered_rows_with_the_one_function():
-    """图表与论断 and 数据与代码 (node.js), 文献 and 变量 (app.html) all call renderRegisteredOutputs, so the task and
-    the date are on every one of them."""
+def test_two_views_draw_their_registered_rows_with_the_one_function_and_the_kind_pages_list_them_as_rows():
+    """文献 and 变量 (app.html) call renderRegisteredOutputs, so the task and the date are on both. 图表与论断 and 数据与代码
+    (node.js) no longer do (21.5, B3-2): an agent's outputs are seen in its handback and are rows of their kind there."""
     app = (WEBAPP / "app.html").read_text(encoding="utf-8")
     node = (WEBAPP / "node.js").read_text(encoding="utf-8")
     assert app.count("function renderRegisteredOutputs(") == 1 and node.count("function renderRegisteredOutputs(") == 0
     assert app.count("renderRegisteredOutputs(host, data.outputs") == 2      # 变量 (the drafts) and 文献
-    assert node.count("renderRegisteredOutputs(") == 2                        # 图表与论断 and 数据与代码
+    assert node.count("renderRegisteredOutputs(") == 0                        # 图表与论断 and 数据与代码: no 任务输出 block
 
 
 _CHOOSING_GOES = r'''

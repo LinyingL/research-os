@@ -14,18 +14,23 @@ the files -- nothing here writes:
   the project's scripts for 「指定生成它的脚本」 (a `generates` / `writes` mapping)
   and its attempts for 「归入尝试」 (a `belongs_to` mapping), or, on an
   attempt's page, its files.
-- `results(conn, root, draft=None)` -- 图表与论断: the figures and tables the
-  drafts include, grouped by draft section, figures no draft includes, and
-  the claims of the drafts marked 「设为论文正文」 only (12.13,
-  `researchos.records.papers`: a draft's revision log or review notes hold
-  numbers that are not the paper's claims) -- per draft, on request: a
-  draft can hold hundreds -- each with its trace state 完整 / 缺来源 /
-  缺尝试, and (21.5, `researchos.provenance`) whether the chosen paper includes it, the cause in words, the
-  tone the row is drawn in (a warning only for what the paper includes) and the action beside it. Every draft is
-  listed with whether it is marked, so the page can offer the mark on its line.
+- `results(conn, root, draft=None)` -- 图表与论断: the figures and tables, one
+  row each (21.5), in four lists -- the paper's, those only the drafts the paper
+  does not include cite, those no draft cites, and those put out of the paper
+  with 「不属于论文」 -- each naming the drafts that include it, the attempts it
+  belongs to and the title it was registered with, and the claims of the drafts
+  marked 「设为论文正文」 only (12.13, `researchos.records.papers`: a draft's
+  revision log or review notes hold numbers that are not the paper's claims) --
+  per draft, on request: a draft can hold hundreds -- each row with its trace
+  state 完整 / 缺来源 / 缺尝试, and (`researchos.provenance`) whether the chosen
+  paper includes it, the cause in words, the tone the row is drawn in (a warning
+  only for what the paper includes) and the action beside it. Every draft is
+  listed with whether it is marked and the day it changed, and `papers.recent`
+  is the order the picker of 「设为论文正文」 offers them in.
 - `data_code(conn, root)` -- 数据与代码: every script and data file with what
-  it reads and writes, and which of the lineage report's blocks it is in
-  (没有生成脚本 / 断链 / 同名文件), so the page can filter; a file with no generating script is a warning only
+  it reads and writes, the attempts it belongs to and its registered title, and
+  which of the lineage report's blocks it is in (没有生成脚本 / 断链 / 同名文件),
+  so the page can filter; a file with no generating script is a warning only
   when the paper includes it, and a broken link offers the file it may mean (21.5).
 
 The page's copy is Chinese (8.8) and says relations in words (12.11): 读取,
@@ -35,14 +40,17 @@ The page's copy is Chinese (8.8) and says relations in words (12.11): 读取,
 from __future__ import annotations
 
 import logging
+import os
 import posixpath
 import re
+from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db, lineage, provenance, settings
+from researchos import db, kind_rows, lineage, provenance, settings
 from researchos import trace as trace_mod
+from researchos.ingest import dataflow
 from researchos.records import judgements
 from researchos.records import notes as notes_mod
 
@@ -65,6 +73,7 @@ SOURCE_BREAKS = provenance.SOURCE_BREAKS
 MAX_COLUMNS = 6           # upstream levels drawn; deeper ones are said, not drawn
 LINK_LIMIT = 300          # links listed under 连线确认
 CLAIM_LIMIT = 2000        # claims of one draft
+PICKER_SHOWN = 5          # drafts 「设为论文正文」 offers before 「更多」 (21.5)
 FILE_NODE_TYPES = ("script", "dataset", "figure", "file")
 
 
@@ -622,8 +631,10 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
             out["paper"] = {"draft": path, "marked": path in _marked(root)["drafts"]}
         chain = trace_mod.chain(conn, root, node_id)
         # 21.5: a warning is for what the paper relies on -- the chosen paper includes this figure or table.
-        in_paper = _in_paper([d["file"] for d in chain["drafts"]], root)
+        in_paper = _in_paper([d["file"] for d in chain["drafts"]], root, path)
         out["in_paper"] = in_paper
+        if prefix in ("figure", "dataset"):  # 21.5: 「不属于论文」 / 「放回论文」 on a figure or table's own page
+            out["paper_item"] = {"file": path, "out": path in {e["file"] for e in _marked(root)["not_in_paper"]}}
         out["tone"] = "warning" if in_paper else "quiet"  # a missing file of this page is plain unless the paper relies on it
         out["trace"] = _columns_from_chain(conn, root, node_id, chain, flags, in_paper)
         out["choices"] = {"attempts": _attempt_choices(conn, root)}
@@ -654,15 +665,11 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
 
 
 def _trace_state(conn: Connection, root: Path, node_id: str, shared: trace_mod.Shared | None = None,
-                 memo: dict[str, dict[str, Any]] | None = None, paper: provenance.Paper | None = None) -> dict[str, Any]:
+                 paper: provenance.Paper | None = None) -> tuple[dict[str, Any], list[str]]:
     """A figure's or table's trace state (18.4 item 1) and what the row says about it (21.5): `causes`, the words
     of why it is not complete; `tone`, `ok`, `warning` (the chosen paper `paper` includes it) or `quiet`; `repair`,
-    the action beside it, if there is one. `shared`: the request's trace context. `memo`: the states already
-    worked out in this request, by node id -- a figure that two sections include is traced once. Every answer is a
-    copy of its own: `officialness.annotate` writes into the payload in place, and two items must not be one
-    object."""
-    if memo is not None and node_id in memo:
-        return _copy_state(memo[node_id])
+    the action beside it, if there is one -- and the ids of the attempts its trace found, which the row names
+    (`kind_rows`). `shared`: the request's trace context. A figure is one row of the page, so it is traced once."""
     chain = trace_mod.chain(conn, root, node_id, shared=shared, variables=False)  # only the breaks are read
     kinds = [b["kind"] for b in chain["breaks"]]
     if any(k in SOURCE_BREAKS for k in kinds):
@@ -676,15 +683,7 @@ def _trace_state(conn: Connection, root: Path, node_id: str, shared: trace_mod.S
     repair = provenance.repair_of(state, _type_of(node_id), codes, chain["node"]["path"])
     out = {"state": state, "label": TRACE_STATES[state], "breaks": [b["label"] for b in chain["breaks"]], "causes": found,
            "tone": provenance.tone_of(state, paper is not None and paper.has(node_id), codes, repair), "repair": repair}
-    if memo is None:
-        return out
-    memo[node_id] = out
-    return _copy_state(out)
-
-
-def _copy_state(state: dict[str, Any]) -> dict[str, Any]:
-    return {**state, "breaks": list(state["breaks"]), "causes": [dict(c) for c in state["causes"]],
-            "repair": dict(state["repair"]) if state.get("repair") else None}
+    return out, [a["id"] for a in chain["attempts"]]
 
 
 def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, dict[str, Any]],
@@ -716,11 +715,30 @@ def _claim_state(conn: Connection, root: Path, claim_id: str, cache: dict[str, d
     return said("complete") if attempted else said("no_attempt", "no_attempt")
 
 
+def _registered_id(entry: dict[str, Any]) -> str:
+    """The node id a registered figure or table has on the page when the index holds no node for it: a figure by its
+    kind, a table a data file (`dataset`) or any other file."""
+    path = entry["path"]
+    if entry["kind"] == "figure":
+        return f"figure:{path}"
+    return f"{'dataset' if dataflow.node_type_for_path(path) == 'dataset' else 'file'}:{path}"
+
+
+def _day(root: Path, rel: str) -> tuple[float, str | None]:
+    """When a file was last changed: its time and its local day (`YYYY-MM-DD`); (-1, None) when it cannot be told."""
+    try:
+        moment = os.stat(root / rel).st_mtime
+    except OSError:
+        return -1.0, None
+    return moment, datetime.fromtimestamp(moment).strftime("%Y-%m-%d")
+
+
 def results(conn: Connection, project_root: str | Path, draft: str | None = None) -> dict[str, Any]:
-    """图表与论断 (module docstring). Without `draft`: the drafts' figures and
-    tables by section, figures no draft includes, and per draft how many
-    claims it holds. With `draft` (a project-relative file): that draft's
-    claims by section."""
+    """图表与论断 (module docstring). Without `draft`: the figures and tables, one row each, with the drafts that
+    include it named, in four lists (21.5) -- `items`, the paper's (while no draft is marked, every draft stands for
+    the paper); `other`, those only the drafts the paper does not include cite; `loose`, figures and registered files no
+    draft cites; `excluded`, those the researcher put out of the paper with 「不属于论文」, wherever they were --
+    and per draft how many claims it holds. With `draft` (a project-relative file): that draft's claims by section."""
     root = Path(project_root)
     if draft is not None:
         return _draft_claims(conn, root, draft)
@@ -729,57 +747,91 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
     # trace fails, as it always did.
     shared = trace_mod.Shared(conn, root)
     papers = _marked(root)
-    paper = provenance.Paper(conn, papers["drafts"])  # 21.5: what the chosen paper includes is what a warning is for
-    states: dict[str, dict[str, Any]] = {}
-    groups: dict[str, dict[str, Any]] = {}
-    included: set[str] = set()
-    for edge in _live(db.query_edges(conn, type="includes")):
-        target = edge["dst"]
-        if _type_of(target) not in FILE_NODE_TYPES:
-            continue
-        section = edge["src"]
-        group = groups.get(section)
-        if group is None:
-            record = db.get_node(conn, section)
-            group = groups[section] = {"section": section, "title": _label(conn, section, record),
-                                       "file": _file_of(section), "items": []}
-        if any(i["id"] == target for i in group["items"]):
-            continue
-        included.add(target)
-        item = _item(conn, root, target)
+    put_out = {e["file"]: e for e in papers["not_in_paper"]}
+    paper = provenance.Paper(conn, papers["drafts"], put_out)  # 21.5: what the chosen paper includes is what a warning is for
+    filed = kind_rows.Filed(conn, root, shared, ("figure", "table"))
+    team = _team(root)
+    marked = set(papers["drafts"])
+
+    def row(node_id: str) -> dict[str, Any]:
+        item = _item(conn, root, node_id)
         item["kind"] = "图" if item["type"] == "figure" else "表"
-        item["in_paper"] = paper.has(target)
-        item["trace"] = _trace_state(conn, root, target, shared, states, paper)
-        group["items"].append(item)
-    loose = []
+        item["in_paper"] = paper.has(node_id)
+        item["trace"], found = _trace_state(conn, root, node_id, shared, paper)
+        item["title"] = filed.title(item["path"])
+        item["attempts"] = filed.attempts_of(item["path"], found)
+        named = sorted(paper.drafts_of.get(node_id, []))
+        item["drafts"] = [f for f in named if f in marked] + [f for f in named if f not in marked]  # the paper's first
+        item["thumb"] = item["type"] == "figure" and kind_rows.thumbnail(root, item["path"])
+        out = put_out.get(item["path"] or "")
+        item["paper"] = {"out": out is not None}
+        if out is not None:
+            item["paper"].update(at=out["at"], by=_person(team, out["by"]) if team is not None and out["by"] else None)
+        return item
+
+    rows: dict[str, dict[str, Any]] = {}
+    for target in paper.drafts_of:
+        if _type_of(target) in FILE_NODE_TYPES:
+            rows[target] = row(target)
+    cited = set(rows)
     for figure in db.get_nodes_by_type(conn, "figure"):
-        if figure["id"] in included:
-            continue
-        item = _item(conn, root, figure["id"])
-        item["kind"] = "图"
-        item["in_paper"] = False  # no draft includes it
-        item["trace"] = _trace_state(conn, root, figure["id"], shared, states, paper)
-        loose.append(item)
-    ordered = sorted(groups.values(), key=lambda g: (g["file"] or "", g["section"]))
-    for g in ordered:
-        g["items"].sort(key=lambda i: i["path"] or i["id"])
+        if figure["id"] not in rows:
+            rows[figure["id"]] = row(figure["id"])
+    for entry in filed.unlisted(r["path"] for r in rows.values()):  # registered, and no node of the index
+        node_id = _registered_id(entry)
+        if node_id not in rows:
+            rows[node_id] = row(node_id)
+    for file in put_out:  # put out of the paper and gone from the index: still there to be put back
+        if file not in {r["path"] for r in rows.values()}:
+            kind = dataflow.node_type_for_path(file)
+            node_id = f"{kind if kind in ('figure', 'dataset') else 'file'}:{file}"
+            rows[node_id] = row(node_id)
+    items, other, loose, excluded = [], [], [], []
+    for node_id, item in rows.items():
+        if item["paper"]["out"]:
+            excluded.append(item)
+        elif node_id not in cited:
+            loose.append(item)
+        elif node_id in paper.included:
+            items.append(item)
+        else:
+            other.append(item)
+    for rows_ in (items, other, loose, excluded):
+        rows_.sort(key=lambda i: i["path"] or i["id"])
     counts: dict[str, int] = {}
     for claim in db.get_nodes_by_type(conn, "claim"):
         file = _file_of(claim["id"])
         if file:
             counts[file] = counts.get(file, 0) + 1
-    marked = set(papers["drafts"])
     drafts = sorted(_draft_files(conn) | set(counts))
+    days = {f: _day(root, f) for f in drafts}
+    # the drafts the paper can still take, the one changed most recently first (the picker shows the first
+    # `PICKER_SHOWN`, the rest under 「更多」); the attempt table's own file is a draft to the index and never the paper
+    try:
+        table = posixpath.normpath(shared.config.file) if shared.config is not None else None  # the context reads it once
+    except (OSError, ValueError):  # an attempts file that cannot be read costs the picker this one exclusion, not the page
+        table = None
+    recent = sorted((f for f in drafts if f not in marked and f != table), key=lambda f: (-days[f][0], f))
+    used = {a for r in rows.values() for a in r["attempts"]}
     return {
-        "sections": ordered,
-        "loose": sorted(loose, key=lambda i: i["path"] or i["id"]),
+        "items": items,
+        "other": other,
+        "loose": loose,
+        "excluded": excluded,
+        # what the paper still lacks (21.5): the figures and tables it includes that are warnings, and what was put out
+        "counts": {"open": sum(1 for i in items if i["trace"]["tone"] == "warning"), "other": len(other),
+                   "loose": len(loose), "excluded": len(excluded)},
+        "attempt_labels": {a: _label(conn, a, shared.by_id.get(a)) for a in sorted(used)},
+        "where": {"drafts": provenance.distinct_names(drafts)},
         # 12.13: claims only from the drafts marked 「设为论文正文」.
         "claims": [{"file": f, "count": counts[f]} for f in drafts if f in marked and f in counts],
-        "drafts": [{"file": f, "marked": f in marked, "claims": counts.get(f, 0), "node": notes_mod.normalize_node(f)} for f in drafts],
+        "drafts": [{"file": f, "marked": f in marked, "claims": counts.get(f, 0), "node": notes_mod.normalize_node(f),
+                    "modified": days[f][1]} for f in drafts],
         "papers": {"marked": sorted(marked), "trusted": papers["trusted"], "message": papers["message"],
-                   "path": papers["path"]},
+                   "path": papers["path"], "recent": recent, "shown": PICKER_SHOWN},
+        "registered": {"error": filed.error, "broken": filed.broken},
         "states": TRACE_STATES,
-        "choices": _repair_choices(conn, root, [i["trace"] for g in ordered for i in g["items"]] + [i["trace"] for i in loose]),
+        "choices": _repair_choices(conn, root, [i["trace"] for rows_ in (items, other, loose, excluded) for i in rows_]),
     }
 
 
@@ -801,17 +853,21 @@ def _marked(root: Path) -> dict[str, Any]:
     try:
         return papers.marked(root)
     except Exception as exc:  # noqa: BLE001 -- 图表与论断 still lists figures and tables
-        return {"drafts": [], "trusted": False, "message": f"论文正文记录文件无法读取：{exc}",
+        return {"drafts": [], "not_in_paper": [], "trusted": False, "message": f"论文正文记录文件无法读取：{exc}",
                 "path": f".researchos/{papers.PAPERS_FILENAME}"}
 
 
-def _in_paper(drafts: list[str | None], root: Path) -> bool:
+def _in_paper(drafts: list[str | None], root: Path, path: str | None = None) -> bool:
     """Whether the chosen paper includes a node: one of `drafts` (the drafts whose sections include it) is marked
-    「设为论文正文」 -- while no draft is marked, any draft stands for the paper (`provenance.Paper`)."""
+    「设为论文正文」 -- while no draft is marked, any draft stands for the paper (`provenance.Paper`) -- and the
+    researcher has not put its file `path` out of the paper with 「不属于论文」."""
     included = {d for d in drafts if d}
     if not included:
         return False
-    marked = _marked(root)["drafts"]
+    papers = _marked(root)
+    if path is not None and path in {e["file"] for e in papers["not_in_paper"]}:
+        return False
+    marked = papers["drafts"]
     return bool(included & set(marked)) if marked else True
 
 
@@ -872,6 +928,11 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     - `where` tells apart the scripts or files of one name in a list of
       readers, writers, reads or writes by the nearest folder that differs.
 
+    - each row names the attempts it belongs to (`attempts`, ids that `attempt_labels` says) and carries the title it
+      was registered with, if it was (`title`); a file an agent or a person registered that the index holds no node
+      for is a row too (`kind_rows`, 21.5). A table the chosen paper includes, or that was put out of it, carries
+      `paper` (`out`): 「不属于论文」 or 「放回论文」 is offered on it.
+
     Counts are of warnings: `no_generator`, `broken`; `raw` counts the quiet
     files nothing writes, `duplicates` those with other files of their name."""
     root = Path(project_root)
@@ -880,7 +941,9 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     gone = lineage.replaced_targets(conn, entries)
     report = lineage.build_lineage_report(conn, root, names=names, replaced=gone)
     orphan = {o["path"] for o in report["orphans"]}
-    paper = provenance.Paper(conn, _marked(root)["drafts"])
+    papers = _marked(root)
+    out_files = {e["file"]: e for e in papers["not_in_paper"]}
+    paper = provenance.Paper(conn, papers["drafts"], out_files)
     broken: dict[str, list[dict[str, Any]]] = {}
     for entry in _broken_entries(root, report["broken_links"], names):
         broken.setdefault(entry["script"], []).append(entry)
@@ -888,6 +951,15 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     for d in report["duplicates"]:
         copies[d["path"]] = list(d["other_copies"])
     flags = judgements.link_flags(conn)
+    shared = trace_mod.Shared(conn, root)
+    filed = kind_rows.Filed(conn, root, shared, ("code", "data"))
+
+    def named(item: dict[str, Any]) -> dict[str, Any]:
+        item["title"] = filed.title(item["path"])
+        item["attempts"] = filed.attempts_of(item["path"])
+        if item["type"] == "dataset" and (item["in_paper"] or item["path"] in out_files):
+            item["paper"] = {"out": item["path"] in out_files}
+        return item
 
     def waiting(edges: list[dict[str, Any]]) -> int:
         return sum(1 for e in edges if (lambda f: f.get("review") or f.get("conflict"))(flags.for_key(judgements.key_of(e))))
@@ -931,10 +1003,19 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
                 item["broken"] = broken[path]
             if path in copies:
                 item["other_copies"] = copies[path]
-            files.append(item)
+            files.append(named(item))
+    for entry in filed.unlisted(f["path"] for f in files):  # registered, and no node of the index
+        kind, path = ("script" if entry["kind"] == "code" else "dataset"), entry["path"]
+        item = {"id": f"{kind}:{path}", "type": kind, "type_label": TYPE_WORDS[kind], "path": path,
+                "exists": _exists(root, path), "orphan_input": False, "review": 0}
+        item.update({"reads": [], "writes": []} if kind == "script" else {"read_by": [], "written_by": [], "in_paper": False})
+        files.append(named(item))
     files.sort(key=lambda f: (f["path"]))
+    used = {a for f in files for a in f["attempts"]}
     return {
         "files": files,
+        "attempt_labels": {a: _label(conn, a, shared.by_id.get(a)) for a in sorted(used)},
+        "registered": {"error": filed.error, "broken": filed.broken},
         "counts": {
             "all": len(files),
             "no_generator": sum(1 for f in files if f.get("no_generator") == "warning"),

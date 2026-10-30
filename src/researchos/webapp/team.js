@@ -198,7 +198,7 @@
     const parts = [];
     if (c.notes) parts.push(t("{n} 条备注", { n: numberText(c.notes) }));
     if (c.judgements) parts.push(t("{n} 条连线确认", { n: numberText(c.judgements) }));
-    if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
+    if (c.papers) parts.push(t("{n} 处论文标记", { n: numberText(c.papers) }));
     if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
     if (c.links_removed) parts.push(t("删除 {n} 条连线", { n: numberText(c.links_removed) }));
     return andSeries(parts);

@@ -57,7 +57,9 @@ def test_completed_outputs_appear_in_the_real_page_endpoints(writing_server):
     complete(root,[{"kind":"table","path":"tables/summary.csv"},{"kind":"literature","path":"literature/pilot.json"}])
     status, data = _get(base,"/api/results")
     assert status == 200
-    assert data["outputs"]["items"][0]["table_preview"][1] == ["wide","2.3"]
+    row = next(i for i in data["loose"] if i["path"] == "tables/summary.csv")   # 21.5: a row of its kind, not a block of task outputs
+    assert row["kind"] == "表" and row["title"] == "summary.csv" and "outputs" not in data and "table_preview" not in row
+    assert outputs.catalog(root, {"table"})["items"][0]["table_preview"][1] == ["wide","2.3"]   # the other views still draw the sample
     status, data = _get(base,"/api/citations")
     assert status == 200 and data["library"]["items"][0]["abstract"]
 
@@ -160,7 +162,7 @@ def test_the_workspace_payload_gives_each_task_with_a_record_its_files_counts_an
     assert (row["work_folder"], row["work_files"], row["work_files_more"], row["error"]) == ("work/20261025-clean", 1, False, False)
 
 
-def test_the_views_rows_name_their_task_and_time_over_http(writing_server):
+def test_the_registered_files_are_rows_of_their_kind_over_http_and_the_other_views_rows_name_their_task_and_time(writing_server):
     base, root, _httpd = writing_server
     put(root, "tables/summary.csv", "n\n2\n")
     put(root, "scratch/run.log", "text")
@@ -170,7 +172,9 @@ def test_the_views_rows_name_their_task_and_time_over_http(writing_server):
     put(root, "tables/two.csv", "n\n3\n")
     assert _post(base, "/api/outputs/register", {"project": str(root), "report": report,
                                                  "items": [{"kind": "table", "path": "tables/two.csv"}]})[0] == 200
-    rows = _get(base, "/api/results")[1]["outputs"]["items"]
+    page = _get(base, "/api/results")[1]
+    assert {r["path"] for r in page["loose"]} == {"tables/summary.csv", "tables/two.csv"} and "outputs" not in page   # B3-2: rows of 图表与论断
+    rows = outputs.catalog(root, {"table"})["items"]   # what the views that still draw the registered rows read (文献, 变量)
     assert {r["path"] for r in rows} == {"tables/summary.csv", "tables/two.csv"}
     assert all(r["task_title"] == "Clean the survey data" and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", r["at"]) for r in rows)
 
@@ -334,7 +338,8 @@ def test_the_register_route_takes_a_run_per_item_and_the_views_date_the_entry_by
     assert [(e["path"], e["run"], e["evidence"]) for e in entries] == [("scripts/fetch.py", old, "person"), ("data/prices.csv", old, "person")]
     from datetime import datetime, timezone
 
-    rows = _get(base, "/api/data-code")[1]["outputs"]["items"]
+    rows = outputs.catalog(root, {"code", "data"})["items"]   # (21.5: 数据与代码 lists them as rows; the dating is the catalog's)
+    assert {r["path"] for r in _get(base, "/api/data-code")[1]["files"]} >= {"scripts/fetch.py", "data/prices.csv"}
     started = datetime.strptime(old[2:17], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).astimezone().isoformat(timespec="seconds")
     assert {r["path"]: r["at"] for r in rows} == {"scripts/fetch.py": started, "data/prices.csv": started}
     assert _get(base, f"/api/outputs/backfill?project={pid}&task=t1")[1]["groups"][0]["runs"][0]["files"] == [

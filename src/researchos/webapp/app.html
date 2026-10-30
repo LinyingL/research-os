@@ -659,7 +659,22 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-path { font-size: 0.74rem; color: var(--ink-soft); word-break: break-all; }
 .res-cause { font-size: 0.78rem; color: var(--ink-soft); }
 .res-cause.warn { color: var(--clay); }
-.res-repair { flex-basis: 100%; }
+.res-repair { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+/* 21.5: a row's small picture, and its quiet fields (the drafts that include it, the attempt it belongs to). */
+.res-thumb { flex: none; align-self: flex-start; width: 56px; height: 40px; object-fit: cover; border: 1px solid var(--line); border-radius: 2px; background: var(--paper-alt); }
+.res-field { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0; align-items: baseline; font-size: 0.78rem; color: var(--ink-soft); }
+.res-field-label { margin-right: 0.45rem; }
+.res-field-more { margin-left: 0.4rem; }
+.res-field .node-link { font-size: 0.78rem; }
+.res-open.warn { color: var(--clay); }
+.res-fold { margin-top: 0.8rem; }
+/* 21.5: the paper is chosen once: its drafts in a line each, and one control that opens the drafts it can still take. */
+.res-paper-list { margin-bottom: 0.7rem; }
+.res-paper-list .res-main { align-items: baseline; }
+.res-picker-list { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.res-picker-list.hidden { display: none; }
+.res-picker-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.86rem; }
+.res-picker-more { margin-top: 0.2rem; }
 .res-draft { border-bottom: 1px solid var(--line); }
 /* 12.13: a quiet line chevron for disclosure; the browser's triangle is hidden. */
 .res-draft-summary { display: flex; align-items: center; gap: 0.6rem; list-style: none; cursor: pointer; padding: 0.5rem 0.3rem; font-size: 0.86rem; }
@@ -1444,7 +1459,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <!-- 数据与代码 (12.9): the lineage report as a list, and 关系图 (the
            canvas, no longer a destination of its own). -->
       <div id="data-switch" class="subnav hidden" role="tablist" aria-label="数据与代码" data-i18n-attr="aria-label">
-        <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>清单</button>
+        <button type="button" class="subnav-item" role="tab" data-subview="lineage" aria-selected="true" data-i18n>列表</button>
         <button type="button" class="subnav-item" role="tab" data-subview="canvas" aria-selected="false" data-i18n>关系图</button>
       </div>
       <!-- 研究路线 (18.3): the route map or the grouped list, one page with

@@ -132,9 +132,9 @@ def _results(root: Path, draft: str | None = None) -> dict:
 
 
 def _items(root: Path) -> dict[str, dict]:
-    """The figures and tables 图表与论断 lists, by path (a figure two drafts include is one row each; they agree)."""
+    """The figures and tables 图表与论断 lists, by path: one row each, in whichever of its four lists it stands (21.5, B3-2)."""
     page = _results(root)
-    return {i["path"]: i for i in [*(i for g in page["sections"] for i in g["items"]), *page["loose"]]}
+    return {i["path"]: i for key in ("items", "other", "loose", "excluded") for i in page[key]}
 
 
 def _page(root: Path, node: str) -> dict:
@@ -414,7 +414,7 @@ def test_the_endpoints_answer_with_the_candidates_and_the_entry_they_wrote_clear
         assert status == 200
         row = next(f for f in got["files"] if f["path"] == CHECK)
         candidate = row["broken"][0]["candidates"][0]
-        assert candidate["path"] == LOCK and "outputs" in got and got["choices"]["scripts"]
+        assert candidate["path"] == LOCK and "outputs" not in got and got["choices"]["scripts"]  # B3-2: no 任务输出 block, its rows are in the list
         status, written = _call(f"{base}/api/mappings/add", "POST", candidate["link"])
         assert status == 200 and written["ok"] and written["entry"]["from"] == LOCK and written["entry"]["to"] == CHECK
         status, got = _call(f"{base}/api/data-code")
@@ -428,7 +428,7 @@ def test_the_endpoints_answer_with_the_candidates_and_the_entry_they_wrote_clear
         status, got = _call(f"{base}/api/data-code")
         assert next(f for f in got["files"] if f["path"] == CHECK)["broken"][0]["candidates"][0]["path"] == LOCK
         status, results = _call(f"{base}/api/results")
-        assert status == 200 and "choices" in results and results["sections"]
+        assert status == 200 and "choices" in results and results["items"]
 
 
 def test_what_the_page_can_offer_no_action_for_is_quiet_even_in_the_paper():

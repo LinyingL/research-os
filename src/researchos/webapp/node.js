@@ -35,7 +35,10 @@
 //   POST /api/mappings/delete -- 「删除标注」 on a hand-drawn link, and 撤销
 //                                after 「是」;
 //   POST /api/judgements      -- 确认 / 否决 / 撤回 on a machine link;
-//   POST /api/notes           -- a note added, or my own note withdrawn.
+//   POST /api/notes           -- a note added, or my own note withdrawn;
+//   POST /api/papers          -- 「设为论文正文」 / 「不再作为论文正文」 ({draft, marked}) and 「不属于论文」 /
+//                                「放回论文」 ({file, not_in_paper}, 21.5); in a member's working copy they
+//                                travel with the next sync.
 // Every path or id sent comes from a server payload; nothing typed on the
 // page ever becomes a path.
 //
@@ -250,7 +253,8 @@
   const nav = { id: null, fromView: null, trail: [], graphOpen: false, notesDraft: new Map(), shownDiffs: new Set() };
   const dc = { filter: "all", data: null };
   let lastLink = null; // the entry the last 「是」 wrote, for 撤销 (18.3)
-  const res = { open: new Set(), drafts: new Map() };
+  let lastOut = null; // the figure or table the last 「不属于论文」 put out, for 撤销 (18.3, 21.5)
+  const res ={ open: new Set(), drafts: new Map() };
   let meCache = { epoch: -1, id: null, loaded: false };
 
   function now() { return new Date(); }
@@ -348,7 +352,7 @@
     const epoch = state.dataEpoch;
     const id = nav.id;
     if (!id) { activateView("desk"); return; }
-    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; }
+    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; lastOut = null; }
     let page, history, notes, me;
     try {
       page = await apiGet("/api/node?node=" + encodeURIComponent(id));
@@ -411,6 +415,7 @@
     if (page.type === "attempt") marks.appendChild(RODesk.verdictInline(d.verdict_status));
     if (page.path && page.exists === false) marks.appendChild(mk("span", "status-label tone-" + (page.tone === "quiet" ? "plain" : "clay"), t("文件不存在")));
     if (page.review) marks.appendChild(mk("span", "status-label tone-ochre", t("{n} 条关联待复核", { n: page.review })));
+    if (page.paper_item && page.paper_item.out) marks.appendChild(mk("span", "status-label tone-plain", t("不属于论文")));
     const own = ownMark(page);
     if (own) marks.appendChild(own);
     if (marks.childElementCount) head.appendChild(marks);
@@ -428,6 +433,10 @@
       const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");
       if (role !== "none") actions.appendChild(mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); }));
       if (d.basis) actions.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => ROTeam.openEvidence(page.id, { number: d.number, title: d.description })));
+    }
+    if (page.paper_item && page.paper_item.file) {
+      // 21.5: a figure or table's own page puts it out of the paper, or back
+      actions.appendChild(outButton({ path: page.paper_item.file, label: page.name, paper: page.paper_item }, { quiet: true }, status));
     }
     if (page.type === "variable") actions.appendChild(mkButton(t("打开定义卡"), "btn btn-small", () => openVariableCard(page.card || page.id.slice("variable:".length))));
     if (page.paper) {
@@ -1115,8 +1124,8 @@
     if (!c || c.mode !== "member") return "";
     const me = c.me && c.me.me ? c.me.me.id : t("你的邮箱");
     const what = { note: t("这条备注"), link: t("这条连线"), judgment: t("你的连线确认"),
-      unlink: t("这次删除"), paper: t("「设为论文正文」的标记") }[kind] || t("这条记录");
-    const record = kind === "link" ? t("正式的 mappings.toml") : kind === "paper" ? t("正式的 papers.toml") : t("正式记录");
+      unlink: t("这次删除"), paper: t("「设为论文正文」的标记"), notinpaper: t("「不属于论文」的标记") }[kind] || t("这条记录");
+    const record = kind === "link" ? t("正式的 mappings.toml") : (kind === "paper" || kind === "notinpaper") ? t("正式的 papers.toml") : t("正式记录");
     const then = kind === "unlink" ? t("PI 下次发布时从正式的 mappings.toml 里删去这条连线")
       : t("PI 下次发布时加入{record}", { record });
     const mine = c.share && c.share.mine && c.share.mine.path;
@@ -1318,11 +1327,84 @@
     return mk("span", "res-cause" + (trace.tone === "warning" ? " warn" : ""), found.map((c) => t(c.label)).join(t("；")));
   }
 
+  // 21.5: the small picture on a figure's row. The engine says whether the asset route can serve it (`thumb`: a png,
+  // jpeg, gif or webp that is there and not too large); it loads when it scrolls into view, and one that cannot be
+  // read leaves no broken image behind.
+  function thumbnail(item) {
+    if (!item.thumb || !item.path) return null;
+    const img = mk("img", "res-thumb");
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path);
+    img.addEventListener("error", () => { if (img.remove) img.remove(); });
+    return img;
+  }
+
+  // A quiet field of a row: its label (already in the page's language), then its values (links or plain text), as
+  // `res-field`.
+  function fieldLine(label, parts) {
+    const line = mk("div", "res-field");
+    line.appendChild(mk("span", "res-field-label", label));
+    parts.forEach((part, i) => {
+      if (i) line.appendChild(mk("span", "res-field-sep", t("、")));
+      line.appendChild(part);
+    });
+    return line;
+  }
+
+  // The attempts a row belongs to (21.5), as '#n 描述' (the engine's `attempt_labels`), the first two and how many
+  // there are in all; nothing at all for a row with none -- lacking an attempt is a warning only where the paper
+  // includes the file, and that is the row's state.
+  function attemptsLine(ids, labels) {
+    if (!ids || !ids.length) return null;
+    const names = labels || {};
+    const parts = ids.slice(0, 2).map((id) => link(names[id] || id, "", () => openNode(id), t("打开它的来龙去脉")));
+    const line = fieldLine(t("尝试"), parts);
+    if (ids.length > 2) line.appendChild(mk("span", "res-field-more", t("等 {n} 条", { n: ids.length })));
+    line.classList.add("res-attempts");
+    return line;
+  }
+
+  // The drafts that include a figure or table (21.5): one row names them all. Two of one name carry their nearest
+  // folder (`where`, from the engine).
+  function draftsLine(item, ctx) {
+    if (!item.drafts || !item.drafts.length) return null;
+    const nodes = ctx.nodes || {};
+    const where = ctx.where || {};
+    const parts = item.drafts.map((file) => {
+      const name = file.split("/").pop();
+      const shown = where[file] ? t("{name}（{folder}）", { name: name, folder: where[file] }) : name;
+      return nodes[file] ? link(shown, "", () => openNode(nodes[file]), t("打开这份文稿的页面")) : mk("span", null, shown);
+    });
+    const line = fieldLine(t("出现在"), parts);
+    line.classList.add("res-drafts-line");
+    return line;
+  }
+
+  // 「不属于论文」 / 「放回论文」 on a figure or table (21.5): one entry in papers.toml, written at once; the row moves,
+  // and 撤销 (18.3) stands at the top of the page until used. In a member's copy it travels with the next sync.
+  function outButton(item, ctx, status) {
+    const out = !!(item.paper && item.paper.out);
+    const b = mkButton(out ? t("放回论文") : t("不属于论文"), "btn btn-small", async () => {
+      const kept = lastOut;  // 撤销 is drawn by the reload the write ends with, so it is set before it
+      lastOut = !out && !ctx.quiet ? { file: item.path, name: item.title || item.label || item.path } : null;
+      const done = await writePaper({ file: item.path, not_in_paper: !out }, status, out ? t("已放回论文。") : t("已放到「不属于论文」里。"), b);
+      if (!done) lastOut = kept;
+    });
+    const blocked = humanRecordsBlocked();
+    if (blocked) { b.disabled = true; b.title = blocked; }
+    const travels = travelsWords("notinpaper");
+    if (travels) b.title = (b.title ? b.title + "\n" : "") + travels;
+    return b;
+  }
+
   function resultRow(item, ctx) {
     const li = mk("li", "res-row");
     li.appendChild(mk("span", "res-kind", t(item.kind || item.type_label || "")));
+    const picture = thumbnail(item);
+    if (picture) li.appendChild(picture);
     const main = mk("div", "res-main");
-    const name = link(item.label, "", () => openNode(item.id), t("打开它的来龙去脉"));
+    const name = link(item.title || item.label, "", () => openNode(item.id), t("打开它的来龙去脉"));
     main.appendChild(name);
     if (item.path) main.appendChild(mk("span", "res-path mono", item.path));
     if (item.exists === false) main.appendChild(mk("span", "status-label tone-" + (item.in_paper ? "clay" : "plain"), t("文件不存在")));
@@ -1330,21 +1412,67 @@
     if (own) main.appendChild(own);
     const cause = causeLine(item.trace);
     if (cause) main.appendChild(cause);
-    // 21.5: the action beside what is missing -- a generating script, or an attempt.
+    const drafts = ctx && draftsLine(item, ctx);
+    if (drafts) main.appendChild(drafts);
+    const attempts = attemptsLine(item.attempts, ctx && ctx.labels);
+    if (attempts) main.appendChild(attempts);
+    // 21.5: the actions beside what is missing -- a generating script, or an attempt -- and 「不属于论文」, on one line.
     const repair = item.trace && item.trace.repair;
-    if (repair && ctx) {
-      const stands = { type: item.type, id: item.id, path: item.path, name: item.label, choices: ctx.choices, refresh: ctx.refresh };
-      const action = mk("div", "res-repair");
-      action.appendChild(repairControl(stands, repair.type));
-      main.appendChild(action);
+    const put = ctx && item.paper && item.path;
+    if (ctx && (repair || put)) {
+      const actions = mk("div", "res-repair");
+      if (repair) actions.appendChild(repairControl({ type: item.type, id: item.id, path: item.path, name: item.label, choices: ctx.choices, refresh: ctx.refresh }, repair.type));
+      if (put) {
+        const status = mk("div", "notice-status");
+        actions.append(outButton(item, ctx, status), status);
+      }
+      main.appendChild(actions);
     }
     li.append(main, stateLabel(item.trace));
     return li;
   }
 
+  function rowList(items, ctx) {
+    const ul = mk("ul", "res-list");
+    items.forEach((item) => ul.appendChild(resultRow(item, ctx)));
+    return ul;
+  }
+
+  // The line under 图与表 for the paper's open work (21.5): how many of the figures and tables it includes are
+  // warnings. What was put out of the paper is not counted.
+  function openLine(count) {
+    if (!count) return null;
+    return mk("p", "node-sub res-open warn", t("论文用到的图和表里，{n} 项缺来源或缺尝试。", { n: count }));
+  }
+
+  // A line for a registered-outputs read that was not whole (19.6): the rows still list, without the titles and attempts
+  // the unreadable catalogs would have given.
+  function registeredNote(registered) {
+    if (!registered || !registered.error) return null;
+    const line = mk("p", "notice-status err", t("输出清单暂时无法读取。"));
+    (registered.broken || []).slice(0, 3).forEach((file) => line.appendChild(mk("span", "mono lit-hint", " " + file)));
+    return line;
+  }
+
+  // 撤销 after 「不属于论文」 (18.3), drawn on the page the write reloaded, until used or the next fresh visit.
+  function outNotice() {
+    if (!lastOut) return null;
+    const box = mk("div", "dc-undo");
+    const status = mk("span", "notice-status");
+    const done = lastOut;
+    const undo = mkButton(t("撤销"), "btn btn-small", async () => {
+      lastOut = null;
+      if (!(await writePaper({ file: done.file, not_in_paper: false }, status, t("已放回论文。"), undo))) lastOut = done;
+    });
+    const blocked = humanRecordsBlocked();
+    if (blocked) { undo.disabled = true; undo.title = blocked; }
+    box.append(mk("span", "dc-undo-text", t("已放到「不属于论文」里：{name}", { name: done.name })), undo, status);
+    return box;
+  }
+
   async function loadResults(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
+    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastOut = null; }
     let data;
     try {
       data = await apiGet("/api/results");
@@ -1358,31 +1486,36 @@
     const top = window.scrollY;
     host.innerHTML = "";
     const page = mk("div", "results");
-    if (data.outputs) renderRegisteredOutputs(page, data.outputs);
+    const undone = outNotice();
+    if (undone) page.appendChild(undone);
+    const note = registeredNote(data.registered);
+    if (note) page.appendChild(note);
     if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(page, data.research_records);
     page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉。论文用到的图和表如果缺来源或缺尝试，会标成红色，并在旁边给出补救的办法；其余的只淡淡地说一句。")));
-    const ctx = { choices: data.choices || {}, refresh: () => loadResults(host, true) };
+    renderPaperChoice(page, data);
+    const nodes = {};
+    (data.drafts || []).forEach((d) => { nodes[d.file] = d.node; });
+    const ctx = { choices: data.choices || {}, refresh: () => loadResults(host, true), labels: data.attempt_labels || {},
+      nodes: nodes, where: (data.where && data.where.drafts) || {} };
+    const items = data.items || [], other = data.other || [], loose = data.loose || [], excluded = data.excluded || [];
     const figs = mk("section", "res-block");
     figs.appendChild(mk("h2", "desk-title", t("图与表")));
-    if (!data.sections.length && !data.loose.length) figs.appendChild(mk("p", "node-empty", t("文稿里还没有引用图或表。")));
-    data.sections.forEach((g) => {
+    const open = openLine((data.counts || {}).open);
+    if (open) figs.appendChild(open);
+    if (!items.length && !other.length && !loose.length && !excluded.length) figs.appendChild(mk("p", "node-empty", t("文稿里还没有引用图或表。")));
+    if (items.length) figs.appendChild(rowList(items, ctx));
+    if (loose.length) {
       const group = mk("div", "res-group");
-      const title = mk("div", "res-group-title");
-      title.append(mk("span", "res-group-file mono", g.file || ""), link(g.title || "", "", () => openNode(g.section)));
-      group.appendChild(title);
-      const ul = mk("ul", "res-list");
-      g.items.forEach((item) => ul.appendChild(resultRow(item, ctx)));
-      group.appendChild(ul);
-      figs.appendChild(group);
-    });
-    if (data.loose.length) {
-      const group = mk("div", "res-group");
-      group.appendChild(mk("div", "res-group-title", t("没有被文稿引用的图")));
-      const ul = mk("ul", "res-list");
-      data.loose.forEach((item) => ul.appendChild(resultRow(item, ctx)));
-      group.appendChild(ul);
+      group.appendChild(mk("div", "res-group-title", t("没有被文稿引用的图和表")));
+      group.appendChild(rowList(loose, ctx));
       figs.appendChild(group);
     }
+    // 21.5: what only the drafts the paper does not include cite, and what the researcher put out of the paper, are
+    // folded away: neither is the paper's open work.
+    if (other.length) figs.appendChild(fold(t("其他文稿（{n}）", { n: other.length }), (body) => body.appendChild(rowList(other, ctx)), "res-fold"));
+    if (excluded.length) figs.appendChild(fold(t("不属于论文（{n}）", { n: excluded.length }), (body) => {
+      body.appendChild(rowList(excluded, ctx));
+    }, "res-fold"));
     page.appendChild(figs);
     const claims = mk("section", "res-block");
     claims.appendChild(mk("h2", "desk-title", t("论断")));
@@ -1393,28 +1526,33 @@
     if (refresh) window.scrollTo(0, top);
   }
 
-  // 12.13: 「设为论文正文」 / 「不再作为论文正文」 -- one entry appended to
-  // .researchos/papers.toml; in a member's copy it travels with the next sync.
-  // 18.4 item 1: as every other write of the page does, it keeps the generation
-  // the POST returns (so the poll does not find a move this page has already
-  // read) and refreshes the page's views itself -- once, not once here and
-  // again when the poll sees the generation move.
+  // 12.13, 21.5: a draft marked 「设为论文正文」 or not any more, or a figure or table put out of the paper or back --
+  // one entry appended to .researchos/papers.toml; in a member's copy it travels with the next sync. 18.4 item 1: as
+  // every other write of the page does, it keeps the generation the POST returns (so the poll does not find a move
+  // this page has already read) and refreshes the page's views itself -- once, not once here and again when the poll
+  // sees the generation move. Resolves to whether it was written.
+  async function writePaper(body, status, done, button) {
+    if (button) button.disabled = true;
+    setStatus(status, "", t("正在记下…"));
+    let res;
+    try {
+      res = await apiPost("/api/papers", body);
+    } catch (err) {
+      if (button) button.disabled = false;
+      setStatus(status, "err", t("没能记下"), err);
+      return false;
+    }
+    setStatus(status, "ok", done);
+    if (res && typeof res.generation === "number" && typeof lastGeneration !== "undefined") lastGeneration = res.generation;
+    if (typeof refreshCurrentView === "function") await refreshCurrentView();
+    return true;
+  }
+
+  // 「设为论文正文」 / 「不再作为论文正文」 on a draft's own page and for a draft of the paper.
   function paperButton(draft, marked, status) {
-    const b = mkButton(marked ? t("不再作为论文正文") : t("设为论文正文"), "btn btn-small", async () => {
-      b.disabled = true;
-      setStatus(status, "", t("正在记下…"));
-      let res;
-      try {
-        res = await apiPost("/api/papers", { draft: draft, marked: !marked });
-      } catch (err) {
-        b.disabled = false;
-        setStatus(status, "err", t("没能记下"), err);
-        return;
-      }
-      setStatus(status, "ok", marked ? t("已不再作为论文正文。") : t("已设为论文正文：它的论断会出现在图表与论断里。"));
-      if (res && typeof res.generation === "number" && typeof lastGeneration !== "undefined") lastGeneration = res.generation;
-      if (typeof refreshCurrentView === "function") await refreshCurrentView();
-    });
+    const b = mkButton(marked ? t("不再作为论文正文") : t("设为论文正文"), "btn btn-small", () =>
+      writePaper({ draft: draft, marked: !marked }, status,
+        marked ? t("已不再作为论文正文。") : t("已设为论文正文：它的论断会出现在图表与论断里。"), b));
     const blocked = humanRecordsBlocked();
     if (blocked) { b.disabled = true; b.title = blocked; }
     const travels = travelsWords("paper");
@@ -1436,54 +1574,103 @@
     return svg;
   }
 
-  // 12.13: every draft on its own line, with the mark; claims only under
-  // a draft marked 「设为论文正文」.
-  function renderPapers(section, data) {
+  // 21.5: the paper is chosen once. The drafts of the paper stand in a line each, with 「不再作为论文正文」; one control,
+  // 「设为论文正文」, opens the list of the drafts it can still take -- the one changed most recently first, five shown
+  // and the rest under 「更多」 -- and choosing one writes the mark. A paper can be several drafts (the main text and
+  // an appendix).
+  function renderPaperChoice(page, data) {
     const papers = data.papers || {};
     const drafts = data.drafts || [];
     const marked = drafts.filter((d) => d.marked);
+    const block = mk("section", "res-block res-paper");
+    block.appendChild(mk("h2", "desk-title", t("论文正文")));
     if (papers.message) {
       const p = mk("p", "trace-break");
       renderBlockingError(p, papers.message, "");
-      section.appendChild(p);
+      block.appendChild(p);
     }
+    const status = mk("div", "notice-status");
     if (!drafts.length) {
-      section.appendChild(mk("p", "node-empty", t("还没有读到文稿。")));
+      block.appendChild(mk("p", "node-empty", t("还没有读到文稿。")));
+      page.appendChild(block);
       return;
     }
     if (!marked.length) {
-      section.appendChild(mk("p", "node-sub", t("图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
-        t("在下面的文稿旁点「设为论文正文」，或在文稿自己的页面上点它。")));
+      block.appendChild(mk("p", "node-sub", t("图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
+        t("点「设为论文正文」，从文稿里选一份；在选定之前，所有文稿的图和表都当作论文用到的。")));
     } else {
-      section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));
+      const ul = mk("ul", "res-list res-paper-list");
+      marked.forEach((d) => {
+        const li = mk("li", "res-row");
+        const main = mk("div", "res-main");
+        main.append(link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
+          mk("span", "node-sub-inline", t("{n} 条论断", { n: d.claims })));
+        li.append(main, paperButton(d.file, true, status));
+        ul.appendChild(li);
+      });
+      block.appendChild(ul);
     }
-    const status = mk("div", "notice-status");
+    const byFile = {};
+    drafts.forEach((d) => { byFile[d.file] = d; });
+    const choices = (papers.recent || []).map((file) => byFile[file]).filter(Boolean);
+    if (choices.length) {
+      const shown = papers.shown || 5;
+      const control = mk("div", "res-picker");
+      const list = mk("div", "res-picker-list hidden");
+      const pick = (d) => {
+        const row = mk("div", "res-picker-row");
+        const b = mkButton(d.file, "node-link mono", () => writePaper({ draft: d.file, marked: true }, status,
+          t("已设为论文正文：它的论断会出现在图表与论断里。"), b));
+        const blocked = humanRecordsBlocked();
+        if (blocked) { b.disabled = true; b.title = blocked; }
+        row.appendChild(b);
+        if (d.modified) row.appendChild(mk("span", "node-sub-inline", t("改动于 {when}", { when: when(d.modified) })));
+        return row;
+      };
+      choices.slice(0, shown).forEach((d) => list.appendChild(pick(d)));
+      if (choices.length > shown) {
+        const more = mk("details", "dc-fold res-picker-more");
+        const summary = mk("summary", "res-draft-summary");
+        summary.append(chevron(), mk("span", null, t("更多")));
+        const body = mk("div", "dc-fold-body");
+        choices.slice(shown).forEach((d) => body.appendChild(pick(d)));
+        more.append(summary, body);
+        list.appendChild(more);
+      }
+      const open = mkButton(t("设为论文正文"), "btn btn-small", () => {
+        const shownNow = list.classList.contains("hidden");
+        list.classList.toggle("hidden", !shownNow);
+        open.setAttribute("aria-expanded", String(shownNow));
+      });
+      open.setAttribute("aria-expanded", "false");
+      const blocked = humanRecordsBlocked();
+      if (blocked) { open.disabled = true; open.title = blocked; }
+      const travels = travelsWords("paper");
+      if (travels) open.title = (open.title ? open.title + "\n" : "") + travels;
+      control.append(open, list);
+      block.appendChild(control);
+    }
+    block.appendChild(status);
+    page.appendChild(block);
+  }
+
+  // 12.13: the claims of the drafts marked 「设为论文正文」, each loaded when it is opened.
+  function renderPapers(section, data) {
+    const marked = (data.drafts || []).filter((d) => d.marked);
+    if (!marked.length) {
+      section.appendChild(mk("p", "node-sub", t("还没有选定论文正文，这里暂时没有论断。")));
+      return;
+    }
+    section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));
     const list = mk("div", "res-drafts");
-    drafts.forEach((d) => list.appendChild(d.marked ? draftClaims(d, status) : draftLine(d, status)));
-    section.append(list, status);
-    const travels = travelsWords("paper");
-    if (travels) section.appendChild(mk("p", "node-sub writes", travels));
+    marked.forEach((d) => list.appendChild(draftClaims(d)));
+    section.appendChild(list);
   }
 
-  function draftLine(d, status) {
-    const row = mk("div", "res-draft res-draft-plain");
-    const head = mk("div", "res-draft-summary");
-    head.append(link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
-      mk("span", "node-sub-inline", d.claims ? t("{n} 处带数字的句子，不列出", { n: d.claims }) : t("没有带数字的句子")));
-    head.appendChild(paperButton(d.file, false, status));
-    row.appendChild(head);
-    return row;
-  }
-
-  function draftClaims(c, status) {
+  function draftClaims(c) {
     const box = mk("details", "res-draft");
     const summary = mk("summary", "res-draft-summary");
     summary.append(chevron(), mk("span", "mono", c.file), mk("span", "node-sub-inline", t("{n} 条论断", { n: c.claims != null ? c.claims : c.count })));
-    if (status) {
-      const off = paperButton(c.file, true, status);
-      off.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); }); // not a toggle
-      summary.appendChild(off);
-    }
     box.appendChild(summary);
     const body = mk("div", "res-draft-body");
     box.appendChild(body);
@@ -1582,12 +1769,15 @@
     kind.append(icon(f.type), mk("span", null, t(f.type_label)));
     const main = mk("div", "dc-main");
     const head = mk("div", "dc-head");
-    head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
+    // 21.5: a file an agent or a person registered shows the title it was registered with, its path beside it
+    if (f.title) head.append(link(f.title, "", () => openNode(f.id), t("打开它的来龙去脉")), mk("span", "res-path mono", f.path));
+    else head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
     // 21.5: a file that is not there, or a script that cannot be read, is a plain fact; the script that names the
     // missing file carries the warning.
     if (f.exists === false) head.appendChild(mk("span", "status-label tone-plain", t("文件不存在")));
     if (f.unreadable) head.appendChild(mk("span", "status-label tone-plain", t("暂时无法读取")));
     if (f.no_generator === "warning") head.appendChild(mk("span", "status-label tone-clay", t("缺生成脚本")));
+    if (f.paper && f.paper.out) head.appendChild(mk("span", "status-label tone-plain", t("不属于论文")));
     if (f.review) {
       const tag = mkButton(t("{n} 条关联待复核", { n: f.review }), "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
       tag.title = t("打开待复核的连线确认");
@@ -1597,8 +1787,16 @@
     if (own) head.appendChild(own);
     main.appendChild(head);
     fileRelations(f).forEach((line) => main.appendChild(mk("div", "dc-rel", line)));
+    const attempts = attemptsLine(f.attempts, ctx && ctx.labels);  // 21.5: the attempt it belongs to, if it has one
+    if (attempts) main.appendChild(attempts);
     if (f.no_generator && ctx) main.appendChild(noGenerator(f, ctx));
     (f.broken || []).forEach((b) => main.appendChild(brokenLine(b, ctx)));
+    if (f.paper && ctx) {  // a table the paper includes, or one put out of it (21.5)
+      const status = mk("div", "notice-status");
+      const put = mk("div", "res-repair");
+      put.append(outButton({ path: f.path, label: f.path, title: f.title, paper: f.paper }, ctx, status), status);
+      main.appendChild(put);
+    }
     if (f.other_copies && f.other_copies.length) {
       main.appendChild(fold(t("其他同名文件 {n} 个", { n: f.other_copies.length }), (body) => f.other_copies.forEach((p) => body.appendChild(mk("div", "dc-rel mono", p)))));
     }
@@ -1608,7 +1806,7 @@
 
   async function loadDataCode(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; }
+    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; lastOut = null; }
     let data;
     try {
       data = await apiGet("/api/data-code");
@@ -1623,14 +1821,13 @@
     const top = window.scrollY;
     host.innerHTML = "";
     const bar = mk("div", "dc-filters");
-    if (data.outputs) renderRegisteredOutputs(host, data.outputs);
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", t("筛选"));
     const counts = Object.assign({}, data.counts || {});
     counts.chains = (data.files || []).filter((f) => inFilter(f, "chains")).length;
     counts.missing = counts.no_generator;
     const again = () => loadDataCode(host, true);
-    const ctx = { choices: data.choices || {}, refresh: again };
+    const ctx = { choices: data.choices || {}, refresh: again, labels: data.attempt_labels || {} };
     const list = mk("ul", "dc-list");
     const draw = () => {
       list.innerHTML = "";
@@ -1649,6 +1846,10 @@
     const stata = mk("div", "dc-stata-slot");
     const undone = undoNotice(again);
     if (undone) host.appendChild(undone);
+    const putOut = outNotice();
+    if (putOut) host.appendChild(putOut);
+    const note = registeredNote(data.registered);
+    if (note) host.appendChild(note);
     host.append(stata, bar, list);
     draw();
     host.dataset.loaded = "1";

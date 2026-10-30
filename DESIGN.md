@@ -3113,7 +3113,9 @@ and review notes. 成果 shows figures and tables, and claims only from drafts
 the researcher marks 「设为论文正文」 — a list kept in
 `.researchos/papers.toml`, snapshotted like the other record files. With
 none marked, 成果 says how to mark one. Disclosure of a draft's claims uses a
-quiet line chevron, not the browser's triangle.
+quiet line chevron, not the browser's triangle. (*Amended by 21.5, B3-2*: the
+mark is one control with a picker, not a button on each draft; a figure or table
+can be put out of the paper in the same file.)
 
 *Two folders for a member* (personal OneDrive). Sharing a subfolder with
 other rights than its parent makes it a separate shortcut on the member's
@@ -5729,6 +5731,8 @@ binding like the rest of this section:
    stand under one heading per task: the title of its result record (the record's first
    heading), else the task's first line cut as before, with the date of the run that produced
    the files; 「打开结果」 is on the heading, once. A row no longer repeats the task.
+   (*Amended by 21.5, B3-2*: 图表与论断 and 数据与代码 draw no such block; a registered
+   file is a row there, saying its attempt. 文献 and 变量 keep theirs.)
 4. **A file's date is its run's.** An entry a person registers from a run's created files
    (19.5, the earlier-runs list) also records that `run`; every date shown for an entry with a
    run is that run's start (its id), else `at`.
@@ -6620,7 +6624,8 @@ attempts.py`; `research_records.assessment_statuses`).
     script names it.
   - **Counts and filters of 数据与代码**: 缺生成脚本 and 断链 count warnings and
     show the warning colour while they count some; 没有生成脚本 (the downloads),
-    中间数据 and 同名文件 are neutral facts.
+    中间数据 and 同名文件 are neutral facts. A table put out of the paper
+    (below) leaves 缺生成脚本 for 没有生成脚本.
   - **Same name.** 「其他同名文件 n 个」 is folded on every row, with 「展开」 (「收起」
     open) and 12.13's chevron. A list of readers, writers, reads or writes that
     names two or more scripts of one name shows each with the fewest nearest
@@ -6631,15 +6636,71 @@ attempts.py`; `research_records.assessment_statuses`).
     the action; any other: the same gap in no colour); its broken links are
     drawn under the trace with the candidates; 文件不存在 is plain, except on
     a file a broken link names in the trace and on a figure or table of the paper.
-  - *Not in B3-1:* 「不属于论文」, kept in `.researchos/papers.toml` as
-    `not_in_paper` (a list of paths), which stops a figure or file counting as
-    open work; and no page of the app counts the paper's open work as a number
-    yet, so nothing needs to agree with the counts above.
-- **The paper is chosen once.** 设为论文正文 offers the drafts changed most
-  recently first (five shown, the rest under 「更多」). Once chosen, 图表与论断
-  shows that paper's figures and claims first; other drafts are under 「其他
-  文稿」. A figure that several drafts include is one row naming its drafts.
-  Figure rows carry a small thumbnail.
+- **The paper is chosen once** (*amended, B3-2*: this was one sentence; it says
+  what the pages do now).
+  - **One control, a picker.** 图表与论断 has one 「设为论文正文」, not a button on
+    each draft. It opens the list of the drafts the paper can still take -- the
+    files the index read as drafts, except the attempt table's own --, the one
+    changed most recently first (the file's modification time; each with the day
+    it changed), **five shown and the rest under 「更多」**; choosing one writes the
+    mark through the path the button always had (`POST /api/papers {draft,
+    marked}`, `papers.toml`, 12.13; in a member's copy it is written in the
+    working copy and travels with the next sync, 12.12). The drafts of the paper
+    stand above the control, each with its claim count and 「不再作为论文正文」: a
+    paper may be several drafts (the main text and an appendix). A draft's own
+    page keeps its 「设为论文正文」.
+  - **The paper first.** 图与表 is one row per figure or table, in four lists:
+    the paper's (a section of a marked draft includes it; with no draft marked,
+    every draft stands for the paper and says so); the figures and registered
+    files no draft cites (「没有被文稿引用的图和表」); then, folded with 12.13's
+    chevron, 「其他文稿」 (included only by drafts the paper does not include)
+    and 「不属于论文」 (below). **A figure that several drafts include is one row
+    naming them** (「出现在」, the paper's draft first; two drafts of one name
+    carry their folder). A line under the heading counts the paper's open work:
+    its rows that are warnings (`counts.open`, in the warning colour; nothing
+    is said at none). Claims are listed for the paper's drafts only.
+  - **A thumbnail** stands on the row of a figure the asset route can serve: a
+    png, jpeg, gif or webp that is there and under 8 MB (`thumb`, said by the
+    engine), loaded lazily from `/api/workspace/asset`. A .pdf or .svg, a file
+    that is gone and one that is too large have none, and a picture that cannot
+    be read removes itself: never a broken image.
+- **「不属于论文」 and 「放回论文」** (*B3-2*; the `not_in_paper` of B3-1 is the
+  act's name). A figure or table that is not part of the paper -- a .svg or .tif
+  copy of a plot, a by-product -- is put out with a button on its row (图表与论断,
+  any list), on its own page and, for a table the paper includes, on 数据与代码;
+  「放回论文」 puts it back. Each is **one entry in `.researchos/papers.toml`**,
+  the event log of 12.13, in its form: a `[[paper]]` with `id`, `seq`, `at`, `by`
+  and `via` and `act = "not_in_paper"` (or `"back_in_paper"`), the file in
+  `file` -- an entry that marks a draft names it in `draft`, and the two kinds do
+  not touch each other. A file is out when its newest such entry is
+  `not_in_paper`; the file is its own history, and nothing on disk is moved.
+  `POST /api/papers {file, not_in_paper}` writes it at once, and 撤销 (18.3)
+  on the page it reloads writes the next entry. A member's is written in the
+  working copy and carried by the next sync like the mark: the PI's next
+  publish appends it with the member's `by`; no approval waits for either (12.4).
+  A file put out is not what the paper includes, whatever a draft cites: it is
+  quiet (above), not in the open count, and on 数据与代码 a table of the paper
+  that is put out leaves 缺生成脚本 and is counted as 没有生成脚本. Its row
+  stands under the folded 「不属于论文」 with the day (and, in a team, who), and
+  the group lists a file that has gone from the index too, so that it can be put
+  back.
+- **The kind pages list by kind, and each row says its attempt** (21 intro,
+  decision 5; *B3-2*). The 任务输出 block that opened 图表与论断 and 数据与代码
+  is gone: what an agent produced is seen in its handback (21.2). A file an
+  agent or a person registered (19.5) is a row of its kind like any other file --
+  a figure or table on 图表与论断, a script or data file on 数据与代码, with the
+  title it was registered with and its path beside it, also when the index holds
+  no node for it (a document is seen in its handback, not listed by kind). A row
+  says its attempt as a quiet field, 「尝试 #n 描述」 (the first two, and
+  「等 n 条」), from `researchos.kind_rows`: **the attempt of the task whose output
+  it is** (`now_doing.placed_reports`, the one notion of the attempt a report
+  belongs to: the task's own, else the first its research context links), else
+  **the attempts the researcher filed it under** (`trace.attempt_members`: the
+  step files an attempt names and 「归入尝试」) -- for a figure or table, the
+  attempts its trace finds, which its own page says too. A row with neither
+  says nothing: lacking an attempt is a warning only for what the paper includes,
+  and that is the row's state. A catalog that cannot be read costs the titles and
+  attempts and is said in one line; the rows still list.
 
 ### 21.6 Words (amends 13.4)
 
@@ -6756,9 +6817,15 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    `check_R_environment.R`'s 断链 offers
    `00_Current/replication_v9/environment/R_packages.lock.csv` under 「是这个吗？」,
    the other copies of the file under 「其他同名文件 n 个」, and one 「是」 makes
-   the row stop saying 断链; every row's same-name files are folded; 「不属于论文」
-   removes a by-product figure from open work and the chosen paper's figures come
-   first (*not yet built*).
+   the row stop saying 断链; every row's same-name files are folded (*amended,
+   B3-2*): the paper is chosen with one 「设为论文正文」 and its picker (the
+   drafts changed most recently first, five shown, 「更多」), and then 图表与论断
+   lists its figures first with 其他文稿 folded and a figure of two drafts one
+   row naming both, each figure with a small picture and each row of 图表与论断
+   and 数据与代码 saying its attempt; 「不属于论文」 on a by-product (a .svg copy of
+   a plot) is one entry in `papers.toml`, takes it out of the open count and
+   puts it under the folded 「不属于论文」, and 「放回论文」 reverses it; the
+   任务输出 block is gone from both pages.
 6. No screen uses a retired word of 21.6; the glossary test covers the new
    rows; English mode shows the new words.
 7. One primary button per page; no title or status drawn as a button; the
