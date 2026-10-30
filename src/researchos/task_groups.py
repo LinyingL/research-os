@@ -177,26 +177,28 @@ def _common(strings: list[str]) -> str:
 
 def _table(root: Path) -> dict[str, Any]:
     """What the new rows are numbered and dated by: whether the project has an attempt table at all (`config`), the
-    greatest whole number in it (the same `defaultNewNumber` the form uses: "14a" counts as 14) and whether it dates
-    its rows `MM-DD` (as `defaultDateValue`)."""
+    greatest whole number in it (the same `defaultNewNumber` the form uses: "14a" counts as 14), the numbers it holds as
+    written (`numbers`: the page leaves a group the number it carries while the table does not have it) and whether it
+    dates its rows `MM-DD` (as `defaultDateValue`)."""
     try:
         attempts_ingest.load_config(root)
         config = True
     except (attempts_ingest.AttemptsConfigError, OSError, ValueError, TypeError):
         config = False
-    biggest, short = 0, False
+    biggest, short, numbers = 0, False, []
     try:
         path = paths.graph_db_path(root)
         if path.is_file() and not paths.is_dataless(path):
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
                 for (raw,) in conn.execute("SELECT attrs FROM nodes WHERE type = 'attempt'"):
                     attrs = json.loads(raw)
+                    numbers.append(str(attrs.get("number") or "").strip())
                     found = re.match(r"\s*(\d+)", str(attrs.get("number") or ""))
                     biggest = max(biggest, int(found.group(1))) if found else biggest
                     short = short or bool(re.match(r"\d{2}-\d{2}", str(attrs.get("date") or "")))
     except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError, paths.IdentityUnavailableError):
         pass
-    return {"config": config, "biggest": biggest, "short": short}
+    return {"config": config, "biggest": biggest, "short": short, "numbers": [n for n in dict.fromkeys(numbers) if n]}
 
 
 def pending_marker(root: Path) -> str:
@@ -218,8 +220,9 @@ def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     (`version` | `term`), `term` (what the tasks share), `tasks` (their ids, in list order), `after` (task id to the id of
     the task it continues: those placed by rule 3) and `attempt` -- the row
     to write: `number`, `date`, `description`, `variables`, `result` (empty) and `verdict` (the marker of 待定) --
-    with `verdict_status` as the page words it; `ungrouped` (ids in no group); and `duplicates`, each `task`,
-    `same_as` and `number` (the place of that task in the list). Reads only."""
+    with `verdict_status` as the page words it; `ungrouped` (ids in no group); `duplicates`, each `task`,
+    `same_as` and `number` (the place of that task in the list); and `numbers`, the attempt numbers the table holds,
+    as written (the page keeps a group's number while it is not among them). Reads only."""
     root = workspace._root(root)  # noqa: SLF001
     tasks, raw = workspace._read_tasks(root)  # noqa: SLF001
     facts = _table(root)
@@ -292,7 +295,7 @@ def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     grouped = {tid for group in out for tid in group["tasks"]}
     return {"tasks_revision": workspace._revision(raw), "table": facts["config"],  # noqa: SLF001
             "tasks": list(info.values()), "groups": out,
-            "ungrouped": [tid for tid in info if tid not in grouped], "duplicates": duplicates}
+            "ungrouped": [tid for tid in info if tid not in grouped], "duplicates": duplicates, "numbers": facts["numbers"]}
 
 
 def _term_groups(left: list[str], squashed: dict[str, str], info: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

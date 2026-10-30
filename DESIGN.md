@@ -5980,7 +5980,9 @@ The engine answers `GET /api/workspace/task-groups` (a read) with the tasks
 (each with `asked_of`, the owners' names when the same question went to
 several agents), the groups with their prefilled attempt and their `after`
 (task id to the id of the task it continues, from rule 3), the tasks in no
-group and the duplicates. `POST /api/workspace/task-groups` takes one group
+group, the duplicates and `numbers`, the attempt numbers the table holds as
+written (the page keeps a group's number while the table does not have it).
+`POST /api/workspace/task-groups` takes one group
 the person kept — the attempt's number, date and name, the ids of its tasks
 and optionally `after` — and writes the row through the write the
 new-attempt form uses (`proposals.write_directly`: the dry run, the conflict
@@ -6005,14 +6007,21 @@ leaves out its `after` when the earlier task is moved out of the group.
 A task of several lines is shown by its first line, cut at 90 characters (the
 report's title at 50), and its buttons are named by that line cut at 40, with no
 line break in the name.
-The numbers the groups carry follow the table: once a group is written, the
-groups left move to the next free numbers (the greatest whole number in the
-table plus one, in the order shown), except a number the person typed, which
-stays and which the others step round — so confirming the next group is not
-refused for a number the one before has just taken. Leaving the panel after
-a change asks first, as the other forms of the home do. In a project with no
-attempt table the first group confirmed makes the table first, as the
-new-attempt form does.
+The numbers the groups carry follow the table: once a group is written, a
+group left keeps its number while that number is still free — not in the table
+(`numbers`) and not carried by another group shown — so confirming the groups
+in any order leaves no gaps (on a table with no rows, Sword v0, v0.2 and v0.3
+confirmed in that order are #4, #5 and #6 while the three groups shown before
+them keep 1, 2 and 3). Only a group whose number is now taken moves, to the
+next free one: the greatest whole number among the table's numbers and those
+the other groups carry, plus one (“14a” counts as 14) — so confirming the next
+group is not refused for a number the one before has just taken. A number the
+person typed never changes; of two groups that carry one number, the one the
+person did not type moves (the later one when neither was typed; neither when
+both were, and the engine then refuses the second as it does any taken number).
+Leaving the panel after a change asks first, as the other forms of the home do.
+In a project with no attempt table the first group confirmed makes the table
+first, as the new-attempt form does.
 
 ### 21.2 The handback
 
@@ -6048,12 +6057,15 @@ this Mac under the Research OS home, never in the project.
   its state, 越过了限制, and a task whose run did so reads that on the card and
   in the attempt's panel, not 等你看 or 已完成.
 - **A handback without the fields** (a report written before them, or by an
-  agent that left them out) says in one line 「这份交回没有附上要点。」 and, when
-  its Section 20 context has them, shows the context's finding in the
-  headline's place under 「发现与解释」, then 「局限与待确认」 and 「下一步」 when
-  present -- the names the key points editor gives them (20.1). A report with
-  neither the 21.2 fields nor a finding, and one whose context cannot be read,
-  is shown unfolded, so that the person reads something; any other is folded.
+  agent that left them out) shows, when its Section 20 context has them, the
+  context's finding in the headline's place under 「发现与解释」, then 「局限与待确认」
+  and 「下一步」 when present -- the names the key points editor gives them
+  (20.1); these are the report's 要点 (21.6). Only when it holds none of the
+  three does it say in one line 「这份交回没有附上要点。」 (This handback has no
+  key points.), and never above them. A report with neither the 21.2 fields
+  nor a finding, and one whose context cannot be read, is shown unfolded, so
+  that the person reads something; any other is folded (one that holds limits
+  or a next step but no finding is unfolded below them, with no such line).
 - **Confirming** writes the attempt's research assessment through the same
   write as the panel (18.3: only the changed cell, backup, history, conflict
   check). The history entry reads 「由 张三 确认（采纳 Claude Code · sonnet 的
@@ -6392,7 +6404,9 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    or stay in none (the data-source tasks, 4 and 15, are not proposed as one
    attempt: the person moves 15 into the group of 4 if they want one); after
    confirming, the route map shows those attempts with their tasks counted,
-   and 项目首页's 进行中的尝试 shows them.
+   and 项目首页's 进行中的尝试 shows them. Confirmed in that order, on a table
+   with no rows, they are written as #4, #5 and #6, the groups still shown
+   keeping 1, 2 and 3.
 2. A real agent run on a task under an attempt hands back a headline, key
    numbers (each found in its file), what is undone, questions and a
    suggested assessment; 「确认这个判断」 writes the cell in the file's form and

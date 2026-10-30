@@ -837,7 +837,7 @@ _NO_21_2 = dict(headline="", key_numbers=[], undone="", decide=[], suggested=Non
 
 @needs_node
 @pytest.mark.parametrize("lang", ["zh", "en"])
-def test_a_handback_with_no_headline_shows_the_contexts_finding_limits_and_next_step_in_its_place_and_keeps_the_note_and_the_report_folded(root, pid, report, lang):
+def test_a_handback_with_no_headline_shows_the_contexts_finding_limits_and_next_step_in_its_place_and_the_report_stays_folded(root, pid, report, lang):
     out = _run(root, pid, report, r"""
 await window.ROWorkspace.openHandback(REPORT);
 const shown=cls('ws-hb-part').filter(p=>p.children[1]&&p.children[1].classList.contains('ws-hb-text')).map(p=>[p.children[0].textContent,p.children[1].textContent]);
@@ -845,16 +845,48 @@ console.log(JSON.stringify({parts:parts(), shown, words:cls('ws-agent-quiet').ma
 """, lang=lang, finding="Sword v0.2 beats v0.1 on all 12 members.\nIn every year.", limits="Only one data vendor.", next_step="Repeat on delisted names.", **_NO_21_2)
     zh = lang == "zh"
     names = ["发现与解释", "局限与待确认", "下一步"] if zh else ["Findings and interpretation", "Limitations and open questions", "Next step"]
-    assert out["parts"][:5] == ["other:ws-agent-quiet", *[f"part:{n}" for n in names], "part:" + ("尝试 #16：" if zh else "Attempt #16: ") + "TopicShift volatility (16-17)"]
+    none = "这份交回没有附上要点。" if zh else "This handback has no key points."
+    assert out["parts"][:4] == [*[f"part:{n}" for n in names], "part:" + ("尝试 #16：" if zh else "Attempt #16: ") + "TopicShift volatility (16-17)"]
     assert out["shown"] == [[names[0], "Sword v0.2 beats v0.1 on all 12 members.\nIn every year."], [names[1], "Only one data vendor."], [names[2], "Repeat on delisted names."]]
-    assert out["words"][0] == ("这份交回没有附上要点。" if zh else "This handback has no key points.")       # the one-line note stays
-    assert out["open"] is False and out["headline"] == 0                                                   # something to read above: the report stays folded
+    assert none not in out["words"]                                            # they are the key points: no line saying there are none above them
+    assert out["open"] is False and out["headline"] == 0                       # something to read above: the report stays folded
     only = _run(root, pid, report, r"""
 await window.ROWorkspace.openHandback(REPORT);
-console.log(JSON.stringify({parts:parts().slice(0,3), open:cls('ws-hb-report')[0].open}));
+console.log(JSON.stringify({parts:parts().slice(0,3), words:cls('ws-agent-quiet').map(e=>e.textContent), open:cls('ws-hb-report')[0].open}));
 """, lang=lang, finding="Only a finding.", **_NO_21_2)
-    assert only["parts"][:2] == ["other:ws-agent-quiet", f"part:{names[0]}"] and only["parts"][2].startswith("part:") and names[1] not in only["parts"][2]
-    assert only["open"] is False
+    assert only["parts"][0] == f"part:{names[0]}" and only["parts"][1].startswith("part:") and names[1] not in only["parts"][1]
+    assert none not in only["words"] and only["open"] is False
+    # either of the other two alone is something to read as well: no line; with no finding the report is unfolded below them (21.2)
+    for held, name in (({"limits": "One vendor."}, names[1]), ({"next_step": "Delisted names."}, names[2])):
+        one = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts().slice(0,2), words:cls('ws-agent-quiet').map(e=>e.textContent), open:cls('ws-hb-report')[0].open}));
+""", lang=lang, **{**_NO_21_2, "finding": "", "limits": "", "next_step": "", **held})
+        assert one["parts"][0] == f"part:{name}" and none not in one["words"] and one["open"] is True
+    # none of the three held: the line says so, and the report is unfolded so that the person reads something
+    nothing = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts().slice(0,2), words:cls('ws-agent-quiet').map(e=>e.textContent), open:cls('ws-hb-report')[0].open}));
+""", lang=lang, **{**_NO_21_2, "finding": "", "limits": "", "next_step": ""})
+    assert nothing["parts"][0] == "other:ws-agent-quiet" and nothing["words"][0] == none and nothing["open"] is True
+    if not zh:
+        assert not CJK.search(none) and not CJK.search(" ".join(out["words"] + nothing["words"]))
+
+
+@needs_node
+def test_a_handback_with_a_headline_or_a_confirmation_and_nothing_else_does_not_say_it_has_no_key_points(root, pid, report):
+    said = "这份交回没有附上要点。"
+    headline = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({words:cls('ws-agent-quiet').map(e=>e.textContent)}));
+""", **{**_NO_21_2, "headline": "Sharpe 1.82 on all 12 members.", "finding": "", "limits": "", "next_step": ""})
+    assert said not in headline["words"]
+    confirmed = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({words:cls('ws-agent-quiet').map(e=>e.textContent)}));
+""", **{**_NO_21_2, "confirmed": {"by": PERSON, "at": "2026-10-30T09:00:00+01:00", "status": "现行", "adopted": True, "by_label": "张三"},
+        "finding": "", "limits": "", "next_step": ""})
+    assert said not in confirmed["words"]
 
 
 @needs_node

@@ -15,7 +15,7 @@ import pytest
 
 from researchos import task_groups, workspace
 from test_v16_task_groups import TODAY, _legacy, quant, root  # noqa: F401 -- `root` and `quant` are fixtures of the engine tests
-from test_v8_phase2 import _project
+from test_v8_phase2 import _project, _scan
 from test_v9_language import CJK, needs_node
 from test_workspace_js import run
 
@@ -379,9 +379,9 @@ console.log(JSON.stringify({where:where().map(b=>b.dataset.key), heads:heads()})
 
 # -- the numbers follow the table (round AF-2, item 3) ----------------------------------------------------------------
 
-_TAKES_NUMBERS = r"""
-// the stand-in of the attempt table: rows 1 to 16 are there, and a number that is taken is refused as the engine refuses it
-const taken=new Set(Array.from({length:16},(_,n)=>String(n+1)));
+_TABLE = r"""
+// the stand-in of the attempt table: the rows @ROWS@ are there, and a number that is taken is refused as the engine refuses it
+const taken=new Set(@ROWS@);
 customPost=((was)=>(path,body)=>{
   if(path==='/api/workspace/task-groups') {
     if(taken.has(body.attempt.number)) { const e=new Error('x'); e.state='workspace_group_duplicate'; e.engineMessage='这个编号已经在尝试表里了，请换一个编号。什么都没有改。'; throw e; }
@@ -398,8 +398,12 @@ const sentNumbers=()=>posted.filter(p=>p[0]==='/api/workspace/task-groups').map(
 """
 
 
+# the fixture project's table holds rows 1 to 16 (the engine's own is the one row 16, which is all the proposal needs)
+_TAKES_NUMBERS = _TABLE.replace("@ROWS@", "Array.from({length:16},(_,n)=>String(n+1))")
+
+
 @needs_node
-def test_after_a_group_is_confirmed_the_others_move_to_the_next_free_numbers_so_the_next_one_is_not_refused(root):
+def test_after_a_group_is_confirmed_one_whose_number_the_table_now_has_moves_to_the_next_free_one_and_the_others_keep_theirs(root):
     out = _run(root, _TAKES_NUMBERS + r"""
 await window.ROWorkspace.load(root);
 await find('把这些任务归入尝试…').click();
@@ -408,13 +412,15 @@ const ids=PLAN.groups.map(g=>g.id), shown=[numbers()];
 typed(boxOf(ids[0],'number'),'18');
 await confirm(ids[0]); shown.push(numbers());
 await confirm(ids[1]); shown.push(numbers());
-// the last group before the one left: the one left follows it
+// the last group before the one left: the one left keeps its number
 await confirm(ids[3]); shown.push(numbers());
 await confirm(ids[2]);
 console.log(JSON.stringify({shown, sent:sentNumbers(), refused:refusals(), left:cards().filter(c=>c.dataset&&c.dataset.group).length}));
 """)
-    assert out["shown"] == [["17", "18", "19", "20"], [None, "19", "20", "21"], [None, None, "20", "21"], [None, None, "22", None]]
-    assert out["sent"] == ["18", "19", "21", "22"] and out["refused"] == 0 and out["left"] == 0
+    # 18 is written and the second group, which carried it, moves to one more than the greatest the table and the others carry (20, so 21);
+    # the third and fourth carry 19 and 20, which are free: they stay, and so no number is moved twice
+    assert out["shown"] == [["17", "18", "19", "20"], [None, "21", "19", "20"], [None, None, "19", "20"], [None, None, "19", None]]
+    assert out["sent"] == ["18", "21", "20", "19"] and out["refused"] == 0 and out["left"] == 0
 
 
 @needs_node
@@ -430,13 +436,67 @@ const after=numbers();
 await confirm(ids[0]);
 console.log(JSON.stringify({after, last:numbers(), sent:sentNumbers(), refused:refusals()}));
 """)
-    # 18 is written; the first group moves to the next free number, 19 (19a is another label); 19a and 20 stay as typed
-    assert out["after"] == ["19", None, "19a", "20"] and out["last"] == [None, None, "19a", "20"]
-    assert out["sent"] == ["18", "19"] and out["refused"] == 0
+    # 18 is written; the first group carries 17, which is still free: it keeps it (and so fills the gap below 18); 19a and 20 stay as typed
+    assert out["after"] == ["17", None, "19a", "20"] and out["last"] == [None, None, "19a", "20"]
+    assert out["sent"] == ["18", "17"] and out["refused"] == 0
 
 
 @needs_node
-def test_a_group_written_but_not_read_back_still_moves_the_others_past_its_number(root):
+def test_when_two_groups_carry_one_number_the_one_the_person_did_not_type_moves_and_a_typed_number_never_does(root):
+    out = _run(root, _TAKES_NUMBERS + r"""
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const ids=PLAN.groups.map(g=>g.id);
+typed(boxOf(ids[1],'number'),'17');      // the second group is typed over with the number the first one carries
+await confirm(ids[3]);                   // writes 20
+const moved=numbers();
+await confirm(ids[1]);                   // writes 17: the first group, which moved off it, is not in its way
+const then=numbers();
+// two groups the person typed with one number: neither is moved, and the engine refuses the second as it would any taken number
+typed(boxOf(ids[0],'number'),'25'); typed(boxOf(ids[2],'number'),'25');
+await confirm(ids[0]);
+const twin=numbers(); await confirm(ids[2]);
+console.log(JSON.stringify({moved, then, twin, last:numbers(), sent:sentNumbers(), refused:refusals()}));
+""")
+    assert out["moved"] == ["21", "17", "19", None] and out["then"] == ["21", None, "19", None]
+    assert out["twin"] == [None, None, "25", None] and out["last"] == [None, None, "25", None]     # still 25, not moved to make room
+    assert out["sent"] == ["20", "17", "25", "25"] and out["refused"] == 1
+
+
+@needs_node
+def test_a_group_whose_number_is_in_the_table_moves_though_that_row_is_not_the_one_just_written(root):
+    out = _run(root, _TAKES_NUMBERS + r"""
+PLAN.numbers.push('19');                 // a row the table has gained since the groups were proposed
+await window.ROWorkspace.load(root);
+await find('把这些任务归入尝试…').click();
+const ids=PLAN.groups.map(g=>g.id);
+await confirm(ids[0]);
+console.log(JSON.stringify({numbers:numbers(), refused:refusals()}));
+""")
+    assert out["numbers"] == [None, "18", "21", "20"] and out["refused"] == 0     # 17 written; 19 is taken: one more than the greatest of 19, 18 and 20
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_confirming_quants_sword_groups_in_order_writes_4_5_6_and_the_three_groups_before_them_still_show_1_2_3(quant, lang):
+    # Quant's attempt table was empty: the groups are numbered from 1 in the order of their dates, so the three shared-term groups
+    # come first and Sword v0, v0.2 and v0.3 are 4, 5 and 6 -- the groups that are left must not be pushed past a number written
+    (quant / "map.md").write_text("# Map\n\n## Attempt timeline\n\n| # | Date | Path | Variables | Result | Verdict |\n|---|---|---|---|---|---|\n")
+    _scan(quant)
+    out = _run(quant, _TABLE.replace("@ROWS@", "[]") + r"""
+await window.ROWorkspace.load(root);
+await find(window.ROI18N.t('把这些任务归入尝试…')).click();
+const ids=PLAN.groups.map(g=>g.id), shown=[numbers()];
+for (const id of ['v:sword v0', 'v:sword v0.2', 'v:sword v0.3']) { await confirm(id); shown.push(numbers()); }
+console.log(JSON.stringify({ids, table:PLAN.numbers, shown, sent:sentNumbers(), refused:refusals()}));
+""", lang=lang)
+    assert out["ids"][3:] == ["v:sword v0", "v:sword v0.2", "v:sword v0.3"] and out["table"] == []
+    assert out["shown"] == [["1", "2", "3", "4", "5", "6"], ["1", "2", "3", None, "5", "6"], ["1", "2", "3", None, None, "6"], ["1", "2", "3", None, None, None]]
+    assert out["sent"] == ["4", "5", "6"] and out["refused"] == 0                  # no gaps left behind: not 4, 8, 12
+
+
+@needs_node
+def test_a_group_written_but_not_read_back_still_counts_its_number_as_taken_for_the_others(root):
     out = _run(root, _TAKES_NUMBERS + r"""
 customPost=((was)=>(path,body)=>path==='/api/workspace/task-groups'?(taken.add(body.attempt.number), {attempt:{id:'attempt:map.md#'+body.attempt.number,number:body.attempt.number,label:'x',file:'map.md',date:'08-02'},
   moved:[],linked:false,tasks:clone(listed.tasks),tasks_revision:listed.tasks_revision,ingest_error:'disk is full',mode:'single'}):was(path,body))(customPost);
@@ -447,7 +507,7 @@ typed(boxOf(ids[0],'number'),'18');
 await confirm(ids[0]);
 console.log(JSON.stringify({numbers:numbers()}));
 """)
-    assert out["numbers"] == [None, "19", "20", "21"]
+    assert out["numbers"] == [None, "21", "19", "20"]     # 18 is in the table whether or not the tasks could be moved into it: the second group, which carried it, moves
 
 
 # -- the same question to several agents, and the task that goes on from the one before (round AF-2, items 1 and 4) -----

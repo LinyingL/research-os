@@ -219,9 +219,11 @@ def test_groups_are_numbered_after_the_greatest_number_in_the_table_in_the_order
     assert [(g["id"], g["attempt"]["number"], g["attempt"]["date"]) for g in plan["groups"]] == [
         ("v:sword v0", "15", "2026-08-02"), ("v:sword v0.2", "16", "2026-09-01"), ("v:sword v0.3", "17", "2026-10-05"),
         ("t:美股历史数据源", "18", "2026-10-29")]  # "14a" counts as 14, and full dates stay full
+    assert plan["numbers"] == ["3", "14a"]    # the rows as written: the page keeps a group's number while the table does not hold it
     (root / "map.md").write_text("# Map\n\n## Attempt timeline\n\n| # | Date | Path | Variables | Result | Verdict |\n|---|---|---|---|---|---|\n")
     _scan(root)
-    assert [g["attempt"]["number"] for g in task_groups.propose(root, today=TODAY)["groups"]] == ["1", "2", "3", "4"]
+    empty = task_groups.propose(root, today=TODAY)
+    assert [g["attempt"]["number"] for g in empty["groups"]] == ["1", "2", "3", "4"] and empty["numbers"] == []
 
 
 def test_the_assessment_is_the_projects_own_marker_for_pending(root):
@@ -242,12 +244,13 @@ def test_a_project_with_no_attempt_table_still_gets_groups_numbered_from_one_and
     plan = task_groups.propose(root, today=TODAY)
     assert plan["table"] is False
     assert [(g["attempt"]["number"], g["attempt"]["date"]) for g in plan["groups"]] == [("1", "2026-10-29"), ("2", "2026-10-29")]
+    assert plan["numbers"] == []
 
 
 def test_no_tasks_and_no_task_file_propose_nothing_and_an_unreadable_task_file_is_refused(root):
     (root / workspace.TASKS_PATH).unlink()
     assert task_groups.propose(root, today=TODAY) == {"tasks_revision": None, "table": True, "tasks": [], "groups": [], "ungrouped": [],
-                                                      "duplicates": []}
+                                                      "duplicates": [], "numbers": ["16"]}   # the table's own rows are listed even when there is nothing to propose
     (root / workspace.TASKS_PATH).write_text("not json")
     with pytest.raises(workspace.WorkspaceError) as refused:
         task_groups.propose(root, today=TODAY)

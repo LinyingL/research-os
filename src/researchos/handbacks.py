@@ -324,7 +324,7 @@ def view(root: str | Path, project_id: str | None, person: str | None, report: s
     later run of the task is still going, or waits for an answer: confirming waits for it); the context's
     `headline`, `key_numbers` (with `check`, `check_numbers`), `undone`, `decide`, and Section 20's `finding`,
     `limits` and `next_step`, which a report written without the 21.2 fields still has and the page shows in the
-    headline's place; `suggested` (`status`, `reason`,
+    headline's place (it says the report has no key points only when it holds none of the three); `suggested` (`status`, `reason`,
     `known`, `marker`, `abandons`) and `confirmed` (`assessment_confirmed` with `by_label`); `statuses`
     (`research_records.assessment_statuses`); `outputs` by kind order; `attempt_draft`; `context_error` when the
     context cannot be read; `unopened` for `person`; `mode` (who writes: single, pi, member, none, unknown). Reads

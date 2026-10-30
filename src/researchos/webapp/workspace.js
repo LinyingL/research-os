@@ -1251,9 +1251,9 @@
   // nothing is written until one is confirmed, and confirming is one call (`POST` of the same path) that writes the
   // attempt row and sets `attempt` (and `after`, for a task that continues another of the group) on that group's tasks. A
   // duplicate is removed by the task row's own removal, with its question; the same question given to several agents is
-  // not a duplicate and is only said. The numbers the groups carry follow the table: once a group is written, the others
-  // move to the next free numbers, but a number the person typed stays. The panel is the folders form's kind of subject
-  // (`folderSubject`): leaving it after a change asks first.
+  // not a duplicate and is only said. The numbers the groups carry follow the table: once a group is written, one whose
+  // number the table now has moves to the next free one and the others keep theirs, as does a number the person typed.
+  // The panel is the folders form's kind of subject (`folderSubject`): leaving it after a change asks first.
   // a task whose attempt is gone from the table is as loose as one with none (the list puts it under 「未归入尝试」 too)
   function hasLooseTasks() {
     const known = new Set((data.attempts || []).map((a) => a.id));
@@ -1268,16 +1268,20 @@
   function cutWords(words, size) { const text = String(words).split("\n")[0]; return text.length > size ? text.slice(0, size) + "…" : text; }
   function groupWords(group) { return group.description.trim() || group.term; }
   function wholeNumber(value) { const found = /^\s*(\d+)/.exec(String(value)); return found ? parseInt(found[1], 10) : 0; }
-  // The table has a new row, so the numbers still on offer move past it -- to the next free ones in the order shown --
-  // except a number the person typed, which is theirs (and which the others step round).
+  // The table has a new row (`written`), so the numbers on offer are looked at again. A group keeps its number while that
+  // number is still free -- not in the table and not carried by another group shown -- so the gaps of the first proposal
+  // fill as the groups are confirmed in any order. Only a group whose number is now taken moves, to one more than the
+  // greatest of the table's numbers and the numbers the other groups carry. A number the person typed never changes; of
+  // two groups that carry the same number, the one the person did not type moves (else the later one).
   function renumberGroups(subject, written) {
-    subject.biggest = Math.max(subject.biggest, wholeNumber(written));
-    const used = new Set(subject.groups.filter((group) => group.typed).map((group) => group.number.trim()));
-    let next = subject.biggest + 1;
-    subject.groups.forEach((group) => {
+    subject.taken.add(written.trim());
+    const greatest = (numbers) => numbers.reduce((most, number) => Math.max(most, wholeNumber(number)), 0);
+    subject.groups.forEach((group, at) => {
       if (group.typed) return;
-      while (used.has(String(next))) next += 1;
-      group.number = String(next); used.add(group.number);
+      const mine = group.number.trim();
+      const shared = subject.groups.some((other, to) => other !== group && other.number.trim() === mine && (other.typed || to < at));
+      if (!subject.taken.has(mine) && !shared) return;
+      group.number = String(greatest(Array.from(subject.taken).concat(subject.groups.filter((other) => other !== group).map((other) => other.number))) + 1);
     });
   }
   function moveGroupedTask(subject, id, to) {
@@ -1438,7 +1442,7 @@
     if (!editable() || !mayReplacePanel()) return;
     const mark = stamp();
     // Unsaved work: a group typed in or rearranged and not confirmed yet, or a group dropped (agreeing to leave clears it).
-    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, after: {}, biggest: 0, groups: [], pool: [], done: [], dropped: false,
+    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, after: {}, taken: new Set(), groups: [], pool: [], done: [], dropped: false,
       get dirty() { return this.dropped || this.groups.some((group) => group.edited); },
       set dirty(on) { if (!on) { this.dropped = false; this.groups.forEach((group) => { group.edited = false; }); } } };
     folderSubject = subject; state.panelSubject = subject;
@@ -1453,8 +1457,8 @@
       subject.groups = (plan.groups || []).map((group) => ({ id: group.id, term: group.term, number: group.attempt.number, date: group.attempt.date,
         description: group.attempt.description, verdictWord: (group.verdict_status || {}).label || "", tasks: group.tasks.slice(), sentence: "", note: null, edited: false, typed: false }));
       (plan.groups || []).forEach((group) => Object.assign(subject.after, group.after || {}));
-      // the first group carries the next free number of the table (the engine numbers them from there)
-      if (subject.groups.length) subject.biggest = Math.max(0, wholeNumber(subject.groups[0].number) - 1);
+      // the numbers the table holds, as written: a group keeps its own while the table does not have it (the engine numbers the groups from the greatest)
+      subject.taken = new Set((plan.numbers || []).map((number) => String(number).trim()));
       subject.pool = (plan.ungrouped || []).slice();
       drawGrouping(subject);
     } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取任务的分组。"), err), "err"); }
@@ -1678,7 +1682,8 @@
     return part;
   }
   // A report written without the 21.2 fields still has Section 20's context: its finding stands where the headline would,
-  // then its limitations and next step when it has them, under the names the key points editor gives them.
+  // then its limitations and next step when it has them, under the names the key points editor gives them. They are the
+  // report's key points (21.6), so the panel says 「这份交回没有附上要点。」 only when none of the three is held.
   function hbContext(view) {
     return [["finding", t("发现与解释")], ["limits", t("局限与待确认")], ["next_step", t("下一步")]].filter(([key]) => view[key]).map(([key, title]) => {
       const part = hbPart(title); part.classList.add("ws-hb-" + key.replace("_", "-"));
@@ -1719,12 +1724,15 @@
     if (panelTitle.classList) panelTitle.classList.add("plain-title");
     if (subject.back) body.append(keyed(button(t("返回"), () => { if (subject.back) subject.back(); }, "ws-hb-link"), "hb-back"));
     const empty = !view.headline && !view.key_numbers.length && !view.undone && !view.decide.length && !view.suggested;
+    // the context's finding, limits and next step are the key points of a report without the 21.2 fields: the line that says it
+    // has none is for when none of them is shown either
+    const context = view.headline ? [] : hbContext(view);
     const warning = hbWarning(view);
     if (warning) body.append(warning);
     if (view.context_error) body.append(el("p", "ws-status err", t("这份报告的要点读不出来。")));
-    else if (empty && !view.confirmed) body.append(quiet(t("这份交回没有附上要点。")));
+    else if (empty && !view.confirmed && !context.length) body.append(quiet(t("这份交回没有附上要点。")));
     if (view.headline) body.append(el("p", "ws-hb-headline", view.headline));
-    else hbContext(view).forEach((part) => body.append(part));
+    else context.forEach((part) => body.append(part));
     if (view.key_numbers.length) body.append(hbNumbers(view));
     if (view.undone) { const part = hbPart(t("没做完的")); part.append(el("p", "ws-hb-text", view.undone)); body.append(part); }
     if (view.decide.length) {
