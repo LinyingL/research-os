@@ -4467,7 +4467,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 with self.server.write_guard(human=True):
                     self._workspace_target(body)
                     saved = {k: v for k, v in body.items() if k != "project"}
-                    payload = self._workspace_api(lambda: handbacks.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock))
+                    payload = self._workspace_api(lambda: handbacks.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock, lang=self._lang()))
                 payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
                 self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":

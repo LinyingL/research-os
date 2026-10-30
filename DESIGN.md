@@ -5899,7 +5899,8 @@ Decided the same day:
 
 **How groups are proposed.** A small rule, so that it can be said in a
 sentence and checked by eye (`src/researchos/task_groups.py`). Only tasks
-with no `attempt` are looked at, and each lands in at most one group.
+with no `attempt` -- or one the attempt table no longer has, a row removed or
+renumbered by hand -- are looked at, and each lands in at most one group.
 
 1. **What is read.** A task's text (whitespace collapsed) and the title of
    the report it points to (the report's first heading); nothing else of it,
@@ -5980,11 +5981,16 @@ this Mac under the Research OS home, never in the project.
 - **What the person sees**, in this order: the headline; the key numbers,
   each with its file (a value that does not occur in the text of its cited
   file, by the number check of 16.1, is marked 「在所引文件里没找到这个数」);
-  没做完的; 需要你决定的; 代理建议 — the suggested status and reason, with
+  没做完的; 需要你决定的; the attempt it belongs to (its number and title) with
+  the research assessment it has now -- what confirming replaces --; 代理建议 —
+  the suggested status and reason, with
   「确认这个判断」, 「改一下」 (the chooser of 21.3, prefilled) and 「先不判断」;
   then 产出 by kind (figures as thumbnails, tables, data, code), each by its
   title with the path as a quiet second line; the report in full, folded; the
-  run log. The agent and model are named once, at the top.
+  run log. The agent and model are named once, at the top. A run that ended out
+  of bounds after it handed in (18.1 item 4) is warned of first, in the words of
+  its state, 越过了限制, and a task whose run did so reads that on the card and
+  in the attempt's panel, not 等你看 or 已完成.
 - **Confirming** writes the attempt's research assessment through the same
   write as the panel (18.3: only the changed cell, backup, history, conflict
   check). The history entry reads 「由 张三 确认（采纳 Claude Code · sonnet 的
@@ -6009,7 +6015,9 @@ this Mac under the Research OS home, never in the project.
   most five `{what, value, file}`; `value` is text, written as in the file;
   `file` a visible project path, which need not exist -- the check says so),
   `undone`, `decide` (at most three), `suggested_assessment` `{status, reason}`
-  and `assessment_confirmed` `{by, at, status, adopted}` are written to the
+  and `assessment_confirmed` `{by, at, status, adopted}` (`by` is the member id; a
+  researcher with no `me.toml` has none, and is named in the screen's language
+  when it is read, 13.1) are written to the
   context file only when they hold something, so a context from before 21
   reads and saves byte for byte as it was. `status` is one of the project's
   statuses as 21.3 lists them -- the words of the file, `现行` and the rest,
@@ -6034,7 +6042,10 @@ this Mac under the Research OS home, never in the project.
   run that was undone hands nothing back. `GET /api/workspace/handbacks` lists
   what waits for this person; `POST /api/workspace/handback/opened` marks one.
   Nothing is written in the project, and a store that cannot be read says
-  everything waits, not an error.
+  everything waits, not an error. A report that is gone waits for nobody, and
+  neither does one whose context holds none of the fields above: it was
+  written before they existed, is no handback of this version, and a project's
+  older reports do not all wait on its first day.
 - **The number check** is 16.1's (`semantic/draft.py`): every number in the
   value occurs in the text of its file as written or as a value (0.10 is 0.1;
   a comma is read both as a thousands and a field separator); a value with
@@ -6046,13 +6057,34 @@ this Mac under the Research OS home, never in the project.
   first -- who may write, the task and its attempt, the status, the context
   the record will go into -- and only then writes the cell (`proposals.
   write_directly`: for the PI and a single researcher an abandonment needs
-  its reason, 14.3), the history note and `assessment_confirmed`. A cell the
-  table already holds that way is not written again; the confirmation is
-  recorded all the same. The note is stored in Chinese and said in the
-  request's language when it is read. The suggestion's status and reason,
-  space aside, are what `adopted` compares against. A suggestion that
-  abandons the route opens the chooser with the agent's words offered as the
-  reason, and asks for it.
+  its reason, 14.3), the history note and `assessment_confirmed`. The page
+  sends the cell it showed (`was`); a row that no longer reads that way is
+  refused (18.3's conflict check), the page reads the attempt again and the
+  person confirms against what it holds now. A task whose latest run is still
+  going or waits for an answer is refused: that run's completion is checked
+  against the context it was started with, and the confirmation would make it
+  fail for good. A cell that already holds that status and reason -- whatever
+  its marker, spacing or line breaks -- is not written again; the confirmation
+  is recorded all the same; when the status is the one the cell has, its own
+  marker is written again (21.3). The note is stored in Chinese and said in the
+  request's language when it is read. A confirmation checks only the shape of
+  the record it adds, not the links the record already holds (a file or an
+  attempt removed since does not stop it). A member's abandonment is
+  proposed, and the proposal needs the route's result as well as the reason:
+  the page asks for the result when the row has none, and the engine refuses
+  before writing the working copy when it is missing. The suggestion's status
+  and reason, space aside, are what `adopted` compares against. A suggestion
+  that abandons the route opens the chooser with the agent's words offered as
+  the reason, and asks for it.
+- **A member's proposal.** A confirmation made by a member is proposed as the
+  panel proposes a change of the same row (12.4): a row of the official table
+  as a verdict change, with the report's context named so that the record of
+  who confirmed it, and whether they took the suggestion unchanged, travels
+  with it; a row of their own that the official version does not have yet as a
+  new attempt, replacing the proposal still waiting for it (once that is
+  approved there is nothing to change until they sync). The sentence is the
+  stored Chinese one on either screen (13.1): it goes into a file on the shared
+  drive.
 - **The page.** The handback is read in the side panel, from 项目首页's task
   row (`打开结果` on a task whose latest run handed its report back; a report
   written by hand still opens to write in), the attempt's panel (`打开交回`,
@@ -6062,8 +6094,12 @@ this Mac under the Research OS home, never in the project.
   goes to the writing area. The outputs are headed 「输出」 (13.4), not the
   retired 产出. Without a suggestion the person writes the assessment in the
   chooser, prefilled with the one the attempt has. The chooser here is
-  21.3's. 撤销 (18.3) stays in the attempt's panel: a confirmation is
-  a record and is not undone by this view.
+  21.3's. The line that says the assessment was written has 撤销 (18.3) for the
+  PI and a single researcher, as the panel's save has it: the cell goes back as
+  the file held it, while the row still reads as this write left it. It is not
+  offered for an abandonment, whose basis was frozen, nor for a member's write,
+  which is proposed. A confirmation is a record: the key points still say that
+  it was made, and the line says so.
 
 ### 21.3 A research assessment is a choice and a reason
 

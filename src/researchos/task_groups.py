@@ -211,7 +211,7 @@ def pending_marker(root: Path) -> str:
 
 def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     """`GET /api/workspace/task-groups`: `tasks_revision`; `table` (whether the project has an attempt table to write
-    to); `tasks`, the tasks with no attempt in the order of the list, each with `number` (its place in the whole list,
+    to); `tasks`, the tasks with no attempt -- or one the table no longer has -- in the order of the list, each with `number` (its place in the whole list,
     from 1), `text`, `owner`, `owner_label`, `due`, `report` and `report_title`; `groups`, each `id`, `basis`
     (`version` | `term`), `term` (what the tasks share), `tasks` (their ids, in list order) and `attempt` -- the row
     to write: `number`, `date`, `description`, `variables`, `result` (empty) and `verdict` (the marker of 待定) --
@@ -220,7 +220,9 @@ def propose(root: str | Path, *, today: date | None = None) -> dict[str, Any]:
     root = workspace._root(root)  # noqa: SLF001
     tasks, raw = workspace._read_tasks(root)  # noqa: SLF001
     facts = _table(root)
-    loose = [(at + 1, task) for at, task in enumerate(tasks) if not task.get("attempt")]
+    known = {row["id"] for row in workspace._attempts(root, None)}  # noqa: SLF001
+    # a task whose attempt row was removed or renumbered by hand is as loose as one with none: the page lists it so too
+    loose = [(at + 1, task) for at, task in enumerate(tasks) if not task.get("attempt") or task["attempt"] not in known]
     reports: dict[str, tuple[str | None, str | None]] = {}
     for _n, task in loose:
         rel = task.get("report")
@@ -338,8 +340,8 @@ def _duplicates(tasks: list[dict[str, Any]], info: dict[str, dict[str, Any]], sq
 # -- confirming ----------------------------------------------------------------------------------------------------
 
 _ATTEMPT_WORDS = {
-    "duplicate": "这个编号已经在年表里了，请换一个编号。",
-    "table_missing": "找不到尝试年表了：年表文件、它的标题或 .researchos/attempts.toml 已经不在。",
+    "duplicate": "这个编号已经在尝试表里了，请换一个编号。",
+    "table_missing": "找不到尝试表了：尝试表文件、它的标题或 .researchos/attempts.toml 已经不在。",
 }
 
 
@@ -401,7 +403,8 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str
         if gone:
             raise workspace.WorkspaceError("group_task_gone", f"Task {gone[0]} is no longer in the list, so nothing was changed", 409,
                                            "有一个任务已经不在任务列表里了，什么都没有改。请重新打开这个面板。")
-        taken = [tid for tid in ids if by_id[tid].get("attempt")]
+        known = {row["id"] for row in workspace._attempts(root, None)}  # noqa: SLF001 -- before the row below is written
+        taken = [tid for tid in ids if by_id[tid].get("attempt") in known]
         if taken:
             raise workspace.WorkspaceError("group_task_taken", f"Task {taken[0]} already belongs to an attempt, so nothing was changed", 409,
                                            "有一个任务已经属于某条尝试了，什么都没有改。请重新打开这个面板。")
@@ -427,7 +430,7 @@ def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str
         except workspace.WorkspaceError as exc:
             raise workspace.WorkspaceError(
                 "group_not_linked", f"The attempt row {cells['number']} was written, but its tasks could not be moved into it: {exc}",
-                409, f"尝试 #{cells['number']} 已经写进年表，但任务没能归入它：{exc.message_zh}。请在每个任务的「属于哪条尝试」里选这一条。") from exc
+                409, f"尝试 #{cells['number']} 已经写进尝试表，但任务没能归入它：{exc.message_zh}。请在每个任务的「属于哪条尝试」里选这一条。") from exc
         out.update(moved=ids, linked=True, tasks=saved["tasks"], tasks_revision=saved["tasks_revision"],
                    history_error=saved["history_error"], changed_task_reports=saved["changed_task_reports"])
         return out

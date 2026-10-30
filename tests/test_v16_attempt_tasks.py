@@ -172,6 +172,8 @@ def test_tasks_of_an_attempt_are_listed_in_after_order_and_a_circle_written_by_h
     ({}, {"state": "ended"}, False, "failed"),
     ({}, {"state": "stopped"}, False, "not_started"),
     ({"done": True}, {"state": "failed"}, False, "done"),
+    ({"done": True}, {"state": "out_of_bounds", "outcome": "done"}, False, "out_of_bounds"),   # the done mark stays the agent's; the run is what warns (18.1 item 4)
+    ({"done": True}, {"state": "out_of_bounds", "outcome": "done"}, True, "out_of_bounds"),    # and an unopened handback does not hide it
 ])
 def test_a_tasks_state_comes_from_its_done_mark_its_latest_run_and_whether_its_handback_waits(task, run, waiting, state):
     assert attempt_tasks.state_of({"id": "t", **task}, run, waiting) == state
@@ -248,7 +250,7 @@ def test_an_unopened_handback_is_counted_on_its_attempt_and_waits_as_to_read(roo
     _save(root, [_task("a", attempt=A16, done=True, report=report), _task("b", attempt=A16)])
     seen = []
     with monkeypatch.context() as local:
-        local.setattr(handbacks, "unopened", lambda project_id, person: seen.append((project_id, person)) or [report])
+        local.setattr(handbacks, "unopened", lambda project_id, person, root=None: seen.append((project_id, person)) or [report])
         work = _work(_payload(root), A16)
     assert (work["tasks"], work["unfinished"], work["unopened"]) == (2, 1, 1)
     assert [(i["id"], i["state"], i["unopened"]) for i in work["items"]] == [("a", "to_read", True), ("b", "not_started", False)]
@@ -258,15 +260,18 @@ def test_an_unopened_handback_is_counted_on_its_attempt_and_waits_as_to_read(roo
     assert _work(_payload(root), A16)["unopened"] == 0
 
 
-def test_a_tasks_latest_run_decides_how_it_reads_and_only_unfinished_or_waiting_tasks_are_looked_up(root, monkeypatch):
-    _save(root, [_task(n, attempt=A16) for n in "abcde"] + [_task("f", attempt=A16, done=True)])
+def test_a_tasks_latest_run_decides_how_it_reads_and_only_unfinished_waiting_or_agents_tasks_are_looked_up(root, monkeypatch):
+    agent = "agent:claude-code:sonnet"
+    _save(root, [_task(n, attempt=A16) for n in "abcde"] + [_task("f", attempt=A16, done=True), _task("g", attempt=A16, done=True, owner=agent),
+                                                         _task("h", attempt=A16, done=True, owner="Zhang San")])
     wanted = []
     runs = {"a": {"state": "running"}, "b": {"state": "needs_input"}, "c": {"state": "out_of_bounds", "outcome": "done"},
-            "d": {"state": "failed"}}
+            "d": {"state": "failed"}, "g": {"state": "out_of_bounds", "outcome": "done"}}
     monkeypatch.setattr(attempt_tasks, "_latest_runs", lambda project_id, ids: wanted.append(ids) or {k: v for k, v in runs.items() if k in ids})
     states = {i["id"]: i["state"] for i in _work(_payload(root), A16)["items"]}
-    assert states == {"a": "running", "b": "needs_answer", "c": "out_of_bounds", "d": "failed", "e": "not_started", "f": "done"}
-    assert wanted == [{"a", "b", "c", "d", "e"}]
+    assert states == {"a": "running", "b": "needs_answer", "c": "out_of_bounds", "d": "failed", "e": "not_started", "f": "done",
+                      "g": "out_of_bounds", "h": "done"}   # a finished task of an agent is looked at, for the run may have gone out of bounds
+    assert wanted == [{"a", "b", "c", "d", "e", "g"}]
 
 
 def test_the_latest_run_of_each_task_is_read_from_the_run_store_newest_first(root):

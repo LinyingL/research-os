@@ -343,7 +343,7 @@ def test_a_project_with_no_attempt_table_refuses_the_group_and_nothing_is_writte
     before = _state(root)
     with pytest.raises(workspace.WorkspaceError) as refused:
         _confirm(root, group)
-    assert refused.value.code == "group_table_missing" and "找不到尝试年表" in refused.value.message_zh
+    assert refused.value.code == "group_table_missing" and "找不到尝试表" in refused.value.message_zh
     assert _state(root) == before
 
 
@@ -377,6 +377,7 @@ def test_tasks_that_cannot_be_moved_after_the_row_was_written_say_which_row_exis
         _confirm(root, group)
     assert refused.value.code == "group_not_linked" and refused.value.status == 409
     assert "#17" in refused.value.message_zh and "属于哪条尝试" in refused.value.message_zh and "attempt row 17" in str(refused.value)
+    assert "写进尝试表" in refused.value.message_zh and "年表" not in refused.value.message_zh      # 21.6: the table is 尝试表
     assert "| 17 |" in (root / "map.md").read_text() and (root / workspace.TASKS_PATH).read_bytes() == before_tasks
 
 
@@ -543,3 +544,25 @@ def test_a_task_whose_report_is_gone_or_cannot_be_read_is_still_grouped_by_its_t
     # their versions were only in the titles of those reports: with no title they read as tasks of no version
     assert _group(plan, "v:sword v0.2")["tasks"] == ["t2", "t3"] and _group(plan, "v:sword v0.3")["tasks"] == ["t7"]
     assert {"t4", "t5"} <= set(plan["ungrouped"])
+
+
+def test_a_task_whose_attempt_row_has_gone_is_proposed_for_grouping_like_one_with_none_and_one_in_the_table_is_not(root):
+    tasks = workspace.read_tasks(root)[0]
+    tasks[0]["attempt"] = "attempt:map.md#99"      # a row renumbered or removed by hand: the task names an attempt the table does not have
+    tasks[1]["attempt"] = "attempt:map.md#16"      # and one that it has
+    (root / workspace.TASKS_PATH).write_text(json.dumps(tasks, ensure_ascii=False))
+    plan = task_groups.propose(root, today=TODAY)
+    assert "t1" in {t["id"] for t in plan["tasks"]} and "t2" not in {t["id"] for t in plan["tasks"]}
+    group = _group(plan, "v:sword v0")
+    assert group["tasks"] == ["t1"]
+    done = _confirm(root, group)                     # and it is put under the new attempt, not refused as one that already has an attempt
+    assert done["linked"] is True and {t["id"]: t.get("attempt") for t in done["tasks"]}["t1"] == done["attempt"]["id"]
+    assert {t["id"]: t.get("attempt") for t in done["tasks"]}["t2"] == "attempt:map.md#16"    # the other is where it was
+
+
+def test_a_taken_number_and_a_missing_table_are_said_with_the_attempt_table_not_the_retired_word(root, tmp_path):
+    group = _group(task_groups.propose(root, today=TODAY), "v:sword v0")
+    with pytest.raises(workspace.WorkspaceError) as taken:
+        _confirm(root, group, attempt={"number": "16", "date": group["attempt"]["date"], "description": "Again"})
+    assert taken.value.code == "group_duplicate" and "尝试表" in taken.value.message_zh and "年表" not in taken.value.message_zh
+    assert all("年表" not in sentence for sentence in task_groups._ATTEMPT_WORDS.values())    # 21.6 renames it; no screen uses the old word

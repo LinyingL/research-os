@@ -718,3 +718,256 @@ def test_the_routes_refuse_a_missing_report_a_wrong_project_a_foreign_origin_and
     httpd.set_served(dataclasses.replace(httpd.get_served(), read_only=True))
     assert _post(base, "/api/workspace/handback/confirm", body)[0] == 409
     assert (root / "map.md").read_bytes() == before
+
+
+# -- the first review's findings: what the researcher's own words and rows are spared ----------------------------------
+
+
+def _write_map_cell(root: Path, cell: str, number: str = "16") -> None:
+    """The researcher's hand edit of an attempt's assessment cell."""
+    lines = (root / "map.md").read_text().splitlines(keepends=True)
+    (root / "map.md").write_text("".join(
+        re.sub(r"\|[^|]*\|\n$", f"| {cell} |\n", line) if line.startswith(f"| {number} |") else line for line in lines))
+    _scan(root)
+
+
+def _own_marker(root: Path) -> None:
+    """The project names 现行 with a second marker."""
+    (root / ".researchos" / "attempts.toml").write_text((root / ".researchos" / "attempts.toml").read_text() + '[verdict_labels]\n"✔" = "现行"\n')
+
+
+def test_the_attempt_and_its_assessment_come_with_the_handback_for_the_page_to_show_above_the_suggestion(root, pid):
+    _write_map_cell(root, "✅ 主线，别动")
+    report = hand_back(root, pid, context={**FULL, "suggested_assessment": {"status": "待定", "reason": "agent says wait"}})
+    got = handbacks.view(root, pid, PERSON, report)["attempt"]
+    assert (got["number"], got["label"], got["verdict"], got["status"]["status"]) == ("16", "TopicShift volatility (16-17)", "✅ 主线，别动", "current")
+
+
+def test_a_confirmation_made_against_a_cell_the_row_no_longer_holds_is_refused_and_one_made_against_it_says_what_it_replaced(root, pid):
+    report = hand_back(root, pid)
+    _write_map_cell(root, "✅ 主线，别动")
+    seen = handbacks.view(root, pid, PERSON, report)["attempt"]["verdict"]       # what the panel was drawn with
+    _write_map_cell(root, "⚠️ 不利证据：2008 年不成立")                            # another window moved the row meanwhile
+    held = (root / "map.md").read_bytes()
+    with pytest.raises(workspace.WorkspaceError) as exc:
+        handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member", "was": seen})
+    assert exc.value.code == "handback_moved" and exc.value.status == 409 and "被改过" in exc.value.message_zh
+    assert (root / "map.md").read_bytes() == held and "assessment_confirmed" not in _context(root, report)   # nothing was written
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member", "was": "⚠️ 不利证据：2008 年不成立"})
+    assert done["written"] is True and done["before"] == {"was": "⚠️ 不利证据：2008 年不成立", "was_text": "⚠️ 不利证据：2008 年不成立",
+                                                         "now_text": "✅ Holds on every member"}
+    assert done["context_path"] == research_records.path_for(report)
+
+
+def test_the_cell_the_page_saw_is_compared_without_spaces_and_a_confirmation_that_sends_none_or_changes_nothing_is_no_conflict(root, pid):
+    report = hand_back(root, pid)
+    assert handbacks.confirm(root, {"report": report, "status": "现行", "reason": "r", "was": " 🕒\n"})["written"] is True   # spacing is not a change
+    again = hand_back(root, pid, task_id="t2", attempt=A17)
+    assert handbacks.confirm(root, {"report": again, "status": "待定", "reason": ""})["written"] is False                    # sends no cell: as before
+    moved = hand_back(root, pid, task_id="t3", attempt=A17)
+    assert handbacks.confirm(root, {"report": moved, "status": "待定", "reason": "", "was": "old text"})["written"] is False   # it writes nothing, so it replaces nothing
+
+
+def test_a_cell_with_another_marker_of_the_same_status_keeps_it_and_one_that_already_says_so_is_not_written(root, pid):
+    _own_marker(root)
+    _write_map_cell(root, "✔ 主线")
+    report = hand_back(root, pid, context={**FULL, "suggested_assessment": {"status": "现行", "reason": "另一个理由"}})
+    assert handbacks.confirm(root, {"report": report, "status": "现行", "reason": "另一个理由"})["cell"] == "✔ 另一个理由"
+    assert _cell(root).endswith("| ✔ 另一个理由 |")                                  # the researcher's marker stays
+    same = hand_back(root, pid, task_id="t2", attempt=A16)
+    held = (root / "map.md").read_bytes()
+    done = handbacks.confirm(root, {"report": same, "status": "现行", "reason": "另一个理由"})
+    assert done["written"] is False and (root / "map.md").read_bytes() == held and _context(root, same)["assessment_confirmed"]["status"] == "现行"
+    other = hand_back(root, pid, task_id="t3", attempt=A16)
+    assert handbacks.confirm(root, {"report": other, "status": "待定", "reason": "x"})["cell"] == "🕒 x"   # another status takes its own first marker
+
+
+def test_a_cell_that_holds_the_same_status_and_words_over_several_lines_is_not_rewritten_flat(root, pid):
+    _write_map_cell(root, "✅ Holds<br>on every member")
+    report = hand_back(root, pid)
+    held = (root / "map.md").read_bytes()
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member"})
+    assert done["written"] is False and (root / "map.md").read_bytes() == held and done["adopted"] is True
+
+
+def test_a_confirmation_waits_for_a_run_of_the_task_that_is_still_going_so_that_its_completion_is_not_lost(root, pid):
+    report = hand_back(root, pid)
+    sent_back = _run(root, pid, task_id="t1", by=PERSON)                          # 打回: a new run of the same task, going
+    assert handbacks.view(root, pid, PERSON, report)["run_active"] is True
+    held = (root / "map.md").read_bytes()
+    with pytest.raises(workspace.WorkspaceError) as exc:
+        handbacks.confirm(root, {"report": report, "status": "现行", "reason": "r"})
+    assert exc.value.code == "handback_run_active" and exc.value.status == 409 and "还有一次运行" in exc.value.message_zh
+    assert (root / "map.md").read_bytes() == held and "assessment_confirmed" not in _context(root, report)   # the context the run froze is as it was
+    runs.update_run(pid, sent_back, state="needs_input")
+    assert handbacks.view(root, pid, PERSON, report)["run_active"] is True        # waiting for an answer is still going
+    runs.update_run(pid, sent_back, state="stopped")
+    assert handbacks.view(root, pid, PERSON, report)["run_active"] is False
+    assert handbacks.confirm(root, {"report": report, "status": "现行", "reason": "r"})["written"] is True
+
+
+def test_a_link_in_the_report_s_record_that_has_gone_stale_does_not_stop_a_confirmation(root, pid):
+    (root / "results" / "extra.csv").write_text("a,b\n1,2\n")
+    report = hand_back(root, pid, context={**FULL, "references": ["results/extra.csv"], "attempts": [A17]})
+    (root / "results" / "extra.csv").unlink()                                      # a file the record names is gone ...
+    (root / "map.md").write_text(TWO_ROWS.replace("| 17 | 07-27 | Sword v0.2 recheck | V | r17 | 🕒 |\n", ""))   # ... and so is an attempt it names
+    _scan(root)
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member"})
+    assert done["written"] is True and done["context_error"] is None
+    stored = _context(root, report)
+    assert stored["references"] == ["results/extra.csv"] and stored["attempts"] == [A17]      # the stale links stay as they were
+    assert stored["assessment_confirmed"]["status"] == "现行"
+    with pytest.raises(workspace.WorkspaceError):                                    # the editor's own save still asks for them
+        research_records.save(root, {"report": report, "revision": workspace._revision(workspace._read(root, research_records.path_for(report))),
+                                     "context": {k: v for k, v in stored.items() if k != "assessment_confirmed"}})
+
+
+def test_with_no_me_toml_the_first_researcher_confirms_and_is_named_in_the_language_of_the_screen_not_stored_in_one(root, pid):
+    people.me_path().unlink()
+    report = hand_back(root, pid, by=None)
+    done = handbacks.confirm(root, {"report": report, "status": "现行", "reason": "Holds on every member"}, lang="en")
+    assert done["by_label"] == "Original researcher" and "by" not in done["confirmed"]            # no language, no name, on disk
+    assert "by" not in _context(root, report)["assessment_confirmed"]
+    assert done["note"] == "由 最初的研究者 确认（采纳 Claude Code · sonnet 的建议）"                  # the history note is stored in Chinese
+    assert done["sentence"]["en"] == "Confirmed by Original researcher (adopted the suggestion of Claude Code · sonnet)"
+    shown = handbacks.view(root, pid, None, report, "en")["confirmed"]
+    assert shown["by_label"] == "Original researcher" and handbacks.view(root, pid, None, report, "zh")["confirmed"]["by_label"] == "最初的研究者"
+    assert history.versions(root, A16, "en")["versions"][0]["note"] == "Confirmed by Original researcher (adopted the suggestion of Claude Code · sonnet)"
+    assert history.versions(root, A16, "zh")["versions"][0]["note"] == "由 最初的研究者 确认（采纳 Claude Code · sonnet 的建议）"
+    assert handbacks.confirm(root, {"report": report, "status": "待定", "reason": ""}, lang="zh")["by_label"] == "最初的研究者"
+
+
+def test_a_confirmation_record_with_an_id_still_reads_as_before_and_one_without_is_valid_but_not_empty(root):
+    ok = research_records.normalize({"assessment_confirmed": {"by": "m", "at": "now", "status": "现行", "adopted": True}})
+    assert list(ok["assessment_confirmed"]) == ["by", "at", "status", "adopted"]
+    assert list(research_records.normalize({"assessment_confirmed": {"at": "now", "status": "现行", "adopted": True}})["assessment_confirmed"]) == ["at", "status", "adopted"]
+    for bad in ({"by": "", "at": "now", "status": "现行", "adopted": True}, {"at": "now", "status": "现行"}, {"at": "now", "status": "现行", "adopted": 1}):
+        with pytest.raises(workspace.WorkspaceError):
+            research_records.normalize({"assessment_confirmed": bad})
+
+
+def test_a_run_that_went_out_of_bounds_after_completing_says_so_on_the_card_the_panel_and_the_handback(root, pid):
+    from researchos import attempt_tasks
+
+    report = hand_back(root, pid)
+    run_id = handbacks._handed_back(pid)[report]["id"]
+    runs.update_run(pid, run_id, state="out_of_bounds", outcome="done", violations=[{"path": "data/a.csv", "kind": "data_changed"}])
+    got = handbacks.view(root, pid, PERSON, report)["run"]
+    assert (got["state"], got["outcome"], got["violations"]) == ("out_of_bounds", "done", 1)
+    assert attempt_tasks.state_of({"id": "t1", "done": True}, {"state": "out_of_bounds", "outcome": "done"}, True) == "out_of_bounds"
+    assert attempt_tasks.state_of({"id": "t1", "done": True}, {"state": "out_of_bounds", "outcome": "done"}, False) == "out_of_bounds"
+    unopened_state = attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]["items"][0]
+    assert (unopened_state["state"], unopened_state["unopened"]) == ("out_of_bounds", True)    # the handback still waits, the word is the warning
+    handbacks.mark_opened(pid, PERSON, report)
+    assert attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]["items"][0]["state"] == "out_of_bounds"   # and not 已完成 once it is read
+    runs.update_run(pid, run_id, state="done", outcome=None, violations=[])
+    assert attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]["items"][0]["state"] == "done"
+
+
+def test_reports_that_predate_the_handbacks_fields_do_not_wait_on_the_first_day_but_a_new_one_with_or_without_a_readable_record_does(root, pid):
+    from researchos import attempt_tasks
+
+    old = [hand_back(root, pid, task_id=f"o{n}", context={"question": "Q"} if n else None) for n in range(3)]   # the context of Section 20, and none at all
+    assert not (paths.researchos_home() / "handbacks" / pid).exists()                                              # no store yet: nothing is opened
+    assert handbacks.unopened(pid, PERSON, root) == [] and handbacks.list_unopened(root, pid, PERSON) == []
+    work = attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]
+    assert (work["tasks"], work["unopened"], work["latest"]["unopened"]) == (3, 0, False)
+    assert {i["state"] for i in work["items"]} == {"done"}
+    assert handbacks.view(root, pid, PERSON, old[0])["unopened"] is False
+    new = hand_back(root, pid, task_id="n1", context={"headline": "A new answer."})
+    damaged = hand_back(root, pid, task_id="n2", context={"question": "Q"})
+    (root / research_records.path_for(damaged)).write_text("{damaged")                                              # a record that cannot be read waits: the page says so
+    assert handbacks.unopened(pid, PERSON, root) == [new, damaged]
+    assert handbacks.unopened(pid, PERSON) == sorted(old + [new, damaged], key=lambda r: handbacks._handed_back(pid)[r]["id"])   # without the project: as it always was
+
+
+def test_a_handback_whose_report_file_is_gone_is_not_counted_on_the_card_and_the_card_and_the_list_agree(root, pid):
+    from researchos import attempt_tasks
+
+    report = hand_back(root, pid)
+    (root / report).unlink()
+    work = attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]
+    assert work["unopened"] == 0 and work["latest"] is None and work["items"][0]["state"] == "done" and work["items"][0]["unopened"] is False
+    assert handbacks.list_unopened(root, pid, PERSON) == [] and handbacks.unopened(pid, PERSON, root) == []
+    (root / report).write_text("# Recheck\n\nBack again.\n")                         # restored by hand: it waits again
+    assert attempt_tasks.by_attempt(root, pid, PERSON, [A16])[A16]["unopened"] == 1
+
+
+def _member_scene(tmp_path, monkeypatch, *, result: str = "t=2.91", extra_rows: str = ""):
+    """A PI's official project and a member's working copy, the member's map as `result` and `extra_rows` have it."""
+    import test_v8_phase2
+    from researchos import addproject
+    from test_v8_phase4 import Drive
+
+    def _map(verdict="🕒", *, row=True):
+        rows = f"| 16 | 07-26 | TopicShift volatility (16-17) | TopicShift->RV | {result} | {verdict} |\n" if row else ""
+        return "# Map\n\n## Attempt timeline\n\n| # | Date | Path | Variables | Result | Verdict |\n|---|---|---|---|---|---|\n" + rows
+    monkeypatch.setattr(test_v8_phase2, "_map", _map)
+    monkeypatch.setattr(addproject, "_top_level_folders", lambda: set())
+    return Drive(tmp_path, monkeypatch)
+
+
+def test_a_member_abandoning_a_route_whose_result_is_empty_is_asked_for_it_before_anything_is_written_so_the_proposal_can_follow(tmp_path, monkeypatch):
+    from researchos import project as project_mod
+
+    drive = _member_scene(tmp_path, monkeypatch, result="")
+    with drive.member():
+        project_mod.open_project(drive.work)
+        _scan(drive.work)
+        work_id = read_identity(drive.work).identity.id
+        report = hand_back(drive.work, work_id, by=None, attempt=A16)
+        held = (drive.work / "map.md").read_bytes()
+        body = {"report": report, "status": "已放弃", "reason": "Dead end", "abandon_reason": "The data stops in 2009"}
+        with pytest.raises(workspace.WorkspaceError) as exc:
+            handbacks.confirm(drive.work, body)
+        assert exc.value.code == "handback_result_needed" and "结果和理由都必须填写" in exc.value.message_zh
+        assert (drive.work / "map.md").read_bytes() == held and "assessment_confirmed" not in _context(drive.work, report)
+        with pytest.raises(workspace.WorkspaceError):                                  # a result without the reason is no better
+            handbacks.confirm(drive.work, {**body, "abandon_reason": "", "result": "Stops at 2009"})
+        done = handbacks.confirm(drive.work, {**body, "result": "Stops at 2009"})
+        assert done["written"] is True and "| ☠️ Dead end | " not in _cell(drive.work) and "Stops at 2009" in _cell(drive.work)
+        draft = proposals.make_proposal(drive.work, "verdict_change", done["sentence"]["zh"], number="16", reason="The data stops in 2009")
+        assert draft.data["verdict"]["abandons"] == "yes" and draft.data["verdict"]["result"] == "Stops at 2009"
+
+
+def test_a_member_s_own_unproposed_row_is_told_apart_so_its_confirmation_is_proposed_whole_as_a_new_attempt(tmp_path, monkeypatch):
+    from researchos import project as project_mod
+    from test_v8_phase4 import ROW_18
+
+    drive = _member_scene(tmp_path, monkeypatch)
+    with drive.member():
+        project_mod.open_project(drive.work)
+        _scan(drive.work)
+        work_id = read_identity(drive.work).identity.id
+        (drive.work / "map.md").write_text((drive.work / "map.md").read_text() + ROW_18)
+        _scan(drive.work)
+        official = hand_back(drive.work, work_id, by=None, attempt=A16)
+        own = hand_back(drive.work, work_id, by=None, attempt="attempt:map.md#18", task_id="t2")
+        assert handbacks.view(drive.work, work_id, "wang@example.com", official)["attempt"]["officialness"]["new_row"] is False
+        row = handbacks.view(drive.work, work_id, "wang@example.com", own)["attempt"]["officialness"]
+        assert row["new_row"] is True and row["state"] != "approved"
+        done = handbacks.confirm(drive.work, {"report": own, "status": "现行", "reason": "Holds on every member"})
+        assert done["written"] is True and done["number"] == "18"
+        with pytest.raises(proposals.ProposalRefused):                                 # the verdict change of a row the official version lacks
+            proposals.make_proposal(drive.work, "verdict_change", done["sentence"]["zh"], number="18")
+        draft = proposals.make_proposal(drive.work, "attempt_new", done["sentence"]["zh"], number="18")   # what the page composes for it
+        assert draft.data["attempt"]["verdict"] == "✅ Holds on every member"
+
+
+def test_a_members_confirmation_can_carry_the_record_that_says_who_confirmed_it_and_whether_they_adopted_the_suggestion(tmp_path, monkeypatch):
+    from researchos import addproject
+    from researchos import project as project_mod
+    from test_v8_phase4 import Drive
+
+    monkeypatch.setattr(addproject, "_top_level_folders", lambda: set())
+    drive = Drive(tmp_path, monkeypatch)
+    with drive.member():
+        project_mod.open_project(drive.work)
+        _scan(drive.work)
+        work_id = read_identity(drive.work).identity.id
+        report = hand_back(drive.work, work_id, by=None, attempt=A16)
+        done = handbacks.confirm(drive.work, {"report": report, "status": "现行", "reason": "Holds on every member"})
+        plain = proposals.make_proposal(drive.work, "verdict_change", done["sentence"]["zh"], number="16")
+        assert done["context_path"] not in [f["path"] for f in plain.data["file"]]       # a verdict change carries its row only ...
+        carried = proposals.make_proposal(drive.work, "verdict_change", done["sentence"]["zh"], number="16", only=[done["context_path"]])
+        assert done["context_path"] in [f["path"] for f in carried.data["file"]]         # ... unless the record is named

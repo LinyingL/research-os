@@ -852,7 +852,7 @@
       });
       const disclosure = el("details", "ws-task-details");
       disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
-      const view = { open: disclosure.open, remember: () => {
+      const view = { open: disclosure.open, node: disclosure, remember: () => {
         if (view.open !== disclosure.open) { view.open = disclosure.open; taskOpen[task.id] = disclosure.open; }
       } };
       taskDisclosures[task.id] = view;
@@ -1250,7 +1250,11 @@
   // nothing is written until one is confirmed, and confirming is one call (`POST` of the same path) that writes the
   // attempt row and sets `attempt` on that group's tasks. A duplicate is removed by the task row's own removal, with its
   // question. The panel is the folders form's kind of subject (`folderSubject`): leaving it after a change asks first.
-  function hasLooseTasks() { return (data.tasks || []).some((task) => !task.attempt); }
+  // a task whose attempt is gone from the table is as loose as one with none (the list puts it under 「未归入尝试」 too)
+  function hasLooseTasks() {
+    const known = new Set((data.attempts || []).map((a) => a.id));
+    return (data.tasks || []).some((task) => !task.attempt || !known.has(task.attempt));
+  }
   function openGroupingButton(key) {
     const open = keyed(button(t("把这些任务归入尝试…"), openGrouping), key);
     open.disabled = !tasksEditable();
@@ -1466,41 +1470,49 @@
   function hbChooser(subject) {
     const view = subject.view, choose = subject.choose, box = el("div", "ws-hb-choose"), locked = subject.busy;
     const abandons = () => (view.statuses.find((item) => item.status === choose.status) || {}).abandons === true;
+    // a member's abandonment becomes a proposal, which is refused without the route's result (12.4): the row may have none
+    const asksResult = () => view.mode === "member" && abandons() && !((view.attempt && view.attempt.result) || "").trim();
     const abandonBox = el("div", "ws-hb-abandon"), abandon = keyed(el("textarea", "form-input"), "hb-abandon");
     abandon.rows = 2; abandon.value = choose.abandon; abandon.disabled = locked;
+    const result = keyed(el("textarea", "form-input"), "hb-result"), resultBox = el("div", "ws-hb-result");
+    result.rows = 2; result.value = choose.result || ""; result.disabled = locked;
+    resultBox.append(field(t("结果（放弃一条路线时必填）"), result));
+    resultBox.classList.toggle("hidden", !asksResult());
     abandonBox.append(field(view.mode === "member" ? t("理由（放弃一条路线时必填）") : t("放弃的理由（必填）"), abandon),
       quiet(t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
     abandonBox.classList.toggle("hidden", !abandons());
     const save = keyed(button(t("保存"), () => {
       if (abandons() && !choose.abandon.trim()) { subject.note = { words: t("放弃一条路线时必须写明理由"), kind: "err" }; drawHandback(subject); return; }
-      confirmHandback(subject, choose.status, choose.reason, abandons() ? choose.abandon : "");
+      if (asksResult() && !(choose.result || "").trim()) { subject.note = { words: t("放弃一条路线时，结果和理由都必须填写"), kind: "err" }; drawHandback(subject); return; }
+      confirmHandback(subject, choose.status, choose.reason, abandons() ? choose.abandon : "", asksResult() ? choose.result : "");
     }, "btn btn-primary btn-small"), "hb-save");
     const picker = window.RODesk.statusChooser({ statuses: view.statuses, status: choose.status, reason: choose.reason, label: t("研究判断"),
       onChange: (now) => {
         choose.status = now.status(); choose.reason = now.reason(); choose.edited = true;
-        abandonBox.classList.toggle("hidden", !abandons());
+        abandonBox.classList.toggle("hidden", !abandons()); resultBox.classList.toggle("hidden", !asksResult());
         save.disabled = subject.busy || !choose.status;
       } });
     keyed(picker.statusEl, "hb-status"); keyed(picker.reasonEl, "hb-reason");
     picker.picks.forEach((pick) => keyed(pick, "hb-pick-" + pick.dataset.status));
     picker.setDisabled(locked);
     choose.status = picker.status(); // a status the project has since taken out is none chosen: the person picks one
-    abandonBox.classList.toggle("hidden", !abandons());
+    abandonBox.classList.toggle("hidden", !abandons()); resultBox.classList.toggle("hidden", !asksResult());
     abandon.addEventListener("input", () => { choose.abandon = abandon.value; choose.edited = true; });
+    result.addEventListener("input", () => { choose.result = result.value; choose.edited = true; });
     save.disabled = locked || !choose.status;
     const cancel = keyed(button(t("取消"), () => { subject.choose = null; subject.note = null; drawHandback(subject); }), "hb-cancel");
     cancel.disabled = locked;
     const actions = el("div", "ws-agent-actions"); actions.append(save, cancel);
     const group = el("div", "ws-field"); group.append(el("span", "ws-field-label", t("研究判断")), picker.el);
-    box.append(group, abandonBox, actions);
+    box.append(group, resultBox, abandonBox, actions);
     return box;
   }
   function hbOpenChooser(subject, abandoning) {
     const view = subject.view, now = view.attempt && view.attempt.verdict != null ? view.attempt : null, sug = view.suggested;
     // without a suggestion: the assessment the attempt has, read from its cell (a cell with no known marker is 其它, all of it the reason)
     const have = now ? window.RODesk.assessment.parse(now.verdict, view.statuses) : { status: (view.statuses.find((item) => item.other) || view.statuses[0]).status, reason: "" };
-    subject.choose = sug ? { status: sug.status, reason: sug.reason, abandon: abandoning ? sug.reason : "", edited: false }
-      : { status: have.status, reason: have.reason, abandon: "", edited: false };
+    subject.choose = sug ? { status: sug.status, reason: sug.reason, abandon: abandoning ? sug.reason : "", result: "", edited: false }
+      : { status: have.status, reason: have.reason, abandon: "", result: "", edited: false };
     subject.note = null; drawHandback(subject); focusKey(panelBody, "hb-reason");
   }
   // What the assessment part says once a person has confirmed (now, or before): who, which status, and how it came.
@@ -1509,6 +1521,29 @@
     line.append(el("span", null, t("{who} 已确认：", { who: by })), hbStatusChip(view, confirmed.status));
     if (view.suggested) line.append(el("span", "ws-agent-quiet", confirmed.adopted ? t("采纳了代理的建议") : t("改动了代理的建议")));
     return line;
+  }
+  // The attempt the handback belongs to (its number and title) and the research assessment it has now -- what 「确认这个判断」
+  // replaces, read from the cell as the engine gave it (a cell with no known marker is 其它, all of it the reason).
+  function hbAttempt(view) {
+    const attempt = view.attempt, part = hbPart(t("尝试 #{number}：{description}", { number: attempt.number, description: attempt.label }));
+    part.classList.add("ws-hb-attempt");
+    if (attempt.verdict != null) {
+      const have = window.RODesk.assessment.parse(attempt.verdict, view.statuses), line = el("p", "ws-hb-now");
+      line.append(el("span", "ws-agent-quiet", t("现在的研究判断：")), hbStatusChip(view, have.status));
+      if (have.reason) line.append(el("span", "ws-hb-reason", have.reason));
+      part.append(line);
+    }
+    return part;
+  }
+  // A run that went out of bounds after handing in (18.1 item 4: the done mark stays the agent's and the run is what
+  // warns) says so before anything is confirmed on its word.
+  function hbWarning(view) {
+    const run = view.run;
+    if (!run || run.state !== "out_of_bounds") return null;
+    const box = el("div", "ws-hb-warning"); box.setAttribute("role", "status");
+    box.append(runLabel(run));
+    if (run.violations > 0) box.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动。确认这个判断之前，请先看一下运行日志。", { n: run.violations })));
+    return box;
   }
   function hbAssessment(subject) {
     const view = subject.view, sug = view.suggested, part = hbPart(t("代理建议")), confirmed = view.confirmed, writer = hbWriter(subject);
@@ -1523,7 +1558,15 @@
       part.append(quiet(view.mode === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步") : t("现在说不清你在这个项目里的角色，研究判断先不能改。")));
       return part;
     }
-    if (!view.task || !view.attempt) { part.append(quiet(t("这份交回的任务还没有归入尝试，所以没有可写的研究判断。"))); return part; }
+    if (!view.task || !view.attempt) {
+      // a task whose attempt row was removed or renumbered by hand names an attempt the table no longer has
+      part.append(quiet(view.task && view.task.attempt ? t("这份交回的任务所属的尝试已经不在尝试表里了，请先把任务归入一条尝试。")
+        : t("这份交回的任务还没有归入尝试，所以没有可写的研究判断。")));
+      return part;
+    }
+    if (view.run_active) { part.append(quiet(t("这个任务又有一次运行在进行，等它交回以后再确认这一份。"))); return part; }
+    const own = (view.mode === "member" && view.attempt.officialness) || {};
+    if (own.new_row && own.state === "approved") { part.append(quiet(t("这一行已经批准，正式版本里有了：先同步，再改它。"))); return part; }
     if (view.mode === "member") part.append(quiet(t("你是这个项目的成员：确认会先写进你的工作副本，再生成提议；PI 批准后才进入正式版本。")));
     if (sug && !sug.known) part.append(quiet(t("这个状态已经不在项目的选项里，请用「改一下」另选一个。")));
     if (subject.choose) part.append(hbChooser(subject));
@@ -1623,6 +1666,8 @@
     if (panelTitle.classList) panelTitle.classList.add("plain-title");
     if (subject.back) body.append(keyed(button(t("返回"), () => { if (subject.back) subject.back(); }, "ws-hb-link"), "hb-back"));
     const empty = !view.headline && !view.key_numbers.length && !view.undone && !view.decide.length && !view.suggested;
+    const warning = hbWarning(view);
+    if (warning) body.append(warning);
     if (view.context_error) body.append(el("p", "ws-status err", t("这份报告的要点读不出来。")));
     else if (empty && !view.confirmed) body.append(quiet(t("这份交回没有附上要点。")));
     if (view.headline) body.append(el("p", "ws-hb-headline", view.headline));
@@ -1633,6 +1678,7 @@
       view.decide.forEach((question) => list.append(el("li", null, question)));
       part.append(list); body.append(part);
     }
+    if (view.attempt) body.append(hbAttempt(view));
     if (view.suggested || view.confirmed || (view.task && view.attempt) || subject.done) {
       const part = hbAssessment(subject);
       if (subject.note) { const says = el("p", "ws-status"); says.setAttribute("role", "status"); status(says, subject.note.words, subject.note.kind); part.append(says); }
@@ -1647,44 +1693,111 @@
     restoreFocus(panelBody, snap);
   }
   // The answer of a confirmation: what was written, what could not be recorded, and for a member the proposal to send.
+  // The PI's and a single researcher's write has 撤销 on its line (18.3), as the panel's save has -- the cell goes back as the
+  // file held it, once the row still reads as this write left it; the confirmation itself stays recorded in the report's
+  // key points (it is a record, 21.2), and the line says so. An abandonment is not offered back: its basis was frozen.
   function hbDone(subject) {
     const done = subject.done, response = done.response, box = el("div", "ws-hb-done");
     if (response.mode === "member") {
       box.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number} 的研究判断。提议还没有发送。", { number: response.number })));
       box.append(done.says, done.host);
+    } else if (subject.undone) {
+      box.append(el("p", "ws-status ok", t("已撤销：尝试 #{number} 的研究判断改回了确认之前的样子。报告里仍记着你确认过。", { number: response.number })));
     } else {
-      box.append(el("p", "ws-status ok", response.written ? t("已写入尝试 #{number} 的研究判断。", { number: response.number }) : t("尝试 #{number} 的研究判断本来就是这样，只记下了你的确认。", { number: response.number })));
+      const line = el("p", "ws-status ok", response.written ? t("已写入尝试 #{number} 的研究判断。", { number: response.number }) : t("尝试 #{number} 的研究判断本来就是这样，只记下了你的确认。", { number: response.number }));
+      if (subject.undo) {
+        const undo = keyed(button(t("撤销"), () => hbUndo(subject), "btn btn-small"), "hb-undo");
+        undo.disabled = subject.busy; line.append(" ", undo);
+      }
+      box.append(line);
     }
     if (response.ingest_error) box.append(el("p", "ws-status err", t("已写入并备份，但重扫失败")));
     if (response.history_error) box.append(el("p", "ws-status err", t("研究判断已写入，但修改历史没能记下这次确认。")));
     if (response.context_error) box.append(el("p", "ws-status err", t("研究判断已写入，但报告的要点里没能记下这次确认。")));
     return box;
   }
-  async function confirmHandback(subject, statusWord, reason, abandonReason) {
+  // The handback read again, for a page whose attempt moved under it (a confirmation refused as `handback_moved`): the
+  // attempt and its assessment as they are now, what the person was choosing left as it is.
+  async function hbReread(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    try {
+      const fresh = await apiGet("/api/workspace/handback?report=" + encodeURIComponent(subject.report) + "&project=" + encodeURIComponent(mark.project));
+      if (!here()) return;
+      fresh.unopened = false; subject.view = fresh;
+    } catch (err) { if (!here()) return; }
+    subject.busy = false; subject.undo = null;
+    subject.note = { words: t("这一行在你打开这份交回以后被改过：上面是它现在的研究判断，请看一眼再确认。"), kind: "err" };
+    drawHandback(subject);
+  }
+  async function confirmHandback(subject, statusWord, reason, abandonReason, resultWords) {
     const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
     if (subject.busy || !here() || !hbWriter(subject)) return;
     subject.busy = true; subject.note = { words: t("正在保存…") }; drawHandback(subject);
+    const view = subject.view, sent = { project: mark.project, report: subject.report, status: statusWord, reason: reason, abandon_reason: abandonReason };
+    // the cell the page showed: a row that has moved since is refused (18.3), not written over
+    if (view.attempt && typeof view.attempt.verdict === "string") sent.was = view.attempt.verdict;
+    if (resultWords && resultWords.trim()) sent.result = resultWords.trim();
     let response;
     try {
-      response = await apiPost("/api/workspace/handback/confirm", { project: mark.project, report: subject.report, status: statusWord, reason: reason, abandon_reason: abandonReason });
+      response = await apiPost("/api/workspace/handback/confirm", sent);
     } catch (err) {
       if (!here()) return;
+      if (err && err.state === "workspace_handback_moved") { await hbReread(subject); return; }
       subject.busy = false; subject.note = { words: errorWords(t("没能确认这个判断。"), err), kind: "err" }; drawHandback(subject);
       return;
     }
     if (!live(mark)) return;
     if (typeof pollGeneration === "function") pollGeneration();
     if (!here()) return;
-    subject.busy = false; subject.note = null; subject.choose = null;
-    subject.view.confirmed = Object.assign({ by_label: response.by_label }, response.confirmed);
+    subject.busy = false; subject.note = null; subject.choose = null; subject.undone = false;
+    view.confirmed = Object.assign({ by_label: response.by_label }, response.confirmed);
+    if (response.written && view.attempt && response.before) view.attempt.verdict = response.before.now_text;   // the assessment the attempt has now
+    const member = response.mode === "member";
+    subject.undo = response.written && !member && !response.decision && !response.ingest_error && response.before && window.RODesk && window.RODesk.atOnce
+      ? window.RODesk.atOnce.undoOf({ cells: { verdict: response.before } }, { number: response.number, fields: { verdict: response.cell } }, { verdict: response.before.was_text }) : null;
     subject.done = { response: response, says: el("div", "notice-status"), host: el("div", "compose-result") };
     drawHandback(subject);
-    if (response.mode === "member" && typeof ROTeam !== "undefined" && ROTeam.composeInto) {
-      const english = typeof uiLang === "function" && uiLang() === "en";
-      const draft = { kind: "verdict_change", sentence: english ? response.sentence.en : response.sentence.zh, number: response.number };
+    if (member && typeof ROTeam !== "undefined" && ROTeam.composeInto) {
+      // The sentence is the stored Chinese one whatever the screen says: it goes into a proposal file on the shared drive,
+      // which nothing in the person's language may change (13.1). A row of the member's own that the official version does
+      // not have yet is proposed whole as a new attempt, replacing the proposal still waiting for it (as the panel does);
+      // a row of the official table as a change of its verdict, with the report's record, which says who confirmed it.
+      const own = (view.attempt && view.attempt.officialness) || {}, draft = { sentence: response.sentence.zh, number: response.number };
+      if (own.new_row) {
+        draft.kind = "attempt_new";
+        if (own.state === "proposed" && own.proposal) draft.supersedes = own.proposal;
+      } else {
+        draft.kind = "verdict_change";
+        if (response.context_path && !response.context_error) draft.only = [response.context_path];
+      }
       if (abandonReason && abandonReason.trim()) draft.reason = abandonReason.trim();
       ROTeam.composeInto(subject.done.host, draft, subject.done.says);
     }
+  }
+  // 撤销 on the line of a written confirmation: the same way as the panel's (the preview, then the write).
+  async function hbUndo(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject, back = subject.undo;
+    if (!back || subject.busy || !here()) return;
+    subject.busy = true; subject.note = { words: t("正在写入…") }; drawHandback(subject);
+    let result;
+    try {
+      result = await window.RODesk.atOnce.undo(back);
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; subject.note = { words: errorWords(t("写入失败，文件没有被修改"), err), kind: "err" }; drawHandback(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false; subject.undo = null;
+    if (result.state === "done") {
+      subject.note = null; subject.undone = true;
+      if (subject.view.attempt && typeof back.text.verdict === "string") subject.view.attempt.verdict = back.text.verdict;
+    } else {
+      subject.note = { words: result.state === "abandons" ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"), kind: "err" };
+    }
+    drawHandback(subject);
   }
   // Marked opened for this person (kept on this Mac), and the cards that count what waits are drawn again.
   async function hbMarkOpened(subject) {
@@ -1718,6 +1831,11 @@
   // 「运行日志」 (the link at the foot of a handback): the task's row on 项目首页 with its run's log open.
   function showRunLog(taskId) {
     if (!data || !ui) return false;
+    // the log sits inside the row's disclosure: a task that is not among the newest three is closed until the person
+    // opens it, and would show a closed title and no log
+    const disclosure = taskDisclosures[taskId];
+    taskOpen[taskId] = true;
+    if (disclosure) { disclosure.open = true; if (disclosure.node) disclosure.node.open = true; }
     agentState(taskId).log = true; updateAgentSections();
     if (latestRun(taskId)) ensureDetails(stamp());
     const row = rowNodes[taskId];

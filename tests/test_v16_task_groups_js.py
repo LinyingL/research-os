@@ -261,7 +261,7 @@ await window.ROWorkspace.load(root);
 await find('把这些任务归入尝试…').click();
 const id=PLAN.groups[1].id;
 typed(text(cardOf(1),'group-name:'+id),'Sword v0.2 全成员复算');
-failWith={state:'workspace_group_duplicate', message:'这个编号已经在年表里了，请换一个编号。什么都没有改。'};
+failWith={state:'workspace_group_duplicate', message:'这个编号已经在尝试表里了，请换一个编号。什么都没有改。'};
 await text(cardOf(1),'group-confirm:'+id).click(); await sleepTick();
 const refused={says:cardOf(1).all().filter(e=>e.classList.contains('ws-status')).map(e=>[e.className,e.textContent]), name:text(cardOf(1),'group-name:'+id).value,
   locked:text(cardOf(1),'group-confirm:'+id).disabled, tasks:listed.tasks.filter(t=>t.attempt).length, groups:PLAN.groups.length, shown:cards().length};
@@ -269,7 +269,7 @@ failWith=null; typed(text(cardOf(1),'group-number:'+id),'31');
 await text(cardOf(1),'group-confirm:'+id).click(); await sleepTick();
 console.log(JSON.stringify({refused, sent:posted.filter(p=>p[0]==='/api/workspace/task-groups').map(p=>p[1].attempt), done:listed.tasks.filter(t=>t.attempt).map(t=>t.id)}));
 """)
-    assert out["refused"]["says"] == [["ws-status err", "没能归入这一组。 这个编号已经在年表里了，请换一个编号。什么都没有改。"]]
+    assert out["refused"]["says"] == [["ws-status err", "没能归入这一组。 这个编号已经在尝试表里了，请换一个编号。什么都没有改。"]]
     assert out["refused"]["name"] == "Sword v0.2 全成员复算" and out["refused"]["locked"] is False and out["refused"]["tasks"] == 0
     assert out["sent"][-1] == {"number": "31", "date": "09-01", "description": "Sword v0.2 全成员复算"} and out["done"] == ["t2", "t3", "t4"]
 
@@ -362,3 +362,14 @@ console.log(JSON.stringify({failed, empty:panelBody.textContent}));
 """)
     assert out["failed"] == "没能读取任务的分组。 任务文件暂时无法读取"
     assert "没有可以归入尝试的任务。" in out["empty"]
+
+
+@needs_node
+def test_a_task_whose_attempt_is_gone_from_the_table_is_as_loose_as_one_with_none_and_the_page_offers_to_group_it(root):
+    out = _run(root, r"""
+listed.tasks=listed.tasks.map(t=>Object.assign({},t,{attempt:'attempt:map.md#99'}));   // every task names a row that is not in the table
+await window.ROWorkspace.load(root);
+const where=()=>byClass('ws-tasks').all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='把这些任务归入尝试…');
+console.log(JSON.stringify({where:where().map(b=>b.dataset.key), heads:heads()}));
+""")
+    assert out == {"where": ["group-tasks", "group-tasks-loose"], "heads": ["未归入尝试"]}      # the heading is there, and so is the way out of it

@@ -225,10 +225,14 @@ def confirmed_note_words(note: object, lang: str) -> str | None:
     got = _CONFIRMED_NOTE.fullmatch(note) if isinstance(note, str) else None
     if got is None:
         return None
+    from researchos import people  # noqa: PLC0415
+
+    # a researcher with no `me.toml` is the stored 「最初的研究者」: said in the request's language, as every page names them (12.12, 13.4)
+    who = first_researcher_label(lang) if got["who"] == people.FIRST_RESEARCHER_LABEL else got["who"]
     if got["agent"]:
         return settings.say("由 {who} 确认（采纳 {agent} 的建议）", "Confirmed by {who} (adopted the suggestion of {agent})",
-                            lang, who=got["who"], agent=got["agent"])
-    return settings.say("由 {who} 确认", "Confirmed by {who}", lang, who=got["who"])
+                            lang, who=who, agent=got["agent"])
+    return settings.say("由 {who} 确认", "Confirmed by {who}", lang, who=who)
 
 
 # -- the version store ----------------------------------------------------------------

@@ -329,6 +329,25 @@ def _is_marker_char(ch: str) -> bool:
     return unicodedata.category(ch) == "So" or 0x1F000 <= ord(ch) <= 0x1FAFF
 
 
+def _first_marker(bare: str, labels: dict[str, str] | None) -> tuple[int, int, str, str] | None:
+    """The earliest known marker in `bare` (a cell without variation selectors; the longer when two start together):
+    where it starts, its length, its word and the marker as `labels` names it."""
+    best: tuple[int, int, str, str] | None = None
+    for marker, label in (labels if labels is not None else DEFAULT_VERDICT_LABELS).items():
+        key = _bare(marker)[0].strip()
+        at = bare.find(key) if key else -1
+        if at >= 0 and (best is None or at < best[0] or (at == best[0] and len(key) > best[1])):
+            best = (at, len(key), label, marker)
+    return best
+
+
+def verdict_marker(verdict: str | None, labels: dict[str, str] | None = None) -> str:
+    """The marker, as `labels` names it, that a verdict cell wrote its status with (21.3: written again when the status
+    is the one the cell was read with, not the status's first marker); empty for a cell with no known marker."""
+    found = _first_marker(_bare(verdict if isinstance(verdict, str) else "")[0], labels)
+    return found[3] if found is not None else ""
+
+
 def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) -> dict[str, str]:
     """A verdict cell as the interface shows it (12.11): `{status, label,
     words}` -- the word for its marker (`labels`, default
@@ -338,14 +357,9 @@ def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) ->
     text with no marker at all is 其它 with all of it as the words."""
     text = verdict if isinstance(verdict, str) else ""
     bare, where = _bare(text)
-    best: tuple[int, int, str] | None = None
-    for marker, label in (labels if labels is not None else DEFAULT_VERDICT_LABELS).items():
-        key = _bare(marker)[0].strip()
-        at = bare.find(key) if key else -1
-        if at >= 0 and (best is None or at < best[0] or (at == best[0] and len(key) > best[1])):
-            best = (at, len(key), label)
+    best = _first_marker(bare, labels)
     if best is not None:
-        at, length, label = best
+        at, length, label, _marker = best
         status = VERDICT_STATUSES.get(label, "labelled")
     else:
         lead = len(bare) - len(bare.lstrip())

@@ -106,13 +106,14 @@ def _handback(value: dict[str, Any]) -> dict[str, Any]:
         found['suggested_assessment'] = {'status': _short(suggestion['status'], 64, 'A suggested status'), 'reason': reason}
     confirmed = value.get('assessment_confirmed')
     if confirmed is not None:
-        if (not isinstance(confirmed, dict) or set(confirmed) != {'by', 'at', 'status', 'adopted'}
+        # `by` is the member's id; a researcher with no `me.toml` has none, and the page names them in its own language (13.1)
+        if (not isinstance(confirmed, dict) or not {'at', 'status', 'adopted'} <= set(confirmed) <= {'by', 'at', 'status', 'adopted'}
                 or type(confirmed['adopted']) is not bool):
             raise _bad('A confirmed assessment is {by, at, status, adopted}')
-        found['assessment_confirmed'] = {'by': _short(confirmed['by'], 256, 'Who confirmed'),
-                                         'at': _short(confirmed['at'], 64, 'When it was confirmed'),
-                                         'status': _short(confirmed['status'], 64, 'The confirmed status'),
-                                         'adopted': confirmed['adopted']}
+        found['assessment_confirmed'] = {'by': _short(confirmed['by'], 256, 'Who confirmed')} if 'by' in confirmed else {}
+        found['assessment_confirmed'].update({'at': _short(confirmed['at'], 64, 'When it was confirmed'),
+                                              'status': _short(confirmed['status'], 64, 'The confirmed status'),
+                                              'adopted': confirmed['adopted']})
     return found
 
 
@@ -318,13 +319,15 @@ def save(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
 
 
 def confirmed_context(root: str | Path, report: str, confirmed: dict[str, Any]) -> dict[str, Any]:
-    """The context of `report` as it will read once `confirmed` ({by, at, status, adopted}) is recorded in it,
-    checked as a save is, or the refusal. Nothing is written: the confirm path asks first, so that an assessment is
-    not written to the table when its record could not follow."""
+    """The context of `report` as it will read once `confirmed` ({by, at, status, adopted}) is recorded in it, or the
+    refusal. Only the shape of the confirmation is checked: the links the stored record already holds are not
+    revalidated, so that a file or an attempt removed since does not stop a person confirming (the editor's save does
+    ask for them). Nothing is written: the confirm path asks first, so that an assessment is not written to the
+    table when its record could not follow."""
     root = workspace._root(root)
     _report(root, report)
     stored = parse(workspace._read(root, path_for(report)))
-    return validate_context(root, {**stored, 'assessment_confirmed': confirmed}, stored=stored)
+    return normalize({**stored, 'assessment_confirmed': confirmed})
 
 
 def confirm_assessment(root: str | Path, report: str, confirmed: dict[str, Any]) -> dict[str, Any]:

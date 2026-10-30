@@ -57,19 +57,20 @@ def ordered(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def state_of(task: dict[str, Any], run: dict[str, Any] | None, waiting: bool) -> str:
     """A task's state in one code, from its done mark, its latest run (`run`, None when it never ran) and whether
     its handback waits to be opened (`waiting`): a run going on says 运行中 and one that asked a question 等你回答,
-    whatever else is true; an unopened handback says 等你看; a task not marked done reads from how its last run
-    ended (越过了限制, 失败 -- a run that failed, was interrupted or ended without a report); a task the person
-    marked done is 已完成; anything else, including a run the person stopped, has not started."""
+    whatever else is true; a run that went out of bounds says 越过了限制 even when the agent marked the task done
+    (18.1 item 4: the done mark stays the agent's and the run is what warns -- 等你看 and 已完成 would hide it); an
+    unopened handback says 等你看; a task not marked done reads from how its last run ended (失败 -- a run that
+    failed, was interrupted or ended without a report); a task the person marked done is 已完成; anything else,
+    including a run the person stopped, has not started."""
     state = (run or {}).get("state")
     if state in ("preparing", "running"):
         return "running"
     if state == "needs_input":
         return "needs_answer"
-    if not task.get("done"):
-        if state == "out_of_bounds":
-            return "out_of_bounds"
-        if state in ("failed", "interrupted", "ended"):
-            return "failed"
+    if state == "out_of_bounds":
+        return "out_of_bounds"
+    if not task.get("done") and state in ("failed", "interrupted", "ended"):
+        return "failed"
     if waiting:
         return "to_read"
     return "done" if task.get("done") else "not_started"
@@ -82,6 +83,13 @@ def owner_label(owner: str) -> str:
     except ValueError:
         agent = None
     return agent.label if agent is not None else owner
+
+
+def _agent_owned(task: dict[str, Any]) -> bool:
+    try:
+        return agent_labels.parse_owner(task.get("owner")) is not None
+    except ValueError:
+        return False
 
 
 def _first_line(value: Any) -> str | None:
@@ -138,7 +146,8 @@ def _latest_runs(project_id: str | None, wanted: set[str]) -> dict[str, dict[str
 def by_attempt(root: str | Path, project_id: str | None, person: str | None,
                attempts: Iterable[str]) -> dict[str, dict[str, Any]]:
     """For each of `attempts` (node ids) that has tasks: `tasks` (how many), `unfinished` (not marked done),
-    `unopened` (its handbacks `person` has not opened: `handbacks.unopened`), `latest` (the handback whose report was
+    `unopened` (its handbacks `person` has not opened, that can be read and carry the handback's fields:
+    `handbacks.unopened`), `latest` (the handback whose report was
     written last, `_handback`; None when no task has one) and `items`, the tasks in `after` order with their `owner`
     and its `owner_label`, `due`, `done`, `after`, `report`, `state` (`state_of`) and `unopened`. An attempt with no
     tasks has no entry, and a task naming an attempt that is not in `attempts` is left out."""
@@ -151,8 +160,10 @@ def by_attempt(root: str | Path, project_id: str | None, person: str | None,
     mine = [task for task in tasks if task.get("attempt") in wanted]
     if not mine:
         return {}
-    waiting = set(handbacks.unopened(project_id, person))
-    runs = _latest_runs(project_id, {task["id"] for task in mine if not task.get("done") or task.get("report") in waiting})
+    waiting = set(handbacks.unopened(project_id, person, root))
+    # a task an agent finished is looked at too: its run may have gone out of bounds, which 已完成 must not hide (18.1)
+    runs = _latest_runs(project_id, {task["id"] for task in mine
+                                     if not task.get("done") or task.get("report") in waiting or _agent_owned(task)})
     out: dict[str, dict[str, Any]] = {}
     for attempt in wanted:
         own = ordered([task for task in mine if task["attempt"] == attempt])
