@@ -150,7 +150,7 @@ def test_the_frame_marks_a_panels_title_as_a_path_only_for_the_file_panel():
     script = ("global.window = {};\n" + "const classes = new Set();\n"
               "global.panelTitle = { classList: { toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); }, remove: (c) => classes.delete(c) } };\n"
               "const gone = () => ({ classList: { remove() {}, add() {}, contains: () => false, toggle() {} }, setAttribute() {}, addEventListener() {} });\n"
-              "global.panel = gone(); global.panelBackdrop = gone(); global.state = { panelSubject: null }; global.document = { getElementById: gone };\n"
+              "global.panel = gone(); global.panelBackdrop = gone(); global.panelBody = { scrollTop: 0 }; global.state = { panelSubject: null }; global.document = { getElementById: gone };\n"
               + _app_block("// -- Panel and 返回 (DESIGN.md 21.8)", "// -- end of panel and 返回") +
               "\nconst seen = [];\n"
               "for (const subject of [{ kind: 'file', path: 'a/b.csv' }, { kind: 'records' }, null, { kind: 'file', path: 'c.py' }, { kind: 'settings' }]) {\n"

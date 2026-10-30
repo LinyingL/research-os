@@ -664,6 +664,7 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-path { font-size: 0.75rem; color: var(--ink-soft); word-break: break-all; }
 /* 21.7: a path is the quiet second line under its title, never the line itself. */
 .res-main > .res-path { flex: 0 0 100%; margin-top: -0.4rem; font-size: 0.75rem; }
+.res-main > .res-gone { flex: 0 0 100%; margin-top: -0.4rem; font-size: 0.75rem; }   /* 21.5: a mark whose file has gone: one quiet sentence under its name */
 .dc-path { margin-top: 0.05rem; font-size: 0.75rem; }
 .dc-broken-path { margin: -0.05rem 0 0.2rem; font-size: 0.75rem; }
 .res-cause { font-size: 0.78rem; color: var(--ink-soft); }
@@ -3657,6 +3658,10 @@ function openPanel() {
   panel.classList.remove("hidden");
   panelBackdrop.classList.remove("hidden");
   panel.setAttribute("aria-hidden", "false");
+  // 21.8: a panel that opens with another subject starts at the top, whatever the last one was scrolled to. Only a shown panel
+  // has a box to scroll, so this comes after `hidden` is gone; the subject on screen drawn again (the form's preview step) keeps
+  // its place, and the redraws that do not come through here (a refresh of the records, an attempt's panel read again) keep theirs.
+  if (!(visible && subject && before === subject)) panelBody.scrollTop = 0;
   syncPanelBack();
 }
 

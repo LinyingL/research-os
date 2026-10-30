@@ -305,9 +305,17 @@
     }
     if (p.kind === "verdict_change" && p.verdict) {
       const v = p.verdict;
-      return t("#{number} 的研究判断从「{was}」改为「{became}」", { number: String(v.number || "").replace(/^#/, ""),
-        was: v.old_status ? verdictWord(v.old_status) : "", became: v.new_status ? verdictWord(v.new_status) : "" }) +
-        (v.abandons ? t("，放弃这条路线") : "") + filesPart;
+      const number = String(v.number || "").replace(/^#/, "");
+      const was = v.old_status ? verdictWord(v.old_status) : "", became = v.new_status ? verdictWord(v.new_status) : "";
+      // 21.3: the cell is a status and a reason; a proposal that keeps the status the cell reads with and changes the
+      // reason is not a move "from 待定 to 待定", and one whose cell differs only in its marker changes nothing as it reads
+      const reasonOf = (status, cell) => String(status && typeof status.words === "string" ? status.words : cell || "").trim();
+      const kept = !!(v.old_status && v.new_status) && was === became;
+      const sentence = !kept ? t("#{number} 的研究判断从「{was}」改为「{became}」", { number: number, was: was, became: became })
+        : reasonOf(v.old_status, v.old) !== reasonOf(v.new_status, v.new)
+          ? t("#{number} 的研究判断仍是「{verdict}」，理由改了", { number: number, verdict: became })
+          : t("#{number} 的研究判断不变（{verdict}）", { number: number, verdict: became });
+      return sentence + (v.abandons ? t("，放弃这条路线") : "") + filesPart;
     }
     if (p.kind === "route_link" && p.route) {
       const ends = { child: p.route.child_number || "", parent: p.route.parent_number || "" };

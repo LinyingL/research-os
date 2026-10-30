@@ -5788,7 +5788,8 @@ check. A stale revision refuses the write rather than overwriting another
 editor. Associations describe what the author linked: a material link or
 purpose does not prove that a run read or produced that file. Literature
 links are file-level associations, not per-reference or per-DOI support
-claims. Native file and variable views can show these explicit backlinks.
+claims. A node page, a variable card and a reference file of 文献 show these
+explicit backlinks -- each is about one thing; 图表与论断 does not (21.5).
 
 ### 20.2 Task and AI handoff
 
@@ -6284,6 +6285,18 @@ attempts.py`; `research_records.assessment_statuses`).
   end). In an existing row the panel and the form send a cell only when it
   changed, so a cell with no known marker, a decoration or two lines is never
   rewritten by looking at it. After a save or 撤销 it reads the cell again.
+- **A move is told by what the status reads as** (*B6*). The cell holds a status and a
+  reason, so the places that word how it moved (the node page's timeline and the panel's
+  「你上次查看以来的改动」 through `verdictMove`, a proposal's line in `desk.js`, the engine's
+  word form `history._attempt_change`) compare the status word as it reads -- a default
+  word by its code, the researcher's own as written, two markers of one word the same --
+  and the reason apart. Another word is 「研究判断从「待定」改为「现行」」; the same word
+  with another reason is 「研究判断仍是「待定」，理由改了」 (“Research assessment still
+  “Pending”; the reason changed”), joined with 「，结果改为：…」 when the result moved
+  too; a cell that reads the same (its marker spelt another way, spaces) is 「研究判断不
+  变」. A proposal that keeps the status says 「#16 的研究判断仍是「待定」，理由改了」. The
+  stored cell is not touched, and the command line keeps its markers. The engine's
+  word form now follows the page's language (it said Chinese on an English page).
 - **The chooser.** One component: a button for each status, the chosen one
   pressed (`aria-pressed`, the `selected` class: ink and weight, not the
   clay of a problem, 21.8) and a reason field captioned 理由. Its two
@@ -6691,7 +6704,20 @@ attempts.py`; `research_records.assessment_statuses`).
     「还没有读到文稿。」 and no instruction to press a control that is not there. The drafts of the paper
     stand above the control, each with its claim count and 「不再作为论文正文」: a
     paper may be several drafts (the main text and an appendix). A draft's own
-    page keeps its 「设为论文正文」.
+    page keeps its 「设为论文正文」. *B6:* **every mark stands on the page.** A file marked
+    that the index does not read has a row like any other -- its name, 「0 条论断」 and
+    「不再作为论文正文」 -- so the count 你的记录与备份 gives (「3 份文稿设为论文正文」) and the
+    rows agree, and the mark can be taken back. The index skips `research/overview.md`, the
+    project's 研究问题与计划, on purpose (it is a file Research OS writes, 18.3), and reads
+    only Markdown and LaTeX as drafts; a mark is accepted for any file of the project, and an index
+    built before the rule keeps the sections it had read (a rescan does not retire them) and
+    went on offering the file, while a fresh index -- a copy of the project -- does not list it. The engine adds the marked
+    files to the drafts (`results().drafts`, with `exists`), so that `where`, `nodes` and the
+    claims of a file take it in; the picker still offers neither a marked file nor the attempt
+    table. A marked file that is no longer in the project says so in one quiet sentence
+    (「这个文件现在不在项目里」, “This file is no longer in the project”), its name is text,
+    not a link that opens nothing, it is not listed under 论断, and 「不再作为论文正文」 still
+    works; the file's own page, when it has one, offers the same. Nothing stored changes.
   - **The paper first.** 图与表 is one row per figure or table, in four lists:
     the paper's (a section of a marked draft includes it; with no draft marked,
     every draft stands for the paper and says so); the figures and registered
@@ -6750,7 +6776,15 @@ attempts.py`; `research_records.assessment_statuses`).
   agent or a person registered (19.5) is a row of its kind like any other file --
   a figure or table on 图表与论断, a script or data file on 数据与代码, with the
   title it was registered with and its path beside it, also when the index holds
-  no node for it (a document is seen in its handback, not listed by kind). A row
+  no node for it (a document is seen in its handback, not listed by kind). *B6:* nor
+  does a box of reports open 图表与论断: 「提到它的笔记与报告」 was drawn at its top from every
+  report that named any figure or table of the page -- one report, its question and eleven
+  files with their paths filled the first screen, and its 「它」 had nothing to refer to on a
+  page of many figures. The box belongs to a page about one thing -- a node page, a variable
+  card, and 「提到这个文件的笔记与报告」 under a reference file of 文献 -- so `/api/results`
+  names no report any more (it no longer scans the sidecars for the page). A report that names
+  a figure or table is on that figure's own page (`/api/node`'s `research_records`, held by a
+  test for a figure and a table) and under 报告 on 项目首页. A row
   says its attempt as a quiet field, 「尝试 #n 描述」 (the first two, and
   「等 n 条」), from `researchos.kind_rows`: **the attempt of the task whose output
   it is** (`now_doing.placed_reports`, the one notion of the attempt a report
@@ -7118,7 +7152,15 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   declines (nothing opened) a panel opened next from the one on screen is still "from" it and
   has 返回. The scrim is a dimmed page a stray click reaches, so a click on it asks about words
   half typed before it closes the panel (the 关闭 button and Escape are deliberate and close as
-  before).
+  before). *Fix of B6:* **a panel that opens with another subject starts at the top**, whatever
+  the last one was scrolled to -- after 关闭, from inside a panel, for 返回 (which opens the first
+  fresh), for an attempt's panel, a handback, a file, 设置 and 你的记录与备份. `openPanel` sets
+  `panelBody.scrollTop = 0` after it has taken `hidden` off the panel (a panel with no box cannot
+  be scrolled, and a panel built whole before it is opened is not shortened by a loading line), so
+  it holds for an opener that draws before it opens and for one that draws after an await. The
+  subject on screen drawn again keeps its place (the form's preview step) and so does every
+  redraw that does not come through `openPanel`: the records read again when the project moves,
+  an attempt's panel read again after a write, a refresh of the open panel.
 - **The route map** fits all its cards the first time a project's map is opened in this
   browser (*B5-2*; remembered per project in the browser's storage as the way the page
   is looked at is, a per-viewer convenience), forgetting a camera saved before as 适应全部
@@ -7216,5 +7258,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    from a panel has 返回, which asks once, and the scrim is on every panel that covers the page and asks
    about words half typed; the route map fits on its first opening and says how many cards are out of
    the view, a line a wrapped toolbar does not cover; nothing is set under 12 px (a `font` shorthand and
-   a keyword or `calc` size read too); an attempt with no files yet draws no clay.
+   a keyword or `calc` size read too); an attempt with no files yet draws no clay. *B6, on a copy of a real
+   project:* a change of the reason alone is told as 「研究判断仍是「待定」，理由改了」, never 「从「待定」改为「待定」」
+   (`tests/test_v16_b6_acceptance.py`); a panel opens at its top whatever the one before it was scrolled to, and a
+   panel read again keeps its place (`tests/test_v16_b6_panel_scroll.py`, and a run in headless Chrome: 记录与备份
+   at 600 px, 关闭, 设置 opened at 0, it was 600); 图表与论断 opens on its own sentence and 论文正文, with no box of
+   reports; every draft marked has a row there, also the project overview the index does not read and a file
+   that has gone, and can be unmarked (`tests/test_v16_b6_acceptance.py`).
 8. The full suite passes on Python 3.11 and 3.13.

@@ -250,15 +250,13 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang
 
 
 def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
-    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims."""
+    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims. It names no report: a page of many figures has no one thing for a
+    box of the documents that mention "it" to be about (21.5); a report that names a figure or table is on that figure's own page
+    (`node_payload`)."""
     from researchos import nodepage  # noqa: PLC0415
 
     try:
-        page = nodepage.results(conn, root, _arg(query, "draft"))
-        from researchos import research_records
-        items = [item for key in ("items", "other", "loose", "excluded") for item in page.get(key, [])]
-        page['research_records'] = research_records.backlinks(root, paths=[item['path'] for item in items if item.get('path')])
-        return page
+        return nodepage.results(conn, root, _arg(query, "draft"))
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 

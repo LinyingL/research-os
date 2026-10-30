@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Say that **the reason changed** when an attempt's research assessment keeps its
+  status and gets another reason (on the attempt's timeline, in its panel, in a
+  proposal and in the comparison of two versions), instead of "from Pending to
+  Pending"; the comparison also follows the page's language.
+- Open every side panel at its top, whatever the one before it was scrolled to;
+  a panel that is only read again keeps its place.
+- Take the box of notes and reports off **Figures and claims**, whose "it" had
+  nothing to refer to; a report that names a figure or table is on that figure's
+  own page.
+- List every draft set as the paper on **Figures and claims**, also one the
+  index does not read (the project overview) or whose file has gone, so that it
+  can be taken back.
 - Show only the first eight files of a task's opened **Process files** group,
   with **N more** for the rest, as every other group of files does; a task can
   register hundreds of them.

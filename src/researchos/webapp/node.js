@@ -169,6 +169,9 @@
   // An attempt's verdict as it moved between two recorded versions, in the
   // screen's words (13.6; the desk's panel says it too, 14.5): a default
   // verdict by its code (RODesk.verdictWord), the researcher's own as written.
+  // The cell holds a status and a reason (21.3), so a move is told by what the
+  // status reads as: another word is 「从…改为…」, the same word with another
+  // reason is 「仍是…，理由改了」 (21.3), and a cell that reads the same says nothing moved.
   function verdictMove(prev, cur) {
     const word = (v) => {
       const s = v && v.verdict_status;
@@ -176,13 +179,21 @@
       const D = typeof window !== "undefined" && window.RODesk;
       return D && D.verdictWord ? D.verdictWord(s) : s.label;
     };
+    // the reason as the engine split it off the cell (`verdict_status.words`); a payload without it compares the cell
+    const reason = (v) => {
+      const s = v && v.verdict_status;
+      return String(s && typeof s.words === "string" ? s.words : (v && v.verdict) || "").trim();
+    };
     if (!prev) return t("记下这条尝试，研究判断为「{verdict}」", { verdict: word(cur) });
-    const moved = (prev.verdict || "") !== (cur.verdict || "");
+    const moved = word(prev) !== word(cur);
+    const reasoned = !moved && reason(prev) !== reason(cur);
     const result = (prev.result || "") !== (cur.result || "") ? cur.result || t("（空）") : null;
-    const words = { was: word(prev), became: word(cur), result: result };
+    const words = { was: word(prev), became: word(cur), verdict: word(cur), result: result };
     if (moved && result !== null) return t("研究判断从「{was}」改为「{became}」，结果改为：{result}", words);
     if (moved) return t("研究判断从「{was}」改为「{became}」", words);
-    return result !== null ? t("结果改为：{result}", words) : t("研究判断不变（{verdict}）", { verdict: word(cur) });
+    if (reasoned && result !== null) return t("研究判断仍是「{verdict}」，理由改了，结果改为：{result}", words);
+    if (reasoned) return t("研究判断仍是「{verdict}」，理由改了", words);
+    return result !== null ? t("结果改为：{result}", words) : t("研究判断不变（{verdict}）", words);
   }
 
   // Where a version came from, in words; one 同步 installed names the
@@ -1533,7 +1544,6 @@
     if (undone) page.appendChild(undone);
     const note = registeredNote(data.registered);
     if (note) page.appendChild(note);
-    if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(page, data.research_records);
     page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉。论文用到的图和表如果缺来源或缺尝试，会标成红色，并在旁边给出补救的办法；其余的只淡淡地说一句。")));
     renderPaperChoice(page, data);
     const nodes = {};
@@ -1649,8 +1659,12 @@
       marked.forEach((d) => {
         const li = mk("li", "res-row");
         const main = mk("div", "res-main");
-        main.append(link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
+        // 21.5: every mark stands, whether or not the index reads the file. A file that has gone from the project has a name that is
+        // text -- its page would open nothing -- and one quiet sentence; the way to take the mark back is the same.
+        const gone = d.exists === false;
+        main.append(gone ? mk("span", "mono", d.file) : link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
           mk("span", "node-sub-inline", t("{n} 条论断", { n: d.claims })));
+        if (gone) main.appendChild(mk("div", "node-sub-inline res-gone", t("这个文件现在不在项目里")));
         li.append(main, paperButton(d.file, true, status));
         ul.appendChild(li);
       });
@@ -1709,7 +1723,7 @@
     }
     section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));
     const list = mk("div", "res-drafts");
-    marked.forEach((d) => list.appendChild(draftClaims(d)));
+    marked.filter((d) => d.exists !== false).forEach((d) => list.appendChild(draftClaims(d)));   // a file that has gone has nothing to open
     section.appendChild(list);
   }
 

@@ -340,7 +340,7 @@ const mkEl = (cls) => { const s = new Set(cls ? cls.split(" ") : []);
     toggle: (c, on) => { const want = on === undefined ? !s.has(c) : !!on; if (want) s.add(c); else s.delete(c); return want; } },
     setAttribute() {}, on: {}, addEventListener(type, fn) { this.on[type] = fn; }, click() { this.on.click(); } }; };
 const parts = { "panel-back": mkEl("hidden") };
-global.panel = mkEl("hidden"); global.panelBackdrop = mkEl("hidden"); global.panelTitle = mkEl();
+global.panel = mkEl("hidden"); global.panelBackdrop = mkEl("hidden"); global.panelTitle = mkEl(); global.panelBody = { scrollTop: 0 };
 global.document = { getElementById: (id) => parts[id] };
 global.state = { panelSubject: null };
 global.endPanelResize = () => {};
@@ -590,7 +590,7 @@ def test_the_path_under_a_trace_card_keeps_a_leading_00_in_place_under_the_left_
 
 _REAL_BACK = r"""
 parts["panel-back"] = el("button", "panel-back ws-text-link hidden");
-global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"];
+global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"]; global.panelBody = parts["panel-body"];
 global.endPanelResize = () => {}; global.RODesk = window.RODesk;
 %(block)s
 %(scrim)s
@@ -646,7 +646,7 @@ def test_return_asks_once_about_half_typed_words_when_it_leads_back_to_an_attemp
 
 _RETURN_DECLINED = r"""
 parts["panel-back"] = el("button", "panel-back ws-text-link hidden");
-global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"];
+global.panel = parts.panel; global.panelBackdrop = parts["panel-backdrop"]; global.panelTitle = parts["panel-title"]; global.panelBody = parts["panel-body"];
 global.endPanelResize = () => {}; global.RODesk = window.RODesk;
 %(block)s
 global.openPanel = openPanel; global.closePanel = closePanel;

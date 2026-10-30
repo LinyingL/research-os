@@ -25,8 +25,11 @@ the files -- nothing here writes:
   state 完整 / 缺来源 / 缺尝试, and (`researchos.provenance`) whether the chosen
   paper includes it, the cause in words, the tone the row is drawn in (a warning
   only for what the paper includes) and the action beside it. Every draft is
-  listed with whether it is marked and the day it changed, and `papers.recent`
-  is the order the picker of 「设为论文正文」 offers them in.
+  listed with whether it is marked, whether it is still there and the day it
+  changed, and `papers.recent` is the order the picker of 「设为论文正文」 offers
+  them in. Every mark stands (B6): a file marked but not read by the index (the
+  writing desk's own overview, which the scan skips on purpose, 18.3) or gone
+  from the project is a row too, with no claim, so that it can be taken back.
 - `data_code(conn, root)` -- 数据与代码: every script and data file with what
   it reads and writes, the attempts it belongs to and its registered title, and
   which of the lineage report's blocks it is in (没有生成脚本 / 断链 / 同名文件),
@@ -644,9 +647,11 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
         out["trace"] = _attempt_trace(conn, root, record, flags, lang)
         out["choices"] = {"files": _file_choices(conn, root, ("script", "dataset", "figure"))}
     elif prefix in FILE_NODE_TYPES:
-        if prefix == "file" and path is not None and path in _draft_files(conn):
-            # 12.13: a draft's page offers 「设为论文正文」 too.
-            out["paper"] = {"draft": path, "marked": path in _marked(root)["drafts"]}
+        if prefix == "file" and path is not None:
+            # 12.13: a draft's page offers 「设为论文正文」 too -- and a marked file the index does not read the way back (21.5, B6)
+            marks = _marked(root)["drafts"]
+            if path in marks or path in _draft_files(conn):
+                out["paper"] = {"draft": path, "marked": path in marks}
         chain = trace_mod.chain(conn, root, node_id)
         # 21.5: a warning is for what the paper relies on -- the chosen paper includes this figure or table.
         in_paper = _in_paper([d["file"] for d in chain["drafts"]], root, path)
@@ -826,7 +831,9 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         file = _file_of(claim["id"])
         if file:
             counts[file] = counts.get(file, 0) + 1
-    drafts = sorted(_draft_files(conn) | set(counts))
+    # every mark stands (21.5, B6): a file marked 「设为论文正文」 that the index does not read -- the writing desk's own overview, a
+    # plain-text draft, a file that has gone -- is a row too, with no claim, so that it can be taken back
+    drafts = sorted(_draft_files(conn) | set(counts) | marked)
     days = {f: _day(root, f) for f in drafts}
     # the drafts the paper can still take, the one changed most recently first (the picker shows the first
     # `PICKER_SHOWN`, the rest under 「更多」); the attempt table's own file is a draft to the index and never the paper
@@ -849,7 +856,7 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         # 12.13: claims only from the drafts marked 「设为论文正文」.
         "claims": [{"file": f, "count": counts[f]} for f in drafts if f in marked and f in counts],
         "drafts": [{"file": f, "marked": f in marked, "claims": counts.get(f, 0), "node": notes_mod.normalize_node(f),
-                    "modified": days[f][1]} for f in drafts],
+                    "modified": days[f][1], "exists": days[f][1] is not None} for f in drafts],
         "papers": {"marked": sorted(marked), "trusted": papers["trusted"], "message": papers["message"],
                    "path": papers["path"], "recent": recent, "shown": PICKER_SHOWN},
         "registered": {"error": filed.error, "broken": filed.broken},
