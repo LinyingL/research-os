@@ -1274,7 +1274,8 @@
   const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
   const OWNER_OTHER = "\u0000other", OWNER_SETTINGS = "\u0000settings";
   // 21.7: the owner written for the researcher when no name is set (a project of one person). Like a name typed by hand it is
-  // the owner text as it is on disk, so it stays 「我」 whatever the screen says; the screen reads it as Me (`ownerLabel`).
+  // the owner text as it is on disk, so it stays 「我」 whatever the screen says; the screen reads it as Me (`ownerLabel`) -- in a
+  // project of one person only: in a team's, a stored 「我」 is a task of the solo period, and no one of the team is it.
   const OWNER_ME = "我";
   const POLL_MS = 2000, POLL_MAX_MS = 30000;
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
@@ -1350,10 +1351,12 @@
     const m = /^agent:([^:]+):(.+)$/.exec(String(owner || ""));
     return m && RUNNER_NAMES[m[1]] ? { runner: m[1], model: m[2], owner: m[0], label: RUNNER_NAMES[m[1]] + " · " + m[2] } : null;
   }
+  // A project of one person (the engine's mode); a page that has not read the project yet is taken to be one.
+  function soloProject() { return !data || data.mode === "single"; }
   // The owner as people read it: an agent by its label, never by the raw agent: value.
   function ownerLabel(owner) {
     if (!owner) return "";
-    if (owner === OWNER_ME) return t("我");
+    if (owner === OWNER_ME) return soloProject() ? t("我") : t("最初的研究者");
     const known = agentInfo && (agentInfo.agents || []).find((a) => a.owner === owner);
     if (known && known.label) return known.label;
     const parsed = parseAgent(owner);
@@ -1578,7 +1581,7 @@
     const words = el("span", "ws-group-task-text", cutWords(info.text, 90)); words.title = info.text;
     row.append(el("span", "ws-group-task-n", t("第 {n} 条", { n: info.number })), words);
     if (info.report_title) row.append(el("span", "ws-agent-quiet", t("报告：{title}", { title: cutWords(info.report_title, 50) })));
-    if ((info.asked_of || []).length > 1) row.append(el("span", "ws-agent-quiet", t("同一个问题，分别交给了 {agents}", { agents: info.asked_of.map((who) => who || t("没有指定负责人")).join(t("、")) })));
+    if ((info.asked_of || []).length > 1) row.append(el("span", "ws-agent-quiet", t("同一个问题，分别交给了 {agents}", { agents: info.asked_of.map((who) => ownerLabel(who) || t("没有指定负责人")).join(t("、")) })));
     const prior = subject.after[id];
     if (prior && group && subject.info[prior] && group.tasks.indexOf(prior) >= 0) row.append(el("span", "ws-agent-quiet", t("接在第 {n} 条之后", { n: subject.info[prior].number })));
     if (subject.same[id]) {
@@ -2321,7 +2324,7 @@
   function ownerChoices() {
     const list = [{ value: "", words: t("不指定") }];
     if (people.me) list.push({ value: people.me, words: t("{name}（我）", { name: people.me }) });
-    else if (people.loaded) list.push({ value: OWNER_ME, words: t("我") });
+    else if (people.loaded && soloProject()) list.push({ value: OWNER_ME, words: t("我") });
     people.team.forEach((name) => { if (!list.some((c) => c.value === name)) list.push({ value: name, words: name }); });
     return list;
   }

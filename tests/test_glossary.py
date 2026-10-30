@@ -453,7 +453,12 @@ ROWS_OF_21_6: list[dict[str, str]] = [
 #: The words 21.6 retires (the lead's list for B4-1), each of which the "Old" column of some row names or whose row says it
 #: is gone. 清单 is retired on 数据与代码 only (the undo's plan, a task's catalogue and a run's list of changes are other
 #: lists), so it has a scope of its own below.
-RETIRED_WORDS = ("结果记录", "记录结果", "研究记录", "人工记录", "运行记录", "年表", "待办", "未识别生成脚本", "关联文件")
+RETIRED_WORDS = ("结果记录", "记录结果", "研究记录", "人工记录", "运行记录", "年表", "待办", "未识别生成脚本", "没有找到生成它的脚本", "关联文件")
+#: 18.2's 产出, which became 输出 (the noun, 21.2: "not the retired 产出"). Looked for in every string of the screens but for one case: the
+#: string that is the word alone is the link word "produces" (an experiment produces a figure), which 输出 does not replace and
+#: which has a key of its own in the page's English table (test_v9_language holds that).
+RETIRED_OF_18_2 = ("产出",)
+RELATION_WORD = "产出"
 #: The files that show 数据与代码, 图表与论断 and the pages around them; 清单 is retired in their strings.
 LIST_WORD_SCOPE = ("node.js", "app.html", "desk.js", "routemap.js", "canvas.js", "team.js", "canvas.py", "node_api.py", "nodepage.py",
                    "kind_rows.py", "provenance.py", "trace.py")
@@ -470,6 +475,9 @@ ALLOWED_RETIRED: list[tuple[str, str, str]] = [
                               "read the file earlier sends it; 13.1: no file depends on the screen's words)"),
     ("attempts.py", "二、尝试途径总年表", "the researcher's own heading in the map file, which the reader finds the table by (21.6, last paragraph)"),
     ("identity.py", "人工记录", "the header comment written into .researchos/identity: on disk (13.1)"),
+    ("brief.py", "产出目录", "the agent's instruction (17.5) calls the folders its files go to 产出目录: a noun of the prompt, not a word of a screen "
+                         "(tests/test_outputs.py holds the sentence)"),
+    ("brief.py", "最终产出", "the same instruction: 中间缓存不算最终产出, a generic noun for the files the agent hands in"),
 ]
 #: Python files whose strings are not on a screen: the command line is a developer surface that keeps its words (13.1, 21.6).
 NOT_ON_A_SCREEN = {"cli.py": "the command line (13.1): its help and its printed lines keep their words"}
@@ -546,9 +554,11 @@ def _kept_out(where: str, text: str) -> str:
 
 
 def _retired_in(where: str, text: str) -> list[str]:
-    """The retired words a string shows once what the allowlist keeps is taken out of it (清单 only in LIST_WORD_SCOPE)."""
+    """The retired words a string shows once what the allowlist keeps is taken out of it (清单 only in LIST_WORD_SCOPE; 产出 unless the
+    string is that word alone, the link word)."""
     left = _kept_out(where, text)
     words = [word for word in RETIRED_WORDS if word in left]
+    words += [word for word in RETIRED_OF_18_2 if word in left and left.strip() != RELATION_WORD]
     if "清单" in left and where in LIST_WORD_SCOPE:
         words.append("清单")
     return words
@@ -628,8 +638,8 @@ def test_no_screen_shows_a_retired_word_of_21_6():
     """DESIGN 21.6, 21.9 item 6 (task V16 B4-1): in everything the app can show -- app.html's text and attributes, every string
     of every script it serves (a t() argument, a table of words, the English table), every string of the engine's modules (a
     sentence it composes, a say() pair) and the shell -- none of 结果记录, 记录结果, 研究记录, 人工记录, 运行记录, 年表, 待办, 未识别生成脚本,
-    关联文件, nor 清单 on 数据与代码 and its neighbours. What must stay is ALLOWED_RETIRED, each with its reason; an entry that
-    excuses nothing is stale and is reported."""
+    没有找到生成它的脚本, 关联文件, 18.2's 产出 (but for the link word "produces" on its own), nor 清单 on 数据与代码 and its
+    neighbours. What must stay is ALLOWED_RETIRED, each with its reason; an entry that excuses nothing is stale and is reported."""
     found, used, read = retired_words_on_screens()
     assert found == []
     assert used == {(name, kept) for name, kept, _why in ALLOWED_RETIRED}, "an allowlist entry excuses nothing any more"
@@ -645,6 +655,11 @@ def test_the_scan_for_retired_words_finds_a_word_and_excuses_only_what_is_listed
     assert _retired_in("app.html", "提交说明「Research OS：人工记录」，你的人工记录") == ["人工记录"]
     assert _retired_in("node.js", "Research OS：人工记录") == ["人工记录"]
     assert _retired_in("node.js", "输出清单暂时无法读取。") == ["清单"] and _retired_in("workspace.js", "没能读出撤回的清单。") == []
+    # the second retired sentence of the generating-script row, and 18.2's 产出 (a sentence of the notice that had it; the bare link word stays)
+    assert _retired_in("provenance.py", "没有找到生成它的脚本") == ["没有找到生成它的脚本"]
+    assert _retired_in("research_records.py", "已登记的产出暂时无法读取；要点仍可查看和保存。") == ["产出"]
+    assert _retired_in("desk.js", "产出") == [] and _retired_in("nodepage.py", " 产出 ") == []
+    assert _retired_in("brief.py", "产出目录（项目内相对路径）") == [] and _retired_in("node.js", "产出目录") == ["产出"]
     assert _markup_strings('<button title="查看年表">记录</button><script>"年表"</script><!-- 年表 --><p> 年表 </p>') == ["查看年表", "记录", "年表"]
     sample = Path(__file__).parent / "_scratch_retired_docstring.py"
     try:
@@ -652,6 +667,63 @@ def test_the_scan_for_retired_words_finds_a_word_and_excuses_only_what_is_listed
         assert _python_strings(sample) == ["尝试表", "年表"]
     finally:
         sample.unlink(missing_ok=True)
+
+
+#: Retired English the engine's own sentences must not say either (the page's English table is held to it below). What must stay, each
+#: with why: (file, the text kept, reason), taken out of a string before it is looked at, as ALLOWED_RETIRED does for the Chinese.
+ALLOWED_RETIRED_ENGLISH: list[tuple[str, str, str]] = [
+    ("workspace.py", "Result record", "_RETIRED_TITLES: the title a headingless report had before 21.6, read back as 'no title typed' "
+                                      "(13.1: no file depends on the screen's words)"),
+]
+
+
+def retired_english_in_the_engine() -> tuple[list[str], set[tuple[str, str]], int]:
+    """(what is found, the entries that excused something, how many strings were read): every string constant of the engine's modules
+    (the command line apart), which are the English a person reads in English mode and under 「详情」."""
+    found, used, read = [], set(), 0
+    for path in sorted(WEBAPP.parent.rglob("*.py")):
+        if path.name in NOT_ON_A_SCREEN:
+            continue
+        for text in _python_strings(path):
+            read += 1
+            left = text
+            for name, kept, _why in ALLOWED_RETIRED_ENGLISH:
+                if name == path.name and kept in left:
+                    used.add((name, kept))
+                    left = left.replace(kept, "")
+            found += [f"{path.name}: {pattern} in {text.strip()[:90]!r}" for pattern in RETIRED_ENGLISH if re.search(pattern, left, re.I)]
+    return found, used, read
+
+
+def test_no_sentence_of_the_engine_says_a_retired_english_word():
+    """DESIGN 21.6, 21.9 item 6: the English a person reads -- the engine's own sentences, in English mode and under 「详情」, and what
+    the agent's tools answer -- says report, not "result record"; your records, not "human records"; and none of the other retired
+    English of 21.6. The page's English table is held to it by the test below; this holds the engine's strings to it."""
+    found, used, read = retired_english_in_the_engine()
+    assert found == []
+    assert used == {(name, kept) for name, kept, _why in ALLOWED_RETIRED_ENGLISH}, "an allowlist entry excuses nothing any more"
+    assert read > 5000, read
+
+
+#: README and the guides under docs/ are read by the people the app is for, in the words of the screens. "research record(s)" and "run
+#: record(s)" are left out of their English: README says them for the records Research OS keeps and for the verb ("each run records
+#: the ...") and the command line keeps its words (`researchos records`); the document kinds the screens renamed are held.
+GUIDE_RETIRED_ENGLISH = tuple(p for p in RETIRED_ENGLISH if p not in (r"\bresearch records?\b", r"\brun records?\b"))
+
+
+def test_readme_and_the_guides_use_no_retired_word_in_either_language():
+    """DESIGN 21.6, 21.9 item 6: README.md and every guide under docs/ say the words of the screens -- a report, not a "result
+    record"; none of 21.6's retired Chinese words either. (CHANGELOG.md is history and says what the words were.)"""
+    root = Path(__file__).parents[1]
+    guides = [root / "README.md", *sorted((root / "docs").glob("*.md"))]
+    assert len(guides) >= 5
+    found = []
+    for path in guides:
+        text = path.read_text(encoding="utf-8")
+        found += [f"{path.name}: {word}" for word in RETIRED_WORDS if word in text]
+        found += [f"{path.name}: {pattern} in {line.strip()[:80]!r}" for line in text.splitlines()
+                  for pattern in GUIDE_RETIRED_ENGLISH if re.search(pattern, line, re.I)]
+    assert found == []
 
 
 @needs_node

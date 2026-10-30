@@ -192,7 +192,8 @@ out.shown = panelPart("panel").cls.has("hidden") ? "hidden" : "shown";
     assert out["sections"] == [["agents", w("AI 执行者", "AI agent")], ["llm", w("本地模型（辅助填写）", "Local model (draft with a model)")],
                                ["lookup", w("联网查询", "Online lookup")], ["language", w("界面语言", "Interface language")]]
     assert out["mounted"] == [["ws-agent-settings", "settings", True]]
-    assert out["last"] == w("每个项目自己的设置在侧栏顶部的项目菜单里。", "Each project’s own settings are in the project menu at the top of the sidebar.")
+    assert out["last"] == w("每个项目自己的设置：输出目录在项目首页的「全部任务」里，其余在侧栏顶部的项目菜单里。",
+                            "Each project’s own settings: output folders are under “All tasks” on Project home, the others in the project menu at the top of the sidebar.")
     assert out["calls"] == ["GET /api/settings/llm", "GET /api/settings/lookup"]
     assert out["shown"] == "shown"
 

@@ -847,6 +847,7 @@
     "提议人 {who}": "Proposed by {who}",
     "批准人 {who}": "Approved by {who}",
     "迁移后才能记录连线确认": "Link judgments can be recorded once the old records are migrated",
+    "迁移后才能新建变量卡": "Variable cards can be made once the old records are migrated",
     "只读打开：不会写入任何东西": "Opened read-only: nothing is written",
     // 18.1: a window opened without the engine's session (app.html's BLOCKING_ERROR_TEXT, routemap.js).
     "这个窗口没有连上 Research OS 的写入权限：请从 Research OS 应用打开它。如果你已经在应用里，说明应用是旧版本：请运行 researchos app 重新生成。": "This window cannot save: open it from the Research OS app. If you already did, the app is out of date: run researchos app to rebuild it.",
@@ -1572,7 +1573,7 @@
     "这是这台电脑的设置，所有项目共用。": "This is a setting of this Mac, shared by every project.",
     "界面语言": "Interface language",
     "侧栏下方的「English」和「中文」是同一个设置的快捷方式。": "The “English” and “Chinese” switch at the foot of the sidebar is a shortcut to the same setting.",
-    "每个项目自己的设置在侧栏顶部的项目菜单里。": "Each project’s own settings are in the project menu at the top of the sidebar.",
+    "每个项目自己的设置：输出目录在项目首页的「全部任务」里，其余在侧栏顶部的项目菜单里。": "Each project’s own settings: output folders are under “All tasks” on Project home, the others in the project menu at the top of the sidebar.",
     "没能读到模型设置": "Could not read the model setting",
     "没能读到这个设置": "Could not read this setting",
     // 21.7: what 停止服务 says when an AI agent is still working
@@ -1594,6 +1595,7 @@
     "变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。": "A variable card records what a variable is, how it is built and why it is built that way. You write the definition; Research OS checks the implementation against the files.",
     "卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。": "A card is written in the project’s .researchos/variables/<id>/ and filled in with your editor. This page shows it and records confirming, retiring and the like.",
     "为真正进入模型、图表或论断的变量建卡。点上面的「新建变量卡」创建第一张。": "Make cards for the variables that really go into a model, a figure or a claim. Choose “New variable card” above to make the first.",
+    "为真正进入模型、图表或论断的变量建卡。这个项目现在不能新建变量卡，原因在上面。": "Make cards for the variables that really go into a model, a figure or a claim. This project cannot make a variable card right now; the reason is above.",
     "已保存，下次任务运行时使用。": "Saved. New task runs will use these folders.",
     "没能保存输出目录。": "Could not save output folders.",
     "没能读取输出目录。": "Could not read output folders.",

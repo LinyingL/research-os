@@ -363,7 +363,7 @@ def save_document(root: str | Path, body: dict[str, Any], *,
         _check_revision(body, before)
         if before is None and kind != "overview" and not _GENERATED_RE.fullmatch(rel):
             # A file with any other name is shown and saved once it exists; the engine only creates its own names.
-            raise WorkspaceError("path", "A new note or result record is named by Research OS")
+            raise WorkspaceError("path", "A new note or report is named by Research OS")
         # A title is the first Markdown heading, not a second source of
         # document data. An unchanged title field must not undo a heading
         # the researcher changed directly in the writing area.
@@ -443,7 +443,7 @@ def _tasks(value: Any) -> list[dict[str, Any]]:
         context = task.get("context")
         if context is not None:
             if not isinstance(context, dict) or set(context) != {"report"}:
-                raise WorkspaceError("invalid", "Task context contains a result record path only")
+                raise WorkspaceError("invalid", "Task context contains a report path only")
             from researchos import research_records
 
             research_records.path_for(context["report"])
@@ -536,7 +536,7 @@ def save_tasks(root: str | Path, body: dict[str, Any], *,
         for task in tasks:
             context = task.get("context")
             if context and context != old_contexts.get(task["id"]) and _read(root, context["report"]) is None:
-                raise WorkspaceError("not_found", "The task context result record does not exist", 409)
+                raise WorkspaceError("not_found", "The task context report does not exist", 409)
         _check_attempt_links(root, tasks, old_tasks)
         backup, history_error = _save(root, TASKS_PATH, before, after, pid, author)
         return {"tasks": tasks, "tasks_revision": _revision(after), "backup": backup, "history_error": history_error,

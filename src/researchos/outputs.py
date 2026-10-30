@@ -212,7 +212,7 @@ def _folders(root: Path, value: Any, *, unset: bool = False) -> dict[str, str]:
         if target.exists() and not target.is_dir():
             raise _bad(f"The {role} location is a file, not a folder: {rel}", f"“{rel}”是文件，请填写目录路径。")
         if rel in {"research", "research/notes", "research/results"} or rel.startswith(("research/notes/", "research/results/")):
-            raise _bad("Notes and result records have their own save tools; choose another output folder")
+            raise _bad("Notes and reports have their own save tools; choose another output folder")
     if value["work"]:
         problem = _apart(value["work"], {role: rel for role, rel in value.items() if role != "work"})
         if problem is not None:
@@ -448,7 +448,7 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
                        f"the outputs ({rel})", "过程文件留在这次任务的过程文件夹里，不要登记；只列出输出文件。")
         _path(root, rel)
         if _is_record(rel):
-            raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}",
+            raise _bad(f"Notes, reports and the app's record files are written by Research OS only: {rel}",
                        f"“{rel}”是笔记、报告或应用自己的记录文件，只能由 Research OS 写入，不能登记。")
         if not anywhere and not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}",
@@ -531,7 +531,7 @@ def _owner(root: Path, report: Any) -> dict[str, Any]:
     tasks, _revision = workspace.read_tasks(root)
     task = next((t for t in tasks if t.get("report") == report), None)
     if task is None or workspace._read(root, report) is None:  # noqa: SLF001
-        raise _bad(f"No task owns the result record {report}", "没有哪项任务的报告是这一份，不能给它登记文件。")
+        raise _bad(f"No task owns the report {report}", "没有哪项任务的报告是这一份，不能给它登记文件。")
     return task
 
 

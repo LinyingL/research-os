@@ -42,7 +42,7 @@ def _bad(message: str) -> workspace.WorkspaceError:
 
 def path_for(report: str) -> str:
     if workspace._kind(report) != 'result':
-        raise _bad('Research context must belong to a result record')
+        raise _bad('Research context must belong to a report')
     return report.removesuffix('.md') + '.context.json'
 
 
@@ -171,7 +171,7 @@ def parse(raw: bytes | None) -> dict[str, Any]:
 def _report(root: Path, report: str) -> None:
     path_for(report)
     if workspace._read(root, report) is None:
-        raise _bad('The result record does not exist in this project')
+        raise _bad('The report does not exist in this project')
 
 
 def _validate_links(root: Path, context: dict[str, Any]) -> None:
@@ -273,7 +273,7 @@ def read(root: str | Path, report: str) -> dict[str, Any]:
         # context save into an error while building its response.
         entries = []
         notices.append({'kind': 'outputs_unavailable', 'message': 'Cannot read the registered outputs: ' + str(exc),
-                        'message_zh': '已登记的产出暂时无法读取；要点仍可查看和保存。'})
+                        'message_zh': '已登记的输出暂时无法读取；要点仍可查看和保存。'})
     drafts = []
     for item in entries:
         if item['kind'] != 'variable':
@@ -380,7 +380,7 @@ def import_variable(root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
     report = body.get('report')
     _report(root, report)
     if not any(item['kind'] == 'variable' and item['path'] == body.get('path') for item in _entries(root, report)):
-        raise _bad('The variable draft is not registered to this result record')
+        raise _bad('The variable draft is not registered to this report')
     result = outputs.import_variable(root, body)
     card = variables.open_card(root, result['id'])
     return {**result, 'version': card.draft, 'in_use': card.in_use}

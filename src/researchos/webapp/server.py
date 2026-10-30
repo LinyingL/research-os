@@ -3863,7 +3863,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 return None, None
             raise AgentApiError(_AgentRefusal(
                 "person_unreadable", 409, str(exc),
-                "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它，或在设置里重新填写你的名字"), self._lang()) from exc
+                "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它，或在「成员」页重新填写你的名字"
+                "（单人项目：项目菜单里的「开始协作…」会打开它）"), self._lang()) from exc
         try:
             me = people.read_me().me
         except Exception:  # noqa: BLE001 -- a name is a courtesy, never a reason to refuse

@@ -3809,7 +3809,7 @@ leave out the judge's remote warning on request; no change to approval.
   language of the files' own comments and text.
 - The server's address and the model are this Mac's setting
   (`settings.json`: `llm_base_url`, `llm_model`), under 「模型服务」 in the
-  form: each field shows the value saved on this Mac (empty when none),
+  form (since B4-3 on the 设置 page, 21.7): each field shows the value saved on this Mac (empty when none),
   with the value in effect as its placeholder; 保存 (or Enter in either
   field) sends both. An empty value returns to the `RCE_LLM_*` environment
   variables, then to the defaults (LM Studio's `http://localhost:1234/v1`).
@@ -6415,7 +6415,10 @@ attempts.py`; `research_records.assessment_statuses`).
     a task to themselves; they are listed as 「我」 (“Me”) once the page knows there
     is no name, and chosen like a named person: the owner written to
     `tasks.json` is the text 「我」 whatever the screen's language is (nothing on
-    disk depends on it, 13.1), and a row reads it as “Me” on an English screen.
+    disk depends on it, 13.1), and a row reads it as “Me” on an English screen. *Amended, fix batch B4:* that is so in a project of
+    one person only, on 项目首页 and in an attempt's panel alike. In a team's project (the PI's, a member's, a machine not yet in
+    the team) a stored 「我」 is a task of the solo period, and no one of the team is it: it reads as the project's first researcher
+    (「最初的研究者」, “Original researcher”), and the owner control no longer offers 「我」.
     With a name set the entry is 「<name>（我）」, written as the name, and there is
     no second one.
   - **日期** is optional and empty by default -- nothing fills it with today.
@@ -6821,8 +6824,16 @@ engine's gap (「这条尝试还没有添加任何文件」) -- and the two guid
 - **The attempt form says 研究判断**, as the panel does, whatever the table's own header for the column is (「状态」 in
   the Quant table); the header only finds the column.
 
+*Fix batch B4 (the words, again)*: the English of the retired rows is gone from every sentence a person reads, not from the page's
+table alone -- the engine's own English (`outputs`, `research_records`, `workspace`, the refusals of `situation`) and the agent's tools
+(`researchos_complete_task` answers 「Saved the report …」 and its description says report) say report and your records, never
+"result record" or "human records"; README and the guides under `docs/` say report. 18.2's 产出 (it is 输出) is no screen's
+noun any more (the notice of an unreadable output catalog said it); the string 产出 alone stays as the link word "produces". The second
+retired sentence of the generating-script row, 没有找到生成它的脚本, is scanned for like the first.
+
 What stays, each with its reason (the test that scans the screens lists them): the commit message above (on disk, 13.1);
 `二、尝试途径总年表`, the heading the map file is read by; the header comment `identity` writes into `.researchos/`;
+the agent's instruction, whose nouns 产出目录 and 最终产出 are the prompt's own (`agents/brief.py`);
 and the command line, which keeps its words (`researchos github push --commit-records` still names the commit message; the help of
 `researchos link` still names 补上来源 and 关联文件).
 
@@ -6841,7 +6852,12 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   - *When it was last backed up* is the time in the newest backup's own name in `.researchos/backups/` (a daily snapshot or
     the copy taken before a write, whichever is later; `inventory.backup_time`, the API's `backed_up_at`) — never a file's
     modified time —, said as the desk says a time (今天 14:02, 10月4日, 2025年3月4日). A record never copied says
-    「还没有备份过」; the version store is not copied and says neither.
+    「还没有备份过」; the version store is not copied and says neither. 变量卡 is many files: its time is the newest over the log and
+    every version file of every card (`v1.toml`, … -- the text the researcher edits, the only file of a card still a draft), each by
+    the later of its daily snapshot and its pre-write copy, so that a draft with a backup does not read 「还没有备份过」.
+  - *The panel is drawn again* whenever the project moves (an agent's run changes files every two seconds), and it keeps what was
+    done in it: a 「详情」 fold the researcher opened stays open, the answer to 「在 Finder 中显示」 stays on its line, and the scroll
+    stays where it was. They are kept by record for as long as the panel is open.
   - *A problem* keeps its sentence in words on its line, in clay (内容无法解析, 旁边有同步冲突副本, …), not behind 「详情」.
   - *「在 Finder 中显示」* is offered for a record the project holds and goes through the existing `/api/open` route, which
     refuses a path outside the project (`..`, an absolute path, a link that leads out) before anything runs. The tick
@@ -6874,6 +6890,12 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   copy, as the command does there (12.4: a variable's new definition version is a proposal); the form adds one sentence, that
   it reaches the PI by 提议 of the kind 变量定义. The empty page says what a card is and points at the button; `empty_help`
   (a sentence and the command to type) is gone from `GET /api/variables`, and no string of the 变量 view names a command.
+  *Fix batch B4:* the form is a half-typed form and is left alone: the page is drawn again whenever the project moves, and the
+  open form, the id typed and the caret in its field (`varState.newCard`) come through the redraw; creating the card or switching
+  project ends them. While the form is open its 创建 is the one primary button and the opener is the quiet one (21.8), and 取消
+  gives it back. Where no card can be made the sentence stands in the button's place, worded for the cards (「只读打开：不会写入任何东西」;
+  before the migration 「迁移后才能新建变量卡」, not the link judgments' sentence), and the empty page's guide card then says the
+  project cannot make one now -- it names 「新建变量卡」 only where the button is drawn.
 - **One 设置 page** for this Mac, opened by 「设置」 in the sidebar's foot (between 备份 and 停止服务, shown with no project
   too; *B4-3*). It is the side panel, one section each, and needs no project. **AI 执行者**: the form 项目首页 carried --
   the programs and their paths, the agents by model and reasoning effort, the time limit, the spending cap, the run space
@@ -6886,9 +6908,17 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   as the shortcut, and both run `switchInterfaceLanguage`. Nothing is stored anew. Every setting has this one form; the places
   that held one keep a text link 「在设置里修改」 and, where the setting is read, its state: 项目首页's header (「AI 执行者」 and
   the link; the owner control's 「设置 AI 执行者…」 opens the page too), 文献 (「联网查询：已打开 / 已关闭」 and the link, where a
-  fold and a checkbox were) and the attempt form's 辅助填写 (where a draft goes, and the link). Per-project settings stay in the
-  project menu, and the page says so. Opening it over a panel with half-typed words asks first (14.3), and words typed in its
+  fold and a checkbox were) and the attempt form's 辅助填写 (where a draft goes, and the link). Per-project settings stay where
+  they were -- 输出目录 on 项目首页, the rest in the project menu -- and the page says so. Opening it over a panel with half-typed words asks first (14.3), and words typed in its
   fields and not saved count for that.
+  *Fix batch B4:* (1) 联网查询 is shown on both tabs of 文献, and turning it on from the 设置 page draws whichever tab is showing again.
+  (2) The language choice is a reload, which drops what is not written: it asks first about the drafts of 项目首页 and about words
+  half-typed in the open panel -- the 设置 page's own fields included (one question when 项目首页 has asked) --, and when the question
+  is declined the choice goes back to the language in force. (3) The closing sentence names where a project's own settings are:
+  「输出目录在项目首页的「全部任务」里，其余在侧栏顶部的项目菜单里」. (4) 新增尝试's 「在设置里修改」 takes the side panel, so the
+  files chosen for 生成草稿 count as unsaved work for the leave guard (14.3), as typed words do. (5) A refusal that tells the researcher to
+  write their name (an unreadable `me.toml` when 运行 is pressed) names 「成员」 -- and, for a project of one person, 「开始协作…」 that
+  opens it --, not 设置, which has no name field.
 - **停止服务 names what it ends** (*B4-3*). Before it asks, the page reads `GET /api/agents/going` -- the runs this engine
   carries out now, in every project (`AgentManager.going`; it answers with no project too) -- and, when there are any, the
   question names each by task (its first line), agent and model, and a run of another project by that project's folder, then
@@ -6977,7 +7007,9 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    任务输出 block is gone from both pages.
 6. No screen uses a retired word of 21.6; the glossary test covers the new
    rows; English mode shows the new words (*B4-1*: `tests/test_glossary.py` holds every row of 21.6 to the page's English
-   table and scans every string the screens show for the retired words, with a short allowlist, a reason each).
+   table and scans every string the screens show for the retired words, with a short allowlist, a reason each); *fix batch B4:* the
+   scan also covers 18.2's 产出 and 没有找到生成它的脚本, the engine's English sentences (retired English such as "result record" and
+   "human records") and README and the guides under `docs/`.
 7. One primary button per page; no title or status drawn as a button; the
    clay colour appears only on problems; long numbers are shown to four
    significant digits.

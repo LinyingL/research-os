@@ -22,7 +22,7 @@ from researchos.webapp import server, variables_api
 
 from test_v5_phase9 import _call, _confirmed, live  # noqa: F401 -- fixture of the card endpoint tests
 from test_v10_desk_panel import _PANEL_DOM
-from test_v9_language import APP_HTML, CJK, FILL_VARS_LINE, NODE, T_LINE, _app_function, _i18n_source, js_literals, needs_node
+from test_v9_language import APP_HTML, CJK, FILL_VARS_LINE, NODE, T_LINE, _app_block, _app_function, _i18n_source, js_literals, needs_node
 from test_variable_cards import _project, _text
 
 
@@ -236,7 +236,8 @@ global.text = (e) => e.textContent;
 
 def _form(lang: str, steps: str) -> dict:
     i18n = f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source() + "\n" + FILL_VARS_LINE + "\n" + T_LINE
-    block = _app_function("function newCardBlock(")
+    block = (_app_block("const varState = {", "function varNote(") + _app_function("function cardsBlocked(")
+             + _app_function("function newCardBlock("))
     script = (_FORM_PRELUDE % {"i18n": i18n, "dom": _PANEL_DOM, "block": block}
               + "\n(async () => {\n const out = {};\n" + steps + "\n process.stdout.write(JSON.stringify(out));\n})();\n")
     done = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True)

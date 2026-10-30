@@ -225,7 +225,7 @@ def test_complete_task_refuses_an_oversized_report_and_writes_nothing(setup):
 def test_complete_task_report_just_under_the_limit_is_saved_or_refused_cleanly(setup):
     root, pid, run_id = setup
     answer = mcp_server.agent_complete_task(root, pid, run_id, "x" * (workspace.TEXT_LIMIT - 5000))
-    assert answer.startswith("Saved the result record")
+    assert answer.startswith("Saved the report")
 
 
 def test_complete_task_report_with_nul_is_refused(setup):
@@ -312,7 +312,7 @@ def test_complete_task_names_the_record_when_the_task_could_not_be_marked(setup,
 
     monkeypatch.setattr(workspace, "save_tasks", broken)
     answer = mcp_server.agent_complete_task(root, pid, run_id, REPORT)
-    assert answer.startswith("Not written: the result record research/results/")
+    assert answer.startswith("Not written: the report research/results/")
     assert "call the tool again" in answer
     assert runs.read_signals(pid, run_id) == []
 
@@ -329,7 +329,7 @@ def test_complete_task_retries_once_when_tasks_json_moved_underneath(setup, monk
         return real(root_, body, **kw)
 
     monkeypatch.setattr(workspace, "save_tasks", flaky)
-    assert mcp_server.agent_complete_task(root, pid, run_id, REPORT).startswith("Saved the result record")
+    assert mcp_server.agent_complete_task(root, pid, run_id, REPORT).startswith("Saved the report")
     assert len(calls) == 2 and _task(root)["done"] is True
 
 
@@ -347,7 +347,7 @@ def test_in_an_agent_run_only_the_tools_can_write(setup, monkeypatch):
     before = (root / "research" / "tasks.json").read_bytes()
     assert not (root / "research" / "notes").exists()
     # ... the tools open it for themselves ...
-    assert mcp_server.agent_complete_task(root, pid, run_id, REPORT).startswith("Saved the result record")
+    assert mcp_server.agent_complete_task(root, pid, run_id, REPORT).startswith("Saved the report")
     assert mcp_server.agent_save_note(root, pid, run_id, "A note", "text").startswith("Saved the note research/notes/")
     assert (root / "research" / "tasks.json").read_bytes() != before
     # ... and only for the length of the call
@@ -471,7 +471,7 @@ def test_agent_server_tools_run_through_the_protocol_layer(setup):
     server = mcp_server.build_agent_server(root, pid, run_id)
     assert _call(server, "researchos_ask", {"question": "Which?"}).startswith("Your question is recorded")
     assert _call(server, "researchos_save_note", {"title": "N", "content": "c"}).startswith("Saved the note")
-    assert _call(server, "researchos_complete_task", {"report": REPORT, "title": "T"}).startswith("Saved the result")
+    assert _call(server, "researchos_complete_task", {"report": REPORT, "title": "T"}).startswith("Saved the report")
     assert [s["kind"] for s in runs.read_signals(pid, run_id)] == ["ask", "note", "complete"]
 
 
@@ -651,7 +651,7 @@ def test_stdio_session_with_the_runners_command(setup):
         "researchos_find", "researchos_trace", "researchos_status",
     ])
     assert not any(r.isError for r in (ask, note, done, status))
-    assert done.content[0].text.startswith("Saved the result record research/results/")
+    assert done.content[0].text.startswith("Saved the report research/results/")
     assert status.content[0].text.startswith("Research OS graph status:")
 
     task = _task(root)

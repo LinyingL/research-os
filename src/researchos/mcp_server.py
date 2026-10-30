@@ -339,7 +339,7 @@ DEFAULT_TITLE_LIMIT = output_files.TITLE_CUT
 
 
 def _result_title(title: str | None, task_text: str) -> str:
-    """The result record's heading: the agent's title, else the task's
+    """The report's heading: the agent's title, else the task's
     first line cut to `DEFAULT_TITLE_LIMIT` characters (a task can be a
     paragraph; a heading is a few words)."""
     given = re.sub(r"^#+\s*", "", _one_line(title, TITLE_LIMIT))
@@ -435,7 +435,7 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
         for attempt in (1, 2):  # a second go only when the file moved under an external editor
             tasks, revision = workspace.read_tasks(root)
             if not any(t["id"] == run["task_id"] for t in tasks):
-                raise _Refused(f"the result record {path} was saved, but task {run['task_id']!r} is gone from "
+                raise _Refused(f"the report {path} was saved, but task {run['task_id']!r} is gone from "
                                "research/tasks.json, so it was not marked done")
             marked = [{**t, "done": True, "report": path} if t["id"] == run["task_id"] else t for t in tasks]
             try:
@@ -443,10 +443,10 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
                 break
             except workspace.WorkspaceError as exc:
                 if exc.code != "conflict" or attempt == 2:
-                    raise _Refused(f"the result record {path} was saved, but the task could not be marked done "
+                    raise _Refused(f"the report {path} was saved, but the task could not be marked done "
                                    f"({exc}); call the tool again") from exc
         if saved_tasks is None:  # not reachable: the loop either breaks or raises
-            raise _Refused(f"the result record {path} was saved, but the task could not be marked done")
+            raise _Refused(f"the report {path} was saved, but the task could not be marked done")
         if saved_tasks.get("history_error"):
             notes.append(saved_tasks["history_error"])
         extra = {"outputs_sha": registration[1], "outputs_catalog": registration[0]} if registration else {}
@@ -458,14 +458,14 @@ def _complete(root: Path, project_id: str, run_id: str, report: str, title: str 
                   + ([saved_context['path']] if saved_context is not None else []), **extra,
         )
     tail = " (The change history could not be updated; the person is told.)" if notes else ""
-    return (f"Saved the result record {path} and marked the task done. "
+    return (f"Saved the report {path} and marked the task done. "
             f"Your work on this task is finished; stop now.{tail}")
 
 
 def agent_complete_task(root: str | Path, project_id: str, run_id: str, report: str, title: str | None = None,
                         outputs: list[dict[str, str]] | None = None,
                         research_context: dict[str, Any] | None = None) -> str:
-    """`researchos_complete_task`: write the task's result record (a new
+    """`researchos_complete_task`: write the task's report (a new
     `research/results/` document, or the one an earlier run of this task
     wrote), mark the task done and link the record as its `report`, as the
     agent (DESIGN.md 17.4). Returns the answer text; an expected refusal
@@ -535,14 +535,14 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
                                  outputs: list[dict[str, str]] | None = None,
                                  research_context: dict[str, Any] | None = None) -> str:
         """Call this ONCE, when the task you were given is finished. `report`
-        is the result record, in Markdown: what you did, the commands you
+        is the report, in Markdown: what you did, the commands you
         ran, and the key numbers exactly as your actual runs gave them --
         never invented or rounded from memory. Name a file where it matters,
         but add no list of your outputs: Research OS appends the section
         "Registered output files" to the record from `outputs`.
         `title` is a short heading naming the result, a few words (default:
         the start of the task). This saves
-        the report as a result record in the project, marks the task done
+        the report in the project, marks the task done
         and links the record to it. After it answers, stop: do nothing
         more. `outputs` lists each final file as {kind, path, title}; kinds:
         code, data, figure, table, literature, document, variable. Paths must

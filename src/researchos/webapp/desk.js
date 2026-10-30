@@ -550,6 +550,14 @@
     return mk("div", "desk-meta", parts.filter(Boolean).join(" · "));
   }
 
+  // A task's owner as the engine labels it. The researcher with no name set is stored as the text 「我」 whatever the screen's language
+  // (21.7), and the engine gives that text back as it is; the screen reads it as 项目首页 does (workspace.js `ownerLabel`): "Me" in a
+  // project of one person, the project's first researcher in a team's, where it is a task of the solo period and not the viewer's.
+  function ownerWords(item) {
+    if (item.owner !== "我") return item.owner_label;
+    return deskRole() === "single" ? t("我") : t("最初的研究者");
+  }
+
   let routeMap = null;
   let layoutEl = null;
   let mapEl = null;             // the map's element, hidden while the page is a list
@@ -1466,7 +1474,7 @@
         if (first !== item.text) text.title = item.text;
         head.append(text, taskState(item.state));
         main.appendChild(head);
-        main.appendChild(metaLine([item.owner_label, item.due]));
+        main.appendChild(metaLine([ownerWords(item), item.due]));
         if (item.report) {
           const actions = mk("div", "desk-actions");
           actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => { openHandback(item.report, id); }));

@@ -416,12 +416,18 @@ def _variables_row(conn: Connection | None, root: Path) -> Row:
     drafts = sum(1 for c in found if c["draft"] is not None)
     count = f"{len(found)} card(s), {drafts} draft(s)"
     newest = None
+    files: dict[str, list[Path]] = {}
+    for path, sub in card_file_paths(root):
+        files.setdefault(sub, []).append(path)
     for card in found:
-        snap = record_files.newest_snapshot(root, directory / card["id"] / variables_mod.LOG_FILENAME,
-                                            variables_mod.snapshot_subdir(card["id"]))
-        # the newest by the time in the name: names of different cards, or of a log and a version file, do not sort by it
-        if snap is not None and (newest is None or _taken(snap.name) > _taken(newest)):
-            newest = snap.name
+        sub = variables_mod.snapshot_subdir(card["id"])
+        # a card's log and every version file (a draft has no log, and its definition is the text the researcher edits), each by the
+        # later of its daily snapshot and the copy taken before a write; a card whose folder is gone still has its log's backups
+        for path in files.get(sub) or [directory / card["id"] / variables_mod.LOG_FILENAME]:
+            snap = record_files.newest_snapshot(root, path, sub, writes=True)
+            # the newest by the time in the name: names of different files do not sort by it
+            if snap is not None and (newest is None or _taken(snap.name) > _taken(newest)):
+                newest = snap.name
     return Row("Variable definition cards", shown, count, newest, tuple(dict.fromkeys(problems)), code="variables",
                facts={"exists": True, "cards": len(found), "drafts": drafts, "issues": list(dict.fromkeys(issues))})
 

@@ -3120,6 +3120,8 @@ async function reloadAllViews(opts) {
   varState.card = null;
   varState.version = null;
   varState.asking = null;
+  varState.newCard.open = false;
+  varState.newCard.id = "";
   RCECanvas.reset();
   closePanel();
   clearProjectState();
@@ -4132,6 +4134,10 @@ function attemptDraftBlock(inputs, attempts, proposing, columns) {
   function drawChosen() {
     list.innerHTML = "";
     chosen.forEach((p, i) => list.appendChild(mkButton(t("{path} 去掉", { path: p }), "chip", () => { chosen.splice(i, 1); drawChosen(); })));
+    // The chosen files are chips, not typed words, but a panel opened over this form drops them: for the leave guard (14.3, desk.js
+    // halfTyped, which counts a typed field that differs from its start) the path field differs from its start while any is chosen.
+    pathInput.dataset.initial = chosen.join("\n");
+    if (chosen.length) pathInput.dataset.typed = "1";
     sync();
   }
   // The path in the field joins the chosen files; false when it was refused (a sixth file).
@@ -5157,14 +5163,17 @@ function recordBackupText(row) {
   return t("最近一次备份：{when}", { when: when.charAt(0).toLowerCase() + when.slice(1) });
 }
 
-// 「详情」, folded (12.13): the file's name and the newest backup's name, and what the engine said of a problem.
-function recordDetails(row) {
+// 「详情」, folded (12.13): the file's name and the newest backup's name, and what the engine said of a problem. A fold the researcher
+// opened stays open when the panel is drawn again (`subject.open`, by record).
+function recordDetails(row, subject) {
   const lines = [];
   if (row.path && row.path !== "-") lines.push([t("存放位置"), row.path]);
   if (recordIsBackedUp(row) && row.snapshot) lines.push([t("最新备份"), row.snapshot]);
   const engine = (row.problems || []).join("\n");
   if (!lines.length && !engine) return null;
   const fold = mk("details", "records-fold");
+  fold.open = subject.open.has(row.code);
+  fold.addEventListener("toggle", () => { if (fold.open) subject.open.add(row.code); else subject.open.delete(row.code); });
   const summary = mk("summary", "res-draft-summary");
   summary.append(chevronIcon(), mk("span", null, t("详情")));
   fold.appendChild(summary);
@@ -5192,11 +5201,13 @@ async function revealRecord(path, statusEl) {
   }
 }
 
-function recordRow(row) {
+// The line a press of 「在 Finder 中显示」 answers on is kept by record (`subject.said`), so that a redraw does not take the answer away.
+function recordRow(row, subject) {
   const f = row.facts || {};
   const div = mk("div", "records-row");
   div.dataset.code = row.code;
-  const status = mk("div", "panel-status");
+  if (!subject.said.has(row.code)) subject.said.set(row.code, mk("div", "panel-status"));
+  const status = subject.said.get(row.code);
   const head = mk("div", "records-head");
   head.appendChild(mk("div", "records-kind", recordKindWord(row)));
   // only a record the project holds; the file itself, or the folder of the variable cards
@@ -5208,14 +5219,14 @@ function recordRow(row) {
   if (backup) div.appendChild(mk("div", "records-backup", backup));
   const problem = recordIssueText(row);
   if (problem) div.appendChild(mk("div", "records-problem", problem));
-  const details = recordDetails(row);
+  const details = recordDetails(row, subject);
   if (details) div.appendChild(details);
   div.appendChild(status);
   return div;
 }
 
 async function openRecordsPanel() {
-  const subject = { kind: "records" };
+  const subject = { kind: "records", open: new Set(), said: new Map() };
   state.panelSubject = subject;
   panelTitle.textContent = t("你的记录与备份");
   panelTitle.title = "";
@@ -5235,9 +5246,11 @@ async function renderRecordsPanel(subject) {
     return;
   }
   if (state.panelSubject !== subject) return;
+  const top = panelBody.scrollTop; // drawn again whenever the project moves: the folds, the answers and the place read stay
   panelBody.innerHTML = "";
   panelBody.appendChild(mk("p", "records-intro", t("Research OS 为这个项目保存了这些记录，并在它们变化时备份。")));
-  (data.rows || []).forEach((row) => panelBody.appendChild(recordRow(row)));
+  (data.rows || []).forEach((row) => panelBody.appendChild(recordRow(row, subject)));
+  panelBody.scrollTop = top;
 }
 
 document.getElementById("records-btn").addEventListener("click", () => { if (mayReplacePanel()) openRecordsPanel(); });
@@ -5343,10 +5356,10 @@ function lookupSettingForm() {
       const res = await apiPost("/api/citations/lookup-setting", { on: wanted });
       input.checked = !!(res && res.lookup && res.lookup.enabled);
       setFormStatus(status, "ok", input.checked ? t("已打开：下次扫描时查询") : t("已关闭：不会联网查询"));
-      // the 文献 page, if it holds the project's answer, follows the setting
+      // the 文献 page, if it holds the project's answer, follows the setting: on either tab, both of which say where it stands
       if (litState.data) {
         litState.data.lookup = res.lookup;
-        if (litState.tab === "library" && currentView === "literature") {
+        if (currentView === "literature") {
           views.literature.replaceChildren();
           renderLiterature(views.literature, litState.data);
         }
@@ -5378,7 +5391,7 @@ function languageSettingForm() {
     switchInterfaceLanguage(select.value, [select, document.getElementById("lang-btn")], (err) => {
       select.value = uiLang();
       setFormStatus(status, "err", t("没能切换界面语言"), err);
-    });
+    }, () => { select.value = uiLang(); }); // the leave question was declined: the choice shows the language in force
   });
   box.append(select, mk("p", "settings-note", t("侧栏下方的「English」和「中文」是同一个设置的快捷方式。")), status);
   return box;
@@ -5407,7 +5420,7 @@ function openSettingsPanel(focus) {
   const language = settingsSection("language", t("界面语言"));
   language.appendChild(languageSettingForm());
   panelBody.append(agents, llm, lookup, language);
-  panelBody.appendChild(mk("p", "settings-note", t("每个项目自己的设置在侧栏顶部的项目菜单里。")));
+  panelBody.appendChild(mk("p", "settings-note", t("每个项目自己的设置：输出目录在项目首页的「全部任务」里，其余在侧栏顶部的项目菜单里。")));
   openPanel();
   if (window.ROWorkspace && ROWorkspace.mountSettings) ROWorkspace.mountSettings(agentBox, subject);
   llmForm.load();
@@ -5519,6 +5532,9 @@ const varState = {
   asking: null,    // "<id>:v<n>" while the attestation question is open
   askingHash: null, // the draft's content hash when that question opened
   notes: new Map(), // typed notes, kept across re-renders
+  // 「新建变量卡」: whether its form is open and the id typed into it. The list is drawn again whenever the project moves, and a
+  // half-typed form is left alone (the home's forms are), so both outlive the redraw; creating the card or a project switch ends them.
+  newCard: { open: false, id: "" },
 };
 
 function varNote(key, placeholder) {
@@ -5570,9 +5586,17 @@ async function loadVariablesView() {
   }
   clearProjectState(); // the project answered as itself: whatever was wrong is over
   const top = window.scrollY;
+  // The id field of 新建变量卡 keeps the caret through the redraw: it is drawn anew below.
+  const typing = host.querySelector(".var-new-id");
+  const refocus = !!typing && document.activeElement === typing;
   host.innerHTML = "";
   if (varState.card) renderVariableCard(host, data);
   else renderVariableList(host, data);
+  const field = refocus ? host.querySelector(".var-new-id") : null;
+  if (field) {
+    field.focus();
+    if (field.setSelectionRange) field.setSelectionRange(field.value.length, field.value.length);
+  }
   window.scrollTo(0, top);
 }
 
@@ -5597,19 +5621,30 @@ function cardChips(row) {
   return chips;
 }
 
+// What stops a card from being made (9.10): the two states `humanRecordsBlocked` says, worded for the cards (its migration sentence names
+// the link judgments).
+function cardsBlocked() {
+  const blocked = humanRecordsBlocked();
+  return blocked && state.summary && state.summary.needs_migration ? t("迁移后才能新建变量卡") : blocked;
+}
+
 // 「新建变量卡」 (DESIGN.md 21.7): the draft card is made by the engine's own code for `researchos variable new`
 // (POST /api/variables/new), so the page asks for the id and says the command's rules in words. Nothing of the
 // researcher's text is written: the card begins as the commented template, and its definition is written in the editor.
 // A member's card is made in their working copy, as it is today, and goes to the PI as a proposal (12.4).
+// The form and the id typed in it outlive a redraw (`varState.newCard`); the opener is the quiet button while the form is open.
 function newCardBlock(onlyAction) {
   const box = mk("div", "var-new");
-  const blocked = humanRecordsBlocked();
+  const blocked = cardsBlocked();
   if (blocked) {
     box.appendChild(mk("span", "review-note", blocked));
     return box;
   }
+  const kept = varState.newCard;
   const form = mk("form", "var-new-form hidden");
-  const id = mk("input", "form-input form-mono");
+  const id = mk("input", "form-input form-mono var-new-id");
+  id.value = kept.id;
+  id.addEventListener("input", () => { kept.id = id.value; });
   id.setAttribute("aria-label", t("变量编号"));
   id.placeholder = t("例如 topicshift");
   id.setAttribute("autocomplete", "off");
@@ -5618,7 +5653,12 @@ function newCardBlock(onlyAction) {
   const status = mk("div", "notice-status");
   const make = mkButton(t("创建"), "btn btn-primary btn-small");
   make.type = "submit";
-  const cancel = mkButton(t("取消"), "btn btn-small", () => { form.classList.add("hidden"); status.textContent = ""; });
+  const cancel = mkButton(t("取消"), "btn btn-small", () => {
+    kept.open = false;
+    form.classList.add("hidden");
+    open.className = openClass;
+    status.textContent = "";
+  });
   const actions = mk("div", "var-new-actions");
   actions.append(make, cancel);
   form.append(mk("label", "var-new-label", t("变量编号")), id, rules);
@@ -5642,12 +5682,22 @@ function newCardBlock(onlyAction) {
     }
     if (epoch !== state.dataEpoch) return;
     if (res && typeof res.generation === "number") lastGeneration = res.generation;
+    kept.open = false;
+    kept.id = "";
     openVariableCard(res.id);
   });
-  const open = mkButton(t("新建变量卡"), onlyAction ? "btn btn-primary" : "btn btn-small", () => {
+  // One primary button at a time (21.8): while the form is open its 创建 is it, and the opener goes quiet.
+  const openClass = onlyAction ? "btn btn-primary" : "btn btn-small";
+  const open = mkButton(t("新建变量卡"), openClass, () => {
+    kept.open = true;
     form.classList.remove("hidden");
+    open.className = "btn btn-small";
     id.focus();
   });
+  if (kept.open) {
+    form.classList.remove("hidden");
+    open.className = "btn btn-small";
+  }
   box.append(open, form);
   return box;
 }
@@ -5664,7 +5714,10 @@ function renderVariableList(host, data) {
     card.appendChild(mk("h2", null, t("还没有变量定义卡")));
     card.appendChild(mk("p", null, t("变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。")));
     card.appendChild(mk("p", null, t("卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。")));
-    card.appendChild(mk("p", null, t("为真正进入模型、图表或论断的变量建卡。点上面的「新建变量卡」创建第一张。")));
+    // the button is named only where it is drawn
+    card.appendChild(mk("p", null, cardsBlocked()
+      ? t("为真正进入模型、图表或论断的变量建卡。这个项目现在不能新建变量卡，原因在上面。")
+      : t("为真正进入模型、图表或论断的变量建卡。点上面的「新建变量卡」创建第一张。")));
     host.appendChild(card);
     return;
   }
@@ -8101,8 +8154,24 @@ document.getElementById("shutdown-btn").addEventListener("click", async () => {
 // re-reads settings.json itself -- and reloads on the same section (the
 // remembered view). A refusal leaves everything as it was and says so: in
 // the header line, or where the caller (the 设置 page's own choice, 21.7) says.
-async function switchInterfaceLanguage(language, controls, onError) {
-  if (window.ROWorkspace && !ROWorkspace.mayLeave()) return;
+// A reload drops what is not written, so it asks first (14.3); declined, it
+// tells the caller (`onDeclined`), so that a choice the caller shows can go back.
+
+// The two kinds of unsaved work a reload loses: the workspace's drafts, and the
+// words half-typed in the open panel -- the 设置 page's own fields among them.
+// One question when the workspace has already asked.
+function mayReloadPage() {
+  const workspace = window.ROWorkspace;
+  if (workspace && !workspace.mayLeave()) return false;
+  if (workspace && workspace.isDirty && workspace.isDirty()) return true; // that question was asked, and agreed
+  return !(window.RODesk && RODesk.mayLeavePanel) || RODesk.mayLeavePanel();
+}
+
+async function switchInterfaceLanguage(language, controls, onError, onDeclined) {
+  if (!mayReloadPage()) {
+    if (onDeclined) onDeclined();
+    return;
+  }
   controls.forEach((control) => { control.disabled = true; });
   try {
     await apiPost("/api/settings/language", { language: language });

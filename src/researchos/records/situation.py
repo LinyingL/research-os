@@ -694,7 +694,7 @@ def write_guard(
         # included -- the old index is at an older schema, and nothing new
         # may land in it before the migration reads its own count.
         raise NeedsMigrationError(
-            f"{root} was indexed before V5: it is frozen until it is migrated -- human records and scans "
+            f"{root} was indexed before V5: it is frozen until it is migrated -- your records and scans "
             f"alike; migrate first: researchos migrate -- nothing written"
         )
     with project_lock(root, expected_id, timeout=timeout) as held:
@@ -714,6 +714,6 @@ def write_guard(
         ident = check_still_home(root, expected_id)
         if human and ident is not None and ident.migrating_from is not None:
             raise NeedsMigrationError(
-                f"the migration of {root} has not finished; human records wait for it -- nothing written"
+                f"the migration of {root} has not finished; your records wait for it -- nothing written"
             )
         yield held
