@@ -5141,6 +5141,31 @@ function recordKindWord(row) {
   }
 }
 
+// 21.7: the lines stand in this order -- the researcher's own judgments and the table they are made in, the link judgments and
+// hand-drawn links, the route map's layout, the variable cards, then the rest -- and the records the project holds stand before
+// the ones whose line would say 还没有 (each group in that order, and the engine's order for a kind this list does not know).
+const RECORD_ORDER = ["attempts", "attempts_config", "judgements", "mappings", "canvas", "variables", "notes", "decisions", "papers",
+  "tasks", "stata", "history", "legacy"];
+
+// Whether the project holds nothing of this record yet -- no file, no card, nothing arranged. A file that cannot be read is held.
+function recordHasNone(row) {
+  const f = row.facts || {};
+  switch (row.code) {
+    case "attempts": return f.state === "not_configured";
+    case "attempts_config": case "variables": case "tasks": case "history": return !f.exists;
+    case "canvas": return f.state === "absent";
+    case "legacy": return false;
+    default: return f.file_state === "absent" || f.state === "absent";
+  }
+}
+
+function orderedRecordRows(rows) {
+  const rank = (row) => { const at = RECORD_ORDER.indexOf(row.code); return at < 0 ? RECORD_ORDER.length : at; };
+  return rows.map((row, at) => ({ row: row, at: at }))
+    .sort((a, b) => Number(recordHasNone(a.row)) - Number(recordHasNone(b.row)) || rank(a.row) - rank(b.row) || a.at - b.at)
+    .map((item) => item.row);
+}
+
 function recordIssueWord(code, f) {
   switch (code) {
     case "dataless": return t("正在从云端下载");
@@ -5318,7 +5343,7 @@ async function openRecordsPanel() {
   state.panelSubject = subject;
   panelTitle.textContent = t("你的记录与备份");
   panelTitle.title = "";
-  panelSubtitle.textContent = t("项目记录与备份");
+  panelSubtitle.textContent = "";   // the title says what the panel is; its first line says what is kept (21.7)
   panelBody.innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
   openPanel();
   await renderRecordsPanel(subject);
@@ -5337,7 +5362,7 @@ async function renderRecordsPanel(subject) {
   const top = panelBody.scrollTop; // drawn again whenever the project moves: the folds, the answers and the place read stay
   panelBody.innerHTML = "";
   panelBody.appendChild(mk("p", "records-intro", t("Research OS 为这个项目保存了这些记录，并在它们变化时备份。")));
-  (data.rows || []).forEach((row) => panelBody.appendChild(recordRow(row, subject)));
+  orderedRecordRows(data.rows || []).forEach((row) => panelBody.appendChild(recordRow(row, subject)));
   panelBody.scrollTop = top;
 }
 
@@ -5789,6 +5814,17 @@ function newCardBlock(onlyAction) {
   return box;
 }
 
+// 21.7: where something is stored is said in words first and kept for 「详情」, folded (12.13's chevron): the place, with the same
+// fold and lines as the 备份 panel's.
+function storageDetails(path) {
+  const fold = mk("details", "records-fold");
+  fold.appendChild(chevronSummary(t("详情")));
+  const line = mk("div", "records-detail");
+  line.append(mk("span", "records-detail-label", t("存放位置")), mk("span", "mono", path));
+  fold.appendChild(line);
+  return fold;
+}
+
 function renderVariableList(host, data) {
   if (data.outputs) renderRegisteredOutputs(host, data.outputs, true);
   const rows = data.cards || [];
@@ -5800,7 +5836,8 @@ function renderVariableList(host, data) {
     const card = mk("div", "guide-card");
     card.appendChild(mk("h2", null, t("还没有变量定义卡")));
     card.appendChild(mk("p", null, t("变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。")));
-    card.appendChild(mk("p", null, t("卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。")));
+    card.appendChild(mk("p", null, t("每张卡存放在项目里 Research OS 自己的记录文件夹中，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。")));
+    card.appendChild(storageDetails(".researchos/variables/<id>/"));   // 21.7: the folder's name is for 详情, not for the sentence
     // the button is named only where it is drawn
     card.appendChild(mk("p", null, cardsBlocked()
       ? t("为真正进入模型、图表或论断的变量建卡。这个项目现在不能新建变量卡，原因在上面。")
@@ -6561,10 +6598,11 @@ function renderVariableCard(host, card) {
   if (card.implementation && v && v.version === card.implementation.version) implementationSection(host, card, card.implementation);
   if (v) renderVersion(host, card, v);
   const hist = mk("div", "var-section");
-  hist.appendChild(mk("div", "var-section-title", "记录（log.toml，按追加顺序）"));
+  // 21.7: the card's record is named in words (it is in the order it was written, which is the order of time); the file is under 详情
+  hist.appendChild(mk("div", "var-section-title", t("这张卡的记录（按时间先后）")));
   if (!(card.history || []).length) hist.appendChild(mk("div", "var-line soft", card.state === "ok"
-    ? "还没有记录：草稿确认之前，log.toml 里什么都没有。"
-    : "log.toml 现在无法读取，里面的记录暂时看不到（文件本身没有被改动）。"));
+    ? t("还没有记录：草稿确认之前，这里什么都没有。")
+    : t("这张卡的记录现在无法读取，暂时看不到（文件本身没有被改动）。")));
   (card.history || []).forEach((e) => {
     const line = mk("div", "var-line" + (e.in_force === false ? " off" : ""), cardActText(e) + (e.in_force === false ? "（不再生效）" : ""));
     if (e.attested) line.appendChild(mk("span", "var-id", " · 说明：输出按此口径生成 — " + (ATTESTED_WORDS[e.attested] || e.attested)));
@@ -6572,6 +6610,7 @@ function renderVariableCard(host, card) {
     if (e.frozen) line.appendChild(mkButton("查看这一版当时的文字", "ws-text-link", () => openVariableCopy(card.id, e, "frozen")));
     hist.appendChild(line);
   });
+  hist.appendChild(storageDetails(".researchos/variables/" + card.id + "/log.toml"));
   host.appendChild(hist);
 }
 // -- end of the 变量 view --------------------------------------------------------
@@ -8219,10 +8258,14 @@ function stopServiceQuestion(runs) {
   const ask = t("确定要停止本地服务吗？停止后这个页面将无法继续使用。");
   if (runs === null) return t("没能查看是否还有 AI 执行者在运行。") + "\n\n" + ask;
   if (!runs.length) return ask;
+  // one run is "it", several are "they" (21.7): the sentence is chosen by the count, in both languages
+  const effect = runs.length === 1
+    ? t("停止服务会结束它的程序，以及程序启动的所有进程。这次运行会记为「已中断」。它已经改动的文件不会自动撤回；下次打开 Research OS 后，如果这次运行能撤回，任务那一行里有「撤回本次运行」。")
+    : t("停止服务会结束它们的程序，以及程序启动的所有进程。这些运行会记为「已中断」。它们已经改动的文件不会自动撤回；下次打开 Research OS 后，能撤回的运行在任务那一行里有「撤回本次运行」。");
   return [
     t("还有 {n} 个 AI 执行者正在运行：", { n: runs.length }),
     runs.map(goingRunLine).join("\n"),
-    t("停止服务会结束它们的程序，以及程序启动的所有进程。这些运行会记为「已中断」。它们已经改动的文件不会自动撤回；下次打开 Research OS 后，能撤回的运行在任务那一行里有「撤回本次运行」。"),
+    effect,
     ask,
   ].join("\n\n");
 }

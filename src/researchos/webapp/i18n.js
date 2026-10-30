@@ -258,7 +258,6 @@
     "本地模型：{model}": "Local model: {model}",
     "所选文件将发送至 {host} · 模型：{model}": "Selected files will be sent to {host} · Model: {model}",
     "模型：{model} · 参考文件：{files}": "Model: {model} · Reference files: {files}",
-    "项目记录与备份": "Project records and backups",
     // 你的记录与备份 (21.7): what Research OS keeps for the project, each with when it was last backed up
     "Research OS 为这个项目保存了这些记录，并在它们变化时备份。": "Research OS keeps these records for this project and backs them up when they change.",
     "尝试表": "Attempt table",
@@ -1348,8 +1347,8 @@
     "发给它的指示": "The instruction sent to it",
     "运行 AI 执行者需要 mcp 组件，这个 Research OS 里还没有安装。按你安装 Research OS 的方式，运行下面其中一条命令，然后重新打开 Research OS：":
       "Running an AI agent needs the mcp package, which is not installed in this Research OS. Run one of the commands below, the one that matches how you installed Research OS, then reopen Research OS:",
-    "负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。":
-      "An owner can be an AI agent installed on this Mac: when run, it does the task directly in the project folder, writing code, running programs and writing notes and results.",
+    "负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和报告。":
+      "An owner can be an AI agent installed on this Mac: when run, it does the task directly in the project folder, writing code, running programs and writing notes and reports.",
     "没能读取 AI 执行者的设置。": "Could not read the AI agent settings.",
     "没能保存设置。": "Could not save the settings.",
     "版本 {version}": "Version {version}",
@@ -1583,6 +1582,8 @@
     "没能查看是否还有 AI 执行者在运行。": "Could not check whether an AI agent is still running.",
     "还有 {n} 个 AI 执行者正在运行：": { one: "{n} AI agent is still running:", other: "{n} AI agents are still running:" },
     "停止服务会结束它们的程序，以及程序启动的所有进程。这些运行会记为「已中断」。它们已经改动的文件不会自动撤回；下次打开 Research OS 后，能撤回的运行在任务那一行里有「撤回本次运行」。": "Stopping the service ends their programs and everything those programs started. The runs are recorded as “Interrupted”. Files they have already changed are not reverted automatically; when you open Research OS again, a run that can be undone has “Undo this run” in its task row.",
+    // the same for one run: its program, the run, the files it changed (the plural above is for several)
+    "停止服务会结束它的程序，以及程序启动的所有进程。这次运行会记为「已中断」。它已经改动的文件不会自动撤回；下次打开 Research OS 后，如果这次运行能撤回，任务那一行里有「撤回本次运行」。": "Stopping the service ends its program and everything that program started. The run is recorded as “Interrupted”. Files it has already changed are not reverted automatically; when you open Research OS again, if the run can be undone, “Undo this run” is in its task row.",
     // 21.7: 「新建变量卡」 on the 变量 page, and the empty page that no longer sends anyone to a terminal
     "新建变量卡": "New variable card",
     "变量编号": "Variable id",
@@ -1594,7 +1595,11 @@
     "没能新建变量卡": "Could not create the variable card",
     "还没有变量定义卡": "No variable cards yet",
     "变量定义卡记下一个变量是什么、怎样构建、为什么这样构建：研究口径由你书写，实现依据由 Research OS 对照文件核对。": "A variable card records what a variable is, how it is built and why it is built that way. You write the definition; Research OS checks the implementation against the files.",
-    "卡片写在项目的 .researchos/variables/<id>/ 里，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。": "A card is written in the project’s .researchos/variables/<id>/ and filled in with your editor. This page shows it and records confirming, retiring and the like.",
+    "每张卡存放在项目里 Research OS 自己的记录文件夹中，由你在编辑器中填写；页面只显示它，并记录确认、弃用等动作。": "Each card is kept in Research OS’s own records folder inside the project and filled in with your editor. This page shows it and records confirming, retiring and the like.",
+    // 21.7: a card’s record in words; where it is kept is under 详情
+    "这张卡的记录（按时间先后）": "Record of this card (in time order)",
+    "还没有记录：草稿确认之前，这里什么都没有。": "No record yet: until the draft is confirmed, there is nothing here.",
+    "这张卡的记录现在无法读取，暂时看不到（文件本身没有被改动）。": "The record of this card cannot be read right now, so it cannot be shown for the moment (the file itself has not been changed).",
     "为真正进入模型、图表或论断的变量建卡。点上面的「新建变量卡」创建第一张。": "Make cards for the variables that really go into a model, a figure or a claim. Choose “New variable card” above to make the first.",
     "为真正进入模型、图表或论断的变量建卡。这个项目现在不能新建变量卡，原因在上面。": "Make cards for the variables that really go into a model, a figure or a claim. This project cannot make a variable card right now; the reason is above.",
     "已保存，下次任务运行时使用。": "Saved. New task runs will use these folders.",

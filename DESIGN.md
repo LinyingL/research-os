@@ -5914,6 +5914,9 @@ Decided the same day:
   reading again.
   「未完成 m」 counts the tasks that are not marked done and do not read
   已完成, so a project whose tasks all handed back says 「任务 n，全部完成」.
+  *Amended (B5-3):* this is the one reading wherever the app says how many tasks are done: the 任务列表 line of
+  你的记录与备份 (21.7) counts the tasks that read 已完成 by `attempt_tasks.task_states`, not the `done` marks of
+  `research/tasks.json` -- in Quant one task is marked and eighteen have a report, and 项目首页 reads all nineteen 已完成.
 - **Grouping the tasks a project already has** (Quant's 16, later 18). The
   page offers 「把这些任务归入尝试…」: Research OS proposes groups — tasks
   whose text or report title share a version (`Sword v0.2`), tasks that say
@@ -6805,7 +6808,9 @@ engine's gap (「这条尝试还没有添加任何文件」) -- and the two guid
   in the kind label, in the confirm sentence of the done mark, in the PI's footer (「笔记和报告会随下一次发布交给成员。」)
   and as the title the engine gives a report with no heading (`workspace._title`: 报告 / Report; the pre-21.6 words
   stand for "no title typed" too, so a page that read the file earlier writes no heading). The agent's instruction says
-  report as well (`agents/brief.py`).
+  report as well (`agents/brief.py`). *B5-3:* so does the first sentence of the 设置 page's AI 执行者 section, which said an agent
+  writes 「笔记和结果」: it writes 笔记和报告. 结果 stays where it is the thing found -- the attempt table's 结果 column, what 生成草稿
+  drafts, a number's result. The other sentences of 设置 and of the task form were read for the same slip; this was the one.
 - **研究记录 had three meanings, and each has its word.** (a) A report's Section 20 context is 要点 (“Key points”): the
   disclosure of the report editor, 「保存要点」, 「还没有写要点。」, 「没能读取要点。」, 「重新载入要点」, the notices
   that follow a save, the section of a proposal's page, and the engine's sentences about it (`research_records.py`).
@@ -6861,6 +6866,14 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
     「还没有备份过」; the version store is not copied and says neither. 变量卡 is many files: its time is the newest over the log and
     every version file of every card (`v1.toml`, … -- the text the researcher edits, the only file of a card still a draft), each by
     the later of its daily snapshot and its pre-write copy, so that a draft with a backup does not read 「还没有备份过」.
+  - *The order, the counts and no subtitle* (*B5-3*): the lines stand in the order of the list above, and the records the project
+    holds stand before the ones that would say 还没有, each group in that order (a file that cannot be read is held, a kind the page
+    does not list goes last of its group; `RECORD_ORDER` and `recordHasNone` in app.html -- the order of `researchos records` is the
+    engine's own and is not changed). The panel has no subtitle: the title says what it is and its first line what is kept. 任务列表
+    counts 「n 项任务，其中 m 项已完成」 as 项目首页 reads the tasks (21.1: `attempt_tasks.task_states`, through `inventory._tasks_done`),
+    never the `done` marks of the file -- a task whose report is in reads 已完成 though nothing marked it, one whose handback waits
+    reads 等你看 and is not counted --, and falls back to the marks only when that reading cannot be made (a list the home does not
+    accept). Nothing on disk changes.
   - *The panel is drawn again* whenever the project moves (an agent's run changes files every two seconds), and it keeps what was
     done in it: a 「详情」 fold the researcher opened stays open, the answer to 「在 Finder 中显示」 stays on its line, and the scroll
     stays where it was. They are kept by record for as long as the panel is open.
@@ -6902,6 +6915,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   gives it back. Where no card can be made the sentence stands in the button's place, worded for the cards (「只读打开：不会写入任何东西」;
   before the migration 「迁移后才能新建变量卡」, not the link judgments' sentence), and the empty page's guide card then says the
   project cannot make one now -- it names 「新建变量卡」 only where the button is drawn.
+  *B5-3 (where a card lives, in words):* the empty page says 「每张卡存放在项目里 Research OS 自己的记录文件夹中，由你在编辑器中填写…」
+  and a card's history is headed 「这张卡的记录（按时间先后）」 (it was 「记录（log.toml，按追加顺序）」), its empty line 「还没有记录：草稿确认之前，
+  这里什么都没有。」 and its unreadable line 「这张卡的记录现在无法读取…」. The folder `.researchos/variables/<id>/` and the file `log.toml`
+  are folded under 「详情」 with the label 「存放位置」 (`storageDetails`: 12.13's chevron, the lines of the 备份 panel); no sentence of
+  the page names them.
 - **One 设置 page** for this Mac, opened by 「设置」 in the sidebar's foot (between 备份 and 停止服务, shown with no project
   too; *B4-3*). It is the side panel, one section each, and needs no project. **AI 执行者**: the form 项目首页 carried --
   the programs and their paths, the agents by model and reasoning effort, the time limit, the spending cap, the run space
@@ -6925,6 +6943,13 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   files chosen for 生成草稿 count as unsaved work for the leave guard (14.3), as typed words do. (5) A refusal that tells the researcher to
   write their name (an unreadable `me.toml` when 运行 is pressed) names 「成员」 -- and, for a project of one person, 「开始协作…」 that
   opens it --, not 设置, which has no name field.
+  *B5-3 (the programs of AI 执行者):* each program is titled by its name and its version, 「Claude Code  版本 2.1.309」, and its path
+  is the quiet second line under it (`ws-output-path`, the small mono of 图表与论断's rows), never the line itself. The version is the
+  number in the line `--version` printed (`2.1.309 (Claude Code)` and `codex-cli 0.164.0-alpha.11.1` say the program's name
+  again beside a title that names it; a pre-release tag stays with the number), the line as printed is the hover, and a line with no number in
+  it is shown as it is -- nothing stored changes. A program not found says so in its title and has no second line; its box for a
+  path is as it was. The section's first sentence says what an agent writes in the project folder: code, programs, 笔记和报告 (21.6;
+  it said 笔记和结果).
 - **停止服务 names what it ends** (*B4-3*). Before it asks, the page reads `GET /api/agents/going` -- the runs this engine
   carries out now, in every project (`AgentManager.going`; it answers with no project too) -- and, when there are any, the
   question names each by task (its first line), agent and model, and a run of another project by that project's folder, then
@@ -6932,6 +6957,10 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   run is recorded 已中断 (`interrupted`, code `shutdown`), and what they had changed is **not** undone -- after the next start a
   run that can be undone has 「撤回本次运行」 in its task row. With none going the question is the old one; when the list
   cannot be read the question says so (“Could not check whether an AI agent is still running.”) and does not claim there are none.
+  *B5-3 (one run, several runs):* the sentence that says what stopping does is worded for the count, in both languages. For one
+  run it says 「它的程序」, 「这次运行会记为「已中断」」, 「它已经改动的文件」 and 「如果这次运行能撤回」 (“its program”, “The run is
+  recorded as ‘Interrupted’”, “Files it has already changed”, “if the run can be undone”); for several, 「它们的程序」, 「这些运行」 and
+  「它们已经改动的文件」 as before. The count line above the names is “1 AI agent is still running” and “2 AI agents are still running”.
 
 ### 21.8 Presentation (amends 12.11)
 
@@ -7135,7 +7164,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    rows; English mode shows the new words (*B4-1*: `tests/test_glossary.py` holds every row of 21.6 to the page's English
    table and scans every string the screens show for the retired words, with a short allowlist, a reason each); *fix batch B4:* the
    scan also covers 18.2's 产出 and 没有找到生成它的脚本, the engine's English sentences (retired English such as "result record" and
-   "human records") and README and the guides under `docs/`.
+   "human records") and README and the guides under `docs/`. *B5-3, on a Quant-shaped project (nineteen tasks, one marked done,
+   three attempts, backups present):* 你的记录与备份 has no subtitle, lists the records the project holds first in 21.7's order and
+   says 「19 项任务，其中 19 项已完成」, as 项目首页 reads them; 设置 titles each program by its name and version with its path as a
+   quiet line under it and says an agent writes 笔记和报告; 变量 names no file or folder in a sentence; 停止服务 says 「它」 for one
+   run and 「它们」 for several, in both languages (`tests/test_v16_b53_acceptance.py`).
 7. One primary button per surface, the one 21.8 names (*B5-1*: counted per page and
    panel under node, in both languages); no title or status drawn as a button and
    what only navigates a text link; the clay colour appears only on what 21.8 lists

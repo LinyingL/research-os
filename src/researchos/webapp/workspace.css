@@ -178,7 +178,7 @@
 .ws-run-group.ws-oob .ws-run-heading, .ws-run-group.ws-oob li { color: var(--clay); }
 .ws-agent-files { list-style: none; margin: 0; padding: 0; }
 .ws-agent-files li { padding: .08rem 0; overflow-wrap: anywhere; }
-.ws-agent-files code, .ws-step-text.mono, .ws-runner-where code, .ws-install-cmd { font-family: var(--font-mono); font-size: .76rem; }
+.ws-agent-files code, .ws-step-text.mono, .ws-install-cmd { font-family: var(--font-mono); font-size: .76rem; }
 .ws-steps { list-style: none; margin: 0; padding: 0; }
 .ws-step { display: flex; gap: .7rem; padding: .12rem 0; align-items: baseline; }
 .ws-step-kind { flex: 0 0 3.2rem; color: var(--ink-soft); font-size: .75rem; }
@@ -189,7 +189,8 @@
 .ws-agent-heading { margin: 0; font-family: var(--font-serif); font-size: 1rem; font-weight: normal; }
 .ws-runner, .ws-agent-list { display: flex; flex-direction: column; gap: .35rem; }
 .ws-runner-name { margin: 0; font-size: .82rem; font-weight: 500; }
-.ws-runner-where { margin: 0; display: flex; flex-wrap: wrap; gap: .3rem .7rem; align-items: baseline; font-size: .8rem; overflow-wrap: anywhere; }
+.ws-runner-head { margin: 0; display: flex; flex-wrap: wrap; gap: .3rem .7rem; align-items: baseline; }
+.ws-runner > .ws-output-path { margin-top: -.15rem; }
 .ws-agent-add { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
 .ws-agent-add > .form-input { flex: 1 1 14rem; width: auto; min-width: 0; box-sizing: border-box; }
 /* Inside a labelled field (a column) a flex basis would set the height: keep the input its own height. */

@@ -3418,16 +3418,28 @@
     sui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
   }
   function quiet(words) { return el("p", "ws-agent-quiet", words); }
+  // 21.7: the version as a person reads it, the number in the line `--version` printed -- "2.1.309 (Claude Code)" and
+  // "codex-cli 0.164.0-alpha.11.1" say the program's name again beside the title that already names it. A line with no
+  // number in it is shown as it is; the line as printed is the hover, and nothing stored changes.
+  function versionNumber(line) {
+    const found = /\d+(?:\.\d+)+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?/.exec(String(line));
+    return found ? found[0] : String(line);
+  }
   function runnerBlock(r) {
     const row = el("div", "ws-runner"), program = PROGRAMS[r.runner] || r.runner;
-    row.append(el("h4", "ws-runner-name", RUNNER_NAMES[r.runner] || r.label || r.runner));
-    const where = el("p", "ws-runner-where");
-    if (r.path) where.append(el("code", null, r.path));
-    if (r.found && r.version) where.append(el("span", "ws-agent-meta", t("版本 {version}", { version: r.version })));
-    if (r.problem === "missing" || !r.path) where.append(el("span", "ws-agent-meta", t("没有找到这个程序")));
-    else if (r.problem === "not_executable") where.append(el("span", "ws-agent-meta bad", t("找到了文件，但它不能运行")));
-    else if (r.problem === "no_version") where.append(el("span", "ws-agent-meta bad", t("找到了，但没能读到版本号")));
-    row.append(where);
+    // 21.7: the program's name and its version are the title, and where it is stands under it as a quiet line, never as the line itself
+    const head = el("div", "ws-runner-head");
+    head.append(el("h4", "ws-runner-name", RUNNER_NAMES[r.runner] || r.label || r.runner));
+    if (r.found && r.version) {
+      const number = versionNumber(r.version), version = el("span", "ws-agent-meta", t("版本 {version}", { version: number }));
+      if (number !== r.version) version.title = r.version;   // what the program printed, as it printed it
+      head.append(version);
+    }
+    if (r.problem === "missing" || !r.path) head.append(el("span", "ws-agent-meta", t("没有找到这个程序")));
+    else if (r.problem === "not_executable") head.append(el("span", "ws-agent-meta bad", t("找到了文件，但它不能运行")));
+    else if (r.problem === "no_version") head.append(el("span", "ws-agent-meta bad", t("找到了，但没能读到版本号")));
+    row.append(head);
+    if (r.path) row.append(el("code", "ws-output-path", r.path));
     if (!r.found || r.problem) {
       const path = keyed(input("text"), "set-path:" + r.runner), runnerName = RUNNER_NAMES[r.runner] || r.label || r.runner;
       path.placeholder = t("程序的完整路径，例如 /usr/local/bin/{program}", { program: program });
@@ -3702,7 +3714,7 @@
     if (!fresh && typing && isTyping(typing)) { showSettingsNote(); return; }
     const snap = focusSnapshot(box);
     box.replaceChildren(); sui = {};   // the page gives the heading; the box is the form
-    box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。")));
+    box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和报告。")));
     if (!agentInfo) {
       if (agentInfoError) {
         box.append(el("p", "ws-status err", errorWords(t("没能读取 AI 执行者的设置。"), agentInfoError)));

@@ -215,10 +215,12 @@ def test_the_panel_says_in_words_what_is_kept_with_the_time_of_its_last_backup_a
     the file's name and the backup's name under a folded 「详情」 with the chevron, not on the line."""
     out = _open_panel(used, language=None)
     rows = _by_code(out)
-    assert (out["title"], out["subtitle"]) == ("你的记录与备份", "项目记录与备份")
+    # B5-3: the subtitle only repeated the title and is gone; the records the project holds come first, in 21.7's order, and then the
+    # ones that say 还没有, in the same order (the engine's order, which this fixture used to pin, was not the page's)
+    assert (out["title"], out["subtitle"]) == ("你的记录与备份", "")
     assert [row["kind"] for row in out["view"]] == [
-        "连线确认", "手画的连线", "研究判断", "尝试表", "研究路线的布局", "变量卡", "备注", "经 PI 批准的决定", "论文正文与不属于论文", "任务列表",
-        "版本历史（保存的材料，不是记录）"]
+        "连线确认", "论文正文与不属于论文", "任务列表", "版本历史（保存的材料，不是记录）",
+        "研究判断", "尝试表", "手画的连线", "研究路线的布局", "变量卡", "备注", "经 PI 批准的决定"]
     judgements_row = rows["judgements"]
     assert judgements_row["count"] == "1 条记录，其中 1 条正在生效"
     assert judgements_row["backup"] == "最近一次备份：2025年3月4日"
@@ -246,11 +248,11 @@ def test_the_panel_says_in_words_what_is_kept_with_the_time_of_its_last_backup_a
 def test_the_panel_in_english_says_the_same_in_english(used):
     out = _open_panel(used, language="en")
     rows = _by_code(out)
-    assert (out["title"], out["subtitle"]) == ("Your records and backups", "Project records and backups")
+    assert (out["title"], out["subtitle"]) == ("Your records and backups", "")
     assert [row["kind"] for row in out["view"]] == [
-        "Link judgments", "Hand-drawn links", "Research assessment", "Attempt table", "Layout of the research routes", "Variable card", "Comments",
-        "Decisions approved by the PI", "The paper, and what is not part of it", "Task list",
-        "Version history (kept material, not a record)"]
+        "Link judgments", "The paper, and what is not part of it", "Task list", "Version history (kept material, not a record)",
+        "Research assessment", "Attempt table", "Hand-drawn links", "Layout of the research routes", "Variable card", "Comments",
+        "Decisions approved by the PI"]
     assert rows["judgements"]["count"] == "1 entry, 1 in force"
     assert rows["judgements"]["backup"] == "Last backed up: 4 Mar 2025"
     assert rows["judgements"]["reveal"] == ["Show in Finder"]

@@ -518,9 +518,27 @@ def _papers_row(root: Path) -> Row:
                code="papers", facts=facts)
 
 
+def _tasks_done(root: Path, tasks: list[Any]) -> int:
+    """How many tasks read 已完成 on 项目首页 (21.1, 21.7): the states of `attempt_tasks.task_states`, the reading the
+    cards and the task rows use -- a task whose report is in reads 已完成 though the file never marked it done, and one
+    whose handback waits to be opened reads 等你看, not 已完成. The marks in the file stand in only when that reading
+    cannot be made (a list `workspace` does not accept, a run store that cannot be read)."""
+    from researchos import attempt_tasks, handbacks  # noqa: PLC0415 -- these import the webapp-side module, as `_tasks_row` does
+
+    marked = sum(1 for task in tasks if isinstance(task, dict) and task.get("done") is True)
+    got = read_identity(root)
+    project_id = got.identity.id if got.state is IdentityState.PRESENT and got.identity is not None else None
+    try:
+        states = attempt_tasks.task_states(root, project_id, handbacks.person_of())
+    except Exception:  # noqa: BLE001 -- the inventory is read-only and must not fail for a count; the marks stand in
+        return marked
+    return sum(1 for state in states.values() if state == "done") if states else marked
+
+
 def _tasks_row(root: Path) -> Row:
-    """The task list of 项目首页 (`research/tasks.json`): how many tasks, how many are done. The file is the
-    project's, not under `.researchos/`; its backups are the ones `workspace` takes before it writes."""
+    """The task list of 项目首页 (`research/tasks.json`): how many tasks, how many are done (as 项目首页 reads them,
+    `_tasks_done`). The file is the project's, not under `.researchos/`; its backups are the ones `workspace` takes
+    before it writes."""
     from researchos import workspace  # noqa: PLC0415 -- the webapp-side module imports this one's callers
 
     path = root / workspace.TASKS_PATH
@@ -539,7 +557,7 @@ def _tasks_row(root: Path) -> Row:
             problems.append("research/tasks.json is not a list of tasks")
             issues.append("invalid")
         else:
-            done = sum(1 for task in tasks if isinstance(task, dict) and task.get("done") is True)
+            done = _tasks_done(root, tasks)
             count = f"{len(tasks)} task(s), {done} done"
             facts.update(tasks=len(tasks), done=done)
     elif got.state is RecordState.ABSENT:

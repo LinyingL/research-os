@@ -82,7 +82,8 @@ out.elsewhere = rendered.length;
 
 _VARIABLES_BLOCK = "\n".join([
     _app_block("const varState = {", "function varNote("), _app_function("async function loadVariablesView("),
-    _app_function("function cardsBlocked("), _app_function("function newCardBlock("), _app_function("function renderVariableList("),
+    _app_function("function cardsBlocked("), _app_function("function newCardBlock("), _app_function("function storageDetails("),
+    _app_function("function chevronSummary("), _app_function("function renderVariableList("),
     # the stand-in DOM stubs `humanRecordsBlocked` as a global; the page's own function takes its place
     _app_function("function humanRecordsBlocked(").replace("function humanRecordsBlocked(", "global.humanRecordsBlocked = function (", 1)])
 
@@ -90,6 +91,7 @@ _VARIABLES_PRELUDE = _PAGE_GLOBALS + r"""
 views.variables = el("div", "host"); global.currentView = "variables"; global.clearProjectState = () => {};
 window.scrollY = 0; window.scrollTo = () => {};
 global.openedCards = []; global.openVariableCard = (id) => openedCards.push(id);
+global.chevronIcon = () => el("svg", "res-chevron");
 global.apiPost = async (path, body) => { calls.push(["POST", path, body]); return { ok: true, id: body.id, generation: 7 }; };
 global.lastGeneration = 0;
 global.answer = { cards: [] };
