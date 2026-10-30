@@ -303,6 +303,7 @@
     "还没有摆放过": "Nothing arranged yet",
     "正在从云端下载…": "Downloading from the cloud…",
     "{n} 张卡片": { one: "{n} card", other: "{n} cards" },
+    "有 {n} 张卡片在视野之外": { one: "{n} card is outside the view", other: "{n} cards are outside the view" },
     "写在 {n} 处": { one: "on {n} item", other: "on {n} items" },
     "{n} 条已撤回": "{n} withdrawn",
     "{n} 条决定，其中 {abandoned} 条是放弃的路线": {

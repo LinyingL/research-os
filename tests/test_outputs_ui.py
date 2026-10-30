@@ -293,7 +293,8 @@ const groupsOf = (items) => {
 def _rows_run(scenario: str, *, lang: str = "zh") -> dict:
     """The registered rows as app.html draws them, on their own."""
     source = DOM + "\nwindow.ROI18N_SAVED=" + json.dumps(lang) + ";\n" + (WEBAPP / "i18n.js").read_text() + "\n" + _ROWS_PRELUDE
-    for head in ("function mk(", "function mkButton(", "function atText(", "function renderRegisteredOutputs("):
+    source += (WEBAPP / "desk.js").read_text() + "\n"   # RODesk.whenWords: the one function that turns a stored time into this Mac's time (21.8)
+    for head in ("function mk(", "function mkButton(", "function stampText(", "function atText(", "function renderRegisteredOutputs("):
         source += _app_function(head) + "\n"
     source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
     return _node(source)

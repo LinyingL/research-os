@@ -149,9 +149,9 @@ def test_the_frame_marks_a_panels_title_as_a_path_only_for_the_file_panel():
     also in the panel that replaces a file panel without the panel being closed first."""
     script = ("global.window = {};\n" + "const classes = new Set();\n"
               "global.panelTitle = { classList: { toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); }, remove: (c) => classes.delete(c) } };\n"
-              "const gone = () => ({ classList: { remove() {}, add() {} }, setAttribute() {} });\n"
-              "global.panel = gone(); global.panelBackdrop = gone(); global.state = { panelSubject: null };\n"
-              + _app_function("function openPanel()") +
+              "const gone = () => ({ classList: { remove() {}, add() {}, contains: () => false, toggle() {} }, setAttribute() {}, addEventListener() {} });\n"
+              "global.panel = gone(); global.panelBackdrop = gone(); global.state = { panelSubject: null }; global.document = { getElementById: gone };\n"
+              + _app_block("// -- Panel and 返回 (DESIGN.md 21.8)", "// -- end of panel and 返回") +
               "\nconst seen = [];\n"
               "for (const subject of [{ kind: 'file', path: 'a/b.csv' }, { kind: 'records' }, null, { kind: 'file', path: 'c.py' }, { kind: 'settings' }]) {\n"
               "  state.panelSubject = subject; openPanel(); seen.push(classes.has('path-title'));\n}\n"

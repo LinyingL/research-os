@@ -15,6 +15,7 @@ import email.message
 import http.client
 import html as html_mod
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -399,11 +400,23 @@ def english_offenders(table: dict[str, Any]) -> list[str]:
 # -- node --------------------------------------------------------------------------------------------------
 
 
+#: The zone the pages run in under node. 21.8: every time a page shows is the viewer's local time, so the zone is fixed (the
+#: researcher's, with its daylight-saving change on 2026-10-25) and a time written with Z or +02:00 reads the same on every machine.
+NODE_ENV = {**os.environ, "TZ": "Europe/Berlin"}
+
+
 def _node(script: str) -> Any:
     # The script goes in on stdin, not as an argument: these scripts carry
     # whole page modules, and Linux caps a single argument at 128 KB.
-    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True)
+    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, env=NODE_ENV)
     return json.loads(out.stdout)
+
+
+def _times_prelude() -> str:
+    """What a pure block of app.html needs to show a time (21.8): the stand-in window with desk.js (RODesk.whenWords, the one function
+    that converts a stored time) and the page's language block (`t`, `stampText`)."""
+    return ("global.window = {}; global.document = {getElementById(){return null}};\n" + (WEBAPP / "desk.js").read_text(encoding="utf-8") + "\n"
+            + _slice(APP_HTML.read_text(encoding="utf-8"), "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state") + "\n");
 
 
 def _i18n_source(entries: dict[str, Any] | None = None) -> str:

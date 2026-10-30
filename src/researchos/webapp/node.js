@@ -250,7 +250,7 @@
 
   // -- runtime ------------------------------------------------------------------------
 
-  const nav = { id: null, fromView: null, trail: [], graphOpen: false, notesDraft: new Map(), shownDiffs: new Set() };
+  const nav = { id: null, fromView: null, fromPanel: null, trail: [], graphOpen: false, notesDraft: new Map(), shownDiffs: new Set() };
   const dc = { filter: "all", data: null };
   let lastLink = null; // the entry the last 「是」 wrote, for 撤销 (18.3)
   let lastOut = null; // the figure or table the last 「不属于论文」 put out, for 撤销 (18.3, 21.5)
@@ -312,11 +312,15 @@
   // opened from; from a node page it remembers the node before.
   function openNode(id) {
     if (!id) return;
+    // 21.8: a node page opened from a panel gives the panel back with 返回 -- the panel on screen, as it can be opened again
+    const from = currentView !== "node" && typeof panelReopener === "function" && typeof panel !== "undefined" && !panel.classList.contains("hidden")
+      ? panelReopener(state.panelSubject) : null;
     if (typeof closePanel === "function") closePanel();
     if (currentView === "node") {
       if (nav.id && nav.id !== id) nav.trail.push(nav.id);
     } else {
       nav.fromView = currentView || "desk";
+      nav.fromPanel = from;
       nav.trail = [];
     }
     if (nav.id !== id) {
@@ -338,7 +342,10 @@
       window.scrollTo(0, 0);
       return;
     }
+    const reopen = nav.fromPanel;
+    nav.fromPanel = null;
     activateView(nav.fromView && nav.fromView !== "node" ? nav.fromView : "desk");
+    if (typeof reopen === "function") reopen();   // the panel the page was opened from (21.8)
   }
 
   // The sidebar section the node page belongs to: where it was opened from.
@@ -1312,12 +1319,14 @@
       return;
     }
     const holder = mk("div", "node-graph" + (nav.graphOpen ? "" : " hidden"));
-    const toggle = mkButton(nav.graphOpen ? t("收起关系图") : t("打开关系图"), "btn btn-small", () => {
+    const toggle = mkButton(nav.graphOpen ? t("收起关系图") : t("打开关系图"), "btn btn-small has-chevron", () => {   // 12.13: the chevron, turned when it is open
       nav.graphOpen = !nav.graphOpen;
       toggle.textContent = nav.graphOpen ? t("收起关系图") : t("打开关系图");
+      toggle.setAttribute("aria-expanded", String(nav.graphOpen));
       holder.classList.toggle("hidden", !nav.graphOpen);
       if (nav.graphOpen) RCECanvas.load(holder, "near:" + page.id);
     });
+    toggle.setAttribute("aria-expanded", String(nav.graphOpen));
     s.appendChild(toggle);
     s.appendChild(holder);
     host.appendChild(s);
@@ -1721,8 +1730,19 @@
           const li = mk("li", "res-row");
           const main = mk("div", "res-main");
           main.appendChild(link(cl.sentence || cl.id, "claim", () => openNode(cl.id), t("打开它的来龙去脉")));
-          const where = [cl.number ? t("数字 {number}", { number: cl.number }) : "", cl.line ? t("第 {n} 行", { n: cl.line }) : ""].filter(Boolean).join(" · ");
-          if (where) main.appendChild(mk("span", "node-sub-inline", where));
+          // 21.8: a claim's number is drawn by the one number function, as a number of a table is -- to four significant digits when
+          // it is longer than six, the value as written on hover. The sentence is the paper's own text and stays as written.
+          if (cl.number || cl.line) {
+            const where = mk("span", "node-sub-inline");
+            if (cl.number) {
+              const shown = typeof RODesk.formatNumber === "function" ? RODesk.formatNumber(cl.number) : String(cl.number);
+              const number = mk("span", "claim-number", t("数字 {number}", { number: shown }));
+              if (shown !== String(cl.number)) number.title = String(cl.number);
+              where.appendChild(number);
+            }
+            if (cl.line) where.append((cl.number ? " · " : "") + t("第 {n} 行", { n: cl.line }));
+            main.appendChild(where);
+          }
           const why = causeLine(cl.trace);
           if (why) main.appendChild(why);
           li.append(main, stateLabel(cl.trace));
@@ -2011,5 +2031,6 @@
     _judgeActions: judgeActions, _linkRow: linkRow, _mappingEnds: mappingEnds, _noteIsMine: noteIsMine, _verdictMove: verdictMove,
     _tableWords: tableWords, _timeline: timeline, _when: when, _timeKey: timeKey, _inFilter: inFilter, _fileRelations: fileRelations, _sourceWords: sourceWords,
     _renderStata: renderStata, _stataReasonWords: stataReasonWords, _judgmentSentence: judgmentSentence,
+    _back: back, _nav: nav,
   });
 })();

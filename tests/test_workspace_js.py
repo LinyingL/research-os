@@ -7,6 +7,7 @@ and creating a project never asks for an external attempts/history table.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,6 +16,9 @@ from pathlib import Path
 import pytest
 
 WEBAPP = Path(__file__).parents[1] / "src" / "researchos" / "webapp"
+#: The zone the pages run in under node (21.8: every time is shown in the viewer's local time): the researcher's, with a daylight-saving
+#: change on 2026-10-25, so a time written with +02:00 and one written with Z are both told from the clock of the day.
+TZ = "Europe/Berlin"
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
@@ -213,7 +217,7 @@ function deferred() { let resolve,reject;const promise=new Promise((a,b)=>{resol
 """
 
 
-def run(scenario: str, *, lang: str = "zh") -> dict:
+def run(scenario: str, *, lang: str = "zh", tz: str = TZ) -> dict:
     source = DOM + "\nwindow.ROI18N_SAVED=" + json.dumps(lang) + ";\n"
     source += (WEBAPP / "i18n.js").read_text()
     source += "\n" + (WEBAPP / "workspace.js").read_text()
@@ -221,7 +225,7 @@ def run(scenario: str, *, lang: str = "zh") -> dict:
     source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
     # The script goes in on stdin, not as an argument: it carries whole page modules,
     # and Linux caps a single argument at 128 KB (E2BIG).
-    result = subprocess.run([NODE, "-"], input=source, capture_output=True, text=True, timeout=20)
+    result = subprocess.run([NODE, "-"], input=source, capture_output=True, text=True, timeout=20, env={**os.environ, "TZ": tz})
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -2962,7 +2966,7 @@ const runOf=(id,date,agent,files)=>({id:id,date:date,agent:agent,files:files.map
 const baseListing=()=>({groups:[
   group('t1','Run the model',REPORT_FILE,[runOf('r-20261024T101010Z-aaaaaa','2026-10-24T10:10:10+02:00','Claude Code · sonnet',
     [[SWORD+'/checks/verify.py','work'],[SWORD+'/scripts/fetch.py','code'],[SWORD+'/figures/equity.png','figure'],'LICENSE'])]),
-  group('t2','Second task',REPORT2,[runOf('r-20261025T090000Z-bbbbbb','2026-10-25T09:00:00+02:00','Codex · gpt',
+  group('t2','Second task',REPORT2,[runOf('r-20261025T090000Z-bbbbbb','2026-10-25T09:00:00+01:00','Codex · gpt',
     [['reports/plan.md','document'],['reports/notes.md','document']])])],listed:6,more:0});
 const server={listing:baseListing(),fail:null,broken:false,calls:[]};
 const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:'work'};

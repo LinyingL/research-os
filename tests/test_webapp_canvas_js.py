@@ -672,7 +672,7 @@ def test_blocking_error_shows_coded_sentence_and_a_collapsed_detail_button():
     assert coded["title"] == ""  # never hover-only
     text, toggle, detail = coded["children"]
     assert text["text"] == "这个编号已经在尝试表里了，请换一个编号。"
-    assert toggle == {"tag": "button", "cls": "err-detail-toggle", "text": "详情", "type": "button", "expanded": "false"}
+    assert toggle == {"tag": "button", "cls": "err-detail-toggle has-chevron", "text": "详情", "type": "button", "expanded": "false"}   # 21.8: with the chevron (12.13)
     assert detail["cls"] == "err-detail hidden" and "already exists" in detail["text"]
     assert out["opened"]["stopped"] is True
     assert out["opened"]["children"][1]["expanded"] == "true"
@@ -1302,7 +1302,7 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert 'const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");' in node_js
     assert 'mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); })' in node_js
     assert node_js.count("openAttemptForm(") == 1
-    assert _APP_SRC.count("openAttemptForm(") == 4  # definition, header/menu, and research-record prefill entry
+    assert _APP_SRC.count("openAttemptForm(") == 5  # definition, header/menu, research-record prefill entry, and the way back to the form (21.8: 返回 from a panel opened from it)
     form = _function_body(_APP_SRC, "function renderAttemptForm(")
     for call in ("defaultNewNumber(attempts)", "defaultDateValue(attempts, new Date())"):
         assert call in form

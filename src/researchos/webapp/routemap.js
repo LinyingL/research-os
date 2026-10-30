@@ -316,7 +316,10 @@
   function emptySave() { return { positions: {}, viewport: undefined, reset: false }; }
 
   // `options.onOpen(attemptId)`: a click on a card; `options.onChanged()`:
-  // after a line was written or proposed (the desk reads itself again).
+  // after a line was written or proposed (the desk reads itself again);
+  // `options.firstOpen(project)`: true the first time this project's map is
+  // opened (21.8: the desk remembers that per project, in the browser, as it
+  // remembers the way the page is looked at), when the map fits all its cards.
   function create(options) {
     const opts = options || {};
     const m = {
@@ -381,9 +384,10 @@
       const zoom = el("div", "cv-zoom", "100%");
       const status = el("div", "cv-status hidden");
       const empty = el("div", "cv-empty hidden");
-      root.append(world, bar, zoom, status, empty);
+      const outside = el("div", "cv-note rm-outside hidden");   // 21.8: one quiet line when cards are out of view
+      root.append(world, bar, zoom, status, empty, outside);
       host.appendChild(root);
-      m.dom = { root, world, links, draft, cards, zoom, status, empty };
+      m.dom = { root, world, links, draft, cards, zoom, status, empty, outside };
       root.addEventListener("pointerdown", onDown);
       root.addEventListener("pointermove", onMove);
       root.addEventListener("pointerup", onUp);
@@ -399,7 +403,7 @@
       if (typeof ResizeObserver === "function") {
         new ResizeObserver(() => {
           clearTimeout(m.resizeTimer);
-          m.resizeTimer = setTimeout(() => { if ((m.autoFit || m.needsFit) && m.data && !m.drag) fit(); }, RESIZE_MS);
+          m.resizeTimer = setTimeout(() => { if ((m.autoFit || m.needsFit) && m.data && !m.drag) fit(); else syncOutside(); }, RESIZE_MS);
         }).observe(root);
       }
       applyCamera();
@@ -441,8 +445,12 @@
       render();
       if (!m.cameraSet) {
         m.cameraSet = true;
-        const vp = layout.viewport;
-        if (vp && isFinite(vp.x) && isFinite(vp.y) && vp.zoom > 0) {
+        const vp = layout.viewport, saved = !!vp && isFinite(vp.x) && isFinite(vp.y) && vp.zoom > 0;
+        // 21.8: the first time this project's map is opened it fits all its cards; a camera saved before that is forgotten, as 适应全部 does
+        if (typeof opts.firstOpen === "function" && opts.firstOpen(project)) {
+          autoFit();
+          if (saved) queueViewport(true);
+        } else if (saved) {
           m.camera = { x: vp.x, y: vp.y, zoom: clamp(vp.zoom, ZOOM_MIN, ZOOM_MAX) };
           m.autoFit = false;
           applyCamera();
@@ -476,6 +484,7 @@
       }
       m.attempts.forEach((a) => d.cards.appendChild(cardEl(a)));
       renderLines();
+      syncOutside();
     }
 
     function verdictWord(s) {
@@ -605,11 +614,7 @@
       m.dom.cards.querySelectorAll(".rm-card").forEach((c) => c.classList.toggle("marked", m.marked.includes(c.dataset.id)));
       const v = size(), z = m.camera.zoom;
       if (!m.marked.length || !v.w) return;
-      const shown = (id) => {
-        const x = m.positions[id][0] * z + m.camera.x, y = m.positions[id][1] * z + m.camera.y;
-        return x + CARD_W * z > 0 && x < v.w && y + cardH() * z > TOOLBAR_H && y < v.h;
-      };
-      if (m.marked.some(shown)) return;
+      if (m.marked.some((id) => inView(id, v))) return;
       const p = m.positions[m.marked[0]];
       m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + cardH() / 2) * z, zoom: z };
       applyCamera();
@@ -625,6 +630,25 @@
       m.dom.root.style.backgroundSize = GRID * zoom + "px " + GRID * zoom + "px";
       m.dom.root.style.backgroundPosition = x + "px " + y + "px";
       m.dom.zoom.textContent = Math.round(zoom * 100) + "%";
+      syncOutside();
+    }
+
+    // Whether a card shows in the view: any part of it between the edges, below the toolbar (it covers the top of the map).
+    function inView(id, v) {
+      const p = m.positions[id];
+      if (!p) return true;
+      const z = m.camera.zoom, x = p[0] * z + m.camera.x, y = p[1] * z + m.camera.y;
+      return x + CARD_W * z > 0 && x < v.w && y + cardH() * z > TOOLBAR_H && y < v.h;
+    }
+
+    // 21.8: how many cards are out of the view, in one quiet line, when some are (the view is the camera's: a fit that cannot hold
+    // them all at the smallest zoom, or a pan, leaves some out; 适应全部 brings them back).
+    function syncOutside() {
+      if (!m.dom || !m.dom.outside) return;
+      const v = typeof m.dom.root.getBoundingClientRect === "function" ? size() : { w: 0, h: 0 };
+      const n = v.w && v.h ? m.attempts.filter((a) => !inView(a.id, v)).length : 0;
+      m.dom.outside.textContent = n ? t("有 {n} 张卡片在视野之外", { n: n }) : "";
+      m.dom.outside.classList.toggle("hidden", !n);
     }
 
     function size() {
@@ -773,9 +797,10 @@
       const raw = err ? String(err.detail || err.message || err) : "";
       if (raw) {
         const detail = el("span", "err-detail hidden", raw);
-        const toggle = el("button", "err-detail-toggle", t("详情"));
+        const toggle = el("button", "err-detail-toggle has-chevron", t("详情"));   // 12.13: the chevron, turned when it is open
         toggle.type = "button";
-        toggle.addEventListener("click", () => detail.classList.toggle("hidden"));
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.addEventListener("click", () => toggle.setAttribute("aria-expanded", String(detail.classList.toggle("hidden") === false)));
         s.append(toggle, detail);
       }
       if (!o.ms) {

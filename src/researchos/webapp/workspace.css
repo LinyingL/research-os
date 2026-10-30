@@ -24,7 +24,7 @@
    open document (above it when the window is narrow). */
 .ws-plan { margin: 0 0 2rem; padding: 0 0 1.2rem; border-bottom: 1px solid var(--line-strong); }
 .ws-plan-title { font-family: var(--font-serif); font-size: 1.1rem; font-weight: normal; margin: 0 0 .7rem; }
-.ws-plan-lead { max-width: 46rem; max-height: 11rem; overflow: hidden; overflow-wrap: anywhere; font-size: .92rem; line-height: 1.85; }
+.ws-plan-lead { max-width: 46rem; overflow-wrap: anywhere; font-size: .92rem; line-height: 1.85; }
 .ws-plan-lead p, .ws-plan-lead blockquote { white-space: pre-wrap; margin: 0 0 .4rem; }
 .ws-plan-lead h1, .ws-plan-lead h2, .ws-plan-lead h3 { font-family: var(--font-serif); font-weight: normal; line-height: 1.5; margin: 0 0 .4rem; font-size: 1.1rem; }
 .ws-plan-lead ul, .ws-plan-lead ol { margin: 0 0 .4rem; }
@@ -47,7 +47,7 @@
 .ws-document-row.current { border-left-color: var(--ink); background: var(--paper-alt); }
 .ws-document-row.current .ws-document { font-weight: 600; }
 .ws-document { appearance: none; display: block; flex: 1 1 auto; min-width: 0; padding: .45rem .3rem .45rem .55rem; background: transparent; border: 0; text-align: left; color: var(--ink); font: inherit; font-size: .84rem; line-height: 1.55; cursor: pointer; overflow-wrap: anywhere; }
-.ws-document-date { flex: none; padding-right: .55rem; color: var(--ink-soft); font-size: .72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ws-document-date { flex: none; padding-right: .55rem; color: var(--ink-soft); font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ws-document-attempt { margin: 1rem 0 .15rem; padding-left: .55rem; font-size: .76rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
 .ws-document-attempt:first-of-type { margin-top: 0; }
 .ws-empty { color: var(--ink-soft); font-size: .78rem; line-height: 1.7; margin: .3rem 0 .7rem; }
@@ -144,9 +144,9 @@
   .ws-task-form { gap: .6rem; }
 }
 
-.ws-unavailable { display: block; color: var(--clay); font-size: .7rem; margin-top: .2rem; }
+.ws-unavailable { display: block; color: var(--clay); font-size: .75rem; margin-top: .2rem; }
 
-.ws-officialness { font-size: .72rem; color: var(--ink-soft); border: 1px solid var(--line); padding: .12rem .4rem; margin-left: .65rem; }
+.ws-officialness { font-size: .75rem; color: var(--ink-soft); border: 1px solid var(--line); padding: .12rem .4rem; margin-left: .65rem; }
 
 /* AI agents carry out tasks (DESIGN.md Section 17; 12.11): the same quiet tinted words as the verdicts
    (.status-label in app.html), plain buttons, no badges and no icons; the warning colour is the clay. */
@@ -172,7 +172,7 @@
 .ws-undo-row input { flex: none; margin: 0; align-self: center; }
 .ws-agent-more { font-size: .76rem; color: var(--ink-soft); }
 .ws-agent-more summary { cursor: pointer; }
-.ws-agent-more .ws-code { margin: .4rem 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .74rem; }
+.ws-agent-more .ws-code { margin: .4rem 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
 .ws-run-details { border-left: 1px solid var(--line-strong); padding-left: .8rem; margin-top: .2rem; display: flex; flex-direction: column; gap: .7rem; font-size: .8rem; }
 .ws-run-heading { margin: 0 0 .25rem; font-size: .76rem; font-weight: 500; color: var(--ink-soft); }
 .ws-run-group.ws-oob .ws-run-heading, .ws-run-group.ws-oob li { color: var(--clay); }
@@ -181,7 +181,7 @@
 .ws-agent-files code, .ws-step-text.mono, .ws-runner-where code, .ws-install-cmd { font-family: var(--font-mono); font-size: .76rem; }
 .ws-steps { list-style: none; margin: 0; padding: 0; }
 .ws-step { display: flex; gap: .7rem; padding: .12rem 0; align-items: baseline; }
-.ws-step-kind { flex: 0 0 3.2rem; color: var(--ink-soft); font-size: .72rem; }
+.ws-step-kind { flex: 0 0 3.2rem; color: var(--ink-soft); font-size: .75rem; }
 .ws-step-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ws-step-body { min-width: 0; flex: 1 1 auto; }
 .ws-step.bad .ws-step-kind, .ws-step.bad .ws-step-text { color: var(--clay); }

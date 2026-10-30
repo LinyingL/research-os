@@ -387,19 +387,36 @@
   // The text of the plan the page shows: the open document while it is the plan, else the plan as last read.
   function planContent() { return draft && draft.kind === "overview" ? draft.content : planSnap ? planSnap.content : ""; }
   function overviewEntry() { return ((data && data.documents) || []).find((doc) => doc.kind === "overview") || null; }
-  // The first paragraph of a document: its first block of text that is no heading (a fenced block is one block); a document
-  // of headings only gives its first line, one with no text "".
+  // The first paragraph of a document, whole (21.4): its first block of text that is no heading (a fenced block is one block); a
+  // document of headings only gives its first line, one with no text "". A block that is a list gives its first item with the
+  // item's own continuation lines (and its deeper items), not the rest of the list; text that leads into a list gives the text,
+  // and when it ends with a colon (「…约束：」, the lead-in), the first item as well -- the lead-in alone, or followed by the list after
+  // a blank line, is the same. A sentence is never cut: what is shown is what the file has up to the end of a paragraph or an item.
   function firstParagraph(text) {
     const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), heading = (line) => /^#{1,6}\s/.test(line);
+    const item = (line) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line), indent = (line) => /^\s*/.exec(line)[0].length;
     let at = lines.findIndex((line) => line.trim() && !heading(line));
     if (at < 0) return (lines.find((line) => line.trim()) || "").trim();
-    const block = [lines[at]];
     if (/^\s*```/.test(lines[at])) {
-      for (at += 1; at < lines.length; at += 1) { block.push(lines[at]); if (/^\s*```/.test(lines[at])) break; }
-      return block.join("\n");
+      const fence = [lines[at]];
+      for (at += 1; at < lines.length; at += 1) { fence.push(lines[at]); if (/^\s*```/.test(lines[at])) break; }
+      return fence.join("\n");
     }
-    for (at += 1; at < lines.length && lines[at].trim() && !heading(lines[at]); at += 1) block.push(lines[at]);
-    return block.join("\n");
+    // the lines of the block that starts at `from`: up to a blank line or a heading
+    const block = (from) => { const out = [lines[from]]; for (let i = from + 1; i < lines.length && lines[i].trim() && !heading(lines[i]); i += 1) out.push(lines[i]); return out; };
+    // the first item of a list block: its own line, then the lines that go on with it (deeper items included)
+    const firstItem = (rows) => { const out = [rows[0]]; for (let i = 1; i < rows.length && !(item(rows[i]) && indent(rows[i]) <= indent(rows[0])); i += 1) out.push(rows[i]); return out; };
+    const rows = block(at);
+    if (item(rows[0])) return firstItem(rows).join("\n");
+    const into = rows.findIndex((line, i) => i > 0 && item(line));
+    const leadIn = (words) => /[：:]\s*$/.test(words[words.length - 1]);
+    if (into > 0) { const lead = rows.slice(0, into); return (leadIn(lead) ? lead.concat(firstItem(rows.slice(into))) : lead).join("\n"); }
+    if (rows.length === 1 && leadIn(rows)) {
+      let next = at + 1;
+      while (next < lines.length && !lines[next].trim()) next += 1;
+      if (next < lines.length && item(lines[next])) return rows.concat(firstItem(block(next))).join("\n");
+    }
+    return rows.join("\n");
   }
   // Drawn with every change of the documents: the plan folded to its first paragraph, or unfolded (the writing area is in
   // it) when the person asked and the plan is the open document. A plan with no words yet starts unfolded, to be written in.
@@ -2620,7 +2637,7 @@
     }
     if (run && run.can_stop) { const stop = keyed(named(button(t("停止"), () => stopRun(task, run)), t("停止：{task}", who)), k("stop")); stop.disabled = busy; actions.append(stop); }
     if (run) {
-      const log = keyed(named(button(t("运行日志"), () => toggleLog(task), "ws-text-link"), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
+      const log = keyed(named(button(t("运行日志"), () => toggleLog(task), "ws-text-link has-chevron"), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
     if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
       const answer = keyed(named(button(t("回答"), () => toggleReply(task, "answer")), t("回答：{task}", who)), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
@@ -2681,8 +2698,8 @@
 
   // -- 任务输出: a task's files in its row (DESIGN.md 19.6) -------------------------------------------------------
   // Under the run controls of a task with a result record: the files registered for it by kind (the 输出目录 panel's
-  // words), each opening in the file panel and each with 移除登记 (the 过程文件 group is its count until opened, any other
-  // past 8 files has 「另外 N 个」: 19.12 item 2); the new files that nobody registered, of every run of the task that is
+  // words), each opening in the file panel and each with 移除登记 (the 过程文件 group is its count until opened; it and any other
+  // past 8 files has 「另外 N 个」: 19.12 item 2, 21.8); the new files that nobody registered, of every run of the task that is
   // not undone (19.12 item 7); the task's process folder (19.12 item 1) with the files in it now. The engine's
   // `task_outputs` (one answer with the page) has the
   // facts; the place sits inside the task's details, so it collapses with them, and is drawn again only when what it
@@ -2729,8 +2746,8 @@
     open.disabled = !editable() || !!outputBusy[task.id] || isActiveState(run.state);
     line.append(open);
   }
-  // How many files of a group the row shows before 「另外 N 个」 (DESIGN.md 19.12 item 2); the 过程文件 group, once opened,
-  // shows them all.
+  // How many files of a group the row shows before 「另外 N 个」 (DESIGN.md 19.12 item 2, 21.8): every group, the 过程文件 group
+  // once opened included.
   const OUTPUT_SHOWN = 8;
   function outputState(task) { return outputOpen[task.id] || (outputOpen[task.id] = { process: false, all: {} }); }
   // The rest of a group, opened: drawn again with every file, and the focus goes to the first file that was not shown.
@@ -2761,10 +2778,17 @@
         // (and stays open, or closed, when the row is drawn again)
         const fold = el("details", "ws-outputs-process"), summary = keyed(disclosureSummary(kinds[kind]), "output-group:" + task.id + ":work");
         summary.classList.add("ws-outputs-kind"); summary.append(count);
-        group.forEach((item) => list.append(outputRow(task, item, locked)));
+        // opened, it lists its first files and 「另外 N 个」 for the rest like the other groups (21.8): a task can have registered hundreds
+        const shownWork = opened.all.work ? group : group.slice(0, OUTPUT_SHOWN);
+        shownWork.forEach((item) => list.append(outputRow(task, item, locked)));
         fold.open = !!opened.process;
         fold.addEventListener("toggle", () => { opened.process = fold.open; });
         fold.append(summary, list);
+        if (shownWork.length < group.length) {
+          const rest = countText(group.length - shownWork.length);
+          fold.append(keyed(named(button(t("另外 {n} 个", { n: rest }), () => showAllOutputs(task, kind, group[shownWork.length])), t("另外 {n} 个：{kind}", { n: rest, kind: kinds[kind] })),
+            "output-more:" + task.id + ":" + kind));
+        }
         box.append(fold);
         return;
       }
@@ -3114,7 +3138,11 @@
   }
   function undoItems(open) { return open && open.plan ? (open.plan.restore || []).concat(open.plan.remove || []) : []; }
   function undoTicked(open) { return undoItems(open).filter((item) => !open.off[item.path]); }
-  function whenWords(iso) { return typeof iso === "string" && iso.length >= 16 ? iso.slice(0, 10) + " " + iso.slice(11, 16) : ""; }
+  // A run's or a file's time in this Mac's own time (21.8), 2026-10-30 16:33: RODesk.whenWords is the one function that converts a
+  // stored time, whatever zone it was written in; "" for what is no time with hours and minutes.
+  function whenWords(iso) {
+    return typeof iso === "string" && window.RODesk && typeof window.RODesk.whenWords === "function" ? window.RODesk.whenWords(iso, new Date(), "full") : "";
+  }
   // A group of the list under a disclosure with 12.13's chevron, open until the person closes it (and kept as they left it).
   function undoGroup(st, key, title, content) {
     const box = el("details", "res-draft"), summary = el("summary", "res-draft-summary");

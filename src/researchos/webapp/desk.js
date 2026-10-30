@@ -124,12 +124,33 @@
 
   function pad2(n) { return String(n).padStart(2, "0"); }
 
+  // An ISO time as a Date, or null. A log writes the T as a space and a clock may write more fractional digits than a Date reads
+  // (microseconds): both are read. A time written with no zone is this Mac's own (the engine writes `+02:00` or `Z` on every
+  // time it keeps; the stamps of a person's own files carry none).
+  function momentOf(at) {
+    const text = at == null ? "" : String(at).trim();
+    if (!text) return null;
+    const d = new Date(text.replace(/^(\d{4}-\d{2}-\d{2}) (?=\d{2}:\d{2})/, "$1T").replace(/(\.\d{3})\d+/, "$1"));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const ISO_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
   // When something happened, as a person says it: 今天 14:02, 昨天 09:10,
   // 10月4日, 2025年10月4日; in English (13.5) Today 14:02, Yesterday 09:10,
   // 4 Oct, 4 Oct 2025. `now` is a Date (the tests pass one).
-  function whenWords(at, now) {
-    const d = new Date(String(at || ""));
-    if (isNaN(d.getTime())) return "";
+  // Every time the app shows is the viewer's own local time (DESIGN.md 21.8), never UTC and never the time of the machine that
+  // wrote it, and this is the one function that turns a stored time into words, in two forms. The third argument names the
+  // other: "full", 2026-10-30 16:33, for a history line, a run's head and the like where the minute is the point (24-hour as
+  // 13.5 writes the time, in both languages), and "day", 2026-10-30. A time with hours and minutes is read for them; anything
+  // else -- a day, a label, nothing -- gives "" in those forms and the caller keeps what was written.
+  function whenWords(at, now, form) {
+    const d = momentOf(at);
+    if (!d) return "";
+    if (form === "full" || form === "day") {
+      if (!ISO_TIME.test(String(at).trim())) return "";
+      const date = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+      return form === "day" ? date : date + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    }
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const days = Math.round((today - day) / 86400000);
@@ -200,9 +221,31 @@
     return m[1] + kept.slice(0, power + 1) + (kept.length > power + 1 ? "." + kept.slice(power + 1) : "");
   }
 
+  // A number in a table or a list the app draws from a data file (21.8): the node shows formatNumber's text and, whenever
+  // that is shorter than the value, the value as written is on hover (`title`). The text of a note or a report, which a
+  // person or an agent wrote, never comes here: it is shown as written. Returns the node.
+  function showNumber(node, value) {
+    const written = value == null ? "" : String(value), shown = formatNumber(written);
+    node.textContent = shown;
+    if (shown !== written) node.title = written;
+    return node;
+  }
+
   function toneOf(status) {
     const s = status && status.status;
     return Object.prototype.hasOwnProperty.call(VERDICT_TONES, s) ? VERDICT_TONES[s] : "plain";
+  }
+
+  // The first time a project's map is opened in this browser (21.8: the map then fits all its cards): remembered per project, as the
+  // way the page is looked at is (18.3), a per-viewer convenience -- with storage off, every opening is the first.
+  function fittedKey(project) {
+    return "ro.routes.fitted:" + String(project || "");
+  }
+  function firstMapOpen(project) {
+    if (!project) return false;
+    const key = fittedKey(project), seen = storageGet(key) === "1";
+    if (!seen) storageSet(key, "1");
+    return !seen;
   }
 
   // The per-person, per-project key of "when I last looked at the desk".
@@ -1094,7 +1137,8 @@
       layoutEl = mk("div", "desk-layout");
       if (window.RORouteMap) {
         mapEl = mk("div", "desk-map");
-        routeMap = window.RORouteMap.create({ onOpen: openAttempt, onOpenHandback: (report) => openHandback(report, null), onChanged: () => loadDesk(views.desk, true) });
+        routeMap = window.RORouteMap.create({ onOpen: openAttempt, onOpenHandback: (report) => openHandback(report, null), onChanged: () => loadDesk(views.desk, true),
+          firstOpen: firstMapOpen });
         routeMap.mount(mapEl);
         layoutEl.appendChild(mapEl);
       }
@@ -1288,8 +1332,9 @@
     return drawPanel(subject);
   }
 
-  // The panel opened on the desk for `subject`, the map live beside it (no
-  // backdrop); what an earlier write said is not carried over.
+  // The panel opened for `subject`; what an earlier write said is not carried over. On the desk the map stays live beside it
+  // (14.3: no backdrop); opened from 项目首页 or any other page it covers the page, and has the scrim every panel that covers
+  // the page has (21.8).
   function showPanel(subject, title, subtitle) {
     state.panelSubject = subject;
     panelSaid = null;
@@ -1301,7 +1346,7 @@
     byIdOf("panel-body").innerHTML = '<p class="empty-note">' + t("载入中…") + "</p>";
     openPanel();
     const backdrop = byIdOf("panel-backdrop");
-    if (backdrop) backdrop.classList.add("hidden");
+    if (backdrop && !offDesk()) backdrop.classList.add("hidden");
   }
 
   // A proposal from the column (14.4) opened in the panel as its own
@@ -1313,6 +1358,7 @@
     if (s && s.kind === "desk-proposal" && s.id === p.id && s.by === (p.by || null) && panelShown()) { mark(); return null; }
     if (!mayLeavePanel()) return null;
     const subject = { kind: "desk-proposal", id: p.id, by: p.by || null, hold: false };
+    subject.reopen = () => openProposal(p);   // 返回 from a panel opened from this one (21.8)
     showPanel(subject, p.sentence || proposalWhat(p) || p.id,
       [kindWord(p.kind) || t("提议", { n: 1 }), p.by_label || p.by].filter(Boolean).join(" · "));
     mark();
@@ -2268,7 +2314,7 @@
     // a task's state code in words and tone (21.1), the attempt's panel and 项目首页's 全部任务 say it alike
     taskStateWords,
     // a long number to four significant digits, the value as written left to the caller's title and record (21.8)
-    formatNumber,
+    formatNumber, showNumber,
     openAttempt, openProposal, revalidatePanel, mayLeavePanel, leaveDesk,
     // 等你处理 (21.4): the list the engine works out, taken in for the sidebar's count, drawn on 项目首页 and in the column
     noteNeeds, needsCount, needsList, openAttemptAnywhere,
@@ -2276,7 +2322,7 @@
     atOnce: Object.freeze({ kind: atOnceKind, verdict: atOnceVerdict, undoOf: undoOf, undo: undoWrite, line: savedLine }),
     statusChooser: statusChooser, assessment: Object.freeze({ parse: parseAssessment, compose: composeAssessment }),
     // pure, for tests/test_v8_u2.py
-    _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat,
+    _whenWords: whenWords, _shareLineText: shareLineText, _proposalWhat: proposalWhat, _firstMapOpen: firstMapOpen,
     _proposalStateText: proposalStateText, _seenKey: seenKey, _modeKey: modeKey, _toneOf: toneOf,
   });
 })();

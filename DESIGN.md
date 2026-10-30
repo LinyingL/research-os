@@ -5727,7 +5727,8 @@ binding like the rest of this section:
    working directory say 项目文件夹 / "project folder". 15.3's words stay.
 2. **The task row stays short.** In 任务输出 the 过程文件 group shows only its count until
    opened; any other group of more than 8 files shows the first 8 and 「另外 N 个」 ("N more")
-   to open the rest.
+   to open the rest. *Amended (21.8, B5-2):* the 过程文件 group, once opened, does the same --
+   a task had registered about 200 files and listed them all.
 3. **The views group by task.** On 图表与论断, 数据与代码, 文献 and 变量 the registered rows
    stand under one heading per task: the title of its result record (the record's first
    heading), else the task's first line cut as before, with the date of the run that produced
@@ -6354,8 +6355,13 @@ attempts.py`; `research_records.assessment_statuses`).
   - **研究问题与计划**, under its own title: its first paragraph and 「展开」
     with 12.13's chevron (「收起」 once open). The first paragraph is the first
     block of text that is no heading (a fenced block is one block; a plan of
-    headings only gives its first line), drawn as the preview draws it and
-    kept to eleven rem, the rest only on unfolding. Unfolded, the plan is the
+    headings only gives its first line), drawn as the preview draws it, the rest
+    only on unfolding. *Amended (B5-2):* the paragraph is shown whole, never cut
+    in a sentence -- the box of eleven rem it was kept to cut a plan of long
+    bullets in the middle of one: a block that is a list gives its first item with
+    the lines that go on with it, text that leads into a list gives the text, and
+    when it ends with a colon (「…约束：」) the first item under it, also across a
+    blank line. Unfolded, the plan is the
     writing area itself, opened as every existing document is -- preview, 编辑,
     保存 (18.3) --, not a copy of it: the writing area is one, and stands in the
     plan while the plan is the open document and beside the lists for any
@@ -7014,16 +7020,71 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   An integer, a value of six digits or fewer, and anything with a unit, a
   percent sign, a word or a thousands separator is shown as written. The
   caller puts the value as written in the element's `title`; the record and
-  the number check of 16.1 only ever have it as written. The handback's key
-  numbers use it; the other tables are batch 5's.
-- Every disclosure uses 12.13's chevron (文献 included). Every panel that
-  covers the page has the same scrim and a 返回 step when it was opened from
-  another panel. The route map fits all cards the first time a project's map
-  is opened and says how many cards are outside the view when some are.
-  Chinese text in the interface is never smaller than 12 px (*amended, fix
-  batch 3*: the state word `.status-label` -- task rows, the chips of 等你处理,
-  the assessment on a card --, `.own-mark` and `.var-chip` were 0.74rem, 11.84 px
-  at the browser's 16 px root, and are 0.75rem).
+  the number check of 16.1 only ever have it as written. *Amended (B5-2):* it is
+  applied to every table and list the app draws from a data file: the handback's
+  key numbers, the table preview of a registered data file (文献 and 变量: the
+  first row is the file's header, as written) and the number of a claim on
+  图表与论断 (`RODesk.showNumber` sets the text and, when it is shorter, the
+  title). A CSV, TSV or JSON file opened in the file view is its text as written,
+  line by line, and the text of a note or a report -- markdown a person or an
+  agent wrote, its tables included -- is never given to it. No other table of the
+  app holds values from a file (a Word document's tables are its text, a Stata
+  file's table names variables, the team's holds people); `tests/test_v16_b52_numbers_times_js.py`
+  scans the scripts for a table cell made by hand and lists why each is not data.
+- **Times are the viewer's** (*B5-2*): every time the app shows is this Mac's local
+  time, never UTC and never the time of the machine that wrote it.
+  `RODesk.whenWords(at, now, form)` is the one function that turns a stored time
+  into words: an ISO time with a Z or an offset is converted to the zone this Mac
+  is in, one written with none was local already, a space for the T and more
+  fractional digits than a Date reads are read. Without `form` it says the time as
+  a person does (今天 14:02, 昨天 09:10, 10月4日; 13.5); with `"full"` as
+  2026-10-30 16:33 (24-hour, in both languages) where the minute is the point; with
+  `"day"` as 2026-10-30. What is no time with hours and minutes -- a day, a label
+  such as 「迁移自旧索引」, nothing -- gives "" and the caller shows what it was given
+  (app.html's `stampText` and workspace.js's `whenWords` only call it). The
+  handback's head (a run that ended at 15:33 UTC reads 16:33 on a Mac in CET), the
+  earlier runs' dates, the files of an undo, the runs of the space panel, a link
+  judgment's history, the hover card of a link, the confirmations of a variable
+  card and the times of the registered rows all go through it; no script cuts a
+  stamp out of an ISO string (the scan of the same test file). An engine sentence
+  that holds a time is written from this Mac's own clock (the GitHub line 「（2026-10-30 16:33 获取）」),
+  so none is converted again. The node tests run in Europe/Berlin (`NODE_ENV`).
+- **Disclosures have the chevron** (*B5-2*): every `<details>` has a `res-draft-summary`
+  with 12.13's chevron in it (`chevronSummary` in app.html; 文献's drafts and its
+  source lists, the proposals' 查看改动 and the team page's folds included), and a
+  button that shows or hides more of the same thing in place -- the 「详情」 of a
+  refusal, 查看当时的内容, 运行日志, 打开关系图 -- wears `has-chevron`, which draws the same
+  shape in CSS and turns it while `aria-expanded` is true.
+- **Panels** (*B5-2*): every panel that covers the page has the one scrim
+  (`#panel-backdrop`). The desk hides it only for an attempt's or a proposal's
+  panel opened on the desk, where the map stays live beside it (14.3); the same
+  panel opened from 项目首页 or another page covers the page and has it. A panel
+  opened from another panel has 返回, a text link at the head of the panel, that
+  opens the panel it came from again -- opened afresh, for what was half typed in
+  it was asked about when the second opened, and 返回 asks once: 设置 from an
+  attempt's panel or from the new-attempt form, a file from another file. An attempt's
+  and a proposal's panel are where the others start and have none, and a handback keeps
+  its own 返回 to the attempt in its body. A node page opened from a panel gives it back:
+  the page's 返回 goes to the section the page was opened from and opens the panel again.
+- **The route map** fits all its cards the first time a project's map is opened in this
+  browser (*B5-2*; remembered per project in the browser's storage as the way the page
+  is looked at is, a per-viewer convenience), forgetting a camera saved before as 适应全部
+  does, and opens as the person left it after that. When cards are out of the view --
+  after a pan or a zoom, or because a fit cannot hold them at the smallest zoom, 25% --
+  one quiet line under the toolbar says how many (「有 n 张卡片在视野之外」, “n cards are outside
+  the view”) and is gone when none are.
+- **Chinese text in the interface is never smaller than 12 px**, which is 0.75rem at
+  the browser's 16 px root (*amended, B5-2*: the fix batch 3 state word, `.own-mark` and
+  `.var-chip` were the first; every `font-size` of the page's style block and of
+  workspace.css was read, forty-one lay between 10.9 and 11.84 px and are 0.75rem or 12px,
+  the canvas measures its text at 12 px to fit its cards). `tests/test_v16_b52_pages_js.py`
+  reads every size and fails on a smaller one.
+- **Two carried items of 21.4** (*B5-2*): the fold of 研究问题与计划 shows its first
+  paragraph whole -- the box of eleven rem that cut it is gone, a list that opens the plan
+  gives its first item with the lines that go on with it, a lead-in ending with a colon
+  its first item under it --, and a task's 过程文件 group, opened, lists its first eight
+  files and 「另外 n 个」 like the other groups (a task of the OpenStock project had
+  registered about 200).
 
 ### 21.9 Acceptance
 
@@ -7079,5 +7140,10 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    panel under node, in both languages); no title or status drawn as a button and
    what only navigates a text link; the clay colour appears only on what 21.8 lists
    (`tests/test_v16_clay.py`); 关系图 opens on 全部, saying so, when the current
-   attempt has nothing to draw; long numbers are shown to four significant digits.
+   attempt has nothing to draw; long numbers are shown to four significant digits
+   (*B5-2*: in every table drawn from a data file and for a claim's number, the value
+   as written on hover; a note's or a report's text as written); every time is this Mac's
+   local time; every disclosure has the chevron; a panel opened from a panel has 返回
+   and the scrim is on every panel that covers the page; the route map fits on its first
+   opening and says how many cards are out of the view; nothing is set under 12 px.
 8. The full suite passes on Python 3.11 and 3.13.

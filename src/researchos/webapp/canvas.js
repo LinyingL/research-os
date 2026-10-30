@@ -989,7 +989,7 @@ window.RCECanvas = (function () {
 
   function renderSockets(g, n) {
     const s = SOCKETS[n.type] || SOCKETS.dataset;
-    const sans = "11px " + fontStack("--font-sans"); // words, not paths (12.11)
+    const sans = "12px " + fontStack("--font-sans"); // words, not paths (12.11)
     s.inputs.forEach((sock, i) => {
       const y = socketY(i);
       const orphan = i === 0 && n.orphan_input && n.orphan_tone === "warning"; // clay is for what is wrong (21.8): a download is not
@@ -1032,7 +1032,7 @@ window.RCECanvas = (function () {
     name.textContent = fitRight(n.label, "13px " + fontStack("--font-sans"), NODE_W - 24);
     g.appendChild(name);
     const dir = svgEl("text", { x: 12, y: TITLE_H + 37 }, "cv-dir");
-    dir.textContent = fitLeft(n.dir ? n.dir + "/" : "./", "11px " + fontStack("--font-mono"), NODE_W - 24);
+    dir.textContent = fitLeft(n.dir ? n.dir + "/" : "./", "12px " + fontStack("--font-mono"), NODE_W - 24);
     g.appendChild(dir);
     renderSockets(g, n);
     placeNode(g, n.id);

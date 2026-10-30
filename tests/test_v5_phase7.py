@@ -25,6 +25,7 @@ from researchos.records import ledger as ledger_mod
 from researchos.webapp import registry, server
 
 from test_records_judgements import READ, _conn, _project, _scan
+from test_v9_language import NODE_ENV, _times_prelude
 
 APP_HTML = Path(server.__file__).parent / "app.html"
 CANVAS_JS = Path(server.__file__).parent / "canvas.js"
@@ -359,11 +360,11 @@ process.stdout.write(JSON.stringify(calls.map(([fn, args]) => W[fn](...args))));
 def _wording(*calls: tuple[str, list[Any]]) -> list[Any]:
     html = APP_HTML.read_text(encoding="utf-8")
     # The block's words go through the page's one t() helper (13.6): run alone, Chinese.
-    block = (html[html.index("// -- The interface language (DESIGN.md 13.6)"):html.index("// -- Small shared state")]
-             + html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")])
+    # ... with the page's one time function in front of them (21.8: a time reads as this Mac's, in the zone the harness fixes)
+    block = (_times_prelude() + html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")])
     result = subprocess.run(
         [NODE, "-e", _WORDING_RUNNER, json.dumps(list(calls))],
-        input=block, capture_output=True, text=True, check=True, timeout=30,
+        input=block, capture_output=True, text=True, check=True, timeout=30, env=NODE_ENV,
     )
     return json.loads(result.stdout)
 

@@ -335,7 +335,7 @@
   // put beside it -- yours first, then the official one.
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
-    d.appendChild(mk("summary", null, t("你的和正式的有什么不同")));
+    d.appendChild(summaryOf(t("你的和正式的有什么不同")));
     // 12.13: a table's rows and columns first (the engine's sentence, in the
     // page's language), its line diff below when small.
     if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
@@ -347,6 +347,8 @@
   }
 
   function now() { return new Date(); }
+  // 12.13: the summary of a <details> carries the quiet chevron (app.html's `chevronSummary`); plain words where there is none.
+  function summaryOf(label) { return typeof chevronSummary === "function" ? chevronSummary(label) : mk("summary", null, label); }
   function when(at) { return at ? RODesk.whenWords(at, now()) || String(at) : ""; }
   // A date inside a line starts lower case in English (13.5), as desk.js writes it.
   function whenInLine(at) { const w = when(at); return w.charAt(0).toLowerCase() + w.slice(1); }
@@ -724,6 +726,7 @@
         btn.disabled = false;
       });
       btn.setAttribute("aria-expanded", "false");
+      btn.classList.add("has-chevron"); // 12.13: a toggle that is not a <details> has the chevron too
       li.append(btn, slot);
     }
     return li;
@@ -1086,7 +1089,7 @@
         li.appendChild(mk("p", "desk-note plain", t("表格较大：只比较行和列，不逐行对比。")));
       } else if (f.diff) {
         const d = mk("details", "proposal-diff");
-        d.appendChild(mk("summary", null, t("查看改动")));
+        d.appendChild(summaryOf(t("查看改动")));
         d.appendChild(diffOf(f.diff, f.truncated));
         if (f.action === "added" || files.length <= 3) d.open = true;
         li.appendChild(d);
@@ -1450,7 +1453,7 @@
       if ((c.returned || []).length) row.appendChild(mk("p", "desk-break", t("这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。")));
       if (c.chosen && f.diff) {
         const det = mk("details", "proposal-diff");
-        det.appendChild(mk("summary", null, t("查看改动")));
+        det.appendChild(summaryOf(t("查看改动")));
         det.appendChild(diffOf(f.diff, f.truncated));
         row.appendChild(det);
       }
@@ -1729,7 +1732,7 @@
     }
     if (pending.count) {
       const det = mk("details", "team-pending");
-      det.appendChild(mk("summary", null, last ? "和第 " + last.seq + " 版相比有 " + pending.count + " 个文件不同"
+      det.appendChild(summaryOf(last ? "和第 " + last.seq + " 版相比有 " + pending.count + " 个文件不同"
         : "第一版会带上正式版本的 " + pending.count + " 个文件"));
       const ul = mk("ul", "desk-files");
       (pending.files || []).slice(0, 60).forEach((f) => ul.appendChild(mk("li", "mono", f)));
@@ -1821,7 +1824,7 @@
     const list = (coming && coming.removals) || [];
     if (!list.length) return wrap;
     const det = mk("details", "team-pending");
-    det.appendChild(mk("summary", null, t("会删除的连线（{n} 条）", { n: numberText(list.length) })));
+    det.appendChild(summaryOf(t("会删除的连线（{n} 条）", { n: numberText(list.length) })));
     const ul = mk("ul", "desk-files");
     list.forEach((r) => {
       const li = mk("li");
@@ -1929,7 +1932,7 @@
   // member can write into their own folder.
   function twoFolders(share) {
     const det = mk("details", "team-pending");
-    det.appendChild(mk("summary", null, share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
+    det.appendChild(summaryOf(share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
     det.appendChild(line("在个人版 OneDrive 里，PI 分别共享「已发布」（只能查看）和你自己的提议文件夹（可以编辑），它们会在你的电脑上变成两个文件夹。分别选好：", "quiet"));
     const pub = pathField("公盘的「已发布」文件夹（PI 共享给你，只能查看）", "shared", "已发布文件夹的完整路径");
     const mine = pathField("你自己的提议文件夹（PI 共享给你，可以编辑）", "mine", "你的提议文件夹的完整路径");
@@ -1974,7 +1977,7 @@
       if (!a.reachable) head.appendChild(label("现在打不开", "ochre"));
       li.appendChild(head);
       const det = mk("details", "team-pending");
-      det.appendChild(mk("summary", null, "提议区在别处"));
+      det.appendChild(summaryOf("提议区在别处"));
       const pf = pathField("这位成员的提议区在这台电脑上的位置", "shared", "完整路径");
       const status = mk("div", "notice-status");
       const btn = mkButton("记下", "btn btn-small", async () => {
