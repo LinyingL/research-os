@@ -344,6 +344,12 @@
     "接着哪个任务": "Which task it follows",
     "请选择一条尝试": "Choose an attempt",
     "新开一条尝试…": "Start a new attempt…",
+    // The task form (21.4): the owner in two groups, 保存并运行 beside the save button and what came of it.
+    "人员": "People",
+    "保存并运行": "Save and run",
+    "任务已保存，运行已开始。": "Task saved. The run has started.",
+    "任务已保存，没有开始运行。": "Task saved. The run was not started.",
+    "任务已保存，但运行没有开始。原因写在这项任务那一行里。": "Task saved, but the run did not start. The reason is in that task’s row.",
     "不接着任何任务": "Does not follow a task",
     "未归入尝试": "Not in an attempt",
     "新任务要属于一条尝试：请在「属于哪条尝试」里选一条，或选「新开一条尝试…」。": "A new task belongs to an attempt: choose one in “Which attempt it belongs to”, or pick “Start a new attempt…”.",

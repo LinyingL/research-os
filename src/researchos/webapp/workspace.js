@@ -1057,13 +1057,20 @@
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
     ui.taskError = el("div"); box.append(ui.taskError);
     renderTaskList();
-    const form = el("form", "ws-task-form"), text = keyed(input("text", t("例如：整理下一次组会要讨论的问题")), "task-text"); text.value = taskDraft.text;
+    // 21.4: the task is written in a field of several lines (Enter makes a new line), which grows with what is typed.
+    const form = el("form", "ws-task-form"), text = keyed(el("textarea", "form-input ws-task-input"), "task-text");
+    text.placeholder = t("例如：整理下一次组会要讨论的问题"); text.rows = 3; text.value = taskDraft.text;
     const owner = keyed(el("select", "form-input"), "task-owner"); ui.ownerSelect = owner; fillOwnerOptions(owner);
     const name = taskDraft.custom ? keyed(input("text", t("姓名（可留空）")), "task-name") : null;
     if (name) { name.value = taskDraft.owner; name.addEventListener("input", () => { taskDraft.owner = name.value; }); }
     ui.ownerName = name;
     const due = keyed(input("date"), "task-due"); due.value = taskDraft.due;
-    const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-small"), "task-submit");
+    // 21.8: the save button is the form's one primary button; 「保存并运行」 stands beside it while the owner is an agent
+    // (`syncRunButton`) and is the quiet one, as is 清空.
+    const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-primary btn-small"), "task-submit");
+    const saveRun = keyed(button(t("保存并运行"), () => addTask(true)), "task-run");
+    const clear = keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear");
+    ui.taskRun = saveRun; ui.taskClear = clear;
     // 21.1: the task's place on the route comes first -- the attempt it belongs to, and the task it continues.
     const attempt = keyed(el("select", "form-input"), "task-attempt"), after = keyed(el("select", "form-input"), "task-after");
     ui.taskAttempt = attempt; ui.taskAfter = after; fillAttemptOptions(attempt); fillAfterOptions(after);
@@ -1072,13 +1079,15 @@
     [text, owner, name, due, submit, attempt].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });  // `after` decides for itself
     function changed() { taskDraft = Object.assign({}, taskDraft, { text: text.value, due: due.value }); }
     [text, due].forEach((node) => node.addEventListener("input", changed));
+    text.addEventListener("input", () => growField(text));
     owner.addEventListener("change", () => chooseOwner(owner));
     form.addEventListener("submit", (event) => { event.preventDefault(); addTask(); });
     const ownerField = field(t("负责人"), owner), dateField = field(t("日期"), due);
     ownerField.className += " ws-field-owner"; dateField.className += " ws-field-date";
     const attemptField = field(t("属于哪条尝试"), attempt), afterField = field(t("接着哪个任务"), after), textField = field(t("任务", { n: 1 }), text);
     attemptField.className += " ws-field-attempt"; afterField.className += " ws-field-after"; textField.className += " ws-field-text";
-    form.append(attemptField, afterField, textField, ownerField);
+    // 21.4: the attempt, the task, the task it follows, the owner, the date -- then the research context and the buttons.
+    form.append(attemptField, textField, afterField, ownerField);
     if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
     const context = keyed(el("select", "form-input"), "task-context");
     const noContext = el("option", null, t("无关联研究记录")); noContext.value = ""; context.append(noContext);
@@ -1088,10 +1097,11 @@
     context.value = taskDraft.contextReport || ""; context.disabled = !tasksEditable() || taskBusy || taskConflict;
     context.addEventListener("change", () => { taskDraft.contextReport = context.value; });
     const contextField = field(t("研究上下文（可选）"), context); contextField.className += " ws-field-context";
-    form.append(dateField, contextField, submit);
-    form.append(keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear"));
+    const buttons = el("div", "ws-task-buttons"); buttons.append(submit, clear);
+    form.append(dateField, contextField, buttons);
     const taskStatus = el("div", "ws-status"); taskStatus.setAttribute("role", "status");
     box.append(form, taskStatus); ui.taskText = text; ui.taskStatus = taskStatus;
+    growField(text); syncRunButton();
     if (taskConflict) showTaskConflict();
     if (data.mode === "member") {
       const propose = button(t("提交修改"), () => {
@@ -1117,6 +1127,7 @@
     if (taskConflict) {
       const submit = descendants(ui.tasks).find((x) => x.dataset && x.dataset.key === "task-submit");
       if (submit) submit.disabled = true;
+      syncRunButton();
       showTaskConflict();
     }
   }
@@ -1128,7 +1139,7 @@
       if (row) row.className = "ws-task" + (task.done ? " done" : "");
     });
   }
-  async function addTask() {
+  async function addTask(thenRun) {
     if (!tasksEditable() || taskBusy || taskConflict) return;
     if (!taskDraft.text.trim()) { status(ui.taskStatus, t("请写下要做的事。"), "err"); ui.taskText.focus(); return; }
     // A new task belongs to an attempt (21.1); a task from before that may stay without one.
@@ -1142,7 +1153,9 @@
     if (taskDraft.after && taskDraft.attempt) item.after = taskDraft.after; else if (existing && existing.after) item.after = null;
     // Object.assign keeps what the form does not edit: a task's report (17.2) stays with it.
     if (existing) Object.assign(existing, item); else next.push(item);
-    await mutateTasks(next, true);
+    const saved = await mutateTasks(next, true);
+    // 「保存并运行」 (21.4): only a task that is saved is run -- a refused or failed save starts nothing.
+    if (thenRun && saved) await runSaved(item.id);
   }
   function showTaskConflict() {
     if (ui.taskStatus.dataset.conflict) return;
@@ -1159,6 +1172,7 @@
       } catch (err) { if (live(mark)) status(ui.taskStatus, errorWords(t("没能读取任务。"), err), "err"); }
     }));
   }
+  // True once the engine has saved the tasks (the caller may go on to start a run on what is saved), false when it did not.
   async function mutateTasks(tasks, clearForm) {
     if (!tasksEditable() || taskBusy || taskConflict) return;
     const mark = stamp(), snapshot = JSON.stringify(taskDraft);
@@ -1171,12 +1185,61 @@
       if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft(taskDraft.attempt);
       renderTasks(); status(ui.taskStatus, response.history_error ? t("任务已保存，但修改历史暂时未能记录。") : t("已保存"), response.history_error ? "" : "ok");
       if (typeof pollGeneration === "function") pollGeneration();
+      return true;
     } catch (err) {
       if (!live(mark)) return;
       taskBusy = false; taskConflict = !!(err && /conflict|revision|changed/.test(err.state || ""));
       renderTasks();
       if (!taskConflict) status(ui.taskStatus, errorWords(t("没能保存任务，当前填写已保留。"), err), "err");
+      return false;
     }
+  }
+  // The task field grows with the lines typed (21.4), never below its three rows; the stylesheet bounds it, and beyond that it
+  // scrolls. Measuring needs the rows' own height first, so the field is shortened and grown again; the page keeps its place.
+  function scrollParent(node) {
+    for (let n = node.parentNode; n && n.nodeType === 1; n = n.parentNode) {
+      if (n.scrollHeight > n.clientHeight && /auto|scroll/.test(getComputedStyle(n).overflowY)) return n;
+    }
+    return null;
+  }
+  function growField(area) {
+    const style = area.style;
+    if (!style) return;
+    const holder = scrollParent(area), top = holder ? holder.scrollTop : 0;
+    style.height = "";
+    if (area.offsetWidth && area.scrollHeight > area.clientHeight) style.height = (area.scrollHeight + area.offsetHeight - area.clientHeight) + "px";
+    if (holder) holder.scrollTop = top;
+  }
+  // 「保存并运行」 stands beside the save button while the owner chosen is an agent and the task could be run from its row (a task
+  // being carried out, or waiting for the answer the person can give, cannot); like the row's 运行 it waits while the project has
+  // another run going.
+  function syncRunButton() {
+    const run = ui && ui.taskRun;
+    if (!run || !ui.taskClear) return;
+    const agent = taskDraft.custom ? null : parseAgent(taskDraft.owner), existing = taskDraft.id ? (data.tasks || []).find((x) => x.id === taskDraft.id) : null;
+    if (!agent || (taskDraft.id && !(existing && runnable(existing, agent)))) { run.remove(); return; }
+    if (!run.parentNode) ui.taskClear.before(run);
+    const waiting = anyActive();
+    run.disabled = !may() || waiting; run.title = waiting ? t("这个项目里还有一次运行没有结束。") : "";
+  }
+  // After 保存并运行 has saved the task: the run starts by the row's own path (`startRun`: the mcp check and the confirmations of
+  // 17.1 and 18.1 item 5), and the form says what came of it. A run that did not start leaves its reason in the task's row, which
+  // is opened to show it (the rows are shut by default, 21.4).
+  async function runSaved(id) {
+    const task = (data.tasks || []).find((x) => x.id === id), agent = task && parseAgent(task.owner);
+    if (!agent || !runnable(task, agent)) return;
+    const mark = stamp(), before = latestRun(id), noteBefore = agentNotes[id];
+    await startRun(task, agent);
+    if (!live(mark) || !ui || !ui.taskStatus) return;
+    const now = latestRun(id);
+    if (now && (!before || now.id !== before.id)) status(ui.taskStatus, t("任务已保存，运行已开始。"), "ok");
+    else if (agentNotes[id] && agentNotes[id] !== noteBefore) { openTaskRow(id); status(ui.taskStatus, t("任务已保存，但运行没有开始。原因写在这项任务那一行里。"), "err"); }
+    else status(ui.taskStatus, t("任务已保存，没有开始运行。"));
+  }
+  function openTaskRow(id) {
+    const view = taskDisclosures[id];
+    taskOpen[id] = true;
+    if (view) { view.node.open = true; view.open = true; }
   }
 
   // -- AI agents carry out tasks (DESIGN.md Section 17) ---------------------------------------
@@ -1295,6 +1358,12 @@
   function activeIds() { return runsInfo.runs.filter((r) => isActiveState(r.state)).map((r) => r.id); }
   function anyActive() { return activeIds().length > 0 || !!runsInfo.active; }
   function latestRun(taskId) { return runsInfo.runs.find((r) => r.task_id === taskId) || null; }
+  // Whether the row offers 运行 (and the form 保存并运行): an agent owns the task, it is not marked done, and its latest run is
+  // neither going nor waiting for the answer the person can give.
+  function runnable(task, agent) {
+    const run = latestRun(task.id);
+    return !!agent && !task.done && (!run || (!isActiveState(run.state) && !(outcomeOf(run) === "needs_input" && run.can_reply)));
+  }
   // undo: the open 撤回本次运行 list of the task's latest run (18.1 item 5), { run, plan, error, off } -- off holds the
   // paths whose box the person cleared.
   function agentState(taskId) { return agentUiState[taskId] || (agentUiState[taskId] = { log: false, reply: null, text: "", open: {}, undo: null }); }
@@ -2194,15 +2263,21 @@
     people.team.forEach((name) => { if (!list.some((c) => c.value === name)) list.push({ value: name, words: name }); });
     return list;
   }
+  // 21.4: people and agents stand in two labelled groups (an <optgroup> each) under 「不指定」, which is neither; an agent is named by
+  // the agent and its model, as everywhere else (`ownerLabel`).
   function fillOwnerOptions(select) {
     const current = taskDraft.custom ? OWNER_OTHER : taskDraft.owner;
-    const people_ = ownerChoices(), agents = ((agentInfo && agentInfo.agents) || []).map((a) => ({ value: a.owner, words: a.label }));
-    const choices = people_.slice();
-    // A name typed by hand earlier, or an agent this Mac does not have, stays selectable while it is the value.
-    if (current && current !== OWNER_OTHER && ![...people_, ...agents].some((c) => c.value === current)) choices.push({ value: current, words: ownerLabel(current) });
-    choices.push({ value: OWNER_OTHER, words: t("其他人…") }, ...agents);
-    if (agentInfo && !agents.length) choices.push({ value: OWNER_SETTINGS, words: t("设置 AI 执行者…") });
-    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    const [none, ...team] = ownerChoices(), known = ((agentInfo && agentInfo.agents) || []).map((a) => ({ value: a.owner, words: a.label }));
+    const persons = team.slice(), agents = known.slice();
+    // A name typed by hand earlier, or an agent this Mac does not have, stays selectable while it is the value, in its own group.
+    if (current && current !== OWNER_OTHER && ![...team, ...known].some((c) => c.value === current)) {
+      (/^agent:/.test(current) ? agents : persons).push({ value: current, words: ownerLabel(current) });
+    }
+    persons.push({ value: OWNER_OTHER, words: t("其他人…") });
+    if (agentInfo && !known.length) agents.push({ value: OWNER_SETTINGS, words: t("设置 AI 执行者…") });
+    const option = (c) => { const node = el("option", null, c.words); node.value = c.value; return node; };
+    const group = (words, choices) => { const node = el("optgroup"); node.label = words; node.append(...choices.map(option)); return node; };
+    select.replaceChildren(option(none), group(t("人员"), persons), ...(agents.length ? [group(t("这台电脑上的 AI 执行者"), agents)] : []));
     select.value = current;
   }
   function refreshOwnerOptions() {
@@ -2218,7 +2293,7 @@
       return;
     }
     taskDraft = Object.assign({}, taskDraft, { custom: false, owner: value });
-    if (wasCustom) renderTasks();
+    if (wasCustom) renderTasks(); else syncRunButton();
   }
 
   // -- what the page knows of the Mac, the people and the runs ----------------------------------
@@ -2423,6 +2498,7 @@
   }
   function updateAgentSections() {
     if (!ui || !ui.tasks) return;
+    syncRunButton();
     (data.tasks || []).forEach((task) => {
       lockRow(task);
       drawTaskOutputs(task);
@@ -2467,7 +2543,7 @@
     if (run && run.error) live.append(errorBlock(run, st));
     box.append(live);
     const actions = el("div", "ws-agent-actions");
-    if (agent && !task.done && (!run || (!active && !(outcomeOf(run) === "needs_input" && run.can_reply)))) {
+    if (runnable(task, agent)) {
       const go = keyed(named(button(t("运行"), () => startRun(task, agent)), t("运行：{task}", who)), k("run"));
       go.disabled = !allowed || anyActive();
       if (allowed && anyActive()) go.title = t("这个项目里还有一次运行没有结束。");

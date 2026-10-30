@@ -116,14 +116,16 @@
 .ws-task-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .65rem; padding-top: 1rem; }
 .ws-field { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
 .ws-field-label { color: var(--ink-soft); font-size: .76rem; }
-.ws-task-form > .ws-field-text { flex: 1 1 250px; }
-.ws-task-form > .ws-field-attempt { flex: 1 1 230px; }
+/* 21.4: the attempt, then the task on a line of its own (several lines, growing with what is typed, then scrolling), then the rest */
+.ws-task-form > .ws-field-attempt { flex: 0 1 28rem; }
+.ws-task-form > .ws-field-text { flex: 1 1 100%; }
 .ws-task-form > .ws-field-after { flex: 1 1 200px; }
 .ws-task-form > .ws-field-owner { flex: 0 1 190px; }
 .ws-task-form > .ws-field-name { flex: 0 1 130px; }
 .ws-task-form > .ws-field-date { flex: 0 1 145px; }
 .ws-task-form .form-input { width: 100%; box-sizing: border-box; }
-.ws-task-form > .btn { margin-bottom: .1rem; }
+.ws-task-form .ws-task-input { display: block; resize: vertical; line-height: 1.5; max-height: 15rem; overflow-y: auto; }
+.ws-task-buttons { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
 .ws-create { display: flex; flex-direction: column; gap: .9rem; }
 .ws-create .form-input { width: 100%; box-sizing: border-box; }
 .ws-create > .btn { align-self: flex-start; }

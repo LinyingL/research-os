@@ -22,7 +22,7 @@ DOM = r"""
 class Element {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.kids = []; this.parentNode = null;
     this.dataset = {}; this.attrs = {}; this.on = {}; this.className = ''; this.value = ''; this.type = ''; this.disabled = false;
-    this.placeholder = ''; this.checked = false; this.selectionStart = null; this.selectionEnd = null; }
+    this.placeholder = ''; this.checked = false; this.selectionStart = null; this.selectionEnd = null; this.style = {}; }
   get textContent() { return this.kids.map(k => typeof k === 'string' ? k : k.textContent).join(''); }
   set textContent(s) { this.replaceChildren(s == null ? '' : String(s)); }
   get children() { return this.kids.filter(k => typeof k !== 'string'); }
@@ -195,9 +195,11 @@ const pickAttempt=async (id='attempt:research/attempts.md#1')=>{ const s=field('
 const field=(words,where=root)=>where.all().find(e=>e.tagName==='LABEL'&&e.children[0].textContent===words).children[1];
 const sleepTick=()=>new Promise(r=>setTimeout(r,0));
 const buttonsIn=node=>node.all().filter(e=>e.tagName==='BUTTON').map(e=>e.textContent);
-const optionsOf=select=>select.children.map(o=>[o.textContent,o.value]);
+// the owner control holds its options in two <optgroup>s (21.4): the options are listed flat, in the order they are shown
+const flatOptions=select=>select.children.flatMap(o=>o.tagName==='OPTGROUP'?o.children:[o]);
+const optionsOf=select=>flatOptions(select).map(o=>[o.textContent,o.value]);
 // The owner control is a select: pick by what is shown, then (for 其他人…) type the name.
-const pickOwner=async (label,words='负责人')=>{ const s=field(words); s.value=s.children.find(o=>o.textContent===label).value; await s.emit('change'); };
+const pickOwner=async (label,words='负责人')=>{ const s=field(words); s.value=flatOptions(s).find(o=>o.textContent===label).value; await s.emit('change'); };
 const noChinese=text=>!/[\u3400-\u9fff]/.test(text);
 function deferred() { let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject}; }
 """

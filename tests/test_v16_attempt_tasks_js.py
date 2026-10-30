@@ -229,7 +229,7 @@ const groups=byClass('ws-task-list').children.filter(e=>e.tagName!=='BUTTON').ma
 console.log(JSON.stringify({form,chosen,other,saved,groups,
   keptAttempt:field('属于哪条尝试').value,after:field('接着哪个任务').value,text:field('任务').value,dirty:window.ROWorkspace.isDirty()}));
 """.replace("ATT", json.dumps(ATTEMPT)).replace("TASKS", _TASKS))
-    assert out["form"]["labels"][:3] == ["属于哪条尝试", "接着哪个任务", "任务"]  # the attempt is the first field
+    assert out["form"]["labels"][:3] == ["属于哪条尝试", "任务", "接着哪个任务"]  # the attempt is the first field, then the task (21.4)
     assert out["form"]["attempt"] == [["请选择一条尝试", ""], ["#1 First check", ATTEMPT], ["#2 Second idea", "attempt:research/attempts.md#2"],
                                       ["新开一条尝试…", "\u0000new"]]
     assert out["form"]["afterEnabled"] is False and out["form"]["after"] == [["不接着任何任务", ""]]
@@ -269,7 +269,7 @@ const refused=byClass('ws-tasks').textContent;
 const labels=byClass('ws-task-form').children.filter(e=>e.tagName==='LABEL').map(e=>e.children[0].textContent);
 console.log(JSON.stringify({refused, labels, attempt:optionsOf(field(T('属于哪条尝试'))), groups:byClass('ws-task-list').children.filter(e=>e.tagName==='H3').map(e=>e.textContent)}));
 """.replace("ATT", json.dumps(ATTEMPT)).replace("TASKS", _TASKS), lang="en")
-    assert out["labels"][:3] == ["Which attempt it belongs to", "Which task it follows", "Task"]
+    assert out["labels"][:3] == ["Which attempt it belongs to", "Task", "Which task it follows"]
     assert out["attempt"] == [["Choose an attempt", ""], ["#1 First check", ATTEMPT], ["Start a new attempt…", "\u0000new"]]
     assert ("A new task belongs to an attempt: choose one in “Which attempt it belongs to”, or pick “Start a new attempt…”."
             in out["refused"])

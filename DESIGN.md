@@ -6367,14 +6367,50 @@ attempts.py`; `research_records.assessment_statuses`).
     打开结果, 编辑, 移除) and 任务输出, the long block, which is therefore shown only when
     the row is opened. A row opened by hand stays open through the page's
     refreshes; 回答 and 运行日志 in 等你处理 open theirs.
-- **The task form**: the task as several lines; 属于哪条尝试; 接着哪个任务
-  (optional); 负责人, people and agents in separate groups; 日期 (optional);
-  「保存并运行」 when the owner is an agent. Opened by 「在这条尝试下加任务」 it
-  has the attempt chosen and 接着哪个任务 set to the attempt's last task in
-  `after` order (none when it has no task); opened by a handback's 「再派一个任务」
-  it also has 研究上下文 set to that handback's record. These are choices, not
-  writing: a form that holds only them is not unsaved work, and the person may
-  change each.
+- **The task form** (*amended, B2-3*: this was one sentence; the fields stand
+  top to bottom as follows, and the attempt comes first, as 21.1 asks):
+  属于哪条尝试; the task; 接着哪个任务 (optional); 负责人; 日期 (optional);
+  研究上下文 (optional); then the buttons.
+  - **The task** is written in a field of three lines at least that grows with
+    what is typed, to fifteen rem, and then scrolls; it shrinks when lines are
+    taken out. Enter makes a new line (nothing takes it for a save; the button
+    saves). The text is saved as written but for the blank space at either end,
+    under the engine's own limit (2,000 characters). A task written on one line
+    is edited and shown as before; one of several lines comes back whole into
+    the field, and its row shows the lines as written.
+  - **负责人**: 「不指定」 first, then two labelled groups: 「人员」 (me, the
+    team, 「其他人…」) and 「这台电脑上的 AI 执行者」 (each by agent and model,
+    「Claude Code · sonnet」, as the rows name it; 「设置 AI 执行者…」 when this
+    Mac has none). A name typed by hand stays among the people, and an agent this
+    Mac lacks among the agents, while it is the value. Nothing about the owner
+    on disk changes.
+  - **日期** is optional and empty by default -- nothing fills it with today.
+    It is the task's existing `due`, which stays `""` when no date was given,
+    as it always did: no new field on disk, and the engine's validation (empty,
+    or a calendar date) is unchanged.
+  - **保存并运行** stands beside the save button while the owner is an agent
+    (not a name typed by hand) and the task could be run from its row -- it is
+    not marked done, and its latest run is neither going nor waiting for the
+    person's answer (`runnable`, the row's own condition). It saves, and once the
+    engine has answered that the tasks are saved it starts the run by the row's
+    own path (`startRun`: the mcp check, and the first-run confirmation of 17.1
+    and 18.1 item 5 with the large files named), so nothing is asked twice or
+    differently. If the save is refused (no attempt, no words) or fails (a
+    conflict included), nothing runs and nothing is asked, and what was typed
+    stays. Like the row's 运行 it waits, disabled with 「这个项目里还有一次运行没有结束。」,
+    while another run of the project goes, and follows the poll when that run
+    ends. The form then says 「任务已保存，运行已开始。」; 「任务已保存，没有开始运行。」
+    when the confirmation was declined; or, when the run could not start (the
+    mcp component missing, the engine refusing), 「任务已保存，但运行没有开始。原因写在这项任务那一行里。」,
+    and that row is opened -- the rows are shut by default -- to show its note.
+    When the owner is a person, only the save button shows.
+  - **One primary button** (21.8): the save button (添加任务, 保存任务 when
+    editing) is drawn as the primary; 保存并运行 and 清空 are the quiet ones.
+  - **Presets.** Opened by 「在这条尝试下加任务」 the form has the attempt chosen
+    and 接着哪个任务 set to the attempt's last task in `after` order (none when
+    it has no task); opened by a handback's 「再派一个任务」 it also has 研究上下文
+    set to that handback's record. These are choices, not writing: a form that
+    holds only them is not unsaved work, and the person may change each.
 - **研究路线's right-hand column** is the same 等你处理 list, under that title
   (it was 待办; English “Needs you”); it folds to a narrow strip (its title,
   set upright, and the sentence 「现在没有要处理的事。」 on hover) when the list
