@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from researchos import nodepage, trace
+from researchos import nodepage, provenance, trace
 
 from test_v9_language import CJK, WEBAPP, _DESK_DOM, _i18n_source, _node, english_table, needs_node
 
@@ -12,7 +12,8 @@ from test_v9_language import CJK, WEBAPP, _DESK_DOM, _i18n_source, _node, englis
 def test_node_api_interface_words_have_english_entries():
     table = english_table()
     labels = [*nodepage.TYPE_WORDS.values(), *nodepage.RELATION_WORDS.values(),
-              *nodepage.TRACE_STATES.values(), *trace.BREAK_LABELS.values(), *trace.REPAIR_LABELS.values()]
+              *nodepage.TRACE_STATES.values(), *trace.BREAK_LABELS.values(), *trace.REPAIR_LABELS.values(),
+              *provenance.CAUSES.values(), *provenance.CLAIM_CAUSES.values()]
     assert [word for word in labels if word not in table] == []
 
 

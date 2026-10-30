@@ -6554,15 +6554,87 @@ attempts.py`; `research_records.assessment_statuses`).
 ### 21.5 The paper and its provenance
 
 - **A warning appears only where it can be acted on, with the action beside
-  it.** 缺生成脚本: 「指定生成它的脚本」. A broken link whose file exists under
-  the same name elsewhere in the project: 「是这个吗？」, which writes the link
-  as 补上来源 does. 缺尝试: 「归入尝试」. A figure or file that is not part of
-  the paper: 「不属于论文」, kept in `.researchos/papers.toml` as `not_in_paper`
-  (a list of paths), which stops it counting as open work. A state that is
-  normal — a script that belongs to no attempt, a file that has no reader —
-  is quiet text, not a warning; the warning colour is for what the paper
-  relies on and is broken. 缺来源 on a figure says which of its causes it is,
-  on the row, not in a tooltip.
+  it** (*amended, B3-1*: this was one paragraph; it says what the pages do
+  now). One rule decides it (`researchos.provenance`): **the warning colour
+  (21.8) is for what the paper relies on and is broken.** That is
+  - a figure or table the chosen paper includes -- a section of a draft marked
+    「设为论文正文」 includes it; while no draft is marked, any draft stands for
+    the paper -- that has no source (缺来源) or that no attempt holds (缺尝试);
+  - a claim of the paper with nothing behind it, or a result behind it whose
+    script or file is not there (a claim whose result no attempt holds is
+    quiet: the attempt is filed on the result);
+  - any broken link (断链): a script names a file that is not there, whatever
+    the file is for.
+
+  Every other state the engine reports for a file is normal: quiet text in no
+  colour, with its action beside it, drawn as a button in the outline style,
+  where there is one to take. The engine says it as `tone` -- `ok`, `warning`
+  or `quiet` -- on every row, and the pages draw it and decide nothing.
+  - **A file no script writes that is only read** (a download in `raw/`):
+    quiet 「没有生成脚本」 with 「指定生成它的脚本」. It is the warning 缺生成脚本
+    -- the tag, the filter and the count of 数据与代码 -- only for a table the
+    paper includes; 图表与论断 and a figure's own page say the same about a figure,
+    with its cause (below).
+  - **A script that belongs to no attempt, a file that has no reader, a script
+    with no reads or writes found (未识别到读写关联), a script that cannot be
+    read (暂时无法读取), a file that is not there and no script names (文件不存在),
+    a figure or table of a draft the paper does not include**: quiet. 缺尝试
+    on a script or a data file the paper does not include is quiet and offers
+    「归入尝试」 (21.6; the `belongs_to` entry); on a figure or table the paper
+    includes it is the warning, and says whether the generating script is the
+    one in no attempt (「生成脚本没有归入尝试」) or nothing is (「还没有归入任何尝试」).
+    Where a source is missing too, the row says the source's cause only. A table
+    of the paper that is a draft or a document (the mapping grammar gives it no
+    generating script) is quiet too: a warning is where the page can act.
+  - **缺来源 on a figure says which of its causes it is**, on the row and on the
+    page, not in a tooltip: 「没有生成脚本」, and 「没有生成脚本：图是从 Word 文件里抽出来的」
+    when the picture is named `image<N>` and stands in a folder called assets,
+    media, files or images (what a Word file is taken apart into); 「生成它的脚本文件不在磁盘上」;
+    「生成它的脚本暂时无法读取」; 「生成它的脚本读的文件不在」. The action
+    is 「指定生成它的脚本」 for the first two: a `generates` entry for a figure, a
+    `writes` entry for data, the write 补上来源 has always made (history and
+    撤销 as for any entry; in a member's copy it travels with the next
+    sync, 12.4). The others have no action of their own: the script or the
+    file is mended where it is, and a broken link on the script's page offers the
+    file it may mean.
+  - **断链 is always a warning, on the script that names the file**; the file's
+    own row is plain 「文件不存在」, and the count and the filter count scripts, not
+    files. When a file of that name exists in the project, 「是这个吗？」 shows
+    the first candidate, with one action, 「是」, that writes the entry a person
+    would draw: a `reads` entry from that file to the script (data first), a
+    `writes` or `generates` entry from the script to it. Candidates, in this
+    order: the path the script names, taken from each folder of the script in
+    turn, the script's own first and the project's root last, where it is a file
+    (`environment/R_packages.lock.csv` named by
+    `00_Current/replication_v9/environment/check_R_environment.R` is
+    `00_Current/replication_v9/environment/R_packages.lock.csv`: scripts are
+    often run from their package's root); then the other files of the same name,
+    the nearest first by the folders they share with the script. The rest stand
+    under 「其他同名文件 n 个」, folded, each with the same 「是」; nothing is
+    written without the click, and 撤销 stays on the page that wrote it. **The
+    engine uses the person's entry**: a script for which the researcher has a
+    `reads` (or `writes`, `generates`) entry of a file of the same name is not broken
+    -- the machine's link to the missing file stays in the index but is not
+    reported (`lineage.superseded`), not in the report, the trace, the counts or
+    `researchos lineage`, and the file only that text named is no row once no
+    script names it.
+  - **Counts and filters of 数据与代码**: 缺生成脚本 and 断链 count warnings and
+    show the warning colour while they count some; 没有生成脚本 (the downloads),
+    中间数据 and 同名文件 are neutral facts.
+  - **Same name.** 「其他同名文件 n 个」 is folded on every row, with 「展开」 (「收起」
+    open) and 12.13's chevron. A list of readers, writers, reads or writes that
+    names two or more scripts of one name shows each with the fewest nearest
+    folders that tell it from the others -- 复核诊断.R（交付_20260927_审查修订）
+    --, and a file in the project's root with none.
+  - **On a node's own page** the same tones apply to its gaps (a figure of the
+    paper: the gap in the warning colour, 缺生成脚本 with the cause under it and
+    the action; any other: the same gap in no colour); its broken links are
+    drawn under the trace with the candidates; 文件不存在 is plain, except on
+    a file a broken link names in the trace and on a figure or table of the paper.
+  - *Not in B3-1:* 「不属于论文」, kept in `.researchos/papers.toml` as
+    `not_in_paper` (a list of paths), which stops a figure or file counting as
+    open work; and no page of the app counts the paper's open work as a number
+    yet, so nothing needs to agree with the counts above.
 - **The paper is chosen once.** 设为论文正文 offers the drafts changed most
   recently first (five shown, the rest under 「更多」). Once chosen, 图表与论断
   shows that paper's figures and claims first; other drafts are under 「其他
@@ -6586,6 +6658,9 @@ As approved by the researcher on 2026-10-29:
 | 年表 | 尝试表 | Attempt table |
 | 清单 (数据与代码) | 列表 | List |
 | 未识别生成脚本, 没有找到生成它的脚本 | 缺生成脚本 (缺来源 stays the figures' umbrella) | No generating script |
+| — | 指定生成它的脚本 (the action of 缺生成脚本; was 补上来源 on a figure) | Assign a generating script |
+| — | 没有生成脚本 (the quiet text, and the filter of the files only read) | No script writes it |
+| — | 是这个吗？ (with 「是」), 其他同名文件 n 个 | Is it this one?, n other same-name files |
 | — | 代理建议, 确认这个判断; history 「由 X 确认（采纳 … 的建议）」 | Suggested by the agent, Confirm this assessment |
 | — | 现在在做什么: 进行中的尝试, 等你处理 | In progress: Attempts in progress, Needs you |
 
@@ -6674,10 +6749,16 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 4. 等你处理 lists an unopened handback, a run waiting for an answer and, in a
    two-person copy, a proposal; the sidebar count matches; opening a
    handback removes it for that person only.
-5. On the thesis copy: no red warning on a script that only lacks an
-   attempt; 「是这个吗？」 repairs the `R_packages.lock.csv` link; 「不属于论文」
-   removes a by-product figure from open work; the chosen paper's figures come
-   first.
+5. On the thesis copy (*amended, B3-1*): no red warning on a script that only
+   lacks an attempt, nor on a download in `raw/` (quiet 「没有生成脚本」, with
+   「指定生成它的脚本」); the pictures extracted from the Word file show 缺来源
+   with 「没有生成脚本：图是从 Word 文件里抽出来的」 and 「指定生成它的脚本」;
+   `check_R_environment.R`'s 断链 offers
+   `00_Current/replication_v9/environment/R_packages.lock.csv` under 「是这个吗？」,
+   the other copies of the file under 「其他同名文件 n 个」, and one 「是」 makes
+   the row stop saying 断链; every row's same-name files are folded; 「不属于论文」
+   removes a by-product figure from open work and the chosen paper's figures come
+   first (*not yet built*).
 6. No screen uses a retired word of 21.6; the glossary test covers the new
    rows; English mode shows the new words.
 7. One primary button per page; no title or status drawn as a button; the

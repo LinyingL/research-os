@@ -19,7 +19,7 @@ nothing it does not have to:
 - **Downstream.** The sections that `include` the node.
 - **Attempts.** An attempt claims a file through its step numbers
   (`attrs.step_files`, resolved under `steps_dir`) or through a hand-drawn
-  `belongs_to` mapping from the file to the attempt (「关联文件」). Every
+  `belongs_to` mapping from the file to the attempt (「归入尝试」). Every
   file of the chain is asked.
 - **Variables.** A variable card's version whose `[implementation]` names a
   file of the chain as its `output` -- or whose `field` is a column of a
@@ -29,13 +29,19 @@ nothing it does not have to:
 
 Every break is explicit, never an empty list that looks like "nothing":
 
-- `no_generating_script` -- the node itself has no producer; repair:
-  「补上来源」, a `generates` (figure) or `writes` (data) mapping;
+- `no_generating_script` (缺生成脚本) -- the node itself has no producer; repair:
+  「指定生成它的脚本」, a `generates` (figure) or `writes` (data) mapping
+  (the write 补上来源 has always made);
 - `no_attempt` -- no attempt claims any file of the chain; repair:
-  「关联文件」, a `belongs_to` mapping;
+  「归入尝试」, a `belongs_to` mapping;
 - `script_unreadable` -- the latest scan could not read or parse a script
   of the chain (its reads may be missing);
-- `script_missing` / `data_missing` -- a file of the chain is not on disk.
+- `script_missing` / `data_missing` -- a file of the chain is not on disk. A file only a script's own text
+  names, which the researcher has answered with an entry of their own for the same script (a `reads` or `writes`
+  of a file of that name; `lineage.superseded`), is no part of the chain: the script reads what they named.
+
+Which of these is a warning and which is quiet is `researchos.provenance`'s rule (DESIGN.md 21.5); the trace only
+says what is broken.
 
 One request, many traces (18.4 item 1). 图表与论断 traces every figure it
 lists, and each `chain` would read the link flags, the attempts
@@ -53,7 +59,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db
+from researchos import db, lineage
 from researchos.records import judgements
 from researchos.records import notes as notes_mod
 
@@ -62,13 +68,13 @@ PRODUCER_TYPES = ("generates", "writes")
 TABLE_SUFFIXES = (".csv", ".tsv", ".tab")
 
 BREAK_LABELS = {
-    "no_generating_script": "没有找到生成它的脚本",
+    "no_generating_script": "缺生成脚本",
     "no_attempt": "还没有归入任何尝试",
     "script_unreadable": "脚本暂时无法读取或解析",
     "script_missing": "脚本文件不在磁盘上",
     "data_missing": "数据文件不在磁盘上",
 }
-REPAIR_LABELS = {"generates": "补上来源", "writes": "补上来源", "belongs_to": "关联文件"}
+REPAIR_LABELS = {"generates": "指定生成它的脚本", "writes": "指定生成它的脚本", "belongs_to": "归入尝试"}
 
 
 def _live(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -173,6 +179,7 @@ class Shared:
         self._cards: list[Any] | None = None
         self._on_disk: dict[str, bool] = {}
         self._header: dict[str, list[str] | None] = {}
+        self._entries: dict[tuple[str, str], set[str]] | None = None
 
     @property
     def flags(self) -> judgements.LinkFlags:
@@ -250,6 +257,23 @@ class Shared:
             self._cards = variables_mod.read_cards(self.root)
         return self._cards
 
+    @property
+    def person_entries(self) -> dict[tuple[str, str], set[str]]:
+        """The files the researcher's own entries say a script reads or writes (`lineage.person_entries`)."""
+        if self._entries is None:
+            self._entries = lineage.person_entries(self.conn)
+        return self._entries
+
+    def answered(self, edge: dict[str, Any]) -> bool:
+        """Whether `edge` is a machine link to a file that is not on disk which the researcher's own entry has
+        answered: the script reads or writes what they named, so the missing file is no part of the chain."""
+        if edge["type"] not in lineage.FAMILY or edge["extractor"] in db.HUMAN_EXTRACTORS or not edge["src"].startswith("script:"):
+            return False
+        target = notes_mod.node_path(edge["dst"])
+        if target is None or self.exists(target):
+            return False
+        return lineage.superseded(self.person_entries, notes_mod.node_path(edge["src"]), edge["type"], target)
+
     def exists(self, rel: str | None) -> bool:
         if rel is None:
             return False
@@ -297,7 +321,7 @@ def chain(conn: Connection, project_root: str | Path, node: str, *, shared: Shar
         for edge_type in PRODUCER_TYPES:
             for edge in _live(db.query_edges(conn, dst=target, type=edge_type)):
                 script = _script_of(edge)
-                if script is None:
+                if script is None or shared.answered(edge):
                     continue
                 links[judgements.key_of(edge)] = _link(edge, flags)
                 found.append(script)
@@ -312,6 +336,8 @@ def chain(conn: Connection, project_root: str | Path, node: str, *, shared: Shar
                  "scan_status": status, "reads": [], "writes": []}
         scripts[script] = entry
         for edge in _live(db.query_edges(conn, src=script)):
+            if shared.answered(edge):
+                continue
             if edge["type"] == "reads":
                 links[judgements.key_of(edge)] = _link(edge, flags)
                 entry["reads"].append(edge["dst"])

@@ -403,7 +403,7 @@ def test_12_0_results_that_lost_their_evidence(tmp_path):
 
     found = traces()
     assert found["figs/fig1.png"][0] == "paper.md" and found["figs/fig1.png"][1]["state"] == "no_source"
-    assert found["figs/fig1.png"][1]["breaks"][0] == "没有找到生成它的脚本"
+    assert found["figs/fig1.png"][1]["breaks"][0] == "缺生成脚本"  # 21.6 renames the break
     assert found["figs/fig2.png"][1]["state"] != "no_source"
     (root / "data" / "raw.csv").unlink()
     gone = traces()["figs/fig2.png"][1]

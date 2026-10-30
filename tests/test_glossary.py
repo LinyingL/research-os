@@ -381,3 +381,30 @@ def test_21_4s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_w
     for name in ("desk.js", "workspace.js", "app.html", "team.js"):
         shown = (WEBAPP / name).read_text(encoding="utf-8")
         assert not re.search(r"""t\(["']待办["']""", shown), name
+
+
+#: 21.5 / 21.6's words for the provenance pages (task V16 B3-1): the warning that replaces 未识别生成脚本 and 没有找到生成它的脚本,
+#: its action, the quiet text beside it, 归入尝试 for the file page and the question of a broken link.
+TERMS_OF_21_5 = {"缺生成脚本": "No generating script", "归入尝试": "File under an attempt", "指定生成它的脚本": "Assign a generating script",
+                 "没有生成脚本": "No script writes it", "是这个吗？": "Is it this one?"}
+
+
+@needs_node
+def test_21_5s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_writes_them_and_the_old_words_are_gone():
+    """DESIGN 21.5 / 21.6 (task V16 B3-1): each word is in 21.6's English column as written and is a key of the page's English
+    table with exactly that English; the words it replaces on these screens (未识别生成脚本, 没有找到生成它的脚本, and 补上来源 as
+    the figure's button) are keys no more and no screen string says them."""
+    text = DESIGN.read_text(encoding="utf-8")
+    six = text[text.index("### 21.6"):text.index("### 21.7")]
+    english_column = " ".join(re.findall(r"^\| .+? \| .+? \| (.+?) \|$", six, re.M))
+    for zh, en in TERMS_OF_21_5.items():
+        assert en in english_column, f"{zh}: {en!r} is not in 21.6's English column"
+        assert zh in six, f"{zh} is not in 21.6's table"
+    table = english_table()
+    assert {zh: table[zh] for zh in TERMS_OF_21_5} == TERMS_OF_21_5
+    assert table["其他同名文件 {n} 个"] == {"one": "{n} other same-name file", "other": "{n} other same-name files"}
+    for old in ("未识别生成脚本", "没有找到生成它的脚本", "补上来源", "其他同名文件：{files}"):
+        assert old not in table, old
+    for name in ("node.js", "desk.js", "app.html", "team.js", "workspace.js"):
+        shown = (WEBAPP / name).read_text(encoding="utf-8")
+        assert not re.search(r"""t\(["'](未识别生成脚本|没有找到生成它的脚本|补上来源)["']""", shown), name

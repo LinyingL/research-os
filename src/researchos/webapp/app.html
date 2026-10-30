@@ -603,6 +603,10 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .trace-belongs-word { color: var(--ink-soft); }
 .trace-attempt { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
 .trace-break { font-size: 0.82rem; color: var(--clay); margin: 0.4rem 0 0; }
+/* 21.5: the same break in no colour when the paper does not rely on it (the clay colour is for what is wrong). */
+.trace-gap.quiet { border-color: var(--line-strong); }
+.trace-gap.quiet .trace-gap-label, .trace-break.quiet { color: var(--ink-soft); }
+.trace-gap-cause { font-size: 0.78rem; color: var(--ink-soft); }
 .repair { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
 .repair-form { align-self: stretch; }
 .repair-form { display: flex; flex-direction: column; gap: 0.4rem; }
@@ -653,6 +657,9 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .res-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.88rem; }
 .res-main .node-link.claim { font-size: 0.84rem; border-bottom-color: var(--line); }
 .res-path { font-size: 0.74rem; color: var(--ink-soft); word-break: break-all; }
+.res-cause { font-size: 0.78rem; color: var(--ink-soft); }
+.res-cause.warn { color: var(--clay); }
+.res-repair { flex-basis: 100%; }
 .res-draft { border-bottom: 1px solid var(--line); }
 /* 12.13: a quiet line chevron for disclosure; the browser's triangle is hidden. */
 .res-draft-summary { display: flex; align-items: center; gap: 0.6rem; list-style: none; cursor: pointer; padding: 0.5rem 0.3rem; font-size: 0.86rem; }
@@ -679,6 +686,15 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .dc-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
 .dc-rel { font-size: 0.8rem; color: var(--ink-soft); margin-top: 0.1rem; word-break: break-all; }
 .dc-rel.bad { color: var(--clay); }
+.dc-filter.problem { color: var(--clay); }
+.dc-nogen { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.dc-broken { display: flex; flex-direction: column; }
+.dc-maybe, .dc-candidate { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; font-size: 0.8rem; margin-top: 0.2rem; }
+.dc-maybe-path { font-size: 0.78rem; word-break: break-all; }
+.dc-fold > .res-draft-summary { padding: 0.15rem 0; font-size: 0.8rem; color: var(--ink-soft); }
+.dc-fold[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.dc-fold-body { padding-left: calc(12px + 0.6rem); }
+.dc-undo { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.84rem; margin: 0 0 0.8rem; }
 .lit-ref-open { display: block; font: inherit; font-size: 0.84rem; text-align: left; background: none; border: none; padding: 0; color: var(--ink); cursor: pointer; border-bottom: 1px solid transparent; }
 .lit-ref-open:hover { border-bottom-color: var(--clay); }
 

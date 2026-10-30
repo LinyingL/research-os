@@ -630,7 +630,7 @@ GUIDE_EN = ROOT / "docs" / "install-and-join.en.md"
 GUIDE_LABELS_NOW_ENGLISH = ("添加项目…", "从公盘加入项目…", "已经是最新的正式版本", "已批准，待同步",
                             # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
                             "按勾选的文件重新查看", "发送提议", "提议中", "已批准", "已退回", "批准并加入", "退回并说明",
-                            "讨论", "两边都改过", "关联文件", "补上来源",
+                            "讨论", "两边都改过", "关联文件", "归入尝试", "指定生成它的脚本",
                             # 18.2 text rules: the composer under 提议 is in English too (kinds, fields, buttons).
                             "提交提议", "新的尝试", "修改研究判断", "变量定义", "只有文件", "查看将要发送的内容")
 #: Every Chinese label the English guide quotes from a screen still in Chinese, each written

@@ -526,8 +526,8 @@ def test_12_10_2_a_broken_trace_repaired_with_generates_and_belongs_to(tmp_path,
         conn.close()
     kinds = {b["kind"]: b for b in broken["breaks"]}
     assert set(kinds) == {"no_generating_script", "no_attempt"}
-    assert kinds["no_generating_script"]["repair"]["label"] == "补上来源"
-    assert kinds["no_attempt"]["repair"]["label"] == "关联文件"
+    assert kinds["no_generating_script"]["repair"]["label"] == "指定生成它的脚本"
+    assert kinds["no_attempt"]["repair"]["label"] == "归入尝试"
     assert cli.main(["link", "figs/fig1.png", "attempt:map.md#16", "--type", "belongs_to", str(root)]) == 0
     conn = _conn(root)
     try:

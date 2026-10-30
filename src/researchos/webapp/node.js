@@ -26,10 +26,14 @@
 //   /api/me                -- who I am (my own notes can be withdrawn);
 //   /api/results[?draft=]  -- 图表与论断; /api/data-code -- 数据与代码.
 // What it writes, each through the existing write path:
-//   POST /api/mappings/add    -- 「补上来源」 (generates / writes) and
-//                                「关联文件」 (belongs_to); in a member's
-//                                working copy these travel as packets (U1);
-//   POST /api/mappings/delete -- 「删除标注」 on a hand-drawn link;
+//   POST /api/mappings/add    -- 「指定生成它的脚本」 (generates / writes; the
+//                                write 补上来源 made), 「归入尝试」 (belongs_to)
+//                                and 「是」 on 「是这个吗？」 (21.5: reads / writes
+//                                / generates from the file that may be the one a
+//                                script names); in a member's working copy these
+//                                travel as packets (U1);
+//   POST /api/mappings/delete -- 「删除标注」 on a hand-drawn link, and 撤销
+//                                after 「是」;
 //   POST /api/judgements      -- 确认 / 否决 / 撤回 on a machine link;
 //   POST /api/notes           -- a note added, or my own note withdrawn.
 // Every path or id sent comes from a server payload; nothing typed on the
@@ -67,7 +71,7 @@
     }
   };
   const filters = () => [
-    ["all", t("全部")], ["orphans", t("未识别生成脚本")], ["chains", t("中间数据")], ["broken", t("断链")], ["duplicates", t("同名文件")],
+    ["all", t("全部")], ["missing", t("缺生成脚本")], ["raw", t("没有生成脚本")], ["chains", t("中间数据")], ["broken", t("断链")], ["duplicates", t("同名文件")],
   ];
   // Monochrome line icons for file types (12.11: where they help recognition).
   const ICONS = {
@@ -245,6 +249,7 @@
 
   const nav = { id: null, fromView: null, trail: [], graphOpen: false, notesDraft: new Map(), shownDiffs: new Set() };
   const dc = { filter: "all", data: null };
+  let lastLink = null; // the entry the last 「是」 wrote, for 撤销 (18.3)
   const res = { open: new Set(), drafts: new Map() };
   let meCache = { epoch: -1, id: null, loaded: false };
 
@@ -343,7 +348,7 @@
     const epoch = state.dataEpoch;
     const id = nav.id;
     if (!id) { activateView("desk"); return; }
-    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
+    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; }
     let page, history, notes, me;
     try {
       page = await apiGet("/api/node?node=" + encodeURIComponent(id));
@@ -404,7 +409,7 @@
     const marks = mk("div", "node-marks");
     const d = page.details || {};
     if (page.type === "attempt") marks.appendChild(RODesk.verdictInline(d.verdict_status));
-    if (page.path && page.exists === false) marks.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
+    if (page.path && page.exists === false) marks.appendChild(mk("span", "status-label tone-" + (page.tone === "quiet" ? "plain" : "clay"), t("文件不存在")));
     if (page.review) marks.appendChild(mk("span", "status-label tone-ochre", t("{n} 条关联待复核", { n: page.review })));
     const own = ownMark(page);
     if (own) marks.appendChild(own);
@@ -500,6 +505,9 @@
     const o = opts || {};
     const s = sec(t("来龙去脉"), "node-trace-sec");
     const tr = page.trace || { columns: [], lines: [], breaks: [] };
+    const refresh = () => loadNode(views.node, true);
+    const undone = o.panel ? null : undoNotice(refresh);
+    if (undone) s.appendChild(undone);
     if (tr.deeper) s.appendChild(mk("p", "node-sub", t("更上游还有 {n} 个文件，这里只画出最近的几层。", { n: tr.deeper })));
     const scroller = mk("div", "trace-scroll");
     const grid = mk("div", "trace");
@@ -523,7 +531,9 @@
     s.appendChild(scroller);
     if (!o.panel) renderBelongs(s, page);
     const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
-    other.forEach((b) => s.appendChild(mk("p", "trace-break", b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
+    other.forEach((b) => s.appendChild(mk("p", "trace-break" + (b.tone === "quiet" ? " quiet" : ""), b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
+    // 21.5: a script that names a file that is not there -- always a warning, with the file it may mean beside it.
+    (tr.broken || []).forEach((b) => s.appendChild(brokenLine(b, { bare: !!o.panel, refresh: refresh })));
     host.appendChild(s);
     return s;
   }
@@ -556,8 +566,11 @@
     const where = item.path ? posixDir(item.path) : (item.file || "");
     if (where) el.appendChild(mk("span", "trace-item-dir mono", where));
     const flags = [];
-    if (item.exists === false) flags.push([t("文件不存在"), "clay"]);
-    if (item.unreadable) flags.push([t("暂时无法读取"), "clay"]);
+    // 21.5: on a file's page (the engine gives `tone`) a missing file or an unreadable script is the warning's
+    // when a broken link names it or the paper relies on it, a plain fact otherwise.
+    const missing = item.tone === "quiet" ? "plain" : "clay";
+    if (item.exists === false) flags.push([t("文件不存在"), missing]);
+    if (item.unreadable) flags.push([t("暂时无法读取"), missing]);
     if (item.raw && item.type === "dataset") flags.push([t("原始数据"), "plain"]);
     if (item.member) flags.push([viaWord(item.member), "plain"]);
     if (item.note) flags.push([item.note, "plain"]);
@@ -577,92 +590,98 @@
   }
 
   // A break, drawn where the missing piece would be, with its repair (not
-  // in the desk's panel: `bare`).
+  // in the desk's panel: `bare`). A quiet one (21.5: what the paper does not rely on) is the same box in no colour.
   function gapBox(page, gap, bare) {
-    const box = mk("div", "trace-gap");
+    const box = mk("div", "trace-gap" + (gap.tone === "quiet" ? " quiet" : ""));
     box.appendChild(mk("div", "trace-gap-label", t(gap.label)));
+    if (gap.cause) box.appendChild(mk("div", "trace-gap-cause", t(gap.cause)));
     if (gap.repair && !bare) box.appendChild(repairControl(page, gap.repair.type));
     return box;
   }
 
-  // 「补上来源」 (generates / writes from a chosen script) or 「关联文件」
-  // (belongs_to: this file to a chosen attempt, or a chosen file to this
-  // attempt). Choose, see the sentence it will record, then confirm.
+  // 「指定生成它的脚本」 (generates / writes from a chosen script; the write 补上来源 has always made), 「归入尝试」
+  // (belongs_to: this file to a chosen attempt) or, on an attempt, 「关联文件」 (a chosen file to this attempt). Choose,
+  // see the sentence it will record, then confirm. `page` is the node page, or what a row of a list stands for
+  // (`type`, `id`, `path`, `name`, `choices`, and `refresh`, which reads the list again once it is written, 21.5).
+  // The form is drawn when its button is first pressed: a list of rows would otherwise carry a long list of scripts
+  // each.
   function repairControl(page, type) {
     const wrap = mk("div", "repair");
     const blocked = humanRecordsBlocked();
-    const choices = page.choices || {};
-    let options = [];
-    let label = "";
-    if (type === "generates" || type === "writes") {
-      label = t("补上来源");
-      options = (choices.scripts || []).map((s) => ({ value: s.path, text: s.path }));
-    } else if (page.type === "attempt") {
-      label = t("关联文件");
-      options = (choices.files || []).map((f) => ({ value: f.path, text: t(f.type_label) + "  " + f.path }));
-    } else {
-      label = t("关联文件");
-      options = (choices.attempts || []).map((a) => ({
-        value: a.id,
-        text: (a.verdict_status && a.verdict_status.label ? a.verdict_status.label + " · " : "") + "#" +
-          String(a.number || "").replace(/^#/, "") + " " + (a.title || ""),
-      }));
-    }
+    const generating = type === "generates" || type === "writes";
+    const label = generating ? t("指定生成它的脚本") : (page.type === "attempt" ? t("关联文件") : t("归入尝试"));
+    let form = null;
     // An open chooser widens its column (the lines follow).
     const widen = (on) => {
-      const col = wrap.closest(".trace-col");
+      const col = wrap.closest ? wrap.closest(".trace-col") : null;
       if (!col) return;
       col.classList.toggle("repairing", on);
       drawAllLines(col.closest(".node-page") || col);
     };
     const trigger = mkButton(label, "btn btn-small", () => {
+      if (!form) { form = buildForm(); wrap.appendChild(form); }
       trigger.classList.add("hidden");
       form.classList.remove("hidden");
       widen(true);
-      select.focus();
+      form.select.focus();
     });
     if (blocked) { trigger.disabled = true; trigger.title = blocked; }
-    const form = mk("div", "repair-form hidden");
-    const select = mk("select", "form-input repair-select");
-    select.setAttribute("aria-label", type === "generates" || type === "writes" ? t("生成它的脚本") : (page.type === "attempt" ? t("要关联的文件") : t("它属于的尝试")));
-    const first = mk("option", null, type === "generates" || type === "writes" ? t("选择生成它的脚本") : (page.type === "attempt" ? t("选择要关联的文件") : t("选择它属于的尝试")));
-    first.value = "";
-    select.appendChild(first);
-    options.forEach((o) => {
-      const opt = mk("option", null, o.text);
-      opt.value = o.value;
-      select.appendChild(opt);
-    });
-    const sentence = mk("p", "repair-sentence");
-    const note = mk("input", "form-input repair-note");
-    note.type = "text";
-    note.placeholder = t("备注（可不填）");
-    const status = mk("div", "notice-status");
-    const go = mkButton(t("确认"), "btn btn-small btn-primary", () => writeRepair(page, type, select.value, note.value, status, [go, cancel]));
-    const cancel = mkButton(t("取消"), "btn btn-small", () => {
-      form.classList.add("hidden");
-      trigger.classList.remove("hidden");
-      widen(false);
-      select.value = "";
-      sentence.textContent = "";
+    function buildForm() {
+      const choices = page.choices || {};
+      let options;
+      if (generating) options = (choices.scripts || []).map((s) => ({ value: s.path, text: s.path }));
+      else if (page.type === "attempt") options = (choices.files || []).map((f) => ({ value: f.path, text: t(f.type_label) + "  " + f.path }));
+      else {
+        options = (choices.attempts || []).map((a) => ({
+          value: a.id,
+          text: (a.verdict_status && a.verdict_status.label ? a.verdict_status.label + " · " : "") + "#" +
+            String(a.number || "").replace(/^#/, "") + " " + (a.title || ""),
+        }));
+      }
+      const box = mk("div", "repair-form");
+      const select = mk("select", "form-input repair-select");
+      box.select = select;
+      select.setAttribute("aria-label", generating ? t("生成它的脚本") : (page.type === "attempt" ? t("要关联的文件") : t("它属于的尝试")));
+      const first = mk("option", null, generating ? t("选择生成它的脚本") : (page.type === "attempt" ? t("选择要关联的文件") : t("选择它属于的尝试")));
+      first.value = "";
+      select.appendChild(first);
+      options.forEach((o) => {
+        const opt = mk("option", null, o.text);
+        opt.value = o.value;
+        select.appendChild(opt);
+      });
+      const sentence = mk("p", "repair-sentence");
+      const note = mk("input", "form-input repair-note");
+      note.type = "text";
+      note.placeholder = t("备注（可不填）");
+      const status = mk("div", "notice-status");
+      const go = mkButton(t("确认"), "btn btn-small btn-primary", () => writeRepair(page, type, select.value, note.value, status, [go, cancel]));
+      const cancel = mkButton(t("取消"), "btn btn-small", () => {
+        box.classList.add("hidden");
+        trigger.classList.remove("hidden");
+        widen(false);
+        select.value = "";
+        sentence.textContent = "";
+        go.disabled = true;
+      });
       go.disabled = true;
-    });
-    go.disabled = true;
-    select.addEventListener("change", () => {
-      const chosen = options.find((o) => o.value === select.value);
-      go.disabled = !chosen;
-      sentence.textContent = chosen ? repairSentence(page, type, chosen) : "";
-    });
-    const row = mk("div", "repair-actions");
-    row.append(go, cancel);
-    form.append(select, sentence, note, row, status);
-    const travels = travelsWords("link");
-    if (travels) form.appendChild(mk("p", "node-sub writes", travels));
-    if (!options.length) {
-      form.innerHTML = "";
-      form.appendChild(mk("p", "node-sub", type === "generates" || type === "writes" ? t("项目里还没有脚本可选。") : t("没有可以选择的项目。")));
+      select.addEventListener("change", () => {
+        const chosen = options.find((o) => o.value === select.value);
+        go.disabled = !chosen;
+        sentence.textContent = chosen ? repairSentence(page, type, chosen) : "";
+      });
+      const row = mk("div", "repair-actions");
+      row.append(go, cancel);
+      box.append(select, sentence, note, row, status);
+      const travels = travelsWords("link");
+      if (travels) box.appendChild(mk("p", "node-sub writes", travels));
+      if (!options.length) {
+        box.innerHTML = "";
+        box.appendChild(mk("p", "node-sub", generating ? t("项目里还没有脚本可选。") : t("没有可以选择的项目。")));
+      }
+      return box;
     }
-    wrap.append(trigger, form);
+    wrap.appendChild(trigger);
     return wrap;
   }
 
@@ -688,7 +707,7 @@
       r = await apiPost("/api/mappings/add", body);
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", type === "belongs_to" ? t("没能关联文件") : t("没能补上来源"), err);
+      setStatus(status, "err", type !== "belongs_to" ? t("没能指定生成它的脚本") : (page.type === "attempt" ? t("没能关联文件") : t("没能归入尝试")), err);
       return;
     }
     if (r.ingest_error) {
@@ -696,11 +715,127 @@
       return;
     }
     setStatus(status, "ok", t("已记下。"));
-    loadNode(views.node, true);
+    if (page.refresh) await written(r, page.refresh);
+    else loadNode(views.node, true);
+  }
+
+  // A write of a list's own (a row's action, 「是」) keeps the generation the POST returns, as 设为论文正文 does, and has
+  // the page read again once -- the poll that follows finds nothing new (18.4 item 1). `again` is the list's own
+  // reading, for this file evaluated alone.
+  async function written(res, again) {
+    if (res && typeof res.generation === "number" && typeof lastGeneration !== "undefined") lastGeneration = res.generation;
+    if (typeof refreshCurrentView === "function") await refreshCurrentView();
+    else await again();
+  }
+
+  // 12.13: a list kept out of the way -- the quiet chevron and 「展开」 (「收起」 once it is open).
+  function fold(summaryText, fill, cls) {
+    const details = mk("details", "dc-fold" + (cls ? " " + cls : ""));
+    const summary = mk("summary", "res-draft-summary");
+    const word = mk("span", "dc-fold-word", t("展开"));
+    summary.append(chevron(), mk("span", null, summaryText), word);
+    const body = mk("div", "dc-fold-body");
+    fill(body);
+    details.append(summary, body);
+    details.addEventListener("toggle", () => { word.textContent = details.open ? t("收起") : t("展开"); });
+    return details;
+  }
+
+  // 21.5: a script names a file that is not there. The line says so (a warning, whatever the file is for); when a
+  // file of that name exists elsewhere in the project, 「是这个吗？」 offers the nearest and 「其他同名文件 n 个」 the rest,
+  // each with the one action that writes the entry 补上来源 writes (`link`, from the engine): the script reads, or
+  // writes, that file. Nothing is written without the click. `ctx.refresh` reads the page again, `ctx.bare` leaves
+  // the actions out (the desk's side panel).
+  function brokenLine(entry, ctx) {
+    const box = mk("div", "dc-broken");
+    // 8.8's glossary: the brackets read 「（写出，文件不存在）」 or 「（读取，文件不存在）」, by the code (13.6).
+    const words = { script: entry.script || "", relation: t(entry.relation), target: entry.target || "" };
+    box.appendChild(mk("div", "dc-rel bad", entry.type === "writes"
+      ? t("断链：{script} {relation} {target}（写出，文件不存在）", words)
+      : t("断链：{script} {relation} {target}（读取，文件不存在）", words)));
+    const candidates = entry.candidates || [];
+    if (!candidates.length || (ctx && ctx.bare)) return box;
+    const status = mk("div", "notice-status");
+    const buttons = [];
+    const yes = (candidate) => {
+      const b = mkButton(t("是"), "btn btn-small", () => confirmCandidate(entry, candidate, ctx, status, buttons));
+      const blocked = humanRecordsBlocked();
+      const travels = travelsWords("link");
+      b.title = candidateSentence(entry, candidate);
+      if (travels) b.title += "\n" + travels;
+      if (blocked) { b.disabled = true; b.title = blocked; }
+      buttons.push(b);
+      return b;
+    };
+    const maybe = mk("div", "dc-maybe");
+    maybe.append(mk("span", null, t("是这个吗？")), mk("span", "mono dc-maybe-path", candidates[0].path), yes(candidates[0]));
+    box.appendChild(maybe);
+    if (candidates.length > 1) {
+      box.appendChild(fold(t("其他同名文件 {n} 个", { n: candidates.length - 1 }), (body) => candidates.slice(1).forEach((c) => {
+        const row = mk("div", "dc-candidate");
+        row.append(mk("span", "mono dc-maybe-path", c.path), yes(c));
+        body.appendChild(row);
+      })));
+    }
+    box.appendChild(status);
+    return box;
+  }
+
+  function candidateSentence(entry, candidate) {
+    const words = { script: entry.script || "", file: candidate.path };
+    if (candidate.link.type === "reads") return t("将记下：{script} 读取 {file}", words);
+    return candidate.link.type === "generates" ? t("将记下：{script} 生成 {file}", words) : t("将记下：{script} 写出 {file}", words);
+  }
+
+  // 「是」: the entry is written at once, the page reads again, and 撤销 (18.3) takes it back -- the same entry's removal,
+  // which 「删除标注」 on the link does too.
+  async function confirmCandidate(entry, candidate, ctx, status, buttons) {
+    buttons.forEach((b) => { b.disabled = true; });
+    setStatus(status, "", t("正在记下…"));
+    let r;
+    try {
+      r = await apiPost("/api/mappings/add", candidate.link);
+    } catch (err) {
+      buttons.forEach((b) => { b.disabled = false; });
+      setStatus(status, "err", t("没能记下这条连线"), err);
+      return;
+    }
+    if (r.ingest_error) {
+      setStatus(status, "err", t("已经写进 mappings.toml，但图谱还没有更新；稍后会自动重试"), r.ingest_error);
+      return;
+    }
+    setStatus(status, "ok", t("已记下。"));
+    lastLink = { link: candidate.link, entry: entry, file: candidate.path };
+    await written(r, ctx.refresh);
+  }
+
+  // 撤销 after 「是」, drawn on the page the write reloaded (until used, or the next write, or the next fresh visit).
+  function undoNotice(refresh) {
+    if (!lastLink) return null;
+    const box = mk("div", "dc-undo");
+    const status = mk("span", "notice-status");
+    const done = lastLink;
+    const undo = mkButton(t("撤销"), "btn btn-small", async () => {
+      undo.disabled = true;
+      setStatus(status, "", t("正在撤销…"));
+      let r;
+      try {
+        r = await apiPost("/api/mappings/delete", done.link);
+      } catch (err) {
+        undo.disabled = false;
+        setStatus(status, "err", t("没能撤销"), err);
+        return;
+      }
+      lastLink = null;
+      await written(r, refresh);
+    });
+    const sentence = t("已记下：{script} {relation} {file}。", { script: done.entry.script || "", relation: t(done.entry.relation), file: done.file });
+    box.append(mk("span", "dc-undo-text", sentence), undo, status);
+    return box;
   }
 
   // The attempt(s) it belongs to and the variable versions it uses, as a
-  // line under the trace; no attempt is a gap with 「关联文件」.
+  // line under the trace; no attempt is a gap with 「归入尝试」.
   function renderBelongs(host, page) {
     const trace = page.trace || {};
     if (page.type === "attempt") {
@@ -729,7 +864,7 @@
       });
       host.appendChild(line);
     } else if (brk && (page.type === "script" || page.type === "dataset" || page.type === "figure")) {
-      const gap = mk("div", "trace-gap wide");
+      const gap = mk("div", "trace-gap wide" + (brk.tone === "quiet" ? " quiet" : ""));
       gap.appendChild(mk("div", "trace-gap-label", t(brk.label)));
       gap.appendChild(repairControl(page, "belongs_to"));
       host.appendChild(gap);
@@ -1165,23 +1300,44 @@
 
   // -- 图表与论断 (12.9) ---------------------------------------------------------------------
 
+  // 图表与论断 (12.9). A row says its state in the colour 21.5 gives it: the warning colour for a figure or table the
+  // chosen paper includes that is not complete, plain for the rest (`trace.tone`, from the engine's one rule), olive
+  // for a complete one.
   function stateLabel(trace) {
     const value = trace || {};
-    const el = mk("span", "status-label tone-" + traceTone(value.state), t(value.label || ""));
-    if (value.breaks && value.breaks.length) el.title = value.breaks.map((text) => t(text)).join(t("；"));
+    const tone = value.tone === "warning" ? "clay" : value.tone === "quiet" ? "plain" : value.tone === "ok" ? "olive" : traceTone(value.state);
+    const el = mk("span", "status-label tone-" + tone, t(value.label || ""));
+    if (value.breaks && value.breaks.length && !(value.causes && value.causes.length)) el.title = value.breaks.map((text) => t(text)).join(t("；"));
     return el;
   }
 
-  function resultRow(item) {
+  // Why a row is not complete, in words on the row (21.5), not in a tooltip.
+  function causeLine(trace) {
+    const found = (trace && trace.causes) || [];
+    if (!found.length) return null;
+    return mk("span", "res-cause" + (trace.tone === "warning" ? " warn" : ""), found.map((c) => t(c.label)).join(t("；")));
+  }
+
+  function resultRow(item, ctx) {
     const li = mk("li", "res-row");
     li.appendChild(mk("span", "res-kind", t(item.kind || item.type_label || "")));
     const main = mk("div", "res-main");
     const name = link(item.label, "", () => openNode(item.id), t("打开它的来龙去脉"));
     main.appendChild(name);
     if (item.path) main.appendChild(mk("span", "res-path mono", item.path));
-    if (item.exists === false) main.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
+    if (item.exists === false) main.appendChild(mk("span", "status-label tone-" + (item.in_paper ? "clay" : "plain"), t("文件不存在")));
     const own = ownMark(item);
     if (own) main.appendChild(own);
+    const cause = causeLine(item.trace);
+    if (cause) main.appendChild(cause);
+    // 21.5: the action beside what is missing -- a generating script, or an attempt.
+    const repair = item.trace && item.trace.repair;
+    if (repair && ctx) {
+      const stands = { type: item.type, id: item.id, path: item.path, name: item.label, choices: ctx.choices, refresh: ctx.refresh };
+      const action = mk("div", "res-repair");
+      action.appendChild(repairControl(stands, repair.type));
+      main.appendChild(action);
+    }
     li.append(main, stateLabel(item.trace));
     return li;
   }
@@ -1204,7 +1360,8 @@
     const page = mk("div", "results");
     if (data.outputs) renderRegisteredOutputs(page, data.outputs);
     if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(page, data.research_records);
-    page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉：完整，或者缺来源、缺尝试。")));
+    page.appendChild(mk("p", "node-sub", t("文稿里的图、表和论断。每一项都能打开它的来龙去脉。论文用到的图和表如果缺来源或缺尝试，会标成红色，并在旁边给出补救的办法；其余的只淡淡地说一句。")));
+    const ctx = { choices: data.choices || {}, refresh: () => loadResults(host, true) };
     const figs = mk("section", "res-block");
     figs.appendChild(mk("h2", "desk-title", t("图与表")));
     if (!data.sections.length && !data.loose.length) figs.appendChild(mk("p", "node-empty", t("文稿里还没有引用图或表。")));
@@ -1214,7 +1371,7 @@
       title.append(mk("span", "res-group-file mono", g.file || ""), link(g.title || "", "", () => openNode(g.section)));
       group.appendChild(title);
       const ul = mk("ul", "res-list");
-      g.items.forEach((item) => ul.appendChild(resultRow(item)));
+      g.items.forEach((item) => ul.appendChild(resultRow(item, ctx)));
       group.appendChild(ul);
       figs.appendChild(group);
     });
@@ -1222,7 +1379,7 @@
       const group = mk("div", "res-group");
       group.appendChild(mk("div", "res-group-title", t("没有被文稿引用的图")));
       const ul = mk("ul", "res-list");
-      data.loose.forEach((item) => ul.appendChild(resultRow(item)));
+      data.loose.forEach((item) => ul.appendChild(resultRow(item, ctx)));
       group.appendChild(ul);
       figs.appendChild(group);
     }
@@ -1352,6 +1509,8 @@
           main.appendChild(link(cl.sentence || cl.id, "claim", () => openNode(cl.id), t("打开它的来龙去脉")));
           const where = [cl.number ? t("数字 {number}", { number: cl.number }) : "", cl.line ? t("第 {n} 行", { n: cl.line }) : ""].filter(Boolean).join(" · ");
           if (where) main.appendChild(mk("span", "node-sub-inline", where));
+          const why = causeLine(cl.trace);
+          if (why) main.appendChild(why);
           li.append(main, stateLabel(cl.trace));
           ul.appendChild(li);
         });
@@ -1368,39 +1527,67 @@
 
   // -- 数据与代码 (12.9) ------------------------------------------------------------------
 
+  // The filters count only what is wrong as problems (21.5): 缺生成脚本 is a table of the paper that no script
+  // writes, 断链 a script that names a file that is not there. A file nothing writes that is only read (a download in
+  // raw/) is quiet and has a neutral filter of its own, 没有生成脚本; 中间数据 and 同名文件 are facts, not problems.
   function inFilter(f, filter) {
-    if (filter === "orphans") return !!f.orphan_input;
+    if (filter === "missing") return f.no_generator === "warning";
+    if (filter === "raw") return f.no_generator === "quiet";
     if (filter === "chains") return f.type === "dataset" && (f.written_by || []).length > 0 && (f.read_by || []).length > 0;
-    if (filter === "broken") return !!(f.broken && f.broken.length) || f.exists === false;
+    if (filter === "broken") return !!(f.broken && f.broken.length);
     if (filter === "duplicates") return !!(f.other_copies && f.other_copies.length);
     return true;
   }
 
+  // The first three files of a list by their names; two of one name carry the nearest folder that tells them
+  // apart (`f.where`, from the engine): 复核诊断.R（交付_20260927_审查修订）.
+  function fileNames(f, key, list) {
+    const where = (f.where && f.where[key]) || {};
+    return list.slice(0, 3).map((p) => {
+      const name = p.split("/").pop();
+      return where[p] ? t("{name}（{folder}）", { name: name, folder: where[p] }) : name;
+    }).join(t("、")) +
+      (list.length > 3 ? t(" 等 {n} 个", { n: list.length }) : "");
+  }
+
   function fileRelations(f) {
     const lines = [];
-    const few = (list) => list.slice(0, 3).map((p) => p.split("/").pop()).join(t("、")) + (list.length > 3 ? t(" 等 {n} 个", { n: list.length }) : "");
     if (f.type === "script") {
-      if (f.reads && f.reads.length) lines.push(t("读取 {files}", { files: few(f.reads) }));
-      if (f.writes && f.writes.length) lines.push(t("写出 {files}", { files: few(f.writes) }));
+      if (f.reads && f.reads.length) lines.push(t("读取 {files}", { files: fileNames(f, "reads", f.reads) }));
+      if (f.writes && f.writes.length) lines.push(t("写出 {files}", { files: fileNames(f, "writes", f.writes) }));
       if (!lines.length) lines.push(t("未识别到读写关联"));
     } else {
-      if (f.written_by && f.written_by.length) lines.push(t("由这些脚本写出：{files}", { files: few(f.written_by) }));
-      if (f.read_by && f.read_by.length) lines.push(t("被这些脚本读取：{files}", { files: few(f.read_by) }));
+      if (f.written_by && f.written_by.length) lines.push(t("由这些脚本写出：{files}", { files: fileNames(f, "written_by", f.written_by) }));
+      if (f.read_by && f.read_by.length) lines.push(t("被这些脚本读取：{files}", { files: fileNames(f, "read_by", f.read_by) }));
       if (!lines.length) lines.push(t("未识别到读写关联"));
     }
     return lines;
   }
 
-  function fileRow(f) {
+  // A file nothing writes (21.5): quiet text with the action, unless the paper includes it (a table of the paper),
+  // when it is the warning 缺生成脚本 and the action stands beside it.
+  function noGenerator(f, ctx) {
+    const line = mk("div", "dc-rel dc-nogen");
+    if (f.no_generator === "quiet") line.appendChild(mk("span", null, t("没有生成脚本")));
+    if (f.repair) {
+      const stands = { type: f.type, id: f.id, path: f.path, name: f.path, choices: ctx.choices, refresh: ctx.refresh };
+      line.appendChild(repairControl(stands, f.repair.type));
+    }
+    return line;
+  }
+
+  function fileRow(f, ctx) {
     const li = mk("li", "dc-row");
     const kind = mk("span", "dc-kind");
     kind.append(icon(f.type), mk("span", null, t(f.type_label)));
     const main = mk("div", "dc-main");
     const head = mk("div", "dc-head");
     head.appendChild(link(f.path, "mono", () => openNode(f.id), t("打开它的来龙去脉")));
-    if (f.exists === false) head.appendChild(mk("span", "status-label tone-clay", t("文件不存在")));
-    if (f.unreadable) head.appendChild(mk("span", "status-label tone-clay", t("暂时无法读取")));
-    if (f.orphan_input) head.appendChild(mk("span", "status-label tone-clay", t("未识别生成脚本")));
+    // 21.5: a file that is not there, or a script that cannot be read, is a plain fact; the script that names the
+    // missing file carries the warning.
+    if (f.exists === false) head.appendChild(mk("span", "status-label tone-plain", t("文件不存在")));
+    if (f.unreadable) head.appendChild(mk("span", "status-label tone-plain", t("暂时无法读取")));
+    if (f.no_generator === "warning") head.appendChild(mk("span", "status-label tone-clay", t("缺生成脚本")));
     if (f.review) {
       const tag = mkButton(t("{n} 条关联待复核", { n: f.review }), "review-tag", () => { if (mayReplace()) openReviewPanel(null); });
       tag.title = t("打开待复核的连线确认");
@@ -1409,22 +1596,19 @@
     const own = ownMark(f);
     if (own) head.appendChild(own);
     main.appendChild(head);
-    fileRelations(f).forEach((t) => main.appendChild(mk("div", "dc-rel", t)));
-    (f.broken || []).forEach((b) => {
-      // 8.8's glossary: the brackets read 「（写出，文件不存在）」 or 「（读取，文件不存在）」, by the code (13.6).
-      const words = { script: b.script || "", relation: t(b.relation), target: b.target || "" };
-      main.appendChild(mk("div", "dc-rel bad", b.type === "writes"
-        ? t("断链：{script} {relation} {target}（写出，文件不存在）", words)
-        : t("断链：{script} {relation} {target}（读取，文件不存在）", words)));
-    });
-    if (f.other_copies && f.other_copies.length) main.appendChild(mk("div", "dc-rel", t("其他同名文件：{files}", { files: f.other_copies.join(t("、")) })));
+    fileRelations(f).forEach((line) => main.appendChild(mk("div", "dc-rel", line)));
+    if (f.no_generator && ctx) main.appendChild(noGenerator(f, ctx));
+    (f.broken || []).forEach((b) => main.appendChild(brokenLine(b, ctx)));
+    if (f.other_copies && f.other_copies.length) {
+      main.appendChild(fold(t("其他同名文件 {n} 个", { n: f.other_copies.length }), (body) => f.other_copies.forEach((p) => body.appendChild(mk("div", "dc-rel mono", p)))));
+    }
     li.append(kind, main);
     return li;
   }
 
   async function loadDataCode(host, refresh) {
     const epoch = state.dataEpoch;
-    if (!refresh) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
+    if (!refresh) { host.replaceChildren(mk("p", "empty-note", t("载入中…"))); lastLink = null; }
     let data;
     try {
       data = await apiGet("/api/data-code");
@@ -1444,21 +1628,27 @@
     bar.setAttribute("aria-label", t("筛选"));
     const counts = Object.assign({}, data.counts || {});
     counts.chains = (data.files || []).filter((f) => inFilter(f, "chains")).length;
+    counts.missing = counts.no_generator;
+    const again = () => loadDataCode(host, true);
+    const ctx = { choices: data.choices || {}, refresh: again };
     const list = mk("ul", "dc-list");
     const draw = () => {
       list.innerHTML = "";
       const shown = (data.files || []).filter((f) => inFilter(f, dc.filter));
       if (!shown.length) list.appendChild(mk("li", "node-empty", dc.filter === "all" ? t("还没有扫描到脚本或数据文件。") : t("没有。")));
-      shown.forEach((f) => list.appendChild(fileRow(f)));
+      shown.forEach((f) => list.appendChild(fileRow(f, ctx)));
       bar.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === dc.filter)));
     };
     filters().forEach(([key, text]) => {
       const n = key === "all" ? counts.all : counts[key];
-      const b = mkButton(text + " " + (n || 0), "dc-filter", () => { dc.filter = key; draw(); });
+      // the two filters that count problems turn the warning colour while they count some
+      const b = mkButton(text + " " + (n || 0), "dc-filter" + ((key === "missing" || key === "broken") && n ? " problem" : ""), () => { dc.filter = key; draw(); });
       b.dataset.filter = key;
       bar.appendChild(b);
     });
     const stata = mk("div", "dc-stata-slot");
+    const undone = undoNotice(again);
+    if (undone) host.appendChild(undone);
     host.append(stata, bar, list);
     draw();
     host.dataset.loaded = "1";
