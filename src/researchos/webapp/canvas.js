@@ -984,7 +984,7 @@ window.RCECanvas = (function () {
     const sans = "11px " + fontStack("--font-sans"); // words, not paths (12.11)
     s.inputs.forEach((sock, i) => {
       const y = socketY(i);
-      const orphan = i === 0 && n.orphan_input;
+      const orphan = i === 0 && n.orphan_input && n.orphan_tone === "warning"; // clay is for what is wrong (21.8): a download is not
       g.appendChild(svgEl("circle", { cx: 0, cy: y, r: SOCKET_R },
         "cv-socket in sock-" + sock.carries + (orphan ? " orphan" : "")));
       const label = svgEl("text", { x: 12, y: y + 4 }, "cv-socket-label in");

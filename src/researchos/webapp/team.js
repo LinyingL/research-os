@@ -173,7 +173,7 @@
     switch (kind) {
       case "verdict_change": return t("修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
       case "attempt_new":
-        return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
+        return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「添加文件」挂上的文件）；可以加上或去掉。");
       case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
       default: return t("只带勾选的文件。");
     }

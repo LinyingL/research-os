@@ -5,9 +5,9 @@ The kind pages (图表与论断, 数据与代码) list by kind. An agent's outpu
 of their own at the top of these pages: they are rows like any other file, with their registered title, and each row
 says its attempt as a quiet field. `Filed` reads, once for an answer, what the rows need:
 
-- **the registered outputs** (`outputs.catalog`, the catalogs an agent's declaration and a person's registration go to),
-  by path -- a registered file that is not a node of the index is a row too, so that nothing an agent produced drops out
-  of the list for want of a link;
+- **the registered outputs** (`outputs.catalog`, the catalogs an agent's declaration and a person's registration go to,
+  read once for the request by the trace context, `trace.Shared.registered`), by path -- a registered file that is not a
+  node of the index is a row too, so that nothing an agent produced drops out of the list for want of a link;
 - **the attempt a row belongs to**, in this order. The task whose output the file is: the attempt of that task
   (`now_doing.placed_reports`, the one notion of which attempt a report -- and so its outputs -- belongs to, 21.4: the
   task's own attempt, else the first attempt its research context links). Else the attempts the file was filed under by
@@ -26,7 +26,6 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Iterable
 
-from researchos import now_doing, outputs, workspace
 from researchos import trace as trace_mod
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import files as ingest_files
@@ -35,7 +34,6 @@ from researchos.records import notes as notes_mod
 #: What `/api/workspace/asset` serves, and the size it refuses past: a thumbnail of anything else would be a broken image.
 THUMBNAIL_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 THUMBNAIL_LIMIT = 8 * 1024 * 1024
-_READS = (OSError, ValueError, workspace.WorkspaceError)
 
 
 def thumbnail(root: Path, rel: str | None) -> bool:
@@ -53,14 +51,14 @@ class Filed:
 
     def __init__(self, conn: Connection, root: Path, shared: trace_mod.Shared, kinds: Iterable[str]) -> None:
         self.conn, self.root, self.shared = conn, root, shared
-        bundle = outputs.catalog(root, set(kinds), preview=False)
+        bundle, wanted = shared.registered, set(kinds)
         #: The sentence and the catalogs a read that was not whole is about (`outputs.catalog`'s own), else None.
         self.error: str | None = bundle.get("error")
         self.broken: list[str] = list(bundle.get("broken") or [])
-        #: The registered files by path as the scan compares paths (`ingest_files.fold`), newest registration first
-        #: (`outputs.catalog` keeps one row per path).
-        self.registered: dict[str, dict[str, Any]] = {ingest_files.fold(item["path"]): item for item in bundle["items"]}
-        self._placed: dict[str, str] | None = None
+        #: The registered files of these kinds by path as the scan compares paths (`ingest_files.fold`), newest
+        #: registration first (`outputs.catalog` keeps one row per path).
+        self.registered: dict[str, dict[str, Any]] = {ingest_files.fold(item["path"]): item for item in bundle["items"]
+                                                      if item["kind"] in wanted}
         self._linked: dict[str, list[str]] | None = None
 
     def title(self, path: str | None) -> str | None:
@@ -72,16 +70,6 @@ class Filed:
         """The registered files whose path is not in `known` (the rows the index gave), in the catalog's order."""
         have = {ingest_files.fold(path) for path in known}
         return [entry for key, entry in self.registered.items() if key not in have]
-
-    def _reports(self) -> dict[str, str]:
-        """`{report path: attempt id}` (`now_doing.placed_reports`), read when the first registered row asks."""
-        if self._placed is None:
-            try:
-                tasks = workspace.read_tasks(self.root)[0]
-            except _READS:
-                tasks = []
-            self._placed = now_doing.placed_reports(self.root, set(self.shared.by_id), tasks)
-        return self._placed
 
     def _filed(self) -> dict[str, list[str]]:
         """`{path: [attempt id]}` of the files the researcher filed under an attempt (`trace.attempt_members`)."""
@@ -105,7 +93,7 @@ class Filed:
         under an attempt. Ids the index does not hold are left out."""
         entry = self.registered.get(ingest_files.fold(path or ""))
         if entry is not None:
-            placed = self._reports().get(str(entry.get("report") or ""))
+            placed = self.shared.reports.get(str(entry.get("report") or ""))  # `now_doing.placed_reports`
             if placed:
                 return [placed]
         ids = list(found) if found is not None else self._filed().get(path or "", [])

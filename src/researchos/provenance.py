@@ -197,9 +197,21 @@ def _shared_folders(a: str, b: str) -> int:
     return n
 
 
-def candidates(root: Path, script: str, target: str, kind: str, names: Any) -> list[dict[str, Any]]:
+def _inside(root: Path, rel: str) -> bool:
+    """Whether `rel` is a file of the project in the sense the scan has (`lineage.Names`): not a symlink, nor on a path
+    that leaves the project through one -- the writer of an entry refuses such a path."""
+    full = root / rel
+    try:
+        return not full.is_symlink() and full.resolve().is_relative_to(root.resolve()) and full.is_file()
+    except OSError:
+        return False
+
+
+def candidates(root: Path, script: str, target: str, kind: str, names: Any, taken: Iterable[str] = ()) -> list[dict[str, Any]]:
     """The files that may be the one a script names and cannot find. `target` is the path as the script's text gave
-    it (relative to the project), `kind` `reads` or `writes`, `names` a `lineage.Names`.
+    it (relative to the project), `kind` `reads` or `writes`, `names` a `lineage.Names`; `taken`, the files the
+    researcher has already given this script as that (their entries): one entry answers one path, so they are not
+    offered for another.
 
     First, the path the script's own text names when it is taken from each of the script's folders in turn, the
     script's own first and the project's root last -- scripts are often run from the folder of their package
@@ -211,7 +223,7 @@ def candidates(root: Path, script: str, target: str, kind: str, names: Any) -> l
     (data first) or writes it, in the form `/api/mappings/add` takes. A file the grammar cannot give that entry (an
     image a script reads) is left out. Reads the disk for the folders named, never the whole project."""
     found: list[dict[str, Any]] = []
-    seen = {target}
+    seen = {target, *taken}
 
     def add(path: str, package: bool) -> None:
         if path in seen:
@@ -229,7 +241,7 @@ def candidates(root: Path, script: str, target: str, kind: str, names: Any) -> l
     folder = posixpath.dirname(script)
     while folder:
         path = posixpath.normpath(posixpath.join(folder, target))
-        if not path.startswith("../") and (root / path).is_file():
+        if not path.startswith("../") and _inside(root, path):
             add(path, True)
         folder = posixpath.dirname(folder)
     where = posixpath.dirname(script)

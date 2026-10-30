@@ -23,7 +23,8 @@ global.window = { scrollTo() {}, scrollY: 0 };
 %(i18n)s
 %(dom)s
 global.RODesk = { ensureContext: async () => ({}), context: () => ({ mode: "single" }), refreshSidebar() {},
-  statusLabel: (s) => el("span", "status-label", s && s.label || ""), verdictInline: () => el("span", "v") };
+  statusLabel: (s) => el("span", "status-label", s && s.label || ""), verdictInline: () => el("span", "v"),
+  _whenWords: (at) => String(at).slice(0, 10) };  // the day, as the desk words it
 global.clearProjectState = () => {};
 global.renderBlockingError = (node, framing) => { node.textContent = framing; };
 global.openFilePanel = () => {};

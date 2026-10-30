@@ -709,7 +709,8 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .dc-fold > .res-draft-summary { padding: 0.15rem 0; font-size: 0.8rem; color: var(--ink-soft); }
 .dc-fold[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
 .dc-fold-body { padding-left: calc(12px + 0.6rem); }
-.dc-undo { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.84rem; margin: 0 0 0.8rem; }
+/* 撤销 (18.3) stays in view at the top while a long list is read: the write reloads the page at the scroll the person was at. */
+.dc-undo { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; font-size: 0.84rem; margin: 0 0 0.8rem; position: sticky; top: 0; z-index: 6; padding: 0.5rem 0; background: var(--paper); border-bottom: 1px solid var(--line); }
 .lit-ref-open { display: block; font: inherit; font-size: 0.84rem; text-align: left; background: none; border: none; padding: 0; color: var(--ink); cursor: pointer; border-bottom: 1px solid transparent; }
 .lit-ref-open:hover { border-bottom-color: var(--clay); }
 

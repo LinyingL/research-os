@@ -6587,6 +6587,12 @@ attempts.py`; `research_records.assessment_statuses`).
     「归入尝试」 (21.6; the `belongs_to` entry); on a figure or table the paper
     includes it is the warning, and says whether the generating script is the
     one in no attempt (「生成脚本没有归入尝试」) or nothing is (「还没有归入任何尝试」).
+    **An attempt holds a file in three ways, and a trace asks every file of its
+    chain** (*fix batch B3*): the step files its description names, 「归入尝试」, and
+    **a task registered the file as its output** (`trace.Shared.placed`: the attempt of the
+    task whose report lists it, `now_doing.placed_reports`; the page words it 「任务登记」).
+    A row that names its attempt is never also 缺尝试, and the figure's own page and its
+    script's say the same attempt.
     Where a source is missing too, the row says the source's cause only. A table
     of the paper that is a draft or a document (the mapping grammar gives it no
     generating script) is quiet too: a warning is where the page can act.
@@ -6615,13 +6621,26 @@ attempts.py`; `research_records.assessment_statuses`).
     often run from their package's root); then the other files of the same name,
     the nearest first by the folders they share with the script. The rest stand
     under 「其他同名文件 n 个」, folded, each with the same 「是」; nothing is
-    written without the click, and 撤销 stays on the page that wrote it. **The
+    written without the click, and 撤销 stays on the page that wrote it. A candidate
+    is a file of the project (*fix batch B3*): a symlink, or a path that leaves the
+    project through one, is never offered, as the entry would be refused; and a file
+    already given to that script as that is not offered again for another path. **The
     engine uses the person's entry**: a script for which the researcher has a
     `reads` (or `writes`, `generates`) entry of a file of the same name is not broken
     -- the machine's link to the missing file stays in the index but is not
     reported (`lineage.superseded`), not in the report, the trace, the counts or
     `researchos lineage`, and the file only that text named is no row once no
-    script names it.
+    script names it -- nor a card of 关系图, which draws what 列表 lists (*fix batch
+    B3*). **One entry answers one missing path**: a script that names a file of one
+    name in two folders, neither there, needs an entry for each (two files of that
+    name); an entry does not say which path it was for, so with fewer entries than
+    paths the paths come in the order of their names and the last ones stay broken,
+    with their own offer.
+  - **关系图** (the other view of 数据与代码) says the same (*fix batch B3*): a file that
+    only a script's text named and the researcher has answered is no card; the socket of an
+    orphan input (`orphan_input`, the lineage report's definition, unchanged) is in the warning
+    colour only when the chosen paper includes the table (`orphan_tone` `warning`), and a
+    download in `raw/` is drawn with the plain socket (`quiet`).
   - **Counts and filters of 数据与代码**: 缺生成脚本 and 断链 count warnings and
     show the warning colour while they count some; 没有生成脚本 (the downloads),
     中间数据 and 同名文件 are neutral facts. A table put out of the paper
@@ -6645,7 +6664,11 @@ attempts.py`; `research_records.assessment_statuses`).
     it changed), **five shown and the rest under 「更多」**; choosing one writes the
     mark through the path the button always had (`POST /api/papers {draft,
     marked}`, `papers.toml`, 12.13; in a member's copy it is written in the
-    working copy and travels with the next sync, 12.12). The drafts of the paper
+    working copy and travels with the next sync, 12.12). *Fix batch B3*: **a file
+    name in the list is text, never the control** (21.8) -- each row has its own
+    outline button, 「选这份」 (“Choose this one”), that writes the mark. With no draft
+    to choose from (the attempt table is not one) and none marked, the block says
+    「还没有读到文稿。」 and no instruction to press a control that is not there. The drafts of the paper
     stand above the control, each with its claim count and 「不再作为论文正文」: a
     paper may be several drafts (the main text and an appendix). A draft's own
     page keeps its 「设为论文正文」.
@@ -6669,21 +6692,38 @@ attempts.py`; `research_records.assessment_statuses`).
   copy of a plot, a by-product -- is put out with a button on its row (图表与论断,
   any list), on its own page and, for a table the paper includes, on 数据与代码;
   「放回论文」 puts it back. Each is **one entry in `.researchos/papers.toml`**,
-  the event log of 12.13, in its form: a `[[paper]]` with `id`, `seq`, `at`, `by`
-  and `via` and `act = "not_in_paper"` (or `"back_in_paper"`), the file in
-  `file` -- an entry that marks a draft names it in `draft`, and the two kinds do
-  not touch each other. A file is out when its newest such entry is
+  the event log of 12.13, in its form, **in a table of its own** (*fix batch B3*): a
+  `[[paper_file]]` with `id` (`pf-…`), `seq`, `at`, `by` and `via` and `act =
+  "not_in_paper"` (or `"back_in_paper"`), the file in `file`; the marks stay
+  `[[paper]]` with `act` mark or unmark and `draft`, and the two tables do not touch
+  each other, each counting its own `seq`. Why two tables: a Research OS from before
+  the acts reads `[[paper]]` and refuses the whole file at an act it does not know
+  (the ledger's strictness, 9.3), which on a member's older install, or a second
+  machine not yet updated, would have emptied the marked drafts and refused every
+  write; `parse_ledger` reads only its own table, so an older reader passes over the
+  other, as `mappings.toml` carries `[[removal]]` and `[[received]]` beside
+  `[[mapping]]`. The file is one for trust: either table unreadable or invalid
+  refuses every write, and a file holding only `[[paper_file]]` entries is not an
+  empty one. A member's put-out travels as a `paper_file` packet entry like the mark
+  (an older PI engine passes over it; the member's file keeps it). The form of B3-2,
+  an act in `[[paper]]`, was never released and is not read. A file is out when its
+  newest such entry is
   `not_in_paper`; the file is its own history, and nothing on disk is moved.
   `POST /api/papers {file, not_in_paper}` writes it at once, and 撤销 (18.3)
   on the page it reloads writes the next entry. A member's is written in the
   working copy and carried by the next sync like the mark: the PI's next
   publish appends it with the member's `by`; no approval waits for either (12.4).
+  **It is offered for a file that is there**: a file that is gone cannot be put out
+  (its row says 文件不存在, and is mended in the draft or the file), but one put out
+  while it was there stays listed, to be put back.
   A file put out is not what the paper includes, whatever a draft cites: it is
   quiet (above), not in the open count, and on 数据与代码 a table of the paper
   that is put out leaves 缺生成脚本 and is counted as 没有生成脚本. Its row
-  stands under the folded 「不属于论文」 with the day (and, in a team, who), and
-  the group lists a file that has gone from the index too, so that it can be put
-  back.
+  stands under the folded 「不属于论文」 with the day (and, in a team, who), said on
+  the row as 「放入「不属于论文」 {day}、{who}」, and the group lists a file that has gone
+  from the index too, so that it can be put back. The confirmation and 撤销 stand at
+  the top of the page and stay in view while a long list is read (*fix batch B3*:
+  sticky).
 - **The kind pages list by kind, and each row says its attempt** (21 intro,
   decision 5; *B3-2*). The 任务输出 block that opened 图表与论断 and 数据与代码
   is gone: what an agent produced is seen in its handback (21.2). A file an
@@ -6700,7 +6740,13 @@ attempts.py`; `research_records.assessment_statuses`).
   attempts its trace finds, which its own page says too. A row with neither
   says nothing: lacking an attempt is a warning only for what the paper includes,
   and that is the row's state. A catalog that cannot be read costs the titles and
-  attempts and is said in one line; the rows still list.
+  attempts and is said in one line; the rows still list. **Speed** (*fix batch B3*):
+  the catalog and the task list are read once for an answer (`trace.Shared`, which
+  `kind_rows.Filed` and the traces share); the researcher's entries are read once, and
+  asked of no link while there are none; the walk that finds same-name files is kept for
+  20 seconds for the same scan (`lineage.Names`' `stamp`), so that a node page with a
+  broken link does not walk the project at each opening; a row's old copies are built
+  when its fold is first opened.
 
 ### 21.6 Words (amends 13.4)
 
@@ -6732,6 +6778,9 @@ heading in the map file (「二、尝试途径总年表」) is theirs and is not
 In the interface 待办 is gone (21.4): the column of 研究路线, the part of the same name in an
 attempt's panel and the count beside 项目首页 say 等你处理 (“Needs you”; the count's
 hover is “{n} need you”). 14.6 and 18.3 above keep the word they introduced.
+
+*Fix batch B3*: an attempt's page says 「添加文件」 (“Add files”) -- the button, its failure sentence and the
+engine's gap (「这条尝试还没有添加任何文件」) -- and the two guides name it so; no screen says 「关联文件」.
 
 Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 `.context.json`, `judgements.toml` keep their names.
@@ -6823,8 +6872,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    lists its figures first with 其他文稿 folded and a figure of two drafts one
    row naming both, each figure with a small picture and each row of 图表与论断
    and 数据与代码 saying its attempt; 「不属于论文」 on a by-product (a .svg copy of
-   a plot) is one entry in `papers.toml`, takes it out of the open count and
-   puts it under the folded 「不属于论文」, and 「放回论文」 reverses it; the
+   a plot) is one entry in the `[[paper_file]]` table of `papers.toml` (an older
+   Research OS still reads the file), takes it out of the open count and
+   puts it under the folded 「不属于论文」 with the day, and 「放回论文」 reverses it;
+   a figure a task registered under an attempt is never both in that attempt and
+   缺尝试; the
    任务输出 block is gone from both pages.
 6. No screen uses a retired word of 21.6; the glossary test covers the new
    rows; English mode shows the new words.

@@ -208,15 +208,19 @@ MESSAGES = {
 }
 
 #: The ledgers whose entries a member's sync carries, without approval
-#: (12.4): file name -> TOML table.
-TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement", "papers.toml": "paper"}
+#: (12.4): ledger (its file name, and `#<table>` for a second table of one file) -> TOML table.
+TRAVELLING = {"notes.toml": "note", "judgements.toml": "judgement", "papers.toml": "paper",
+              "papers.toml#paper_file": "paper_file"}
+#: `papers.toml` holds two ledgers, each its own table (21.5, `researchos.records.papers`): the drafts marked and the
+#: files put out of the paper. A ledger of `TRAVELLING` is named by its file and, for the second, `#<table>`.
+PAPER_FILES = "papers.toml#paper_file"
 #: 12.12: hand-drawn links travel the same way (`researchos.ingest.mappings`,
 #: "a member's links travel"): the packet's `[[mapping]]` (added) and
 #: `[[mapping_removed]]` (removed) tables.
 MAPPINGS_NAME = "mappings.toml"
 PACKET_ADDED, PACKET_REMOVED = "mapping", "mapping_removed"
 #: Record files a member's own changes travel in packets, never in a proposal.
-TRAVELLING_FILES = frozenset({*TRAVELLING, MAPPINGS_NAME})
+TRAVELLING_FILES = frozenset({name.partition("#")[0] for name in TRAVELLING} | {MAPPINGS_NAME})
 #: 12.12: canvas arrangements do not travel: each person keeps their own.
 CANVAS_NAME = "canvas.json"
 _PACKET_HEADER = ("# 成员的笔记、连接判断和手工连线：不需要批准，PI 的 Research OS 收进正式版本时保留 by。"
@@ -1906,6 +1910,11 @@ def _travelling(rel: str) -> str | None:
     return name if name in TRAVELLING else None
 
 
+def _file_of(ledger: str) -> str:
+    """The record file a ledger of `TRAVELLING` is kept in."""
+    return ledger.partition("#")[0]
+
+
 def _schema(name: str):
     from researchos.records import ledger as ledger_mod  # noqa: PLC0415
     from researchos.records import notes as notes_mod  # noqa: PLC0415
@@ -1913,6 +1922,8 @@ def _schema(name: str):
 
     if name == papers_mod.PAPERS_FILENAME:
         return papers_mod.PAPERS_SCHEMA
+    if name == PAPER_FILES:
+        return papers_mod.FILES_SCHEMA
     return notes_mod.NOTES_SCHEMA if name == "notes.toml" else ledger_mod.JUDGEMENT_SCHEMA
 
 
@@ -1939,13 +1950,18 @@ def _ledger_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any]
     when either cannot be read (then the file is treated like any other)."""
     name = _travelling(rel)
     try:
-        mine = _parse((root / rel).read_text(encoding="utf-8"), name)
-        official = _parse(_read_content(shared, entry).decode("utf-8"), name)
+        text = (root / rel).read_text(encoding="utf-8")
+        official_text = _read_content(shared, entry).decode("utf-8")
     except (OSError, UnicodeDecodeError, ShareError):
         return None
-    if mine is None or official is None:
-        return None
-    return "carried" if {e.id for e in mine.entries} <= _represented(official) else "waiting"
+    carried = "carried"
+    for ledger in (key for key in TRAVELLING if _file_of(key) == name):  # a file may hold several ledgers
+        mine, official = _parse(text, ledger), _parse(official_text, ledger)
+        if mine is None or official is None:
+            return None
+        if not {e.id for e in mine.entries} <= _represented(official):
+            carried = "waiting"
+    return carried
 
 
 def _mappings_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any], base,
@@ -2017,7 +2033,7 @@ def _outgoing(root: Path, state: Mapping[str, Any], base, me: str, problems: lis
                 links[table].append({**item, "by": me})
                 link_keys.append(key)
     for name in TRAVELLING:
-        rel = f"{paths.PROJECT_DIRNAME}/{name}"
+        rel = f"{paths.PROJECT_DIRNAME}/{_file_of(name)}"
         try:
             mine = _parse((root / rel).read_text(encoding="utf-8"), name)
         except FileNotFoundError:
@@ -2046,7 +2062,7 @@ def outgoing_summary(going: Mapping[str, Any]) -> dict[str, int]:
     kinds = list(going.get("kinds") or [])
     links = going.get("links") or {}
     return {"notes": kinds.count("notes.toml"), "judgements": kinds.count("judgements.toml"),
-            "papers": kinds.count("papers.toml"),
+            "papers": kinds.count("papers.toml") + kinds.count(PAPER_FILES),
             "links_added": len(links.get(PACKET_ADDED) or []), "links_removed": len(links.get(PACKET_REMOVED) or [])}
 
 
@@ -2152,12 +2168,12 @@ def collect_entries(official_root: str | Path, *, shared: Path | None = None, ex
                     if not batch:
                         continue
                     schema = _schema(name)
-                    path = paths.project_dir(root) / name
+                    path = paths.project_dir(root) / _file_of(name)
                     for member, entry in batch:
-                        if name == "papers.toml":
+                        if _file_of(name) == "papers.toml":
                             from researchos.records import papers as papers_mod  # noqa: PLC0415
 
-                            loaded, decision = papers_mod.assess(root, identity)
+                            loaded, decision = (papers_mod.assess_files if name == PAPER_FILES else papers_mod.assess)(root, identity)
                         else:
                             loaded, decision = (notes_mod.assess(conn, root, identity) if name == "notes.toml"
                                                 else judgements_mod.assess(conn, root, identity))
@@ -2681,7 +2697,7 @@ def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
         official: dict[str, set[str]] = {}
         for name in TRAVELLING:
             try:
-                parsed = _parse((paths.project_dir(root) / name).read_text(encoding="utf-8"), name)
+                parsed = _parse((paths.project_dir(root) / _file_of(name)).read_text(encoding="utf-8"), name)
             except FileNotFoundError:
                 parsed = None
             official[name] = _represented(parsed) if parsed is not None else set()
@@ -2702,8 +2718,8 @@ def incoming(root: Path, shared: Path, team: people.TeamRead) -> dict[str, Any]:
                     fresh = [e for e in data.get(table) or [] if isinstance(e, dict)
                              and str(e.get("id")) not in official[name] and e.get("by") == member]
                     if fresh:
-                        out[{"notes.toml": "notes", "papers.toml": "papers"}.get(name, "judgements")] += len(fresh)
-                        touched.add(name)
+                        out[{"notes.toml": "notes", "papers.toml": "papers", PAPER_FILES: "papers"}.get(name, "judgements")] += len(fresh)
+                        touched.add(_file_of(name))
                         took = True
                 if packet_id not in received and (data.get(PACKET_ADDED) or data.get(PACKET_REMOVED)):
                     out["links_added"] += len(data.get(PACKET_ADDED) or [])

@@ -31,6 +31,11 @@ here -- commits are not canvas objects.
   has rejected is not a writer, so a dataset whose only writer was marked
   as a wrong extraction gets its clay dot -- and `researchos.lineage` excludes
   rejected edges the same way, so the 血缘 tab agrees with the dot.
+- A file that exists only because a script's text named it and that the researcher's own entry has since answered
+  (`lineage.replaced_targets`, DESIGN.md 21.5) is no card, nor are its links: 列表 does not list it either.
+- `orphan_tone` says what the orphan socket means (21.8: the clay colour is for what is wrong): `warning` for a table the
+  chosen paper includes (`provenance.Paper`), `quiet` for the rest -- a download in raw/ -- and None for a card that is
+  no orphan input. `orphan_input` stays the report's definition.
 - `missing` is a fresh filesystem fact: the graph knows the node, the file
   is not on disk now. `ghost` nodes (section 8.1) are the reverse: a file
   an attempt's `step_files` names, on disk, with no graph node yet. A ghost
@@ -110,12 +115,13 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db, lineage, paths
+from researchos import db, lineage, paths, provenance
 from researchos import trace as trace_mod
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import mappings as mappings_ingest
 from researchos.records import files as record_files
 from researchos.records import judgements
+from researchos.records import papers as papers_mod
 from researchos.records import situation as records_situation
 
 logger = logging.getLogger(__name__)
@@ -187,7 +193,8 @@ def _node_path(node: dict[str, Any]) -> str:
     return node.get("title") or node["id"].partition(":")[2]
 
 
-def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing: bool, orphan: bool) -> dict[str, Any]:
+def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing: bool, orphan: bool,
+                orphan_tone: str | None = None) -> dict[str, Any]:
     return {
         "id": node_id,
         "type": node_type,
@@ -196,6 +203,7 @@ def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing
         "dir": posixpath.dirname(path),
         "missing": missing,
         "orphan_input": orphan,
+        "orphan_tone": orphan_tone if orphan else None,
         "ghost": ghost,
     }
 
@@ -326,7 +334,8 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     map's view (`routes`) shows the attempts themselves, nothing else."""
     if scope == SCOPE_ROUTES:
         return {"scope": scope, "visible": {a["id"] for a in db.get_nodes_by_type(conn, "attempt")}}
-    nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t)}
+    gone = lineage.replaced_targets(conn)  # answered by the researcher's entry: the list does not list them (21.5)
+    nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t) if n["id"] not in gone}
     edges = [
         e for t in CANVAS_EDGE_TYPES for e in db.query_edges(conn, type=t)
         if e["status"] != "rejected" and e["src"] in nodes and e["dst"] in nodes
@@ -410,14 +419,19 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
     writers = {e["dst"] for e in edges if e["type"] == "writes"}
 
     node_entries = []
+    paper = None
     for node_id in sorted(visible):
         if node_id in nodes:
             node = nodes[node_id]
             path = _node_path(node)
+            orphan = lineage.is_orphan_input(node["type"], node_id in readers, node_id in writers)
+            if orphan and paper is None:  # the chosen paper is read for the first orphan card only
+                marked = papers_mod.marked(root)
+                paper = provenance.Paper(conn, marked["drafts"], [e["file"] for e in marked["not_in_paper"]])
             node_entries.append(_node_entry(
                 node_id, node["type"], path, ghost=False,
-                missing=not _on_disk(root, path),
-                orphan=lineage.is_orphan_input(node["type"], node_id in readers, node_id in writers),
+                missing=not _on_disk(root, path), orphan=orphan,
+                orphan_tone=("warning" if paper.has(node_id) else "quiet") if orphan else None,
             ))
         else:
             node_type, path = ghosts[node_id]

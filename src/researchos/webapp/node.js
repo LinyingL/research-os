@@ -552,6 +552,7 @@
     switch (via) {
       case "step_files": return t("步骤脚本");
       case "belongs_to": return t("人工关联");
+      case "task": return t("任务登记");
       default: return via ? String(via) : "";
     }
   }
@@ -609,7 +610,7 @@
   }
 
   // 「指定生成它的脚本」 (generates / writes from a chosen script; the write 补上来源 has always made), 「归入尝试」
-  // (belongs_to: this file to a chosen attempt) or, on an attempt, 「关联文件」 (a chosen file to this attempt). Choose,
+  // (belongs_to: this file to a chosen attempt) or, on an attempt, 「添加文件」 (a chosen file to this attempt). Choose,
   // see the sentence it will record, then confirm. `page` is the node page, or what a row of a list stands for
   // (`type`, `id`, `path`, `name`, `choices`, and `refresh`, which reads the list again once it is written, 21.5).
   // The form is drawn when its button is first pressed: a list of rows would otherwise carry a long list of scripts
@@ -618,7 +619,7 @@
     const wrap = mk("div", "repair");
     const blocked = humanRecordsBlocked();
     const generating = type === "generates" || type === "writes";
-    const label = generating ? t("指定生成它的脚本") : (page.type === "attempt" ? t("关联文件") : t("归入尝试"));
+    const label = generating ? t("指定生成它的脚本") : (page.type === "attempt" ? t("添加文件") : t("归入尝试"));
     let form = null;
     // An open chooser widens its column (the lines follow).
     const widen = (on) => {
@@ -716,7 +717,7 @@
       r = await apiPost("/api/mappings/add", body);
     } catch (err) {
       buttons.forEach((b) => { b.disabled = false; });
-      setStatus(status, "err", type !== "belongs_to" ? t("没能指定生成它的脚本") : (page.type === "attempt" ? t("没能关联文件") : t("没能归入尝试")), err);
+      setStatus(status, "err", type !== "belongs_to" ? t("没能指定生成它的脚本") : (page.type === "attempt" ? t("没能添加文件") : t("没能归入尝试")), err);
       return;
     }
     if (r.ingest_error) {
@@ -738,15 +739,21 @@
   }
 
   // 12.13: a list kept out of the way -- the quiet chevron and 「展开」 (「收起」 once it is open).
-  function fold(summaryText, fill, cls) {
+  // `lazy`: the body is built when the fold is first opened -- a list of rows each with a fold of up to a dozen
+  // old copies would otherwise build them all, and again at every filter click.
+  function fold(summaryText, fill, cls, lazy) {
     const details = mk("details", "dc-fold" + (cls ? " " + cls : ""));
     const summary = mk("summary", "res-draft-summary");
     const word = mk("span", "dc-fold-word", t("展开"));
     summary.append(chevron(), mk("span", null, summaryText), word);
     const body = mk("div", "dc-fold-body");
-    fill(body);
+    let filled = !lazy;
+    if (filled) fill(body);
     details.append(summary, body);
-    details.addEventListener("toggle", () => { word.textContent = details.open ? t("收起") : t("展开"); });
+    details.addEventListener("toggle", () => {
+      if (!filled && details.open) { filled = true; fill(body); }
+      word.textContent = details.open ? t("收起") : t("展开");
+    });
     return details;
   }
 
@@ -848,7 +855,7 @@
   function renderBelongs(host, page) {
     const trace = page.trace || {};
     if (page.type === "attempt") {
-      // 12.7: 「关联文件」 attaches more scripts, data and figures to it.
+      // 12.7: 「添加文件」 attaches more scripts, data and figures to it (21.6).
       if (!(trace.breaks || []).some((b) => b.kind === "no_files")) {
         const more = mk("div", "trace-belongs");
         more.appendChild(mk("span", "trace-belongs-word", t("还有文件属于这条尝试？")));
@@ -1416,6 +1423,12 @@
     if (drafts) main.appendChild(drafts);
     const attempts = attemptsLine(item.attempts, ctx && ctx.labels);
     if (attempts) main.appendChild(attempts);
+    // 21.5: a file put out of the paper stands with the day, and in a team who put it out.
+    if (item.paper && item.paper.out && item.paper.at) {
+      const who = [mk("span", null, when(item.paper.at))];
+      if (item.paper.by) who.push(mk("span", null, item.paper.by));
+      main.appendChild(fieldLine(t("放入「不属于论文」"), who));
+    }
     // 21.5: the actions beside what is missing -- a generating script, or an attempt -- and 「不属于论文」, on one line.
     const repair = item.trace && item.trace.repair;
     const put = ctx && item.paper && item.path;
@@ -1590,7 +1603,10 @@
       block.appendChild(p);
     }
     const status = mk("div", "notice-status");
-    if (!drafts.length) {
+    const byFile = {};
+    drafts.forEach((d) => { byFile[d.file] = d; });
+    const choices = (papers.recent || []).map((file) => byFile[file]).filter(Boolean);
+    if (!marked.length && !choices.length) {  // nothing to choose from (the attempt table is no paper): no instruction to press a control that is not there
       block.appendChild(mk("p", "node-empty", t("还没有读到文稿。")));
       page.appendChild(block);
       return;
@@ -1610,21 +1626,21 @@
       });
       block.appendChild(ul);
     }
-    const byFile = {};
-    drafts.forEach((d) => { byFile[d.file] = d; });
-    const choices = (papers.recent || []).map((file) => byFile[file]).filter(Boolean);
     if (choices.length) {
       const shown = papers.shown || 5;
       const control = mk("div", "res-picker");
       const list = mk("div", "res-picker-list hidden");
+      // 21.8: a file name is text and never the control; the choice is a button of its own (a name that wrote the mark
+      // would look like the links that open a draft).
       const pick = (d) => {
         const row = mk("div", "res-picker-row");
-        const b = mkButton(d.file, "node-link mono", () => writePaper({ draft: d.file, marked: true }, status,
+        row.appendChild(mk("span", "mono", d.file));
+        row.appendChild(mk("span", "node-sub-inline", d.modified ? t("改动于 {when}", { when: when(d.modified) }) : ""));
+        const b = mkButton(t("选这份"), "btn btn-small", () => writePaper({ draft: d.file, marked: true }, status,
           t("已设为论文正文：它的论断会出现在图表与论断里。"), b));
         const blocked = humanRecordsBlocked();
         if (blocked) { b.disabled = true; b.title = blocked; }
         row.appendChild(b);
-        if (d.modified) row.appendChild(mk("span", "node-sub-inline", t("改动于 {when}", { when: when(d.modified) })));
         return row;
       };
       choices.slice(0, shown).forEach((d) => list.appendChild(pick(d)));
@@ -1798,7 +1814,7 @@
       main.appendChild(put);
     }
     if (f.other_copies && f.other_copies.length) {
-      main.appendChild(fold(t("其他同名文件 {n} 个", { n: f.other_copies.length }), (body) => f.other_copies.forEach((p) => body.appendChild(mk("div", "dc-rel mono", p)))));
+      main.appendChild(fold(t("其他同名文件 {n} 个", { n: f.other_copies.length }), (body) => f.other_copies.forEach((p) => body.appendChild(mk("div", "dc-rel mono", p))), "", true));
     }
     li.append(kind, main);
     return li;

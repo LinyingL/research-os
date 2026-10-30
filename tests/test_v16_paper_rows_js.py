@@ -69,9 +69,12 @@ _PICKER = r"""
   control[0].click();
   out.shown = !picker.cls.has("hidden");
   const rows = (node) => node.kids.filter((k) => typeof k !== "string" && k.cls.has("res-picker-row"));
-  out.first = rows(picker).map((r) => [text(r.all().find((k) => k.tag === "BUTTON")), text(r.kids[1] || "")]);
+  // a file name is text, never the control (21.8); the choice is a button of its own
+  out.first = rows(picker).map((r) => [text(r.kids[0]), text(r.kids[1] || "")]);
+  out.names = rows(picker).map((r) => r.all().filter((k) => k.tag === "BUTTON").map(text));
+  out.nameIsText = rows(picker).every((r) => r.kids[0].tag === "SPAN" && !r.kids[0].cls.has("node-link"));
   const more = byClass(picker, "res-picker-more")[0];
-  out.more = [text(more.kids[0]), rows(more.kids[1]).map((r) => text(r.all().find((k) => k.tag === "BUTTON")))];
+  out.more = [text(more.kids[0]), rows(more.kids[1]).map((r) => text(r.kids[0]))];
   out.claimDrafts = byClass(host, "res-draft").length;
   // choosing one writes the mark and the page reads again, now with a paper
   const choice = rows(picker)[1].all().find((k) => k.tag === "BUTTON");
@@ -111,6 +114,7 @@ def test_the_paper_is_chosen_with_one_control_that_opens_a_picker_of_the_drafts_
     assert [row[0] for row in out["first"]] == order  # five shown, the one changed most recently first
     days = ["10月10日", "10月8日", "10月7日", "10月6日", "10月5日"] if zh else ["10 Oct", "8 Oct", "7 Oct", "6 Oct", "5 Oct"]
     assert [row[1] for row in out["first"]] == [("改动于 " if zh else "Changed ") + day for day in days]
+    assert out["nameIsText"] is True and out["names"] == [["选这份" if zh else "Choose this one"]] * 5  # one button a row
     assert out["more"][0] == ("更多" if zh else "More")  # the rest under 「更多」
     assert out["more"][1] == [f"00_Current/drafts/d{n}.md" for n in (4, 3, 2, 1)]
     # choosing the second writes the mark through the existing path, and the page reads again once
@@ -318,7 +322,9 @@ global.apiPost = async () => ({ ok: true });
     assert figures[HAND] == ["Hand-drawn schematic", [attempt + a2]]  # the registered title, the attempt of the task
     assert figures["agent_out/fig_new.png"] == ["The new figure", [attempt + a2]]
     assert figures["agent_out/summary.csv"] == ["Summary of the run", [attempt + a2]]
-    assert figures[FIG["main"]] == ["fig_main.png", [attempt + a1]]  # the attempt its script is in
+    # the attempt its script is in, and the task's: the panel it reads is an output of the task, and a trace asks every
+    # file of its chain which attempt holds it (21.5)
+    assert figures[FIG["main"]] == ["fig_main.png", [attempt + a1 + ("、" if zh else ", ") + a2]]
     assert figures[WORD1] == ["image1.png", []]  # neither: nothing is said
     rows = out["dataRows"]
     assert rows["Cleaning script | agent_out/clean.py"] == [attempt + a2]

@@ -43,6 +43,7 @@ import logging
 import os
 import posixpath
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -265,7 +266,11 @@ def _columns_from_chain(conn: Connection, root: Path, node_id: str, chain: dict[
     otherwise), and the broken links of the chain's scripts with the files
     that may be the ones they mean (`broken`, always warnings)."""
     start = _type_of(node_id)
-    broken = _broken_entries(root, lineage.broken_in(conn, _script_edges(conn, chain)), names)
+    entries = lineage.person_entries(conn)  # read once: the broken links and the files already given to a script
+    found = lineage.broken_in(conn, _script_edges(conn, chain), entries)
+    if names is None and found:  # the walk for candidates is kept between openings of pages (`lineage.Names`)
+        names = lineage.Names(root, stamp=_scan_stamp(conn))
+    broken = _broken_entries(root, found, names, entries=entries)
     covered = {b["target"] for b in broken}
     by_depth: dict[int, list[dict[str, Any]]] = {}
     lines: list[dict[str, Any]] = []
@@ -371,19 +376,31 @@ def _script_edges(conn: Connection, chain: dict[str, Any]) -> list[dict[str, Any
             if e["type"] in ("reads", "writes")]
 
 
+def _scan_stamp(conn: Connection) -> int | None:
+    """The index's last scan, which says when the project was last read (`lineage.Names`'s `stamp`)."""
+    try:
+        return conn.execute("SELECT MAX(id) FROM scans").fetchone()[0]
+    except sqlite3.Error:
+        return None
+
+
 def _broken_entries(root: Path, found: list[dict[str, Any]], names: lineage.Names | None,
-                    memo: dict[tuple[str, str, str], list[dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+                    memo: dict[tuple[str, str, str], list[dict[str, Any]]] | None = None,
+                    entries: dict[tuple[str, str], set[str]] | None = None) -> list[dict[str, Any]]:
     """Broken links as the pages draw them (21.5): one per script, file and direction, with `candidates`, the
-    files that may be the one the script means (`provenance.candidates`). `type` is the code the page compares
-    (13.6), `relation` its words."""
+    files that may be the one the script means (`provenance.candidates`, less the files the researcher has already
+    given that script: one entry answers one path). `type` is the code the page compares (13.6), `relation` its
+    words."""
     names = lineage.Names(root) if names is None else names
     memo = {} if memo is None else memo
+    entries = entries or {}
     out: list[dict[str, Any]] = []
     for b in found:
         script, target, kind = b.get("script"), b.get("target"), b.get("kind") or "reads"
         if not script or not target or (script, target, kind) in memo:
             continue
-        memo[(script, target, kind)] = provenance.candidates(root, script, target, kind, names)
+        taken = entries.get((script, lineage.FAMILY.get(kind, kind)), ())
+        memo[(script, target, kind)] = provenance.candidates(root, script, target, kind, names, taken)
         out.append({"script": script, "target": target, "type": kind, "relation": RELATION_WORDS.get(kind, "读取"),
                     "line": b.get("line"), "candidates": memo[(script, target, kind)]})
     return out
@@ -469,8 +486,8 @@ def _attempt_trace(conn: Connection, root: Path, record: dict[str, Any], flags: 
     breaks = []
     if not members:
         breaks.append({"kind": "no_files", "node": node_id, "path": None,
-                       "label": settings.say("这条尝试还没有关联任何文件", "No files are linked to this attempt yet", lang),
-                       "repair": {"type": "belongs_to", "label": settings.say("关联文件", "Link files", lang), "file": None}})
+                       "label": settings.say("这条尝试还没有添加任何文件", "No files have been added to this attempt yet", lang),
+                       "repair": {"type": "belongs_to", "label": settings.say("添加文件", "Add files", lang), "file": None}})
         columns[1]["gap"] = breaks[0]
     return {"columns": columns, "lines": _dedupe_lines(lines), "deeper": 0, "breaks": breaks, "attempts": [],
             "variables": []}
@@ -634,7 +651,9 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
         in_paper = _in_paper([d["file"] for d in chain["drafts"]], root, path)
         out["in_paper"] = in_paper
         if prefix in ("figure", "dataset"):  # 21.5: 「不属于论文」 / 「放回论文」 on a figure or table's own page
-            out["paper_item"] = {"file": path, "out": path in {e["file"] for e in _marked(root)["not_in_paper"]}}
+            put_out = path in {e["file"] for e in _marked(root)["not_in_paper"]}
+            if out["exists"] or put_out:  # a file that is gone can be put back, not put out
+                out["paper_item"] = {"file": path, "out": put_out}
         out["tone"] = "warning" if in_paper else "quiet"  # a missing file of this page is plain unless the paper relies on it
         out["trace"] = _columns_from_chain(conn, root, node_id, chain, flags, in_paper)
         out["choices"] = {"attempts": _attempt_choices(conn, root)}
@@ -764,9 +783,11 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         item["drafts"] = [f for f in named if f in marked] + [f for f in named if f not in marked]  # the paper's first
         item["thumb"] = item["type"] == "figure" and kind_rows.thumbnail(root, item["path"])
         out = put_out.get(item["path"] or "")
-        item["paper"] = {"out": out is not None}
         if out is not None:
-            item["paper"].update(at=out["at"], by=_person(team, out["by"]) if team is not None and out["by"] else None)
+            item["paper"] = {"out": True, "at": out["at"],
+                             "by": _person(team, out["by"]) if team is not None and out["by"] else None}
+        elif item["exists"]:  # 「不属于论文」 is written for a file that is there (`papers.set_not_in_paper`); a gone one is mended, not put out
+            item["paper"] = {"out": False}
         return item
 
     rows: dict[str, dict[str, Any]] = {}
@@ -781,14 +802,15 @@ def results(conn: Connection, project_root: str | Path, draft: str | None = None
         node_id = _registered_id(entry)
         if node_id not in rows:
             rows[node_id] = row(node_id)
+    listed = {r["path"] for r in rows.values()}
     for file in put_out:  # put out of the paper and gone from the index: still there to be put back
-        if file not in {r["path"] for r in rows.values()}:
+        if file not in listed:
             kind = dataflow.node_type_for_path(file)
             node_id = f"{kind if kind in ('figure', 'dataset') else 'file'}:{file}"
             rows[node_id] = row(node_id)
     items, other, loose, excluded = [], [], [], []
     for node_id, item in rows.items():
-        if item["paper"]["out"]:
+        if item.get("paper", {}).get("out"):
             excluded.append(item)
         elif node_id not in cited:
             loose.append(item)
@@ -939,13 +961,13 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     names = lineage.Names(root)
     entries = lineage.person_entries(conn)
     gone = lineage.replaced_targets(conn, entries)
-    report = lineage.build_lineage_report(conn, root, names=names, replaced=gone)
+    report = lineage.build_lineage_report(conn, root, names=names, replaced=gone, entries=entries)
     orphan = {o["path"] for o in report["orphans"]}
     papers = _marked(root)
     out_files = {e["file"]: e for e in papers["not_in_paper"]}
     paper = provenance.Paper(conn, papers["drafts"], out_files)
     broken: dict[str, list[dict[str, Any]]] = {}
-    for entry in _broken_entries(root, report["broken_links"], names):
+    for entry in _broken_entries(root, report["broken_links"], names, entries=entries):
         broken.setdefault(entry["script"], []).append(entry)
     copies: dict[str, list[str]] = {}
     for d in report["duplicates"]:
@@ -957,7 +979,7 @@ def data_code(conn: Connection, project_root: str | Path) -> dict[str, Any]:
     def named(item: dict[str, Any]) -> dict[str, Any]:
         item["title"] = filed.title(item["path"])
         item["attempts"] = filed.attempts_of(item["path"])
-        if item["type"] == "dataset" and (item["in_paper"] or item["path"] in out_files):
+        if item["type"] == "dataset" and (item["in_paper"] and item["exists"] or item["path"] in out_files):
             item["paper"] = {"out": item["path"] in out_files}
         return item
 

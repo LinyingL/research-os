@@ -2303,7 +2303,7 @@ GUIDE_EN_ENGLISH_LABELS = (
     "Start collaborating…",
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
-    "Return with reason", "Discuss", "Changed on both sides", "Link files", "File under an attempt", "Assign a generating script",
+    "Return with reason", "Discuss", "Changed on both sides", "Add files", "File under an attempt", "Assign a generating script",
     # 18.2 text rules: the composer under Proposals (kinds and buttons) is in English too.
     "Submit a proposal", "New attempt", "Change a research assessment", "Variable definition", "Files only",
     "Review what will be sent",

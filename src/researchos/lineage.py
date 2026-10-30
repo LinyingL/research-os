@@ -50,7 +50,10 @@ there is broken (block 3), unless the researcher has said, with a `reads` or `wr
 own (`.researchos/mappings.toml`), that the same script reads or writes a file of that name elsewhere: that entry
 is what the script reads now, and the occurrence that named the missing file is superseded -- not listed as broken,
 and the file it named, when nothing else refers to it, not listed as a target at all (`superseded`,
-`replaced_targets`). The machine's edge stays in the index; only what the report calls broken changes.
+`replaced_targets`). The machine's edge stays in the index; only what the report calls broken changes. One entry
+answers one missing path: a script that names the same file name in two folders, neither there, needs an entry for
+each (two files of that name); the entry does not say which path it was for, so the paths come in the order of their
+names and the last ones are the ones left broken (`Entries.missing_of`).
 
 Never guesses which occurrence, script, or file is "the" answer -- every
 finding lists every matching occurrence/path it actually found, sorted for
@@ -62,6 +65,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import time
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -153,10 +157,37 @@ def _live_edges(conn: Connection, edge_type: str) -> list[dict[str, Any]]:
 FAMILY = {"reads": "reads", "writes": "writes", "generates": "writes"}
 
 
-def person_entries(conn: Connection) -> dict[tuple[str, str], set[str]]:
+class Entries(dict):
+    """`{(script path, family): {file paths}}` (`person_entries`), which can also say which files a script names that
+    are not there (`missing_of`), read from the index when first asked and only for a script that has an entry."""
+
+    def __init__(self, conn: Connection) -> None:
+        super().__init__()
+        self.conn = conn
+        self._missing: dict[tuple[str, str], list[str]] = {}
+
+    def missing_of(self, script: str, family: str) -> list[str]:
+        """The files `script` reads (or writes, by `family`) that a machine occurrence says are not on disk, sorted."""
+        key = (script, family)
+        if key not in self._missing:
+            found: set[str] = set()
+            for edge in _live_edges_of(self.conn, f"script:{script}"):
+                if edge["extractor"] in db.HUMAN_EXTRACTORS or edge["type"] not in ("reads", "writes") or FAMILY[edge["type"]] != family:
+                    continue
+                if any(occ.get("missing") and occ.get("file") == script for occ in _edge_occurrences(self.conn, edge)):
+                    found.add(_target_path_and_type(self.conn, edge["dst"])[0])
+            self._missing[key] = sorted(found)
+        return self._missing[key]
+
+
+def _live_edges_of(conn: Connection, script_id: str) -> list[dict[str, Any]]:
+    return [e for e in db.query_edges(conn, src=script_id) if e["status"] != "rejected"]
+
+
+def person_entries(conn: Connection) -> Entries:
     """The files the researcher's own entries say a script reads or writes (`FAMILY`): `{(script path, family): {file
     paths}}`, from the live edges of a human extractor. Reads the index only."""
-    out: dict[tuple[str, str], set[str]] = {}
+    out = Entries(conn)
     for edge_type, family in FAMILY.items():
         for edge in _live_edges(conn, edge_type):
             if edge["extractor"] not in db.HUMAN_EXTRACTORS:
@@ -170,9 +201,18 @@ def person_entries(conn: Connection) -> dict[tuple[str, str], set[str]]:
 def superseded(entries: dict[tuple[str, str], set[str]], script: str | None, kind: str, target: str) -> bool:
     """Whether the researcher's own entry answers a script's naming of the missing file `target`: they said `script`
     reads (`kind` "reads") or writes (`kind` "writes") a different file of the same name. An entry for the very path
-    the script names does not answer it -- that file is still not there."""
-    name = posixpath.basename(target)
-    return any(p != target and posixpath.basename(p) == name for p in entries.get((script or "", FAMILY.get(kind, kind)), ()))
+    the script names does not answer it -- that file is still not there. One entry answers one path: when the script
+    names that file name in several folders, none of them there (`Entries.missing_of`), as many of them are answered as
+    there are entries of the name, the first in the order of the paths."""
+    script, family, name = script or "", FAMILY.get(kind, kind), posixpath.basename(target)
+    answers = [p for p in entries.get((script, family), ()) if p != target and posixpath.basename(p) == name]
+    if not answers:
+        return False
+    missing_of = getattr(entries, "missing_of", None)
+    if missing_of is None:
+        return True
+    rivals = sorted({p for p in missing_of(script, family) if posixpath.basename(p) == name} | {target})
+    return rivals.index(target) < len(answers)
 
 
 def broken_in(conn: Connection, edges: list[dict[str, Any]],
@@ -199,7 +239,7 @@ def broken_in(conn: Connection, edges: list[dict[str, Any]],
 def answered(conn: Connection, entries: dict[tuple[str, str], set[str]], edge: dict[str, Any]) -> bool:
     """Whether a script's link `edge` (a live `reads` / `writes`) is a machine link every occurrence of which names
     a file that is not there and that a person's own entry answers (`superseded`)."""
-    if edge["extractor"] in db.HUMAN_EXTRACTORS or edge["type"] not in ("reads", "writes"):
+    if not entries or edge["extractor"] in db.HUMAN_EXTRACTORS or edge["type"] not in ("reads", "writes"):
         return False
     target_path, _ = _target_path_and_type(conn, edge["dst"])
     found = _edge_occurrences(conn, edge)
@@ -210,6 +250,8 @@ def replaced_targets(conn: Connection, entries: dict[tuple[str, str], set[str]] 
     """The ids of the files that exist only because a script named them and that a person's own entry has since
     answered (module docstring): every link that refers to the file is an answered one (`answered`)."""
     entries = person_entries(conn) if entries is None else entries
+    if not entries:
+        return set()
     gone: dict[str, bool] = {}
     for edge_type in ("reads", "writes"):
         for edge in _live_edges(conn, edge_type):
@@ -217,16 +259,33 @@ def replaced_targets(conn: Connection, entries: dict[tuple[str, str], set[str]] 
     return {target for target, ok in gone.items() if ok}
 
 
-class Names:
-    """The project's files by base name (`_scan_basenames`), walked once and only when something asks."""
+#: The walks of pages that ask for a `stamp`, by project: `(stamp, when, files by base name)`.
+_WALKS: dict[str, tuple[Any, float, dict[str, list[str]]]] = {}
+#: How long a walk is kept for the same `stamp` (seconds): a node page with a broken link opens often, the project is big.
+WALK_KEPT = 20.0
 
-    def __init__(self, project_root: str | Path) -> None:
+
+class Names:
+    """The project's files by base name (`_scan_basenames`), walked once and only when something asks. With a `stamp`
+    (the index's last scan, which says the project was read as it was then) a walk is kept for `WALK_KEPT` seconds for
+    the next page that asks with the same stamp: a node page offers candidates for a broken link, and walking thousands
+    of files for each opening is what makes it slow."""
+
+    def __init__(self, project_root: str | Path, stamp: Any = None) -> None:
         self.root = Path(project_root)
+        self.stamp = stamp
         self._found: dict[str, list[str]] | None = None
 
     def get(self, name: str) -> list[str]:
         if self._found is None:
-            self._found = _scan_basenames(self.root)
+            key = str(self.root)
+            kept = _WALKS.get(key) if self.stamp is not None else None
+            if kept is not None and kept[0] == self.stamp and time.monotonic() - kept[1] < WALK_KEPT:
+                self._found = kept[2]
+            else:
+                self._found = _scan_basenames(self.root)
+                if self.stamp is not None:
+                    _WALKS[key] = (self.stamp, time.monotonic(), self._found)
         return self._found.get(name, [])
 
 
@@ -294,7 +353,7 @@ def _scan_basenames(project_root: Path) -> dict[str, list[str]]:
 
 
 def build_lineage_report(conn: Connection, project_root: str | Path, *, names: Names | None = None,
-                         replaced: set[str] | None = None) -> dict[str, Any]:
+                         replaced: set[str] | None = None, entries: dict[tuple[str, str], set[str]] | None = None) -> dict[str, Any]:
     """The full four-block lineage report (task W4), as a plain JSON-ready
     dict:
 
@@ -325,7 +384,7 @@ def build_lineage_report(conn: Connection, project_root: str | Path, *, names: N
     flags = judgements.link_flags(conn)
     readers_by_target = _collect_by_target(conn, reads_edges, flags)
     writers_by_target = _collect_by_target(conn, writes_edges, flags)
-    entries = person_entries(conn)
+    entries = person_entries(conn) if entries is None else entries  # a caller that has read them says so
     # What a person's own entry has answered (module docstring) is no target of this report: the script reads
     # the file they named now.
     gone = replaced_targets(conn, entries) if replaced is None else replaced

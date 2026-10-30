@@ -198,7 +198,7 @@ person when they join.
    the reason. Sync again when it says **Approved, awaiting sync**.
 
 Proposals and replies arrive after OneDrive syncs. Comments, link judgments,
-and changes made with **File under an attempt**, **Link files** or **Assign a generating script**
+and changes made with **File under an attempt**, **Add files** or **Assign a generating script**
 travel with sync without individual approval.
 Lines between research attempts require the PI's approval.
 

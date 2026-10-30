@@ -227,7 +227,7 @@ def test_node_fields_split_label_and_cjk_directory(project):
     assert node == {
         "id": MONTHLY, "type": "dataset", "path": f"{STEPS}/数据/topicshift_monthly.csv",
         "label": "topicshift_monthly.csv", "dir": f"{STEPS}/数据",
-        "missing": False, "orphan_input": False, "ghost": False,
+        "missing": False, "orphan_input": False, "orphan_tone": None, "ghost": False,
     }
 
 

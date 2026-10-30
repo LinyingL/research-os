@@ -93,7 +93,7 @@ def test_the_table_is_read_whole_and_its_words_are_plain_english_and_unique():
 #: 18.2's words (and 13.4's gains): each is a row, as written there.
 TERMS_OF_18_2 = {
     "连线确认": "Link judgments", "关系图": "Relationship map", "研究判断": "Research assessment",
-    "补上来源": "Add a source", "缺尝试": "Missing attempt", "关联文件": "Link files",
+    "补上来源": "Add a source", "缺尝试": "Missing attempt",
     "正式版本": "Official version", "改动与备注": "Changes and comments", "备注": "Comment", "笔记": "Note",
     "图表与论断": "Figures and claims", "结果记录": "Result records", "输出": "Outputs", "实验": "Experiment",
     "本机": "This Mac", "项目首页": "Project home", "负责人": "Owner", "任务": "Task",
@@ -386,7 +386,7 @@ def test_21_4s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_w
 #: 21.5 / 21.6's words for the provenance pages (task V16 B3-1): the warning that replaces 未识别生成脚本 and 没有找到生成它的脚本,
 #: its action, the quiet text beside it, 归入尝试 for the file page and the question of a broken link.
 TERMS_OF_21_5 = {"缺生成脚本": "No generating script", "归入尝试": "File under an attempt", "指定生成它的脚本": "Assign a generating script",
-                 "没有生成脚本": "No script writes it", "是这个吗？": "Is it this one?"}
+                 "没有生成脚本": "No script writes it", "是这个吗？": "Is it this one?", "添加文件": "Add files"}
 
 
 @needs_node
@@ -403,8 +403,8 @@ def test_21_5s_words_are_in_21_6_s_table_and_the_page_holds_them_as_the_design_w
     table = english_table()
     assert {zh: table[zh] for zh in TERMS_OF_21_5} == TERMS_OF_21_5
     assert table["其他同名文件 {n} 个"] == {"one": "{n} other same-name file", "other": "{n} other same-name files"}
-    for old in ("未识别生成脚本", "没有找到生成它的脚本", "补上来源", "其他同名文件：{files}"):
+    for old in ("未识别生成脚本", "没有找到生成它的脚本", "补上来源", "其他同名文件：{files}", "关联文件", "没能关联文件"):
         assert old not in table, old
     for name in ("node.js", "desk.js", "app.html", "team.js", "workspace.js"):
         shown = (WEBAPP / name).read_text(encoding="utf-8")
-        assert not re.search(r"""t\(["'](未识别生成脚本|没有找到生成它的脚本|补上来源)["']""", shown), name
+        assert not re.search(r"""t\(["'](未识别生成脚本|没有找到生成它的脚本|补上来源|关联文件|没能关联文件)["']""", shown), name

@@ -843,6 +843,7 @@
     "{label}：{path}": "{label}: {path}",
     "步骤脚本": "Step script",
     "人工关联": "Linked by hand",
+    "任务登记": "Registered by a task",
     "暂时无法读取": "Cannot be read right now",
     "原始数据": "Raw data",
     "{relation}（人工标注）": "{relation} (drawn by hand)",
@@ -1074,8 +1075,8 @@
     "带上的文件": "Files it carries",
     "修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。":
       "A research assessment change carries only its row of the attempt table; to send files with it, tick them below.",
-    "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。":
-      "A new attempt carries its row and the files linked to it (the step scripts its description names, and files added with “Link files”); you can add or untick files.",
+    "新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「添加文件」挂上的文件）；可以加上或去掉。":
+      "A new attempt carries its row and the files linked to it (the step scripts its description names, and files added with “Add files”); you can add or untick files.",
     "变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。":
       "A variable definition carries only the new version's definition file; to send files with it, tick them below.",
     "只带勾选的文件。": "Only the ticked files.",
@@ -1519,7 +1520,9 @@
     "第 {n} 版": "Version {n}",
     "状态": "Status",
     "定义卡的记录现在无法读取": "The definition card records cannot be read right now",
-    "关联文件": "Link files",
+    "添加文件": "Add files",
+    "选这份": "Choose this one",
+    "放入「不属于论文」": "Put under “Not part of the paper”",
     // 21.5: a warning only where it can be acted on, with the action beside it (21.6's words).
     "指定生成它的脚本": "Assign a generating script",
     "归入尝试": "File under an attempt",
@@ -1544,7 +1547,7 @@
     "将记下：{script} 写出 {file}": "Record that {script} writes {file}",
     "将记下：{file} 属于 {attempt}": "Record that {file} belongs to {attempt}",
     "正在记下…": "Recording…",
-    "没能关联文件": "Could not link the file",
+    "没能添加文件": "Could not add the files",
     "已经写进 mappings.toml，但图谱还没有更新；稍后会自动重试": "Saved to mappings.toml; the index has not updated yet and will retry automatically",
     "已记下。": "Recorded.",
     "还有文件属于这条尝试？": "More files belong to this attempt?",

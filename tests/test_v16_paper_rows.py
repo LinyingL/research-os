@@ -163,7 +163,14 @@ def test_each_figure_row_says_whether_it_has_a_thumbnail_a_picture_only(root):
 
 
 def _entries(root: Path) -> list[dict]:
+    """The drafts' table of papers.toml (`[[paper]]`)."""
     return tomllib.loads(papers.papers_path(root).read_text(encoding="utf-8"))["paper"]
+
+
+def _file_entries(root: Path) -> list[dict]:
+    """The files' table of the same file (`[[paper_file]]`, 21.5): a second table, so that an older Research OS, which reads
+    only `[[paper]]`, still reads the file."""
+    return tomllib.loads(papers.papers_path(root).read_text(encoding="utf-8")).get("paper_file", [])
 
 
 def test_putting_a_by_product_out_of_the_paper_and_back_is_an_entry_each_in_the_event_log_and_moves_its_row(root, monkeypatch):
@@ -181,21 +188,22 @@ def test_putting_a_by_product_out_of_the_paper_and_back_is_an_entry_each_in_the_
     assert row["in_paper"] is False and row["trace"]["tone"] == "quiet" and row["trace"]["state"] == "no_source"
     assert row["paper"]["out"] is True and row["paper"]["at"] and row["paper"]["by"] is None  # one person: nobody to name
     assert after["counts"]["open"] == before["counts"]["open"] - 1 and after["counts"]["excluded"] == 1
-    # the file is the history: an act per change, in the form of the marks (id, seq, at, by, via)
-    marks, outs = _entries(root)[0], _entries(root)[1]
-    assert (marks["act"], marks["draft"]) == ("mark", DRAFT) and "file" not in marks
+    # the file is the history: an act per change, in the form of the marks (id, seq, at, by, via), in a table of its own
+    marks, outs = _entries(root)[0], _file_entries(root)[0]
+    assert (marks["act"], marks["draft"]) == ("mark", DRAFT) and "file" not in marks and len(_entries(root)) == 1
     assert (outs["act"], outs["file"], outs["via"]) == ("not_in_paper", FIG["needs"], "app") and "draft" not in outs
-    assert outs["id"].startswith("pp-") and outs["seq"] == 2 and outs["at"] and outs["by"] == PI[1] and marks["by"] == PI[1]
+    assert outs["id"].startswith("pf-") and outs["seq"] == 1 and outs["at"] and outs["by"] == PI[1] and marks["by"] == PI[1]
     # nothing on disk moved, and the draft is still the paper
     assert (root / FIG["needs"]).read_bytes() == b"\x89PNG needs" and papers.marked(root)["drafts"] == [DRAFT]
     assert papers.marked(root)["not_in_paper"][0]["file"] == FIG["needs"]
     # again: nothing appended
-    assert papers.set_not_in_paper(root, FIG["needs"], True, via="app")["changed"] is False and len(_entries(root)) == 2
+    assert papers.set_not_in_paper(root, FIG["needs"], True, via="app")["changed"] is False and len(_file_entries(root)) == 1
     # 放回论文: the next entry; the figure is the paper's again, as it was
     back = papers.set_not_in_paper(root, FIG["needs"], False, via="app")
     assert back["changed"] and back["files"] == []
-    assert [(e["act"], e.get("file") or e.get("draft"), e["seq"]) for e in _entries(root)] == [
-        ("mark", DRAFT, 1), ("not_in_paper", FIG["needs"], 2), ("back_in_paper", FIG["needs"], 3)]
+    assert [(e["act"], e["draft"], e["seq"]) for e in _entries(root)] == [("mark", DRAFT, 1)]
+    assert [(e["act"], e["file"], e["seq"]) for e in _file_entries(root)] == [
+        ("not_in_paper", FIG["needs"], 1), ("back_in_paper", FIG["needs"], 2)]
     restored = _results(root)
     assert restored["excluded"] == [] and restored["counts"] == before["counts"]
     assert next(i for i in restored["items"] if i["path"] == FIG["needs"])["trace"]["tone"] == "warning"
@@ -301,9 +309,9 @@ def test_a_members_not_in_paper_travels_with_the_sync_and_is_taken_at_the_publis
     with drive.pi():
         assert share.status(drive.official)["incoming"]["papers"] == 1
         share.publish(drive.official)
-        entries = tomllib.loads(papers.papers_path(drive.official).read_text(encoding="utf-8"))["paper"]
+        entries = _file_entries(drive.official)
         assert [(e["act"], e["file"], e["by"], e["via"]) for e in entries] == [("not_in_paper", "figs/fig1.png", MEMBER[1], "app")]
-        assert entries[0]["recovered_from"].startswith("pp-")
+        assert entries[0]["recovered_from"].startswith("pf-")
         assert [e["file"] for e in papers.marked(drive.official)["not_in_paper"]] == ["figs/fig1.png"]
     with drive.member():
         papers.set_not_in_paper(drive.work, "figs/fig1.png", False, via="app")
@@ -311,8 +319,7 @@ def test_a_members_not_in_paper_travels_with_the_sync_and_is_taken_at_the_publis
     with drive.pi():
         share.publish(drive.official)
         assert papers.marked(drive.official)["not_in_paper"] == []
-        assert [e["act"] for e in tomllib.loads(papers.papers_path(drive.official).read_text(encoding="utf-8"))["paper"]] == [
-            "not_in_paper", "back_in_paper"]
+        assert [e["act"] for e in _file_entries(drive.official)] == ["not_in_paper", "back_in_paper"]
 
 
 def test_a_team_names_who_put_a_figure_out(drive):  # noqa: F811

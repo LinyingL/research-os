@@ -520,7 +520,12 @@ global.apiPost = async (path, body) => {
   const press = (label) => host.all().find((k) => k.tag === "BUTTON" && k.kids.join("") === label);
   const button = press(%(label)s);
   button.click();
-  if (%(picker)s) { await settle(); press("paper.md").click(); }  // 21.5: on 图表与论断 the one control opens the picker; the draft chosen in it is written
+  // 21.5: on 图表与论断 the one control opens the picker; the draft chosen in it (its own button, 21.8: the name is text) is written
+  if (%(picker)s) {
+    await settle();
+    const row = host.all().find((k) => k.cls && k.cls.has("res-picker-row") && k.kids.some((c) => typeof c !== "string" && c.textContent === "paper.md"));
+    row.all().find((k) => k.tag === "BUTTON").click();
+  }
   await settle();
   const written = calls.slice(start);
   const tick = calls.length;
