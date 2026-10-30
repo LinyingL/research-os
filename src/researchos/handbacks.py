@@ -1,21 +1,451 @@
-"""Handbacks (交回, DESIGN.md 21.2): which of them the person has not opened yet.
+"""Handbacks (交回, DESIGN.md 21.2): what an agent hands back, whether this person has opened it, and what confirming
+its suggested assessment writes.
 
 A handback is a run's report, the report's context and its registered outputs, from the moment the run ends with
 `researchos_complete_task`. It is listed in 等你处理 and on its attempt's card until the person who started the run
-opens it. That an agent run has been handed back is in the project (the task's `report`); that *this person* has
-looked at it is not: "opened" is kept per person on this Mac under the Research OS home, never in the project (21.2).
+opens it. That an agent run handed something back is in the project (the task's `report`); that *this person* has
+looked at it is not: "opened" is kept per person on this Mac under the Research OS home, never in the project, in
+`<home>/handbacks/<project id>/<one file per person>.json`, by report path. A report is opened for the run that
+handed it back: a task sent back and handed in again is unopened again.
 
-This module is the interface the readers use -- the route map's cards (21.1, `attempt_tasks`) and, later, 项目首页's
-「现在在做什么」 (21.4). The store itself, and the writes that mark a handback opened, come with the handback view
-(task B1-3); until then every handback counts as opened, so nothing waits and no card says 等你看.
-"""
+- **Reading.** `unopened` (the interface the route map's cards and 项目首页's 等你处理 use), `mark_opened`, `view`
+  (everything the handback page shows, in this order: headline, key numbers with the number check of 16.1 against
+  their files, what is undone, what the researcher must decide, the suggestion, the outputs by kind, the report, the
+  run) -- reads, except for `mark_opened`, which writes the home's store and nothing of the project.
+- **Confirming.** `confirm` writes the attempt's research assessment through the write the panel uses
+  (`proposals.write_directly`: only the changed cell, backup, history, conflict and abandonment rules -- 14.3 and
+  18.3), puts 「由 张三 确认（采纳 Claude Code · sonnet 的建议）」 on that version in the history (a plain 「由 张三 确认」
+  when the person changed the suggestion), and records `assessment_confirmed` in the report's context through the
+  human context write (`research_records.confirm_assessment`) -- in that order, and only after the record could be
+  written has been checked, so the table is never left saying something the record does not. A member's write lands
+  in their working copy and the page proposes it (12.4). Nothing of this is an agent's: the guard that keeps an
+  agent from writing the attempt table is unchanged.
+
+The engine says no sentence of its own here but its refusals (13.1)."""
 
 from __future__ import annotations
+
+import hashlib
+import json
+import threading
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from researchos import db, history, paths, people, proposals, research_records, workspace
+from researchos.agents import labels as agent_labels
+from researchos.agents import runs as run_store
+from researchos.ingest import attempts as attempts_ingest
+from researchos.records import files as record_files
+from researchos.records.identity import read_identity
+from researchos.semantic import draft
+from researchos.webapp import mapedit
+
+OPENED_DIRNAME = "handbacks"
+#: The outputs the page lists, by kind, in this order (21.2: figures, tables, data, code, then the rest).
+OUTPUT_KINDS = ("figure", "table", "data", "code", "document", "literature", "variable")
+OUTPUTS_SHOWN = 200
+_LOCK = threading.Lock()
+
+
+# -- which handbacks a person has opened ---------------------------------------------------------------------------
+
+
+def _store_file(project_id: str, person: str | None) -> Path:
+    """The file one person's opened handbacks of one project are kept in: named by a hash of the member id, which can
+    hold any character of an email address."""
+    key = hashlib.sha256(person.encode("utf-8")).hexdigest()[:32] if person else "nobody"
+    return paths.researchos_home() / OPENED_DIRNAME / run_store._check_project_id(project_id) / f"{key}.json"  # noqa: SLF001
+
+
+def _read_opened(file: Path) -> dict[str, dict[str, Any]]:
+    try:
+        data = json.loads(file.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    opened = data.get("opened") if isinstance(data, dict) else None
+    if not isinstance(opened, dict):
+        return {}
+    return {report: entry for report, entry in opened.items() if isinstance(report, str) and isinstance(entry, dict)}
+
+
+def _handed_back(project_id: str) -> dict[str, dict[str, Any]]:
+    """Each report an agent run handed back that is still handed back -- the run was not undone -- with the newest run
+    that did, by report path. At most the runs the run store keeps (17.6)."""
+    found: dict[str, dict[str, Any]] = {}
+    for run in run_store.iter_runs(project_id):  # newest first
+        report = run.get("report")
+        if isinstance(report, str) and report and not run.get("reverted") and report not in found:
+            found[report] = run
+    return found
+
+
+def person_of() -> str | None:
+    """The person this Mac belongs to (`me.toml`'s id); None when none is set or it cannot be read."""
+    try:
+        return people.current_member_id()
+    except people.PeopleError:
+        return None
+
+
+def _mine(run: dict[str, Any], person: str | None) -> bool:
+    """Whether `person` is the one who started `run`; a run that names nobody (no `me.toml` then) is whoever's Mac it
+    is."""
+    return run.get("by") is None or run.get("by") == person
 
 
 def unopened(project_id: str | None, person: str | None) -> list[str]:
     """The handbacks `person` has not opened in the project `project_id`: the project paths of their result records
     (`research/results/<name>.md`), oldest first. `person` is the person this Mac belongs to (`proposals.role_of`'s
     `me`; None when none is set), `project_id` the project's identity (None when it has none): neither is a path
-    or a name typed on a page. Reads only. Nothing yet -- see the module docstring."""
-    return []
+    or a name typed on a page. A handback counts for the person who started the run that handed it back, and until
+    they open it; one opened before a later run handed the report back again is unopened again. Reads only."""
+    if not project_id:
+        return []
+    try:
+        opened = _read_opened(_store_file(project_id, person))
+        found = _handed_back(project_id)
+    except (OSError, ValueError):
+        return []
+    waiting = [(run["id"], report) for report, run in found.items()
+               if _mine(run, person) and str((opened.get(report) or {}).get("run") or "") < run["id"]]
+    return [report for _run, report in sorted(waiting)]
+
+
+def mark_opened(project_id: str, person: str | None, report: str) -> dict[str, Any]:
+    """`person` has opened the handback `report`: kept in the home's store for the run that handed it back. A report no
+    run handed back (one written by hand) has nothing to open and is not recorded. The store keeps only reports
+    that are still handed back, so it does not grow with the runs it has forgotten."""
+    file = _store_file(project_id, person)
+    found = _handed_back(project_id)
+    run = found.get(report)
+    if run is None:
+        return {"report": report, "opened": False}
+    with _LOCK:
+        opened = {key: entry for key, entry in _read_opened(file).items() if key in found}
+        opened[report] = {"run": run["id"], "at": run_store.now_iso()}
+        file.parent.mkdir(parents=True, exist_ok=True)
+        record_files.durable_write(file, (json.dumps({"version": 1, "opened": opened}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    return {"report": report, "opened": True, "run": run["id"]}
+
+
+def list_unopened(root: str | Path, project_id: str | None, person: str | None) -> list[dict[str, Any]]:
+    """`unopened`, each with what a list of them says: the report, its title (the first heading, else the file name),
+    the context's headline, the task it belongs to and that task's attempt, and the run that handed it back (`run`,
+    `ended`). A report that is gone, or whose task has been removed, is left out."""
+    root = workspace._root(root)  # noqa: SLF001
+    waiting = unopened(project_id, person)
+    if not waiting or not project_id:
+        return []
+    try:
+        tasks, _revision = workspace.read_tasks(root)
+    except (workspace.WorkspaceError, OSError):
+        return []
+    by_report = {task["report"]: task for task in tasks if task.get("report")}
+    found = _handed_back(project_id)
+    out = []
+    for report in waiting:
+        task = by_report.get(report)
+        if task is None:
+            continue
+        try:
+            raw = workspace._read(root, report)  # noqa: SLF001
+            if raw is None:
+                continue
+            title = workspace._heading(workspace._decode(raw)[:4096]) or Path(report).stem  # noqa: SLF001
+        except workspace.WorkspaceError:
+            continue
+        out.append({"report": report, "title": title, "headline": _context(root, report).get("headline") or "",
+                    "task": task["id"], "attempt": task.get("attempt"),
+                    "run": found[report]["id"], "ended": found[report].get("ended")})
+    return out
+
+
+def _context(root: Path, report: str) -> dict[str, Any]:
+    """The report's context as stored; empty when there is none or it cannot be read (the page says so itself)."""
+    try:
+        return research_records.parse(workspace._read(root, research_records.path_for(report)))  # noqa: SLF001
+    except workspace.WorkspaceError:
+        return {}
+
+
+# -- the number check ----------------------------------------------------------------------------------------------
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def check_numbers(root: str | Path, numbers: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Each key number with `check`: `found` when its value occurs in the text of the file it cites, by the number
+    check of 16.1 (`semantic.draft._unsupported_numbers`: every number in the value occurs in the text, as written or
+    as a value -- 0.10 is 0.1 -- a comma read both as a thousands and as a field separator); a value that holds no
+    number must occur as written, case and spacing aside. `missing` when it does not, `unreadable` when the file
+    cannot be read as text here (it is not there, only in the cloud, over 200 KB, not UTF-8). The check says what the
+    text holds; it does not say the number is right."""
+    root = workspace._root(root)  # noqa: SLF001
+    texts: dict[str, str | None] = {}
+    out = []
+    for item in numbers:
+        if item["file"] not in texts:
+            try:
+                raw = workspace._read(root, item["file"])  # noqa: SLF001
+                texts[item["file"]] = workspace._decode(raw) if raw is not None else None  # noqa: SLF001
+            except (workspace.WorkspaceError, OSError):
+                texts[item["file"]] = None
+        text = texts[item["file"]]
+        if text is None:
+            state = "unreadable"
+        elif draft._numbers(item["value"]):  # noqa: SLF001
+            state = "missing" if draft._unsupported_numbers(item["value"], text) else "found"  # noqa: SLF001
+        else:
+            state = "found" if _squash(item["value"]) in _squash(text) else "missing"
+        out.append({**item, "check": state})
+    return out
+
+
+# -- the page -----------------------------------------------------------------------------------------------------
+
+
+def _task_of(root: Path, report: str) -> dict[str, Any] | None:
+    try:
+        tasks, _revision = workspace.read_tasks(root)
+    except (workspace.WorkspaceError, OSError):
+        return None
+    return next((task for task in tasks if task.get("report") == report), None)
+
+
+def _attempt_view(root: Path, attempt_id: str | None) -> dict[str, Any] | None:
+    """The attempt a handback belongs to: `id`, `number`, `label`, and its research assessment now (`verdict`, the cell as
+    the table's reader sees it, and `status`: `{status, label, words}`); None when the task has none or the table no
+    longer has it."""
+    if not attempt_id:
+        return None
+    row = next((item for item in workspace._attempts(root, None) if item["id"] == attempt_id), None)  # noqa: SLF001
+    if row is None:
+        return None
+    number = attempt_id.rpartition("#")[2]
+    out: dict[str, Any] = {"id": attempt_id, "number": number, "label": row["label"], "verdict": None, "status": None}
+    try:
+        cells = mapedit.row_cells(root, number)
+    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError):
+        cells = None
+    if cells is not None:
+        verdict = attempts_ingest._clean_cell(cells["verdict"])  # noqa: SLF001
+        out.update(verdict=verdict, status=attempts_ingest.verdict_status(verdict, attempts_ingest.verdict_labels(root)))
+    return out
+
+
+def view(root: str | Path, project_id: str | None, person: str | None, report: str, lang: str = "zh") -> dict[str, Any]:
+    """`GET /api/workspace/handback?report=…`: the handback of the result record `report`, in the order the page shows
+    it. `report` and `title`, `text` (the report in full); `task` (`id`, `text`, `attempt`, `after`, `owner`, `done`;
+    None when no task points to it); `attempt` (`_attempt_view`); `run` (the newest run that handed it back: `id`,
+    `label`, `runner`, `model`, `by`, `by_name`, `ended`; None for a report written by hand); the context's
+    `headline`, `key_numbers` (with `check`, `check_numbers`), `undone`, `decide`; `suggested` (`status`, `reason`,
+    `known`, `marker`, `abandons`) and `confirmed` (`assessment_confirmed` with `by_label`); `statuses`
+    (`research_records.assessment_statuses`); `outputs` by kind order; `attempt_draft`; `context_error` when the
+    context cannot be read; `unopened` for `person`; `mode` (who writes: single, pi, member, none, unknown). Reads
+    only: opening is `mark_opened`, which the page asks for."""
+    root = workspace._root(root)  # noqa: SLF001
+    research_records.path_for(report)  # a result record, or the refusal
+    raw = workspace._read(root, report)  # noqa: SLF001
+    if raw is None:
+        raise workspace.WorkspaceError("not_found", "This report does not exist in the project", 404,
+                                       "这份报告已经不在项目里了。")
+    text = workspace._decode(raw)  # noqa: SLF001
+    task = _task_of(root, report)
+    run = (_handed_back(project_id).get(report) if project_id else None)
+    mode, _me, team = proposals.role_of(root)
+    out: dict[str, Any] = {
+        "report": report, "title": workspace._heading(text[:4096]) or Path(report).stem, "text": text,  # noqa: SLF001
+        "revision": workspace._revision(raw),  # noqa: SLF001
+        "task": ({key: task.get(key) for key in ("id", "text", "attempt", "after", "owner", "done")} if task else None),
+        "attempt": _attempt_view(root, task.get("attempt") if task else None),
+        "run": ({"id": run["id"], "label": run.get("label"), "runner": run.get("runner"), "model": run.get("model"),
+                 "by": run.get("by"), "by_name": run.get("by_name"), "ended": run.get("ended")} if run else None),
+        "mode": mode, "statuses": research_records.assessment_statuses(root),
+        "unopened": report in unopened(project_id, person), "context_error": None,
+        "headline": "", "key_numbers": [], "undone": "", "decide": [], "suggested": None, "confirmed": None,
+        "attempt_draft": None, "outputs": [],
+    }
+    try:
+        context = research_records.parse(workspace._read(root, research_records.path_for(report)))  # noqa: SLF001
+    except workspace.WorkspaceError as exc:
+        out["context_error"] = str(exc)
+        context = research_records.normalize({})
+    out.update(headline=context.get("headline", ""), undone=context.get("undone", ""), decide=list(context.get("decide", [])),
+               attempt_draft=context.get("attempt_draft"), key_numbers=check_numbers(root, context.get("key_numbers", [])))
+    suggestion = context.get("suggested_assessment")
+    if suggestion is not None:
+        known = next((item for item in out["statuses"] if item["status"] == suggestion["status"]), None)
+        out["suggested"] = {**suggestion, "known": known is not None, "marker": known["marker"] if known else "",
+                            "abandons": bool(known and known["abandons"])}
+    confirmed = context.get("assessment_confirmed")
+    if confirmed is not None:
+        out["confirmed"] = {**confirmed, "by_label": people.attribution({"by": confirmed["by"]}, team if team.state == "present" else None, lang)["label"]}
+    try:
+        entries = research_records._entries(root, report)  # noqa: SLF001
+    except (workspace.WorkspaceError, OSError):
+        entries = []
+    rank = {kind: index for index, kind in enumerate(OUTPUT_KINDS)}
+    out["outputs"] = [{key: item.get(key) for key in ("kind", "path", "title", "state")}
+                      for item in sorted((e for e in entries if e.get("kind") in rank), key=lambda e: rank[e["kind"]])][:OUTPUTS_SHOWN]
+    return out
+
+
+# -- confirming ----------------------------------------------------------------------------------------------------
+
+
+def _refused(code: str, message: str, message_zh: str, status: int = 409):
+    return workspace.WorkspaceError(code, message, status, message_zh)
+
+
+def _table_refusal(exc: Exception, root: Path):
+    """The attempt table's refusal as the page's: the cell was not written."""
+    if isinstance(exc, proposals.ProposalRefused):
+        return workspace.WorkspaceError(exc.code, str(exc), 409, exc.message_zh)
+    code = mapedit.error_code(exc, root) or "refused"
+    return workspace.WorkspaceError("handback_" + code, f"The attempt table refused the assessment, so nothing was changed: {exc}", 409,
+                                    "尝试表没有接受这条研究判断，什么都没有改。")
+
+
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _record_history(root: Path, node: str, before: int, who: str | None, note: str) -> str | None:
+    """The version of the attempt the write made carries `note` and `who`: the re-ingest that follows a write saw the
+    row first, as a scan on this Mac; this names the person on that same version (as an approval does) instead of
+    adding a second. None, or why the history could not be updated (the assessment is written all the same)."""
+    try:
+        identity = read_identity(root).identity
+        if identity is None:
+            return "the project has no readable identity"
+        conn = db.connect(paths.graph_db_path(root))
+        try:
+            attempt = db.get_node(conn, node)
+        finally:
+            conn.close()
+        if attempt is None:
+            return f"{node} is not in the index"
+        human = attempt.get("human_fields") or {}
+        fields = {"verdict": str(human.get("verdict") or ""), "result": str(human.get("result") or "")}
+        digest = history._attempt_digest(fields)  # noqa: SLF001
+        with history.Store.open(identity.id) as store:
+            latest = store.latest(node)
+            if latest is not None and latest.seq > before and latest.sha256 == digest and latest.source == "scan":
+                store.attribute(latest.seq, source="scan", who=who, note=note, approved_by=None)
+            else:
+                store.add(node, sha256=digest, size=None, kind="attempt", source="scan", who=who, note=note, summary=fields)
+    except Exception as exc:  # noqa: BLE001 -- the history is the record of the write, never a reason to undo it
+        return str(exc)
+    return None
+
+
+def _max_seq(root: Path) -> int:
+
+    try:
+        identity = read_identity(root).identity
+        if identity is None:
+            return 0
+        with history.Store.open(identity.id) as store:
+            row = store.conn.execute("SELECT MAX(seq) FROM versions").fetchone()
+            return int(row[0] or 0)
+    except Exception:  # noqa: BLE001 -- see `_record_history`
+        return 0
+
+
+def confirm(root: str | Path, body: Any, *, ingest_lock: Any = None) -> dict[str, Any]:
+    """`POST /api/workspace/handback/confirm` {report, status, reason?, abandon_reason?}: write the research assessment
+    of the attempt the report's task belongs to, as the person chose it -- the suggestion as it stands, or another
+    status or reason (`adopted` is whether it is the suggestion unchanged: the same status and reason). The cell is
+    the status's marker, a space and the reason (21.3); 其它 writes the reason alone. `abandon_reason` is what
+    14.3 asks when the status turns the route abandoned (the PI and a single researcher; a member's proposal asks it
+    itself). Everything is checked before anything is written: who may write, the task and its attempt, the status, the
+    context the record will go into. Then the cell (a cell the table already holds that way is not written again), the
+    history note, and `assessment_confirmed` in the context; the last two cannot undo the first, so they are answered
+    as `history_error` and `context_error`. Answers `written` (whether the table changed), `adopted`, `note` (the
+    history note) and `sentence` (the same, in the request's language, for a member's proposal), `confirmed`, `number`,
+    `node`, `cell`, `file`, `backup`, `ingest_error`, `decision`, `mode` and `by_label` (who confirmed, as people are named)."""
+    if not isinstance(body, dict):
+        raise _refused("invalid", "A confirmation must be an object", "内容格式不对，请检查后重试", 400)
+    root = workspace._root(root)  # noqa: SLF001
+    report, status = body.get("report"), body.get("status")
+    research_records.path_for(report)
+    mode, me, team = proposals.role_of(root)
+    if mode not in ("single", "pi", "member"):
+        raise _refused("read_only", f"The project is read-only for this user ({mode})", "当前项目只读，不能写研究判断。", 403)
+    workspace._require_write(root)  # noqa: SLF001 -- a member writes only in their recognized working copy: asked before the table is
+    reason = " ".join(str(body.get("reason") or "").split())
+    if not isinstance(status, str) or len(reason) > research_records.REASON_LIMIT:
+        raise _refused("invalid", "A confirmation names a status and a reason of at most "
+                       f"{research_records.REASON_LIMIT} characters", "内容格式不对，请检查后重试", 400)
+    chosen = next((item for item in research_records.assessment_statuses(root) if item["status"] == status), None)
+    if chosen is None:
+        raise _refused("handback_status_unknown", f"{status!r} is not one of this project's statuses",
+                       "这个研究判断的状态不在这个项目的选项里。", 400)
+    cell = reason if chosen["other"] else (f"{chosen['marker']} {reason}" if reason else chosen["marker"])
+    if not cell:
+        raise _refused("handback_reason_needed", "A status of Other needs the researcher's words", "选「其它」时，请写下你自己的话。", 400)
+    task = _task_of(root, report)
+    if task is None or not task.get("attempt"):
+        raise _refused("handback_no_attempt", "This handback's task does not belong to an attempt, so there is no assessment to "
+                       "write; put the task under an attempt first", "这份交回的任务还没有归入尝试，没有可写的研究判断。请先把任务归入一条尝试。")
+    node = task["attempt"]
+    if not any(item["id"] == node for item in workspace._attempts(root, None)):  # noqa: SLF001
+        raise _refused("handback_attempt_unknown", "The attempt this task belongs to is no longer in the attempt table",
+                       "这个任务所属的尝试已经不在尝试表里了。")
+    number = node.rpartition("#")[2]
+    stored = research_records.parse(workspace._read(root, research_records.path_for(report)))  # noqa: SLF001
+    suggestion = stored.get("suggested_assessment")
+    adopted = bool(suggestion) and suggestion["status"] == status and " ".join(suggestion["reason"].split()) == reason
+    run = _handed_back_run(root, report)
+    agent = (run or {}).get("label") or (agent_labels.parse_owner(task.get("owner")).label if _is_agent(task.get("owner")) else None)
+    who = people.attribution({"by": me}, team if team.state == "present" else None)["label"]
+    note = history.confirmed_note(who, agent if adopted else None)
+    confirmed = {"by": me or who, "at": _now_iso(), "status": status, "adopted": adopted}
+    research_records.confirmed_context(root, report, confirmed)  # refused now, not after the cell is written
+    try:
+        cells = mapedit.row_cells(root, number)
+    except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError) as exc:
+        raise _table_refusal(exc, root) from exc
+    if cells is None:
+        raise _refused("handback_attempt_unknown", "The attempt table has no single row for this attempt", "尝试表里找不到这条尝试的那一行。")
+    out: dict[str, Any] = {"written": False, "adopted": adopted, "note": note, "confirmed": confirmed, "number": number, "node": node,
+                           "cell": cell, "file": None, "backup": None, "ingest_error": None, "decision": None, "mode": mode,
+                           "history_error": None, "context_error": None, "by_label": who}
+    out["sentence"] = {"zh": note, "en": history_note_words(note, "en")}
+    if attempts_ingest._clean_cell(cells["verdict"]) != attempts_ingest._clean_cell(cell):  # noqa: SLF001
+        before = _max_seq(root)
+        try:
+            written = proposals.write_directly(root, "update", number, {"verdict": cell},
+                                               " ".join(str(body.get("abandon_reason") or "").split()) or None, ingest_lock=ingest_lock)
+        except (mapedit.MapEditError, attempts_ingest.AttemptsConfigError, proposals.ProposalRefused) as exc:
+            raise _table_refusal(exc, root) from exc
+        out.update(written=True, file=written["file"], backup=written["backup"], ingest_error=written["ingest_error"],
+                   decision=(written.get("decision") or {}).get("id"))
+        out["history_error"] = _record_history(root, node, before, me, note)
+    try:
+        research_records.confirm_assessment(root, report, confirmed)
+    except workspace.WorkspaceError as exc:
+        out["context_error"] = str(exc)
+    return out
+
+
+def _is_agent(owner: Any) -> bool:
+
+    try:
+        return agent_labels.parse_owner(owner) is not None
+    except ValueError:
+        return False
+
+
+def _handed_back_run(root: Path, report: str) -> dict[str, Any] | None:
+
+    got = read_identity(root)
+    return _handed_back(got.identity.id).get(report) if got.identity is not None else None
+
+
+def history_note_words(note: str, lang: str) -> str:
+    """A confirmation's note in `lang` (the note itself is stored in Chinese)."""
+    return history.confirmed_note_words(note, lang) or note

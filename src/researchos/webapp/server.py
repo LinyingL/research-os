@@ -692,7 +692,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, task_groups, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
 from researchos import research_records
 from researchos.agents import labels as agent_labels
@@ -4077,6 +4077,22 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     self._workspace_target({"project": query["project"][0]})
                 payload = self._workspace_api(lambda: task_groups.propose(served.root))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/handback":
+                # 21.2: one handback -- the report, its context, its outputs and the run that handed it back, in the order
+                # the page shows them -- a read; that this person opened it is the POST below
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                report = (query.get("report") or [""])[0]
+                payload = self._workspace_api(lambda: handbacks.view(served.root, served.project_id, handbacks.person_of(), report, self._lang()))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/handbacks":
+                # 21.2: the handbacks the person who started the run has not opened yet (等你处理, the cards' 等你看)
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                listed = self._workspace_api(lambda: handbacks.list_unopened(served.root, served.project_id, handbacks.person_of()))
+                self._send_json(200, {"unopened": listed, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4427,6 +4443,25 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     payload = self._workspace_api(lambda: task_groups.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock))
                 marks = workspace.local_annotations(served.root, {workspace.TASKS_PATH: payload["tasks_revision"]}, self._lang())
                 payload["tasks_officialness"] = marks["files"][workspace.TASKS_PATH]
+                payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
+                self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/handback/opened":
+                # 21.2: this person has opened the handback -- kept on this Mac under the Research OS home, not in the project
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                report = body.get("report")
+                if not isinstance(report, str) or not served.project_id:
+                    raise MissingParamError("request body must carry the 'report' of the handback")
+                self._send_json(200, handbacks.mark_opened(served.project_id, handbacks.person_of(), report))
+            elif parsed.path == "/api/workspace/handback/confirm":
+                # 21.2: the assessment of the handback's attempt, through the attempt write (under the watcher's ingest lock,
+                # as /api/attempts/write), then the record of it in the report's context
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: handbacks.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock))
                 payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
                 self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":

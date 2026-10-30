@@ -168,6 +168,10 @@ def test_the_lists_are_read_and_give_a_word_once_with_one_english():
         assert len(stems) == 1, f"{zh}: {sorted(forms)}"
 
 
+#: 21.2's words (the handback), listed in 17.9 and in 21.6's table: each is a key of the page's English table.
+TERMS_OF_21_2 = {"交回": "Handback", "代理建议": "Suggested by the agent", "确认这个判断": "Confirm this assessment", "报告": "Report",
+                 "运行日志": "Run log"}
+
 # -- the English table holds to it -----------------------------------------------------------------------------
 
 
@@ -336,3 +340,18 @@ global.extra={labels:panelBody.all().filter(node=>node.tag==="LABEL").map(node=>
 ''', lang=lang)
         assert assessment in shown["extra"]["labels"]
         assert "结论" not in shown["extra"]["labels"]
+
+
+@needs_node
+def test_21_2s_handback_words_are_listed_in_17_9_and_21_6_and_the_page_holds_them_as_the_design_writes_them():
+    """DESIGN 21.2 / 21.6 (task V16 B1-3): 交回, 代理建议, 确认这个判断, 报告 and 运行日志 are in 17.9's list as written, in
+    21.6's table (the English column holds each), and keys of the page's English table that carry exactly that English."""
+    given = {zh: en for name, zh, en in listed_pairs() if name == "17.9" and zh in TERMS_OF_21_2}
+    assert given == TERMS_OF_21_2
+    text = DESIGN.read_text(encoding="utf-8")
+    six = text[text.index("### 21.6"):text.index("### 21.7")]
+    english_column = " ".join(re.findall(r"^\| .+? \| .+? \| (.+?) \|$", six, re.M))
+    for zh, en in TERMS_OF_21_2.items():
+        assert en in english_column, f"{zh}: {en!r} is not in 21.6's English column"
+    table = english_table()
+    assert {zh: table[zh] for zh in TERMS_OF_21_2} == TERMS_OF_21_2

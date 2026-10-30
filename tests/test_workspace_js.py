@@ -1277,7 +1277,7 @@ def test_open_result_opens_the_report_the_way_the_rail_opens_a_document():
 agentsInfo=agentFixture();listed.tasks=[agentTask({done:true,report:REPORT_PATH})];
 docs[REPORT_PATH]={path:REPORT_PATH,kind:'result',title:'Fit results',content:'# Fit results\nIt worked.',revision:'r-1'};
 listed.documents.push({path:REPORT_PATH,kind:'result',title:'Fit results',excerpt:''});
-setRuns([mkRun({state:'done',can_reply:true,report:REPORT_PATH})]);
+setRuns([mkRun({state:'done',can_reply:true})]);   // a run that did not hand this report back (21.2: one that did opens the handback): the report opens to write in
 await window.ROWorkspace.load(root);await sleepTick();
 await find('打开结果',byClass('ws-agent')).click();
 console.log(JSON.stringify({title:byClass('ws-title-input').value,text:byClass('ws-writing').value,current:root.all().filter(e=>e.getAttribute('aria-current')==='page').map(e=>e.textContent)}));

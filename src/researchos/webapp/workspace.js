@@ -1428,6 +1428,298 @@
     } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取任务的分组。"), err), "err"); }
   }
 
+  // -- 交回: a handback, read in one place (DESIGN.md 21.2) -----------------------------------------------------------
+  // What an agent handed back with `researchos_complete_task`: the headline, the key numbers each with its file (the
+  // engine marks a value its file does not hold), what is undone, what only the researcher can decide, the agent's
+  // suggested assessment, then what it handed over and the report in full. The engine arranges it (`GET
+  // /api/workspace/handback`); this shows it in the side panel -- from 项目首页, the attempt's panel or the route map's
+  // card -- and tells the engine that this person has opened it (`POST .../opened`: kept on this Mac, not in the
+  // project). 「确认这个判断」 writes the attempt's research assessment (`POST .../confirm`: the write the attempt's panel
+  // uses, with the history saying the person confirmed it, and whether they took the suggestion unchanged); a member's
+  // is written into their working copy and proposed (12.4). Like the grouping panel it is a `folderSubject`: leaving it
+  // with a half-made assessment asks first.
+  const HANDBACK_WRITERS = ["single", "pi", "member"];
+  function hbPart(title) { const part = el("section", "ws-hb-part"); if (title) part.append(el("h3", "ws-hb-title", title)); return part; }
+  function hbWriter(subject) { return HANDBACK_WRITERS.indexOf(subject.view.mode) >= 0; }
+  function hbWho(view) { return view.run ? [view.run.label, view.run.by_name ? t("{name} 指派", { name: view.run.by_name }) : "", whenWords(view.run.ended)].filter(Boolean).join(" · ") : ""; }
+  function hbStatusChip(view, word) {
+    const known = (view.statuses || []).find((item) => item.status === word);
+    const tone = typeof verdictTone === "function" ? verdictTone({ status: known ? known.code : "other" }) : "plain";
+    return el("span", "status-label tone-" + tone, t(word));
+  }
+  function hbNumbers(view) {
+    const part = hbPart(t("关键数字")), list = el("ul", "ws-hb-numbers");
+    view.key_numbers.forEach((item) => {
+      const row = el("li", "ws-hb-number");
+      row.append(el("span", "ws-hb-what", item.what), el("code", "ws-hb-value", item.value),
+        named(button(item.file, () => { if (typeof openFilePanel === "function") openFilePanel(item.file); }, "btn btn-small ws-file-link"), t("打开：{file}", { file: item.file })));
+      if (item.check === "missing") row.append(el("span", "ws-status err ws-hb-flag", t("在所引文件里没找到这个数")));
+      else if (item.check === "unreadable") row.append(el("span", "ws-agent-quiet ws-hb-flag", t("所引文件读不了，没法核对")));
+      list.append(row);
+    });
+    part.append(list);
+    return part;
+  }
+  // The chooser of the assessment (a minimal one: the project's statuses and the researcher's words), prefilled.
+  function hbChooser(subject) {
+    const view = subject.view, choose = subject.choose, box = el("div", "ws-hb-choose"), locked = subject.busy;
+    const select = keyed(el("select", "form-input"), "hb-status"), reason = keyed(el("textarea", "form-input"), "hb-reason");
+    view.statuses.forEach((item) => { const option = el("option", null, t(item.status)); option.value = item.status; select.append(option); });
+    select.value = choose.status; reason.rows = 2; reason.value = choose.reason; select.disabled = locked; reason.disabled = locked;
+    const abandons = () => (view.statuses.find((item) => item.status === choose.status) || {}).abandons === true;
+    const abandonBox = el("div", "ws-hb-abandon"), abandon = keyed(el("textarea", "form-input"), "hb-abandon");
+    abandon.rows = 2; abandon.value = choose.abandon; abandon.disabled = locked;
+    abandonBox.append(field(view.mode === "member" ? t("理由（放弃一条路线时必填）") : t("放弃的理由（必填）"), abandon),
+      quiet(t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
+    abandonBox.classList.toggle("hidden", !abandons());
+    select.addEventListener("change", () => { choose.status = select.value; choose.edited = true; abandonBox.classList.toggle("hidden", !abandons()); });
+    reason.addEventListener("input", () => { choose.reason = reason.value; choose.edited = true; });
+    abandon.addEventListener("input", () => { choose.abandon = abandon.value; choose.edited = true; });
+    const save = keyed(button(t("保存"), () => {
+      if (abandons() && !choose.abandon.trim()) { subject.note = { words: t("放弃一条路线时必须写明理由"), kind: "err" }; drawHandback(subject); return; }
+      confirmHandback(subject, choose.status, choose.reason, abandons() ? choose.abandon : "");
+    }, "btn btn-primary btn-small"), "hb-save");
+    save.disabled = locked;
+    const cancel = keyed(button(t("取消"), () => { subject.choose = null; subject.note = null; drawHandback(subject); }), "hb-cancel");
+    cancel.disabled = locked;
+    const actions = el("div", "ws-agent-actions"); actions.append(save, cancel);
+    box.append(field(t("研究判断"), select), field(t("理由"), reason), abandonBox, actions);
+    return box;
+  }
+  function hbOpenChooser(subject, abandoning) {
+    const view = subject.view, now = view.attempt && view.attempt.status ? view.attempt.status : null, sug = view.suggested;
+    subject.choose = sug ? { status: sug.status, reason: sug.reason, abandon: abandoning ? sug.reason : "", edited: false }
+      : { status: now && view.statuses.some((item) => item.status === now.label) ? now.label : (view.statuses.find((item) => item.other) || view.statuses[0]).status, reason: now ? now.words : "", abandon: "", edited: false };
+    subject.note = null; drawHandback(subject); focusKey(panelBody, "hb-reason");
+  }
+  // What the assessment part says once a person has confirmed (now, or before): who, which status, and how it came.
+  function hbConfirmedLine(view, confirmed) {
+    const line = el("p", "ws-hb-confirmed"), by = confirmed.by_label || confirmed.by;
+    line.append(el("span", null, t("{who} 已确认：", { who: by })), hbStatusChip(view, confirmed.status));
+    if (view.suggested) line.append(el("span", "ws-agent-quiet", confirmed.adopted ? t("采纳了代理的建议") : t("改动了代理的建议")));
+    return line;
+  }
+  function hbAssessment(subject) {
+    const view = subject.view, sug = view.suggested, part = hbPart(t("代理建议")), confirmed = view.confirmed, writer = hbWriter(subject);
+    if (sug) {
+      const line = el("p", "ws-hb-suggested");
+      line.append(hbStatusChip(view, sug.status));
+      if (sug.reason) line.append(el("span", "ws-hb-reason", sug.reason));
+      part.append(line);
+    } else part.append(quiet(t("代理没有给出建议。")));
+    if (confirmed) { part.append(hbConfirmedLine(view, confirmed)); return part; }
+    if (!writer) {
+      part.append(quiet(view.mode === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步") : t("现在说不清你在这个项目里的角色，研究判断先不能改。")));
+      return part;
+    }
+    if (!view.task || !view.attempt) { part.append(quiet(t("这份交回的任务还没有归入尝试，所以没有可写的研究判断。"))); return part; }
+    if (view.mode === "member") part.append(quiet(t("你是这个项目的成员：确认会先写进你的工作副本，再生成提议；PI 批准后才进入正式版本。")));
+    if (sug && !sug.known) part.append(quiet(t("这个状态已经不在项目的选项里，请用「改一下」另选一个。")));
+    if (subject.choose) part.append(hbChooser(subject));
+    else if (subject.later) part.append(quiet(t("先不判断。之后可以在尝试的面板里写研究判断。")));
+    else {
+      const actions = el("div", "ws-agent-actions");
+      if (sug) {
+        // a suggestion that abandons the route still asks for the reason first (14.3): the chooser opens with it, the agent's words in it
+        const ok = keyed(button(t("确认这个判断"), () => (sug.abandons ? hbOpenChooser(subject, true) : confirmHandback(subject, sug.status, sug.reason, "")), "btn btn-primary btn-small"), "hb-confirm");
+        ok.disabled = subject.busy || !sug.known; actions.append(ok);
+        const change = keyed(button(t("改一下"), () => hbOpenChooser(subject)), "hb-change"); change.disabled = subject.busy; actions.append(change);
+        const later = keyed(button(t("先不判断"), () => { subject.later = true; drawHandback(subject); }), "hb-later"); later.disabled = subject.busy; actions.append(later);
+      } else {
+        const write = keyed(button(t("写下研究判断"), () => hbOpenChooser(subject), "btn btn-primary btn-small"), "hb-write"); write.disabled = subject.busy; actions.append(write);
+      }
+      part.append(actions);
+    }
+    return part;
+  }
+  // After a confirmation: the three ways on (21.2).
+  function hbNext(subject) {
+    const view = subject.view, actions = el("div", "ws-agent-actions ws-hb-next"), writer = hbWriter(subject);
+    if (writer && view.task && view.attempt) {
+      actions.append(keyed(button(t("再派一个任务"), () => hbNewTask(subject), "btn btn-primary btn-small"), "hb-next-task"),
+        keyed(button(t("从这条开新尝试"), () => hbNewAttempt(subject)), "hb-next-attempt"));
+    }
+    actions.append(keyed(button(t("这条先到这里"), () => { if (typeof closePanel === "function") closePanel(); }), "hb-next-stop"));
+    return actions;
+  }
+  function hbNewTask(subject) {
+    const view = subject.view;
+    if (typeof closePanel === "function") closePanel();
+    if (typeof startTaskOnHome === "function") startTaskOnHome({ attempt: view.attempt.id, after: view.task.id });
+    else startTask({ attempt: view.attempt.id, after: view.task.id });
+  }
+  // The new-attempt form (the attempt's table, 21.3), prefilled from the agent's `attempt_draft`, the new row 源自 this
+  // attempt: the form writes the line with the mapping write it has always used for a parent it was given.
+  function hbNewAttempt(subject) {
+    const view = subject.view, draft = view.attempt_draft || {};
+    const parents = [view.attempt.id].concat((draft.parents || []).filter((id) => id !== view.attempt.id));
+    if (typeof window.ROWorkspace.onCreateAttempt !== "function") return;
+    window.ROWorkspace.onCreateAttempt({ description: draft.description || "", result: draft.result || "", parents: parents }, () => {});
+  }
+  function hbOutputs(view) {
+    const part = hbPart(t("输出")), kinds = outputKinds(), seen = [];
+    view.outputs.forEach((item) => { if (seen.indexOf(item.kind) < 0) seen.push(item.kind); });
+    seen.forEach((kind) => {
+      const group = el("div", "ws-hb-outputs"), list = el("ul", "ws-outputs-files");
+      group.append(el("h4", "ws-outputs-kind", kinds[kind] || kind));
+      view.outputs.filter((item) => item.kind === kind).forEach((item) => {
+        const li = el("li", "ws-hb-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+        if (gone || cloud) li.append(el("span", null, name));
+        else li.append(named(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }, "btn btn-small ws-file-link"), t("打开：{file}", { file: item.path })));
+        if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+        if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
+        if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
+        if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
+        if (!gone && !cloud && kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+          const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
+          image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
+          preview.append(image); li.append(preview);
+        }
+        list.append(li);
+      });
+      group.append(list); part.append(group);
+    });
+    return part;
+  }
+  function hbReport(subject) {
+    const view = subject.view, box = el("details", "ws-hb-report");
+    box.append(disclosureSummary(t("报告")));
+    const body = el("div", "ws-preview"), keep = unchecked;
+    renderMarkdown(body, view.text, view.report); unchecked = keep;
+    box.append(body);
+    const tools = el("div", "ws-agent-actions");
+    tools.append(keyed(button(t("编辑报告"), () => hbEdit(subject), "ws-hb-link"), "hb-edit"));
+    box.append(tools);
+    return box;
+  }
+  function hbEdit(subject) {
+    if (typeof closePanel === "function") closePanel();
+    if (typeof openResultOnHome === "function") openResultOnHome(subject.report);
+    else openReport(subject.report);
+  }
+  function hbRunLog(subject) {
+    // the ways out of the panel are links, not buttons (21.8: a link that only navigates is a text link)
+    const view = subject.view, link = keyed(button(t("运行日志"), () => {
+      if (typeof closePanel === "function") closePanel();
+      if (typeof openRunLogOnHome === "function") openRunLogOnHome(view.task.id); else showRunLog(view.task.id);
+    }, "ws-hb-link"), "hb-log");
+    return link;
+  }
+  function drawHandback(subject) {
+    if (state.panelSubject !== subject || !subject.view) return;
+    const view = subject.view, snap = focusSnapshot(panelBody), body = el("div", "ws-hb");
+    panelTitle.textContent = view.title; panelSubtitle.textContent = hbWho(view);
+    if (panelTitle.classList) panelTitle.classList.add("plain-title");
+    if (subject.back) body.append(keyed(button(t("返回"), () => { if (subject.back) subject.back(); }, "ws-hb-link"), "hb-back"));
+    const empty = !view.headline && !view.key_numbers.length && !view.undone && !view.decide.length && !view.suggested;
+    if (view.context_error) body.append(el("p", "ws-status err", t("这份报告的要点读不出来。")));
+    else if (empty && !view.confirmed) body.append(quiet(t("这份交回没有附上要点。")));
+    if (view.headline) body.append(el("p", "ws-hb-headline", view.headline));
+    if (view.key_numbers.length) body.append(hbNumbers(view));
+    if (view.undone) { const part = hbPart(t("没做完的")); part.append(el("p", "ws-hb-text", view.undone)); body.append(part); }
+    if (view.decide.length) {
+      const part = hbPart(t("需要你决定的")), list = el("ul", "ws-hb-decide");
+      view.decide.forEach((question) => list.append(el("li", null, question)));
+      part.append(list); body.append(part);
+    }
+    if (view.suggested || view.confirmed || (view.task && view.attempt) || subject.done) {
+      const part = hbAssessment(subject);
+      if (subject.note) { const says = el("p", "ws-status"); says.setAttribute("role", "status"); status(says, subject.note.words, subject.note.kind); part.append(says); }
+      if (subject.done) part.append(hbDone(subject));
+      body.append(part);
+    }
+    if (view.confirmed) body.append(hbNext(subject));
+    if (view.outputs.length) body.append(hbOutputs(view));
+    body.append(hbReport(subject));
+    if (view.task && view.run) body.append(hbRunLog(subject));
+    panelBody.replaceChildren(body);
+    restoreFocus(panelBody, snap);
+  }
+  // The answer of a confirmation: what was written, what could not be recorded, and for a member the proposal to send.
+  function hbDone(subject) {
+    const done = subject.done, response = done.response, box = el("div", "ws-hb-done");
+    if (response.mode === "member") {
+      box.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number} 的研究判断。提议还没有发送。", { number: response.number })));
+      box.append(done.says, done.host);
+    } else {
+      box.append(el("p", "ws-status ok", response.written ? t("已写入尝试 #{number} 的研究判断。", { number: response.number }) : t("尝试 #{number} 的研究判断本来就是这样，只记下了你的确认。", { number: response.number })));
+    }
+    if (response.ingest_error) box.append(el("p", "ws-status err", t("已写入并备份，但重扫失败")));
+    if (response.history_error) box.append(el("p", "ws-status err", t("研究判断已写入，但修改历史没能记下这次确认。")));
+    if (response.context_error) box.append(el("p", "ws-status err", t("研究判断已写入，但报告的要点里没能记下这次确认。")));
+    return box;
+  }
+  async function confirmHandback(subject, statusWord, reason, abandonReason) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !here() || !hbWriter(subject)) return;
+    subject.busy = true; subject.note = { words: t("正在保存…") }; drawHandback(subject);
+    let response;
+    try {
+      response = await apiPost("/api/workspace/handback/confirm", { project: mark.project, report: subject.report, status: statusWord, reason: reason, abandon_reason: abandonReason });
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; subject.note = { words: errorWords(t("没能确认这个判断。"), err), kind: "err" }; drawHandback(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false; subject.note = null; subject.choose = null;
+    subject.view.confirmed = Object.assign({ by_label: response.by_label }, response.confirmed);
+    subject.done = { response: response, says: el("div", "notice-status"), host: el("div", "compose-result") };
+    drawHandback(subject);
+    if (response.mode === "member" && typeof ROTeam !== "undefined" && ROTeam.composeInto) {
+      const english = typeof uiLang === "function" && uiLang() === "en";
+      const draft = { kind: "verdict_change", sentence: english ? response.sentence.en : response.sentence.zh, number: response.number };
+      if (abandonReason && abandonReason.trim()) draft.reason = abandonReason.trim();
+      ROTeam.composeInto(subject.done.host, draft, subject.done.says);
+    }
+  }
+  // Marked opened for this person (kept on this Mac), and the cards that count what waits are drawn again.
+  async function hbMarkOpened(subject) {
+    if (!subject.view.unopened) return;
+    try { await apiPost("/api/workspace/handback/opened", { project: subject.mark.project, report: subject.report }); } catch (err) { return; }
+    if (!live(subject.mark)) return;
+    subject.view.unopened = false;
+    if (typeof refreshCurrentView === "function") refreshCurrentView();
+  }
+  async function openHandback(report, options) {
+    if (typeof mayReplacePanel === "function" && !mayReplacePanel()) return false;
+    const mark = stamp();
+    const subject = { kind: "handback", mark: mark, report: report, view: null, busy: false, choose: null, note: null, done: null, later: false,
+      back: (options && options.back) || null,
+      get dirty() { return !!this.choose && !!this.choose.edited; },
+      set dirty(on) { if (!on && this.choose) this.choose.edited = false; } };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("交回"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const view = await apiGet("/api/workspace/handback?report=" + encodeURIComponent(report) + "&project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || state.panelSubject !== subject) return false;
+      subject.view = view; drawHandback(subject);
+      hbMarkOpened(subject);
+    } catch (err) {
+      if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取这份交回。"), err), "err");
+      return false;
+    }
+    return true;
+  }
+  // 「运行日志」 (the link at the foot of a handback): the task's row on 项目首页 with its run's log open.
+  function showRunLog(taskId) {
+    if (!data || !ui) return false;
+    agentState(taskId).log = true; updateAgentSections();
+    if (latestRun(taskId)) ensureDetails(stamp());
+    const row = rowNodes[taskId];
+    if (row && typeof row.scrollIntoView === "function") row.scrollIntoView();
+    return true;
+  }
+  // 「打开结果」 on a task whose latest run handed its report back is the handback; any other report is opened to write in.
+  function openResult(task) {
+    const run = latestRun(task.id);
+    if (run && run.report && run.report === task.report && !run.reverted) return openHandback(task.report);
+    return openReport(task.report);
+  }
+
   // -- the owner control: people and this Mac's agents ------------------------------------------
   function ownerChoices() {
     const list = [{ value: "", words: t("不指定") }];
@@ -1724,7 +2016,7 @@
       const undo = keyed(named(button(t("撤回本次运行"), () => revertRun(task, run)), t("撤回本次运行：{task}", who)), k("undo"));
       undo.setAttribute("aria-expanded", String(!!st.undo)); undo.disabled = !allowed; actions.append(undo);
     }
-    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openReport(task.report)), t("打开结果：{task}", who)), k("report")));
+    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openResult(task)), t("打开结果：{task}", who)), k("report")));
     if (actions.childElementCount) box.append(actions);
     const note = agentNotes[task.id];
     if (note) box.append(noteBlock(note));
@@ -2934,6 +3226,6 @@
     if (typeof activateView === "function") activateView("workspace");
     if (ui) openDocument(path, false, true);
   }
-  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

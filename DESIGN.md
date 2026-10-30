@@ -4237,6 +4237,10 @@ report", 失败 "Failed", 已停止 "Stopped", 已中断 "Interrupted", 部分�
 "Went out of bounds" (a run that ended with an out-of-bounds change, in the
 warning colour; never 已完成).
 
+Added by 21.2 (the handback; the table of 21.6 has them too): 交回 "Handback"; 代理建议 "Suggested by the agent";
+确认这个判断 "Confirm this assessment"; 报告 "Report"; 运行日志 "Run log" (21.6 renames 运行记录 to it; the page changes the
+word where it converts that screen).
+
 ### 17.10 Acceptance
 
 1. A task assigned to 「Claude Code · sonnet」 runs from the task row; the
@@ -5994,6 +5998,70 @@ this Mac under the Research OS home, never in the project.
   guard is unchanged. What changes is that an agent may *propose* one, in
   its own field, always labelled as its suggestion, and that a person's
   adoption of it is recorded as such.
+
+**How it is kept and read** (`src/researchos/handbacks.py`; the brief in
+`agents/brief.py`; the context fields in `research_records.py`).
+
+- **The fields.** `headline` (at most 200 characters), `key_numbers` (at
+  most five `{what, value, file}`; `value` is text, written as in the file;
+  `file` a visible project path, which need not exist -- the check says so),
+  `undone`, `decide` (at most three), `suggested_assessment` `{status, reason}`
+  and `assessment_confirmed` `{by, at, status, adopted}` are written to the
+  context file only when they hold something, so a context from before 21
+  reads and saves byte for byte as it was. `status` is one of the project's
+  statuses as 21.3 lists them -- the words of the file, `现行` and the rest,
+  and the researcher's own from `[verdict_labels]`; an agent writing English
+  may name a default status by its English name (`Pending`), and the file
+  keeps the word (13.1). A status the researcher has since taken out does not
+  stop them saving the rest of the record; the handback shows the suggestion
+  as one the project no longer has. `assessment_confirmed` is refused on the
+  agent's tool path (`researchos_complete_task` answers `Not written: ...`), and
+  the editor's save keeps what is stored and refuses a change to it: the one
+  writer is the confirm path.
+- **The brief** asks for the fields in both languages, lists the project's
+  statuses (English names in the English brief), says the suggestion is only
+  a suggestion and that the agent never writes the attempt table, and that
+  it writes no note besides its report unless the task asks for one. The
+  guard is unchanged.
+- **Opened.** `<home>/handbacks/<project id>/<one file per person>.json`, the
+  file named by a hash of the member id, holds for each report the id of the
+  run that was opened. A handback waits for the person who started the run
+  that handed it back (a run that names nobody is whoever's Mac it is); it is
+  opened for that run, so a task sent back and handed in again waits again; a
+  run that was undone hands nothing back. `GET /api/workspace/handbacks` lists
+  what waits for this person; `POST /api/workspace/handback/opened` marks one.
+  Nothing is written in the project, and a store that cannot be read says
+  everything waits, not an error.
+- **The number check** is 16.1's (`semantic/draft.py`): every number in the
+  value occurs in the text of its file as written or as a value (0.10 is 0.1;
+  a comma is read both as a thousands and a field separator); a value with
+  no number must occur as written, case and spacing aside. `missing` is
+  marked 「在所引文件里没找到这个数」; a file that is not there, only in the
+  cloud, over 200 KB, not UTF-8 or a link cannot be checked and the line says
+  so. The check says what the text holds, not that the number is right.
+- **Confirming** (`POST /api/workspace/handback/confirm`) checks everything
+  first -- who may write, the task and its attempt, the status, the context
+  the record will go into -- and only then writes the cell (`proposals.
+  write_directly`: for the PI and a single researcher an abandonment needs
+  its reason, 14.3), the history note and `assessment_confirmed`. A cell the
+  table already holds that way is not written again; the confirmation is
+  recorded all the same. The note is stored in Chinese and said in the
+  request's language when it is read. The suggestion's status and reason,
+  space aside, are what `adopted` compares against. A suggestion that
+  abandons the route opens the chooser with the agent's words offered as the
+  reason, and asks for it.
+- **The page.** The handback is read in the side panel, from 项目首页's task
+  row (`打开结果` on a task whose latest run handed its report back; a report
+  written by hand still opens to write in), the attempt's panel (`打开交回`,
+  with 返回 to the attempt) and the route map's card (the handback line or
+  「等你看 n」; the rest of the card opens the attempt). A registered output
+  row of a run opens its record as a handback too; `编辑报告` in the handback
+  goes to the writing area. The outputs are headed 「输出」 (13.4), not the
+  retired 产出. Without a suggestion the person writes the assessment in the
+  chooser, prefilled with the one the attempt has. The chooser here is the
+  minimal one (the project's statuses and the researcher's words); 21.3's
+  replaces it. 撤销 (18.3) stays in the attempt's panel: a confirmation is
+  a record and is not undone by this view.
 
 ### 21.3 A research assessment is a choice and a reason
 

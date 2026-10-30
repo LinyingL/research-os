@@ -86,6 +86,9 @@ def prepare(root: Path, run: dict[str, Any], supplied: dict[str, Any] | None,
     """Merge background associations, never the old finding, into this run's result."""
     frozen = run.get('research_handoff') or {}
     source = frozen.get('source') or {}
+    if isinstance(supplied, dict) and 'assessment_confirmed' in supplied:
+        # 21.2: an agent may suggest an assessment (`suggested_assessment`); that one was confirmed is a person's act
+        raise research_records._bad(research_records.AGENT_CONFIRMED)
     if supplied is None and not source:
         return None  # old calls retain their exact behavior
     inherited = source.get('context') or {}

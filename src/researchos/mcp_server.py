@@ -555,6 +555,17 @@ def build_agent_server(project_root: str | Path, project_id: str, run_id: str) -
         (project paths), optional purposes (path to short note), and optional
         attempt_draft {description, result, parents}. A suggested attempt is never
         automatically registered or adopted. Earlier findings are background only.
+        A research task also hands back, in the same `research_context`: `headline`
+        (the answer to the task's question in one plain sentence, at most 200
+        characters); `key_numbers` (at most five {what, value, file}: `value` is text
+        written exactly as the cited project file has it, which Research OS checks);
+        `undone` (what you did not finish, and why); `decide` (at most three questions
+        only the researcher can answer); `suggested_assessment` {status, reason}
+        (`status` one of the project's assessment statuses, `reason` at most 1,000
+        characters). The suggested assessment is only a suggestion: the researcher
+        confirms or changes it, you never write the attempt table, and
+        `assessment_confirmed` is refused. Write no note besides this report unless the
+        task asks for one.
         If you cannot finish or a decision belongs to the person, call
         researchos_ask instead."""
         return agent_complete_task(root, project_id, run_id, report, title, outputs, research_context)

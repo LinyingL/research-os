@@ -207,6 +207,30 @@ def seen_run_id(note: object) -> str | None:
     return None
 
 
+# -- a confirmed assessment (DESIGN.md 21.2) ---------------------------------------------
+
+_CONFIRMED_NOTE = re.compile(r"由 (?P<who>.+?) 确认(?:（采纳 (?P<agent>.+) 的建议）)?\Z", re.S)
+
+
+def confirmed_note(who: str, agent: str | None = None) -> str:
+    """The note of the version a person's confirmation of an attempt's assessment writes from a handback: 「由 张三
+    确认（采纳 Claude Code · sonnet 的建议）」 when they took the agent's suggestion unchanged, 「由 张三 确认」 when they put
+    another status or reason in its place. Stored in Chinese, as the file's own words are (13.1); `name_people` says it
+    in the language of the request."""
+    return f"由 {who} 确认（采纳 {agent} 的建议）" if agent else f"由 {who} 确认"
+
+
+def confirmed_note_words(note: object, lang: str) -> str | None:
+    """`note` said in `lang` when it is a confirmation's (`confirmed_note`), else None."""
+    got = _CONFIRMED_NOTE.fullmatch(note) if isinstance(note, str) else None
+    if got is None:
+        return None
+    if got["agent"]:
+        return settings.say("由 {who} 确认（采纳 {agent} 的建议）", "Confirmed by {who} (adopted the suggestion of {agent})",
+                            lang, who=got["who"], agent=got["agent"])
+    return settings.say("由 {who} 确认", "Confirmed by {who}", lang, who=got["who"])
+
+
 # -- the version store ----------------------------------------------------------------
 
 
@@ -1161,6 +1185,9 @@ def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") ->
         else:
             unknown = unknown or unknown_who_label(root, lang)
             v["who_label"] = unknown
+        said = confirmed_note_words(v.get("note"), lang)  # 21.2: a confirmed assessment's note, in the request's language
+        if said is not None:
+            v["note"] = said
         approved = v.get("approved_by")
         if isinstance(approved, str) and approved:
             v["approved_by_label"] = people.attribution({"by": approved}, team, lang)["label"]

@@ -148,7 +148,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
-from researchos import history, names, outputs, paths, workspace
+from researchos import history, names, outputs, paths, research_records, workspace
 from researchos.agents import brief, guard, labels, profiles, runners, research_context
 from researchos.agents import runs as run_store
 from researchos.agents import snapshot, store
@@ -1185,7 +1185,8 @@ class AgentManager:
                              launch_error={"code": "guard_failed", "detail": refused[:2000]})
                 return
 
-        rules = brief.rules(lang=lang, runner=runner, prot=prot, folders=locations, work_folder=work_folder, slug=slug)
+        rules = brief.rules(lang=lang, runner=runner, prot=prot, folders=locations, work_folder=work_folder, slug=slug,
+                            statuses=[item["status"] for item in research_records.assessment_statuses(root)])
         if run["kind"] == "start":
             text = brief.instruction(lang=lang, task={"text": run["task_text"], "due": run.get("task_due")},
                                      project_name=root.name, overview=self._overview(root, lang),

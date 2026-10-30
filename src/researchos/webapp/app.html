@@ -1029,6 +1029,9 @@ body.canvas-mode main#main { max-width: none; padding: 0; display: flex; flex-di
 .rm-headline { display: block; text-overflow: ellipsis; color: var(--ink); }
 .rm-tasks { flex: none; }
 .rm-look { flex: none; font-weight: 600; color: var(--ink); }
+/* 21.2: the handback line and 「等你看」 open that handback; the rest of the card opens the attempt. */
+.rm-headline, .rm-look { cursor: pointer; }
+.rm-headline:hover { text-decoration: underline; }
 .rm-num { flex: none; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
 .rm-title { overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
 .rm-date { flex: none; font-size: 12px; color: var(--ink-soft); }
@@ -5357,6 +5360,17 @@ async function startTaskOnHome(choice) {
   ROWorkspace.startTask(choice);
 }
 
+// 「运行日志」 on a handback (DESIGN.md 21.2): the task's row on 项目首页 with its run's log open -- the home is shown by the
+// page's own view switch, as for 「在这条尝试下加任务」.
+async function openRunLogOnHome(taskId) {
+  const epoch = state.dataEpoch;
+  const loading = activateView("workspace");
+  if (currentView !== "workspace") return;
+  if (loading) await loading;
+  if (epoch !== state.dataEpoch || currentView !== "workspace" || !views.workspace.dataset.loaded) return;
+  ROWorkspace.showRunLog(taskId);
+}
+
 function renderRegisteredOutputs(host, bundle, variableDrafts) {
   if (!(bundle.items || []).length && !bundle.error) return;
   const box = mk("section", "registered-outputs");
@@ -5374,9 +5388,10 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
   const tasks = new Map();
   items.forEach((item) => {
     const key = item.task || item.report || "";
-    const found = tasks.get(key) || tasks.set(key, { title: "", at: "", fromRun: false, report: "", node: null }).get(key);
+    const found = tasks.get(key) || tasks.set(key, { title: "", at: "", fromRun: false, handed: false, report: "", node: null }).get(key);
     if (!found.title) found.title = item.task_removed ? t("任务已移除") : (item.report_title || item.task_title || "");
     if (item.at && (!found.at || (!found.fromRun && item.run))) { found.at = item.at; found.fromRun = !!item.run; }
+    if (item.run) found.handed = true;   // 21.2: a record an agent run handed back is read as a handback
     if (!found.report && item.report) found.report = item.report;
   });
   function taskGroup(item) {
@@ -5386,7 +5401,7 @@ function renderRegisteredOutputs(host, bundle, variableDrafts) {
     const head = mk("div", "registered-task-head");
     if (found.title) head.appendChild(mk("h3", "registered-task-title", found.title));
     if (found.at) head.appendChild(mk("span", "lit-hint registered-time", atText(found.at)));
-    if (found.report) head.appendChild(mkButton(t("打开结果"), "btn btn-small", () => openResultOnHome(found.report)));
+    if (found.report) head.appendChild(mkButton(t("打开结果"), "btn btn-small", () => (found.handed ? ROWorkspace.openHandback(found.report) : openResultOnHome(found.report))));
     if (head.children.length) found.node.appendChild(head);
     box.appendChild(found.node);
     return found.node;

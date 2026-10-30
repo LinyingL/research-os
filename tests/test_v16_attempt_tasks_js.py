@@ -128,7 +128,7 @@ def test_the_panel_lists_the_attempts_tasks_in_after_order_with_owner_state_in_w
     out = _run_panel(case, """
       await window.RODesk.openAttempt(%s);
       global.opening = [];
-      global.openResultOnHome = (path) => { opening.push(path); };
+      window.ROWorkspace = { openHandback: (path) => { opening.push(path); } };   // 21.2: the handback opens in its own panel
       global.startTaskOnHome = (choice) => { opening.push(choice); };
       const buttons = panelPart('panel-body').all().filter((k) => k.tag === 'BUTTON');
       buttons.filter((b) => b.kids.join('') === %s).forEach((b) => b.click());
@@ -175,12 +175,12 @@ def test_an_attempt_with_no_tasks_says_so_and_still_offers_the_way_to_add_one(la
 
 
 @needs_node
-def test_someone_who_cannot_write_in_the_project_is_not_offered_the_way_to_add_a_task_and_the_handback_entry_waits_for_a_guard():
+def test_someone_who_cannot_write_in_the_project_is_not_offered_the_way_to_add_a_task_and_the_handback_entry_opens_the_handback():
     case = _case("none")
     case["desk"]["attempts"][0]["work"] = _work(tasks=1, unfinished=0, items=_items()[:1])
     out = _run_panel(case, """
       await window.RODesk.openAttempt(%s);
-      global.openResultOnHome = (path) => { global.extra = path; };
+      window.ROWorkspace = { openHandback: (path) => { global.extra = path; } };
       window.confirm = (q) => { asked.push(q); return false; };
       const open = panelPart('panel-body').all().find((k) => k.tag === 'BUTTON' && k.kids.join('') === '打开交回');
       open.click();

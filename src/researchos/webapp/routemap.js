@@ -14,7 +14,9 @@
 // words: the engine's 等你批准 / 提议中 / 待复核 N, a member's own work as
 // 12.12 says, and 有改动 when the desk says so. A card whose attempt holds
 // tasks (21.1) says under its status 「任务 n，未完成 m」, 「等你看 n」 when a
-// handback is unopened and the first line of its latest handback; a card
+// handback is unopened and the first line of its latest handback (a click
+// on that line opens the handback, 21.2, on 「等你看」 the first one not
+// opened yet; the rest of the card opens the attempt); a card
 // with no tasks is as it was, and `after` is not drawn. The 「源自」 lines are a
 // human's lines (clay, 8.2): a parent stands left of what grew out of it,
 // no arrowheads; a line a proposal carries is dashed and says so. The
@@ -985,7 +987,9 @@
       if (card && e.target.closest(".rm-handle")) {
         m.drag = Object.assign(base, { kind: "line", from: card.dataset.id, target: null });
       } else if (card) {
-        m.drag = Object.assign(base, { kind: "card", id: card.dataset.id, el: card, start: m.positions[card.dataset.id].slice() });
+        m.drag = Object.assign(base, { kind: "card", id: card.dataset.id, el: card, start: m.positions[card.dataset.id].slice(),
+          // the handback lines of a card are their own click (21.2)
+          handback: e.target.closest(".rm-look") ? "waiting" : e.target.closest(".rm-headline") ? "latest" : null });
       } else {
         const line = e.target.closest(".rm-line");
         m.drag = Object.assign(base, { kind: "pan", cam: Object.assign({}, m.camera), line: line ? line.getAttribute("data-key") : null });
@@ -1032,7 +1036,7 @@
       } else if (d.kind === "card") {
         d.el.classList.remove("dragging");
         if (d.moved) cardMoved(d.id);
-        else openCard(d.id);
+        else if (!(d.handback && openHandbackOf(d.id, d.handback))) openCard(d.id);
       } else if (!d.moved || e.type === "pointercancel") {
         drawDraft(null, null);
         if (!d.moved && e.type !== "pointercancel") openCard(d.from); // a click on the handle is a click on its card
@@ -1059,6 +1063,19 @@
     function openCard(id) {
       select(id);
       if (typeof opts.onOpen === "function") opts.onOpen(id);
+    }
+
+    // A click on a card's handback line (21.2) opens that handback, `onOpenHandback(report)`: the line of the latest
+    // handback opens the latest, 「等你看 n」 the first of those not opened yet; a click on the rest of the card opens
+    // the attempt. False when the card has no handback to open.
+    function openHandbackOf(id, which) {
+      const a = m.byId.get(id), work = (a && a.work) || {}, latest = work.latest;
+      const waiting = which === "waiting" ? (work.items || []).find((item) => item.unopened && item.report) : null;
+      const report = (waiting && waiting.report) || (latest && latest.report);
+      if (!report || typeof opts.onOpenHandback !== "function") return false;
+      select(id);
+      opts.onOpenHandback(report);   // not from a panel: there is nothing to go back to
+      return true;
     }
 
     function onWheel(e) {

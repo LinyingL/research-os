@@ -254,7 +254,7 @@ def test_an_unopened_handback_is_counted_on_its_attempt_and_waits_as_to_read(roo
     assert [(i["id"], i["state"], i["unopened"]) for i in work["items"]] == [("a", "to_read", True), ("b", "not_started", False)]
     assert work["latest"]["unopened"] is True
     assert seen and seen[0][0] and seen[0][1] is None  # this project's id; no person is set on this machine
-    assert handbacks.unopened("p", "me") == []  # until B1-3 lands every handback counts as opened
+    assert handbacks.unopened("p", "me") == []  # a project id that is no project's has no run folder, so nothing waits (the store itself: B1-3)
     assert _work(_payload(root), A16)["unopened"] == 0
 
 

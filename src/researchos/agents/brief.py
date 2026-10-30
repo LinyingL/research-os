@@ -184,7 +184,7 @@ def _routing(lang: str, folders: Mapping[str, str], work_folder: str | None, slu
 
 
 def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None = None,
-          work_folder: str | None = None, slug: str | None = None) -> str:
+          work_folder: str | None = None, slug: str | None = None, statuses: Iterable[str] | None = None) -> str:
     """The binding rules of 17.5 in plain words, and how to finish (17.4).
 
     `prot` is `snapshot.protected(...)`: its `data` files (up to
@@ -193,7 +193,8 @@ def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None 
     `folders` (the eight locations, `outputs.folders`), `work_folder` and `slug`
     (this task's, `run.json`) give the routing block of 19.3; the process folder
     (19.12 item 1) is the location itself and the slug `task` when a caller names
-    neither."""
+    neither. `statuses` are the words of the project's assessment statuses (21.2), the ones an agent's suggested
+    assessment may name; the default words when a caller gives none."""
     complete = tool_name(runner, "researchos_complete_task")
     ask = tool_name(runner, "researchos_ask")
     note = tool_name(runner, "researchos_save_note")
@@ -205,6 +206,11 @@ def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None 
     shown, more = data[:PROTECTED_LIST_LIMIT], max(0, len(data) - PROTECTED_LIST_LIMIT)
     hooked = runner == "claude-code"  # only Claude Code has a hook that refuses every listed action (17.5)
 
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415 -- the statuses' words; only a run's brief needs them
+
+    given = list(statuses) if statuses else list(attempts_ingest.VERDICT_ENGLISH)
+    # the English brief names a default status by its English name (13.4; the engine takes both), the researcher's own words as written
+    words = ", ".join(attempts_ingest.VERDICT_ENGLISH.get(word, word) for word in given) if _is_en(lang) else ", ".join(given)
     routing = _routing(lang, folders, work_folder, slug) if folders else []
     routing += [
         "For research work, submit research_context with question, method, finding, limits, next_step; "
@@ -217,7 +223,22 @@ def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None 
         "limits（局限）、next_step（下一步）；attempts 写已有尝试 ID，variables 写明确的 {id, version}，"
         "references/materials 写项目内路径，purposes 只写已知用途。可用 attempt_draft {description, result, parents} "
         "建议登记尝试；是否登记、是否采用由研究者决定，不自动执行。变量输出只是未确认草稿。"
-        "不要直接编辑 *.context.json，只通过完成工具提交。"
+        "不要直接编辑 *.context.json，只通过完成工具提交。",
+        # 21.2: what the researcher is handed back. The suggestion is the agent's own field and nothing more: the
+        # assessment itself stays the researcher's (rule 1), and `assessment_confirmed` is their act, never an agent's.
+        "A research task also hands back, in the same research_context: headline, the answer to the task's question "
+        "in one plain sentence (at most 200 characters); key_numbers, at most five {what, value, file}, each value "
+        "written exactly as the cited project file has it (Research OS checks that the file holds it); undone, what "
+        "you did not finish and why; decide, at most three questions only the researcher can answer; and "
+        "suggested_assessment {status, reason}, where status is one of " + words + " (exactly as written) and "
+        "reason is at most 1,000 characters. The suggested assessment is a suggestion only: the researcher confirms or changes it. You do not "
+        "write the attempt table, and never send assessment_confirmed."
+        if _is_en(lang) else
+        "研究任务还要在同一个 research_context 里交回：headline（标题句），用一句平实的话回答任务的问题，"
+        "不超过 200 个字符；key_numbers，最多五个 {what, value, file}，value 必须与所引项目文件里的写法完全一致"
+        "（Research OS 会核对这个文件里有没有这个数）；undone，没做完的事和原因；decide，最多三个只有研究者能回答的问题；"
+        "suggested_assessment {status, reason}，status 取下面之一：" + words + "；reason 不超过 1000 个字符。"
+        "代理建议只是建议，由研究者确认或改动。你不写尝试表，也绝不提交 assessment_confirmed。",
     ]
 
     if _is_en(lang):
@@ -262,7 +283,8 @@ def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None 
             "(a few words). This call also marks the task done.",
             f"- If you are blocked, or a decision belongs to the person, call `{ask}` with one clear "
             "question and then stop. Their answer continues this conversation.",
-            f"- To keep a note for the project, call `{note}` with a title and the content.",
+            f"- Write no note besides your report unless the task asks for one; when it does, call `{note}` with a title "
+            "and the content.",
             f"- To look things up in the project's index you may use `{find}`, `{trace}` and `{status}`; they "
             "only read.",
             "- Write the report and any note in English.",
@@ -302,7 +324,7 @@ def rules(*, lang: str, runner: str, prot: dict, folders: dict[str, str] | None 
         "再给一个几个词的简短标题，说明这是什么结果。这一次调用同时把任务标为完成。",
         f"- 如果做不下去，或需要这个人来决定，调用 `{ask}`，提出一个清楚的问题，然后停下。"
         "他们的回答会接上这段对话。",
-        f"- 想给项目留一条笔记，调用 `{note}`，给出标题和内容。",
+        f"- 除了报告，不要另写笔记，除非任务要求；要求时调用 `{note}`，给出标题和内容。",
         f"- 想查项目的索引，可以用 `{find}`、`{trace}` 和 `{status}`；它们只读。",
         "- 报告和笔记用中文写。",
     ])

@@ -268,6 +268,8 @@ _ROWS_PRELUDE = r"""
 global.t = (s, v) => window.ROI18N.t(s, v);
 const opened = [];
 global.openResultOnHome = async (path) => { opened.push(path); };
+// 21.2: a record an agent run handed back (a row with a `run`) opens as a handback, the others to write in
+global.ROWorkspace = { openHandback: async (path) => { opened.push(path); } };
 const rowsOf = (items) => {
   const host = new Element('div');
   renderRegisteredOutputs(host, { items });

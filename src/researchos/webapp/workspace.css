@@ -245,3 +245,31 @@
 .ws-related-record + .ws-related-record { margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--line); }
 .ws-related-record p { margin: .3rem 0; font-size: .82rem; overflow-wrap: anywhere; }
 .ws-research-purpose { color: var(--ink-soft); }
+
+/* 21.2: 交回, a handback in the side panel -- the headline, the key numbers each with its file, what is undone, what the
+   researcher must decide, the agent's suggestion, the outputs by kind, the report folded, the run log. Ink and weight
+   mark what to read first; the clay is for a number its file does not hold (21.8). */
+.ws-hb { display: flex; flex-direction: column; gap: .9rem; font-size: .84rem; }
+.ws-hb-headline { margin: 0; font-size: 1rem; line-height: 1.6; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.ws-hb-part { display: flex; flex-direction: column; gap: .35rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+.ws-hb-title { margin: 0; font-size: .76rem; font-weight: 500; color: var(--ink-soft); }
+.ws-hb-text { margin: 0; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-hb-numbers, .ws-hb-decide { list-style: none; margin: 0; padding: 0; }
+.ws-hb-decide li { padding: .15rem 0; line-height: 1.7; overflow-wrap: anywhere; }
+.ws-hb-number { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .25rem 0; border-bottom: 1px solid var(--line); }
+.ws-hb-what { flex: 1 1 10rem; min-width: 0; overflow-wrap: anywhere; }
+.ws-hb-value { flex: none; font-family: var(--font-mono); font-weight: 600; }
+.ws-hb-flag { flex: 0 0 100%; margin: 0; }
+.ws-hb-suggested, .ws-hb-confirmed { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; margin: 0; }
+.ws-hb-reason { overflow-wrap: anywhere; }
+.ws-hb-choose { display: flex; flex-direction: column; gap: .4rem; }
+.ws-hb-choose .form-input { width: 100%; box-sizing: border-box; }
+.ws-hb-output { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .2rem 0; }
+.ws-hb-output .ws-output-path { flex: 0 0 100%; color: var(--ink-soft); font-size: .76rem; overflow-wrap: anywhere; }
+.ws-hb-outputs .ws-outputs-kind { margin: .3rem 0 0; }
+.ws-hb-report > .res-draft-summary { font-size: inherit; padding: .2rem 0; gap: .45rem; }
+.ws-hb-report[open] > .res-draft-summary .res-chevron { transform: rotate(90deg); }
+.ws-hb-done { display: flex; flex-direction: column; gap: .2rem; }
+.ws-hb > .ws-hb-link { align-self: flex-start; }
+.ws-hb-link { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.ws-hb-link:hover { color: var(--ink-soft); }

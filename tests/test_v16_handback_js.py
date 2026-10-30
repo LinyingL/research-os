@@ -1,0 +1,473 @@
+"""Research OS V16, task B1-3 (DESIGN.md 21.2 'The handback'), the pages.
+
+An agent's handback opens in the side panel -- from 项目首页's task row, the attempt's panel and the route map's card --
+in this order: the headline, the key numbers each with its file (a number its file does not hold is marked), what is
+undone, what the researcher must decide, the agent's suggested assessment with 「确认这个判断」, 「改一下」 and
+「先不判断」, the outputs by kind, the report folded, the run log. Opening marks it opened for this person; confirming
+writes the assessment and says who, and what comes after. The scripts run under node on the stand-in DOMs of the
+tests that already drive them, fed what the real engine answers for a real handback, in both languages. Every test
+names its scenario."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from researchos import handbacks
+from test_v16_handback import A16, A17, FULL, PERSON, hand_back, me, pid, root  # noqa: F401 -- fixtures of the engine tests
+from test_v9_language import CJK, needs_node
+from test_workspace_js import run
+
+@pytest.fixture
+def report(root, pid):
+    for folder in ("figures", "code", "tables"):
+        (root / folder).mkdir(exist_ok=True)
+    (root / "figures" / "sharpe.png").write_bytes(b"\x89PNG fig")
+    (root / "code" / "recheck.py").write_text("print(1.82)\n")
+    (root / "tables" / "t.csv").write_text("a,b\n1,2\n")
+    ctx = {**FULL, "key_numbers": [*FULL["key_numbers"], {"what": "Alpha", "value": "9.99", "file": "results/sharpe.csv"},
+                                   {"what": "Beta", "value": "0.5", "file": "results/gone.csv"}]}
+    return hand_back(root, pid, context=ctx, report_text="Ran the recheck.\n\n- Sharpe: 1.82\n- Members: 12", outputs=[
+        {"kind": "code", "path": "code/recheck.py", "title": "Recheck script"},
+        {"kind": "figure", "path": "figures/sharpe.png", "title": "Sharpe by member"},
+        {"kind": "table", "path": "tables/t.csv", "title": "Table 1"}])
+
+
+def _page(root: Path, pid: str, report: str, extra: str = "", **view) -> str:
+    """The first lines of a scenario: the handback as the real engine reads it, and the answers the stand-in API gives to
+    the three calls of this page -- the handback, opened, and a confirmation."""
+    got = handbacks.view(root, pid, PERSON, report, "zh")
+    got.update(view)
+    return f"""
+const REPORT={json.dumps(report)}; let VIEW={json.dumps(got, ensure_ascii=False)};
+global.apiGet=((real)=>async(path)=>{{ if(!path.startsWith('/api/workspace/handback?')) return real(path); gets.push(path); if(handbackDown) throw Object.assign(new Error('gone'),{{engineMessage:'no such report'}}); return clone(VIEW); }})(global.apiGet);
+const opened=[], composed=[], closed=[], started=[], attempts=[], logs=[], editing=[], refreshed=[], files=[];
+let refuse=null, handbackDown=false;
+global.closePanel=()=>{{ closed.push(1); panel.classList.add('hidden'); state.panelSubject=null; }};
+global.startTaskOnHome=(c)=>started.push(c); global.openResultOnHome=(p)=>editing.push(p); global.openRunLogOnHome=(id)=>logs.push(id);
+global.refreshCurrentView=()=>refreshed.push(1); global.openFilePanel=(p)=>files.push(p);
+global.verdictTone=(s)=>({{current:'olive',abandoned:'gray',pending:'ochre',adverse:'clay'}})[s.status]||'plain';
+global.ROTeam={{composeInto:async(host,draft,says)=>{{ composed.push(draft); host.append('proposal'); return true; }}}};
+window.ROWorkspace.onCreateAttempt=(prefill,cb)=>attempts.push(prefill);
+customPost=(path,body)=>{{
+  if(path==='/api/workspace/handback/opened') {{ opened.push(body); return {{report:body.report,opened:true}}; }}
+  if(path!=='/api/workspace/handback/confirm') return undefined;
+  if(refuse) {{ const e=new Error(refuse); e.state='workspace_handback_refused'; e.engineMessage=refuse; throw e; }}
+  const adopted=!!VIEW.suggested&&VIEW.suggested.status===body.status&&VIEW.suggested.reason===body.reason;
+  const at='2026-10-30T09:00:00+01:00';
+  return {{written:true,adopted,confirmed:{{by:'{PERSON}',at,status:body.status,adopted}},by_label:'张三',number:'16',node:{json.dumps(A16)},mode:VIEW.mode,
+    sentence:{{zh:adopted?'由 张三 确认（采纳 Claude Code · sonnet 的建议）':'由 张三 确认',en:adopted?'Confirmed by 张三 (adopted the suggestion of Claude Code · sonnet)':'Confirmed by 张三'}},
+    file:'map.md',backup:'b',ingest_error:null,history_error:null,context_error:null,decision:null,cell:'x'}};
+}};
+{extra}
+"""
+
+
+_HELPERS = r"""
+const panelText=()=>panelBody.textContent;
+const hb=()=>panelBody.all().find(e=>e.classList.contains('ws-hb'));
+const parts=()=>hb().children.map(e=>e.classList.contains('ws-hb-part')?'part:'+(e.children[0]&&e.children[0].classList.contains('ws-hb-title')?e.children[0].textContent:'?'):e.tagName==='DETAILS'?'details:report':e.classList.contains('ws-hb-headline')?'headline':e.tagName==='BUTTON'?'button:'+e.textContent:e.classList.contains('ws-hb-next')?'next':'other:'+e.className);
+const pbuttons=()=>buttonsIn(panelBody);
+const pbtn=(label)=>panelBody.all().find(e=>e.tagName==='BUTTON'&&e.textContent===label);
+const key=(k)=>panelBody.all().find(e=>e.dataset&&e.dataset.key===k);
+const cls=(c,where=panelBody)=>where.all().filter(e=>e.classList.contains(c));
+"""
+
+
+def _run(root, pid, report, scenario: str, *, lang="zh", extra="", **view) -> dict:
+    return run(_page(root, pid, report, extra, **view) + _HELPERS + scenario, lang=lang)
+
+
+# -- the panel ------------------------------------------------------------------------------------------------------
+
+
+@needs_node
+def test_the_handback_opens_in_the_panel_in_the_order_of_21_2_with_each_part_as_the_engine_gave_it(root, pid, report):
+    out = _run(root, pid, report, r"""
+const T=window.ROI18N.t;
+await window.ROWorkspace.openHandback(REPORT);
+const num=cls('ws-hb-number').map(r=>({what:r.children[0].textContent,value:r.children[1].textContent,file:r.children[2].textContent,flag:r.children.slice(3).map(c=>c.textContent)}));
+const outs=cls('ws-hb-outputs').map(g=>({kind:g.children[0].textContent,rows:cls('ws-hb-output',g).map(li=>({name:li.children[0].textContent,path:li.children.filter(c=>c.tagName==='CODE').map(c=>c.textContent),img:cls('ws-output-figure',li).map(i=>i.src)}))}));
+console.log(JSON.stringify({title:panelTitle.textContent,subtitle:panelSubtitle.textContent,parts:parts(),headline:cls('ws-hb-headline')[0].textContent,num,
+  undone:cls('ws-hb-text')[0].textContent,decide:cls('ws-hb-decide')[0].children.map(c=>c.textContent),
+  chip:cls('status-label')[0].textContent+'|'+cls('status-label')[0].className, reason:cls('ws-hb-reason')[0].textContent, buttons:pbuttons(),
+  primary:panelBody.all().filter(e=>e.tagName==='BUTTON'&&e.className.includes('btn-primary')).map(e=>e.textContent),
+  outs, report:{open:!!cls('ws-hb-report')[0].open, text:cls('ws-preview',cls('ws-hb-report')[0])[0].textContent, folded:cls('ws-hb-report')[0].tagName},
+  subject:state.panelSubject&&state.panelSubject.kind, dirty:window.ROWorkspace.isDirty(), got:gets.filter(p=>p.startsWith('/api/workspace/handback?'))}));
+""")
+    assert out["title"] == "Recheck" and out["subtitle"].startswith("Claude Code · sonnet · 张三 指派 · ")   # the agent and model, once, at the top
+    assert out["parts"] == ["headline", "part:关键数字", "part:没做完的", "part:需要你决定的", "part:代理建议", "part:输出", "details:report", "button:运行日志"]
+    assert out["headline"] == FULL["headline"]
+    assert [(n["what"], n["value"], n["file"]) for n in out["num"]] == [
+        ("Sharpe ratio", "1.82", "results/sharpe.csv"), ("Members", "12", "results/sharpe.csv"),
+        ("Alpha", "9.99", "results/sharpe.csv"), ("Beta", "0.5", "results/gone.csv")]
+    assert [n["flag"] for n in out["num"]] == [[], [], ["在所引文件里没找到这个数"], ["所引文件读不了，没法核对"]]   # found, found, missing, unreadable
+    assert out["undone"] == FULL["undone"] and out["decide"] == FULL["decide"]
+    assert out["chip"] == "现行|status-label tone-olive" and out["reason"] == "Holds on every member"
+    assert out["buttons"].count("确认这个判断") == 1 and out["buttons"][out["buttons"].index("确认这个判断"):][:3] == ["确认这个判断", "改一下", "先不判断"]
+    assert out["primary"] == ["确认这个判断"]                    # one primary action in the panel
+    assert [(g["kind"], [r["name"] for r in g["rows"]]) for g in out["outs"]] == [("图", ["Sharpe by member"]), ("表", ["Table 1"]), ("代码", ["Recheck script"])]
+    assert out["outs"][0]["rows"][0]["path"] == ["figures/sharpe.png"] and out["outs"][0]["rows"][0]["img"] == ["/api/workspace/asset?path=figures%2Fsharpe.png"]
+    assert out["outs"][2]["rows"][0]["img"] == [] and out["outs"][2]["rows"][0]["path"] == ["code/recheck.py"]
+    assert out["report"]["open"] is False and out["report"]["folded"] == "DETAILS" and "Sharpe: 1.82" in out["report"]["text"]
+    assert out["subject"] == "handback" and out["dirty"] is False and len(out["got"]) == 1
+
+
+@needs_node
+def test_a_handback_in_english_says_every_word_in_english_and_keeps_the_agents_own_words(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({parts:parts(), buttons:pbuttons(), all:panelBody.textContent.replace(cls("ws-hb-report")[0].textContent, ""), subtitle:panelSubtitle.textContent,
+  flags:cls('ws-hb-flag').map(e=>e.textContent), chip:cls('status-label')[0].textContent, kinds:cls('ws-outputs-kind').map(e=>e.textContent)}));
+""", lang="en")
+    assert out["parts"] == ["headline", "part:Key numbers", "part:Not finished", "part:For you to decide", "part:Suggested by the agent",
+                            "part:Outputs", "details:report", "button:Run log"]
+    assert ["Confirm this assessment", "Change it", "Decide later"] == out["buttons"][out["buttons"].index("Confirm this assessment"):][:3]
+    assert out["flags"] == ["This number is not in the file it cites", "The cited file cannot be read, so the number was not checked"]
+    assert out["chip"] == "Current" and out["kinds"] == ["Figure", "Table", "Code"] and "指派" not in out["subtitle"]
+    assert out["subtitle"].startswith("Claude Code · sonnet · Assigned by 张三")
+    rest = out["all"]
+    for own in (FULL["headline"], FULL["undone"], FULL["decide"][0], "Holds on every member", "Sharpe by member", "Recheck script", "Table 1", "张三"):
+        rest = rest.replace(own, "")
+    assert not CJK.search(rest), rest
+
+
+@needs_node
+def test_opening_an_unopened_handback_marks_it_opened_once_and_draws_the_cards_again_and_an_opened_one_asks_nothing(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT); await sleepTick();
+const first={opened:opened.slice(), refreshed:refreshed.length, mode:state.panelSubject.view.unopened};
+VIEW.unopened=false; opened.length=0; refreshed.length=0;
+await window.ROWorkspace.openHandback(REPORT); await sleepTick();
+console.log(JSON.stringify({first, again:{opened:opened.length, refreshed:refreshed.length}}));
+""", unopened=True)
+    assert out["first"] == {"opened": [{"project": "/projects/study", "report": out["first"]["opened"][0]["report"]}], "refreshed": 1, "mode": False}
+    assert out["first"]["opened"][0]["report"].startswith("research/results/")
+    assert out["again"] == {"opened": 0, "refreshed": 0}
+
+
+@needs_node
+def test_a_handback_that_cannot_be_read_says_so_and_a_report_without_key_points_says_that(root, pid, report):
+    out = _run(root, pid, report, r"""
+handbackDown=true;
+const failed=await window.ROWorkspace.openHandback(REPORT);
+const unreadable=panelBody.textContent;
+handbackDown=false; VIEW=Object.assign(VIEW,{headline:'',key_numbers:[],undone:'',decide:[],suggested:null,confirmed:null,outputs:[]});
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({failed, unreadable, bare:parts(), words:cls('ws-agent-quiet').map(e=>e.textContent)}));
+""")
+    assert out["failed"] is False and "没能读取这份交回。" in out["unreadable"]
+    assert out["bare"] == ["other:ws-agent-quiet", "part:代理建议", "details:report", "button:运行日志"]
+    assert out["words"][0] == "这份交回没有附上要点。" and "代理没有给出建议。" in out["words"]
+
+
+# -- confirming ---------------------------------------------------------------------------------------------------------
+
+
+@needs_node
+def test_confirm_this_assessment_sends_the_suggestion_as_it_stands_says_who_confirmed_it_and_offers_what_comes_next(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('确认这个判断').click(); await sleepTick();
+const post=posted.filter(p=>p[0]==='/api/workspace/handback/confirm');
+const next=cls('ws-hb-next')[0];
+await pbtn('再派一个任务').click();
+console.log(JSON.stringify({post, line:cls('ws-hb-confirmed')[0].textContent, done:cls('ws-hb-done')[0].textContent, buttons:pbuttons().slice(0,8),
+  nextPrimary:next.children.map(b=>b.className.includes('btn-primary')), pollsBefore:0, started, closed:closed.length}));
+""")
+    assert out["post"] == [["/api/workspace/handback/confirm", {"project": "/projects/study", "report": out["post"][0][1]["report"], "status": "现行",
+                                                                "reason": "Holds on every member", "abandon_reason": ""}]]
+    assert out["line"] == "张三 已确认：现行采纳了代理的建议" and out["done"] == "已写入尝试 #16 的研究判断。"
+    assert "确认这个判断" not in out["buttons"] and "改一下" not in out["buttons"]            # the suggestion is answered
+    assert out["nextPrimary"] == [True, False, False]                                        # 再派一个任务, 从这条开新尝试, 这条先到这里
+    assert out["started"] == [{"attempt": A16, "after": "t1"}] and out["closed"] == 1        # the new task: same attempt, after this one
+
+
+@needs_node
+def test_the_three_ways_on_are_a_new_task_in_this_attempt_a_new_attempt_from_the_agents_draft_and_leaving_it(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('确认这个判断').click(); await sleepTick();
+const labels=cls('ws-hb-next')[0].children.map(b=>b.textContent);
+await pbtn('从这条开新尝试').click();
+const form=attempts.slice();
+await pbtn('这条先到这里').click();
+console.log(JSON.stringify({labels, form, closed:closed.length, started}));
+""", attempt_draft={"description": "Add 2008 to the sample", "result": "", "parents": [A17]})
+    assert out["labels"] == ["再派一个任务", "从这条开新尝试", "这条先到这里"]
+    assert out["form"] == [{"description": "Add 2008 to the sample", "result": "", "parents": [A16, A17]}]   # 源自 this attempt, then the draft's own
+    assert out["closed"] == 1 and out["started"] == []
+
+
+@needs_node
+def test_change_it_opens_the_chooser_prefilled_and_saving_another_status_or_reason_is_sent_as_the_persons_own(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('改一下').click();
+const prefilled={status:key('hb-status').value, reason:key('hb-reason').value, options:optionsOf(key('hb-status')).map(o=>o[0]), abandonHidden:cls('ws-hb-abandon')[0].classList.contains('hidden'),
+  buttons:pbuttons(), dirty:window.ROWorkspace.isDirty()};
+key('hb-status').value='待定'; await key('hb-status').emit('change'); typed(key('hb-reason'),'Needs 2008');
+const edited={dirty:window.ROWorkspace.isDirty(), asked:confirmQuestions.length};
+answers.push(false); const stays=window.ROWorkspace.mayLeavePanel(); const asked=confirmQuestions.length;
+await key('hb-save').click(); await sleepTick();
+console.log(JSON.stringify({prefilled, edited, stays, asked, post:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').map(p=>p[1]),
+  line:cls('ws-hb-confirmed')[0].textContent, dirty:window.ROWorkspace.isDirty()}));
+""")
+    assert out["prefilled"]["status"] == "现行" and out["prefilled"]["reason"] == "Holds on every member"
+    assert out["prefilled"]["options"] == ["现行", "已放弃", "待定", "不利证据", "被否", "归档", "其它"] and out["prefilled"]["abandonHidden"] is True
+    assert "保存" in out["prefilled"]["buttons"] and "取消" in out["prefilled"]["buttons"] and out["prefilled"]["dirty"] is False
+    assert not {"确认这个判断", "改一下", "先不判断"} & set(out["prefilled"]["buttons"])         # while the chooser is open, only it asks
+    assert out["edited"]["dirty"] is True and out["stays"] is False and out["asked"] == 1       # leaving a half-made assessment asks first
+    assert out["post"][0]["status"] == "待定" and out["post"][0]["reason"] == "Needs 2008" and out["post"][0]["abandon_reason"] == ""
+    assert out["line"] == "张三 已确认：待定改动了代理的建议" and out["dirty"] is False
+
+
+@needs_node
+def test_a_suggestion_to_abandon_the_route_still_asks_for_the_reason_and_the_agents_words_are_offered_for_it(root, pid, report):
+    out = _run(root, pid, report, r"""
+VIEW.suggested={status:'已放弃',reason:'Dead end',known:true,marker:'☠️',abandons:true};
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('确认这个判断').click();
+const asked={posts:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').length, status:key('hb-status').value, visible:!cls('ws-hb-abandon')[0].classList.contains('hidden'), offered:key('hb-abandon').value};
+typed(key('hb-abandon'),'');
+await key('hb-save').click(); await sleepTick();
+const blocked={posts:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').length, words:cls('ws-status').map(e=>e.textContent).join('|')};
+typed(key('hb-abandon'),'The data stops in 2009');
+await key('hb-save').click(); await sleepTick();
+console.log(JSON.stringify({asked, blocked, post:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').map(p=>p[1])}));
+""")
+    assert out["asked"] == {"posts": 0, "status": "已放弃", "visible": True, "offered": "Dead end"}
+    assert out["blocked"]["posts"] == 0 and "放弃一条路线时必须写明理由" in out["blocked"]["words"]
+    assert out["post"][0]["status"] == "已放弃" and out["post"][0]["reason"] == "Dead end" and out["post"][0]["abandon_reason"] == "The data stops in 2009"
+
+
+@needs_node
+def test_decide_later_writes_nothing_and_a_refused_confirmation_says_so_and_leaves_the_buttons_to_try_again(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('先不判断').click();
+const later={posts:posted.length-0, buttons:pbuttons().filter(b=>['确认这个判断','改一下','先不判断'].includes(b)), words:cls('ws-agent-quiet').map(e=>e.textContent)};
+await window.ROWorkspace.openHandback(REPORT);
+refuse='The attempt table refused the assessment';
+await pbtn('确认这个判断').click(); await sleepTick();
+const refused={words:cls('ws-status').map(e=>e.textContent).join('|'), buttons:pbuttons().filter(b=>['确认这个判断','改一下','先不判断'].includes(b)), confirmed:cls('ws-hb-confirmed').length};
+refuse=null; await pbtn('确认这个判断').click(); await sleepTick();
+console.log(JSON.stringify({later, refused, retried:cls('ws-hb-confirmed').length}));
+""")
+    assert out["later"]["buttons"] == [] and "先不判断。之后可以在尝试的面板里写研究判断。" in out["later"]["words"]
+    assert out["later"]["posts"] == 1                                        # only the engine's note that it was opened (none for the assessment)
+    assert "没能确认这个判断。" in out["refused"]["words"] and "The attempt table refused the assessment" in out["refused"]["words"]
+    assert out["refused"]["buttons"] == ["确认这个判断", "改一下", "先不判断"] and out["refused"]["confirmed"] == 0 and out["retried"] == 1
+
+
+@needs_node
+def test_a_member_confirms_into_the_working_copy_and_the_proposal_carries_the_same_sentence_in_the_screens_language(root, pid, report):
+    for lang, sentence in (("zh", "由 张三 确认（采纳 Claude Code · sonnet 的建议）"),
+                           ("en", "Confirmed by 张三 (adopted the suggestion of Claude Code · sonnet)")):
+        out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+const note=cls('ws-agent-quiet').map(e=>e.textContent).join('|');
+await pbtn(window.ROI18N.t('确认这个判断')).click(); await sleepTick();
+console.log(JSON.stringify({note, composed, done:cls('ws-hb-done')[0].textContent, host:cls('compose-result').length}));
+""", lang=lang, mode="member")
+        assert out["composed"] == [{"kind": "verdict_change", "sentence": sentence, "number": "16"}]
+        assert out["host"] == 1 and out["done"].endswith("proposal")
+        assert ("项目的成员：确认会先写进你的工作副本" in out["note"]) if lang == "zh" else ("member of this project" in out["note"])
+        assert ("已写进你的工作副本" in out["done"]) if lang == "zh" else ("Written into your working copy" in out["done"])
+
+
+@needs_node
+def test_someone_who_cannot_write_reads_the_handback_but_is_not_offered_to_confirm_it(root, pid, report):
+    for mode, said in (("none", "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"), ("unknown", "现在说不清你在这个项目里的角色，研究判断先不能改。")):
+        out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({buttons:pbuttons(), words:cls('ws-agent-quiet').map(e=>e.textContent), headline:cls('ws-hb-headline').length}));
+""", mode=mode)
+        assert said in out["words"] and out["headline"] == 1
+        assert not set(out["buttons"]) & {"确认这个判断", "改一下", "先不判断", "写下研究判断"}
+
+
+@needs_node
+def test_a_handback_with_no_suggestion_offers_to_write_the_assessment_prefilled_with_the_one_the_attempt_has(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+const before={words:cls('ws-agent-quiet').map(e=>e.textContent), buttons:pbuttons()};
+await pbtn('写下研究判断').click();
+const chooser={status:key('hb-status').value, reason:key('hb-reason').value};
+typed(key('hb-reason'),'Wait for the data'); await key('hb-save').click(); await sleepTick();
+console.log(JSON.stringify({before, chooser, post:posted.filter(p=>p[0]==='/api/workspace/handback/confirm').map(p=>p[1]), line:cls('ws-hb-confirmed')[0].textContent}));
+""", suggested=None)
+    assert "代理没有给出建议。" in out["before"]["words"] and "写下研究判断" in out["before"]["buttons"] and "确认这个判断" not in out["before"]["buttons"]
+    assert out["chooser"] == {"status": "待定", "reason": ""} or out["chooser"]["status"] == "待定"   # the attempt's own status (🕒) is where it starts
+    assert out["post"][0]["status"] == "待定" and out["post"][0]["reason"] == "Wait for the data"
+    assert out["line"] == "张三 已确认：待定"                                              # nothing was suggested: nothing to say it adopted
+
+
+@needs_node
+def test_a_suggestion_with_a_status_the_project_no_longer_has_cannot_be_confirmed_as_it_is(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({disabled:pbtn('确认这个判断').disabled, change:pbtn('改一下').disabled, words:cls('ws-agent-quiet').map(e=>e.textContent)}));
+""", suggested={"status": "成立", "reason": "r", "known": False, "marker": "", "abandons": False})
+    assert out["disabled"] is True and out["change"] is False
+    assert "这个状态已经不在项目的选项里，请用「改一下」另选一个。" in out["words"]
+
+
+@needs_node
+def test_a_handback_already_confirmed_says_who_and_how_and_offers_no_second_confirmation_only_the_ways_on(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({line:cls('ws-hb-confirmed')[0].textContent, buttons:pbuttons()}));
+""", confirmed={"by": PERSON, "at": "2026-10-30T09:00:00+01:00", "status": "现行", "adopted": False, "by_label": "张三"})
+    assert out["line"] == "张三 已确认：现行改动了代理的建议"
+    assert not set(out["buttons"]) & {"确认这个判断", "改一下", "先不判断"} and "再派一个任务" in out["buttons"]
+
+
+@needs_node
+def test_the_files_the_panel_names_open_in_the_file_panel_and_the_report_and_the_run_log_have_their_own_way_in(root, pid, report):
+    out = _run(root, pid, report, r"""
+await window.ROWorkspace.openHandback(REPORT);
+await cls('ws-file-link')[0].click(); await pbtn('Sharpe by member').click();
+await pbtn('运行日志').click();
+const log={logs:logs.slice(), closed:closed.length};
+await window.ROWorkspace.openHandback(REPORT);
+await pbtn('编辑报告').click();
+console.log(JSON.stringify({files, log, editing, closed:closed.length}));
+""")
+    assert out["files"] == ["results/sharpe.csv", "figures/sharpe.png"]
+    assert out["log"] == {"logs": ["t1"], "closed": 1} and out["editing"] == [out["editing"][0]] and out["editing"][0].startswith("research/results/")
+
+
+@needs_node
+def test_a_handback_opened_from_the_attempts_panel_has_a_way_back_to_it(root, pid, report):
+    out = _run(root, pid, report, r"""
+let back=0;
+await window.ROWorkspace.openHandback(REPORT, {back:()=>{ back+=1; }});
+const had=pbtn('返回')!==undefined;
+await pbtn('返回').click();
+await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({had, back, none:pbtn('返回')===undefined}));
+""")
+    assert out == {"had": True, "back": 1, "none": True}
+
+
+@needs_node
+def test_another_panel_that_holds_half_typed_words_is_not_replaced_without_asking(root, pid, report):
+    out = _run(root, pid, report, r"""
+global.mayReplacePanel=()=>false;
+const refused=await window.ROWorkspace.openHandback(REPORT);
+console.log(JSON.stringify({refused, gets:gets.filter(p=>p.startsWith('/api/workspace/handback?')).length, subject:state.panelSubject}));
+""")
+    assert out == {"refused": False, "gets": 0, "subject": None}
+
+
+# -- where it is opened from -----------------------------------------------------------------------------------------
+
+
+@needs_node
+def test_open_result_on_a_task_whose_latest_run_handed_its_report_back_opens_the_handback_and_any_other_report_opens_to_write_in(root, pid, report):
+    out = _run(root, pid, report, r"""
+agentsInfo=agentFixture();
+const hand='research/results/'+'a'.repeat(32)+'.md', mine='research/results/by-hand.md';
+docs[mine]={path:mine,kind:'result',title:'By hand',content:'# By hand\nMine.',revision:'r-1'};
+listed.documents.push({path:mine,kind:'result',title:'By hand',excerpt:''});
+listed.tasks=[agentTask({id:'t1',done:true,report:hand}),agentTask({id:'t2',text:'Second',done:true,report:mine,owner:''})];
+setRuns([mkRun({task_id:'t1',state:'done',can_reply:true,report:hand})]);
+VIEW.report=hand;
+await window.ROWorkspace.load(root);await sleepTick();
+const rows=root.all().filter(e=>e.classList&&e.classList.contains('ws-task'));
+await find('打开结果',byClass('ws-agent')).click();await sleepTick();
+const handback={subject:state.panelSubject&&state.panelSubject.kind, got:gets.filter(p=>p.startsWith('/api/workspace/handback?')).length, doc:gets.filter(p=>p.startsWith('/api/workspace/document?path=research%2Fresults')).length};
+state.panelSubject=null;
+const second=root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='打开结果');
+console.log(JSON.stringify({handback, buttons:second.length}));
+""".replace("const rows=root.all().filter(e=>e.classList&&e.classList.contains('ws-task'));\n", ""))
+    assert out["handback"] == {"subject": "handback", "got": 1, "doc": 0}      # the editor was not opened for an agent's handback
+    assert out["buttons"] == 1                                                   # only the task with a run that handed its report back has the button here
+
+
+# -- the desk ------------------------------------------------------------------------------------------------------------
+
+
+@needs_node
+def test_the_attempts_panel_opens_the_handback_with_a_way_back_and_asks_before_it_replaces_a_half_made_assessment():
+    from test_v10_desk_panel import A16 as DESK_A16, _case
+    from test_v10_desk_panel import _run as run_panel
+    from test_v16_attempt_tasks_js import _items, _work
+
+    case = _case("single")
+    case["desk"]["attempts"][0]["work"] = _work(tasks=7, unfinished=6, items=_items())
+    out = run_panel(case, """
+      await window.RODesk.openAttempt(%s);
+      window.ROWorkspace = { openHandback: (report, options) => { global.extra = { report, back: typeof options.back }; global.backTo = options.back; return null; } };
+      const open = panelPart('panel-body').all().filter((k) => k.tag === 'BUTTON' && k.kids.join('') === '打开交回')[0];
+      open.click();
+      global.mayReplacePanel = () => false; backTo(); const refused = opened.length + posted.length;
+      global.mayReplacePanel = () => true; await backTo();
+      global.extra.after = state.panelSubject && state.panelSubject.id;
+    """ % json.dumps(DESK_A16))
+    assert out["extra"] == {"report": "research/results/" + "a" * 32 + ".md", "back": "function", "after": DESK_A16}
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_a_click_on_a_cards_handback_line_opens_that_handback_and_a_click_on_the_rest_of_the_card_opens_the_attempt(lang):
+    from test_v10_fix_map import _MAP_DOM, _desk
+    from test_v10_fix_map import A16 as MAP_A16
+    from test_v16_attempt_tasks_js import _work
+    from test_v9_language import WEBAPP, _i18n_source, _node
+
+    data = _desk("pi")
+    waiting_report = "research/results/" + "b" * 32 + ".md"
+    items = [{"id": "a", "report": "research/results/" + "a" * 32 + ".md", "unopened": False},   # the latest, already opened
+             {"id": "b", "report": waiting_report, "unopened": True}]                         # and an older one that waits
+    data["attempts"][0]["work"] = _work(items=items)
+    data["attempts"][1]["work"] = _work(tasks=3, unfinished=0, unopened=0, latest=None)
+    data["attempts"][2]["work"] = _work(tasks=2, unfinished=1, unopened=0)
+    dom = _MAP_DOM.replace("onOpen: (id) => opened.push(id),", "onOpen: (id) => opened.push(id), onOpenHandback: (...args) => handbacks.push(args),")
+    steps = """
+      global.handbacks = [];
+      const press = (target, moved) => { fire('pointerdown', event(target, { x: 5, y: 5 })); if (moved) fire('pointermove', event(root, { x: 80, y: 60 }));
+        fire('pointerup', event(root, moved ? { x: 80, y: 60 } : { x: 5, y: 5 })); };
+      const mark = () => ({ handbacks: handbacks.slice(), opened: opened.slice() });
+      const log = [];
+      press(card(%(a)s).querySelector('.rm-headline'));                 log.push(mark());   // the latest handback's line
+      press(card(%(a)s).querySelector('.rm-look'));                     log.push(mark());   // 等你看 n
+      press(card(%(a)s).querySelector('.rm-title'));                    log.push(mark());   // the rest of the card
+      press(card(%(a)s).querySelector('.rm-tasks'));                    log.push(mark());   // the task count is the card's too
+      press(card(%(b)s).querySelector('.rm-tasks'));                    log.push(mark());   // a card with tasks but no handback
+      press(card(%(c)s).querySelector('.rm-headline'));                 log.push(mark());   // a handback that was opened: still its line
+      press(card(%(a)s).querySelector('.rm-headline'), true);           log.push(mark());   // a drag is a move, not a click
+      global.extra = { log, cursor: !!card(%(a)s).querySelector('.rm-headline') };
+    """ % {"a": json.dumps(MAP_A16), "b": json.dumps("attempt:map.md#17"), "c": json.dumps("attempt:map.md#18")}
+    i18n = f"window.ROI18N_SAVED = {json.dumps(lang)};\n" + _i18n_source()
+    script = ("global.window = {};\n" + i18n + (WEBAPP / "routemap.js").read_text(encoding="utf-8") + "\n" + dom
+              + f"(async () => {{ map.update({json.dumps(data, ensure_ascii=False)}, {{ changed: () => false }});\n{steps}\n"
+              " process.stdout.write(JSON.stringify({ extra: global.extra })); })();\n")
+    log = _node(script)["extra"]["log"]
+    report = "research/results/" + "a" * 32 + ".md"
+    c = MAP_A16
+    assert [step["handbacks"] for step in log[:2]] == [[[report]], [[report], [waiting_report]]]   # the latest's line opens the latest, 等你看 the one that waits; no attempt is named: no way back
+    assert [step["opened"] for step in log[:2]] == [[], []]                                         # and not the panel
+    assert log[2]["opened"] == [c] and log[3]["opened"] == [c, c] and log[2]["handbacks"] == log[1]["handbacks"]
+    assert log[4]["opened"] == [c, c, "attempt:map.md#17"] and log[4]["handbacks"] == log[1]["handbacks"]
+    assert log[5]["handbacks"][-1] == [report]
+    assert log[6] == log[5]                                                                          # a drag moved the card: nothing opened
+
+
+def test_a_registered_heading_opens_a_handback_when_an_agent_run_produced_its_files_and_the_writing_area_when_a_person_did():
+    """21.2: 「打开结果」 above registered files is the handback of a record a run handed back (a row of the group has a `run`);
+    a record nobody's run wrote still opens to write in, as it always did."""
+    from test_outputs_ui import _ROW_ITEMS, _rows_run
+
+    out = _rows_run(_ROW_ITEMS + r"""
+const handed = [];
+global.ROWorkspace = { openHandback: async (path) => { handed.push(path); } };
+const host = new Element('div');
+renderRegisteredOutputs(host, { items });
+for (const group of groupsOn(host)) { const button = find('打开结果', group); if (button) await button.click(); }
+console.log(JSON.stringify({ handed, opened }));
+""")
+    assert out == {"handed": ["research/results/a.md"], "opened": ["research/results/b.md", "research/results/c.md"]}

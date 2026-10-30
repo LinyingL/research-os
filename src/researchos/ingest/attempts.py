@@ -275,6 +275,10 @@ DEFAULT_VERDICT_LABELS = {"✅": "现行", "☠️": "已放弃", "🕒": "待�
 VERDICT_STATUSES = {"现行": "current", "已放弃": "abandoned", "待定": "pending", "不利证据": "adverse",
                     "被否": "rejected", "归档": "archived"}
 OTHER_VERDICT_LABEL = "其它"
+#: The English name 13.4 gives each default status, by its word. An agent that writes in English may name a status by it
+#: (`research_records`: a suggested assessment); the file keeps the word (13.1).
+VERDICT_ENGLISH = {"现行": "Current", "已放弃": "Abandoned", "待定": "Pending", "不利证据": "Adverse evidence", "被否": "Rejected",
+                   "归档": "Archived", OTHER_VERDICT_LABEL: "Other"}
 _SELECTORS = ("\ufe0f", "\ufe0e")
 
 

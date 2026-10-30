@@ -966,7 +966,7 @@
       layoutEl = mk("div", "desk-layout");
       if (window.RORouteMap) {
         mapEl = mk("div", "desk-map");
-        routeMap = window.RORouteMap.create({ onOpen: openAttempt, onChanged: () => loadDesk(views.desk, true) });
+        routeMap = window.RORouteMap.create({ onOpen: openAttempt, onOpenHandback: (report) => openHandback(report, null), onChanged: () => loadDesk(views.desk, true) });
         routeMap.mount(mapEl);
         layoutEl.appendChild(mapEl);
       }
@@ -1269,8 +1269,16 @@
     if (window.RONode && RONode.drawTraceLines) RONode.drawTraceLines(body);
   }
 
+  // A handback (21.2) opened from a card of the map or from an attempt's panel; from the panel it keeps the way back to
+  // the attempt, which is asked for like any other opener of a panel (a half-written assessment is not thrown away).
+  function openHandback(report, attemptId) {
+    if (!window.ROWorkspace || typeof window.ROWorkspace.openHandback !== "function") return null;
+    const back = attemptId ? () => { if (typeof mayReplacePanel !== "function" || mayReplacePanel()) openAttempt(attemptId); } : null;
+    return window.ROWorkspace.openHandback(report, { back: back });
+  }
+
   // 任务 (21.1): what this attempt holds, in `after` order -- each with its owner, its state in words and, once it has
-  // handed something back, the way to open the handback (the report, until the handback has a page of its own).
+  // handed something back, the way to open the handback (21.2).
   // 「在这条尝试下加任务」 writes the new task on 项目首页, whose form has this attempt chosen. The states are the
   // engine's codes (attempt_tasks.state_of); the words are the ones 项目首页 gives a run.
   const TASK_STATES = {
@@ -1303,9 +1311,7 @@
         main.appendChild(metaLine([item.owner_label, item.due]));
         if (item.report) {
           const actions = mk("div", "desk-actions");
-          actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => {
-            if (mayLeavePanel() && typeof openResultOnHome === "function") openResultOnHome(item.report);
-          }));
+          actions.appendChild(mkButton(t("打开交回"), "btn btn-small", () => { openHandback(item.report, id); }));
           main.appendChild(actions);
         }
         li.appendChild(main);
