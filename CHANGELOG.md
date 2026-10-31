@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 — 2026-10-31
+
+First stable release. Research attempts connect tasks, agent handbacks,
+reports, and the researcher's assessment. Project home brings ongoing work
+and decisions into view; the paper's figures and tables show their sources
+and missing links. Settings, wording, and navigation are consistent across
+the English and Chinese interfaces.
+
+This release includes the writing workspace, optional AI agents, typed file
+registration, variable cards, literature abstracts, and PI review introduced
+in earlier versions. See the README for the current product overview.
+
+- Keep the engine's JSON nesting limit consistent with the Mac app on Python
+  3.14 as well as earlier Python versions. An excessively nested settings
+  file is ignored rather than producing a different language in each view.
 
 - Say that **the reason changed** when an attempt's research assessment keeps its
   status and gets another reason (on the attempt's timeline, in its panel, in a
