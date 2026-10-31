@@ -59,6 +59,9 @@ drafts appear in the corresponding views. Each task has a separate process
 folder for scratch work. Review unregistered files, inspect a run's changes,
 and preview an undo before applying it.
 
+Use **Register…** for files an agent run created and nobody registered,
+wherever they lie in the project. Registration keeps the files in place.
+
 ## Read the evidence
 
 | View | What it helps you do |
@@ -162,11 +165,11 @@ approval remain human actions. Review an agent's work before relying on it.
 
 ### Draft attempt fields with a local model
 
-Start LM Studio's server and load a model. In **Settings**, configure
-**Local model** with its address and model ID. A usual address is
+Start LM Studio's server and load a model. In **Settings**, open
+**Local model (draft with a model)** and set its address and model ID. A usual address is
 `http://127.0.0.1:1234/v1`.
 
-In **New attempt**, choose project files and generate a draft of the empty
+In **New attempt**, choose project files and click **Generate draft** for the empty
 fields. Review it before saving. Code alone does not prove its results;
 include a log or results file when drafting findings. Selected file contents
 are sent to the configured model server.
