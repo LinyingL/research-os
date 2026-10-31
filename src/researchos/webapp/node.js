@@ -1721,9 +1721,14 @@
       section.appendChild(mk("p", "node-sub", t("还没有选定论文正文，这里暂时没有论断。")));
       return;
     }
+    const there = marked.filter((d) => d.exists !== false);   // a file that has gone has nothing to open
+    if (!there.length) {   // 21.5: every mark is of a file that has gone: no row to expand, so no instruction to expand one
+      section.appendChild(mk("p", "node-sub", t("设为论文正文的文件现在不在项目里，所以这里没有论断。")));
+      return;
+    }
     section.appendChild(mk("p", "node-sub", t("只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。")));
     const list = mk("div", "res-drafts");
-    marked.filter((d) => d.exists !== false).forEach((d) => list.appendChild(draftClaims(d)));   // a file that has gone has nothing to open
+    there.forEach((d) => list.appendChild(draftClaims(d)));
     section.appendChild(list);
   }
 
@@ -1734,7 +1739,11 @@
     box.appendChild(summary);
     const body = mk("div", "res-draft-body");
     box.appendChild(body);
+    // 21.5: a draft that holds no claims (the project's own 研究问题与计划, which the index does not read, is one) opens to a sentence
+    // that says so, never to an empty box; the row already says 0, so the engine is not asked.
+    const none = () => body.replaceChildren(mk("p", "node-empty", t("这份文稿里没有论断。")));
     const fill = async () => {
+      if ((c.claims != null ? c.claims : c.count) === 0) { none(); return; }
       body.replaceChildren(mk("p", "empty-note", t("载入中…")));
       let d;
       try {
@@ -1747,6 +1756,7 @@
         return;
       }
       body.innerHTML = "";
+      if (!d.sections.some((g) => g.claims.length)) { none(); return; }   // asked for, and the draft holds none (changed since the list was read)
       d.sections.forEach((g) => {
         body.appendChild(mk("div", "res-group-title", g.section ? g.title || "" : t("（不在任何章节下）")));
         const ul = mk("ul", "res-list");

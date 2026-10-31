@@ -6718,6 +6718,13 @@ attempts.py`; `research_records.assessment_statuses`).
     (「这个文件现在不在项目里」, “This file is no longer in the project”), its name is text,
     not a link that opens nothing, it is not listed under 论断, and 「不再作为论文正文」 still
     works; the file's own page, when it has one, offers the same. Nothing stored changes.
+    *Review of B6:* **a draft with no claim opens to a sentence**, 「这份文稿里没有论断。」
+    (“This draft has no claims.”), never to an empty box -- the row says 0 and the engine is not
+    asked; a draft the list counted that the engine then finds none in ends in the same
+    sentence. When every mark is of a file that has gone there is no row under 论断 to expand, so
+    the block does not tell to expand one: its one sentence is 「设为论文正文的文件现在不在项目里，
+    所以这里没有论断。」 (“No file marked as the paper is in the project now, so there are no
+    claims here.”).
   - **The paper first.** 图与表 is one row per figure or table, in four lists:
     the paper's (a section of a marked draft includes it; with no draft marked,
     every draft stands for the paper and says so); the figures and registered
@@ -7160,7 +7167,15 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
   it holds for an opener that draws before it opens and for one that draws after an await. The
   subject on screen drawn again keeps its place (the form's preview step) and so does every
   redraw that does not come through `openPanel`: the records read again when the project moves,
-  an attempt's panel read again after a write, a refresh of the open panel.
+  an attempt's panel read again after a write, a refresh of the open panel. *Review of B6:*
+  **「在设置里修改」 leaves the section it names at the top**, also when the boxes above it draw
+  after the panel is open -- the AI 执行者 list is read from the engine, then the run store, then
+  the model lists, and each step moves the sections below it (the place was taken against a
+  page a loading line long, and 联网查询 ended 1,478 px down the panel, off the screen). `openSettingsPanel`
+  puts the section at the top and watches the panel's sections (`ResizeObserver`): whenever one
+  changes size the section is put at the top again, until the person takes the scroll (the wheel,
+  a touch, a key or a press), another panel takes the place, or ten seconds have passed. Where
+  the page is too short to scroll that far, the section stands as high as the page lets it.
 - **The route map** fits all its cards the first time a project's map is opened in this
   browser (*B5-2*; remembered per project in the browser's storage as the way the page
   is looked at is, a per-viewer convenience), forgetting a camera saved before as 适应全部
@@ -7264,5 +7279,10 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
    panel read again keeps its place (`tests/test_v16_b6_panel_scroll.py`, and a run in headless Chrome: 记录与备份
    at 600 px, 关闭, 设置 opened at 0, it was 600); 图表与论断 opens on its own sentence and 论文正文, with no box of
    reports; every draft marked has a row there, also the project overview the index does not read and a file
-   that has gone, and can be unmarked (`tests/test_v16_b6_acceptance.py`).
+   that has gone, and can be unmarked (`tests/test_v16_b6_acceptance.py`). *Review of B6:* a marked
+   draft with no claim opens to 「这份文稿里没有论断。」 and a block whose every mark is of a file that has
+   gone does not tell to expand a draft; 「在设置里修改」 beside 联网查询, pressed before the AI 执行者
+   list is read, ends with 联网查询 in view (a run in headless Chrome: the panel at 80 px with the section
+   1,478 px down, it is now at 1,167 px and the section in view), and a hand-scroll is not taken back
+   (`tests/test_v16_b6_review.py`).
 8. The full suite passes on Python 3.11 and 3.13.

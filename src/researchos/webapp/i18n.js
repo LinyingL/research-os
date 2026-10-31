@@ -1730,6 +1730,8 @@
     "还没有读到文稿。": "No drafts have been found yet.",
     "图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——": "Figures and claims lists claims from the paper itself; it excludes numbers in revision logs and review comments. No draft is marked as the paper yet. ",
     "只列出设为论文正文的文稿里的论断；展开一份文稿才载入它的论断。": "Only drafts marked as the paper contribute claims. Expand a draft to load them.",
+    "设为论文正文的文件现在不在项目里，所以这里没有论断。": "No file marked as the paper is in the project now, so there are no claims here.",
+    "这份文稿里没有论断。": "This draft has no claims.",
     "打开这份文稿的页面": "Open this draft",
     // 21.5: the paper is chosen once; a by-product is put out of it; each row says its attempt.
     "点「设为论文正文」，从文稿里选一份；在选定之前，所有文稿的图和表都当作论文用到的。": "Choose “Set as the paper” and pick a draft. Until you do, the figures and tables of every draft count as the paper’s.",

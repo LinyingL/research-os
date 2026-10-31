@@ -5543,6 +5543,28 @@ function settingsPageLink(section) {
   return mkButton(t("在设置里修改"), "ws-text-link", () => { if (mayReplacePanel()) openSettingsPanel(section); });
 }
 
+// 21.8: 「在设置里修改」 leaves the section it names at the top of the panel, also when the boxes above it draw after the panel is
+// open: the AI 执行者 list is read from the engine, then the run store, then the model lists, and each step moves the sections below it.
+// The place is put again whenever a section changes size, until the person takes the scroll (the wheel, a touch, a key or a press) or
+// another panel takes the place -- and for ten seconds at most. A browser without a size observer keeps the first placing.
+function holdSettingsPlace(target, subject, sections) {
+  if (typeof target.scrollIntoView !== "function") return;
+  target.scrollIntoView();
+  if (typeof ResizeObserver !== "function") return;
+  const taken = ["wheel", "touchstart", "keydown", "pointerdown"];
+  let watcher = null, timer = null;
+  const release = () => {
+    if (watcher) watcher.disconnect();
+    watcher = null;
+    clearTimeout(timer);
+    taken.forEach((name) => panelBody.removeEventListener(name, release));
+  };
+  watcher = new ResizeObserver(() => { if (state.panelSubject === subject) target.scrollIntoView(); else release(); });
+  sections.forEach((section) => watcher.observe(section));
+  taken.forEach((name) => panelBody.addEventListener(name, release, { passive: true }));
+  timer = setTimeout(release, 10000);
+}
+
 function openSettingsPanel(focus) {
   const subject = { kind: "settings" };
   state.panelSubject = subject;
@@ -5565,8 +5587,8 @@ function openSettingsPanel(focus) {
   openPanel();
   if (window.ROWorkspace && ROWorkspace.mountSettings) ROWorkspace.mountSettings(agentBox, subject);
   llmForm.load();
-  const target = Array.from(panelBody.querySelectorAll("section")).find((section) => section.dataset.section === focus);
-  if (target && typeof target.scrollIntoView === "function") target.scrollIntoView();
+  const sections = Array.from(panelBody.querySelectorAll("section")), target = sections.find((section) => section.dataset.section === focus);
+  if (target) holdSettingsPlace(target, subject, sections);
 }
 
 document.getElementById("settings-btn").addEventListener("click", () => { if (mayReplacePanel()) openSettingsPanel(); });

@@ -14,6 +14,13 @@
 - List every draft set as the paper on **Figures and claims**, also one the
   index does not read (the project overview) or whose file has gone, so that it
   can be taken back.
+- Say "This draft has no claims." when a draft set as the paper is opened and
+  holds none, instead of an empty box; when every file set as the paper has
+  gone from the project, say so under **Claims** and do not tell to expand a
+  draft.
+- Keep the section "Change in Settings" names at the top of **Settings** while
+  the AI agents list above it is still being read; scrolling by hand is never
+  taken back.
 - Show only the first eight files of a task's opened **Process files** group,
   with **N more** for the rest, as every other group of files does; a task can
   register hundreds of them.
