@@ -207,6 +207,41 @@ def seen_run_id(note: object) -> str | None:
     return None
 
 
+# -- a confirmed assessment (DESIGN.md 21.2) ---------------------------------------------
+
+_CONFIRMED_NOTE = re.compile(r"由 (?P<who>.+?) 确认(?:（采纳 (?P<agent>.+) 的建议）)?\Z", re.S)
+
+
+def confirmed_note(who: str, agent: str | None = None) -> str:
+    """The note of the version a person's confirmation of an attempt's assessment writes from a handback: 「由 张三
+    确认（采纳 Claude Code · sonnet 的建议）」 when they took the agent's suggestion unchanged, 「由 张三 确认」 when they put
+    another status or reason in its place. Stored in Chinese, as the file's own words are (13.1); `name_people` says it
+    in the language of the request."""
+    return f"由 {who} 确认（采纳 {agent} 的建议）" if agent else f"由 {who} 确认"
+
+
+#: The note of the version 撤销 writes when it takes a confirmation back (21.2): stored in Chinese like the confirmation's own.
+UNCONFIRMED_NOTE = "撤销了确认"
+
+
+def confirmed_note_words(note: object, lang: str) -> str | None:
+    """`note` said in `lang` when it is a confirmation's (`confirmed_note`) or the note of taking one back
+    (`UNCONFIRMED_NOTE`), else None."""
+    if note == UNCONFIRMED_NOTE:
+        return settings.say(UNCONFIRMED_NOTE, "Withdrew the confirmation", lang)
+    got = _CONFIRMED_NOTE.fullmatch(note) if isinstance(note, str) else None
+    if got is None:
+        return None
+    from researchos import people  # noqa: PLC0415
+
+    # a researcher with no `me.toml` is the stored 「最初的研究者」: said in the request's language, as every page names them (12.12, 13.4)
+    who = first_researcher_label(lang) if got["who"] == people.FIRST_RESEARCHER_LABEL else got["who"]
+    if got["agent"]:
+        return settings.say("由 {who} 确认（采纳 {agent} 的建议）", "Confirmed by {who} (adopted the suggestion of {agent})",
+                            lang, who=who, agent=got["agent"])
+    return settings.say("由 {who} 确认", "Confirmed by {who}", lang, who=who)
+
+
 # -- the version store ----------------------------------------------------------------
 
 
@@ -1161,6 +1196,9 @@ def name_people(root: Path, versions: list[dict[str, Any]], lang: str = "zh") ->
         else:
             unknown = unknown or unknown_who_label(root, lang)
             v["who_label"] = unknown
+        said = confirmed_note_words(v.get("note"), lang)  # 21.2: a confirmed assessment's note, in the request's language
+        if said is not None:
+            v["note"] = said
         approved = v.get("approved_by")
         if isinstance(approved, str) and approved:
             v["approved_by_label"] = people.attribution({"by": approved}, team, lang)["label"]
@@ -1496,7 +1534,7 @@ def diff(project_root: str | Path, node: str, a: str | None = None, b: str | Non
     out: dict[str, Any] = {"node": listed["node"], "kind": listed["kind"], "a": va, "b": vb, "diff": None,
                            "truncated": False, "summary": None, "same": False}
     if listed["kind"] == "attempt":
-        return {**out, **_attempt_change(va, vb, words=words)}
+        return {**out, **_attempt_change(va, vb, words=words, lang=lang)}
     if listed["kind"] == "variable":
         return {**out, "summary": _variable_change(va, vb, words=words)}
     if listed["kind"] != "file":
@@ -1548,20 +1586,48 @@ def _size_sentence(va: dict[str, Any], vb: dict[str, Any], *, words: bool = Fals
     return f"内容不同（大小 {sa} → {sb} 字节）"
 
 
-def _verdict_word(v: dict[str, Any]) -> str:
+def _verdict_word(v: dict[str, Any], lang: str = "zh") -> str:
+    """What an attempt version's status reads as (13.4): a default word by its code, in `lang` (the stored 「待定」 is
+    Pending in English); the researcher's own word, and a version with no reading, as written."""
+    from researchos.ingest import attempts as attempts_ingest  # noqa: PLC0415
+
     status = v.get("verdict_status") or {}
-    return str(status.get("label") or v.get("verdict") or "其它")
+    word = str(status.get("label") or v.get("verdict") or "其它")
+    if lang == "en" and status.get("status") != "labelled":
+        return attempts_ingest.VERDICT_ENGLISH.get(word, word)
+    return word
 
 
-def _attempt_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False) -> dict[str, Any]:
+def _verdict_reason(v: dict[str, Any]) -> str:
+    """The reason of an attempt version's cell: the words the engine split off it (`verdict_status.words`), else the
+    cell as written (21.3)."""
+    words = (v.get("verdict_status") or {}).get("words")
+    return str(words if isinstance(words, str) else v.get("verdict") or "").strip()
+
+
+def _attempt_change(va: dict[str, Any], vb: dict[str, Any], *, words: bool = False, lang: str = "zh") -> dict[str, Any]:
+    """How an attempt's row moved between two versions. `words`: the page's form (12.13) in `lang`, told by what the
+    status reads as (21.3) -- another word is 「从…改为…」, the same word with another reason is 「仍是…，理由改了」, a cell
+    that reads the same says nothing moved; the command line keeps its markers."""
     old_v, new_v = va.get("verdict") or "（空）", vb.get("verdict") or "（空）"
+    changed = (va.get("result") or "") != (vb.get("result") or "")
     if words:
         # 12.13: 「研究判断从「待定」改为「现行」」 -- the status words, never the markers.
-        la, lb = _verdict_word(va), _verdict_word(vb)
-        parts = [f"研究判断从「{la}」改为「{lb}」" if old_v != new_v else f"研究判断不变（「{lb}」）"]
-    else:
-        parts = [f"{old_v} → {new_v}" if old_v != new_v else f"研究判断不变（{new_v}）"]
-    if (va.get("result") or "") != (vb.get("result") or ""):
+        la, lb = _verdict_word(va, lang), _verdict_word(vb, lang)
+        if la != lb:
+            parts = [settings.say("研究判断从「{was}」改为「{became}」", "Research assessment changed from “{was}” to “{became}”",
+                                  lang, was=la, became=lb)]
+        elif _verdict_reason(va) != _verdict_reason(vb):
+            parts = [settings.say("研究判断仍是「{verdict}」，理由改了", "Research assessment still “{verdict}”; the reason changed",
+                                  lang, verdict=lb)]
+        else:
+            parts = [settings.say("研究判断不变（「{verdict}」）", "Research assessment unchanged (“{verdict}”)", lang, verdict=lb)]
+        if changed:
+            parts.append(settings.say("结果改为：{result}", "new result: {result}", lang,
+                                      result=vb.get("result") or settings.say("（空）", "(empty)", lang)))
+        return {"summary": _sentence(parts, lang), "same": va.get("sha256") == vb.get("sha256")}
+    parts = [f"{old_v} → {new_v}" if old_v != new_v else f"研究判断不变（{new_v}）"]
+    if changed:
         parts.append(f"结果改为：{vb.get('result') or '（空）'}")
     return {"summary": "，".join(parts), "same": va.get("sha256") == vb.get("sha256")}
 

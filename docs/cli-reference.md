@@ -197,9 +197,10 @@ they do not run your scripts.
 ## Optional: model-assisted drafts
 
 This feature is in the app's New attempt form; it has no separate CLI
-command. Start LM Studio's local server, load a model, then open Model
-server in the form. Save the server address and model ID, choose up to five
-text files from the project and click Generate draft. A server root such as
+command. Start LM Studio's local server, load a model, then open Settings at
+the foot of the sidebar and save the server address and model ID under Local
+model (draft with a model). In New attempt, choose up to five text files from
+the project and click Generate draft. A server root such as
 `http://127.0.0.1:1234` is accepted and expanded to `/v1` automatically.
 
 Only empty description and result fields are filled. Each drafted field
@@ -258,7 +259,7 @@ refuses to start without it. Its tools are different from the plain server's:
 
 | Tool | Purpose |
 | --- | --- |
-| `researchos_complete_task` | Write the result record, mark the task done and link the record to it. |
+| `researchos_complete_task` | Write the report, mark the task done and link the report to it. |
 | `researchos_ask` | Record a question for the person. The agent stops and the task shows Waiting for your answer. |
 | `researchos_save_note` | Save a new note. |
 | `researchos_find`, `researchos_trace`, `researchos_status` | Read-only, as above. |

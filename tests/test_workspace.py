@@ -15,6 +15,8 @@ import pytest
 from researchos import addproject, db, history, paths, people, project, proposals, share, signing, workspace
 from researchos.records.identity import read_identity
 
+from attempt_seed import seed_attempt
+
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
@@ -238,7 +240,8 @@ def test_binary_and_oversize_documents_are_rejected_without_overwrite(root, raw,
 
 
 def test_tasks_are_optional_independent_and_revision_checked(root):
-    tasks = [{"id": "sample", "text": "Check the sample definition", "owner": "Dr Li", "due": "2026-11-04", "done": False}]
+    tasks = [{"id": "sample", "text": "Check the sample definition", "owner": "Dr Li", "due": "2026-11-04", "done": False,
+              "attempt": seed_attempt(root)}]  # 21.1: a new task belongs to an attempt
     first = workspace.save_tasks(root, {"tasks": tasks, "revision": None})
     assert json.loads((root / workspace.TASKS_PATH).read_text()) == tasks
     assert not (root / workspace.OVERVIEW_PATH).exists()
@@ -286,9 +289,10 @@ def test_inventory_links_visible_files_without_reading_their_content(root, tmp_p
 
 def test_no_save_creates_or_approves_an_attempt_node(root):
     _new(root, "result", "A preliminary finding; reasons for doubt remain.")
-    workspace.save_tasks(root, {"tasks": [{"id": "try", "text": "Try later"}], "revision": None})
+    attempt = seed_attempt(root)  # the attempt a task names exists before the task does (21.1); saving adds no other
+    workspace.save_tasks(root, {"tasks": [{"id": "try", "text": "Try later", "attempt": attempt}], "revision": None})
     with db.connect(paths.graph_db_path(root)) as conn:
-        assert db.get_nodes_by_type(conn, "attempt") == []
+        assert [node["id"] for node in db.get_nodes_by_type(conn, "attempt")] == [attempt]
 
 
 def test_unknown_team_and_nonmember_cannot_save(root):
@@ -321,7 +325,8 @@ def test_member_writing_uses_existing_proposal_approval_and_snapshot_flow(tmp_pa
     with drive.member():
         project.open_project(drive.work)
         note = _new(drive.work, "result", "![Result](figs/fig2.png)\n[Analysis](steps/17-plot.py)")
-        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result", "report": note["path"]}],
+        task = workspace.save_tasks(drive.work, {"tasks": [{"id": "check", "text": "Discuss this result", "report": note["path"],
+                                                           "attempt": "attempt:map.md#16"}],
                                                  "revision": None})
         # A member's 提交 of tasks takes the result records the changed tasks link along (18.3).
         assert task["changed_task_reports"] == [note["path"]]
@@ -467,8 +472,8 @@ def test_a_member_s_save_releases_the_project_lock_before_the_marks_read_the_sha
     assert "An open question" in (drive.work / answer["body"]["path"]).read_text(encoding="utf-8")
 
 
-def test_a_result_document_without_a_heading_is_titled_result_record_not_the_attempt_cells_word(root):
-    """DESIGN.md 18.2: 结果记录 / "Result record" is a document in 项目首页, 结果 /
+def test_a_report_without_a_heading_is_titled_report_not_the_attempt_cells_word(root):
+    """DESIGN.md 18.2, 21.6: 报告 / "Report" is a document in 项目首页, 结果 /
     "Result" the attempt's cell. A result document whose heading was deleted
     (in the writing area, or by an agent) is listed and opened under the
     document's word in both languages; a note keeps its own."""
@@ -476,12 +481,12 @@ def test_a_result_document_without_a_heading_is_titled_result_record_not_the_att
     note = _new(root, "note", "# Reading list\n")
     (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
     (root / note["path"]).write_text("Only a thought.\n", encoding="utf-8")
-    assert workspace.document(root, result["path"], lang="en")["title"] == "Result record"
-    assert workspace.document(root, result["path"])["title"] == "结果记录"
+    assert workspace.document(root, result["path"], lang="en")["title"] == "Report"
+    assert workspace.document(root, result["path"])["title"] == "报告"
     assert workspace.document(root, note["path"], lang="en")["title"] == "Note"
     assert workspace.document(root, note["path"])["title"] == "笔记"
     listed = {doc["path"]: doc["title"] for doc in workspace.overview(root, lang="en")["documents"]}
-    assert listed[result["path"]] == "Result record" and listed[note["path"]] == "Note"
+    assert listed[result["path"]] == "Report" and listed[note["path"]] == "Note"
 
 
 # -- 项目首页 (DESIGN.md 18.3) --------------------------------------------------------------------------------
@@ -527,12 +532,13 @@ def test_a_title_the_person_did_not_type_never_writes_a_heading_in_either_langua
     that word back is no title typed, whichever screen it came from (13.1). A real title still writes one."""
     result = _new(root, "result", "# Fit results\n\nIt worked.\n")
     (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
-    for default in ("Result record", "结果记录"):
+    # the last two are what a page that read the file before 21.6 sends back (workspace._RETIRED_TITLES)
+    for default in ("Report", "报告", "Result record", "结果记录"):
         shown = workspace.document(root, result["path"])
         saved = workspace.save_document(root, {"path": result["path"], "title": default,
                                                "content": shown["content"] + "x", "revision": shown["revision"]}, lang="en")
         assert saved["content"] == "It worked, no heading.\nx" and not saved["content"].startswith("#")
-        assert saved["title"] == "Result record"  # the answer is in the screen's language
+        assert saved["title"] == "Report"  # the answer is in the screen's language
         (root / result["path"]).write_text("It worked, no heading.\n", encoding="utf-8")
     shown = workspace.document(root, result["path"])
     typed = workspace.save_document(root, {"path": result["path"], "title": "A real title", "content": shown["content"],
@@ -668,7 +674,8 @@ def test_existing_files_knows_a_listable_file_beyond_the_listed_ones(root, tmp_p
 
 def test_a_one_person_project_has_no_report_paths_to_take_along(root):
     note = _new(root, "result", "# Fit\n")
-    tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"]}], "revision": None})
+    tasks = workspace.save_tasks(root, {"tasks": [{"id": "t", "text": "Check", "report": note["path"],
+                                                  "attempt": seed_attempt(root)}], "revision": None})
     assert tasks["changed_task_reports"] == [] and workspace.overview(root)["changed_task_reports"] == []
 
 
@@ -684,7 +691,8 @@ def test_a_members_changed_catalog_is_offered_for_review_even_when_its_task_is_u
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         (official / "tables/a.csv").write_text("n\na\n")
@@ -729,7 +737,8 @@ def test_a_file_a_member_registers_again_after_it_changed_is_offered_though_the_
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         for name in ("a", "b"):
@@ -763,7 +772,8 @@ def test_a_malformed_official_catalog_never_breaks_the_project_home_of_a_member_
         official = drive.official
         record = workspace.save_document(official, {"kind": "result", "title": "Estimate", "revision": None,
                                                     "content": "# Estimate\n\nThe estimate is 0.4.\n"})["path"]
-        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record}],
+        workspace.save_tasks(official, {"tasks": [{"id": "check", "text": "Estimate it", "done": True, "report": record,
+                                                "attempt": "attempt:map.md#16"}],
                                         "revision": None})
         (official / "tables").mkdir()
         (official / "tables/a.csv").write_text("n\na\n")

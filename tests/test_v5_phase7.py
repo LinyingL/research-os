@@ -25,6 +25,7 @@ from researchos.records import ledger as ledger_mod
 from researchos.webapp import registry, server
 
 from test_records_judgements import READ, _conn, _project, _scan
+from test_v9_language import NODE_ENV, _times_prelude
 
 APP_HTML = Path(server.__file__).parent / "app.html"
 CANVAS_JS = Path(server.__file__).parent / "canvas.js"
@@ -296,7 +297,7 @@ def test_served_page_carries_the_record_surfaces_in_product_language(live):
         "记录文件比图谱少了 ", "以文件为准", "把缺少的补回文件",
         "项目已移动或已在别处认领，请重新打开", "找不到项目文件夹（可能已移动）", "选择新位置…",
         "迁移这些记录", "这不是这个项目的", "迁移后才能记录连线确认", " 条里有 ", " 条的两端能在这个文件夹里扫到",
-        "原位置暂时无法确认", "项目身份文件无法读取", "人工记录", "在 Finder 中显示", "最新快照：",
+        "原位置暂时无法确认", "项目身份文件无法读取", "你的记录与备份", "在 Finder 中显示", "最近一次备份：",
         "关系图位置", "旧索引已移到：", "请先退出 Research OS 与 MCP 服务",
     ):
         assert copy in html, copy
@@ -312,7 +313,7 @@ def test_review_wording_never_says_something_no_longer_exists():
     html = APP_HTML.read_text(encoding="utf-8")
     start = html.index("// -- Judgment wording (pure")
     wording = html[start:html.index("// -- end of judgment wording")]
-    review = html[html.index("// -- 待复核 (9.6)"):html.index("// -- 记录 (9.2")]
+    review = html[html.index("// -- 待复核 (9.6)"):html.index("// -- 你的记录与备份 (9.2")]
     for text in (wording, review):
         for phrase in ("不再存在", "已不存在", "已删除", "被删除了"):
             assert phrase not in text, phrase
@@ -359,11 +360,11 @@ process.stdout.write(JSON.stringify(calls.map(([fn, args]) => W[fn](...args))));
 def _wording(*calls: tuple[str, list[Any]]) -> list[Any]:
     html = APP_HTML.read_text(encoding="utf-8")
     # The block's words go through the page's one t() helper (13.6): run alone, Chinese.
-    block = (html[html.index("// -- The interface language (DESIGN.md 13.6)"):html.index("// -- Small shared state")]
-             + html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")])
+    # ... with the page's one time function in front of them (21.8: a time reads as this Mac's, in the zone the harness fixes)
+    block = (_times_prelude() + html[html.index("// -- Judgment wording (pure"):html.index("// -- end of judgment wording")])
     result = subprocess.run(
         [NODE, "-e", _WORDING_RUNNER, json.dumps(list(calls))],
-        input=block, capture_output=True, text=True, check=True, timeout=30,
+        input=block, capture_output=True, text=True, check=True, timeout=30, env=NODE_ENV,
     )
     return json.loads(result.stdout)
 

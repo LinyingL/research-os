@@ -18,9 +18,11 @@ nothing it does not have to:
   and is not followed; a link under review is followed and marked.
 - **Downstream.** The sections that `include` the node.
 - **Attempts.** An attempt claims a file through its step numbers
-  (`attrs.step_files`, resolved under `steps_dir`) or through a hand-drawn
-  `belongs_to` mapping from the file to the attempt (「关联文件」). Every
-  file of the chain is asked.
+  (`attrs.step_files`, resolved under `steps_dir`), through a hand-drawn
+  `belongs_to` mapping from the file to the attempt (「归入尝试」), or because
+  a task registered the file as its output (21.5: `Shared.placed`, the attempt
+  of the task whose report lists it -- the one notion `now_doing.placed_reports`
+  has of the attempt a report belongs to). Every file of the chain is asked.
 - **Variables.** A variable card's version whose `[implementation]` names a
   file of the chain as its `output` -- or whose `field` is a column of a
   table in the chain (said as such: a column name is weaker evidence than
@@ -29,13 +31,19 @@ nothing it does not have to:
 
 Every break is explicit, never an empty list that looks like "nothing":
 
-- `no_generating_script` -- the node itself has no producer; repair:
-  「补上来源」, a `generates` (figure) or `writes` (data) mapping;
+- `no_generating_script` (缺生成脚本) -- the node itself has no producer; repair:
+  「指定生成它的脚本」, a `generates` (figure) or `writes` (data) mapping
+  (the write 补上来源 has always made);
 - `no_attempt` -- no attempt claims any file of the chain; repair:
-  「关联文件」, a `belongs_to` mapping;
+  「归入尝试」, a `belongs_to` mapping;
 - `script_unreadable` -- the latest scan could not read or parse a script
   of the chain (its reads may be missing);
-- `script_missing` / `data_missing` -- a file of the chain is not on disk.
+- `script_missing` / `data_missing` -- a file of the chain is not on disk. A file only a script's own text
+  names, which the researcher has answered with an entry of their own for the same script (a `reads` or `writes`
+  of a file of that name; `lineage.superseded`), is no part of the chain: the script reads what they named.
+
+Which of these is a warning and which is quiet is `researchos.provenance`'s rule (DESIGN.md 21.5); the trace only
+says what is broken.
 
 One request, many traces (18.4 item 1). 图表与论断 traces every figure it
 lists, and each `chain` would read the link flags, the attempts
@@ -53,7 +61,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db
+from researchos import db, lineage
 from researchos.records import judgements
 from researchos.records import notes as notes_mod
 
@@ -62,13 +70,13 @@ PRODUCER_TYPES = ("generates", "writes")
 TABLE_SUFFIXES = (".csv", ".tsv", ".tab")
 
 BREAK_LABELS = {
-    "no_generating_script": "没有找到生成它的脚本",
+    "no_generating_script": "缺生成脚本",
     "no_attempt": "还没有归入任何尝试",
     "script_unreadable": "脚本暂时无法读取或解析",
     "script_missing": "脚本文件不在磁盘上",
     "data_missing": "数据文件不在磁盘上",
 }
-REPAIR_LABELS = {"generates": "补上来源", "writes": "补上来源", "belongs_to": "关联文件"}
+REPAIR_LABELS = {"generates": "指定生成它的脚本", "writes": "指定生成它的脚本", "belongs_to": "归入尝试"}
 
 
 def _live(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -115,7 +123,9 @@ def _attempts_config(root: Path):
         return None
 
 
-STEP_FILES, ATTACHED = "step_files", "belongs_to"
+STEP_FILES, ATTACHED, TASK_OUTPUT = "step_files", "belongs_to", "task"
+#: The kinds of registered output (`outputs.ROLES`) that are files of a chain: figures, tables, scripts, data.
+REGISTERED_KINDS = ("figure", "table", "code", "data")
 
 
 def attempt_members(conn: Connection, root: Path,
@@ -152,8 +162,9 @@ class Shared:
     part read on first use and then kept for the request: the link flags;
     the attempts configuration with the verdict words read from the same
     file; the attempt rows, with an index from the path of a step file to
-    the attempts that name it; the variable cards; whether a path is on
-    disk; the header of a table. A part that fails to read is not kept, so
+    the attempts that name it; the files tasks registered and the attempt
+    each is placed in; the variable cards; whether a path is on disk; the
+    header of a table. A part that fails to read is not kept, so
     the next trace meets the same failure it would have met alone.
 
     One request on one thread (the server builds one per request): nothing
@@ -170,9 +181,13 @@ class Shared:
         self._attempts: list[dict[str, Any]] | None = None
         self._by_id: dict[str, dict[str, Any]] = {}
         self._steps: dict[str, list[tuple[int, int, dict[str, Any]]]] | None = None
+        self._registered: dict[str, Any] | None = None
+        self._reports: dict[str, str] | None = None
+        self._placed: dict[str, str] | None = None
         self._cards: list[Any] | None = None
         self._on_disk: dict[str, bool] = {}
         self._header: dict[str, list[str] | None] = {}
+        self._entries: dict[tuple[str, str], set[str]] | None = None
 
     @property
     def flags(self) -> judgements.LinkFlags:
@@ -243,12 +258,71 @@ class Shared:
         return [(attempt, node) for _place, _order, attempt, node in hits]
 
     @property
+    def registered(self) -> dict[str, Any]:
+        """The files agents and people registered as outputs (`outputs.catalog`: figures, tables, scripts and data
+        files; its `items` and, when a catalog could not be read, its `error` and `broken`), read once for the
+        request. The kind pages list them as rows (`kind_rows.Filed`), and a trace asks which attempt holds them."""
+        if self._registered is None:
+            from researchos import outputs  # noqa: PLC0415
+
+            self._registered = outputs.catalog(self.root, set(REGISTERED_KINDS), preview=False)
+        return self._registered
+
+    @property
+    def reports(self) -> dict[str, str]:
+        """`{report path: attempt id}`, the attempt each result record belongs to (`now_doing.placed_reports`, 21.4):
+        the task's own attempt, else the first its research context links. A task list that cannot be read places
+        nothing."""
+        if self._reports is None:
+            from researchos import now_doing, workspace  # noqa: PLC0415
+
+            try:
+                tasks = workspace.read_tasks(self.root)[0]
+            except (OSError, ValueError, workspace.WorkspaceError):
+                tasks = []
+            self._reports = now_doing.placed_reports(self.root, set(self.by_id), tasks)
+        return self._reports
+
+    @property
+    def placed(self) -> dict[str, str]:
+        """`{path, as the scan compares paths (`ingest.files.fold`): attempt id}` of the registered files whose result
+        record an attempt holds (`reports`): what a task made is in the attempt of the task. Nothing is read for a
+        project that registered nothing."""
+        if self._placed is None:
+            from researchos.ingest import files as ingest_files  # noqa: PLC0415
+
+            items = self.registered["items"]
+            reports = self.reports if items else {}
+            self._placed = {ingest_files.fold(item["path"]): reports[item["report"]] for item in items
+                            if isinstance(item.get("report"), str) and item["report"] in reports}
+        return self._placed
+
+    @property
     def cards(self) -> list[Any]:
         if self._cards is None:
             from researchos.records import variables as variables_mod  # noqa: PLC0415
 
             self._cards = variables_mod.read_cards(self.root)
         return self._cards
+
+    @property
+    def person_entries(self) -> dict[tuple[str, str], set[str]]:
+        """The files the researcher's own entries say a script reads or writes (`lineage.person_entries`)."""
+        if self._entries is None:
+            self._entries = lineage.person_entries(self.conn)
+        return self._entries
+
+    def answered(self, edge: dict[str, Any]) -> bool:
+        """Whether `edge` is a machine link to a file that is not on disk which the researcher's own entry has
+        answered: the script reads or writes what they named, so the missing file is no part of the chain."""
+        if edge["type"] not in lineage.FAMILY or edge["extractor"] in db.HUMAN_EXTRACTORS or not edge["src"].startswith("script:"):
+            return False
+        if not self.person_entries:
+            return False
+        target = notes_mod.node_path(edge["dst"])
+        if target is None or self.exists(target):
+            return False
+        return lineage.superseded(self.person_entries, notes_mod.node_path(edge["src"]), edge["type"], target)
 
     def exists(self, rel: str | None) -> bool:
         if rel is None:
@@ -297,7 +371,7 @@ def chain(conn: Connection, project_root: str | Path, node: str, *, shared: Shar
         for edge_type in PRODUCER_TYPES:
             for edge in _live(db.query_edges(conn, dst=target, type=edge_type)):
                 script = _script_of(edge)
-                if script is None:
+                if script is None or shared.answered(edge):
                     continue
                 links[judgements.key_of(edge)] = _link(edge, flags)
                 found.append(script)
@@ -312,6 +386,8 @@ def chain(conn: Connection, project_root: str | Path, node: str, *, shared: Shar
                  "scan_status": status, "reads": [], "writes": []}
         scripts[script] = entry
         for edge in _live(db.query_edges(conn, src=script)):
+            if shared.answered(edge):
+                continue
             if edge["type"] == "reads":
                 links[judgements.key_of(edge)] = _link(edge, flags)
                 entry["reads"].append(edge["dst"])
@@ -409,6 +485,15 @@ def _attempts(shared: Shared, chain_nodes: list[str],
                 continue
             links[judgements.key_of(edge)] = _link(edge, shared.flags)
             claim(attempt, "belongs_to", node)
+    placed = shared.placed
+    if placed:  # a task registered files as its output: the attempt of the task holds them
+        from researchos.ingest import files as ingest_files  # noqa: PLC0415
+
+        for node in chain_nodes:
+            path = notes_mod.node_path(node)
+            attempt = by_id.get(placed.get(ingest_files.fold(path), "")) if path else None
+            if attempt is not None:
+                claim(attempt, TASK_OUTPUT, node)
     return sorted(found.values(), key=lambda a: a["id"])
 
 

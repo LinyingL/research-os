@@ -17,7 +17,7 @@ who I am, notes, what changed, and the trace -- the payloads only.
   `GET /api/results[?draft=…]` -- 图表与论断; `GET /api/data-code` -- 数据与代码
   (`researchos.nodepage`).
 - `POST /api/papers {draft, marked}` -- 「设为论文正文」 (12.13,
-  `researchos.records.papers`).
+  `researchos.records.papers`); `{file, not_in_paper}` -- 「不属于论文」 / 「放回论文」 (21.5).
 - `GET /api/routes` -- 研究路线; `GET /api/evidence?node=attempt:…` -- an
   abandoned route's frozen basis; `GET /api/history/version?node=&version=`
   -- one kept version's content (U4, `researchos.nodepage`).
@@ -192,18 +192,24 @@ def diff_payload(root: Path, query: dict[str, list[str]], lang: str = "zh") -> d
 
 
 def papers_post_payload(root: Path, project_id: str | None, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-    """POST /api/papers {draft, marked}: a draft marked 「设为论文正文」, or
-    no longer -- `researchos.records.papers`, the one write path. In a
-    member's working copy the mark travels with the next sync, like a note."""
+    """POST /api/papers: `{draft, marked}` -- a draft marked 「设为论文正文」, or no longer -- or `{file, not_in_paper}`
+    -- a figure or table put out of the paper with 「不属于论文」, or put back with 「放回论文」 (21.5) -- by
+    `researchos.records.papers`, the one write path of both. In a member's working copy either travels with the next
+    sync, like a note."""
     from researchos.records import papers  # noqa: PLC0415
 
     draft, marked = body.get("draft"), body.get("marked")
-    if not isinstance(draft, str) or not isinstance(marked, bool):
-        raise NodeApiRefused(400, "missing", "request body must carry string 'draft' and boolean 'marked'", "缺少文稿")
+    file, out = body.get("file"), body.get("not_in_paper")
     try:
-        done = papers.set_marked(root, draft, marked, via="app", expected_id=project_id, timeout=timeout)
+        if isinstance(file, str) and isinstance(out, bool) and draft is None:
+            done = papers.set_not_in_paper(root, file, out, via="app", expected_id=project_id, timeout=timeout)
+        elif isinstance(draft, str) and isinstance(marked, bool) and file is None:
+            done = papers.set_marked(root, draft, marked, via="app", expected_id=project_id, timeout=timeout)
+        else:
+            raise NodeApiRefused(400, "missing", "request body must carry string 'draft' and boolean 'marked', or "
+                                                 "string 'file' and boolean 'not_in_paper'", "缺少文稿")
     except papers.PaperRefused as exc:
-        status = {"untrusted": 409, "no_such_draft": 404}.get(exc.code, 400)
+        status = {"untrusted": 409, "no_such_draft": 404, "no_such_file": 404}.get(exc.code, 400)
         raise NodeApiRefused(status, exc.code, str(exc), exc.message_zh) from exc
     return {"ok": True, **done}
 
@@ -244,19 +250,13 @@ def node_payload(conn: Connection, root: Path, query: dict[str, list[str]], lang
 
 
 def results_payload(conn: Connection, root: Path, query: dict[str, list[str]]) -> dict[str, Any]:
-    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims."""
+    """GET /api/results[?draft=…]: 图表与论断, or one draft's claims. It names no report: a page of many figures has no one thing for a
+    box of the documents that mention "it" to be about (21.5); a report that names a figure or table is on that figure's own page
+    (`node_payload`)."""
     from researchos import nodepage  # noqa: PLC0415
 
     try:
-        from researchos import outputs
-
-        page = nodepage.results(conn, root, _arg(query, "draft"))
-        bundle = outputs.catalog(root, {"figure", "table"})
-        from researchos import research_records
-        items = list(bundle.get('items', [])) + list(page.get('loose', []))
-        items.extend(item for group in page.get('sections', []) for item in group.get('items', []))
-        page['research_records'] = research_records.backlinks(root, paths=[item['path'] for item in items if item.get('path')])
-        return {**page, "outputs": bundle}
+        return nodepage.results(conn, root, _arg(query, "draft"))
     except ValueError as exc:
         raise NodeApiRefused(400, "not_a_node", str(exc), "无法识别这份文稿") from exc
 
@@ -300,9 +300,7 @@ def data_code_payload(conn: Connection, root: Path) -> dict[str, Any]:
     """GET /api/data-code: 数据与代码."""
     from researchos import nodepage  # noqa: PLC0415
 
-    from researchos import outputs
-
-    return {**nodepage.data_code(conn, root), "outputs": outputs.catalog(root, {"code", "data", "document"})}
+    return nodepage.data_code(conn, root)
 
 
 # -- proposals (12.3, 12.4; V8 phase 3) -----------------------------------------------

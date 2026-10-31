@@ -253,9 +253,9 @@ def test_12_9_the_sidebar_has_the_projects_and_the_sections_in_order():
     nav = html[html.index('<aside class="sidebar"'):html.index("</aside>")]
     assert nav.index('id="project-menu-btn"') < nav.index('class="side-nav"') < nav.index('id="share-line"') < nav.index('id="me-line"')
     assert 'aria-haspopup="menu"' in nav and 'id="side-count-proposals"' in nav
-    # 18.3: 待办's count sits beside 研究路线, in the 提议 item's style.
-    assert nav.count('<span class="side-count" id="side-count-routes"></span>') == 1
-    assert nav.index('id="side-count-routes"') < nav.index('data-section="results"')
+    # 21.4: the count of 等你处理 sits beside 项目首页 (it sat beside 研究路线 as 待办's, 18.3), in the 提议 item's style.
+    assert nav.count('<span class="side-count" id="side-count-home"></span>') == 1 and "side-count-routes" not in nav
+    assert nav.index('data-section="workspace"') < nav.index('id="side-count-home"') < nav.index('data-section="routes"')
     assert 'projectMenuBtn.textContent = label || noProjectName();' in html
     # 数据与代码 holds the lineage list and 关系图 (the canvas, 12.9).
     assert 'data-subview="lineage"' in html and 'data-subview="canvas"' in html and ">关系图<" in html
@@ -305,7 +305,8 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     # the team (not a project of one). Re-baselined for V10: the desk is the route map with the
     # column beside it, and 14.5 folds the first desk's lists of changes, outputs whose basis
     # changed and abandoned routes into the map's cards (and 图表与论断).
-    for block in ("待办", "等你批准", "我的提议", "待复核", "不属于任何尝试", "正式版本有更新", "连线的一端找不到了",
+    # (21.4 and 21.6: the column is 等你处理, one list whose rows carry these words as their chips; 我的提议 is no heading any more.)
+    for block in ("等你处理", "等你批准", "待复核", "不属于任何尝试", "正式版本有更新", "连线的一端找不到了",
                   "你还不是这个项目的成员：请 PI 把你加入团队，然后同步"):
         assert block in js, block
     for gone in ("依据变了的图表与论断", "已放弃的路线"):
@@ -316,11 +317,11 @@ def test_desk_js_is_served_verbatim_same_origin_and_packaged(live):
     assert js.index("function changesPart(") < js.index("你上次查看以来的改动") < js.index("function reviewKeys(")
     # The desk's writes: 同步, and -- re-baselined for V10 (DESIGN.md 14.3) -- the side panel's,
     # each through an existing endpoint: the attempt's preview and write, a note, a line removed
-    # (a member's removal proposed). Nothing else.
+    # (a member's removal proposed); and (21.4) 「知道了」 on a failed run, kept on this Mac, not in the project. Nothing else.
     writes = re.findall(r'apiPost\("(/api/[\w/-]+)"', js)
-    assert 'apiPost("/api/share/sync", {})' in js and js.count("apiPost(") == len(writes) == 6
+    assert 'apiPost("/api/share/sync", {})' in js and js.count("apiPost(") == len(writes) == 7
     assert sorted(writes) == ["/api/attempts/preview", "/api/attempts/write", "/api/mappings/delete", "/api/notes",
-                              "/api/proposals", "/api/share/sync"]
+                              "/api/proposals", "/api/share/sync", "/api/workspace/run/aside"]
 
 
 # -- 12.0: the desk's data -----------------------------------------------------------------------------------
@@ -398,11 +399,11 @@ def test_12_0_results_that_lost_their_evidence(tmp_path):
             got = nodepage.results(conn, root)
         finally:
             conn.close()
-        return {i["path"]: (g["file"], i["trace"]) for g in got["sections"] for i in g["items"]}
+        return {i["path"]: (i["drafts"][0], i["trace"]) for i in got["items"]}  # (21.5: one row per figure, naming its drafts)
 
     found = traces()
     assert found["figs/fig1.png"][0] == "paper.md" and found["figs/fig1.png"][1]["state"] == "no_source"
-    assert found["figs/fig1.png"][1]["breaks"][0] == "没有找到生成它的脚本"
+    assert found["figs/fig1.png"][1]["breaks"][0] == "缺生成脚本"  # 21.6 renames the break
     assert found["figs/fig2.png"][1]["state"] != "no_source"
     (root / "data" / "raw.csv").unlink()
     gone = traces()["figs/fig2.png"][1]

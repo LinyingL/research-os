@@ -179,8 +179,10 @@ console.log(JSON.stringify({wasHidden, view: currentView, shown: shownView(), ti
     assert out["wasHidden"] is True
     assert out["view"] == "workspace" and out["shown"] == ["workspace"] and out["title"] == "项目首页"
     assert out["loaded"] == "1"
-    # the home was read, its own first document opened, and then the record: the record is what is left on screen
-    assert out["order"] == ["/api/workspace", "research/overview.md", "research/results/a.md", "/api/workspace/research-record?report=research/results/a.md"]
+    # the home was read (and, from 21.4 on, 现在在做什么 beside it: /api/workspace/now), its own first document opened, and then the
+    # record: the record is what is left on screen
+    assert out["order"] == ["/api/workspace", "/api/workspace/now", "research/overview.md", "research/results/a.md",
+                            "/api/workspace/research-record?report=research/results/a.md"]
     assert out["reading"] is True and out["writing"] is True and "The estimate is 0.42." in out["words"]
 
 
@@ -268,6 +270,8 @@ _ROWS_PRELUDE = r"""
 global.t = (s, v) => window.ROI18N.t(s, v);
 const opened = [];
 global.openResultOnHome = async (path) => { opened.push(path); };
+// 21.2: a record an agent run handed back (a row with a `run`) opens as a handback, the others to write in
+global.ROWorkspace = { openHandback: async (path) => { opened.push(path); } };
 const rowsOf = (items) => {
   const host = new Element('div');
   renderRegisteredOutputs(host, { items });
@@ -289,7 +293,8 @@ const groupsOf = (items) => {
 def _rows_run(scenario: str, *, lang: str = "zh") -> dict:
     """The registered rows as app.html draws them, on their own."""
     source = DOM + "\nwindow.ROI18N_SAVED=" + json.dumps(lang) + ";\n" + (WEBAPP / "i18n.js").read_text() + "\n" + _ROWS_PRELUDE
-    for head in ("function mk(", "function mkButton(", "function atText(", "function renderRegisteredOutputs("):
+    source += (WEBAPP / "desk.js").read_text() + "\n"   # RODesk.whenWords: the one function that turns a stored time into this Mac's time (21.8)
+    for head in ("function mk(", "function mkButton(", "function stampText(", "function atText(", "function renderRegisteredOutputs("):
         source += _app_function(head) + "\n"
     source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
     return _node(source)
@@ -382,14 +387,14 @@ console.log(JSON.stringify({title: host.all().filter((e) => e.tagName === 'H2').
     assert out["import"].count("打开结果") == 1 and "导入为变量草稿" in out["import"]
 
 
-def test_the_four_views_draw_their_registered_rows_with_the_one_function():
-    """图表与论断 and 数据与代码 (node.js), 文献 and 变量 (app.html) all call renderRegisteredOutputs, so the task and
-    the date are on every one of them."""
+def test_two_views_draw_their_registered_rows_with_the_one_function_and_the_kind_pages_list_them_as_rows():
+    """文献 and 变量 (app.html) call renderRegisteredOutputs, so the task and the date are on both. 图表与论断 and 数据与代码
+    (node.js) no longer do (21.5, B3-2): an agent's outputs are seen in its handback and are rows of their kind there."""
     app = (WEBAPP / "app.html").read_text(encoding="utf-8")
     node = (WEBAPP / "node.js").read_text(encoding="utf-8")
     assert app.count("function renderRegisteredOutputs(") == 1 and node.count("function renderRegisteredOutputs(") == 0
     assert app.count("renderRegisteredOutputs(host, data.outputs") == 2      # 变量 (the drafts) and 文献
-    assert node.count("renderRegisteredOutputs(") == 2                        # 图表与论断 and 数据与代码
+    assert node.count("renderRegisteredOutputs(") == 0                        # 图表与论断 and 数据与代码: no 任务输出 block
 
 
 _CHOOSING_GOES = r'''
@@ -440,7 +445,7 @@ console.log(JSON.stringify({ named: lines(named), namedRows: rows(named), alone:
 
 def test_the_views_error_line_names_the_catalogs_it_is_about_and_the_other_rows_still_show():
     zh = _home_run(_ERROR_LINE)
-    assert zh["named"] == ["输出清单暂时无法读取。 research/results/a.outputs.json research/results/b.outputs.json"]
-    assert zh["namedRows"] == 1 and zh["alone"] == ["输出清单暂时无法读取。"] and zh["clean"] == []
+    assert zh["named"] == ["输出列表暂时无法读取。 research/results/a.outputs.json research/results/b.outputs.json"]
+    assert zh["namedRows"] == 1 and zh["alone"] == ["输出列表暂时无法读取。"] and zh["clean"] == []
     en = _home_run(_ERROR_LINE, lang="en")
     assert en["named"] == ["The output list could not be read. research/results/a.outputs.json research/results/b.outputs.json"]

@@ -1047,9 +1047,9 @@ def test_instruction_sections(lang):
     assert text.count("\n## ") == 4
     _clean(text)
     if lang == "en":
-        assert "(note)" in text and "(result record)" in text and not re.search(r"[\u4e00-\u9fff]", text)
+        assert "(note)" in text and "(report)" in text and not re.search(r"[\u4e00-\u9fff]", text)
     else:
-        assert "（笔记）" in text and "（结果记录）" in text and "任务" in text
+        assert "（笔记）" in text and "（报告）" in text and "任务" in text
 
 
 def test_instruction_without_due_overview_documents():

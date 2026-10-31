@@ -12,8 +12,13 @@
 // researcher's title, the date as written, the verdict as a text status in
 // its tone (route_status), abandoned cards quieter, and marks as quiet
 // words: the engine's 等你批准 / 提议中 / 待复核 N, a member's own work as
-// 12.12 says, and 有改动 when the desk says so. The 「源自」 lines are a
-// human's lines (clay, 8.2): a parent stands left of what grew out of it,
+// 12.12 says, and 有改动 when the desk says so. A card whose attempt holds
+// tasks (21.1) says under its status 「任务 n，未完成 m」, 「等你看 n」 when a
+// handback is unopened and the first line of its latest handback (a click
+// on that line opens the handback, 21.2, on 「等你看」 the first one not
+// opened yet; the rest of the card opens the attempt); a card
+// with no tasks is as it was, and `after` is not drawn. The 「源自」 lines are a
+// human's lines (ink, 21.8; clay in 8.2): a parent stands left of what grew out of it,
 // no arrowheads; a line a proposal carries is dashed and says so. The
 // layout is a forest by generation, siblings in the map's order (by date),
 // and the attempts with no line in 「还没标来处」 below it (layoutRoutes:
@@ -46,10 +51,13 @@
   const CARD_W = 232;
   const CARD_H = 88;
   const CARD_TALL = CARD_H + 20;    // a card whose marks wrap to a second line (app.html .rm-card min-height)
+  const CARD_WORK_H = 120;          // a card that also says its tasks and its latest handback (21.1): two more lines
   const COL_PITCH = CARD_W + 112;   // one generation to the next: room for the curve
   const ROW_PITCH = CARD_H + 28;    // rows of the forest
+  const WORK_PITCH = CARD_WORK_H + 28;
   const ROW_X = CARD_W + 24;        // 「还没标来处」, card to card
   const ROW_Y = CARD_H + 24;
+  const WORK_ROW_Y = CARD_WORK_H + 24;
   const ROW_GAP = 72;               // the forest to the row's caption
   const CAPTION_H = 30;
   const ROW_MIN = 4;                // the row wraps, at least this wide, toward a page of 1.6:1
@@ -86,8 +94,13 @@
   // arrangement does not hold joins the end of 「还没标来处」 -- the lowest
   // line of the cards with no line, as arranged -- or starts it below all;
   // the caption stands over the highest of those cards, leftmost first.
+  function hasWork(a) { return !!(a && a.work && a.work.tasks > 0); }
+
   function layoutRoutes(attempts, lines, opts) {
     const fixed = (opts && opts.fixed) || {};
+    // 21.1: when any card says its tasks, every row of the forest is as tall as such a card (a map of cards of one height).
+    const rich = attempts.some(hasWork);
+    const cardH = rich ? CARD_WORK_H : CARD_H, pitch = rich ? WORK_PITCH : ROW_PITCH, rowY = rich ? WORK_ROW_Y : ROW_Y;
     const ids = attempts.map((a) => a.id);
     const rank = new Map(ids.map((id, i) => [id, i]));
     const parents = new Map(ids.map((id) => [id, []]));
@@ -125,10 +138,10 @@
     linked.forEach((id) => { if (!parents.get(id).length) place(id, bottom()); });
     linked.forEach((id) => { if (!rowOf.has(id)) place(id, bottom()); }); // only inside a circle
     const auto = {};
-    linked.forEach((id) => { auto[id] = [gen.get(id) * COL_PITCH, rowOf.get(id) * ROW_PITCH]; });
-    const top = linked.length ? bottom() * ROW_PITCH - (ROW_PITCH - CARD_H) + ROW_GAP + CAPTION_H : CAPTION_H;
-    const per = Math.max(ROW_MIN, Math.ceil(Math.sqrt(row.length * ASPECT * ROW_Y / ROW_X)));
-    row.forEach((id, i) => { auto[id] = [(i % per) * ROW_X, top + Math.floor(i / per) * ROW_Y]; });
+    linked.forEach((id) => { auto[id] = [gen.get(id) * COL_PITCH, rowOf.get(id) * pitch]; });
+    const top = linked.length ? bottom() * pitch - (pitch - cardH) + ROW_GAP + CAPTION_H : CAPTION_H;
+    const per = Math.max(ROW_MIN, Math.ceil(Math.sqrt(row.length * ASPECT * rowY / ROW_X)));
+    row.forEach((id, i) => { auto[id] = [(i % per) * ROW_X, top + Math.floor(i / per) * rowY]; });
     const held = ids.filter((id) => hasOwn(fixed, id) && validPos(fixed[id]));
     if (!held.length) return { positions: auto, caption: row.length ? [0, top - CAPTION_H] : null, row, pinned: false };
     const positions = {};
@@ -137,9 +150,9 @@
     let x, y;
     if (inRow.length) {
       y = Math.max(...inRow.map((id) => positions[id][1]));
-      x = Math.max(...held.filter((id) => Math.abs(positions[id][1] - y) < CARD_H).map((id) => positions[id][0])) + ROW_X;
+      x = Math.max(...held.filter((id) => Math.abs(positions[id][1] - y) < cardH).map((id) => positions[id][0])) + ROW_X;
     } else {
-      y = Math.max(...held.map((id) => positions[id][1])) + CARD_H + ROW_GAP + CAPTION_H;
+      y = Math.max(...held.map((id) => positions[id][1])) + cardH + ROW_GAP + CAPTION_H;
       x = Math.min(...held.map((id) => positions[id][0]));
     }
     ids.forEach((id) => { if (!hasOwn(positions, id)) { positions[id] = [x, y]; x += ROW_X; } });
@@ -162,6 +175,18 @@
     return out;
   }
 
+  // A card's work lines (21.1): how many tasks its attempt holds and how many are unfinished, how many handbacks wait
+  // to be opened, and the first line of the latest handback; nothing for an attempt with no tasks.
+  function workWords(a) {
+    if (!hasWork(a)) return { tasks: "", look: "", line: "" };
+    const w = a.work, n = w.tasks, open = w.unfinished || 0;
+    return {
+      tasks: open ? t("任务 {n}，未完成 {open}", { n: n, open: open }) : t("任务 {n}，全部完成", { n: n }),
+      look: w.unopened > 0 ? t("等你看 {n}", { n: w.unopened }) : "",
+      line: (w.latest && w.latest.line) || "",
+    };
+  }
+
   function lineWords(child, parent) {
     return t("#{child} 源自 #{parent}", { child: child, parent: parent });
   }
@@ -175,7 +200,7 @@
       case "circle": case "mapping_circle": return t("这条连线会绕成一个圈：它要连的来处本身就源自它");
       case "mapping_exists": return t("这两条尝试之间已经有这条连线了");
       case "line_exists": return t("这条连线已经在正式版本里了");
-      case "mapping_attempt_not_found": return t("连线的一端在年表里找不到了，可能刚被改了编号；请刷新后再试");
+      case "mapping_attempt_not_found": return t("连线的一端在尝试表里找不到了，可能刚被改了编号；请刷新后再试");
       case "attempt_not_found": return t("连线的一端不在你上次同步的正式版本里：请同步后再试");
       case "no_such_line": return t("正式版本里没有这条连线");
       case "mapping_member_proposes": return t("你是这个项目的成员：连线要作为提议交给 PI 批准；请刷新后再画");
@@ -291,7 +316,10 @@
   function emptySave() { return { positions: {}, viewport: undefined, reset: false }; }
 
   // `options.onOpen(attemptId)`: a click on a card; `options.onChanged()`:
-  // after a line was written or proposed (the desk reads itself again).
+  // after a line was written or proposed (the desk reads itself again);
+  // `options.firstOpen(project)`: true the first time this project's map is
+  // opened (21.8: the desk remembers that per project, in the browser, as it
+  // remembers the way the page is looked at), when the map fits all its cards.
   function create(options) {
     const opts = options || {};
     const m = {
@@ -318,6 +346,7 @@
     }
     function numberOf(id) { const a = m.byId.get(id); return a ? String(a.number).replace(/^#/, "") : String(id).split("#").pop(); }
     function allLines() { return m.lines.concat(m.optimistic); }
+    function cardH() { return m.attempts.some(hasWork) ? CARD_WORK_H : CARD_H; } // the height every card is laid out for (21.1)
     function lineOf(key) { return allLines().find((l) => lineKey(l.child, l.parent) === key) || null; }
 
     // -- the DOM ---------------------------------------------------------------------
@@ -355,9 +384,11 @@
       const zoom = el("div", "cv-zoom", "100%");
       const status = el("div", "cv-status hidden");
       const empty = el("div", "cv-empty hidden");
+      const outside = el("div", "cv-note rm-outside hidden");   // 21.8: one quiet line when cards are out of view
+      bar.append(outside);   // under the toolbar, which the note follows if it wraps (21.8)
       root.append(world, bar, zoom, status, empty);
       host.appendChild(root);
-      m.dom = { root, world, links, draft, cards, zoom, status, empty };
+      m.dom = { root, world, links, draft, cards, zoom, status, empty, outside };
       root.addEventListener("pointerdown", onDown);
       root.addEventListener("pointermove", onMove);
       root.addEventListener("pointerup", onUp);
@@ -373,7 +404,7 @@
       if (typeof ResizeObserver === "function") {
         new ResizeObserver(() => {
           clearTimeout(m.resizeTimer);
-          m.resizeTimer = setTimeout(() => { if ((m.autoFit || m.needsFit) && m.data && !m.drag) fit(); }, RESIZE_MS);
+          m.resizeTimer = setTimeout(() => { if ((m.autoFit || m.needsFit) && m.data && !m.drag) fit(); else syncOutside(); }, RESIZE_MS);
         }).observe(root);
       }
       applyCamera();
@@ -415,8 +446,12 @@
       render();
       if (!m.cameraSet) {
         m.cameraSet = true;
-        const vp = layout.viewport;
-        if (vp && isFinite(vp.x) && isFinite(vp.y) && vp.zoom > 0) {
+        const vp = layout.viewport, saved = !!vp && isFinite(vp.x) && isFinite(vp.y) && vp.zoom > 0;
+        // 21.8: the first time this project's map is opened it fits all its cards; a camera saved before that is forgotten, as 适应全部 does
+        if (typeof opts.firstOpen === "function" && opts.firstOpen(project)) {
+          autoFit();
+          if (saved) queueViewport(true);
+        } else if (saved) {
           m.camera = { x: vp.x, y: vp.y, zoom: clamp(vp.zoom, ZOOM_MIN, ZOOM_MAX) };
           m.autoFit = false;
           applyCamera();
@@ -440,7 +475,7 @@
     function render() {
       const d = m.dom;
       d.cards.textContent = "";
-      d.empty.textContent = t("年表里还没有尝试。");
+      d.empty.textContent = t("尝试表里还没有尝试。");
       d.empty.classList.toggle("hidden", m.attempts.length > 0);
       if (m.caption) {
         const c = el("div", "rm-caption", t("还没标来处"));
@@ -450,6 +485,7 @@
       }
       m.attempts.forEach((a) => d.cards.appendChild(cardEl(a)));
       renderLines();
+      syncOutside();
     }
 
     function verdictWord(s) {
@@ -464,7 +500,10 @@
       const num = "#" + numberOf(a.id);
       const words = a.route_status && a.route_status.words;
       const said = markWords(a, !!(m.changed && m.changed(a)));
-      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "") + (said.length ? "\n" + said.join(" / ") : "");
+      const work = workWords(a);
+      c.title = num + " " + (a.title || "") + (words ? "\n" + words : "")
+        + (work.tasks ? "\n" + [work.tasks, work.look].filter(Boolean).join(" / ") : "") + (work.line ? "\n" + work.line : "")
+        + (said.length ? "\n" + said.join(" / ") : "");
       const head = el("div", "rm-head");
       head.append(el("span", "rm-num", num), el("span", "rm-title", a.title || ""));
       const meta = el("div", "rm-meta");
@@ -474,7 +513,16 @@
       said.forEach((w) => marks.appendChild(el("span", "rm-mark", w)));
       const handle = el("div", "rm-handle");
       handle.title = t("从这里拖到另一条尝试上：那一条源自这一条");
-      c.append(head, meta, marks, handle);
+      c.append(head, meta);
+      if (work.tasks) {
+        c.classList.add("has-work");
+        const progress = el("div", "rm-work");
+        progress.appendChild(el("span", "rm-tasks", work.tasks));
+        if (work.look) progress.appendChild(el("span", "rm-look", work.look));
+        c.appendChild(progress);
+        if (work.line) c.appendChild(el("div", "rm-headline", work.line));
+      }
+      c.append(marks, handle);
       placeCard(c, a.id);
       return c;
     }
@@ -526,7 +574,7 @@
         const got = typeof label.getComputedTextLength === "function" ? label.getComputedTextLength() : 0;
         return got || Array.from(String(text)).reduce((n, ch) => n + (/[\u2e80-\uffef]/.test(ch) ? 11 : 6.2), 0);
       };
-      const boxes = m.attempts.map((a) => m.positions[a.id]).filter(Boolean).map((p) => [p[0], p[1], CARD_W, CARD_TALL]);
+      const boxes = m.attempts.map((a) => m.positions[a.id]).filter(Boolean).map((p) => [p[0], p[1], CARD_W, cardH() + (CARD_TALL - CARD_H)]);
       const plan = labelPlan(word, m.positions[l.parent], m.positions[l.child], width, boxes);
       label.remove();
       label.textContent = "";
@@ -567,13 +615,9 @@
       m.dom.cards.querySelectorAll(".rm-card").forEach((c) => c.classList.toggle("marked", m.marked.includes(c.dataset.id)));
       const v = size(), z = m.camera.zoom;
       if (!m.marked.length || !v.w) return;
-      const shown = (id) => {
-        const x = m.positions[id][0] * z + m.camera.x, y = m.positions[id][1] * z + m.camera.y;
-        return x + CARD_W * z > 0 && x < v.w && y + CARD_H * z > TOOLBAR_H && y < v.h;
-      };
-      if (m.marked.some(shown)) return;
+      if (m.marked.some((id) => inView(id, v))) return;
       const p = m.positions[m.marked[0]];
-      m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + CARD_H / 2) * z, zoom: z };
+      m.camera = { x: v.w / 2 - (p[0] + CARD_W / 2) * z, y: v.h / 2 - (p[1] + cardH() / 2) * z, zoom: z };
       applyCamera();
       userCamera();
     }
@@ -587,6 +631,25 @@
       m.dom.root.style.backgroundSize = GRID * zoom + "px " + GRID * zoom + "px";
       m.dom.root.style.backgroundPosition = x + "px " + y + "px";
       m.dom.zoom.textContent = Math.round(zoom * 100) + "%";
+      syncOutside();
+    }
+
+    // Whether a card shows in the view: any part of it between the edges, below the toolbar (it covers the top of the map).
+    function inView(id, v) {
+      const p = m.positions[id];
+      if (!p) return true;
+      const z = m.camera.zoom, x = p[0] * z + m.camera.x, y = p[1] * z + m.camera.y;
+      return x + CARD_W * z > 0 && x < v.w && y + cardH() * z > TOOLBAR_H && y < v.h;
+    }
+
+    // 21.8: how many cards are out of the view, in one quiet line, when some are (the view is the camera's: a fit that cannot hold
+    // them all at the smallest zoom, or a pan, leaves some out; 适应全部 brings them back).
+    function syncOutside() {
+      if (!m.dom || !m.dom.outside) return;
+      const v = typeof m.dom.root.getBoundingClientRect === "function" ? size() : { w: 0, h: 0 };
+      const n = v.w && v.h ? m.attempts.filter((a) => !inView(a.id, v)).length : 0;
+      m.dom.outside.textContent = n ? t("有 {n} 张卡片在视野之外", { n: n }) : "";
+      m.dom.outside.classList.toggle("hidden", !n);
     }
 
     function size() {
@@ -618,7 +681,7 @@
       m.needsFit = false;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       const take = (p, w, h) => { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0] + w); y1 = Math.max(y1, p[1] + h); };
-      Object.values(m.positions).forEach((p) => take(p, CARD_W, CARD_H));
+      Object.values(m.positions).forEach((p) => take(p, CARD_W, cardH()));
       if (m.caption) take(m.caption, CARD_W, CAPTION_H);
       if (!isFinite(x0)) {
         m.camera = { x: FIT_PAD, y: TOOLBAR_H + FIT_PAD, zoom: 1 };
@@ -735,9 +798,10 @@
       const raw = err ? String(err.detail || err.message || err) : "";
       if (raw) {
         const detail = el("span", "err-detail hidden", raw);
-        const toggle = el("button", "err-detail-toggle", t("详情"));
+        const toggle = el("button", "err-detail-toggle has-chevron", t("详情"));   // 12.13: the chevron, turned when it is open
         toggle.type = "button";
-        toggle.addEventListener("click", () => detail.classList.toggle("hidden"));
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.addEventListener("click", () => toggle.setAttribute("aria-expanded", String(detail.classList.toggle("hidden") === false)));
         s.append(toggle, detail);
       }
       if (!o.ms) {
@@ -935,7 +999,7 @@
     function cardAt(x, y) {
       for (let i = m.attempts.length - 1; i >= 0; i -= 1) {
         const id = m.attempts[i].id, p = m.positions[id];
-        if (p && x >= p[0] && x <= p[0] + CARD_W && y >= p[1] && y <= p[1] + CARD_H) return id;
+        if (p && x >= p[0] && x <= p[0] + CARD_W && y >= p[1] && y <= p[1] + cardH()) return id;
       }
       return null;
     }
@@ -949,7 +1013,9 @@
       if (card && e.target.closest(".rm-handle")) {
         m.drag = Object.assign(base, { kind: "line", from: card.dataset.id, target: null });
       } else if (card) {
-        m.drag = Object.assign(base, { kind: "card", id: card.dataset.id, el: card, start: m.positions[card.dataset.id].slice() });
+        m.drag = Object.assign(base, { kind: "card", id: card.dataset.id, el: card, start: m.positions[card.dataset.id].slice(),
+          // the handback lines of a card are their own click (21.2)
+          handback: e.target.closest(".rm-look") ? "waiting" : e.target.closest(".rm-headline") ? "latest" : null });
       } else {
         const line = e.target.closest(".rm-line");
         m.drag = Object.assign(base, { kind: "pan", cam: Object.assign({}, m.camera), line: line ? line.getAttribute("data-key") : null });
@@ -996,7 +1062,7 @@
       } else if (d.kind === "card") {
         d.el.classList.remove("dragging");
         if (d.moved) cardMoved(d.id);
-        else openCard(d.id);
+        else if (!(d.handback && openHandbackOf(d.id, d.handback))) openCard(d.id);
       } else if (!d.moved || e.type === "pointercancel") {
         drawDraft(null, null);
         if (!d.moved && e.type !== "pointercancel") openCard(d.from); // a click on the handle is a click on its card
@@ -1023,6 +1089,19 @@
     function openCard(id) {
       select(id);
       if (typeof opts.onOpen === "function") opts.onOpen(id);
+    }
+
+    // A click on a card's handback line (21.2) opens that handback, `onOpenHandback(report)`: the line of the latest
+    // handback opens the latest, 「等你看 n」 the first of those not opened yet; a click on the rest of the card opens
+    // the attempt. False when the card has no handback to open.
+    function openHandbackOf(id, which) {
+      const a = m.byId.get(id), work = (a && a.work) || {}, latest = work.latest;
+      const waiting = which === "waiting" ? (work.items || []).find((item) => item.unopened && item.report) : null;
+      const report = (waiting && waiting.report) || (latest && latest.report);
+      if (!report || typeof opts.onOpenHandback !== "function") return false;
+      select(id);
+      opts.onOpenHandback(report);   // not from a panel: there is nothing to go back to
+      return true;
     }
 
     function onWheel(e) {
@@ -1080,8 +1159,8 @@
     create,
     lineRefusal: refusal, // the desk's side panel says a refused removal the same way (14.3)
     // pure, for tests/test_v10_route_map.py
-    _layoutRoutes: layoutRoutes, _markWords: markWords, _lineWords: lineWords, _refusal: refusal,
+    _layoutRoutes: layoutRoutes, _markWords: markWords, _workWords: workWords, _lineWords: lineWords, _refusal: refusal,
     _checkLine: checkLine, _curve: curve, _labelPlan: labelPlan, _splitLabel: splitLabel,
-    _geometry: Object.freeze({ CARD_W, CARD_H, COL_PITCH, ROW_PITCH, ROW_X, ROW_Y, CAPTION_H }),
+    _geometry: Object.freeze({ CARD_W, CARD_H, CARD_WORK_H, COL_PITCH, ROW_PITCH, WORK_PITCH, ROW_X, ROW_Y, WORK_ROW_Y, CAPTION_H }),
   });
 })();

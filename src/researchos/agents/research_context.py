@@ -35,7 +35,7 @@ def freeze(root: Path, task: dict[str, Any]) -> dict[str, Any]:
                             'report_content': '', 'report_sha': None, 'report_truncated': False,
                             'variable_inputs': [],
                             'notices': [{'kind': 'missing_context',
-                                         'message': '作为背景的结果记录已缺失：' + report}]}
+                                         'message': '作为背景的报告已缺失：' + report}]}
         return result
     loaded = research_records.read(root, report)
     record = copy.deepcopy({key: loaded.get(key) for key in
@@ -86,6 +86,9 @@ def prepare(root: Path, run: dict[str, Any], supplied: dict[str, Any] | None,
     """Merge background associations, never the old finding, into this run's result."""
     frozen = run.get('research_handoff') or {}
     source = frozen.get('source') or {}
+    if isinstance(supplied, dict) and 'assessment_confirmed' in supplied:
+        # 21.2: an agent may suggest an assessment (`suggested_assessment`); that one was confirmed is a person's act
+        raise research_records._bad(research_records.AGENT_CONFIRMED)
     if supplied is None and not source:
         return None  # old calls retain their exact behavior
     inherited = source.get('context') or {}

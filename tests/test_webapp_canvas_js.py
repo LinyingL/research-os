@@ -671,8 +671,8 @@ def test_blocking_error_shows_coded_sentence_and_a_collapsed_detail_button():
     coded = out["coded"]
     assert coded["title"] == ""  # never hover-only
     text, toggle, detail = coded["children"]
-    assert text["text"] == "这个编号已经在年表里了，请换一个编号。"
-    assert toggle == {"tag": "button", "cls": "err-detail-toggle", "text": "详情", "type": "button", "expanded": "false"}
+    assert text["text"] == "这个编号已经在尝试表里了，请换一个编号。"
+    assert toggle == {"tag": "button", "cls": "err-detail-toggle has-chevron", "text": "详情", "type": "button", "expanded": "false"}   # 21.8: with the chevron (12.13)
     assert detail["cls"] == "err-detail hidden" and "already exists" in detail["text"]
     assert out["opened"]["stopped"] is True
     assert out["opened"]["children"][1]["expanded"] == "true"
@@ -1101,7 +1101,7 @@ def test_a_header_error_outlives_the_summary_refresh():
 _ATTEMPT_RUNNER = r"""
 const block = require("fs").readFileSync(0, "utf8");
 const input = JSON.parse(process.argv[1]);
-global.state = { attemptsById: new Map(), attemptsConfig: null, dataEpoch: 0 };
+global.state = { attemptsById: new Map(), attemptStatuses: [], attemptsConfig: null, dataEpoch: 0 };
 global.calls = [];
 global.server = input.server || {};
 global.apiGet = async (path) => {
@@ -1111,7 +1111,7 @@ global.apiGet = async (path) => {
   if (answer === undefined || answer === "fail") throw new Error("boom " + path);
   return JSON.parse(JSON.stringify(answer));
 };
-eval(block + "; global.F = { defaultNewNumber, defaultDateValue, distinctVerdicts, ensureAttemptData, fetchAttemptRecords };");
+eval(block + "; global.F = { defaultNewNumber, defaultDateValue, ensureAttemptData, fetchAttemptRecords };");
 (async () => {
   const out = await eval("(async () => {" + input.body + "})()");
   process.stdout.write(JSON.stringify({ out: out === undefined ? null : out, calls }));
@@ -1153,7 +1153,7 @@ _DEFAULTS_BODY = """
   const list = input.attempts;
   const now = new Date(2026, 9, 4);
   return { number: F.defaultNewNumber(list), date: F.defaultDateValue(list, now),
-           verdicts: F.distinctVerdicts(list), viaMap: F.defaultNewNumber(new Map(list.map((a) => [a.id, a])).values()) };
+           viaMap: F.defaultNewNumber(new Map(list.map((a) => [a.id, a])).values()) };
 """
 
 
@@ -1164,16 +1164,14 @@ def test_form_defaults_follow_a_populated_mm_dd_table():
     # max top-level number + 1: "14a"/"14b" count as 14, the max is 23.
     assert out["number"] == "24" and out["viaMap"] == "24"
     assert out["date"] == "10-04"  # every row is MM-DD, so the new one is too
-    # Existing values only, in order of appearance; blank and multi-line skipped.
-    assert out["verdicts"] == ["☠️ 放弃", "✅ 采用", "🕒 待定"]
 
 
 def test_form_defaults_keep_a_full_date_table_full_and_an_empty_project_at_one():
     full = [_attempt("1", "2026-03-01", "✅ 采用"), _attempt("2", "2026-03-02 晚")]
     out = _attempt_run(_DEFAULTS_BODY, attempts=full)["out"]
-    assert out == {"number": "3", "date": "2026-10-04", "verdicts": ["✅ 采用"], "viaMap": "3"}
+    assert out == {"number": "3", "date": "2026-10-04", "viaMap": "3"}
     out = _attempt_run(_DEFAULTS_BODY, attempts=[])["out"]
-    assert out == {"number": "1", "date": "2026-10-04", "verdicts": [], "viaMap": "1"}
+    assert out == {"number": "1", "date": "2026-10-04", "viaMap": "1"}
     # A single MM-DD row among full dates is enough to switch (the table's
     # own convention, as before); a split row alone still counts.
     mixed = [_attempt("1", "2026-03-01"), _attempt("7b", "03-02")]
@@ -1183,15 +1181,19 @@ def test_form_defaults_keep_a_full_date_table_full_and_an_empty_project_at_one()
 
 _SERVER = {
     "/api/generation": {"generation": 7},
-    "/api/attempts": {"attempts": [_attempt("1", "03-01", "✅"), _attempt("2", "03-02")]},
+    "/api/attempts": {"attempts": [_attempt("1", "03-01", "✅"), _attempt("2", "03-02")],
+                      "statuses": [{"status": "现行", "marker": "✅", "markers": ["✅"], "abandons": False, "other": False, "code": "current"},
+                                   {"status": "待定", "marker": "🕒", "markers": ["🕒"], "abandons": False, "other": False, "code": "pending"},
+                                   {"status": "其它", "marker": "", "markers": [], "abandons": False, "other": True, "code": "other"}]},
     "/api/summary": {"attempts_config": {"file": "docs/map.md", "columns": {}}, "pending": 0},
 }
-_STATE = "return { ok, ids: [...state.attemptsById.keys()], file: state.attemptsConfig && state.attemptsConfig.file };"
+_STATE = ("return { ok, ids: [...state.attemptsById.keys()], file: state.attemptsConfig && state.attemptsConfig.file, "
+          "statuses: state.attemptStatuses.length };")
 
 
 def test_ensure_loads_never_loaded_data():
     run = _attempt_run("const ok = await F.ensureAttemptData();" + _STATE, server=_SERVER)
-    assert run["out"] == {"ok": True, "ids": ["attempt:docs/map.md#1", "attempt:docs/map.md#2"], "file": "docs/map.md"}
+    assert run["out"] == {"ok": True, "ids": ["attempt:docs/map.md#1", "attempt:docs/map.md#2"], "file": "docs/map.md", "statuses": 3}
     assert sorted(run["calls"]) == ["/api/attempts", "/api/summary"]
 
 
@@ -1208,12 +1210,12 @@ def test_ensure_rereads_even_when_the_server_generation_did_not_move():
       server["/api/summary"].attempts_config.file = "docs/map2.md";
       const ok = await F.ensureAttemptData();
       const list = [...state.attemptsById.values()];
-      return { ok, before, after: F.defaultNewNumber(list), verdicts: F.distinctVerdicts(list),
+      return { ok, before, after: F.defaultNewNumber(list), statuses: state.attemptStatuses.map((s) => s.status),
                file: state.attemptsConfig.file, calls: calls.slice().sort() };
     """, server=_SERVER, extra=_attempt("26", "03-26", "重启期间"))
     out = run["out"]
     assert out["before"] == "3" and out["after"] == "27"
-    assert "重启期间" in out["verdicts"] and out["file"] == "docs/map2.md"
+    assert out["statuses"] == ["现行", "待定", "其它"] and out["file"] == "docs/map2.md"   # 21.3: the statuses ride with the records
     assert out["calls"] == ["/api/attempts", "/api/summary"]
     assert "/api/generation" not in run["calls"]  # no longer consulted at all
 
@@ -1300,11 +1302,12 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert 'const edit = role === "member" ? t("提议修改研究判断") : t("编辑这一行");' in node_js
     assert 'mkButton(edit, "btn btn-small", () => { if (mayReplace()) openAttemptForm("update", page.id); })' in node_js
     assert node_js.count("openAttemptForm(") == 1
-    assert _APP_SRC.count("openAttemptForm(") == 4  # definition, header/menu, and research-record prefill entry
+    assert _APP_SRC.count("openAttemptForm(") == 5  # definition, header/menu, research-record prefill entry, and the way back to the form (21.8: 返回 from a panel opened from it)
     form = _function_body(_APP_SRC, "function renderAttemptForm(")
-    for call in ("defaultNewNumber(attempts)", "defaultDateValue(attempts, new Date())", "distinctVerdicts(attempts)"):
+    for call in ("defaultNewNumber(attempts)", "defaultDateValue(attempts, new Date())"):
         assert call in form
-    for name in ("defaultNewNumber", "defaultDateValue", "distinctVerdicts"):
+    assert "distinctVerdicts" not in _APP_SRC   # 21.3: the verdict is chosen from the project's statuses, not from the cells it already holds
+    for name in ("defaultNewNumber", "defaultDateValue"):
         assert _APP_SRC.count(name + "(") == 2, name  # defined once, called only by the form
         assert "state." not in _function_body(_APP_SRC, f"function {name}(")
     # One fetch path for the records. Since V8 U4 研究路线's list reads /api/routes
@@ -1314,7 +1317,7 @@ def test_every_way_into_the_attempt_form_awaits_the_loader_first():
     assert "function loadTreeView(" not in _APP_SRC and "ROTeam.loadRoutes(pane," in (CANVAS_JS.parent / "desk.js").read_text(encoding="utf-8")
     assert _APP_SRC.count("state.attemptsById = ") == 2  # the loader, and the project-switch reset
     reset = _function_body(_APP_SRC, "async function reloadAllViews(")
-    for line in ("state.dataEpoch += 1;", "state.attemptsConfig = null;"):
+    for line in ("state.dataEpoch += 1;", "state.attemptsConfig = null;", "state.attemptStatuses = [];"):
         assert line in reset
     # The form's freshness never rests on the generation counter again.
     assert "attemptsGen" not in _APP_SRC and "configGen" not in _APP_SRC

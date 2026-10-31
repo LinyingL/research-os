@@ -396,7 +396,7 @@ def test_the_list_and_the_card_read_everything_the_view_shows(live):
     rows = {r["id"]: r for r in data["cards"]}
     assert rows["topicshift"]["name"] == "TopicShift（叙事更替）" and rows["topicshift"]["in_use"] == 1
     assert rows["rv"]["draft"] == 1 and rows["rv"]["in_use"] is None
-    assert data["empty_help"]["command"] == "researchos variable new <id>"
+    assert "empty_help" not in data  # 21.7: the page no longer sends anyone to a terminal; 「新建变量卡」 makes the card
     status, card = _call(base, "GET", "/api/variables/card?id=TOPICSHIFT")
     assert status == 200 and card["id"] == "topicshift"
     (v1,) = card["versions"]
@@ -443,6 +443,7 @@ def test_a_copy_that_leads_outside_its_folder_is_refused(live, tmp_path):
     ("GET", "/api/variables/card?id=topicshift", None),
     ("GET", "/api/variables/code?id=topicshift&entry=x", None),
     ("GET", "/api/variables/frozen?id=topicshift&entry=x", None),
+    ("POST", "/api/variables/new", {"id": "fresh"}),
     ("POST", "/api/variables/confirm", {"id": "topicshift", "attested": "yes"}),
     ("POST", "/api/variables/revise", {"id": "topicshift"}),
     ("POST", "/api/variables/reaffirm", {"items": [{"id": "topicshift", "version": 1, "signature": "x"}]}),
@@ -489,7 +490,7 @@ def test_the_app_writes_only_what_rce_authors(live):
     assert [e["act"] for e in log] == ["confirmed", "confirmed", "abandoned", "revived"]
     assert {e["via"] for e in log[1:]} == {"app"} and log[1]["attested"] == "no"
     assert (V.variables_dir(root) / "topicshift" / "v1.toml").read_bytes() == v1
-    status, data = _call(base, "POST", "/api/variables/new", {"id": "x"})
+    status, data = _call(base, "POST", "/api/variables/make", {"id": "x"})   # an action nobody wrote (21.7: `new` is one now)
     assert status == 400 and data["state"] == "card_invalid"
     assert not (V.variables_dir(root) / "x").exists()
 

@@ -20,7 +20,7 @@ from researchos import desk
 
 from test_v10_desk_language import DATA, SCRIPT, _page_helpers, _review
 from test_v10_desk_language import _THEIRS as _REVIEW_THEIRS
-from test_v10_desk_panel import _PANEL_DOM, A16, A17, _case
+from test_v10_desk_panel import _PANEL_DOM, A16, A17, _case, with_needs
 from test_v8_phase2 import _csv, _map, _project, _scan
 from test_v8_u2 import FORBIDDEN, _backdate, _card, _desk
 from test_v9_language import CJK, WEBAPP, _i18n_source, _node, needs_node
@@ -89,7 +89,7 @@ def _reviewing(lang: str) -> dict:
     case["desk"]["column"]["review"] = {"count": 3, "groups": [{"id": A16, "items": mine}],
                                         "none": {"items": [review["review"][1]], "cards": []}}
     case["get"]["/api/review"] = review
-    return case
+    return with_needs(case)
 
 
 _JUDGE = """
@@ -98,7 +98,10 @@ _JUDGE = """
   await settle(); await settle(); await settle();
   global.extra = { first: panelLines(), scrolled: scrolled.slice() };
   c.post = { "/api/judgements": (body) => {
-    if (body.verdict !== "undone") { c.desk.column.review.groups[0].items.shift(); c.get["/api/review"].review.shift(); }
+    if (body.verdict !== "undone") {   // the judgment leaves the column and its row of 等你处理 (the engine's list)
+      c.desk.column.review.groups[0].items.shift(); c.desk.needs.rows.find((r) => r.key === "r:" + %(a16)s).items.shift();
+      c.get["/api/review"].review.shift();
+    }
     return { ok: true, generation: 5 };
   } };
   type(field(%(note)s), "复查过");
@@ -203,7 +206,7 @@ def _changed(lang: str) -> dict:
 _TIMELINE = """
   await window.RODesk.openAttempt(%(a16)s);
   global.extra = panelLines();
-  find("steps/fit.py").click();
+  find("fit.py").click();  // the file name is the title that opens its page (21.7)
   answers.length = 0;
   await window.RODesk.openAttempt(%(a17)s);
 """ % {"a16": json.dumps(A16), "a17": json.dumps(A17)}
@@ -222,8 +225,9 @@ def test_14_5_the_panel_says_what_changed_since_the_last_visit():
     out = _run(case, _TIMELINE)
     lines = out["extra"]
     at = lines.index("node-sec-title: 你上次查看以来的改动")
-    shown = [line for line in lines[at + 1:at + 7] if not line.startswith("tl-when")]
-    assert shown == ["desk-link mono: steps/fit.py (title: 打开它的详情页)", "tl-meta: 文件有改动",
+    shown = [line for line in lines[at + 1:at + 8] if not line.startswith("tl-when")]
+    # 21.7: the file's name is the title, its path the quiet line under it, then the fact
+    assert shown == ["desk-link: fit.py (title: 打开它的详情页)", "tl-meta mono: steps/fit.py", "tl-meta: 文件有改动",
                      "tl-what: 研究判断从「待定」改为「已放弃」，结果改为：t=3.10", "tl-meta: 最初的研究者 · 扫描时记下"]
     assert sum(line.startswith("tl-when: ") for line in lines) == 2 and not any("old.csv" in line for line in lines)
     assert lines.index("dp-mark: 有改动") < at < lines.index("node-sec-title: 写备注")
@@ -239,8 +243,8 @@ def test_14_6_what_changed_reads_in_english_and_says_what_is_left_out():
     case["desk"]["attempts"][0].update(changed=case["desk"]["attempts"][0]["changed"][:2], changed_more=3)
     out = _run(case, "await window.RODesk.openAttempt(%s);" % json.dumps(A16), lang="en")
     lines = out["lines"]
-    for line in ["node-sec-title: Changes since you last looked", "desk-link mono: steps/fit.py (title: Open its details page)",
-                 "tl-meta: File changed", "tl-what: Research assessment changed from “Pending” to “Abandoned”; new result: t=3.10",
+    for line in ["node-sec-title: Changes since you last looked", "desk-link: fit.py (title: Open its details page)",
+                 "tl-meta mono: steps/fit.py", "tl-meta: File changed", "tl-what: Research assessment changed from “Pending” to “Abandoned”; new result: t=3.10",
                  "tl-meta: Original researcher · Recorded at a scan", "desk-empty: 3 files changed earlier are not listed here."]:
         assert line in lines, line
     assert _chinese(lines) == [] and not any(FORBIDDEN.search(line) for line in lines)
@@ -257,13 +261,13 @@ def _returned(lang: str = "zh") -> dict:
                             "new_status": {"status": "abandoned", "label": "已放弃"}, "abandons": True}}
     pending = {**returned, "id": "p4", "state": "pending", "sentence": "16 改回", "reason": None, "outcomes": []}
     case["desk"]["column"]["mine"] = [returned, pending]
-    return case
+    return with_needs(case)
 
 
 @needs_node
 def test_14_4_a_returned_proposal_stays_in_my_proposals_until_got_it():
     """A member's returned proposal stays in 我的提议 with its reason, and
-    in #16's 待办, until 「知道了」: then it leaves both, remembered for
+    in #16's 等你处理, until 「知道了」: then it leaves both, remembered for
     this person and project in the browser; the pending one stays. Opened
     again (a new page), it is still put away."""
     steps = """

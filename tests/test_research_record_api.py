@@ -8,6 +8,7 @@ from researchos import research_records, workspace
 from test_workspace_api import writing_server
 from test_webapp_server import _get, _post, _request_with_headers
 from test_v8_phase3 import Team, _serve
+from attempt_seed import seed_attempt
 from researchos import proposals
 
 REPORT = 'research/results/' + 'a' * 32 + '.md'
@@ -54,7 +55,7 @@ def test_research_record_writers_check_origin_project_and_readonly(writing_serve
 def test_task_input_context_save_clear_and_missing_reference_recovery(writing_server):
     base, root, _ = writing_server
     _report(root)
-    task = {'id': 'compare', 'text': 'Compare again', 'context': {'report': REPORT}}
+    task = {'id': 'compare', 'text': 'Compare again', 'context': {'report': REPORT}, 'attempt': seed_attempt(root)}
     endpoint = '/api/workspace/tasks'
     status, saved = _post(base, endpoint, {'project': str(root), 'revision': None, 'tasks': [task]})
     assert status == 200, saved
@@ -81,7 +82,8 @@ def test_member_task_context_and_research_record_submit_through_existing_proposa
                 'context': {'question': 'Question for PI', 'attempt_draft': {'description': 'Candidate'}}})
             assert status == 200, saved
             status, tasks = _post(base, '/api/workspace/tasks', {'project': str(team.work), 'revision': None,
-                'tasks': [{'id': 'followup', 'text': 'Follow up', 'context': {'report': REPORT}}]})
+                'tasks': [{'id': 'followup', 'text': 'Follow up', 'context': {'report': REPORT},
+                           'attempt': 'attempt:map.md#16'}]})
             assert status == 200 and REPORT in tasks['changed_task_reports']
         draft = proposals.make_proposal(team.work, 'files', 'Research handoff',
                                          only=[workspace.TASKS_PATH, *tasks['changed_task_reports']])
@@ -142,7 +144,8 @@ def test_named_manual_result_can_be_task_input_and_team_proposal(tmp_path, monke
         with _serve(team.work):  # register this member's working copy as the open project
             research_records.save(team.work, {'report': report, 'revision': None, 'context': {'finding': 'Recurring theme'}})
             tasks = workspace.save_tasks(team.work, {'revision': None,
-                'tasks': [{'id': 'followup', 'text': 'Check interviews', 'context': {'report': report}}]})
+                'tasks': [{'id': 'followup', 'text': 'Check interviews', 'context': {'report': report},
+                           'attempt': 'attempt:map.md#16'}]})
         assert report in tasks['changed_task_reports']
         draft = proposals.make_proposal(team.work, 'files', 'Review interviews',
                                          only=[workspace.TASKS_PATH, report])

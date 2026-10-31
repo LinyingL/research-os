@@ -13,7 +13,7 @@ project leads follow Part 3.
 ## Interface language
 
 To switch to English, click **English** at the bottom of the sidebar,
-next to **记录** (Records) and **停止服务** (Stop service). Click **中文**
+next to **备份** (Backups), **设置** (Settings) and **停止服务** (Stop service). Click **中文**
 to switch back. Some forms and messages are still in Chinese; their labels
 appear below in bold, followed by a translation.
 
@@ -198,7 +198,7 @@ person when they join.
    the reason. Sync again when it says **Approved, awaiting sync**.
 
 Proposals and replies arrive after OneDrive syncs. Comments, link judgments,
-and changes made with **Link files** or **Add a source**
+and changes made with **File under an attempt**, **Add files** or **Assign a generating script**
 travel with sync without individual approval.
 Lines between research attempts require the PI's approval.
 

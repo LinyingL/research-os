@@ -15,13 +15,13 @@ usual editor for analysis. Work on your own or share a project with a PI
 and collaborators. Plans, notes, tasks, and research attempts can develop
 in whatever order your work needs.
 
-![Project home in preview mode, with a research plan, notes, result records, and tasks](docs/images/project-home-demo-en.png)
+![Project home in preview mode, with a research plan, notes, reports, and tasks](docs/images/project-home-demo-en.png)
 
 *Research OS 0.3.0, English interface. All screenshots use fictional demo data.*
 
 ## Unreleased: research context and handoff
 
-Existing result records in `research/results/` can carry optional research
+Existing reports in `research/results/` can carry optional research
 context alongside their Markdown: the question, method, finding, limits, and
 next step. People can edit these fields directly, and AI agents can supply
 them when completing a task. Link existing attempts, explicit variable
@@ -37,7 +37,7 @@ for PI review. Importing a registered variable definition creates a native
 variable draft, which still needs its own review and confirmation. Working
 alone keeps the existing direct-save workflow.
 
-Result records and their explicit material links travel through the existing
+Reports and their explicit material links travel through the existing
 team proposal review. Literature associations currently name project files;
 they do not record that an individual DOI supports a finding. These fields
 and actions are optional: a note, a manual result, or an ordinary task does
@@ -54,7 +54,7 @@ keeps of each run stay within a limit.
   name>/` by default) for what an agent writes only to carry out the task:
   one-off scripts, check output, downloaded sources and scratch data. Process
   files are not indexed and are not outputs. Agents are told where each kind of
-  file belongs, create nothing under `research/`, and hand in one result record
+  file belongs, create nothing under `research/`, and hand in one report
   per task.
 - **Task outputs:** after every run Research OS sorts the files it created. A
   task's row lists its registered files by kind, says how many new files nobody
@@ -62,13 +62,13 @@ keeps of each run stay within a limit.
   is shown with its file count.
 - **Grouped by task:** Figures and claims, Data & code, Literature and
   Variables show registered files under one heading per task, named after its
-  result record and dated by the run that produced them. **Open the result**
-  opens the record on Project home.
+  report and dated by the run that produced them. **Open the result**
+  opens the report on Project home.
 - **Earlier runs:** **Register files from earlier runs…** in **Output folders**
   lists the files that past runs created and nobody registered, each with a
   suggested kind. Files stay where they are, and nothing is registered until
   you confirm. Compressed data such as `.csv.gz` can be registered as data.
-- **Records link their files:** a file path written in a result record opens
+- **Reports link their files:** a file path written in a report opens
   that file in its preview.
 - **Run storage:** undo backups keep one copy of each content, an undone run
   releases its backup, and a project's run store is kept within 5 GB (1 to 100
@@ -88,7 +88,7 @@ version afterwards. See the [changelog](CHANGELOG.md#050) for every change.
 This version adds writing, reference reading, and AI task execution to the
 research workspace:
 
-- **Writing:** write plans, notes, and result records as Markdown. Saved
+- **Writing:** write plans, notes, and reports as Markdown. Saved
   documents open in preview; click **Edit** to change them and **Save** to
   return to reading. Existing Markdown files in `research/notes/` and
   `research/results/` can be opened and edited too.
@@ -108,7 +108,7 @@ research workspace:
   and preserves its basis.
 - **AI agents:** assign tasks to Codex, Claude Code, DeepSeek Harness, or
   OpenCode. Select a model version and, where supported, its reasoning
-  effort. Follow the run, answer questions, and receive a result record.
+  effort. Follow the run, answer questions, and receive a report.
   Preview the files an undo would affect and choose which changes to keep.
 - **Output folders:** keep the project's existing layout and choose where
   new code, data, figures, tables, references, reports, and variable drafts
@@ -121,7 +121,7 @@ See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 
 | Where | What you do |
 | --- | --- |
-| Project home | Write the research question and plan, keep notes, organize result records, and maintain an optional task list. |
+| Project home | Write the research question and plan, keep notes, organize reports, and maintain an optional task list. |
 | Research routes | Record attempts, connect directions that grew out of earlier work, and retain the reasons for continuing or abandoning them. |
 | Figures and claims | Inspect figures, tables, and quantitative claims in manuscripts, together with the relationships recorded for them. |
 | Data and code | Browse scripts and datasets, inspect their inputs and outputs, and follow file relationships. |
@@ -130,7 +130,7 @@ See the [changelog](CHANGELOG.md#030) for the version changes and upgrade notes.
 | Team review | Submit changes from a working copy, compare them as PI, and publish the accepted version. |
 
 A **note** is an editable document. A **comment** is a short, attributed
-message attached to a file or research attempt. **Result records** hold
+message attached to a file or research attempt. **Reports** hold
 findings and interpretation; **Figures and claims** shows the material
 linked from manuscripts.
 
@@ -155,8 +155,9 @@ and abstract. The library reads indexed BibTeX files and reference exports
 such as `references.csv` and `references.json`, and uses matching DOIs to
 add information from a local Zotero library.
 
-For missing abstracts, enable **Look up references online by DOI** under
-**Online lookup settings**. Click **Fetch abstract** for one reference or
+For missing abstracts, enable **Look up references online by DOI** in
+**Settings** (at the foot of the sidebar; the setting belongs to this Mac, so every
+project shares it). Click **Fetch abstract** for one reference or
 **Fetch missing abstracts** for the project. Research OS checks Crossref,
 then OpenAlex when needed, matches the exact DOI, and shows the abstract's
 source. Results are cached on this Mac; opening the library itself makes
@@ -275,10 +276,11 @@ researchos app
 
 From a checkout, use `python -m pip install -e ".[mcp]"`.
 
-In **Project home**, open **AI agent** in the task area and add the program
-and model version. Select it as a task's **Owner**, save, and click **Run**. The agent
+Open **Settings** at the foot of the sidebar (or **Change in Settings** beside
+**AI agent** in the task area of **Project home**) and add the program
+and model version in its **AI agent** section. Select it as a task's **Owner**, save, and click **Run**. The agent
 works in the project folder: it can read files, write code, run analysis,
-and write notes. Its completion report becomes a result record linked to
+and write notes. Its completion report is saved as a report linked to
 the task.
 
 Use **Output folders** beside **AI agent** to review the project's output
@@ -291,7 +293,7 @@ Everything an agent writes only to carry out a task, such as check scripts
 and their output, downloaded sources and scratch data, is a process file. It
 goes to the task's process folder, `work/<date>-<task name>/` by default, which
 the index skips and which does not count as outputs. The agent is told where
-each kind of file belongs and that the result record is the task's one report.
+each kind of file belongs and that the report is the task's one handback.
 
 When completing a task, the agent lists its final files by type and path.
 The app checks that they exist locally, stay within the assigned folder,
@@ -324,7 +326,7 @@ selection and retains it when you reply or send work back.
 
 The initial instruction includes the task, the saved research question
 and plan up to 8,000 characters, and the titles and paths of up to 50 notes
-and result records. The agent reads further files as needed. Conversations
+and reports. The agent reads further files as needed. Conversations
 in the Claude desktop app are not included.
 
 Use **Run log** to follow progress, inspect file changes, and find the agent
@@ -349,15 +351,17 @@ model provider you configure, which may be local.
 
 ### Draft attempt fields with a local model
 
-Start LM Studio's local server and load a model. In **New attempt**, open
-**Model server**, enter the server address and model ID, and save. A usual
-LM Studio address is `http://127.0.0.1:1234/v1`.
+Start LM Studio's local server and load a model. Open **Settings** at the foot
+of the sidebar, enter the server address and model ID under **Local model
+(draft with a model)**, and save. A usual LM Studio address is
+`http://127.0.0.1:1234/v1`.
 
-Choose up to five project text files and click **Generate draft**. The
-model fills empty description and result fields and identifies their
-source files. Include a text log or results file to draft findings; code
-alone does not show what happened when it ran. Review the draft before
-saving. Selected content goes to the server address shown in the form.
+In **New attempt**, choose up to five project text files and click
+**Generate draft**. The model fills empty description and result fields and
+identifies their source files. Include a text log or results file to draft
+findings; code alone does not show what happened when it ran. Review the
+draft before saving. Selected content goes to the server address shown in the
+form.
 
 ## Work alone or with a team
 
@@ -373,7 +377,7 @@ copies and submit changes through a shared folder:
 
 An unapproved proposal stays separate from the official version. Research
 attempts, assessments, variable versions, project files, and links between
-attempts use PI review. Written plans, notes, and result records use the
+attempts use PI review. Written plans, notes, and reports use the
 file review workflow. Comments, link judgments, and manually recorded file
 relationships sync without individual approval.
 
@@ -395,7 +399,7 @@ Your written work stays in the project folder:
 ```text
 research/overview.md      Research question and plan
 research/notes/           Notes
-research/results/         Result records, including agent reports
+research/results/         Reports, including agent handbacks
 research/tasks.json      Optional tasks
 research/folders.json    Output locations, when saved
 research/results/*.outputs.json   File registrations beside each task report

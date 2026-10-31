@@ -555,7 +555,7 @@ _ROUTES_LIST_STEPS = """
     extra.filtered = dump(views.list, []);
     await window.ROTeam.openEvidence(%(basis)s, { number: "17", title: "事件轴" });
     extra.evidence = panelLines();
-    for (const b of panelPart("panel-body").all().filter((k) => k.tag === "BUTTON" && k.cls.has("btn"))) { b.click(); await settle(); await settle(); }
+    for (const b of panelPart("panel-body").all().filter((k) => k.tag === "BUTTON" && (k.cls.has("btn") || k.cls.has("ws-text-link")))) { b.click(); await settle(); await settle(); }
     extra.opened = panelLines();
     await window.ROTeam.openEvidence("attempt:map.md#99", null);
     extra.unread = panelLines();
@@ -621,7 +621,7 @@ def test_18_3_the_routes_list_and_the_basis_of_an_abandonment_read_in_the_screen
         "route-src: " + w("放弃于 2024年3月2日，当时这条路线没有关联的文件", "Abandoned 2 Mar 2024; the route had no linked files then"),
         "route-src: " + w("写在尝试表里", "Written in the attempt table"),
         "route-title: " + w("（无描述）", "(no description)"), "route-fact: " + w("结果：（没有写）", "Result: (nothing written)"),
-        "btn btn-small: " + w("当时的依据", "The basis then"),
+        "ws-text-link: " + w("当时的依据", "The basis then"),
     ]:
         assert line in lines, line
     for line in [": " + w("只显示已放弃的路线，每条附当时的结果和理由。",
@@ -648,7 +648,7 @@ def test_18_3_the_routes_list_and_the_basis_of_an_abandonment_read_in_the_screen
         "desk-meta: " + w("当时文件已不存在", "The file did not exist then"),
         "desk-meta: " + w("当时文件只在云端 · 1.5 KB", "The file was only in the cloud then · 1.5 KB"),
         "desk-meta: " + w("当时文件无法读取 · 1.5 KB", "The file could not be read then · 1.5 KB"),
-        "evidence-sha mono: " + w("指纹 ", "Fingerprint ") + "ab" * 8, "btn btn-small: " + w("查看当时的内容", "View the content then"),
+        "evidence-sha mono: " + w("指纹 ", "Fingerprint ") + "ab" * 8, "ws-text-link has-chevron: " + w("查看当时的内容", "View the content then"),
     ]:
         assert line in evidence, line
     opened = out["opened"]
@@ -658,7 +658,7 @@ def test_18_3_the_routes_list_and_the_basis_of_an_abandonment_read_in_the_screen
         "team-line quiet: " + w("这一版只记下了指纹和大小，没有保存内容",
                                 "Only this version’s fingerprint and size were recorded; its content was not kept"),
         "team-line quiet: " + w("这一版不是文本，不在这里显示", "This version is not text, so it is not shown here"),
-        "btn btn-small: " + w("收起", "Show less"),
+        "ws-text-link has-chevron: " + w("收起", "Show less"),
     ]:
         assert line in opened, line
     assert out["unread"][-1] == "notice-status err: " + w("没能读到这条路线当时的依据", "Could not read the basis this route had then")

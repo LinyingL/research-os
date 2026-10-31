@@ -113,8 +113,10 @@ def test_completion_registers_all_product_types_and_links_report(root):
     signal, = runs.read_signals(pid, run_id)
     assert outputs.catalog_path(_task(root)["report"]) in signal["paths"] and signal["outputs_sha"]
     with db.connect(paths.graph_db_path(root)) as conn:
-        assert len(node_api.results_payload(conn,root,{})["outputs"]["items"]) == 2
-        assert len(node_api.data_code_payload(conn,root)["outputs"]["items"]) == 3
+        page, data = node_api.results_payload(conn,root,{}), node_api.data_code_payload(conn,root)   # 21.5: rows of their kind, no 任务输出 block
+        assert "outputs" not in page and "outputs" not in data
+        assert sorted(i["title"] for i in page["loose"]) == ["plot.svg", "summary.csv"]   # the figure and the table
+        assert sorted(f["title"] for f in data["files"] if f["title"]) == ["compare.py", "derived.csv"]   # the code and the data; a document is seen in its handback
         refs = bibliography.catalog(conn,root,{},literature.ZoteroLibrary(None,"absent"))["items"]
         assert refs[0]["title"] == "Pilot methods" and refs[0]["abstract"] == "A local abstract."
         assert len(variables_api.list_payload(conn,root)["outputs"]["items"]) == 1
@@ -1375,9 +1377,12 @@ def test_the_listing_is_about_runs_not_undone_of_tasks_that_still_exist_with_a_r
     kept = earlier(root, pid, "20261021T080000", ["kept.py"])
     earlier(root, pid, "20261022T080000", ["removed.py"], task_id="t9")                         # no such task any more
     tasks, revision = workspace.read_tasks(root)
-    workspace.save_tasks(root, {"tasks": [*tasks, {"id": "t3", "text": "No record yet", "done": False, "owner": "", "due": ""},
+    attempt = tasks[0]["attempt"]  # a new task belongs to an attempt (21.1)
+    workspace.save_tasks(root, {"tasks": [*tasks, {"id": "t3", "text": "No record yet", "done": False, "owner": "", "due": "",
+                                                   "attempt": attempt},
                                           {"id": "t4", "text": "Record lost", "done": False, "owner": "", "due": "",
-                                           "report": "research/results/" + "c" * 32 + ".md"}], "revision": revision})
+                                           "report": "research/results/" + "c" * 32 + ".md", "attempt": attempt}],
+                                "revision": revision})
     earlier(root, pid, "20261023T080000", ["no_record.py"], task_id="t3")                       # a task without a result record
     earlier(root, pid, "20261023T090000", ["lost_record.py"], task_id="t4")                     # the record file is gone
     gone = earlier(root, pid, "20261024T080000", ["second.py"], task_id="t2")

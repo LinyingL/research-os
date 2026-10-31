@@ -22,7 +22,7 @@ plan says so and, inside an iCloud, OneDrive or other synced folder, why
 forward, and names the files over 100 MB that GitHub would refuse -- read
 from the folder's listing (`lstat`), never their contents.
 
-`commit_records(root)` -- 「先把人工记录提交一次」: commits exactly the paths
+`commit_records(root)` -- 「先把你的记录提交一次」: commits exactly the paths
 under `.researchos/` that are changed or untracked (`git add` then
 `git commit --only` of those paths), never any other file and never the
 researcher's own staged changes; afterwards the index outside `.researchos/` is
@@ -74,7 +74,7 @@ GIT_TIMEOUT_S = 120.0
 GH_TIMEOUT_S = 60.0
 LOCK_TIMEOUT_S = 5.0
 RECORDS_DIR = paths.PROJECT_DIRNAME
-RECORDS_MESSAGE = "Research OS：人工记录"
+RECORDS_MESSAGE = "Research OS：人工记录"  # on disk, in git (13.1, 21.6): the screen says 你的记录, the commit message keeps its words
 DEFAULT_REPO_NAME = "research-project"
 
 LOGIN_COMMAND = "gh auth login"
@@ -111,9 +111,9 @@ ERROR_MESSAGES = {
     "rejected": "GitHub 上有你本地没有的提交，请先在终端里处理",
     "auth": "GitHub 拒绝了这次登录，请在终端里检查 git 或 gh 的登录（gh auth login）",
     "push_failed": "没能推送到 GitHub",
-    "commit_failed": "没能提交人工记录",
+    "commit_failed": "没能提交你的记录",
     "identity": "git 还不知道你的名字和邮箱，请先在终端里设置 git config user.name 和 user.email",
-    "records_check": "提交人工记录后检查不一致，请在终端里查看 git status",
+    "records_check": "提交你的记录后检查不一致，请在终端里查看 git status",
     "git_missing": "这台电脑上找不到 git",
 }
 
@@ -358,13 +358,13 @@ def _records_state(root: Path, changed: list[str]) -> dict[str, Any]:
     has_tracked = any(tracked.split("\0"))
     has_ignored = any(ignored.split("\0"))
     if changed:
-        message = f"人工记录（.researchos/）有 {len(changed)} 个文件还没有提交"
+        message = f"你的记录（.researchos/）有 {len(changed)} 个文件还没有提交"
     elif has_ignored and not has_tracked:
-        message = "人工记录（.researchos/）被 git 忽略了，推送不包括它们"
+        message = "你的记录（.researchos/）被 git 忽略了，推送不包括它们"
     elif has_tracked:
-        message = "人工记录（.researchos/）都已提交"
+        message = "你的记录（.researchos/）都已提交"
     else:
-        message = "这个项目还没有人工记录"
+        message = "这个项目还没有你的记录"
     return {
         "committed": not changed and has_tracked,
         "changed": changed,
@@ -714,7 +714,7 @@ def _commit_records_locked(root: Path) -> dict[str, Any]:
     rec = _records_prefix(root)
     changed, _ = _record_changes(root)
     if not changed:
-        return {"committed": False, "files": [], "message": "人工记录都已提交，没有要提交的"}
+        return {"committed": False, "files": [], "message": "你的记录都已提交，没有要提交的"}
     prefix = _prefix(root)
     specs = [f":(top,literal){p}" for p in changed]
     before = _index_outside(root, rec)
@@ -735,7 +735,7 @@ def _commit_records_locked(root: Path) -> dict[str, Any]:
     if before != after or not parent_ok or any(not t.startswith(rec) for t in touched):
         raise PushError("records_check", "after committing the records, the index outside .researchos/ or the commit's files are not as expected")
     shown = [p[len(prefix):] if p.startswith(prefix) else p for p in changed]
-    return {"committed": True, "commit": new_head, "files": shown, "message": f"已提交 {len(changed)} 个人工记录文件"}
+    return {"committed": True, "commit": new_head, "files": shown, "message": f"已提交你的记录，共 {len(changed)} 个文件"}
 
 
 def _locked(root: Path, project_id: str | None):
@@ -749,7 +749,7 @@ def _locked(root: Path, project_id: str | None):
 
 
 def commit_records(root: str | Path, project_id: str | None = None) -> dict[str, Any]:
-    """「先把人工记录提交一次」 (module docstring), under the project lock."""
+    """「先把你的记录提交一次」 (module docstring), under the project lock."""
     root = Path(root)
     if not _is_repo(root):
         raise PushError("not_git")
@@ -850,7 +850,7 @@ def push(root: str | Path, token: Any, project_id: str | None = None, *, commit_
          lang: str = "zh") -> dict[str, Any]:
     """Re-plan, refuse on any blocker or a changed plan, then `git push`
     (module docstring). With `commit_records`, the records are committed
-    first (the plan's 「先把人工记录提交一次」). `lang`: the language of the
+    first (the plan's 「先把你的记录提交一次」). `lang`: the language of the
     returned `state`'s sentence, which the page shows under the project
     menu's GitHub line (13.2, 13.7); the push's own words stay Chinese."""
     root = Path(root)

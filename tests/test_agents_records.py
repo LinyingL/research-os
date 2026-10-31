@@ -21,6 +21,8 @@ from researchos.records import notes as notes_mod
 from researchos.records import situation
 from researchos.records.identity import read_identity
 
+from attempt_seed import seed_attempt
+
 RESULT = "research/results/" + "ab" * 16 + ".md"
 AGENT = labels.Agent("claude-code", "sonnet")
 AUTHOR = {"source": "agent", "who": labels.who_value(AGENT, "m-1"), "note": "r-20261021T101500Z-abc123"}
@@ -214,19 +216,20 @@ def _task(**extra) -> dict:
 
 
 def test_task_without_report_is_byte_identical_on_disk(root):
-    first = workspace.save_tasks(root, {"tasks": [_task(owner="Zhang San", due="2026-11-01")], "revision": None})
-    expected = json.dumps([_task(owner="Zhang San", due="2026-11-01")], ensure_ascii=False, indent=2) + "\n"
+    attempt = seed_attempt(root)  # 21.1: a new task names its attempt
+    first = workspace.save_tasks(root, {"tasks": [_task(owner="Zhang San", due="2026-11-01", attempt=attempt)], "revision": None})
+    expected = json.dumps([_task(owner="Zhang San", due="2026-11-01", attempt=attempt)], ensure_ascii=False, indent=2) + "\n"
     assert (root / "research/tasks.json").read_text() == expected
     assert "report" not in first["tasks"][0]
-    again = workspace.save_tasks(root, {"tasks": [_task(owner="Zhang San", due="2026-11-01", report="")],
+    again = workspace.save_tasks(root, {"tasks": [_task(owner="Zhang San", due="2026-11-01", report="", attempt=attempt)],
                                         "revision": first["tasks_revision"]})
     assert again["backup"] is None  # an empty report is the same file
     assert (root / "research/tasks.json").read_text() == expected
 
 
 def test_task_report_and_agent_owner(root):
-    saved = workspace.save_tasks(root, {"tasks": [_task(owner="agent:claude-code:sonnet", done=True, report=RESULT)],
-                                        "revision": None})
+    saved = workspace.save_tasks(root, {"tasks": [_task(owner="agent:claude-code:sonnet", done=True, report=RESULT,
+                                                        attempt=seed_attempt(root))], "revision": None})
     assert saved["tasks"][0]["report"] == RESULT
     on_disk = json.loads((root / "research/tasks.json").read_text())
     assert on_disk[0]["report"] == RESULT and on_disk[0]["owner"] == "agent:claude-code:sonnet"
@@ -300,12 +303,13 @@ def test_overwrite_by_agent_keeps_pre_image_as_scan(root):
 
 
 def test_tasks_author_and_no_author_unchanged(root):
-    workspace.save_tasks(root, {"tasks": [_task()], "revision": None}, author=AUTHOR)
+    attempt = seed_attempt(root)
+    workspace.save_tasks(root, {"tasks": [_task(attempt=attempt)], "revision": None}, author=AUTHOR)
     [v] = _versions(root, "research/tasks.json")
     assert v.source == "agent" and v.note == AUTHOR["note"]
     # without an author the version is the scan's, as before
     _tasks, revision = workspace.read_tasks(root)
-    workspace.save_tasks(root, {"tasks": [_task(text="Edited")], "revision": revision})
+    workspace.save_tasks(root, {"tasks": [_task(text="Edited", attempt=attempt)], "revision": revision})
     assert _versions(root, "research/tasks.json")[0].source == "scan"
 
 

@@ -90,14 +90,14 @@ def test_12_7_a_figure_page_draws_data_scripts_intermediate_data_and_the_draft_a
 
 def test_12_7_a_figure_without_a_source_shows_the_gap_with_its_repair_and_the_choices(tmp_path):
     """A break is a gap where the missing piece would be, offering its
-    repair: 「补上来源」 in the script column with the project's scripts to
-    choose from, 「关联文件」 for the attempt with the attempts (as status
+    repair: 「指定生成它的脚本」 (21.5; the write 补上来源 made) in the script column with the project's scripts to
+    choose from, 「归入尝试」 for the attempt with the attempts (as status
     words, never markers)."""
     root = _project(tmp_path / "proj")
     page = _page(root, "figs/fig1.png")
     assert _titles(page) == ["脚本", "本页", "被引用"]
     gap = page["trace"]["columns"][0]["gap"]
-    assert gap["kind"] == "no_generating_script" and gap["repair"] == {"type": "generates", "label": "补上来源", "file": "figs/fig1.png"}
+    assert gap["kind"] == "no_generating_script" and gap["repair"] == {"type": "generates", "label": "指定生成它的脚本", "file": "figs/fig1.png"}
     assert {b["kind"] for b in page["trace"]["breaks"]} == {"no_generating_script", "no_attempt"}
     assert [s["path"] for s in page["choices"]["scripts"]] == ["steps/16-build.py", "steps/17-plot.py"]
     attempt = page["choices"]["attempts"][0]
@@ -171,14 +171,14 @@ def test_12_9_results_lists_the_drafts_figures_by_section_with_their_trace_state
         claims = nodepage.results(conn, root, "paper.md")
     finally:
         conn.close()
-    group = out["sections"][0]
-    assert group["section"] == "section:paper.md#main-figure" and group["file"] == "paper.md"
-    states = {i["path"]: i["trace"]["label"] for i in group["items"]}
-    assert states == {"figs/fig1.png": "缺来源", "figs/fig2.png": "完整"}
+    # 21.5: one row per figure, naming the drafts that include it; with no draft marked every draft stands for the paper
+    assert out["other"] == [] and out["excluded"] == []
+    states = {i["path"]: i["trace"]["label"] for i in out["items"]}
+    assert states == {"figs/fig1.png": "缺来源", "figs/fig2.png": "完整"} and all(i["drafts"] == ["paper.md"] for i in out["items"])
     assert [(i["path"], i["trace"]["label"]) for i in out["loose"]] == [("figs/loose.png", "缺尝试")]
     # 12.13: claims only from a draft marked 「设为论文正文」 -- none yet; every draft is offered.
     assert out["claims"] == [] and out["papers"]["marked"] == []
-    assert {"file": "paper.md", "marked": False, "claims": 1, "node": "file:paper.md"} in out["drafts"]
+    assert {"file": "paper.md", "marked": False, "claims": 1, "node": "file:paper.md"}.items() <= next(d for d in out["drafts"] if d["file"] == "paper.md").items()  # 21.5 adds `modified` (the picker's day)
     from researchos.records import papers
 
     assert papers.set_marked(root, "paper.md", True, via="cli")["changed"]
@@ -210,7 +210,9 @@ def test_12_9_data_code_marks_orphans_chains_broken_links_and_copies(tmp_path):
     assert by["steps/17-plot.py"]["reads"] == ["data/panel.csv"] and by["steps/17-plot.py"]["writes"] == ["figs/fig2.png"]
     assert by["steps/18-gone.py"]["broken"][0]["target"] == "data/gone.csv"
     assert (by["steps/18-gone.py"]["broken"][0]["type"], by["steps/18-gone.py"]["broken"][0]["relation"]) == ("reads", "读取")
-    assert out["counts"]["orphans"] >= 1 and out["counts"]["duplicates"] == 1 and out["counts"]["broken"] >= 1
+    # 21.5: raw/csv is only read -- quiet, not a problem; the script that names data/gone.csv is the one broken link
+    assert by["data/raw.csv"]["no_generator"] == "quiet" and out["counts"]["no_generator"] == 0 and out["counts"]["raw"] == 1
+    assert out["counts"]["duplicates"] == 1 and out["counts"]["broken"] == 1
 
 
 # -- through the app's endpoints ------------------------------------------------------------------------
@@ -378,7 +380,12 @@ def test_node_page_wording_diff_rows_judgments_and_the_timeline():
     kinds = [e["kind"] for e in _node_call("_timeline", history, notes, links)]
     assert kinds == ["judgment", "version", "note", "version"]
     assert _node_call("_inFilter", {"type": "dataset", "written_by": ["a"], "read_by": ["b"]}, "chains") is True
-    assert _node_call("_inFilter", {"type": "script", "exists": False}, "broken") is True
+    # 21.5: a file that is not there is a plain fact; only a script that names a missing file is a broken link.
+    assert _node_call("_inFilter", {"type": "script", "exists": False}, "broken") is False
+    assert _node_call("_inFilter", {"type": "script", "broken": [{"target": "d.csv"}]}, "broken") is True
+    assert _node_call("_inFilter", {"type": "dataset", "no_generator": "warning"}, "missing") is True
+    assert _node_call("_inFilter", {"type": "dataset", "no_generator": "quiet"}, "missing") is False
+    assert _node_call("_inFilter", {"type": "dataset", "no_generator": "quiet"}, "raw") is True
     assert _node_call("_fileRelations", {"type": "script", "reads": [], "writes": []}) == ["未识别到读写关联"]
     for text in _node_call("_fileRelations", {"type": "dataset", "written_by": ["s/a.py"], "read_by": ["s/b.py"]}):
         assert not FORBIDDEN.search(text)

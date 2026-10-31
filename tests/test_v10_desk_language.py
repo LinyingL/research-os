@@ -47,7 +47,7 @@ def _page_helpers() -> str:
              ("// -- Judgment wording (pure", "// -- end of judgment wording"),
              ("const BLOCKING_ERROR_TEXT = {", "// DESIGN.md 8.8: what the user reads"),
              ("function ownMark(item) {", "\n}\n"), ("function formFieldEl(", "\n}\n"),
-             ("function keyOf(x) {", "// -- 记录 (9.2"),
+             ("function keyOf(x) {", "// -- 你的记录与备份 (9.2"),
              ("// -- Variable wording (pure", "// -- end of variable wording"),
              ("const varState = {", "async function loadVariablesView("),
              ("function cardReviewMember(", "\n}\n"), ("function renderCardReviewGroups(", "\n}\n")]
@@ -270,7 +270,7 @@ def test_14_6_an_act_and_a_refusal_in_the_review_panel_read_in_english():
     out = _run_review("en", refused, post={"/api/judgements": {"refuse": "record_untrusted"}})
     shown = [line for line in out["lines"] if line.startswith("err-text") or line.startswith("err-detail-toggle")]
     assert shown == ["err-text: The link judgments’ record file cannot be read right now; restore it first",
-                     "err-detail-toggle: Details"]
+                     "err-detail-toggle has-chevron: Details"]   # 21.8: the toggle wears the chevron (12.13)
     assert _chinese(out["lines"]) == []
 
 

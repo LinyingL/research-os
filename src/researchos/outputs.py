@@ -212,7 +212,7 @@ def _folders(root: Path, value: Any, *, unset: bool = False) -> dict[str, str]:
         if target.exists() and not target.is_dir():
             raise _bad(f"The {role} location is a file, not a folder: {rel}", f"“{rel}”是文件，请填写目录路径。")
         if rel in {"research", "research/notes", "research/results"} or rel.startswith(("research/notes/", "research/results/")):
-            raise _bad("Notes and result records have their own save tools; choose another output folder")
+            raise _bad("Notes and reports have their own save tools; choose another output folder")
     if value["work"]:
         problem = _apart(value["work"], {role: rel for role, rel in value.items() if role != "work"})
         if problem is not None:
@@ -448,8 +448,8 @@ def validate(root: Path, declared: Any, locations: dict[str, str] | None, *, any
                        f"the outputs ({rel})", "过程文件留在这次任务的过程文件夹里，不要登记；只列出输出文件。")
         _path(root, rel)
         if _is_record(rel):
-            raise _bad(f"Notes, result records and the app's record files are written by Research OS only: {rel}",
-                       f"“{rel}”是笔记、结果记录或应用自己的记录文件，只能由 Research OS 写入，不能登记。")
+            raise _bad(f"Notes, reports and the app's record files are written by Research OS only: {rel}",
+                       f"“{rel}”是笔记、报告或应用自己的记录文件，只能由 Research OS 写入，不能登记。")
         if not anywhere and not _within(root, rel, locations[kind]):
             raise _bad(f"Put the {kind} output under {locations[kind]}/, then report its new path: {rel}",
                        f"“{rel}”不在“{locations[kind]}”里：请把{KIND_ZH[kind]}放进这个目录，再报告它的新路径。")
@@ -531,7 +531,7 @@ def _owner(root: Path, report: Any) -> dict[str, Any]:
     tasks, _revision = workspace.read_tasks(root)
     task = next((t for t in tasks if t.get("report") == report), None)
     if task is None or workspace._read(root, report) is None:  # noqa: SLF001
-        raise _bad(f"No task owns the result record {report}", "没有哪项任务的结果记录是这一份，不能给它登记文件。")
+        raise _bad(f"No task owns the report {report}", "没有哪项任务的报告是这一份，不能给它登记文件。")
     return task
 
 
@@ -710,10 +710,11 @@ def record_heading(root: Path, report: str) -> str | None:
 
 
 def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None,
-              headings: dict[str, str | None] | None = None) -> dict[str, Any] | None:
+              headings: dict[str, str | None] | None = None, preview: bool = True) -> dict[str, Any] | None:
     """One registered file as a view row (DESIGN.md 19.6), or None when its file is not there to be shown. `headings`
     (the caller's memo, by result record) gives the row the `report_title` of the record beside its catalog, read once
-    per record (19.12 item 3); the date `at` is that of the entry's run when it has one (`_when`, 19.12 item 4)."""
+    per record (19.12 item 3); the date `at` is that of the entry's run when it has one (`_when`, 19.12 item 4).
+    `preview` False leaves a table's sample out, for a view that does not draw it (21.5: the kind pages)."""
     try:
         mark = _fingerprint(root, item.get("path"), item.get("fingerprint"))
     except (workspace.WorkspaceError, OSError):
@@ -738,7 +739,7 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None,
         row.pop("at", None)
     if item["kind"] == "variable" and row["state"] == "current":
         row["definition"] = variable_content(root, item["path"])[0]
-    if item["kind"] == "table" and Path(item["path"]).suffix.lower() in {".csv", ".tsv"}:
+    if preview and item["kind"] == "table" and Path(item["path"]).suffix.lower() in {".csv", ".tsv"}:
         # A bounded sample only; the original table remains unchanged. Only a plain .csv or .tsv has one: a
         # compressed table (`x.csv.gz`, 19.12 item 5) is not read for a preview.
         try:
@@ -755,7 +756,7 @@ def _view_row(root: Path, item: dict[str, Any], titles: dict[str, str] | None,
     return row
 
 
-def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
+def catalog(root: Path, kinds: set[str] | None = None, preview: bool = True) -> dict[str, Any]:
     """Read registered files even before the index catches up; never follow missing files. Each row says which task
     produced it (`task_title`, or `task_removed` when the task is gone from the task list) and when (`at`, local ISO
     time; DESIGN.md 19.6: the start of the entry's run when it has one, else the time it was registered, 19.12
@@ -766,7 +767,8 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
     one (`_readable`), so a catalog that cannot be read, or an entry without a fingerprint or with a hidden path, costs
     only itself and the other catalogs' rows show. It is still said: `error` is a sentence naming the catalogs
     concerned and `broken` lists them, for the views' error line; with nothing wrong, `error` is None and there is
-    no `broken`."""
+    no `broken`. A table's sample (`table_preview`) is read unless `preview` is False: the kind pages (21.5) list the
+    files as rows and draw none."""
     items = []
     broken: dict[str, str] = {}
     try:
@@ -805,7 +807,7 @@ def catalog(root: Path, kinds: set[str] | None = None) -> dict[str, Any]:
                 continue
             seen.add(item["path"])
             try:  # a bad entry costs its own row and nothing else (19.6)
-                row = _view_row(root, item, titles, headings)
+                row = _view_row(root, item, titles, headings, preview)
             except (workspace.WorkspaceError, OSError, ValueError, OverflowError):
                 continue
             if row is not None:

@@ -27,6 +27,7 @@ from researchos.webapp import registry, server, watcher
 
 from test_v5_phase9 import _apply, _stored
 from test_variable_cards import _card, _decision, _new_confirmed, _no_entry_without_copy, _project, _text, _write
+from test_v9_language import NODE_ENV, _times_prelude
 
 APP_HTML = Path(server.__file__).parent / "app.html"
 CANVAS_JS = Path(server.__file__).parent / "canvas.js"
@@ -207,7 +208,7 @@ def test_the_page_words_a_corrections_checks_as_the_corrections():
     attestation beside the confirmation's own checks (a 是 beside the
     confirmation's 不符 is still shown as such)."""
     html = APP_HTML.read_text(encoding="utf-8")
-    block = html[html.index("// -- Variable wording (pure"):html.index("// -- end of variable wording")]
+    block = _times_prelude() + html[html.index("// -- Variable wording (pure"):html.index("// -- end of variable wording")]
     runner = r"""
 const block = require("fs").readFileSync(0, "utf8");
 eval(block + "; global.f = confirmationWording;");
@@ -218,7 +219,7 @@ const plain = f({ attested: "no", checked_act: "confirmed", checked: {} });
 process.stdout.write(JSON.stringify({ corrected, plain }));
 """
     out = json.loads(subprocess.run([NODE, "-e", runner], input=block, capture_output=True, text=True,
-                                    check=True, timeout=30).stdout)
+                                    check=True, timeout=30, env=NODE_ENV).stdout)
     c, p = out["corrected"], out["plain"]
     assert c["checksTitle"] == "2026-10-05 06:38 更正时对照文件的核对"
     assert "确认时" not in c["checksTitle"] and "更正时磁盘上" in c["observedTitle"]
@@ -566,7 +567,7 @@ process.stdout.write(JSON.stringify([
     assert out == [True, False, True, False]
     item = html[html.index("function renderReviewItem("):html.index("function sourceFiles(")]
     assert "candidateApplied(c, item.verdict)" in item and "已用到这条关联上" in item
-    panel = html[html.index("async function renderReviewPanel("):html.index("// -- 记录 (9.2")]
+    panel = html[html.index("async function renderReviewPanel("):html.index("// -- 你的记录与备份 (9.2")]
     assert "offer.origin" in panel and "scrollIntoView" in panel
 
 

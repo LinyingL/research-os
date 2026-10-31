@@ -275,6 +275,13 @@ DEFAULT_VERDICT_LABELS = {"✅": "现行", "☠️": "已放弃", "🕒": "待�
 VERDICT_STATUSES = {"现行": "current", "已放弃": "abandoned", "待定": "pending", "不利证据": "adverse",
                     "被否": "rejected", "归档": "archived"}
 OTHER_VERDICT_LABEL = "其它"
+#: The order the interface offers the statuses in (21.3): the default markers' statuses in this order, the researcher's own
+#: after them in the order their file names them, 其它 last.
+STATUS_ORDER = ("✅", "🕒", "⚠️", "☠️", "⛔", "📋")
+#: The English name 13.4 gives each default status, by its word. An agent that writes in English may name a status by it
+#: (`research_records`: a suggested assessment); the file keeps the word (13.1).
+VERDICT_ENGLISH = {"现行": "Current", "已放弃": "Abandoned", "待定": "Pending", "不利证据": "Adverse evidence", "被否": "Rejected",
+                   "归档": "Archived", OTHER_VERDICT_LABEL: "Other"}
 _SELECTORS = ("\ufe0f", "\ufe0e")
 
 
@@ -322,6 +329,25 @@ def _is_marker_char(ch: str) -> bool:
     return unicodedata.category(ch) == "So" or 0x1F000 <= ord(ch) <= 0x1FAFF
 
 
+def _first_marker(bare: str, labels: dict[str, str] | None) -> tuple[int, int, str, str] | None:
+    """The earliest known marker in `bare` (a cell without variation selectors; the longer when two start together):
+    where it starts, its length, its word and the marker as `labels` names it."""
+    best: tuple[int, int, str, str] | None = None
+    for marker, label in (labels if labels is not None else DEFAULT_VERDICT_LABELS).items():
+        key = _bare(marker)[0].strip()
+        at = bare.find(key) if key else -1
+        if at >= 0 and (best is None or at < best[0] or (at == best[0] and len(key) > best[1])):
+            best = (at, len(key), label, marker)
+    return best
+
+
+def verdict_marker(verdict: str | None, labels: dict[str, str] | None = None) -> str:
+    """The marker, as `labels` names it, that a verdict cell wrote its status with (21.3: written again when the status
+    is the one the cell was read with, not the status's first marker); empty for a cell with no known marker."""
+    found = _first_marker(_bare(verdict if isinstance(verdict, str) else "")[0], labels)
+    return found[3] if found is not None else ""
+
+
 def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) -> dict[str, str]:
     """A verdict cell as the interface shows it (12.11): `{status, label,
     words}` -- the word for its marker (`labels`, default
@@ -331,14 +357,9 @@ def verdict_status(verdict: str | None, labels: dict[str, str] | None = None) ->
     text with no marker at all is 其它 with all of it as the words."""
     text = verdict if isinstance(verdict, str) else ""
     bare, where = _bare(text)
-    best: tuple[int, int, str] | None = None
-    for marker, label in (labels if labels is not None else DEFAULT_VERDICT_LABELS).items():
-        key = _bare(marker)[0].strip()
-        at = bare.find(key) if key else -1
-        if at >= 0 and (best is None or at < best[0] or (at == best[0] and len(key) > best[1])):
-            best = (at, len(key), label)
+    best = _first_marker(bare, labels)
     if best is not None:
-        at, length, label = best
+        at, length, label, _marker = best
         status = VERDICT_STATUSES.get(label, "labelled")
     else:
         lead = len(bare) - len(bare.lstrip())
@@ -375,6 +396,23 @@ def route_status(verdict: str | None, labels: dict[str, str] | None, abandon_mar
         label = status["label"] if status["status"] == "labelled" else DEFAULT_VERDICT_LABELS["☠️"]
         return {**status, "status": "abandoned", "label": label}
     return status
+
+
+def status_rank(marker: str) -> int:
+    """Where a status whose marker is `marker` stands in the order of `STATUS_ORDER` (21.3); one of the researcher's own
+    stands after them all."""
+    bare = _bare(marker)[0].strip()
+    return next((i for i, known in enumerate(STATUS_ORDER) if _bare(known)[0] == bare), len(STATUS_ORDER))
+
+
+def compose_verdict(marker: str, reason: str) -> str:
+    """The cell for a status and the researcher's reason (21.3): the status's marker, a space, the reason; the marker
+    alone with no reason; the reason alone for a status that has no marker (其它), so that words with no known marker
+    are written as they are. The page's chooser (`RODesk.statusChooser`) composes the same way."""
+    words = str(reason or "").strip()
+    if not marker:
+        return words
+    return f"{marker} {words}" if words else marker
 
 
 # -- Markdown table location + cell cleanup ---------------------------------

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from researchos import nodepage, trace
+from researchos import nodepage, provenance, trace
 
 from test_v9_language import CJK, WEBAPP, _DESK_DOM, _i18n_source, _node, english_table, needs_node
 
@@ -12,7 +12,8 @@ from test_v9_language import CJK, WEBAPP, _DESK_DOM, _i18n_source, _node, englis
 def test_node_api_interface_words_have_english_entries():
     table = english_table()
     labels = [*nodepage.TYPE_WORDS.values(), *nodepage.RELATION_WORDS.values(),
-              *nodepage.TRACE_STATES.values(), *trace.BREAK_LABELS.values(), *trace.REPAIR_LABELS.values()]
+              *nodepage.TRACE_STATES.values(), *trace.BREAK_LABELS.values(), *trace.REPAIR_LABELS.values(),
+              *provenance.CAUSES.values(), *provenance.CLAIM_CAUSES.values()]
     assert [word for word in labels if word not in table] == []
 
 
@@ -109,9 +110,9 @@ global.apiGet = async path => {
 @needs_node
 @pytest.mark.parametrize("language", ["en", "zh", None])
 def test_data_code_broken_links_read_as_the_8_8_glossary_in_chinese(language):
-    """数据与代码's broken links: in Chinese exactly the 8.8 glossary's
-    「（写出，文件不存在）」/「（读取，文件不存在）」, chosen by the link's code,
-    not its words (13.6); in English one sentence; node.js alone is Chinese."""
+    """数据与代码's broken links, on the script's own row (21.7): 「断链：写出 X，文件不存在」 /
+    「断链：读取 X，文件不存在」, chosen by the link's code, not its words (13.6) -- the row's path and the direction
+    are said once; in English one sentence each; node.js alone is Chinese."""
     data = {"files": [{"id": "script:steps/17.py", "type": "script", "type_label": "脚本", "path": "steps/17.py",
                        "exists": True, "reads": [], "writes": [], "orphan_input": False, "review": 0, "broken": [
                            {"script": "steps/17.py", "target": "figs/a.png", "type": "writes", "relation": "写出"},
@@ -136,11 +137,11 @@ global.currentView = 'data';
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
     if language == "en":
-        assert _node(script) == ["Broken link: steps/17.py writes figs/a.png (file not found)",
-                                 "Broken link: steps/17.py reads data/gone.csv (file not found)"]
+        assert _node(script) == ["Broken link: writes figs/a.png, file not found",
+                                 "Broken link: reads data/gone.csv, file not found"]
     else:
-        assert _node(script) == ["断链：steps/17.py 写出 figs/a.png（写出，文件不存在）",
-                                 "断链：steps/17.py 读取 data/gone.csv（读取，文件不存在）"]
+        assert _node(script) == ["断链：写出 figs/a.png，文件不存在",
+                                 "断链：读取 data/gone.csv，文件不存在"]
 
 
 @needs_node

@@ -31,6 +31,11 @@ here -- commits are not canvas objects.
   has rejected is not a writer, so a dataset whose only writer was marked
   as a wrong extraction gets its clay dot -- and `researchos.lineage` excludes
   rejected edges the same way, so the 血缘 tab agrees with the dot.
+- A file that exists only because a script's text named it and that the researcher's own entry has since answered
+  (`lineage.replaced_targets`, DESIGN.md 21.5) is no card, nor are its links: 列表 does not list it either.
+- `orphan_tone` says what the orphan socket means (21.8: the clay colour is for what is wrong): `warning` for a table the
+  chosen paper includes (`provenance.Paper`), `quiet` for the rest -- a download in raw/ -- and None for a card that is
+  no orphan input. `orphan_input` stays the report's definition.
 - `missing` is a fresh filesystem fact: the graph knows the node, the file
   is not on disk now. `ghost` nodes (section 8.1) are the reverse: a file
   an attempt's `step_files` names, on disk, with no graph node yet. A ghost
@@ -58,7 +63,10 @@ are deliberately not pulled in -- 8.7 names only the upstream direction,
 and following both would re-grow the hairball the scope exists to cut.
 The default scope is the current attempt: the one row whose verdict
 carries ✅ when exactly one does, else the most recent row by natural `#`
-order (`attempt_sort_key`); `all` only when the graph has no attempts.
+order (`attempt_sort_key`); `all` when the graph has no attempts, and
+(21.8, B5-1) when the current attempt has nothing to draw -- a request that names no
+scope is then answered with `all` and `fell_back_from`, the current attempt's own summary, so
+the page can say why in one quiet line; a request that names the attempt still gets its empty view.
 
 Layout state (sections 8.6, 9.2)
 --------------------------------
@@ -110,12 +118,13 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from researchos import db, lineage, paths
+from researchos import db, lineage, paths, provenance
 from researchos import trace as trace_mod
 from researchos.ingest import attempts as attempts_ingest
 from researchos.ingest import mappings as mappings_ingest
 from researchos.records import files as record_files
 from researchos.records import judgements
+from researchos.records import papers as papers_mod
 from researchos.records import situation as records_situation
 
 logger = logging.getLogger(__name__)
@@ -187,7 +196,8 @@ def _node_path(node: dict[str, Any]) -> str:
     return node.get("title") or node["id"].partition(":")[2]
 
 
-def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing: bool, orphan: bool) -> dict[str, Any]:
+def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing: bool, orphan: bool,
+                orphan_tone: str | None = None) -> dict[str, Any]:
     return {
         "id": node_id,
         "type": node_type,
@@ -196,6 +206,7 @@ def _node_entry(node_id: str, node_type: str, path: str, *, ghost: bool, missing
         "dir": posixpath.dirname(path),
         "missing": missing,
         "orphan_input": orphan,
+        "orphan_tone": orphan_tone if orphan else None,
         "ghost": ghost,
     }
 
@@ -326,7 +337,9 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
     map's view (`routes`) shows the attempts themselves, nothing else."""
     if scope == SCOPE_ROUTES:
         return {"scope": scope, "visible": {a["id"] for a in db.get_nodes_by_type(conn, "attempt")}}
-    nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t)}
+    gone = lineage.replaced_targets(conn)  # answered by the researcher's entry: the list does not list them (21.5)
+    asked_default = scope is None
+    nodes = {n["id"]: n for t in CANVAS_NODE_TYPES for n in db.get_nodes_by_type(conn, t) if n["id"] not in gone}
     edges = [
         e for t in CANVAS_EDGE_TYPES for e in db.query_edges(conn, type=t)
         if e["status"] != "rejected" and e["src"] in nodes and e["dst"] in nodes
@@ -381,8 +394,13 @@ def _view(conn: Connection, root: Path, scope: str | None) -> dict[str, Any]:
         upstream = {e["src"] for e in edges if e["type"] == "writes" and e["dst"] in read}
         visible = own | touched | upstream
         grouped = [by_id[scope]]
+    fell_back = None
+    if asked_default and scope != SCOPE_ALL and not visible:
+        # 21.8: the current attempt has no file to draw (a thesis chapter not yet linked to anything): open on 全部, and say so
+        fell_back = by_id[scope]
+        scope, visible, grouped = SCOPE_ALL, set(nodes) | set(ghosts), attempts
     return {
-        "scope": scope, "nodes": nodes, "edges": edges, "attempts": attempts, "by_id": by_id,
+        "scope": scope, "nodes": nodes, "edges": edges, "attempts": attempts, "by_id": by_id, "fell_back": fell_back,
         "default": default, "step_ids": step_ids, "ghosts": ghosts, "visible": visible, "grouped": grouped,
     }
 
@@ -410,14 +428,19 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
     writers = {e["dst"] for e in edges if e["type"] == "writes"}
 
     node_entries = []
+    paper = None
     for node_id in sorted(visible):
         if node_id in nodes:
             node = nodes[node_id]
             path = _node_path(node)
+            orphan = lineage.is_orphan_input(node["type"], node_id in readers, node_id in writers)
+            if orphan and paper is None:  # the chosen paper is read for the first orphan card only
+                marked = papers_mod.marked(root)
+                paper = provenance.Paper(conn, marked["drafts"], [e["file"] for e in marked["not_in_paper"]])
             node_entries.append(_node_entry(
                 node_id, node["type"], path, ghost=False,
-                missing=not _on_disk(root, path),
-                orphan=lineage.is_orphan_input(node["type"], node_id in readers, node_id in writers),
+                missing=not _on_disk(root, path), orphan=orphan,
+                orphan_tone=("warning" if paper.has(node_id) else "quiet") if orphan else None,
             ))
         else:
             node_type, path = ghosts[node_id]
@@ -447,7 +470,7 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
     # 9.6 "Where it shows": a link whose judgment is under review or in
     # conflict carries the mark; a candidate for an old judgment the hint.
     flags = judgements.link_flags(conn)
-    return {
+    payload = {
         "nodes": node_entries,
         "links": sorted((flags.annotate(link_entry(e)) for e in links), key=lambda link: link["id"]),
         # 9.2: the arrangement record's own state -- a file Research OS cannot read
@@ -462,6 +485,9 @@ def build_canvas(conn: Connection, project_root: Path, scope: str | None = None)
             else _scope_summary(by_id[scope], labels)),
         "scopes": [dict(_scope_summary(a, labels), current=a["id"] == default_id) for a in view["attempts"]],
     }
+    if view.get("fell_back"):  # 21.8: opened on 全部 because the current attempt has nothing to draw; the page says so
+        payload["fell_back_from"] = _scope_summary(view["fell_back"], labels)
+    return payload
 
 
 # -- canvas.json (section 8.6) ---------------------------------------------------

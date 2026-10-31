@@ -15,6 +15,7 @@ import email.message
 import http.client
 import html as html_mod
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -103,8 +104,11 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("app.html", "function refEndName(id, title) {", "\n}\n"),
     ("app.html", "function linkText(key) {", "\n}\n"),
     ("app.html", "function historyEntryText(entry) {", "\n}\n"),
-    ("app.html", "// -- 待复核 (9.6)", "// -- 记录 (9.2"),
+    ("app.html", "// -- 待复核 (9.6)", "// -- 你的记录与备份 (9.2"),
     ("app.html", "function coverageLine(item, kind) {", "\n}\n"),
+    # 21.7: 「新建变量卡」 on the 变量 page, and the 设置 page for this Mac (its model, online lookup and language forms)
+    ("app.html", "function newCardBlock(", "\n}\n"),
+    ("app.html", "// -- 设置 (DESIGN.md 21.7)", 'document.getElementById("settings-btn")'),
     ("app.html", "async function variableAction(", "\n}\n"),
     ("app.html", "function cardReviewMember(review, standalone) {", "\n}\n"),
     ("app.html", "function renderCardReviewGroups(host, cardItems) {", "\n}\n"),
@@ -125,8 +129,10 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", "function verdictMove(prev, cur) {", "\n  }\n"),
     ("node.js", "function sourceWords(v) {", "\n  }\n"),
     # V11 (15.4, 15.5): a Stata .dta file in the panel -- rows by variables, its label, the table.
+    # 21.7: 你的记录与备份 -- what Research OS keeps, each with its last backup, and the folded 详情.
+    ("app.html", "// -- 你的记录与备份 (9.2", 'document.getElementById("records-btn")'),
     ("app.html", "function dtaPreview(info) {", "\n}\n"),
-    # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock, llmSettingBox (「模型服务」) and their helpers
+    # V12 (16): 新增尝试's 生成草稿 -- attemptDraftBlock (where a draft goes, and 「在设置里修改」, 21.7) and its helpers
     # (the language, what became of each cell, the refusals in words, the chevron).
     ("app.html", "// -- 「根据所选文件生成草稿」 (DESIGN.md 16)", "// Builds the form from the (now current) records and config."),
     # 18.2 text rules: 项目首页 joins the converted surfaces -- every Chinese literal in workspace.js that reaches
@@ -154,6 +160,9 @@ CONVERTED: list[tuple[str, str | None, str | None]] = [
 _ERROR = "13.7: an error sentence -- errors everywhere are converted in their own increment"
 ALLOWED_CHINESE: dict[str, str] = {
     "停止服务失败": _ERROR,
+    # 21.7: the owner text on disk for the researcher when no name is set; the screen reads it as Me (ownerLabel)
+    "我": "21.7/13.1: the owner written to tasks.json for the researcher with no name set, Chinese whatever the screen says",
+    "中文": "13.3: a language's own name, named in itself (the 设置 page's choice of the interface language)",
     # The project menu's error framings (8.8 "Errors"), shown before the engine's own text.
     "没能从 GitHub 获取": _ERROR,
     "切换项目失败": _ERROR,
@@ -391,11 +400,23 @@ def english_offenders(table: dict[str, Any]) -> list[str]:
 # -- node --------------------------------------------------------------------------------------------------
 
 
+#: The zone the pages run in under node. 21.8: every time a page shows is the viewer's local time, so the zone is fixed (the
+#: researcher's, with its daylight-saving change on 2026-10-25) and a time written with Z or +02:00 reads the same on every machine.
+NODE_ENV = {**os.environ, "TZ": "Europe/Berlin"}
+
+
 def _node(script: str) -> Any:
     # The script goes in on stdin, not as an argument: these scripts carry
     # whole page modules, and Linux caps a single argument at 128 KB.
-    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True)
+    out = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, env=NODE_ENV)
     return json.loads(out.stdout)
+
+
+def _times_prelude() -> str:
+    """What a pure block of app.html needs to show a time (21.8): the stand-in window with desk.js (RODesk.whenWords, the one function
+    that converts a stored time) and the page's language block (`t`, `stampText`)."""
+    return ("global.window = {}; global.document = {getElementById(){return null}};\n" + (WEBAPP / "desk.js").read_text(encoding="utf-8") + "\n"
+            + _slice(APP_HTML.read_text(encoding="utf-8"), "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state") + "\n");
 
 
 def _i18n_source(entries: dict[str, Any] | None = None) -> str:
@@ -662,7 +683,7 @@ def test_13_3_the_switch_sits_beside_records_and_stop_service():
     named in the language it switches to; its title is marked for /i18n.js."""
     html = APP_HTML.read_text(encoding="utf-8")
     tools = html[html.index('<div class="side-tools">'):html.index("</div>", html.index('<div class="side-tools">'))]
-    assert re.findall(r'<button id="([\w-]+)" class="shutdown-btn"', tools) == ["records-btn", "shutdown-btn", "lang-btn"]
+    assert re.findall(r'<button id="([\w-]+)" class="shutdown-btn"', tools) == ["records-btn", "settings-btn", "shutdown-btn", "lang-btn"]
     assert ('<button id="lang-btn" class="shutdown-btn" type="button" lang="en" title="切换界面语言" '
             'data-i18n-attr="title" data-i18n-switch>English</button>') in tools
 
@@ -1091,14 +1112,14 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                                            "Data & code", "Proposals", "Members"]
     # 18.3: 研究路线's switch.
     assert _words(after, "subnav-item") == ["Route map", "List"]
-    assert _words(after, "shutdown-btn") == ["Records", "Stop service", "中文"]
+    assert _words(after, "shutdown-btn") == ["Backups", "Settings", "Stop service", "中文"]
     assert _words(after, "page-title") == ["Project home"]
     assert _words(after, "side-eyebrow") == ["Project"] and _words(after, "new-attempt-btn") == ["New attempt"]
     labels = {el["attrs"]["id"]: (el["attrs"].get("aria-label"), el["attrs"].get("title"))
               for el in after if el["attrs"].get("id") in ("sidebar", "side-nav", "records-btn", "shutdown-btn",
                                                            "project-menu", "welcome")}
     assert labels == {"sidebar": ("Project and sections", None), "side-nav": ("Sections", None),
-                      "records-btn": (None, "See where this project’s human records are kept"),
+                      "records-btn": (None, "See what records you have and when they were last backed up"),
                       "shutdown-btn": (None, "Stop the local service process"),
                       "project-menu": ("Project", None), "welcome": ("No project yet", None)}
     welcome = [el["text"].strip() for el in after if el["tag"] in ("p", "button") and el["text"].strip()
@@ -1107,7 +1128,7 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                and "subnav-item" not in el["attrs"].get("class", "")]
     assert welcome == [
         "Start with a research question and a plan, then write notes and bring results together here.",
-        "Keep using your own tools for code and analysis. Link their files to your research records whenever you need them.",
+        "Keep using your own tools for code and analysis. Link their files to your notes and reports whenever you need them.",
         "New project…", "Add project…", "Join a project from the shared folder…", "A project is the folder that holds one study."]
 
 
@@ -1123,7 +1144,7 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "subnav-item") == ["路线图", "列表"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
-    assert _words(after, "shutdown-btn") == ["记录", "停止服务", "English"]
+    assert _words(after, "shutdown-btn") == ["备份", "设置", "停止服务", "English"]
     assert _words(after, "side-eyebrow") == ["项目"] and _words(after, "new-attempt-btn") == ["新增尝试"]
     assert [el["text"].strip() for el in after if el["attrs"].get("id") in ("welcome-create-btn", "welcome-add-btn", "welcome-join-btn")] == [
         "新建项目…", "添加项目…", "从公盘加入项目…"]
@@ -1186,12 +1207,14 @@ def test_13_7_the_stopped_page_and_its_question(saved):
         "global.document = { getElementById: (id) => id === 'app' ? appEl : id === 'shutdown-btn'"
         " ? { addEventListener: (e, fn) => { handlers[e] = fn; } } : null };\n"
         "let pollTimer = null, generationLive = true; function stopGenerationPoll() {} function closePanel() {}\n"
+        # 21.7: the question is asked after the engine was asked who is still working (nobody here)
+        "global.apiGet = async () => ({ runs: [] }); global.apiPost = async () => ({});\n"
     )
-    expr = f"(function () {{ {code} renderStoppedState(); handlers.click(); return [appEl.innerHTML, asked]; }})()"
-    if saved is None:
-        page, asked = _node("global.window = {};\n" + prelude + f"process.stdout.write(JSON.stringify({expr}));\n")
-    else:
-        page, asked = _with_i18n(expr, saved=saved, prelude=prelude)
+    # the click handler is async now (it reads /api/agents/going first): the page is read once it has answered
+    body = f"{code} renderStoppedState(); const page = appEl.innerHTML; await handlers.click(); process.stdout.write(JSON.stringify([page, asked]));"
+    head = "global.window = {};\nObject.defineProperty(globalThis, 'navigator', {value: undefined, configurable: true});\n"
+    loaded = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source() + "\n"
+    page, asked = _node(head + prelude + loaded + f"(async () => {{ {body} }})();\n")
     if saved == "en":
         assert page == ('<main id="main"><div class="stopped-note"><h2>Service stopped</h2>'
                         "<p>The local service has stopped. You can close this page.</p>"
@@ -1351,7 +1374,7 @@ function el(tag, cls, text) {
     set textContent(v) { this.kids = v === "" ? [] : [String(v)]; },
     set innerHTML(v) { this.kids = v ? ["<html>" + v] : []; },
     appendChild(c) { this.kids.push(adopt(c)); return c; }, append(...cs) { this.kids.push(...cs.map(adopt)); },
-    addEventListener() {}, querySelectorAll() { return []; },
+    addEventListener() {}, querySelectorAll() { return []; }, setAttribute() {},   // a toggle says whether it is open (aria-expanded, 21.8)
     querySelector(sel) {
       const walk = (n) => { for (const k of n.kids) if (typeof k !== "string") {
         if (k.className.split(" ").includes(sel.slice(1))) return k; const f = walk(k); if (f) return f; } return null; };
@@ -1415,6 +1438,7 @@ def _desk_cases(lang: str) -> list[dict]:
     one person -- with /api/desk's column and words as the engine sends them
     in `lang`."""
     from researchos import desk as engine
+    from researchos import now_doing
 
     def w(zh: str, en: str) -> str:
         return en if lang == "en" else zh
@@ -1470,11 +1494,13 @@ def _desk_cases(lang: str) -> list[dict]:
 
     def desk(role: str, **column) -> dict:
         shared = column.pop("shared", "ok" if role in ("pi", "member") else "not_needed")
-        return {"role": role, "attempts": attempts, "lines": [], "lines_missing": column.pop("missing", []), "column": {
+        out = {"role": role, "attempts": attempts, "lines": [], "lines_missing": column.pop("missing", []), "column": {
             "role": role, "me": "li@example.com", "notice": w(*engine.ROLE_WORDS[role]) if role in engine.ROLE_WORDS else None,
             "shared": {"state": shared, "message": w(*engine.SHARED_WORDS[shared]) if shared in engine.SHARED_WORDS else None},
             "waiting": [], "mine": [], "review": {"count": 0, "groups": [], "none": {"items": [], "cards": []}}, "sync": None,
             **column}}
+        out["needs"] = now_doing.assemble(out)   # 21.4: the rows of 等你处理, as the engine works them out from the column
+        return out
 
     me = {"me": {"id": "li@example.com", "name": "Li"}}
     team = [{"id": "wang@example.com", "name": "Wang"}]
@@ -1530,7 +1556,14 @@ def _desks(saved: str | None, desk_js: str | None = None, *, team: bool = False)
 #: 判断 (two rows) -- checked by putting the old word back: the old digest.
 #: Moved again for the finding that the count also holds variable cards: the same sentence says
 #: 项 (「1497 项的依据变了」), not 连线确认 -- checked by putting the old sentence back: the digest e7250298...
-_DESK_ZH_SHA256 = "b096158f2637bdcff2bc7de4edfe0ba7a62a1015a4bd0db04bb2144280c4dda4"
+#: Moved on purpose by DESIGN.md 21.4 and 21.6 (task V16 B2-1): the column is 等你处理, one list of rows -- each with a chip
+#: that says what it is (新尝试, 待复核, 连线的一端找不到了 ...) in the place of the blocks that held them (等你批准, 我的提议,
+#: 待复核, 正式版本有更新, 连线的一端找不到了) --, a 待复核 row is one attempt's (or the judgments that belong to none), its count
+#: sentence is its own, and a column with nothing to do folds to a strip. The words of each row are the ones they were.
+#: Moved again by 21.6 (fix batch 3): the row for a line whose end is missing says 尝试表, not 年表 (the digest changes by that word only).
+#: Moved again by 21.8 (B5-1): 打开交回, 打开详情页, 查看, 运行日志 and 当时的依据 only navigate, so they are text links (the class `ws-text-link`)
+#: and no longer `btn btn-small` (the digest changes by that class only).
+_DESK_ZH_SHA256 = "b0134594c864d96b4706ecf1f9e049fb420e5b794089126429d804d03b56c52b"
 
 
 @needs_node
@@ -1540,8 +1573,9 @@ def test_13_8_the_desk_in_chinese_is_as_before(saved):
 
     desks = _desks(saved)
     assert hashlib.sha256(json.dumps(desks, ensure_ascii=False).encode("utf-8")).hexdigest() == _DESK_ZH_SHA256
-    assert desks[0][:2] == ["desk-column-title: 待办", "desk-title: 等你批准"]
-    assert "desk-sub: 1497 项的依据变了，等你复核。[desk-link]" in desks[0]
+    assert desks[0][:3] == ["desk-column-title: 等你处理", "status-label tone-plain: 新尝试", "desk-link strong: 新增尝试 #18：新路线，附带 1 个文件"]
+    assert "desk-meta: Wang · 等你批准 · 2024年3月1日" in desks[0]
+    assert "desk-sub: 2 项的依据变了，等你复核。" in desks[0] and "desk-sub: 4 项的依据变了，等你复核。" in desks[0]
     assert "desk-link strong: 加上连线：#18 源自 #17 (title: 在路线图上标出它涉及的尝试)" in desks[0]
 
 
@@ -1558,35 +1592,36 @@ def test_13_7_the_desk_in_english():
     left = [line for line in lines if CJK.search(re.sub("|".join(map(re.escape, _THEIRS)), "", line))]
     assert left == [] and not any(FORBIDDEN.search(line) for line in lines)
     for line in [
-        "desk-column-title: To handle", "desk-title: Awaiting your approval", "status-label tone-plain: New attempt",
-        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · 1 Mar 2024", "btn btn-small: View",
+        "desk-column-title: Needs you", "status-label tone-plain: New attempt",
+        "desk-link strong: New attempt #18: 新路线, with 1 file", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024", "ws-text-link: View",
         "desk-link strong: #16: change the research assessment from “Pending” to “Abandoned”, abandoning the route, with 2 files "
         "(title: Mark the attempts it touches on the route map)",
         "desk-meta: Wang · The approval and return records contradict each other · 1 Mar 2024",
         "status-label tone-plain: Line", "desk-link strong: Add the line: #18 grew out of #17 "
         "(title: Mark the attempts it touches on the route map)",
-        "desk-title: Needs review", "desk-sub: The basis of 1,497 items changed; they await your review.[desk-link]",
+        "status-label tone-ochre: Needs review", "desk-sub: The basis of 2 items changed; they await your review.",
         "desk-link: Review", "desk-link strong: #16 TopicShift 波动 (title: Mark this attempt on the route map)",
         ": [desk-reason]steps/16-build.py writes data/clean.csv", "desk-reason: The basis changed",
-        "own-mark: My change, not yet proposed", "desk-head: Not part of any attempt",
+        "own-mark: My change, not yet proposed", "desk-what: Not part of any attempt",
         ": [desk-reason]other.py generates figs/图3.png", "desk-reason: The machine no longer finds this link",
         ": [desk-reason]other.py is linked to x.md", ": [mono] This script’s change touches 2 variables", ": log_ret, vol",
-        "desk-title: Lines with a missing end", "desk-what: #20 grew out of #16",
+        "status-label tone-clay: Lines with a missing end", "desk-what: #20 grew out of #16",
         "desk-meta: #20 is not in the table · Original researcher",
     ]:
         assert line in desks[0], line
     # A judgment two attempts hold is under both, and the count says it once (the engine's).
     assert desks[0].count(": [desk-reason]steps/16-build.py reads data/panel.csv") == 2
-    assert desks[1] == ["desk-column-title: To handle", "desk-empty: Nothing to handle right now."]
-    for line in ["desk-title: My proposals", "desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
+    # 21.4: with nothing waiting the column folds to a strip: its title, the sentence on hover
+    assert desks[1] == ["desk-column: [desk-column-title] (title: Nothing to handle right now.)", "desk-column-title: Needs you"]
+    for line in ["desk-meta: Proposed · The PI says: 先补稳健性 · 1 Mar 2024",
                  "desk-note plain: Variable log_ret: definition version 2", "desk-meta: Returned: redo it · 1 Mar 2024",
                  "desk-link strong: 3 files: 1.py, 2.py and others", "desk-meta: Approved, awaiting sync · 1 Mar 2024",
                  "desk-link strong: #17: change the research assessment from “Current” to “成立” "
                  "(title: Mark the attempts it touches on the route map)", "desk-meta: Returned · 1 Mar 2024",
-                 "desk-meta: Proposed · 1 Mar 2024", "desk-title: Official version updated",
+                 "desk-meta: Proposed · 1 Mar 2024", "status-label tone-ochre: Official version updated",
                  "desk-sub: The PI published version 1,497 (1 Mar 2024): fixes", "btn: Sync",
                  "team-line writes: Syncing first writes what you have not sent yet (1 comment, 2 link judgments, "
-                 "1 “Set as the paper” mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
+                 "1 paper mark and 1 link added) into “提议/li@example.com/” (your proposals folder) in the "
                  "shared folder: no approval is needed, and the PI adds it to the official record at the next publish. "
                  "Then it brings the working copy to version 1,497: update 2 files you have not changed; remove 1 file "
                  "the official version deleted; keep your version of 1 file changed on both sides and put the official "
@@ -1601,12 +1636,12 @@ def test_13_7_the_desk_in_english():
     assert not any("Replaced by your later proposal" in line for line in desks[2])
     for i in (3, 4):  # a member up to date, or before any publish: nothing to handle
         assert desks[i] == desks[1], i
-    assert desks[5] == ["desk-column-title: To handle", "desk-alone: The shared folder cannot be opened right now: "
+    assert desks[5] == ["desk-column-title: Needs you", "desk-alone: The shared folder cannot be opened right now: "
                         "proposals and sync cannot be shown"]  # never 「同步」 while it cannot be opened
     assert "desk-alone: This project is not connected to a shared folder: proposals and sync cannot be shown" in desks[6]
     assert "desk-alone: You are not a member of this project yet: ask the PI to add you to the team, then sync" in desks[7]
     assert "desk-alone: The members file (team.toml) cannot be read right now, so who the PI is cannot be told" in desks[8]
-    assert desks[9][1:3] == ["desk-title: Needs review", "desk-sub: The basis of 1 item changed; it awaits your review.[desk-link]"]
+    assert "desk-sub: The basis of 2 items changed; they await your review." in desks[9]
     assert "item.what ===" not in (WEBAPP / "desk.js").read_text(encoding="utf-8")  # 13.6
 
 
@@ -1629,19 +1664,24 @@ def test_13_7_people_named_in_a_desk_row_read_as_a_list(saved):
             "missing": ["child", "parent"], "by_label": first}
     cards = {"key": "card:x", "script": None, "cards": ["log_ret", "vol", "ret"], "counted": True, "words": None}
     review = {"count": 1, "groups": [], "none": {"items": [], "cards": [cards]}}
+    from researchos import now_doing
+
+    desk_payload = {"role": "pi", "attempts": [], "lines_missing": [line], "column": {
+        "role": "pi", "shared": {"state": "ok", "message": None}, "waiting": [verdict], "review": review}}
+    desk_payload["needs"] = now_doing.assemble(desk_payload)
     case = {"me": {"me": {"id": "li@example.com", "name": "Li"}}, "proposals": {"role": "pi", "proposals": [verdict]},
-            "share": {}, "desk": {"role": "pi", "attempts": [], "lines_missing": [line], "column": {
-                "role": "pi", "shared": {"state": "ok", "message": None}, "waiting": [verdict], "review": review}}}
+            "share": {}, "desk": desk_payload}
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     desk = _node("global.window = {};\n" + i18n + _DESK_DOM + (WEBAPP / "desk.js").read_text(encoding="utf-8")
                  + f"\n(async () => process.stdout.write(JSON.stringify(await renderDesk({json.dumps(case)}))))();\n")
     meta = [line for line in desk if line.startswith(("desk-meta", "desk-link strong", ": log_ret"))]
     if zh:
         assert meta == ["desk-link strong: #16 的研究判断从「待定」改为「现行」 (title: 在路线图上标出它涉及的尝试)",
-                        "desk-meta: Wang · 2024年3月1日", ": log_ret、vol、ret", "desk-meta: 年表里没有 #20 · 年表里没有 #16 · 最初的研究者"]
+                        "desk-meta: Wang · 等你批准 · 2024年3月1日", ": log_ret、vol、ret",
+                        "desk-meta: 尝试表里没有 #20 · 尝试表里没有 #16 · 最初的研究者"]
     else:
         assert meta == ["desk-link strong: #16: change the research assessment from “Pending” to “Current” "
-                        "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · 1 Mar 2024",
+                        "(title: Mark the attempts it touches on the route map)", "desk-meta: Wang · Awaiting your approval · 1 Mar 2024",
                         ": log_ret, vol, ret",
                         "desk-meta: #20 is not in the table · #16 is not in the table · Original researcher"]
 
@@ -1710,7 +1750,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
             "team-done: The official version’s data/panel.csv is beside yours as data/panel.official.csv; yours was not changed.",
             ": How yours differs from the official one", "desk-note plain: Rows from 96 to 97; column added: log_ret",
             *[line for line in shown if line.startswith("dl-row")],
-            "btn btn-small diff-more: Show the remaining 5 lines",
+            "btn btn-small diff-more has-chevron: Show the remaining 5 lines",
             "node-sub: The change is too long; only its beginning was compared.",
             "team-done: The official version’s figs/图3.png is beside yours as figs/图3.official.png; yours was not changed.",
             ": How yours differs from the official one", "desk-note plain: S",
@@ -1728,7 +1768,7 @@ def test_13_7_a_members_desk_after_sync_in_the_screens_language(saved):
             "你的备注和连线还在等 PI 发布，记录文件暂时留着你的。",
             "team-done: 正式版本的 data/panel.csv 放在了旁边：data/panel.official.csv；你的没有动。",
             ": 你的和正式的有什么不同", "desk-note plain: 行数从 96 增至 97，新增列 log_ret",
-            "btn btn-small diff-more: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
+            "btn btn-small diff-more has-chevron: 显示其余 5 行", "node-sub: 改动太长，只比较了开头的一部分。",
             "team-done: 正式版本的 figs/图3.png 放在了旁边：figs/图3.official.png；你的没有动。",
             ": 你的和正式的有什么不同", "desk-note plain: S", "desk-note plain: 表格较大：只比较行和列，不逐行对比。",
             ": 你的和正式的有什么不同", "desk-note plain: 两个文件不同（不是文本，没有逐行比较）",
@@ -1741,7 +1781,7 @@ def test_13_8_a_members_sync_preview_in_chinese_is_as_before(saved):
     """13.8 #1: the desk's 「正式版本有更新」, drawn with the real team.js,
     says what 同步 will write in the words 成员 always used."""
     desks = _desks(saved, team=True)
-    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处「设为论文正文」的标记、增加 1 条连线写进公盘的"
+    assert ("team-line writes: 同步会先把你还没发送的 1 条备注、2 条连线确认、1 处论文标记、增加 1 条连线写进公盘的"
             "「提议/li@example.com/」：不需要批准，PI 下次发布时加入正式记录。然后把工作副本带到第 1497 版：更新 2 个你没改过的文件；"
             "删除 1 个正式版本已删除的文件；1 个两边都改过的文件留着你的，把正式的一份放在旁边（.official）；备注、连线确认和手工连线的记录文件："
             "你的条目都已进入正式版本的，换成正式的那一份；还没进入的，留着你的。从不合并，你改过的内容不会被覆盖。") in desks[2]
@@ -2288,7 +2328,7 @@ GUIDE_EN_ENGLISH_LABELS = (
     "Start collaborating…",
     # V10 D3 (14.6): a proposal as the PI decides it and a member's draft.
     "Review again with the ticked files", "Send proposal", "Proposed", "Approved", "Returned", "Approve",
-    "Return with reason", "Discuss", "Changed on both sides", "Link files", "Add a source",
+    "Return with reason", "Discuss", "Changed on both sides", "Add files", "File under an attempt", "Assign a generating script",
     # 18.2 text rules: the composer under Proposals (kinds and buttons) is in English too.
     "Submit a proposal", "New attempt", "Change a research assessment", "Variable definition", "Files only",
     "Review what will be sent",
@@ -2306,7 +2346,7 @@ GUIDE_EN_EMPHASIS = ("0.5.0",)
 #: still-Chinese page shares with an English surface: the meaning in brackets is the English the
 #: reader sees where the same word is in English.
 _GUIDE_EN_SAME_WORDS = {
-    "记录": "page", "停止服务": "page", "同步": "page", "发布": "shell",
+    "备份": "page", "设置": "page", "停止服务": "page", "同步": "page", "发布": "shell",
 }
 #: A message quoted by its first words (the rest of the line varies).
 _GUIDE_EN_SENTENCE_STARTS = ("指纹：",)
@@ -2374,7 +2414,7 @@ def test_13_7_the_english_guide_quotes_the_labels_the_screen_shows():
     # Chinese labels: what a page still in Chinese shows, whole (a message by its first words).
     still = _still_chinese_texts()
     for label in GUIDE_EN_CHINESE_LABELS:
-        if label in ("记录", "停止服务"):
+        if label in ("备份", "设置", "停止服务"):
             continue  # the switch's neighbours, quoted for the Chinese screen; their meaning is checked below
         if label in _GUIDE_EN_SENTENCE_STARTS:
             assert any(s.startswith(label) for s in still), label
@@ -2399,7 +2439,7 @@ def _draft_run(saved: str | None, body: str) -> Any:
     i18n = "" if saved is None else f"window.ROI18N_SAVED = {json.dumps(saved)};\n" + _i18n_source()
     return _node("global.window = {};\n" + i18n
                  + _app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
-                 + _app_block(*_DRAFT_BLOCK) + "\n" + body)
+                 + _app_block(*_DRAFT_BLOCK) + "\n" + _app_function("function settingsPageLink(") + "\n" + body)
 
 
 def _rows(*cells: tuple[str, str]) -> list[dict[str, Any]]:
@@ -2493,7 +2533,7 @@ def test_16_2_a_refused_draft_names_the_file_or_the_remedy(saved):
         assert not CJK.search(json.dumps(got, ensure_ascii=False))
 
 
-#: Just enough DOM for attemptDraftBlock and llmSettingBox: elements with children, values, datasets,
+#: Just enough DOM for attemptDraftBlock and the 设置 page's model form: elements with children, values, datasets,
 #: listeners one can fire, `after` and `remove`; the page's mk/mkButton/formFieldEl/setFormStatus stood in.
 _DRAFT_DOM = r"""
 function el(tag, cls, text) {
@@ -2523,6 +2563,9 @@ const find = (root, pred) => all(root, pred)[0];
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const key = (k, composing) => ({ key: k, isComposing: !!composing, keyCode: composing ? 229 : 13, prevented: false,
   preventDefault() { this.prevented = true; } });
+global.opened = [];
+global.mayReplacePanel = () => true;
+global.openSettingsPanel = (section) => { global.opened.push(section); };
 """
 
 _DRAFT_FORM = r"""
@@ -2550,17 +2593,18 @@ global.apiPost = async (path, body) => {
   const block = attemptDraftBlock({ description: desc, result: result }, [{ attrs: { description: "面板回归" }, result: "系数 0.3" }],
     false, { description: "做了什么" });
   const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const where = block.el.children[1], status = block.el.children[3];
-  const details = find(block.el, (n) => n.tag === "details");
-  const [url, model] = all(details, (n) => n.tag === "input");
-  const save = find(details, (n) => n.tag === "button" && n.textContent === "保存");
+  const where = block.el.children[1], status = block.el.children[4];
+  const link = find(block.el, (n) => n.tag === "button" && n.textContent === "在设置里修改");
   const path = all(block.el, (n) => n.tag === "input")[0];
   const addBtn = find(block.el, (n) => n.tag === "button" && n.textContent === "加入");
   out.goBeforeTheSetting = go.disabled;
   await tick();
   out.where = [where.className, where.textContent, go.disabled];
-  out.summary = details.children[0].className + " " + details.children[0].children.map((c) => c.className || c.textContent).join("|");
-  out.setting = [url.value, url.placeholder, model.value, model.placeholder, url.dataset.initial, model.dataset.initial];
+  // 21.7: no form here, a text link to the 设置 page, which opens at the model section
+  out.link = [link.className, link.tag, block.el.children[2].className];
+  await link.fire("click");
+  out.opened = global.opened.slice();
+  out.noForm = [find(block.el, (n) => n.tag === "details") === undefined, all(block.el, (n) => n.tag === "input").length];
   const datalist = find(block.el, (n) => n.tag === "datalist");
   const asked = () => [datalist.children.map((o) => o.value), calls.filter((c) => c[1] === "/api/canvas?scope=all").length];
   out.suggestions = [];
@@ -2598,20 +2642,14 @@ global.apiPost = async (path, body) => {
   pending = go.fire("click");
   await tick();
   block.setFrozen(true);
-  out.frozen = [go.disabled, path.disabled, addBtn.disabled, chips.children.map((c) => c.disabled), url.disabled, model.disabled, save.disabled];
+  out.frozen = [go.disabled, path.disabled, addBtn.disabled, chips.children.map((c) => c.disabled), link.disabled];
   release();
   await pending;
   out.late = [desc.value, status.className, status.textContent, go.disabled];
   block.setFrozen(false);
-  out.unfrozen = [go.disabled, path.disabled, save.disabled];
-  // Enter in 模型 saves both fields (never previews the row); the line above 生成草稿 follows.
-  model.value = "m2";
-  model.dataset.typed = "1";
-  e = key("Enter");
-  await model.fire("keydown", e);
-  await tick();
-  out.saved = [e.prevented, calls.filter((c) => c[0] === "POST" && c[1] === "/api/settings/llm").map((c) => c[2]),
-    model.dataset.typed || null, model.dataset.initial, where.className, where.textContent];
+  out.unfrozen = [go.disabled, path.disabled];
+  // the block never writes the setting: the model form is on the 设置 page
+  out.posted = calls.filter((c) => c[0] === "POST" && c[1] === "/api/settings/llm").length;
   // A refusal names the file (apiError carries it from the body); the engine's text goes behind 「详情」.
   global.apiPost = async (path) => { throw apiError(path, { status: 404 },
     { error: "no such file: code/rnu.py", state: "draft_file_missing", file: "code/rnu.py" }); };
@@ -2628,18 +2666,12 @@ global.apiPost = async (path, body) => {
   release();
   await pending;
   out.written = [desc.value, status.className, status.textContent, go.disabled, path.disabled];
-  // The setting cannot be read: 生成草稿 stays off; opening 模型服务 asks again.
+  // The setting cannot be read: 生成草稿 stays off, and the way to the 设置 page is still there.
   settingFails = true;
   const other = attemptDraftBlock({ description: el("textarea"), result: el("textarea") }, [], true, {});
   const go2 = find(other.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const details2 = find(other.el, (n) => n.tag === "details");
   await tick();
-  out.unread = [other.el.children[1].textContent, go2.disabled];
-  settingFails = false;
-  details2.open = true;
-  await details2.fire("toggle");
-  await tick();
-  out.reread = [other.el.children[1].textContent, go2.disabled];
+  out.unread = [other.el.children[1].textContent, go2.disabled, !!find(other.el, (n) => n.textContent === "在设置里修改")];
   process.stdout.write(JSON.stringify(out));
 })();
 """
@@ -2647,21 +2679,21 @@ global.apiPost = async (path, body) => {
 
 @needs_node
 def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
-    """attemptDraftBlock and 「模型服务」 under node: where a draft goes is said
-    before anything is sent (and 生成草稿 waits for it); suggestions are asked
-    until one answer; Enter while composing adds nothing; the request carries
-    the files and the table's language, never example rows; a typed cell is
-    kept, an empty one filled, marked typed for the leave guard, with the
-    model's own claim beside it until edited; a draft that lands while the
-    preview stands fills nothing; the frozen form freezes the block; Enter in
-    the setting saves both fields; a refusal names the file; an unread
-    setting keeps 生成草稿 off until 模型服务 reads it."""
+    """attemptDraftBlock under node: where a draft goes is said before anything
+    is sent (and 生成草稿 waits for it) with a text link to the 设置 page, which
+    holds the model's one form (21.7); suggestions are asked until one answer;
+    Enter while composing adds nothing; the request carries the files and the
+    table's language, never example rows; a typed cell is kept, an empty one
+    filled, marked typed for the leave guard, with the model's own claim beside
+    it until edited; a draft that lands while the preview stands fills nothing;
+    the frozen form freezes the block; a refusal names the file; an unread
+    setting keeps 生成草稿 off and the link in place."""
     out = _draft_run(None, _DRAFT_DOM + _app_function("function apiError(") + _DRAFT_FORM)
     assert out["goBeforeTheSetting"] is True
     assert out["where"] == ["attempt-draft-where warn", "所选文件将发送至 studio.local · 模型：qwen", False]
-    assert out["summary"] == "res-draft-summary res-chevron|模型服务"
-    assert out["setting"] == ["http://studio.local:1234/v1", "http://studio.local:1234/v1", "", "qwen",
-                              "http://studio.local:1234/v1", ""]
+    # 21.7: a text link to the 设置 page (opening at the model section), no form of its own
+    assert out["link"] == ["ws-text-link", "button", "attempt-draft-setting-link"] and out["opened"] == ["llm"]
+    assert out["noForm"] == [True, 1]
     # Asked again after a failed answer, never after a good one; only files a draft can read.
     assert out["suggestions"] == [[[], 1], [["code/run.py", "out/t.csv"], 2], [["code/run.py", "out/t.csv"], 2]]
     assert out["help"] == "仅填写空白的「做了什么」和「结果」。"
@@ -2673,15 +2705,12 @@ def test_16_the_draft_block_fills_only_empty_cells_and_never_a_frozen_form():
     assert out["form"] == ["textarea", "textarea", "模型：qwen-27b · 参考文件：code/run.py、out/t.csv"]
     assert out["status"] == ["panel-status ok", "「做了什么」原本有内容，没有改。 已填入「结果」。 较长的文件只读了开头。", False]
     assert out["afterAnEdit"] == ["textarea", "textarea"]
-    assert out["frozen"] == [True, True, True, [True, True], True, True, True]
+    assert out["frozen"] == [True, True, True, [True, True], False]
     assert out["late"] == ["", "panel-status err", "预览已经生成，草稿没有填入：先返回修改，再生成草稿", True]
-    assert out["unfrozen"] == [False, False, False]
-    assert out["saved"] == [True, [{"base_url": "http://studio.local:1234/v1", "model": "m2"}], None, "m2",
-                            "attempt-draft-where", "本地模型：m2"]
+    assert out["unfrozen"] == [False, False] and out["posted"] == 0
     assert out["refused"] == ["项目里找不到 code/rnu.py", "draft_file_missing", False]
     assert out["written"] == ["", "panel-status ", "这一行已经写进工作副本，草稿没有用上", True, True]
-    assert out["unread"] == ["没能读到模型设置，先不能起草", True]
-    assert out["reread"] == ["所选文件将发送至 studio.local · 模型：qwen", False]
+    assert out["unread"] == ["没能读到模型设置，先不能起草", True, True]
 
 
 _DRAFT_WORD = r"""
@@ -2697,7 +2726,7 @@ global.apiPost = async (path, body) => { sent.push(body); return reply(); };
   form.append(desc, result);
   const block = attemptDraftBlock({ description: desc, result: result }, [], false, { description: "做了什么" });
   const go = find(block.el, (n) => n.tag === "button" && n.textContent === "生成草稿");
-  const path = all(block.el, (n) => n.tag === "input")[0], status = block.el.children[3];
+  const path = all(block.el, (n) => n.tag === "input")[0], status = block.el.children[4];
   const chips = find(block.el, (n) => n.className === "verdict-chips");
   await tick();
   path.value = "/Users/me/论文重建/Currency_Resilience_EN_IREF.docx";
@@ -2814,7 +2843,7 @@ def test_18_2_this_mac_is_never_this_computer_in_english():
 @needs_node
 def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
     """The kind MLflow and W&B bring is 实验 "Experiment" on the node page, in a link's words and in
-    English; 实验记录 and "Run record" are gone (运行记录 is an agent run's log and stays)."""
+    English; 实验记录 and "Run record" are gone (运行日志 is an agent run's log and stays)."""
     from researchos import nodepage
 
     table = english_table()
@@ -2822,7 +2851,7 @@ def test_18_2_the_experiment_node_kind_is_experiment_and_never_a_run_record():
     assert "实验记录" not in table
     assert [(key, text) for key, text in _english_forms(table) if re.search(r"run record", text, re.I)] == []
     assert 'experiment: "实验"' in APP_HTML.read_text(encoding="utf-8")
-    assert table["运行记录"] == "Run log"
+    assert table["运行日志"] == "Run log"
     left = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html", ".py"}
             and "实验记录" in path.read_text(encoding="utf-8")]
     assert left == [] and "实验记录" not in Path(nodepage.__file__).read_text(encoding="utf-8")
@@ -2862,7 +2891,7 @@ def test_18_2_no_english_entry_is_kept_that_no_key_uses():
 def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     """输出 "Outputs" is a script's outputs (the node page's column is built with it); 成果 "Outputs"
     is the page 图表与论断 "Figures and claims", and no other key says "Outputs"; 项目首页's section
-    is 结果记录 "Result records", the attempt's cell 结果 stays "Result"."""
+    is 报告 "Reports" (21.4; its writing area is 报告 "Report" too, 21.6), the attempt's cell 结果 stays "Result"."""
     table = english_table()
     assert table["输出"] == "Outputs" and table["图表与论断"] == "Figures and claims"
     assert "成果" not in table and "依据变了的成果" not in table
@@ -2871,7 +2900,9 @@ def test_18_2_a_scripts_outputs_are_输出_and_the_page_is_figures_and_claims():
     assert table["图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——"].startswith(
         "Figures and claims lists claims")
     assert table["已设为论文正文：它的论断会出现在图表与论断里。"] == "Set as the paper. Its claims will appear in Figures and claims."
-    assert (table["结果记录"], table["还没有结果记录。"], table["结果"]) == ("Result records", "No result records yet.", "Result")
+    # 21.4: 项目首页's second list is headed 报告 and says 「还没有报告。」 when empty; 21.6: the writing area's label is the same word
+    assert (table["报告"], table["还没有报告。"], table["结果"]) == ({"one": "Report", "other": "Reports"}, "No reports yet.", "Result")
+    assert "结果记录" not in table and table["写报告"] == "Write a report"
     names = [path.name for path in WEBAPP.iterdir() if path.suffix in {".js", ".html"} and "成果" in path.read_text(encoding="utf-8")]
     assert names == []
     # What stays 产出 is the link word "produces" (an experiment produces a figure): 输出 is taken by the noun,
@@ -2916,9 +2947,16 @@ def test_18_2_a_comment_on_an_object_is_备注_and_a_note_is_only_a_document_in_
     # engine says about a comment uses it.
     for relative in ("node.js", "desk.js", "routemap.js", "team.js", "canvas.js", "node_api.py", "server.py"):
         assert "笔记" not in (WEBAPP / relative).read_text(encoding="utf-8"), relative
+    # 21.6 (c): the notes and reports that mention a file are 笔记与报告 -- the documents of 项目首页 -- in the welcome sentence and
+    # over the list under a reference file of 文献; neither is about a comment.
     assert [line.strip() for line in APP_HTML.read_text(encoding="utf-8").splitlines() if "笔记" in line] == [
-        '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>']
-    assert 'notes: "备注",' in APP_HTML.read_text(encoding="utf-8") and ' 条备注，写在 ' in APP_HTML.read_text(encoding="utf-8")
+        '<p data-i18n>从研究问题和计划开始，在项目里写笔记、整理结果。</p>',
+        '<p data-i18n>代码和分析继续用你熟悉的工具，相关文件可以随时关联到笔记与报告。</p>',
+        'if (window.ROWorkspace) window.ROWorkspace.renderResearchLinks(source, (data.research_records_by_file || {})[file], '
+        't("提到这个文件的笔记与报告"));']
+    # 21.7: the 你的记录与备份 panel says the notes' record as 备注 ("Comments") and counts them with the same counted word
+    assert 'case "notes": return t("备注", { n: 2 });' in APP_HTML.read_text(encoding="utf-8")
+    assert 't("{n} 条备注", { n: f.notes })' in APP_HTML.read_text(encoding="utf-8")
     workspace_js = (WEBAPP / "workspace.js").read_text(encoding="utf-8")
     assert 't("笔记", { n: 1 })' in workspace_js and "备注" not in workspace_js
     # The engine's sentences for the page.

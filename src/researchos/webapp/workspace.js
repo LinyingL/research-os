@@ -68,12 +68,21 @@
   function restoreFocus(root, snap) { return !!snap && focusKey(root, snap.key, snap); }
   // A control named by the task it belongs to: the same visible words, a longer accessible name (12.11).
   function named(node, words) { node.setAttribute("aria-label", words); return node; }
+  // A file's name, the last step of its project-relative path, and the path as the quiet second line under it (DESIGN.md
+  // 21.7): a path is never the line itself. A file at the project's root has no second line to say.
+  function fileName(path) { const i = String(path).lastIndexOf("/"); return i >= 0 ? String(path).slice(i + 1) : String(path); }
+  function pathNote(path) { return String(path) !== fileName(path) ? el("code", "ws-output-path", path) : null; }
+  // Opening a file or a record: a text link, as 21.8 draws what only navigates -- never a box.
+  function openLink(words, action) { return button(words, action, "ws-text-link ws-file-link"); }
 
   let epoch = 0, request = 0, docRequest = 0, createRequest = 0;
   // Paths a document names that are not among the listed files (the list stops at the engine's limit), and what the
   // engine said of each: true when it is a file the document may link to (DESIGN.md 18.3).
   let knownCache = new Map(), unchecked = [];
   let host = null, data = null, draft = null, saved = null, ui = null;
+  // The research plan on 项目首页 is shown to its first paragraph and unfolded on request (DESIGN.md 21.4): `planOpen` is
+  // the person's choice (null: not chosen yet), `planSnap` the plan as last read, kept while another document is open.
+  let planOpen = null, planSnap = null;
   let taskDraft = blankDraft(), taskBusy = false, taskConflict = false, taskWrites = 0;
   let taskOpen = {}, taskDisclosures = {};
   let createSubject = null, folderSubject = null, foreignBlocked = false;
@@ -84,13 +93,19 @@
   let agentInfo = null, agentInfoError = null, agentInfoLoading = false;
   let people = { loaded: false, loading: false, me: null, team: [] };
   let runsInfo = { runs: [], active: null }, details = {}, detailPending = {};
-  let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, metaNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
+  // A task's state (运行中, 等你回答, ...) is the engine's reading of its latest run (21.4): when a run starts, ends or changes
+  // state after the first reading of them, `runsMoved` makes `syncRuns` ask the engine again and the rows say the new state.
+  let runsSeen = false, runsMoved = false;
+  let agentUiState = {}, agentBusy = {}, agentNotes = {}, sections = {}, factNodes = {}, wordsNodes = {}, rowControls = {}, rowNodes = {};
   // 任务输出 in a task's row (DESIGN.md 19.6): the place it is drawn in, the removal in progress and the sentence that
   // says it failed, each by task id; and what the person opened, which a redraw keeps (19.12 item 2): { process: the
   // 过程文件 group is open, all: { kind: true } for a group shown past its first files }.
   let outputNodes = {}, outputBusy = {}, outputNotes = {}, outputOpen = {};
   let offline = false;
-  let settingsOpen = false, settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  let settingsBusy = false, settingsNote = null, settingsInputs = blankInputs(), modelsState = {};
+  // The 设置 page (app.html, DESIGN.md 21.7) hands this module the box the AI agents' form is drawn in, the subject that page
+  // holds the side panel by, and the form's own slots (`sui`); the form lives while that page is the panel on screen.
+  let settingsHost = null, settingsSubject = null, sui = {};
   // 运行占用的空间 (DESIGN.md 19.8): what the engine says of the open project's run store, the sentence for a read or an
   // action that failed, the action in progress and the timer that asks again while the engine tidies an old store.
   let storeInfo = null, storeError = null, storeBusy = false, storeNote = null, storeTimer = null;
@@ -105,7 +120,7 @@
   function editable() { return !!data && !foreignBlocked && !data.read_only && data.can_write !== false && ["single", "pi", "member"].includes(data.mode); }
   function tasksEditable() { return editable() && !data.tasks_error; }
   function documentDirty() { return !!draft && !!saved && (draft.title !== saved.title || draft.content !== saved.content || researchRecordDirty()); }
-  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due || taskDraft.contextReport); }
+  function taskDirty() { return !!(taskDraft.id || taskDraft.text || taskDraft.owner || taskDraft.due || (taskDraft.contextReport && taskDraft.contextReport !== taskDraft.presetContext)); }
   function createDirty() {
     return !!createSubject && typeof state !== "undefined" && state.panelSubject === createSubject &&
       (createSubject.name.value || createSubject.parent.value) &&
@@ -122,11 +137,14 @@
   }
   function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
-  function blankDraft() { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: "" }; }
+  // `attempt` and `after` (DESIGN.md 21.1) are choices, not writing: a draft that holds only them is not unsaved work, and
+  // neither is the research context a handback chose for the task it sends on (`presetContext`, 21.2).
+  function blankDraft(attempt, context) { return { id: null, text: "", owner: "", due: "", custom: false, contextReport: context || "", presetContext: context || "", attempt: attempt || "", after: "" }; }
   function blankInputs() { return { paths: {}, runner: "claude-code", model: "", effort: "", customModel: false, minutes: null, budget: null, storeLimit: null }; }
   function reset() {
     epoch += 1; request += 1; docRequest += 1; createRequest += 1;
     host = null; data = null; draft = null; saved = null; ui = null; createSubject = null; folderSubject = null;
+    planOpen = null; planSnap = null;
     foreignBlocked = false; knownCache = new Map(); unchecked = [];
     taskDraft = blankDraft(); taskBusy = false; taskConflict = false; taskWrites = 0;
     taskOpen = {}; taskDisclosures = {};
@@ -134,13 +152,14 @@
     agentInfo = null; agentInfoError = null; agentInfoLoading = false;
     people = { loaded: false, loading: false, me: null, team: [] };
     runsInfo = { runs: [], active: null }; details = {}; detailPending = {};
-    agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
+    agentUiState = {}; agentBusy = {}; agentNotes = {}; sections = {}; factNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {};
     outputNodes = {}; outputBusy = {}; outputNotes = {}; outputOpen = {};
-    settingsOpen = false; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
+    nowData = null; nowRequest += 1; runsSeen = false; runsMoved = false;
+    settingsHost = null; settingsSubject = null; sui = {}; settingsBusy = false; settingsNote = null; settingsInputs = blankInputs(); modelsState = {};
     stopStoreTimer(); storeInfo = null; storeError = null; storeBusy = false; storeNote = null;
   }
 
-  function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("结果记录") : t("笔记", { n: 1 }); }
+  function kindLabel(kind) { return kind === "overview" ? t("研究问题与计划") : kind === "result" ? t("报告", { n: 1 }) : t("笔记", { n: 1 }); }
   function fallbackPath(kind) { return kind === "overview" ? "research/overview.md" : "research/" + (kind === "result" ? "results" : "notes") + "/draft.md"; }
   function relativePath(from, to) {
     const a = String(from).split("/").slice(0, -1), b = String(to).split("/");
@@ -336,19 +355,119 @@
   function buildPage() {
     host.replaceChildren();
     const page = el("div", "ws-page"), top = el("div", "ws-heading"), rail = el("nav", "ws-documents");
-    rail.setAttribute("aria-label", t("方案、笔记与结果"));
+    rail.setAttribute("aria-label", t("笔记与报告"));
     const heading = el("div");
     heading.append(el("h2", "ws-project-name", data.project_name || data.name || (typeof state !== "undefined" && state.projectLabel) || t("项目首页")));
     const actions = el("div", "ws-actions");
     const note = button(t("新建笔记"), () => newDocument("note"));
-    const result = button(t("记录结果"), () => newDocument("result"));
+    const result = button(t("写报告"), () => newDocument("result"));
     note.disabled = result.disabled = !editable();
     actions.append(note, result); top.append(heading, actions);
-    const columns = el("div", "ws-columns"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
-    const notices = el("div", "ws-notices");
-    columns.append(rail, editor); page.append(notices, top, columns, tasks);
-    host.append(page); ui = { rail: rail, editor: editor, tasks: tasks, note: note, result: result, notices: notices };
+    // 21.4: the page reads from the top -- 现在在做什么, 研究问题与计划, 笔记与报告 (the lists beside the open document, or above it
+    // when the window is narrow), 全部任务.
+    const columns = el("div", "ws-columns"), slot = el("div", "ws-document-slot"), editor = el("section", "ws-editor-host"), tasks = el("section", "ws-tasks");
+    const hint = el("p", "ws-empty ws-slot-hint hidden", t("选一份笔记或报告来阅读，或新建一份。"));
+    const notices = el("div", "ws-notices"), now = el("section", "ws-now hidden"), plan = buildPlan();
+    slot.append(hint, editor); columns.append(rail, slot); page.append(notices, top, now, plan.box, columns, tasks);
+    host.append(page);
+    ui = { rail: rail, editor: editor, slot: slot, hint: hint, tasks: tasks, note: note, result: result, notices: notices, now: now,
+      plan: plan.box, planLead: plan.lead, planMore: plan.more, planBody: plan.body, planWord: plan.word, planDirty: plan.dirty };
     renderNotices();
+  }
+  // 研究问题与计划 (DESIGN.md 21.4): its title, its first paragraph and 「展开」 with 12.13's chevron. Unfolded, the plan is the
+  // writing area itself, the one a note or a report opens in, which stands here while the plan is the open document.
+  function buildPlan() {
+    const box = el("section", "ws-plan"), lead = el("div", "ws-plan-lead"), more = el("details", "ws-plan-more"), body = el("div", "ws-plan-body");
+    const summary = disclosureSummary(t("展开")), word = summary.lastChild, dirty = el("span", "ws-plan-dirty hidden", t("尚未保存"));
+    summary.className += " ws-plan-summary"; summary.append(dirty);
+    more.append(summary, body); more.addEventListener("toggle", planToggled);
+    box.append(el("h2", "ws-plan-title", t("研究问题与计划")), lead, more);
+    return { box: box, lead: lead, more: more, body: body, word: word, dirty: dirty };
+  }
+  // The text of the plan the page shows: the open document while it is the plan, else the plan as last read.
+  function planContent() { return draft && draft.kind === "overview" ? draft.content : planSnap ? planSnap.content : ""; }
+  function overviewEntry() { return ((data && data.documents) || []).find((doc) => doc.kind === "overview") || null; }
+  // The first paragraph of a document, whole (21.4): its first block of text that is no heading (a fenced block is one block); a
+  // document of headings only gives its first line, one with no text "". A block that is a list gives its first item with the
+  // item's own continuation lines (and its deeper items), not the rest of the list; text that leads into a list gives the text,
+  // and when it ends with a colon (「…约束：」, the lead-in), the first item as well -- the lead-in alone, or followed by the list after
+  // a blank line, is the same. A sentence is never cut: what is shown is what the file has up to the end of a paragraph or an item.
+  function firstParagraph(text) {
+    const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), heading = (line) => /^#{1,6}\s/.test(line);
+    const item = (line) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line), indent = (line) => /^\s*/.exec(line)[0].length;
+    let at = lines.findIndex((line) => line.trim() && !heading(line));
+    if (at < 0) return (lines.find((line) => line.trim()) || "").trim();
+    if (/^\s*```/.test(lines[at])) {
+      const fence = [lines[at]];
+      for (at += 1; at < lines.length; at += 1) { fence.push(lines[at]); if (/^\s*```/.test(lines[at])) break; }
+      return fence.join("\n");
+    }
+    // the lines of the block that starts at `from`: up to a blank line or a heading
+    const block = (from) => { const out = [lines[from]]; for (let i = from + 1; i < lines.length && lines[i].trim() && !heading(lines[i]); i += 1) out.push(lines[i]); return out; };
+    // the first item of a list block: its own line, then the lines that go on with it (deeper items included)
+    const firstItem = (rows) => { const out = [rows[0]]; for (let i = 1; i < rows.length && !(item(rows[i]) && indent(rows[i]) <= indent(rows[0])); i += 1) out.push(rows[i]); return out; };
+    const rows = block(at);
+    if (item(rows[0])) return firstItem(rows).join("\n");
+    const into = rows.findIndex((line, i) => i > 0 && item(line));
+    const leadIn = (words) => /[：:]\s*$/.test(words[words.length - 1]);
+    if (into > 0) { const lead = rows.slice(0, into); return (leadIn(lead) ? lead.concat(firstItem(rows.slice(into))) : lead).join("\n"); }
+    if (rows.length === 1 && leadIn(rows)) {
+      let next = at + 1;
+      while (next < lines.length && !lines[next].trim()) next += 1;
+      if (next < lines.length && item(lines[next])) return rows.concat(firstItem(block(next))).join("\n");
+    }
+    return rows.join("\n");
+  }
+  // Drawn with every change of the documents: the plan folded to its first paragraph, or unfolded (the writing area is in
+  // it) when the person asked and the plan is the open document. A plan with no words yet starts unfolded, to be written in.
+  function renderPlan() {
+    if (!ui || !ui.plan) return;
+    const own = !!draft && draft.kind === "overview";
+    if (planOpen === null && own) planOpen = !planContent().trim();
+    const open = !!planOpen && own;
+    if (!!ui.planMore.open !== open) ui.planMore.open = open;
+    ui.planWord.textContent = open ? t("收起") : t("展开");
+    syncPrimary();   // the writing area stands in the fold while the plan is the open document
+    ui.planLead.classList.toggle("hidden", open);
+    ui.planDirty.classList.toggle("hidden", open || !(own && documentDirty()));
+    if (open) return;
+    // drawn again only when its words changed, so that a page that refreshes every couple of seconds does not take a selection away
+    const block = firstParagraph(planContent()), key = block + "\u0000" + (data.files || []).length;
+    if (ui.planLead.dataset.drawn === key) return;
+    ui.planLead.dataset.drawn = key;
+    if (!block) { ui.planLead.replaceChildren(el("p", "ws-empty", t("还没有研究方案。"))); return; }
+    const keep = unchecked; renderMarkdown(ui.planLead, block, "research/overview.md"); unchecked = keep;
+  }
+  function planToggled() {
+    const own = !!draft && draft.kind === "overview", want = !!ui.planMore.open;
+    if (want === (!!planOpen && own)) return;   // the page's own change
+    planOpen = want;
+    if (want && !own) openPlan(); else renderPlan();
+  }
+  // Unfolding the plan opens it in the writing area, which asks first when another document holds unsaved writing; if it
+  // stays shut, so does the plan.
+  async function openPlan() {
+    const entry = overviewEntry();
+    await openDocument(entry ? entry.path : "research/overview.md");
+    if (!draft || draft.kind !== "overview") { planOpen = false; renderPlan(); }
+  }
+  // While another document is open the plan's first paragraph follows the file: read again when the listing says it changed.
+  async function refreshPlan(mark) {
+    const entry = overviewEntry();
+    if (!entry || (draft && draft.kind === "overview") || (planSnap && planSnap.modified === (entry.modified || null))) return;
+    try {
+      const doc = await apiGet("/api/workspace/document?path=" + encodeURIComponent(entry.path) + "&project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || (draft && draft.kind === "overview")) return;
+      planSnap = { content: doc.content || "", modified: entry.modified || null };
+      renderPlan();
+    } catch (err) { /* the first paragraph stays as it was */ }
+  }
+  // The writing area is one: it stands in 研究问题与计划 while the plan is the open document, and beside the lists of notes and
+  // reports for any other (a note, a report, a new one).
+  function placeEditor() {
+    const own = !!draft && draft.kind === "overview", where = own ? ui.planBody : ui.slot;
+    if (ui.editor.parentNode !== where) { ui.editor.remove(); where.append(ui.editor); }
+    ui.hint.classList.toggle("hidden", !own);
   }
   // What the page has to say about the project as a whole, drawn again with every read of it: why it cannot be
   // written (a Mac that is not a member of a team project says so, DESIGN.md 18.3), a project identity that cannot be
@@ -361,31 +480,79 @@
     if (data.identity_error) box.append(el("p", "ws-status err", data.identity_error.message));
     if ((data.errors || []).length) box.append(el("p", "ws-status err", t("部分文档暂时无法读取，其他内容仍可使用。")));
   }
-  // Notes and result records by their last change, newest first (DESIGN.md 18.3); the engine's order stands for
-  // documents that changed together or whose time is not known.
-  function changeOrder(documents) {
-    const when = (doc) => { const n = Date.parse(doc.modified || ""); return isNaN(n) ? -Infinity : n; };
-    return documents.map((doc, index) => [doc, index]).sort((a, b) => (when(b[0]) - when(a[0])) || (a[1] - b[1])).map((pair) => pair[0]);
+  // The day a note or a report is dated by (21.4), as a quiet field beside its title -- never a part of the title, which is shown
+  // as written even when it holds a date: the date its file name begins with (a note named 2026-03-12-meeting.md), else the day
+  // its file last changed, on this Mac's calendar. "" when it has neither.
+  function documentDay(doc) {
+    const named = /^(\d{4})[-_.](\d{2})[-_.](\d{2})(?!\d)/.exec(String(doc.path || "").split("/").pop());
+    if (named) {
+      const when = new Date(Number(named[1]), Number(named[2]) - 1, Number(named[3]));
+      if (when.getFullYear() === Number(named[1]) && when.getMonth() === Number(named[2]) - 1 && when.getDate() === Number(named[3])) return named[1] + "-" + named[2] + "-" + named[3];
+    }
+    const at = Date.parse(doc.modified || "");
+    if (isNaN(at)) return "";
+    const day = new Date(at), two = (n) => (n < 10 ? "0" : "") + n;
+    return day.getFullYear() + "-" + two(day.getMonth() + 1) + "-" + two(day.getDate());
   }
+  // Notes and reports by the day they are dated, newest first, then by their last change (DESIGN.md 18.3); the engine's order
+  // stands for documents that changed together or whose time is not known.
+  function newestFirst(documents) {
+    const when = (doc) => { const n = Date.parse(doc.modified || ""); return isNaN(n) ? -Infinity : n; };
+    return documents.map((doc, index) => [doc, index]).sort((a, b) => {
+      const x = documentDay(a[0]), y = documentDay(b[0]);
+      return (x === y ? 0 : x < y ? 1 : -1) || (when(b[0]) - when(a[0])) || (a[1] - b[1]);
+    }).map((pair) => pair[0]);
+  }
+  // The attempts in the order 项目首页 groups by (21.4): those the engine lists first, newest activity first, then the rest of the
+  // table in its order. Before the engine has answered, the table's order.
+  function attemptOrder() {
+    const attempts = data.attempts || [], known = new Set(attempts.map((a) => a.id));
+    const first = ((nowData && nowData.home && nowData.home.attempts) || []).filter((id) => known.has(id));
+    return first.concat(attempts.filter((a) => first.indexOf(a.id) < 0).map((a) => a.id));
+  }
+  // Reports under the attempt each belongs to (`home.reports`: the task whose report it is, else an attempt its research context
+  // links), each under that attempt's 「#n 描述」, 「未归入尝试」 last. Before the engine has answered, or when no report belongs
+  // to an attempt, one list with no headings.
+  function reportGroups(reports) {
+    const home = nowData && nowData.home;
+    if (!home) return [{ title: "", documents: reports }];
+    const attempts = new Map((data.attempts || []).map((a) => [a.id, a])), by = new Map(), loose = [];
+    reports.forEach((doc) => {
+      const id = (home.reports || {})[doc.path];
+      if (id && attempts.has(id)) { if (!by.has(id)) by.set(id, []); by.get(id).push(doc); } else loose.push(doc);
+    });
+    const parts = attemptOrder().filter((id) => by.has(id)).map((id) => ({ title: attemptLabel(attempts.get(id)), documents: by.get(id) }));
+    if (loose.length) parts.push({ title: parts.length ? t("未归入尝试") : "", documents: loose });
+    return parts;
+  }
+  function documentRow(doc, kind) {
+    const current = !!draft && draft.path === doc.path, row = el("div", "ws-document-row" + (current ? " current" : ""));
+    const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
+    // Authored titles are never translated as UI strings, nor cut.
+    b.textContent = doc.title || kindLabel(kind);
+    b.setAttribute("aria-current", current ? "page" : "false");
+    if (doc.excerpt) b.title = doc.excerpt;
+    if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
+    row.append(b);
+    const day = documentDay(doc);
+    if (day) row.append(el("span", "ws-document-date", day));
+    return row;
+  }
+  function documentGroup(kind) {
+    const group = el("div", "ws-document-group"), documents = newestFirst((data.documents || []).filter((d) => d.kind === kind));
+    group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : t("报告", { n: 2 })));
+    if (!documents.length) { group.append(el("p", "ws-empty", kind === "note" ? t("还没有笔记。") : t("还没有报告。"))); return group; }
+    (kind === "note" ? [{ title: "", documents: documents }] : reportGroups(documents)).forEach((part) => {
+      if (part.title) group.append(el("h4", "ws-document-attempt", part.title));
+      part.documents.forEach((doc) => group.append(documentRow(doc, kind)));
+    });
+    return group;
+  }
+  // 笔记 and 报告 (21.4): the lists beside the open document. The plan is no longer among them: it has its own place above.
   function renderNav() {
     if (!ui) return;
-    ui.rail.replaceChildren();
-    ["overview", "note", "result"].forEach((kind) => {
-      const group = el("div", "ws-document-group");
-      group.append(el("h3", "ws-group-title", kind === "note" ? t("笔记", { n: 2 }) : kindLabel(kind)));
-      const documents = changeOrder((data.documents || []).filter((d) => d.kind === kind));
-      documents.forEach((doc) => {
-        const b = button(doc.title || kindLabel(kind), () => openDocument(doc.path), "ws-document");
-        // Authored titles are never translated as UI strings.
-        b.textContent = doc.title || kindLabel(kind);
-        b.setAttribute("aria-current", draft && draft.path === doc.path ? "page" : "false");
-        if (doc.excerpt) b.title = doc.excerpt;
-        if (doc.error) { b.append(el("span", "ws-unavailable", t("暂时无法读取"))); b.title = doc.error.message || ""; }
-        group.append(b);
-      });
-      if (!documents.length) group.append(el("p", "ws-empty", kind === "overview" ? t("还没有研究方案。") : kind === "note" ? t("还没有笔记。") : t("还没有结果记录。")));
-      ui.rail.append(group);
-    });
+    ui.rail.replaceChildren(documentGroup("note"), documentGroup("result"));
+    renderPlan();
   }
   // The officialness words of a document: the engine's answer for it, or the list's.
   function officialnessOf(doc) {
@@ -401,6 +568,12 @@
     if (draft.officialness && draft.officialness.label) ui.kindLabel.append(el("span", "ws-officialness", draft.officialness.label));
   }
   function setDraft(doc, previewing) {
+    // the plan keeps its first paragraph while another document is open, and folds (21.4)
+    const entry = overviewEntry();
+    if ((doc.kind || "note") !== "overview") {
+      if (draft && draft.kind === "overview" && saved) planSnap = { content: saved.content, modified: entry ? entry.modified || null : null };
+      planOpen = false;
+    }
     draft = { path: doc.path || null, kind: doc.kind || "note", title: doc.title || "", content: doc.content || "", revision: doc.revision == null ? null : doc.revision, officialness: officialnessOf(doc), researchRecord: doc.research_record || {}, researchContext: emptyResearchContext(doc.research_record && doc.research_record.context), researchOpen: doc.kind === "result" && doc.revision != null };
     saved = { title: draft.title, content: draft.content, researchContext: emptyResearchContext(draft.researchContext) };
     renderEditor(previewing == null ? draft.revision != null || !editable() : previewing); renderNav();
@@ -414,7 +587,7 @@
       const doc = await apiGet("/api/workspace/document?path=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(project()));
       if (doc.kind === "result") {
         try { doc.research_record = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(mark.project)); }
-        catch (err) { doc.research_record = { error: errorWords(t("没能读取研究记录。"), err) }; }
+        catch (err) { doc.research_record = { error: errorWords(t("没能读取要点。"), err) }; }
       }
       if (!live(mark) || token !== docRequest || (doc.project && doc.project !== mark.project)) return;
       if (draft === leaving && draft && (draft.title !== leavingTitle || draft.content !== leavingContent || JSON.stringify(draft.researchContext) !== leavingResearch)) {
@@ -471,8 +644,10 @@
   }
   function renderEditor(previewing) {
     ui.previewing = !editable() || (previewing == null ? !!ui.previewing : previewing);
+    placeEditor();
     const box = ui.editor; box.replaceChildren();
-    const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", kindLabel(draft.kind));
+    // the plan's own title stands above it (21.4): its writing area names only what is not already said there
+    const header = el("div", "ws-editor-header"), label = el("span", "ws-kind", draft.kind === "overview" ? "" : kindLabel(draft.kind));
     const tools = el("div", "ws-actions"), save = button(t("保存"), saveDocument, "btn btn-primary btn-small");
     save.disabled = !editable();
     const previewToggle = button("", () => {
@@ -504,8 +679,8 @@
     box.append(header, title, attachmentTools(), text, preview, docStatus);
     if (draft.kind === "result") box.append(researchRecordSection());
     const footer = el("div", "ws-document-footer");
-    if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }));
-    if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }));
+    if (draft.path) footer.append(button(t("查看文件"), () => { if (typeof openFilePanel === "function") openFilePanel(draft.path); }, "ws-text-link"));
+    if (draft.path) footer.append(button(t("修改历史"), () => { if (window.RONode) window.RONode.openNode(draft.path); }, "ws-text-link"));
     if (data.mode === "member") {
       const propose = button(t("提交修改"), async () => {
         if (documentDirty()) { status(docStatus, t("请先保存，再提交修改。")); return; }
@@ -517,7 +692,7 @@
     }
     // The PI changes the official version directly, so a note or a result record is already theirs to publish: it goes
     // to the members with the next 发布 (DESIGN.md 18.3).
-    if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和结果记录会随下一次发布交给成员。")));
+    if (data.mode === "pi" && (draft.kind === "note" || draft.kind === "result")) footer.append(el("p", "ws-empty", t("笔记和报告会随下一次发布交给成员。")));
     box.append(footer);
     function showMode() {
       title.classList.toggle("hidden", ui.previewing);
@@ -526,6 +701,7 @@
       save.classList.toggle("hidden", ui.previewing);
       ui.attachments.classList.toggle("hidden", ui.previewing);
       previewToggle.textContent = ui.previewing ? t("编辑") : t("预览");
+      syncPrimary();
       if (ui.previewing) renderPreview();
       if (draft.kind === "result") redrawResearchRecord();
     }
@@ -541,7 +717,7 @@
   function researchRecordDirty() { return !!draft && !!saved && JSON.stringify(draft.researchContext) !== JSON.stringify(saved.researchContext); }
   function researchRecordSection() {
     const box = el("details", "ws-research-record"); box.open = !!draft.researchOpen;
-    box.append(disclosureSummary(t("研究记录")));
+    box.append(disclosureSummary(t("要点")));
     box.addEventListener("toggle", () => { draft.researchOpen = box.open; });
     const context = draft.researchContext;
     if (draft.researchRecord.error) { box.append(el("p", "ws-status err", draft.researchRecord.error)); ui.researchRecord = box; return box; }
@@ -567,7 +743,9 @@
       const group = el("div", "ws-research-group"); group.append(el("h3", null, label));
       (context[key] || []).forEach((value) => {
         const row = el("div", "ws-research-link"), choice = choices.find((item) => item.id === valueKey(value));
-        const view = button(choice ? choice.label : valueKey(value), () => open(value), "btn btn-small ws-file-link"); row.append(view);
+        // a file is named by its file name and its path is the quiet line under it (21.7); the others by their label
+        const isFile = key === "materials" || key === "references";
+        const view = openLink(isFile ? fileName(valueKey(value)) : (choice ? choice.label : valueKey(value)), () => open(value)); row.append(view);
         if (!ui.previewing && editable()) row.append(named(button(t("移除"), () => { context[key] = context[key].filter((item) => valueKey(item) !== valueKey(value)); if ((key === "references" || key === "materials") && !context.references.includes(value) && !context.materials.includes(value)) delete context.purposes[value]; changed(); redrawResearchRecord(); }), t("移除：{task}", { task: choice ? choice.label : valueKey(value) })));
         if (key === "references" || key === "materials") {
           if (ui.previewing) { if (context.purposes[value]) row.append(el("span", "ws-research-purpose", context.purposes[value])); }
@@ -576,6 +754,7 @@
             purpose.setAttribute("aria-label", t("用途：{path}", { path: value })); purpose.addEventListener("input", () => { context.purposes[value] = purpose.value; changed(); }); row.append(purpose);
           }
         }
+        if (isFile && pathNote(valueKey(value))) row.append(pathNote(valueKey(value)));
         group.append(row);
       });
       if (!ui.previewing && editable()) {
@@ -596,7 +775,7 @@
       const materials = el("div", "ws-research-group"); materials.append(el("h3", null, t("相关输出")));
       const paths = new Set(); outputs.concat(variables).forEach((item) => {
         if (!item.path || paths.has(item.path)) return; paths.add(item.path);
-        const row = el("div", "ws-research-link"); row.append(button(item.path, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }, "btn btn-small ws-file-link"));
+        const row = el("div", "ws-research-link"); row.append(openLink(fileName(item.path), () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }));
         if (!item.variable_card && variables.some((value) => value.path === item.path) && editable()) {
           const cardId = keyed(input("text", t("变量 ID")), "research-import:" + item.path); cardId.setAttribute("aria-label", t("变量 ID"));
           const feedback = el("span", "ws-status");
@@ -619,7 +798,9 @@
             } catch (err) { if (live(mark) && draft === target) { importButton.disabled = false; status(feedback, errorWords(t("没能导入变量草稿。"), err), "err"); } }
           }); row.append(cardId, importButton, feedback);
         }
-        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); })); materials.append(row);
+        if (item.variable_card) row.append(button(t("打开定义卡"), () => { if (typeof window.ROWorkspace.onOpenVariable === "function" && mayLeave()) window.ROWorkspace.onOpenVariable(item.variable_card); }, "ws-text-link"));
+        if (pathNote(item.path)) row.append(pathNote(item.path));
+        materials.append(row);
       });
       if (variables.length) materials.append(el("p", "ws-empty", t("变量草稿仍需单独审阅和确认。")));
       box.append(materials);
@@ -629,7 +810,7 @@
       [["description", t("尝试描述")], ["result", t("尝试结果")]].forEach(([key, label]) => {
         if (attempt[key]) { const line = el("p", "ws-research-draft", attempt[key]); line.setAttribute("aria-label", label); group.append(line); }
       });
-      (attempt.parents || []).forEach((id) => { group.append(button(id, () => { if (window.RONode) window.RONode.openNode(id); }, "btn btn-small ws-file-link")); });
+      (attempt.parents || []).forEach((id) => { group.append(button(id, () => { if (window.RONode) window.RONode.openNode(id); }, "ws-text-link ws-file-link")); });
       group.append(el("p", "ws-empty", t("尝试草稿仍需单独提交为新的尝试。"))); box.append(group);
     }
     if (editable() && (!ui.previewing || context.attempt_draft || context.method || context.finding)) {
@@ -638,17 +819,17 @@
         if (!attempt || !attempt.id || !draft || draft.researchContext !== context) return;
         if (!context.attempts.includes(attempt.id)) context.attempts.push(attempt.id);
         if (!(data.attempts || []).some((item) => item.id === attempt.id)) data.attempts.push({ id: attempt.id, label: (attempt.attrs || {}).description || attempt.id });
-        redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；研究记录中的关联尚未保存。") : t("尝试已保存；研究记录中的关联尚未保存。"));
+        redrawResearchRecord(); status(ui.docStatus, savedState && savedState.workingCopy ? t("尝试已保存到工作副本；要点里的关联尚未保存。") : t("尝试已保存；要点里的关联尚未保存。"));
       }); }));
-      if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }));
+      if (!ui.previewing && typeof window.ROWorkspace.onOpenVariableDrafts === "function") actions.append(button(t("查看变量草稿…"), () => { if (mayLeave()) window.ROWorkspace.onOpenVariableDrafts(); }, "ws-text-link"));
       box.append(actions);
     }
-    if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("尚未补充研究记录。")));
+    if (ui.previewing && !fields.children.length && !links.children.length && !outputs.length && !variables.length) box.append(el("p", "ws-empty", t("还没有写要点。")));
     const feedback = el("p", "ws-status"); feedback.setAttribute("role", "status");
     if (editable() && (!ui.previewing || researchRecordDirty())) {
-      const save = button(t("保存研究记录"), () => saveResearchRecord(feedback, save), "btn btn-small ws-record-save");
+      const save = button(t("保存要点"), () => saveResearchRecord(feedback, save), "btn btn-small ws-record-save");
       save.disabled = !draft.path || draft.researchBusy || !researchRecordDirty(); box.append(save);
-      if (!draft.path) box.append(el("p", "ws-empty", t("先保存结果文档，再保存研究记录。")));
+      if (!draft.path) box.append(el("p", "ws-empty", t("先保存报告，再保存要点。")));
     }
     box.append(feedback); ui.researchRecord = box; return box;
   }
@@ -665,19 +846,19 @@
         Object.keys(draft.researchContext).forEach((key) => { if (!(key in normalized)) delete draft.researchContext[key]; });
         Object.assign(draft.researchContext, normalized);
       }
-      status(feedback, response.history_warning ? t("研究记录已保存，但修改历史暂时未能记录。") : researchRecordDirty() ? t("已保存；之后输入的内容尚未保存。") : t("研究记录已保存。"), response.history_warning ? "" : "ok");
+      status(feedback, response.history_warning ? t("要点已保存，但修改历史暂时未能记录。") : researchRecordDirty() ? t("已保存；之后输入的内容尚未保存。") : t("要点已保存。"), response.history_warning ? "" : "ok");
       control.disabled = !researchRecordDirty(); if (ui.previewing && !researchRecordDirty()) control.classList.add("hidden"); status(ui.docStatus, documentDirty() ? t("尚未保存") : "");
     } catch (err) {
       if (!live(mark) || draft !== target) return;
       draft.researchBusy = false; control.disabled = false;
-      status(feedback, errorWords(t("没能保存研究记录，当前填写已保留。"), err), "err");
-      if (/conflict|revision|changed/.test(err.state || "")) feedback.append(button(t("重新载入研究记录"), async () => {
-        if (!window.confirm(t("重新载入会放弃尚未保存的研究记录，继续吗？"))) return;
+      status(feedback, errorWords(t("没能保存要点，当前填写已保留。"), err), "err");
+      if (/conflict|revision|changed/.test(err.state || "")) feedback.append(button(t("重新载入要点"), async () => {
+        if (!window.confirm(t("重新载入会放弃尚未保存的要点，继续吗？"))) return;
         try {
           const response = await apiGet("/api/workspace/research-record?report=" + encodeURIComponent(target.path) + "&project=" + encodeURIComponent(mark.project));
           if (!live(mark) || draft !== target) return;
           draft.researchRecord = response; draft.researchContext = emptyResearchContext(response.context); saved.researchContext = emptyResearchContext(response.context); redrawResearchRecord();
-        } catch (readError) { if (live(mark) && draft === target) status(feedback, errorWords(t("没能读取研究记录。"), readError), "err"); }
+        } catch (readError) { if (live(mark) && draft === target) status(feedback, errorWords(t("没能读取要点。"), readError), "err"); }
       }));
     }
   }
@@ -818,13 +999,22 @@
     // A native toggle can be queued just before a refresh; read it before replacing the row.
     Object.values(taskDisclosures).forEach((view) => view.remember());
     list.replaceChildren();
-    sections = {}; metaNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
+    sections = {}; factNodes = {}; wordsNodes = {}; rowControls = {}; rowNodes = {}; outputNodes = {};
     taskDisclosures = {};
-    // Tasks are appended in creation order. Older titles stay visible, with only the newest three open by default.
-    const recent = new Set((data.tasks || []).slice(-3).map((task) => task.id));
     showTaskError();
-    (data.tasks || []).forEach((task) => {
-      const run = latestRun(task.id);
+    // 21.1: the tasks stand under the attempt they belong to, in `after` order; those without one (or whose attempt is
+    // gone from the table) under 「未归入尝试」, last. 21.4: the attempts stand newest activity first, and a row says its owner
+    // and its state without being opened; it is opened to read the rest (the run, the outputs), so none is open by default.
+    const sequence = [];
+    taskGroups().forEach((group) => { sequence.push({ heading: group }); group.tasks.forEach((task) => sequence.push({ task: task })); });
+    sequence.forEach((entry) => {
+      if (entry.heading) {
+        const heading = el("h3", "ws-task-group", entry.heading.title); heading.dataset.attempt = entry.heading.id || "";
+        list.append(heading);
+        if (!entry.heading.id && hasLooseTasks()) list.append(openGroupingButton("group-tasks-loose"));
+        return;
+      }
+      const task = entry.task, run = latestRun(task.id);
       const row = el("div", "ws-task" + (task.done ? " done" : ""));
       const check = keyed(input("checkbox"), "check:" + task.id); check.checked = !!task.done;
       check.setAttribute("aria-label", (task.done ? t("标为未完成") : t("标为完成")) + " " + task.text);
@@ -833,35 +1023,36 @@
         // now, not the row as drawn: the row is kept while a reply is typed). Declined, the box is ticked again and
         // nothing is saved. Ticking never asks.
         const now = (data.tasks || []).find((x) => x.id === task.id) || task;
-        if (!check.checked && now.report && !window.confirm(t("这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"))) {
+        if (!check.checked && now.report && !window.confirm(t("这项任务已经有报告。改回未完成后可以再次运行，再次运行会改写同一份报告。改回未完成吗？"))) {
           check.checked = true;
           return;
         }
         return mutateTasks(data.tasks.map((x) => x.id === task.id ? Object.assign({}, x, { done: check.checked }) : x));
       });
       const disclosure = el("details", "ws-task-details");
-      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : recent.has(task.id);
-      const view = { open: disclosure.open, remember: () => {
+      disclosure.open = Object.prototype.hasOwnProperty.call(taskOpen, task.id) ? taskOpen[task.id] : false;
+      const view = { open: disclosure.open, node: disclosure, remember: () => {
         if (view.open !== disclosure.open) { view.open = disclosure.open; taskOpen[task.id] = disclosure.open; }
       } };
       taskDisclosures[task.id] = view;
       disclosure.addEventListener("toggle", () => { if (taskDisclosures[task.id] === view) view.remember(); });
       const summary = keyed(disclosureSummary(task.text), "task-details:" + task.id);
       summary.className += " ws-task-summary"; summary.lastChild.className = "ws-task-text";
+      const facts = el("span", "ws-task-facts"); factNodes[task.id] = facts; setFacts(task, facts); summary.append(facts);
       const body = el("div", "ws-task-body"), words = el("div", "ws-task-words");
       if (task.context && task.context.report) {
         const report = (data.documents || []).find((doc) => doc.path === task.context.report);
-        words.append(keyed(button(t("研究记录") + ": " + (report ? report.title : task.context.report), () => openDocument(task.context.report), "btn btn-small ws-file-link"), "context:" + task.id));
+        words.append(keyed(button(t("报告：{title}", { title: report ? report.title : task.context.report }), () => openDocument(task.context.report), "ws-text-link ws-file-link"), "context:" + task.id));
       }
-      const meta = el("span", "ws-task-meta"); metaNodes[task.id] = meta; setMeta(task, meta); words.append(meta);
+      const meta = el("span", "ws-task-meta"); setMeta(task, meta); words.append(meta);
       wordsNodes[task.id] = words; rowNodes[task.id] = row;
       if (parseAgent(task.owner) || run) { sections[task.id] = agentSection(task); words.append(sections[task.id]); }
       outputNodes[task.id] = el("div", "ws-task-outputs"); words.append(outputNodes[task.id]); drawTaskOutputs(task);
       const edit = keyed(button(t("编辑"), () => {
         if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return;
-        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "" }; renderTasks(); ui.taskText.focus();
+        taskDraft = { id: task.id, text: task.text, owner: task.owner || "", due: task.due || "", custom: false, contextReport: (task.context || {}).report || "", attempt: task.attempt || "", after: task.after || "" }; renderTasks(); ui.taskText.focus();
       }), "edit:" + task.id);
-      const remove = keyed(button(t("移除"), () => { if (window.confirm(t("移除这项任务吗？"))) mutateTasks(data.tasks.filter((x) => x.id !== task.id)); }), "remove:" + task.id);
+      const remove = keyed(button(t("移除"), () => removeTask(task)), "remove:" + task.id);
       named(edit, t("编辑：{task}", { task: task.text })); named(remove, t("移除：{task}", { task: task.text }));
       rowControls[task.id] = [check, edit, remove]; lockRow(task);
       const actions = el("div", "ws-task-actions"); actions.append(edit, remove);
@@ -869,6 +1060,13 @@
       row.append(check, disclosure); list.append(row);
     });
     restoreFocus(list, snap);
+  }
+  // The removal of a task, after its question; a task that continued the removed one now continues what that one continued.
+  // True when the question was agreed to (the save follows, and may still fail: the caller looks at the list).
+  async function removeTask(task) {
+    if (!window.confirm(t("移除这项任务吗？"))) return false;
+    await mutateTasks(data.tasks.filter((x) => x.id !== task.id).map((x) => x.after === task.id ? Object.assign({}, x, { after: task.after || null }) : x));
+    return true;
   }
   function showTaskError() {
     if (!ui.taskError) return;
@@ -882,43 +1080,61 @@
   }
   function renderTasks() {
     const box = ui.tasks, snap = focusSnapshot(box); box.replaceChildren();
-    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("任务", { n: 2 }))); box.append(header);
+    const header = el("div", "ws-task-header"); header.append(el("h2", "ws-task-title", t("全部任务"))); box.append(header);
     if (data.tasks_officialness && data.tasks_officialness.label) header.append(el("span", "ws-officialness", data.tasks_officialness.label));
-    const agents = keyed(button(t("AI 执行者"), toggleSettings), "agents-toggle"); agents.setAttribute("aria-pressed", String(settingsOpen)); header.append(agents);
+    header.append(settingsLink());   // 21.7: the AI agents are set on the 设置 page; here is only the way to it
     const folders = keyed(button(t("输出目录"), openOutputFolders), "output-folders"); folders.disabled = !editable(); header.append(folders);
+    if (hasLooseTasks()) header.append(openGroupingButton("group-tasks"));
     ui.connection = el("p"); ui.connection.setAttribute("role", "status"); box.append(ui.connection); showConnection();
-    ui.settings = el("div", "ws-agent-settings hidden"); box.append(ui.settings);
     const list = el("div", "ws-task-list"); ui.list = list; box.append(list);
     ui.taskError = el("div"); box.append(ui.taskError);
     renderTaskList();
-    const form = el("form", "ws-task-form"), text = keyed(input("text", t("例如：整理下一次组会要讨论的问题")), "task-text"); text.value = taskDraft.text;
+    // 21.4: the task is written in a field of several lines (Enter makes a new line), which grows with what is typed.
+    const form = el("form", "ws-task-form"), text = keyed(el("textarea", "form-input ws-task-input"), "task-text");
+    text.placeholder = t("例如：整理下一次组会要讨论的问题"); text.rows = 3; text.value = taskDraft.text;
     const owner = keyed(el("select", "form-input"), "task-owner"); ui.ownerSelect = owner; fillOwnerOptions(owner);
     const name = taskDraft.custom ? keyed(input("text", t("姓名（可留空）")), "task-name") : null;
     if (name) { name.value = taskDraft.owner; name.addEventListener("input", () => { taskDraft.owner = name.value; }); }
     ui.ownerName = name;
     const due = keyed(input("date"), "task-due"); due.value = taskDraft.due;
-    const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-small"), "task-submit");
-    [text, owner, name, due, submit].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });
+    // 21.8: the save button is the form's one primary button; 「保存并运行」 stands beside it while the owner is an agent
+    // (`syncRunButton`) and is the quiet one, as is 清空.
+    const submit = keyed(button(taskDraft.id ? t("保存任务") : t("添加任务"), () => addTask(), "btn btn-primary btn-small"), "task-submit");
+    ui.taskSubmit = submit;
+    const saveRun = keyed(button(t("保存并运行"), () => addTask(true)), "task-run");
+    const clear = keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear");
+    ui.taskRun = saveRun; ui.taskClear = clear; syncPrimary();
+    // 21.1: the task's place on the route comes first -- the attempt it belongs to, and the task it continues.
+    const attempt = keyed(el("select", "form-input"), "task-attempt"), after = keyed(el("select", "form-input"), "task-after");
+    ui.taskAttempt = attempt; ui.taskAfter = after; fillAttemptOptions(attempt); fillAfterOptions(after);
+    attempt.addEventListener("change", () => chooseAttempt(attempt, after));
+    after.addEventListener("change", () => { taskDraft = Object.assign({}, taskDraft, { after: after.value }); });
+    [text, owner, name, due, submit, attempt].forEach((node) => { if (node) node.disabled = !tasksEditable() || taskBusy || taskConflict; });  // `after` decides for itself
     function changed() { taskDraft = Object.assign({}, taskDraft, { text: text.value, due: due.value }); }
     [text, due].forEach((node) => node.addEventListener("input", changed));
+    text.addEventListener("input", () => growField(text));
     owner.addEventListener("change", () => chooseOwner(owner));
     form.addEventListener("submit", (event) => { event.preventDefault(); addTask(); });
     const ownerField = field(t("负责人"), owner), dateField = field(t("日期"), due);
     ownerField.className += " ws-field-owner"; dateField.className += " ws-field-date";
-    form.append(field(t("任务", { n: 1 }), text), ownerField);
+    const attemptField = field(t("属于哪条尝试"), attempt), afterField = field(t("接着哪个任务"), after), textField = field(t("任务", { n: 1 }), text);
+    attemptField.className += " ws-field-attempt"; afterField.className += " ws-field-after"; textField.className += " ws-field-text";
+    // 21.4: the attempt, the task, the task it follows, the owner, the date -- then the research context and the buttons.
+    form.append(attemptField, textField, afterField, ownerField);
     if (name) { const nameField = field(t("姓名"), name); nameField.className += " ws-field-name"; form.append(nameField); }
     const context = keyed(el("select", "form-input"), "task-context");
-    const noContext = el("option", null, t("无关联研究记录")); noContext.value = ""; context.append(noContext);
+    const noContext = el("option", null, t("不关联报告")); noContext.value = ""; context.append(noContext);
     const records = (data.documents || []).filter((doc) => doc.kind === "result");
     records.forEach((doc) => { const option = el("option", null, doc.title || doc.path); option.value = doc.path; context.append(option); });
     if (taskDraft.contextReport && !records.some((doc) => doc.path === taskDraft.contextReport)) { const option = el("option", null, taskDraft.contextReport); option.value = taskDraft.contextReport; context.append(option); }
     context.value = taskDraft.contextReport || ""; context.disabled = !tasksEditable() || taskBusy || taskConflict;
     context.addEventListener("change", () => { taskDraft.contextReport = context.value; });
     const contextField = field(t("研究上下文（可选）"), context); contextField.className += " ws-field-context";
-    form.append(dateField, contextField, submit);
-    form.append(keyed(button(t("清空"), () => { taskDraft = blankDraft(); renderTasks(); }), "task-clear"));
+    const buttons = el("div", "ws-task-buttons"); buttons.append(submit, clear);
+    form.append(dateField, contextField, buttons);
     const taskStatus = el("div", "ws-status"); taskStatus.setAttribute("role", "status");
     box.append(form, taskStatus); ui.taskText = text; ui.taskStatus = taskStatus;
+    growField(text); syncRunButton();
     if (taskConflict) showTaskConflict();
     if (data.mode === "member") {
       const propose = button(t("提交修改"), () => {
@@ -928,12 +1144,11 @@
         if (typeof window.ROWorkspace.onPropose === "function") window.ROWorkspace.onPropose(["research/tasks.json"].concat(data.changed_task_reports || []));
       }); propose.disabled = !tasksEditable(); box.append(propose);
     }
-    renderSettings(true);
     restoreFocus(box, snap);
   }
   // The page refreshes on every change of the project's files, which an agent moves about every 2 s. What the person is
   // typing is never rebuilt under them (the draft lives outside data.tasks): a reply is patched in place, the rows
-  // beside the task form are drawn again, and the settings keep their inputs.
+  // beside the task form are drawn again.
   function refreshTasks() {
     if (!ui.taskText) { renderTasks(); return; }
     const typing = activeIn(ui.tasks);
@@ -944,27 +1159,35 @@
     if (taskConflict) {
       const submit = descendants(ui.tasks).find((x) => x.dataset && x.dataset.key === "task-submit");
       if (submit) submit.disabled = true;
+      syncRunButton();
       showTaskConflict();
     }
   }
   function syncRowMarks() {
     (data.tasks || []).forEach((task) => {
       const controls = rowControls[task.id], row = rowNodes[task.id];
+      if (factNodes[task.id]) setFacts(task, factNodes[task.id]);
       if (controls) controls[0].checked = !!task.done;
       if (row) row.className = "ws-task" + (task.done ? " done" : "");
     });
   }
-  async function addTask() {
+  async function addTask(thenRun) {
     if (!tasksEditable() || taskBusy || taskConflict) return;
     if (!taskDraft.text.trim()) { status(ui.taskStatus, t("请写下要做的事。"), "err"); ui.taskText.focus(); return; }
+    // A new task belongs to an attempt (21.1); a task from before that may stay without one.
+    if (!taskDraft.id && !taskDraft.attempt) { status(ui.taskStatus, t("新任务要属于一条尝试：请在「属于哪条尝试」里选一条，或选「新开一条尝试…」。"), "err"); ui.taskAttempt.focus(); return; }
     const next = (data.tasks || []).map((task) => Object.assign({}, task));
     const existing = next.find((task) => task.id === taskDraft.id);
     if (taskDraft.id && !existing) { status(ui.taskStatus, t("这项任务已被移除。可以把当前填写添加为新任务。"), "err"); taskDraft.id = null; return; }
     const item = { id: taskDraft.id || (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : "task-" + Date.now().toString(36) + Math.random().toString(36).slice(2)), text: taskDraft.text.trim(), owner: taskDraft.owner.trim(), due: taskDraft.due, done: existing ? !!existing.done : false };
     if (taskDraft.contextReport) item.context = { report: taskDraft.contextReport }; else if (existing && existing.context) item.context = null;
+    if (taskDraft.attempt) item.attempt = taskDraft.attempt; else if (existing && existing.attempt) item.attempt = null;
+    if (taskDraft.after && taskDraft.attempt) item.after = taskDraft.after; else if (existing && existing.after) item.after = null;
     // Object.assign keeps what the form does not edit: a task's report (17.2) stays with it.
     if (existing) Object.assign(existing, item); else next.push(item);
-    await mutateTasks(next, true);
+    const saved = await mutateTasks(next, true);
+    // 「保存并运行」 (21.4): only a task that is saved is run -- a refused or failed save starts nothing.
+    if (thenRun && saved) await runSaved(item.id);
   }
   function showTaskConflict() {
     if (ui.taskStatus.dataset.conflict) return;
@@ -981,6 +1204,7 @@
       } catch (err) { if (live(mark)) status(ui.taskStatus, errorWords(t("没能读取任务。"), err), "err"); }
     }));
   }
+  // True once the engine has saved the tasks (the caller may go on to start a run on what is saved), false when it did not.
   async function mutateTasks(tasks, clearForm) {
     if (!tasksEditable() || taskBusy || taskConflict) return;
     const mark = stamp(), snapshot = JSON.stringify(taskDraft);
@@ -990,24 +1214,90 @@
       if (!live(mark)) return;
       data.tasks = response.tasks; data.tasks_revision = response.tasks_revision; data.tasks_officialness = response.tasks_officialness || data.tasks_officialness; taskBusy = false; taskWrites += 1;
       data.changed_task_reports = response.changed_task_reports || [];
-      if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft();
+      if (clearForm && snapshot === JSON.stringify(taskDraft)) taskDraft = blankDraft(taskDraft.attempt);
       renderTasks(); status(ui.taskStatus, response.history_error ? t("任务已保存，但修改历史暂时未能记录。") : t("已保存"), response.history_error ? "" : "ok");
       if (typeof pollGeneration === "function") pollGeneration();
+      return true;
     } catch (err) {
       if (!live(mark)) return;
       taskBusy = false; taskConflict = !!(err && /conflict|revision|changed/.test(err.state || ""));
       renderTasks();
       if (!taskConflict) status(ui.taskStatus, errorWords(t("没能保存任务，当前填写已保留。"), err), "err");
+      return false;
     }
+  }
+  // The task field grows with the lines typed (21.4), never below its three rows; the stylesheet bounds it, and beyond that it
+  // scrolls. Measuring needs the rows' own height first, so the field is shortened and grown again; the page keeps its place.
+  function scrollParent(node) {
+    for (let n = node.parentNode; n && n.nodeType === 1; n = n.parentNode) {
+      if (n.scrollHeight > n.clientHeight && /auto|scroll/.test(getComputedStyle(n).overflowY)) return n;
+    }
+    return null;
+  }
+  function growField(area) {
+    const style = area.style;
+    if (!style) return;
+    const holder = scrollParent(area), top = holder ? holder.scrollTop : 0;
+    style.height = "";
+    if (area.offsetWidth && area.scrollHeight > area.clientHeight) style.height = (area.scrollHeight + area.offsetHeight - area.clientHeight) + "px";
+    if (holder) holder.scrollTop = top;
+  }
+  // 21.8: the page has one primary button. 保存 is it while the writing area is on screen in edit mode (a plan's writing area
+  // sits in the fold, which may be shut); the task form's save button is the quiet one then, and the primary again in preview,
+  // with no document open, or with the plan folded. A row that asks (the reply form's 发送, the undo's 确认撤回; marked
+  // `ws-ask`) has the primary while it is open and no document is being written -- the first of them when two rows ask at once, the
+  // other is quiet until it is the only one left; the task form's save button waits.
+  function syncPrimary() {
+    const submit = ui && ui.taskSubmit;
+    if (!submit) return;
+    const writing = !!draft && !!ui.save && !ui.save.classList.contains("hidden") && (draft.kind !== "overview" || !!(ui.planMore && ui.planMore.open));
+    const asks = Array.from(host.querySelectorAll(".ws-ask"));
+    asks.forEach((ask, i) => ask.classList.toggle("btn-primary", !writing && i === 0));   // two rows can ask at once: the first in the page
+    submit.classList.toggle("btn-primary", !writing && !asks.length);
+  }
+  // 「保存并运行」 stands beside the save button while the owner chosen is an agent and the task could be run from its row (a task
+  // being carried out, or waiting for the answer the person can give, cannot); like the row's 运行 it waits while the project has
+  // another run going.
+  function syncRunButton() {
+    const run = ui && ui.taskRun;
+    if (!run || !ui.taskClear) return;
+    const agent = taskDraft.custom ? null : parseAgent(taskDraft.owner), existing = taskDraft.id ? (data.tasks || []).find((x) => x.id === taskDraft.id) : null;
+    if (!agent || (taskDraft.id && !(existing && runnable(existing, agent)))) { run.remove(); return; }
+    if (!run.parentNode) ui.taskClear.before(run);
+    const waiting = anyActive();
+    run.disabled = !may() || waiting; run.title = waiting ? t("这个项目里还有一次运行没有结束。") : "";
+  }
+  // After 保存并运行 has saved the task: the run starts by the row's own path (`startRun`: the mcp check and the confirmations of
+  // 17.1 and 18.1 item 5), and the form says what came of it. A run that did not start leaves its reason in the task's row, which
+  // is opened to show it (the rows are shut by default, 21.4).
+  async function runSaved(id) {
+    const task = (data.tasks || []).find((x) => x.id === id), agent = task && parseAgent(task.owner);
+    if (!agent || !runnable(task, agent)) return;
+    const mark = stamp(), before = latestRun(id), noteBefore = agentNotes[id];
+    await startRun(task, agent);
+    if (!live(mark) || !ui || !ui.taskStatus) return;
+    const now = latestRun(id);
+    if (now && (!before || now.id !== before.id)) status(ui.taskStatus, t("任务已保存，运行已开始。"), "ok");
+    else if (agentNotes[id] && agentNotes[id] !== noteBefore) { openTaskRow(id); status(ui.taskStatus, t("任务已保存，但运行没有开始。原因写在这项任务那一行里。"), "err"); }
+    else status(ui.taskStatus, t("任务已保存，没有开始运行。"));
+  }
+  function openTaskRow(id) {
+    const view = taskDisclosures[id];
+    taskOpen[id] = true;
+    if (view) { view.node.open = true; view.open = true; }
   }
 
   // -- AI agents carry out tasks (DESIGN.md Section 17) ---------------------------------------
   // A task whose owner is an agent on this Mac gets its run in the row: 运行, then the state in
-  // words (17.9), 停止, 运行记录, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
+  // words (17.9), 停止, 运行日志, 回答 / 打回, 撤回本次运行 and 打开结果. The page only asks the
   // engine and follows a run by polling; what an agent may not do is held there (17.5).
   const RUNNER_NAMES = { "claude-code": "Claude Code", opencode: "OpenCode", codex: "Codex", "deepseek-harness": "DeepSeek Harness" };
   const PROGRAMS = { "claude-code": "claude", opencode: "opencode", codex: "codex", "deepseek-harness": "dsh" };
   const OWNER_OTHER = "\u0000other", OWNER_SETTINGS = "\u0000settings";
+  // 21.7: the owner written for the researcher when no name is set (a project of one person). Like a name typed by hand it is
+  // the owner text as it is on disk, so it stays 「我」 whatever the screen says; the screen reads it as Me (`ownerLabel`) -- in a
+  // project of one person only: in a team's, a stored 「我」 is a task of the solo period, and no one of the team is it.
+  const OWNER_ME = "我";
   const POLL_MS = 2000, POLL_MAX_MS = 30000;
   const REPLY_FROM = ["done", "ended", "failed", "stopped", "interrupted"];
   // How the mcp package is added: to the uv tool install (the documented route), or to a source checkout (README).
@@ -1019,7 +1309,7 @@
   // and each Chinese text is the whole argument of its own t().
   // state code -> [words, tone] (tone classes are app.html's .status-label.tone-*).
   const STATE_LABELS = {
-    preparing: [() => t("准备中"), "ochre"], running: [() => t("运行中"), "ochre"], needs_input: [() => t("等你回答"), "clay"],
+    preparing: [() => t("准备中"), "ochre"], running: [() => t("运行中"), "ochre"], needs_input: [() => t("等你回答"), "ochre"],
     done: [() => t("已完成"), "olive"], ended: [() => t("未报告"), "gray"], failed: [() => t("失败"), "clay"],
     stopped: [() => t("已停止"), "gray"], interrupted: [() => t("已中断"), "gray"], out_of_bounds: [() => t("越过了限制"), "clay"],
   };
@@ -1028,7 +1318,7 @@
   };
   const VIOLATION_WORDS = {
     data_changed: () => t("改动了运行前就有的数据文件"), data_deleted: () => t("删除了运行前就有的数据文件"),
-    record_changed: () => t("改动了研究记录"), record_deleted: () => t("删除了研究记录"),
+    record_changed: () => t("改动了尝试表、任务或报告的记录文件"), record_deleted: () => t("删除了尝试表、任务或报告的记录文件"),
     researchos_changed: () => t("改动了 Research OS 自己的记录文件夹"), git_changed: () => t("改变了 git 的状态"),
     git_hooks_changed: () => t("改动了 git 的钩子（git 会自动运行的程序）"), git_config_changed: () => t("改动了 git 的配置"),
     backup_deleted: () => t("删除了 Research OS 的备份"),
@@ -1082,18 +1372,36 @@
     const m = /^agent:([^:]+):(.+)$/.exec(String(owner || ""));
     return m && RUNNER_NAMES[m[1]] ? { runner: m[1], model: m[2], owner: m[0], label: RUNNER_NAMES[m[1]] + " · " + m[2] } : null;
   }
+  // A project of one person (the engine's mode); a page that has not read the project yet is taken to be one.
+  function soloProject() { return !data || data.mode === "single"; }
   // The owner as people read it: an agent by its label, never by the raw agent: value.
   function ownerLabel(owner) {
     if (!owner) return "";
+    if (owner === OWNER_ME) return soloProject() ? t("我") : t("最初的研究者");
     const known = agentInfo && (agentInfo.agents || []).find((a) => a.owner === owner);
     if (known && known.label) return known.label;
     const parsed = parseAgent(owner);
     if (parsed) return parsed.label;
     return /^agent:/.test(owner) ? t("AI 执行者") : owner;
   }
+  // Inside the opened row: the date, if the task has one. Its owner is said in the row's summary (21.4, `setFacts`).
   function setMeta(task, node) {
-    const words = [ownerLabel(task.owner), task.due].filter(Boolean).join(" · ");
+    const words = task.due || "";
     node.textContent = words; node.classList.toggle("hidden", !words);
+  }
+  // What a task's row says without being opened (21.4): its owner (a person, or the agent and its model) and its state in words.
+  // The state is the engine's (`home.tasks`, attempt_tasks.state_of), worded as the attempt's panel words it; before the engine
+  // has answered a row says its owner only.
+  function taskStateCode(id) {
+    const states = nowData && nowData.home && nowData.home.tasks;
+    return states && Object.prototype.hasOwnProperty.call(states, id) ? states[id] : null;
+  }
+  function setFacts(task, node) {
+    node.replaceChildren();
+    const who = ownerLabel(task.owner), code = taskStateCode(task.id), known = code && window.RODesk && window.RODesk.taskStateWords ? window.RODesk.taskStateWords(code) : null;
+    if (who) node.append(el("span", "ws-task-owner", who));
+    if (known) node.append(el("span", "status-label tone-" + known.tone, known.words));
+    node.classList.toggle("hidden", !node.childElementCount);
   }
   function isActiveState(value) { return value === "preparing" || value === "running"; }
   // How a run ended apart from the warning (17.9): an out-of-bounds run reads 越过了限制, and what it would have read
@@ -1102,6 +1410,12 @@
   function activeIds() { return runsInfo.runs.filter((r) => isActiveState(r.state)).map((r) => r.id); }
   function anyActive() { return activeIds().length > 0 || !!runsInfo.active; }
   function latestRun(taskId) { return runsInfo.runs.find((r) => r.task_id === taskId) || null; }
+  // Whether the row offers 运行 (and the form 保存并运行): an agent owns the task, it is not marked done, and its latest run is
+  // neither going nor waiting for the answer the person can give.
+  function runnable(task, agent) {
+    const run = latestRun(task.id);
+    return !!agent && !task.done && (!run || (!isActiveState(run.state) && !(outcomeOf(run) === "needs_input" && run.can_reply)));
+  }
   // undo: the open 撤回本次运行 list of the task's latest run (18.1 item 5), { run, plan, error, off } -- off holds the
   // paths whose box the person cleared.
   function agentState(taskId) { return agentUiState[taskId] || (agentUiState[taskId] = { log: false, reply: null, text: "", open: {}, undo: null }); }
@@ -1123,27 +1437,938 @@
   }
   function may() { return tasksEditable() && !taskBusy && !taskConflict; }
 
+  // -- the attempt a task belongs to, and the task it continues (DESIGN.md 21.1) ---------------
+  const ATTEMPT_NEW = "\u0000new";
+  function attemptLabel(item) {
+    const number = String(item.id).split("#").pop(), words = item.label && item.label !== item.id ? item.label : "";
+    return "#" + number + (words ? " " + words : "");
+  }
+  // The tasks of one attempt in `after` order (researchos.attempt_tasks.ordered): each right after the one it
+  // continues, the others by the order of the list; a circle written by hand is left to the end.
+  function orderedTasks(tasks) {
+    const ids = new Set(tasks.map((task) => task.id)), followers = new Map(), roots = [], out = [], seen = new Set();
+    tasks.forEach((task) => {
+      if (task.after && ids.has(task.after) && task.after !== task.id) { if (!followers.has(task.after)) followers.set(task.after, []); followers.get(task.after).push(task); }
+      else roots.push(task);
+    });
+    const walk = (first) => {
+      const pending = [first];
+      while (pending.length) {
+        const task = pending.pop();
+        if (seen.has(task.id)) continue;
+        seen.add(task.id); out.push(task);
+        (followers.get(task.id) || []).slice().reverse().forEach((x) => pending.push(x));
+      }
+    };
+    roots.forEach(walk); tasks.forEach(walk);
+    return out;
+  }
+  // 全部任务 by attempt, in the order reports stand in (`attemptOrder`: newest activity first), 「未归入尝试」 last (21.4).
+  function taskGroups() {
+    const attempts = new Map((data.attempts || []).map((a) => [a.id, a])), by = new Map(), loose = [];
+    (data.tasks || []).forEach((task) => {
+      if (task.attempt && attempts.has(task.attempt)) { if (!by.has(task.attempt)) by.set(task.attempt, []); by.get(task.attempt).push(task); }
+      else loose.push(task);
+    });
+    const groups = attemptOrder().filter((id) => by.has(id)).map((id) => ({ id: id, title: attemptLabel(attempts.get(id)), tasks: orderedTasks(by.get(id)) }));
+    if (loose.length) groups.push({ id: null, title: t("未归入尝试"), tasks: orderedTasks(loose) });
+    return groups;
+  }
+  function fillAttemptOptions(select) {
+    const choices = [{ value: "", words: t("请选择一条尝试") }].concat((data.attempts || []).map((a) => ({ value: a.id, words: attemptLabel(a) })));
+    // An attempt the draft names that is no longer in the table stays shown while it is the value.
+    if (taskDraft.attempt && !choices.some((c) => c.value === taskDraft.attempt)) choices.push({ value: taskDraft.attempt, words: attemptLabel({ id: taskDraft.attempt }) });
+    choices.push({ value: ATTEMPT_NEW, words: t("新开一条尝试…") });
+    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    select.value = taskDraft.attempt;
+  }
+  // The tasks the chosen attempt holds that this one may continue: not itself, nor one that continues it.
+  function fillAfterOptions(select) {
+    const choices = [{ value: "", words: t("不接着任何任务") }];
+    if (taskDraft.attempt) {
+      const follows = new Set(taskDraft.id ? [taskDraft.id] : []);
+      for (let grew = true; grew;) {
+        grew = false;
+        (data.tasks || []).forEach((task) => { if (task.after && follows.has(task.after) && !follows.has(task.id)) { follows.add(task.id); grew = true; } });
+      }
+      orderedTasks((data.tasks || []).filter((task) => task.attempt === taskDraft.attempt)).filter((task) => !follows.has(task.id))
+        .forEach((task) => choices.push({ value: task.id, words: String(task.text).split("\n")[0].slice(0, 60) }));
+    }
+    if (taskDraft.after && !choices.some((c) => c.value === taskDraft.after)) taskDraft = Object.assign({}, taskDraft, { after: "" });
+    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    select.value = taskDraft.after;
+    select.disabled = !taskDraft.attempt || !tasksEditable() || taskBusy || taskConflict;
+  }
+  function chooseAttempt(select, after) {
+    if (select.value === ATTEMPT_NEW) { select.value = taskDraft.attempt; startAttempt(); return; }
+    taskDraft = Object.assign({}, taskDraft, { attempt: select.value, after: "" });
+    fillAfterOptions(after);
+  }
+  // 「新开一条尝试…」: the existing new-attempt form opens; once its row is saved and read back, the form names it, and a
+  // task already written is added under it.
+  function startAttempt() {
+    if (!editable() || typeof window.ROWorkspace.onCreateAttempt !== "function") return;
+    const mark = stamp();
+    window.ROWorkspace.onCreateAttempt({}, (created) => {
+      if (!live(mark) || !created || !created.id || !ui) return;
+      if (!(data.attempts || []).some((a) => a.id === created.id)) data.attempts.push({ id: created.id, label: (created.attrs || {}).description || created.id });
+      taskDraft = Object.assign({}, taskDraft, { attempt: created.id, after: "" });
+      renderTasks();
+      if (taskDraft.text.trim() && !taskDraft.id) addTask();
+    });
+  }
+  // 「在这条尝试下加任务」 (the attempt's panel): the form with that attempt chosen, the way 再派一个任务 will ask for a
+  // task that continues another (`after`) and works from a research record (`context`, a result record's path).
+  function startTask(choice) {
+    if (!ui || !ui.taskText || !editable()) return false;
+    if (taskDirty() && !window.confirm(t("放弃当前任务里尚未保存的填写吗？"))) return false;
+    taskDraft = Object.assign(blankDraft(choice && choice.attempt, choice && choice.context), { after: (choice && choice.after) || "" });
+    renderTasks(); ui.taskText.focus();
+    if (ui.tasks && typeof ui.tasks.scrollIntoView === "function") ui.tasks.scrollIntoView();
+    return true;
+  }
+
+  // -- 把这些任务归入尝试…: grouping the tasks a project already has (DESIGN.md 21.1) -----------------------------------
+  // The engine proposes (`GET /api/workspace/task-groups`): groups of the tasks that belong to no attempt, each with the
+  // attempt row it would add, and the tasks that are word for word the same as an earlier one. The side panel lets the
+  // person rename a group (and change its number and date), move tasks in or out, merge it with another or drop it;
+  // nothing is written until one is confirmed, and confirming is one call (`POST` of the same path) that writes the
+  // attempt row and sets `attempt` (and `after`, for a task that continues another of the group) on that group's tasks. A
+  // duplicate is removed by the task row's own removal, with its question; the same question given to several agents is
+  // not a duplicate and is only said. The numbers the groups carry follow the table: once a group is written, one whose
+  // number the table now has moves to the next free one and the others keep theirs, as does a number the person typed.
+  // The panel is the folders form's kind of subject (`folderSubject`): leaving it after a change asks first.
+  // a task whose attempt is gone from the table is as loose as one with none (the list puts it under 「未归入尝试」 too)
+  function hasLooseTasks() {
+    const known = new Set((data.attempts || []).map((a) => a.id));
+    return (data.tasks || []).some((task) => !task.attempt || !known.has(task.attempt));
+  }
+  function openGroupingButton(key) {
+    const open = keyed(button(t("把这些任务归入尝试…"), openGrouping), key);
+    open.disabled = !tasksEditable();
+    return open;
+  }
+  function taskNumbered(subject, ids) { return ids.slice().sort((a, b) => subject.info[a].number - subject.info[b].number); }
+  function cutWords(words, size) { const text = String(words).split("\n")[0]; return text.length > size ? text.slice(0, size) + "…" : text; }
+  function groupWords(group) { return group.description.trim() || group.term; }
+  function wholeNumber(value) { const found = /^\s*(\d+)/.exec(String(value)); return found ? parseInt(found[1], 10) : 0; }
+  // The table has a new row (`written`), so the numbers on offer are looked at again. A group keeps its number while that
+  // number is still free -- not in the table and not carried by another group shown -- so the gaps of the first proposal
+  // fill as the groups are confirmed in any order. Only a group whose number is now taken moves, to one more than the
+  // greatest of the table's numbers and the numbers the other groups carry. A number the person typed never changes; of
+  // two groups that carry the same number, the one the person did not type moves (else the later one).
+  function renumberGroups(subject, written) {
+    subject.taken.add(written.trim());
+    const greatest = (numbers) => numbers.reduce((most, number) => Math.max(most, wholeNumber(number)), 0);
+    subject.groups.forEach((group, at) => {
+      if (group.typed) return;
+      const mine = group.number.trim();
+      const shared = subject.groups.some((other, to) => other !== group && other.number.trim() === mine && (other.typed || to < at));
+      if (!subject.taken.has(mine) && !shared) return;
+      group.number = String(greatest(Array.from(subject.taken).concat(subject.groups.filter((other) => other !== group).map((other) => other.number))) + 1);
+    });
+  }
+  function moveGroupedTask(subject, id, to) {
+    subject.groups.forEach((group) => { if (group.tasks.indexOf(id) >= 0) { group.tasks = group.tasks.filter((x) => x !== id); group.edited = true; } });
+    subject.pool = subject.pool.filter((x) => x !== id);
+    const target = subject.groups.find((group) => group.id === to);
+    if (target) { target.tasks = taskNumbered(subject, target.tasks.concat(id)); target.edited = true; } else subject.pool = taskNumbered(subject, subject.pool.concat(id));
+    drawGrouping(subject);
+  }
+  function mergeGroups(subject, from, into) {
+    into.tasks = taskNumbered(subject, into.tasks.concat(from.tasks));
+    if (from.date && (!into.date || (from.date.length === into.date.length && from.date < into.date))) into.date = from.date;
+    subject.groups = subject.groups.filter((group) => group !== from);
+    into.edited = true; drawGrouping(subject);
+  }
+  function dropGroup(subject, group) {
+    subject.pool = taskNumbered(subject, subject.pool.concat(group.tasks));
+    subject.groups = subject.groups.filter((x) => x !== group);
+    subject.dropped = true; drawGrouping(subject);
+  }
+  // A duplicate goes by the removal the task list has, and its question; once it is gone the panel forgets it.
+  async function removeGroupedTask(subject, id) {
+    const task = (data.tasks || []).find((x) => x.id === id);
+    if (!task || !(await removeTask(task))) return;
+    if (!live(subject.mark) || state.panelSubject !== subject) return;
+    if ((data.tasks || []).some((x) => x.id === id)) return;   // the save failed: the task is still there
+    subject.groups.forEach((group) => { group.tasks = group.tasks.filter((x) => x !== id); });
+    subject.pool = subject.pool.filter((x) => x !== id);
+    delete subject.same[id]; delete subject.info[id]; delete subject.after[id];
+    drawGrouping(subject);
+  }
+  function groupedTaskRow(subject, id, group) {
+    const info = subject.info[id], row = el("li", "ws-group-task"), locked = subject.busy || !editable();
+    const words = el("span", "ws-group-task-text", cutWords(info.text, 90)); words.title = info.text;
+    row.append(el("span", "ws-group-task-n", t("第 {n} 条", { n: info.number })), words);
+    if (info.report_title) row.append(el("span", "ws-agent-quiet", t("报告：{title}", { title: cutWords(info.report_title, 50) })));
+    if ((info.asked_of || []).length > 1) row.append(el("span", "ws-agent-quiet", t("同一个问题，分别交给了 {agents}", { agents: info.asked_of.map((who) => ownerLabel(who) || t("没有指定负责人")).join(t("、")) })));
+    const prior = subject.after[id];
+    if (prior && group && subject.info[prior] && group.tasks.indexOf(prior) >= 0) row.append(el("span", "ws-agent-quiet", t("接在第 {n} 条之后", { n: subject.info[prior].number })));
+    if (subject.same[id]) {
+      row.append(el("span", "ws-agent-quiet", t("和第 {n} 条一样", { n: subject.same[id] })));
+      const remove = keyed(named(button(t("移除"), () => removeGroupedTask(subject, id)), t("移除：{task}", { task: cutWords(info.text, 40) })), "group-remove:" + id);
+      remove.disabled = locked; row.append(remove);
+    }
+    const move = keyed(named(el("select", "form-input"), t("移动：{task}", { task: cutWords(info.text, 40) })), "group-move:" + id);
+    const here = el("option", null, t("移到…")); here.value = ""; move.append(here);
+    subject.groups.filter((other) => other !== group).forEach((other) => { const option = el("option", null, groupWords(other)); option.value = other.id; move.append(option); });
+    if (group) { const none = el("option", null, t("不归入任何组")); none.value = "\u0000none"; move.append(none); }
+    move.value = ""; move.disabled = locked;
+    move.addEventListener("change", () => { if (move.value) moveGroupedTask(subject, id, move.value === "\u0000none" ? "" : move.value); });
+    row.append(move);
+    return row;
+  }
+  function groupCard(subject, group) {
+    const card = el("section", "ws-group"), locked = subject.busy || !editable(), member = data.mode === "member";
+    card.dataset.group = group.id;
+    const number = keyed(input("text"), "group-number:" + group.id), date = keyed(input("text"), "group-date:" + group.id), name = keyed(input("text"), "group-name:" + group.id);
+    number.value = group.number; date.value = group.date; name.value = group.description;
+    const numberField = field(t("编号"), number), dateField = field(t("日期"), date), nameField = field(t("尝试的描述"), name);
+    numberField.className += " ws-field-number"; dateField.className += " ws-field-day"; nameField.className += " ws-field-describe";
+    [number, date, name].forEach((box) => { box.disabled = locked; });
+    const keep = keyed(button(t("确认这一组"), () => confirmGroup(subject, group), "btn btn-small"), "group-confirm:" + group.id);
+    keep.disabled = locked || !group.tasks.length;
+    number.addEventListener("input", () => { group.number = number.value; group.typed = true; group.edited = true; });
+    date.addEventListener("input", () => { group.date = date.value; group.edited = true; });
+    name.addEventListener("input", () => { group.description = name.value; group.edited = true; keep.disabled = subject.busy || !editable() || !group.tasks.length; });
+    const head = el("div", "ws-group-head"); head.append(numberField, dateField, nameField); card.append(head);
+    card.append(quiet(t("共同点：{term}", { term: group.term })), quiet(t("研究判断：{status}，结果先留空", { status: t(group.verdictWord) })));
+    const list = el("ul", "ws-group-tasks");
+    if (!group.tasks.length) card.append(quiet(t("这一组还没有任务。")));
+    group.tasks.forEach((id) => list.append(groupedTaskRow(subject, id, group)));
+    card.append(list);
+    if (member) {
+      const sentence = keyed(el("textarea", "form-input"), "group-sentence:" + group.id);
+      sentence.rows = 2; sentence.value = group.sentence || t("把已有的任务归入新尝试 #{number}", { number: group.number.trim() }); sentence.disabled = locked;
+      sentence.addEventListener("input", () => { group.sentence = sentence.value; group.edited = true; });
+      card.append(field(t("一句话说明"), sentence));
+    }
+    const actions = el("div", "ws-agent-actions"), merge = keyed(named(el("select", "form-input"), t("合并这一组：{group}", { group: groupWords(group) })), "group-merge:" + group.id);
+    const first = el("option", null, t("合并到…")); first.value = ""; merge.append(first);
+    subject.groups.filter((other) => other !== group).forEach((other) => { const option = el("option", null, groupWords(other)); option.value = other.id; merge.append(option); });
+    merge.value = ""; merge.disabled = locked || subject.groups.length < 2;
+    merge.addEventListener("change", () => { const into = subject.groups.find((other) => other.id === merge.value); if (into) mergeGroups(subject, group, into); });
+    const drop = keyed(button(t("不要这一组"), () => dropGroup(subject, group)), "group-drop:" + group.id);
+    drop.disabled = locked;
+    actions.append(keep, merge, drop); card.append(actions);
+    if (group.note) { const says = el("p", "ws-status"); says.setAttribute("role", "status"); status(says, group.note.words, group.note.kind); card.append(says); }
+    return card;
+  }
+  function drawGrouping(subject) {
+    if (state.panelSubject !== subject) return;
+    const snap = focusSnapshot(panelBody), body = el("div", "ws-groups");
+    body.append(quiet(t("还没归入尝试的任务，按任务文字和报告标题里的版本号（例如 v0.2）或反复出现的同一个词分成几组。每一组都可以改名、调整任务、和别的组合并，或者不要；你确认哪一组，才会在尝试表里新增一行，并把这一组的任务归入它。文件不会移动。")));
+    if (data.mode === "member") body.append(quiet(t("你是这个项目的成员：确认一组会先把新的一行写进你的工作副本，再生成提议，PI 批准后才进入正式版本。")));
+    subject.done.forEach((node) => body.append(node));
+    if (!subject.groups.length && !subject.pool.length && !subject.done.length) body.append(quiet(t("没有可以归入尝试的任务。")));
+    subject.groups.forEach((group) => body.append(groupCard(subject, group)));
+    if (subject.pool.length) {
+      const rest = el("section", "ws-group");
+      rest.append(el("h3", "ws-task-group", t("没有分到组的任务")));
+      const list = el("ul", "ws-group-tasks");
+      subject.pool.forEach((id) => list.append(groupedTaskRow(subject, id, null)));
+      rest.append(list); body.append(rest);
+    }
+    panelBody.replaceChildren(body);
+    restoreFocus(panelBody, snap);
+  }
+  async function confirmGroup(subject, group) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !editable() || !here() || !group.tasks.length) return;
+    const number = group.number.trim(), description = group.description.trim();
+    if (!number || !description) { group.note = { words: t("请写下这条尝试的编号和描述。"), kind: "err" }; drawGrouping(subject); return; }
+    const ids = group.tasks.slice(), member = data.mode === "member";
+    subject.busy = true; group.note = { words: t("正在保存…") }; drawGrouping(subject);
+    let response;
+    try {
+      // The attempt table the first group is written into is made first, as the new-attempt form makes it (a project with none).
+      if (!subject.table) { await apiPost("/api/attempts/initialize", { project: project() }); subject.table = true; }
+      const body = { project: project(), tasks: ids, attempt: { number: number, date: group.date.trim(), description: description } };
+      // a task that continues another of this group goes after it; one whose earlier task is not in the group has no `after`
+      const follows = {}; ids.forEach((id) => { if (subject.after[id] && ids.indexOf(subject.after[id]) >= 0) follows[id] = subject.after[id]; });
+      if (Object.keys(follows).length) body.after = follows;
+      response = await apiPost("/api/workspace/task-groups", body);
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; group.note = { words: errorWords(t("没能归入这一组。"), err), kind: "err" }; drawGrouping(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    // What the page holds of the project follows what was written, as after any task save.
+    data.tasks = response.tasks; data.tasks_revision = response.tasks_revision; data.tasks_officialness = response.tasks_officialness || data.tasks_officialness;
+    data.changed_task_reports = response.changed_task_reports || [];
+    if (!(data.attempts || []).some((a) => a.id === response.attempt.id)) (data.attempts = data.attempts || []).push({ id: response.attempt.id, label: response.attempt.label });
+    renderTasks();
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false;
+    const moved = response.moved || [], line = el("div", "ws-group-done");
+    subject.groups = subject.groups.filter((x) => x !== group);
+    subject.pool = subject.pool.filter((x) => moved.indexOf(x) < 0);
+    moved.forEach((id) => { delete subject.same[id]; delete subject.info[id]; delete subject.after[id]; });
+    renumberGroups(subject, number);   // the row is in the table, whether or not the tasks could be moved into it
+    if (!response.linked) {
+      line.append(el("p", "ws-status err", t("尝试 #{number} 已经写进尝试表，但没能重新读取它，任务还没有归入。稍后在任务的「属于哪条尝试」里选这一条。", { number: number })));
+    } else if (member) {
+      line.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number}，{n} 个任务归入了它。提议还没有发送。", { number: number, n: moved.length })));
+      const says = el("div", "notice-status"), host = el("div", "compose-result");
+      line.append(says, host);
+      const sentence = (group.sentence || "").trim() || t("把已有的任务归入新尝试 #{number}", { number: number });
+      if (typeof ROTeam !== "undefined" && ROTeam.composeInto) ROTeam.composeInto(host, { kind: "attempt_new", sentence: sentence, number: number }, says);
+    } else {
+      line.append(el("p", "ws-status ok", t("已新增尝试 #{number}，{n} 个任务归入了它。", { number: number, n: moved.length })));
+    }
+    subject.done.push(line);
+    drawGrouping(subject);
+  }
+  async function openGrouping() {
+    if (!editable() || !mayReplacePanel()) return;
+    const mark = stamp();
+    // Unsaved work: a group typed in or rearranged and not confirmed yet, or a group dropped (agreeing to leave clears it).
+    const subject = { kind: "task-groups", mark: mark, busy: false, table: true, info: {}, same: {}, after: {}, taken: new Set(), groups: [], pool: [], done: [], dropped: false,
+      get dirty() { return this.dropped || this.groups.some((group) => group.edited); },
+      set dirty(on) { if (!on) { this.dropped = false; this.groups.forEach((group) => { group.edited = false; }); } } };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("把这些任务归入尝试"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const plan = await apiGet("/api/workspace/task-groups?project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || state.panelSubject !== subject) return;
+      subject.table = plan.table !== false;
+      (plan.tasks || []).forEach((task) => { subject.info[task.id] = task; });
+      (plan.duplicates || []).forEach((pair) => { subject.same[pair.task] = pair.number; });
+      subject.groups = (plan.groups || []).map((group) => ({ id: group.id, term: group.term, number: group.attempt.number, date: group.attempt.date,
+        description: group.attempt.description, verdictWord: (group.verdict_status || {}).label || "", tasks: group.tasks.slice(), sentence: "", note: null, edited: false, typed: false }));
+      (plan.groups || []).forEach((group) => Object.assign(subject.after, group.after || {}));
+      // the numbers the table holds, as written: a group keeps its own while the table does not have it (the engine numbers the groups from the greatest)
+      subject.taken = new Set((plan.numbers || []).map((number) => String(number).trim()));
+      subject.pool = (plan.ungrouped || []).slice();
+      drawGrouping(subject);
+    } catch (err) { if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取任务的分组。"), err), "err"); }
+  }
+
+  // -- 交回: a handback, read in one place (DESIGN.md 21.2) -----------------------------------------------------------
+  // What an agent handed back with `researchos_complete_task`: the headline, the key numbers each with its file (the
+  // engine marks a value its file does not hold), what is undone, what only the researcher can decide, the agent's
+  // suggested assessment, then what it handed over and the report in full. The engine arranges it (`GET
+  // /api/workspace/handback`); this shows it in the side panel -- from 项目首页, the attempt's panel or the route map's
+  // card -- and tells the engine that this person has opened it (`POST .../opened`: kept on this Mac, not in the
+  // project). 「确认这个判断」 writes the attempt's research assessment (`POST .../confirm`: the write the attempt's panel
+  // uses, with the history saying the person confirmed it, and whether they took the suggestion unchanged); a member's
+  // is written into their working copy and proposed (12.4). Like the grouping panel it is a `folderSubject`: leaving it
+  // with a half-made assessment asks first.
+  const HANDBACK_WRITERS = ["single", "pi", "member"];
+  function hbPart(title) { const part = el("section", "ws-hb-part"); if (title) part.append(el("h3", "ws-hb-title", title)); return part; }
+  function hbWriter(subject) { return HANDBACK_WRITERS.indexOf(subject.view.mode) >= 0; }
+  function hbWho(view) { return view.run ? [view.run.label, view.run.by_name ? t("{name} 指派", { name: view.run.by_name }) : "", whenWords(view.run.ended)].filter(Boolean).join(" · ") : ""; }
+  function hbStatusChip(view, word) {
+    const known = (view.statuses || []).find((item) => item.status === word);
+    const tone = typeof verdictTone === "function" ? verdictTone({ status: known ? known.code : "other" }) : "plain";
+    return el("span", "status-label tone-" + tone, t(word));
+  }
+  function numberWords(value) { return window.RODesk && typeof window.RODesk.formatNumber === "function" ? window.RODesk.formatNumber(value) : String(value); }
+  function hbNumbers(view) {
+    const part = hbPart(t("关键数字")), list = el("ul", "ws-hb-numbers");
+    view.key_numbers.forEach((item) => {
+      // 21.8: a long number is shown to four significant digits; the value as the agent wrote it (and as the file and the
+      // number check have it) is on hover and in the record
+      const row = el("li", "ws-hb-number"), shown = numberWords(item.value), value = el("code", "ws-hb-value", shown);
+      if (shown !== item.value) value.title = item.value;
+      row.append(el("span", "ws-hb-what", item.what), value,
+        named(openLink(fileName(item.file), () => { if (typeof openFilePanel === "function") openFilePanel(item.file); }), t("打开：{file}", { file: item.file })));
+      if (pathNote(item.file)) row.append(pathNote(item.file));   // 21.7: the file's name opens it; its path is the quiet line under
+      if (item.check === "missing") row.append(el("span", "ws-status err ws-hb-flag", t("在所引文件里没找到这个数")));
+      else if (item.check === "unreadable") row.append(el("span", "ws-agent-quiet ws-hb-flag", t("所引文件读不了，没法核对")));
+      list.append(row);
+    });
+    part.append(list);
+    return part;
+  }
+  // The chooser of the assessment (21.3): the project's statuses as buttons with the chosen one pressed, and the
+  // reason -- the shared one (RODesk.statusChooser), prefilled --, and beside it the reason 14.3 asks when the status
+  // turns the route abandoned. A suggestion whose status the project no longer has leaves nothing chosen, and 保存 waits.
+  function hbChooser(subject) {
+    const view = subject.view, choose = subject.choose, box = el("div", "ws-hb-choose"), locked = subject.busy;
+    const abandons = () => (view.statuses.find((item) => item.status === choose.status) || {}).abandons === true;
+    // a member's abandonment becomes a proposal, which is refused without the route's result (12.4): the row may have none
+    const asksResult = () => view.mode === "member" && abandons() && !((view.attempt && view.attempt.result) || "").trim();
+    const abandonBox = el("div", "ws-hb-abandon"), abandon = keyed(el("textarea", "form-input"), "hb-abandon");
+    abandon.rows = 2; abandon.value = choose.abandon; abandon.disabled = locked;
+    const result = keyed(el("textarea", "form-input"), "hb-result"), resultBox = el("div", "ws-hb-result");
+    result.rows = 2; result.value = choose.result || ""; result.disabled = locked;
+    resultBox.append(field(t("结果（放弃一条路线时必填）"), result));
+    resultBox.classList.toggle("hidden", !asksResult());
+    abandonBox.append(field(view.mode === "member" ? t("理由（放弃一条路线时必填）") : t("放弃的理由（必填）"), abandon),
+      quiet(t("理由会写进结果一栏，这条路线当时的依据也会冻结下来。")));
+    abandonBox.classList.toggle("hidden", !abandons());
+    const save = keyed(button(t("保存"), () => {
+      if (abandons() && !choose.abandon.trim()) { subject.note = { words: t("放弃一条路线时必须写明理由"), kind: "err" }; drawHandback(subject); return; }
+      if (asksResult() && !(choose.result || "").trim()) { subject.note = { words: t("放弃一条路线时，结果和理由都必须填写"), kind: "err" }; drawHandback(subject); return; }
+      confirmHandback(subject, choose.status, choose.reason, abandons() ? choose.abandon : "", asksResult() ? choose.result : "");
+    }, "btn btn-primary btn-small"), "hb-save");
+    const picker = window.RODesk.statusChooser({ statuses: view.statuses, status: choose.status, reason: choose.reason, label: t("研究判断"),
+      onChange: (now) => {
+        choose.status = now.status(); choose.reason = now.reason(); choose.edited = true;
+        abandonBox.classList.toggle("hidden", !abandons()); resultBox.classList.toggle("hidden", !asksResult());
+        save.disabled = subject.busy || !choose.status;
+      } });
+    keyed(picker.statusEl, "hb-status"); keyed(picker.reasonEl, "hb-reason");
+    picker.picks.forEach((pick) => keyed(pick, "hb-pick-" + pick.dataset.status));
+    picker.setDisabled(locked);
+    choose.status = picker.status(); // a status the project has since taken out is none chosen: the person picks one
+    abandonBox.classList.toggle("hidden", !abandons()); resultBox.classList.toggle("hidden", !asksResult());
+    abandon.addEventListener("input", () => { choose.abandon = abandon.value; choose.edited = true; });
+    result.addEventListener("input", () => { choose.result = result.value; choose.edited = true; });
+    save.disabled = locked || !choose.status;
+    const cancel = keyed(button(t("取消"), () => { subject.choose = null; subject.note = null; drawHandback(subject); }), "hb-cancel");
+    cancel.disabled = locked;
+    const actions = el("div", "ws-agent-actions"); actions.append(save, cancel);
+    const group = el("div", "ws-field"); group.append(el("span", "ws-field-label", t("研究判断")), picker.el);
+    box.append(group, resultBox, abandonBox, actions);
+    return box;
+  }
+  function hbOpenChooser(subject, abandoning) {
+    const view = subject.view, now = view.attempt && view.attempt.verdict != null ? view.attempt : null, sug = view.suggested;
+    // without a suggestion: the assessment the attempt has, read from its cell (a cell with no known marker is 其它, all of it the reason)
+    const have = now ? window.RODesk.assessment.parse(now.verdict, view.statuses) : { status: (view.statuses.find((item) => item.other) || view.statuses[0]).status, reason: "" };
+    subject.choose = sug ? { status: sug.status, reason: sug.reason, abandon: abandoning ? sug.reason : "", result: "", edited: false }
+      : { status: have.status, reason: have.reason, abandon: "", result: "", edited: false };
+    subject.note = null; drawHandback(subject); focusKey(panelBody, "hb-reason");
+  }
+  // What the assessment part says once a person has confirmed (now, or before): who, which status, and how it came.
+  function hbConfirmedLine(view, confirmed) {
+    const line = el("p", "ws-hb-confirmed"), by = confirmed.by_label || confirmed.by;
+    line.append(el("span", null, t("{who} 已确认：", { who: by })), hbStatusChip(view, confirmed.status));
+    if (view.suggested) line.append(el("span", "ws-agent-quiet", confirmed.adopted ? t("采纳了代理的建议") : t("改动了代理的建议")));
+    return line;
+  }
+  // The attempt the handback belongs to (its number and title) and the research assessment it has now -- what 「确认这个判断」
+  // replaces, read from the cell as the engine gave it (a cell with no known marker is 其它, all of it the reason).
+  function hbAttempt(view) {
+    const attempt = view.attempt, part = hbPart(t("尝试 #{number}：{description}", { number: attempt.number, description: attempt.label }));
+    part.classList.add("ws-hb-attempt");
+    if (attempt.verdict != null) {
+      const have = window.RODesk.assessment.parse(attempt.verdict, view.statuses), line = el("p", "ws-hb-now");
+      line.append(el("span", "ws-agent-quiet", t("现在的研究判断：")), hbStatusChip(view, have.status));
+      if (have.reason) line.append(el("span", "ws-hb-reason", have.reason));
+      part.append(line);
+    }
+    return part;
+  }
+  // A run that went out of bounds after handing in (18.1 item 4: the done mark stays the agent's and the run is what
+  // warns) says so before anything is confirmed on its word.
+  function hbWarning(view) {
+    const run = view.run;
+    if (!run || run.state !== "out_of_bounds") return null;
+    const box = el("div", "ws-hb-warning"); box.setAttribute("role", "status");
+    box.append(runLabel(run));
+    if (run.violations > 0) box.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动。确认这个判断之前，请先看一下运行日志。", { n: run.violations })));
+    return box;
+  }
+  function hbAssessment(subject) {
+    const view = subject.view, sug = view.suggested, part = hbPart(t("代理建议")), confirmed = view.confirmed, writer = hbWriter(subject);
+    if (sug) {
+      const line = el("p", "ws-hb-suggested");
+      line.append(hbStatusChip(view, sug.status));
+      if (sug.reason) line.append(el("span", "ws-hb-reason", sug.reason));
+      part.append(line);
+    } else part.append(quiet(t("代理没有给出建议。")));
+    if (confirmed) { part.append(hbConfirmedLine(view, confirmed)); return part; }
+    if (!writer) {
+      part.append(quiet(view.mode === "none" ? t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步") : t("现在说不清你在这个项目里的角色，研究判断先不能改。")));
+      return part;
+    }
+    if (!view.task || !view.attempt) {
+      // a task whose attempt row was removed or renumbered by hand names an attempt the table no longer has
+      part.append(quiet(view.task && view.task.attempt ? t("这份交回的任务所属的尝试已经不在尝试表里了，请先把任务归入一条尝试。")
+        : t("这份交回的任务还没有归入尝试，所以没有可写的研究判断。")));
+      return part;
+    }
+    if (view.run_active) { part.append(quiet(t("这个任务又有一次运行在进行，等它交回以后再确认这一份。"))); return part; }
+    const own = (view.mode === "member" && view.attempt.officialness) || {};
+    if (own.new_row && own.state === "approved") { part.append(quiet(t("这一行已经批准，正式版本里有了：先同步，再改它。"))); return part; }
+    if (view.mode === "member") part.append(quiet(t("你是这个项目的成员：确认会先写进你的工作副本，再生成提议；PI 批准后才进入正式版本。")));
+    if (sug && !sug.known) part.append(quiet(t("这个状态已经不在项目的选项里，请用「改一下」另选一个。")));
+    if (subject.choose) part.append(hbChooser(subject));
+    else if (subject.later) part.append(quiet(t("先不判断。之后可以在尝试的面板里写研究判断。")));
+    else {
+      const actions = el("div", "ws-agent-actions");
+      if (sug) {
+        // a suggestion that abandons the route still asks for the reason first (14.3): the chooser opens with it, the agent's words in it
+        const ok = keyed(button(t("确认这个判断"), () => (sug.abandons ? hbOpenChooser(subject, true) : confirmHandback(subject, sug.status, sug.reason, "")), "btn btn-primary btn-small"), "hb-confirm");
+        ok.disabled = subject.busy || !sug.known; actions.append(ok);
+        const change = keyed(button(t("改一下"), () => hbOpenChooser(subject)), "hb-change"); change.disabled = subject.busy; actions.append(change);
+        const later = keyed(button(t("先不判断"), () => { subject.later = true; drawHandback(subject); }), "hb-later"); later.disabled = subject.busy; actions.append(later);
+      } else {
+        const write = keyed(button(t("写下研究判断"), () => hbOpenChooser(subject), "btn btn-primary btn-small"), "hb-write"); write.disabled = subject.busy; actions.append(write);
+      }
+      part.append(actions);
+    }
+    return part;
+  }
+  // After a confirmation: the three ways on (21.2).
+  function hbNext(subject) {
+    const view = subject.view, actions = el("div", "ws-agent-actions ws-hb-next"), writer = hbWriter(subject);
+    if (writer && view.task && view.attempt) {
+      actions.append(keyed(button(t("再派一个任务"), () => hbNewTask(subject), "btn btn-primary btn-small"), "hb-next-task"),
+        keyed(button(t("从这条开新尝试"), () => hbNewAttempt(subject)), "hb-next-attempt"));
+    }
+    actions.append(keyed(button(t("这条先到这里"), () => { if (typeof closePanel === "function") closePanel(); }), "hb-next-stop"));
+    return actions;
+  }
+  function hbNewTask(subject) {
+    const view = subject.view;
+    if (typeof closePanel === "function") closePanel();
+    // the new task continues this one, and its research context is this handback's own record
+    const choice = { attempt: view.attempt.id, after: view.task.id, context: subject.report };
+    if (typeof startTaskOnHome === "function") startTaskOnHome(choice);
+    else startTask(choice);
+  }
+  // The new-attempt form (the attempt's table, 21.3), prefilled from the agent's `attempt_draft`, the new row 源自 this
+  // attempt: the form writes the line with the mapping write it has always used for a parent it was given.
+  // An agent that gave no draft still wrote a next step (Section 20): that is where the new attempt starts, cut to the
+  // length an attempt's description is written with elsewhere (the grouping panel's 500 characters).
+  const ATTEMPT_TEXT_LIMIT = 500;
+  function cutAttemptText(text, limit) {
+    const chars = Array.from(String(text || "").trim());
+    return chars.length <= limit ? chars.join("") : chars.slice(0, limit - 1).join("").trimEnd() + "…";
+  }
+  function hbNewAttempt(subject) {
+    const view = subject.view, draft = view.attempt_draft || {};
+    const parents = [view.attempt.id].concat((draft.parents || []).filter((id) => id !== view.attempt.id));
+    if (typeof window.ROWorkspace.onCreateAttempt !== "function") return;
+    const description = (draft.description || "").trim() ? draft.description : cutAttemptText(view.next_step, ATTEMPT_TEXT_LIMIT);
+    window.ROWorkspace.onCreateAttempt({ description: description, result: draft.result || "", parents: parents }, () => {});
+  }
+  function hbOutputs(view) {
+    const part = hbPart(t("输出")), kinds = outputKinds(), seen = [];
+    view.outputs.forEach((item) => { if (seen.indexOf(item.kind) < 0) seen.push(item.kind); });
+    seen.forEach((kind) => {
+      const group = el("div", "ws-hb-outputs"), list = el("ul", "ws-outputs-files");
+      group.append(el("h4", "ws-outputs-kind", kinds[kind] || kind));
+      view.outputs.filter((item) => item.kind === kind).forEach((item) => {
+        // 21.2, 21.7: each by its title (else its file name), opening as a text link, the path the quiet line under it
+        const li = el("li", "ws-hb-output"), name = item.title || fileName(item.path), gone = item.state === "gone", cloud = item.state === "cloud";
+        if (gone || cloud) li.append(el("span", null, name));
+        else li.append(named(openLink(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), t("打开：{file}", { file: item.path })));
+        if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
+        if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
+        if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
+        if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+        if (!gone && !cloud && kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
+          const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
+          image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
+          preview.append(image); li.append(preview);
+        }
+        list.append(li);
+      });
+      group.append(list); part.append(group);
+    });
+    return part;
+  }
+  // A report written without the 21.2 fields still has Section 20's context: its finding stands where the headline would,
+  // then its limitations and next step when it has them, under the names the key points editor gives them. They are the
+  // report's key points (21.6), so the panel says 「这份交回没有附上要点。」 only when none of the three is held.
+  function hbContext(view) {
+    return [["finding", t("发现与解释")], ["limits", t("局限与待确认")], ["next_step", t("下一步")]].filter(([key]) => view[key]).map(([key, title]) => {
+      const part = hbPart(title); part.classList.add("ws-hb-" + key.replace("_", "-"));
+      part.append(el("p", "ws-hb-text", view[key]));
+      return part;
+    });
+  }
+  // The report in full, folded -- unfolded when the handback has nothing else to read (no 21.2 field, no finding).
+  function hbReport(subject, unfolded) {
+    const view = subject.view, box = el("details", "ws-hb-report");
+    box.open = !!unfolded;
+    box.append(disclosureSummary(t("报告", { n: 1 })));
+    const body = el("div", "ws-preview"), keep = unchecked;
+    renderMarkdown(body, view.text, view.report); unchecked = keep;
+    box.append(body);
+    const tools = el("div", "ws-agent-actions");
+    tools.append(keyed(button(t("编辑报告"), () => hbEdit(subject), "ws-hb-link"), "hb-edit"));
+    box.append(tools);
+    return box;
+  }
+  function hbEdit(subject) {
+    if (typeof closePanel === "function") closePanel();
+    if (typeof openResultOnHome === "function") openResultOnHome(subject.report);
+    else openReport(subject.report);
+  }
+  function hbRunLog(subject) {
+    // the ways out of the panel are links, not buttons (21.8: a link that only navigates is a text link)
+    const view = subject.view, link = keyed(button(t("运行日志"), () => {
+      if (typeof closePanel === "function") closePanel();
+      if (typeof openRunLogOnHome === "function") openRunLogOnHome(view.task.id); else showRunLog(view.task.id);
+    }, "ws-hb-link"), "hb-log");
+    return link;
+  }
+  function drawHandback(subject) {
+    if (state.panelSubject !== subject || !subject.view) return;
+    const view = subject.view, snap = focusSnapshot(panelBody), body = el("div", "ws-hb");
+    panelTitle.textContent = view.title; panelSubtitle.textContent = hbWho(view);
+    if (panelTitle.classList) panelTitle.classList.add("plain-title");
+    if (subject.back) body.append(keyed(button(t("返回"), () => { if (subject.back) subject.back(); }, "ws-hb-link"), "hb-back"));
+    const empty = !view.headline && !view.key_numbers.length && !view.undone && !view.decide.length && !view.suggested;
+    // the context's finding, limits and next step are the key points of a report without the 21.2 fields: the line that says it
+    // has none is for when none of them is shown either
+    const context = view.headline ? [] : hbContext(view);
+    const warning = hbWarning(view);
+    if (warning) body.append(warning);
+    if (view.context_error) body.append(el("p", "ws-status err", t("这份报告的要点读不出来。")));
+    else if (empty && !view.confirmed && !context.length) body.append(quiet(t("这份交回没有附上要点。")));
+    if (view.headline) body.append(el("p", "ws-hb-headline", view.headline));
+    else context.forEach((part) => body.append(part));
+    if (view.key_numbers.length) body.append(hbNumbers(view));
+    if (view.undone) { const part = hbPart(t("没做完的")); part.append(el("p", "ws-hb-text", view.undone)); body.append(part); }
+    if (view.decide.length) {
+      const part = hbPart(t("需要你决定的")), list = el("ul", "ws-hb-decide");
+      view.decide.forEach((question) => list.append(el("li", null, question)));
+      part.append(list); body.append(part);
+    }
+    if (view.attempt) body.append(hbAttempt(view));
+    if (view.suggested || view.confirmed || (view.task && view.attempt) || subject.done) {
+      const part = hbAssessment(subject);
+      if (subject.note) { const says = el("p", "ws-status"); says.setAttribute("role", "status"); status(says, subject.note.words, subject.note.kind); part.append(says); }
+      if (subject.done) part.append(hbDone(subject));
+      body.append(part);
+    }
+    if (view.confirmed) body.append(hbNext(subject));
+    if (view.outputs.length) body.append(hbOutputs(view));
+    body.append(hbReport(subject, (!!view.context_error || (empty && !view.confirmed)) && !view.finding));
+    if (view.task && view.run) body.append(hbRunLog(subject));
+    panelBody.replaceChildren(body);
+    restoreFocus(panelBody, snap);
+  }
+  // The answer of a confirmation: what was written, what could not be recorded, and for a member the proposal to send.
+  // The PI's and a single researcher's write has 撤销 on its line (18.3), as the panel's save has -- the cell goes back as the
+  // file held it, once the row still reads as this write left it; the confirmation itself stays recorded in the report's
+  // key points (it is a record, 21.2), and the line says so. An abandonment is not offered back: its basis was frozen.
+  function hbDone(subject) {
+    const done = subject.done, response = done.response, box = el("div", "ws-hb-done");
+    if (response.mode === "member") {
+      box.append(el("p", "ws-status ok", t("已写进你的工作副本：尝试 #{number} 的研究判断。提议还没有发送。", { number: response.number })));
+      box.append(done.says, done.host);
+    } else if (subject.undone) {
+      // the confirmation went with it (the buttons are back); only when the report's record could not be taken back is it still there
+      box.append(el("p", "ws-status ok", subject.undone.kept
+        ? t("已撤销：尝试 #{number} 的研究判断改回了确认之前的样子。报告里仍记着你确认过。", { number: response.number })
+        : t("已撤销，研究判断回到了 {status}", { status: t(subject.undone.status) })));
+    } else {
+      const line = el("p", "ws-status ok", response.written ? t("已写入尝试 #{number} 的研究判断。", { number: response.number }) : t("尝试 #{number} 的研究判断本来就是这样，只记下了你的确认。", { number: response.number }));
+      if (subject.undo) {
+        const undo = keyed(button(t("撤销"), () => hbUndo(subject), "btn btn-small"), "hb-undo");
+        undo.disabled = subject.busy; line.append(" ", undo);
+      }
+      box.append(line);
+    }
+    if (response.ingest_error) box.append(el("p", "ws-status err", t("已写入并备份，但重扫失败")));
+    if (response.history_error) box.append(el("p", "ws-status err", t("研究判断已写入，但修改历史没能记下这次确认。")));
+    if (response.context_error) box.append(el("p", "ws-status err", t("研究判断已写入，但报告的要点里没能记下这次确认。")));
+    return box;
+  }
+  // The handback read again, for a page whose attempt moved under it (a confirmation refused as `handback_moved`): the
+  // attempt and its assessment as they are now, what the person was choosing left as it is.
+  async function hbReread(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    try {
+      const fresh = await apiGet("/api/workspace/handback?report=" + encodeURIComponent(subject.report) + "&project=" + encodeURIComponent(mark.project));
+      if (!here()) return;
+      fresh.unopened = false; subject.view = fresh;
+    } catch (err) { if (!here()) return; }
+    subject.busy = false; subject.undo = null;
+    subject.note = { words: t("这一行在你打开这份交回以后被改过：上面是它现在的研究判断，请看一眼再确认。"), kind: "err" };
+    drawHandback(subject);
+  }
+  async function confirmHandback(subject, statusWord, reason, abandonReason, resultWords) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    if (subject.busy || !here() || !hbWriter(subject)) return;
+    subject.busy = true; subject.note = { words: t("正在保存…") }; drawHandback(subject);
+    const view = subject.view, sent = { project: mark.project, report: subject.report, status: statusWord, reason: reason, abandon_reason: abandonReason };
+    // the cell the page showed: a row that has moved since is refused (18.3), not written over
+    if (view.attempt && typeof view.attempt.verdict === "string") sent.was = view.attempt.verdict;
+    if (resultWords && resultWords.trim()) sent.result = resultWords.trim();
+    let response;
+    try {
+      response = await apiPost("/api/workspace/handback/confirm", sent);
+    } catch (err) {
+      if (!here()) return;
+      if (err && err.state === "workspace_handback_moved") { await hbReread(subject); return; }
+      subject.busy = false; subject.note = { words: errorWords(t("没能确认这个判断。"), err), kind: "err" }; drawHandback(subject);
+      return;
+    }
+    if (!live(mark)) return;
+    if (typeof pollGeneration === "function") pollGeneration();
+    if (!here()) return;
+    subject.busy = false; subject.note = null; subject.choose = null; subject.undone = false;
+    view.confirmed = Object.assign({ by_label: response.by_label }, response.confirmed);
+    if (response.written && view.attempt && response.before) view.attempt.verdict = response.before.now_text;   // the assessment the attempt has now
+    const member = response.mode === "member";
+    subject.undo = response.written && !member && !response.decision && !response.ingest_error && response.before && window.RODesk && window.RODesk.atOnce
+      ? window.RODesk.atOnce.undoOf({ cells: { verdict: response.before } }, { number: response.number, fields: { verdict: response.cell } }, { verdict: response.before.was_text }) : null;
+    subject.done = { response: response, says: el("div", "notice-status"), host: el("div", "compose-result") };
+    drawHandback(subject);
+    if (member && typeof ROTeam !== "undefined" && ROTeam.composeInto) {
+      // The sentence is the stored Chinese one whatever the screen says: it goes into a proposal file on the shared drive,
+      // which nothing in the person's language may change (13.1). A row of the member's own that the official version does
+      // not have yet is proposed whole as a new attempt, replacing the proposal still waiting for it (as the panel does);
+      // a row of the official table as a change of its verdict, with the report's record, which says who confirmed it.
+      const own = (view.attempt && view.attempt.officialness) || {}, draft = { sentence: response.sentence.zh, number: response.number };
+      if (own.new_row) {
+        draft.kind = "attempt_new";
+        if (own.state === "proposed" && own.proposal) draft.supersedes = own.proposal;
+      } else {
+        draft.kind = "verdict_change";
+        if (response.context_path && !response.context_error) draft.only = [response.context_path];
+      }
+      if (abandonReason && abandonReason.trim()) draft.reason = abandonReason.trim();
+      ROTeam.composeInto(subject.done.host, draft, subject.done.says);
+    }
+  }
+  // 撤销 on the line of a written confirmation: the same way as the panel's (the preview, then the write).
+  async function hbUndo(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject, back = subject.undo;
+    if (!back || subject.busy || !here()) return;
+    subject.busy = true; subject.note = { words: t("正在写入…") }; drawHandback(subject);
+    let result;
+    try {
+      result = await window.RODesk.atOnce.undo(back);
+    } catch (err) {
+      if (!here()) return;
+      subject.busy = false; subject.note = { words: errorWords(t("写入失败，文件没有被修改"), err), kind: "err" }; drawHandback(subject);
+      return;
+    }
+    if (typeof pollGeneration === "function" && live(mark)) pollGeneration();
+    subject.busy = false; subject.undo = null;
+    if (result.state !== "done") {
+      if (!here()) return;
+      subject.note = { words: result.state === "abandons" ? t("撤销会让这条路线重新放弃，需要写明理由：请把研究判断改回已放弃，再保存。") : t("这一行之后又改过，不能撤销。"), kind: "err" };
+      drawHandback(subject);
+      return;
+    }
+    // The cell is back. The two steps are the page's, not one write, so the second is not dropped because the panel was
+    // closed or replaced meanwhile: only drawing it depends on the panel still being the one shown.
+    const view = subject.view;
+    if (view.attempt && typeof back.text.verdict === "string") view.attempt.verdict = back.text.verdict;
+    // the status the row is back to, said on the line that replaces 撤销
+    const now = typeof back.text.verdict === "string" ? window.RODesk.assessment.parse(back.text.verdict, view.statuses) : null;
+    subject.undone = { status: now ? now.status : "", kept: false };
+    await hbUnconfirm(subject);
+  }
+  // 撤销 also takes the confirmation back: the report's context loses `assessment_confirmed` (the one writer is the page's,
+  // 21.2), so that the handback offers its three buttons again and does not say a person confirmed what the row no longer says.
+  async function hbUnconfirm(subject) {
+    const mark = subject.mark, here = () => live(mark) && state.panelSubject === subject;
+    subject.busy = true; subject.note = { words: t("正在写入…") };
+    if (here()) drawHandback(subject);
+    try {
+      await apiPost("/api/workspace/handback/unconfirm", { project: mark.project, report: subject.report });
+    } catch (err) {
+      subject.busy = false; subject.undone.kept = true;
+      if (!here()) return;
+      subject.note = { words: errorWords(t("研究判断已改回，但报告的要点里没能撤销这次确认。"), err), kind: "err" };
+      drawHandback(subject);
+      return;
+    }
+    if (typeof pollGeneration === "function" && live(mark)) pollGeneration();
+    subject.busy = false; subject.note = null; subject.view.confirmed = null;
+    if (here()) drawHandback(subject);
+  }
+  // Marked opened for this person (kept on this Mac), and the cards that count what waits are drawn again.
+  async function hbMarkOpened(subject) {
+    if (!subject.view.unopened) return;
+    try { await apiPost("/api/workspace/handback/opened", { project: subject.mark.project, report: subject.report }); } catch (err) { return; }
+    if (!live(subject.mark)) return;
+    subject.view.unopened = false;
+    if (typeof refreshCurrentView === "function") refreshCurrentView();
+  }
+  async function openHandback(report, options) {
+    if (typeof mayReplacePanel === "function" && !mayReplacePanel()) return false;
+    const mark = stamp();
+    const subject = { kind: "handback", mark: mark, report: report, view: null, busy: false, choose: null, note: null, done: null, later: false,
+      back: (options && options.back) || null,
+      get dirty() { return !!this.choose && !!this.choose.edited; },
+      set dirty(on) { if (!on && this.choose) this.choose.edited = false; } };
+    folderSubject = subject; state.panelSubject = subject;
+    panelTitle.textContent = t("交回"); panelSubtitle.textContent = ""; panelBody.replaceChildren(); openPanel();
+    const note = el("p", "ws-status"); panelBody.append(note); status(note, t("载入中…"));
+    try {
+      const view = await apiGet("/api/workspace/handback?report=" + encodeURIComponent(report) + "&project=" + encodeURIComponent(mark.project));
+      if (!live(mark) || state.panelSubject !== subject) return false;
+      subject.view = view; drawHandback(subject);
+      hbMarkOpened(subject);
+    } catch (err) {
+      if (live(mark) && state.panelSubject === subject) status(note, errorWords(t("没能读取这份交回。"), err), "err");
+      return false;
+    }
+    return true;
+  }
+  // -- 现在在做什么 (DESIGN.md 21.4) ------------------------------------------------------------
+  // The top of the page: the attempts in progress as cards (the figures of the route map's cards, the engine's
+  // `attempt_tasks.by_attempt` reading, not counted here) and 等你处理, the one list desk.js draws and counts for
+  // the sidebar. Both come from one read of `/api/workspace/now`; the section is left out until that has answered, and
+  // a read that fails leaves what was last drawn.
+  let nowData = null, nowRequest = 0;
+  async function loadNow(mark) {
+    const token = ++nowRequest;
+    let fresh;
+    try { fresh = await apiGet("/api/workspace/now"); } catch (err) { return; }
+    if (!live(mark) || token !== nowRequest || !fresh || fresh.project !== project()) return;
+    const same = !!nowData && JSON.stringify(nowData) === JSON.stringify(fresh);
+    const regroup = !nowData || JSON.stringify(nowData.home) !== JSON.stringify(fresh.home);
+    nowData = fresh;
+    if (window.RODesk && typeof window.RODesk.noteNeeds === "function") window.RODesk.noteNeeds(fresh.needs);
+    if (!same || !ui.now.childElementCount) renderNow();   // an answer that did not change is not drawn again
+    // 报告 and 全部任务 stand in the engine's order and say its states (21.4): drawn again only when those moved
+    if (regroup && data) { renderNav(); refreshTasks(); }
+    catchUpNow(mark, fresh);
+  }
+  // A shared folder too slow for the first read (14.4: slow, or stale -- what it last read) leaves a notice and none of the
+  // PI's proposals in the answer. 研究路线 reads again a little later (desk.js catchUp: 5 s, three times); so does the home,
+  // while it is on screen, which joins the read still in flight rather than starting another.
+  const CATCH_UP_MS = 5000, CATCH_UP_TRIES = 3;
+  let catchUpTimer = null, catchUpTries = 0;
+  function catchUpNow(mark, fresh) {
+    const state = fresh.shared && fresh.shared.state;
+    if (state !== "slow" && state !== "stale") { catchUpTries = 0; return; }
+    if (catchUpTimer !== null || catchUpTries >= CATCH_UP_TRIES || !onWorkspace()) return;
+    catchUpTries += 1;
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null;
+      if (live(mark) && onWorkspace()) loadNow(mark);
+    }, CATCH_UP_MS);
+  }
+  function renderNow() {
+    if (!ui || !ui.now) return;
+    const box = ui.now; box.replaceChildren();
+    box.classList.toggle("hidden", !nowData);
+    if (!nowData) return;
+    const parts = el("div", "ws-now-parts");
+    parts.append(nowAttempts(), nowNeeds());
+    box.append(el("h2", "ws-now-title", t("现在在做什么")), parts);
+  }
+  function nowAttempts() {
+    const part = el("section", "ws-now-part");
+    part.append(el("h3", "ws-now-heading", t("进行中的尝试")));
+    const progress = nowData.progress || { attempts: [], holding: 0 };
+    if (!progress.attempts.length) {
+      part.append(el("p", "ws-empty ws-now-none", progress.holding ? t("现在没有进行中的尝试。") : noTaskWords()));
+      return part;
+    }
+    const cards = el("ul", "ws-now-cards");
+    progress.attempts.forEach((attempt) => cards.append(nowCard(attempt)));
+    part.append(cards);
+    return part;
+  }
+  // A card: the attempt (opened in the side panel, as the route map's cards open it), its assessment, the progress line
+  // 「任务 n，未完成 m」 or 「任务 n，全部完成」, 「等你看 n」 when a handback waits (it opens the first of them) and the first line of
+  // the latest handback (it opens that one).
+  function nowCard(attempt) {
+    const card = el("li", "ws-now-card"), work = attempt.work || {};
+    const open = el("button", "ws-now-open");
+    open.type = "button";
+    open.append(el("span", "ws-now-num", "#" + String(attempt.number).replace(/^#/, "")), el("span", "ws-now-name", attempt.title || ""));
+    open.addEventListener("click", () => { if (window.RODesk && window.RODesk.openAttemptAnywhere) window.RODesk.openAttemptAnywhere(attempt.id); });
+    const meta = el("div", "ws-now-meta"), status = attempt.route_status || {};
+    const word = window.RODesk && window.RODesk.verdictWord ? window.RODesk.verdictWord(status) : status.label;
+    meta.append(el("span", "status-label tone-" + (attempt.tone || "plain"), word));
+    if (attempt.date) meta.append(el("span", "ws-now-date", attempt.date));
+    const progress = el("div", "ws-now-work"), unfinished = work.unfinished || 0;
+    progress.append(el("span", "ws-now-tasks", unfinished ? t("任务 {n}，未完成 {open}", { n: work.tasks, open: unfinished }) : t("任务 {n}，全部完成", { n: work.tasks })));
+    const waiting = (work.items || []).find((item) => item.unopened && item.report);
+    if (work.unopened > 0 && waiting) progress.append(button(t("等你看 {n}", { n: work.unopened }), () => openHandback(waiting.report), "ws-now-look"));
+    card.append(open, meta, progress);
+    if (work.latest && work.latest.line) card.append(button(work.latest.line, () => openHandback(work.latest.report), "ws-now-line"));
+    return card;
+  }
+  // No attempt holds a task: the way in depends on what the project has. Tasks that belong to no attempt (Quant before its
+  // grouping) are grouped, or an attempt is started in the task form; a project with no attempt at all starts one there; a
+  // project with attempts opens one in 研究路线 and adds the task in its panel. A route map with no attempt has nothing to open.
+  function noTaskWords() {
+    if (data && hasLooseTasks()) return t("还没有挂着任务的尝试。全部任务下的「把这些任务归入尝试…」可以把已有的任务归到尝试里，也可以在任务表单里选「新开一条尝试…」。");
+    if (data && !(data.attempts || []).length) return t("还没有挂着任务的尝试。在任务表单里选「新开一条尝试…」，写下第一个任务。");
+    return t("还没有挂着任务的尝试。在研究路线里打开一条尝试，选「在这条尝试下加任务」。");
+  }
+  function nowNeeds() {
+    const part = el("section", "ws-now-part"), body = el("div", "ws-now-needs");
+    part.append(el("h3", "ws-now-heading", t("等你处理")), body);
+    if (window.RODesk && typeof window.RODesk.needsList === "function") window.RODesk.needsList(body, () => (nowData && nowData.needs) || null);
+    return part;
+  }
+  // 「回答」 in 等你处理: the task's row with the reply form open and the cursor in it (the row is opened first, as for
+  // 「运行日志」). The page's runs can be older than the list that sent the person here (the home polls only while it is on
+  // screen, so a run that asked meanwhile is still 运行中 here, and in a session's first load they are not in yet): when
+  // they do not show a run waiting for an answer they are read once more before the row is called one that cannot be
+  // answered. A run that cannot be answered any more only brings its row into view.
+  async function answerRun(taskId) {
+    if (!data || !ui) return false;
+    const mark = stamp();
+    const disclosure = taskDisclosures[taskId];
+    taskOpen[taskId] = true;
+    if (disclosure) { disclosure.open = true; if (disclosure.node) disclosure.node.open = true; }
+    const answerable = () => { const run = latestRun(taskId); return !!run && outcomeOf(run) === "needs_input" && !!run.can_reply; };
+    if (!answerable()) {
+      await syncRuns(mark, { reload: false });
+      if (!live(mark) || !data || !ui) return false;
+    }
+    if (answerable()) {
+      agentState(taskId).reply = "answer"; updateAgentSections();
+      focusKey(sections[taskId], "agent:" + taskId + ":reply");
+    }
+    const row = rowNodes[taskId];
+    if (row && typeof row.scrollIntoView === "function") row.scrollIntoView();
+    return true;
+  }
+
+  // 「运行日志」 (the link at the foot of a handback): the task's row on 项目首页 with its run's log open.
+  function showRunLog(taskId) {
+    if (!data || !ui) return false;
+    // the log sits inside the row's disclosure: a task that is not among the newest three is closed until the person
+    // opens it, and would show a closed title and no log
+    const disclosure = taskDisclosures[taskId];
+    taskOpen[taskId] = true;
+    if (disclosure) { disclosure.open = true; if (disclosure.node) disclosure.node.open = true; }
+    agentState(taskId).log = true; updateAgentSections();
+    if (latestRun(taskId)) ensureDetails(stamp());
+    const row = rowNodes[taskId];
+    if (row && typeof row.scrollIntoView === "function") row.scrollIntoView();
+    return true;
+  }
+  // 「打开结果」 on a task whose latest run handed its report back is the handback; any other report is opened to write in.
+  function openResult(task) {
+    const run = latestRun(task.id);
+    if (run && run.report && run.report === task.report && !run.reverted) return openHandback(task.report);
+    return openReport(task.report);
+  }
+
   // -- the owner control: people and this Mac's agents ------------------------------------------
   function ownerChoices() {
     const list = [{ value: "", words: t("不指定") }];
     if (people.me) list.push({ value: people.me, words: t("{name}（我）", { name: people.me }) });
+    else if (people.loaded && soloProject()) list.push({ value: OWNER_ME, words: t("我") });
     people.team.forEach((name) => { if (!list.some((c) => c.value === name)) list.push({ value: name, words: name }); });
     return list;
   }
+  // 21.4: people and agents stand in two labelled groups (an <optgroup> each) under 「不指定」, which is neither; an agent is named by
+  // the agent and its model, as everywhere else (`ownerLabel`).
   function fillOwnerOptions(select) {
     const current = taskDraft.custom ? OWNER_OTHER : taskDraft.owner;
-    const people_ = ownerChoices(), agents = ((agentInfo && agentInfo.agents) || []).map((a) => ({ value: a.owner, words: a.label }));
-    const choices = people_.slice();
-    // A name typed by hand earlier, or an agent this Mac does not have, stays selectable while it is the value.
-    if (current && current !== OWNER_OTHER && ![...people_, ...agents].some((c) => c.value === current)) choices.push({ value: current, words: ownerLabel(current) });
-    choices.push({ value: OWNER_OTHER, words: t("其他人…") }, ...agents);
-    if (agentInfo && !agents.length) choices.push({ value: OWNER_SETTINGS, words: t("设置 AI 执行者…") });
-    select.replaceChildren(...choices.map((c) => { const option = el("option", null, c.words); option.value = c.value; return option; }));
+    const [none, ...team] = ownerChoices(), known = ((agentInfo && agentInfo.agents) || []).map((a) => ({ value: a.owner, words: a.label }));
+    const persons = team.slice(), agents = known.slice();
+    // A name typed by hand earlier, or an agent this Mac does not have, stays selectable while it is the value, in its own group.
+    if (current && current !== OWNER_OTHER && ![...team, ...known].some((c) => c.value === current)) {
+      (/^agent:/.test(current) ? agents : persons).push({ value: current, words: ownerLabel(current) });
+    }
+    persons.push({ value: OWNER_OTHER, words: t("其他人…") });
+    if (agentInfo && !known.length) agents.push({ value: OWNER_SETTINGS, words: t("设置 AI 执行者…") });
+    const option = (c) => { const node = el("option", null, c.words); node.value = c.value; return node; };
+    const group = (words, choices) => { const node = el("optgroup"); node.label = words; node.append(...choices.map(option)); return node; };
+    select.replaceChildren(option(none), group(t("人员"), persons), ...(agents.length ? [group(t("这台电脑上的 AI 执行者"), agents)] : []));
     select.value = current;
   }
   function refreshOwnerOptions() {
     if (ui && ui.ownerSelect) fillOwnerOptions(ui.ownerSelect);
-    Object.keys(metaNodes).forEach((id) => { const task = data && (data.tasks || []).find((x) => x.id === id); if (task) setMeta(task, metaNodes[id]); });
+    Object.keys(factNodes).forEach((id) => { const task = data && (data.tasks || []).find((x) => x.id === id); if (task) setFacts(task, factNodes[id]); });
   }
   function chooseOwner(select) {
     const value = select.value, wasCustom = taskDraft.custom;
@@ -1154,7 +2379,7 @@
       return;
     }
     taskDraft = Object.assign({}, taskDraft, { custom: false, owner: value });
-    if (wasCustom) renderTasks();
+    if (wasCustom) renderTasks(); else syncRunButton();
   }
 
   // -- what the page knows of the Mac, the people and the runs ----------------------------------
@@ -1216,11 +2441,16 @@
       people.loaded = true; refreshOwnerOptions();
     } finally { if (live(mark)) people.loading = false; }
   }
+  function runsSig() { return runsInfo.runs.map((r) => r.id + ":" + r.state + (r.reverted ? ":r" : "")).join("|"); }
   function applyRuns(fresh) {
+    const was = runsSig();
     runsInfo = { runs: Array.isArray(fresh && fresh.runs) ? fresh.runs : [], active: (fresh && fresh.active) || null };
+    if (runsSeen && runsSig() !== was) runsMoved = true;
+    runsSeen = true;
   }
   function mergeRun(run) {
     if (!run || !run.id) return;
+    runsMoved = true;   // a run this page just started, stopped or answered is a move
     const index = runsInfo.runs.findIndex((r) => r.id === run.id);
     if (index < 0) runsInfo.runs.unshift(run); else runsInfo.runs[index] = run;
     if (isActiveState(run.state)) runsInfo.active = run.id; else if (runsInfo.active === run.id) runsInfo.active = null;
@@ -1239,6 +2469,7 @@
     }
     if (!live(mark)) return false;
     pollFails = 0; offline = false; showConnection(); applyRuns(fresh);
+    if (runsMoved && nowData) { runsMoved = false; loadNow(mark); }
     const ended = before.some((id) => !activeIds().includes(id));
     ensureDetails(mark); updateAgentSections();
     const reload = opts && opts.reload;
@@ -1353,6 +2584,7 @@
   }
   function updateAgentSections() {
     if (!ui || !ui.tasks) return;
+    syncRunButton();
     (data.tasks || []).forEach((task) => {
       lockRow(task);
       drawTaskOutputs(task);
@@ -1368,6 +2600,7 @@
       if (old.dataset.sig === agentSig(task)) return;
       replaceSection(task, old, agentSection(task));
     });
+    syncPrimary();   // a reply form or an undo question that opened or closed moves the page's primary button
   }
   function runLabel(run) {
     const partly = run.reverted && run.revert_skipped > 0;
@@ -1393,11 +2626,11 @@
     }
     if (line.childElementCount) live.append(line);
     if (run && outcomeOf(run) === "needs_input" && run.question) live.append(el("p", "ws-agent-question", run.question));
-    if (run && run.violations > 0) live.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动，详见运行记录。", { n: run.violations })));
+    if (run && run.violations > 0) live.append(el("p", "ws-agent-oob", t("有 {n} 处越界改动，详见运行日志。", { n: run.violations })));
     if (run && run.error) live.append(errorBlock(run, st));
     box.append(live);
     const actions = el("div", "ws-agent-actions");
-    if (agent && !task.done && (!run || (!active && !(outcomeOf(run) === "needs_input" && run.can_reply)))) {
+    if (runnable(task, agent)) {
       const go = keyed(named(button(t("运行"), () => startRun(task, agent)), t("运行：{task}", who)), k("run"));
       go.disabled = !allowed || anyActive();
       if (allowed && anyActive()) go.title = t("这个项目里还有一次运行没有结束。");
@@ -1405,7 +2638,7 @@
     }
     if (run && run.can_stop) { const stop = keyed(named(button(t("停止"), () => stopRun(task, run)), t("停止：{task}", who)), k("stop")); stop.disabled = busy; actions.append(stop); }
     if (run) {
-      const log = keyed(named(button(t("运行记录"), () => toggleLog(task)), t("运行记录：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
+      const log = keyed(named(button(t("运行日志"), () => toggleLog(task), "ws-text-link has-chevron"), t("运行日志：{task}", who)), k("log")); log.setAttribute("aria-expanded", String(st.log)); actions.append(log);
     }
     if (run && outcomeOf(run) === "needs_input" && run.can_reply) {
       const answer = keyed(named(button(t("回答"), () => toggleReply(task, "answer")), t("回答：{task}", who)), k("answer")); answer.setAttribute("aria-expanded", String(reply === "answer"));
@@ -1419,7 +2652,7 @@
       const undo = keyed(named(button(t("撤回本次运行"), () => revertRun(task, run)), t("撤回本次运行：{task}", who)), k("undo"));
       undo.setAttribute("aria-expanded", String(!!st.undo)); undo.disabled = !allowed; actions.append(undo);
     }
-    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openReport(task.report)), t("打开结果：{task}", who)), k("report")));
+    if (task.report) actions.append(keyed(named(button(t("打开结果"), () => openResult(task), "ws-text-link"), t("打开结果：{task}", who)), k("report")));
     if (actions.childElementCount) box.append(actions);
     const note = agentNotes[task.id];
     if (note) box.append(noteBlock(note));
@@ -1466,8 +2699,8 @@
 
   // -- 任务输出: a task's files in its row (DESIGN.md 19.6) -------------------------------------------------------
   // Under the run controls of a task with a result record: the files registered for it by kind (the 输出目录 panel's
-  // words), each opening in the file panel and each with 移除登记 (the 过程文件 group is its count until opened, any other
-  // past 8 files has 「另外 N 个」: 19.12 item 2); the new files that nobody registered, of every run of the task that is
+  // words), each opening in the file panel and each with 移除登记 (the 过程文件 group is its count until opened; it and any other
+  // past 8 files has 「另外 N 个」: 19.12 item 2, 21.8); the new files that nobody registered, of every run of the task that is
   // not undone (19.12 item 7); the task's process folder (19.12 item 1) with the files in it now. The engine's
   // `task_outputs` (one answer with the page) has the
   // facts; the place sits inside the task's details, so it collapses with them, and is drawn again only when what it
@@ -1485,17 +2718,18 @@
       (opened && opened.all) || {}]);
   }
   function outputRow(task, item, locked) {
-    const li = el("li", "ws-output"), name = item.title || item.path, gone = item.state === "gone", cloud = item.state === "cloud";
+    // 21.7: by its title, else its file name; opening is a text link and the path is the quiet line under the title
+    const li = el("li", "ws-output"), name = item.title || fileName(item.path), gone = item.state === "gone", cloud = item.state === "cloud";
     // a registration whose file is gone stays here, to be removed (19.6): there is nothing to open, nothing to preview;
     // so does one whose file is there but only in the cloud, which cannot be read on this Mac
     if (gone || cloud) li.append(el("span", null, name));
-    else li.append(keyed(button(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
-    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
+    else li.append(keyed(openLink(name, () => { if (typeof openFilePanel === "function") openFilePanel(item.path); }), "output-open:" + task.id + ":" + item.path));
     if (item.state === "changed") li.append(el("span", "ws-agent-quiet", t("文件已改动")));
     if (gone) li.append(el("span", "ws-agent-quiet", t("文件已不在")));
     if (cloud) li.append(el("span", "ws-agent-quiet", t("文件只在云端")));
     const remove = keyed(named(button(t("移除登记"), () => removeRegistration(task, item)), t("移除登记：{file}", { file: name })), "output-remove:" + task.id + ":" + item.path);
     remove.disabled = locked; li.append(remove);
+    if (name !== item.path) li.append(el("code", "ws-output-path", item.path));
     if (!gone && !cloud && item.kind === "figure" && /\.(png|jpe?g|gif|webp)$/i.test(item.path)) {
       const preview = el("div", "ws-output-preview"), image = el("img", "ws-output-figure");
       image.src = "/api/workspace/asset?path=" + encodeURIComponent(item.path); image.alt = name; image.loading = "lazy";
@@ -1513,8 +2747,8 @@
     open.disabled = !editable() || !!outputBusy[task.id] || isActiveState(run.state);
     line.append(open);
   }
-  // How many files of a group the row shows before 「另外 N 个」 (DESIGN.md 19.12 item 2); the 过程文件 group, once opened,
-  // shows them all.
+  // How many files of a group the row shows before 「另外 N 个」 (DESIGN.md 19.12 item 2, 21.8): every group, the 过程文件 group
+  // once opened included.
   const OUTPUT_SHOWN = 8;
   function outputState(task) { return outputOpen[task.id] || (outputOpen[task.id] = { process: false, all: {} }); }
   // The rest of a group, opened: drawn again with every file, and the focus goes to the first file that was not shown.
@@ -1532,7 +2766,7 @@
     const run = latestRun(task.id), locked = !editable() || !!outputBusy[task.id] || (!!run && isActiveState(run.state));
     const box = el("div", "ws-outputs");
     box.append(el("h3", "ws-outputs-title", t("任务输出")));
-    if (info.error) box.append(el("p", "ws-status err", t("输出清单暂时无法读取。")));
+    if (info.error) box.append(el("p", "ws-status err", t("输出列表暂时无法读取。")));
     else if (!entries.length) box.append(quiet(t("还没有登记的文件。")));
     const kinds = outputKinds();
     Object.keys(kinds).forEach((kind) => {
@@ -1545,10 +2779,17 @@
         // (and stays open, or closed, when the row is drawn again)
         const fold = el("details", "ws-outputs-process"), summary = keyed(disclosureSummary(kinds[kind]), "output-group:" + task.id + ":work");
         summary.classList.add("ws-outputs-kind"); summary.append(count);
-        group.forEach((item) => list.append(outputRow(task, item, locked)));
+        // opened, it lists its first files and 「另外 N 个」 for the rest like the other groups (21.8): a task can have registered hundreds
+        const shownWork = opened.all.work ? group : group.slice(0, OUTPUT_SHOWN);
+        shownWork.forEach((item) => list.append(outputRow(task, item, locked)));
         fold.open = !!opened.process;
         fold.addEventListener("toggle", () => { opened.process = fold.open; });
         fold.append(summary, list);
+        if (shownWork.length < group.length) {
+          const rest = countText(group.length - shownWork.length);
+          fold.append(keyed(named(button(t("另外 {n} 个", { n: rest }), () => showAllOutputs(task, kind, group[shownWork.length])), t("另外 {n} 个：{kind}", { n: rest, kind: kinds[kind] })),
+            "output-more:" + task.id + ":" + kind));
+        }
         box.append(fold);
         return;
       }
@@ -1898,7 +3139,11 @@
   }
   function undoItems(open) { return open && open.plan ? (open.plan.restore || []).concat(open.plan.remove || []) : []; }
   function undoTicked(open) { return undoItems(open).filter((item) => !open.off[item.path]); }
-  function whenWords(iso) { return typeof iso === "string" && iso.length >= 16 ? iso.slice(0, 10) + " " + iso.slice(11, 16) : ""; }
+  // A run's or a file's time in this Mac's own time (21.8), 2026-10-30 16:33: RODesk.whenWords is the one function that converts a
+  // stored time, whatever zone it was written in; "" for what is no time with hours and minutes.
+  function whenWords(iso) {
+    return typeof iso === "string" && window.RODesk && typeof window.RODesk.whenWords === "function" ? window.RODesk.whenWords(iso, new Date(), "full") : "";
+  }
   // A group of the list under a disclosure with 12.13's chevron, open until the person closes it (and kept as they left it).
   function undoGroup(st, key, title, content) {
     const box = el("details", "res-draft"), summary = el("summary", "res-draft-summary");
@@ -1930,7 +3175,7 @@
     const restore = open.plan.restore || [], remove = open.plan.remove || [], cannot = open.plan.cannot || [], items = undoItems(open);
     const boxes = [];
     const count = el("p", "ws-agent-quiet"), kept = el("p", "ws-agent-quiet");
-    const confirm = keyed(named(button(t("确认撤回"), () => confirmUndo(task, run, st), "btn btn-primary btn-small"), t("确认撤回：{task}", who)), k("undo-confirm"));
+    const confirm = keyed(named(button(t("确认撤回"), () => confirmUndo(task, run, st), "btn btn-primary btn-small ws-ask"), t("确认撤回：{task}", who)), k("undo-confirm"));
     // Ticking or clearing a box changes the buttons and the two lines here, not the list: a long list keeps its place.
     function sync() {
       const n = undoTicked(open).length;
@@ -2014,7 +3259,7 @@
       return agentAction(task, () => apiPost("/api/agents/runs/" + encodeURIComponent(run.id) + "/reply", { project: project(), message: message }), {
         failed: t("没能发送。"), reload: true, after: () => closeReply(st),
       });
-    }, "btn btn-primary btn-small");
+    }, "btn btn-primary btn-small ws-ask");
     const cancel = button(t("取消"), () => { closeReply(st); updateAgentSections(); focusKey(sections[task.id], "agent:" + task.id + ":" + kind); });
     keyed(send, "agent:" + task.id + ":send"); keyed(cancel, "agent:" + task.id + ":cancel");
     named(send, t("发送：{task}", { task: task.text })); named(cancel, t("取消：{task}", { task: task.text }));
@@ -2041,7 +3286,7 @@
     const box = el("div", "ws-run-details");
     if (!loaded) { box.append(el("p", "ws-status", t("正在读取…"))); return box; }
     if (loaded.error || !loaded.data) {
-      box.append(el("p", "ws-status err", errorWords(t("没能读取运行记录。"), loaded.error)));
+      box.append(el("p", "ws-status err", errorWords(t("没能读取运行日志。"), loaded.error)));
       const again = keyed(button(t("重试"), () => { delete details[run.id]; fetchDetail(run, stamp()); updateAgentSections(); }), "agent:" + (task ? task.id : run.task_id) + ":retry");
       box.append(again);
       return box;
@@ -2102,17 +3347,28 @@
     return box;
   }
 
-  // -- 设置: this Mac's agents (17.1) -----------------------------------------------------------------
-  function toggleSettings() {
-    if (settingsOpen) { settingsOpen = false; stopStoreTimer(); renderTasks(); return; }
-    openSettings();
+  // -- 设置: this Mac's agents (17.1; DESIGN.md 21.7) --------------------------------------------------
+  // The form is on the 设置 page (app.html), the one place this Mac's settings are changed: 项目首页 keeps a text link to it
+  // and the owner control a way to it, and the page gives `mountSettings` the box to draw in.
+  function settingsLink() {
+    const line = el("span", "ws-settings-line");
+    line.append(el("span", "ws-agent-quiet", t("AI 执行者")), " ", keyed(openLink(t("在设置里修改"), openSettings), "settings-link"));
+    return line;
   }
   function openSettings() {
-    settingsOpen = true; renderTasks();
+    if (typeof mayReplacePanel === "function" && !mayReplacePanel()) return;
+    if (typeof openSettingsPanel === "function") openSettingsPanel("agents");
+  }
+  function settingsLive() {
+    return !!settingsHost && !!settingsSubject && typeof state !== "undefined" && state.panelSubject === settingsSubject &&
+      typeof panel !== "undefined" && !panel.classList.contains("hidden");
+  }
+  function mountSettings(box, subject) {
+    settingsHost = box; settingsSubject = subject; sui = {}; settingsNote = null;
+    renderSettings(true);
     // The programs may have been installed since the page opened.
-    if (agentInfo) loadAgentInfo(stamp(), true);
+    loadAgentInfo(stamp(), true);
     loadStore(stamp());
-    if (ui && ui.settings && typeof ui.settings.scrollIntoView === "function") ui.settings.scrollIntoView();
   }
   async function saveAgentSettings(body, doneWords, onDone) {
     if (settingsBusy) return;
@@ -2157,22 +3413,34 @@
     return control;
   }
   function fillEffortList() {
-    if (!ui || !ui.effortSlot) return;
-    ui.effortSlot.classList.toggle("hidden", !effortLevels(settingsInputs.runner, settingsInputs.model).length);
+    if (!sui.effortSlot) return;
+    sui.effortSlot.classList.toggle("hidden", !effortLevels(settingsInputs.runner, settingsInputs.model).length);
     if (!effortLevels(settingsInputs.runner, settingsInputs.model).includes(settingsInputs.effort)) settingsInputs.effort = "";
-    ui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
+    sui.effortSlot.replaceChildren(effortSelect(settingsInputs.runner, settingsInputs.model, settingsInputs.effort, "set-effort", (level) => { settingsInputs.effort = level; }));
   }
   function quiet(words) { return el("p", "ws-agent-quiet", words); }
+  // 21.7: the version as a person reads it, the number in the line `--version` printed -- "2.1.309 (Claude Code)" and
+  // "codex-cli 0.164.0-alpha.11.1" say the program's name again beside the title that already names it. A line with no
+  // number in it is shown as it is; the line as printed is the hover, and nothing stored changes.
+  function versionNumber(line) {
+    const found = /\d+(?:\.\d+)+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?/.exec(String(line));
+    return found ? found[0] : String(line);
+  }
   function runnerBlock(r) {
     const row = el("div", "ws-runner"), program = PROGRAMS[r.runner] || r.runner;
-    row.append(el("h4", "ws-runner-name", RUNNER_NAMES[r.runner] || r.label || r.runner));
-    const where = el("p", "ws-runner-where");
-    if (r.path) where.append(el("code", null, r.path));
-    if (r.found && r.version) where.append(el("span", "ws-agent-meta", t("版本 {version}", { version: r.version })));
-    if (r.problem === "missing" || !r.path) where.append(el("span", "ws-agent-meta", t("没有找到这个程序")));
-    else if (r.problem === "not_executable") where.append(el("span", "ws-agent-meta bad", t("找到了文件，但它不能运行")));
-    else if (r.problem === "no_version") where.append(el("span", "ws-agent-meta bad", t("找到了，但没能读到版本号")));
-    row.append(where);
+    // 21.7: the program's name and its version are the title, and where it is stands under it as a quiet line, never as the line itself
+    const head = el("div", "ws-runner-head");
+    head.append(el("h4", "ws-runner-name", RUNNER_NAMES[r.runner] || r.label || r.runner));
+    if (r.found && r.version) {
+      const number = versionNumber(r.version), version = el("span", "ws-agent-meta", t("版本 {version}", { version: number }));
+      if (number !== r.version) version.title = r.version;   // what the program printed, as it printed it
+      head.append(version);
+    }
+    if (r.problem === "missing" || !r.path) head.append(el("span", "ws-agent-meta", t("没有找到这个程序")));
+    else if (r.problem === "not_executable") head.append(el("span", "ws-agent-meta bad", t("找到了文件，但它不能运行")));
+    else if (r.problem === "no_version") head.append(el("span", "ws-agent-meta bad", t("找到了，但没能读到版本号")));
+    row.append(head);
+    if (r.path) row.append(el("code", "ws-output-path", r.path));
     if (!r.found || r.problem) {
       const path = keyed(input("text"), "set-path:" + r.runner), runnerName = RUNNER_NAMES[r.runner] || r.label || r.runner;
       path.placeholder = t("程序的完整路径，例如 /usr/local/bin/{program}", { program: program });
@@ -2194,25 +3462,25 @@
     return row;
   }
   function fillModelList() {
-    if (!ui || !ui.modelList) return;
+    if (!sui.modelList) return;
     const runner = settingsInputs.runner;
     const catalog = modelsState[runner] || {};
     const names = runner === "claude-code" ? ((agentInfo && agentInfo.claude_models) || [])
       : runner === "deepseek-harness" ? ((agentInfo && agentInfo.harness_models) || []) : (catalog.list || []);
     const placeholder = el("option", null, t("选择模型版本…")); placeholder.value = "";
     const custom = el("option", null, t("手动填写完整 ID…")); custom.value = "__custom__";
-    ui.modelList.replaceChildren(placeholder, ...names.map((name) => {
+    sui.modelList.replaceChildren(placeholder, ...names.map((name) => {
       const match = runner === "claude-code" && /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-(\d{8}))?$/.exec(name);
       const label = match ? match[1][0].toUpperCase() + match[1].slice(1) + " " + match[2] + (match[3] ? "." + match[3] : "") + " · " + name
         : runner === "deepseek-harness" ? (name.startsWith("deepseek-account/") ? t("账户") : "API Key") + " · " + name : name;
       const option = el("option", null, label); option.value = name; return option;
     }), custom);
     const manual = settingsInputs.customModel || (!!settingsInputs.model && !names.includes(settingsInputs.model));
-    ui.modelList.value = manual ? "__custom__" : settingsInputs.model;
-    ui.modelCustom.classList.toggle("hidden", !manual);
-    ui.modelInput.value = settingsInputs.model;
-    if (ui.modelNote) {
-      ui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
+    sui.modelList.value = manual ? "__custom__" : settingsInputs.model;
+    sui.modelCustom.classList.toggle("hidden", !manual);
+    sui.modelInput.value = settingsInputs.model;
+    if (sui.modelNote) {
+      sui.modelNote.textContent = catalog.error ? errorWords(t("没能读取模型列表，可以手动填写完整模型 ID。"), catalog.error)
         : catalog.loading ? t("正在读取…") : "";
     }
     fillEffortList();
@@ -2259,15 +3527,15 @@
     const form = el("div", "ws-agent-add"), runner = keyed(el("select", "form-input"), "set-runner"), model = keyed(input("text", t("模型名")), "set-model");
     (agentInfo.runners || []).forEach((r) => { const option = el("option", null, RUNNER_NAMES[r.runner] || r.label || r.runner); option.value = r.runner; runner.append(option); });
     runner.value = settingsInputs.runner; model.value = settingsInputs.model; model.className += " form-mono";
-    ui.modelInput = model;
-    ui.modelList = keyed(el("select", "form-input form-mono"), "set-model-version");
-    ui.modelList.id = "ws-model-list"; ui.modelList.disabled = settingsBusy;
-    ui.modelCustom = field(t("完整模型 ID"), model);
-    ui.modelNote = el("p", "ws-agent-quiet");
-    ui.effortSlot = el("div", "ws-agent-effort");
-    ui.modelList.addEventListener("change", () => {
-      settingsInputs.customModel = ui.modelList.value === "__custom__";
-      settingsInputs.model = settingsInputs.customModel ? "" : ui.modelList.value;
+    sui.modelInput = model;
+    sui.modelList = keyed(el("select", "form-input form-mono"), "set-model-version");
+    sui.modelList.id = "ws-model-list"; sui.modelList.disabled = settingsBusy;
+    sui.modelCustom = field(t("完整模型 ID"), model);
+    sui.modelNote = el("p", "ws-agent-quiet");
+    sui.effortSlot = el("div", "ws-agent-effort");
+    sui.modelList.addEventListener("change", () => {
+      settingsInputs.customModel = sui.modelList.value === "__custom__";
+      settingsInputs.model = settingsInputs.customModel ? "" : sui.modelList.value;
       fillModelList(); if (settingsInputs.customModel) model.focus();
     });
     runner.addEventListener("change", () => {
@@ -2286,8 +3554,8 @@
     const suggested = () => runner.value === "claude-code" || runner.value === "deepseek-harness";
     refresh.disabled = settingsBusy; refresh.classList.toggle("hidden", suggested());
     runner.addEventListener("change", () => refresh.classList.toggle("hidden", suggested()));
-    form.append(field(t("程序"), runner), field(t("模型版本"), ui.modelList), ui.modelCustom, ui.effortSlot, add, refresh);
-    box.append(form, ui.modelNote);
+    form.append(field(t("程序"), runner), field(t("模型版本"), sui.modelList), sui.modelCustom, sui.effortSlot, add, refresh);
+    box.append(form, sui.modelNote);
     fillModelList();
     return box;
   }
@@ -2349,10 +3617,10 @@
   // While the engine tidies an old store it says so; the panel asks again until it has finished.
   function scheduleStore() {
     stopStoreTimer();
-    if (settingsOpen && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
+    if (settingsLive() && storeInfo && storeInfo.converting) storeTimer = setTimeout(() => { storeTimer = null; loadStore(stamp()); }, 3000);
   }
   async function loadStore(mark) {
-    if (!settingsOpen || !project()) return;
+    if (!settingsLive() || !project()) return;
     try {
       const info = await apiGet("/api/agents/store?project=" + encodeURIComponent(project()));
       if (!live(mark)) return;
@@ -2391,7 +3659,7 @@
     return li;
   }
   function drawStore() {
-    const slot = ui && ui.storeSlot;
+    const slot = sui.storeSlot;
     if (!slot) return;
     const snap = focusSnapshot(slot);
     slot.replaceChildren();
@@ -2408,7 +3676,7 @@
     if (info.converting) slot.append(el("p", "ws-status", t("正在整理撤回备份…")));
     else {
       const rows = el("div", "ws-store-rows");
-      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行记录"), info.records]].forEach(([name, bytes]) => {
+      [[t("撤回备份"), info.backups], [t("撤回时移走的文件"), info.moved], [t("运行日志"), info.records]].forEach(([name, bytes]) => {
         const row = el("div", "ws-store-row");
         row.append(el("span", null, name), el("span", "ws-store-size", storeSize(bytes || 0)));
         rows.append(row);
@@ -2435,21 +3703,19 @@
   function storeBlock() {
     const box = el("div", "ws-agent-list ws-store");
     box.append(el("h4", "ws-runner-name", t("运行占用的空间")));
-    ui.storeSlot = el("div", "ws-store-body"); box.append(ui.storeSlot);
+    sui.storeSlot = el("div", "ws-store-body"); box.append(sui.storeSlot);
     drawStore();
     return box;
   }
   // `fresh`: the settings box was just made (or the person asked for the redraw). Otherwise an input the person is
   // typing in is not rebuilt: the program list and statuses of the next redraw wait, only the note is patched.
   function renderSettings(fresh) {
-    if (!ui || !ui.settings) return;
-    const box = ui.settings, typing = activeIn(box);
+    if (!settingsLive()) return;
+    const box = settingsHost, typing = activeIn(box);
     if (!fresh && typing && isTyping(typing)) { showSettingsNote(); return; }
     const snap = focusSnapshot(box);
-    box.replaceChildren(); box.classList.toggle("hidden", !settingsOpen);
-    if (!settingsOpen) return;
-    box.append(el("h3", "ws-agent-heading", t("AI 执行者")));
-    box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和结果。")));
+    box.replaceChildren(); sui = {};   // the page gives the heading; the box is the form
+    box.append(quiet(t("负责人可以选这台电脑上的 AI 执行者：运行时它会直接在项目文件夹里做这项任务，写代码、运行程序、写笔记和报告。")));
     if (!agentInfo) {
       if (agentInfoError) {
         box.append(el("p", "ws-status err", errorWords(t("没能读取 AI 执行者的设置。"), agentInfoError)));
@@ -2459,16 +3725,17 @@
     }
     if (agentInfo.mcp === false) { const warn = el("div", "ws-agent-warn"); warn.append(el("p", "ws-status err", mcpWords()), installBlock()); box.append(warn); }
     (agentInfo.runners || []).forEach((r) => box.append(runnerBlock(r)));
-    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock(), storeBlock());
-    ui.settingsNote = el("p"); ui.settingsNote.setAttribute("role", "status"); box.append(ui.settingsNote); showSettingsNote();
+    box.append(agentsBlock(), limitBlock(), budgetBlock(), storeLimitBlock());
+    if (project()) box.append(storeBlock());   // the open project's run store: nothing to show with no project
+    sui.note = el("p"); sui.note.setAttribute("role", "status"); box.append(sui.note); showSettingsNote();
     restoreFocus(box, snap);
     loadModels(settingsInputs.runner);
     (agentInfo.agents || []).forEach((agent) => loadModels(agent.runner));
   }
   function showSettingsNote() {
-    if (!ui || !ui.settingsNote) return;
-    ui.settingsNote.textContent = settingsNote ? settingsNote.words : "";
-    ui.settingsNote.className = settingsNote ? "ws-status " + settingsNote.kind : "hidden";
+    if (!sui.note) return;
+    sui.note.textContent = settingsNote ? settingsNote.words : "";
+    sui.note.className = settingsNote ? "ws-status " + settingsNote.kind : "hidden";
   }
 
   async function load(target, refresh) {
@@ -2499,6 +3766,9 @@
       if (draft) redrawAttachments();
       ui.note.disabled = ui.result.disabled = !editable(); target.dataset.loaded = "1";
       loadAgentContext(current);
+      if (nowData && !ui.now.childElementCount) renderNow();
+      loadNow(current);
+      if (draft && draft.kind !== "overview") refreshPlan(current);
       if (!draft) {
         const overview = data.documents.find((doc) => doc.kind === "overview");
         if (overview) await openDocument(overview.path, true);
@@ -2613,12 +3883,17 @@
 
   function renderResearchLinks(target, records, label) {
     if (!records || !records.length) return;
-    const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("关联研究记录")));
+    const box = el("section", "ws-related-records"); box.append(el("h3", null, label || t("提到它的笔记与报告")));
     records.forEach((record) => {
       const row = el("div", "ws-related-record");
-      row.append(button(record.title || record.report, () => openResearchRecord(record.report), "btn btn-small ws-file-link"));
+      row.append(openLink(record.title || t("报告", { n: 1 }), () => openResearchRecord(record.report)));
       if (record.question) row.append(el("p", null, record.question));
-      (record.matches || []).forEach((match) => { const line = el("p", "ws-research-purpose"); line.append(el("span", "mono", match.path)); if (match.purpose) line.append(" — " + match.purpose); row.append(line); });
+      // 21.7: a file the document mentions by its file name and what it is for; the path is the quiet line under
+      (record.matches || []).forEach((match) => {
+        const line = el("p", "ws-research-purpose"), where = pathNote(match.path);
+        line.append(el("span", "mono", fileName(match.path))); if (match.purpose) line.append(" — " + match.purpose);
+        row.append(line); if (where) row.append(where);
+      });
       (record.variables || []).forEach((ref) => row.append(el("p", null, t("所用变量版本：{id} v{version}", ref))));
       box.append(row);
     }); target.append(box);
@@ -2629,6 +3904,6 @@
     if (typeof activateView === "function") activateView("workspace");
     if (ui) openDocument(path, false, true);
   }
-  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood };
+  window.ROWorkspace = { renderResearchLinks: renderResearchLinks, openResearchRecord: openResearchRecord, startTask: startTask, load: load, mayLeave: mayLeave, mayLeavePanel: mayLeaveFolders, reset: reset, openCreateProject: openCreateProject, openReport: openReport, openHandback: openHandback, showRunLog: showRunLog, answerRun: answerRun, isDirty: isDirty, projectChangedElsewhere: projectChangedElsewhere, resume: resumePolling, stop: stopForGood, mountSettings: mountSettings };
   window.addEventListener("beforeunload", (event) => { if (isDirty()) { event.preventDefault(); event.returnValue = ""; } });
 })();

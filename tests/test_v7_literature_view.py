@@ -434,12 +434,15 @@ def test_11_5_6_page_tab_setting_lazy_drafts_and_the_one_write_path():
     start = src.index("// -- 文献 (DESIGN.md 11.4")
     view = src[start:src.index("// -- end of the 文献 view", start)]
     assert 'apiGet("/api/citations")' in view
-    assert "用 DOI 联网查文献信息" in view and "只发送 DOI，不发送文稿内容" in view
-    assert 'apiPost("/api/citations/lookup-setting", { on: wanted })' in view
+    # 21.7: the setting is this Mac's and has one form, on the 设置 page; the 文献 view says where it stands and links there
+    assert "用 DOI 联网查文献信息" not in view and "lookup-setting" not in view and "lookupSettingLine(data.lookup" in view
+    page = src[src.index("// -- 设置 (DESIGN.md 21.7)"):src.index('document.getElementById("settings-btn")')]
+    assert "用 DOI 联网查文献信息" in page and "只发送 DOI，不发送文稿内容" in page
+    assert 'apiPost("/api/citations/lookup-setting", { on: wanted })' in page and 'apiGet("/api/settings/lookup")' in page
     # Judgments only through the one write path; openers take keys, never a path.
     assert "postJudgement(link, verdict)" in view
     assert set(__import__("re").findall(r'"(/api/[\w/-]+)"', view)) == {
-        "/api/citations", "/api/citations/lookup-setting", "/api/zotero/open-item", "/api/zotero/open-attachment",
+        "/api/citations", "/api/zotero/open-item", "/api/zotero/open-attachment",
         "/api/literature/abstract",
     }
     assert "{ item_key: t.pdf.item_key, attachment_key: t.pdf.attachment_key }" in view and "path:" not in view

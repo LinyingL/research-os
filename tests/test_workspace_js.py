@@ -7,6 +7,7 @@ and creating a project never asks for an external attempts/history table.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,6 +16,9 @@ from pathlib import Path
 import pytest
 
 WEBAPP = Path(__file__).parents[1] / "src" / "researchos" / "webapp"
+#: The zone the pages run in under node (21.8: every time is shown in the viewer's local time): the researcher's, with a daylight-saving
+#: change on 2026-10-25, so a time written with +02:00 and one written with Z are both told from the clock of the day.
+TZ = "Europe/Berlin"
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
@@ -22,7 +26,7 @@ DOM = r"""
 class Element {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.kids = []; this.parentNode = null;
     this.dataset = {}; this.attrs = {}; this.on = {}; this.className = ''; this.value = ''; this.type = ''; this.disabled = false;
-    this.placeholder = ''; this.checked = false; this.selectionStart = null; this.selectionEnd = null; }
+    this.placeholder = ''; this.checked = false; this.selectionStart = null; this.selectionEnd = null; this.style = {}; }
   get textContent() { return this.kids.map(k => typeof k === 'string' ? k : k.textContent).join(''); }
   set textContent(s) { this.replaceChildren(s == null ? '' : String(s)); }
   get children() { return this.kids.filter(k => typeof k !== 'string'); }
@@ -65,6 +69,14 @@ global.panelTitle = new Element('h2'); global.panelSubtitle = new Element('p'); 
 global.openPanel = ()=>panel.classList.remove('hidden');
 global.closePanel = ()=>{ panel.classList.add('hidden'); state.panelSubject=null; };
 global.mayReplacePanel = ()=>true;
+// 21.7: the 设置 page (app.html) gives the AI agents' form a box in the side panel; here the box stands in the page's root, so the
+// scenarios find it as they found it when 项目首页 drew it. Opening again draws a fresh box, as the page does.
+const settingsOpened=[];
+global.openSettingsPanel=section=>{
+  settingsOpened.push(section); root.all().filter(e=>e.classList.contains('ws-agent-settings')).forEach(e=>e.remove());
+  const host=new Element('div'); host.className='ws-agent-settings'; const subject={kind:'settings'};
+  state.panelSubject=subject; panel.classList.remove('hidden'); root.append(host); window.ROWorkspace.mountSettings(host,subject);
+};
 global.chevronIcon = ()=>{ const e = new Element('svg'); e.className = 'res-chevron'; return e; };
 global.uiLang = ()=>window.ROI18N ? window.ROI18N.lang : 'zh';
 let generations = 0;
@@ -190,25 +202,30 @@ const typed=(node,value)=>{if(node.classList.contains('hidden'))throw Error('Can
 const editDocument=async()=>{const edit=find(window.ROI18N.t('编辑'),byClass('ws-editor-host'));if(edit&&!edit.classList.contains('hidden'))await edit.click();};
 const writeDocument=async value=>{await editDocument();typed(byClass('ws-writing'),value);};
 const titleDocument=async value=>{await editDocument();typed(byClass('ws-title-input'),value);};
+// 21.1: a new task belongs to an attempt, chosen first in the form (the page's one attempt unless a scenario names another).
+const pickAttempt=async (id='attempt:research/attempts.md#1')=>{ const s=field('属于哪条尝试'); s.value=id; await s.emit('change'); };
 const field=(words,where=root)=>where.all().find(e=>e.tagName==='LABEL'&&e.children[0].textContent===words).children[1];
 const sleepTick=()=>new Promise(r=>setTimeout(r,0));
 const buttonsIn=node=>node.all().filter(e=>e.tagName==='BUTTON').map(e=>e.textContent);
-const optionsOf=select=>select.children.map(o=>[o.textContent,o.value]);
+// the owner control holds its options in two <optgroup>s (21.4): the options are listed flat, in the order they are shown
+const flatOptions=select=>select.children.flatMap(o=>o.tagName==='OPTGROUP'?o.children:[o]);
+const optionsOf=select=>flatOptions(select).map(o=>[o.textContent,o.value]);
 // The owner control is a select: pick by what is shown, then (for 其他人…) type the name.
-const pickOwner=async (label,words='负责人')=>{ const s=field(words); s.value=s.children.find(o=>o.textContent===label).value; await s.emit('change'); };
+const pickOwner=async (label,words='负责人')=>{ const s=field(words); s.value=flatOptions(s).find(o=>o.textContent===label).value; await s.emit('change'); };
 const noChinese=text=>!/[\u3400-\u9fff]/.test(text);
 function deferred() { let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject}; }
 """
 
 
-def run(scenario: str, *, lang: str = "zh") -> dict:
+def run(scenario: str, *, lang: str = "zh", tz: str = TZ) -> dict:
     source = DOM + "\nwindow.ROI18N_SAVED=" + json.dumps(lang) + ";\n"
     source += (WEBAPP / "i18n.js").read_text()
     source += "\n" + (WEBAPP / "workspace.js").read_text()
+    source += "\n" + (WEBAPP / "desk.js").read_text()   # RODesk holds the status chooser the handback uses (21.3)
     source += "\n(async()=>{\n" + scenario + "\n})().catch(e=>{console.error(e.stack);process.exitCode=1});"
     # The script goes in on stdin, not as an argument: it carries whole page modules,
     # and Linux caps a single argument at 128 KB (E2BIG).
-    result = subprocess.run([NODE, "-"], input=source, capture_output=True, text=True, timeout=20)
+    result = subprocess.run([NODE, "-"], input=source, capture_output=True, text=True, timeout=20, env={**os.environ, "TZ": tz})
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -241,7 +258,7 @@ await find('保存').click();
 await find('新建笔记').click();
 await titleDocument('Discussion'); await writeDocument('An idea worth revisiting.');
 await find('保存').click();
-await find('记录结果').click();
+await find('写报告').click();
 await titleDocument('Exploratory result'); await writeDocument('This is still uncertain.');
 await find('保存').click();
 console.log(JSON.stringify({posted,words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
@@ -260,18 +277,18 @@ await window.ROWorkspace.load(root);
 const initial={words:root.textContent,plan:byClass('ws-writing').placeholder,intro:!!byClass('ws-intro'),path:!!byClass('ws-path')};
 await find('新建笔记').click();
 const note=byClass('ws-writing').placeholder;
-await find('记录结果').click();
+await find('写报告').click();
 console.log(JSON.stringify({initial,note,result:byClass('ws-writing').placeholder,summary:byClass('ws-attachments').children[0].textContent,taskHeading:byClass('ws-task-title').textContent}));
 """)
     assert out["initial"]["plan"] == "研究问题、思路与计划"
     assert "还没有笔记。" in out["initial"]["words"]
-    assert "还没有结果记录。" in out["initial"]["words"]
+    assert "还没有报告。" in out["initial"]["words"]    # 21.4: the second list is 报告
     assert not out["initial"]["intro"] and not out["initial"]["path"]
     assert "查看文件" in out["initial"]["words"] and "修改历史" in out["initial"]["words"]
     assert out["note"] == "写笔记…"
     assert out["result"] == "结果、解释与待确认的问题"
     assert out["summary"] == "引用文件或尝试"
-    assert out["taskHeading"] == "任务"
+    assert out["taskHeading"] == "全部任务"
 
 
 @pytest.mark.parametrize("kind, path", [
@@ -285,7 +302,9 @@ const path=DOC_PATH,kind=DOC_KIND;
 listed.documents=[{path,kind,title:'Read this'}];
 docs[path]={path,kind,title:'Read this',content:'# Read this\nAn observation.',revision:'existing'};
 await window.ROWorkspace.load(root);
-await find('Read this',byClass('ws-documents')).click();
+// 21.4: the plan is no longer among the lists; it is opened by unfolding it (the writing area stands in it)
+if(kind==='overview'){const more=byClass('ws-plan-more');more.open=true;await more.emit('toggle');}
+else await find('Read this',byClass('ws-documents')).click();
 const initial={preview:!byClass('ws-preview').classList.contains('hidden'),
   writing:!byClass('ws-writing').classList.contains('hidden'),title:!byClass('ws-title-input').classList.contains('hidden'),
   save:!find('保存').classList.contains('hidden'),attachments:!byClass('ws-attachments').classList.contains('hidden'),words:byClass('ws-preview').textContent};
@@ -308,7 +327,7 @@ def test_new_documents_start_in_editing_and_read_only_documents_stay_in_preview(
     out = run(r"""
 await window.ROWorkspace.load(root);
 const fresh=[];
-for (const label of ['新建笔记','记录结果']) {
+for (const label of ['新建笔记','写报告']) {
   await find(label).click();
   fresh.push({writing:!byClass('ws-writing').classList.contains('hidden'),
     preview:!byClass('ws-preview').classList.contains('hidden'),focused:focused===byClass('ws-title-input')});
@@ -413,7 +432,7 @@ console.log(JSON.stringify({saved,openedFiles,openedAttempts,dirty:window.ROWork
 
 def test_project_references_are_relative_images_are_local_and_html_is_text():
     out = run(r"""
-await window.ROWorkspace.load(root); await find('记录结果').click();
+await window.ROWorkspace.load(root); await find('写报告').click();
 await titleDocument('A figure');
 await writeDocument('<script>alert(1)</script>\n[bad](javascript:alert)\n[escape](../../../../outside.png)');
 const files=root.all().find(e=>e.tagName==='SELECT'&&e.getAttribute('aria-label')==='选择项目文件');
@@ -444,7 +463,7 @@ def test_background_refresh_and_task_writes_keep_unsaved_document_and_task_form(
     out = run(r"""
 await window.ROWorkspace.load(root);
 await writeDocument('Unfinished paragraph');
-typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');typed(field('日期'),'2026-11-02');
+await pickAttempt();typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');typed(field('日期'),'2026-11-02');
 docs['research/overview.md'].content='Changed outside';docs['research/overview.md'].revision='doc-external';
 await window.ROWorkspace.load(root,true);
 answers.push(false);const allowed=window.ROWorkspace.mayLeave();
@@ -503,7 +522,7 @@ console.log(JSON.stringify({kept,afterRefresh,afterCancel,afterReload:byClass('w
 def test_task_conflict_keeps_form_and_reload_merges_it_with_latest_list():
     out = run(r"""
 await window.ROWorkspace.load(root);
-typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');
+await pickAttempt();typed(field('任务'),'Read papers');await pickOwner('其他人…');typed(field('姓名'),'Lin');
 customPost=()=>Promise.reject(Object.assign(Error('external change'),{state:'workspace_conflict'}));
 await find('添加任务').click();
 const afterFailure=field('任务').value;
@@ -562,7 +581,7 @@ console.log(JSON.stringify({screen,dialog}));
 
 def test_refresh_files_finds_external_stata_outputs_without_losing_writing():
     out = run(r"""
-await window.ROWorkspace.load(root);await find('记录结果').click();
+await window.ROWorkspace.load(root);await find('写报告').click();
 await titleDocument('Current finding');await writeDocument('An unfinished interpretation.');
 listed.files.push({path:'analysis/stata-new.csv',type:'dataset'});
 await find('刷新文件').click();
@@ -593,16 +612,19 @@ console.log(JSON.stringify({content:byClass('ws-writing').value,status:byClass('
 
 
 @pytest.mark.parametrize("count", [0, 2, 6])
-def test_only_the_three_newest_tasks_show_their_details_by_default(count):
+def test_no_task_row_is_open_by_default_because_each_says_who_has_it_without_being_opened(count):
+    """21.4 (it was: the newest three open by default): a row's summary carries the owner, so none needs opening to be read; the
+    task's words, the run and the outputs are in the row, which opens on request."""
     out = run(r"""
 listed.tasks=Array.from({length:COUNT},(_,i)=>agentTask({id:'t'+i,text:'Task '+i}));
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({rows:root.all().filter(e=>e.classList.contains('ws-task')).map(row=>({
-  title:byClass('ws-task-summary',row).textContent,open:byClass('ws-task-details',row).open,
+  title:byClass('ws-task-text',row).textContent,owner:byClass('ws-task-owner',row).textContent,open:byClass('ws-task-details',row).open,
   check:row.children[0].type,actions:buttonsIn(byClass('ws-task-body',row))})),posted}));
 """.replace("COUNT", str(count)))
     assert [row["title"] for row in out["rows"]] == [f"Task {i}" for i in range(count)]
-    assert [row["open"] for row in out["rows"]] == [i >= count - 3 for i in range(count)]
+    assert [row["open"] for row in out["rows"]] == [False] * count
+    assert [row["owner"] for row in out["rows"]] == ["Claude Code · sonnet"] * count
     assert all(row["check"] == "checkbox" and "编辑" in row["actions"] for row in out["rows"])
     assert out["posted"] == []
 
@@ -624,25 +646,27 @@ const closed=boxes()[0].open;
 boxes()[0].open=true;await boxes()[0].emit('toggle');
 console.log(JSON.stringify({afterRefresh,closed,reply:byClass('ws-agent-reply').children[0].value,dirty:window.ROWorkspace.isDirty(),posted}));
 """)
-    assert out["afterRefresh"] == [True, False, False, True, True, False]
+    assert out["afterRefresh"] == [True, False, False, False, False, False]    # 21.4: none is open by default; the one opened by hand stays
     assert not out["closed"]
     assert out["reply"] == "Keep the balanced sample."
     assert out["dirty"] and out["posted"] == []
 
 
-def test_adding_a_task_updates_default_disclosures_without_resetting_manual_choices():
+def test_adding_a_task_keeps_the_rows_closed_without_resetting_manual_choices():
     out = run(r"""
 listed.tasks=Array.from({length:6},(_,i)=>({id:'t'+i,text:'Task '+i,owner:'Demo'}));
 await window.ROWorkspace.load(root);await sleepTick();
 const boxes=()=>root.all().filter(e=>e.classList.contains('ws-task-details'));
 boxes()[0].open=true;await boxes()[0].emit('toggle');
-typed(field('任务'),'New task');await find('添加任务').click();await sleepTick();
+await pickAttempt();typed(field('任务'),'New task');await find('添加任务').click();await sleepTick();
 const added=boxes().map(e=>e.open);
 window.ROWorkspace.reset();await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({added,reopened:boxes().map(e=>e.open),tasks:listed.tasks.length}));
 """)
-    assert out["added"] == [True, False, False, False, True, True, True]
-    assert out["reopened"] == [False, False, False, False, True, True, True]
+    # 21.1: the new task stands first, under its attempt; the six without one follow under 「未归入尝试」. 21.4: none is open by
+    # default; the one opened by hand stays open until the page is read again.
+    assert out["added"] == [False, True, False, False, False, False, False]
+    assert out["reopened"] == [False] * 7
     assert out["tasks"] == 7
 
 
@@ -735,7 +759,7 @@ def test_task_save_uses_task_annotation_from_the_server():
     out = run(r"""
 listed.mode='member';await window.ROWorkspace.load(root);
 customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',tasks_officialness:{state:'mine',label:'我的改动，尚未提交'}}:undefined;
-typed(field('任务'),'Consider another explanation');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Consider another explanation');await find('添加任务').click();
 console.log(JSON.stringify({words:byClass('ws-tasks').textContent}));
 """)
     assert "我的改动，尚未提交" in out["words"]
@@ -785,8 +809,9 @@ await writeDocument('# Oldest\n\nEdited');
 await find('保存').click();
 console.log(JSON.stringify({before,after:names()}));
 """)
-    assert out["before"] == ["Research question", "Newest", "Middle", "Oldest", "Unknown time"]
-    assert out["after"] == ["Research question", "Oldest", "Newest", "Middle", "Unknown time"]
+    # 21.4: the plan is no longer one of the lists' rows; it has its own place above them
+    assert out["before"] == ["Newest", "Middle", "Oldest", "Unknown time"]
+    assert out["after"] == ["Oldest", "Newest", "Middle", "Unknown time"]
 
 
 def test_typing_during_a_save_keeps_the_title_the_engine_wrote_into_a_new_document():
@@ -925,7 +950,7 @@ await window.ROWorkspace.load(root);
 const proposals=[];window.ROWorkspace.onPropose=files=>proposals.push(files);
 await find('提交修改',byClass('ws-tasks')).click();
 customPost=(path,body)=>path==='/api/workspace/tasks'?{tasks:body.tasks,tasks_revision:'new',changed_task_reports:[]}:undefined;
-typed(field('任务'),'Another task'); await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Another task'); await find('添加任务').click();
 await find('提交修改',byClass('ws-tasks')).click();
 console.log(JSON.stringify({proposals}));
 """)
@@ -960,14 +985,14 @@ console.log(JSON.stringify({said,shown,after:byClass('ws-notices').textContent})
     assert "项目的身份文件暂时读不出来" in out["said"] and out["shown"] and out["after"] == ""
 
 
-def test_a_pis_notes_and_result_records_say_they_go_to_the_members_with_the_next_publish():
+def test_a_pis_notes_and_reports_say_they_go_to_the_members_with_the_next_publish():
     out = run(_note("research/notes/a.md", "Idea", "2026-10-20T10:00:00+00:00") + r"""
-const sentence='笔记和结果记录会随下一次发布交给成员。';
+const sentence='笔记和报告会随下一次发布交给成员。';
 const said=()=>byClass('ws-document-footer').textContent.includes(sentence);
 listed.mode='pi'; await window.ROWorkspace.load(root);
 const onOverview=said();
 await find('Idea').click(); const onNote=said();
-await find('记录结果').click(); const onNewResult=said();
+await find('写报告').click(); const onNewResult=said();
 listed.mode='member'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const member=said();
 listed.mode='single'; window.ROWorkspace.reset(); await window.ROWorkspace.load(root); await find('Idea').click(); const single=said();
 console.log(JSON.stringify({onOverview,onNote,onNewResult,member,single}));
@@ -985,7 +1010,7 @@ console.log(JSON.stringify({none,cut,pi:byClass('ws-document-footer').textConten
 """, lang="en")
     assert out["none"] == "This Mac is not a member of this project; you can only read it"
     assert out["cut"] == "The project has more than 500 files; only the first 500 are listed here. Others can be linked by hand in the text."
-    assert "Notes and result records go to the members with the next publish." in out["pi"]
+    assert "Notes and reports go to the members with the next publish." in out["pi"]
     assert not re.search(r"[㐀-鿿]", out["none"] + out["cut"] + out["pi"])
 
 
@@ -1002,10 +1027,10 @@ agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
 await pickOwner('Claude Code · sonnet');
-typed(field('任务'),'Fit the model');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Fit the model');await find('添加任务').click();
 const asAgent=clone(listed.tasks);
 await pickOwner('其他人…');const hasName=!!field('姓名');
-typed(field('任务'),'Read papers');typed(field('姓名'),'Chen');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Read papers');typed(field('姓名'),'Chen');await find('添加任务').click();
 console.log(JSON.stringify({options,asAgent,hasName,tasks:listed.tasks,gets,nameGoneAfterSave:!root.all().some(e=>e.tagName==='LABEL'&&e.children[0].textContent==='姓名')}));
 """)
     assert [text for text, _ in out["options"]] == ["不指定", "Lin Ying（我）", "Wang Wei", "其他人…", "Claude Code · sonnet"]
@@ -1021,10 +1046,11 @@ def test_owner_control_works_without_a_team_or_any_agent_information():
     out = run(r"""
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
-typed(field('任务'),'Read papers');await find('添加任务').click();
+await pickAttempt();typed(field('任务'),'Read papers');await find('添加任务').click();
 console.log(JSON.stringify({options,tasks:listed.tasks,gets,agentRow:!!byClass('ws-agent')}));
 """)
-    assert [text for text, _ in out["options"]] == ["不指定", "其他人…"]
+    # 21.7: with no name set the researcher is still an owner they can pick, as 我
+    assert [text for text, _ in out["options"]] == ["不指定", "我", "其他人…"]
     assert "/api/share" not in out["gets"]
     assert out["tasks"][0]["owner"] == "" and not out["agentRow"]
 
@@ -1034,12 +1060,13 @@ def test_without_a_configured_agent_the_owner_control_leads_to_the_settings():
 agentsInfo=agentFixture();agentsInfo.agents=[];
 await window.ROWorkspace.load(root);await sleepTick();
 const options=optionsOf(field('负责人'));
-const closed=byClass('ws-agent-settings').classList.contains('hidden');
+const closed=byClass('ws-agent-settings')===undefined;
 await pickOwner('设置 AI 执行者…');
-console.log(JSON.stringify({options,closed,open:!byClass('ws-agent-settings').classList.contains('hidden'),owner:field('负责人').value,words:byClass('ws-agent-settings').textContent}));
+console.log(JSON.stringify({options,closed,open:byClass('ws-agent-settings')!==undefined,opened:settingsOpened,owner:field('负责人').value,words:byClass('ws-agent-settings').textContent}));
 """)
     assert [text for text, _ in out["options"]][-1] == "设置 AI 执行者…"
-    assert out["closed"] and out["open"] and out["owner"] == ""
+    # 21.7: the option opens the 设置 page at the AI 执行者 section (the form is not on 项目首页 any more)
+    assert out["closed"] and out["open"] and out["opened"] == ["agents"] and out["owner"] == ""
     assert "Claude Code" in out["words"]
 
 
@@ -1053,41 +1080,41 @@ await find('编辑',rows()[0]).click();
 const typedName={options:optionsOf(field('负责人')),value:field('负责人').value};
 await find('编辑',rows()[1]).click();
 const unknown={options:optionsOf(field('负责人')),value:field('负责人').value};
-console.log(JSON.stringify({typedName,unknown,meta:rows().map(r=>byClass('ws-task-meta',r).textContent)}));
+console.log(JSON.stringify({typedName,unknown,meta:rows().map(r=>byClass('ws-task-owner',r).textContent)}));
 """)
     assert ["Lin", "Lin"] in out["typedName"]["options"] and out["typedName"]["value"] == "Lin"
     assert ["OpenCode · lmstudio/qwen3-coder", "agent:opencode:lmstudio/qwen3-coder"] in out["unknown"]["options"]
     assert out["unknown"]["value"] == "agent:opencode:lmstudio/qwen3-coder"
-    assert out["meta"] == ["Lin", "OpenCode · lmstudio/qwen3-coder"]
+    assert out["meta"] == ["Lin", "OpenCode · lmstudio/qwen3-coder"]       # 21.4: the owner is said in the row's summary (it was in the opened row)
     assert not any("agent:" in m for m in out["meta"])
 
 
 STATES = [
     # (task fields, run fields or None, label, tone, buttons)
     ({}, None, None, None, ["运行"]),
-    ({}, {"state": "preparing", "can_stop": True}, "准备中", "ochre", ["停止", "运行记录"]),
-    ({}, {"state": "running", "can_stop": True}, "运行中", "ochre", ["停止", "运行记录"]),
-    ({}, {"state": "needs_input", "can_reply": True, "question": "Which sample?"}, "等你回答", "clay", ["运行记录", "回答"]),
+    ({}, {"state": "preparing", "can_stop": True}, "准备中", "ochre", ["停止", "运行日志"]),
+    ({}, {"state": "running", "can_stop": True}, "运行中", "ochre", ["停止", "运行日志"]),
+    ({}, {"state": "needs_input", "can_reply": True, "question": "Which sample?"}, "等你回答", "ochre", ["运行日志", "回答"]),
     ({"done": True, "report": REPORT}, {"state": "done", "can_reply": True, "can_revert": True, "changes": 3, "report": REPORT},
-     "已完成", "olive", ["运行记录", "打回", "撤回本次运行", "打开结果"]),
-    ({}, {"state": "ended", "can_reply": True}, "未报告", "gray", ["运行", "运行记录", "打回"]),
+     "已完成", "olive", ["运行日志", "打回", "撤回本次运行", "打开结果"]),
+    ({}, {"state": "ended", "can_reply": True}, "未报告", "gray", ["运行", "运行日志", "打回"]),
     ({}, {"state": "failed", "can_reply": True, "error": {"code": "timeout", "detail": "past the limit"}}, "失败", "clay",
-     ["运行", "运行记录", "打回"]),
-    ({}, {"state": "stopped", "can_reply": True}, "已停止", "gray", ["运行", "运行记录", "打回"]),
+     ["运行", "运行日志", "打回"]),
+    ({}, {"state": "stopped", "can_reply": True}, "已停止", "gray", ["运行", "运行日志", "打回"]),
     ({}, {"state": "interrupted", "can_reply": True, "can_revert": True, "changes": 1}, "已中断", "gray",
-     ["运行", "运行记录", "打回", "撤回本次运行"]),
-    ({}, {"state": "done", "reverted": True}, "已撤回本次运行", "gray", ["运行", "运行记录"]),
+     ["运行", "运行日志", "打回", "撤回本次运行"]),
+    ({}, {"state": "done", "reverted": True}, "已撤回本次运行", "gray", ["运行", "运行日志"]),
     # 18.1 item 4: a run that went out of bounds never reads 已完成 -- the task keeps the mark the agent gave it
     ({"done": True, "report": REPORT},
      {"state": "out_of_bounds", "outcome": "done", "can_reply": True, "can_revert": True, "changes": 3, "violations": 1,
-      "report": REPORT}, "越过了限制", "clay oob", ["运行记录", "打回", "撤回本次运行", "打开结果"]),
+      "report": REPORT}, "越过了限制", "clay oob", ["运行日志", "打回", "撤回本次运行", "打开结果"]),
     ({}, {"state": "out_of_bounds", "outcome": "needs_input", "can_reply": True, "can_revert": True, "changes": 1,
-          "violations": 1, "question": "Which sample?"}, "越过了限制", "clay oob", ["运行记录", "回答", "撤回本次运行"]),
+          "violations": 1, "question": "Which sample?"}, "越过了限制", "clay oob", ["运行日志", "回答", "撤回本次运行"]),
     ({}, {"state": "out_of_bounds", "outcome": "failed", "can_reply": True, "can_revert": True, "changes": 1,
           "violations": 1, "error": {"code": "timeout", "detail": "past the limit"}}, "越过了限制", "clay oob",
-     ["运行", "运行记录", "打回", "撤回本次运行"]),
+     ["运行", "运行日志", "打回", "撤回本次运行"]),
     ({}, {"state": "out_of_bounds", "outcome": "stopped", "reverted": True, "violations": 1}, "已撤回本次运行", "gray",
-     ["运行", "运行记录"]),
+     ["运行", "运行日志"]),
 ]
 
 
@@ -1111,7 +1138,7 @@ console.log(JSON.stringify(results));
     assert "改动了 3 个文件" in out[4]["words"]
     assert "运行超过了时间限制，已被停止。" in out[6]["words"] and "详情" in out[6]["words"]
     oob_done, oob_asked, oob_failed = out[10], out[11], out[12]
-    assert "已完成" not in oob_done["words"] and "有 1 处越界改动，详见运行记录。" in oob_done["words"]
+    assert "已完成" not in oob_done["words"] and "有 1 处越界改动，详见运行日志。" in oob_done["words"]
     assert "Which sample?" in oob_asked["words"] and "等你回答" not in oob_asked["words"]
     assert "运行超过了时间限制，已被停止。" in oob_failed["words"]
 
@@ -1133,7 +1160,7 @@ console.log(JSON.stringify({declined,started,questions:confirmQuestions,posts:po
     assert "Anthropic" in first and "直接修改项目里的文件" in first
     assert len(out["questions"]) == 2 and out["questions"][1] == first  # declined once, then accepted
     assert out["started"]["posted"] == [["/api/agents/runs", {"project": "/projects/study", "task": "t1"}]]
-    assert out["started"]["buttons"] == ["停止", "运行记录"] and out["started"]["label"] == "准备中"
+    assert out["started"]["buttons"] == ["停止", "运行日志"] and out["started"]["label"] == "准备中"
     assert out["started"]["waiting"] == 1
     assert out["posts"] == ["/api/agents/runs", "/api/agents/runs/r-20261021T090000Z-aaaaaa/stop".replace("090000Z-aaaaaa", "091000Z-bbbbbb"), "/api/agents/runs"]
 
@@ -1273,7 +1300,7 @@ def test_open_result_opens_the_report_the_way_the_rail_opens_a_document():
 agentsInfo=agentFixture();listed.tasks=[agentTask({done:true,report:REPORT_PATH})];
 docs[REPORT_PATH]={path:REPORT_PATH,kind:'result',title:'Fit results',content:'# Fit results\nIt worked.',revision:'r-1'};
 listed.documents.push({path:REPORT_PATH,kind:'result',title:'Fit results',excerpt:''});
-setRuns([mkRun({state:'done',can_reply:true,report:REPORT_PATH})]);
+setRuns([mkRun({state:'done',can_reply:true})]);   // a run that did not hand this report back (21.2: one that did opens the handback): the report opens to write in
 await window.ROWorkspace.load(root);await sleepTick();
 await find('打开结果',byClass('ws-agent')).click();
 console.log(JSON.stringify({title:byClass('ws-title-input').value,text:byClass('ws-writing').value,current:root.all().filter(e=>e.getAttribute('aria-current')==='page').map(e=>e.textContent)}));
@@ -1314,17 +1341,17 @@ runLogs[run.id]=Object.assign(clone(run),{steps:[{kind:'start',text:'model sonne
   violations:[{path:'data/raw.csv',reason:'data_changed'},{path:'.git',reason:'git_changed'}],instruction:'Do the task now.',stderr_tail:'warning: slow',error:null,refusals:[]});
 await window.ROWorkspace.load(root);await sleepTick();
 const before={oob:byClass('ws-agent-oob').textContent,log:!!byClass('ws-run-details')};
-await find('运行记录',byClass('ws-agent')).click();await sleepTick();
+await find('运行日志',byClass('ws-agent')).click();await sleepTick();
 const d=byClass('ws-run-details'),words=d.textContent;
 const kinds=d.all().filter(e=>e.classList.contains('ws-step-kind')).map(e=>e.textContent);
 const mono=d.all().filter(e=>e.classList.contains('mono')).map(e=>e.textContent);
 const more=d.all().filter(e=>e.tagName==='DETAILS').map(e=>[e.children[0].textContent,e.children[1].textContent]);
 const headings=d.all().filter(e=>e.classList.contains('ws-run-heading')).map(e=>e.textContent);
 const oobGroup=byClass('ws-oob',d).textContent;
-await find('运行记录',byClass('ws-agent')).click();
+await find('运行日志',byClass('ws-agent')).click();
 console.log(JSON.stringify({before,words,kinds,mono,more,headings,oobGroup,closed:!byClass('ws-run-details'),gets:gets.filter(g=>g.startsWith('/api/agents/runs/'))}));
 """.replace("REPORT_PATH", json.dumps(REPORT)))
-    assert out["before"] == {"oob": "有 1 处越界改动，详见运行记录。", "log": False}
+    assert out["before"] == {"oob": "有 1 处越界改动，详见运行日志。", "log": False}
     assert out["headings"] == ["越界改动", "新建的文件", "修改的文件", "删除的文件", "经过"]
     assert "data/raw.csv" in out["oobGroup"] and "改动了运行前就有的数据文件" in out["oobGroup"]
     assert ".git" in out["oobGroup"] and "改变了 git 的状态" in out["oobGroup"]
@@ -1441,7 +1468,7 @@ def test_settings_show_where_each_program_is_and_save_a_path_for_one_not_found()
     out = run(r"""
 agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=byClass('ws-agent-settings'),runners=box.all().filter(e=>e.classList.contains('ws-runner'));
 const found=runners[0].textContent,missing=runners[1].textContent;
 const hasPathInput=r=>r.all().some(e=>e.tagName==='INPUT');
@@ -1451,7 +1478,7 @@ await find('保存',runners[1]).click();
 const empty=posted.length;
 typed(pathBox,'/opt/tools/opencode');await find('保存',runners[1]).click();await sleepTick();
 const after=byClass('ws-agent-settings').all().filter(e=>e.classList.contains('ws-runner'))[1].textContent;
-console.log(JSON.stringify({found,missing,inputs,empty,posted,after,pressed:find('AI 执行者').getAttribute('aria-pressed')}));
+console.log(JSON.stringify({found,missing,inputs,empty,posted,after,opened:settingsOpened}));
 """)
     assert "/usr/local/bin/claude" in out["found"] and "版本 2.1.0" in out["found"]
     assert "Anthropic" in out["found"]
@@ -1460,7 +1487,7 @@ console.log(JSON.stringify({found,missing,inputs,empty,posted,after,pressed:find
     assert out["inputs"] == [False, True] and out["empty"] == 0
     assert out["posted"] == [["/api/settings/agents", {"commands": {"opencode": "/opt/tools/opencode"}}]]
     assert "/opt/tools/opencode" in out["after"] and "版本 0.9.0" in out["after"]
-    assert out["pressed"] == "true"
+    assert out["opened"] == ["agents"]   # the link opened the 设置 page at the AI 执行者 section
 
 
 def test_settings_add_and_remove_an_agent_and_set_the_time_limit():
@@ -1468,7 +1495,7 @@ def test_settings_add_and_remove_an_agent_and_set_the_time_limit():
 agentsInfo=agentFixture();modelsList=['lmstudio/qwen3-coder','ollama/llama3'];
 Object.assign(agentsInfo.runners[1],{path:'/opt/opencode',version:'0.9.0',problem:null,found:true});
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),add=()=>byClass('ws-agent-add',box()).parentNode;
 const suggestions=()=>field('模型版本',box()).children.map(o=>o.value).filter(v=>v&&v!=='__custom__');
 const claude=suggestions();
@@ -1501,7 +1528,7 @@ def test_reasoning_picker_follows_model_and_preserves_saved_settings():
     out = run(r"""
 agentsInfo=agentFixture();
 customGet=path=>path==='/api/agents/models?runner=codex'?{models:['gpt-test'],reasoning_efforts:{'gpt-test':['medium','high']}}:undefined;
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),form=()=>byClass('ws-agent-add',byClass('ws-agent-list'));
 const model=()=>field('模型版本',form()),effort=()=>field('推理强度',form());
 model().value='claude-sonnet-5-5';await model().emit('change');
@@ -1541,7 +1568,7 @@ agentsInfo=agentFixture();listed.tasks=[agentTask()];
 const recorded=mkRun({state:'ended',reasoning_effort:LEVEL});setRuns([recorded]);
 runLogs[recorded.id]=Object.assign({},recorded,{steps:[],changes:{},violations:[]});
 await window.ROWorkspace.load(root);await sleepTick();
-await find(uiLang()==='en'?'Run log':'运行记录',byClass('ws-agent')).click();await sleepTick();
+await find(uiLang()==='en'?'Run log':'运行日志',byClass('ws-agent')).click();await sleepTick();
 console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 """.replace("LEVEL", json.dumps(level)), lang=lang)
     assert words in out["words"]
@@ -1550,7 +1577,7 @@ console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 def test_claude_model_versions_are_visible_and_custom_snapshots_are_preserved():
     out = run(r"""
 agentsInfo=agentFixture();
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),versions=()=>field('模型版本',box());
 const offered=optionsOf(versions());
 versions().value='claude-sonnet-5-5';await versions().emit('change');
@@ -1570,7 +1597,7 @@ console.log(JSON.stringify({offered,posted:posted.filter(p=>p[0]==='/api/setting
 def test_codex_version_selection_custom_id_and_separate_catalogs():
     out = run(r"""
 agentsInfo=agentFixture();modelsList=['gpt-6.1-sol','gpt-6-luna'];
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings');
 const runner=field('程序',box());runner.value='codex';await runner.emit('change');await sleepTick();
 const versions=()=>field('模型版本',box());
@@ -1580,7 +1607,7 @@ versions().value='__custom__';await versions().emit('change');
 const custom=field('完整模型 ID',box());typed(custom,'gpt-5.5');await find('添加',box()).click();await sleepTick();
 Object.assign(agentsInfo.runners[1],{found:true,path:'/opt/opencode',problem:null});
 modelsList=['openai/gpt-6.1-sol'];
-await find('AI 执行者').click();await find('AI 执行者').click();await sleepTick();
+await find('在设置里修改').click();await find('在设置里修改').click();await sleepTick();
 const provider=field('程序',box());provider.value='opencode';await provider.emit('change');await sleepTick();
 const other=optionsOf(versions());provider.value='codex';await provider.emit('change');await sleepTick();
 console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:posted.filter(p=>p[0]==='/api/settings/agents'),gets:gets.filter(g=>g.includes('/models?'))}));
@@ -1596,7 +1623,7 @@ console.log(JSON.stringify({offered,other,back:optionsOf(versions()),posted:post
 def test_harness_model_selection_distinguishes_authentication_and_preserves_full_id():
     out = run(r"""
 agentsInfo=agentFixture();
-await window.ROWorkspace.load(root);await sleepTick();await find('AI 执行者').click();
+await window.ROWorkspace.load(root);await sleepTick();await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings');
 const runner=field('程序',box());runner.value='deepseek-harness';await runner.emit('change');await sleepTick();
 const versions=field('模型版本',box()),offered=optionsOf(versions);
@@ -1615,7 +1642,7 @@ def test_settings_warn_about_the_missing_mcp_extra_and_a_failed_save_keeps_the_f
     out = run(r"""
 agentsInfo=agentFixture();agentsInfo.mcp=false;
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=byClass('ws-agent-settings');
 const commands=box.all().filter(e=>e.classList.contains('ws-install-cmd')).map(e=>e.textContent);
 customPost=()=>Promise.reject(Object.assign(Error('bad'),{state:'agent_invalid',engineMessage:'模型名不对'}));
@@ -1631,7 +1658,7 @@ def test_a_failed_agent_listing_says_so_and_can_be_retried():
 let fail=true;customGet=path=>path==='/api/agents'&&fail?Promise.reject(Error('boom')):undefined;
 agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const failed=byClass('ws-agent-settings').textContent;
 fail=false;await find('重试').click();await sleepTick();
 console.log(JSON.stringify({failed,words:byClass('ws-agent-settings').textContent}));
@@ -1656,7 +1683,7 @@ const boxes=()=>root.all().filter(e=>e.classList.contains('ws-agent'));
 await find('Answer',boxes()[0]).click();
 await find('Run log',boxes()[1]).click();await sleepTick();
 const rows=boxes().map(b=>buttonsIn(b));
-await find('AI agent').click();
+await find('Change in Settings').click();
 await pickOwner('Someone else…','Owner');
 const all=root.textContent+root.all().map(e=>(e.placeholder||'')+(e.getAttribute('aria-label')||'')+(e.title||'')).join(' ');
 console.log(JSON.stringify({all,rows}));
@@ -1687,7 +1714,7 @@ agentsInfo=agentFixture();listed.tasks=[agentTask()];
 const run=mkRun({state:'running',can_stop:true});setRuns([run]);
 runLogs[run.id]=Object.assign(clone(run),{steps:[{kind:'start',text:'model sonnet'}],steps_total:1,changes:{},violations:[],instruction:'Do the task now.',stderr_tail:'',error:null,refusals:[]});
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录',byClass('ws-agent')).click();await sleepTick();
+await find('运行日志',byClass('ws-agent')).click();await sleepTick();
 const instruction=()=>byClass('ws-run-details').all().find(e=>e.tagName==='DETAILS');
 instruction().open=true;await instruction().emit('toggle');
 runLogs[run.id].steps.push({kind:'say',text:'Working on it.'});runLogs[run.id].steps_total=2;
@@ -1704,7 +1731,7 @@ setRuns([mkRun({state:'done',can_reply:true,can_revert:true,changes:1})]);
 await window.ROWorkspace.load(root);await sleepTick();
 console.log(JSON.stringify({buttons:buttonsIn(byClass('ws-agent'))}));
 """)
-    assert out["buttons"] == ["运行记录", "打回", "撤回本次运行"]
+    assert out["buttons"] == ["运行日志", "打回", "撤回本次运行"]
 
 
 
@@ -1717,7 +1744,7 @@ def test_the_task_list_takes_the_agents_done_mark_while_the_task_form_holds_text
     out = run(r"""
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'running',can_stop:true})]);
 await window.ROWorkspace.load(root);await sleepTick();
-typed(field('任务'),'Next question for the group');
+await pickAttempt();typed(field('任务'),'Next question for the group');
 Object.assign(runsList.runs[0],{state:'done',can_stop:false,can_reply:true,changes:1});runsList.active=null;
 listed.tasks=[agentTask({done:true,report:'research/results/run.md'})];listed.tasks_revision='tasks-agent';
 await tick();
@@ -1736,9 +1763,9 @@ console.log(JSON.stringify({after,revision:save&&save[1].revision,tasks:save&&sa
 
 # -- the done mark of a task that has a result record (DESIGN.md 19.6, 19.10 item 1) ------------------------------
 
-DONE_QUESTION_ZH = "这项任务已经有结果。改回未完成后可以再次运行，再次运行会改写同一份结果记录。改回未完成吗？"
-DONE_QUESTION_EN = ("This task already has a result. Once it is marked not done it can be run again, and a new run "
-                    "rewrites the same result record. Mark it as not done?")
+DONE_QUESTION_ZH = "这项任务已经有报告。改回未完成后可以再次运行，再次运行会改写同一份报告。改回未完成吗？"
+DONE_QUESTION_EN = ("This task already has a report. Once it is marked not done it can be run again, and a new run "
+                    "rewrites the same report. Mark it as not done?")
 #: One task with a result record and one without; `box(id)` is the done checkbox of a task's row as drawn now.
 _DONE_TASKS = r"""
 listed.tasks=[{id:'t1',text:'Plan the run',owner:'',due:'',done:true,report:'research/results/a.md'},
@@ -1905,7 +1932,7 @@ console.log(JSON.stringify({clean,focusedOnOpen,dirty,leave,asked,same:byClass('
     assert out["clean"] is False and out["focusedOnOpen"] is True and out["dirty"] is True and out["asked"] == 1
     assert out["same"] and out["focus"] and out["value"] == "Sample B, because" and out["caret"] == 7
     assert out["question"] == "Which sample, A or B?"
-    assert out["buttons"] == ["运行记录", "回答", "发送", "取消"]
+    assert out["buttons"] == ["运行日志", "回答", "发送", "取消"]
 
 
 def test_a_settings_input_is_not_rebuilt_under_the_typing_when_the_agent_list_arrives():
@@ -1914,7 +1941,7 @@ agentsInfo=agentFixture();
 await window.ROWorkspace.load(root);await sleepTick();
 const slow=deferred();let slowed=false;
 customGet=path=>{ if(path==='/api/agents'&&!slowed){slowed=true;return slow.promise;} };
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),model=field('完整模型 ID',box());
 typed(model,'son');model.focus();
 agentsInfo.timeout_minutes=90;
@@ -1954,20 +1981,20 @@ runLogs[run1.id]=Object.assign(clone(run1),{steps:[{kind:'say',text:'The fit con
 customGet=path=>{ if(path===logPath&&broken) return Promise.reject(Object.assign(Error('timeout'),{})); };
 const reads=()=>gets.filter(g=>g===logPath).length;
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 const failed={reads:reads(),words:byClass('ws-run-details').textContent,retry:buttonsIn(byClass('ws-run-details'))};
 broken=false;
-await find('运行记录').click();await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await find('运行日志').click();await sleepTick();
 const reopened={reads:reads(),words:byClass('ws-run-details').textContent};
 // the button, with the read failing again once more
 broken=true;window.ROWorkspace.reset();setRuns([run1]);listed.tasks=[agentTask()];
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 broken=false;const before=reads();
 await find('重试',byClass('ws-run-details')).click();await sleepTick();
 console.log(JSON.stringify({failed,reopened,button:{reads:reads()-before,words:byClass('ws-run-details').textContent}}));
 """)
-    assert out["failed"]["reads"] == 1 and "没能读取运行记录。" in out["failed"]["words"] and out["failed"]["retry"] == ["重试"]
+    assert out["failed"]["reads"] == 1 and "没能读取运行日志。" in out["failed"]["words"] and out["failed"]["retry"] == ["重试"]
     assert out["reopened"]["reads"] == 2 and "The fit converged." in out["reopened"]["words"]
     assert out["button"]["reads"] == 1 and "The fit converged." in out["button"]["words"]
 
@@ -1979,10 +2006,10 @@ agentsInfo=agentFixture();listed.tasks=[agentTask(),agentTask({id:'t2',text:'Oth
 setRuns([mkRun({state:'needs_input',can_reply:true,question:'Which sample?'})]);
 await window.ROWorkspace.load(root);await sleepTick();
 const box=()=>byClass('ws-agent');
-const names={log:find('运行记录',box()).getAttribute('aria-label'),answer:find('回答',box()).getAttribute('aria-label'),
+const names={log:find('运行日志',box()).getAttribute('aria-label'),answer:find('回答',box()).getAttribute('aria-label'),
   edit:byClass('ws-tasks').all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='编辑').map(e=>e.getAttribute('aria-label')),
   remove:root.all().filter(e=>e.tagName==='BUTTON'&&e.textContent==='移除').map(e=>e.getAttribute('aria-label'))};
-const logButton=find('运行记录',box());logButton.focus();await logButton.click();
+const logButton=find('运行日志',box());logButton.focus();await logButton.click();
 const afterLog={moved:document.activeElement!==logButton,key:document.activeElement.dataset.key,label:document.activeElement.textContent,expanded:document.activeElement.getAttribute('aria-expanded')};
 await find('回答',box()).click();
 const reply={tag:document.activeElement.tagName,label:document.activeElement.getAttribute('aria-label')};
@@ -1991,10 +2018,10 @@ const closed={label:document.activeElement.textContent,key:document.activeElemen
 const live=byClass('ws-agent-status',box());
 console.log(JSON.stringify({names,afterLog,reply,closed,live:{role:live.getAttribute('role'),words:live.textContent}}));
 """)
-    assert out["names"]["log"] == "运行记录：Run the model" and out["names"]["answer"] == "回答：Run the model"
+    assert out["names"]["log"] == "运行日志：Run the model" and out["names"]["answer"] == "回答：Run the model"
     assert out["names"]["edit"] == ["编辑：Run the model", "编辑：Other task"]
     assert out["names"]["remove"] == ["移除：Run the model", "移除：Other task"]
-    assert out["afterLog"] == {"moved": True, "key": "agent:t1:log", "label": "运行记录", "expanded": "true"}
+    assert out["afterLog"] == {"moved": True, "key": "agent:t1:log", "label": "运行日志", "expanded": "true"}
     assert out["reply"] == {"tag": "TEXTAREA", "label": "你的回答"}
     assert out["closed"] == {"label": "回答", "key": "agent:t1:answer"}
     assert out["live"]["role"] == "status" and "等你回答" in out["live"]["words"] and "Which sample?" in out["live"]["words"]
@@ -2007,7 +2034,7 @@ customPost=path=>path==='/api/agents/runs'?Promise.reject(Object.assign(Error('n
 await window.ROWorkspace.load(root);await sleepTick();
 const go=find('运行',byClass('ws-agent'));go.focus();await go.click();await sleepTick();
 const note=byClass('ws-agent-note');
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const path=root.all().find(e=>e.tagName==='INPUT'&&e.dataset.key==='set-path:opencode');
 console.log(JSON.stringify({note:{role:note.getAttribute('role'),words:note.textContent},path:path.getAttribute('aria-label'),
   focusBack:document.activeElement&&document.activeElement.dataset.key}));
@@ -2022,7 +2049,7 @@ def test_buttons_carry_the_task_in_their_english_accessible_names():
 agentsInfo=agentFixture();listed.tasks=[agentTask()];setRuns([mkRun({state:'done',can_reply:true,can_revert:true})]);
 await window.ROWorkspace.load(root);await sleepTick();
 const names=root.all().filter(e=>e.tagName==='BUTTON'&&e.getAttribute('aria-label')).map(e=>e.getAttribute('aria-label'));
-await find('AI agent').click();
+await find('Change in Settings').click();
 const path=root.all().find(e=>e.dataset&&e.dataset.key==='set-path:opencode');
 console.log(JSON.stringify({names,path:path.getAttribute('aria-label')}));
 """, lang="en")
@@ -2042,7 +2069,7 @@ runLogs[partly.id]=Object.assign(clone(partly),{steps:[],steps_total:0,changes:{
   revert:{restored:['a.py'],removed:[],skipped:[{path:'data/new.csv',reason:'changed_since'},{path:'big.bin',reason:'no_copy'},{path:'Drive/x.xlsx',reason:'in_cloud'},{path:'raw/old.csv',reason:'kept'}]}});
 await window.ROWorkspace.load(root);await sleepTick();
 const partlyLabel=byClass('status-label').textContent;
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 const log=byClass('ws-run-details').textContent;
 window.ROWorkspace.reset();
 setRuns([mkRun({state:'done',reverted:true,revert_skipped:0})]);listed.tasks=[agentTask()];
@@ -2062,13 +2089,13 @@ agentsInfo=agentFixture();listed.tasks=[agentTask()];
 const mk=(o)=>{ const r=mkRun({state:'done',can_reply:true}); runLogs[r.id]=Object.assign(clone(r),{steps:[],steps_total:0,changes:{created:[],modified:[],deleted:[]},violations:[],refusals:[]},o); setRuns([r]); };
 mk({snapshot:{files:50000,partial:true},leftovers:2});
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 const log=byClass('ws-run-details'),warn=log.all().find(e=>e.classList.contains('err')&&/50,000/.test(e.textContent));
 const first=log.all().filter(e=>e.tagName==='P').map(e=>e.textContent);
 window.ROWorkspace.reset();
 mk({snapshot:{files:10,partial:false},leftovers:1});listed.tasks=[agentTask()];
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 const clean=byClass('ws-run-details').textContent;
 window.ROWorkspace.reset();
 setRuns([mkRun({state:'failed',can_reply:true,error:{code:'guard_failed',detail:'hook did not start'}})]);listed.tasks=[agentTask()];
@@ -2109,7 +2136,7 @@ def test_the_budget_setting_posts_max_budget_usd_and_empty_removes_it():
     out = run(r"""
 agentsInfo=agentFixture();agentsInfo.max_budget_usd=5;
 await window.ROWorkspace.load(root);await sleepTick();
-await find('AI 执行者').click();
+await find('在设置里修改').click();
 const box=()=>byClass('ws-agent-settings'),usd=()=>field('每次运行的费用上限（美元，只对 Claude Code 有效，留空为不限）',box());
 const shown=usd().value;
 typed(usd(),'12.5');await find('保存',usd().parentNode.parentNode).click();await sleepTick();
@@ -2164,7 +2191,7 @@ console.log(JSON.stringify({text:box.textContent,oob:byClass('ws-oob',box).textC
 
 
 def test_the_run_log_words_the_settings_reason_the_protected_reason_and_the_withheld_variables():
-    out = run(LOG_SETUP.replace("LOG", "'运行记录'"))
+    out = run(LOG_SETUP.replace("LOG", "'运行日志'"))
     assert "改动了 AI 执行程序的项目设置（.claude、.opencode、.codex、opencode.json）" in out["oob"]
     assert ".git/config 属于 Research OS 的记录文件夹或 git，撤回不会动它" in out["text"]
     assert "没有改动这个文件" not in out["text"]  # that was no reason, only the outcome again
@@ -2179,7 +2206,7 @@ def test_the_run_log_words_the_settings_reason_the_protected_reason_and_the_with
 
 
 def test_a_run_without_withheld_variables_shows_no_such_line():
-    out = run(LOG_SETUP.replace("LOG", "'运行记录'").replace("env_removed:['GITHUB_TOKEN','FOO_SECRET'],", "env_removed:[],"))
+    out = run(LOG_SETUP.replace("LOG", "'运行日志'").replace("env_removed:['GITHUB_TOKEN','FOO_SECRET'],", "env_removed:[],"))
     assert out["env"] is None and "没有交给它的环境变量" not in out["text"]
 
 
@@ -2451,7 +2478,7 @@ console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error
 
 
 def test_a_refusal_and_an_error_in_the_log_are_a_sentence_with_the_programs_words_behind_details():
-    out = run(LOG_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    out = run(LOG_STEPS_SETUP.replace("LOG", "'运行日志'"))
     rows = out["rows"]
     assert [r["kind"] for r in rows] == ["被拒绝", "被拒绝", "被拒绝", "被拒绝", "被拒绝", "出错", "出错", "操作", "结束"]
     assert [r["text"] for r in rows] == [
@@ -2514,7 +2541,7 @@ console.log(JSON.stringify({rows,words:d.textContent,top:byClass('ws-agent-error
 def test_an_internal_error_is_worded_generally_and_a_stopped_or_interrupted_end_is_told_by_its_code():
     """18.1 item 6: `internal` is also the code of a crash before the program started, so it does not say the output was
     being read. The engine-written end of a stopped or interrupted run carries a code and the page words it."""
-    out = run(END_STEPS_SETUP.replace("LOG", "'运行记录'"))
+    out = run(END_STEPS_SETUP.replace("LOG", "'运行日志'"))
     assert out["top"].startswith("Research OS 在运行中出了错。") and "读取程序的输出" not in out["words"] + out["top"]
     assert [r["text"] for r in out["rows"]] == [
         "Research OS 在运行中出了错。", "运行已被你停止。", "运行期间 Research OS 被关闭了。", "运行期间 Research OS 退出了。"]
@@ -2640,7 +2667,7 @@ console.log(JSON.stringify(seen));
     assert out == [None, None,
                    "任务输出还没有登记的文件。过程文件夹work/w0 个文件",
                    "任务输出还没有登记的文件。1 个新文件未登记登记…",
-                   "任务输出输出清单暂时无法读取。",
+                   "任务输出输出列表暂时无法读取。",
                    "任务输出还没有登记的文件。过程文件夹work/w超过 5000 个文件",
                    None, None]
 
@@ -2665,7 +2692,7 @@ answers.push(true);
 await lost.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
 console.log(JSON.stringify(Object.assign(state,{posted,asked:confirmQuestions,after:blockOf().all().filter(e=>e.classList.contains('ws-output')).map(e=>e.children[0].textContent)})));
 """)
-    assert out["lost"] == "Lost" + "tables/lost.csv" + "文件已不在" + "移除登记"
+    assert out["lost"] == "Lost" + "文件已不在" + "移除登记" + "tables/lost.csv"   # 21.7: the path is the quiet line after the title's own line
     assert out["lostWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0   # nothing to open, nothing to preview
     assert out["fitWords"] == ["Fit", "移除登记"] and out["fitImages"] == 1 and out["opened"] == 0
     assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]            # the gone ones are counted where they are listed
@@ -2674,7 +2701,7 @@ console.log(JSON.stringify(Object.assign(state,{posted,asked:confirmQuestions,af
     english = run(_OUTPUTS + _GONE + r"""
 console.log(JSON.stringify({text:lost.textContent, words:words(lost), label:lost.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
 """, lang="en")
-    assert english == {"text": "Lost" + "tables/lost.csv" + "File no longer there" + "Remove registration",
+    assert english == {"text": "Lost" + "File no longer there" + "Remove registration" + "tables/lost.csv",
                        "words": ["Remove registration"], "label": "Remove registration: Lost"}
 
 
@@ -2698,14 +2725,14 @@ answers.push(true);
 await far.all().find(e=>e.tagName==='BUTTON'&&e.textContent==='移除登记').click();await sleepTick();
 console.log(JSON.stringify(Object.assign(state,{posted})));
 """)
-    assert out["far"] == "Far" + "tables/far.csv" + "文件只在云端" + "移除登记" and "文件已不在" not in out["far"]
+    assert out["far"] == "Far" + "文件只在云端" + "移除登记" + "tables/far.csv" and "文件已不在" not in out["far"]
     assert out["farWords"] == ["移除登记"] and out["figWords"] == ["移除登记"] and out["images"] == 0 and out["opened"] == 0
     assert out["group"] == ["代码1 个文件", "图3 个文件", "表2 个文件", "过程文件1 个文件"]          # counted where they are listed
     assert out["posted"] == [["/api/outputs/unregister", {"project": "/projects/study", "report": REPORT, "path": "tables/far.csv"}]]
     english = run(_OUTPUTS + _CLOUD + r"""
 console.log(JSON.stringify({text:far.textContent, words:words(far), label:far.all().find(e=>e.tagName==='BUTTON').getAttribute('aria-label')}));
 """, lang="en")
-    assert english == {"text": "Far" + "tables/far.csv" + "The file is only in the cloud" + "Remove registration",
+    assert english == {"text": "Far" + "The file is only in the cloud" + "Remove registration" + "tables/far.csv",
                        "words": ["Remove registration"], "label": "Remove registration: Far"}
 
 
@@ -2723,8 +2750,9 @@ const moreButtons=()=>blockOf().all().filter(e=>e.tagName==='BUTTON'&&e.dataset.
 
 
 def test_the_process_files_group_is_its_count_until_opened_and_any_other_group_past_eight_files_shows_eight():
-    """19.12 item 2: in 任务输出 the 过程文件 group is only its count (a disclosure) until opened and, opened, shows every
-    file; any other group of more than 8 files shows the first 8 and 「另外 N 个」 for the rest; exactly 8 shows all."""
+    """19.12 item 2: in 任务输出 the 过程文件 group is only its count (a disclosure) until opened and, opened, lists its first 8 files and
+    「另外 N 个」 for the rest as every other group does (21.8; tests/test_v16_b52_pages_js.py opens 200); a group of more than 8 files shows the
+    first 8 and 「另外 N 个」 for the rest; exactly 8 shows all."""
     out = run(_OUTPUTS + _MANY + r"""
 await window.ROWorkspace.load(root);await sleepTick();
 const fold=processFold(), summary=fold.children[0];
@@ -2939,7 +2967,7 @@ const runOf=(id,date,agent,files)=>({id:id,date:date,agent:agent,files:files.map
 const baseListing=()=>({groups:[
   group('t1','Run the model',REPORT_FILE,[runOf('r-20261024T101010Z-aaaaaa','2026-10-24T10:10:10+02:00','Claude Code · sonnet',
     [[SWORD+'/checks/verify.py','work'],[SWORD+'/scripts/fetch.py','code'],[SWORD+'/figures/equity.png','figure'],'LICENSE'])]),
-  group('t2','Second task',REPORT2,[runOf('r-20261025T090000Z-bbbbbb','2026-10-25T09:00:00+02:00','Codex · gpt',
+  group('t2','Second task',REPORT2,[runOf('r-20261025T090000Z-bbbbbb','2026-10-25T09:00:00+01:00','Codex · gpt',
     [['reports/plan.md','document'],['reports/notes.md','document']])])],listed:6,more:0});
 const server={listing:baseListing(),fail:null,broken:false,calls:[]};
 const folders={code:'code',data:'data',figure:'figures',table:'tables',literature:'literature',document:'reports',variable:'research/variables',work:'work'};
@@ -3313,7 +3341,7 @@ console.log(JSON.stringify({text:panelBody.textContent}));
 
 def test_a_code_span_that_is_a_project_file_path_becomes_a_link_and_other_code_stays_text():
     out = run(r"""
-await window.ROWorkspace.load(root); await find('记录结果').click();
+await window.ROWorkspace.load(root); await find('写报告').click();
 await titleDocument('Record');
 const body='Fit `data/source.csv` with `code/model.do`; not `data/absent.csv`, `x = 1`, `../code/model.do`, `/data/source.csv`, `data/`, `data/./source.csv`, `a\\b`.\n\n```\n`data/source.csv`\n```\n\n- Table `figures/图 (1).png`';
 await writeDocument(body);
@@ -3353,7 +3381,7 @@ console.log(JSON.stringify({links,asked,askedAgain:gets.filter(p=>p.startsWith('
 def test_a_link_that_resolves_from_the_project_root_but_not_from_the_documents_folder_opens_that_file():
     out = run(r"""
 listed.files.push({path:'figures/fit.png',type:'figure'},{path:'research/results/data/source.csv',type:'dataset'});
-await window.ROWorkspace.load(root); await find('记录结果').click();
+await window.ROWorkspace.load(root); await find('写报告').click();
 await titleDocument('Record');
 const body='[Root](code/model.do)\n[Own folder wins](data/source.csv)\n[Absent](data/absent.csv)\n![Fit](figures/fit.png)\n[Up](../../code/model.do)\n[Above](../../../../outside.do)';
 await writeDocument(body);
@@ -3374,7 +3402,7 @@ def test_a_root_relative_link_beyond_the_listed_files_is_asked_about_with_the_on
     out = run(r"""
 listed.files_truncated=true; listed.files_limit=500;
 customGet=path=>path.startsWith('/api/workspace/exists?')?{exists:['data/beyond.csv']}:undefined;
-await window.ROWorkspace.load(root); await find('记录结果').click();
+await window.ROWorkspace.load(root); await find('写报告').click();
 await writeDocument('[Beyond](data/beyond.csv)\n[Absent](data/absent.csv)');
 await find('预览').click(); await sleepTick(); await sleepTick();
 const preview=byClass('ws-preview'), links=preview.all().filter(e=>e.tagName==='A');
@@ -3387,7 +3415,7 @@ console.log(JSON.stringify({links:links.map(e=>e.textContent),openedFiles,asked:
 
 def test_a_files_own_relative_links_are_unchanged_when_they_resolve_from_its_folder():
     out = run(r"""
-await window.ROWorkspace.load(root); await find('记录结果').click();
+await window.ROWorkspace.load(root); await find('写报告').click();
 await writeDocument('[Model](../../code/model.do)');
 await find('预览').click();
 const links=byClass('ws-preview').all().filter(e=>e.tagName==='A');
@@ -3406,7 +3434,7 @@ storeInfo=Object.assign(storeInfo,{backups:Math.round(1.5*GB),moved:250*MB,recor
   moved_runs:[{run:'r-1',task:'Compare models',task_removed:false,date:'2026-10-21T09:40:03+02:00',size:200*MB,files:1497},
               {run:'r-2',task:'Old task',task_removed:true,date:'2026-10-19T18:02:00+02:00',size:50*MB,files:1}]});
 await window.ROWorkspace.load(root);await sleepTick();
-await find(T('AI 执行者')).click();await sleepTick();
+await find(T('在设置里修改')).click();await sleepTick();
 const store=()=>byClass('ws-store');
 const rows=()=>byClass('ws-store-rows').children.map(r=>r.children.map(c=>c.textContent));
 const runRows=()=>(byClass('ws-store-runs')?byClass('ws-store-runs').children:[]).map(li=>li.children.map(c=>c.textContent));
@@ -3421,7 +3449,7 @@ console.log(JSON.stringify({heading:store().children[0].textContent,rows:rows(),
   release:find(T('释放所有撤回备份'),store()).disabled}));
 """)
     assert out["heading"] == "运行占用的空间"
-    assert out["rows"] == [["撤回备份", "1.5 GB"], ["撤回时移走的文件", "250 MB"], ["运行记录", "30 MB"]]
+    assert out["rows"] == [["撤回备份", "1.5 GB"], ["撤回时移走的文件", "250 MB"], ["运行日志", "30 MB"]]
     assert "共占用 1.8 GB，每个项目最多 5.0 GB。" in out["words"]
     assert "超过上限时，从最早的运行开始释放撤回备份，正在运行的那一次不受影响。" in out["words"]
     assert out["runs"] == [["任务已移除", "2026-10-19 18:02", "50 MB", "1 个文件", "删除这些文件"],
@@ -3446,19 +3474,19 @@ console.log(JSON.stringify({heading:store().children[0].textContent,rows:rows(),
 
 def test_the_space_panel_says_so_when_the_files_moved_away_alone_pass_the_limit():
     out = run(STORE_SCENE + r"""
-storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({words:store().textContent,err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """)
     assert out["err"] == ["撤回时移走的文件已经超过上限。它们不会被自动清理，只有你可以删除。"
                           "在你删除它们之前，每次新运行的撤回备份会在运行结束时立刻释放，所以新的运行不能撤回。"]    # 19.12 item 8
     english = run(STORE_SCENE + r"""
-storeInfo.moved_over=true; storeInfo.over=true; await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+storeInfo.moved_over=true; storeInfo.over=true; await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """, lang="en")
     assert english["err"] == ["Files moved away by undo are over the limit. They are never cleaned up automatically; only you can delete them. "
                               "Until you delete them, each new run's undo backup is released as soon as the run ends, so new runs cannot be undone."]
     quiet = run(STORE_SCENE + r"""
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('err')).map(e=>e.textContent)}));
 """)
     assert quiet["err"] == []                                                          # said only when the moved-away files alone pass the limit
@@ -3467,7 +3495,7 @@ console.log(JSON.stringify({err:store().all().filter(e=>e.classList.contains('er
 def test_the_space_panel_says_the_engine_is_tidying_asks_again_and_then_shows_the_sizes():
     out = run(STORE_SCENE.replace("moved_runs:[", "converting:true,moved_runs:[") + r"""
 Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 const during={words:store().textContent,rows:byClass('ws-store-rows')===undefined,waiting:waiting(),release:find(T('释放所有撤回备份'),store()).disabled};
 Object.assign(storeInfo,{converting:false,backups:5*MB,moved:0,records:MB,total:6*MB});
 await tick();
@@ -3483,7 +3511,7 @@ console.log(JSON.stringify({during,words:store().textContent,rows:rows(),waiting
 def test_the_space_panel_in_english_says_tidying():
     out = run(STORE_SCENE + r"""
 Object.assign(storeInfo,{converting:true,backups:null,moved:null,records:null,total:null,moved_runs:[],releasable:0});
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 console.log(JSON.stringify({words:store().textContent}));
 """, lang="en")
     assert "Tidying undo backups…" in out["words"] and not re.search(r"[㐀-鿿]", out["words"])
@@ -3535,7 +3563,7 @@ console.log(JSON.stringify({declined,posted:posted.filter(p=>p[0].includes('/sto
 def test_a_failed_read_or_action_on_the_space_panel_says_so_and_a_read_can_be_retried():
     out = run(STORE_SCENE + r"""
 let fail=true; customGet=path=>path.startsWith('/api/agents/store')&&fail?Promise.reject(Error('boom')):undefined;
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click(); await sleepTick();
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click(); await sleepTick();
 const failed=store().textContent;
 fail=false; await find(T('重试'),store()).click(); await sleepTick();
 customPost=path=>path.includes('/store/')?Promise.reject(Error('no')):undefined;
@@ -3568,7 +3596,7 @@ def test_the_space_panel_is_not_drawn_into_a_project_that_was_left_meanwhile():
     out = run(STORE_SCENE + r"""
 const slow=deferred(); let seen=0;
 customGet=path=>{ if(path.startsWith('/api/agents/store')&&++seen===1) return slow.promise; };
-await find(T('AI 执行者')).click(); await find(T('AI 执行者')).click();   // closed, opened again: a read is pending
+await find(T('在设置里修改')).click(); await find(T('在设置里修改')).click();   // closed, opened again: a read is pending
 state.currentPath='/projects/other'; window.ROWorkspace.reset && window.ROWorkspace.reset();
 slow.resolve(Object.assign({},storeInfo,{backups:9*GB}));
 await sleepTick();
@@ -3585,7 +3613,7 @@ const run1=mkRun({state:'done',changes:0,id:'r-20261021T090000Z-aaaaaa'});
 setRuns([run1]);
 runLogs[run1.id]=Object.assign(clone(run1),{steps:[],steps_total:0,changes:{},violations:[],session_id:'0a1b2c3d-1111-2222-3333-444455556666'});
 await window.ROWorkspace.load(root);await sleepTick();
-await find('运行记录').click();await sleepTick();
+await find('运行日志').click();await sleepTick();
 console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 """)
     assert "会话编号：0a1b2c3d-1111-2222-3333-444455556666" in out["words"]
@@ -3594,16 +3622,16 @@ console.log(JSON.stringify({words:byClass('ws-run-details').textContent}));
 def test_manual_result_research_record_keeps_independent_unsaved_context_and_links():
     out = run(r"""
 await window.ROWorkspace.load(root);
-await find('记录结果').click(); await titleDocument('Manual check'); await writeDocument('Observation.');
+await find('写报告').click(); await titleDocument('Manual check'); await writeDocument('Observation.');
 typed(field('研究问题'), 'Does the finding hold?');
 await find('保存').click();
 const afterDocument=window.ROWorkspace.isDirty();
-await find('保存研究记录').click();
+await find('保存要点').click();
 const afterRecord=window.ROWorkspace.isDirty();
 await editDocument();
 const group=byClass('ws-research-links').children.find(e=>e.children[0].textContent==='研究尝试');
 const select=group.querySelector('select');select.value=listed.attempts[0].id; await find('加入关联',group).click();
-await find('保存研究记录').click();
+await find('保存要点').click();
 console.log(JSON.stringify({afterDocument,afterRecord,posted,words:root.textContent}));
 """)
     assert out['afterDocument'] and not out['afterRecord']
@@ -3620,11 +3648,11 @@ researchRecords[path]={report:path,revision:'rr1',context:{finding:'Initial'}};
 await window.ROWorkspace.load(root);await find('Result').click();await editDocument();
 typed(field('发现与解释'),'Sent');const wait=deferred();
 customPost=(url,body)=>url==='/api/workspace/research-record'?wait.promise:undefined;
-const saving=find('保存研究记录').click();typed(field('发现与解释'),'New words');
+const saving=find('保存要点').click();typed(field('发现与解释'),'New words');
 wait.resolve({report:path,revision:'rr2',context:{finding:'Sent'}});await saving;
 const retained=field('发现与解释').value,dirty=window.ROWorkspace.isDirty();
 customPost=(url)=>url==='/api/workspace/research-record'?Promise.reject({state:'revision_conflict',message:'changed'}):undefined;
-await find('保存研究记录').click();
+await find('保存要点').click();
 console.log(JSON.stringify({retained,dirty,current:field('发现与解释').value,words:root.textContent}));
 """)
     assert out['retained'] == out['current'] == 'New words' and out['dirty']
@@ -3634,7 +3662,7 @@ console.log(JSON.stringify({retained,dirty,current:field('发现与解释').valu
 def test_task_optional_research_context_is_editable_and_clearable():
     out = run(r"""
 listed.documents.push({path:'research/results/manual.md',kind:'result',title:'Manual finding'});
-await window.ROWorkspace.load(root);typed(field('任务'),'Compare specifications');
+await window.ROWorkspace.load(root);await pickAttempt();typed(field('任务'),'Compare specifications');
 field('研究上下文（可选）').value='research/results/manual.md';await field('研究上下文（可选）').emit('change');
 await find('添加任务').click();const first=clone(listed.tasks[0]);await find('编辑',byClass('ws-task-actions')).click();
 field('研究上下文（可选）').value='';await field('研究上下文（可选）').emit('change');await find('保存任务').click();
@@ -3650,7 +3678,7 @@ const path='research/results/manual.md';listed.mode='reader';listed.read_only=tr
 listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
 researchRecords[path]={report:path,revision:'rr1',context:{finding:'A cautious finding',variables:[{id:'outcome',version:2}],materials:['code/model.do'],purposes:{'code/model.do':'Sensitivity comparison'}},choices:{variables:[{id:'outcome',label:'Outcome',version:2}]}};
 await window.ROWorkspace.load(root);await find('Result').click();
-console.log(JSON.stringify({words:root.textContent,save:!!find('Save research record'),open:byClass('ws-research-record').open}));
+console.log(JSON.stringify({words:root.textContent,save:!!find('Save key points'),open:byClass('ws-research-record').open}));
 """, lang='en')
     assert out['open'] and not out['save']
     assert 'Outcome · v2' in out['words'] and 'Sensitivity comparison' in out['words']
@@ -3665,7 +3693,7 @@ const select=byClass('ws-research-links').querySelector('select');select.focus()
 await find('加入关联',select.parentNode).click();
 const focusKey=document.activeElement.dataset.key;
 const wait=deferred();customPost=(url)=>url==='/api/workspace/research-record'?wait.promise:undefined;
-const saving=find('保存研究记录').click();window.ROWorkspace.reset();state.currentPath='/projects/other';state.dataEpoch++;
+const saving=find('保存要点').click();window.ROWorkspace.reset();state.currentPath='/projects/other';state.dataEpoch++;
 listed={...listed,project:'/projects/other',documents:[],tasks:[]};await window.ROWorkspace.load(root);
 wait.resolve({report:path,revision:'stale',context:{question:'Stale answer'}});await saving;
 console.log(JSON.stringify({focusKey,words:root.textContent,dirty:window.ROWorkspace.isDirty()}));
@@ -3682,9 +3710,9 @@ let imported=null,opened=null;window.ROWorkspace.onOpenVariable=id=>opened=id;
 customPost=(url,body)=>{if(url==='/api/workspace/research-record/variable'){imported=clone(body);return {id:body.id,version:1,in_use:null};}};
 await window.ROWorkspace.load(root);await find('Result').click();await editDocument();
 const group=byClass('ws-research-links').children.find(e=>e.children[0].textContent==='变量定义');
-const select=group.querySelector('select');select.value='outcome@3';await find('加入关联',group).click();await find('保存研究记录').click();
+const select=group.querySelector('select');select.value='outcome@3';await find('加入关联',group).click();await find('保存要点').click();
 const card=root.all().find(e=>e.dataset.key==='research-import:variables/proposed.md');typed(card,'new_outcome');await find('导入为变量草稿').click();
-const afterImportDirty=window.ROWorkspace.isDirty(),repeat=!!find('导入为变量草稿');await find('保存研究记录').click();await find('打开定义卡').click();
+const afterImportDirty=window.ROWorkspace.isDirty(),repeat=!!find('导入为变量草稿');await find('保存要点').click();await find('打开定义卡').click();
 console.log(JSON.stringify({imported,opened,posted,afterImportDirty,repeat,dirty:window.ROWorkspace.isDirty()}));
 """)
     record = next(body for path, body in out['posted'] if path == '/api/workspace/research-record')
@@ -3701,8 +3729,8 @@ researchRecords[path]={report:path,revision:'r1',context:{finding:'Tentative'},n
 await window.ROWorkspace.load(root);await find('Result').click();const before=byClass('ws-research-record').textContent;
 await editDocument();typed(field('Findings and interpretation'),'First save');
 customPost=(url,body)=>url==='/api/workspace/research-record'?{...researchRecords[path],revision:'r2',context:body.context,history_warning:'History unavailable'}:undefined;
-await find('Save research record').click();const warning=byClass('ws-research-record').textContent;
-typed(field('Findings and interpretation'),'New words after saving');await find('Save research record').click();
+await find('Save key points').click();const warning=byClass('ws-research-record').textContent;
+typed(field('Findings and interpretation'),'New words after saving');await find('Save key points').click();
 console.log(JSON.stringify({before,warning,last:posted[posted.length-1][1].context.finding,dirty:window.ROWorkspace.isDirty()}));
 """, lang='en')
     assert 'height: references version 1; currently confirmed version 2' in out['before']
@@ -3716,7 +3744,7 @@ def test_preview_hands_attempt_draft_to_existing_form_without_writing_or_empty_s
 const path='research/results/manual.md';listed.documents.push({path,kind:'result',title:'Result'});docs[path]={path,kind:'result',title:'Result',content:'Body',revision:'d1'};
 researchRecords[path]={report:path,revision:'r1',context:{attempt_draft:{description:'Compare samples',result:'Undecided',parents:[]}}};
 let prefill=null;window.ROWorkspace.onCreateAttempt=value=>prefill=value;
-await window.ROWorkspace.load(root);await find('Result').click();const saveBefore=!!find('保存研究记录');await find('记录研究尝试…').click();
+await window.ROWorkspace.load(root);await find('Result').click();const saveBefore=!!find('保存要点');await find('记录研究尝试…').click();
 console.log(JSON.stringify({prefill,saveBefore,posted,dirty:window.ROWorkspace.isDirty()}));
 """)
     assert out['prefill'] == {'description': 'Compare samples', 'result': 'Undecided', 'parents': []}

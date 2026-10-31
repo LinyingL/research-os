@@ -17,8 +17,8 @@ and its settings automatically, then opens the form. Existing files are kept.
 
 Write freely, then click **Save**, or press Command-S in the writing area.
 **Preview** displays headings, lists, tables and local image references.
-Use **New note** for ideas or discussions and **Record results** to keep
-findings, figures and your interpretation together. Notes and result records
+Use **New note** for ideas or discussions and **Write a report** to keep
+findings, figures and your interpretation together. Notes and reports
 are listed by their last change, newest first. A document's title is the first
 heading of its file. Research OS writes a heading only when you type a title
 different from the one the file shows, in whichever language the screen is.
@@ -56,7 +56,9 @@ reached through OpenCode. The agent does the task itself, not a draft of it.
 **Set up.** Install your chosen program and sign in to it. Install
 Research OS with the optional MCP extra (see the
 [README](../README.md#optional-ai-agents)); without it, **Run** says what is
-missing. In the task area open **AI agent**. Research OS shows whether it
+missing. Open **Settings** at the foot of the sidebar (the task area of
+**Project home** has **Change in Settings** beside **AI agent**), to its **AI agent**
+section. Research OS shows whether it
 found each program and its version; if not, enter the program's full path.
 Add an agent by choosing the program and **Model version**. Codex's list
 shows full IDs such as `gpt-6.1-sol`; **Refresh models** reads the current
@@ -107,18 +109,19 @@ compressed ones. Missing files stop appearing;
 changed files carry **File changed**. These links record the task's declaration,
 not proof of execution or a confirmed research assessment. In **Figures and
 claims**, **Data & code**, **Literature** and **Variables**, the registered rows
-stand under one heading per task: the first heading of the task's result record
+stand under one heading per task: the first heading of the task's report
 (or the task's first line, or **Task removed** when the task is no longer in the
 list), the date of the run that produced the files, and **Open the result** once,
-which goes to **Project home** and opens the task's result record. A row does not
+which goes to **Project home** and opens the task's report. A row does not
 repeat the task; it shows its own date only when that differs from the heading's.
 
-**Task outputs.** A task that has a result record shows its files in its row,
+**Task outputs.** A task that has a report shows its files in its row,
 under **Task outputs**, which collapses with the task's other details. The
 registered files are grouped by kind; each opens in the file panel, figures show
 small previews, and each has **Remove registration**. The **Process files**
-group is only its count until you open it; any other group of more than eight
-files shows the first eight and **N more** for the rest. What you opened stays
+group is only its count until you open it; opened, it is like every other group:
+a group of more than eight files shows the first eight and **N more** for the
+rest (a task can register hundreds of process files). What you opened stays
 open when the row is drawn again. When a run ends, Research OS
 sorts the files it created: its own records, outputs registered for the task,
 files in the process folder, caches, and the rest. If the task's runs that were
@@ -152,7 +155,7 @@ were never registered. **Register files from earlier runs…** in **Output
 folders** (and **Register…** in a task's row, for all of that task's runs that
 were not undone) lists the ones still there, grouped by task with the run's date
 and agent. A file registered from here is dated by the run that created it.
-Runs you undid and tasks with no result record are left out, and so are records,
+Runs you undid and tasks with no report are left out, and so are records,
 caches, files in a run's own process folder and files already registered. Each file
 has a suggested kind taken from its folder and name: files under folders such as
 `checks`, `logs`, `tmp` or `sources`, and `.log` files, as process files; images
@@ -216,7 +219,7 @@ and write notes. It is told where each kind of file belongs (the locations in
 **Output folders**), which process folder and subfolder name are its task's, that
 process files go to the process folder, and that nothing is created under
 `research/`, where only Research OS writes. Programs it leaves running when it
-finishes are ended. When it finishes it writes a result record, marks the task
+finishes are ended. When it finishes it writes a report, marks the task
 done and links it; **Open the result** opens that record. The record is the
 task's one report: a document you asked for (a plan, a review, a write-up) goes
 to the documents folder as an output, and the record stays short, with the
@@ -274,9 +277,9 @@ question and stops; the task shows **Waiting for your answer**. **Answer**
 continues the same conversation. If the work is not right, **Send back** with
 what to change; a task already marked done is reopened first. Only the
 latest run of a task can be continued. Clearing the box of a task that has a
-result, to mark it not done yourself, asks first: "This task already has a
-result. Once it is marked not done it can be run again, and a new run rewrites
-the same result record. Mark it as not done?" Marking a task done never asks.
+report, to mark it not done yourself, asks first: "This task already has a
+report. Once it is marked not done it can be run again, and a new run rewrites
+the same report. Mark it as not done?" Marking a task done never asks.
 **Undo this run** first shows what it will do: the files it will put back
 (changed or deleted ones, restored from copies taken before the run, and the
 done mark and result link it set) and the files it will move away (the ones the
@@ -303,7 +306,7 @@ twice.
 distinct content, shared by the runs that need it, so a file that is the same in
 several runs is stored once. A project's undo backups, files moved away by
 undo, and run logs may take up to 5 GB; change the **Space limit** (1 to 100
-GB) in the AI agent area, where the time limit is. When they pass the limit,
+GB) in the AI agent section of **Settings**, where the time limit is. When they pass the limit,
 Research OS releases the oldest run's backup first, then the next, and those
 runs can no longer be undone; a run that is going, or waiting for its changes
 to be compared, keeps its own. Files moved away by undo are never removed
@@ -320,7 +323,7 @@ panel is opened; the panel says **Tidying undo backups…** meanwhile.
 
 **Attribution.** Each file the agent created or changed is recorded in
 **Change history** as made by an agent, naming the agent and the person who
-started the run. The result record opens with a line saying which agent
+started the run. The report opens with a line saying which agent
 wrote it, when, and for whom. For a file tracked by git, the history is
 git's; the run log names the agent's change.
 
@@ -366,10 +369,10 @@ In a team, members save in their own working copies, and each document and the
 task list is marked with its state: **My change, not yet proposed**,
 **Proposed** or **Approved, awaiting sync**. **Submit changes** opens the
 existing proposal preview; a document's referenced local files are also
-selected for review, and submitting the tasks takes along the result records
-that the changed tasks link, so that an approved task never points at a record
+selected for review, and submitting the tasks takes along the reports
+that the changed tasks link, so that an approved task never points at a report
 the official project lacks. Check that selection, explain the change and send
 it. Approval applies it to the official project. On the PI's page, a note or a
-result record says it goes to the members with the next **Publish**. A Mac that
+report says it goes to the members with the next **Publish**. A Mac that
 is not a member of the project says so, and the project can only be read there.
 A single-person project saves directly.

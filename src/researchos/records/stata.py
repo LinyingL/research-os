@@ -75,7 +75,7 @@ _HEADER = ("# Stata 全局变量代表项目里的哪个文件夹：Research OS 
 
 MESSAGES = {
     "no_identity": ("项目身份文件无法读取", "The project's identity file cannot be read"),
-    "migrating": ("项目正在迁移，迁移完成前不能写入人工记录", "The project is being migrated; no record is written until it ends"),
+    "migrating": ("项目正在迁移，迁移完成前不能写入你的记录", "The project is being migrated; no record is written until it ends"),
     "missing": ("全局变量记录文件（stata.toml）当前无法读取，请先恢复它",
                 "The record of globals (stata.toml) cannot be read now; restore it first"),
     "dataless": ("记录文件正在从云端下载…", "The record file is downloading from the cloud…"),

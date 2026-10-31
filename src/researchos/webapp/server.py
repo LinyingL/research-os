@@ -24,7 +24,9 @@ Endpoints (all GET unless noted):
                             column names, never hardcoded ones (see
                             `summary_payload`).
     GET  /api/attempts  -- attempt nodes (human_fields verdict/result plus
-                            every attrs field); `{"attempts": [], "hint":
+                            every attrs field) and `statuses`, the statuses
+                            a research assessment can have in the project
+                            (the chooser's); `{"attempts": [], "hint":
                             ...}` when the graph has none (see
                             `attempts_payload`).
     GET  /api/tree      -- the decision-tree view, this app's own reason to
@@ -58,7 +60,7 @@ Endpoints (all GET unless noted):
                             (`researchos.githubpush.plan`): branch, unpushed
                             commits, uncommitted files, the records, the
                             refusals, a `token`. Reads only; no network.
-    POST /api/github/commit-records -- 11.3 「先把人工记录提交一次」: commits
+    POST /api/github/commit-records -- 11.3 「先把你的记录提交一次」: commits
                             exactly the changed `.researchos/` files. Body `{}`.
     POST /api/github/create-repo -- 11.3, no remote: `{name, token}` -> a
                             PRIVATE repository via `gh`, added as origin.
@@ -143,6 +145,12 @@ Endpoints (all GET unless noted):
                             (`researchos.agents.profiles`; keys not sent are
                             kept, a refusal saves none of them); answers like
                             GET /api/agents. Works with no project served.
+    GET  /api/agents/going -- the runs this engine carries out now, in every
+                            project, with the task, the agent and its model
+                            and whether the run is in the served project
+                            (`AgentManager.going`): what 停止服务 ends, which
+                            its question names (21.7). Works with no project
+                            served.
     GET  /api/agents/runs -- the served project's agent runs, newest first,
                             and which is active (`AgentManager.runs`).
     GET  /api/agents/runs/<id> -- one run: steps, changes, out-of-bounds
@@ -278,10 +286,13 @@ Endpoints (all GET unless noted):
                             project answers 409 `project_blocked` with its
                             situation, a folder moved under the engine 409
                             `project_moved`.
-    POST /api/variables/<confirm|revise|reaffirm|abandon|revive|answer|
+    POST /api/variables/<new|confirm|revise|reaffirm|abandon|revive|answer|
          full-compare>   -- only what Research OS authors on a card, through
                             `researchos.records.cards` (never the researcher's
-                            text); see `researchos.webapp.variables_api`.
+                            text); `new` is 「新建变量卡」 (21.7), the code of
+                            `researchos variable new`, its refusals worded in
+                            the request's language; see
+                            `researchos.webapp.variables_api`.
     GET  /api/citations -- the 「文献」 view (11.4): per draft, its citations
                             and how each resolves, candidates with the
                             links 确认 / 否决 write through /api/judgements;
@@ -297,6 +308,11 @@ Endpoints (all GET unless noted):
                             (`researchos.settings`), that one key of
                             `settings.json`; anything else is a 400 and
                             writes nothing. Allowed with no project served.
+    GET  /api/settings/lookup -- `{"lookup": {"enabled": bool}}`: the machine
+                            setting 「用 DOI 联网查文献信息」 that the 设置
+                            page reads (21.7); it is written by POST
+                            /api/citations/lookup-setting. Works with no
+                            project served.
     GET  /api/settings/llm, POST /api/settings/llm -- `{"base_url"?, "model"?}`:
                             the model server 「生成草稿」 uses (16), this
                             Mac's setting. GET: `{base_url, model}` in
@@ -342,7 +358,7 @@ Endpoints (all GET unless noted):
                             for one link, in order (9.9 #12), each with
                             the basis it was made on.
     GET  /api/records   -- the 9.2 inventory (`researchos records`) for the app's
-                            「记录」 panel (see `records_payload`).
+                            「你的记录与备份」 panel (see `records_payload`).
     POST /api/project/reopen -- no body: the identity check again on the
                             served folder (「重新打开」; see
                             `reopen_payload`).
@@ -692,7 +708,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Callable, Iterator
 
-from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, inventory, lineage, migration, names, newproject, officialness, outputs, paths, people, workspace
+from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, now_doing, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
 from researchos import research_records
 from researchos.agents import labels as agent_labels
@@ -1594,9 +1610,13 @@ def _sorted_attempt_nodes(conn: Connection) -> list[dict[str, Any]]:
 
 
 def attempts_payload(conn: Connection, project_root: Path | None = None) -> dict[str, Any]:
+    """`GET /api/attempts`: the attempts with their cells, and (given the project) `statuses`, the statuses the
+    research assessment can have in it (`research_records.assessment_statuses`, DESIGN.md 21.3) -- what the page's
+    status chooser offers and reads a cell by, loaded with the records it is drawn for."""
     nodes = _sorted_attempt_nodes(conn)
+    statuses = {"statuses": research_records.assessment_statuses(project_root)} if project_root is not None else {}
     if not nodes:
-        return {"attempts": [], "hint": _NO_ATTEMPTS_HINT}
+        return {"attempts": [], "hint": _NO_ATTEMPTS_HINT, **statuses}
     labels = attempts_ingest.verdict_labels(project_root)
     attempts = [
         {
@@ -1609,7 +1629,7 @@ def attempts_payload(conn: Connection, project_root: Path | None = None) -> dict
         }
         for node in nodes
     ]
-    return {"attempts": attempts}
+    return {"attempts": attempts, **statuses}
 
 
 # -- /api/tree: the decision-tree view (task V1's core endpoint) -------------
@@ -2009,6 +2029,17 @@ def agents_payload() -> dict[str, Any]:
         "store_limit_range": list(agent_profiles.STORE_LIMIT_RANGE),
         "max_agents": agent_profiles.MAX_AGENTS,
     }
+
+
+def going_payload(agents: Any, served: ServedProject) -> dict[str, Any]:
+    """`GET /api/agents/going` (21.7): the runs this engine carries out now, in every project -- what stopping the service
+    ends -- each with its task, its agent (`label`: the agent and its model as the rows name it) and whether it is in the
+    served project; the folder's name says which project otherwise."""
+    runs = []
+    for item in (agents.going() if agents is not None else []):
+        runs.append({key: item[key] for key in ("task", "label", "runner", "model", "started", "project")}
+                    | {"here": not served.no_project and item["root"] == str(served.root)})
+    return {"runs": runs}
 
 
 def agents_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -3201,9 +3232,9 @@ def variables_get(served: ServedProject, path: str, query: dict[str, list[str]],
 
 def records_payload(served: ServedProject) -> dict[str, Any]:
     """`GET /api/records`: the inventory of 9.2 -- what `researchos records`
-    prints -- for the app's 「记录」 panel: each kind of human record, where
+    prints -- for the app's 「你的记录与备份」 panel (21.7): each kind of human record, where
     it lives (project-relative when inside the project), how many, the
-    newest snapshot and any problem, each row with its machine-readable
+    newest backup with the time in its name (`backed_up_at`) and any problem, each row with its machine-readable
     `code` and `facts` (the page words them in Chinese; `problems` stays
     the engine's English for 「详情」). Reads only. The index is consulted
     for the shrink check when it can be opened; a blocked project, or one
@@ -3832,7 +3863,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 return None, None
             raise AgentApiError(_AgentRefusal(
                 "person_unreadable", 409, str(exc),
-                "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它，或在设置里重新填写你的名字"), self._lang()) from exc
+                "这台电脑上的个人信息文件（me.toml）读不出来，请先修好它，或在「成员」页重新填写你的名字"
+                "（单人项目：项目菜单里的「开始协作…」会打开它）"), self._lang()) from exc
         try:
             me = people.read_me().me
         except Exception:  # noqa: BLE001 -- a name is a courtesy, never a reason to refuse
@@ -4069,6 +4101,42 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 report = (query.get("report") or [""])[0]
                 payload = self._workspace_api(lambda: research_records.read(served.root, report))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/task-groups":
+                # 21.1: the groups proposed for the tasks that belong to no attempt, and the duplicates among them --
+                # a read; nothing is written until a group is confirmed (POST, below)
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                payload = self._workspace_api(lambda: task_groups.propose(served.root))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/handback":
+                # 21.2: one handback -- the report, its context, its outputs and the run that handed it back, in the order
+                # the page shows them -- a read; that this person opened it is the POST below
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                report = (query.get("report") or [""])[0]
+                payload = self._workspace_api(lambda: handbacks.view(served.root, served.project_id, handbacks.person_of(), report, self._lang()))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/handbacks":
+                # 21.2: the handbacks the person who started the run has not opened yet (等你处理, the cards' 等你看)
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                listed = self._workspace_api(lambda: handbacks.list_unopened(served.root, served.project_id, handbacks.person_of()))
+                self._send_json(200, {"unopened": listed, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/workspace/now":
+                # 21.4: 现在在做什么 -- the attempts in progress and the one list of what waits for this person (等你处理),
+                # a read; `only=needs` is the list alone (the sidebar's count). The shared folder is read for at most a few
+                # seconds, as the desk's is, and the desk's own job is joined, not started twice.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                only = (query.get("only") or [None])[0]
+                lang = self._lang()
+                def now_payload(conn: Connection) -> dict[str, Any]:
+                    return {**now_doing.payload(conn, served.root, lang=lang, only=only), "project": str(served.root), "id": served.project_id}
+                self._json_from_conn(now_payload)
             elif path == "/api/workspace/document":
                 served = self._require_unblocked()
                 if "project" in query:
@@ -4262,6 +4330,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, agents_payload())
             elif path == "/api/agents/models":
                 self._send_json(200, self._agent_api(lambda: agents_models_payload(query)))
+            elif path == "/api/agents/going":
+                # 21.7: what 停止服务 would end; engine-wide, so with no project served too
+                self._send_json(200, going_payload(self.server.agents, self._served()))
+            elif path == "/api/settings/lookup":
+                # 21.7: the 设置 page reads this Mac's online-lookup setting (it is written by the 文献 view's own route)
+                self._send_json(200, literature_api.lookup_setting_read())
             elif path == "/api/agents/runs":
                 served = self._require_unblocked()
                 if served.project_id is None:  # no identity yet: nothing could have run
@@ -4408,6 +4482,60 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     except ApiError as exc:
                         logger.info("no immediate scan after writing a research document: %s", exc)
                 self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/task-groups":
+                # 21.1: one group the person kept -- its attempt row through the attempt write (under the watcher's
+                # ingest lock, as /api/attempts/write), then `attempt` on its tasks
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: task_groups.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock))
+                marks = workspace.local_annotations(served.root, {workspace.TASKS_PATH: payload["tasks_revision"]}, self._lang())
+                payload["tasks_officialness"] = marks["files"][workspace.TASKS_PATH]
+                payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
+                self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/handback/opened":
+                # 21.2: this person has opened the handback -- kept on this Mac under the Research OS home, not in the project
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                report = body.get("report")
+                if not isinstance(report, str) or not served.project_id:
+                    raise MissingParamError("request body must carry the 'report' of the handback")
+                self._send_json(200, handbacks.mark_opened(served.project_id, handbacks.person_of(), report))
+            elif parsed.path == "/api/workspace/run/aside":
+                # 21.4: 「知道了」 on a failed or out-of-bounds run -- kept on this Mac under the Research OS home, not in the project
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                run = body.get("run")
+                if not isinstance(run, str) or not served.project_id:
+                    raise MissingParamError("request body must carry the 'run' to set aside")
+                try:
+                    self._send_json(200, now_doing.set_aside(served.project_id, handbacks.person_of(), run))
+                except ValueError as exc:
+                    raise MissingParamError(str(exc)) from exc
+            elif parsed.path == "/api/workspace/handback/confirm":
+                # 21.2: the assessment of the handback's attempt, through the attempt write (under the watcher's ingest lock,
+                # as /api/attempts/write), then the record of it in the report's context
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: handbacks.confirm(served.root, saved, ingest_lock=self.server.watcher.ingest_lock, lang=self._lang()))
+                payload["generation"] = self.server.watcher.record_external_change(payload["ingest_error"])
+                self._send_json(200, payload)
+            elif parsed.path == "/api/workspace/handback/unconfirm":
+                # 21.2: 撤销 on the written line has put the cell back (the attempt write); this takes the confirmation back
+                # from the report's context and notes it on the history
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: handbacks.unconfirm(served.root, saved, lang=self._lang()))
+                payload["generation"] = self.server.watcher.record_write(set())
+                self._send_json(200, payload)
             elif parsed.path == "/api/projects/switch":
                 body = self._read_json_body_with_path()
                 requested_id = body.get("id") if isinstance(body.get("id"), str) else None
@@ -4480,7 +4608,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._read_json_object()
                 self._send_json(200, github_fetch_payload(self._served(), lang=self._lang()))
             elif parsed.path == "/api/github/commit-records":
-                # 11.3 「先把人工记录提交一次」: the `.researchos/` files only.
+                # 11.3 「先把你的记录提交一次」: the `.researchos/` files only.
                 self._send_json(200, github_commit_records_payload(self._served(), self._read_json_object()))
             elif parsed.path == "/api/github/create-repo":
                 # 11.3: a PRIVATE repository via gh, only on this click.
@@ -4745,7 +4873,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 action = parsed.path[len("/api/variables/"):]
                 try:
                     with self.server.write_guard(human=action != "full-compare"):
-                        payload = variables_api.act(served.root, served.project_id, action, body)
+                        payload = variables_api.act(served.root, served.project_id, action, body, self._lang())
                 except variables_api.CardActionRefused as exc:
                     raise CardRefusedApiError(exc) from exc
                 payload["generation"] = self.server.watcher.record_write(
@@ -4812,12 +4940,12 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 _NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js", "/workspace.js", "/workspace.css",
                              "/api/projects",
                              "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm",
-                             "/api/agents", "/api/agents/models"})
+                             "/api/agents", "/api/agents/models", "/api/agents/going", "/api/settings/lookup"})
 _NO_PROJECT_POST = frozenset({
     "/api/projects/switch", "/api/projects/locate", "/api/projects/remove", "/api/projects/inspect",
     "/api/projects/add", "/api/projects/create", "/api/projects/rename", "/api/shutdown", "/api/me",
     "/api/me/key", "/api/share/join-preview", "/api/share/join", "/api/settings/language",
-    "/api/settings/llm", "/api/settings/agents",
+    "/api/settings/llm", "/api/settings/agents", "/api/citations/lookup-setting",
 })
 #: The writes of the output places and the files registered in them, each a person's (commit 17a1527; DESIGN.md 19.5).
 _OUTPUT_WRITES: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {

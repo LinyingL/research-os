@@ -173,7 +173,7 @@
     switch (kind) {
       case "verdict_change": return t("修改研究判断只带尝试表里的这一行；要一起发送文件，在下面勾选。");
       case "attempt_new":
-        return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「关联文件」挂上的文件）；可以加上或去掉。");
+        return t("新的尝试带上它这一行，和与它关联的文件（描述里写的步骤脚本、用「添加文件」挂上的文件）；可以加上或去掉。");
       case "variable_version": return t("变量定义只带新版本的定义文件；要一起发送文件，在下面勾选。");
       default: return t("只带勾选的文件。");
     }
@@ -198,7 +198,7 @@
     const parts = [];
     if (c.notes) parts.push(t("{n} 条备注", { n: numberText(c.notes) }));
     if (c.judgements) parts.push(t("{n} 条连线确认", { n: numberText(c.judgements) }));
-    if (c.papers) parts.push(t("{n} 处「设为论文正文」的标记", { n: numberText(c.papers) }));
+    if (c.papers) parts.push(t("{n} 处论文标记", { n: numberText(c.papers) }));
     if (c.links_added) parts.push(t("增加 {n} 条连线", { n: numberText(c.links_added) }));
     if (c.links_removed) parts.push(t("删除 {n} 条连线", { n: numberText(c.links_removed) }));
     return andSeries(parts);
@@ -335,7 +335,7 @@
   // put beside it -- yours first, then the official one.
   function differenceBlock(f, open) {
     const d = mk("details", "proposal-diff");
-    d.appendChild(mk("summary", null, t("你的和正式的有什么不同")));
+    d.appendChild(summaryOf(t("你的和正式的有什么不同")));
     // 12.13: a table's rows and columns first (the engine's sentence, in the
     // page's language), its line diff below when small.
     if (f.summary) d.appendChild(mk("p", "desk-note plain", f.summary));
@@ -347,6 +347,8 @@
   }
 
   function now() { return new Date(); }
+  // 12.13: the summary of a <details> carries the quiet chevron (app.html's `chevronSummary`); plain words where there is none.
+  function summaryOf(label) { return typeof chevronSummary === "function" ? chevronSummary(label) : mk("summary", null, label); }
   function when(at) { return at ? RODesk.whenWords(at, now()) || String(at) : ""; }
   // A date inside a line starts lower case in English (13.5), as desk.js writes it.
   function whenInLine(at) { const w = when(at); return w.charAt(0).toLowerCase() + w.slice(1); }
@@ -477,7 +479,7 @@
     }
     if (epoch !== state.dataEpoch) return;
     clearProjectState();
-    const top = host.scrollTop; // the list is a pane of its own beside 待办 (18.3)
+    const top = host.scrollTop; // the list is a pane of its own beside 等你处理 (18.3, 21.4)
     host.innerHTML = "";
     const page = mk("div", "routes");
     const list = (ctx && ctx.proposals && ctx.proposals.proposals) || [];
@@ -544,7 +546,7 @@
       }
       if (item.decision && item.decision.act === "abandoned") {
         const act = mk("div", "route-actions");
-        act.appendChild(mkButton(t("当时的依据"), "btn btn-small", () => openEvidence(item.id, item)));
+        act.appendChild(mkButton(t("当时的依据"), "ws-text-link", () => openEvidence(item.id, item)));
         const d = item.decision;
         act.appendChild(mk("span", "route-src", d.evidence_count
           ? t("放弃于 {when}，记录了 {n} 个文件的状态", { when: whenInLine(d.at), n: d.evidence_count })
@@ -699,7 +701,7 @@
     if (f.sha256) li.appendChild(mk("div", "evidence-sha mono", t("指纹 {sha}", { sha: String(f.sha256).slice(0, 16) })));
     if (f.viewable) {
       const slot = mk("div", "evidence-slot");
-      const btn = mkButton(t("查看当时的内容"), "btn btn-small", async () => {
+      const btn = mkButton(t("查看当时的内容"), "ws-text-link", async () => {
         if (slot.childElementCount) { slot.innerHTML = ""; btn.textContent = t("查看当时的内容"); btn.setAttribute("aria-expanded", "false"); return; }
         btn.disabled = true;
         try {
@@ -724,6 +726,7 @@
         btn.disabled = false;
       });
       btn.setAttribute("aria-expanded", "false");
+      btn.classList.add("has-chevron"); // 12.13: a toggle that is not a <details> has the chevron too
       li.append(btn, slot);
     }
     return li;
@@ -789,7 +792,7 @@
     if (m === "single" || !m) {
       page.appendChild(block(t("提议"), "plain"));
       page.lastChild.appendChild(line(t("这是单人项目：你的改动直接生效，不需要提议和批准。要和别人一起做，在「成员」一栏里开始协作。"), "quiet"));
-      page.lastChild.appendChild(mkButton(t("去成员一栏"), "btn btn-small", () => activateView("members")));
+      page.lastChild.appendChild(mkButton(t("去成员一栏"), "ws-text-link", () => activateView("members")));
     } else if (m === "none") {
       page.appendChild(mk("p", "desk-alone", t("你还不是这个项目的成员：请 PI 把你加入团队，然后同步")));
     } else if (m === "pi") {
@@ -986,7 +989,7 @@
 
   function renderResearchRecords(host, records) {
     records.forEach((record) => {
-      const s = sec(t("研究记录"));
+      const s = sec(t("要点"));
       s.appendChild(mk("p", "desk-meta mono", record.path));
       const context = record.context || {};
       [["question", "研究问题"], ["method", "方法"],
@@ -1086,7 +1089,7 @@
         li.appendChild(mk("p", "desk-note plain", t("表格较大：只比较行和列，不逐行对比。")));
       } else if (f.diff) {
         const d = mk("details", "proposal-diff");
-        d.appendChild(mk("summary", null, t("查看改动")));
+        d.appendChild(summaryOf(t("查看改动")));
         d.appendChild(diffOf(f.diff, f.truncated));
         if (f.action === "added" || files.length <= 3) d.open = true;
         li.appendChild(d);
@@ -1360,6 +1363,7 @@
       }
       view.compose = { kind: kind };
       await composeInto(result, body, status);
+      look.classList.toggle("btn-primary", !result.querySelector(".btn-primary"));   // 21.8: the preview's 发送提议 is the primary while it stands
     });
     form.append(look, status);
     const result = mk("div", "compose-result");
@@ -1449,7 +1453,7 @@
       if ((c.returned || []).length) row.appendChild(mk("p", "desk-break", t("这个文件曾在被退回的提议里：先看看退回的理由，再决定是否带上。")));
       if (c.chosen && f.diff) {
         const det = mk("details", "proposal-diff");
-        det.appendChild(mk("summary", null, t("查看改动")));
+        det.appendChild(summaryOf(t("查看改动")));
         det.appendChild(diffOf(f.diff, f.truncated));
         row.appendChild(det);
       }
@@ -1558,9 +1562,17 @@
     other.appendChild(mkButton("从公盘加入项目…", "btn btn-small", () => openJoinDialog()));
     page.appendChild(other);
     showFlash(page, "members");
+    onePrimary(page);
     host.appendChild(page);
     host.dataset.loaded = "1";
     if (refresh) window.scrollTo(0, top);
+  }
+
+  // 21.8: a page of steps has one primary button, the first step not done yet (the sections stand in the order the steps are
+  // taken); the buttons of the later steps are quiet until the earlier ones are done. The two-folders form a joined member keeps under
+  // a fold is an exceptional setup beside the step, drawn quiet: the first primary in the page is always one that is on screen.
+  function onePrimary(page) {
+    Array.from(page.querySelectorAll(".btn-primary")).slice(1).forEach((b) => b.classList.remove("btn-primary"));
   }
 
   // 我是谁: set once, on first use -- the only form of its kind (12.1).
@@ -1721,7 +1733,7 @@
     }
     if (pending.count) {
       const det = mk("details", "team-pending");
-      det.appendChild(mk("summary", null, last ? "和第 " + last.seq + " 版相比有 " + pending.count + " 个文件不同"
+      det.appendChild(summaryOf(last ? "和第 " + last.seq + " 版相比有 " + pending.count + " 个文件不同"
         : "第一版会带上正式版本的 " + pending.count + " 个文件"));
       const ul = mk("ul", "desk-files");
       (pending.files || []).slice(0, 60).forEach((f) => ul.appendChild(mk("li", "mono", f)));
@@ -1813,7 +1825,7 @@
     const list = (coming && coming.removals) || [];
     if (!list.length) return wrap;
     const det = mk("details", "team-pending");
-    det.appendChild(mk("summary", null, t("会删除的连线（{n} 条）", { n: numberText(list.length) })));
+    det.appendChild(summaryOf(t("会删除的连线（{n} 条）", { n: numberText(list.length) })));
     const ul = mk("ul", "desk-files");
     list.forEach((r) => {
       const li = mk("li");
@@ -1921,7 +1933,7 @@
   // member can write into their own folder.
   function twoFolders(share) {
     const det = mk("details", "team-pending");
-    det.appendChild(mk("summary", null, share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
+    det.appendChild(summaryOf(share.two_folders ? "更改两个文件夹" : "PI 把两个文件夹分开共享给你？"));
     det.appendChild(line("在个人版 OneDrive 里，PI 分别共享「已发布」（只能查看）和你自己的提议文件夹（可以编辑），它们会在你的电脑上变成两个文件夹。分别选好：", "quiet"));
     const pub = pathField("公盘的「已发布」文件夹（PI 共享给你，只能查看）", "shared", "已发布文件夹的完整路径");
     const mine = pathField("你自己的提议文件夹（PI 共享给你，可以编辑）", "mine", "你的提议文件夹的完整路径");
@@ -1930,7 +1942,7 @@
     det.append(pub.wrap, mine.wrap);
     det.appendChild(line("使用前会检查：「已发布」里有这个项目经过 PI 签名的快照；你能写入自己的提议文件夹（在里面建一个空文件，马上删掉，不留下任何东西）。只记在这台电脑的设置里。", "writes"));
     const status = mk("div", "notice-status");
-    const btn = mkButton("检查并使用这两个文件夹", "btn btn-primary", async () => {
+    const btn = mkButton("检查并使用这两个文件夹", "btn btn-small", async () => {
       const p = pub.input.value.trim(), m = mine.input.value.trim();
       if (!p || !m) { setStatus(status, "err", "请选好两个文件夹"); return; }
       btn.disabled = true;
@@ -1966,7 +1978,7 @@
       if (!a.reachable) head.appendChild(label("现在打不开", "ochre"));
       li.appendChild(head);
       const det = mk("details", "team-pending");
-      det.appendChild(mk("summary", null, "提议区在别处"));
+      det.appendChild(summaryOf("提议区在别处"));
       const pf = pathField("这位成员的提议区在这台电脑上的位置", "shared", "完整路径");
       const status = mk("div", "notice-status");
       const btn = mkButton("记下", "btn btn-small", async () => {
@@ -2134,8 +2146,10 @@
     panelBody.append(shared.wrap, mine.wrap, folder.wrap);
     const status = mk("div", "notice-status");
     const result = mk("div", "join-result");
-    const look = mkButton("查看", "btn btn-primary", () => lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result,
-      mine.input.value.trim()));
+    const look = mkButton("查看", "btn btn-primary", async () => {
+      await lookJoin(subject, shared.input.value.trim(), folder.input.value.trim(), status, result, mine.input.value.trim());
+      look.classList.toggle("btn-primary", !result.querySelector(".btn-primary"));   // 21.8: 核对无误，加入 is the primary once the folder is read
+    });
     panelBody.append(look, status, result);
   }
 
