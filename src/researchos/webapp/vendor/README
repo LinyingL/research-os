@@ -1,0 +1,62 @@
+Third-party code vendored into Research OS (DESIGN.md 22.0.1)
+====================================================================
+
+Written by tools/vendor/build-codemirror.mjs; do not edit by hand.
+
+These files are code Research OS did not write. They are served same-origin by
+GET /vendor/<name> from an allow-list (webapp/server.py, _VENDOR_FILES), never
+fetched from a network, and loaded only by the LaTeX editor through
+ROLatex.loadEditorLibs() (webapp/latex.js). The tests that scan the page's
+scripts and styles skip this folder by name.
+
+codemirror.js
+-------------
+CodeMirror 6, bundled by esbuild 0.28.2 (MIT) as an IIFE that sets
+window.ROCodeMirror; options: {"bundle":true,"format":"iife","globalName":"ROCodeMirror","minify":true,"target":"safari16","legalComments":"none","charset":"ascii"}.
+Exports: ChangeSet, Compartment, Decoration, EditorSelection, EditorState, EditorView, HighlightStyle, MapMode, RangeSet, RangeSetBuilder, StateEffect, StateField, StreamLanguage, Text, Transaction, ViewPlugin, WidgetType, defaultKeymap, drawSelection, highlightSpecialChars, history, historyKeymap, keymap, placeholder, redo, redoDepth, search, searchKeymap, stex, syntaxHighlighting, tags, undo, undoDepth.
+
+Packages (all bundled; each one's licence text is LICENSE.<package> here):
+- @codemirror/commands 6.11.1 (MIT)
+- @codemirror/language 6.13.1 (MIT)
+- @codemirror/legacy-modes 6.5.5 (MIT)
+- @codemirror/search 6.7.2 (MIT)
+- @codemirror/state 6.7.6 (MIT)
+- @codemirror/streamparser 6.0.0 (MIT)
+- @codemirror/view 6.43.15 (MIT)
+- @lezer/common 1.5.5 (MIT)
+- @lezer/highlight 1.2.5 (MIT)
+- @marijn/find-cluster-break 1.0.4 (MIT)
+- crelt 1.0.7 (MIT)
+- style-mod 4.1.4 (MIT)
+- w3c-keyname 2.2.8 (MIT)
+
+KaTeX (22.0.1, batch B3) is not vendored yet; its katex.js, katex.css and
+fonts/*.woff2 will be added here by a script of its own, with its rows below.
+
+sha256
+------
+2f066430cbd41b21f6cf2fce24a33f0f3bc20c5dcba87e336899895e7d891d5d  codemirror.js
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-commands
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-language
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-legacy-modes
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-search
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-state
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-streamparser
+05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07  LICENSE.codemirror-view
+568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba  LICENSE.lezer-common
+568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba  LICENSE.lezer-highlight
+9360b00fdd091f05c783b568bdd46c679c41b72415599252de98949462ea1acb  LICENSE.marijn-find-cluster-break
+23852ebf6aef7fadffc92514b3c5df163a8651f2c3ed0dbb494cb49d93bd5de5  LICENSE.crelt
+cb4474e26547397169061d3586c00022cda5330a1b64fa13e872319f3b63aff1  LICENSE.style-mod
+869c30f368eb08735e779027b9f4bc9fea2f39624351856aebe42741f0bc0884  LICENSE.w3c-keyname
+
+Rebuilding
+----------
+1. Have a node_modules folder holding exactly the packages and versions of
+   tools/vendor/codemirror.lock.json, and esbuild 0.28.2.
+2. From the repository root:
+     node tools/vendor/build-codemirror.mjs <that node_modules folder>
+   It refuses, writing nothing, when the packages it bundles or the names the
+   bundle exposes differ from the lock.
+3. Commit codemirror.js, the LICENSE.* files and this README together.
+   To change a version or an export, change the lock (and the entry) first.

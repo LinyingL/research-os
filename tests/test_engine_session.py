@@ -517,6 +517,8 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/routemap.js": ("page", "/routemap.js"),
     "/workspace.js": ("page", "/workspace.js"),
     "/workspace.css": ("page", "/workspace.css"),
+    "/latex.js": ("page", "/latex.js"),
+    "/vendor/": ("page", "/vendor/codemirror.js"),   # 22.0.1: an allow-listed vendored file, as bytes
     "/api/workspace": ("read", "/api/workspace"),
     "/api/outputs/folders": ("read", "/api/outputs/folders"),
     "/api/outputs/backfill": ("read", "/api/outputs/backfill"),
@@ -843,7 +845,7 @@ def test_the_page_and_the_engine_say_the_same_words_in_both_languages():
 def test_the_page_makes_no_request_of_its_own_that_would_skip_the_cookie():
     """Every write goes through app.html's apiPost (same origin, so the cookie travels); no module opens a
     request of its own."""
-    for name in ("app.html", "canvas.js", "desk.js", "node.js", "team.js", "routemap.js", "workspace.js"):
+    for name in ("app.html", "canvas.js", "desk.js", "node.js", "team.js", "routemap.js", "workspace.js", "latex.js"):
         text = (WEBAPP / name).read_text(encoding="utf-8")
         own = len(re.findall(r"\bfetch\(", text)) + len(re.findall(r"XMLHttpRequest|navigator\.sendBeacon", text))
         assert own == (2 if name == "app.html" else 0), name

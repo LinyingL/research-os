@@ -127,8 +127,10 @@ def html_screen_text(html: str) -> list[str]:
 
 def _served_scripts() -> list[Path]:
     html = APP_HTML.read_text(encoding="utf-8")
-    names = re.findall(r'<script src="/([\w.-]+\.js)"></script>', html)
-    return [WEBAPP / name for name in names]
+    names = re.findall(r'<script src="/([\w./-]+\.js)"></script>', html)
+    # vendor/ (DESIGN.md 22.0.1) is third-party code we did not write, never shown as text and never in the markup (the
+    # editor's loader adds it); its strings are not the page's words, so it is skipped by name.
+    return [WEBAPP / name for name in names if not name.startswith("vendor/")]
 
 
 def css_content_strings(css: str) -> list[str]:

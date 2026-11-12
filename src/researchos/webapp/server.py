@@ -456,6 +456,15 @@ Endpoints (all GET unless noted):
                             doubling the page. Same origin check as every
                             other route -- a foreign page cannot even fetch
                             the script through a rebound hostname.
+    GET  /latex.js     -- the LaTeX editor's module (DESIGN.md 22.1; task
+                            V17), served the same way; it loads the vendored
+                            libraries only when the editor first opens.
+    GET  /vendor/<name> -- third-party code vendored by tools/vendor/
+                            (DESIGN.md 22.0.1): only a name of
+                            `_VENDOR_FILES`, as bytes with its own content
+                            type; any other name, a subfolder or a `..` is
+                            404, since the name is looked up, never joined
+                            into a path.
 
 Path-traversal defense (`/api/file` and `/api/open` alike, both required by
 task V1): `_resolve_within_root` resolves the requested path -- symlinks
@@ -3376,6 +3385,11 @@ _ROUTEMAP_JS_PATH = Path(__file__).parent / "routemap.js"
 _I18N_JS_PATH = Path(__file__).parent / "i18n.js"
 _WORKSPACE_JS_PATH = Path(__file__).parent / "workspace.js"
 _WORKSPACE_CSS_PATH = Path(__file__).parent / "workspace.css"
+_LATEX_JS_PATH = Path(__file__).parent / "latex.js"
+_VENDOR_DIR = Path(__file__).parent / "vendor"
+#: DESIGN.md 22.0.1: the vendored files `GET /vendor/<name>` serves, each with its content type; nothing else in
+#: `vendor/` (the README, the licence texts) is served. KaTeX's script, style and `font/woff2` fonts join in B3.
+_VENDOR_FILES: dict[str, str] = {"codemirror.js": "application/javascript"}
 
 
 def _canvas_js() -> str:
@@ -3755,6 +3769,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_vendor(self, name: str) -> None:
+        """22.0.1: one allow-listed vendored file, its bytes as stored. The name is a key of `_VENDOR_FILES`, never
+        a path: `../x`, `a/b`, `%2e%2e` and every unlisted name are 404."""
+        content_type = _VENDOR_FILES.get(name)
+        if content_type is None:
+            raise NotFoundError(f"no such vendored file: {name}")
+        body = (_VENDOR_DIR / name).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json_from_conn(self, fn: Callable[[Connection], Any]) -> None:
         conn = self._open_conn()
         try:
@@ -4042,6 +4070,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 except OSError:  # the window went away while it was answered: nothing to report, and nothing to log
                     pass
                 return
+            if path.startswith("/vendor/"):  # 22.0.1: a page's script, so it answers with no project too
+                self._send_vendor(path[len("/vendor/"):])
+                return
             self._refuse_without_project(path, _NO_PROJECT_GET)
             if path == "/":
                 self._send_html(200, _app_html())
@@ -4061,6 +4092,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _WORKSPACE_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
             elif path == "/workspace.css":
                 self._send_text(200, _WORKSPACE_CSS_PATH.read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            elif path == "/latex.js":
+                self._send_text(200, _LATEX_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
             elif path == "/api/outputs/folders":
                 served = self._require_unblocked()
                 self._send_json(200, self._workspace_api(lambda: outputs.folders(served.root)))
@@ -4938,6 +4971,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
 _NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js", "/workspace.js", "/workspace.css",
+                             "/latex.js",
                              "/api/projects",
                              "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm",
                              "/api/agents", "/api/agents/models", "/api/agents/going", "/api/settings/lookup"})
