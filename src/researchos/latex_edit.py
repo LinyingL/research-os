@@ -9,7 +9,8 @@ A save sends `{path, revision, edits}`: `revision` the sha256 of the bytes the e
 edits are spliced into the decoded text, so every byte outside an edited range is unchanged, and written through
 `workspace._save` (the human write path: the daily snapshot, a backup in a series of its own per path, a durable atomic
 write, a history entry, the recheck). A save never writes the evidence ledger (22.2). Undoing a save writes the bytes
-before it back, as a second history entry, only while the file is still what that save wrote.
+before it back, as a second history entry, only while the file is still what that save wrote and that save is the
+path's last (its backup the newest of the series).
 """
 
 from __future__ import annotations
@@ -59,7 +60,9 @@ def _path_refused(rel: Any) -> WorkspaceError:
 def checked_path(root: Path, rel: Any) -> str:
     """`rel` when the editor may open it (22.1 "Which files"), else a refusal: a project-relative path that
     `papers.clean_draft` accepts as it is written, no component starting with `.`, no symbolic link anywhere on it,
-    not only in the cloud (409 `cloud`), an existing regular file, suffix `.tex` in lower case."""
+    not only in the cloud (409 `cloud`), an existing regular file, suffix `.tex` in lower case, and every component
+    spelt as its folder lists it: a Mac volume ignores case and Unicode normalisation, so `Tables/T2.tex` would open
+    `tables/t2.tex` past the read-only rule and the per-path backup series."""
     try:
         if papers.clean_draft(rel) != rel:
             raise _path_refused(rel)
@@ -76,6 +79,16 @@ def checked_path(root: Path, rel: Any) -> str:
         raise _refuse("unreadable", f"Cannot read {rel}: {exc}", "文件无法读取，请先检查项目文件", 409) from exc
     if not stat.S_ISREG(info.st_mode):
         raise _path_refused(rel)
+    folder = root
+    for part in rel.split("/"):
+        try:
+            names = os.listdir(folder)
+        except OSError as exc:
+            raise _refuse("unreadable", f"Cannot read {rel}: {exc}", "文件无法读取，请先检查项目文件", 409) from exc
+        if part not in names:
+            raise _refuse("path", f"{rel!r} is not spelt as the file is named on disk",
+                          "路径的大小写或字符写法和磁盘上的文件名不一致，请从项目文件里打开", 400)
+        folder = folder / part
     return rel
 
 
@@ -89,12 +102,12 @@ def _generated(root: Path, rel: str) -> bool:
         graph = paths.graph_db_path(root)
         if not graph.is_file() or paths.is_dataless(graph):
             return False
-        ids = [f"{prefix}:{rel}" for prefix in sorted(notes.FILE_PREFIXES)]
         with closing(sqlite3.connect(graph.as_uri() + "?mode=ro", uri=True)) as conn:
-            found = conn.execute(
-                f"SELECT 1 FROM edges WHERE dst IN ({','.join('?' * len(ids))}) AND type IN ('writes', 'generates') "
-                "AND status != 'rejected' LIMIT 1", ids).fetchone()
-        return found is not None
+            dsts = conn.execute("SELECT DISTINCT dst FROM edges WHERE type IN ('writes', 'generates') "
+                                "AND status != 'rejected'").fetchall()
+        # Compared folded, as the output records are: the index may spell the path otherwise than the disk.
+        return any(prefix in notes.FILE_PREFIXES and files_ingest.fold(path) == key
+                   for prefix, _, path in (str(dst).partition(":") for (dst,) in dsts))
     except (OSError, sqlite3.Error, ValueError, paths.IdentityUnavailableError):
         return False
 
@@ -227,31 +240,37 @@ def save_tex(root: str | Path, body: Any) -> dict[str, Any]:
             raise _refuse("conflict", "The file has changed since it was opened", "这个文件在别处被改过。", 409)
         opened = _opened(root, rel, before)
         if opened["read_only"]:
-            raise _refuse("read_only_file", f"{rel} opens read-only ({opened['read_only_reason']})",
+            raise _refuse("read_only_file", READ_ONLY[opened["read_only_reason"]][1],
                           READ_ONLY[opened["read_only_reason"]][0], 409)
         after = _splice(opened["text"], edits, opened["line_ending"]).encode("utf-8")
         if len(after) > SIZE_LIMIT:
             raise _refuse("too_large", "The saved file would be larger than 2 MB", "保存后的文件会超过 2 MB", 413)
         backup, history_error = workspace._save(root, rel, before, after, pid,  # noqa: SLF001
-                                                limit=SIZE_LIMIT, backup_subdir=backup_series(rel))
+                                                limit=SIZE_LIMIT, text=False, backup_subdir=backup_series(rel))
     changed = before != after
     return {"path": rel, "revision": _revision(after), "previous": _revision(before) if changed else None,
             "changed": changed, "backup": backup, "history_error": history_error}
 
 
-def _saved_before(root: Path, rel: str, previous: str) -> bytes | None:
-    """The bytes a save replaced, from the backup it took (the newest copy of the path's series with that sha256)."""
+def _saved_before(root: Path, rel: str, previous: str) -> bytes:
+    """The bytes the last save replaced: the newest copy of the path's series, taken by the save that wrote the file
+    as it still is. Only when its sha256 is `previous`; any older copy would roll back more than that one save."""
     series = record_files._backups_dir(root, backup_series(rel))  # noqa: SLF001
     copies = record_files._snapshots_of(series, Path(rel).name, ".tex", writes=True)  # noqa: SLF001
-    for _stamp, copy in reversed(copies):
+    data = None
+    if copies:
         try:
-            workspace._confined(root, copy.relative_to(root).as_posix())  # noqa: SLF001
-            data = copy.read_bytes()
+            workspace._confined(root, copies[-1][1].relative_to(root).as_posix())  # noqa: SLF001
+            data = copies[-1][1].read_bytes()
         except (OSError, ValueError, WorkspaceError):
-            continue
-        if _revision(data) == previous:
-            return data
-    return None
+            data = None
+    if data is None:
+        raise _refuse("gone", "The copy taken before this save is no longer kept",
+                      "这次保存之前的版本已经不在备份里了，不能撤销。", 409)
+    if _revision(data) != previous:
+        raise _refuse("conflict", "This is not the file's last save, so it cannot be undone",
+                      "这不是这个文件最近的一次保存，不能撤销。", 409)
+    return data
 
 
 def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
@@ -271,13 +290,10 @@ def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
                           "这个文件在这次保存之后又被改过，不能撤销这次保存。", 409)
         opened = _opened(root, rel, current)
         if opened["read_only"]:
-            raise _refuse("read_only_file", f"{rel} opens read-only ({opened['read_only_reason']})",
+            raise _refuse("read_only_file", READ_ONLY[opened["read_only_reason"]][1],
                           READ_ONLY[opened["read_only_reason"]][0], 409)
         restored = _saved_before(root, rel, previous)
-        if restored is None:
-            raise _refuse("gone", "The copy taken before this save is no longer kept",
-                          "这次保存之前的版本已经不在备份里了，不能撤销。", 409)
         backup, history_error = workspace._save(root, rel, current, restored, pid,  # noqa: SLF001
-                                                limit=SIZE_LIMIT, backup_subdir=backup_series(rel))
+                                                limit=SIZE_LIMIT, text=False, backup_subdir=backup_series(rel))
     return {**_payload(rel, restored, _opened(root, rel, restored), lang), "backup": backup,
             "history_error": history_error}

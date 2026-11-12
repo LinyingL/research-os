@@ -59,7 +59,8 @@ def _refused(code: str, action) -> latex_edit.WorkspaceError:
 def test_a_save_changes_exactly_the_edited_bytes_on_lf_and_crlf_files_with_chinese_and_an_emoji(root, ending):
     """Offsets are code points of the decoded text with a CRLF counted as two: an edit after the emoji and after a
     CRLF lands where Python's own string index says, and every other byte is the file's."""
-    text = (CHINESE * 50).replace("\n", ending)
+    text = (CHINESE * 750).replace("\n", ending)                           # 3,000 lines (22.8, acceptance 1)
+    assert text.count(ending) == 3000
     raw = text.encode("utf-8")
     revision = _put(root, "paper/main.tex", raw)
     opened = latex_edit.read_tex(root, "paper/main.tex")
@@ -188,6 +189,49 @@ def test_the_validator_refuses_every_path_the_editor_may_not_open(root, tmp_path
     assert latex_edit.read_tex(root, "inside/main.tex")["text"] == "x\n"
 
 
+@pytest.mark.parametrize("variant", ["Tables/T2.tex", "tables/T2.TEX", "TABLES/t2.tex", "tables/cafe\u0301.tex"])
+def test_a_path_spelt_otherwise_than_on_disk_never_opens_or_saves_a_generated_file(root, variant):
+    """A Mac volume ignores case and Unicode normalisation, so a variant spelling reaches the same file: it is refused
+    with `path` (or `not_found` on a volume that tells them apart), never opened editable, never saved."""
+    data = b"\\begin{tabular}{l}\\end{tabular}\n"
+    revision = _put(root, "tables/t2.tex", data)
+    _put(root, "tables/caf\u00e9.tex", data)
+    conn = db.connect(paths.graph_db_path(root))
+    try:
+        db.migrate(conn)
+        db.upsert_node(conn, "script:make.py", "script")
+        for rel in ("tables/t2.tex", "tables/caf\u00e9.tex"):
+            db.upsert_node(conn, f"dataset:{rel}", "dataset")
+            db.upsert_edge(conn, "script:make.py", f"dataset:{rel}", "writes", "dataflow", {"line": 3}, 1.0)
+        conn.commit()
+    finally:
+        conn.close()
+    code = "path" if os.path.exists(root / variant) else "not_found"
+    _refused(code, lambda: latex_edit.read_tex(root, variant))
+    _refused(code, lambda: _save(root, variant, revision, [{"from": 0, "to": 0, "insert": "% hacked\n"}]))
+    assert (root / "tables/t2.tex").read_bytes() == data and (root / "tables/caf\u00e9.tex").read_bytes() == data
+    assert not (root / ".researchos/backups/latex").exists()
+
+
+def test_an_index_link_spelt_otherwise_than_the_disk_still_makes_the_file_read_only(root):
+    """The index may hold a path in another case or normal form than the disk's (a script that writes
+    `Tables/T2.tex`): the read-only rule compares them folded, as the output records are."""
+    _put(root, "tables/t2.tex", b"x\n")
+    conn = db.connect(paths.graph_db_path(root))
+    try:
+        db.migrate(conn)
+        db.upsert_node(conn, "script:make.py", "script")
+        db.upsert_node(conn, "dataset:Tables/T2.tex", "dataset")
+        db.upsert_edge(conn, "script:make.py", "dataset:Tables/T2.tex", "writes", "dataflow", {"line": 3}, 1.0)
+        conn.commit()
+    finally:
+        conn.close()
+    opened = latex_edit.read_tex(root, "tables/t2.tex", lang="en")
+    assert opened["read_only_reason"] == "generated"
+    error = _refused("read_only_file", lambda: _save(root, "tables/t2.tex", opened["revision"], []))
+    assert str(error) == latex_edit.READ_ONLY["generated"][1] and "(generated)" not in str(error)
+
+
 def test_a_tex_only_in_the_cloud_is_the_existing_409_cloud(root):
     (root / "paper/.main.tex.icloud").write_bytes(b"")
     error = _refused("cloud", lambda: latex_edit.read_tex(root, "paper/main.tex"))
@@ -288,12 +332,49 @@ def test_an_undo_is_refused_once_the_file_changed_after_the_save(root):
     error = _refused("conflict", lambda: latex_edit.undo_save(root, body))
     assert error.status == 409
     assert (root / "paper/main.tex").read_bytes() == b"six\n"
-    # The newest save can still be undone; a previous revision no backup holds is `gone`.
+    # The newest save can still be undone; once the series is gone, so is the undo.
     latex_edit.undo_save(root, {"path": "paper/main.tex", "revision": later["revision"], "previous": later["previous"]})
     assert (root / "paper/main.tex").read_bytes() == b"two\n"
+    for copy in (root / ".researchos/backups" / latex_edit.backup_series("paper/main.tex")).iterdir():
+        copy.unlink()
     error = _refused("gone", lambda: latex_edit.undo_save(
-        root, {"path": "paper/main.tex", "revision": saved["revision"], "previous": "0" * 64}))
+        root, {"path": "paper/main.tex", "revision": saved["revision"], "previous": saved["previous"]}))
     assert error.status == 409
+
+
+def test_an_undo_restores_only_the_last_save_never_an_older_version(root):
+    """Save A to B, then B to C: an undo naming C but A's revision (a stale `previous`) is refused, the file stays C;
+    the undo of the last save writes B back, and a second undo (now naming B and A) is refused too, since the newest
+    copy of the series is C, the one the undo itself took."""
+    a = _put(root, "paper/main.tex", b"A\n")
+    first = _save(root, "paper/main.tex", a, [{"from": 0, "to": 1, "insert": "B"}])
+    second = _save(root, "paper/main.tex", first["revision"], [{"from": 0, "to": 1, "insert": "C"}])
+    stale = {"path": "paper/main.tex", "revision": second["revision"], "previous": a}
+    assert _refused("conflict", lambda: latex_edit.undo_save(root, stale)).status == 409
+    assert (root / "paper/main.tex").read_bytes() == b"C\n"
+    latex_edit.undo_save(root, {"path": "paper/main.tex", "revision": second["revision"],
+                                "previous": second["previous"]})
+    assert (root / "paper/main.tex").read_bytes() == b"B\n"
+    again = {"path": "paper/main.tex", "revision": first["revision"], "previous": first["previous"]}
+    _refused("conflict", lambda: latex_edit.undo_save(root, again))
+    assert (root / "paper/main.tex").read_bytes() == b"B\n"
+
+
+def test_a_file_turned_binary_while_its_backup_is_made_is_a_conflict_not_a_wrong_reason(root, monkeypatch):
+    """The recheck during the backup reads bytes on the LaTeX path: another program writing non-UTF-8 bytes into
+    the file meanwhile is 409 `conflict` (changed elsewhere), and its bytes stay."""
+    revision = _put(root, "paper/main.tex", b"one\n")
+    real = mapedit.write_backup_bytes
+
+    def meanwhile(*args, **kwargs):
+        got = real(*args, **kwargs)
+        (root / "paper/main.tex").write_bytes(b"\xff\x00 elsewhere\n")
+        return got
+
+    monkeypatch.setattr(mapedit, "write_backup_bytes", meanwhile)
+    error = _refused("conflict", lambda: _save(root, "paper/main.tex", revision, [{"from": 0, "to": 3, "insert": "two"}]))
+    assert error.status == 409
+    assert (root / "paper/main.tex").read_bytes() == b"\xff\x00 elsewhere\n"
 
 
 def test_reading_writes_nothing(root):

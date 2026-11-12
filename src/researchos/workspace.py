@@ -280,10 +280,11 @@ def _backup_subdir(rel: str) -> str | None:
 
 
 def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
-           author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT,
+           author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT, text: bool = True,
            backup_subdir: str | None = None) -> tuple[str | None, str | None]:
     """The caller holds write_guard and has checked the current revision. `limit` is the size the recheck of the
-    file reads up to; `backup_subdir` the folder of `.researchos/backups/` its backups go in when not
+    file reads up to and `text` whether it must find UTF-8 text (as `_read`'s, so a file turned binary meanwhile is a
+    `conflict` for a caller that opened it as bytes); `backup_subdir` the folder of `.researchos/backups/` its backups go in when not
     `_backup_subdir`'s (the LaTeX editor's per-path series, DESIGN.md 22.1)."""
     if before == after:
         return None, None
@@ -299,7 +300,7 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
             record_files.snapshot_if_first_change_today(root, target, subdir)
             backup = mapedit.write_backup_bytes(root, target, before, target.suffix, subdir)
         # Catch a file edited outside Research OS while its backup was made.
-        if _read(root, rel, limit=limit) != before:
+        if _read(root, rel, limit=limit, text=text) != before:
             raise WorkspaceError("conflict", "The file changed while its history was being preserved", 409)
         if before is None:
             tmp = record_files.temp_path_for(target)
@@ -328,10 +329,10 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
 
 
 def _save(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
-          author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT,
+          author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT, text: bool = True,
           backup_subdir: str | None = None) -> tuple[str | None, str | None]:
     try:
-        return _write(root, rel, before, after, pid, author, limit=limit, backup_subdir=backup_subdir)
+        return _write(root, rel, before, after, pid, author, limit=limit, text=text, backup_subdir=backup_subdir)
     except (OSError, sqlite3.Error, record_files.RecordFileError, mapedit.MapEditError) as exc:
         raise WorkspaceError("write_failed", f"Could not save {rel}: {exc}", 409) from exc
 
