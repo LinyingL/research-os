@@ -133,7 +133,9 @@ def _confined(root: Path, rel: str) -> Path:
     return current
 
 
-def _read(root: Path, rel: str) -> bytes | None:
+def _read(root: Path, rel: str, *, limit: int = TEXT_LIMIT, text: bool = True) -> bytes | None:
+    """`rel`'s bytes, at most `limit` of them (the LaTeX editor's `.tex` has 2 MB, DESIGN.md 22.1; everything else
+    `TEXT_LIMIT`); `text=False` returns bytes that are not UTF-8 text too, for a caller that says why itself."""
     full = _confined(root, rel)
     try:
         fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -145,13 +147,14 @@ def _read(root: Path, rel: str) -> bytes | None:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise WorkspaceError("binary", f"{rel} is not a regular text file", 409)
-        if info.st_size > TEXT_LIMIT:
-            raise WorkspaceError("too_large", f"{rel} is larger than {TEXT_LIMIT} bytes", 413)
+        if info.st_size > limit:
+            raise WorkspaceError("too_large", f"{rel} is larger than {limit} bytes", 413)
         with os.fdopen(fd, "rb", closefd=False) as handle:
-            raw = handle.read(TEXT_LIMIT + 1)
-        if len(raw) > TEXT_LIMIT:
-            raise WorkspaceError("too_large", f"{rel} is larger than {TEXT_LIMIT} bytes", 413)
-        _decode(raw)
+            raw = handle.read(limit + 1)
+        if len(raw) > limit:
+            raise WorkspaceError("too_large", f"{rel} is larger than {limit} bytes", 413)
+        if text:
+            _decode(raw)
         return raw
     finally:
         os.close(fd)
@@ -277,8 +280,11 @@ def _backup_subdir(rel: str) -> str | None:
 
 
 def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
-           author: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
-    """The caller holds write_guard and has checked the current revision."""
+           author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT,
+           backup_subdir: str | None = None) -> tuple[str | None, str | None]:
+    """The caller holds write_guard and has checked the current revision. `limit` is the size the recheck of the
+    file reads up to; `backup_subdir` the folder of `.researchos/backups/` its backups go in when not
+    `_backup_subdir`'s (the LaTeX editor's per-path series, DESIGN.md 22.1)."""
     if before == after:
         return None, None
     target = _confined(root, rel)
@@ -289,11 +295,11 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
         backup = None
         if before is not None:
             _history(store, root, rel, None, True)  # the pre-image
-            subdir = _backup_subdir(rel)
+            subdir = backup_subdir or _backup_subdir(rel)
             record_files.snapshot_if_first_change_today(root, target, subdir)
             backup = mapedit.write_backup_bytes(root, target, before, target.suffix, subdir)
         # Catch a file edited outside Research OS while its backup was made.
-        if _read(root, rel) != before:
+        if _read(root, rel, limit=limit) != before:
             raise WorkspaceError("conflict", "The file changed while its history was being preserved", 409)
         if before is None:
             tmp = record_files.temp_path_for(target)
@@ -322,9 +328,10 @@ def _write(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
 
 
 def _save(root: Path, rel: str, before: bytes | None, after: bytes, pid: str,
-          author: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
+          author: dict[str, Any] | None = None, *, limit: int = TEXT_LIMIT,
+          backup_subdir: str | None = None) -> tuple[str | None, str | None]:
     try:
-        return _write(root, rel, before, after, pid, author)
+        return _write(root, rel, before, after, pid, author, limit=limit, backup_subdir=backup_subdir)
     except (OSError, sqlite3.Error, record_files.RecordFileError, mapedit.MapEditError) as exc:
         raise WorkspaceError("write_failed", f"Could not save {rel}: {exc}", 409) from exc
 

@@ -465,6 +465,24 @@ Endpoints (all GET unless noted):
                             type; any other name, a subfolder or a `..` is
                             404, since the name is looked up, never joined
                             into a path.
+    GET  /api/latex/file -- `?path=<.tex>`: a draft as the LaTeX editor
+                            opens it (DESIGN.md 22.1, `researchos.latex_edit`):
+                            text, revision (sha256 of the bytes), line ending,
+                            and `read_only` with the reason. Reads only.
+    POST /api/latex/save -- `{project, path, revision, edits}`: a person's
+                            save of a `.tex`; edits are code-point ranges
+                            with a CRLF counted as two, spliced so every
+                            other byte stays. 409 `workspace_conflict` when
+                            the file changed; a body over 4 MB is 413,
+                            unread. The scan starts after the answer.
+    POST /api/latex/undo -- `{project, path, revision, previous}`:
+                            撤销这次保存, the bytes before that save written
+                            back while the file is still what it wrote.
+    These two are, with the attempt table, the Markdown under `research/`
+    and an agent's run, the only writes of a researcher's own files (18.1's
+    list, extended by 22.1): a `.tex` the person saves in the editor, through
+    the human write path (backup, history, the project lock, a member only in
+    their working copy).
 
 Path-traversal defense (`/api/file` and `/api/open` alike, both required by
 task V1): `_resolve_within_root` resolves the requested path -- symlinks
@@ -719,7 +737,7 @@ from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, now_doing, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
-from researchos import research_records
+from researchos import latex_edit, research_records
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
@@ -4179,6 +4197,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 marks = workspace.local_annotations(served.root, {rel: payload["revision"]}, self._lang())
                 payload["officialness"] = marks["files"][rel]
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/file":
+                # 22.1: a `.tex` as the editor opens it -- text, revision, line ending, whether it is read-only and
+                # why. A read: nothing is written, normalised or re-anchored.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang()))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at
                 # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).
@@ -4515,6 +4542,32 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     except ApiError as exc:
                         logger.info("no immediate scan after writing a research document: %s", exc)
                 self._send_json(200, payload)
+            elif parsed.path in ("/api/latex/save", "/api/latex/undo"):
+                # 22.1: a person's save of a `.tex`, or 撤销这次保存. A body over 4 MB is refused before it is read.
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                except ValueError as exc:
+                    raise MissingParamError("the request has no valid Content-Length") from exc
+                if length > latex_edit.BODY_LIMIT:
+                    self.close_connection = True
+                    raise WorkspaceApiError(workspace.WorkspaceError(
+                        "too_large", "The save is larger than 4 MB", 413, "这次保存的内容超过 4 MB，没有保存"), self._lang())
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: latex_edit.save_tex(served.root, saved)
+                                                  if parsed.path.endswith("/save")
+                                                  else latex_edit.undo_save(served.root, saved, self._lang()))
+                payload["generation"] = self.server.watcher.record_write(set())
+                self._send_json(200, payload)
+                # The answer first; then the scan reads claims, citations and figures again (22.1).
+                if payload.get("changed", True):
+                    try:
+                        self.server.start_scan(served)
+                    except Exception as exc:  # noqa: BLE001 -- the save is answered; a scan not started is logged
+                        logger.info("no scan after saving a LaTeX draft: %s", exc)
             elif parsed.path == "/api/workspace/task-groups":
                 # 21.1: one group the person kept -- its attempt row through the attempt write (under the watcher's
                 # ingest lock, as /api/attempts/write), then `attempt` on its tasks

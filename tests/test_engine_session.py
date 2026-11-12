@@ -142,7 +142,7 @@ def test_every_post_route_is_refused_without_the_session_before_it_is_routed(eng
     """The check runs before routing: even an endpoint that does not exist answers 403 session_required, so
     the answer never tells a program which writes there are."""
     eng, _root = engine
-    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/agents/store/release", "/api/agents/store/delete-moved", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/nope", "/"):
+    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/agents/store/release", "/api/agents/store/delete-moved", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/latex/save", "/api/latex/undo", "/api/nope", "/"):
         status, body = eng.post(path, {})
         assert (status, body["state"]) == (403, "session_required"), path
 
@@ -530,6 +530,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/workspace/research-record": ("read", "/api/workspace/research-record?report=research/results/pilot.md"),
     "/api/workspace/research-records": ("read", "/api/workspace/research-records?path=map.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),
+    "/api/latex/file": ("read", "/api/latex/file?path=paper/main.tex"),   # 22.1: a .tex as the editor opens it
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),
