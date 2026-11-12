@@ -7289,9 +7289,11 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 
 ## Section 22 — Writing the paper in Research OS: a LaTeX editor, passages tied to their supporting files, export to PDF (task V17)
 
-*Status: first draft, 2026-11-12, for the researcher's review. Nothing here is
-built until the researcher approves it, and 22.0's two rulings need the
-researcher's own word before any code.*
+*Status: second draft, 2026-11-12, for the researcher's review. The first
+draft (c549c8e) went through three adversarial reviews (engineering,
+security, the researcher's use: 41 findings, 6 blocking); 22.9 says what
+changed and why. Nothing here is built until the researcher approves it, and
+22.0's rulings need the researcher's own word before any code.*
 
 The researcher, 2026-11-12, after asking whether the local Overleaf server
 (ayakaleaf, `~/ayakaleaf-toolkit`) could be shown inside Research OS: "我的想法
@@ -7308,391 +7310,536 @@ questions, they answered the same day:
    reference read while writing and not a to-do.
 
 Why not Overleaf itself, for the record: the app's window refuses every address
-that is not the engine's own (`RCEShell.swift:937-951`, the safety property of
-18.1 at 4639-4650); Overleaf answers a frame from another port with
+that is not the engine's own (`RCEShell.swift:937-951`, the property 18.1
+relies on at 4639-4650); Overleaf answers a frame from another port with
 `X-Frame-Options`/`frame-ancestors 'none'`; and its sign-in cookie, set for
-`localhost`, is not sent to a page on `127.0.0.1`. Lifting all three to show
-in the window what a browser tab already shows would weaken 18.1 and add a
-service for nothing. Overleaf's texts live in its own database, so Research OS
-would see them only through its git bridge in any case. `~/paperleaf` (an
-unfinished, never-run prototype) is not reused.
+`localhost`, is not sent to a page on `127.0.0.1`. Lifting all three to show in
+the window what a browser tab already shows would weaken 18.1 and add a service
+for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 
-What this section adds, in five parts:
+The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
+kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
+presentation; 22.8 batches and acceptance; 22.9 what the review changed.
 
-- 22.1 the editor: one `.tex` at a time, shown like a document, saved
-  byte-exact;
-- 22.2 passages and their supporting files (依据文件): the record, the anchor,
-  what happens when the text changes;
-- 22.3 the three kinds of evidence, written down at last, and where a passage's
-  file stands among them;
-- 22.4 export to PDF: one run of the local TeX, on request, hardened;
-- 22.5 a team: who may link, who approves.
+### 22.0 Rulings that need the researcher's word
 
-22.6 lists the words, 22.7 the batches and 22.8 the acceptance.
+1. **Third-party front-end code, vendored.** Section 8 says "nothing here
+   introduces a new palette, a new font, or a third-party dependency", and
+   `app.html` opens on "zero external resources, zero build step". Two
+   libraries, asked for separately because they serve different batches:
+   - **CodeMirror 6** (MIT) — the editor itself: text, selection, IME, undo,
+     and the mapping that carries a passage's position through every edit
+     (22.2). Needed from the first batch (B1). About 0.4 MB.
+   - **KaTeX** (MIT) with **its own math fonts** (about 20 woff2 files, a new
+     font in 8's sense) — formulas typeset in place. Needed only for "like
+     Word" (B3). About 0.3 MB of script and style and 0.3 MB of fonts.
 
-### 22.0 Two rulings that need the researcher's word
+   How they are carried: built once, by hand, by a script committed under
+   `tools/vendor/` (outside the package; it names every npm package and its
+   exact version, the bundler and its options) into
+   `src/researchos/webapp/vendor/` — one `codemirror.js`; `katex.js`,
+   `katex.css` and `fonts/*.woff2` —, with `vendor/README` listing each
+   file's sha256, version and licence and the licences beside them. They are
+   served same-origin by one route, `GET /vendor/<name>`, from an allow-list
+   of those names with their content types (`font/woff2` among them), listed
+   in package-data by glob, never fetched from a network. Only the editor
+   page loads them, by a small loader that adds the script tags when the editor
+   first opens; no other page changes. The tests that scan served scripts and
+   stylesheets for emoji, arrows, untranslated words and the clay colour skip
+   the `vendor/` folder by name, saying why (code we did not write, never
+   shown as text). The Python side stays `dependencies = []`.
 
-1. **Two third-party front-end libraries, vendored.** Section 8 says "nothing
-   here introduces a new palette, a new font, or a third-party dependency", and
-   `app.html` opens on "zero external resources, zero build step". An editor
-   that hides LaTeX markup while the text stays LaTeX (22.1) needs
-   **CodeMirror 6** (MIT; the editor, its decorations and the mapping that
-   carries positions through edits) and **KaTeX** (MIT; formulas typeset in
-   place), and KaTeX brings **its own math fonts** (woff2), a new font in 8's
-   sense. Both are vendored as one pinned, pre-built file each under
-   `src/researchos/webapp/vendor/`, served same-origin from `/vendor/…` routes,
-   listed in package-data with their licences, never fetched from a CDN, and
-   loaded only by the editor (22.1), not by every page. The Python side stays
-   `dependencies = []`. Roughly 0.9 MB of script and 0.3 MB of fonts. *The
-   alternative, if the researcher says no:* a plain source editor (a textarea
-   with LaTeX colouring written by hand, as workspace.js's note editor), with
-   formulas and markup shown as written. That is not "like Word".
-2. **The word.** 依据 is already a word of the app: a judgment's basis
-   (「依据已变化」, 「当时的依据」, 13.4's 「依据变了的图表与论断」), and the key `依据`
-   is the link word "is based on". The thing this section adds is named
-   **依据文件** ("supporting file"), the act **关联依据文件** ("Link a supporting
-   file"), and a passage with one **有依据的段落** ("supported passage"). Each is
-   a new 13.4 row, one English each, for the researcher to approve. The noun
-   依据 alone is never used for it.
+   *If the researcher says no to CodeMirror:* the editor is a plain textarea
+   as in `workspace.js` — source only, and a passage is found again by its
+   words after each save instead of being carried through edits. *If no to
+   KaTeX alone:* formulas stay as written, everything else of 22.1 holds.
+
+2. **The words** of 22.6, each a new 13.4 row with one English. Chiefly:
+   **依据文件** for the thing this section adds (依据 alone already means a
+   judgment's basis, 「依据已变化」, and the key `依据` is the link word "is
+   based on"); **人工声明** for the kind of evidence a person declares
+   (「作者」 is already "Authors", and in a team the person who links is often
+   not the paper's author); **撤回关联** to take a link back (「取消」 is
+   "Cancel", and 撤回 is the ledger's word for withdrawing, 9.6).
+
+3. **A reworded passage needs one click** (22.2). By 9.6 a judgment holds
+   only while its basis is the same; a link's basis is its passage's words.
+   So any change of the words — in Research OS or elsewhere — puts the link
+   under 待复核 「依据已变化」 until the person presses 「仍然成立」, which is one
+   click in the editor beside the passage. The first draft let a rewording
+   made in the editor pass; the review showed it would let 「显著」 become
+   「不显著」 silently and would treat the same change differently by the tool
+   it was made in. The researcher may rule otherwise; this draft follows
+   9.6.
+
+4. **A declaration does not clear 缺来源** (22.3). A claim of the paper with
+   no result behind its number stays a warning even when its passage has a
+   supporting file; the file is shown beside the warning. The first draft
+   cleared it; the review held that a person's declaration would then pass
+   for a checked number, against Section 0. The researcher may rule
+   otherwise.
 
 ### 22.1 The editor
 
-- **Where.** A `.tex` draft's own page (the file node page, `node.js`) gets
-  「编辑」 beside 「查看内容」; 图表与论断 gets it on each row of 论文正文. It opens
-  the editor as a full page of its own (not a side panel: a paper needs the
-  width), with 返回 to the page it came from. One file at a time.
-- **What is shown.** The text is the file's LaTeX source, always; the editor
-  only changes how it looks. Where the cursor is not:
-  - `\section`, `\subsection`, `\subsubsection`, `\chapter`, `\paragraph` and
-    their starred forms are headings in the serif face (12.11), the command and
-    braces hidden;
-  - `\textbf`, `\textit`, `\emph`, `\underline` are bold, italic, underlined,
-    the command and braces hidden;
-  - `$…$`, `\(…\)`, `\[…\]`, `$$…$$` and the bodies of `equation`, `equation*`,
-    `align`, `align*`, `gather`, `multline` are typeset by KaTeX. A formula
-    KaTeX cannot typeset (an unknown macro, a package it lacks) is shown as
-    written, in the mono face, with nothing coloured: it is not an error, the
-    PDF is the judge;
-  - `\cite` and its forms (the list `ingest/latex.py:43-50` reads) are a quiet
-    chip with the key, and the author and year when a `.bib` of the project has
-    the key (`latex.parse_bib_entries`); `\ref`, `\eqref`, `\label` a quiet chip
-    with the label;
-  - `\includegraphics{…}` is a line with the file's name and, for a png, jpeg,
-    gif or webp the asset route serves, its thumbnail (21.5's rule);
-  - `itemize` and `enumerate` items are indented with a bullet or a number,
-    the `\item` hidden; `\footnote{…}` is a small superscript mark that opens
-    its text in place;
-  - comments (`%` to the end of the line, `\%` excepted) are in the quiet gray;
-  - **the preamble** (everything before `\begin{document}`) is folded under
-    「导言区」 with the chevron, and opens as source;
-  - **everything else is shown as written**, in the mono face only for the
-    command itself: `tabular`, `figure`/`table` environments' own commands,
-    `\newcommand`, any macro the editor does not know. The editor never guesses
-    what an unknown command means.
-  Moving the cursor into any of these shows its source; leaving shows it again
-  as above. 「显示源码」 (a text link) turns all of it off for the file; its
-  state is kept per file in the page, nothing is stored.
-- **Typing.** Typing is typing source. The toolbar has 加粗, 斜体, 标题 (a
-  short list of the heading commands), 公式 (inserts `$ $` with the cursor
-  inside), 引用 (a search over the project's `.bib` keys, inserting `\cite{key}`;
-  with no `.bib`, the list says so) — each the same as typing the command, and
-  ⌘B / ⌘I do the first two. **Return makes a new paragraph** (a blank line and
-  the cursor after it, which is what a paragraph is in LaTeX); ⇧Return makes a
-  single line break in the source. Inside a formula, an environment the editor
-  shows as written, or 显示源码, Return is a plain newline. IME composition is
-  respected as in `workspace.js:668-675`.
-- **One file at a time.** `\input{…}`, `\include{…}`, `\subfile{…}` are a
-  text link that opens that file in the editor (resolved from the file's own
-  folder, then the main file's, 22.4), asking first if the text is unsaved.
-- **Saving.** 「保存」 is the one primary button (21.8); ⌘S does the same. A
-  save:
-  1. sends `{project, path, revision, edits}`: `revision` is the sha256 of the
-     bytes the editor opened, and `edits` the changed ranges as offsets in
-     those bytes with their new text — never the whole file;
-  2. is refused with 409 when the file on disk is no longer that revision
-     (「这个文件在别处被改过。」 with 「载入新版本」 and, folded, what the editor
+- **Where.** A `.tex` draft's own page (`node.js`) gets 「编辑」 beside
+  「查看内容」; 图表与论断 gets it on each row of 论文正文. It opens the editor as
+  a page of its own (a paper needs the width), with 返回 to the page it came
+  from. One file at a time.
+- **Which files.** One validator decides every path the editor reads, saves,
+  links to (`\input` links, error lines of 22.4, a passage's 「在编辑器里打开」):
+  a project-relative path that `papers.clean_draft` accepts; no component
+  that starts with `.` (so nothing under `.researchos/`, whose backups are
+  `.tex` too); no symlink anywhere on the path (`workspace._confined`); an
+  existing regular file; suffix `.tex` in lower case; not only in the cloud
+  (the existing 409 `cloud`). A `.tex` that a script writes or a result
+  record registers (a generated table, 19.5) opens **read-only**, saying
+  「这个文件是脚本生成的，在这里改了下次运行会被覆盖。」 A path that fails is never
+  a link, only text.
+- **Coordinates.** The file is read as bytes, decoded as UTF-8, and its line
+  ending found: LF or CRLF. A file that is not UTF-8, holds a NUL, mixes
+  endings or has a lone CR opens **read-only** with one sentence why; nothing
+  is normalised. The editor is set to the file's ending (CodeMirror's
+  `lineSeparator`), and every line break typed or pasted is converted to it.
+  **Every position the editor sends is a count of Unicode code points in the
+  decoded text, a CRLF counted as two** (the client converts from
+  CodeMirror's positions, which count a line break as one and use UTF-16).
+- **Saving.** 「保存」 is the editor's one primary button (21.8); ⌘S does the
+  same. A save sends `{project, path, revision, edits}`: `revision` is the
+  sha256 of the bytes the editor opened, `edits` the changed ranges with their
+  new text. The server, before writing:
+  1. refuses with 409 when the file is no longer that revision
+     (「这个文件在别处被改过。」, with 「载入新版本」 and, folded, what the editor
      still holds, so nothing typed is lost);
-  3. splices the edits into the bytes as read, so **every byte outside an
-     edited range is unchanged** (the rule of `mapedit`): a file that is not
-     UTF-8, holds a NUL, or mixes CRLF and LF is opened read-only with one
-     sentence why, never normalised;
-  4. goes through the human write path of `workspace.save_document`
-     (`write_guard(human=True)`, the daily snapshot, a backup of the replaced
-     bytes under `.researchos/backups/`, a durable atomic write, a history
-     entry, the recheck that the file did not change during the backup,
-     `watcher.record_write`), and refuses a file only in the cloud (503
-     `cloud_only`), a project that is read-only, and a member's write outside
-     their working copy (22.5);
-  5. then re-reads **that file only** (`latex`, `claims`, `citations`
-     extractors for the one path) under the ingest lock and bumps the
-     generation, instead of a full scan.
-  撤销 after a save writes the previous bytes back as a second entry, as
-  18.3, offered until the editor closes. The limit is **2 MB** per file for
-  this endpoint (the 200 KB of `workspace.TEXT_LIMIT` stays for the rest), and
-  the endpoint refuses a body larger than 4 MB before reading it.
-- **Unsaved text.** The editor's state joins `ROWorkspace.isDirty()` and
-  `mayLeave`/`mayLeavePanel`, so closing the window, switching project or
-  leaving the page asks (`RCEShell.swift:736-746`). The editor checks the
-  file's revision when the window regains focus and before saving; a change
-  made elsewhere while nothing is unsaved reloads quietly and says
-  「已载入在别处保存的版本」.
+  2. checks the edits: at most 2,000; sorted, not overlapping, inside the
+     text; their new text valid Unicode (no lone surrogate), no NUL, no line
+     ending but the file's; the result no larger than **2 MB**; and the body
+     no larger than 4 MB, refused before it is read;
+  3. splices the edits into the decoded text and encodes it, so **every byte
+     outside an edited range is unchanged**.
+
+  It writes through a new `save_tex` built on `workspace._write` with its
+  size limit as a parameter (the 200 KB of `TEXT_LIMIT` stays for the rest):
+  `write_guard(human=True)`, the daily snapshot, a backup of the replaced
+  bytes under `.researchos/backups/latex/<first 16 hex of the sha256 of the
+  path>/` (so `paper/main.tex` and `slides/main.tex` keep separate series),
+  a durable atomic write, a history entry, the recheck that the file did not
+  change during the backup, `watcher.record_write`. A read-only project and a
+  member writing outside their working copy (22.5) are refused. **The save
+  answers first; then a scan starts, as a workspace document's save does**,
+  so claims, citations and figures are read again with the whole inventory.
+- **Undoing a save.** 「撤销这次保存」 (named apart from the editor's own ⌘Z,
+  which undoes typing) writes the previous bytes back as a second history
+  entry (18.3). It sends the revision the save wrote and is refused with 409
+  when the file has changed since; it is offered until the editor closes or
+  the file is reloaded.
+- **Unsaved text and changes made elsewhere.** The editor's state joins
+  `ROWorkspace.isDirty()` and `mayLeave`/`mayLeavePanel`, so closing the
+  window, switching project or leaving the page asks
+  (`RCEShell.swift:736-746`). When the window regains focus the editor
+  checks the revision. Changed elsewhere and nothing unsaved: it reloads,
+  says 「已载入在别处保存的版本」, clears its own undo history and withdraws
+  「撤销这次保存」; not while an IME composition is open or within two seconds of
+  a keystroke. Changed elsewhere with unsaved text: the 409 of the next save
+  says so.
+- **One file at a time.** `\input`, `\include` (adding `.tex`), `\subfile`,
+  `\import`/`\subimport` are a text link that opens that file in the editor.
+  `\input` and `\include` resolve from the **main file's folder** (22.4), as
+  TeX does; `\subfile` and `\import` from their own rules; the link says
+  which file it opens. With no main file found, from the file's own folder,
+  and the link says that too.
 - **This rule is new.** Until now Research OS wrote a researcher's own files
-  only in the attempt table, the Markdown under `research/`, and an agent's
-  run. A `.tex` the researcher opens in the editor and saves is the fourth, and
-  the only file kind the editor writes. The server's docstring and 18.1's list
-  of writes say so.
+  only in the attempt table, the Markdown under `research/` and an agent's
+  run. The editor writes a `.tex` the person saves, and the export writes a
+  PDF (22.4); nothing else. The server's docstring and 18.1's list of writes
+  say so.
+
+**Like Word** (batch B3, needs KaTeX). The text stays the file's LaTeX source;
+only how it looks changes. Where the selection does not touch them:
+
+- `\section`, `\subsection`, `\subsubsection`, `\chapter`, `\paragraph` and
+  their starred forms are headings in the serif face, the command and braces
+  hidden; `\textbf`, `\textit`, `\emph`, `\underline` are bold, italic,
+  underlined;
+- `$…$`, `\(…\)`, `\[…\]`, `$$…$$` and `equation`, `align`, `gather`,
+  `multline` (starred too) are typeset by KaTeX; one KaTeX cannot typeset is
+  shown as written in the mono face, uncoloured — the PDF is the judge;
+- `\cite` and its forms (`ingest/latex.py:43-50`) are a quiet chip with the
+  key, and author and year when a `.bib` of the project has it; `\ref`,
+  `\eqref`, `\label` a quiet chip with the label;
+- `\includegraphics{…}` is a line with the file's name and, for a png, jpeg,
+  gif or webp the asset route serves, its thumbnail (21.5);
+- `itemize` and `enumerate` items are indented with a bullet or number, the
+  `\item` hidden; `\footnote{…}` a small mark that opens its text in place;
+- comments are in the quiet gray; **the preamble** is folded under 「导言区」
+  with the chevron and opens as source;
+- **everything else is shown as written**, in the mono face for the command
+  only: `tabular`, `\newcommand`, any macro the editor does not know. The
+  editor never guesses what an unknown command means.
+
+A construct shows its source as soon as the selection touches it. 「显示源码」
+(a text link) turns all of it off for the file. The ranges come from a
+LaTeX range reader written for this (CodeMirror has no LaTeX syntax tree):
+braces, environments, math delimiters, comments and `\verb`, read again only
+over the changed region; the decorations live in a state field, since
+CodeMirror refuses line-crossing replacements from a view plugin. **Typing
+stays under 16 ms a key on a 3,000-line file with 300 formulas.**
+
+Typing is typing source. The toolbar has 加粗, 斜体, 标题, 公式, 引用 (a search
+over the project's `.bib` keys; with no `.bib`, it says so), each the same as
+typing the command; ⌘B / ⌘I do the first two. **Return follows Word**, by
+where the cursor is:
+- in running text: a new paragraph (a blank line, then the cursor);
+- in a heading's argument: the cursor leaves the braces and a new paragraph
+  starts after the heading;
+- inside any other command's argument (`\textbf`, `\caption`, `\href`, …):
+  a plain newline, never a blank line, which would break the PDF;
+- in a list: a new `\item `; on an empty item, the item is removed and the
+  cursor leaves the list;
+- in a formula, an environment shown as written, or 显示源码: a plain
+  newline.
+⇧Return is a plain newline. IME composition is respected as in
+`workspace.js:668-675`.
 
 ### 22.2 Passages and their supporting files
 
 - **Making a link.** Selecting text in the editor shows 「关联依据文件」 beside
-  the selection. It opens a panel: the passage quoted (at most the first 200
-  characters, then 「…」 and the count), a search over the project's files (the
-  inventory, as 关联文件's list, figures and tables first, then data, scripts,
-  documents), an optional note, and 「关联」. A passage may have several
-  files; one file may support many passages. A selection that crosses a
-  formula, a command or a comment is allowed: the passage is the source text
-  selected.
+  the selection. It opens a panel: the passage quoted (the first 200
+  characters, then 「…」 and the count), a search over the project's files
+  (figures and tables first, then data, scripts, documents), an optional
+  note, and 「关联」, the panel's one primary button. A passage may have several
+  files; a file may support many passages. Links are made in the editor only.
 - **The record.** A new ledger, **`.researchos/evidence.toml`**, on the
   ledger engine (`records/ledger.py`), table **`[[passage_evidence]]`**, id
-  prefix `pe-`, keyed by a **`link`** id (`pl-…`, made at the first entry and
-  kept through every later one). Acts:
-  - `link` — the first entry: `draft` (project-relative path of the `.tex`,
-    checked as `papers.clean_draft`), `file` (the supporting file, a node id or
-    `file:<path>` as `notes.normalize_node`), `note` (optional, multiline),
-    `via` (`app` | `cli` | `recovered`), and the anchor table;
-  - `reanchor` — a new anchor for the same link (22.2, below);
-  - `unlink` — the person took the link back (「取消关联」);
+  prefix `pe-`, keyed by **`link`** (`pl-…`, made at the first entry and kept
+  through every later one). Acts:
+  - `link` — `draft` (the `.tex`, through the validator of 22.1), `file` (the
+    supporting file, project-relative, or a node id as
+    `notes.normalize_node`), `note` (optional), `via` (`app` | `cli` |
+    `recovered`), and the anchor;
+  - `reanchor` — the person said where the passage is now, or that it still
+    holds (「是这段」, 「仍然成立」): a new anchor;
+  - `withdraw` — 撤回关联;
   - `undone` — 撤销 of the key's last act, the engine's rule.
-  The anchor is a table `[passage_evidence.anchor]` with `quote` (the selected
-  source text, exactly; multiline), `prefix` and `suffix` (up to 32 characters
-  of source before and after it), and `offset` (the quote's character offset
-  when it was made: a hint, never authority). Every engine rule holds:
-  append-only, `seq` under the project lock, read back after writing, strict
-  parsing, 9.3's trust rules, the daily snapshot. A new file, so older engines
-  never see it; it joins `proposals._RECORD_FILES` and `share.RECORD_FILES`.
-  The `.tex` is never written by a link.
-- **Finding a passage again.** Whenever the draft is read (the editor opening
-  it, a scan, a save), each live link is resolved against the current text:
-  1. the quote occurs once: found;
-  2. it occurs several times: the occurrence whose prefix and suffix match;
-     if still several, the one nearest `offset`;
-  3. it does not occur: the passage is **待复核** with the reason
-     「段落的文字改了，没能找回」, and **candidates** are offered: the
-     stretches of the current text, between the same prefix and suffix when
-     both are still there, else the most similar paragraph-sized stretches
-     (similarity by shared words; for Chinese, shared characters), best first,
-     at most three. 「是这段」 on a candidate writes a `reanchor`; 「取消关联」
-     writes `unlink`. **Nothing is moved without the click** (9.6).
-  Resolving never writes the ledger.
-- **Edits in the editor carry the passage with them.** While the editor is
-  open, CodeMirror maps each passage's range through every edit, so a passage
-  is never lost to an edit made here. On save, for each link whose passage's
-  text is no longer its `quote`, the save appends one `reanchor` with the new
-  quote, prefix and suffix (one entry per link per save, never per
-  keystroke), in the same lock as the file write and after it. Text typed
-  inside the passage is part of it; a passage whose every character was
-  deleted is 待复核 「段落已被删掉」 (with 撤销 still there until the editor
-  closes) and is not re-anchored.
-- **What an edit means for the link.** The person saw the passage marked
-  while they changed it, so a reworded passage keeps its file. One change
-  does not pass: **when the numbers in the passage change** (the numbers as
-  `claims.py` reads them, in order), the link is 待复核 with
-  「段落里的数字改了：{old} 改成 {new}」 and 「仍然成立」 (a `reanchor` that
-  re-records the numbers) or 「取消关联」. The anchor keeps the numbers it was
-  made on (`numbers`, a list of the printed literals) for this.
-- **What is shown.**
-  - In the editor a supported passage has a soft olive underline and, in the
-    margin, the count of its files in quiet text; pressing either opens the
-    passage's panel: its files (each a link to its page), the note, who linked
-    it and when (`RODesk.whenWords`), 「取消关联」. A passage 待复核 is underlined
-    in ochre, with its reason and candidates in the same panel.
-  - On a file's own page, a new block **「正文里以它为依据的段落」** lists each
-    passage (the draft, the section, the first 80 characters) with 「在编辑器里
-    打开」, which opens the draft at the passage.
-  - 图表与论断 says under 论文正文, per draft, 「{n} 段有依据文件」 and, in the
-    warning colour, 「{m} 段待复核」 when there are some.
-  - A file that has gone from the project leaves its links in place; the
-    passage's panel says 「这个文件现在不在项目里」 (21.5's sentence), and the link
-    is not 待复核 for that alone.
 
-### 22.3 Three kinds of evidence
+  The anchor, `[passage_evidence.anchor]`: `quote` (the passage's source
+  text), `prefix` and `suffix` (up to 32 characters before and after), each
+  with every line ending written as `\n` (so a CRLF file stores no `\r`, which
+  the engine refuses), all three named in the schema's `multiline` set;
+  `offset`, a count of code points into that `\n`-normalised text, a hint and
+  never authority. Every engine rule holds: append-only, `seq` under the
+  project lock, read back after writing, strict parsing, 9.3's trust rules,
+  the daily snapshot. A save of the `.tex` never writes this ledger, and the
+  ledger never writes the `.tex`.
+- **Finding a passage again**, whenever the draft is read (the editor
+  opening it, a scan): with the draft's text `\n`-normalised,
+  1. the quote occurs once: **found**;
+  2. several times: the occurrence whose prefix and suffix match; if still
+     several, the one nearest `offset`: **found**;
+  3. it does not occur: **待复核** 「依据已变化」, with up to three candidates —
+     the text between the same prefix and suffix when both are still there,
+     else the most similar paragraph-sized stretches (shared words; for
+     Chinese, shared characters), best first. 「是这段」 on a candidate writes a
+     `reanchor`; 「撤回关联」 writes `withdraw`. Nothing is moved without the
+     click (9.6).
+
+  Reading never writes the ledger.
+- **While editing.** The editor carries each found passage's range through
+  every edit (CodeMirror's position mapping), so it always knows where the
+  passage is. When the passage's own words change (after whitespace is
+  collapsed; markup counts), the passage is 待复核 「依据已变化」 at the next
+  save, and the editor offers, beside the passage, the new words as the
+  first candidate with **「仍然成立」**: one click writes the `reanchor`. A link
+  that was 待复核 when the editor opened is never re-anchored by a save; only
+  a click moves it. A passage whose every character was deleted is 待复核
+  「段落已被删掉」, offering 撤回关联.
+- **What is shown.**
+  - In the editor a found passage has a dotted underline in ink and, in the
+    margin, the count of its files in quiet text; a passage 待复核 a dotted
+    underline in ochre (a wait, 21.8). Pressing either opens the passage's
+    panel: its files (each a link to its page), the note, who linked it and
+    when (`RODesk.whenWords`), its state, candidates when 待复核, 撤回关联.
+  - On a file's own page, **「以它为依据的段落」** lists each passage (the
+    draft, the section, the first 80 characters, its state) with 「在编辑器里
+    打开」, which opens the draft at the passage.
+  - 图表与论断, per draft under 论文正文: 「{n} 段有依据文件」 and, in ochre,
+    「{m} 段待复核」 when there are some.
+  - A supporting file that has gone from the project: the passage's panel
+    says 「这个文件现在不在项目里」 (21.5's sentence) and the link is shown as
+    such, in ochre; it is not withdrawn.
+- **The index.** No edge is stored for a link. Pages that show links read
+  `evidence.toml` and resolve it at read time, with the scan's text of the
+  draft; `evidence.toml` joins the watcher's record set, so a link made or
+  withdrawn refreshes the pages at once. (A stored edge would need a new edge
+  type, a node for files the index does not hold, and a claim id that changes
+  with every rewording; reading the record directly needs none of these.)
+
+### 22.3 Kinds of evidence
 
 Written down here for the first time (the researcher's ruling of 2026-10-12,
 until now outside this file). A link between a result and what stands behind
-it is one of three kinds, and the app never calls one by another's name:
+it is of one of three kinds, and the app never calls one by another's name:
 
-1. **运行记录** ("run record"): a run Research OS saw, with the content
-   fingerprints of its inputs, script and outputs. Not built yet; the
-   evidence round after V17 builds it.
+1. **A run Research OS saw**, with the content fingerprints of its inputs,
+   script and outputs. Not built; the evidence round after V17 builds it and
+   names it then (运行记录 is not free: 21.6 retired it for 运行日志).
 2. **代码推断** ("inferred from code"): what the scan reads from scripts and
-   drafts — reads, writes, `generates`, and `backed_by` (a number in the prose
-   that matches a run metric). Machine links; confirmed or rejected by the
-   person (9.3), never renamed.
-3. **作者声明** ("declared by the author"): what a person drew or wrote —
-   mappings (8.5), 补上来源, 关联文件, and **a passage's supporting file**.
+   drafts — reads, writes, `generates`, `backed_by`. Machine links, confirmed
+   or rejected by the person (9.3), never renamed.
+3. **人工声明** ("declared by a person"): what a person drew or wrote —
+   mappings (8.5), 补上来源, 关联文件, and a passage's supporting file.
 
-A paper's claim (21.5) is backed, for 21.5's warning rule, by a `backed_by`
-edge as today **or by a supporting file of a passage that contains the claim's
-sentence** (the passage resolved, not 待复核). Such a claim is no longer
-缺来源; its row says 「作者声明：{file}」 in quiet text, never in the colour of a
-confirmed machine link. A passage 待复核 does not back anything until it is
-settled. The index draws a passage's file as an edge derived from the ledger
-by the ingest (`supported_by`, extractor `passage`, from the claim or, with no
-claim in the passage, from the section), never written by a page.
+A claim of the paper (21.5) is backed as today, by `backed_by` only. A claim
+whose sentence lies in a found passage with a supporting file keeps its state
+and its warning; its row and its page add, in quiet text and in a column of
+their own (never under 依据, the `backed_by` column), 「人工声明的依据文件：
+{file}」. Whether a claim lies in a passage is decided by position: the claims
+reader records the column span of each sentence it reads (today it records
+the line only), and the span is tested against the passage's found range.
 
 ### 22.4 Export to PDF
 
-- **Where.** 「导出 PDF」 in the editor's toolbar (a quiet button: 保存 stays
-  the one primary) and on a `.tex` draft's own page. No compiling on save, on
-  a timer, or by an agent: there is no endpoint an agent may call that runs TeX
-  (17.5).
-- **Which file is compiled.** The main file: the draft itself when it has
-  `\documentclass` before `\begin{document}`; otherwise the files of the
-  project that do and that reach this one through `\input`/`\include`/
-  `\subfile` (read without running anything). One: that one. Several: the
-  person chooses, and the choice is kept in this Mac's settings for the draft.
-  None: 「找不到包含这个文件的主文件（带 \documentclass 的 .tex）。」 with the
-  same choice over every `.tex` that has one.
-- **Before running.** Unsaved text is saved first (22.1; a refused save stops
-  the export). Any file the main file inputs that is only in the cloud stops
-  it with 「有文件还在 iCloud 里没下载：{files}」. TeX is found at the path in this
-  Mac's settings, else `/Library/TeX/texbin`, else the newest
-  `/usr/local/texlive/<year>/bin/universal-darwin`; none: 「这台 Mac 上没有找到
-  TeX（TeX Live 或 MacTeX）。」 with the setting. Research OS never installs
+- **Where.** 「导出 PDF」 in the editor's toolbar (a quiet button) and on a
+  `.tex` draft's own page. No compiling on save, on a timer, or by an agent:
+  there is no endpoint an agent may call that runs TeX (17.5).
+- **Which file.** The main file: the draft itself when it has `\documentclass`
+  before `\begin{document}`; otherwise the project's `.tex` files that do and
+  that reach this one through `\input` (with or without braces),
+  `\include`, `\subfile`, `\import`/`\subimport`, followed transitively,
+  commented lines skipped (read, nothing run). One: that one. Several: the
+  person chooses, kept in this Mac's settings for the draft. None:
+  「找不到包含这个文件的主文件（带 \documentclass 的 .tex）。」 with the same choice
+  over every `.tex` that has one.
+- **Before running.** Unsaved text is saved first (a refused save stops the
+  export). A file the main file inputs that is only in the cloud stops it:
+  「有文件还在 iCloud 里没下载：{files}」. TeX is found at the path in this Mac's
+  settings, else `/Library/TeX/texbin`, else the newest
+  `/usr/local/texlive/<year>/bin/universal-darwin`; none:
+  「这台 Mac 上没有找到 TeX（TeX Live 或 MacTeX）。」 Research OS never installs
   TeX.
 - **The engine.** pdfLaTeX, XeLaTeX or LuaLaTeX, chosen by the person in the
-  export's own small settings line, per main file, kept in this Mac's
-  settings. The first time, it is preset from the file: XeLaTeX when the
-  preamble loads `ctex`, `xeCJK` or `fontspec` or the class is a `ctex` one,
-  LuaLaTeX for `luatexja`, else pdfLaTeX — a preset the person sees and can
-  change, never read from `% !TEX program` or a `latexmkrc`.
-- **The run.** One `latexmk` run, an argument list, never a shell:
+  export's settings line, per main file, kept in this Mac's settings. The
+  first time it is preset to XeLaTeX when the preamble loads `ctex`, `xeCJK`
+  or `fontspec` or the class is a `ctex` one, else pdfLaTeX. **LuaLaTeX is
+  never preset**: only the person chooses it.
+- **The run is confined by the operating system, not by TeX.** TeX's own
+  settings do not hold: LuaLaTeX's Lua reads and writes any file, XeLaTeX's
+  PDF driver embeds any file by `\special`, biber reads any path, and a
+  symlink passes TeX's name check (each shown by the review on this Mac).
+  So the run is wrapped in a macOS sandbox profile (`/usr/bin/sandbox-exec`,
+  a profile Research OS writes for the run) that:
+  - allows reading only the project folder, the TeX installation, the system
+    and user font folders and the system's own libraries;
+  - allows writing only the build folder (below);
+  - allows no network.
+
+  Inside it: one `latexmk` run, an argument list, never a shell:
   `latexmk -norc -<engine> -interaction=nonstopmode -halt-on-error
-  -file-line-error -no-shell-escape -synctex=0 -outdir=<build> -auxdir=<build>
-  <main>.tex`, with the main file's folder as the working directory and stdin
-  closed. Its environment is built from nothing: `PATH` (the TeX folder,
-  `/usr/bin`, `/bin`), `HOME`, `LANG`/`LC_ALL`, `shell_escape=f`,
-  `openout_any=p`, `openin_any=p`, `TEXMFOUTPUT=<build>`; no `TEXMFCNF`,
-  `TEXINPUTS`, `TEXMFHOME`, `BIBINPUTS`, Perl or credential variables (TeX
-  takes its safety settings from the environment, checked on this Mac).
-  **`-norc` is not optional**: without it a `latexmkrc` in the project runs as
-  Perl (checked: it created a file). The run is started in its own session and
-  the whole group is killed after **180 seconds**; one export per main file at
-  a time.
+  -file-line-error -no-shell-escape -recorder -synctex=0 -outdir=<build>
+  -auxdir=<build> <main>.tex`, the main file's folder as the working
+  directory, stdin closed, an environment built from nothing (`PATH` of the
+  TeX folder, `/usr/bin`, `/bin`; `HOME`; `LANG`/`LC_ALL`; `shell_escape=f`;
+  `openout_any=p`; `TEXMFOUTPUT=<build>`; `TEXMFVAR` a per-Mac font cache
+  under `~/.researchos/latex-builds/texmf-var/`, which the profile allows
+  writing too). **`-norc` is not optional**: without it a `latexmkrc` in the
+  project runs as Perl. Started in its own session; the whole group killed
+  after **180 seconds**; one export per main file at a time. When
+  `sandbox-exec` is not there or refuses the profile, the export does not run:
+  「这台 Mac 上没法隔离导出，所以没有运行。」 Shell escape is never turned on.
+
+  *Checked on this Mac, 2026-11-12* (scratchpad `sbx`): under the profile, a
+  ctex paper in `paper/` with `\includegraphics{../figures/f.png}` exported
+  with the system Songti fonts and 「喆」 present; a read of a file outside the
+  project failed; `\special{pdf:fstream}` of it embedded nothing; an
+  `\openout` outside the build was refused; LuaLaTeX's `io.open` could
+  neither read outside the project nor write in it; the project folder was
+  unchanged.
 - **Build files stay out of the project**: `<build>` is
-  `~/.researchos/latex-builds/<project id>/<sha256 of the main file's path,
-  16 hex>/`, mode 0700, kept between exports so a second run is faster, with
-  the record of the last export (`export.json`: time, engine, the main file's
-  sha256, the TeX and latexmk versions, the exit code, the time taken, the
-  PDF's sha256). Nothing is written in the project but the PDF.
-- **The PDF.** After a run that exits 0 and leaves a non-empty PDF, it is
-  copied (a temporary file, then an atomic rename) to the project's
-  **document folder** (`outputs.ROLES["document"]`, 19.2: the first of
-  `reports/`, `manuscript/`, `paper/` that exists, else `paper/`, created),
-  named after the main file (`paper/main.pdf`), replacing the previous export of
-  that file. A failed run leaves the previous PDF as it was. The scan knows an
-  exported PDF by `export.json` and lists it as 「导出的 PDF」 on its draft's
-  page, not as a figure without a source.
+  `~/.researchos/latex-builds/<project id>/<first 16 hex of the sha256 of the
+  main file's resolved absolute path>/`, mode 0700, kept between exports.
+- **The PDF.** After a run that exits 0 and leaves a non-empty PDF, it goes
+  to the project's **document folder** — `outputs.folders(root)["folders"]
+  ["document"]`, the person's saved choice first, else the first of
+  `reports/`, `manuscript/`, `paper/` that exists, else `reports/` — named
+  after the main file (`main.pdf`), or `<folder>-<name>.pdf` when two main
+  files of the project share a name. It is written through the human write
+  path (`write_guard(human=True)`, a backup of a PDF it replaces, a temporary
+  file and an atomic rename, a history entry, `watcher.record_write`;
+  refused in a read-only project). **A PDF already there is replaced only
+  when it is the last export of that main file** (its sha256 is the one
+  recorded below); otherwise the export asks 「{file} 不是上次导出的文件，要替换
+  它吗？」 with 替换 and 另存为 `{name}-导出.pdf`. A failed run leaves the
+  project as it was.
+- **The record of an export** is a new table in `papers.toml`,
+  `[[export]]` (id `px-`): `main`, `pdf`, `pdf_sha256`, `tex_sha256`,
+  `engine`, `via`. In the project, so every Mac and a rebuilt index know
+  the PDF as 「导出的 PDF」 of its main file (listed on the draft's page, not as
+  a figure without a source). A table of its own, so an older engine reading
+  `papers.toml` passes over it (12.13's reason). No approval is needed: an
+  export is not evidence.
 - **What the person sees.** While it runs: 「正在导出…」 and 「停止」. Done:
-  「已导出 paper/main.pdf」 with 「打开 PDF」 and 「在 Finder 中显示」 (both
-  through `POST /api/open`). Failed: 「导出没有成功」 in the warning colour, the
-  first errors as `file:line` with TeX's message (from `-file-line-error`),
-  each opening the editor at that line, and the log folded under 「详情」. Three
-  failures are said in plain words: a package TeX Live does not have
-  (「缺少宏包 {name}」, from `! LaTeX Error: File `{name}.sty' not found`); a
-  package that needs shell escape (`minted`, `svg`, `pythontex`, named:
-  「这个宏包需要运行外部程序，导出时不允许」); and a file outside the main file's
-  folder (「读取了主文件夹以外的文件 {path}，导出时不允许」, from `openin_any=p`).
-  Shell escape is never turned on to make a run pass.
+  「已导出 reports/main.pdf」 with 「打开 PDF」 and 「在 Finder 中显示」, text links
+  through `POST /api/open`. Failed: 「导出没有成功」 in clay (an error, 21.8),
+  the first errors as `file:line` with TeX's message (from
+  `-file-line-error`), each a link into the editor only when the path passes
+  22.1's validator after resolving it from the main file's folder (a path
+  into TeX's own tree, outside the project, or written by `\typeout` to look
+  like one, is text); the log folded under 「详情」. Said in plain words: a
+  package TeX Live does not have (「缺少宏包 {name}」); a package that needs to
+  run programs (`minted`, `svg`, `pythontex`: 「这个宏包需要运行外部程序，导出时
+  不允许」); a file the sandbox refused (from the `-recorder` list and the
+  log: 「读取了项目以外的文件 {path}，导出时不允许」). **A run that succeeded but
+  whose log says `Missing character` is reported**, in ochre, with the
+  characters: 「有 {n} 个字符字体里没有，PDF 里缺了：{chars}」.
 
 ### 22.5 A team
 
 - **Editing.** A member edits a draft in their working copy only; the edit
   reaches the official version as a file proposal (12.4); Research OS never
   merges two people's edits (12.3).
-- **Linking needs approval** (the researcher's ruling of 2026-10-12, written
-  here). A member's 关联依据文件, 「是这段」, 「仍然成立」 and 取消关联 are written in
-  their working copy's `evidence.toml` and shown there as 「待批准」; at sync
-  they go into one proposal of a new kind, **`passage_evidence`** (「依据关系」,
-  one per sync, listing every link), and the PI approves or returns it as
-  any proposal (12.4). Approval appends the entries to the official
-  `evidence.toml` with `by` = the member and `approved_by` = the PI, as
-  `decisions.toml` does. The PI's own links need no proposal.
+- **Linking needs approval** (the ruling of 2026-10-12). A member's
+  关联依据文件, 「是这段」, 「仍然成立」 and 撤回关联 are written in their working
+  copy's `evidence.toml`, shown there as 「待批准」, and at sync go into one
+  proposal of a new kind, **`passage_evidence`** (「依据关系」; it joins
+  `proposals.KINDS`, its validator and the signed payload). The proposal
+  names the revision of each draft its quotes were made on; when that
+  revision is itself waiting in a file proposal, the PI sees both together
+  and the links cannot be approved before the file. **Approval appends the
+  member's entries with their own ids**, `by` = the member and `approved_by`
+  = the PI (as `decisions.toml`); returning it makes the PI write a
+  `withdraw` for each. `evidence.toml` joins the reconciliation of
+  `share._ledger_carried`: an entry approved or returned counts as settled,
+  so the member's copy carries no conflict copy afterwards. A link 待批准
+  backs nothing and shows its state. The PI's own links need no proposal.
+- **Older engines.** A snapshot that carries `evidence.toml` is refused by an
+  engine from before V17 (it rejects record files it does not know). The
+  release notes say members update before the PI's first link.
 - **Not changed here:** 12.4 and 12.12 still let a member's mappings,
   关联文件 and 补上来源 travel without approval, although 22.3 counts them as
-  作者声明 too. Bringing them under the same rule is the evidence round's
-  work, said here so that the difference is known, not hidden.
-- **Export** runs on the Mac of the person who presses it, on their copy, and
-  writes their copy's PDF; a PDF is a file like any other for 12.4.
+  人工声明 too. Bringing them under the same rule is the evidence round's
+  work, said here so that the difference is known.
+- **Export** runs on the Mac of the person who presses it, on their copy; the
+  PDF is a file like any other for 12.4.
 
 ### 22.6 Words
 
-New 13.4 rows (one English each, for the researcher to approve with 22.0.2):
+New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 
 | 中文 | English |
 |---|---|
 | 依据文件 | supporting file |
 | 关联依据文件 | Link a supporting file |
-| 有依据的段落 | supported passage |
-| 正文里以它为依据的段落 | Passages it supports |
-| 取消关联 | Unlink |
-| 运行记录 | run record |
+| 以它为依据的段落 | Passages it supports |
+| 撤回关联 | Withdraw the link |
+| 人工声明 | declared by a person |
+| 人工声明的依据文件 | Supporting file declared by a person |
 | 代码推断 | inferred from code |
-| 作者声明 | declared by the author |
+| 撤销这次保存 | Undo this save |
 | 导出 PDF | Export PDF |
+| 导出的 PDF | Exported PDF |
 | 导言区 | Preamble |
 | 显示源码 | Show source |
 
-待复核, 是这段, 仍然成立, 打开 PDF, 在 Finder 中显示, 详情, 返回 and 保存 keep
-their present English. Every sentence above goes through `t()` with its
-English; no emoji, no arrow, no glyph as decoration, in the vendored files'
-use as much as in ours (the toolbar is words).
+待复核, 依据已变化, 是这段, 仍然成立, 待批准, 打开 PDF, 在 Finder 中显示, 详情,
+返回 and 保存 keep their present English. 运行记录 is not used (21.6). Every
+sentence goes through `t()` with its English; the toolbar is words, with no
+emoji, arrow or glyph.
 
-### 22.7 Batches
+### 22.7 Presentation (amends 21.8's list)
 
-Each batch is built, reviewed and accepted on its own, on the branch
-`v17-latex-editor`:
+- The editor page: 「保存」 primary; 导出 PDF quiet; 撤销这次保存, 显示源码,
+  载入新版本 and 返回 text links.
+- The link panel: 「关联」 primary. The passage panel: no primary; 「是这段」 and
+  「仍然成立」 quiet buttons, 撤回关联 a text link.
+- The export result: 打开 PDF and 在 Finder 中显示 text links; 「导出没有成功」
+  in clay (added to `test_v16_clay`'s list); a missing character and 待复核
+  in ochre; a found passage in ink.
 
-- **B1 — Save and a plain editor.** The vendored CodeMirror (22.0.1), the
-  save path of 22.1 (byte-exact splice, revision, guard, backup, the
-  one-file re-read, 撤销, the 2 MB limit), the editor page with source shown
-  as written and LaTeX colouring, the dirty guard, `\input` links. The tests'
-  served-script scans exempt `/vendor/` by name and say why.
-- **B2 — Like Word.** The decorations of 22.1, KaTeX and its fonts, the
-  toolbar, Return and ⇧Return, 导言区, 显示源码.
-- **B3 — Passages.** `evidence.toml`, the anchor and its resolution, the
-  mapping through edits, `reanchor` on save, 待复核 and candidates, the
-  numbers rule, the passage panel, the block on a file's page, the count on
-  图表与论断, the `supported_by` edge and 22.3's change to 21.5.
-- **B4 — Export.** Main-file finding, the engine preset, the hardened run, the
-  build folder, the PDF in the document folder, the result and error
-  display, 「导出的 PDF」.
-- **B5 — A team.** The `passage_evidence` proposal, 待批准, approval.
+### 22.8 Batches and acceptance
 
-### 22.8 Acceptance
+Each batch is built, reviewed and accepted on its own, on
+`v17-latex-editor`, split further where 300 changed lines would be passed.
+The order puts the researcher's purpose — 改正文, 将某段话关联文件 — first:
 
-1. Editing and saving a `.tex` of 3,000 lines changes exactly the bytes edited
-   (a byte comparison of the rest), on a file with CRLF line ends too; a file
-   with mixed ends opens read-only; a change made in another editor between
-   opening and saving is refused with 409 and nothing typed is lost.
-2. Every construct of 22.1's list is shown as described, and a file using
-   commands the editor does not know shows them as written; a formula KaTeX
-   cannot typeset is shown as written without colour.
-3. A link made in the editor survives: an edit before it, an edit inside it
-   (one `reanchor` per save), and a move of the paragraph; a change made in
-   another editor that keeps the words; and goes 待复核 with candidates when
-   the words are changed elsewhere, and when a number in it changes anywhere.
-   No ledger entry is written by reading.
-4. A claim whose sentence is in a supported passage is not 缺来源 on
-   图表与论断 and says 「作者声明」; a passage 待复核 backs nothing.
-5. Export of a real paper with a bibliography, figures and Chinese text
-   produces the PDF in the document folder and nothing else in the project (a
-   listing before and after); a project `latexmkrc`, `\write18` and an
-   `\openout` to `../` do nothing and are reported; the 180-second limit kills
-   a run that loops; a missing package is named.
-6. A member's link waits as 待批准 and is in the official record only after
-   approval, with `approved_by`.
-7. The test of a real draft: the researcher names one LaTeX paper (no project
-   on this Mac holds one today), and the acceptance runs on a copy of it.
-8. No page other than the editor loads the vendored files; the full suite
-   passes on Python 3.11 and 3.13.
+- **B1 — Edit and link** (needs CodeMirror, 22.0.1): the vendoring, the
+  editor with source shown as written and LaTeX colouring, the validator,
+  coordinates and save of 22.1, 撤销这次保存, the dirty guard, reloads,
+  `\input` links; `evidence.toml`, making a link, finding again, 待复核 with
+  candidates and 「仍然成立」, the passage panel, 以它为依据的段落, the count on
+  图表与论断.
+- **B2 — Export**: main-file finding, the engine preset, the sandboxed run,
+  the build folder, the PDF in the document folder and its replacement rule,
+  `[[export]]`, the result and errors.
+- **B3 — Like Word** (needs KaTeX): the decorations, the range reader, the
+  toolbar, Return by context, 导言区, 显示源码; the claims column span and
+  人工声明的依据文件 on a claim (22.3).
+- **B4 — A team**: the `passage_evidence` proposal, 待批准, approval and
+  reconciliation.
+
+Acceptance:
+
+1. Saving a 3,000-line `.tex` changes exactly the bytes edited (a byte
+   comparison of the rest), on an LF file and a CRLF file with Chinese text
+   and an emoji; typing Return in the CRLF file writes CRLF; a mixed or
+   lone-CR file opens read-only; a change made elsewhere between opening and
+   saving is refused with 409 and nothing typed is lost; `.researchos/`, a
+   symlink, a `../` path and a generated table cannot be saved.
+2. A link survives a save of edits before and after it and a move of its
+   paragraph, made here or elsewhere, with no ledger entry written; a change
+   of its words, here or elsewhere, makes it 待复核 「依据已变化」, and 「仍然成立」
+   writes one `reanchor`; a link 待复核 at opening is not moved by a save;
+   reading writes nothing.
+3. Export of a copy of a real paper — chapters by `\input`, a bibliography,
+   figures in `../figures`, Chinese text — produces the PDF in the document
+   folder and nothing else in the project (a listing before and after). A
+   project `latexmkrc`, `\write18`, an `\openout` outside the build, a
+   `\special{pdf:fstream}` of a file outside the project, a symlink out of
+   the project, a biber `.bib` outside it and LuaLaTeX's `io.open` all fail
+   to read or write and are reported; the 180-second limit kills a loop; a
+   missing package and a missing character are named; a `paper/main.pdf`
+   that was not exported is not replaced without asking.
+4. (B3) Every construct of 22.1's list is shown as described; unknown
+   commands show as written; Return in a heading, a `\textbf`, a list and a
+   formula does what 22.1 says and the file still exports; typing stays
+   under 16 ms a key on the 3,000-line file.
+5. (B4) A member's link waits as 待批准, reaches the official record with
+   `approved_by` and the member's ids, and leaves no conflict copy.
+6. The test of a real draft: the researcher names one LaTeX paper (no project
+   on this Mac holds one today) and the acceptance runs on a copy of it.
+7. No page but the editor loads the vendored files; the full suite passes on
+   Python 3.11 and 3.13.
+
+### 22.9 What the review of the first draft changed
+
+Three reviews of c549c8e (engineering, security, the researcher's use), each
+point checked against the code or by experiment on this Mac:
+
+- **Export confinement** (blocking, three reviews): TeX's own settings do not
+  confine LuaLaTeX's Lua, XeLaTeX's `\special`, biber or symlinks, and
+  `openin_any=p` refused `../figures` — Research OS's own layout — and
+  silently swapped ctex's Songti for Fandol, dropping 「喆」. Now the run is
+  confined by a sandbox profile, which was tried on this Mac (22.4).
+- **Rewording and 9.6** (blocking): a link no longer survives a change of
+  its words by itself; 「仍然成立」 is one click (22.0.3). The numbers rule
+  went with it (it missed integers, signs, tables and 显著/不显著).
+- **The derived edge** (blocking): `supported_by` would have needed a new
+  edge type, nodes for unindexed files and a claim id stable under edits; links
+  are read from the record instead (22.2).
+- **A declaration as proof**: it no longer clears 缺来源 (22.0.4, 22.3).
+- **Coordinates and storage**: positions in code points with CRLF as two;
+  line endings kept per file; anchors stored `\n`-normalised (22.1, 22.2).
+- **The save path**: its own `save_tex` with a size parameter, a path
+  validator, backups per path; the scan runs after the answer instead of an
+  unsafe one-file re-ingest; a save never writes the ledger, so the file and
+  the record cannot disagree.
+- **The PDF**: the document folder by `outputs.folders`; no silent
+  replacement of a PDF that was not exported; the export record in the
+  project, not per Mac.
+- **A team**: reanchors are explicit acts in the proposal; approval keeps ids
+  and reconciles; older engines named.
+- **Words**: 运行记录 (retired), 作者 (= Authors), 取消 (= Cancel) avoided;
+  the save's undo named apart from ⌘Z.
+- **Order**: edit-and-link first (B1), export second, "like Word" third.
+- **Return**: by context, since a blank line inside `\section{}`, `\textbf{}`
+  or `\caption{}` breaks the PDF (checked).
+- **Vendoring**: a committed build script, an allow-listed binary route, a
+  loader for the editor page only, the tests' exemption by folder.
