@@ -7289,11 +7289,12 @@ Nothing on disk is renamed: `research/results/`, `tasks.json`'s `report`,
 
 ## Section 22 — Writing the paper in Research OS: a LaTeX editor, passages tied to their supporting files, export to PDF (task V17)
 
-*Status: second draft, 2026-11-12, for the researcher's review. The first
-draft (c549c8e) went through three adversarial reviews (engineering,
-security, the researcher's use: 41 findings, 6 blocking); 22.9 says what
-changed and why. Nothing here is built until the researcher approves it, and
-22.0's rulings need the researcher's own word before any code.*
+*Status: approved, 2026-11-12. The researcher, on the second draft: "都按建议" —
+all five rulings of 22.0 as proposed (CodeMirror; KaTeX with its fonts; the
+words of 22.6; a reworded passage needs one click; a declaration does not
+clear 缺来源). The first draft (c549c8e) went through three adversarial
+reviews (engineering, security, the researcher's use: 41 findings, 6
+blocking); 22.9 says what changed and why.*
 
 The researcher, 2026-11-12, after asking whether the local Overleaf server
 (ayakaleaf, `~/ayakaleaf-toolkit`) could be shown inside Research OS: "我的想法
