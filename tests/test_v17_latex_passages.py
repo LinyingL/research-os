@@ -2,16 +2,18 @@
 
 The editor's side runs under node on the vendored CodeMirror (the same driver as test_v17_latex_editor.py): the
 server's positions (code points, a CRLF as two) turned into the editor's and back; a found passage carried through
-edits; at a save, changed words make it 待复核 with 「仍然成立」, a deleted one 「段落已被删掉」, and a link 待复核 at
-opening is left alone; a save never posts to the ledger; 「仍然成立」, 「关联」 and 撤回关联 each post one act. Every
-body the editor sent is then applied, in order, to a real project through `latex_edit`, so the positions are checked
-against the server's own reading and `evidence.toml` is shown to change only by the clicks. Also the file search of
-the link panel and the hooks on a file's page and 论文正文. Every test names its scenario."""
+edits; at a save, changed words make it 待复核 with 「仍然成立」, an emptied one is found again by the server (cut and
+pasted: found; deleted: 「段落已被删掉」), and a link 待复核 at opening is left alone; a save never posts to the ledger;
+「仍然成立」, 「关联」 and 撤回关联 each post one act. Every body the editor sent is then applied, in order, to a real
+project through `latex_edit`, so the positions are checked against the server's own reading and `evidence.toml` is
+shown to change only by the clicks. Also the file search of the link panel and the hooks on a file's page and 论文正文.
+Every test names its scenario."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -63,9 +65,15 @@ out.stillOffered = !!still && !button('是这段');
 still.fire('click'); await tick();
 const re = posts.shift(); fromServer = {from: re.body.from, to: re.body.to}; re.res({act: 'reanchor'}); sent.push(re); await tick(); await tick(); await tick();
 out.afterStill = seen();
-// every character of the passage deleted: 段落已被删掉 at the save
+// every character of the passage deleted: the save asks the server again, and its 段落已被删掉 is shown
 const p2 = P().find((p) => p.opened === 'found');
-V.dispatch({changes: {from: p2.from, to: p2.to}}); sent.push(await save());
+V.dispatch({changes: {from: p2.from, to: p2.to}});
+out.beforeDeleteSave = seen();
+evidenceAnswer = () => ({revision: rev, links: EVIDENCE.links.map((l) => l.quote === '不显著'
+  ? Object.assign({}, l, {state: 'deleted', from: null, to: null, candidates: []}) : l)});
+const asked = evidenceGets.length;
+sent.push(await save()); await tick();
+out.deleteAsked = evidenceGets.length - asked;
 out.afterDelete = seen();
 // 关联: a selection, the file search (figures first), the chosen file, 确认关联
 const b = V.state.doc.toString().indexOf('B');
@@ -155,6 +163,8 @@ def test_a_rewording_waits_for_the_save_then_offers_still_holds_and_a_link_waiti
 
 def test_a_passage_whose_every_character_was_deleted_says_so_at_the_save(run):
     _root, out, _ledger = run
+    assert [p["state"] for p in out["beforeDeleteSave"]] == ["found", "changed"]   # not declared deleted by the editor
+    assert out["deleteAsked"] == 1
     assert [p["state"] for p in out["afterDelete"]] == ["deleted", "changed"]
 
 
@@ -447,3 +457,80 @@ def test_a_files_page_lists_the_passages_it_supports_with_open_in_the_editor(rev
 
 def test_a_waiting_passages_label_is_cut_at_forty_characters_not_forty_code_units(review):
     assert review["label"] == "😀" * 40
+
+
+# -- B1f: a linked paragraph cut and pasted elsewhere ------------------------------------------------------------------
+
+_MOVED = r"""
+const out = {}, P = window.ROLatex._passages;
+const seen = () => P().map((p) => ({state: p.state, opened: p.opened, from: p.from, to: p.to}));
+evidenceAnswer = () => BEFORE;
+L.open(FILE.path); await tick();
+gets.shift().res(FILE); await tick(); await tick(); await tick();
+const V = viewsMade[0], doc = () => V.state.doc.toString();
+out.opened = seen();
+// cut the paragraph with its blank line, paste it after the last one
+const at = doc().indexOf(PARA);
+V.dispatch({changes: {from: at, to: at + PARA.length + 2}});
+V.dispatch({changes: {from: doc().length, insert: '\n' + PARA + '\n'}});
+out.text = doc();
+out.beforeSave = seen();
+evidenceAnswer = () => AFTER;
+const asked = evidenceGets.length;
+button('保存').fire('click'); await tick();
+const p = posts.shift(); p.res({revision: AFTER.revision, changed: true, previous: FILE.revision});
+await tick(); await tick(); await tick();
+out.asked = evidenceGets.length - asked;
+out.afterSave = seen();
+out.shown = P().map((p) => doc().slice(p.from, p.to));
+out.side = all.filter((e) => e.textContent === '段落已被删掉' && !e.removed).length;
+out.sent = [{url: p.url, body: p.body}];
+out.leftover = posts.length;
+console.log(JSON.stringify(out));
+"""
+
+
+def test_a_linked_paragraph_cut_and_pasted_elsewhere_is_found_there_after_the_save_not_called_deleted(tmp_path):
+    """The editor's range of the cut paragraph is empty, yet it is not 「段落已被删掉」: after the save the server finds
+    it again in the saved text, at its new place, and that answer is what the editor shows. The save writes no entry."""
+    if NODE is None:
+        pytest.skip("node is not installed")
+    para = "Para one is 显著 here."
+    before_text, after_text = f"Intro.\n\n{para}\n\nPara two.\n", f"Intro.\n\nPara two.\n\n{para}\n"
+    root = tmp_path / "project"
+    root.mkdir()
+    project.init_project(root)
+    (root / "figures").mkdir()
+    (root / "figures/f1.png").write_bytes(b"png")
+    _put(root, before_text)
+    latex_edit.evidence_act(root, "link", {"path": PATH, "revision": _sha(root), "from": before_text.index(para),
+                                           "to": before_text.index(para) + len(para), "file": "figures/f1.png"})
+    ledger = evidence.evidence_path(root).read_bytes()
+    opened, before = latex_edit.read_tex(root, PATH), latex_edit.evidence_of_draft(root, PATH)
+    # what the server will answer once the editor's save is on disk, read from a copy holding the saved text
+    twin = tmp_path / "twin"
+    shutil.copytree(root, twin)
+    _put(twin, after_text)
+    after = latex_edit.evidence_of_draft(twin, PATH)
+    assert [l["state"] for l in after["links"]] == ["found"]
+    prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
+                                                     "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    script = (prelude + "(async () => {\nconst FILE = " + json.dumps(opened) + ", BEFORE = " + json.dumps(before)
+              + ", AFTER = " + json.dumps(after) + ", PARA = " + json.dumps(para) + ";\n" + _MOVED
+              + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });")
+    got = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, timeout=60).stdout
+    out = json.loads(got.strip().splitlines()[-1])
+    assert "error" not in out, out.get("error")
+    assert out["opened"][0]["state"] == "found" and out["text"] == after_text
+    assert out["beforeSave"][0]["from"] == out["beforeSave"][0]["to"]           # the editor's own range is empty
+    assert out["asked"] == 1                                                      # the save had the server look again
+    assert out["afterSave"] == [{"state": "found", "opened": "found", "from": after_text.index(para),
+                                 "to": after_text.index(para) + len(para)}]
+    assert out["shown"] == [para] and out["side"] == 0
+    assert [s["url"] for s in out["sent"]] == ["/api/latex/save"] and out["leftover"] == 0
+    # the save the editor sent, applied to the real project: the text is the pasted one, the ledger byte for byte the
+    # same, and the server's own reading is the answer the editor was given
+    latex_edit.save_tex(root, dict(out["sent"][0]["body"], revision=_sha(root)))
+    assert (root / PATH).read_bytes().decode() == after_text
+    assert evidence.evidence_path(root).read_bytes() == ledger
+    assert latex_edit.evidence_of_draft(root, PATH)["links"] == after["links"]

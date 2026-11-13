@@ -351,11 +351,12 @@
     if (ed !== me) return;
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
     clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
-    checkPassages(me);
+    const emptied = checkPassages(me);
     me.busy = false; me.ui.save.disabled = false;
     if (r.changed && r.previous) me.lastSave = { revision: r.revision, previous: r.previous };
     me.ui.undo.classList.toggle("hidden", !me.lastSave);
     setStatus(me.ui.status, "", dirty() ? t("尚未保存") : t("已保存"));
+    if (emptied) await loadPassages(me, true);   // a cut passage pasted elsewhere is found there by the server
   }
 
   // 409: the file changed elsewhere. What the editor holds stays in it and, folded, under the notice; 载入新版本 reads the
@@ -550,21 +551,25 @@
   }
 
   // At a save (22.2 "While editing"): a passage found when the editor opened whose words changed is 待复核
-  // 「依据已变化」, its new words the first candidate with 「仍然成立」; every character deleted, 「段落已被删掉」. A link
-  // 待复核 at opening is never touched. Nothing is written: only a click writes the ledger.
+  // 「依据已变化」, its new words the first candidate with 「仍然成立」. A link 待复核 at opening is never touched.
+  // A passage whose range is now empty may have been cut and pasted elsewhere: it is not called deleted here; true is
+  // returned, and the caller has the server find it again in the saved text (found, 待复核 or 「段落已被删掉」 is
+  // the server's answer). Nothing is written: only a click writes the ledger.
   function checkPassages(me) {
     const doc = me.view.state.doc;
-    let moved = false;
+    let moved = false, emptied = false;
     const list = passagesOf(me).map((p) => {
       if (p.opened !== "found" || p.from == null) return p;
+      if (p.to <= p.from) { emptied = true; return p.local ? Object.assign({}, p, { local: false }) : p; }
       const now = doc.sliceString(p.from, p.to, "\n");
-      const state = p.to <= p.from ? "deleted" : words(now) === words(p.quote) ? "found" : "changed";
+      const state = words(now) === words(p.quote) ? "found" : "changed";
       if (state === p.state && state !== "changed") return p;
       moved = true;
       return Object.assign({}, p, { state: state, local: state !== "found",
         candidates: state === "changed" ? [{ from: p.from, to: p.to, text: now, still: true }] : [] });
     });
-    if (moved) setPassages(me, list);
+    if (moved || emptied) setPassages(me, list);
+    return emptied;
   }
 
   // Entries in the ledger, one POST each. A link or a reanchor names a passage of the saved file, so with unsaved text
