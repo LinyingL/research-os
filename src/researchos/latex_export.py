@@ -18,9 +18,12 @@ import hashlib
 import os
 import posixpath
 import re
+import resource
 import shutil
 import signal
+import stat
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -31,6 +34,7 @@ from researchos.workspace import WorkspaceError
 
 TIMEOUT_S = 180
 PDF_LIMIT = 512 * 1024 * 1024
+LOG_TAIL = 2 * 1024 * 1024  # of the TeX log, biber's log and latexmk's output: their last part only
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 TEX_SETTING = "tex_path"
 ENGINE_SETTING = "latex_export_engines"
@@ -77,7 +81,7 @@ def tex_tree(tex: Path) -> Path:
     """The TeX installation the programs' folder belongs to (`<tree>/bin/<platform>`), else that folder alone: the
     sandbox never opens a folder as wide as `/opt` or `/usr` for a TeX found elsewhere."""
     tree = tex.parent.parent
-    return tree if tex.parent.name == "bin" and len(tree.parts) >= 3 else tex
+    return tree if tex.parent.name == "bin" and len(tree.parts) >= 3 and (tree / "texmf-dist").is_dir() else tex
 
 
 def _closure(root: Path, main: str, text_of: Callable[[str], str]) -> list[str]:
@@ -124,10 +128,17 @@ def build_dir(project_id: str, main_abs: Path) -> Path:
     return folder
 
 
-def _own_folder(name: str) -> Path:
-    folder = paths.researchos_home() / "latex-builds" / name
-    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return folder
+def cache_dirs(build: Path) -> tuple[Path, Path]:
+    """The run's TeX cache (`TEXMFVAR`) and temporary folder, `<build>-cache/`, of this main file alone (22.4 as
+    amended): TeX searches `TEXMFVAR` before its installation and biber runs what it unpacks into the temporary
+    folder, so a cache one project's run may write must never be read by another's."""
+    found = []
+    for name in ("texmf-var", "tmp"):
+        folder = build.parent / f"{build.name}-cache" / name
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(folder.parent, 0o700)
+        found.append(folder)
+    return found[0], found[1]
 
 
 def _quoted(path: Path | str) -> str:
@@ -172,9 +183,15 @@ def sandbox_profile(project: Path, tex_root: Path, writable: list[Path]) -> str:
     lipo = _lipo_cache()
     reading = " ".join([f"(subpath {_quoted(p)})" for p in reads] + lipo)
     writing = " ".join([f"(subpath {_quoted(p)})" for p in [*real[2:], "/dev"]] + lipo)
+    # Whether a file exists, its size and time: only below what the run reads, and the folders on the way there
+    # (with the system's own links: /etc, /var, /tmp and the local time zone).
+    parents = {str(parent) for p in [*reads, *real[2:]] for parent in Path(p).parents}
+    parents |= {"/etc", "/var", "/tmp", "/private", "/private/etc", "/private/etc/localtime"}
+    looking = " ".join(f"(literal {_quoted(p)})" for p in sorted(parents))
     return ("(version 1)\n(deny default)\n"
             "(allow process-exec process-fork signal sysctl-read mach-lookup ipc-posix-shm iokit-open)\n"
-            f"(allow file-read-metadata)\n(allow file-read* (literal \"/\") {reading})\n(allow file-write* {writing})\n")
+            f"(allow file-read-metadata {looking})\n(allow file-read* (literal \"/\") {reading})\n"
+            f"(allow file-write* {writing})\n")
 
 
 def command(tex: Path, engine: str, build: Path, main_name: str, profile: str) -> list[str]:
@@ -191,23 +208,31 @@ def environment(tex: Path, build: Path, cache: Path, temp: Path) -> dict[str, st
             "TMPDIR": f"{temp}/", "max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
 
 
+def _file_limit() -> None:
+    """In the child before it starts: no file it writes grows past `PDF_LIMIT` (a log a loop fills stops there)."""
+    resource.setrlimit(resource.RLIMIT_FSIZE, (PDF_LIMIT, PDF_LIMIT))
+
+
 def run(cmd: list[str], cwd: Path, env: dict[str, str], timeout: float) -> tuple[int | None, str, str | None]:
-    """`cmd` in a session of its own, stdin closed: its exit code, its output, and `timeout` or `stopped` (by `stop`)
-    when it was killed. The whole group is killed when it ends either way."""
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, start_new_session=True)
-    _running.update(proc=proc, stopped=False)
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-        killed = "stopped" if _running.get("stopped") else None
-    except subprocess.TimeoutExpired:
-        _kill(proc)
-        out, _ = proc.communicate()
-        killed = "timeout"
-    finally:
-        _kill(proc)
-        _running.clear()
-    return proc.returncode, out.decode("utf-8", errors="replace"), killed
+    """`cmd` in a session of its own, stdin closed: its exit code, the last `LOG_TAIL` of its output (kept in a
+    file without a name, never in memory), and `timeout` or `stopped` (by `stop`) when it was killed. The whole
+    group is killed when it ends either way."""
+    with tempfile.TemporaryFile() as output:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                                stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=_file_limit)
+        _running.update(proc=proc, stopped=False)
+        try:
+            proc.wait(timeout=timeout)
+            killed = "stopped" if _running.get("stopped") else None
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+            proc.wait()
+            killed = "timeout"
+        finally:
+            _kill(proc)
+            _running.clear()
+        output.seek(max(0, os.fstat(output.fileno()).st_size - LOG_TAIL))
+        return proc.returncode, output.read(LOG_TAIL).decode("utf-8", errors="replace"), killed
 
 
 def _kill(proc: subprocess.Popen) -> None:
@@ -233,6 +258,7 @@ _LINE_ERROR_RE = re.compile(r"^(?P<file>[^\s:<][^:\n]*?):(?P<line>\d+): (?P<text
 _NOT_FOUND_RE = re.compile(r"(?:File|file) [`'](?P<name>[^'\n]+)' not found|I can't find file [`'](?P<other>[^'\n]+)'"
                            r"|I couldn't open (?:database|style) file (?P<bib>[^\s]+)"
                            r"|Couldn't open (?P<denied>/[^\n:]+): Operation not permitted"
+                           r"|I WON'T RUN '[^\n]*' because I don't find the following files:\n\s+(?P<unseen>/[^\n]+)"
                            r"|xdvipdfmx:warning: File \"(?P<special>[^\"\n]+)\" not found")
 _MISSING_CHAR_RE = re.compile(r"Missing character: There is no (?P<char>.+?) (?:\(U\+[0-9A-F]+\) )?in font")
 
@@ -288,6 +314,7 @@ def read_log(root: Path, main: str, log: str, lang: str, more: str = "") -> dict
     missing = None
     if chars:
         missing = _say(lang, "有 {n} 个字符字体里没有，PDF 里缺了：{chars}",
+                       "1 character is not in the font and is missing from the PDF: {chars}" if len(chars) == 1 else
                        "{n} characters are not in the font and are missing from the PDF: {chars}",
                        n=len(chars), chars=" ".join(chars))
     return {"errors": errors, "notes": list(dict.fromkeys(notes)), "missing_characters": chars,
@@ -297,10 +324,11 @@ def read_log(root: Path, main: str, log: str, lang: str, more: str = "") -> dict
 # -- the PDF ------------------------------------------------------------------------------------------------------------
 
 def pdf_name(root: Path, main: str, folder: str) -> str:
-    """`<folder>/<name>.pdf`, or `<folder>/<main's folder>-<name>.pdf` when two main files share a name."""
+    """`<folder>/<name>.pdf`, or `<folder>/<main's folders>-<name>.pdf` (its whole folder path, `/` as `-`) when two
+    main files share a name."""
     stem = posixpath.splitext(posixpath.basename(main))[0]
     twins = [m for m in latex_edit.every_main(root) if m != main and posixpath.splitext(posixpath.basename(m))[0] == stem]
-    parent = posixpath.basename(posixpath.dirname(main))
+    parent = posixpath.dirname(main).replace("/", "-")
     name = f"{parent}-{stem}.pdf" if twins and parent else f"{stem}.pdf"
     return posixpath.join(folder, name) if folder else name
 
@@ -406,7 +434,8 @@ def export(root: str | Path, body: Any, lang: str = "zh", *, guard: Callable[[],
     try:
         main_abs = root / main
         tex_sha = _sha(main_abs.read_bytes())
-        build, cache, temp = build_dir(pid, main_abs), _own_folder("texmf-var"), _own_folder("tmp")
+        build = build_dir(pid, main_abs)
+        cache, temp = cache_dirs(build)
         produced, marker = build / f"{main_abs.stem}.pdf", build / "last-good-run"
         if _text(marker) != engine:  # after a failed run or with another engine, latexmk starts from nothing
             for leftover in build.iterdir():
@@ -419,10 +448,14 @@ def export(root: str | Path, body: Any, lang: str = "zh", *, guard: Callable[[],
         profile = sandbox_profile(root, tex_tree(tex), [build, cache, temp])
         code, out, killed = run(command(tex, engine, build, main_abs.name, profile), main_abs.parent,
                                 environment(tex, build, cache, temp), timeout)
+        if out.startswith("sandbox-exec:"):  # it refused the profile: nothing ran
+            raise _refuse("no_sandbox", "这台 Mac 上没法隔离导出，所以没有运行。",
+                          "This Mac cannot confine the export, so it did not run.")
         log, more = (_text(build / f"{main_abs.stem}{suffix}") for suffix in (".log", ".blg"))
-        pdf = produced.read_bytes() if not killed and code == 0 and produced.is_file() else b""
+        pdf = _build_file(produced, PDF_LIMIT) if not killed and code == 0 else b""
+        pdf = pdf if pdf.startswith(b"%PDF-") else b""
         if pdf:
-            marker.write_text(engine)
+            _mark(marker, engine)
     finally:
         _RUN_LOCK.release()
     answer = {"main": main, "engine": engine, **read_log(root, main, log, lang, out + "\n" + more),
@@ -440,8 +473,31 @@ def export(root: str | Path, body: Any, lang: str = "zh", *, guard: Callable[[],
             "message": _say(lang, "已导出 {pdf}", "Exported {pdf}", pdf=place["pdf"])}
 
 
-def _text(path: Path) -> str:
+def _build_file(path: Path, limit: int, *, tail: bool = False) -> bytes:
+    """A file the run left in its build folder, read by Research OS outside the sandbox: never through a link, only
+    a regular file with one name and at most `limit` bytes (or, with `tail`, its last `limit`); else nothing."""
     try:
-        return path.read_text("utf-8", errors="replace")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
-        return ""
+        return b""
+    with os.fdopen(fd, "rb") as handle:
+        found = os.fstat(fd)
+        if not stat.S_ISREG(found.st_mode) or found.st_nlink != 1 or (found.st_size > limit and not tail):
+            return b""
+        handle.seek(max(0, found.st_size - limit))
+        return handle.read(limit)
+
+
+def _mark(marker: Path, engine: str) -> None:
+    """`last-good-run` written afresh, never through a link or a file the run left there."""
+    try:
+        marker.unlink(missing_ok=True)
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return  # without it the next export starts from nothing
+    with os.fdopen(fd, "w") as handle:
+        handle.write(engine)
+
+
+def _text(path: Path) -> str:
+    return _build_file(path, LOG_TAIL, tail=True).decode("utf-8", errors="replace")

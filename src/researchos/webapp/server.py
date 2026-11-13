@@ -4620,9 +4620,15 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 served = self._workspace_target(body)
                 with self.server.write_guard(human=True):
                     pass  # a blocked, read-only or moved project is refused before TeX runs
+
+                @contextlib.contextmanager
+                def placing() -> Iterator[None]:
+                    with self.server.write_guard(human=True):
+                        self._workspace_target(body)  # another window may have switched projects during the run
+                        yield
+
                 payload = self._workspace_api(lambda: latex_export.export(
-                    served.root, {k: v for k, v in body.items() if k != "project"}, self._lang(),
-                    guard=lambda: self.server.write_guard(human=True)))
+                    served.root, {k: v for k, v in body.items() if k != "project"}, self._lang(), guard=placing))
                 if payload.get("exported"):
                     from researchos.records import papers as papers_mod  # noqa: PLC0415
 

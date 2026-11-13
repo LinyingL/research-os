@@ -7645,13 +7645,30 @@ the line only), and the span is tested against the passage's found range.
   -auxdir=<build> <main>.tex`, the main file's folder as the working
   directory, stdin closed, an environment built from nothing (`PATH` of the
   TeX folder, `/usr/bin`, `/bin`; `HOME`; `LANG`/`LC_ALL`; `shell_escape=f`;
-  `openout_any=p`; `TEXMFOUTPUT=<build>`; `TEXMFVAR` a per-Mac font cache
-  under `~/.researchos/latex-builds/texmf-var/`, which the profile allows
-  writing too). **`-norc` is not optional**: without it a `latexmkrc` in the
-  project runs as Perl. Started in its own session; the whole group killed
-  after **180 seconds**; one export per main file at a time. When
-  `sandbox-exec` is not there or refuses the profile, the export does not run:
+  `openout_any=p`; `TEXMFOUTPUT=<build>`; `TEXMFVAR` and `TMPDIR` the main
+  file's own font cache and temporary folder, `<build>-cache/`, which the
+  profile allows writing too). **`-norc` is not optional**: without it a
+  `latexmkrc` in the project runs as Perl. Started in its own session; the
+  whole group killed after **180 seconds**; no file it writes larger than
+  512 MB; one export per main file at a time. When `sandbox-exec` is not
+  there or refuses the profile, the export does not run:
   「这台 Mac 上没法隔离导出，所以没有运行。」 Shell escape is never turned on.
+
+  *Amended after the review of B2a (2026-11-13).* The cache is no longer
+  one per Mac: TeX searches `TEXMFVAR` before its own installation and
+  biber runs what it unpacks into the temporary folder, so a cache one
+  project's run may write would change every later export of every project
+  (shown on this Mac: a planted `size10.clo` was loaded by another
+  project's pdfLaTeX). The price is a first LuaLaTeX run per main file that
+  builds its font list again (about 8 seconds here). The run may also see
+  whether a file exists (its size, its time) only below what it may read and
+  in the folders on the way there. What the run leaves in its build folder
+  is read by Research OS without following a link, only as a regular file
+  with one name: the PDF up to 512 MB and starting `%PDF-`, the logs and
+  latexmk's output by their last 2 MB (latexmk's output kept in a file, not
+  in memory); `last-good-run` is written afresh, never through a file the run
+  left. The PDF is placed only while the project the export was asked in is
+  still the one open.
 
   *Checked on this Mac, 2026-11-12* (scratchpad `sbx`): under the profile, a
   ctex paper in `paper/` with `\includegraphics{../figures/f.png}` exported
@@ -7667,8 +7684,9 @@ the line only), and the span is tested against the passage's found range.
   to the project's **document folder** — `outputs.folders(root)["folders"]
   ["document"]`, the person's saved choice first, else the first of
   `reports/`, `manuscript/`, `paper/` that exists, else `reports/` — named
-  after the main file (`main.pdf`), or `<folder>-<name>.pdf` when two main
-  files of the project share a name. It is written through the human write
+  after the main file (`main.pdf`), or `<folders>-<name>.pdf` (the main
+  file's whole folder path, `/` as `-`) when two main files of the project
+  share a name. It is written through the human write
   path (`write_guard(human=True)`, a backup of a PDF it replaces, a temporary
   file and an atomic rename, a history entry, `watcher.record_write`;
   refused in a read-only project). **A PDF already there is replaced only

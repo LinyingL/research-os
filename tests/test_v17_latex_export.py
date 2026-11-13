@@ -418,3 +418,143 @@ def test_the_endpoint_exports_asks_and_refuses_another_project(served):
 
 def test_nothing_was_written_under_the_real_research_os_home():
     assert REAL_BUILDS.exists() == REAL_BUILDS_BEFORE
+
+
+# -- what the review of B2a found ---------------------------------------------------------------------------------------
+
+
+def _lua_at_end(root: Path, lua: str) -> None:
+    """A LuaLaTeX draft whose Lua runs at the very end of the run (`wrapup_run`), inside the sandbox."""
+    _simple(root, "\\directlua{luatexbase.add_to_callback('wrapup_run', function() " + lua + " end, 'x')}"
+                  "\\begin{document}hello\\end{document}")
+
+
+def test_a_link_the_run_leaves_for_the_pdf_or_a_log_is_never_followed(root, tmp_path):
+    secret = tmp_path / "secret-key"
+    secret.write_text("PRIVATE KEY MATERIAL\n")
+    out = "os.getenv('TEXMFOUTPUT') .. '/main"
+    _lua_at_end(root, f"os.remove({out}.pdf') lfs.link('{secret}', {out}.pdf', true) "
+                      f"lfs.link('{secret}', {out}.blg', true)")
+    answer = _export(root, engine="lualatex")
+    assert not answer["exported"] and answer["message"] == "导出没有成功"
+    assert "PRIVATE KEY" not in json.dumps(answer, ensure_ascii=False)
+    assert not (root / "paper/main.pdf").exists() and papers.exports(root) == []
+    # A hard link, a FIFO, a file over the limit: nothing is read from any of them.
+    build = latex_export.build_dir(read_identity(root).identity.id, root / "paper/main.tex")
+    (build / "plain").write_bytes(b"%PDF-1.4 x")
+    assert latex_export._build_file(build / "plain", 100) == b"%PDF-1.4 x"  # noqa: SLF001
+    assert latex_export._build_file(build / "plain", 4) == b""  # noqa: SLF001
+    assert latex_export._build_file(build / "plain", 4, tail=True) == b".4 x"  # noqa: SLF001
+    os.link(build / "plain", build / "twice")
+    assert latex_export._build_file(build / "twice", 100) == b""  # noqa: SLF001
+    os.mkfifo(build / "fifo")
+    assert latex_export._build_file(build / "fifo", 100) == b""  # noqa: SLF001
+
+
+def test_a_link_the_run_leaves_for_its_marker_is_not_written_through(root, tmp_path):
+    victim = tmp_path / "thesis-final.docx"
+    victim.write_text("the person's thesis")
+    _lua_at_end(root, f"lfs.link('{victim}', os.getenv('TEXMFOUTPUT') .. '/last-good-run', true)")
+    answer = _export(root, engine="lualatex")
+    assert answer["exported"], answer["log"][-2000:]
+    assert victim.read_text() == "the person's thesis"
+    marker = latex_export.build_dir(read_identity(root).identity.id, root / "paper/main.tex") / "last-good-run"
+    assert not marker.is_symlink() and marker.read_text() == "lualatex"
+
+
+def test_a_tex_cache_one_project_writes_is_never_read_by_another(root, tmp_path):
+    planted = ("local d = os.getenv('TEXMFVAR') .. '/tex' lfs.mkdir(d) lfs.mkdir(d .. '/latex') "
+               "local f = io.open(d .. '/latex/size10.clo', 'w') "
+               "f:write('\\string\\\\typeout{PLANTED-BY-OTHER-PROJECT}\\string\\\\endinput') f:close() "
+               "local t = io.open(os.getenv('TMPDIR') .. 'planted-tmp', 'w') t:write('x') t:close()")
+    _simple(root, "\\directlua{" + planted + "}\\begin{document}x\\end{document}")
+    _export(root, engine="lualatex")                                   # its own run reads what it planted
+    other = tmp_path / "other"
+    other.mkdir()
+    project.init_project(other)
+    _simple(other, "\\begin{document}hello\\end{document}")
+    answer = _export(other)
+    assert answer["exported"] and "PLANTED-BY-OTHER-PROJECT" not in answer["log"]
+    mine = latex_export.cache_dirs(latex_export.build_dir(read_identity(root).identity.id, root / "paper/main.tex"))
+    theirs = latex_export.cache_dirs(latex_export.build_dir(read_identity(other).identity.id, other / "paper/main.tex"))
+    assert (mine[1] / "planted-tmp").exists() and not (theirs[1] / "planted-tmp").exists()
+    assert set(mine).isdisjoint(theirs)
+
+
+def test_a_refused_sandbox_profile_says_the_export_did_not_run(root, monkeypatch):
+    _simple(root, "\\begin{document}x\\end{document}")
+    monkeypatch.setattr(latex_export, "sandbox_profile", lambda *_args: "(version 1)(bogus)")
+    with pytest.raises(WorkspaceError) as caught:
+        _export(root)
+    assert caught.value.code == "no_sandbox" and caught.value.message_zh == "这台 Mac 上没法隔离导出，所以没有运行。"
+    assert not latex_export._RUN_LOCK.locked() and papers.exports(root) == []  # noqa: SLF001
+
+
+def test_an_endless_log_stops_at_the_file_limit_and_only_its_end_is_read(root, monkeypatch):
+    monkeypatch.setattr(latex_export, "PDF_LIMIT", 4 * 1024 * 1024)
+    _simple(root, "\\begin{document}\\loop\\message{" + "x" * 900 + "}\\iftrue\\repeat\\end{document}")
+    started = time.monotonic()
+    answer = latex_export.export(root, {"path": "paper/main.tex"}, "en", timeout=120)
+    assert time.monotonic() - started < 60 and answer["stopped"] is None and not answer["exported"]
+    build = latex_export.build_dir(read_identity(root).identity.id, root / "paper/main.tex")
+    assert (build / "main.log").stat().st_size <= 4 * 1024 * 1024 and len(answer["log"]) <= 20000
+
+
+def test_the_run_cannot_see_whether_a_file_outside_what_it_reads_exists(root, tmp_path):
+    (tmp_path / "secret.txt").write_text("x" * 1234)
+    lua = (f"texio.write_nl('META-OUT:' .. tostring(lfs.attributes('{tmp_path / 'secret.txt'}', 'size'))) "
+           f"texio.write_nl('META-IN:' .. tostring(lfs.attributes('{root / 'paper/main.tex'}', 'mode')))")
+    _simple(root, "\\begin{document}x\\directlua{" + lua + "}\\end{document}")
+    answer = _export(root, engine="lualatex")
+    assert answer["exported"] and "META-OUT:nil" in answer["log"] and "META-IN:file" in answer["log"]
+
+
+def test_twin_main_files_in_folders_of_one_name_get_their_whole_folder_path(root):
+    for folder in ("a/paper", "b/paper"):
+        _put(root, f"{folder}/main.tex", "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")
+    assert latex_export.pdf_name(root, "a/paper/main.tex", "reports") == "reports/a-paper-main.pdf"
+    assert latex_export.pdf_name(root, "b/paper/main.tex", "reports") == "reports/b-paper-main.pdf"
+
+
+def test_one_missing_character_is_said_in_the_singular():
+    log = "Missing character: There is no 喆 (U+5586) in font [lmroman10-regular]:+tlig;!\n"
+    read = latex_export.read_log(Path("/nonexistent"), "main.tex", log, "en")
+    assert read["missing_message"] == "1 character is not in the font and is missing from the PDF: 喆"
+    read = latex_export.read_log(Path("/nonexistent"), "main.tex", log + log.replace("喆", "龘"), "en")
+    assert read["missing_message"] == "2 characters are not in the font and are missing from the PDF: 喆 龘"
+
+
+def test_a_tex_folder_outside_a_tex_installation_is_read_alone(tmp_path):
+    home_bin = tmp_path / "home" / "bin" / "tex"
+    home_bin.mkdir(parents=True)
+    assert latex_export.tex_tree(home_bin) == home_bin                  # never the whole home folder
+    (tmp_path / "home" / "texmf-dist").mkdir()
+    assert latex_export.tex_tree(home_bin) == tmp_path / "home"
+
+
+def test_a_project_switched_during_the_run_gets_no_pdf(root, tmp_path, monkeypatch):
+    httpd = server.build_server(root, 0)
+    httpd.start_scan = lambda target: None
+    other = tmp_path / "other"
+    other.mkdir()
+    project.init_project(other)
+    real_run = latex_export.run
+
+    def run_then_switch(*args, **kwargs):
+        done = real_run(*args, **kwargs)
+        httpd.set_served(server.served_for(other))                     # another window opened another project
+        return done
+
+    monkeypatch.setattr(latex_export, "run", run_then_switch)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _simple(root, "\\begin{document}x\\end{document}")
+        status, refused = _post(httpd.server_address[1], "/api/latex/export", {"project": str(root),
+                                                                              "path": "paper/main.tex"})
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+    assert status == 409 and refused["state"] == "workspace_project_changed"
+    assert not (root / "paper/main.pdf").exists() and papers.exports(root) == []
