@@ -474,6 +474,11 @@ Endpoints (all GET unless noted):
                             (`links`, resolved from its main files, `mains`);
                             `&links=0` leaves those out (the revision check
                             on focus). Reads only.
+    GET  /api/latex/drafts -- 正文 (DESIGN.md 22.10): the project's .tex drafts,
+                            each main file with the files it brings in, then
+                            the rest; generated tables counted, not listed;
+                            passage counts per draft. Reads only, at most
+                            2,000 .tex files.
     POST /api/latex/save -- `{project, path, revision, edits}`: a person's
                             save of a `.tex`; edits are code-point ranges
                             with a CRLF counted as two, spliced so every
@@ -4250,6 +4255,13 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 rel = (query.get("path") or [""])[0]
                 links = (query.get("links") or ["1"])[0] != "0"
                 payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/drafts":
+                # 22.10: 正文's list of drafts -- a read; nothing is written, nothing is run.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                payload = self._workspace_api(lambda: latex_edit.drafts(served.root, self._lang()))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/latex/export":
                 # 22.4: the export's settings line -- main file, engine, the last exported PDF. Runs nothing.

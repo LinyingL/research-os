@@ -237,7 +237,7 @@ def test_12_11_verdicts_are_shown_as_words_never_as_markers():
 # -- 12.9: the sidebar ---------------------------------------------------------------------------------------
 
 
-SECTIONS = [("workspace", "项目首页"), ("routes", "研究路线"), ("results", "图表与论断"), ("variables", "变量"),
+SECTIONS = [("workspace", "项目首页"), ("routes", "研究路线"), ("results", "图表与论断"), ("drafts", "正文"), ("variables", "变量"),
             ("literature", "文献"), ("data", "数据与代码"), ("proposals", "提议"), ("members", "成员")]
 
 

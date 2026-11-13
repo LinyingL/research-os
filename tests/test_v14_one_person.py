@@ -446,7 +446,7 @@ def test_18_3_the_sidebar_keeps_eight_items_and_hides_the_two_by_a_rule_of_its_o
     nav = html[html.index('<nav class="side-nav"'):html.index("</nav>")]
     assert nav.startswith('<nav class="side-nav" id="side-nav" data-team="single" aria-label="栏目" data-i18n-attr="aria-label">')
     assert re.findall(r'class="side-item" data-section="(\w+)"', nav) == [
-        "workspace", "routes", "results", "variables", "literature", "data", "proposals", "members"]
+        "workspace", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members"]   # 22.10: 正文
     css = html[html.index("<style>"):html.index("</style>")]
     assert ('.side-nav[data-team="single"] .side-item[data-section="proposals"],\n'
             '.side-nav[data-team="single"] .side-item[data-section="members"] { display: none; }') in css

@@ -1563,6 +1563,66 @@
     }, () => say(t("没能读到这份文稿的依据文件")));
   }
 
+  // 正文 (22.10), the sidebar's page of the project's drafts: each main file with the files it brings in, then the rest.
+  // A path opens the editor, whose 返回 comes back here; a file only in the cloud is text. One read, GET /api/latex/drafts,
+  // which also counts each draft's passages; a main file's 导出 PDF is the exporter's, quiet. Writes nothing.
+  async function loadDrafts(host) {
+    if (!host.children.length) host.replaceChildren(mk("p", "empty-note", t("载入中…")));
+    const epoch = state.dataEpoch;   // a project switch while the read is out: its answer is not shown
+    let data;
+    try { data = await apiGet("/api/latex/drafts"); } catch (err) {
+      if (epoch !== state.dataEpoch) return;
+      const status = mk("div", "notice-status");
+      setStatus(status, "err", t("没能读到项目里的文稿"), err);
+      host.replaceChildren(status);
+      return;
+    }
+    if (epoch !== state.dataEpoch) return;
+    host.dataset.loaded = "1";
+    const when = (at) => (window.RODesk && RODesk.whenWords && RODesk.whenWords(at, new Date())) || at;
+    const row = (d) => {
+      const li = mk("li", "res-row"), main = mk("div", "res-main");
+      main.appendChild(d.cloud ? mk("span", "mono", d.path) : mkButton(d.path, "ws-text-link mono", () => open(d.path)));
+      if (d.cloud) main.appendChild(mk("span", "node-sub-inline", t("只在云端")));
+      else if (d.modified) main.appendChild(mk("span", "node-sub-inline", t("改动于 {when}", { when: when(d.modified) })));
+      if (d.supported) main.appendChild(mk("span", "node-sub-inline", t("{n} 段有依据文件", { n: d.supported })));
+      if (d.waiting) main.appendChild(mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: d.waiting })));
+      li.appendChild(main);
+      return li;
+    };
+    const list = (rows) => { const ul = mk("ul", "res-list"); rows.forEach((d) => ul.appendChild(row(d))); return ul; };
+    const page = mk("div", "latex-drafts");
+    page.appendChild(mk("p", "node-sub", t("项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。")));
+    if (data.message) page.appendChild(mk("p", "notice-status err", data.message));
+    (data.groups || []).forEach((g) => {
+      const block = mk("section", "res-block latex-draft-group"), head = row(g.main);
+      let ex = null;
+      if (!g.main.cloud) {
+        ex = exporter(g.main.path);
+        ex.button.className = "ws-text-link";   // 22.10: a quiet text action, never a second primary
+        head.children[0].appendChild(ex.button);
+      }
+      const top = mk("ul", "res-list");
+      top.appendChild(head);
+      block.appendChild(top);
+      if (ex) block.appendChild(ex.block);
+      if (g.files.length) block.appendChild(list(g.files));
+      page.appendChild(block);
+    });
+    if ((data.others || []).length) {
+      const block = mk("section", "res-block latex-draft-others");
+      if ((data.groups || []).length) block.appendChild(mk("h2", "desk-title", t("其他 .tex 文件")));
+      block.appendChild(list(data.others));
+      page.appendChild(block);
+    }
+    if (!(data.groups || []).length && !(data.others || []).length) {
+      page.append(mk("p", "node-empty", t("这个项目里还没有 .tex 文稿。")), mk("p", "node-sub", t("把 .tex 文件放进项目文件夹后，这里会列出来。")));
+    }
+    if (data.truncated) page.appendChild(mk("p", "node-sub", t("项目里的 .tex 文件多于 {n} 个，这里只列出前 {n} 个。", { n: data.limit })));
+    if (data.generated) page.appendChild(mk("p", "node-sub", t("另有 {n} 个由脚本生成的 .tex 表格，只能查看，不在这里编辑。", { n: data.generated })));
+    host.replaceChildren(page);
+  }
+
   // The pages' refresh (app.html refreshCurrentView): evidence.toml is in the watcher's set, so a link made or withdrawn
   // elsewhere (the CLI, another window) shows in the open editor at once (22.2 "The index").
   function refresh() {
@@ -1576,7 +1636,7 @@
 
   window.ROLatex = Object.freeze({
     loadEditorLibs: loadEditorLibs, loadMath: loadMath, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
-    renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter,
+    renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter, loadDrafts: loadDrafts,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions,
       readLatex: readLatex, bodyStart: bodyStart, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM }),

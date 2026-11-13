@@ -7320,7 +7320,8 @@ for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 
 The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
 kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
-presentation; 22.8 batches and acceptance; 22.9 what the review changed.
+presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
+正文 in the sidebar.
 
 ### 22.0 Rulings that need the researcher's word
 
@@ -7827,6 +7828,9 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 显示源码 | Show source |
 | 依据关系 | Supporting-file links (the proposal's kind, 22.5) |
 | 待批准 | Awaiting approval (it had no English before B4) |
+| 正文 (the sidebar's item and page, 22.10) | Manuscript |
+| 只在云端 | Only in the cloud |
+| 其他 .tex 文件 | Other .tex files |
 
 待复核, 依据已变化, 是这段, 仍然成立, 打开 PDF, 在 Finder 中显示, 详情,
 返回 and 保存 keep their present English. 运行记录 is not used (21.6). Every
@@ -7932,3 +7936,34 @@ point checked against the code or by experiment on this Mac:
   or `\caption{}` breaks the PDF (checked).
 - **Vendoring**: a committed build script, an allow-listed binary route, a
   loader for the editor page only, the tests' exemption by folder.
+
+### 22.10 正文 in the sidebar (the researcher, 2026-11-13)
+
+After V17 shipped, the researcher could not find the editor: "是不是因为在左侧
+单独出一个板块编辑正文？" 22.1 put the way in only on a `.tex` draft's own page
+and on 图表与论断's 论文正文 rows. Now the sidebar has an item of its own:
+
+- **「正文」** (Manuscript), directly after 图表与论断, drawn like the others (a
+  page with a pen, lines only). Its page is the view `drafts`; the editor
+  opened from it belongs to 正文 — the sidebar marks 正文 and 返回 comes back to
+  the list. Opened from anywhere else, the editor keeps 22.1's behaviour.
+- **The page.** Title 正文 and one quiet sentence: 「项目里的 LaTeX 文稿。点一份就在
+  编辑器里打开；改动保存回原文件。」 Each main file (22.4: `\documentclass` before
+  `\begin{document}`) is a group, the files it brings in by `\input`,
+  `\include`, `\subfile`, `\import` listed under it in document order, read by
+  22.1's include reader; then, under 「其他 .tex 文件」, the `.tex` files no main
+  file includes. A row is the path as a text link that opens the editor, when it
+  last changed (21.8's local-time words), and 「{n} 段有依据文件」 and, in ochre,
+  「{n} 段待复核」 when there are some, counted as 论文正文's rows count them (a
+  member's 待批准 not counted). A main file's group has 「导出 PDF」 as a text
+  link (22.4's exporter); the page has no primary button. A file only in the
+  cloud is text with 「只在云端」. A `.tex` a script writes or a result record
+  registers is not listed; the page says once 「另有 {n} 个由脚本生成的 .tex
+  表格，只能查看，不在这里编辑。」 With no draft: 「这个项目里还没有 .tex 文稿。」 and
+  「把 .tex 文件放进项目文件夹后，这里会列出来。」
+- **The engine.** `GET /api/latex/drafts`, a read like the editor's others
+  (refused for a blocked project, `project` echoed): the project walked as the
+  scan walks it (dot folders, `.researchos/` among them, never entered;
+  symbolic links never followed), stopping after 2,000 `.tex` files, which the
+  page then says; each listed draft's passages found again in one pass over
+  `evidence.toml`, so the page makes one request. It writes nothing.
