@@ -77,7 +77,9 @@ def test_a_name_that_opens_a_file_is_a_text_link_and_a_title_or_a_chip_is_never_
 
 #: Where a primary button is created, by script: how many sites. Each is one surface's primary action (DESIGN.md 21.8 lists them);
 #: a new site is a new surface, or a second primary button on one -- add it to 21.8 with its surface, or draw it quiet.
-PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "node.js": 2, "routemap.js": 1, "team.js": 12, "workspace.js": 10}
+#: latex.js: 保存, the LaTeX editor's one primary button, and 确认关联, the link panel's (DESIGN.md 22.7, amending 21.8's list).
+PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "latex.js": 2, "node.js": 2, "routemap.js": 1, "team.js": 12,
+                 "workspace.js": 10}
 
 
 def _primary_sites() -> dict[str, int]:
@@ -332,8 +334,10 @@ UNNAMED_PRIMARY = {"继续迁移": "a notice's question, as it was (21.8)", "迁
 
 
 def _design_21_8() -> str:
+    """21.8's list, with 22.7, which amends it (the LaTeX editor's 保存 and the link panel's 确认关联)."""
     design = (WEBAPP.parents[2] / "DESIGN.md").read_text(encoding="utf-8")
-    return design[design.index("### 21.8 Presentation"):design.index("### 21.9 Acceptance")]
+    return (design[design.index("### 21.8 Presentation"):design.index("### 21.9 Acceptance")]
+            + design[design.index("### 22.7 Presentation"):design.index("### 22.8 Batches")])
 
 
 def test_every_primary_button_made_with_a_label_is_named_in_21_8_and_the_two_folders_form_is_not_one():

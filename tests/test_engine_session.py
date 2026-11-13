@@ -142,7 +142,7 @@ def test_every_post_route_is_refused_without_the_session_before_it_is_routed(eng
     """The check runs before routing: even an endpoint that does not exist answers 403 session_required, so
     the answer never tells a program which writes there are."""
     eng, _root = engine
-    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/agents/store/release", "/api/agents/store/delete-moved", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/nope", "/"):
+    for path in ("/api/shutdown", "/api/open", "/api/agents/runs", "/api/agents/store/release", "/api/agents/store/delete-moved", "/api/projects/switch", "/api/outputs/folders", "/api/outputs/variable", "/api/outputs/register", "/api/outputs/unregister", "/api/latex/save", "/api/latex/undo", "/api/latex/evidence/link", "/api/latex/evidence/withdraw", "/api/nope", "/"):
         status, body = eng.post(path, {})
         assert (status, body["state"]) == (403, "session_required"), path
 
@@ -517,6 +517,8 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/routemap.js": ("page", "/routemap.js"),
     "/workspace.js": ("page", "/workspace.js"),
     "/workspace.css": ("page", "/workspace.css"),
+    "/latex.js": ("page", "/latex.js"),
+    "/vendor/": ("page", "/vendor/codemirror.js"),   # 22.0.1: an allow-listed vendored file, as bytes
     "/api/workspace": ("read", "/api/workspace"),
     "/api/outputs/folders": ("read", "/api/outputs/folders"),
     "/api/outputs/backfill": ("read", "/api/outputs/backfill"),
@@ -528,6 +530,11 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/workspace/research-record": ("read", "/api/workspace/research-record?report=research/results/pilot.md"),
     "/api/workspace/research-records": ("read", "/api/workspace/research-records?path=map.md"),
     "/api/workspace/exists": ("read", "/api/workspace/exists?path=map.md"),
+    "/api/latex/file": ("read", "/api/latex/file?path=paper/main.tex"),   # 22.1: a .tex as the editor opens it
+    "/api/latex/evidence": ("read", "/api/latex/evidence?path=paper/main.tex"),   # 22.2: a draft's links, found again
+    "/api/latex/supports": ("read", "/api/latex/supports?file=figs/fig1.png"),   # 22.2: 以它为依据的段落
+    "/api/latex/files": ("read", "/api/latex/files?q=fig"),   # 22.2: the link panel's file search
+    "/api/latex/export": ("read", "/api/latex/export?path=paper/main.tex"),   # 22.4: the export's settings line
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),
@@ -843,7 +850,7 @@ def test_the_page_and_the_engine_say_the_same_words_in_both_languages():
 def test_the_page_makes_no_request_of_its_own_that_would_skip_the_cookie():
     """Every write goes through app.html's apiPost (same origin, so the cookie travels); no module opens a
     request of its own."""
-    for name in ("app.html", "canvas.js", "desk.js", "node.js", "team.js", "routemap.js", "workspace.js"):
+    for name in ("app.html", "canvas.js", "desk.js", "node.js", "team.js", "routemap.js", "workspace.js", "latex.js"):
         text = (WEBAPP / name).read_text(encoding="utf-8")
         own = len(re.findall(r"\bfetch\(", text)) + len(re.findall(r"XMLHttpRequest|navigator\.sendBeacon", text))
         assert own == (2 if name == "app.html" else 0), name

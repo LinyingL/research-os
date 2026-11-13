@@ -54,6 +54,13 @@ The kinds, and what each carries besides its files:
   parent and the member's note; no files. Approving writes it to the
   official `mappings.toml` through the same writer and rules as a line the
   PI draws (a missing end or a circle then is a conflict, nothing applied).
+- `passage_evidence` -- 「依据关系」 (22.5): the member's 待批准 entries of
+  `evidence.toml` (`[[evidence]]`, made by 同步, `evidence_draft`) and the
+  revision of each draft they name (`[[revision]]`); no files. Approving
+  appends them with their own ids and `approved_by`, refused while a
+  revision waits in a pending file proposal of the member's; returning
+  appends them with the PI's acts that take them back (the one return that
+  writes into the official version: `researchos.records.evidence.settle`).
 
 A new attempt may also name the official attempts it grew out of
 (`parents`); approving it adds those lines once its row is written.
@@ -162,7 +169,7 @@ from researchos.records.situation import READ_NOW, index_db_path, write_guard
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("attempt_new", "verdict_change", "variable_version", "files", "route_link")
+KINDS = ("attempt_new", "verdict_change", "variable_version", "files", "route_link", "passage_evidence")
 ROUTE_OPS = ("add", "remove")
 ACTIONS = ("added", "changed", "removed")
 STORES = ("text", "blob")
@@ -180,7 +187,7 @@ APPROVED_BACKUPS = "approved"
 ROW_FIELDS = ("date", "description", "variables", "result", "verdict")
 #: The record files a working copy starts with (besides `variables/`).
 _RECORD_FILES = ("project.toml", "attempts.toml", "mappings.toml", "team.toml", "judgements.toml", "notes.toml",
-                 "decisions.toml", "canvas.json", "papers.toml", "stata.toml")
+                 "decisions.toml", "canvas.json", "papers.toml", "stata.toml", "evidence.toml")
 
 _PROPOSAL_HEADER = "# 一份提议：成员工作副本里的改动，PI 批准后才进入正式版本。由 Research OS 写入，写成后不再改动。\n"
 _OUTCOME_HEADER = "# PI 对一份提议的答复。由 Research OS 写入，写成后不再改动。\n"
@@ -207,6 +214,7 @@ MESSAGES = {
     "changed_since_shown": "工作副本在你查看之后又有改动，请重新查看",
     "decided": "这份提议已经有了结论",
     "not_approvable": "这份提议现在不能批准",
+    "not_returnable": "这份提议现在不能退回",
     "not_yours": "这份提议不是你的",
     "invalid": "提议的内容不对",
     "wrong_project": "这份提议属于另一个项目",
@@ -221,6 +229,9 @@ MESSAGES = {
     "attempt_not_found": "连线的一端不在你上次同步的正式版本里：请同步后再试",
     "line_exists": "这条连线已经在正式版本里了",
     "no_such_line": "正式版本里没有这条连线",
+    # 22.5: a member's passage links, proposed at 同步.
+    "evidence_at_sync": "段落和依据文件的关联在同步时自动提议",
+    "evidence_not_written": "依据关系没有写入正式版本",
 }
 
 
@@ -875,6 +886,8 @@ def make_proposal(
     root = Path(working_copy)
     if kind not in KINDS:
         raise ProposalRefused("bad_kind", f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
+    if kind == "passage_evidence":
+        raise ProposalRefused("evidence_at_sync", "passage links are proposed by 同步 (researchos share sync)")
     if not isinstance(sentence, str) or len(sentence) > MAX_SENTENCE or (not sentence.strip() and kind != "route_link"):
         raise ProposalRefused("invalid", "a proposal says what it is in a sentence of your own",
                               message_zh="请用一句话说明这份提议")
@@ -996,6 +1009,7 @@ def make_proposal(
             continue
         reason = ("notes, link judgments and hand-drawn links travel with every sync (researchos share sync), "
                   "without approval" if name in share.TRAVELLING_FILES
+                  else "passage links go at sync as a proposal of their own" if name in share.PROPOSED
                   else "canvas arrangements do not travel: each person keeps their own" if name == share.CANVAS_NAME
                   else "Research OS's own record files are not part of a proposal")
         not_carried.append({"path": rel, "reason": reason})
@@ -1056,6 +1070,30 @@ def make_proposal(
     ]
     draft.preview = preview
     return draft
+
+
+def evidence_draft(working_copy: str | Path, skip: Iterable[str] = ()) -> Draft | None:
+    """22.5: the member's 待批准 passage links not proposed yet (`skip`), as one `passage_evidence` proposal naming the
+    revision (the working copy's bytes now) of each draft they are about; None when there are none. Reads only."""
+    from researchos.records import evidence  # noqa: PLC0415
+
+    root = Path(working_copy)
+    me = _require_member(root)
+    pid = _project_id(root)
+    base = read_base(pid)
+    if base is None or Path(base.working_copy) != root.resolve():
+        raise ProposalRefused("no_base", f"{root} has no recorded base for project {pid} on this machine")
+    loaded, decision = evidence.assess(root)
+    if not decision.may_apply:
+        words = evidence.message_of(decision) or evidence.MESSAGES["missing"]
+        raise ProposalRefused("invalid", words[1], message_zh=words[0])
+    items = evidence.proposal_items(root, loaded, skip)
+    if not items:
+        return None
+    revisions = [{"path": rel, "sha256": (fingerprint(root / rel) or {}).get("sha256")}
+                 for rel in sorted({str(i["draft"]) for i in items if i.get("draft")})]
+    return Draft(data={"format": FORMAT, "project": pid, "by": me, "kind": "passage_evidence", "sentence": "",
+                       "base": base.snapshot, "evidence": items, "revision": revisions, "file": []})
 
 
 _RESEARCH_RESULT_RE = re.compile(r"research/results/((?!\.)[^/\\\x00-\x1f]+)\.(?:md|context\.json|outputs\.json)\Z")
@@ -1245,6 +1283,21 @@ def validate(data: Mapping[str, Any]) -> None:
         _text_field(route, "note", required=False)
         if data.get("file"):
             raise ValueError("a route_link proposal carries no files")
+    if kind == "passage_evidence":
+        from researchos.records import evidence  # noqa: PLC0415
+
+        items, revisions = data.get("evidence"), data.get("revision", [])
+        if not isinstance(items, list) or not items or data.get("file"):
+            raise ValueError("a passage_evidence proposal carries [[evidence]] and no files")
+        for item in items:
+            evidence.check_item(item, data["by"])
+        if len({i["id"] for i in items}) != len(items) or not isinstance(revisions, list):
+            raise ValueError("each [[evidence]] is one entry; drafts are named in [[revision]]")
+        evidence.check_follows(items)
+        for item in revisions:
+            evidence.clean_tex_draft(item.get("path") if isinstance(item, dict) else None)
+            if item.get("sha256") is not None and not _SHA_RE.match(str(item["sha256"])):
+                raise ValueError("[[revision]] sha256 is not a content hash")
     if kind == "verdict_change":
         verdict = data.get("verdict")
         if not isinstance(verdict, dict):
@@ -1406,12 +1459,21 @@ def _summary(stored: StoredProposal, state: Mapping[str, Any], labels: Mapping[s
         "id": stored.id, "by": stored.member, "at": data.get("at"), "kind": data.get("kind"),
         "sentence": data.get("sentence"), "base": data.get("base"), "attempt": verdict_words(data.get("attempt"), labels),
         "verdict": verdict_words(data.get("verdict"), labels), "variable": data.get("variable"),
-        "route": _route_summary(data.get("route")),
+        "route": _route_summary(data.get("route")), "evidence": _evidence_summary(data.get("evidence")),
         "files": [{k: f.get(k) for k in ("path", "action", "size", "store")} for f in files],
         "not_carried": data.get("not_carried") or [], "supersedes": data.get("supersedes"),
         "base_seq": data.get("base_seq"),
         "verification": stored.check.payload() if getattr(stored, "check", None) is not None else None, **state,
     }
+
+
+def _evidence_summary(items: Any) -> list[dict[str, Any]] | None:
+    """A `passage_evidence` proposal's entries as the pages show them: the act, the passage (its first 200
+    characters), the draft, the supporting file, the note."""
+    if not isinstance(items, list):
+        return None
+    return [{"act": i.get("act"), "link": i.get("link"), "quote": (i.get("quote") or "")[:200] or None,
+             "draft": i.get("draft"), "file": i.get("file"), "note": i.get("note")} for i in items if isinstance(i, dict)]
 
 
 def listing(root: str | Path, *, exchange: LocalExchange | None = None) -> dict[str, Any]:
@@ -1511,6 +1573,17 @@ REASONS = {
     "both_changed": ("这个文件在提议之后，正式版本里也改了", "The official version also changed this file after the proposal"),
     "gone": ("这个文件在正式版本里已经不在了", "The official version no longer has this file"),
     "content_missing": ("提议里缺少这个文件的内容", "The proposal is missing this file's content"),
+    "link_changed": ("这段的关联在正式版本里已经和提议时不一样了：请退回，成员同步后再关联",
+                     "This link is no longer in the official version as it was when proposed: return it, and the member "
+                     "links again after syncing"),
+    "earlier_waiting": ("这些依据关系接着提议 {ids} 里的关联：先批准或退回它，再处理这一份",
+                        "These links build on links still waiting in proposal {ids}: approve or return it first, then "
+                        "this one"),
+    "drafts_unknown": ("无法确认文稿的这一版是否还在等你批准的提议里：{error}",
+                       "Whether this version of the draft still waits in a proposal cannot be told: {error}"),
+    "draft_waiting": ("文稿 {draft} 的这一版还在提议 {ids} 里等你批准：先批准它，再批准这些依据关系",
+                      "This version of the draft {draft} is still waiting in proposal {ids}: approve it first, then "
+                      "these links to supporting files"),
     "no_table": ("正式版本没有配置尝试表", "The official version has no attempt table configured"),
     "table_unreadable": ("尝试表无法读取：{error}", "The attempt table cannot be read: {error}"),
     "row_taken": ("正式版本的尝试表里已经有第 {n} 行", "The official attempt table already has row {n}"),
@@ -1982,10 +2055,11 @@ def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = 
             # Beside `fields`, never in it: `fields` is what approving writes.
             out["attempt"]["verdict_status"] = verdict_words(out["attempt"]["fields"], labels)["verdict_status"]
     out["variable"] = _variable_change(root, stored, data, done, lang)
+    out["evidence"] = _evidence_change(root, stored, data, lang)
     out["files"] = [_file_change(root, stored, item, done, lang) for item in data.get("file") or []]
     out["not_carried"] = data.get("not_carried") or []
     conflicts = []
-    parts = [p for p in (out["attempt"], out["variable"], out["route"]) if p] + out["files"]
+    parts = [p for p in (out["attempt"], out["variable"], out["route"], out["evidence"]) if p] + out["files"]
     for part in parts:
         if part.get("state") == "conflict":
             conflicts.append({"path": part.get("path") or part.get("file") or part.get("card"), "reason": part.get("reason"),
@@ -2001,6 +2075,81 @@ def what_changes(stored: StoredProposal, official_root: str | Path, lang: str = 
     out["conflicts"] = conflicts
     out["problems"] = problems
     out["approvable"] = not conflicts and not problems
+    return out
+
+
+def _evidence_change(root: Path, stored: StoredProposal, data: Mapping[str, Any], lang: str) -> dict[str, Any] | None:
+    """What approving a `passage_evidence` proposal would do to the official evidence.toml (22.5), with its entries as
+    shown; a conflict when a link is no longer as the member saw it, or when a draft's revision the links were made on
+    still waits in a pending file proposal of the member's (`waiting_for`): the links are never approved before it."""
+    from researchos import settings  # noqa: PLC0415
+    from researchos.records import evidence  # noqa: PLC0415
+
+    if data["kind"] != "passage_evidence":
+        return None
+    out = {"path": f"{paths.PROJECT_DIRNAME}/{evidence.EVIDENCE_FILENAME}", "items": _evidence_summary(data["evidence"])}
+    try:
+        others = _pending_others(root, stored)
+    except (ExchangeError, ProposalRefused, OSError) as exc:   # fails closed: never approved unchecked
+        return {**out, "state": "problem", **_reason("drafts_unknown", lang, error=str(exc) if lang == "en"
+                                                      else getattr(exc, "message_zh", None) or str(exc))}
+    earlier = _earlier_waiting(data, others)
+    if earlier:   # said before link_changed, which the earlier answer may settle
+        return {**out, "state": "conflict", "code": "earlier_waiting", "waiting_for": earlier,
+                **_reason("earlier_waiting", lang, ids=", ".join(earlier))}
+    seen = evidence.review(root, data["evidence"])
+    out["state"] = seen["state"]
+    if seen["state"] == "problem":
+        out["reason"] = settings.say(*seen["words"], lang)
+    elif seen["state"] == "conflict":
+        out.update(code="link_changed", **_reason("link_changed", lang))
+    elif seen["state"] == "apply":
+        for draft, ids in _drafts_waiting(root, data, others).items():
+            out.update(state="conflict", code="draft_waiting", waiting_for=ids,
+                       **_reason("draft_waiting", lang, draft=draft, ids=", ".join(ids)))
+    return out
+
+
+def _evidence_held(root: Path, data: Mapping[str, Any]) -> bool:
+    from researchos.records import evidence  # noqa: PLC0415
+
+    return evidence.held(root, data["evidence"])
+
+
+def _pending_others(root: Path, stored: StoredProposal) -> list[StoredProposal]:
+    """The member's other pending proposals. Raises what the exchange raises: the caller refuses then."""
+    ex = exchange_mod.for_project(_project_id(root), root)
+    found = ex.list_proposals(stored.member).proposals
+    return [o for o in found if o.id != stored.id and state_of(ex, o, found)["state"] == "pending"]
+
+
+def _earlier_waiting(data: Mapping[str, Any], others: list[StoredProposal]) -> list[str]:
+    """The pending `passage_evidence` proposals of the member holding an act this one's acts follow (and not the other
+    way round): this one is answered after them, or its acts land on a link the official ledger does not hold yet."""
+    def ids_follows(d: Mapping[str, Any]) -> tuple[set[Any], set[Any]]:
+        items = [i for i in d.get("evidence") or [] if isinstance(i, Mapping)]
+        return {i.get("id") for i in items}, {i.get("follows") for i in items if i.get("follows")}
+
+    mine, follows = ids_follows(data)
+    out = []
+    for other in others:
+        if other.data.get("kind") == "passage_evidence":
+            theirs, back = ids_follows(other.data)
+            if follows & theirs and not back & mine:
+                out.append(other.id)
+    return sorted(out)
+
+
+def _drafts_waiting(root: Path, data: Mapping[str, Any], others: list[StoredProposal]) -> dict[str, list[str]]:
+    """Each draft whose official bytes are not the revision the proposal names, and which a pending file proposal of
+    the same member carries: the ids of those proposals."""
+    changed = {(r["path"], r["sha256"]) for r in data.get("revision") or []
+               if r.get("sha256") and (fingerprint(root / r["path"]) or {}).get("sha256") != r["sha256"]}
+    out: dict[str, list[str]] = {}
+    for other in others if changed else ():
+        carried = {(f.get("path"), f.get("sha256")) for f in other.data.get("file") or [] if isinstance(f, dict)}
+        for path, _sha in sorted(changed & carried):
+            out.setdefault(path, []).append(other.id)
     return out
 
 
@@ -2035,7 +2184,8 @@ def read_journal(root: Path, proposal_id: str) -> dict[str, Any]:
     """What an earlier, interrupted approval of `proposal_id` did (module
     docstring). A torn last line is ignored."""
     done: dict[str, Any] = {"started": False, "member": None, "placed": set(), "attempt_started": False,
-                            "attempt_applied": False, "version": None, "deciding": False, "route_applied": False}
+                            "attempt_applied": False, "version": None, "deciding": False, "route_applied": False,
+                            "returning": False, "answer": None}
     try:
         lines = journal_path(root, proposal_id).read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -2064,6 +2214,10 @@ def read_journal(root: Path, proposal_id: str) -> dict[str, Any]:
             done["deciding"] = True
         elif kind == "route_applied":
             done["route_applied"] = True
+        elif kind == "returning":
+            done["returning"], done["answer"] = True, "return"
+        elif kind == "evidence":
+            done["answer"] = "approve"   # 22.5: the last of the two names who wrote (`evidence.held`)
     return done
 
 
@@ -2466,7 +2620,16 @@ def approve(
             resumed = True
         else:
             resumed = False
+            if data["kind"] == "passage_evidence" and read_journal(root, stored.id)["answer"] == "return" \
+                    and _evidence_held(root, data):
+                raise ProposalRefused("decided", f"a return of {stored.id} has been written; return it again to finish")
             changes = what_changes(stored, root)
+            part = changes["evidence"] or {}
+            if part.get("state") in ("conflict", "problem"):   # 22.5: refused in a sentence of its own
+                said = _evidence_change(root, stored, data, "en")["reason"]
+                raise ProposalRefused("not_approvable", f"proposal {proposal_id} cannot be approved: {said}",
+                                      message_zh=part.get("reason"),
+                                      details={"conflicts": changes["conflicts"], "problems": changes["problems"]})
             if not changes["approvable"]:
                 raise ProposalRefused("not_approvable", f"proposal {proposal_id} cannot be approved: "
                                       + "; ".join([f"{c['path']}: both sides changed" for c in changes["conflicts"]] + changes["problems"]),
@@ -2542,6 +2705,16 @@ def approve(
                                 applied["lines"].append({"op": op, "child": child, "parent": parent})
                         if changes["route"] is not None:
                             _mark(root, stored, "route_applied")
+
+                    if data["kind"] == "passage_evidence" and changes["evidence"]["state"] == "apply":
+                        from researchos.records import evidence  # noqa: PLC0415
+
+                        _mark(root, stored, "evidence")
+                        try:
+                            applied["passages"] = evidence.settle(root, data["evidence"], member_id, approved_by=pi,
+                                                                  lock=held, via="app", now=now)
+                        except evidence.EvidenceRefused as exc:
+                            raise ProposalRefused("evidence_not_written", str(exc), message_zh=exc.say("zh")) from exc
             finally:
                 _unstage(staged)
 
@@ -2598,7 +2771,7 @@ def approval_note(note: Any) -> str | None:
     return found.group(1) if found else None
 
 
-def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: float | None, note: str) -> dict[str, Any]:
+def _publish_after(root: Path, ex: LocalExchange, expected_id: Any, timeout: float | None, note: str | None) -> dict[str, Any]:
     """12.3: approving publishes a new snapshot. Contained: the approval is
     done and recorded whatever publishing says; a failure is returned (and
     「发布」 can be pressed again)."""
@@ -2684,25 +2857,46 @@ def return_(
 ) -> dict[str, Any]:
     """「退回并说明」: an outcome with the reason; nothing is applied, ever.
     Refused once an approval of it has begun applying (module docstring):
-    a returned proposal never leaves anything in the official version."""
+    a returned proposal never leaves anything in the official version --
+    but for `passage_evidence` (22.5), whose entries are written followed
+    by the PI's acts that take them back, then published, so the member's
+    copy holds nothing the official ledger does not."""
     if not isinstance(reason, str) or not reason.strip():
         raise ProposalRefused("empty_reason", "returning a proposal says why (--reason)")
     root = Path(official_root)
     _require_pi(root)
-    with write_guard(root, expected_id, human=True, timeout=timeout):
+    with write_guard(root, expected_id, human=True, timeout=timeout) as held:
         pi = _require_pi(root)
         _preflight(root, pi)
         ex = _exchange_for(root, exchange)
         stored = ex.open_proposal(proposal_id, member=member)
-        _parsed(stored)
+        data = _parsed(stored)
         _pending(ex, stored)
         started = read_journal(root, stored.id)
         decision = decisions_mod.for_proposal(root, stored.id)
+        if data["kind"] == "passage_evidence":   # 22.5: an approval began only once its entries were written
+            started["started"] = started["answer"] == "approve" and _evidence_held(root, data)
         if (started["started"] and started["member"] in (None, stored.member)) or (
                 decision is not None and decision.get("by") == stored.member):
             raise ProposalRefused("approval_started", f"an approval of {stored.id} has begun applying it "
                                   f"({journal_path(root, stored.id)}); approve it again to finish -- it is not returned")
-        return _outcome(ex, stored, "returned", pi, reason.strip(), None, now, root=root)
+        if data["kind"] == "passage_evidence":
+            from researchos.records import evidence  # noqa: PLC0415
+
+            part = _evidence_change(root, stored, data, "zh")
+            if part.get("code") == "earlier_waiting" or part.get("reason_code") == "drafts_unknown":
+                said = _evidence_change(root, stored, data, "en")["reason"]
+                raise ProposalRefused("not_returnable", f"proposal {proposal_id} cannot be returned now: {said}",
+                                      message_zh=part["reason"])
+            _mark(root, stored, "returning")   # binds an approval only once written (`_evidence_held`)
+            try:
+                evidence.settle(root, data["evidence"], stored.member, approved_by=None, lock=held, via="app", now=now)
+            except evidence.EvidenceRefused as exc:
+                raise ProposalRefused("evidence_not_written", str(exc), message_zh=exc.say("zh")) from exc
+        outcome = _outcome(ex, stored, "returned", pi, reason.strip(), None, now, root=root)
+        if data["kind"] == "passage_evidence" and _evidence_held(root, data):   # a resumed return publishes too
+            outcome["published"] = _publish_after(root, ex, expected_id, timeout, None)
+        return outcome
 
 
 def discuss(

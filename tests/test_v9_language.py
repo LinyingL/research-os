@@ -59,8 +59,11 @@ T_LINE = 'function t(s, v) { var I = typeof window !== "undefined" && window.ROI
 #: end marker of None its end). In each: every Chinese literal is the whole
 #: first argument of t() (or listed in ALLOWED_CHINESE), and every such key
 #: has an English entry. T2, T3 and later increments add theirs here.
+#: The vendored files (webapp/vendor/, DESIGN.md 22.0.1) are never listed: code we did not write, never shown as
+#: text; the editor's own words are in latex.js, which is.
 CONVERTED: list[tuple[str, str | None, str | None]] = [
     ("node.js", None, None),
+    ("latex.js", None, None),
     ("team.js", "async function loadProposals(", "// One proposal drawn into"),
     ("team.js", "function backBar() {", "\n  }\n"),
     ("app.html", "// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state"),

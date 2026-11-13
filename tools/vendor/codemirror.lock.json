@@ -1,0 +1,42 @@
+{
+  "comment": "The vendored CodeMirror 6 bundle (DESIGN.md 22.0.1). build-codemirror.mjs refuses to write unless the packages esbuild actually bundles are exactly these, at exactly these versions, and the bundle exposes exactly these exports.",
+  "output": "src/researchos/webapp/vendor/codemirror.js",
+  "global": "ROCodeMirror",
+  "bundler": {
+    "name": "esbuild",
+    "version": "0.28.2",
+    "license": "MIT",
+    "options": {
+      "bundle": true,
+      "format": "iife",
+      "globalName": "ROCodeMirror",
+      "minify": true,
+      "target": "safari16",
+      "legalComments": "none",
+      "charset": "ascii"
+    }
+  },
+  "packages": [
+    {"name": "@codemirror/commands", "version": "6.11.1", "license": "MIT"},
+    {"name": "@codemirror/language", "version": "6.13.1", "license": "MIT"},
+    {"name": "@codemirror/legacy-modes", "version": "6.5.5", "license": "MIT"},
+    {"name": "@codemirror/search", "version": "6.7.2", "license": "MIT"},
+    {"name": "@codemirror/state", "version": "6.7.6", "license": "MIT"},
+    {"name": "@codemirror/streamparser", "version": "6.0.0", "license": "MIT"},
+    {"name": "@codemirror/view", "version": "6.43.15", "license": "MIT"},
+    {"name": "@lezer/common", "version": "1.5.5", "license": "MIT"},
+    {"name": "@lezer/highlight", "version": "1.2.5", "license": "MIT"},
+    {"name": "@marijn/find-cluster-break", "version": "1.0.4", "license": "MIT"},
+    {"name": "crelt", "version": "1.0.7", "license": "MIT"},
+    {"name": "style-mod", "version": "4.1.4", "license": "MIT"},
+    {"name": "w3c-keyname", "version": "2.2.8", "license": "MIT"}
+  ],
+  "exports": [
+    "ChangeSet", "Compartment", "Decoration", "EditorSelection", "EditorState", "EditorView",
+    "HighlightStyle", "MapMode", "RangeSet", "RangeSetBuilder", "StateEffect", "StateField",
+    "StreamLanguage", "Text", "Transaction", "ViewPlugin", "WidgetType",
+    "defaultKeymap", "drawSelection", "highlightSpecialChars", "history", "historyKeymap", "keymap",
+    "placeholder", "redo", "redoDepth", "search", "searchKeymap", "stex", "syntaxHighlighting", "tags",
+    "undo", "undoDepth"
+  ]
+}

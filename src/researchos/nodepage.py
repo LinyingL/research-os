@@ -673,7 +673,8 @@ def node(conn: Connection, project_root: str | Path, given: str, lang: str = "zh
         ]
     else:
         if prefix == "claim":
-            out["details"] = {"sentence": record["attrs"].get("sentence"), "line": record["attrs"].get("line")}
+            out["details"] = {"sentence": record["attrs"].get("sentence"), "line": record["attrs"].get("line"),
+                              "declared": _declared(root, out["file"]).get(node_id, [])}
         elif prefix in ("reference", "ref"):
             attrs = record["attrs"]
             out["details"] = {k: attrs.get(k) for k in ("doi", "year", "authors", "venue", "zotero_key", "citekey")
@@ -912,6 +913,15 @@ def _draft_files(conn: Connection) -> set[str]:
     return found
 
 
+def _declared(root: Path, draft: str | None) -> dict[str, list[dict[str, Any]]]:
+    """22.3: 人工声明的依据文件 of a .tex draft's claims, by claim id (`latex_edit.declared_by_claim`)."""
+    if not draft or not draft.endswith(".tex"):
+        return {}
+    from researchos import latex_edit  # noqa: PLC0415
+
+    return latex_edit.declared_by_claim(root, draft)
+
+
 def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
     rel = notes_mod.node_path(notes_mod.normalize_node(f"file:{draft}")) or draft
     prefix = f"claim:{rel}#"
@@ -922,6 +932,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
     claims = [db.get_node(conn, r[0]) for r in rows[:CLAIM_LIMIT]]
     claims = [c for c in claims if c is not None]
     claims.sort(key=lambda c: (c["attrs"].get("line") or 0, c["id"]))
+    declared = _declared(root, rel) if claims else {}
     for claim in claims:
         section = claim["attrs"].get("section") or ""
         group = sections.get(section)
@@ -933,6 +944,7 @@ def _draft_claims(conn: Connection, root: Path, draft: str) -> dict[str, Any]:
             "id": claim["id"], "sentence": claim["attrs"].get("sentence") or claim.get("title") or "",
             "number": claim["attrs"].get("printed_number"), "line": claim["attrs"].get("line"),
             "trace": _claim_state(conn, root, claim["id"], cache, shared),
+            "declared": declared.get(claim["id"], []),   # 22.3: beside the state, never under 依据 nor changing it
         })
     return {"file": rel, "sections": list(sections.values()), "total": len(rows), "shown": len(claims),
             "states": TRACE_STATES}

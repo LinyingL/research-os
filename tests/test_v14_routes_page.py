@@ -390,7 +390,7 @@ def test_18_3_the_switch_is_in_the_page_header_marked_like_the_other_and_not_tak
         ("map", "true", "路线图"), ("list", "false", "列表")]
     assert html.index('id="data-switch"') < html.index('id="routes-switch"') < html.index('id="view-workspace"')
     view = _app_function("function activateView(")
-    assert 'document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node");' in view
+    assert 'document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node" || name === "latex");' in view  # nor the editor (22.1)
     assert 'document.querySelectorAll(".subnav-item[data-subview]")' in view
     assert 'document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {\n  btn.addEventListener("click", () => activateView(btn.dataset.subview));' in html
     assert 'document.querySelectorAll("#routes-switch .subnav-item").forEach((btn) => {\n  btn.addEventListener("click", () => RODesk.setMode(btn.dataset.mode));' in html

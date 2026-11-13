@@ -64,6 +64,7 @@
       case "variable_version": return t("变量定义");
       case "files": return t("文件");
       case "route_link": return t("连线");
+      case "passage_evidence": return t("依据关系");
       default: return null;
     }
   }
@@ -320,6 +321,9 @@
     if (p.kind === "route_link" && p.route) {
       const ends = { child: p.route.child_number || "", parent: p.route.parent_number || "" };
       return p.route.op === "remove" ? t("删去连线：#{child} 源自 #{parent}", ends) : t("加上连线：#{child} 源自 #{parent}", ends);
+    }
+    if (p.kind === "passage_evidence" && p.evidence) {   // 22.5: a member's passages and their supporting files
+      return t("{n} 条依据关系", { n: numberText(p.evidence.length) });
     }
     if (p.kind === "variable_version" && p.variable) {
       return t("变量 {card} 的第 {version} 版定义", { card: p.variable.card || "", version: p.variable.version || "" }) +

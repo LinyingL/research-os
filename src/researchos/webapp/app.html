@@ -668,6 +668,10 @@ details.script-node > summary { display: list-item; cursor: pointer; padding: 0.
 .dc-path { margin-top: 0.05rem; font-size: 0.75rem; }
 .dc-broken-path { margin: -0.05rem 0 0.2rem; font-size: 0.75rem; }
 .res-cause { font-size: 0.78rem; color: var(--ink-soft); }
+/* 22.3: a claim's 人工声明的依据文件, in a column of its own between the claim and its state. */
+.res-declared { flex: 0 1 15rem; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; overflow-wrap: anywhere; }
+.trace-declared { margin: 0.4rem 0 0; }
+.trace-declared p { margin: 0; }
 .res-cause.warn { color: var(--clay); }
 .res-repair { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
 /* 21.5: a row's small picture, and its quiet fields (the drafts that include it, the attempt it belongs to). */
@@ -1522,6 +1526,7 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
       <section id="view-members" class="view hidden"></section>
       <!-- 12.9: every object opens the same node page (node.js). -->
       <section id="view-node" class="view hidden" aria-label="详情" data-i18n-attr="aria-label"></section>
+      <section id="view-latex" class="view hidden"></section>
     </main>
   </div>
 </div>
@@ -1557,6 +1562,9 @@ body.canvas-mode .notices { margin: 0; padding: 0.75rem 1rem; border-bottom: 1px
 <!-- 研究路线, 提议 and 成员 (DESIGN.md 12.3, 12.4, 12.9): window.ROTeam. -->
 <script src="/team.js"></script>
 <script src="/workspace.js"></script>
+<!-- The LaTeX editor (DESIGN.md 22): window.ROLatex; it adds the vendored libraries'
+     script tags itself when the editor first opens, never here (22.0.1). -->
+<script src="/latex.js"></script>
 <script>
 "use strict";
 
@@ -2113,6 +2121,7 @@ const views = {
   proposals: document.getElementById("view-proposals"),
   members: document.getElementById("view-members"),
   node: document.getElementById("view-node"),
+  latex: document.getElementById("view-latex"), // the LaTeX editor (22.1), a page of its own: latex.js
 };
 let currentView = null;
 
@@ -2121,6 +2130,7 @@ const SECTION_OF_VIEW = {
   desk: "routes", results: "results", lineage: "data", canvas: "data",
   variables: "variables", literature: "literature", proposals: "proposals", members: "members",
   node: null, // the section it was opened from (RONode.section)
+  latex: null, // the page it was opened from (ROLatex.section)
 };
 const SECTION_TITLES = {
   workspace: "项目首页",
@@ -2151,13 +2161,13 @@ function storedView() {
   try {
     const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
     const v = stored === "tree" ? "desk" : stored; // 18.3: the old 研究路线 list is a mode of the one page
-    return v && v !== "node" && Object.prototype.hasOwnProperty.call(views, v) ? v : null;
+    return v && v !== "node" && v !== "latex" && Object.prototype.hasOwnProperty.call(views, v) ? v : null;
   } catch (err) {
     return null;
   }
 }
 
-const FULL_WINDOW_VIEWS = ["canvas", "desk"];
+const FULL_WINDOW_VIEWS = ["canvas", "desk", "latex"];
 
 // Returns the canvas's load when this call started one, so a command that
 // acts on the canvas (适应全部 from the menu) can wait for it.
@@ -2172,11 +2182,15 @@ function activateView(name) {
   // closes it, after asking when something in it is half typed; declined,
   // the desk stays. Every way to another view comes through here.
   if (currentView === "desk" && window.RODesk && RODesk.leaveDesk && !RODesk.leaveDesk()) return null;
+  // 22.1: leaving the editor asks when something is unsaved, then closes it.
+  if (currentView === "latex" && window.ROLatex && !ROLatex.mayClose()) return null;
   currentView = name;
-  // A node page is not remembered: it reopens on the section it came from.
-  try { window.localStorage.setItem(VIEW_STORAGE_KEY, name === "node" ? RONode.section() : name); } catch (err) { /* convenience only */ }
-  const section = name === "node" ? SECTION_OF_VIEW[RONode.section()] : SECTION_OF_VIEW[name];
-  if (section === "data") lastDataView = name;
+  // A node page or the editor is not remembered: it reopens on the section it came from.
+  const page = name === "latex" ? ROLatex.section() : name;
+  try { window.localStorage.setItem(VIEW_STORAGE_KEY, page === "node" ? RONode.section() : page); } catch (err) { /* convenience only */ }
+  const section = page === "node" ? SECTION_OF_VIEW[RONode.section()] : SECTION_OF_VIEW[page];
+  // The editor is not a page 数据与代码 reopens: it is closed once left, so the node page it came from stays the one.
+  if (section === "data" && name !== "latex") lastDataView = name;
   document.querySelectorAll(".side-item").forEach((btn) => {
     if (btn.dataset.section === section) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
@@ -2184,9 +2198,9 @@ function activateView(name) {
   document.querySelectorAll(".subnav-item[data-subview]").forEach((btn) => {
     btn.setAttribute("aria-selected", String(btn.dataset.subview === name));
   });
-  document.getElementById("data-switch").classList.toggle("hidden", section !== "data" || name === "node");
+  document.getElementById("data-switch").classList.toggle("hidden", section !== "data" || name === "node" || name === "latex");
   // 研究路线's switch (18.3) belongs to the page, not to a node page opened from it.
-  document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node");
+  document.getElementById("routes-switch").classList.toggle("hidden", section !== "routes" || name === "node" || name === "latex");
   document.getElementById("page-title").textContent = sectionTitle(section);
   // 新增尝试 belongs to the attempts (研究路线); the native menu still
   // reaches the form from anywhere.
@@ -3120,6 +3134,7 @@ async function reloadAllViews(opts) {
   // still in flight for the previous project is discarded.
   state.dataEpoch += 1;
   ROWorkspace.reset();
+  if (window.ROLatex) ROLatex.reset(); // the open .tex belonged to the previous project
   state.attemptsById = new Map();
   state.attemptsConfig = null;
   state.attemptStatuses = [];
@@ -3154,7 +3169,7 @@ async function reloadAllViews(opts) {
   loadProjectSummary(true); // the switch succeeded: the line is the new project's
   RODesk.refreshSidebar();
   if (state.noProject) return; // 10.1: the welcome is all there is to show
-  if (currentView === "node") activateView("workspace"); // the node belonged to the previous project
+  if (currentView === "node" || currentView === "latex") activateView("workspace"); // the node belonged to the previous project
   else if (currentView === "workspace") ROWorkspace.load(views.workspace);
   else if (currentView === "desk") RODesk.loadDesk(views.desk);
   else if (currentView === "results") RONode.loadResults(views.results);
@@ -3304,6 +3319,8 @@ async function refreshCurrentView() {
     await loadVariablesView();
   } else if (currentView === "literature") {
     await loadLiteratureView();
+  } else if (currentView === "latex" && window.ROLatex) {
+    await ROLatex.refresh();   // 22.2: the open draft's links, read again; the text itself is left as it is
   }
   await revalidatePanel();
   loadProjectSummary(); // the review count may have moved with the graph

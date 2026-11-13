@@ -1,0 +1,23 @@
+{
+  "comment": "The vendored KaTeX (DESIGN.md 22.0.1, batch B3). build-katex.mjs refuses to write unless the tarball it is given has exactly this sha256 and npm integrity, holds this package at this version and licence, its stylesheet names exactly these woff2 fonts, and its script typesets a formula under node. The script and the fonts are copied byte for byte; the stylesheet keeps only the woff2 source of each font.",
+  "package": {"name": "katex", "version": "0.19.1", "license": "MIT"},
+  "tarball": {
+    "name": "katex-0.19.1.tgz",
+    "sha256": "24da5a599eb2fcede2e270b99a6ff48bca816beecc95feeb84e8cccbd1bb34fd",
+    "integrity": "sha512-jG8uKntjSEcm2EpQOh0XturpPuuC9r3Sq5HLHdsFdWZT27E672SF19QEi+of0/YeOy15lDgRhKvr5614uRrEfA=="
+  },
+  "global": "katex",
+  "files": {
+    "katex.js": "package/dist/katex.min.js",
+    "katex.css": "package/dist/katex.min.css",
+    "LICENSE.katex": "package/LICENSE"
+  },
+  "fonts": [
+    "KaTeX_AMS-Regular.woff2", "KaTeX_Caligraphic-Bold.woff2", "KaTeX_Caligraphic-Regular.woff2",
+    "KaTeX_Fraktur-Bold.woff2", "KaTeX_Fraktur-Regular.woff2", "KaTeX_Main-Bold.woff2", "KaTeX_Main-BoldItalic.woff2",
+    "KaTeX_Main-Italic.woff2", "KaTeX_Main-Regular.woff2", "KaTeX_Math-BoldItalic.woff2", "KaTeX_Math-Italic.woff2",
+    "KaTeX_SansSerif-Bold.woff2", "KaTeX_SansSerif-Italic.woff2", "KaTeX_SansSerif-Regular.woff2",
+    "KaTeX_Script-Regular.woff2", "KaTeX_Size1-Regular.woff2", "KaTeX_Size2-Regular.woff2", "KaTeX_Size3-Regular.woff2",
+    "KaTeX_Size4-Regular.woff2", "KaTeX_Typewriter-Regular.woff2"
+  ]
+}

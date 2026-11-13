@@ -634,6 +634,8 @@ def append_many(
     now: Clock | None = None,
     snapshot_subdir: str | None = None,
     aliases: Iterable[str | None] | None = None,
+    adopt: bool = False,
+    check: Callable[[Ledger], None] | None = None,
 ) -> list[LedgerEntry]:
     """Append several entries as ONE write (`append`'s rules, applied to
     each entry in turn against the file as it would be after the ones
@@ -646,7 +648,18 @@ def append_many(
     a process killed in between leaves some of them in the file while the
     question still lists all of them, and answering again appends the
     first ones a second time -- which can flip a link's verdict. Any entry
-    refused refuses the batch; nothing is written then."""
+    refused refuses the batch; nothing is written then.
+
+    `adopt`: an entry that names its `id` (and `at`) was made elsewhere and
+    keeps them (a member's acts approved into the official ledger, 22.5);
+    an id of another prefix, or one the ledger already holds, is refused.
+    An adopted undo may name an earlier act that is no longer the last one
+    (the member undid what stood when they acted; whatever stands since
+    stays): the rule `parse_ledger` reads it by.
+
+    `check`: the ledger as it would read after the write, given before
+    anything is written; a ValueError it raises refuses the batch (a
+    record's own rules across entries, beyond this engine's)."""
     lock.require_held()
     path, project_root = Path(path), Path(project_root)
     _confine(project_root, path)
@@ -654,11 +667,15 @@ def append_many(
     if not batch:
         raise LedgerWriteRefused("nothing to append")
     for fields in batch:
-        reserved = [f for f in ("id", "seq", "at", "settles") if f in fields]
+        reserved = [f for f in ("id", "seq", "at", "settles") if f in fields and not (adopt and f in ("id", "at"))]
+        if adopt and "id" in fields and not str(fields["id"]).startswith(schema.id_prefix):
+            raise LedgerWriteRefused(f"an adopted entry keeps its own {schema.id_prefix}… id")
         if reserved:
             raise LedgerWriteRefused(f"{', '.join(reserved)} are assigned by the ledger, not the caller")
 
     loaded = load_ledger(path, schema)
+    if adopt and loaded.ledger is not None and {f.get("id") for f in batch} & loaded.ledger.ids:
+        raise LedgerWriteRefused(f"{path.name} already holds an entry of this id; nothing written")
     if loaded.state is RecordState.ABSENT:
         if not create:
             raise LedgerWriteRefused(f"{path.name} does not exist and may not be created here")
@@ -689,7 +706,7 @@ def append_many(
     for fields, name in zip(batch, names):
         if fields.get("undoes") in assigned_ids:
             fields = {**fields, "undoes": assigned_ids[fields["undoes"]]}
-        full = _prepare_entry(schema, current, fields, moment)
+        full = _prepare_entry(schema, current, fields, moment, adopt=adopt)
         if name:
             assigned_ids[name] = full["id"]
         new_bytes += emit_entry(schema, full)
@@ -700,6 +717,11 @@ def append_many(
             raise LedgerWriteRefused(f"the entry would not read back from {path.name} ({exc}); nothing written") from exc
         if current.entry_dicts() != written:
             raise LedgerWriteRefused(f"the entry would not read back exactly from {path.name}; nothing written")
+    if check is not None:
+        try:
+            check(current)
+        except ValueError as exc:
+            raise LedgerWriteRefused(f"{path.name} would not be in its right form ({exc}); nothing written") from exc
 
     if old:
         files.snapshot_if_first_change_today(project_root, path, snapshot_subdir, now=now)
@@ -740,7 +762,8 @@ def _with_author(fields: Mapping[str, Any], author: str) -> dict[str, Any]:
     return out
 
 
-def _prepare_entry(schema: LedgerSchema, ledger: Ledger, fields: Mapping[str, Any], moment: datetime) -> dict[str, Any]:
+def _prepare_entry(schema: LedgerSchema, ledger: Ledger, fields: Mapping[str, Any], moment: datetime, *,
+                   adopt: bool = False) -> dict[str, Any]:
     """One entry as `append` writes it after `ledger`: validated, its undo
     target resolved, `id` / `seq` / `at` / `settles` assigned."""
     entry: dict[str, Any] = {k: v for k, v in fields.items() if v is not None}
@@ -763,9 +786,12 @@ def _prepare_entry(schema: LedgerSchema, ledger: Ledger, fields: Mapping[str, An
         if state.entry is None:
             raise LedgerWriteRefused("there is no act on this link to undo")
         given = entry.get("undoes")
-        if given is not None and given != state.entry.id:
+        target = ledger.by_id(given) if adopt and given is not None and "id" in entry else None
+        earlier = target is not None and target.key == key and target.data[schema.act_field] != schema.undo_act \
+            and not ledger.is_cancelled(target)   # adopted: the act the member undid, as parse_ledger reads it
+        if given is not None and given != state.entry.id and not earlier:
             raise LedgerWriteRefused(f"only the last act ({state.entry.id}) can be undone, not {given}")
-        entry["undoes"] = state.entry.id
+        entry["undoes"] = given if earlier else state.entry.id
 
     assigned: dict[str, Any] = {
         "id": schema.id_prefix + secrets.token_hex(16),

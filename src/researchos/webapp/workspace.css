@@ -341,3 +341,71 @@
 @media (max-width: 1000px) {
   .ws-now-parts { grid-template-columns: minmax(0, 1fr); gap: 1.4rem; }
 }
+/* DESIGN.md 22.1, 22.7: the LaTeX editor, a page of its own the width of the window (canvas-mode); the source in the mono face
+   on the paper, scrolled inside its box; 保存 primary, the rest text links. */
+body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 1rem 2rem 1.2rem; }
+.latex-page { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
+.latex-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem; padding-top: 1rem; }
+.latex-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; }
+.latex-act { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
+.latex-read-only, .latex-notice { margin: 0; }
+.latex-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
+.latex-notice details { width: 100%; }
+.latex-held { max-height: 30vh; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); font-size: .8rem; background: var(--paper-alt); padding: .6rem .8rem; }
+.latex-body { flex: 1; min-height: 0; display: flex; gap: 1rem; }
+.latex-editor { flex: 1; min-width: 0; min-height: 12rem; position: relative; border: 1px solid var(--line); background: var(--paper); }
+.latex-editor .cm-editor { height: 100%; }
+.latex-editor .cm-editor.cm-focused { outline: 1px solid var(--line-strong); }
+.latex-editor .cm-scroller { font-family: var(--font-mono); font-size: .86rem; line-height: 1.7; }
+.latex-editor .cm-content { padding: .8rem 0; caret-color: var(--ink); }
+.latex-editor .cm-line { position: relative; padding: 0 2.4rem 0 1rem; }
+/* 22.1 like Word (B3b): running text in the sans, commands shown as written in the mono, headings in the serif; formulas
+   by KaTeX, one it cannot typeset as written; cite and ref quiet chips; list items indented with their bullet or number. */
+.latex-editor .cm-content.latex-word { font-family: var(--font-sans); font-size: .95rem; }
+.latex-word .latex-cmd { font-family: var(--font-mono); font-size: .82rem; }
+.latex-word .latex-h { font-family: var(--font-serif); font-weight: 600; }
+.latex-h1 { font-size: 1.4rem; } .latex-h2 { font-size: 1.25rem; } .latex-h3 { font-size: 1.1rem; } .latex-h4, .latex-h5 { font-size: 1rem; }
+.latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
+.latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
+/* a formula wider than the column scrolls inside its own line, never past the column (as KaTeX's own advice) */
+.latex-math-display { display: block; text-align: center; margin: .2rem 0; overflow-x: auto; overflow-y: hidden; }
+/* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is
+   narrow. In the flow, the formula and its number are centred together, so the formula sits half a number to the left. */
+.latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static; margin-left: 1.2em; }
+.latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
+.latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }
+.latex-bullet::before { content: ""; display: inline-block; width: .32em; height: .32em; border-radius: 50%; background: var(--ink-soft); vertical-align: middle; }
+.latex-editor .cm-line.latex-li-1 { padding-left: 2.2rem; } .latex-editor .cm-line.latex-li-2 { padding-left: 3.4rem; }
+.latex-editor .cm-line.latex-li-3 { padding-left: 4.6rem; } .latex-editor .cm-line.latex-li-4 { padding-left: 5.8rem; }
+.latex-preamble { display: flex; align-items: center; width: 100%; padding: .1rem 1rem; background: none; border: 0; text-align: left; font-family: var(--font-sans); font-size: .8rem; color: var(--ink-soft); cursor: pointer; }
+.latex-source[aria-pressed="true"] { color: var(--ink); text-decoration: underline; }
+.latex-include { margin-left: .6rem; font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); }
+/* 22.2, 22.7: a found passage dotted in ink, one 待复核 in ochre; the count of its files quiet, in the margin */
+.latex-passage { text-decoration: underline dotted var(--ink); text-underline-offset: 3px; cursor: pointer; }
+.latex-passage.latex-wait { text-decoration-color: var(--ochre); }
+.latex-count { position: absolute; right: .6rem; font-family: var(--font-sans); font-size: .75rem; color: var(--gray); cursor: pointer; }
+.latex-link-button { position: absolute; z-index: 5; }
+.latex-side { width: 19rem; flex: none; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; font-size: .86rem; }
+.latex-side-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .6rem; }
+.latex-side-title { margin: 0; font-size: .95rem; }
+.latex-side .ws-input { width: 100%; box-sizing: border-box; }
+.latex-quote { margin: 0; padding-left: .6rem; border-left: 2px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.latex-files { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: .5rem; }
+.latex-files p { margin: .1rem 0; }
+/* a chosen file and its 移除, a file and its state: set apart as the export line's words are */
+.latex-picked li, .latex-files li > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
+.latex-results { width: 100%; display: flex; flex-direction: column; align-items: flex-start; max-height: 14rem; overflow: auto; }
+.latex-group { margin-top: .3rem; font-size: .76rem; color: var(--gray); }
+.latex-result { border: 0; background: none; padding: .1rem 0; text-align: left; color: var(--ink); cursor: pointer; font-size: .8rem; }
+.latex-result:hover { text-decoration: underline; }
+.latex-candidate { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; }
+.latex-counts { margin: 0; }
+.latex-excerpt { color: var(--ink-soft); }
+/* 导出 PDF (DESIGN.md 22.4, 22.7): a failed export in clay, a character the fonts lack in ochre, the rest ink */
+.latex-export { display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; font-size: .86rem; }
+.latex-export:empty, .latex-export-result:empty { display: none; }
+.latex-export-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; margin: 0; }
+.latex-engine { width: auto; padding: .1rem .3rem; font-size: .8rem; }
+.latex-export-failed { margin: 0; color: var(--clay); font-weight: 600; }
+.latex-export-warn { margin: 0; border-left: 2px solid var(--ochre); padding-left: .6rem; }
+.latex-export-errors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }

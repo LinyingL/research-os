@@ -42,6 +42,10 @@ A file is out of the paper when its newest such entry is `not_in_paper`. The
 two tables do not touch each other: a draft is never put out, a figure is never
 marked. Nothing on disk is moved.
 
+**An export to PDF** (DESIGN.md 22.4, task V17) is a third table, `[[export]]` (ids `px-`): `act = "export"`,
+`main` (the main `.tex`), `pdf` (where the PDF was written), `pdf_sha256`, `tex_sha256` (the main file's bytes when
+it ran), `engine` and `via`. A PDF already there is replaced only when it is the last export of that main file.
+
 Why a table of its own: a Research OS from before the acts read `[[paper]]` and
 refuse the whole file at an act they do not know (the ledger's strictness, 9.3),
 which would have emptied the marked drafts on a member's older install, or on a
@@ -88,6 +92,8 @@ MARK, UNMARK = "mark", "unmark"
 NOT_IN_PAPER, BACK_IN_PAPER = "not_in_paper", "back_in_paper"
 ACTS = frozenset({MARK, UNMARK})
 FILE_ACTS = frozenset({NOT_IN_PAPER, BACK_IN_PAPER})
+EXPORT = "export"
+ENGINES = frozenset({"pdflatex", "xelatex", "lualatex"})
 VIAS = frozenset({"cli", "app", "recovered"})
 DRAFT_SUFFIXES = (".md", ".markdown", ".tex", ".qmd", ".rmd", ".txt", ".docx")
 
@@ -176,6 +182,34 @@ FILES_SCHEMA = LedgerSchema(
 )
 
 
+def _validate_export(entry: Mapping[str, Any]) -> None:
+    clean_draft(entry.get("main"))
+    clean_draft(entry.get("pdf"))
+    for key in ("pdf_sha256", "tex_sha256"):
+        value = entry.get(key)
+        if not isinstance(value, str) or len(value) != 64 or value.strip("0123456789abcdef"):
+            raise ValueError(f"'{key}' must be a SHA-256 hash")
+    if entry.get("engine") not in ENGINES:
+        raise ValueError(f"'engine' must be one of {', '.join(sorted(ENGINES))}")
+    _validate_file({"file": entry.get("pdf"), "via": entry.get("via")})
+
+
+#: The exports to PDF (22.4): the third table of the same file (module docstring).
+EXPORTS_SCHEMA = LedgerSchema(
+    table="export",
+    id_prefix="px-",
+    act_field="act",
+    acts=frozenset({EXPORT}),
+    undo_act=None,
+    key_fields=(),
+    field_order=("id", "seq", "at", "by", "act", "main", "pdf", "pdf_sha256", "tex_sha256", "engine", "via",
+                 "recovered_from", "recovered_at"),
+    header=_HEADER,
+    validate=_validate_export,
+    validate_new=_validate_new,
+)
+
+
 def papers_path(project_root: str | Path) -> Path:
     return paths.project_dir(project_root) / PAPERS_FILENAME
 
@@ -190,6 +224,11 @@ def load_files(project_root: str | Path) -> LedgerLoad:
     return ledger_mod.load_ledger(papers_path(project_root), FILES_SCHEMA)
 
 
+def load_exports(project_root: str | Path) -> LedgerLoad:
+    """The exports' table of the same file (`[[export]]`)."""
+    return ledger_mod.load_ledger(papers_path(project_root), EXPORTS_SCHEMA)
+
+
 def expected(project_root: str | Path) -> bool:
     """Whether the project is known to have had the file: a snapshot of it
     exists under `.researchos/backups/`."""
@@ -201,20 +240,20 @@ def _identity_now(project_root: Path) -> ProjectIdentity | None:
     return got.identity if got.state is IdentityState.PRESENT else None
 
 
-def _judged(drafts: LedgerLoad, files: LedgerLoad) -> LedgerLoad:
+def _judged(*loads: LedgerLoad) -> LedgerLoad:
     """The load trust judges: the file is one, so the first table that does not read is the one that refuses, and the
-    file holds no entries only when neither table does."""
-    if drafts.state is not RecordState.PRESENT:
-        return drafts
-    if files.state is not RecordState.PRESENT:
-        return files
-    return drafts if drafts.ledger.entries else files
+    file holds no entries only when no table does."""
+    for loaded in loads:
+        if loaded.state is not RecordState.PRESENT:
+            return loaded
+    return next((loaded for loaded in loads if loaded.ledger.entries), loads[-1])
 
 
 def _assess(project_root: str | Path, identity: ProjectIdentity | None) -> tuple[LedgerLoad, LedgerLoad, TrustDecision]:
     root = Path(project_root)
     drafts, files = load(root), load_files(root)
-    decision = assess_ledger(identity if identity is not None else _identity_now(root), _judged(drafts, files), {},
+    decision = assess_ledger(identity if identity is not None else _identity_now(root),
+                             _judged(drafts, files, load_exports(root)), {},
                              expected=expected(root))
     return drafts, files, decision
 
@@ -354,3 +393,25 @@ def set_not_in_paper(project_root: str | Path, file: str, out: bool, *, via: str
                           {"act": NOT_IN_PAPER if out else BACK_IN_PAPER, "file": rel, "via": via}, now)
         return {"changed": True, "file": rel, "not_in_paper": out, "entry": entry.id,
                 "files": [e["file"] for e in excluded_from(load_files(root))]}
+
+
+def exports(project_root: str | Path) -> list[dict[str, Any]]:
+    """The exports to PDF (22.4), oldest first, each `{id, at, main, pdf, pdf_sha256, tex_sha256, engine}`; none when
+    the file cannot be trusted now."""
+    _drafts, _files, decision = _assess(project_root, None)
+    table = load_exports(project_root)
+    if not decision.may_apply or table.ledger is None:
+        return []
+    return [{"id": e.id, "at": e.at, **{k: e.get(k) for k in ("main", "pdf", "pdf_sha256", "tex_sha256", "engine")}}
+            for e in table.ledger.entries]
+
+
+def record_export(project_root: str | Path, fields: Mapping[str, Any], *, via: str, timeout: float | None = None,
+                  now: Callable[[], datetime] | None = None) -> str:
+    """One `[[export]]` entry appended (22.4): `fields` holds `main`, `pdf`, `pdf_sha256`, `tex_sha256` and
+    `engine`. Under the project lock, as the other two tables; no approval (an export is not evidence). Its id."""
+    root = Path(project_root)
+    with write_guard(root, READ_NOW, human=True, timeout=timeout) as held:
+        drafts, _files, decision = _writable(root)
+        entry = _appended(root, held, drafts, decision, EXPORTS_SCHEMA, {"act": EXPORT, **fields, "via": via}, now)
+        return entry.id

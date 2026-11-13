@@ -398,6 +398,8 @@
     const pageEl = mk("div", "node-page");
     pageEl.appendChild(backBar());
     renderHead(pageEl, page);
+    // 22.2: 以它为依据的段落, the passages a file of the project supports (shown when there are some)
+    if (window.ROLatex && page.path && ["script", "dataset", "figure", "file"].includes(page.type)) ROLatex.renderSupported(pageEl, page);
     if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(pageEl, page.research_records);
     renderTraceSection(pageEl, page);
     renderTimelineSection(pageEl, page, history, notes, me);
@@ -439,8 +441,12 @@
     if (marks.childElementCount) head.appendChild(marks);
     const actions = mk("div", "node-actions");
     const status = mk("div", "notice-status");
+    let exporter = null;   // 22.4: 导出 PDF on a .tex draft's own page, its settings line and result under the head
     if (page.path && page.exists) {
       actions.appendChild(mkButton(t("查看内容"), "ws-text-link", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
+      // 22.1: a .tex draft opens in the LaTeX editor, beside 查看内容 (the editor's server validator decides what it may open)
+      if (/\.tex$/.test(page.path) && window.ROLatex) actions.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(page.path)));
+      if (/\.tex$/.test(page.path) && window.ROLatex) { exporter = ROLatex.exporter(page.path); actions.appendChild(exporter.button); }   // 22.4
       actions.appendChild(mkButton(t("打开"), "btn btn-small", () => openFile(page.path, false, status)));
       actions.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => openFile(page.path, true, status)));
     }
@@ -466,6 +472,7 @@
     }
     if (actions.childElementCount) head.append(actions, status);
     host.appendChild(head);
+    if (exporter) host.appendChild(exporter.block);
     renderDetails(host, page);
   }
 
@@ -557,6 +564,9 @@
     scroller.appendChild(grid);
     s.appendChild(scroller);
     if (!o.panel) renderBelongs(s, page);
+    // 22.3: a claim's 人工声明的依据文件, under the trace and never in its 依据 column; the gap there stays.
+    const declared = (page.details || {}).declared || [];
+    if (declared.length) s.appendChild(declaredLines(declared, "p", "trace-declared"));
     const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
     other.forEach((b) => s.appendChild(mk("p", "trace-break" + (b.tone === "quiet" ? " quiet" : ""), b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
     // 21.5: a script that names a file that is not there -- always a warning, with the file it may mean beside it.
@@ -1655,7 +1665,7 @@
       block.appendChild(mk("p", "node-sub", t("图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
         t("点「设为论文正文」，从文稿里选一份；在选定之前，所有文稿的图和表都当作论文用到的。")));
     } else {
-      const ul = mk("ul", "res-list res-paper-list");
+      const ul = mk("ul", "res-list res-paper-list"), countsSaid = {};   // the ledger's message once for all rows (22.2)
       marked.forEach((d) => {
         const li = mk("li", "res-row");
         const main = mk("div", "res-main");
@@ -1665,6 +1675,10 @@
         main.append(gone ? mk("span", "mono", d.file) : link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
           mk("span", "node-sub-inline", t("{n} 条论断", { n: d.claims })));
         if (gone) main.appendChild(mk("div", "node-sub-inline res-gone", t("这个文件现在不在项目里")));
+        else if (/\.tex$/.test(d.file) && window.ROLatex) {
+          main.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(d.file)));   // 22.1
+          ROLatex.paperCounts(main, d.file, countsSaid);   // 22.2: 「{n} 段有依据文件」, 「{n} 段待复核」
+        }
         li.append(main, paperButton(d.file, true, status));
         ul.appendChild(li);
       });
@@ -1732,6 +1746,17 @@
     section.appendChild(list);
   }
 
+  // 22.3: 「人工声明的依据文件：{file}」, one line per file, quiet; a file gone from the project says so in ochre (22.2).
+  function declaredLines(files, tag, cls) {
+    const box = mk("div", cls);
+    files.forEach((d) => {
+      const line = mk(tag, "node-sub-inline", t("人工声明的依据文件：{file}", { file: d.file }));
+      if (d.missing) line.append(" ", mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
+      box.appendChild(line);
+    });
+    return box;
+  }
+
   function draftClaims(c) {
     const box = mk("details", "res-draft");
     const summary = mk("summary", "res-draft-summary");
@@ -1779,7 +1804,11 @@
           }
           const why = causeLine(cl.trace);
           if (why) main.appendChild(why);
-          li.append(main, stateLabel(cl.trace));
+          li.appendChild(main);
+          // 22.3: the supporting file of a passage the claim lies in, in quiet text and a column of its own -- never under
+          // 依据, and the state beside it stays what backed_by makes it (a declaration does not clear 缺来源, 22.0.4).
+          if ((cl.declared || []).length) li.appendChild(declaredLines(cl.declared, "div", "res-declared"));
+          li.appendChild(stateLabel(cl.trace));
           ul.appendChild(li);
         });
         body.appendChild(ul);

@@ -82,6 +82,8 @@ CLAY_SELECTORS: dict[str, str] = {
     ".ws-run-group.ws-oob li": OUT_OF_BOUNDS + ": its lines",
     ".ws-step.bad .ws-step-kind": ERROR + ": a step of a run that failed",
     ".ws-step.bad .ws-step-text": ERROR + ": its words",
+    # the LaTeX editor (DESIGN.md 22.7)
+    ".latex-export-failed": ERROR + ": 导出没有成功, an export to PDF that failed (22.4)",
 }
 
 #: The scripts' own uses: a tone named "clay" that the page draws as `tone-clay` (a state word, a frame, a card) -- each line that
@@ -343,7 +345,9 @@ def test_the_colour_written_out_is_in_the_token_and_the_icon_alone():
     """`#A64B2A` and `#F1DCD0` (or their rgb) are the tokens' definition; the application icon's chart dot is the brand's mark."""
     found = []
     for path in sorted(WEBAPP.rglob("*")):
-        if path.suffix not in (".html", ".js", ".css", ".swift"):
+        # vendor/ (DESIGN.md 22.0.1) is third-party code we did not write, minified and never shown as text: its colours are
+        # not the page's tokens, and the page's own scripts that use it are checked here like every other.
+        if path.suffix not in (".html", ".js", ".css", ".swift") or "vendor" in path.relative_to(WEBAPP).parts:
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
             if _writes_clay(line):

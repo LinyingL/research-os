@@ -456,6 +456,67 @@ Endpoints (all GET unless noted):
                             doubling the page. Same origin check as every
                             other route -- a foreign page cannot even fetch
                             the script through a rebound hostname.
+    GET  /latex.js     -- the LaTeX editor's module (DESIGN.md 22.1; task
+                            V17), served the same way; it loads the vendored
+                            libraries only when the editor first opens.
+    GET  /vendor/<name> -- third-party code vendored by tools/vendor/
+                            (DESIGN.md 22.0.1): only a name of
+                            `_VENDOR_FILES`, as bytes with its own content
+                            type (KaTeX's fonts as `fonts/KaTeX_<x>.woff2`,
+                            each listed); any other name, subfolder or `..`
+                            is 404, since the name is looked up, never
+                            joined into a path.
+    GET  /api/latex/file -- `?path=<.tex>`: a draft as the LaTeX editor
+                            opens it (DESIGN.md 22.1, `researchos.latex_edit`):
+                            text, revision (sha256 of the bytes), line ending,
+                            `read_only` with the reason, and the files its
+                            includes (input, include, subfile, import) open
+                            (`links`, resolved from its main files, `mains`);
+                            `&links=0` leaves those out (the revision check
+                            on focus). Reads only.
+    POST /api/latex/save -- `{project, path, revision, edits}`: a person's
+                            save of a `.tex`; edits are code-point ranges
+                            with a CRLF counted as two, spliced so every
+                            other byte stays. 409 `workspace_conflict` when
+                            the file changed; a body over 4 MB is 413,
+                            unread. The scan starts after the answer.
+    POST /api/latex/undo -- `{project, path, revision, previous}`:
+                            撤销这次保存, the bytes before that save written
+                            back while the file is still what it wrote.
+    GET  /api/latex/evidence -- `?path=<.tex>`: the draft's passages tied to
+                            supporting files (DESIGN.md 22.2,
+                            `researchos.records.evidence`), each found again in
+                            its current text: found, changed (with candidates)
+                            or deleted; a supporting file gone. Reads only.
+    GET  /api/latex/supports -- `?file=<path or node>`: 以它为依据的段落, the
+                            passages that file supports. Reads only.
+    GET  /api/latex/files -- `?q=&path=`: the files the link panel offers as a
+                            supporting file, figures and tables first, then
+                            data, scripts, documents; never the draft `path`,
+                            the other drafts of its paper or the PDF exported
+                            from it. Reads directory listings, the paper's
+                            .tex files and papers.toml.
+    POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
+                            one entry in `.researchos/evidence.toml`, the PI or
+                            a single researcher only (a member's links wait
+                            for approval, not built yet); the `.tex` is only
+                            read, never written.
+    POST /api/latex/export -- `{project, path, main?, engine?, pdf?}`: 「导出 PDF」
+                            (DESIGN.md 22.4, `researchos.latex_export`): one
+                            latexmk in a macOS sandbox, the PDF into the
+                            document folder and an `[[export]]` in
+                            papers.toml; or a question (`ask`: the main file,
+                            or 替换 / 另存为). A person's only: no agent
+                            endpoint runs TeX. `/api/latex/export/stop` kills
+                            the running one.
+    GET  /api/latex/export -- `?path=<.tex>&project=`: the export's settings
+                            line (main file, engine, the last exported PDF);
+                            409 when `project` is not the open one. Reads only.
+    The save and the undo are, with the attempt table, the Markdown under `research/`
+    and an agent's run, the only writes of a researcher's own files (18.1's
+    list, extended by 22.1): a `.tex` the person saves in the editor, through
+    the human write path (backup, history, the project lock, a member only in
+    their working copy).
 
 Path-traversal defense (`/api/file` and `/api/open` alike, both required by
 task V1): `_resolve_within_root` resolves the requested path -- symlinks
@@ -710,7 +771,7 @@ from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, now_doing, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
-from researchos import research_records
+from researchos import latex_edit, latex_export, research_records
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
@@ -3376,6 +3437,21 @@ _ROUTEMAP_JS_PATH = Path(__file__).parent / "routemap.js"
 _I18N_JS_PATH = Path(__file__).parent / "i18n.js"
 _WORKSPACE_JS_PATH = Path(__file__).parent / "workspace.js"
 _WORKSPACE_CSS_PATH = Path(__file__).parent / "workspace.css"
+_LATEX_JS_PATH = Path(__file__).parent / "latex.js"
+_VENDOR_DIR = Path(__file__).parent / "vendor"
+#: DESIGN.md 22.0.1: the vendored files `GET /vendor/<name>` serves, each with its content type; nothing else in
+#: `vendor/` (the README, the licence texts) is served. KaTeX's fonts are listed one by one, `fonts/<name>` as
+#: katex.css names them, never matched by a pattern: the name is still a key, never a path.
+_KATEX_FONTS = (
+    "AMS-Regular", "Caligraphic-Bold", "Caligraphic-Regular", "Fraktur-Bold", "Fraktur-Regular", "Main-Bold",
+    "Main-BoldItalic", "Main-Italic", "Main-Regular", "Math-BoldItalic", "Math-Italic", "SansSerif-Bold",
+    "SansSerif-Italic", "SansSerif-Regular", "Script-Regular", "Size1-Regular", "Size2-Regular", "Size3-Regular",
+    "Size4-Regular", "Typewriter-Regular",
+)
+_VENDOR_FILES: dict[str, str] = {
+    "codemirror.js": "application/javascript", "katex.js": "application/javascript", "katex.css": "text/css",
+    **{f"fonts/KaTeX_{font}.woff2": "font/woff2" for font in _KATEX_FONTS},
+}
 
 
 def _canvas_js() -> str:
@@ -3755,6 +3831,20 @@ class RceRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_vendor(self, name: str) -> None:
+        """22.0.1: one allow-listed vendored file, its bytes as stored. The name is a key of `_VENDOR_FILES`, never
+        a path: `../x`, `a/b`, `%2e%2e` and every unlisted name are 404."""
+        content_type = _VENDOR_FILES.get(name)
+        if content_type is None:
+            raise NotFoundError(f"no such vendored file: {name}")
+        body = (_VENDOR_DIR / name).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json_from_conn(self, fn: Callable[[Connection], Any]) -> None:
         conn = self._open_conn()
         try:
@@ -4042,6 +4132,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 except OSError:  # the window went away while it was answered: nothing to report, and nothing to log
                     pass
                 return
+            if path.startswith("/vendor/"):  # 22.0.1: a page's script, so it answers with no project too
+                self._send_vendor(path[len("/vendor/"):])
+                return
             self._refuse_without_project(path, _NO_PROJECT_GET)
             if path == "/":
                 self._send_html(200, _app_html())
@@ -4061,6 +4154,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(200, _WORKSPACE_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
             elif path == "/workspace.css":
                 self._send_text(200, _WORKSPACE_CSS_PATH.read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            elif path == "/latex.js":
+                self._send_text(200, _LATEX_JS_PATH.read_text(encoding="utf-8"), "text/javascript; charset=utf-8")
             elif path == "/api/outputs/folders":
                 served = self._require_unblocked()
                 self._send_json(200, self._workspace_api(lambda: outputs.folders(served.root)))
@@ -4145,6 +4240,40 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 payload = self._workspace_api(lambda: workspace.document(served.root, rel, self._lang()))
                 marks = workspace.local_annotations(served.root, {rel: payload["revision"]}, self._lang())
                 payload["officialness"] = marks["files"][rel]
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/file":
+                # 22.1: a `.tex` as the editor opens it -- text, revision, line ending, whether it is read-only and
+                # why. A read: nothing is written, normalised or re-anchored.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                links = (query.get("links") or ["1"])[0] != "0"
+                payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/export":
+                # 22.4: the export's settings line -- main file, engine, the last exported PDF. Runs nothing.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                payload = self._workspace_api(lambda: latex_export.choices(served.root, rel))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path in ("/api/latex/evidence", "/api/latex/supports", "/api/latex/files"):
+                # 22.2: a draft's links found again in its current text, or the passages a file supports. Reads only:
+                # nothing is re-anchored and the ledger is never written by a read.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                if path.endswith("/evidence"):
+                    rel = (query.get("path") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.evidence_of_draft(served.root, rel, self._lang()))
+                elif path.endswith("/files"):   # the link panel's search over the project's files
+                    q, draft = (query.get("q") or [""])[0], (query.get("path") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.supporting_files(served.root, q, draft=draft or None))
+                else:
+                    file = (query.get("file") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.passages_supported(served.root, file, self._lang()))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at
@@ -4482,6 +4611,76 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     except ApiError as exc:
                         logger.info("no immediate scan after writing a research document: %s", exc)
                 self._send_json(200, payload)
+            elif parsed.path in ("/api/latex/save", "/api/latex/undo"):
+                # 22.1: a person's save of a `.tex`, or 撤销这次保存. A body over 4 MB is refused before it is read.
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                except ValueError as exc:
+                    raise MissingParamError("the request has no valid Content-Length") from exc
+                if length > latex_edit.BODY_LIMIT:
+                    self.close_connection = True
+                    raise WorkspaceApiError(workspace.WorkspaceError(
+                        "too_large", "The save is larger than 4 MB", 413, "这次保存的内容超过 4 MB，没有保存"), self._lang())
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    saved = {k: v for k, v in body.items() if k != "project"}
+                    payload = self._workspace_api(lambda: latex_edit.save_tex(served.root, saved)
+                                                  if parsed.path.endswith("/save")
+                                                  else latex_edit.undo_save(served.root, saved, self._lang()))
+                payload["generation"] = self.server.watcher.record_write(set())
+                self._send_json(200, payload)
+                # The answer first; then the scan reads claims, citations and figures again (22.1).
+                if payload.get("changed", True):
+                    try:
+                        self.server.start_scan(served)
+                    except Exception as exc:  # noqa: BLE001 -- the save is answered; a scan not started is logged
+                        logger.info("no scan after saving a LaTeX draft: %s", exc)
+            elif parsed.path == "/api/latex/export":
+                # 22.4: TeX runs outside the project lock (it writes only its build folder); the PDF and its record
+                # are written under it, through the human write path.
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    pass  # a blocked, read-only or moved project is refused before TeX runs
+
+                @contextlib.contextmanager
+                def placing() -> Iterator[None]:
+                    with self.server.write_guard(human=True):
+                        self._workspace_target(body)  # another window may have switched projects during the run
+                        yield
+
+                payload = self._workspace_api(lambda: latex_export.export(
+                    served.root, {k: v for k, v in body.items() if k != "project"}, self._lang(), guard=placing))
+                if payload.get("exported"):
+                    from researchos.records import papers as papers_mod  # noqa: PLC0415
+
+                    payload["generation"] = self.server.watcher.record_write({str(papers_mod.papers_path(served.root))})
+                self._send_json(200, payload)
+                if payload.get("exported"):
+                    try:
+                        self.server.start_scan(served)
+                    except Exception as exc:  # noqa: BLE001 -- the export is answered; a scan not started is logged
+                        logger.info("no scan after exporting a PDF: %s", exc)
+            elif parsed.path == "/api/latex/export/stop":
+                self._read_json_object()
+                self._send_json(200, {"stopped": latex_export.stop()})
+            elif parsed.path.startswith("/api/latex/evidence/"):
+                # 22.2: 关联依据文件, 「是这段」/「仍然成立」, 撤回关联, 撤销 -- one entry in .researchos/evidence.toml
+                # (`researchos.records.evidence`, under the project lock). The .tex is only read.
+                from researchos.records import evidence as evidence_mod  # noqa: PLC0415
+
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                action = parsed.path[len("/api/latex/evidence/"):]
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    payload = self._workspace_api(lambda: latex_edit.evidence_act(
+                        served.root, action, {k: v for k, v in body.items() if k != "project"},
+                        timeout=WRITE_LOCK_TIMEOUT_S))
+                payload["generation"] = self.server.watcher.record_write({str(evidence_mod.evidence_path(served.root))})
+                self._send_json(200, {"ok": True, **payload})
             elif parsed.path == "/api/workspace/task-groups":
                 # 21.1: one group the person kept -- its attempt row through the attempt write (under the watcher's
                 # ingest lock, as /api/attempts/write), then `attempt` on its tasks
@@ -4938,6 +5137,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
 # What answers with no project served (10.1): the page, the registry and the
 # engine's own state, and what changes the served project.
 _NO_PROJECT_GET = frozenset({"/", "/i18n.js", "/canvas.js", "/desk.js", "/node.js", "/team.js", "/routemap.js", "/workspace.js", "/workspace.css",
+                             "/latex.js",
                              "/api/projects",
                              "/api/engine", "/api/generation", "/api/me", "/api/me/key", "/api/settings/llm",
                              "/api/agents", "/api/agents/models", "/api/agents/going", "/api/settings/lookup"})

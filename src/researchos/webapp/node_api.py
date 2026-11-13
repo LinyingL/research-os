@@ -311,7 +311,7 @@ _PROPOSAL_STATUS = {
     "not_member": 403, "not_in_team": 403, "not_yours": 403, "no_base": 409, "bad_kind": 400, "nothing": 409, "ambiguous": 409,
     "reason_required": 400, "no_attempt_table": 409, "attested_required": 400, "changed_since_shown": 409,
     "decided": 409, "not_approvable": 409, "invalid": 400, "wrong_project": 409, "empty_reason": 400,
-    "empty_text": 400, "cannot_sign": 409,
+    "empty_text": 400, "cannot_sign": 409, "not_returnable": 409, "evidence_not_written": 409,
     # a 「源自」 line (14.2)
     "bad_route": 400, "self_link": 400, "circle": 409, "attempt_not_found": 409, "line_exists": 409,
     "no_such_line": 409,
