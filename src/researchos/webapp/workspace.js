@@ -135,7 +135,9 @@
     folderSubject.dirty = false;
     return true;
   }
-  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty(); }
+  // The LaTeX editor's unsaved text (DESIGN.md 22.1) is asked about wherever the workspace's is: closing the window, switching project.
+  function latexDirty() { return !!(window.ROLatex && window.ROLatex.isDirty && window.ROLatex.isDirty()); }
+  function isDirty() { return documentDirty() || taskDirty() || replyDirty() || !!createDirty() || !!folderDirty() || latexDirty(); }
   function mayLeave() { return !isDirty() || window.confirm(t("有未保存的内容，仍要离开吗？")); }
   // `attempt` and `after` (DESIGN.md 21.1) are choices, not writing: a draft that holds only them is not unsaved work, and
   // neither is the research context a handback chose for the task it sends on (`presetContext`, 21.2).

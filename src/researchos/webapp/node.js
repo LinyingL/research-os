@@ -441,6 +441,8 @@
     const status = mk("div", "notice-status");
     if (page.path && page.exists) {
       actions.appendChild(mkButton(t("查看内容"), "ws-text-link", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
+      // 22.1: a .tex draft opens in the LaTeX editor, beside 查看内容 (the editor's server validator decides what it may open)
+      if (/\.tex$/.test(page.path) && window.ROLatex) actions.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(page.path)));
       actions.appendChild(mkButton(t("打开"), "btn btn-small", () => openFile(page.path, false, status)));
       actions.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => openFile(page.path, true, status)));
     }
@@ -1665,6 +1667,7 @@
         main.append(gone ? mk("span", "mono", d.file) : link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
           mk("span", "node-sub-inline", t("{n} 条论断", { n: d.claims })));
         if (gone) main.appendChild(mk("div", "node-sub-inline res-gone", t("这个文件现在不在项目里")));
+        else if (/\.tex$/.test(d.file) && window.ROLatex) main.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(d.file)));   // 22.1
         li.append(main, paperButton(d.file, true, status));
         ul.appendChild(li);
       });

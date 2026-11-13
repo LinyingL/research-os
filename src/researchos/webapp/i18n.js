@@ -1852,6 +1852,21 @@
     // The done mark of a task that has a report (DESIGN.md 19.6): clearing it asks first.
     "这项任务已经有报告。改回未完成后可以再次运行，再次运行会改写同一份报告。改回未完成吗？":
       "This task already has a report. Once it is marked not done it can be run again, and a new run rewrites the same report. Mark it as not done?",
+    // The LaTeX editor (DESIGN.md 22.1, 22.6; task V17 B1c)
+    "撤销这次保存": "Undo this save",
+    "这个文件在别处被改过。": "This file was changed elsewhere.",
+    "载入新版本": "Load the new version",
+    "编辑器里还没保存的内容": "What the editor holds, not saved",
+    "已载入新版本。你原来的内容在下面，可以复制回去。": "The new version is loaded. What you had is below, to copy back.",
+    "已载入在别处保存的版本": "Loaded the version saved elsewhere",
+    "已撤销这次保存": "This save was undone",
+    "撤销这次保存会丢掉还没保存的改动，仍要撤销吗？": "Undoing this save drops the changes not yet saved. Undo it anyway?",
+    "这次保存的内容超过 4 MB，没有保存": "This save is larger than 4 MB, so nothing was saved",
+    "没能打开这个文件": "Could not open this file",
+    "没能撤销这次保存": "Could not undo this save",
+    "LaTeX 源码": "LaTeX source",
+    "打开 {file}": "Open {file}",
+    "打开 {file}（没有找到主文件，按这个文件所在的文件夹找）": "Open {file} (no main file found, so looked up from this file’s folder)",
 
   };
 

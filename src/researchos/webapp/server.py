@@ -468,7 +468,9 @@ Endpoints (all GET unless noted):
     GET  /api/latex/file -- `?path=<.tex>`: a draft as the LaTeX editor
                             opens it (DESIGN.md 22.1, `researchos.latex_edit`):
                             text, revision (sha256 of the bytes), line ending,
-                            and `read_only` with the reason. Reads only.
+                            `read_only` with the reason, and the files its
+                            \input/\include/\subfile/\import open (`links`,
+                            resolved from its main files, `mains`). Reads only.
     POST /api/latex/save -- `{project, path, revision, edits}`: a person's
                             save of a `.tex`; edits are code-point ranges
                             with a CRLF counted as two, spliced so every

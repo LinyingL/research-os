@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import posixpath
 import re
 import sqlite3
 import stat
@@ -157,12 +158,130 @@ def _payload(rel: str, raw: bytes, opened: dict[str, Any], lang: str) -> dict[st
 
 
 def read_tex(root: str | Path, rel: Any, lang: str = "zh") -> dict[str, Any]:
-    """The editor's view of a `.tex`: its text, revision, line ending and whether, and why, it is read-only.
-    Writes nothing."""
+    """The editor's view of a `.tex`: its text, revision, line ending, whether, and why, it is read-only, and the files
+    its includes open (`include_links`). Writes nothing."""
     root = workspace._root(root)  # noqa: SLF001
     rel = checked_path(root, rel)
     raw = _read(root, rel)
-    return _payload(rel, raw, _opened(root, rel, raw), lang)
+    opened = _opened(root, rel, raw)
+    return {**_payload(rel, raw, opened, lang), **include_links(root, rel, opened["text"])}
+
+
+# -- includes and the main file (22.1 "One file at a time", 22.4 "Which file") --------------------------------------
+
+_INCLUDE_RE = re.compile(r"\\(input|include|subfile)\s*\{([^{}]*)\}|\\(input)\s+([^\s{}\\%]+)"
+                         r"|\\(import|subimport)\*?\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+#: The most `.tex` files of a project main-file finding reads.
+TEX_FILE_LIMIT = 2000
+
+
+def uncommented(text: str) -> str:
+    """`text` with each line cut at its first `%` that is not escaped (an odd run of backslashes before it)."""
+    lines = []
+    for line in text.splitlines():
+        at = 0
+        while (at := line.find("%", at)) >= 0:
+            run = len(line[:at]) - len(line[:at].rstrip("\\"))
+            if run % 2 == 0:
+                line = line[:at]
+                break
+            at += 1
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def includes(text: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Each `\\input` (with or without braces), `\\include`, `\\subfile`, `\\import` and `\\subimport` of `text`
+    outside comments: the command and its arguments as written."""
+    found = []
+    for m in _INCLUDE_RE.finditer(uncommented(text)):
+        if m.group(1):
+            found.append((m.group(1), (m.group(2),)))
+        elif m.group(3):
+            found.append(("input", (m.group(4),)))
+        else:
+            found.append((m.group(5), (m.group(6), m.group(7))))
+    return found
+
+
+def resolve_include(command: str, args: tuple[str, ...], own_dir: str, main_dir: str) -> str | None:
+    """The project-relative path an include names, as TeX finds it: `\\input`, `\\include` and `\\import` from the
+    main file's folder, `\\subfile` and `\\subimport` from the including file's own; `.tex` added to a name without
+    it. None for a name no project path can be (empty, absolute, a backslash, a `..` out of the project)."""
+    parts = [part.strip() for part in args]
+    if not parts[-1] or any("\\" in part or part.startswith(("/", "~")) for part in parts):
+        return None
+    path = posixpath.normpath(posixpath.join(own_dir if command in ("subfile", "subimport") else main_dir, *parts))
+    if path == ".." or path.startswith(("../", "/")):
+        return None
+    return path if path.endswith(".tex") else path + ".tex"
+
+
+def _is_main(text: str) -> bool:
+    code = uncommented(text)
+    head = re.search(r"\\documentclass\b", code)
+    return bool(head) and code.find("\\begin{document}", head.end()) >= 0
+
+
+def main_files(root: str | Path, rel: str) -> list[str]:
+    """The main files of the draft `rel` (22.4): `rel` itself when it has `\\documentclass` before
+    `\\begin{document}`; else the project's `.tex` files that do and reach `rel` through includes, followed
+    transitively, commented lines skipped. Reads files, runs nothing; a file only in the cloud is not read."""
+    root = workspace._root(root)  # noqa: SLF001
+    known = [r for r, _ in files_ingest.iter_files(root) if r.endswith(".tex")][:TEX_FILE_LIMIT]
+    texts: dict[str, str] = {}
+
+    def text_of(path: str) -> str:
+        if path not in texts:
+            texts[path] = ""
+            full = root / path
+            try:
+                if not paths.is_dataless(full) and full.stat().st_size <= SIZE_LIMIT:
+                    texts[path] = full.read_bytes().decode("utf-8", errors="replace")
+            except OSError:
+                pass
+        return texts[path]
+
+    if _is_main(text_of(rel)):
+        return [rel]
+    tex, found = set(known), []
+    for main in known:
+        if main == rel or not _is_main(text_of(main)):
+            continue
+        seen, todo = {main}, [main]
+        while todo:
+            current = todo.pop()
+            for command, args in includes(text_of(current)):
+                target = resolve_include(command, args, posixpath.dirname(current), posixpath.dirname(main))
+                if target in tex and target not in seen:
+                    seen.add(target)
+                    todo.append(target)
+        if rel in seen:
+            found.append(main)
+    return found
+
+
+def include_links(root: Path, rel: str, text: str) -> dict[str, Any]:
+    """The editor's include links (22.1): for each include of `text`, the file it opens when that path passes
+    `checked_path`, else None (shown as text). `\\input`, `\\include` and `\\import` resolve from the main file's
+    folder; with no main file, or main files in several folders, from the draft's own, and `own_folder` says so."""
+    mains = main_files(root, rel)
+    folders = {posixpath.dirname(main) for main in mains}
+    own, single = posixpath.dirname(rel), len(folders) == 1
+    main_dir = next(iter(folders)) if single else own
+    links, seen = [], set()
+    for command, args in includes(text):
+        if (command, args) in seen:
+            continue
+        seen.add((command, args))
+        target = resolve_include(command, args, own, main_dir)
+        try:
+            path = checked_path(root, target) if target else None
+        except WorkspaceError:
+            path = None
+        links.append({"command": command, "args": list(args), "path": path,
+                      "own_folder": not single and command not in ("subfile", "subimport")})
+    return {"mains": mains, "links": links}
 
 
 def backup_series(rel: str) -> str:

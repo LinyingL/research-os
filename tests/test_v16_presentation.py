@@ -77,7 +77,9 @@ def test_a_name_that_opens_a_file_is_a_text_link_and_a_title_or_a_chip_is_never_
 
 #: Where a primary button is created, by script: how many sites. Each is one surface's primary action (DESIGN.md 21.8 lists them);
 #: a new site is a new surface, or a second primary button on one -- add it to 21.8 with its surface, or draw it quiet.
-PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "node.js": 2, "routemap.js": 1, "team.js": 12, "workspace.js": 10}
+#: latex.js: 保存, the LaTeX editor's one primary button (DESIGN.md 22.7, amending 21.8's list).
+PRIMARY_SITES = {"app.html": 10, "canvas.js": 1, "desk.js": 2, "latex.js": 1, "node.js": 2, "routemap.js": 1, "team.js": 12,
+                 "workspace.js": 10}
 
 
 def _primary_sites() -> dict[str, int]:
