@@ -1379,7 +1379,8 @@
   // 「停止」, and the result -- 已导出 with 打开 PDF and 在 Finder 中显示, the question of the main file or of 替换 / 另存为, or
   // 导出没有成功 as an error with TeX's file:line errors (a link into the editor where the server's validator passed the path)
   // and the log under 详情; characters the fonts lack as a warning. `before` (the editor's save) runs first.
-  function exporter(path, before) {
+  // `list` (正文, 22.10): one of several exporters on one page, so another draft's does not drop this one's 已导出.
+  function exporter(path, before, list) {
     const button = mkButton(t("导出 PDF"), "btn btn-small", () => run({}));
     const settingsLine = mk("div", "latex-export-line node-sub hidden"), result = mk("div", "latex-export-result");
     const block = mk("div", "latex-export");
@@ -1499,7 +1500,7 @@
     }
 
     drawn[path] = (drawn[path] || []).filter((x) => x.block.isConnected !== false).concat([self]);
-    if (lastShown && lastShown.path !== path) lastShown = null;   // another draft's page: the person left this one
+    if (!list && lastShown && lastShown.path !== path) lastShown = null;   // another draft's page: the person left this one
     settings();
     if (exporting && exporting.path === path) showRunning(exporting.using);
     else if (lastShown && lastShown.path === path) show(lastShown.r);
@@ -1598,7 +1599,7 @@
       const block = mk("section", "res-block latex-draft-group"), head = row(g.main);
       let ex = null;
       if (!g.main.cloud) {
-        ex = exporter(g.main.path);
+        ex = exporter(g.main.path, null, true);
         ex.button.className = "ws-text-link";   // 22.10: a quiet text action, never a second primary
         head.children[0].appendChild(ex.button);
       }

@@ -351,7 +351,12 @@ def drafts(root: str | Path, lang: str = "zh") -> dict[str, Any]:
 
     tex = set(known)
     mains = [p for p in known if _is_main(text_of(p))]
-    groups = [{"main": row(m), "files": [row(p) for p in _closure(m, tex, text_of)]} for m in mains]
+    closures = {m: _closure(m, tex, text_of) for m in mains}
+    # A main file another main file brings in (a subfiles chapter, `\documentclass[main.tex]{subfiles}`) is that
+    # file's chapter, listed under it only; two that bring in each other both stay groups.
+    within = {m for m in mains for n in mains if n != m and m in closures[n] and n not in closures[m]}
+    groups = [{"main": row(m), "files": [row(p) for p in closures[m]]} for m in mains if m not in within]
+    mains = [m for m in mains if m not in within]
     included = {f["path"] for g in groups for f in g["files"]}
     others = [row(p) for p in known if p not in included and p not in mains]
     return {"groups": groups, "others": others,

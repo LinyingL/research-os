@@ -69,6 +69,23 @@ def test_main_files_group_their_includes_in_document_order_and_the_rest_stand_ap
     assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", row["modified"]) and row["modified"].endswith("+00:00")
 
 
+def test_a_subfiles_chapter_is_listed_once_under_the_book_not_as_a_group_of_its_own(tmp_path):
+    # review of 22.10: a chapter written for the subfiles package has its own \\documentclass and \\begin{document}, so
+    # it reads as a main file; brought in by another main file, it is that file's chapter, listed there only
+    root = tmp_path / "p"
+    root.mkdir()
+    project.init_project(root)
+    _put(root, "book/main.tex", "\\documentclass{book}\n\\usepackage{subfiles}\n\\begin{document}\n\\subfile{ch1}\n\\end{document}\n")
+    _put(root, "book/ch1.tex", "\\documentclass[main.tex]{subfiles}\n\\begin{document}\nOne.\n\\end{document}\n")
+    # two main files that bring in each other: neither is dropped
+    _put(root, "loop/a.tex", "\\documentclass{article}\n\\begin{document}\n\\input{b}\n\\end{document}\n")
+    _put(root, "loop/b.tex", "\\documentclass{article}\n\\begin{document}\n\\input{a}\n\\end{document}\n")
+    got = latex_edit.drafts(root)
+    assert [g["main"]["path"] for g in got["groups"]] == ["book/main.tex", "loop/a.tex", "loop/b.tex"]
+    assert [f["path"] for f in got["groups"][0]["files"]] == ["book/ch1.tex"]
+    assert got["others"] == []
+
+
 def test_a_generated_table_is_counted_never_listed_and_dot_folders_and_symlinks_are_never_read(root, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -169,7 +186,9 @@ def test_the_sidebar_has_manuscript_right_after_figures_and_claims_drawn_like_th
     assert ("drafts", "drafts", "正文") in items
     assert '<section id="view-drafts" class="view hidden"></section>' in html
     assert 'drafts: "drafts"' in html and 'drafts: t("正文")' in html
-    assert 'if (name === "drafts" && !views.drafts.dataset.loaded) ROLatex.loadDrafts(views.drafts);' in html
+    # read afresh every time it is shown (review of 22.10): a .tex dropped in by Finder moves no generation
+    assert 'if (name === "drafts") ROLatex.loadDrafts(views.drafts);' in html
+    assert "views.drafts.dataset.loaded" not in html
     # the editor counts as the page it was opened from: its section is ROLatex.section()'s
     assert 'const page = name === "latex" ? ROLatex.section() : name;' in html
 
@@ -204,6 +223,17 @@ const empty = mk('section'); empty.dataset = {};
 p = L.loadDrafts(empty); await tick();
 gets.shift().res({groups: [], others: [], generated: 0, truncated: false, limit: 2000, message: null}); await p;
 out.empty = texts(empty).filter(Boolean);
+// two main files: an export of the first stays shown through the redraws its generation bumps bring (refreshCurrentView)
+global.exportAnswer = (url) => ({main: null, mains: [], engine: null, engines: [],
+  last: url.indexOf('a%2Fmain.tex') >= 0 ? {pdf: 'a/main.pdf'} : null});
+const two = mk('section'); two.dataset = {};
+const twoAnswer = {groups: [{main: row('a/main.tex'), files: []}, {main: row('b/main.tex'), files: []}],
+  others: [], generated: 0, truncated: false, limit: 2000, message: null};
+p = L.loadDrafts(two); await tick(); gets.shift().res(twoAnswer); await p; await tick();
+inHost(two).find((e) => e.tag === 'button' && e.textContent === '导出 PDF').fire('click'); await tick();
+posts.shift().res({exported: true, pdf: 'a/main.pdf', main: 'a/main.tex'}); await tick(); await tick();
+for (let i = 0; i < 2; i += 1) { p = L.loadDrafts(two); await tick(); gets.shift().res(twoAnswer); await p; await tick(); }
+out.twoAfter = texts(two).filter(Boolean);
 console.log(JSON.stringify(out));
 """
 
@@ -239,6 +269,11 @@ def test_a_path_opens_the_editor_which_belongs_to_the_manuscript_page(page):
 
 def test_an_empty_project_says_so_and_where_drafts_come_from(page):
     assert page["empty"][-2:] == ["这个项目里还没有 .tex 文稿。", "把 .tex 文件放进项目文件夹后，这里会列出来。"]
+
+
+def test_an_export_from_the_page_stays_shown_when_it_redraws_with_another_main_file(page):
+    # review of 22.10: the second main file's exporter used to drop the first one's 已导出 on the redraw
+    assert page["twoAfter"].count("已导出 a/main.pdf") == 1 and "在 Finder 中显示" in page["twoAfter"]
 
 
 def test_every_new_word_has_its_english():

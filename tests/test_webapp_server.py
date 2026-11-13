@@ -2145,7 +2145,7 @@ def test_page_dispatcher_and_shell_whitelist_name_the_same_commands():
     swift_names = set(re.findall(r'"([a-z-]+)"', whitelist_src))
     expected = {
         "workspace", "create-project",
-        "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+        "desk", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members",
         "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
     }
     assert _page_shell_commands(html) == expected

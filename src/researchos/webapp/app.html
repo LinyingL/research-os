@@ -2221,7 +2221,8 @@ function activateView(name) {
   else if (name === "desk") RODesk.resume(); // drawn already: shown the way it is now kept
   if (name === "node" && !views.node.dataset.loaded) RONode.loadNode(views.node);
   if (name === "results" && !views.results.dataset.loaded) RONode.loadResults(views.results);
-  if (name === "drafts" && !views.drafts.dataset.loaded) ROLatex.loadDrafts(views.drafts);
+  // 正文 (22.10) is read afresh each time it is shown: a .tex dropped in or changed elsewhere moves no generation.
+  if (name === "drafts") ROLatex.loadDrafts(views.drafts);
   if (name === "proposals" && !views.proposals.dataset.loaded) ROTeam.loadProposals(views.proposals);
   if (name === "members" && !views.members.dataset.loaded) ROTeam.loadMembers(views.members);
   if (name === "lineage" && !views.lineage.dataset.loaded) loadLineageView();
@@ -8536,13 +8537,14 @@ ROWorkspace.onPropose = (paths) => {
 const SHELL_COMMANDS = {
   "workspace": () => activateView("workspace"),
   "create-project": () => ROWorkspace.openCreateProject(),
-  // 视图 ⌘1-8 (12.9): one command per sidebar section. 研究路线 is one page
+  // 视图 ⌘1-9 (12.9; 22.10 added 正文): one command per sidebar section. 研究路线 is one page
   // (18.3), and its one menu item sends either name: both open it the way it
   // is kept for the project (a menu built before 18.3 sent "desk" for the map
   // and "routes" for the list, as two items; the page cannot tell them apart now).
   "desk": () => showRoutes(),
   "routes": () => showRoutes(),
   "results": () => activateView("results"),
+  "drafts": () => activateView("drafts"),
   "variables": () => activateView("variables"),
   "literature": () => activateView("literature"),
   // 数据与代码 reopens on the list or 关系图, as the sidebar does.

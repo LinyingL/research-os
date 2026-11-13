@@ -117,10 +117,10 @@ import AppKit
 // V8 U5 (DESIGN.md 12.9): one command per sidebar section, plus 提交提议
 // (a member) and 发布 (the PI). 18.3: 研究路线 is one page and the menu has one
 // item for it ("routes"); "desk" stays a valid name, and the page opens the
-// same page for both.
+// same page for both. 22.10: 正文 ("drafts") after 图表与论断, ⌘4.
 let shellCommands: Set<String> = [
     "workspace", "create-project",
-    "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+    "desk", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members",
     "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
 ]
 
@@ -204,6 +204,7 @@ let englishText: [String: String] = [
     "视图": "View",
     "研究路线": "Research Routes",
     "图表与论断": "Figures and Claims",
+    "正文": "Manuscript",
     "变量": "Variables",
     "文献": "Literature",
     "数据与代码": "Data & Code",
@@ -849,11 +850,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             cmd("项目首页", "workspace", "1"),
             cmd("研究路线", "routes", "2"),
             cmd("图表与论断", "results", "3"),
-            cmd("变量", "variables", "4"),
-            cmd("文献", "literature", "5"),
-            cmd("数据与代码", "data", "6"),
-            cmd("提议", "proposals", "7"),
-            cmd("成员", "members", "8"),
+            cmd("正文", "drafts", "4"),
+            cmd("变量", "variables", "5"),
+            cmd("文献", "literature", "6"),
+            cmd("数据与代码", "data", "7"),
+            cmd("提议", "proposals", "8"),
+            cmd("成员", "members", "9"),
             .separator(),
             item("重新载入", #selector(reloadPage(_:)), "r"),
             .separator(),
@@ -888,7 +890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     // 文件 > 提交提议… for a member, 发布 for the PI; neither otherwise.
-    // 视图 > 提议 and 成员 (⌘7, ⌘8): in every project but one person's (18.3);
+    // 视图 > 提议 and 成员 (⌘8, ⌘9): in every project but one person's (18.3);
     // a hidden item is off the menu and its shortcut does nothing.
     func applyTeamMode() {
         proposeItem.isHidden = teamMode != "member"

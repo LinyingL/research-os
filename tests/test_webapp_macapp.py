@@ -406,8 +406,8 @@ def test_swift_sources_ship_as_package_data():
 
 def test_shell_menus_match_the_design():
     """V8 U5 (12.9): 文件 holds 添加项目… ⌘O, 提交提议… / 发布 by role, 关闭 ⌘W;
-    视图 names the eight sidebar sections on ⌘1-⌘8 in the sidebar's order
-    (18.3: 研究路线 is one item and 项目首页 is ⌘1), then 重新载入 and the
+    视图 names the nine sidebar sections on ⌘1-⌘9 in the sidebar's order
+    (18.3: 研究路线 is one item and 项目首页 is ⌘1; 22.10: 正文 is ⌘4), then 重新载入 and the
     zoom set. The pre-12.9 views (决策树 / 血缘 / 画布, 适应全部) and 工作台
     are gone."""
     for snippet in (
@@ -417,8 +417,10 @@ def test_shell_menus_match_the_design():
         'item("关闭", #selector(NSWindow.performClose(_:)), "w")',
         'submenu("编辑"', '"undo:"', '"redo:"', "NSText.cut", "NSText.copy", "NSText.paste", "NSText.selectAll",
         'submenu("视图"', 'cmd("项目首页", "workspace", "1")', 'cmd("研究路线", "routes", "2")', 'cmd("图表与论断", "results", "3")',
-        'cmd("变量", "variables", "4")', 'cmd("文献", "literature", "5")', 'cmd("数据与代码", "data", "6")',
-        'cmd("提议", "proposals", "7")', 'cmd("成员", "members", "8")',
+        'cmd("正文", "drafts", "4")',
+        'cmd("变量", "variables", "5")', 'cmd("文献", "literature", "6")', 'cmd("数据与代码", "data", "7")',
+        'cmd("提议", "proposals", "8")', 'cmd("成员", "members", "9")',
+        '"正文": "Manuscript"',
         'item("重新载入", #selector(reloadPage(_:)), "r")', 'cmd("放大", "zoom-in", "+")',
         'cmd("缩小", "zoom-out", "-")', 'cmd("实际大小", "zoom-reset", "0")',
         'submenu("窗口"', 'item("最小化", #selector(NSWindow.performMiniaturize(_:)), "m")',
@@ -434,11 +436,16 @@ def test_shell_menus_match_the_design():
     assert order == sorted(order)
     view = _SHELL[_SHELL.index('submenu("视图"'):]
     view = view[: view.index("])")]
-    keys = [view.index(f'"{k}")') for k in "12345678"]
+    keys = [view.index(f'"{k}")') for k in "123456789"]
     assert keys == sorted(keys)
     # The shortcuts follow the sidebar's order, one item each.
-    sidebar = [view.index(f'cmd("{name}"') for name in ("项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员")]
+    sidebar = [view.index(f'cmd("{name}"') for name in ("项目首页", "研究路线", "图表与论断", "正文", "变量", "文献", "数据与代码", "提议", "成员")]
     assert sidebar == sorted(sidebar) and view.count('"routes"') == 1
+    # and the page's own sidebar is in that order too, one item per menu command
+    page = (Path(macapp.__file__).parent / "app.html").read_text(encoding="utf-8")
+    nav = page[page.index('<nav class="side-nav"'):page.index("</nav>")]
+    labels = [label for label in re.findall(r'<span class="side-label" data-i18n>([^<]+)</span>', nav)]
+    assert labels == ["项目首页", "研究路线", "图表与论断", "正文", "变量", "文献", "数据与代码", "提议", "成员"]
 
 
 def test_shell_whitelist_and_page_dispatcher_agree():
@@ -452,7 +459,7 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     whitelist = set(re.findall(r'"([a-z-]+)"', whitelist[: whitelist.index("]")]))
     assert whitelist == {
         "workspace", "create-project",
-        "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+        "desk", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members",
         "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
     }
     sent = set(re.findall(r'cmd\("[^"]+", "([a-z-]+)"', _SHELL))
@@ -466,7 +473,8 @@ def test_shell_whitelist_and_page_dispatcher_agree():
     for name, target in (("workspace", 'activateView("workspace")'),
                          ("create-project", "ROWorkspace.openCreateProject()"),
                          ("desk", "showRoutes()"), ("routes", "showRoutes()"),
-                         ("results", 'activateView("results")'), ("variables", 'activateView("variables")'),
+                         ("results", 'activateView("results")'), ("drafts", 'activateView("drafts")'),
+                         ("variables", 'activateView("variables")'),
                          ("literature", 'activateView("literature")'), ("data", "activateView(lastDataView)"),
                          ("proposals", 'activateView("proposals")'), ("members", 'activateView("members")'),
                          ("propose", 'revealShellAnchor("proposals", "compose")'),
@@ -508,16 +516,16 @@ def test_shell_file_menu_shows_propose_or_publish_by_the_pages_mode():
 
 
 def test_shell_view_menu_has_no_proposals_or_members_for_a_project_of_one_person():
-    """18.3: 视图 > 提议 and 成员 (⌘7, ⌘8) are the two items a project of one
+    """18.3: 视图 > 提议 and 成员 (⌘8, ⌘9 since 22.10) are the two items a project of one
     person does not have, as it has no 提交提议… or 发布 in 文件: they are
     found among the items the menu was built with (the commands `proposals`
     and `members`), hidden for the mode "single" and shown for every other,
     set when the menus are built (a language change rebuilds them) and
-    whenever the page says the mode; the other six sections stay, so the
-    shortcuts ⌘1 to ⌘6 are the sidebar's six."""
+    whenever the page says the mode; the other seven sections stay, so the
+    shortcuts ⌘1 to ⌘7 are the sidebar's seven."""
     build = _SHELL[_SHELL.index("func buildMainMenu"):]
     build = build[: build.index("\n    }\n")]
-    assert 'cmd("提议", "proposals", "7")' in build and 'cmd("成员", "members", "8")' in build
+    assert 'cmd("提议", "proposals", "8")' in build and 'cmd("成员", "members", "9")' in build
     assert 'var teamViewItems: [NSMenuItem] = []' in _SHELL
     assert ('teamViewItems = (viewMenu.submenu?.items ?? []).filter {\n'
             '            ["proposals", "members"].contains($0.representedObject as? String ?? "")\n        }') in build
@@ -1009,7 +1017,7 @@ _ENGLISH_MENUS = {
     "关闭": "Close",
     "编辑": "Edit", "撤销": "Undo", "重做": "Redo", "剪切": "Cut", "拷贝": "Copy", "粘贴": "Paste",
     "全选": "Select All",
-    "视图": "View", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "变量": "Variables",
+    "视图": "View", "研究路线": "Research Routes", "图表与论断": "Figures and Claims", "正文": "Manuscript", "变量": "Variables",
     "文献": "Literature", "数据与代码": "Data & Code", "提议": "Proposals", "成员": "Members",
     "重新载入": "Reload", "放大": "Zoom In", "缩小": "Zoom Out", "实际大小": "Actual Size",
     "窗口": "Window", "最小化": "Minimize", "缩放": "Zoom",

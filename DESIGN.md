@@ -3082,7 +3082,7 @@ The command line, a developer surface, may keep its arrows.
 
 *The shell's menus* replace 8.9's list: 文件 — 添加项目… ⌘O, 提交提议…
 (member) or 发布 (PI) when the project is collaborative, 关闭 ⌘W; 视图 — the
-eight sections on ⌘1–⌘8, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
+eight sections on ⌘1–⌘8 *(nine on ⌘1–⌘9 since 22.10)*, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
 title, mode and choose-folder / choose-file messages, nothing else. (Amended by 13.3: also `{type: "language"}`.)
 
 *Who.* A version installed by 同步 is attributed to the publish it came
@@ -4769,9 +4769,11 @@ does not add.
     rows shows beside 项目首页 in every project, a project of one person
     included; there is none beside 研究路线.)*
   - The Mac menu has one item for it, ⌘2; 项目首页 is ⌘1, and the shortcuts
-    follow the sidebar's order (⌘1 to ⌘8).
+    follow the sidebar's order (⌘1 to ⌘8). *(Replaced by 22.10: ⌘1 to ⌘9,
+    正文 being ⌘4.)*
 - **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
   and, in a team project, 提议 and 成员. 项目首页 stays the first page.
+  *(Replaced by 22.10: 正文 comes after 图表与论断.)*
 - **A one-person project** (no team file, 12.1):
   - The sidebar shows no 提议, no 成员 and no identity reminder, and the Mac
     menus show no 提议, 成员, 提交提议 or 发布.
@@ -7966,4 +7968,23 @@ and on 图表与论断's 论文正文 rows. Now the sidebar has an item of its o
   scan walks it (dot folders, `.researchos/` among them, never entered;
   symbolic links never followed), stopping after 2,000 `.tex` files, which the
   page then says; each listed draft's passages found again in one pass over
-  `evidence.toml`, so the page makes one request. It writes nothing.
+  `evidence.toml`, so the list is one request (each main file's 导出 PDF then
+  reads its settings line, as on a draft's own page: one more read per main
+  file). It writes nothing.
+- **After review (2026-11-14).**
+  - The page is read afresh every time it is shown (the sidebar, 返回 from the
+    editor, the menu): a `.tex` dropped in by Finder or changed in another
+    editor moves no generation, the watcher's set not holding `.tex` files.
+  - A main file another main file brings in (a chapter written for the
+    subfiles package, `\documentclass[main.tex]{subfiles}`) is listed once,
+    under the file that brings it in, not as a group of its own; two main files
+    that bring in each other both stay groups.
+  - An export made from the page stays shown (已导出, 在 Finder 中显示) when the
+    page redraws after it, whichever group it was in.
+  - The Mac menu: 视图 gains 「正文」 ⌘4 between 图表与论断 and 变量, the
+    sections after it moving down one (成员 is ⌘9). This replaces 12.9's and
+    18.3's ⌘1 to ⌘8 and 18.3's list of the sidebar.
+  - 正文 is not 论文正文. 正文 is the page of the project's `.tex` drafts, every
+    one, marked as the paper or not; 论文正文 (papers.toml, 图表与论断) is the one
+    draft marked as the paper, `.md` and `.docx` included. Whether 正文 should
+    mark the row that is the 论文正文 is the researcher's to decide (22.0.2).
