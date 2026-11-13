@@ -395,6 +395,24 @@ out.supportsHidden = page.children[0].classList.contains('hidden');
 EV = {revision: 'r2', links: [link('pl-4', {quote: '😀'.repeat(45), state: 'changed', from: null, to: null})]};
 await L.refresh(); await tick();
 out.label = all.filter((e) => e.classList.contains('latex-waiting')).pop().textContent;
+// 22.5: a member's link 待批准 backs nothing -- not counted, dotted in ochre, said in its panel and on the pages
+EV = {revision: 'r1', links: [link('pl-5', {pending: true}), link('pl-6', {quote: 'more', from: 7, to: 11})]};
+await open('p.tex');
+const P = view(), marks = [];
+for (const d of P.state.facet(real.EditorView.decorations)) {
+  if (typeof d !== 'function') d.between(0, P.state.doc.length, (from, to, value) => { if (!value.spec.widget) marks.push([from, value.spec.class]); });
+}
+out.pendingMarks = marks;
+out.pendingCounts = texts(side().children.find((c) => c.classList.contains('latex-counts'))).join('|');
+all.filter((e) => e.classList.contains('latex-waiting')).pop().fire('click'); await tick();
+out.pendingPanel = texts(side()).includes('待批准');
+const row4 = mk('div');
+L.paperCounts(row4, 'p.tex', {}); await tick();
+out.pendingRow = texts(row4.children[0]).join('|');
+const page2 = mk('div');
+L.renderSupported(page2, {id: 'figure:figures/f1.png'}); await tick();
+gets.shift().res({passages: [{draft: 'p.tex', section: null, excerpt: '显著', state: 'found', pending: true, link: 'pl-5'}]}); await tick();
+out.pendingPage = texts(page2.children[0]);
 console.log(JSON.stringify(out));
 """
 
@@ -683,3 +701,13 @@ def test_text_typed_while_the_saves_reload_is_out_moves_a_waiting_passage_and_a_
     assert (root / PATH).read_bytes().decode() == f"TYPED Intro.\n\nNot {a}\n\n\n\n\n\nEnd.\n\n{b}\n"
     states = {x["quote"]: x["state"] for x in latex_edit.evidence_of_draft(root, PATH)["links"]}
     assert states[new_a] == "found" and states[b] == "found"
+
+
+def test_a_members_link_waiting_for_approval_is_not_counted_and_is_said_as_such_everywhere(review):
+    """22.5: a link 待批准 backs nothing -- the side counts it apart, its underline is the ochre of a wait, its panel says
+    待批准; 图表与论断 does not count it; a file's page says 待批准, not 已找到."""
+    assert review["pendingMarks"] == [[2, "latex-passage latex-wait"], [7, "latex-passage"]]
+    assert review["pendingCounts"] == "1 段有依据文件| |1 段待批准"
+    assert review["pendingPanel"] is True
+    assert review["pendingRow"] == "|1 段有依据文件"
+    assert "待批准" in review["pendingPage"] and "已找到" not in review["pendingPage"]

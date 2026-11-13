@@ -1,7 +1,8 @@
 """DESIGN.md 22.2 (task V17, B1d): passages of a `.tex` tied to their supporting files, the engine side. The ledger
 `.researchos/evidence.toml` (round trip with a CRLF draft, Chinese and an emoji; anchors `\\n`-normalised; offsets in
 code points), finding a passage again (every branch), the acts (link, reanchor, withdraw, undo), the trust rules, a
-member refused until B4, reading writes nothing, and the endpoints. Every test names its scenario."""
+member refused outside their working copy (B4's team flow: test_v17_team_evidence), reading writes nothing, and the
+endpoints. Every test names its scenario."""
 
 from __future__ import annotations
 
@@ -350,7 +351,7 @@ def test_an_untrusted_ledger_refuses_every_write_and_readers_list_no_link_with_t
     assert error.status == 409 and not path.exists()
 
 
-def test_a_member_is_refused_until_approval_exists_and_nothing_is_written(root):
+def test_a_member_outside_their_own_working_copy_is_refused_and_nothing_is_written(root):
     _put(root, "paper/main.tex", DRAFT)
     people.team_path(root).write_text('[[member]]\nid="pi@example.com"\nname="PI"\nrole="pi"\n\n'
                                       '[[member]]\nid="member@example.com"\nname="Member"\nrole="member"\n')
@@ -374,7 +375,8 @@ def test_reading_writes_nothing(root):
 
 def test_the_record_travels_in_snapshots_and_the_watcher_refreshes_on_it(root):
     assert "evidence.toml" in share.RECORD_FILES and "evidence.toml" in proposals._RECORD_FILES
-    assert "evidence.toml" not in share.TRAVELLING_FILES  # a member's links wait for B4's approval
+    assert "evidence.toml" not in share.TRAVELLING_FILES  # a member's links go as a proposal (22.5), never a packet
+    assert share.PROPOSED == {"evidence.toml": "passage_evidence"}
     _put(root, "paper/main.tex", DRAFT)
     _link(root, "paper/main.tex", "很慢。")
     assert "evidence.toml" in paths.project_readme_text(root)

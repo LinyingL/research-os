@@ -634,6 +634,7 @@ def append_many(
     now: Clock | None = None,
     snapshot_subdir: str | None = None,
     aliases: Iterable[str | None] | None = None,
+    adopt: bool = False,
 ) -> list[LedgerEntry]:
     """Append several entries as ONE write (`append`'s rules, applied to
     each entry in turn against the file as it would be after the ones
@@ -646,7 +647,11 @@ def append_many(
     a process killed in between leaves some of them in the file while the
     question still lists all of them, and answering again appends the
     first ones a second time -- which can flip a link's verdict. Any entry
-    refused refuses the batch; nothing is written then."""
+    refused refuses the batch; nothing is written then.
+
+    `adopt`: an entry that names its `id` (and `at`) was made elsewhere and
+    keeps them (a member's acts approved into the official ledger, 22.5);
+    an id of another prefix, or one the ledger already holds, is refused."""
     lock.require_held()
     path, project_root = Path(path), Path(project_root)
     _confine(project_root, path)
@@ -654,11 +659,15 @@ def append_many(
     if not batch:
         raise LedgerWriteRefused("nothing to append")
     for fields in batch:
-        reserved = [f for f in ("id", "seq", "at", "settles") if f in fields]
+        reserved = [f for f in ("id", "seq", "at", "settles") if f in fields and not (adopt and f in ("id", "at"))]
+        if adopt and "id" in fields and not str(fields["id"]).startswith(schema.id_prefix):
+            raise LedgerWriteRefused(f"an adopted entry keeps its own {schema.id_prefix}… id")
         if reserved:
             raise LedgerWriteRefused(f"{', '.join(reserved)} are assigned by the ledger, not the caller")
 
     loaded = load_ledger(path, schema)
+    if adopt and loaded.ledger is not None and {f.get("id") for f in batch} & loaded.ledger.ids:
+        raise LedgerWriteRefused(f"{path.name} already holds an entry of this id; nothing written")
     if loaded.state is RecordState.ABSENT:
         if not create:
             raise LedgerWriteRefused(f"{path.name} does not exist and may not be created here")

@@ -531,7 +531,8 @@ def _missing(root: Path, node: str) -> bool:
 def evidence_of_draft(root: str | Path, rel: Any, lang: str = "zh") -> dict[str, Any]:
     """The draft's standing links, each found again in its current text (22.2), in the editor's positions: `state`
     `found` / `changed` (待复核 「依据已变化」, with `candidates`) / `deleted` (「段落已被删掉」); `file_missing` when the
-    supporting file has gone from the project (it is not withdrawn). Writes nothing."""
+    supporting file has gone from the project (it is not withdrawn); `pending` (待批准) for a member's link the PI has
+    not approved yet (22.5). Writes nothing."""
     root = workspace._root(root)  # noqa: SLF001
     rel = checked_path(root, rel)
     raw = _read(root, rel)
@@ -550,7 +551,7 @@ def evidence_of_draft(root: str | Path, rel: Any, lang: str = "zh") -> dict[str,
             "from": _to_file(crlfs_n, found["start"]), "to": _to_file(crlfs_n, found["end"]),
             "candidates": [{"from": _to_file(crlfs_n, c["start"]), "to": _to_file(crlfs_n, c["end"]), "text": c["text"]}
                            for c in found["candidates"]],
-            "conflict": item["conflict"], "last": item["last"], "at": item["entry"].at,
+            "conflict": item["conflict"], "last": item["last"], "at": item["entry"].at, "pending": item["pending"],
             **people.attribution(item["entry"].data, team, lang),
         })
     return {"path": rel, "revision": _revision(raw), "links": out, **_record_state(decision, lang)}
@@ -591,7 +592,8 @@ def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[st
         headings = list(_HEADING_RE.finditer(got[0][:where])) if got is not None else []
         shown = got[0][found["start"]:found["end"]] if found["state"] == "found" else anchor["quote"]
         out.append({"link": item["link"], "draft": draft, "state": found["state"], "excerpt": " ".join(shown.split())[:80],
-                    "section": headings[-1].group(1).strip() if headings else None, "conflict": item["conflict"]})
+                    "section": headings[-1].group(1).strip() if headings else None, "conflict": item["conflict"],
+                    "pending": item["pending"]})
     out.sort(key=lambda p: (p["draft"], p["section"] or ""))
     return {"file": node, "passages": out, **_record_state(decision, lang)}
 
@@ -609,7 +611,8 @@ def declared_by_claim(root: str | Path, rel: str) -> dict[str, list[dict[str, An
         text = _opened(root, rel, _read(root, rel))["text"]
     except WorkspaceError:
         return {}
-    mine = [item for item in evidence.links_now(root)[0].values() if item["draft"] == rel]
+    # 22.5: a link 待批准 backs nothing
+    mine = [item for item in evidence.links_now(root)[0].values() if item["draft"] == rel and not item["pending"]]
     if not mine:
         return {}
     norm, _crlfs, crlfs_n = _normalised(text)

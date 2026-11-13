@@ -221,6 +221,10 @@ MAPPINGS_NAME = "mappings.toml"
 PACKET_ADDED, PACKET_REMOVED = "mapping", "mapping_removed"
 #: Record files a member's own changes travel in packets, never in a proposal.
 TRAVELLING_FILES = frozenset({name.partition("#")[0] for name in TRAVELLING} | {MAPPINGS_NAME})
+#: 22.5: ledgers whose member entries go at sync as a proposal (`passage_evidence`), not a packet; once the PI has
+#: answered, the official ledger holds every entry of theirs, approved or returned, and replaces their copy as a
+#: travelling ledger's does (`_ledger_carried`).
+PROPOSED = {"evidence.toml": "passage_evidence"}
 #: 12.12: canvas arrangements do not travel: each person keeps their own.
 CANVAS_NAME = "canvas.json"
 _PACKET_HEADER = ("# 成员的笔记、连接判断和手工连线：不需要批准，PI 的 Research OS 收进正式版本时保留 by。"
@@ -1747,12 +1751,13 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None, lang: str = "zh
     base = proposals.read_base(pid)
     if base is None:
         raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
-    # 12.4: the member's own notes and link judgments go with every sync.
+    # 12.4: the member's own notes and link judgments go with every sync; 22.5: their passage links as a proposal.
     out["entries_sent"] = _send_entries(root, pid, state, base, shared, out["problems"], now)
+    out["evidence_proposed"] = _propose_evidence(root, state, shared, out["problems"], now)
     present = _present(root, state.get("official_copies"))
     pruned = present != list(state.get("official_copies") or [])
     state["official_copies"] = present  # a copy the member deleted is no longer beside their file
-    if out["entries_sent"] or pruned:
+    if out["entries_sent"] or out["evidence_proposed"] or pruned:
         _write_state(pid, state)  # what was sent is never sent again
     target = chain.last_good
     if target is None or target.seq <= state["seq"]:
@@ -1907,7 +1912,7 @@ def _difference(mine: Path, official: Path, entry: Mapping[str, Any], lang: str 
 def _travelling(rel: str) -> str | None:
     prefix = paths.PROJECT_DIRNAME + "/"
     name = rel[len(prefix):] if rel.startswith(prefix) else None
-    return name if name in TRAVELLING else None
+    return name if name in TRAVELLING or name in PROPOSED else None
 
 
 def _file_of(ledger: str) -> str:
@@ -1924,6 +1929,10 @@ def _schema(name: str):
         return papers_mod.PAPERS_SCHEMA
     if name == PAPER_FILES:
         return papers_mod.FILES_SCHEMA
+    if name in PROPOSED:
+        from researchos.records import evidence  # noqa: PLC0415
+
+        return evidence.SCHEMA
     return notes_mod.NOTES_SCHEMA if name == "notes.toml" else ledger_mod.JUDGEMENT_SCHEMA
 
 
@@ -1955,7 +1964,7 @@ def _ledger_carried(root: Path, rel: str, shared: Path, entry: Mapping[str, Any]
     except (OSError, UnicodeDecodeError, ShareError):
         return None
     carried = "carried"
-    for ledger in (key for key in TRAVELLING if _file_of(key) == name):  # a file may hold several ledgers
+    for ledger in (key for key in (*TRAVELLING, *PROPOSED) if _file_of(key) == name):  # a file may hold several
         mine, official = _parse(text, ledger), _parse(official_text, ledger)
         if mine is None or official is None:
             return None
@@ -2113,6 +2122,28 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
     state["sent_mappings"] = sent_mappings
     state["packets_sent"] = order
     return len(ids) + len(link_keys)
+
+
+def _propose_evidence(root: Path, state: dict[str, Any], shared: Path, problems: list[dict[str, Any]],
+                      now: Callable[[], datetime] | None) -> str | None:
+    """22.5: the member's 待批准 passage links not proposed yet, written as one signed `passage_evidence` proposal to
+    their area; `state["proposed_evidence"]` remembers the entries proposed, so none goes twice. Its id, or None."""
+    from researchos import proposals  # noqa: PLC0415
+
+    try:
+        if proposals.role_of(root)[0] != "member":
+            return None
+        draft = proposals.evidence_draft(root, state.get("proposed_evidence") or ())
+        if draft is None:
+            return None
+        stored = proposals.write_proposal(root, draft, exchange=ex_mod.LocalExchange(shared), now=now)
+    except (proposals.ProposalRefused, ExchangeError, OSError) as exc:
+        problems.append({"kind": "evidence_not_proposed", "path": f"{paths.PROJECT_DIRNAME}/evidence.toml",
+                         "detail": f"依据关系没有提议：{getattr(exc, 'message_zh', None) or exc}"})
+        return None
+    state["proposed_evidence"] = sorted({*(state.get("proposed_evidence") or ()),
+                                         *(item["id"] for item in draft.data["evidence"])})
+    return stored.id
 
 
 def _packet_order(data: Mapping[str, Any], packet_id: str) -> tuple[str, int, str]:

@@ -28,9 +28,13 @@ the engine's rule. A link stands while its current act is `link` or `reanchor`.
 **Trust** is 9.3's, as for `papers.toml` (no index copy): a file missing though a snapshot of it exists, in the cloud,
 unreadable, invalid, or with a sync conflict copy beside it refuses every write, and readers list no link and say why.
 
-**Who writes** (22.5): the PI and a single researcher. A member's links need the PI's approval, which is not built yet
-(B4): until then a member is refused and nothing is written in the working copy, so no entry exists that a later
-proposal would have to account for.
+**Who writes** (22.5): the PI and a single researcher, in the official version; a member, in their own working copy
+only. A member's entries are 待批准 there (`unapproved`: theirs, and not in the official version they synced to) and
+back nothing until approved: at 同步 they go, with the revision of each draft, into one proposal of the kind
+`passage_evidence` (`researchos.share`). Approving appends them to the official ledger with their own ids and
+`approved_by` (`settle`); returning appends them followed by the PI's acts that undo their effect -- a `withdraw` of a
+link they made -- so either way every entry of the member's is held by the official ledger, and their copy is replaced
+by it at the next sync with nothing left beside it.
 
 `resolve` finds a passage again in the draft's `\\n`-normalised text (22.2). It is a pure function: reading never
 writes the ledger, and nothing here ever writes the `.tex`.
@@ -78,9 +82,9 @@ MESSAGES = {
                 "The record of supporting files (evidence.toml) is not in the right form; fix it first"),
     "conflict_copy": ("依据文件记录旁有同步冲突副本，请先处理",
                       "A sync conflict copy sits beside the record of supporting files; deal with it first"),
-    "member": ("团队项目里，成员关联依据文件需要 PI 批准，这一步还没有做好；现在只有 PI 能关联。",
-               "In a team project a member's supporting files need the PI's approval, which is not available yet; "
-               "for now only the PI links them."),
+    "member": ("成员只能在自己的工作副本里关联依据文件，PI 批准后才进入正式版本",
+               "A member links supporting files in their own working copy only; they reach the official version "
+               "when the PI approves them"),
     "not_in_team": ("你还不是这个项目的成员，不能关联依据文件",
                     "You are not in this project's team yet, so you cannot link a supporting file"),
     "team_unreadable": ("成员名单（team.toml）当前无法读取，无法判断谁是 PI",
@@ -154,6 +158,9 @@ def _validate(entry: Mapping[str, Any]) -> None:
             raise ValueError(f"'note' is at most {MAX_NOTE} characters")
     if act in (LINK, REANCHOR):
         _validate_anchor(entry.get("anchor"))
+    approved_by = entry.get("approved_by")
+    if approved_by is not None and (not isinstance(approved_by, str) or "@" not in approved_by):
+        raise ValueError(f"'approved_by' names the PI who approved a member's act, got {approved_by!r}")
     via = entry.get("via")
     if via is not None and via not in VIAS:
         raise ValueError(f"'via' must be one of {', '.join(sorted(VIAS))}, got {via!r}")
@@ -171,7 +178,7 @@ SCHEMA = LedgerSchema(
     acts=ACTS,
     undo_act=UNDONE,
     key_fields=("link",),
-    field_order=("id", "seq", "at", "by", "act", "link", "draft", "file", "note", "via", "undoes"),
+    field_order=("id", "seq", "at", "by", "approved_by", "act", "link", "draft", "file", "note", "via", "undoes"),
     header=_HEADER,
     validate=_validate,
     validate_new=_validate_new,
@@ -215,9 +222,10 @@ def message_of(decision: TrustDecision) -> tuple[str, str] | None:
     return None if decision.reason is None else MESSAGES.get(decision.reason, MESSAGES["missing"])
 
 
-def links_from(loaded: LedgerLoad) -> dict[str, dict[str, Any]]:
+def links_from(loaded: LedgerLoad, waiting: frozenset[str] | set[str] = frozenset()) -> dict[str, dict[str, Any]]:
     """Every link that stands (its current act `link` or `reanchor`; a key in conflict counts, marked, until a new act
-    settles it): `{link, draft, file, note, anchor, entry (its link act), last (the act 撤销 would take back), conflict}`."""
+    settles it): `{link, draft, file, note, anchor, entry (its link act), last (the act 撤销 would take back), conflict,
+    pending}` -- `pending` (待批准, 22.5) when an act of its history is one of `waiting` (`unapproved`)."""
     if loaded.ledger is None:
         return {}
     ledger, out = loaded.ledger, {}
@@ -232,14 +240,48 @@ def links_from(loaded: LedgerLoad) -> dict[str, dict[str, Any]]:
             continue
         anchor = next(e for e in reversed(live) if e.get("act") in (LINK, REANCHOR)).get("anchor")
         out[key[0]] = {"link": key[0], "draft": made.get("draft"), "file": made.get("file"), "note": made.get("note"),
-                       "anchor": dict(anchor), "entry": made, "last": current.id, "conflict": state.conflict is not None}
+                       "anchor": dict(anchor), "entry": made, "last": current.id, "conflict": state.conflict is not None,
+                       "pending": any(e.id in waiting for e in state.history)}
     return out
 
 
 def links_now(project_root: str | Path) -> tuple[dict[str, dict[str, Any]], TrustDecision]:
     """The standing links, or none when the file cannot be trusted now (the decision says why). Reads only."""
     loaded, decision = assess(project_root)
-    return (links_from(loaded) if decision.may_apply else {}), decision
+    return (links_from(loaded, unapproved(project_root, loaded)) if decision.may_apply else {}), decision
+
+
+def _official_ids(project_root: str | Path) -> set[str] | None:
+    """The entry ids of the official ledger a member's working copy was synced to (its base), or None when this is no
+    member's working copy."""
+    from researchos import proposals  # noqa: PLC0415 -- proposals imports the records
+
+    root = Path(project_root)
+    try:
+        if proposals.role_of(root)[0] != "member":
+            return None
+        base = proposals.read_base(proposals._project_id(root))  # noqa: SLF001
+        if base is None or Path(base.working_copy).resolve() != root.resolve():
+            return None
+        return ledger_mod.parse_ledger((base.text(f"{paths.PROJECT_DIRNAME}/{EVIDENCE_FILENAME}") or "")
+                                       .removeprefix("\ufeff"), SCHEMA).ids
+    except (proposals.ProposalRefused, ledger_mod.LedgerInvalidError, OSError, ValueError, TypeError):
+        return None
+
+
+def unapproved(project_root: str | Path, loaded: LedgerLoad) -> set[str]:
+    """待批准 (22.5): in a member's working copy, the ids of their own entries the official version does not hold yet.
+    Empty anywhere else."""
+    from researchos import people  # noqa: PLC0415
+
+    official = _official_ids(project_root) if loaded.ledger is not None else None
+    if official is None:
+        return set()
+    try:
+        me = people.current_member_id()
+    except people.PeopleError:
+        return set()
+    return {e.id for e in loaded.ledger.entries if e.get("by") == me and e.id not in official}
 
 
 # -- finding a passage again (22.2) -------------------------------------------------------------------------------
@@ -376,7 +418,9 @@ def _may_write(root: Path) -> None:
     from researchos import proposals  # noqa: PLC0415 -- proposals imports the records
 
     role = proposals.role_of(root)[0]
-    if role not in ("pi", "single"):
+    if role == "member" and _official_ids(root) is None:
+        raise EvidenceRefused("member", "a member links in their own working copy only: nothing written")
+    if role not in ("pi", "single", "member"):
         code = _ROLE_REFUSAL.get(role, "team_unreadable")
         raise EvidenceRefused(code, f"{code}: nothing written")
 
@@ -518,3 +562,135 @@ def undo(project_root: str | Path, link: str, undoes: str, *, via: str, expected
         return {"act": UNDONE, "link": link, "undoes": undoes, "via": via}
 
     return _write(Path(project_root), plan, expected_id=expected_id, timeout=timeout, now=now)
+
+
+# -- a member's acts as a proposal, and the PI's answer (22.5) ----------------------------------------------------
+
+_ITEM_FIELDS = ("id", "at", "act", "link", "note", "via", "undoes")
+_ANCHOR_FIELDS = ("quote", "prefix", "suffix", "offset")
+
+
+def _current_of(entries: Any) -> str | None:
+    """The act that stands after `entries` (one link's, in file order), by the engine's undo rule."""
+    entries = list(entries)
+    cancelled = {e.get("undoes") for e in entries if e.get("act") == UNDONE}
+    return next((e.id for e in reversed(entries) if e.get("act") != UNDONE and e.id not in cancelled), None)
+
+
+def proposal_items(project_root: str | Path, loaded: LedgerLoad, skip: Any = ()) -> list[dict[str, Any]]:
+    """A member's 待批准 entries not in `skip` (already proposed), in file order, as a proposal's flat `[[evidence]]`:
+    the entry's fields and its anchor's, the link's `draft` and `file` (for the reader), and on the first entry of a link
+    made before, `follows` -- the act it stood on then, which approving requires to be the official one still ("" for a
+    link they make, which approving requires the official ledger not to hold)."""
+    waiting = unapproved(project_root, loaded) - set(skip)
+    out: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for e in loaded.ledger.entries if loaded.ledger is not None else ():
+        if e.id not in waiting:
+            continue
+        history = loaded.ledger.history(e.key)
+        made = next((x for x in history if x.get("act") == LINK), None)
+        item = {k: e.get(k) for k in _ITEM_FIELDS if e.get(k) is not None}
+        item.update(at=e.at, draft=made.get("draft") if made else None, file=made.get("file") if made else None,
+                    **{k: (e.get("anchor") or {}).get(k) for k in _ANCHOR_FIELDS})
+        if e.key not in seen:
+            seen.add(e.key)
+            item["follows"] = _current_of(x for x in history if x.index < e.index) or ""
+        out.append({k: v for k, v in item.items() if v is not None})
+    return out
+
+
+def entry_of(item: Mapping[str, Any], by: str, approved_by: str | None = None) -> dict[str, Any]:
+    """The ledger entry a proposal's item stands for, made by `by` (the member), approved by `approved_by`."""
+    entry = {k: item[k] for k in _ITEM_FIELDS if item.get(k) is not None}
+    entry.update(by=by, approved_by=approved_by)
+    if item.get("act") == LINK:
+        entry.update(draft=item.get("draft"), file=item.get("file"))
+    if item.get("act") in (LINK, REANCHOR):
+        entry["anchor"] = {k: item.get(k) for k in _ANCHOR_FIELDS}
+    return {k: v for k, v in entry.items() if v is not None}
+
+
+def check_item(item: Any, by: str) -> None:
+    """A proposal's item as read from the exchange: an entry the ledger would take. Raises ValueError."""
+    if not isinstance(item, Mapping) or not str(item.get("id") or "").startswith(SCHEMA.id_prefix):
+        raise ValueError("each [[evidence]] is a member's entry, with its pe-… id")
+    entry = entry_of(item, by)
+    ledger_mod._validate_engine_fields(SCHEMA, entry)  # noqa: SLF001
+    SCHEMA.validate(entry)
+    SCHEMA.validate_new(entry)
+    if item.get("follows") is not None and not isinstance(item["follows"], str):
+        raise ValueError("'follows' names the act the link stood on")
+
+
+def review(project_root: str | Path, items: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """What approving `items` would do to the official ledger (reads only): `state` `apply`, `same` (held already: an
+    approval taken up again), `conflict` (`code` `link_changed`: a link the member acted on is no longer as they saw
+    it, or one they made exists already) or `problem` (`code` `untrusted`)."""
+    loaded, decision = assess(project_root)
+    if not decision.may_write:
+        return {"state": "problem", "code": "untrusted", "words": message_of(decision) or MESSAGES["missing"]}
+    ledger = loaded.ledger or ledger_mod.parse_ledger("", SCHEMA)
+    if all(item["id"] in ledger.ids for item in items):
+        return {"state": "same"}
+    for item in (i for i in items if "follows" in i):   # the first entry of each link
+        state = ledger.state((item["link"],))
+        now = state.entry.id if state.entry is not None else ""
+        made_here = item["follows"] == "" and item.get("act") == LINK
+        if state.conflict is not None or (bool(state.history) if made_here else now != item["follows"]):
+            return {"state": "conflict", "code": "link_changed", "link": item["link"]}
+    return {"state": "apply"}
+
+
+def _as_ledger(datas: list[Mapping[str, Any]]) -> ledger_mod.Ledger:
+    return ledger_mod.Ledger(SCHEMA, tuple(ledger_mod.LedgerEntry(data=d, index=i, line=None, key=SCHEMA.key_of(d))
+                                           for i, d in enumerate(datas)), ())
+
+
+def _closing(ledger: ledger_mod.Ledger, entries: list[dict[str, Any]], via: str) -> list[dict[str, Any]]:
+    """The PI's acts that take back what `entries` did to each link when a proposal is returned: a link they made is
+    withdrawn; one that stood before stands again on its official passage (their withdraw undone, its anchor put back);
+    one withdrawn before is withdrawn again."""
+    close: list[dict[str, Any]] = []
+    for key in dict.fromkeys(SCHEMA.key_of(e) for e in entries):
+        state = ledger.state(key).entry
+        want = dict(state.get("anchor")) if state is not None and state.get("act") in (LINK, REANCHOR) else None
+        for _ in range(2):
+            after = _as_ledger([*ledger.entry_dicts(), *entries,
+                                *({**c, "id": f"pe-closing-{n}"} for n, c in enumerate(close))]).state(key).entry
+            act = after.get("act") if after is not None else None
+            if want is None and act in (LINK, REANCHOR):
+                close.append({"act": WITHDRAW, "link": key[0], "via": via})
+            elif want is not None and act == WITHDRAW:
+                close.append({"act": UNDONE, "link": key[0], "undoes": after.id, "via": via})
+                continue
+            elif want is not None and act in (LINK, REANCHOR) and dict(after.get("anchor")) != want:
+                close.append({"act": REANCHOR, "link": key[0], "anchor": want, "via": via})
+            break
+    return close
+
+
+def settle(project_root: str | Path, items: list[Mapping[str, Any]], member: str, *, approved_by: str | None, lock: Any,
+           via: str, now: Callable[[], datetime] | None = None) -> list[str]:
+    """The PI's answer written (under the held project lock): approved (`approved_by` the PI), the member's entries
+    with their own ids; returned (`approved_by` None), the same entries followed by the PI's `_closing` acts. Nothing
+    when the ledger holds them already. Returns the ids written."""
+    root = Path(project_root)
+    loaded, decision = assess(root)
+    if not decision.may_write:
+        raise EvidenceRefused("untrusted", f"{EVIDENCE_FILENAME} may not be written now ({decision.reason})",
+                              message_of(decision) or MESSAGES["missing"])
+    ledger = loaded.ledger or ledger_mod.parse_ledger("", SCHEMA)
+    if all(item["id"] in ledger.ids for item in items):
+        return []
+    entries = [entry_of(item, member, approved_by) for item in items]
+    if approved_by is None:
+        entries += _closing(ledger, entries, via)
+    try:
+        written = ledger_mod.append_many(evidence_path(root), SCHEMA, entries, lock=lock, project_root=root,
+                                         create=decision.may_create, now=now, adopt=True)
+    except LedgerWriteRefused as exc:
+        raise EvidenceRefused("not_written", str(exc)) from exc
+    if loaded.state is RecordState.ABSENT:
+        record_files.snapshot_if_first_change_today(root, evidence_path(root), now=now)
+    return [e.id for e in written]

@@ -7767,6 +7767,30 @@ file that is no longer in the project keeps its line, and 「这个文件现在�
 - **Export** runs on the Mac of the person who presses it, on their copy; the
   PDF is a file like any other for 12.4.
 
+*As built (B4, 2026-11-13).* 同步 itself makes the proposal: every entry of
+the member's that the official version they synced to does not hold, and
+that no earlier proposal carried, goes in one `passage_evidence` proposal
+(its own sentence empty, as a 「源自」 line's; it cannot be made by hand). Its
+revision of a draft is the draft's bytes in the working copy at that sync.
+The first entry about a link made before names the act the link stood on
+then (`follows`); approving refuses, with 「这段的关联在正式版本里已经和
+提议时不一样了」, when that is no longer the official one (or when a link the
+member made is there already), and refuses, naming the proposal, when a
+draft's official bytes differ from the revision and a pending file proposal
+of the same member carries it; a revision no proposal carries does not
+block (the link is then found again, or 待复核, in the official text). Every
+entry keeps its `id` and `at`; approving adds `approved_by`. Returning writes
+the member's entries followed by the PI's acts that take them back -- a
+`withdraw` of a link they made, the undo of their withdraw and a `reanchor`
+to the official passage for a link that stood -- and publishes, so that the
+member's copy, all of whose entries the official ledger then holds, is
+replaced at their next sync like a travelling ledger's, nothing put beside
+it. In the member's copy a link with an act of theirs not yet held is
+待批准: underlined in ochre, counted apart as 「{n} 段待批准」, absent from
+「{n} 段有依据文件」 on 图表与论断 and from a claim's 人工声明的依据文件. An
+engine that does not know the kind refuses the proposal as invalid, with
+nothing written.
+
 ### 22.6 Words
 
 New 13.4 rows, one English each, for the researcher to approve (22.0.2):

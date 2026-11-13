@@ -1052,8 +1052,25 @@
     }
     if (full.route) s.appendChild(line(RODesk.proposalWhat(full), ""));
     if (full.route && full.route.note) s.appendChild(mk("p", "desk-note", t("备注：{note}", { note: full.route.note })));
-    s.appendChild(fileList(full.files || [], null));
+    if (full.evidence) s.appendChild(evidenceList(full.evidence));
+    else s.appendChild(fileList(full.files || [], null));
     page.appendChild(s);
+  }
+
+  // 22.5: a 「依据关系」 proposal's entries: what was done, the passage quoted, its draft and its supporting file.
+  function evidenceList(items) {
+    const acts = { link: t("关联依据文件"), reanchor: t("指明段落现在的位置"), withdraw: t("撤回关联"), undone: t("撤销") };
+    const ul = mk("ul", "proposal-files");
+    items.forEach((i) => {
+      const li = mk("li", "proposal-file"), head = mk("div", "desk-head");
+      head.append(mk("span", "evidence-role", acts[i.act] || i.act || ""), mk("span", "mono", i.draft || ""));
+      li.appendChild(head);
+      if (i.quote) li.appendChild(mk("p", "desk-note plain", t("「{quote}」", { quote: i.quote })));
+      if (i.file) li.appendChild(mk("p", "desk-meta", t("依据文件：{file}", { file: String(i.file).replace(/^[a-z]+:/, "") })));
+      if (i.note) li.appendChild(mk("p", "desk-note", i.note));   // as the passage's panel shows it (22.2)
+      ul.appendChild(li);
+    });
+    return ul;
   }
 
   function fileList(files, changes) {
@@ -1163,12 +1180,21 @@
       else if (r.state === "same") box.appendChild(line(t("正式版本的连线记录里已经是这样了。"), "quiet"));
       s.appendChild(box);
     }
+    const e = c.evidence; // 22.5: the passages and their supporting files approving writes to the official record
+    if (e) {
+      const box = mk("div", "proposal-part");
+      box.appendChild(mk("p", "desk-head", t("批准后写入正式版本的依据关系")));
+      box.appendChild(evidenceList(e.items || []));
+      if (e.state === "conflict" || e.state === "problem") box.appendChild(mk("p", "desk-break", e.reason || ""));
+      else if (e.state === "same") box.appendChild(line(t("正式版本里已经有这些依据关系了。"), "quiet"));
+      s.appendChild(box);
+    }
     const files = c.files || [];
     if (files.length) {
       s.appendChild(mk("h4", "proposal-h4", t("文件")));
       s.appendChild(fileList(files, c));
     }
-    if (!a && !v && !r && !files.length) s.appendChild(line(t("这份提议没有带来任何改动。"), "quiet"));
+    if (!a && !v && !r && !e && !files.length) s.appendChild(line(t("这份提议没有带来任何改动。"), "quiet"));
     const ctxNow = RODesk.context();
     const coming = ctxNow && ctxNow.share && ctxNow.share.incoming;
     const carried = packetWords(coming);

@@ -1021,7 +1021,7 @@
     }
     const mapped = (changes, r) => r.from == null ? r : Object.assign({}, r, { from: changes.mapPos(r.from, -1), to: Math.max(changes.mapPos(r.from, -1), changes.mapPos(r.to, 1)) });
     const decorate = (list) => CM.Decoration.set([].concat.apply([], list.filter((p) => p.from != null && p.to > p.from).map((p) => [
-      CM.Decoration.mark({ class: "latex-passage" + (p.state === "found" ? "" : " latex-wait"), attributes: { "data-passage": p.key } }).range(p.from, p.to),
+      CM.Decoration.mark({ class: "latex-passage" + (p.state === "found" && !p.pending ? "" : " latex-wait"), attributes: { "data-passage": p.key } }).range(p.from, p.to),
       CM.Decoration.widget({ widget: new Count(p), side: -1 }).range(p.from),
     ])), true);
     const field = CM.StateField.define({
@@ -1070,6 +1070,7 @@
       if (!groups.has(at)) { groups.set(at, Object.assign(p, { key: item.link, quote: item.quote, links: [] })); list.push(groups.get(at)); }
       groups.get(at).links.push(item);
     });
+    list.forEach((p) => { p.pending = p.links.every((l) => l.pending); });   // 22.5: 待批准 backs nothing
     me.evidence = { trusted: data.trusted, message: data.message };
     if (me.panel && me.panel !== "link") {
       const kept = list.find((p) => p.links.some((l) => l.link === me.panel));
@@ -1261,6 +1262,7 @@
     me.panel = key;
     const side = me.ui.side, head = mk("div", "latex-side-head");
     head.appendChild(mk("h3", "latex-side-title", t("依据文件")));
+    if (p.pending) head.append(mk("span", "status-label tone-ochre", t("待批准")));
     if (p.state !== "found") head.append(mk("span", "status-label tone-ochre", t("待复核")), mk("span", "node-sub-inline", p.state === "deleted" ? t("段落已被删掉") : t("依据已变化")));
     const files = mk("ul", "latex-files");
     p.links.forEach((l) => {
@@ -1306,12 +1308,14 @@
     const parts = [];
     if (ev.failed) parts.push(mk("p", "notice-status err", t("没能读到这份文稿的依据文件")));
     if (ev.message) parts.push(mk("p", "notice-status err", ev.message));
-    const waiting = list.filter((p) => p.state !== "found");
+    const backed = list.filter((p) => !p.pending), waiting = backed.filter((p) => p.state !== "found");
+    const pending = list.filter((p) => p.pending);
     if (list.length) {
-      const counts = mk("p", "latex-counts", t("{n} 段有依据文件", { n: list.length }));
+      const counts = mk("p", "latex-counts", backed.length ? t("{n} 段有依据文件", { n: backed.length }) : "");
       if (waiting.length) counts.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
+      if (pending.length) counts.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待批准", { n: pending.length })));
       parts.push(counts);
-      waiting.forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
+      waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
     } else if (me.mayLink) parts.push(mk("p", "node-sub", t("选中一段文字，可以关联依据文件。")));
     side.replaceChildren(...parts);
   }
@@ -1493,7 +1497,7 @@
       if (data.message) block.appendChild(mk("p", "notice-status err", data.message));
       const ul = mk("ul", "res-list");
       passages.forEach((p) => {
-        const li = mk("li", "res-row"), main = mk("div", "res-main"), seen = pageState(p.state);
+        const li = mk("li", "res-row"), main = mk("div", "res-main"), seen = p.pending ? [t("待批准"), "ochre"] : pageState(p.state);
         main.append(mk("span", "mono", p.draft));
         if (p.section) main.append(mk("span", "node-sub-inline", p.section));
         main.append(mk("span", "status-label tone-" + seen[1], seen[0]), mk("div", "latex-excerpt", p.excerpt));
@@ -1520,7 +1524,7 @@
     apiGet("/api/latex/evidence?path=" + encodeURIComponent(path)).then((data) => {
       if (data.message) { say(data.message); return; }
       const all = new Set(), waiting = new Set();
-      (data.links || []).forEach((l) => {
+      (data.links || []).filter((l) => !l.pending).forEach((l) => {
         const key = l.state === "found" ? l.from + ":" + l.to : l.link;
         all.add(key);
         if (l.state !== "found") waiting.add(key);
