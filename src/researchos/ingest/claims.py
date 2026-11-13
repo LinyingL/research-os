@@ -368,14 +368,22 @@ class ParsedClaim:
     value: float  # normalized, comparable across percent/fraction
     precision_decimals: int  # rounding precision derived from `raw`
     # DESIGN 22.3: where the sentence is in the file, `[start, end)` in code points of the decoded text with a CRLF
-    # counted as two (22.1's coordinates), its surrounding whitespace left out. A .tex claim only; never stored.
+    # counted as two (22.1's coordinates), its surrounding whitespace and closing punctuation left out. A .tex claim
+    # only; never stored.
     span: tuple[int, int] | None = None
+
+
+# 22.3: the closing punctuation a sentence's span leaves out, so a passage that stops before the full stop still holds it.
+_SPAN_END_RE = re.compile(r"(?:[.!?]|[。！？]+[」』”’）】》〉\"')\]]*)$")
 
 
 def _sentence_span(line: str, bounds: tuple[int, int], start: int) -> tuple[int, int]:
     left, right = bounds
     piece = line[left:right]
-    return start + left + len(piece) - len(piece.lstrip()), start + right - len(piece) + len(piece.rstrip())
+    kept = piece.rstrip()
+    end = _SPAN_END_RE.search(kept)
+    kept = kept[: end.start()] if end else kept
+    return start + left + len(piece) - len(piece.lstrip()), start + left + len(kept)
 
 
 def _scan_claims_in_lines(

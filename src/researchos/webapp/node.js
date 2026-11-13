@@ -1746,10 +1746,14 @@
     section.appendChild(list);
   }
 
-  // 22.3: 「人工声明的依据文件：{file}」, one line per file, quiet.
+  // 22.3: 「人工声明的依据文件：{file}」, one line per file, quiet; a file gone from the project says so in ochre (22.2).
   function declaredLines(files, tag, cls) {
     const box = mk("div", cls);
-    files.forEach((file) => box.appendChild(mk(tag, "node-sub-inline", t("人工声明的依据文件：{file}", { file: file }))));
+    files.forEach((d) => {
+      const line = mk(tag, "node-sub-inline", t("人工声明的依据文件：{file}", { file: d.file }));
+      if (d.missing) line.append(" ", mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
+      box.appendChild(line);
+    });
     return box;
   }
 

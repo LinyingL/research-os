@@ -7613,6 +7613,18 @@ is tested against. Only a found passage declares; one 待复核 or withdrawn
 does not, nor a ledger that cannot be trusted. On the claim's page the line
 stands under the trace, outside its columns.
 
+*As built, after review (B3c, 2026-11-13).* The span also leaves out the
+sentence's closing punctuation (`.` `!` `?`, or a run of `。！？` with the
+closing quotes after it), so a passage that stops before the full stop holds
+it. A sentence is the claims reader's: it is read one source line at a time,
+so for a claim on the second line of a hard-wrapped sentence the sentence is
+that line's part, and a passage of that part alone declares. One sentence
+printed twice under one heading is one claim id, and it declares the files of
+the passages around either copy. A link whose acts are in a sync conflict
+stands until a new act settles it, and declares like any other. A declared
+file that is no longer in the project keeps its line, and 「这个文件现在不在
+项目里」 follows it as an ochre label, as in the editor's panel (22.2).
+
 ### 22.4 Export to PDF
 
 - **Where.** 「导出 PDF」 in the editor's toolbar (a quiet button) and on a

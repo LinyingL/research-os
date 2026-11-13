@@ -913,7 +913,7 @@ def _draft_files(conn: Connection) -> set[str]:
     return found
 
 
-def _declared(root: Path, draft: str | None) -> dict[str, list[str]]:
+def _declared(root: Path, draft: str | None) -> dict[str, list[dict[str, Any]]]:
     """22.3: 人工声明的依据文件 of a .tex draft's claims, by claim id (`latex_edit.declared_by_claim`)."""
     if not draft or not draft.endswith(".tex"):
         return {}

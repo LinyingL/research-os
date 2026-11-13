@@ -596,10 +596,10 @@ def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[st
     return {"file": node, "passages": out, **_record_state(decision, lang)}
 
 
-def declared_by_claim(root: str | Path, rel: str) -> dict[str, list[str]]:
-    """人工声明的依据文件 of each claim of the draft `rel` (22.3): claim id to the supporting files of every found
-    passage its sentence lies in, by position -- the claims reader's span tested against the passage's found range,
-    both in the editor's positions, on the one text read now. Nothing when the draft cannot be read as a draft or the
+def declared_by_claim(root: str | Path, rel: str) -> dict[str, list[dict[str, Any]]]:
+    """人工声明的依据文件 of each claim of the draft `rel` (22.3): claim id to `{file, missing}` for the supporting file of
+    every found passage its sentence lies in (`missing` when the file has gone from the project), by position -- the
+    claims reader's span tested against the passage's found range, both in the editor's positions, on the one text read now. Nothing when the draft cannot be read as a draft or the
     ledger cannot be trusted. It is shown beside a claim's state and never changes it. Writes nothing."""
     from researchos.ingest import claims as claims_ingest  # noqa: PLC0415 -- the scan's reader, only when asked
 
@@ -622,13 +622,13 @@ def declared_by_claim(root: str | Path, rel: str) -> dict[str, list[str]]:
         claims = claims_ingest.parse_tex_claims(root, rel, text) if ranges else []
     except OSError:   # its sections are read from the file again; gone or in the cloud since
         return {}
-    out: dict[str, list[str]] = {}
-    for claim in claims:
-        files = {notes.node_path(f) or f for start, end, f in ranges
-                 if claim.span is not None and start <= claim.span[0] and claim.span[1] <= end}
-        if files:
-            out[claim.id] = sorted(files)
-    return out
+    got: dict[str, set[str]] = {}
+    for claim in claims:   # one sentence printed twice in a section is one id: the files of both are kept
+        got.setdefault(claim.id, set()).update(f for start, end, f in ranges
+                                               if claim.span is not None and start <= claim.span[0] and claim.span[1] <= end)
+    return {cid: [{"file": notes.node_path(f) or f, "missing": _missing(root, f)}
+                  for f in sorted(files, key=lambda f: notes.node_path(f) or f)]
+            for cid, files in got.items() if files}
 
 
 #: The order the link panel lists a project's files in (22.2): figures and tables, then data, scripts, documents.

@@ -65,6 +65,10 @@ def paper(tmp_path) -> Path:
     return root
 
 
+def _files(*files: str) -> list[dict]:
+    return [{"file": f, "missing": False} for f in files]
+
+
 def _claims(root: Path) -> dict[str, dict]:
     page = _results(root, PATH)
     return {c["number"]: c for g in page["sections"] for c in g["claims"]}
@@ -79,8 +83,8 @@ def test_each_claims_span_is_its_sentence_in_code_points_with_a_crlf_counted_as_
         (tmp_path / PATH).write_bytes(text.encode("utf-8"))
         got = claims_ingest.parse_tex_claims(tmp_path, PATH)
         assert [c.printed_number for c in got] == ["0.42", "12.5", "3.14"]
-        for claim in got:
-            assert text[claim.span[0]:claim.span[1]] == claim.sentence
+        for claim in got:   # the sentence without its closing punctuation (a passage often stops before the full stop)
+            assert text[claim.span[0]:claim.span[1]] == claim.sentence.rstrip("。.")
         spans[name] = got
     crlf, lf = spans["crlf"], spans["lf"]
     assert [(c.id, c.line, c.sentence) for c in crlf] == [(c.id, c.line, c.sentence) for c in lf]
@@ -94,14 +98,14 @@ def test_a_claim_inside_a_found_passage_names_its_supporting_files_and_keeps_its
     number alone, which covers only part of the sentence. 12.5 lies only in the line; 3.14 in no passage. The state of
     each is 缺来源 with its warning, as before: a declaration does not clear it (22.0.4), and nothing is put under 依据."""
     claims = _claims(paper)
-    assert claims["0.42"]["declared"] == ["data/x.csv", "figures/f1.png"]
-    assert claims["12.5"]["declared"] == ["data/x.csv"]
+    assert claims["0.42"]["declared"] == _files("data/x.csv", "figures/f1.png")
+    assert claims["12.5"]["declared"] == _files("data/x.csv")
     assert claims["3.14"]["declared"] == []
     for claim in claims.values():
         assert (claim["trace"]["state"], claim["trace"]["label"], claim["trace"]["tone"]) == ("no_source", "缺来源", "warning")
         assert [c["code"] for c in claim["trace"]["causes"]] == ["no_backing"]
     page = _page(paper, claims["0.42"]["id"])
-    assert page["details"]["declared"] == ["data/x.csv", "figures/f1.png"]
+    assert page["details"]["declared"] == _files("data/x.csv", "figures/f1.png")
     before = page["trace"]["columns"][0]
     assert before["key"] == "before" and before["items"] == [] and before["gap"]["kind"] == "no_backing"
     assert _page(paper, claims["3.14"]["id"])["details"]["declared"] == []
@@ -114,7 +118,7 @@ def test_a_passage_waiting_for_review_or_withdrawn_declares_nothing(paper):
     (paper / PATH).write_bytes(text.replace("另一句", "另外一句").encode("utf-8"))
     _scan(paper)
     claims = _claims(paper)
-    assert claims["0.42"]["declared"] == ["figures/f1.png"] and claims["12.5"]["declared"] == []
+    assert claims["0.42"]["declared"] == _files("figures/f1.png") and claims["12.5"]["declared"] == []
     sentence = next(item for item in evidence.links_now(paper)[0].values() if item["file"] == "figure:figures/f1.png")
     latex_edit.evidence_act(paper, "withdraw", {"link": sentence["link"]})
     assert all(c["declared"] == [] for c in _claims(paper).values())
@@ -205,3 +209,108 @@ def test_the_row_and_the_page_show_the_declared_file_quietly_in_a_column_of_thei
                    language=lang, view="node")
     assert out["declared"] == [[word.format("data/x.csv"), word.format("figures/f1.png")]]
     assert out["inColumns"] == [0, 0, 0][:len(out["inColumns"])] and out["gap"] == 1
+
+
+# -- what the review of B3c found --------------------------------------------------------------------------------------
+
+
+def _draft(tmp_path, lines: list[str], links: list[tuple[str, str, int]]) -> Path:
+    """A draft of `lines` (LF) and one link per (words, file, which occurrence of the words), no scan needed."""
+    root = tmp_path / "p"
+    root.mkdir(parents=True)
+    project.init_project(root)
+    for rel in ("data/x.csv", "data/y.csv"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(b"x")
+    (root / PATH).parent.mkdir(parents=True)
+    (root / PATH).write_bytes("\n".join(lines).encode("utf-8"))
+    for words, file, nth in links:
+        text, start = (root / PATH).read_bytes().decode("utf-8"), -1
+        for _ in range(nth + 1):
+            start = text.index(words, start + 1)
+        latex_edit.evidence_act(root, "link", {"path": PATH, "revision": _sha(root), "from": start,
+                                               "to": start + len(words), "file": file})
+    return root
+
+
+def _only(root: Path) -> list[dict]:
+    got = latex_edit.declared_by_claim(root, PATH)
+    assert len(got) == 1, got
+    return next(iter(got.values()))
+
+
+def test_one_sentence_printed_twice_in_a_section_keeps_the_files_of_both_copies(tmp_path):
+    """The same sentence twice under one heading is one claim id; its first copy linked to x.csv and its second to
+    y.csv, both files are declared for it -- the second no longer replaces the first."""
+    sentence = "Effect is 0.42 here."
+    root = _draft(tmp_path, ["\\section{A}", sentence, "", sentence, ""],
+                  [(sentence, "data/x.csv", 0), (sentence, "data/y.csv", 1)])
+    assert len({c.id for c in claims_ingest.parse_tex_claims(root, PATH)}) == 1
+    assert _only(root) == _files("data/x.csv", "data/y.csv")
+
+
+def test_a_supporting_file_gone_from_the_project_is_declared_and_marked_missing(tmp_path):
+    """22.2: a link whose file is no longer in the project stands and is shown as such. The claim still names the file,
+    with `missing`, so its row and page can say 「这个文件现在不在项目里」 in ochre."""
+    sentence = "Effect is 0.42 here."
+    root = _draft(tmp_path, ["\\section{A}", sentence, ""], [(sentence, "data/x.csv", 0)])
+    (root / "data/x.csv").unlink()
+    assert _only(root) == [{"file": "data/x.csv", "missing": True}]
+
+
+@pytest.mark.parametrize("line,words", [
+    ("效应是 0.42，而且显著。", "效应是 0.42，而且显著"),
+    ("他说“效应是 0.42。”", "他说“效应是 0.42"),
+    ("Effect is 0.42 here.", "Effect is 0.42 here"),
+    ("Is the effect 0.42?  ", "Is the effect 0.42"),
+])
+def test_a_passage_that_stops_before_the_full_stop_still_holds_the_sentence(tmp_path, line, words):
+    """A drag selection often stops before the full stop: the span leaves the closing punctuation (and closing quotes
+    after a Chinese one) out, so such a passage declares; one that stops inside the sentence's words still does not."""
+    root = _draft(tmp_path, ["\\section{A}", line, ""], [(words, "data/x.csv", 0)])
+    assert _only(root) == _files("data/x.csv")
+    short = _draft(tmp_path / "short", ["\\section{A}", line, ""], [(words[:-2], "data/x.csv", 0)])
+    assert latex_edit.declared_by_claim(short, PATH) == {}
+
+
+def test_a_hard_wrapped_sentence_is_its_part_on_the_claims_own_line(tmp_path):
+    """The claims reader reads a sentence one source line at a time, so a sentence hard-wrapped over two lines is, for the
+    claim on the second line, only that line's part: a passage of that part declares for it, and a passage of the first
+    line's part does not."""
+    lines = ["\\section{A}", "The first half of the sentence says", "the effect is 0.42 in the sample.", ""]
+    root = _draft(tmp_path, lines, [("the effect is 0.42 in the sample", "data/x.csv", 0)])
+    assert _only(root) == _files("data/x.csv")
+    first = _draft(tmp_path / "first", lines, [("The first half of the sentence says", "data/y.csv", 0)])
+    assert latex_edit.declared_by_claim(first, PATH) == {}
+
+
+def test_a_link_in_conflict_still_declares(tmp_path, monkeypatch):
+    """A link whose acts are in a sync conflict stands, marked, until a new act settles it (`links_from`); it is found in
+    the text like any other, so it declares."""
+    sentence = "Effect is 0.42 here."
+    root = _draft(tmp_path, ["\\section{A}", sentence, ""], [(sentence, "data/x.csv", 0)])
+    real = evidence.links_now
+
+    def in_conflict(project_root):
+        links, decision = real(project_root)
+        return {k: {**v, "conflict": True} for k, v in links.items()}, decision
+
+    monkeypatch.setattr(evidence, "links_now", in_conflict)
+    assert _only(root) == _files("data/x.csv")
+
+
+@needs_node
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_a_declared_file_gone_from_the_project_says_so_in_ochre_on_the_page(paper, lang):
+    """On the claim's page a declared file that is no longer in the project keeps its line and adds 21.5's sentence as an
+    ochre status label; a file still there has none."""
+    page = _page(paper, _claims(paper)["0.42"]["id"])
+    page["details"]["declared"][0]["missing"] = True
+    script = _PAGE.replace('gap: byClass(cols[0], "trace-gap").length',
+                           'gap: byClass(cols[0], "trace-gap").length, ochre: byClass(host, "trace-declared")'
+                           '.map((d) => byClass(d, "tone-ochre").map(text))')
+    out = node_run(script % {"page": json.dumps(page, ensure_ascii=False)}, language=lang, view="node")
+    gone = {"zh": "这个文件现在不在项目里", "en": "This file is no longer in the project"}[lang]
+    assert out["ochre"] == [[gone]]
+    assert out["declared"][0][0].startswith({"zh": "人工声明的依据文件：data/x.csv", "en": "Supporting file declared by a person: data/x.csv"}[lang])
+    assert out["declared"][0][1] == {"zh": "人工声明的依据文件：figures/f1.png", "en": "Supporting file declared by a person: figures/f1.png"}[lang]
