@@ -93,6 +93,8 @@ def test_latex_js_shows_no_chevron_or_arrow_as_ui_text_and_draws_none_in_css():
 def test_an_equations_number_follows_it_and_never_covers_its_last_characters():
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     assert ".latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static;" in css
+    # a wide formula with its number in the flow scrolls in its own line, never past the column (review of 8439d3c)
+    assert ".latex-math-display { display: block; text-align: center; margin: .2rem 0; overflow-x: auto; overflow-y: hidden; }" in css
     katex = (WEBAPP / "vendor" / "katex.css").read_text(encoding="utf-8")
     assert ".katex-display>.katex>.katex-html>.katex-tag{position:absolute;right:0}" in katex   # what it overrides
 
@@ -145,6 +147,20 @@ def test_the_link_panel_never_offers_the_draft_its_papers_other_drafts_or_its_ex
     assert "other/notes.tex" not in alone and "paper/chapters/model.tex" in alone and "paper/main.pdf" in alone
 
 
+def test_a_draft_gone_or_not_a_tex_leaves_out_only_its_own_path_and_the_list_never_fails(tmp_path):
+    from researchos import latex_edit
+
+    root = _paper(tmp_path)
+    every = [f["path"] for f in latex_edit.supporting_files(root, "")["files"]]
+    # deleted on disk while the editor is open, a path that is not a .tex, one outside the project, not a string
+    (root / "paper/chapters/model.tex").unlink()
+    gone = [f["path"] for f in latex_edit.supporting_files(root, "", draft="paper/chapters/model.tex")["files"]]
+    assert gone == [p for p in every if p != "paper/chapters/model.tex"]
+    for draft in ("paper/refs.bib", "nonexist.tex", "../x.tex", 7):
+        offered = [f["path"] for f in latex_edit.supporting_files(root, "", draft=draft)["files"]]
+        assert offered == [p for p in every if p != draft and p != "paper/chapters/model.tex"], draft
+
+
 def test_the_files_search_takes_the_open_draft_from_the_editor_and_the_server():
     from pathlib import Path
 
@@ -157,10 +173,77 @@ def test_the_files_search_takes_the_open_draft_from_the_editor_and_the_server():
 def test_a_link_acts_undo_names_what_it_takes_back_and_stands_with_its_status_apart_from_undo_this_save():
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     assert 'mkButton(t("撤销"),' not in js                               # no bare 撤销 beside 撤销这次保存
-    assert ('return action === "link" ? t("撤销这次关联") : action === "withdraw" ? t("撤销这次撤回") : '
-            't("撤销这次确认");') in js
-    assert "me.ui.undoLink.textContent = undoActWords(action);" in js
+    words = js[js.index("  function undoActWords(action, done) {"):js.index("  // 撤销: the entries the last act wrote")]
+    assert 'if (action === "link") return t("撤销这次关联");' in words
+    assert 'if (action === "withdraw") return t("撤销这次撤回");' in words
+    # a reanchor's undo is named after what its status said, never 「确认」, the link's word (review of 8439d3c)
+    assert 'return done === t("已记录：仍然成立") ? t("撤销“仍然成立”") : t("撤销“是这段”");' in words
+    assert "撤销这次确认" not in js
+    assert "me.ui.undoLink.textContent = undoActWords(action, done);" in js
     assert "said.append(status, undoLink);" in js and "tools.append(save, undo, exported.button, source, said);" in js
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
-    for zh, en in (("撤销这次关联", "Undo this link"), ("撤销这次撤回", "Undo this withdrawal"), ("撤销这次确认", "Undo this confirmation")):
+    for zh, en in (("撤销这次关联", "Undo this link"), ("撤销这次撤回", "Undo this withdrawal"),
+                   ("撤销“是这段”", "Undo “This is the passage”"), ("撤销“仍然成立”", "Undo “Still holds”")):
         assert f'"{zh}": "{en}",' in i18n
+
+
+# -- the real path: L.open() and 显示源码 under the editor's driver (review of 8439d3c) --------------------------------
+
+_OPEN_DRIVEN = r"""
+const out = {}, MODEL = __MODEL__;
+const F = L._pure.wordField(CM);
+const shown = (st) => { const g = []; const w = st.field(F.field, false); if (!w) return null;
+  w.deco.between(0, st.doc.length, (f, t, v) => g.push(st.doc.sliceString(f, t) + '=' + (v.spec.class || (v.spec.widget ? v.spec.widget.constructor.name : 'hidden'))));
+  return g; };
+evidenceAnswer = () => ({revision: 'r1', links: [{link: 'pl-1', last: 'pe-1', quote: '是基准', file: 'figure:figures/fig1.pdf', note: null,
+  label: 'Li', at: null, state: 'changed', from: null, to: null, candidates: [{from: MODEL.indexOf('式'), to: MODEL.length - 1, text: '式 是基准。'}],
+  file_missing: false}]});
+L.open('paper/chapters/model.tex'); await tick();
+gets.shift().res({path: 'paper/chapters/model.tex', text: MODEL, revision: 'r1', line_ending: 'lf', read_only: false, links: [], mains: []});
+await tick(); await tick(); await tick();
+const V = viewsMade[viewsMade.length - 1];
+out.cursor = V.state.selection.main.head;
+out.opened = shown(V.state);
+const source = byClass('latex-source');
+source.fire('click'); await tick();
+out.sourceOn = shown(V.state);
+source.fire('click'); await tick();
+out.sourceOff = shown(V.state);
+V.hasFocus = true;                                   // with the focus the cursor at 0 shows the heading's source
+source.fire('click'); await tick(); source.fire('click'); await tick();
+out.focusedOff = shown(V.state);
+// 是这段 on the waiting passage: its undo is named after what the status said
+all.filter((e) => e.classList.contains('latex-waiting')).pop().fire('click'); await tick();
+button('是这段').fire('click'); await tick();
+const re = posts.shift(); out.reanchor = re.url;
+re.res({act: 'reanchor', link: 'pl-1', entry: 'pe-2'}); await tick(); await tick(); await tick();
+const actUndo = all.filter((e) => e.classList.contains('latex-act-undo')).pop();
+out.undoWords = actUndo.textContent; out.undoHidden = actUndo.classList.contains('hidden');
+out.status = byClass('latex-act').children[0].textContent;
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_l_open_shows_model_tex_section_as_a_heading_and_show_source_twice_keeps_it_until_focused():
+    import json
+    import subprocess
+
+    from test_v17_latex_editor import _DRIVER
+
+    prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
+                                                     "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    script = (prelude + "(async () => {\n" + _OPEN_DRIVEN.replace("__MODEL__", json.dumps(MODEL))
+              + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });")
+    got = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, timeout=60).stdout
+    out = json.loads(got.strip().splitlines()[-1])
+    assert "error" not in out, out.get("error")
+    assert out["cursor"] == 0
+    for drawn in (out["opened"], out["sourceOff"]):
+        assert "模型=latex-h latex-h2" in drawn and "\\section{=hidden" in drawn, drawn
+        assert "\\section=latex-cmd" not in drawn
+    assert out["sourceOn"] is None                                       # 显示源码: no word field at all
+    assert "模型=latex-h latex-h2" not in out["focusedOff"]              # focused: the cursor's construct as source
+    assert out["reanchor"] == "/api/latex/evidence/reanchor"
+    assert out["status"] == "已记录：是这段"
+    assert out["undoWords"] == "撤销“是这段”" and not out["undoHidden"]

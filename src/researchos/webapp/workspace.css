@@ -367,8 +367,10 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-h1 { font-size: 1.4rem; } .latex-h2 { font-size: 1.25rem; } .latex-h3 { font-size: 1.1rem; } .latex-h4, .latex-h5 { font-size: 1rem; }
 .latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
 .latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
-.latex-math-display { display: block; text-align: center; margin: .2rem 0; }
-/* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is narrow */
+/* a formula wider than the column scrolls inside its own line, never past the column (as KaTeX's own advice) */
+.latex-math-display { display: block; text-align: center; margin: .2rem 0; overflow-x: auto; overflow-y: hidden; }
+/* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is
+   narrow. In the flow, the formula and its number are centred together, so the formula sits half a number to the left. */
 .latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static; margin-left: 1.2em; }
 .latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
 .latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }

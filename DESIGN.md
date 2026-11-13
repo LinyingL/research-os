@@ -7477,8 +7477,9 @@ only how it looks changes. Where the selection does not touch them:
   gif or webp the asset route serves, its thumbnail (21.5);
 - `itemize` and `enumerate` items are indented with a bullet or number, the
   `\item` hidden; `\footnote{…}` a small mark that opens its text in place;
-- comments are in the quiet gray; **the preamble** is folded under 「导言区」
-  with the chevron and opens as source;
+- comments are in the quiet gray; **the preamble** is folded under
+  「导言区（已折叠，点开）」, said in words with no chevron, and opens as source
+  under 「收起导言区」;
 - **everything else is shown as written**, in the mono face for the command
   only: `tabular`, `\newcommand`, any macro the editor does not know. The
   editor never guesses what an unknown command means.
@@ -7818,7 +7819,11 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 撤销这次保存 | Undo this save |
 | 导出 PDF | Export PDF |
 | 导出的 PDF | Exported PDF |
-| 导言区 | Preamble |
+| 导言区（已折叠，点开） | Preamble (folded, click to open) |
+| 收起导言区 | Fold the preamble |
+| 撤销这次关联 | Undo this link |
+| 撤销这次撤回 | Undo this withdrawal |
+| 撤销“是这段” / 撤销“仍然成立” | Undo “This is the passage” / Undo “Still holds” (a reanchor's undo, named after what its status said, never 确认, the link's word) |
 | 显示源码 | Show source |
 | 依据关系 | Supporting-file links (the proposal's kind, 22.5) |
 | 待批准 | Awaiting approval (it had no English before B4) |

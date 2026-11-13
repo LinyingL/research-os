@@ -1145,7 +1145,7 @@
     if (ed !== me) return false;
     me.acting = false;
     me.lastAct = wrote.filter((w) => w.link && w.entry);
-    me.ui.undoLink.textContent = undoActWords(action);
+    me.ui.undoLink.textContent = undoActWords(action, done);
     me.ui.undoLink.classList.toggle("hidden", !me.lastAct.length);
     if (failed) setStatus(me.ui.status, "err", t("关联没有写入"), failed);
     else setStatus(me.ui.status, "ok", done);
@@ -1153,8 +1153,11 @@
     return !failed;
   }
 
-  function undoActWords(action) {
-    return action === "link" ? t("撤销这次关联") : action === "withdraw" ? t("撤销这次撤回") : t("撤销这次确认");
+  // A reanchor's undo is named after what its status said (「是这段」 or 「仍然成立」), never 「确认」, the link's word (22.6).
+  function undoActWords(action, done) {
+    if (action === "link") return t("撤销这次关联");
+    if (action === "withdraw") return t("撤销这次撤回");
+    return done === t("已记录：仍然成立") ? t("撤销“仍然成立”") : t("撤销“是这段”");
   }
   // 撤销: the entries the last act wrote taken back, newest first (the engine's `undone`).
   async function undoAct(me) {

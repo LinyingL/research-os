@@ -661,11 +661,18 @@ def supporting_files(root: str | Path, query: Any, limit: int = 50, draft: Any =
     """The project's files the link panel offers as a passage's supporting file (22.2): every file the scan's walk
     lists (no hidden folder, no symlink), its path containing `query` as a Mac volume compares names, figures and
     tables first, then data, scripts and documents; with `draft`, the draft being edited, never that draft, the other
-    drafts of its paper or the PDF exported from it (`_own_paper`). `group` is one of `_FILE_GROUPS`. Reads directory
-    listings, and with `draft` the paper's `.tex` files and papers.toml."""
+    drafts of its paper or the PDF exported from it (`_own_paper`); a `draft` the editor may no longer open (deleted
+    or renamed on disk while open, not a `.tex`) or whose paper cannot be read leaves out only that path, so the list
+    never fails for it. `group` is one of `_FILE_GROUPS`. Reads directory listings, and with `draft` the paper's
+    `.tex` files and papers.toml."""
     root = workspace._root(root)  # noqa: SLF001
     wanted = files_ingest.fold(query.strip()) if isinstance(query, str) else ""
-    own = _own_paper(root, checked_path(root, draft)) if draft else set()
+    own: set[str] = set()
+    if draft:
+        try:
+            own = _own_paper(root, checked_path(root, draft))
+        except (WorkspaceError, OSError, ValueError):
+            own = {files_ingest.fold(draft)} if isinstance(draft, str) else set()
     found: list[tuple[int, str, str]] = []
     walked = 0
     for rel, _category in files_ingest.iter_files(root):
