@@ -331,7 +331,13 @@
     if (!me.busy) setStatus(me.ui.status, "", dirty() ? t("尚未保存") : "");
   }
 
-  async function saveNow() {
+  // The save now running is kept as `me.saving`: an export asked meanwhile waits for its answer (22.4).
+  function saveNow() {
+    const me = ed, idle = !!me && !me.busy, done = saveOnce();
+    if (idle && me.busy) me.saving = done;
+    return done;
+  }
+  async function saveOnce() {
     const me = ed;
     if (!me || me.readOnly || me.busy) return;
     if (me.view.composing) { me.afterComposing = saveNow; return; }
@@ -356,6 +362,7 @@
     }
     if (ed !== me) return;
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
+    if (lastShown && lastShown.path === me.path) lastShown = null;   // an export's answer is about the text before this save
     clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
     const emptied = checkPassages(me);
     if (r.changed && r.previous) me.lastSave = { revision: r.revision, previous: r.previous };
@@ -794,12 +801,18 @@
   // -- export to PDF (22.4, B2b) ------------------------------------------------------------------------------------
 
   const ENGINE_NAMES = { pdflatex: "pdfLaTeX", xelatex: "XeLaTeX", lualatex: "LuaLaTeX" };
-  // The last export's answer, {path, r}: a page drawn again (the scan after an export redraws a file's page) shows it again.
+  // The last export's answer, {path, r}: the draft's page drawn again (the scan after an export redraws it) shows it
+  // again, until the draft is saved, another draft's export is drawn or its PDF is no longer the last one there.
   let lastShown = null;
+  // The draft whose export runs, {path, using}, and the exporters drawn for each draft: a page drawn again during the run
+  // shows 正在导出… with 停止, and the answer reaches the page now shown, not a block no longer on screen.
+  let exporting = null;
+  const drawn = {};
 
-  // 22.4 "Before running": the editor's unsaved text is saved first; a save refused, still running or overtaken by
-  // typing stops the export.
+  // 22.4 "Before running": the editor's unsaved text is saved first; a save under way is waited for; a save refused
+  // or overtaken by typing stops the export.
   async function saveFirst(me) {
+    if (ed === me && me.busy && me.saving) await me.saving;
     if (ed === me && dirty() && !me.busy) await saveNow();
     return ed === me && !me.busy && !dirty();
   }
@@ -825,7 +838,7 @@
     const engine = mk("select", "ws-input latex-engine");
     engine.setAttribute("aria-label", t("排版引擎"));
     Object.keys(ENGINE_NAMES).forEach((k) => { const o = mk("option", null, ENGINE_NAMES[k]); o.value = k; engine.appendChild(o); });
-    let running = false, kept = null, chosen = null;   // kept: the engine the server would use; chosen: the person's change
+    let kept = null, chosen = null;   // kept: the engine the server would use; chosen: the person's change
     engine.addEventListener("change", () => { chosen = engine.value; });
     const row = (...kids) => { const r = mk("div", "latex-export-line"); r.append(...kids); return r; };
     const opener = (label, pdf, reveal, status) => mkButton(label, "ws-text-link", async () => {
@@ -833,8 +846,13 @@
         setStatus(status, "err", reveal ? t("无法在 Finder 中显示") : t("无法打开"), err);
       }
     });
-    const settings = () => apiGet("/api/latex/export?path=" + encodeURIComponent(path)).then((seen) => {
+    const settings = () => {
+      const shown = lastShown;
+      return apiGet("/api/latex/export?path=" + encodeURIComponent(path) + "&project=" + encodeURIComponent(state.currentPath)).then((seen) => {
       const parts = [];
+      // a PDF exported here that is gone or no longer the last one: its 已导出 and 打开 PDF are not offered again
+      if (shown && shown === lastShown && shown.path === path && shown.r.exported && !(exporting && exporting.path === path)
+          && !(seen.last && seen.last.pdf === shown.r.pdf)) { lastShown = null; result.replaceChildren(); }
       if (seen.main) parts.push(mk("span", null, t("主文件")), mk("span", "mono", seen.main));
       if (seen.engine) {
         kept = seen.engine;
@@ -848,6 +866,7 @@
       settingsLine.replaceChildren(...parts);
       settingsLine.classList.toggle("hidden", !parts.length);
     }, () => settingsLine.classList.add("hidden"));
+    };
 
     function show(r) {
       const parts = [], status = mk("span", "notice-status");
@@ -883,34 +902,58 @@
         parts.push(fold);
       }
       result.replaceChildren(...parts);
-      lastShown = { path: path, r: r };
     }
+    function showRunning(using) {
+      button.disabled = true;
+      const stop = mkButton(t("停止"), "ws-text-link", () => { stop.disabled = true; apiPost("/api/latex/export/stop", {}).catch(() => { stop.disabled = false; }); });
+      result.replaceChildren(row(mk("span", "notice-status", using ? t("正在用 {engine} 导出…", { engine: ENGINE_NAMES[using] }) : t("正在导出…")), stop));
+    }
+    // A refusal before anything ran (no TeX, no sandbox, a file only in iCloud, another export running...): the engine's
+    // own sentence, already in the screen's language (22.4); the framing only for an error without one.
+    function showRefused(err) {
+      const s = mk("div", "notice-status");
+      const own = err && typeof err.state === "string" && err.state.indexOf("workspace_") === 0 && err.engineMessage;
+      setStatus(s, "err", own || t("导出没有成功"), err);
+      result.replaceChildren(s);
+    }
+    const self = { button: button, block: block, result: result, show: show, showRunning: showRunning, showRefused: showRefused, settings: settings };
+    // the exporters of this draft still on screen (a detached block is dropped; a test's stand-in elements stay)
+    const each = (fn) => { (drawn[path] || []).filter((x) => x.block.isConnected !== false).forEach(fn); };
 
     async function run(extra) {
-      if (running) return;
-      running = true; button.disabled = true;
+      if (exporting && exporting.path === path) return;
+      if (exporting) { result.replaceChildren(mk("p", "notice-status err", t("正在导出另一份文稿，请等它结束。"))); return; }
+      const mine = exporting = { path: path, using: null };   // a project switch (reset) drops it: its answer is not shown
+      each((x) => { x.button.disabled = true; });
       try {
-        if (before && !(await before())) { result.replaceChildren(mk("p", "notice-status err", t("文稿没有保存，所以没有导出。"))); return; }
-        const using = chosen || kept;
-        const stop = mkButton(t("停止"), "ws-text-link", () => { stop.disabled = true; apiPost("/api/latex/export/stop", {}).catch(() => { stop.disabled = false; }); });
-        result.replaceChildren(row(mk("span", "notice-status", using ? t("正在用 {engine} 导出…", { engine: ENGINE_NAMES[using] }) : t("正在导出…")), stop));
+        if (before && !(await before())) {
+          if (exporting === mine) each((x) => x.result.replaceChildren(mk("p", "notice-status err", t("文稿没有保存，所以没有导出。"))));
+          return;
+        }
+        if (exporting !== mine) return;
+        mine.using = chosen || kept;
+        each((x) => x.showRunning(mine.using));
         let r;
         try {
           r = await apiPost("/api/latex/export", Object.assign({ project: state.currentPath, path: path }, chosen ? { engine: chosen } : {}, extra));
         } catch (err) {
-          const s = mk("div", "notice-status");
-          setStatus(s, "err", t("导出没有成功"), err);
-          result.replaceChildren(s);
+          if (exporting === mine) each((x) => x.showRefused(err));
           return;
         }
+        if (exporting !== mine) return;
         if (r.engine) chosen = null;   // the server keeps the person's engine for this main file from now on
-        show(r);
-        settings();
-      } finally { running = false; button.disabled = false; }
+        lastShown = { path: path, r: r };
+        each((x) => { x.show(r); x.settings(); });
+      } finally {
+        if (exporting === mine) { exporting = null; each((x) => { x.button.disabled = false; }); }
+      }
     }
 
+    drawn[path] = (drawn[path] || []).filter((x) => x.block.isConnected !== false).concat([self]);
+    if (lastShown && lastShown.path !== path) lastShown = null;   // another draft's page: the person left this one
     settings();
-    if (lastShown && lastShown.path === path) show(lastShown.r);
+    if (exporting && exporting.path === path) showRunning(exporting.using);
+    else if (lastShown && lastShown.path === path) show(lastShown.r);
     return { button: button, block: block };
   }
 
@@ -978,7 +1021,7 @@
   }
 
   // A project switch or the editor's view dropped: nothing of the previous project stays open.
-  function reset() { discard(); fromView = null; lastShown = null; }
+  function reset() { discard(); fromView = null; lastShown = null; exporting = null; Object.keys(drawn).forEach((k) => { delete drawn[k]; }); }
 
   if (typeof window.addEventListener === "function") window.addEventListener("focus", () => { checkRevision(); });
 

@@ -506,9 +506,9 @@ Endpoints (all GET unless noted):
                             or 替换 / 另存为). A person's only: no agent
                             endpoint runs TeX. `/api/latex/export/stop` kills
                             the running one.
-    GET  /api/latex/export -- `?path=<.tex>`: the export's settings line
-                            (main file, engine, the last exported PDF).
-                            Reads only.
+    GET  /api/latex/export -- `?path=<.tex>&project=`: the export's settings
+                            line (main file, engine, the last exported PDF);
+                            409 when `project` is not the open one. Reads only.
     The save and the undo are, with the attempt table, the Markdown under `research/`
     and an agent's run, the only writes of a researcher's own files (18.1's
     list, extended by 22.1): a `.tex` the person saves in the editor, through

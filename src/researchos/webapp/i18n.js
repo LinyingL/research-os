@@ -1914,6 +1914,7 @@
     "已导出 {pdf}": "Exported {pdf}",
     "{file} 不是上次导出的文件，要替换它吗？": "{file} is not the last export. Replace it?",
     "替换": "Replace",
+    "正在导出另一份文稿，请等它结束。": "Another export is running; wait for it to finish.",
     "另存为 {file}": "Save as {file}",
     "找不到包含这个文件的主文件（带 {command} 的 .tex）。": "No main file (a .tex with {command}) includes this file.",
     "有几个主文件包含这个文件。导出哪一个？": "Several main files include this file. Which one should be exported?",

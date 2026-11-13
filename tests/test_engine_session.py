@@ -534,6 +534,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/latex/evidence": ("read", "/api/latex/evidence?path=paper/main.tex"),   # 22.2: a draft's links, found again
     "/api/latex/supports": ("read", "/api/latex/supports?file=figs/fig1.png"),   # 22.2: 以它为依据的段落
     "/api/latex/files": ("read", "/api/latex/files?q=fig"),   # 22.2: the link panel's file search
+    "/api/latex/export": ("read", "/api/latex/export?path=paper/main.tex"),   # 22.4: the export's settings line
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),

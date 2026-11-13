@@ -24,8 +24,9 @@ const within = (root, test) => { const found = []; const walk = (e) => { if (!e 
 let R = null;
 const result = () => R || (R = byClass('latex-export-result'));   // the editor's, the first one asked for
 const exportPosts = () => posts.filter((p) => p.url.startsWith('/api/latex/export'));
+let lastPdf = 'reports/a.pdf';   // the last export of a.tex whose PDF is still there, as the server would answer
 exportAnswer = () => ({main: 'a.tex', mains: ['a.tex'], engine: 'xelatex', engines: ['pdflatex', 'xelatex', 'lualatex'],
-                       last: {pdf: 'reports/a.pdf', at: '2026-11-13T10:00:00Z'}});
+                       last: lastPdf && {pdf: lastPdf, at: '2026-11-13T10:00:00Z'}});
 L.open('a.tex'); await tick();
 gets.shift().res({path: 'a.tex', text: 'l1\nl2\nl3 \\foo\nl4\n', revision: 'r1', line_ending: 'lf', read_only: false, links: [], mains: ['a.tex']});
 await tick(); await tick(); await tick();
@@ -35,6 +36,7 @@ out.button = {cls: exp.className, inTools: byClass('latex-tools').children.inclu
 out.settings = {words: words(byClass('latex-export-line')), engine: select.value,
                 options: select.children.map((o) => [o.value, o.textContent]),
                 hidden: byClass('latex-export-line').classList.contains('hidden')};
+out.settingsUrl = exportGets[0];
 // unsaved text is saved first; then one export, the engine named while it runs, 停止 a text link
 V.dispatch({changes: {from: 0, insert: 'X'}});
 exp.fire('click'); await tick();
@@ -42,6 +44,12 @@ out.firstPost = posts[0].url;
 posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick(); await tick();
 const sent = exportPosts()[0];
 out.exportBody = sent.body; out.running = words(result());
+// the page drawn again during the run (a scan) shows the run with 停止; another draft's export waits for it
+const during = L.exporter('a.tex'); await tick();
+out.during = {words: words(during.block.children[1]), disabled: during.button.disabled};
+const other = L.exporter('b.tex'); await tick();
+other.button.fire('click'); await tick();
+out.otherWhileRunning = {words: words(other.block.children[1]), posts: exportPosts().length};
 const stop = button('停止');
 out.stopClass = stop.className;
 exp.fire('click'); await tick(); out.postsWhileRunning = exportPosts().length;
@@ -53,6 +61,7 @@ sent.res({exported: false, stopped: null, main: 'a.tex', engine: 'xelatex',
   notes: ['缺少宏包 foo'], missing_characters: [], missing_message: null, log: 'THE LOG', message: '导出没有成功'});
 await tick(); await tick();
 posts.length = 0;
+out.duringAfter = {words: words(during.block.children[1].children[0]), disabled: during.button.disabled};
 const failed = byClass('latex-export-failed');
 out.failed = {words: words(failed), tag: failed.tag};
 const errLinks = within(result(), (e) => e.tag === 'button');
@@ -75,6 +84,7 @@ out.ask = words(result());
 out.askButtons = within(result(), (e) => e.tag === 'button').map((b) => [b.textContent, b.className]);
 button('另存为 reports/a-导出.pdf').fire('click'); await tick(); await tick();
 out.saveAsBody = exportPosts()[0].body;
+lastPdf = 'reports/a-导出.pdf';
 exportPosts()[0].res({exported: true, pdf: 'reports/a-导出.pdf', main: 'a.tex', engine: 'lualatex', errors: [], notes: [],
   missing_characters: ['喆'], missing_message: '有 1 个字符字体里没有，PDF 里缺了：喆', log: 'L', message: '已导出 reports/a-导出.pdf'});
 await tick(); await tick(); posts.length = 0;
@@ -87,6 +97,7 @@ out.openPost = posts[0] && {url: posts[0].url, body: posts[0].body}; posts.lengt
 // the page drawn again (the scan after the export redraws it) shows the same answer; another draft's does not
 out.redrawn = words(L.exporter('a.tex').block.children[1]) === out.done;
 out.otherDraft = L.exporter('b.tex').block.children[1].children.length;
+lastPdf = 'reports/a.pdf';
 posts.length = 0;
 // several main files: the person chooses one
 exp.fire('click'); await tick(); await tick();
@@ -94,13 +105,42 @@ exportPosts()[0].res({exported: false, ask: 'main', mains: ['a.tex', 'b.tex'], m
 out.askMain = words(result());
 within(result(), (e) => e.tag === 'button' && e.textContent === 'b.tex')[0].fire('click'); await tick(); await tick();
 out.mainBody = exportPosts()[0].body;
-exportPosts()[0].rej({state: 'workspace_no_tex'}); await tick(); await tick(); posts.length = 0;
+exportPosts()[0].rej({state: 'workspace_no_tex', engineMessage: '这台 Mac 上没有找到 TeX（TeX Live 或 MacTeX）。'}); await tick(); await tick(); posts.length = 0;
 out.refused = {words: words(result()), cls: result().children[0].className};
+out.refusedMore = [];
+for (const err of [{state: 'workspace_cloud', engineMessage: '有文件还在 iCloud 里没下载：paper/a.tex'},
+                   {state: 'workspace_busy', engineMessage: '正在导出另一份文稿，请等它结束。'}, {}]) {
+  exp.fire('click'); await tick(); await tick();
+  exportPosts()[0].rej(err); await tick(); await tick(); posts.length = 0;
+  out.refusedMore.push(words(result()));
+}
 // a save refused stops the export: no export is sent
 V.dispatch({changes: {from: 0, insert: 'Y'}});
 exp.fire('click'); await tick();
 posts.shift().rej({state: 'none'}); await tick(); await tick();
 out.afterRefusedSave = {exports: exportPosts().length, words: words(result())};
+// a save under way: the export waits for its answer, then runs
+button('保存').fire('click'); await tick();
+const saving = posts.shift();
+exp.fire('click'); await tick(); await tick();
+out.exportsWhileSaving = exportPosts().length;
+saving.res({revision: 'r4', changed: true, previous: 'r3'}); await tick(); await tick(); await tick(); await tick();
+out.exportsAfterSave = exportPosts().length;
+const done = {exported: true, pdf: 'reports/a.pdf', main: 'a.tex', engine: 'xelatex', errors: [], notes: [], log: 'L', message: ''};
+exportPosts()[0].res(done); await tick(); await tick(); posts.length = 0;
+const redraw = async () => { const x = L.exporter('a.tex'); await tick(); await tick(); return words(x.block.children[1]); };
+out.keptOnRedraw = await redraw();
+// a later save of the draft: the answer was about the text before it
+V.dispatch({changes: {from: 0, insert: 'Z'}});
+button('保存').fire('click'); await tick();
+posts.shift().res({revision: 'r5', changed: true, previous: 'r4'}); await tick(); await tick(); posts.length = 0;
+out.afterSaveRedraw = await redraw();
+// the PDF exported is gone: 已导出 and its 打开 PDF are not drawn again
+exp.fire('click'); await tick(); await tick();
+exportPosts()[0].res(done); await tick(); await tick(); posts.length = 0;
+lastPdf = null;
+out.goneRedraw = await redraw();
+lastPdf = 'reports/a.pdf';
 // the same, in English
 window.ROI18N_SAVED = 'en';
 eval(fs.readFileSync(%(i18n)s, 'utf8'));
@@ -134,6 +174,7 @@ def test_export_is_a_quiet_button_in_the_toolbar_and_the_settings_line_names_mai
     assert page["settings"]["hidden"] is False and page["settings"]["engine"] == "xelatex"
     assert page["settings"]["words"] == "主文件 a.tex 排版引擎 pdfLaTeX XeLaTeX LuaLaTeX 导出的 PDF reports/a.pdf 打开 PDF"
     assert page["settings"]["options"] == [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]]
+    assert page["settingsUrl"] == "/api/latex/export?path=a.tex&project=%2Fp"   # tied to the project the page shows
 
 
 def test_unsaved_text_is_saved_first_and_the_run_names_its_engine_with_a_way_to_stop_it(page):
@@ -173,7 +214,11 @@ def test_an_export_that_succeeded_offers_open_and_finder_as_text_links_and_a_mis
 def test_several_main_files_are_a_choice_and_a_refusal_or_a_refused_save_says_the_export_did_not_run(page):
     assert page["askMain"] == "有几个主文件包含这个文件。导出哪一个？ a.tex b.tex"
     assert page["mainBody"] == {"project": "/p", "path": "a.tex", "main": "b.tex"}
-    assert page["refused"] == {"words": "导出没有成功 [workspace_no_tex]", "cls": "notice-status err"}
+    # a refusal before anything ran says the engine's own sentence (22.4); an error without one, the framing
+    assert page["refused"] == {"words": "这台 Mac 上没有找到 TeX（TeX Live 或 MacTeX）。 [workspace_no_tex]",
+                               "cls": "notice-status err"}
+    assert page["refusedMore"] == ["有文件还在 iCloud 里没下载：paper/a.tex [workspace_cloud]",
+                                   "正在导出另一份文稿，请等它结束。 [workspace_busy]", "导出没有成功 [none]"]
     assert page["afterRefusedSave"] == {"exports": 0, "words": "文稿没有保存，所以没有导出。"}
 
 
@@ -193,3 +238,18 @@ def test_a_tex_drafts_own_page_offers_export_under_its_head_and_the_editor_keeps
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     assert ".latex-export-failed { margin: 0; color: var(--clay);" in css
     assert ".latex-export-warn { margin: 0; border-left: 2px solid var(--ochre);" in css
+
+
+def test_a_page_drawn_again_during_the_run_shows_it_and_gets_its_answer_and_another_draft_waits(page):
+    assert page["during"] == {"words": "正在用 XeLaTeX 导出… 停止", "disabled": True}
+    assert page["otherWhileRunning"] == {"words": "正在导出另一份文稿，请等它结束。", "posts": 1}
+    assert page["duringAfter"] == {"words": "导出没有成功", "disabled": False}
+
+
+def test_an_export_asked_while_a_save_runs_waits_for_that_save(page):
+    assert page["exportsWhileSaving"] == 0 and page["exportsAfterSave"] == 1
+
+
+def test_an_old_answer_is_not_drawn_again_after_a_save_or_once_its_pdf_is_gone(page):
+    assert page["keptOnRedraw"].startswith("已导出 reports/a.pdf 打开 PDF")
+    assert page["afterSaveRedraw"] == "" and page["goneRedraw"] == ""
