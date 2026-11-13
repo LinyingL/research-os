@@ -196,7 +196,12 @@
   const CITE_RE = /^(?:cite(?:p|t|alp)?|Citep|Citet|parencite|textcite|autocite)$/;   // ingest/latex.py's _CITE_RE
   const REFS = new Set(["ref", "eqref", "label"]);
   const LIST_ENVS = new Set(["itemize", "enumerate", "description"]);
-  const TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "center", "flushleft", "flushright"]);
+  // Environments of running text, where Return makes a paragraph: these, and those the file declares by \newtheorem or
+  // \declaretheorem. Any other is shown as written (tabular, tikzpicture, eqnarray ...): a blank line there can break it.
+  const TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "verse", "center", "flushleft", "flushright",
+    "doublespace", "onehalfspace", "singlespace", "spacing", "minipage", "multicols", "appendices", "landscape", "titlepage",
+    "frame", "proof", "theorem", "lemma", "proposition", "corollary", "definition", "remark", "example", "assumption",
+    "conjecture", "claim", "hypothesis", "fact", "condition", "note"]);
   const MATH_ENVS = /^(?:equation|align|gather|multline)\*?$/;
   const VERBATIM_ENVS = /^(?:verbatim|Verbatim|BVerbatim|lstlisting|minted|comment|filecontents)\*?$/;
   const SPECIAL = /[\\%$]/g;
@@ -247,7 +252,7 @@
   // environment {name, role (list, text or raw), from, beginTo, endFrom, to}; math {from, to, display, src}; raw text
   // (comments, \verb, verbatim-like environments) {from, to, kind}. Nothing inside math or raw text is read.
   function readLatex(text) {
-    const out = { cmds: [], maths: [], envs: [], raws: [], preamble: null, end: -1 };
+    const out = { cmds: [], maths: [], envs: [], raws: [], preamble: null, end: -1 }, theorems = new Set();
     const stack = [], n = text.length;
     let i = 0;
     while (i < n) {
@@ -304,7 +309,8 @@
           i = to;
           continue;
         }
-        const frame = { name: env, role: LIST_ENVS.has(env) ? "list" : TEXT_ENVS.has(env) ? "text" : "raw", from: i, beginTo: g, endFrom: n, to: n, items: 0 };
+        const base = env.replace(/\*$/, ""), prose = TEXT_ENVS.has(base) || theorems.has(base);
+        const frame = { name: env, role: LIST_ENVS.has(env) ? "list" : prose ? "text" : "raw", from: i, beginTo: g, endFrom: n, to: n, items: 0 };
         stack.push(frame);
         out.envs.push(frame);
         i = g;
@@ -337,6 +343,10 @@
         }
       }
       if (cmd.args.length) cmd.to = cmd.args[cmd.args.length - 1].to;
+      if (name === "newtheorem" || name === "declaretheorem") {   // \newtheorem{lemma}[theorem]{Lemma}: lemma is text
+        const a = cmd.args.find((x) => !x.opt);
+        if (a) theorems.add(text.slice(a.from + 1, a.to - 1).trim());
+      }
       out.cmds.push(cmd);
       i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.nameTo;   // the arguments' text is read as text
     }
@@ -346,11 +356,16 @@
   // What KaTeX is given: \label (which it does not know) dropped, multline set as gather.
   function forKatex(src) { return src.replace(/\\label\s*\{[^{}]*\}/g, "").replace(/\\(begin|end)\{multline(\*?)\}/g, "\\$1{gather$2}"); }
   // A formula typeset by KaTeX (trust off: no \href or \url reaches the network); one it cannot typeset is shown as
-  // written, in the mono face, uncoloured -- the PDF is the judge (22.1). Never throws.
+  // written, in the mono face, uncoloured -- the PDF is the judge (22.1). Never throws. What trust off refuses (\href,
+  // \url, \includegraphics ...) KaTeX draws in its error colour instead of throwing: that colour, set to one no formula
+  // asks for, counts as a failure too.
+  const KATEX_ERROR = "#0e0e0f";
   function mathDOM(src, display, whole) {
     const box = mk("span", display ? "latex-math latex-math-display" : "latex-math");
     try {
-      box.innerHTML = window.katex.renderToString(forKatex(src), { displayMode: display, throwOnError: true, trust: false, strict: "ignore" });
+      const html = window.katex.renderToString(forKatex(src), { displayMode: display, throwOnError: true, trust: false, strict: "ignore", errorColor: KATEX_ERROR });
+      if (html.includes(KATEX_ERROR)) throw new Error("refused");
+      box.innerHTML = html;
     } catch (err) {
       box.className = "latex-math-raw";
       box.textContent = whole;
@@ -363,6 +378,79 @@
     if (!read.preamble || !read.preamble.to) return 0;
     const line = doc.lineAt(read.preamble.to);
     return line.from > 0 && doc.sliceString(0, line.from).trim() ? line.from - 1 : 0;
+  }
+  // Where the body starts, the line after \begin{document}'s: the editor's first cursor, and where folding the preamble
+  // moves one that was in it. 0 when nothing is folded.
+  function bodyStart(doc, read) {
+    if (!preambleEnd(doc, read)) return 0;
+    const line = doc.lineAt(read.preamble.to);
+    return line.number < doc.lines ? doc.line(line.number + 1).from : line.to;
+  }
+  // The selection is in the preamble when a cursor is in it, its start included, or a selection covers any of it: then
+  // the preamble is open, so nothing typed or deleted lands on lines that cannot be seen (22.1).
+  function inPreamble(ranges, pre) { return pre > 0 && ranges.some((r) => r.from <= pre); }
+
+  // Constructs read before (mapped through the change) and now, compared from both ends: the ranges of those between,
+  // which differ, are pushed to `spans`.
+  function differ(was, now, same, parts, map, spans) {
+    const n = Math.min(was.length, now.length);
+    let a = 0, b = 0;
+    while (a < n && same(was[a], now[a])) a += 1;
+    while (b < n - a && same(was[was.length - 1 - b], now[now.length - 1 - b])) b += 1;
+    for (let k = a; k < was.length - b; k++) parts(was[k], map).forEach((p) => spans.push([Math.min(p[0], p[1]), Math.max(p[0], p[1])]));
+    for (let k = a; k < now.length - b; k++) parts(now[k], (x) => x).forEach((p) => spans.push(p));
+  }
+  function sameCmd(a, b, map) {
+    if (a.role !== b.role || a.name !== b.name || a.n !== b.n || a.depth !== b.depth || (a.list && a.list.name) !== (b.list && b.list.name) ||
+      map(a.from) !== b.from || map(a.to) !== b.to || map(a.nameTo) !== b.nameTo || a.args.length !== b.args.length) return false;
+    return a.args.every((x, k) => map(x.from) === b.args[k].from && map(x.to) === b.args[k].to);
+  }
+  const envParts = (e, map) => [[map(e.from), map(e.beginTo)], [map(e.endFrom), map(e.to)]];
+  const wholeParts = (x, map) => [[map(x.from), map(x.to)]];
+
+  // Where the decorations must be drawn again after `tr` (22.1): around each change, every construct read differently
+  // from before, and every one the selection now touches or leaves; widened to whole lines and to every construct it
+  // reaches until none crosses an edge. Null when nothing is to be drawn again.
+  function redraw(old, read, math, tr) {
+    const doc = tr.state.doc, ch = tr.changes, map = (x) => ch.mapPos(x), sel = tr.state.selection.ranges, spans = [];
+    const was = tr.docChanged ? tr.startState.selection.map(ch).ranges : tr.startState.selection.ranges;
+    const pre = preambleEnd(doc, read);
+    if (tr.docChanged) {
+      ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb, tb]));
+      differ(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map), wholeParts, map, spans);
+      differ(old.envs, read.envs, (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to, envParts, map, spans);
+      differ(old.maths, read.maths, (a, b) => map(a.from) === b.from && map(a.to) === b.to && a.display === b.display, wholeParts, map, spans);
+      const preWas = map(preambleEnd(tr.startState.doc, old));
+      if (preWas !== pre) spans.push([0, Math.max(pre, preWas)]);
+    }
+    if (inPreamble(was, pre) !== inPreamble(sel, pre)) spans.push([0, pre]);
+    const touch = (s, from, to) => s.some((r) => r.from <= to && r.to >= from);
+    const flip = (from, to) => { if (touch(was, from, to) !== touch(sel, from, to)) spans.push([from, to]); };
+    for (const c of read.cmds) if (c.role !== "other" && c.from >= pre) flip(c.from, c.to);
+    if (math) for (const f of read.maths) if (f.from >= pre) flip(f.from, f.to);
+    if (!spans.length) return null;
+    const lines = (list) => {
+      const out = [];
+      list.map((s) => [doc.lineAt(s[0]).from, doc.lineAt(s[1]).to]).sort((x, y) => x[0] - y[0]).forEach((s) => {
+        const last = out[out.length - 1];
+        if (last && s[0] <= last[1] + 1) last[1] = Math.max(last[1], s[1]); else out.push(s);
+      });
+      return out;
+    };
+    let w = lines(spans);
+    for (let pass = 0; pass < 8; pass++) {
+      let grew = false;
+      const reach = (from, to) => {
+        for (const s of w) if (from <= s[1] && to >= s[0] && (from < s[0] || to > s[1])) { s[0] = Math.min(s[0], from); s[1] = Math.max(s[1], to); grew = true; }
+      };
+      if (pre > 0) reach(0, pre);
+      for (const c of read.cmds) reach(c.from, c.to);
+      for (const e of read.envs) { reach(e.from, e.beginTo); reach(e.endFrom, e.to); }
+      for (const f of read.maths) reach(f.from, f.to);
+      if (!grew) return w;
+      w = lines(w);
+    }
+    return [[0, doc.length]];
   }
 
   let wx = null;
@@ -386,14 +474,24 @@
       eq(other) { return other.n === this.n; }
       toDOM() { return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : ""); }
     }
+    // 导言区 is a button (12.11): Tab reaches it, Return and Space press it. Folding it moves a cursor that was in the
+    // preamble to the body, so the fold always closes when asked.
     class Preamble extends CM.WidgetType {
       constructor(open) { super(); this.open = open; }
       eq(other) { return other.open === this.open; }
       toDOM(view) {
-        const b = mk("div", "latex-preamble has-chevron", t("导言区"));
-        b.setAttribute("role", "button");
+        const b = mk("button", "latex-preamble has-chevron", t("导言区"));
+        b.setAttribute("type", "button");
         b.setAttribute("aria-expanded", String(this.open));
-        b.addEventListener("mousedown", (event) => { event.preventDefault(); view.dispatch({ effects: preamble.of(!this.open) }); });
+        b.addEventListener("mousedown", (event) => event.preventDefault());
+        b.addEventListener("click", () => {
+          const value = view.state.field(field, false);
+          if (!value) return;
+          const spec = { effects: preamble.of(!this.open) };
+          if (this.open && inPreamble(view.state.selection.ranges, preambleEnd(view.state.doc, value.read))) spec.selection = { anchor: bodyStart(view.state.doc, value.read) };
+          view.dispatch(spec);
+          view.focus();
+        });
         return b;
       }
       ignoreEvent() { return true; }
@@ -403,18 +501,19 @@
     const mark = (cls) => { if (!marks.has(cls)) marks.set(cls, D.mark({ class: cls })); return marks.get(cls); };
     const lineMarks = [1, 2, 3, 4].map((k) => D.line({ class: "latex-li latex-li-" + k }));
 
-    function decorate(read, math, open, state) {
+    // The decorations of the constructs that meet `within` ([from, to], closed: none crosses its edges), or of all.
+    function decorate(read, math, open, state, within) {
       const doc = state.doc, sel = state.selection.ranges, out = [];
       const touch = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
+      const meets = within ? (from, to) => from <= within[1] && to >= within[0] : () => true;
       const pre = preambleEnd(doc, read);
-      if (pre > 0) {
-        const shown = open || sel.some((r) => r.head > 0 && r.head <= pre);   // a cursor placed inside (an error's line) opens it
-        out.push(shown ? D.widget({ widget: new Preamble(true), block: true, side: -1 }).range(0)
+      if (pre > 0 && meets(0, pre)) {
+        out.push(open || inPreamble(sel, pre) ? D.widget({ widget: new Preamble(true), block: true, side: -1 }).range(0)
           : D.replace({ widget: new Preamble(false), block: true }).range(0, pre));
       }
       const lines = new Set();
       for (const c of read.cmds) {
-        if (c.from < pre) continue;   // the preamble is source, folded or open
+        if (c.from < pre || !meets(c.from, c.to)) continue;   // the preamble is source, folded or open
         const arg = c.args.length ? c.args[c.args.length - 1] : null;
         if (c.role === "item" && c.list) {
           const line = doc.lineAt(c.from);
@@ -435,38 +534,37 @@
       }
       for (const env of read.envs) {
         if (env.from < pre) continue;
-        out.push(command.range(env.from, env.beginTo));
-        if (env.endFrom < env.to) out.push(command.range(env.endFrom, env.to));
+        if (meets(env.from, env.beginTo)) out.push(command.range(env.from, env.beginTo));
+        if (env.endFrom < env.to && meets(env.endFrom, env.to)) out.push(command.range(env.endFrom, env.to));
       }
       if (math) {
         for (const f of read.maths) {
-          if (f.from >= pre && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
+          if (f.from >= pre && meets(f.from, f.to) && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
         }
       }
-      return D.set(out, true);
+      return out;
     }
-    // A move of the selection that shows and hides the same constructs keeps the decorations as they are.
-    function sameTouch(read, before, after) {
-      const a = before.selection.ranges, b = after.selection.ranges, pre = preambleEnd(after.doc, read);
-      const touch = (sel, from, to) => sel.some((r) => r.from <= to && r.to >= from);
-      const differ = (from, to) => touch(a, from, to) !== touch(b, from, to);
-      const inPreamble = (sel) => sel.some((r) => r.head > 0 && r.head <= pre);
-      if (pre > 0 && inPreamble(a) !== inPreamble(b)) return false;
-      for (const c of read.cmds) if (c.role !== "other" && c.from >= pre && differ(c.from, c.to)) return false;
-      for (const f of read.maths) if (f.from >= pre && differ(f.from, f.to)) return false;
-      return true;
-    }
+    // On each change the text is read again whole (3 ms on a 2 MB file, the save's limit); the decorations are mapped
+    // and drawn again only where `redraw` says, so a key costs the same in a long file as in a short one. A move of the
+    // selection that shows and hides nothing new keeps them as they are.
     const field = CM.StateField.define({
       create: (state) => {
         const read = readLatex(state.doc.toString()), math = typeof window !== "undefined" && !!window.katex;
-        return { read: read, math: math, open: false, deco: decorate(read, math, false, state) };
+        return { read: read, math: math, open: false, deco: D.set(decorate(read, math, false, state), true) };
       },
       update(value, tr) {
-        let math = value.math, open = value.open, read = value.read;
+        let math = value.math, open = value.open;
         for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(preamble)) open = e.value; }
-        if (tr.docChanged) read = readLatex(tr.state.doc.toString());
-        else if (math === value.math && open === value.open && (!tr.selection || sameTouch(read, tr.startState, tr.state))) return value;
-        return { read: read, math: math, open: open, deco: decorate(read, math, open, tr.state) };
+        if (!tr.docChanged && !tr.selection && math === value.math && open === value.open) return value;
+        const read = tr.docChanged ? readLatex(tr.state.doc.toString()) : value.read;
+        if (math !== value.math || open !== value.open) return { read: read, math: math, open: open, deco: D.set(decorate(read, math, open, tr.state), true) };
+        const spans = redraw(value.read, read, math, tr);
+        let deco = tr.docChanged ? value.deco.map(tr.changes) : value.deco;
+        if (!spans && !tr.docChanged) return value;
+        for (const s of spans || []) {
+          deco = deco.update({ filterFrom: s[0], filterTo: s[1], filter: (from, to) => !(from <= s[1] && to >= s[0]), add: decorate(read, math, open, tr.state, s), sort: true });
+        }
+        return { read: read, math: math, open: open, deco: deco };
       },
       provide: (f) => CM.EditorView.decorations.from(f, (v) => v.deco),
     });
@@ -658,7 +756,10 @@
     // A read-only file may mix endings: CodeMirror's own splitting shows it; nothing is ever sent.
     if (me.readOnly) extensions.push(CM.EditorState.readOnly.of(true));
     else extensions.push(CM.EditorState.lineSeparator.of(me.sep), breakFilter(CM, me.sep));
-    const state = CM.EditorState.create({ doc: file.text, extensions: extensions });
+    let state = CM.EditorState.create({ doc: file.text, extensions: extensions });
+    // the first cursor is where the body starts: one at 0 would sit before the folded preamble, typing into it unseen
+    const first = bodyStart(state.doc, readLatex(state.doc.toString()));
+    if (first) state = state.update({ selection: { anchor: first } }).state;
     const top = me.view ? me.view.scrollDOM.scrollTop : 0;
     if (me.view) me.view.setState(state);
     else me.view = new CM.EditorView({ state: state, parent: me.ui.box });
@@ -1447,6 +1548,6 @@
     renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions,
-      readLatex: readLatex, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM }),
+      readLatex: readLatex, bodyStart: bodyStart, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM }),
   });
 })();

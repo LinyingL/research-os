@@ -3,10 +3,16 @@ hidden only where the selection does not touch it), KaTeX formulas, cite and ref
 Return by context -- run under node on the vendored CodeMirror and KaTeX. The Return results are typeset by pdfLaTeX to
 show the file still exports. Every test names its scenario.
 
-Typing time, measured on this Mac (2026-11-13, node 3,000-line benchmark below: 2,998 lines, 181 kB, 580 formulas, the
-reader and the decorations rebuilt on every key): median 4.3 ms, p95 5.7 ms, max 9.8 ms a key; the reader alone 1.1 ms;
-a selection move that shows and hides nothing new 0.1 ms. The whole text is read again on each change: at 1.1 ms, reading
-only the changed region (22.1) was not needed to stay under 16 ms."""
+Typing time, measured on this Mac (2026-11-13, node benchmark below; state updates, plus every widget within 60 lines
+of the cursor that the view would draw anew, drawn by its toDOM with the real KaTeX; layout in a browser is not part of
+it): on the 3,000-line file (2,998 lines, 580 formulas) median 3.3 ms, p95 5.4 ms a key; on a 1.95 MB file (26,311
+lines), the largest the save takes, median 13 ms, p95 18 ms. The reader alone takes 1.1 ms on the 3,000 lines. In a
+browser (a scratch page: the same 3,000 lines in a real EditorView, dispatch and layout) median 1.6 ms, p95 7.7 ms a key.
+
+The text is read again whole on each change (22.1 says only over the changed region): the reader is the cheap part
+(4.5 ms at 2 MB), and a partial read would still have to shift every later position. What was costly, drawing every
+decoration again (27 ms a key at 2 MB), is now done only where the change or the selection asks (`redraw`), and a test
+below checks it against drawing whole after each of 3,000 random edits."""
 
 from __future__ import annotations
 
@@ -164,22 +170,43 @@ for (let i = 0; lines.length < 2997; i++) {
 }
 lines.push('\\end{document}');
 const text = lines.join('\n');
-window.katex = {};
-let st = CM.EditorState.create({doc: text, extensions: [P.wordExtensions(CM)], selection: {anchor: text.indexOf('Running text', 60000)}});
+window.katex = kctx.katex;
 const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6, stats = (xs) => { xs.sort((a, b) => a - b); return {median: xs[xs.length >> 1], p95: xs[Math.floor(xs.length * 0.95)], max: xs[xs.length - 1]}; };
-for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}}).state;  // warm up
-const keys = [];
-for (let k = 0; k < 300; k++) {
-  const at = st.selection.main.head, t0 = process.hrtime.bigint();
-  st = st.update({changes: {from: at, insert: k % 13 === 0 ? '$' : 'x'}, selection: {anchor: at + 1}}).state;
-  st.field(F.field);
-  keys.push(ms(t0));
-}
+// One key: the transaction, then what the view would draw anew: every widget within 60 lines of the cursor (more than a
+// screen) that is not the one it had, drawn by its toDOM (KaTeX for formulas). Layout in a browser is not measured.
+const typing = (doc, at, n, key) => {
+  let st = CM.EditorState.create({doc, extensions: [P.wordExtensions(CM)], selection: {anchor: at}});
+  const shown = (s) => { const l = s.doc.lineAt(s.selection.main.head), from = s.doc.line(Math.max(1, l.number - 60)).from, to = s.doc.line(Math.min(s.doc.lines, l.number + 60)).to, got = []; s.field(F.field).deco.between(from, to, (a, b, v) => { if (v.spec.widget) got.push({a, b, w: v.spec.widget}); }); return got; };
+  for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}}).state;  // warm up
+  const keys = [];
+  let drawnAnew = 0;
+  for (let k = 0; k < n; k++) {
+    const at = st.selection.main.head, before = shown(st), t0 = process.hrtime.bigint();
+    const tr = st.update({changes: {from: at, insert: key(k)}, selection: {anchor: at + 1}});
+    st = tr.state;
+    st.field(F.field);
+    let spent = ms(t0);
+    const had = new Map(before.map((x) => [tr.changes.mapPos(x.a, 1) + ':' + tr.changes.mapPos(x.b, -1), x.w]));
+    for (const {a, b, w} of shown(st)) if (!(had.get(a + ':' + b) && had.get(a + ':' + b).eq(w))) {   // as the view: eq ones are kept
+      const t2 = process.hrtime.bigint(); w.toDOM({dispatch() {}, state: st, focus() {}}); spent += ms(t2); drawnAnew += 1; }
+    keys.push(spent);
+  }
+  return {st, keys: stats(keys), drawnAnew};
+};
+const at3k = text.indexOf('Running text', 60000);
+const small = typing(text, at3k, 300, (k) => k % 13 === 0 ? '$' : 'x');
+let st = small.st;
 const reads = [];
 for (let k = 0; k < 100; k++) { const t0 = process.hrtime.bigint(); P.readLatex(st.doc.toString()); reads.push(ms(t0)); }
 const moves = [];
-for (let k = 0; k < 100; k++) { const t0 = process.hrtime.bigint(); st = st.update({selection: {anchor: text.indexOf('Running text', 60000) + (k % 5)}}).state; st.field(F.field); moves.push(ms(t0)); }
-console.log(JSON.stringify({lines: st.doc.lines, formulas: P.readLatex(text).maths.length, key: stats(keys), read: stats(reads), move: stats(moves)}));
+for (let k = 0; k < 100; k++) { const t0 = process.hrtime.bigint(); st = st.update({selection: {anchor: at3k + 40 * (k % 7)}}).state; st.field(F.field); moves.push(ms(t0)); }
+// the largest file the editor saves (2 MB): what a key costs there
+const body = lines.slice(3, -1), big = lines.slice(0, 3);
+for (let i = 0, bytes = 0; bytes < 1.95e6; i++) { big.push(body[i % body.length]); bytes += Buffer.byteLength(body[i % body.length]) + 1; }
+const bigText = big.concat(['\\end{document}']).join('\n');
+const large = typing(bigText, bigText.length >> 1, 100, () => 'x');
+console.log(JSON.stringify({lines: st.doc.lines, formulas: P.readLatex(text).maths.length, key: small.keys, drawnAnew: small.drawnAnew,
+  read: stats(reads), move: stats(moves), bigBytes: Buffer.byteLength(bigText), bigLines: large.st.doc.lines, bigKey: large.keys}));
 """
 
 
@@ -417,7 +444,147 @@ def test_typing_stays_under_16_ms_a_key_on_a_3000_line_file_with_hundreds_of_for
     print("like Word, per key:", json.dumps(got))
     assert got["lines"] >= 2998 and got["formulas"] >= 300
     assert got["key"]["median"] < 16 and got["key"]["p95"] < 16
+    assert got["drawnAnew"] > 0                                     # formulas typed were typeset within the key's time
     assert got["move"]["median"] < 16
+    assert got["bigBytes"] > 1.9e6 and got["bigKey"]["median"] < 32  # the 2 MB the save allows: two frames at most
+
+
+# -- what the review of B3b found ---------------------------------------------------------------------------------------
+
+_REVIEW = r"""
+window.katex = kctx.katex;
+const DOC = '\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nHello \\textbf{world}.\n\\end{document}\n';
+const PRE = '\\documentclass{article}\n\\usepackage{amsmath}'.length;
+const state = (anchor, head) => CM.EditorState.create({doc: DOC, selection: {anchor, head: head == null ? anchor : head}, extensions: [P.wordExtensions(CM)]});
+const fold = (st) => { let got = null; st.field(F.field).deco.between(0, 0, (a, b, v) => { if (v.spec.widget && v.spec.block) got = {from: a, to: b, open: v.spec.widget.open}; }); return got; };
+out.fold = {
+  crossing: fold(state(DOC.indexOf('amsmath'), DOC.indexOf('Hello') + 2)),
+  crossingUp: fold(state(DOC.indexOf('Hello') + 2, DOC.indexOf('amsmath'))),
+  fromStart: fold(state(0, DOC.indexOf('world'))),
+  atStart: fold(state(0)),
+  inBody: fold(state(DOC.indexOf('Hello'))),
+  body: DOC.slice(P.bodyStart(state(0).doc, P.readLatex(DOC))),
+  noPreamble: P.bodyStart(CM.Text.of(['Just text']), P.readLatex('Just text')),
+};
+// moving the selection across the boundary opens and folds it again
+let st = state(DOC.indexOf('Hello'));
+st = st.update({selection: {anchor: DOC.indexOf('Hello'), head: DOC.indexOf('amsmath')}}).state;
+out.fold.extended = fold(st);
+st = st.update({selection: {anchor: DOC.indexOf('Hello')}}).state;
+out.fold.collapsed = fold(st);
+
+// the 导言区 button: what it is, and a click (Return and Space press a button the same way)
+const made = [];
+global.mk = (tag, cls, text) => { const el = {tag, className: cls || '', textContent: String(text || ''), attrs: {}, on: {}, setAttribute(k, v) { this.attrs[k] = v; },
+  addEventListener(k, f) { this.on[k] = f; }}; made.push(el); return el; };
+const viewOf = (s) => ({state: s, focused: false, dispatch(spec) { this.state = this.state.update(spec).state; }, focus() { this.focused = true; }});
+const press = (v) => { let w = null; v.state.field(F.field).deco.between(0, 0, (a, b, d) => { if (d.spec.widget && d.spec.block) w = d.spec.widget; });
+  const el = w.toDOM(v); let prevented = false; el.on.mousedown({preventDefault() { prevented = true; }}); el.on.click(); return {tag: el.tag, type: el.attrs.type, prevented}; };
+const v1 = viewOf(state(DOC.indexOf('amsmath')));             // opened by the cursor inside: a click folds and moves it out
+const b1 = press(v1);
+out.button = {el: b1, folded: fold(v1.state), cursor: DOC.slice(v1.state.selection.main.head), focused: v1.focused};
+const v2 = viewOf(state(DOC.indexOf('world')));               // folded, cursor in the body: a click opens, the cursor stays
+press(v2);
+out.button.opened = fold(v2.state);
+out.button.stays = v2.state.selection.main.head === DOC.indexOf('world');
+press(v2);                                                    // and a second click folds it, the cursor still where it was
+out.button.again = fold(v2.state);
+out.button.stillStays = v2.state.selection.main.head === DOC.indexOf('world');
+
+// what KaTeX refuses with trust off is drawn as written, never in its error colour
+global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {}, setAttribute() {}, addEventListener() {}});
+out.katex = {};
+for (const src of ['x \\href{https://a.b}{x}', '\\url{https://a.b}', '\\includegraphics{a.png}', '\\htmlClass{a}{b}', '\\textcolor{red}{x}', 'x^2']) {
+  const box = P.mathDOM(src, false, '$' + src + '$');
+  out.katex[src] = {cls: box.className, text: box.textContent, red: /#cc0000|#0e0e0f/i.test(box.innerHTML)};
+}
+
+// Return in environments of running text, and in those shown as written
+const ret = (marked) => { const pos = marked.indexOf('|'), text = marked.replace('|', '');
+  const s0 = CM.EditorState.create({doc: text, selection: {anchor: pos}, extensions: [P.wordExtensions(CM)]});
+  const s1 = s0.update(P.returnSpec(s0, s0.field(F.field).read)).state, at = s1.selection.main.head, t = s1.doc.toString();
+  return t.slice(0, at) + '|' + t.slice(at); };
+out.envs = {};
+for (const env of ['doublespace', 'onehalfspace', 'spacing', 'proof', 'theorem', 'lemma*', 'minipage', 'appendices', 'frame', 'hyp', 'tabular', 'tikzpicture', 'eqnarray', 'figure'])
+  out.envs[env] = ret('\\newtheorem{hyp}{Hypothesis}\n\\begin{' + env + '}\nSo it holds.|\n\\end{' + env + '}');
+
+// the decorations drawn again only where a change or the selection asks equal those drawn whole, edit after edit
+let seed = 7;
+const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+const bits = ['x', ' ', '$', '\\', '{', '}', '\n', '\n\n', 'section', '\\textbf{', '\\item ', '\\begin{itemize}', '\\end{itemize}', '\\cite{k}',
+  '$y$', '%', '\\[', '\\]', '\\begin{equation}', '\\end{equation}', '\\begin{document}', '[', ']', '*', 'é'];
+const sig = (s) => { const got = []; s.field(F.field).deco.between(0, s.doc.length, (a, b, v) => { const w = v.spec.widget;
+  got.push([a, b, v.spec.class || (v.spec.attributes && v.spec.attributes.class) || '', w ? w.constructor.name + JSON.stringify(w) : '', !!v.spec.block].join('|')); }); return got.sort(); };
+const fresh = (s, open) => { let f = CM.EditorState.create({doc: s.doc, selection: s.selection, extensions: [P.wordExtensions(CM)]});
+  return open ? f.update({effects: F.preamble.of(true)}).state : f; };
+let cur = CM.EditorState.create({doc: '\\documentclass{article}\n\\begin{document}\n\\section{A} $x$ and \\textbf{b} \\citep{k}.\nThen $a$ or $b$, \\(c\\) and $d$.\n\\begin{enumerate}\n\\item one\n\\item two\n\\end{enumerate}\n\\begin{equation}\na=b\n\\end{equation}\n\\end{document}\n',
+  extensions: [P.wordExtensions(CM)]});
+let open = false, steps = 0, mismatch = null;
+for (let k = 0; k < 3000 && !mismatch; k++) {
+  const len = cur.doc.length, r = rnd(12), a = rnd(len + 1);
+  let spec;
+  if (r >= 10) spec = {changes: {from: a, insert: bits[rnd(bits.length)]}};   // a change elsewhere: the selection stays
+  else if (r < 5) spec = {changes: {from: a, insert: bits[rnd(bits.length)]}, selection: {anchor: a + 1 > len ? a : a + 1}};
+  else if (r < 7) { const b = Math.min(len, a + 1 + rnd(12)); spec = {changes: {from: a, to: b}, selection: {anchor: a}}; }
+  else if (r < 9) spec = {selection: {anchor: a, head: rnd(len + 1)}};
+  else { open = !open; spec = {effects: F.preamble.of(open)}; }
+  if (spec.selection && spec.changes) { const nl = len - ((spec.changes.to || spec.changes.from) - spec.changes.from) + (spec.changes.insert || '').length; spec.selection.anchor = Math.min(spec.selection.anchor, nl); }
+  cur = cur.update(spec).state;
+  steps += 1;
+  const x = sig(cur), y = sig(fresh(cur, open));
+  if (JSON.stringify(x) !== JSON.stringify(y)) mismatch = {step: k, doc: cur.doc.toString(), sel: [cur.selection.main.anchor, cur.selection.main.head], only: x.filter((z) => !y.includes(z)), missing: y.filter((z) => !x.includes(z))};
+}
+out.incremental = {steps, mismatch};
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def review() -> dict:
+    return _node(_REVIEW)
+
+
+@needs_node
+def test_a_selection_that_covers_any_of_the_preamble_opens_it_so_nothing_hidden_is_typed_over(review):
+    f, pre = review["fold"], len("\\documentclass{article}\n\\usepackage{amsmath}")
+    opened = {"from": 0, "to": 0, "open": True}
+    for case in ("crossing", "crossingUp", "fromStart", "atStart", "extended"):
+        assert f[case] == opened, case
+    assert f["inBody"] == f["collapsed"] == {"from": 0, "to": pre, "open": False}
+    assert f["body"] == "Hello \\textbf{world}.\n\\end{document}\n"       # where the editor puts its first cursor
+    assert f["noPreamble"] == 0
+
+
+@needs_node
+def test_the_preamble_header_is_a_button_whose_click_always_folds_or_opens_it(review):
+    b = review["button"]
+    assert b["el"] == {"tag": "button", "type": "button", "prevented": True}
+    assert b["folded"]["open"] is False and b["cursor"].startswith("Hello") and b["focused"] is True
+    assert b["opened"]["open"] is True and b["stays"] is True
+    assert b["again"]["open"] is False and b["stillStays"] is True
+
+
+@needs_node
+def test_what_katex_refuses_with_trust_off_is_shown_as_written_and_never_in_red(review):
+    k = review["katex"]
+    for src in ("x \\href{https://a.b}{x}", "\\url{https://a.b}", "\\includegraphics{a.png}", "\\htmlClass{a}{b}"):
+        assert k[src] == {"cls": "latex-math-raw", "text": "$" + src + "$", "red": False}, src
+    assert k["x^2"]["cls"] == "latex-math" and k["\\textcolor{red}{x}"]["cls"] == "latex-math"   # the writer's own colour stays
+
+
+@needs_node
+def test_return_makes_a_paragraph_in_environments_of_running_text_and_a_newline_in_those_shown_as_written(review):
+    e = review["envs"]
+    for env in ("doublespace", "onehalfspace", "spacing", "proof", "theorem", "lemma*", "minipage", "appendices", "frame", "hyp"):
+        assert e[env].endswith("So it holds.\n\n|\n\\end{" + env + "}"), env    # hyp: declared by \newtheorem in the file
+    for env in ("tabular", "tikzpicture", "eqnarray", "figure"):
+        assert e[env].endswith("So it holds.\n|\n\\end{" + env + "}"), env
+
+
+@needs_node
+def test_decorations_drawn_again_only_where_needed_equal_those_drawn_whole_after_every_edit(review):
+    assert review["incremental"]["mismatch"] is None, review["incremental"]["mismatch"]
+    assert review["incremental"]["steps"] == 3000
 
 
 # -- in the editor: 显示源码, passages, words ----------------------------------------------------------------------------
@@ -482,7 +649,7 @@ def test_the_words_of_like_word_go_through_t_with_their_english_and_the_toolbar_
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     assert 'mkButton(t("显示源码"), "ws-text-link latex-source"' in js
-    assert 'mk("div", "latex-preamble has-chevron", t("导言区"))' in js     # the chevron is drawn in CSS, 12.13
+    assert 'mk("button", "latex-preamble has-chevron", t("导言区"))' in js  # a real button; the chevron drawn in CSS, 12.13
     assert '"导言区": "Preamble",' in i18n and '"显示源码": "Show source",' in i18n
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     block = css[css.index("/* 22.1 like Word (B3b)"):css.index(".latex-include {")]
