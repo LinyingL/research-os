@@ -206,7 +206,8 @@ def test_a_path_spelt_otherwise_than_on_disk_never_opens_or_saves_a_generated_fi
         conn.commit()
     finally:
         conn.close()
-    code = "path" if os.path.exists(root / variant) else "not_found"
+    # A name not ending in lower-case .tex is refused as `path` before the file is looked for, on any volume.
+    code = "path" if os.path.exists(root / variant) or not variant.endswith(".tex") else "not_found"
     _refused(code, lambda: latex_edit.read_tex(root, variant))
     _refused(code, lambda: _save(root, variant, revision, [{"from": 0, "to": 0, "insert": "% hacked\n"}]))
     assert (root / "tables/t2.tex").read_bytes() == data and (root / "tables/caf\u00e9.tex").read_bytes() == data
