@@ -299,14 +299,17 @@ def test_a_supporting_file_is_stored_under_one_name_and_found_by_it_whatever_it_
     """Review of B1d: `figures/f1.png`, `file:…` and `dataset:…` named one file three ways and 以它为依据的段落 listed one
     link of three; a wrong-case spelling passed on a Mac volume; a claim or attempt id was written unchecked."""
     _put(root, "paper/main.tex", DRAFT)
+    _link(root, "paper/main.tex", "很慢。", file="figures/f1.png")
+    # review of B1e: the same passage to the same file again is refused, however the file is named
     for name in ("figures/f1.png", "file:figures/f1.png", "dataset:figures/f1.png"):
-        _link(root, "paper/main.tex", "很慢。", file=name)
+        assert _refused("already_linked", lambda: _link(root, "paper/main.tex", "很慢。", file=name)).status == 409
+    _link(root, "paper/main.tex", "人民币国际化", file="dataset:figures/f1.png")
     assert {e.get("file") for e in evidence.load(root).ledger.entries} == {"figure:figures/f1.png"}
     for name in ("Figures/F1.PNG", "figures/F1.png", "claim:does-not-exist", "attempt:bogus"):
         _refused("no_such_file", lambda: _link(root, "paper/main.tex", "很慢。", file=name))
     for name in ("figures/f1.png", "file:figures/f1.png", "dataset:figures/f1.png"):
         got = latex_edit.passages_supported(root, name)
-        assert got["file"] == "figure:figures/f1.png" and len(got["passages"]) == 3
+        assert got["file"] == "figure:figures/f1.png" and len(got["passages"]) == 2
 
 
 def test_a_long_note_an_unencodable_note_and_a_page_break_in_the_passage_are_refused_with_a_reason(root):

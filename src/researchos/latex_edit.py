@@ -137,14 +137,16 @@ def _read(root: Path, rel: str) -> bytes:
 
 
 def _opened(root: Path, rel: str, raw: bytes) -> dict[str, Any]:
-    reason = "generated" if _generated(root, rel) else None
+    # A reason of the text itself comes before "generated": a generated file is still linked to (22.2), which needs
+    # its text read as the file it is, one line break per ending.
+    reason = None
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode("utf-8", errors="replace")
-        reason = reason or "encoding"
+        reason = "encoding"
     ending, odd = _ending(text)
-    reason = reason or ("nul" if "\0" in text else None) or odd
+    reason = reason or ("nul" if "\0" in text else None) or odd or ("generated" if _generated(root, rel) else None)
     return {"text": text, "line_ending": ending, "read_only": reason is not None, "read_only_reason": reason}
 
 
@@ -602,7 +604,8 @@ def supporting_files(root: str | Path, query: Any, limit: int = 50) -> dict[str,
         if wanted and wanted not in files_ingest.fold(rel):
             continue
         kind = notes.normalize_node(rel).split(":", 1)[0]
-        group = ("figure" if kind == "figure" or _TABLE_RE.search(rel) else "data" if kind == "dataset"
+        table = kind != "script" and _TABLE_RE.search(rel)   # tab.py is a script, tables/t.tex a table
+        group = ("figure" if kind == "figure" or table else "data" if kind == "dataset"
                  else "script" if kind == "script" else "document")
         found.append((_FILE_GROUPS.index(group), rel, group))
     found.sort()

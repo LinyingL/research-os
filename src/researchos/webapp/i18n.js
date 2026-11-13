@@ -1899,6 +1899,8 @@
     "已找到": "Found",
     "文稿现在打不开": "The draft cannot be opened now",
     "在编辑器里打开": "Open in the editor",
+    "已撤销": "Undone",
+    "选中的文字在新版本里找不到了，请重新选择": "The selected words are not in the new version; select them again",
 
   };
 

@@ -202,7 +202,8 @@
     const undo = mkButton(t("撤销这次保存"), "ws-text-link hidden", () => undoSave());
     const status = mk("span", "notice-status");
     status.setAttribute("role", "status");
-    tools.append(save, undo, status);
+    const undoLink = mkButton(t("撤销"), "ws-text-link hidden", () => undoAct(ed));   // the last 关联/撤回关联/是这段 (18.3)
+    tools.append(save, undo, status, undoLink);
     head.append(mk("div", "node-path mono", file.path), tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
@@ -210,7 +211,7 @@
     body.append(box, side);
     page.append(backBar(), head, readOnly, notice, body);
     host.replaceChildren(page);
-    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side },
+    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
     me.ui.linkButton = mkButton(t("关联依据文件"), "btn btn-small latex-link-button hidden", () => openLinkPanel(me));
     me.ui.linkButton.addEventListener("mousedown", (event) => event.preventDefault());   // the selection stays
@@ -262,7 +263,8 @@
     me.ui.save.classList.toggle("hidden", me.readOnly);
     // a passage can be tied to a file in any draft but one that cannot be read as the file it is (22.1's read-only reasons)
     me.mayLink = !file.read_only || file.read_only_reason === "generated";
-    me.panel = null; me.linkRange = null;
+    me.lastAct = null; me.ui.undoLink.classList.add("hidden");   // an entry's 撤销 is offered until the file is reloaded
+    if (me.panel === "link") keepLinkPanel(me, state.doc);   // a passage's panel stays; loadPassages drops it if gone
     placeLinkButton(me);
     loadPassages(me, false);
   }
@@ -528,12 +530,16 @@
         ? { state: kept.p.state, opened: "found", local: true, from: kept.p.from, to: kept.p.to, candidates: kept.p.candidates }
         : { state: item.state, opened: item.state, local: false, from: here(item.from, -1), to: here(item.to, 1),
           candidates: (item.candidates || []).map((c) => ({ from: here(c.from, -1), to: here(c.to, 1), text: c.text })) };
-      const key = p.from != null && (p.state === "found" || p.local) ? p.state + "@" + p.from + ":" + p.to : item.link;
-      if (!groups.has(key)) { groups.set(key, Object.assign(p, { key: key, quote: item.quote, links: [] })); list.push(groups.get(key)); }
-      groups.get(key).links.push(item);
+      // links of one place are one passage; a passage is named by its first link, so a reload or an edit keeps its panel
+      const at = p.from != null && (p.state === "found" || p.local) ? p.state + "@" + p.from + ":" + p.to : item.link;
+      if (!groups.has(at)) { groups.set(at, Object.assign(p, { key: item.link, quote: item.quote, links: [] })); list.push(groups.get(at)); }
+      groups.get(at).links.push(item);
     });
     me.evidence = { trusted: data.trusted, message: data.message };
-    if (me.panel && !list.some((p) => p.key === me.panel)) me.panel = null;
+    if (me.panel && me.panel !== "link") {
+      const kept = list.find((p) => p.links.some((l) => l.link === me.panel));
+      me.panel = kept ? kept.key : null;
+    }
     setPassages(me, list);
     const target = me.target && list.find((p) => p.links.some((l) => l.link === me.target.link));
     me.target = null;
@@ -561,24 +567,64 @@
     if (moved) setPassages(me, list);
   }
 
-  // One entry in the ledger. The server takes a passage from the saved file, so unsaved text is saved first.
-  async function act(me, action, bodyOf, done) {
-    if (dirty()) await saveNow();
-    if (ed !== me) return false;
-    if (dirty() || me.busy) { setStatus(me.ui.status, "err", t("先保存，再改依据文件")); return false; }
-    const conv = positions(me.view.state.doc, me.sep);
+  // Entries in the ledger, one POST each. A link or a reanchor names a passage of the saved file, so with unsaved text
+  // it is refused, never saved for the person (保存 is the editor's own act, 22.1, 22.7); a withdraw names only the
+  // link. `each(body)` runs after each POST that went through; what was written is then offered for 撤销 (18.3).
+  async function act(me, action, bodyOf, done, each) {
+    if (me.acting) return false;
+    if (me.busy || (action !== "withdraw" && dirty())) { setStatus(me.ui.status, "err", t("先保存，再改依据文件")); return false; }
+    const conv = positions(me.view.state.doc, me.sep), wrote = [];
+    me.acting = true;
+    let failed = null;
     try {
       for (const body of bodyOf(conv)) {
-        await apiPost("/api/latex/evidence/" + action, Object.assign({ project: state.currentPath, path: me.path, revision: me.revision }, body));
+        const r = await apiPost("/api/latex/evidence/" + action, Object.assign({ project: state.currentPath, path: me.path, revision: me.revision }, body));
+        wrote.push({ link: r && r.link, entry: r && r.entry });
+        if (each && ed === me) each(body);
       }
-    } catch (err) {
-      if (ed === me) setStatus(me.ui.status, "err", t("关联没有写入"), err);
-      return false;
-    }
+    } catch (err) { failed = err; }
     if (ed !== me) return false;
-    setStatus(me.ui.status, "ok", done);
+    me.acting = false;
+    me.lastAct = wrote.filter((w) => w.link && w.entry);
+    me.ui.undoLink.classList.toggle("hidden", !me.lastAct.length);
+    if (failed) setStatus(me.ui.status, "err", t("关联没有写入"), failed);
+    else setStatus(me.ui.status, "ok", done);
+    if (wrote.length) await loadPassages(me, true);
+    return !failed;
+  }
+
+  // 撤销: the entries the last act wrote taken back, newest first (the engine's `undone`).
+  async function undoAct(me) {
+    if (!me || me.acting || !me.lastAct || !me.lastAct.length) return;
+    const last = me.lastAct;
+    me.acting = true; me.ui.undoLink.disabled = true;
+    let failed = null;
+    while (last.length && !failed) {
+      const w = last[last.length - 1];
+      try {
+        await apiPost("/api/latex/evidence/undo", { project: state.currentPath, path: me.path, link: w.link, undoes: w.entry });
+        last.pop();
+      } catch (err) { failed = err; }
+    }
+    if (ed !== me) return;
+    me.acting = false; me.ui.undoLink.disabled = false;
+    me.ui.undoLink.classList.toggle("hidden", !last.length);
+    if (failed) setStatus(me.ui.status, "err", t("没能撤销"), failed);
+    else setStatus(me.ui.status, "ok", t("已撤销"));
     await loadPassages(me, true);
-    return true;
+  }
+
+  // A reload (载入新版本, a version saved elsewhere) keeps an open link panel, its files and note, when the selected
+  // words are still in the file, at the place nearest where they were; else it closes, saying so.
+  function keepLinkPanel(me, doc) {
+    const text = doc.toString(), quote = me.linkQuote || "", was = me.linkRange ? me.linkRange.from : 0;
+    let best = -1;
+    for (let at = quote ? text.indexOf(quote) : -1; at >= 0; at = text.indexOf(quote, at + 1)) {
+      if (best < 0 || Math.abs(at - was) < Math.abs(best - was)) best = at;
+    }
+    if (best >= 0 && me.mayLink) { me.linkRange = { from: best, to: best + quote.length }; return; }
+    me.panel = null; me.linkRange = null;
+    setStatus(me.ui.status, "err", t("选中的文字在新版本里找不到了，请重新选择"));
   }
 
   // 「关联依据文件」 beside a selection of words.
@@ -611,6 +657,7 @@
     const sel = me.view.state.selection.main;
     if (sel.empty) return;
     me.linkRange = { from: sel.from, to: sel.to };
+    me.linkQuote = me.view.state.doc.sliceString(sel.from, sel.to);
     me.panel = "link";
     const side = me.ui.side, chosen = [], picked = mk("ul", "latex-files"), results = mk("div", "latex-results");
     const search = mk("input", "ws-input");
@@ -618,14 +665,18 @@
     search.setAttribute("aria-label", t("搜索项目里的文件"));
     const note = mk("textarea", "ws-input latex-note");
     note.setAttribute("placeholder", t("备注（可选）"));
+    let sending = false;
     const go = mkButton(t("确认关联"), "btn btn-primary", async () => {
-      if (!chosen.length || !me.linkRange) return;
-      go.disabled = true;
+      if (!chosen.length || !me.linkRange || sending) return;
+      sending = true; go.disabled = true;
       const range = me.linkRange, text = (note.value || "").trim();
+      // each file leaves the chosen list once its link is written, so pressing again after a failure writes the rest only
       const ok = await act(me, "link", (conv) => chosen.map((file) => ({ file: file, note: text || null,
-        from: conv.toServer(range.from), to: conv.toServer(range.to) })), t("已关联依据文件"));
+        from: conv.toServer(range.from), to: conv.toServer(range.to) })), t("已关联依据文件"),
+      (body) => { chosen.splice(chosen.indexOf(body.file), 1); showPicked(); });
+      sending = false;
       if (ed !== me) return;
-      if (ok) { me.panel = null; me.linkRange = null; renderSide(me); } else go.disabled = false;
+      if (ok) { me.panel = null; me.linkRange = null; renderSide(me); } else go.disabled = !chosen.length;
     });
     go.disabled = true;
     const showPicked = () => {
@@ -634,7 +685,7 @@
         li.append(mk("span", "mono", file), mkButton(t("移除"), "ws-text-link", () => { chosen.splice(chosen.indexOf(file), 1); showPicked(); }));
         return li;
       }));
-      go.disabled = !chosen.length;
+      go.disabled = sending || !chosen.length;
     };
     let asked = 0;
     const find = async () => {
@@ -680,10 +731,12 @@
       if (l.note) li.appendChild(mk("p", "latex-note-text", l.note));
       const when = window.RODesk && RODesk.whenWords ? RODesk.whenWords(l.at, new Date()) : "";
       li.appendChild(mk("p", "node-sub", [l.label, when].filter(Boolean).join(t("，"))));
-      li.appendChild(mkButton(t("撤回关联"), "ws-text-link", () => {
-        if (!window.confirm(t("撤回这个依据文件的关联吗？"))) return;
-        act(me, "withdraw", () => [{ link: l.link }], t("已撤回关联"));
-      }));
+      const withdraw = mkButton(t("撤回关联"), "ws-text-link", async () => {
+        if (withdraw.disabled || !window.confirm(t("撤回这个依据文件的关联吗？"))) return;
+        withdraw.disabled = true;   // one click, one entry
+        if (!await act(me, "withdraw", () => [{ link: l.link }], t("已撤回关联"))) withdraw.disabled = false;
+      });
+      li.appendChild(withdraw);
       files.appendChild(li);
     });
     const parts = [head, quoted(p.from != null && p.state !== "deleted" ? me.view.state.sliceDoc(p.from, p.to) : p.quote), files];
@@ -691,9 +744,13 @@
       parts.push(mk("p", "node-sub", p.candidates[0].still ? t("这段的文字改过了。依据文件还支持它吗？") : t("原来的文字找不到了。是下面哪一段？")));
       p.candidates.slice(0, 3).forEach((c) => {
         const row = mk("div", "latex-candidate");
-        row.append(quoted(c.text), mkButton(c.still ? t("仍然成立") : t("是这段"), "btn btn-small", () => act(me, "reanchor",
-          (conv) => p.links.map((l) => ({ link: l.link, from: conv.toServer(c.from), to: conv.toServer(c.to) })),
-          c.still ? t("已记录：仍然成立") : t("已记录：是这段"))));
+        const here = mkButton(c.still ? t("仍然成立") : t("是这段"), "btn btn-small", async () => {
+          if (here.disabled) return;
+          here.disabled = true;   // one click, one entry
+          if (!await act(me, "reanchor", (conv) => p.links.map((l) => ({ link: l.link, from: conv.toServer(c.from), to: conv.toServer(c.to) })),
+            c.still ? t("已记录：仍然成立") : t("已记录：是这段"))) here.disabled = false;
+        });
+        row.append(quoted(c.text), here);
         parts.push(row);
       });
     }
@@ -714,7 +771,7 @@
       const counts = mk("p", "latex-counts", t("{n} 段有依据文件", { n: list.length }));
       if (waiting.length) counts.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
       parts.push(counts);
-      waiting.forEach((p) => parts.push(mkButton(words(p.quote).slice(0, 40), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
+      waiting.forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
     } else if (me.mayLink) parts.push(mk("p", "node-sub", t("选中一段文字，可以关联依据文件。")));
     side.replaceChildren(...parts);
   }
@@ -750,11 +807,19 @@
     }, () => {});
   }
 
-  // 图表与论断, per draft under 论文正文: 「{n} 段有依据文件」 and, in ochre, 「{n} 段待复核」 when there are some.
-  function paperCounts(host, path) {
+  // 图表与论断, per draft under 论文正文: 「{n} 段有依据文件」 and, in ochre, 「{n} 段待复核」 when there are some. `once`, shared by
+  // the rows of one list, says the ledger's own message (it cannot be trusted now) or a failed read on one row only.
+  function paperCounts(host, path, once) {
     const line = mk("span", "node-sub-inline hidden");
     host.appendChild(line);
+    const say = (text) => {
+      if (!once || once.said) return;
+      once.said = true;
+      line.replaceChildren(mk("span", "notice-status err", text));
+      line.classList.remove("hidden");
+    };
     apiGet("/api/latex/evidence?path=" + encodeURIComponent(path)).then((data) => {
+      if (data.message) { say(data.message); return; }
       const all = new Set(), waiting = new Set();
       (data.links || []).forEach((l) => {
         const key = l.state === "found" ? l.from + ":" + l.to : l.link;
@@ -765,7 +830,13 @@
       line.append(t("{n} 段有依据文件", { n: all.size }));
       if (waiting.size) line.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.size })));
       line.classList.remove("hidden");
-    }, () => {});
+    }, () => say(t("没能读到这份文稿的依据文件")));
+  }
+
+  // The pages' refresh (app.html refreshCurrentView): evidence.toml is in the watcher's set, so a link made or withdrawn
+  // elsewhere (the CLI, another window) shows in the open editor at once (22.2 "The index").
+  function refresh() {
+    if (ed && ed.view && !ed.busy && !ed.acting) return loadPassages(ed, true);
   }
 
   // A project switch or the editor's view dropped: nothing of the previous project stays open.
@@ -775,7 +846,7 @@
 
   window.ROLatex = Object.freeze({
     loadEditorLibs: loadEditorLibs, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
-    renderSupported: renderSupported, paperCounts: paperCounts,
+    renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions }),
   });

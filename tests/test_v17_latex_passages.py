@@ -213,7 +213,7 @@ def test_the_link_panels_search_lists_figures_and_tables_first_then_data_scripts
 
 def test_a_files_page_and_the_papers_rows_show_the_passages_it_supports_and_the_counts():
     node = (WEBAPP / "node.js").read_text(encoding="utf-8")
-    assert 'ROLatex.renderSupported(pageEl, page)' in node and 'ROLatex.paperCounts(main, d.file)' in node
+    assert 'ROLatex.renderSupported(pageEl, page)' in node and 'ROLatex.paperCounts(main, d.file, countsSaid)' in node
     latex = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     assert 'apiGet("/api/latex/supports?file=" + encodeURIComponent(page.id))' in latex
     assert 'mkButton(t("在编辑器里打开"), "ws-text-link", () => open(p.draft, { link: p.link }))' in latex
@@ -222,3 +222,228 @@ def test_a_files_page_and_the_papers_rows_show_the_passages_it_supports_and_the_
     assert 'mkButton(t("撤回关联"), "ws-text-link"' in latex
     assert 'mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.size }))' in latex
     assert "clay" not in latex
+
+
+def test_a_generated_table_with_odd_line_endings_is_read_only_for_its_endings_and_cannot_be_linked(tmp_path):
+    """Review of B1e: a generated file whose text is not one ending per break says so, not 「generated」, so the editor
+    hides 「关联依据文件」 and the server refuses a link it could not place (CodeMirror would count each break as one)."""
+    root = tmp_path / "p"
+    root.mkdir()
+    project.init_project(root)
+    text = "a\nb\nc\r\nTARGET word\r\n"
+    (root / "tables").mkdir()
+    (root / "tables/t.tex").write_bytes(text.encode())
+    (root / "figures").mkdir()
+    (root / "figures/f1.png").write_bytes(b"png")
+    (root / "research/results").mkdir(parents=True)
+    (root / "research/results/abc.outputs.json").write_text(json.dumps(
+        {"version": 1, "items": [{"kind": "table", "path": "tables/t.tex"}]}))
+    assert latex_edit.read_tex(root, "tables/t.tex")["read_only_reason"] == "mixed"
+    with pytest.raises(latex_edit.WorkspaceError) as error:
+        latex_edit.evidence_act(root, "link", {"path": "tables/t.tex", "revision": _sha_of(root / "tables/t.tex"),
+                                               "from": 7, "to": 13, "file": "figures/f1.png"})
+    assert error.value.code == "read_only_file"
+    assert not evidence.evidence_path(root).exists()
+    (root / "tables/t.tex").write_bytes(text.replace("\r\n", "\n").encode())   # one ending: generated, and linkable
+    assert latex_edit.read_tex(root, "tables/t.tex")["read_only_reason"] == "generated"
+    latex_edit.evidence_act(root, "link", {"path": "tables/t.tex", "revision": _sha_of(root / "tables/t.tex"),
+                                           "from": 6, "to": 12, "file": "figures/f1.png"})
+    (only,) = evidence.links_now(root)[0].values()
+    assert only["anchor"]["quote"] == "TARGET"
+
+
+def test_the_same_passage_linked_to_the_same_file_again_is_refused_and_another_file_is_not(tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    project.init_project(root)
+    for rel in ("figures/f1.png", "data/x.csv"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(b"x")
+    revision = _put(root, "A 显著 b\n")
+    body = {"path": PATH, "revision": revision, "from": 2, "to": 4, "file": "figures/f1.png"}
+    latex_edit.evidence_act(root, "link", body)
+    with pytest.raises(latex_edit.WorkspaceError) as error:
+        latex_edit.evidence_act(root, "link", dict(body, file="file:figures/f1.png"))
+    assert (error.value.code, error.value.status) == ("already_linked", 409)
+    latex_edit.evidence_act(root, "link", dict(body, file="data/x.csv"))
+    assert sorted(item["file"] for item in evidence.links_now(root)[0].values()) == ["dataset:data/x.csv",
+                                                                                     "figure:figures/f1.png"]
+
+
+def test_a_script_named_like_a_table_is_a_script_and_a_table_folder_holds_tables(tmp_path):
+    root = tmp_path / "p"
+    for rel in ("tab.py", "tables/t.csv", "tables/t.tex"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x")
+    project.init_project(root)
+    got = {f["path"]: f["group"] for f in latex_edit.supporting_files(root, "")["files"]}
+    assert got == {"tab.py": "script", "tables/t.csv": "figure", "tables/t.tex": "figure"}
+
+
+def _sha_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# -- the review of B1e, driven under node -----------------------------------------------------------------------------
+
+_REVIEW = r"""
+FakeView.prototype.dispatch = function (spec) {   // as the driver's, telling the listeners when the selection moved
+  const tr = this.state.update(spec); this.state = tr.state;
+  for (const listen of tr.state.facet(real.EditorView.updateListener)) listen({docChanged: tr.docChanged, selectionSet: !!spec.selection, changes: tr.changes, view: this, state: tr.state});
+};
+const out = {};
+const TEXT = 'A 显著 b\nmore words here\n';
+const f = (path, extra) => Object.assign({path, text: TEXT, revision: 'r1', line_ending: 'lf', read_only: false, read_only_reason: null, links: [], mains: []}, extra);
+const link = (id, extra) => Object.assign({link: id, last: 'pe-' + id, quote: '显著', file: 'figure:figures/f1.png', note: null, label: 'Li',
+  at: null, state: 'found', from: 2, to: 4, candidates: [], file_missing: false}, extra);
+let EV = {revision: 'r1', links: []};
+evidenceAnswer = () => EV;
+const view = () => viewsMade[viewsMade.length - 1];
+const linkHidden = () => byClass('latex-link-button').classList.contains('hidden');
+const side = () => byClass('latex-side');
+const texts = (el) => typeof el === 'string' ? [el] : [el.textContent].concat(...el.children.filter(Boolean).map(texts));
+const status = () => byClass('latex-tools').children[2].textContent;
+const open = async (path, extra, at) => { L.open(path, at); await tick(); gets.shift().res(f(path, extra)); await tick(); await tick(); await tick(); };
+// a read-only draft for its line endings offers no link; a generated one does
+await open('odd.tex', {read_only: true, read_only_reason: 'mixed'});
+view().dispatch({selection: {anchor: 2, head: 4}}); out.oddHidden = linkHidden();
+await open('gen.tex', {read_only: true, read_only_reason: 'generated'});
+view().dispatch({selection: {anchor: 2, head: 4}}); out.generatedShown = !linkHidden();
+await open('ro.tex', {read_only: true, read_only_reason: 'encoding'});
+view().dispatch({selection: {anchor: 2, head: 4}}); out.encodingHidden = linkHidden();
+// a draft opened at a passage: its panel; the margin count and the underlines as drawn
+EV = {revision: 'r1', links: [link('pl-1'), link('pl-2', {quote: 'gone words', state: 'changed', from: null, to: null,
+  candidates: [{from: 7, to: 22, text: 'more words here'}]})]};
+await open('a.tex', {}, {link: 'pl-1'});
+const V = view();
+const drawn = [];
+for (const d of V.state.facet(real.EditorView.decorations)) {
+  if (typeof d === 'function') continue;   // the include links' plugin, which needs a real view
+  d.between(0, V.state.doc.length, (from, to, value) => {
+    const w = value.spec.widget;
+    drawn.push(w ? {at: from, count: w.toDOM().textContent, cls: w.toDOM().className} : {from, to, cls: value.spec.class});
+  });
+}
+out.drawn = drawn;
+out.panelAtOpen = texts(side()).includes('依据文件');
+// typing before the passage, then the pages' refresh: the passage's panel stays open
+V.dispatch({changes: {from: 0, insert: 'X'}});
+await L.refresh(); await tick();
+out.panelAfterRefresh = texts(side()).includes('依据文件') && texts(side()).includes('显著');
+// with unsaved text: 是这段 is refused without a save; 撤回关联 posts the withdraw only, once however often pressed
+const wait = all.filter((e) => e.classList.contains('latex-waiting')).pop();
+wait.fire('click'); await tick();
+button('是这段').fire('click'); await tick();
+out.thisOneWhileDirty = {posts: posts.length, status: status()};
+const withdraw = button('撤回关联');
+withdraw.fire('click'); await tick(); withdraw.fire('click'); await tick();
+out.withdrawPosts = posts.map((p) => p.url);
+out.withdrawDisabled = withdraw.disabled;
+EV = {revision: 'r1', links: [link('pl-1')]};
+posts.shift().res({act: 'withdraw', link: 'pl-2', entry: 'pe-9'}); await tick(); await tick(); await tick();
+out.undoShown = !button('撤销').classList.contains('hidden');
+button('撤销').fire('click'); await tick();
+const un = posts.shift(); out.undo = {url: un.url, link: un.body.link, undoes: un.body.undoes};
+un.res({act: 'undone'}); await tick(); await tick();
+out.undoAfter = {hidden: button('撤销').classList.contains('hidden'), status: status()};
+out.dirtyStill = L.isDirty();
+// saved; then two files chosen, the second refused: only it stays chosen, and pressing again sends it alone
+button('保存').fire('click'); await tick();
+posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick();
+EV = {revision: 'r2', links: [link('pl-1', {from: 3, to: 5})]};
+const more = V.state.doc.toString().indexOf('more');
+V.dispatch({selection: {anchor: more, head: more + 4}});
+byClass('latex-link-button').fire('click'); await tick();
+gets.shift().res({files: [{path: 'figures/f1.png', group: 'figure'}, {path: 'data/x.csv', group: 'data'}]}); await tick();
+button('figures/f1.png').fire('click'); button('data/x.csv').fire('click');
+button('确认关联').fire('click'); await tick();
+posts.shift().res({act: 'link', link: 'pl-a', entry: 'pe-a'}); await tick(); await tick();
+posts.shift().rej({state: 'workspace_conflict'}); await tick(); await tick(); await tick();
+out.chosenAfterFailure = byClass('latex-files').children.map((li) => li.children[0].textContent);
+out.primaryAfterFailure = button('确认关联').disabled;
+button('确认关联').fire('click'); await tick();
+out.retried = posts.map((p) => [p.body.file, p.body.from, p.body.to]);
+posts.shift().res({act: 'link', link: 'pl-b', entry: 'pe-b'}); await tick(); await tick(); await tick();
+out.leftover = posts.length;
+// 图表与论断's rows: the counts, and the ledger's own message said once for all rows
+const row1 = mk('div'), row2 = mk('div'), row3 = mk('div'), once = {};
+EV = {revision: 'r2', links: [link('pl-1'), link('pl-3'), link('pl-2', {state: 'changed', from: null, to: null})]};
+L.paperCounts(row1, 'a.tex', {}); await tick();
+EV = {revision: 'r2', links: [], message: 'The record cannot be read now'};
+L.paperCounts(row2, 'a.tex', once); L.paperCounts(row3, 'b.tex', once); await tick(); await tick();
+out.counts = texts(row1.children[0]).join('|');
+out.messages = [row2, row3].map((r) => texts(r).filter((x) => x === 'The record cannot be read now').length);
+// 以它为依据的段落 on a file's page
+const page = mk('div');
+L.renderSupported(page, {id: 'figure:figures/f1.png'}); await tick();
+out.supportsUrl = gets[0].url;
+gets.shift().res({passages: [{draft: 'a.tex', section: '引言', excerpt: '显著', state: 'changed', link: 'pl-1'}]}); await tick();
+out.supports = texts(page.children[0]);
+out.supportsHidden = page.children[0].classList.contains('hidden');
+// a waiting passage's label cut at 40 characters never halves an emoji
+EV = {revision: 'r2', links: [link('pl-4', {quote: '😀'.repeat(45), state: 'changed', from: null, to: null})]};
+await L.refresh(); await tick();
+out.label = all.filter((e) => e.classList.contains('latex-waiting')).pop().textContent;
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def review() -> dict:
+    if NODE is None:
+        pytest.skip("node is not installed")
+    prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
+                                                     "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    script = (prelude + "(async () => {\n" + _REVIEW
+              + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });")
+    got = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, timeout=60).stdout
+    out = json.loads(got.strip().splitlines()[-1])
+    assert "error" not in out, out.get("error")
+    return out
+
+
+def test_the_link_button_is_offered_on_a_generated_draft_and_never_on_one_read_only_for_its_text(review):
+    assert review["oddHidden"] is True and review["encodingHidden"] is True and review["generatedShown"] is True
+
+
+def test_a_found_passage_is_dotted_in_ink_with_its_count_in_the_margin_and_a_waiting_one_has_no_place(review):
+    assert review["drawn"] == [{"at": 2, "count": "1", "cls": "latex-count"},
+                               {"from": 2, "to": 4, "cls": "latex-passage"}]
+    assert review["panelAtOpen"] is True
+
+
+def test_an_open_passage_panel_stays_open_through_typing_and_a_refresh(review):
+    assert review["panelAfterRefresh"] is True
+
+
+def test_with_unsaved_text_a_reanchor_is_refused_and_a_withdraw_posts_alone_and_once(review):
+    assert review["thisOneWhileDirty"] == {"posts": 0, "status": "先保存，再改依据文件"}
+    assert review["withdrawPosts"] == ["/api/latex/evidence/withdraw"] and review["withdrawDisabled"] is True
+    assert review["dirtyStill"] is True
+
+
+def test_undo_is_offered_after_an_entry_and_takes_back_that_entry(review):
+    assert review["undoShown"] is True
+    assert review["undo"] == {"url": "/api/latex/evidence/undo", "link": "pl-2", "undoes": "pe-9"}
+    assert review["undoAfter"] == {"hidden": True, "status": "已撤销"}
+
+
+def test_a_link_to_several_files_that_fails_part_way_sends_only_the_rest_again(review):
+    assert review["chosenAfterFailure"] == ["data/x.csv"] and review["primaryAfterFailure"] is False
+    assert [r[0] for r in review["retried"]] == ["data/x.csv"] and review["leftover"] == 0
+
+
+def test_the_papers_rows_count_passages_and_say_the_ledgers_message_once(review):
+    # two links on one place are one passage; the waiting one is counted apart, in ochre
+    assert review["counts"] == "|2 段有依据文件| |1 段待复核"
+    assert sorted(review["messages"]) == [0, 1]
+
+
+def test_a_files_page_lists_the_passages_it_supports_with_open_in_the_editor(review):
+    assert review["supportsUrl"] == "/api/latex/supports?file=figure%3Afigures%2Ff1.png"
+    assert "以它为依据的段落" in review["supports"] and "在编辑器里打开" in review["supports"] and "引言" in review["supports"]
+    assert review["supportsHidden"] is False
+
+
+def test_a_waiting_passages_label_is_cut_at_forty_characters_not_forty_code_units(review):
+    assert review["label"] == "😀" * 40

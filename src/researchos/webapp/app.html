@@ -3315,6 +3315,8 @@ async function refreshCurrentView() {
     await loadVariablesView();
   } else if (currentView === "literature") {
     await loadLiteratureView();
+  } else if (currentView === "latex" && window.ROLatex) {
+    await ROLatex.refresh();   // 22.2: the open draft's links, read again; the text itself is left as it is
   }
   await revalidatePanel();
   loadProjectSummary(); // the review count may have moved with the graph

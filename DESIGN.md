@@ -7380,6 +7380,12 @@ presentation; 22.8 batches and acceptance; 22.9 what the review changed.
    for a checked number, against Section 0. The researcher may rule
    otherwise.
 
+5. **The link panel's button reads 「确认关联」** (22.2, 22.7), not 「关联」:
+   the key `关联` is already the link word "is linked to" (as `依据` is
+   "is based on", 22.0.2), so a button 「关联」 would read "is linked to" in
+   English. Its English is "Link". Raised by the review of B1e; the
+   researcher may rule otherwise.
+
 ### 22.1 The editor
 
 - **Where.** A `.tex` draft's own page (`node.js`) gets 「编辑」 beside
@@ -7507,7 +7513,7 @@ where the cursor is:
   the selection. It opens a panel: the passage quoted (the first 200
   characters, then 「…」 and the count), a search over the project's files
   (figures and tables first, then data, scripts, documents), an optional
-  note, and 「关联」, the panel's one primary button. A passage may have several
+  note, and 「确认关联」 (22.0.5), the panel's one primary button. A passage may have several
   files; a file may support many passages. Links are made in the editor only.
 - **The record.** A new ledger, **`.researchos/evidence.toml`**, on the
   ledger engine (`records/ledger.py`), table **`[[passage_evidence]]`**, id
@@ -7731,6 +7737,7 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 关联依据文件 | Link a supporting file |
 | 以它为依据的段落 | Passages it supports |
 | 撤回关联 | Withdraw the link |
+| 确认关联 | Link (22.0.5) |
 | 人工声明 | declared by a person |
 | 人工声明的依据文件 | Supporting file declared by a person |
 | 代码推断 | inferred from code |
@@ -7749,7 +7756,7 @@ emoji, arrow or glyph.
 
 - The editor page: 「保存」 primary; 导出 PDF quiet; 撤销这次保存, 显示源码,
   载入新版本 and 返回 text links.
-- The link panel: 「关联」 primary. The passage panel: no primary; 「是这段」 and
+- The link panel: 「确认关联」 primary (22.0.5). The passage panel: no primary; 「是这段」 and
   「仍然成立」 quiet buttons, 撤回关联 a text link.
 - The export result: 打开 PDF and 在 Finder 中显示 text links; 「导出没有成功」
   in clay (added to `test_v16_clay`'s list); a missing character and 待复核

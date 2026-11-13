@@ -1659,7 +1659,7 @@
       block.appendChild(mk("p", "node-sub", t("图表与论断只列出论文正文里的论断：修订记录、审稿意见里的数字不算。还没有文稿设为论文正文——") +
         t("点「设为论文正文」，从文稿里选一份；在选定之前，所有文稿的图和表都当作论文用到的。")));
     } else {
-      const ul = mk("ul", "res-list res-paper-list");
+      const ul = mk("ul", "res-list res-paper-list"), countsSaid = {};   // the ledger's message once for all rows (22.2)
       marked.forEach((d) => {
         const li = mk("li", "res-row");
         const main = mk("div", "res-main");
@@ -1671,7 +1671,7 @@
         if (gone) main.appendChild(mk("div", "node-sub-inline res-gone", t("这个文件现在不在项目里")));
         else if (/\.tex$/.test(d.file) && window.ROLatex) {
           main.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(d.file)));   // 22.1
-          ROLatex.paperCounts(main, d.file);   // 22.2: 「{n} 段有依据文件」, 「{n} 段待复核」
+          ROLatex.paperCounts(main, d.file, countsSaid);   // 22.2: 「{n} 段有依据文件」, 「{n} 段待复核」
         }
         li.append(main, paperButton(d.file, true, status));
         ul.appendChild(li);

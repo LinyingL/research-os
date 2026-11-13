@@ -87,6 +87,7 @@ MESSAGES = {
                         "The member list (team.toml) cannot be read now, so who the PI is cannot be told"),
     "no_such_file": ("项目里找不到这个文件", "There is no such file in the project"),
     "no_such_link": ("找不到这条关联", "This link cannot be found"),
+    "already_linked": ("这段已经关联了这个文件", "This passage is already linked to this file"),
     "withdrawn": ("这条关联已经撤回", "This link has been withdrawn"),
     "invalid_request": ("无法识别这次关联", "This link cannot be read"),
     "not_written": ("关联没有写入", "The link was not written"),
@@ -99,7 +100,7 @@ MESSAGES = {
 LINE_SEPARATORS = "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ROLE_REFUSAL = {"member": "member", "none": "not_in_team", "unknown": "team_unreadable"}
 _STATUS = {"member": 403, "not_in_team": 403, "team_unreadable": 409, "untrusted": 409, "no_such_file": 404,
-           "no_such_link": 404, "withdrawn": 409, "not_written": 409}
+           "no_such_link": 404, "withdrawn": 409, "already_linked": 409, "not_written": 409}
 
 
 class EvidenceRefused(Exception):
@@ -463,7 +464,16 @@ def add_link(project_root: str | Path, draft: str, file: str, anchor: Mapping[st
     node = notes.normalize_node(rel)
     fields = {"act": LINK, "link": "pl-" + secrets.token_hex(16), "draft": draft, "file": node, "note": note,
               "via": via, "anchor": dict(anchor)}
-    return _write(root, lambda _links, _loaded: fields, expected_id=expected_id, timeout=timeout, now=now)
+    same = ("quote", "prefix", "suffix")
+
+    def plan(links: dict[str, dict[str, Any]], _loaded: LedgerLoad) -> dict[str, Any]:
+        # The same passage to the same file twice (a retried panel, a second click) would be two links of one thing.
+        if any(item["draft"] == draft and item["file"] == node and all(item["anchor"].get(k) == anchor.get(k) for k in same)
+               for item in links.values()):
+            raise EvidenceRefused("already_linked", f"this passage is already linked to {node}")
+        return fields
+
+    return _write(root, plan, expected_id=expected_id, timeout=timeout, now=now)
 
 
 def reanchor(project_root: str | Path, link: str, draft: str, anchor: Mapping[str, Any], *, via: str,
