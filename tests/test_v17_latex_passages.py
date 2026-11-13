@@ -413,6 +413,11 @@ const page2 = mk('div');
 L.renderSupported(page2, {id: 'figure:figures/f1.png'}); await tick();
 gets.shift().res({passages: [{draft: 'p.tex', section: null, excerpt: '显著', state: 'found', pending: true, link: 'pl-5'}]}); await tick();
 out.pendingPage = texts(page2.children[0]);
+// every link 待批准: the count line starts with its one label, no space before it
+EV = {revision: 'r1', links: [link('pl-5', {pending: true})]};
+await open('p.tex');
+const only = side().children.find((c) => c.classList.contains('latex-counts'));
+out.onlyPending = [only.textContent].concat(only.children.map((k) => typeof k === 'string' ? k : k.textContent));
 console.log(JSON.stringify(out));
 """
 
@@ -711,3 +716,4 @@ def test_a_members_link_waiting_for_approval_is_not_counted_and_is_said_as_such_
     assert review["pendingPanel"] is True
     assert review["pendingRow"] == "|1 段有依据文件"
     assert "待批准" in review["pendingPage"] and "已找到" not in review["pendingPage"]
+    assert review["onlyPending"] == ["", "1 段待批准"]

@@ -7785,7 +7785,17 @@ the member's entries followed by the PI's acts that take them back -- a
 to the official passage for a link that stood -- and publishes, so that the
 member's copy, all of whose entries the official ledger then holds, is
 replaced at their next sync like a travelling ledger's, nothing put beside
-it. In the member's copy a link with an act of theirs not yet held is
+it. *After the B4 review:* a proposal whose acts follow an act still
+waiting in an earlier proposal of the same member is neither approved nor
+returned until that one is answered (「这些依据关系接着提议 … 里的关联」);
+a returned member's undo of an act the PI has since replaced is kept as
+written and changes nothing; a link the official ledger cannot hold (never
+made there, or made there already) is left out of a return; every write is
+read back by the ledger's own rules before it is made, so an answer never
+leaves `evidence.toml` unreadable; a return that wrote nothing binds
+nothing, and one taken up again still publishes. A proposal names `follows`
+on the first entry of each link only, `at` as a time and each id as
+`pe-` and 32 hex digits, or it is invalid. In the member's copy a link with an act of theirs not yet held is
 待批准: underlined in ochre, counted apart as 「{n} 段待批准」, absent from
 「{n} 段有依据文件」 on 图表与论断 and from a claim's 人工声明的依据文件. An
 engine that does not know the kind refuses the proposal as invalid, with
@@ -7810,8 +7820,10 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 导出的 PDF | Exported PDF |
 | 导言区 | Preamble |
 | 显示源码 | Show source |
+| 依据关系 | Supporting-file links (the proposal's kind, 22.5) |
+| 待批准 | Awaiting approval (it had no English before B4) |
 
-待复核, 依据已变化, 是这段, 仍然成立, 待批准, 打开 PDF, 在 Finder 中显示, 详情,
+待复核, 依据已变化, 是这段, 仍然成立, 打开 PDF, 在 Finder 中显示, 详情,
 返回 and 保存 keep their present English. 运行记录 is not used (21.6). Every
 sentence goes through `t()` with its English; the toolbar is words, with no
 emoji, arrow or glyph.

@@ -190,19 +190,32 @@ def evidence_path(project_root: str | Path) -> Path:
     return paths.project_dir(project_root) / EVIDENCE_FILENAME
 
 
+def _misshapen(ledger: ledger_mod.Ledger) -> tuple[ledger_mod.LedgerEntry, str] | None:
+    """The ledger's one rule across entries: a link's first entry is its `link` act, and it has only one."""
+    for key in ledger.keys():
+        history = ledger.history(key)
+        made = [e for e in history if e.get("act") == LINK]
+        if history[0].get("act") != LINK or len(made) != 1:
+            return (history[0] if history[0].get("act") != LINK else made[1],
+                    f"link {key[0]!r} must start with exactly one 'link' entry")
+    return None
+
+
+def _check_shape(ledger: ledger_mod.Ledger) -> None:
+    """`_misshapen` for `append_many(check=...)`: a write that would leave the file unreadable is refused."""
+    bad = _misshapen(ledger)
+    if bad is not None:
+        raise ValueError(bad[1])
+
+
 def load(project_root: str | Path) -> LedgerLoad:
-    """The ledger, plus its one rule across entries: a link's first entry is its `link` act, and it has only one."""
+    """The ledger, read by the engine and by `_misshapen`."""
     loaded = ledger_mod.load_ledger(evidence_path(project_root), SCHEMA)
-    if loaded.ledger is not None:
-        for key in loaded.ledger.keys():
-            history = loaded.ledger.history(key)
-            made = [e for e in history if e.get("act") == LINK]
-            if history[0].get("act") != LINK or len(made) != 1:
-                bad = history[0] if history[0].get("act") != LINK else made[1]
-                where = f"line {bad.line}: " if bad.line else ""
-                return LedgerLoad(RecordState.INVALID, loaded.path, data=loaded.data, line=bad.line,
-                                  error=f"{where}link {key[0]!r} must start with exactly one 'link' entry",
-                                  conflict_copies=loaded.conflict_copies)
+    bad = _misshapen(loaded.ledger) if loaded.ledger is not None else None
+    if bad is not None:
+        where = f"line {bad[0].line}: " if bad[0].line else ""
+        return LedgerLoad(RecordState.INVALID, loaded.path, data=loaded.data, line=bad[0].line, error=where + bad[1],
+                          conflict_copies=loaded.conflict_copies)
     return loaded
 
 
@@ -232,7 +245,7 @@ def links_from(loaded: LedgerLoad, waiting: frozenset[str] | set[str] = frozense
     for key in ledger.keys():
         state = ledger.state(key)
         live = [e for e in state.history if e.get("act") != UNDONE and not ledger.is_cancelled(e)]
-        made = next((e for e in live if e.get("act") == LINK), None)
+        made = next((e for e in state.history if e.get("act") == LINK), None)
         if made is None or not live or (state.conflict is None and state.entry is None):
             continue
         current = state.entry if state.conflict is None else live[-1]
@@ -464,8 +477,8 @@ def _write(root: Path, plan: Callable[[dict[str, dict[str, Any]], LedgerLoad], d
                                   message_of(decision) or MESSAGES["missing"])
         fields = plan(links_from(loaded), loaded)
         try:
-            entry = ledger_mod.append(evidence_path(root), SCHEMA, fields, lock=held, project_root=root,
-                                      create=decision.may_create, now=now)
+            (entry,) = ledger_mod.append_many(evidence_path(root), SCHEMA, [fields], lock=held, project_root=root,
+                                              create=decision.may_create, now=now, check=_check_shape)
         except LedgerWriteRefused as exc:
             raise EvidenceRefused("not_written", str(exc)) from exc
         if loaded.state is RecordState.ABSENT:
@@ -567,6 +580,7 @@ def undo(project_root: str | Path, link: str, undoes: str, *, via: str, expected
 # -- a member's acts as a proposal, and the PI's answer (22.5) ----------------------------------------------------
 
 _ITEM_FIELDS = ("id", "at", "act", "link", "note", "via", "undoes")
+_ID_RE = re.compile(r"pe-[0-9a-f]{32}\Z")
 _ANCHOR_FIELDS = ("quote", "prefix", "suffix", "offset")
 
 
@@ -613,14 +627,35 @@ def entry_of(item: Mapping[str, Any], by: str, approved_by: str | None = None) -
 
 def check_item(item: Any, by: str) -> None:
     """A proposal's item as read from the exchange: an entry the ledger would take. Raises ValueError."""
-    if not isinstance(item, Mapping) or not str(item.get("id") or "").startswith(SCHEMA.id_prefix):
+    if not isinstance(item, Mapping) or not isinstance(item.get("id"), str) or not _ID_RE.match(item["id"]):
         raise ValueError("each [[evidence]] is a member's entry, with its pe-… id")
+    at = item.get("at")
+    try:
+        when = datetime.fromisoformat(at) if isinstance(at, str) else at
+    except ValueError:
+        when = None
+    if not isinstance(when, datetime) or when.tzinfo is None:
+        raise ValueError(f"each [[evidence]] keeps the time it was made, with its offset, got {at!r}")
     entry = entry_of(item, by)
     ledger_mod._validate_engine_fields(SCHEMA, entry)  # noqa: SLF001
     SCHEMA.validate(entry)
     SCHEMA.validate_new(entry)
     if item.get("follows") is not None and not isinstance(item["follows"], str):
         raise ValueError("'follows' names the act the link stood on")
+
+
+def check_follows(items: list[Mapping[str, Any]]) -> None:
+    """The proposal's items together: the first about each link, and only it, names `follows` -- "" exactly when it
+    makes the link (a `link`, which no later item repeats) -- and never an item of the proposal. Raises ValueError."""
+    ids, seen = {i["id"] for i in items}, set()
+    for item in items:
+        first = item["link"] not in seen
+        seen.add(item["link"])
+        follows = item.get("follows")
+        if first != isinstance(follows, str) or (first and (follows == "") != (item.get("act") == LINK)) \
+                or (not first and item.get("act") == LINK) or follows in ids:
+            raise ValueError(f"the first [[evidence]] about link {item['link']!r}, and only it, names the act it "
+                             "follows (\"\" when it makes the link)")
 
 
 def review(project_root: str | Path, items: list[Mapping[str, Any]]) -> dict[str, Any]:
@@ -664,17 +699,43 @@ def _closing(ledger: ledger_mod.Ledger, entries: list[dict[str, Any]], via: str)
             elif want is not None and act == WITHDRAW:
                 close.append({"act": UNDONE, "link": key[0], "undoes": after.id, "via": via})
                 continue
-            elif want is not None and act in (LINK, REANCHOR) and dict(after.get("anchor")) != want:
+            elif want is not None and (act is None or (act in (LINK, REANCHOR) and dict(after.get("anchor")) != want)):
                 close.append({"act": REANCHOR, "link": key[0], "anchor": want, "via": via})
             break
     return close
 
 
+def _returnable(ledger: ledger_mod.Ledger, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Of a returned proposal's entries, those of each link the official ledger can hold, whole: a link it has never
+    held is left out unless they make it (nothing to take back), and so is one whose acts would not read back -- a
+    `link` it holds already, an undo of an act it does not hold."""
+    keep: list[dict[str, Any]] = []
+    for key in dict.fromkeys(SCHEMA.key_of(e) for e in entries):
+        mine = [e for e in entries if SCHEMA.key_of(e) == key]
+        if (mine[0].get("act") == LINK) == bool(ledger.history(key)):
+            continue
+        try:
+            trial = ledger_mod.parse_ledger(SCHEMA.header + "".join(
+                ledger_mod.emit_entry(SCHEMA, e).decode("utf-8") for e in [*ledger.entry_dicts(), *keep, *mine]), SCHEMA)
+        except ledger_mod.LedgerInvalidError:
+            continue
+        if _misshapen(trial) is None:
+            keep += mine
+    return keep
+
+
+def held(project_root: str | Path, items: list[Mapping[str, Any]]) -> bool:
+    """Whether the official ledger holds an entry of `items` (an answer to their proposal was written). Reads only."""
+    loaded = load(project_root)
+    return loaded.ledger is not None and any(item.get("id") in loaded.ledger.ids for item in items)
+
+
 def settle(project_root: str | Path, items: list[Mapping[str, Any]], member: str, *, approved_by: str | None, lock: Any,
            via: str, now: Callable[[], datetime] | None = None) -> list[str]:
     """The PI's answer written (under the held project lock): approved (`approved_by` the PI), the member's entries
-    with their own ids; returned (`approved_by` None), the same entries followed by the PI's `_closing` acts. Nothing
-    when the ledger holds them already. Returns the ids written."""
+    with their own ids; returned (`approved_by` None), those of them the ledger can hold (`_returnable`) followed by
+    the PI's `_closing` acts. Nothing when the ledger holds them already (an answer taken up again). Every write is
+    read back by `load`'s rules before it is made. Returns the ids written."""
     root = Path(project_root)
     loaded, decision = assess(root)
     if not decision.may_write:
@@ -685,10 +746,15 @@ def settle(project_root: str | Path, items: list[Mapping[str, Any]], member: str
         return []
     entries = [entry_of(item, member, approved_by) for item in items]
     if approved_by is None:
+        if any(item["id"] in ledger.ids for item in items):
+            return []   # a return written before: what it left out stays out
+        entries = _returnable(ledger, entries)
         entries += _closing(ledger, entries, via)
+        if not entries:
+            return []
     try:
         written = ledger_mod.append_many(evidence_path(root), SCHEMA, entries, lock=lock, project_root=root,
-                                         create=decision.may_create, now=now, adopt=True)
+                                         create=decision.may_create, now=now, adopt=True, check=_check_shape)
     except LedgerWriteRefused as exc:
         raise EvidenceRefused("not_written", str(exc)) from exc
     if loaded.state is RecordState.ABSENT:

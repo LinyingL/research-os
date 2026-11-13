@@ -1753,7 +1753,7 @@ def _sync_locked(root: Path, now: Callable[[], datetime] | None, lang: str = "zh
         raise ShareError("not_joined", f"the base of {pid} is missing on this machine")
     # 12.4: the member's own notes and link judgments go with every sync; 22.5: their passage links as a proposal.
     out["entries_sent"] = _send_entries(root, pid, state, base, shared, out["problems"], now)
-    out["evidence_proposed"] = _propose_evidence(root, state, shared, out["problems"], now)
+    out["evidence_proposed"] = _propose_evidence(root, state, shared, out["problems"], now, lang)
     present = _present(root, state.get("official_copies"))
     pruned = present != list(state.get("official_copies") or [])
     state["official_copies"] = present  # a copy the member deleted is no longer beside their file
@@ -2124,8 +2124,11 @@ def _send_entries(root: Path, pid: str, state: dict[str, Any], base, shared: Pat
     return len(ids) + len(link_keys)
 
 
+_EVIDENCE_NOT_PROPOSED = ("依据关系没有提议：{why}", "The supporting-file links were not proposed: {why}")
+
+
 def _propose_evidence(root: Path, state: dict[str, Any], shared: Path, problems: list[dict[str, Any]],
-                      now: Callable[[], datetime] | None) -> str | None:
+                      now: Callable[[], datetime] | None, lang: str = "zh") -> str | None:
     """22.5: the member's 待批准 passage links not proposed yet, written as one signed `passage_evidence` proposal to
     their area; `state["proposed_evidence"]` remembers the entries proposed, so none goes twice. Its id, or None."""
     from researchos import proposals  # noqa: PLC0415
@@ -2139,7 +2142,8 @@ def _propose_evidence(root: Path, state: dict[str, Any], shared: Path, problems:
         stored = proposals.write_proposal(root, draft, exchange=ex_mod.LocalExchange(shared), now=now)
     except (proposals.ProposalRefused, ExchangeError, OSError) as exc:
         problems.append({"kind": "evidence_not_proposed", "path": f"{paths.PROJECT_DIRNAME}/evidence.toml",
-                         "detail": f"依据关系没有提议：{getattr(exc, 'message_zh', None) or exc}"})
+                         "detail": settings.say(*_EVIDENCE_NOT_PROPOSED, lang, why=exc if lang == "en"
+                                                else getattr(exc, "message_zh", None) or exc)})
         return None
     state["proposed_evidence"] = sorted({*(state.get("proposed_evidence") or ()),
                                          *(item["id"] for item in draft.data["evidence"])})

@@ -1312,8 +1312,10 @@
     const pending = list.filter((p) => p.pending);
     if (list.length) {
       const counts = mk("p", "latex-counts", backed.length ? t("{n} 段有依据文件", { n: backed.length }) : "");
-      if (waiting.length) counts.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
-      if (pending.length) counts.append(" ", mk("span", "status-label tone-ochre", t("{n} 段待批准", { n: pending.length })));
+      let first = !backed.length;   // a space only between two counts
+      const add = (label) => { counts.append(...(first ? [label] : [" ", label])); first = false; };
+      if (waiting.length) add(mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
+      if (pending.length) add(mk("span", "status-label tone-ochre", t("{n} 段待批准", { n: pending.length })));
       parts.push(counts);
       waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
     } else if (me.mayLink) parts.push(mk("p", "node-sub", t("选中一段文字，可以关联依据文件。")));

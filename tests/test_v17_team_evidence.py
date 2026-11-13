@@ -294,3 +294,199 @@ def test_22_6_the_pi_sees_the_passage_its_draft_and_its_file_in_the_review_list_
     if en:   # nothing of ours in Chinese: only the member's passage, note and file name
         assert not [l for l in panel if re.search(r"[一-鿿]", l) and "人民币" not in l and "我们用" not in l
                     and "图 1" not in l and "王" not in l and "数据从哪来" not in l and "残差" not in l]
+
+
+# -- what the review of B4 found: answers out of order, a return taken up again, a hand-made proposal ----------------
+
+
+def _readable(root: Path) -> bool:
+    return evidence.assess(root)[1].may_apply
+
+
+def _two_proposals(drive: Drive, second: str, link_words: str = "人民币国际化的进展很慢。") -> tuple[dict, dict, dict]:
+    """The member links a passage (P1, synced), then withdraws or undoes that link (P2, synced)."""
+    with drive.member():
+        made = _act(drive.work, "link", link_words, file="figures/f1.png")
+    _sync(drive)
+    with drive.member():
+        if second == "withdraw":
+            _act(drive.work, "withdraw", link=made["link"])
+        else:
+            _act(drive.work, "undo", link=made["link"], undoes=made["entry"])
+    _sync(drive)
+    ps = _proposals(drive)
+    first = next(p for p in ps if p["evidence"][0]["act"] == "link")
+    later = next(p for p in ps if p["id"] != first["id"])
+    return made, first, later
+
+
+def test_22_5_a_later_proposal_on_a_link_still_waiting_in_an_earlier_one_waits_for_it_and_nothing_breaks(drive):
+    made, first, later = _two_proposals(drive, "withdraw")
+    with drive.pi():
+        part = proposals.open_for(drive.official, later["id"])["changes"]["evidence"]
+        assert (part["state"], part["code"], part["waiting_for"]) == ("conflict", "earlier_waiting", [first["id"]])
+        assert first["id"] in part["reason"] and "请退回" not in part["reason"]
+        for answer in (lambda: proposals.return_(drive.official, later["id"], "不要"),
+                       lambda: proposals.approve(drive.official, later["id"])):
+            with pytest.raises(proposals.ProposalRefused) as refused:
+                answer()
+            assert refused.value.code in ("not_returnable", "not_approvable") and first["id"] in str(refused.value)
+        assert not (drive.official / EVIDENCE).exists()   # nothing written by either refusal
+        proposals.approve(drive.official, first["id"])
+        assert _readable(drive.official) and [l["link"] for l in _links(drive.official)] == [made["link"]]
+        assert proposals.open_for(drive.official, later["id"])["changes"]["evidence"]["state"] == "apply"
+        proposals.return_(drive.official, later["id"], "这段要有依据")
+        assert _readable(drive.official) and [l["link"] for l in _links(drive.official)] == [made["link"]]
+    after = _sync(drive)
+    assert EVIDENCE in after["updated"] and not after["notes_waiting"] and _beside(drive.work) == []
+    with drive.member():
+        assert [(l["link"], l["pending"]) for l in _links(drive.work)] == [(made["link"], False)]
+
+
+def test_22_5_an_undo_returned_after_the_link_it_undid_was_returned_is_kept_and_changes_nothing(drive):
+    made, first, later = _two_proposals(drive, "undo")
+    with drive.pi():
+        proposals.return_(drive.official, first["id"], "不要")
+        assert _readable(drive.official) and _links(drive.official) == []
+        with pytest.raises(proposals.ProposalRefused):   # it no longer follows the official act
+            proposals.approve(drive.official, later["id"])
+        result = proposals.return_(drive.official, later["id"], "也不要")
+        assert result["published"]["published"] is not False
+        assert _readable(drive.official) and _links(drive.official) == []
+        acts = [(e["act"], e["by"]) for e in _entries(drive.official)]
+        assert acts == [("link", MEMBER[1]), ("withdraw", PI[1]), ("undone", MEMBER[1])]
+    after = _sync(drive)   # every entry of the member's is held: their copy is replaced, nothing left waiting
+    assert EVIDENCE in after["updated"] and not after["notes_waiting"] and _beside(drive.work) == []
+    with drive.member():
+        assert _links(drive.work) == []
+        assert (drive.work / EVIDENCE).read_bytes() == (drive.official / EVIDENCE).read_bytes()
+
+
+def test_22_5_a_returned_undo_of_the_pis_own_link_leaves_that_link_standing(drive):
+    with drive.pi():
+        pis = _act(drive.official, "link", "我们用 BIS 的数据。", file="figures/f2.png")
+        share.publish(drive.official)
+    _sync(drive)
+    with drive.member():
+        _act(drive.work, "undo", link=pis["link"], undoes=pis["entry"])
+        assert _links(drive.work) == []
+    _sync(drive)
+    (inbox,) = _proposals(drive)
+    with drive.pi():
+        proposals.return_(drive.official, inbox["id"], "这条要留着")
+        assert _readable(drive.official)
+        assert [(l["link"], l["quote"], l["state"]) for l in _links(drive.official)] == \
+            [(pis["link"], "我们用 BIS 的数据。", "found")]
+
+
+@pytest.mark.parametrize("then", ["approve", "return"])
+def test_22_5_a_return_refused_before_writing_binds_nothing_and_either_answer_works_after(drive, then):
+    with drive.pi():
+        _act(drive.official, "link", "我们用 BIS 的数据。", file="figures/f2.png")
+        share.publish(drive.official)
+    _sync(drive)
+    with drive.member():
+        made = _act(drive.work, "link", "人民币国际化的进展很慢。", file="figures/f1.png")
+    _sync(drive)
+    (inbox,) = _proposals(drive)
+    copy = drive.official / ".researchos/evidence (conflicted copy).toml"
+    with drive.pi():
+        copy.write_bytes((drive.official / EVIDENCE).read_bytes())   # the official ledger is not to be trusted now
+        before = (drive.official / EVIDENCE).read_bytes()
+        with pytest.raises(proposals.ProposalRefused) as refused:
+            proposals.return_(drive.official, inbox["id"], "不要")
+        assert refused.value.code == "evidence_not_written"
+        assert (drive.official / EVIDENCE).read_bytes() == before
+        assert proposals.read_journal(drive.official, inbox["id"])["answer"] == "return"   # the journal stays
+        copy.unlink()
+        if then == "approve":
+            proposals.approve(drive.official, inbox["id"])
+            assert made["link"] in [l["link"] for l in _links(drive.official)]
+        else:
+            proposals.return_(drive.official, inbox["id"], "不要")
+            assert made["link"] not in [l["link"] for l in _links(drive.official)]
+        assert _readable(drive.official)
+    assert not _sync(drive)["notes_waiting"] and _beside(drive.work) == []
+
+
+def test_22_5_a_return_taken_up_again_after_it_wrote_publishes_and_an_approval_stays_refused(drive, monkeypatch):
+    with drive.member():
+        made = _act(drive.work, "link", "人民币国际化的进展很慢。", file="figures/f1.png")
+    _sync(drive)
+    (inbox,) = _proposals(drive)
+    real = proposals._outcome   # noqa: SLF001
+
+    def cut(*args, **kwargs):
+        raise OSError("the shared folder went away")
+
+    with drive.pi():
+        monkeypatch.setattr(proposals, "_outcome", cut)
+        with pytest.raises(OSError):
+            proposals.return_(drive.official, inbox["id"], "不要")
+        monkeypatch.setattr(proposals, "_outcome", real)
+        assert _readable(drive.official) and made["entry"] in {e["id"] for e in _entries(drive.official)}
+        with pytest.raises(proposals.ProposalRefused) as refused:   # written as a return: never approved now
+            proposals.approve(drive.official, inbox["id"])
+        assert refused.value.code == "decided"
+        result = proposals.return_(drive.official, inbox["id"], "不要")
+        assert result["published"]["published"] is not False
+        assert [(e["act"], e["by"]) for e in _entries(drive.official)] == [("link", MEMBER[1]), ("withdraw", PI[1])]
+    after = _sync(drive)
+    assert EVIDENCE in after["updated"] and not after["notes_waiting"]
+
+
+@pytest.mark.parametrize("change", ["no_follows", "follows_twice", "follows_own", "bad_at", "bad_id", "id_newline"])
+def test_22_5_a_hand_made_proposal_without_follows_or_with_a_bad_time_or_id_is_invalid(drive, change):
+    with drive.member():
+        made = _act(drive.work, "link", "人民币国际化的进展很慢。", file="figures/f1.png")
+        _act(drive.work, "reanchor", "人民币国际化", link=made["link"])
+        data = {**proposals.evidence_draft(drive.work).data, "id": "pr-" + "0" * 32, "at": "2026-11-13T10:00:00+01:00"}
+    proposals.validate(data)
+    first, second = data["evidence"]
+    if change == "no_follows":
+        del first["follows"]
+    elif change == "follows_twice":
+        second["follows"] = first["id"]
+    elif change == "follows_own":
+        first["follows"] = second["id"]
+    elif change == "bad_at":
+        first["at"] = "not a time"
+    elif change == "bad_id":
+        first["id"] = "pe-x"
+    else:
+        first["id"] = "pe-" + "0" * 31 + "\n"
+    with pytest.raises(ValueError):
+        proposals.validate(data)
+
+
+def test_22_5_whether_a_drafts_revision_still_waits_unknown_refuses_the_approval(drive, monkeypatch):
+    with drive.member():
+        _act(drive.work, "link", "人民币国际化的进展很慢。", file="figures/f1.png")
+    _sync(drive)
+    (inbox,) = _proposals(drive)
+
+    def unreachable(*_args):
+        raise OSError("the shared folder cannot be listed")
+
+    monkeypatch.setattr(proposals, "_pending_others", unreachable)
+    with drive.pi():
+        part = proposals.open_for(drive.official, inbox["id"], lang="en")["changes"]["evidence"]
+        assert (part["state"], part["reason_code"]) == ("problem", "drafts_unknown")
+        assert part["reason"].startswith("Whether this version of the draft still waits")
+        with pytest.raises(proposals.ProposalRefused):
+            proposals.approve(drive.official, inbox["id"])
+        assert not (drive.official / EVIDENCE).exists()
+
+
+@pytest.mark.parametrize("lang", ["zh", "en"])
+def test_22_6_links_not_proposed_at_sync_are_said_in_the_screens_language(drive, lang):
+    with drive.member():
+        _act(drive.work, "link", "人民币国际化的进展很慢。", file="figures/f1.png")
+        (drive.work / EVIDENCE).write_text("not = [valid", encoding="utf-8")
+        out = share.sync(drive.work, lang=lang)
+    (problem,) = [p for p in out["problems"] if p["kind"] == "evidence_not_proposed"]
+    if lang == "en":
+        assert problem["detail"].startswith("The supporting-file links were not proposed: ")
+        assert not re.search(r"[一-鿿]", problem["detail"])
+    else:
+        assert problem["detail"].startswith("依据关系没有提议：")
