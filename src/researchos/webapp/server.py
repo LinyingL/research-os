@@ -489,6 +489,10 @@ Endpoints (all GET unless noted):
                             or deleted; a supporting file gone. Reads only.
     GET  /api/latex/supports -- `?file=<path or node>`: 以它为依据的段落, the
                             passages that file supports. Reads only.
+    GET  /api/latex/files -- `?q=`: the files the link panel offers as a
+                            supporting file, figures and tables first, then
+                            data, scripts, documents. Reads directory
+                            listings only.
     POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
                             one entry in `.researchos/evidence.toml`, the PI or
                             a single researcher only (a member's links wait
@@ -4223,7 +4227,7 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 links = (query.get("links") or ["1"])[0] != "0"
                 payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
-            elif path in ("/api/latex/evidence", "/api/latex/supports"):
+            elif path in ("/api/latex/evidence", "/api/latex/supports", "/api/latex/files"):
                 # 22.2: a draft's links found again in its current text, or the passages a file supports. Reads only:
                 # nothing is re-anchored and the ledger is never written by a read.
                 served = self._require_unblocked()
@@ -4232,6 +4236,9 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if path.endswith("/evidence"):
                     rel = (query.get("path") or [""])[0]
                     payload = self._workspace_api(lambda: latex_edit.evidence_of_draft(served.root, rel, self._lang()))
+                elif path.endswith("/files"):   # the link panel's search over the project's files
+                    q = (query.get("q") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.supporting_files(served.root, q))
                 else:
                     file = (query.get("file") or [""])[0]
                     payload = self._workspace_api(lambda: latex_edit.passages_supported(served.root, file, self._lang()))

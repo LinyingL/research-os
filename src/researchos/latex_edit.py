@@ -579,3 +579,32 @@ def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[st
                     "section": headings[-1].group(1).strip() if headings else None, "conflict": item["conflict"]})
     out.sort(key=lambda p: (p["draft"], p["section"] or ""))
     return {"file": node, "passages": out, **_record_state(decision, lang)}
+
+
+#: The order the link panel lists a project's files in (22.2): figures and tables, then data, scripts, documents.
+_FILE_GROUPS = ("figure", "data", "script", "document")
+_TABLE_RE = re.compile(r"(?:^|/)(?:tables?|tabs?)/|(?:^|/)tab(?:le)?s?[_\-.\d]", re.IGNORECASE)
+_FILE_WALK_LIMIT = 20000
+
+
+def supporting_files(root: str | Path, query: Any, limit: int = 50) -> dict[str, Any]:
+    """The project's files the link panel offers as a passage's supporting file (22.2): every file the scan's walk
+    lists (no hidden folder, no symlink), its path containing `query` as a Mac volume compares names, figures and
+    tables first, then data, scripts and documents. `group` is one of `_FILE_GROUPS`. Reads only directory listings."""
+    root = workspace._root(root)  # noqa: SLF001
+    wanted = files_ingest.fold(query.strip()) if isinstance(query, str) else ""
+    found: list[tuple[int, str, str]] = []
+    walked = 0
+    for rel, _category in files_ingest.iter_files(root):
+        walked += 1
+        if walked > _FILE_WALK_LIMIT:
+            break
+        if wanted and wanted not in files_ingest.fold(rel):
+            continue
+        kind = notes.normalize_node(rel).split(":", 1)[0]
+        group = ("figure" if kind == "figure" or _TABLE_RE.search(rel) else "data" if kind == "dataset"
+                 else "script" if kind == "script" else "document")
+        found.append((_FILE_GROUPS.index(group), rel, group))
+    found.sort()
+    return {"files": [{"path": rel, "group": group} for _rank, rel, group in found[:limit]],
+            "more": len(found) > limit}

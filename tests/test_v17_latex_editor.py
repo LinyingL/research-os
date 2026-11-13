@@ -275,7 +275,7 @@ class FakeView {            // CodeMirror's view needs a DOM: this one keeps the
   }
   destroy() { this.destroyed = true; }
 }
-for (const k of ['lineWrapping', 'contentAttributes', 'updateListener']) FakeView[k] = real.EditorView[k];
+for (const k of ['lineWrapping', 'contentAttributes', 'updateListener', 'decorations', 'domEventHandlers']) FakeView[k] = real.EditorView[k];
 const CM = Object.assign({}, real, {EditorView: FakeView});
 const all = [];
 class El {
@@ -312,7 +312,11 @@ global.currentView = 'node';
 global.state = {currentPath: '/p'};
 global.activateView = (name) => { if (currentView === name) return; if (currentView === 'latex' && !window.ROLatex.mayClose()) return; currentView = name; };
 const gets = [], posts = [];
-global.apiGet = (url) => new Promise((res, rej) => gets.push({url, res, rej}));
+// the draft's passages (22.2) are answered at once by `evidenceAnswer`; every other read waits in `gets`
+global.evidenceAnswer = () => ({revision: null, links: []});
+const evidenceGets = [];
+global.apiGet = (url) => url.startsWith('/api/latex/evidence?') ? (evidenceGets.push(url), Promise.resolve(evidenceAnswer(url)))
+  : new Promise((res, rej) => gets.push({url, res, rej}));
 global.apiPost = (url, body) => new Promise((res, rej) => posts.push({url, body: JSON.parse(JSON.stringify(body)), res, rej}));
 eval(fs.readFileSync(%(latex)s, 'utf8'));
 const L = window.ROLatex;
@@ -469,5 +473,7 @@ def test_edit_is_offered_on_a_tex_drafts_page_and_on_each_row_of_the_paper():
     node = (WEBAPP / "node.js").read_text(encoding="utf-8")
     assert node.count('mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(') == 2
     latex = (WEBAPP / "latex.js").read_text(encoding="utf-8")
-    assert latex.count("btn-primary") == 1 and 'mkButton(t("保存"), "btn btn-primary"' in latex
+    # one primary per surface (22.7): 保存 on the editor page, 确认关联 in the link panel
+    assert latex.count("btn-primary") == 2 and 'mkButton(t("保存"), "btn btn-primary"' in latex
+    assert 'mkButton(t("确认关联"), "btn btn-primary"' in latex
     assert 'mkButton(t("撤销这次保存"), "ws-text-link' in latex and 'mkButton(t("载入新版本"), "ws-text-link"' in latex

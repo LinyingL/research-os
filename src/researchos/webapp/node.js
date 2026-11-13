@@ -398,6 +398,8 @@
     const pageEl = mk("div", "node-page");
     pageEl.appendChild(backBar());
     renderHead(pageEl, page);
+    // 22.2: 以它为依据的段落, the passages a file of the project supports (shown when there are some)
+    if (window.ROLatex && page.path && ["script", "dataset", "figure", "file"].includes(page.type)) ROLatex.renderSupported(pageEl, page);
     if (window.ROWorkspace && window.ROWorkspace.renderResearchLinks) window.ROWorkspace.renderResearchLinks(pageEl, page.research_records);
     renderTraceSection(pageEl, page);
     renderTimelineSection(pageEl, page, history, notes, me);
@@ -1667,7 +1669,10 @@
         main.append(gone ? mk("span", "mono", d.file) : link(d.file, "mono", () => openNode(d.node), t("打开这份文稿的页面")),
           mk("span", "node-sub-inline", t("{n} 条论断", { n: d.claims })));
         if (gone) main.appendChild(mk("div", "node-sub-inline res-gone", t("这个文件现在不在项目里")));
-        else if (/\.tex$/.test(d.file) && window.ROLatex) main.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(d.file)));   // 22.1
+        else if (/\.tex$/.test(d.file) && window.ROLatex) {
+          main.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(d.file)));   // 22.1
+          ROLatex.paperCounts(main, d.file);   // 22.2: 「{n} 段有依据文件」, 「{n} 段待复核」
+        }
         li.append(main, paperButton(d.file, true, status));
         ul.appendChild(li);
       });
