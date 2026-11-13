@@ -54,6 +54,32 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
+def _within_json_depth(text: str) -> bool:
+    """Match Foundation's 512-container limit, independently of Python's parser.
+
+    Python 3.14 accepts nesting that older Python versions refused with a
+    RecursionError. Count containers before parsing, leaving quoted text alone.
+    """
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            if depth > 512:
+                return False
+        elif char in "]}":
+            depth -= 1
+    return True
+
+
 def read_json(path: Path) -> dict[str, Any]:
     """A JSON object file, tolerantly: anything that is not a readable JSON
     object is `{}` -- nested too deeply to read included. The shell reads
@@ -62,7 +88,10 @@ def read_json(path: Path) -> dict[str, Any]:
     BOM allowed; a repeated key's first value; no NaN or Infinity; no lone
     surrogate."""
     try:
-        data = json.loads(path.read_bytes().decode("utf-8-sig"), object_pairs_hook=_first,
+        text = path.read_bytes().decode("utf-8-sig")
+        if not _within_json_depth(text):
+            return {}
+        data = json.loads(text, object_pairs_hook=_first,
                           parse_constant=_no_constant)
         json.dumps(data, ensure_ascii=False).encode("utf-8")  # a lone surrogate: Foundation refuses the file
     except (OSError, UnicodeError, ValueError, RecursionError):

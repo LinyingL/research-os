@@ -1174,6 +1174,9 @@ SETTINGS_BYTES = {
     "infinity.json": (b'{"interface_language": "en", "x": Infinity}', "none"),
     "surrogate.json": (b'{"interface_language": "en", "x": "\\ud800"}', "none"),
     "deep.json": (b'{"interface_language": "en", "x": ' + b"[" * 100000 + b"]" * 100000 + b"}", "none"),
+    "nesting-limit.json": (b'{"interface_language":"en","x":' + b"[" * 511 + b"0" + b"]" * 511 + b"}", "en"),
+    "over-nesting-limit.json": (b'{"interface_language":"en","x":' + b"[" * 512 + b"0" + b"]" * 512 + b"}", "none"),
+    "brackets-in-string.json": (b'{"interface_language":"en","x":"' + b"[" * 1024 + b"}" * 1024 + b'"}', "en"),
 }
 
 _LANGUAGE_HARNESS = r"""
