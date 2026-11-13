@@ -1607,7 +1607,7 @@
       top.appendChild(head);
       block.appendChild(top);
       if (ex) block.appendChild(ex.block);
-      if (g.files.length) block.appendChild(list(g.files));
+      if (g.files.length) { const files = list(g.files); files.classList.add("latex-draft-files"); block.appendChild(files); }   // under its main file, set in
       page.appendChild(block);
     });
     if ((data.others || []).length) {
