@@ -228,11 +228,9 @@ def _is_main(text: str) -> bool:
     return bool(head) and code.find("\\begin{document}", head.end()) >= 0
 
 
-def main_files(root: str | Path, rel: str) -> list[str]:
-    """The main files of the draft `rel` (22.4): `rel` itself when it has `\\documentclass` before
-    `\\begin{document}`; else the project's `.tex` files that do and reach `rel` through includes, followed
-    transitively, commented lines skipped. Reads files, runs nothing; a file only in the cloud is not read."""
-    root = workspace._root(root)  # noqa: SLF001
+def tex_reader(root: Path) -> tuple[list[str], Any]:
+    """The project's `.tex` files (at most `TEX_FILE_LIMIT`) and a reader of their text, each read once: "" for one
+    that is not a regular file, is only in the cloud or is over 2 MB. Reads files, runs nothing."""
     known = [r for r, _ in files_ingest.iter_files(root) if r.endswith(".tex")][:TEX_FILE_LIMIT]
     texts: dict[str, str] = {}
 
@@ -253,6 +251,21 @@ def main_files(root: str | Path, rel: str) -> list[str]:
             except OSError:
                 pass
         return texts[path]
+
+    return known, text_of
+
+
+def every_main(root: str | Path) -> list[str]:
+    """Every `.tex` of the project with `\\documentclass` before `\\begin{document}` (22.4 "None")."""
+    known, text_of = tex_reader(workspace._root(root))  # noqa: SLF001
+    return [path for path in known if _is_main(text_of(path))]
+
+
+def main_files(root: str | Path, rel: str) -> list[str]:
+    """The main files of the draft `rel` (22.4): `rel` itself when it has `\\documentclass` before
+    `\\begin{document}`; else the project's `.tex` files that do and reach `rel` through includes, followed
+    transitively, commented lines skipped. Reads files, runs nothing; a file only in the cloud is not read."""
+    known, text_of = tex_reader(workspace._root(root))  # noqa: SLF001
 
     if _is_main(text_of(rel)):
         return [rel]

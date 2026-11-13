@@ -498,6 +498,14 @@ Endpoints (all GET unless noted):
                             a single researcher only (a member's links wait
                             for approval, not built yet); the `.tex` is only
                             read, never written.
+    POST /api/latex/export -- `{project, path, main?, engine?, pdf?}`: 「导出 PDF」
+                            (DESIGN.md 22.4, `researchos.latex_export`): one
+                            latexmk in a macOS sandbox, the PDF into the
+                            document folder and an `[[export]]` in
+                            papers.toml; or a question (`ask`: the main file,
+                            or 替换 / 另存为). A person's only: no agent
+                            endpoint runs TeX. `/api/latex/export/stop` kills
+                            the running one.
     The save and the undo are, with the attempt table, the Markdown under `research/`
     and an agent's run, the only writes of a researcher's own files (18.1's
     list, extended by 22.1): a `.tex` the person saves in the editor, through
@@ -757,7 +765,7 @@ from typing import Any, Callable, Iterator
 
 from researchos import addproject, cloud, db, docx_preview, dta, github, githubpush, handbacks, inventory, lineage, migration, names, newproject, now_doing, officialness, outputs, paths, people, task_groups, workspace
 from researchos import settings as settings_mod
-from researchos import latex_edit, research_records
+from researchos import latex_edit, latex_export, research_records
 from researchos.agents import labels as agent_labels
 from researchos.agents import manager as agent_manager
 from researchos.agents import profiles as agent_profiles
@@ -4605,6 +4613,29 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         self.server.start_scan(served)
                     except Exception as exc:  # noqa: BLE001 -- the save is answered; a scan not started is logged
                         logger.info("no scan after saving a LaTeX draft: %s", exc)
+            elif parsed.path == "/api/latex/export":
+                # 22.4: TeX runs outside the project lock (it writes only its build folder); the PDF and its record
+                # are written under it, through the human write path.
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    pass  # a blocked, read-only or moved project is refused before TeX runs
+                payload = self._workspace_api(lambda: latex_export.export(
+                    served.root, {k: v for k, v in body.items() if k != "project"}, self._lang(),
+                    guard=lambda: self.server.write_guard(human=True)))
+                if payload.get("exported"):
+                    from researchos.records import papers as papers_mod  # noqa: PLC0415
+
+                    payload["generation"] = self.server.watcher.record_write({str(papers_mod.papers_path(served.root))})
+                self._send_json(200, payload)
+                if payload.get("exported"):
+                    try:
+                        self.server.start_scan(served)
+                    except Exception as exc:  # noqa: BLE001 -- the export is answered; a scan not started is logged
+                        logger.info("no scan after exporting a PDF: %s", exc)
+            elif parsed.path == "/api/latex/export/stop":
+                self._read_json_object()
+                self._send_json(200, {"stopped": latex_export.stop()})
             elif parsed.path.startswith("/api/latex/evidence/"):
                 # 22.2: 关联依据文件, 「是这段」/「仍然成立」, 撤回关联, 撤销 -- one entry in .researchos/evidence.toml
                 # (`researchos.records.evidence`, under the project lock). The .tex is only read.
