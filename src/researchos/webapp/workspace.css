@@ -358,6 +358,22 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-editor .cm-scroller { font-family: var(--font-mono); font-size: .86rem; line-height: 1.7; }
 .latex-editor .cm-content { padding: .8rem 0; caret-color: var(--ink); }
 .latex-editor .cm-line { position: relative; padding: 0 2.4rem 0 1rem; }
+/* 22.1 like Word (B3b): running text in the sans, commands shown as written in the mono, headings in the serif; formulas
+   by KaTeX, one it cannot typeset as written; cite and ref quiet chips; list items indented with their bullet or number. */
+.latex-editor .cm-content.latex-word { font-family: var(--font-sans); font-size: .95rem; }
+.latex-word .latex-cmd { font-family: var(--font-mono); font-size: .82rem; }
+.latex-word .latex-h { font-family: var(--font-serif); font-weight: 600; }
+.latex-h1 { font-size: 1.4rem; } .latex-h2 { font-size: 1.25rem; } .latex-h3 { font-size: 1.1rem; } .latex-h4, .latex-h5 { font-size: 1rem; }
+.latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
+.latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
+.latex-math-display { display: block; text-align: center; margin: .2rem 0; }
+.latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
+.latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }
+.latex-bullet::before { content: ""; display: inline-block; width: .32em; height: .32em; border-radius: 50%; background: var(--ink-soft); vertical-align: middle; }
+.latex-editor .cm-line.latex-li-1 { padding-left: 2.2rem; } .latex-editor .cm-line.latex-li-2 { padding-left: 3.4rem; }
+.latex-editor .cm-line.latex-li-3 { padding-left: 4.6rem; } .latex-editor .cm-line.latex-li-4 { padding-left: 5.8rem; }
+.latex-preamble { display: flex; align-items: center; padding: .1rem 1rem; font-family: var(--font-sans); font-size: .8rem; color: var(--ink-soft); cursor: pointer; }
+.latex-source[aria-pressed="true"] { color: var(--ink); text-decoration: underline; }
 .latex-include { margin-left: .6rem; font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); }
 /* 22.2, 22.7: a found passage dotted in ink, one 待复核 in ochre; the count of its files quiet, in the margin */
 .latex-passage { text-decoration: underline dotted var(--ink); text-underline-offset: 3px; cursor: pointer; }

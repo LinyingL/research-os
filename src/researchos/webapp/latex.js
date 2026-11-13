@@ -30,6 +30,9 @@
 // a click does, through POST /api/latex/evidence/<link|reanchor|withdraw>. Also
 // 以它为依据的段落 on a file's page and the counts on 论文正文's rows (node.js).
 //
+// Like Word (22.1, B3b): the range reader `readLatex`, a state field of decorations (markup hidden where the selection does
+// not touch it, formulas by KaTeX, cite and ref chips, list items, the folded 导言区), 「显示源码」, and Return by context.
+//
 // Export to PDF (22.4, B2b): 「导出 PDF」, a quiet button beside 保存 and on a .tex draft's own page (`exporter`), with the
 // settings line GET /api/latex/export answers, POST /api/latex/export and /api/latex/export/stop, and the result.
 (function () {
@@ -181,6 +184,367 @@
     return found;
   }
 
+  // -- like Word (22.1, B3b) -------------------------------------------------------------------------------------
+  //
+  // The text stays the file's LaTeX; only how it looks changes. `readLatex` is the range reader (CodeMirror has no LaTeX
+  // tree): commands with their arguments, environments, math, comments, \verb and verbatim-like environments (left raw),
+  // the preamble. A state field turns what it read into decorations (line-crossing ones must come from a field), hiding
+  // a construct's markup only where the selection does not touch it; `returnSpec` is Return by context.
+
+  const HEADINGS = new Map([["chapter", 1], ["section", 2], ["subsection", 3], ["subsubsection", 4], ["paragraph", 5]]);
+  const STYLES = new Map([["textbf", "latex-b"], ["textit", "latex-i"], ["emph", "latex-i"], ["underline", "latex-u"]]);
+  const CITE_RE = /^(?:cite(?:p|t|alp)?|Citep|Citet|parencite|textcite|autocite)$/;   // ingest/latex.py's _CITE_RE
+  const REFS = new Set(["ref", "eqref", "label"]);
+  const LIST_ENVS = new Set(["itemize", "enumerate", "description"]);
+  const TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "center", "flushleft", "flushright"]);
+  const MATH_ENVS = /^(?:equation|align|gather|multline)\*?$/;
+  const VERBATIM_ENVS = /^(?:verbatim|Verbatim|BVerbatim|lstlisting|minted|comment|filecontents)\*?$/;
+  const SPECIAL = /[\\%$]/g;
+
+  // A blank line starts at the "\n" at `i`: only spaces, tabs or CR up to the next "\n".
+  function blankAfter(text, i) {
+    for (let j = i + 1; j < text.length; j++) {
+      const c = text.charCodeAt(j);
+      if (c === 10) return true;
+      if (c !== 32 && c !== 9 && c !== 13) return false;
+    }
+    return false;
+  }
+  function skipSpaces(text, i) { while (text[i] === " " || text[i] === "\t") i += 1; return i; }
+
+  // The group opened by text[i] ("{" or "["): the index after its close, or -1 when unclosed. `short` arguments end at
+  // a blank line, as TeX's do; comments and escaped braces do not count.
+  function skipGroup(text, i, short) {
+    const square = text[i] === "[";
+    let depth = 0;
+    for (let j = i + 1; j < text.length; j++) {
+      const c = text[j];
+      if (c === "\\") { j += 1; continue; }
+      if (c === "%") { const e = text.indexOf("\n", j); if (e < 0) return -1; j = e - 1; continue; }
+      if (c === "\n" && short && blankAfter(text, j)) return -1;
+      if (c === "{") depth += 1;
+      else if (c === "}") { if (depth === 0) return square ? -1 : j + 1; depth -= 1; }
+      else if (c === "]" && square && depth === 0) return j + 1;
+    }
+    return -1;
+  }
+
+  // The end of math whose content starts at `from`, closed by `close`: the index after the close, or -1 when a blank
+  // line (which TeX refuses in math) or the end comes first.
+  function mathEnd(text, from, close) {
+    for (let j = from; j < text.length; j++) {
+      const c = text[j];
+      if (c === "\\") { if (text.startsWith(close, j)) return j + close.length; j += 1; continue; }
+      if (c === "%") { const e = text.indexOf("\n", j); if (e < 0) return -1; j = e - 1; continue; }
+      if (c === "\n" && blankAfter(text, j)) return -1;
+      if (c === "$" && text.startsWith(close, j)) return j + close.length;
+    }
+    return -1;
+  }
+
+  // {cmds, maths, envs, raws, preamble, end}: positions are indices into `text`. A command is {name, role (heading,
+  // style, cite, ref, item or other), from, nameTo, to, args: [{from, to, opt}]}; an item has its list and number. An
+  // environment {name, role (list, text or raw), from, beginTo, endFrom, to}; math {from, to, display, src}; raw text
+  // (comments, \verb, verbatim-like environments) {from, to, kind}. Nothing inside math or raw text is read.
+  function readLatex(text) {
+    const out = { cmds: [], maths: [], envs: [], raws: [], preamble: null, end: -1 };
+    const stack = [], n = text.length;
+    let i = 0;
+    while (i < n) {
+      SPECIAL.lastIndex = i;
+      const m = SPECIAL.exec(text);
+      if (!m) break;
+      i = m.index;
+      const c = text[i];
+      if (c === "%") { let e = text.indexOf("\n", i); if (e < 0) e = n; out.raws.push({ from: i, to: e, kind: "comment" }); i = e; continue; }
+      if (c === "$") {
+        const display = text[i + 1] === "$", open = display ? 2 : 1, e = mathEnd(text, i + open, display ? "$$" : "$");
+        if (e > 0) { out.maths.push({ from: i, to: e, display: display, src: text.slice(i + open, e - open) }); i = e; } else i += open;
+        continue;
+      }
+      const s = i + 1;
+      let e = s;
+      for (let k = text.charCodeAt(e); (k >= 65 && k <= 90) || (k >= 97 && k <= 122); k = text.charCodeAt(e)) e += 1;
+      if (e === s) {   // a one-character command: \( and \[ open math; \\, \$, \%, \{ ... are text
+        const d = text[s];
+        if (d === "(" || d === "[") {
+          const end = mathEnd(text, s + 1, d === "(" ? "\\)" : "\\]");
+          if (end > 0) { out.maths.push({ from: i, to: end, display: d === "[", src: text.slice(s + 1, end - 2) }); i = end; continue; }
+        }
+        i = s + 1;
+        continue;
+      }
+      const name = text.slice(s, e), star = text[e] === "*" ? 1 : 0;
+      if (name === "verb") {   // \verb|...|: to the same delimiter on the same line
+        const d = text[e + star], close = d && d !== "\n" && d !== "\r" ? text.indexOf(d, e + star + 1) : -1, eol = text.indexOf("\n", e + star + 1);
+        if (close > 0 && (eol < 0 || close < eol)) { out.raws.push({ from: i, to: close + 1, kind: "verb" }); i = close + 1; continue; }
+        i = e;
+        continue;
+      }
+      if (name === "begin" || name === "end") {
+        const at = skipSpaces(text, e), g = text[at] === "{" ? skipGroup(text, at, true) : -1;
+        if (g < 0) { i = e; continue; }
+        const env = text.slice(at + 1, g - 1).trim();
+        if (name === "end") {
+          let k = stack.length - 1;
+          while (k >= 0 && stack[k].name !== env) k -= 1;
+          if (k >= 0) { stack[k].endFrom = i; stack[k].to = g; stack.length = k; }
+          if (env === "document" && out.end < 0) out.end = g;
+          i = g;
+          continue;
+        }
+        if (env === "document" && !out.preamble && !stack.length) out.preamble = { from: 0, to: i };
+        if (MATH_ENVS.test(env)) {
+          const end = mathEnd(text, g, "\\end{" + env + "}");
+          if (end > 0) { out.maths.push({ from: i, to: end, display: true, src: text.slice(i, end) }); i = end; continue; }
+        }
+        if (VERBATIM_ENVS.test(env)) {
+          const close = "\\end{" + env + "}", end = text.indexOf(close, g), to = end < 0 ? n : end + close.length;
+          out.raws.push({ from: i, to: to, kind: "verbatim" });
+          i = to;
+          continue;
+        }
+        const frame = { name: env, role: LIST_ENVS.has(env) ? "list" : TEXT_ENVS.has(env) ? "text" : "raw", from: i, beginTo: g, endFrom: n, to: n, items: 0 };
+        stack.push(frame);
+        out.envs.push(frame);
+        i = g;
+        continue;
+      }
+      const role = HEADINGS.has(name) ? "heading" : STYLES.has(name) ? "style" : CITE_RE.test(name) ? "cite" : REFS.has(name) ? "ref" : name === "item" ? "item" : "other";
+      const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [] };
+      let at = cmd.nameTo;
+      if (role === "other") {   // a command it does not know: the groups right after it are its arguments
+        while (cmd.args.length < 9 && (text[at] === "{" || text[at] === "[")) {
+          const g = skipGroup(text, at, false);
+          if (g < 0) break;
+          cmd.args.push({ from: at, to: g, opt: text[at] === "[" });
+          at = g;
+        }
+      } else {
+        at = skipSpaces(text, at);
+        for (let opts = role === "cite" ? 2 : role === "heading" || role === "item" ? 1 : 0; opts > 0 && text[at] === "["; opts--) {
+          const g = skipGroup(text, at, true);
+          if (g < 0) break;
+          cmd.args.push({ from: at, to: g, opt: true });
+          at = skipSpaces(text, g);
+        }
+        const g = role !== "item" && text[at] === "{" ? skipGroup(text, at, true) : -1;
+        if (g > 0) cmd.args.push({ from: at, to: g, opt: false });
+        else if (role !== "item") cmd.role = "other";   // no argument: shown as written
+        if (role === "item") {
+          for (let k = stack.length - 1; k >= 0; k--) if (stack[k].role === "list") { cmd.list = stack[k]; cmd.n = ++stack[k].items; break; }
+          cmd.depth = stack.filter((f) => f.role === "list").length;
+        }
+      }
+      if (cmd.args.length) cmd.to = cmd.args[cmd.args.length - 1].to;
+      out.cmds.push(cmd);
+      i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.nameTo;   // the arguments' text is read as text
+    }
+    return out;
+  }
+
+  // What KaTeX is given: \label (which it does not know) dropped, multline set as gather.
+  function forKatex(src) { return src.replace(/\\label\s*\{[^{}]*\}/g, "").replace(/\\(begin|end)\{multline(\*?)\}/g, "\\$1{gather$2}"); }
+  // A formula typeset by KaTeX (trust off: no \href or \url reaches the network); one it cannot typeset is shown as
+  // written, in the mono face, uncoloured -- the PDF is the judge (22.1). Never throws.
+  function mathDOM(src, display, whole) {
+    const box = mk("span", display ? "latex-math latex-math-display" : "latex-math");
+    try {
+      box.innerHTML = window.katex.renderToString(forKatex(src), { displayMode: display, throwOnError: true, trust: false, strict: "ignore" });
+    } catch (err) {
+      box.className = "latex-math-raw";
+      box.textContent = whole;
+    }
+    return box;
+  }
+
+  // The preamble is folded from the file's start to the end of the line before \begin{document}: 0 when nothing is.
+  function preambleEnd(doc, read) {
+    if (!read.preamble || !read.preamble.to) return 0;
+    const line = doc.lineAt(read.preamble.to);
+    return line.from > 0 && doc.sliceString(0, line.from).trim() ? line.from - 1 : 0;
+  }
+
+  let wx = null;
+  function wordField(CM) {
+    if (wx && wx.CM === CM) return wx;
+    const mathOn = CM.StateEffect.define(), preamble = CM.StateEffect.define(), D = CM.Decoration;
+    class MathWidget extends CM.WidgetType {
+      constructor(src, display, whole) { super(); this.src = src; this.display = display; this.whole = whole; }
+      eq(other) { return other.whole === this.whole; }
+      toDOM() { return mathDOM(this.src, this.display, this.whole); }
+      ignoreEvent() { return false; }   // a click places the cursor there, which shows the source
+    }
+    class Chip extends CM.WidgetType {
+      constructor(text, kind) { super(); this.text = text; this.kind = kind; }
+      eq(other) { return other.text === this.text && other.kind === this.kind; }
+      toDOM() { return mk("span", "latex-chip latex-chip-" + this.kind, this.text); }
+      ignoreEvent() { return false; }
+    }
+    class Item extends CM.WidgetType {
+      constructor(n) { super(); this.n = n; }
+      eq(other) { return other.n === this.n; }
+      toDOM() { return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : ""); }
+    }
+    class Preamble extends CM.WidgetType {
+      constructor(open) { super(); this.open = open; }
+      eq(other) { return other.open === this.open; }
+      toDOM(view) {
+        const b = mk("div", "latex-preamble has-chevron", t("导言区"));
+        b.setAttribute("role", "button");
+        b.setAttribute("aria-expanded", String(this.open));
+        b.addEventListener("mousedown", (event) => { event.preventDefault(); view.dispatch({ effects: preamble.of(!this.open) }); });
+        return b;
+      }
+      ignoreEvent() { return true; }
+    }
+    const command = D.mark({ class: "latex-cmd" }), hide = D.replace({});
+    const marks = new Map();
+    const mark = (cls) => { if (!marks.has(cls)) marks.set(cls, D.mark({ class: cls })); return marks.get(cls); };
+    const lineMarks = [1, 2, 3, 4].map((k) => D.line({ class: "latex-li latex-li-" + k }));
+
+    function decorate(read, math, open, state) {
+      const doc = state.doc, sel = state.selection.ranges, out = [];
+      const touch = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
+      const pre = preambleEnd(doc, read);
+      if (pre > 0) {
+        const shown = open || sel.some((r) => r.head > 0 && r.head <= pre);   // a cursor placed inside (an error's line) opens it
+        out.push(shown ? D.widget({ widget: new Preamble(true), block: true, side: -1 }).range(0)
+          : D.replace({ widget: new Preamble(false), block: true }).range(0, pre));
+      }
+      const lines = new Set();
+      for (const c of read.cmds) {
+        if (c.from < pre) continue;   // the preamble is source, folded or open
+        const arg = c.args.length ? c.args[c.args.length - 1] : null;
+        if (c.role === "item" && c.list) {
+          const line = doc.lineAt(c.from);
+          if (!lines.has(line.from)) { lines.add(line.from); out.push(lineMarks[Math.min(c.depth, 4) - 1].range(line.from)); }
+        }
+        if (c.role === "other" || touch(c.from, c.to)) { out.push(command.range(c.from, c.nameTo)); continue; }
+        if (c.role === "heading" || c.role === "style") {
+          if (arg.to - arg.from < 3) { out.push(command.range(c.from, c.nameTo)); continue; }
+          out.push(hide.range(c.from, arg.from + 1),
+            mark(c.role === "heading" ? "latex-h latex-h" + HEADINGS.get(c.name) : STYLES.get(c.name)).range(arg.from + 1, arg.to - 1),
+            hide.range(arg.to - 1, arg.to));
+        } else if (c.role === "cite" || c.role === "ref") {
+          const keys = doc.sliceString(arg.from + 1, arg.to - 1).split(",").map((k) => k.trim()).filter(Boolean).join(", ");
+          out.push(D.replace({ widget: new Chip(keys, c.role) }).range(c.from, c.to));
+        } else if (c.list && c.args.length === 0) {
+          out.push(D.replace({ widget: new Item(c.list.name === "enumerate" ? c.n : 0) }).range(c.from, c.nameTo + (doc.sliceString(c.nameTo, c.nameTo + 1) === " " ? 1 : 0)));
+        } else out.push(command.range(c.from, c.nameTo));
+      }
+      for (const env of read.envs) {
+        if (env.from < pre) continue;
+        out.push(command.range(env.from, env.beginTo));
+        if (env.endFrom < env.to) out.push(command.range(env.endFrom, env.to));
+      }
+      if (math) {
+        for (const f of read.maths) {
+          if (f.from >= pre && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
+        }
+      }
+      return D.set(out, true);
+    }
+    // A move of the selection that shows and hides the same constructs keeps the decorations as they are.
+    function sameTouch(read, before, after) {
+      const a = before.selection.ranges, b = after.selection.ranges, pre = preambleEnd(after.doc, read);
+      const touch = (sel, from, to) => sel.some((r) => r.from <= to && r.to >= from);
+      const differ = (from, to) => touch(a, from, to) !== touch(b, from, to);
+      const inPreamble = (sel) => sel.some((r) => r.head > 0 && r.head <= pre);
+      if (pre > 0 && inPreamble(a) !== inPreamble(b)) return false;
+      for (const c of read.cmds) if (c.role !== "other" && c.from >= pre && differ(c.from, c.to)) return false;
+      for (const f of read.maths) if (f.from >= pre && differ(f.from, f.to)) return false;
+      return true;
+    }
+    const field = CM.StateField.define({
+      create: (state) => {
+        const read = readLatex(state.doc.toString()), math = typeof window !== "undefined" && !!window.katex;
+        return { read: read, math: math, open: false, deco: decorate(read, math, false, state) };
+      },
+      update(value, tr) {
+        let math = value.math, open = value.open, read = value.read;
+        for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(preamble)) open = e.value; }
+        if (tr.docChanged) read = readLatex(tr.state.doc.toString());
+        else if (math === value.math && open === value.open && (!tr.selection || sameTouch(read, tr.startState, tr.state))) return value;
+        return { read: read, math: math, open: open, deco: decorate(read, math, open, tr.state) };
+      },
+      provide: (f) => CM.EditorView.decorations.from(f, (v) => v.deco),
+    });
+    wx = { CM: CM, field: field, mathOn: mathOn, preamble: preamble };
+    return wx;
+  }
+  // Like Word's extensions, which 显示源码 takes out (a compartment): the field, and the class that sets the text face.
+  function wordExtensions(CM) { return [wordField(CM).field, CM.EditorView.contentAttributes.of({ class: "latex-word" })]; }
+
+  // The innermost place `pos` is in: {kind: math, raw, arg or env, x: what it is}, or null in running text at the top.
+  function contextAt(read, pos) {
+    let best = null;
+    const consider = (from, to, kind, x) => {
+      if (from <= pos && pos <= to && (!best || from > best.from || (from === best.from && to < best.to))) best = { from: from, to: to, kind: kind, x: x };
+    };
+    if (read.preamble) consider(0, read.preamble.to, "raw", null);
+    if (read.end >= 0) consider(read.end, Infinity, "raw", null);
+    read.envs.forEach((e) => consider(e.beginTo, e.endFrom, "env", e));
+    read.raws.forEach((r) => consider(r.from + 1, r.to, "raw", r));
+    read.maths.forEach((f) => consider(f.from + 1, f.to - 1, "math", f));
+    read.cmds.forEach((c) => c.args.forEach((a) => consider(a.from + 1, a.to - 1, "arg", { cmd: c, arg: a })));
+    return best;
+  }
+
+  // Return by where the cursor is (22.1): running text, a new paragraph; a heading's argument, out of the braces and a
+  // new paragraph after the heading; another command's argument, a plain newline; a list, a new \item, and an empty
+  // item is removed and the cursor leaves the list; math, raw text, an environment shown as written or `read` null
+  // (显示源码, ⇧Return), a plain newline. Every line break is the file's own (state.lineBreak, 22.1).
+  function returnSpec(state, read) {
+    const sel = state.selection.main, pos = sel.from, br = state.lineBreak, doc = state.doc;
+    const make = (specs, at, back) => {
+      const changes = state.changes(specs);
+      return { changes: changes, selection: { anchor: changes.mapPos(at, 1) - (back || 0) }, scrollIntoView: true, userEvent: "input" };
+    };
+    const plain = () => make({ from: sel.from, to: sel.to, insert: br }, sel.to);
+    // A new, empty paragraph at the end of `at`'s line, set apart by a blank line from the one after it too.
+    const after = (deletes, at) => {
+      const line = doc.lineAt(at), next = line.number < doc.lines ? doc.line(line.number + 1).text.trim() : "";
+      return next ? make(deletes.concat([{ from: at, insert: br + br + br }]), at, 1) : make(deletes.concat([{ from: at, insert: br + br }]), at);
+    };
+    if (!read) return plain();
+    const ctx = contextAt(read, pos);
+    const paragraph = () => /^\s*$/.test(doc.sliceString(doc.lineAt(pos).from, pos)) ? plain() : make({ from: sel.from, to: sel.to, insert: br + br }, sel.to);
+    if (!ctx) return paragraph();
+    if (ctx.kind === "arg") {
+      const c = ctx.x.cmd;
+      if (c.role !== "heading" || ctx.x.arg.opt || sel.to > c.to) return plain();
+      const line = doc.lineAt(c.to), rest = doc.sliceString(c.to, line.to);
+      const at = /^\s*(\\label\s*\{[^{}]*\}\s*)*$/.test(rest) ? line.to : c.to;   // after a \label that follows it
+      return after([{ from: sel.from, to: sel.to }], at);
+    }
+    if (ctx.kind !== "env" || ctx.x.role === "raw") return plain();
+    if (ctx.x.role === "text") return paragraph();
+    const env = ctx.x, items = read.cmds.filter((c) => c.role === "item" && c.list === env);
+    const item = items.filter((c) => c.from <= pos).pop();
+    if (!item || pos < item.to) return plain();
+    const next = items.find((c) => c.from > item.from), end = next ? next.from : env.endFrom;
+    if (!doc.sliceString(item.to, end).trim()) {
+      if (!sel.empty || env.endFrom >= doc.length) return plain();   // a list never closed: nowhere to leave to
+      const line = doc.lineAt(item.from), endLine = doc.lineAt(end), whole = endLine.from > item.from;
+      const delFrom = whole && !doc.sliceString(line.from, item.from).trim() ? line.from : item.from;
+      return after([{ from: delFrom, to: whole ? endLine.from : end }], env.to);
+    }
+    const indent = /^[ \t]*/.exec(doc.lineAt(item.from).text)[0];
+    return make({ from: sel.from, to: sel.to, insert: br + indent + "\\item " }, sel.to);
+  }
+
+  // Return and ⇧Return: never while an input method composes (its Return picks a candidate), never in a read-only file.
+  function onReturn(CM, plain) {
+    return (view) => {
+      if (view.composing || view.state.readOnly) return false;
+      const value = plain ? null : view.state.field(wordField(CM).field, false);
+      view.dispatch(returnSpec(view.state, value ? value.read : null));
+      return true;
+    };
+  }
+  function returnKeys(CM) { return CM.keymap.of([{ key: "Enter", run: onReturn(CM, false) }, { key: "Shift-Enter", run: onReturn(CM, true) }]); }
+
   // -- the editor page -------------------------------------------------------------------------------------------
 
   const EDIT_LIMIT = 2000;  // the most edits one save may carry (latex_edit.EDIT_LIMIT)
@@ -241,7 +605,8 @@
     status.setAttribute("role", "status");
     const undoLink = mkButton(t("撤销"), "ws-text-link hidden", () => undoAct(ed));   // the last 关联/撤回关联/是这段 (18.3)
     const exported = exporter(file.path, () => saveFirst(me));   // 22.4: 导出 PDF, quiet, at the toolbar's end
-    tools.append(save, undo, status, undoLink, exported.button);
+    const source = mkButton(t("显示源码"), "ws-text-link latex-source", () => toggleSource(me));   // 22.1: like Word off for the file
+    tools.append(save, undo, status, undoLink, exported.button, source);
     head.append(mk("div", "node-path mono", file.path), tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
@@ -249,13 +614,14 @@
     body.append(box, side);
     page.append(backBar(), head, exported.block, readOnly, notice, body);
     host.replaceChildren(page);
-    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink },
+    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink, source: source },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
     me.ui.linkButton = mkButton(t("关联依据文件"), "btn btn-small latex-link-button hidden", () => openLinkPanel(me));
     me.ui.linkButton.addEventListener("mousedown", (event) => event.preventDefault());   // the selection stays
     box.appendChild(me.ui.linkButton);
     ed = me;
     load(me, file);
+    mathWhenShown(me);
     if (at && at.line) { me.target = null; goToLine(me, at.line); }   // an export error's file:line (22.4)
     box.addEventListener("keydown", () => { me.lastKey = Date.now(); }, true);
     box.addEventListener("compositionend", () => {
@@ -270,6 +636,8 @@
   // (Re)loads `file` into the editor: a fresh state, so CodeMirror's own undo history starts again.
   function load(me, file) {
     const CM = me.CM;
+    me.wordComp = new CM.Compartment();
+    me.ui.source.setAttribute("aria-pressed", String(sourceShown.has(me.path)));
     me.revision = file.revision;
     me.readOnly = !!file.read_only;
     me.sep = file.line_ending === "crlf" ? "\r\n" : "\n";
@@ -277,11 +645,11 @@
     if (file.links) me.links = new Map(file.links.filter((l) => l.path).map((l) => [includeKey(l.command, l.args), l]));
     const extensions = [
       CM.history(), CM.drawSelection(), CM.highlightSpecialChars(), CM.EditorView.lineWrapping,
-      CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
+      returnKeys(CM), CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
       CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM)), includeLinks(CM, me),
       CM.EditorView.contentAttributes.of({ "aria-label": t("LaTeX 源码"), spellcheck: "false" }),
       CM.EditorView.updateListener.of((update) => { changed(me, update); if (update.selectionSet || update.docChanged || update.geometryChanged) placeLinkButton(me); }),
-      passageField(CM).field,
+      passageField(CM).field, me.wordComp.of(sourceShown.has(me.path) ? [] : wordExtensions(CM)),
       CM.EditorView.domEventHandlers({ click: (event) => {
         const hit = event.target && event.target.closest && event.target.closest("[data-passage]");
         if (hit) openPassage(me, hit.getAttribute("data-passage"));
@@ -306,6 +674,22 @@
     if (me.panel === "link") keepLinkPanel(me, state.doc);   // a passage's panel stays; loadPassages drops it if gone
     placeLinkButton(me);
     loadPassages(me, false);
+  }
+
+  // 显示源码 (22.1): like Word off, or on again, for this file while Research OS runs. KaTeX is loaded the first time a
+  // file is shown like Word; until it is in, and if it fails, formulas stay as written (22.0.1).
+  const sourceShown = new Set();
+  function toggleSource(me) {
+    if (ed !== me || !me.view) return;
+    if (sourceShown.has(me.path)) sourceShown.delete(me.path); else sourceShown.add(me.path);
+    const on = sourceShown.has(me.path);
+    me.ui.source.setAttribute("aria-pressed", String(on));
+    me.view.dispatch({ effects: me.wordComp.reconfigure(on ? [] : wordExtensions(me.CM)) });
+    mathWhenShown(me);
+  }
+  function mathWhenShown(me) {
+    if (sourceShown.has(me.path) || window.katex || typeof document === "undefined") return;
+    loadMath().then(() => { if (ed === me && me.view) me.view.dispatch({ effects: wordField(me.CM).mathOn.of(true) }); }, () => {});
   }
 
   // Colours from the palette's own tokens (8): commands olive, comments the quiet gray, the rest ink.
@@ -1054,7 +1438,7 @@
   }
 
   // A project switch or the editor's view dropped: nothing of the previous project stays open.
-  function reset() { discard(); fromView = null; lastShown = null; exporting = null; Object.keys(drawn).forEach((k) => { delete drawn[k]; }); }
+  function reset() { discard(); fromView = null; lastShown = null; exporting = null; sourceShown.clear(); Object.keys(drawn).forEach((k) => { delete drawn[k]; }); }
 
   if (typeof window.addEventListener === "function") window.addEventListener("focus", () => { checkRevision(); });
 
@@ -1062,6 +1446,7 @@
     loadEditorLibs: loadEditorLibs, loadMath: loadMath, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
     renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
-    _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions }),
+    _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions,
+      readLatex: readLatex, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM }),
   });
 })();

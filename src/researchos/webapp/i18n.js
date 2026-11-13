@@ -1901,6 +1901,9 @@
     "在编辑器里打开": "Open in the editor",
     "已撤销": "Undone",
     "选中的文字在新版本里找不到了，请重新选择": "The selected words are not in the new version; select them again",
+    // Like Word (DESIGN.md 22.1, 22.6; task V17 B3b)
+    "导言区": "Preamble",
+    "显示源码": "Show source",
     // Export to PDF (DESIGN.md 22.4, 22.6; task V17 B2b)
     "导出 PDF": "Export PDF",
     "导出的 PDF": "Exported PDF",
