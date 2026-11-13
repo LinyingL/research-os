@@ -671,6 +671,7 @@ def record_file_paths(root: Path) -> list[Path]:
         record_dir / "decisions.toml",  # 12.3/12.4: approved decisions (researchos.records.decisions)
         record_dir / "papers.toml",  # 12.13: the drafts marked 「设为论文正文」 (researchos.records.papers)
         record_dir / "stata.toml",  # 15.3: the project folder behind a Stata global (researchos.records.stata)
+        record_dir / "evidence.toml",  # 22.2: passages and their supporting files (researchos.records.evidence)
     ]
     try:
         config = attempts_ingest.load_config(root)

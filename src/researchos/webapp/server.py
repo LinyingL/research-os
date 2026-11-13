@@ -482,7 +482,19 @@ Endpoints (all GET unless noted):
     POST /api/latex/undo -- `{project, path, revision, previous}`:
                             撤销这次保存, the bytes before that save written
                             back while the file is still what it wrote.
-    These two are, with the attempt table, the Markdown under `research/`
+    GET  /api/latex/evidence -- `?path=<.tex>`: the draft's passages tied to
+                            supporting files (DESIGN.md 22.2,
+                            `researchos.records.evidence`), each found again in
+                            its current text: found, changed (with candidates)
+                            or deleted; a supporting file gone. Reads only.
+    GET  /api/latex/supports -- `?file=<path or node>`: 以它为依据的段落, the
+                            passages that file supports. Reads only.
+    POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
+                            one entry in `.researchos/evidence.toml`, the PI or
+                            a single researcher only (a member's links wait
+                            for approval, not built yet); the `.tex` is only
+                            read, never written.
+    The save and the undo are, with the attempt table, the Markdown under `research/`
     and an agent's run, the only writes of a researcher's own files (18.1's
     list, extended by 22.1): a `.tex` the person saves in the editor, through
     the human write path (backup, history, the project lock, a member only in
@@ -4211,6 +4223,19 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 links = (query.get("links") or ["1"])[0] != "0"
                 payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path in ("/api/latex/evidence", "/api/latex/supports"):
+                # 22.2: a draft's links found again in its current text, or the passages a file supports. Reads only:
+                # nothing is re-anchored and the ledger is never written by a read.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                if path.endswith("/evidence"):
+                    rel = (query.get("path") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.evidence_of_draft(served.root, rel, self._lang()))
+                else:
+                    file = (query.get("file") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.passages_supported(served.root, file, self._lang()))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at
                 # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).
@@ -4573,6 +4598,21 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         self.server.start_scan(served)
                     except Exception as exc:  # noqa: BLE001 -- the save is answered; a scan not started is logged
                         logger.info("no scan after saving a LaTeX draft: %s", exc)
+            elif parsed.path.startswith("/api/latex/evidence/"):
+                # 22.2: 关联依据文件, 「是这段」/「仍然成立」, 撤回关联, 撤销 -- one entry in .researchos/evidence.toml
+                # (`researchos.records.evidence`, under the project lock). The .tex is only read.
+                from researchos.records import evidence as evidence_mod  # noqa: PLC0415
+
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                action = parsed.path[len("/api/latex/evidence/"):]
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    payload = self._workspace_api(lambda: latex_edit.evidence_act(
+                        served.root, action, {k: v for k, v in body.items() if k != "project"},
+                        timeout=WRITE_LOCK_TIMEOUT_S))
+                payload["generation"] = self.server.watcher.record_write({str(evidence_mod.evidence_path(served.root))})
+                self._send_json(200, {"ok": True, **payload})
             elif parsed.path == "/api/workspace/task-groups":
                 # 21.1: one group the person kept -- its attempt row through the attempt write (under the watcher's
                 # ingest lock, as /api/attempts/write), then `attempt` on its tasks

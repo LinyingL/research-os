@@ -566,6 +566,7 @@ README_RECORDS = (
     ("notes.toml", "笔记"),
     ("papers.toml", "设为论文正文的文稿，和不属于论文的图表与表"),
     ("stata.toml", "Stata 全局变量指向的项目里的文件夹"),
+    ("evidence.toml", "正文段落和它的依据文件"),
     ("team.toml", "项目成员"),
     ("backups/", "以上记录的快照"),
 )

@@ -175,7 +175,7 @@ STORE_BLOB = "blob"
 OFFICIAL_INFIX = ".official"
 #: The record files a snapshot carries (besides `variables/`).
 RECORD_FILES = ("project.toml", "attempts.toml", "mappings.toml", "team.toml", "judgements.toml", "notes.toml",
-                "decisions.toml", "canvas.json", "papers.toml", "stata.toml")
+                "decisions.toml", "canvas.json", "papers.toml", "stata.toml", "evidence.toml")
 VARIABLES_DIRNAME = "variables"
 _SEQ_RE = re.compile(r"^[1-9][0-9]{0,8}$")
 _TMP_SEQ_RE = re.compile(r"^\.([1-9][0-9]{0,8})\.tmp-")

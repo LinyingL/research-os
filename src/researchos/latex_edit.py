@@ -15,6 +15,7 @@ path's last (its backup the newest of the series).
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import os
 import posixpath
@@ -25,10 +26,10 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from researchos import paths, workspace
+from researchos import paths, people, settings, workspace
 from researchos.ingest import files as files_ingest
 from researchos.records import files as record_files
-from researchos.records import notes, papers, situation
+from researchos.records import evidence, notes, papers, situation
 from researchos.workspace import WorkspaceError
 
 #: The largest `.tex` the editor opens or a save may leave (22.1), and the largest save request (refused unread).
@@ -425,3 +426,146 @@ def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
                                                 limit=SIZE_LIMIT, text=False, backup_subdir=backup_series(rel))
     return {**_payload(rel, restored, _opened(root, rel, restored), lang), "backup": backup,
             "history_error": history_error}
+
+
+# -- passages and their supporting files (22.2) ---------------------------------------------------------------------
+# The editor's positions count a CRLF as two; the ledger's anchors and `evidence.resolve` use the text with every line
+# ending written as \n. Converted here, both ways, so neither side ever guesses.
+
+_HEADING_RE = re.compile(r"\\(?:chapter|section|subsection|subsubsection)\*?\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
+
+
+def _normalised(text: str) -> tuple[str, list[int], list[int]]:
+    """The `\\n`-normalised text, where each CRLF starts in the file's text, and where its \\n is in the normalised."""
+    crlfs = [m.start() for m in re.finditer("\r\n", text)]
+    return text.replace("\r\n", "\n"), crlfs, [i - k for k, i in enumerate(crlfs)]
+
+
+def _to_file(crlfs_n: list[int], k: int | None) -> int | None:
+    return None if k is None else k + bisect.bisect_left(crlfs_n, k)
+
+
+def _anchor_of(text: str, start: Any, end: Any) -> dict[str, Any]:
+    """The anchor of the passage `[start, end)` (the editor's positions) in `text`: its quote, prefix and suffix
+    `\\n`-normalised and its offset in that text. Refused when the range is not a passage of words."""
+    norm, crlfs, _n = _normalised(text)
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (start, end)) or not 0 <= start < end <= len(text):
+        raise _refuse("invalid", "A passage is a range inside the text", "请先选中正文里的一段文字")
+    at = []
+    for pos in (start, end):
+        k = bisect.bisect_left(crlfs, pos)
+        if k and crlfs[k - 1] == pos - 1:
+            raise _refuse("invalid", "A passage cannot start or end inside a line ending", "请先选中正文里的一段文字")
+        at.append(pos - k)
+    quote = norm[at[0]:at[1]]
+    if not quote.strip() or len(quote) > evidence.MAX_QUOTE:
+        raise _refuse("invalid", f"A passage is 1 to {evidence.MAX_QUOTE} characters of text",
+                      f"一段正文最多 {evidence.MAX_QUOTE} 个字符，不能是空白")
+    return {"quote": quote, "prefix": norm[max(0, at[0] - evidence.CONTEXT):at[0]],
+            "suffix": norm[at[1]:at[1] + evidence.CONTEXT], "offset": at[0]}
+
+
+def _evidence_call(fn: Any) -> dict[str, Any]:
+    try:
+        return fn()
+    except evidence.EvidenceRefused as exc:
+        raise _refuse(exc.code, exc.words[1], exc.words[0], exc.status) from exc
+
+
+def evidence_act(root: str | Path, action: str, body: Any, *, timeout: float | None = None) -> dict[str, Any]:
+    """关联依据文件 (`link`), 「是这段」/「仍然成立」 (`reanchor`), 撤回关联 (`withdraw`) or 撤销 (`undo`): one entry in
+    `.researchos/evidence.toml`. A passage is named by the editor's range in the saved file `{path, revision, from, to}`,
+    and its anchor is taken from the file as it is on disk (409 `conflict` when it is no longer that revision). The
+    `.tex` is only read."""
+    root = workspace._root(root)  # noqa: SLF001
+    if not isinstance(body, dict) or action not in ("link", "reanchor", "withdraw", "undo"):
+        raise _refuse("invalid", "Not a link request", "无法识别这次关联")
+    link = body.get("link")
+    if action in ("link", "reanchor"):
+        rel = checked_path(root, body.get("path"))
+        raw = _read(root, rel)
+        if _revision(raw) != _revision_of(body, "revision"):
+            raise _refuse("conflict", "The file has changed since it was opened", "这个文件在别处被改过。", 409)
+        opened = _opened(root, rel, raw)
+        if opened["read_only_reason"] not in (None, "generated"):
+            raise _refuse("read_only_file", READ_ONLY[opened["read_only_reason"]][1],
+                          READ_ONLY[opened["read_only_reason"]][0], 409)
+        anchor = _anchor_of(opened["text"], body.get("from"), body.get("to"))
+        if action == "link":
+            return _evidence_call(lambda: evidence.add_link(root, rel, body.get("file"), anchor, body.get("note"),
+                                                            via="app", timeout=timeout))
+        return _evidence_call(lambda: evidence.reanchor(root, link, rel, anchor, via="app", timeout=timeout))
+    if action == "withdraw":
+        return _evidence_call(lambda: evidence.withdraw(root, link, via="app", timeout=timeout))
+    return _evidence_call(lambda: evidence.undo(root, link, body.get("undoes"), via="app", timeout=timeout))
+
+
+def _record_state(decision: Any, lang: str) -> dict[str, Any]:
+    words = evidence.message_of(decision)
+    return {"trusted": decision.may_apply, "message": None if words is None else settings.say(*words, lang)}
+
+
+def _missing(root: Path, node: str) -> bool:
+    rel = notes.node_path(node)
+    return rel is not None and not evidence._file_of_project(root, node)  # noqa: SLF001
+
+
+def evidence_of_draft(root: str | Path, rel: Any, lang: str = "zh") -> dict[str, Any]:
+    """The draft's standing links, each found again in its current text (22.2), in the editor's positions: `state`
+    `found` / `changed` (待复核 「依据已变化」, with `candidates`) / `deleted` (「段落已被删掉」); `file_missing` when the
+    supporting file has gone from the project (it is not withdrawn). Writes nothing."""
+    root = workspace._root(root)  # noqa: SLF001
+    rel = checked_path(root, rel)
+    raw = _read(root, rel)
+    norm, _crlfs, crlfs_n = _normalised(_opened(root, rel, raw)["text"])
+    links, decision = evidence.links_now(root)
+    team = people.read_team(root)
+    team = team if team.state == "present" else None
+    paragraphs, out = evidence.Paragraphs(norm), []
+    for item in links.values():
+        if item["draft"] != rel:
+            continue
+        found = evidence.resolve(item["anchor"], norm, paragraphs)
+        out.append({
+            "link": item["link"], "file": item["file"], "file_missing": _missing(root, item["file"]),
+            "note": item["note"], "quote": item["anchor"]["quote"], "state": found["state"],
+            "from": _to_file(crlfs_n, found["start"]), "to": _to_file(crlfs_n, found["end"]),
+            "candidates": [{"from": _to_file(crlfs_n, c["start"]), "to": _to_file(crlfs_n, c["end"]), "text": c["text"]}
+                           for c in found["candidates"]],
+            "conflict": item["conflict"], "last": item["last"], "at": item["entry"].at,
+            **people.attribution(item["entry"].data, team, lang),
+        })
+    return {"path": rel, "revision": _revision(raw), "links": out, **_record_state(decision, lang)}
+
+
+def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[str, Any]:
+    """以它为依据的段落: every standing link whose supporting file is `file` (a path or a node id), with its draft, the
+    section the passage is in, its first 80 characters and its state (`draft_missing` when the draft cannot be read
+    now). Writes nothing."""
+    root = workspace._root(root)  # noqa: SLF001
+    try:
+        node = notes.normalize_node(file)
+    except ValueError as exc:
+        raise _refuse("invalid", str(exc), "无法识别这个文件") from exc
+    links, decision = evidence.links_now(root)
+    texts: dict[str, tuple[str, evidence.Paragraphs] | None] = {}
+    out = []
+    for item in links.values():
+        if item["file"] != node:
+            continue
+        draft = item["draft"]
+        if draft not in texts:
+            try:
+                norm = _normalised(_opened(root, draft, _read(root, checked_path(root, draft)))["text"])[0]
+                texts[draft] = (norm, evidence.Paragraphs(norm))
+            except WorkspaceError:
+                texts[draft] = None
+        got, anchor = texts[draft], item["anchor"]
+        found = evidence.resolve(anchor, *got) if got is not None else {"state": "draft_missing", "start": None}
+        where = found["start"] if found["start"] is not None else anchor["offset"]
+        headings = list(_HEADING_RE.finditer(got[0][:where])) if got is not None else []
+        shown = got[0][found["start"]:found["end"]] if found["state"] == "found" else anchor["quote"]
+        out.append({"link": item["link"], "draft": draft, "state": found["state"], "excerpt": " ".join(shown.split())[:80],
+                    "section": headings[-1].group(1).strip() if headings else None, "conflict": item["conflict"]})
+    out.sort(key=lambda p: (p["draft"], p["section"] or ""))
+    return {"file": node, "passages": out, **_record_state(decision, lang)}

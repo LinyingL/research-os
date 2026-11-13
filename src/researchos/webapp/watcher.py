@@ -211,7 +211,7 @@ def take_snapshot(project_root: Path) -> WatchSnapshot:
     steps: set[str] = set()
 
     for record in (*record_paths(project_root), notes_record_path(project_root), papers_record_path(project_root),
-                   stata_record_path(project_root)):
+                   stata_record_path(project_root), evidence_record_path(project_root)):
         record_entry = _stat_entry(record)
         if record_entry is not None:
             files[str(record)] = record_entry
@@ -284,6 +284,14 @@ def papers_record_path(project_root: Path) -> Path:
     from researchos.records import papers  # noqa: PLC0415 -- leaf use
 
     return papers.papers_path(project_root)
+
+
+def evidence_record_path(project_root: Path) -> Path:
+    """Passages and their supporting files (22.2): a change -- a link made or withdrawn, a sync, a hand edit -- only
+    refreshes the pages that read the file; nothing is ingested."""
+    from researchos.records import evidence  # noqa: PLC0415 -- leaf use
+
+    return evidence.evidence_path(project_root)
 
 
 def stata_record_path(project_root: Path) -> Path:
@@ -707,12 +715,14 @@ class ProjectWatcher:
         notes_file = str(notes_record_path(root))
         papers_file = str(papers_record_path(root))
         stata_file = str(stata_record_path(root))
+        evidence_file = str(evidence_record_path(root))
         stata_changed = stata_file in changed
         mappings_changed = mappings_file in changed
         ledger_changed = ledger_file in changed or notes_file in changed
         impl_paths = (baseline.impl_paths | snapshot.impl_paths) - (baseline.steps_paths | snapshot.steps_paths)
         cards_changed = {path for path in changed if _is_card_file(path, root) or path in impl_paths}
-        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file, papers_file, stata_file}
+        attempts_changed = bool(changed - {mappings_file, ledger_file, canvas_file, notes_file, papers_file, stata_file,
+                                          evidence_file}
                                 - cards_changed)
         error: str | None = None
         try:
