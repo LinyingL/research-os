@@ -347,6 +347,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-page { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
 .latex-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem; padding-top: 1rem; }
 .latex-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; }
+.latex-act { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
 .latex-read-only, .latex-notice { margin: 0; }
 .latex-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
 .latex-notice details { width: 100%; }
@@ -367,6 +368,8 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
 .latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
 .latex-math-display { display: block; text-align: center; margin: .2rem 0; }
+/* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is narrow */
+.latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static; margin-left: 1.2em; }
 .latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
 .latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }
 .latex-bullet::before { content: ""; display: inline-block; width: .32em; height: .32em; border-radius: 50%; background: var(--ink-soft); vertical-align: middle; }
@@ -387,6 +390,8 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-quote { margin: 0; padding-left: .6rem; border-left: 2px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 .latex-files { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: .5rem; }
 .latex-files p { margin: .1rem 0; }
+/* a chosen file and its 移除, a file and its state: set apart as the export line's words are */
+.latex-picked li, .latex-files li > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
 .latex-results { width: 100%; display: flex; flex-direction: column; align-items: flex-start; max-height: 14rem; overflow: auto; }
 .latex-group { margin-top: .3rem; font-size: .76rem; color: var(--gray); }
 .latex-result { border: 0; background: none; padding: .1rem 0; text-align: left; color: var(--ink); cursor: pointer; font-size: .8rem; }

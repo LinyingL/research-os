@@ -1854,6 +1854,11 @@
       "This task already has a report. Once it is marked not done it can be run again, and a new run rewrites the same report. Mark it as not done?",
     // The LaTeX editor (DESIGN.md 22.1, 22.6; task V17 B1c)
     "撤销这次保存": "Undo this save",
+    "导言区（已折叠，点开）": "Preamble (folded, click to open)",
+    "收起导言区": "Fold the preamble",
+    "撤销这次关联": "Undo this link",
+    "撤销这次撤回": "Undo this withdrawal",
+    "撤销这次确认": "Undo this confirmation",
     "这个文件在别处被改过。": "This file was changed elsewhere.",
     "载入新版本": "Load the new version",
     "编辑器里还没保存的内容": "What the editor holds, not saved",
@@ -1913,7 +1918,6 @@
     "已撤销": "Undone",
     "选中的文字在新版本里找不到了，请重新选择": "The selected words are not in the new version; select them again",
     // Like Word (DESIGN.md 22.1, 22.6; task V17 B3b)
-    "导言区": "Preamble",
     "显示源码": "Show source",
     // Export to PDF (DESIGN.md 22.4, 22.6; task V17 B2b)
     "导出 PDF": "Export PDF",

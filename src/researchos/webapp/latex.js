@@ -409,9 +409,9 @@
   const wholeParts = (x, map) => [[map(x.from), map(x.to)]];
 
   // Where the decorations must be drawn again after `tr` (22.1): around each change, every construct read differently
-  // from before, and every one the selection now touches or leaves; widened to whole lines and to every construct it
-  // reaches until none crosses an edge. Null when nothing is to be drawn again.
-  function redraw(old, read, math, tr) {
+  // from before, and every one the selection now touches or leaves (none while `live` is off); widened to whole lines
+  // and to every construct it reaches until none crosses an edge. Null when nothing is to be drawn again.
+  function redraw(old, read, math, tr, live) {
     const doc = tr.state.doc, ch = tr.changes, map = (x) => ch.mapPos(x), sel = tr.state.selection.ranges, spans = [];
     const was = tr.docChanged ? tr.startState.selection.map(ch).ranges : tr.startState.selection.ranges;
     const pre = preambleEnd(doc, read);
@@ -425,7 +425,7 @@
     }
     if (inPreamble(was, pre) !== inPreamble(sel, pre)) spans.push([0, pre]);
     const touch = (s, from, to) => s.some((r) => r.from <= to && r.to >= from);
-    const flip = (from, to) => { if (touch(was, from, to) !== touch(sel, from, to)) spans.push([from, to]); };
+    const flip = (from, to) => { if (live && touch(was, from, to) !== touch(sel, from, to)) spans.push([from, to]); };
     for (const c of read.cmds) if (c.role !== "other" && c.from >= pre) flip(c.from, c.to);
     if (math) for (const f of read.maths) if (f.from >= pre) flip(f.from, f.to);
     if (!spans.length) return null;
@@ -456,7 +456,10 @@
   let wx = null;
   function wordField(CM) {
     if (wx && wx.CM === CM) return wx;
-    const mathOn = CM.StateEffect.define(), preamble = CM.StateEffect.define(), D = CM.Decoration;
+    // `live` (on unless the editor turns it off): whether the selection shows the source of what it touches. The editor
+    // loads a file with it off and turns it on at the first focus, so the cursor CodeMirror puts at 0 (or the body's
+    // start) before anyone has clicked never shows a file's first heading as source.
+    const mathOn = CM.StateEffect.define(), preamble = CM.StateEffect.define(), live = CM.StateEffect.define(), D = CM.Decoration;
     class MathWidget extends CM.WidgetType {
       constructor(src, display, whole) { super(); this.src = src; this.display = display; this.whole = whole; }
       eq(other) { return other.whole === this.whole; }
@@ -475,12 +478,12 @@
       toDOM() { return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : ""); }
     }
     // 导言区 is a button (12.11): Tab reaches it, Return and Space press it. Folding it moves a cursor that was in the
-    // preamble to the body, so the fold always closes when asked.
+    // preamble to the body, so the fold always closes when asked. Its state is said in words, with no chevron (22.6).
     class Preamble extends CM.WidgetType {
       constructor(open) { super(); this.open = open; }
       eq(other) { return other.open === this.open; }
       toDOM(view) {
-        const b = mk("button", "latex-preamble has-chevron", t("导言区"));
+        const b = mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"));
         b.setAttribute("type", "button");
         b.setAttribute("aria-expanded", String(this.open));
         b.addEventListener("mousedown", (event) => event.preventDefault());
@@ -502,9 +505,9 @@
     const lineMarks = [1, 2, 3, 4].map((k) => D.line({ class: "latex-li latex-li-" + k }));
 
     // The decorations of the constructs that meet `within` ([from, to], closed: none crosses its edges), or of all.
-    function decorate(read, math, open, state, within) {
+    function decorate(read, math, open, state, within, on) {
       const doc = state.doc, sel = state.selection.ranges, out = [];
-      const touch = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
+      const touch = (from, to) => on !== false && sel.some((r) => r.from <= to && r.to >= from);
       const meets = within ? (from, to) => from <= within[1] && to >= within[0] : () => true;
       const pre = preambleEnd(doc, read);
       if (pre > 0 && meets(0, pre)) {
@@ -550,29 +553,36 @@
     const field = CM.StateField.define({
       create: (state) => {
         const read = readLatex(state.doc.toString()), math = typeof window !== "undefined" && !!window.katex;
-        return { read: read, math: math, open: false, deco: D.set(decorate(read, math, false, state), true) };
+        return { read: read, math: math, open: false, live: true, deco: D.set(decorate(read, math, false, state), true) };
       },
       update(value, tr) {
-        let math = value.math, open = value.open;
-        for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(preamble)) open = e.value; }
-        if (!tr.docChanged && !tr.selection && math === value.math && open === value.open) return value;
+        let math = value.math, open = value.open, on = value.live;
+        for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(preamble)) open = e.value; if (e.is(live)) on = e.value; }
+        if (!tr.docChanged && !tr.selection && math === value.math && open === value.open && on === value.live) return value;
         const read = tr.docChanged ? readLatex(tr.state.doc.toString()) : value.read;
-        if (math !== value.math || open !== value.open) return { read: read, math: math, open: open, deco: D.set(decorate(read, math, open, tr.state), true) };
-        const spans = redraw(value.read, read, math, tr);
+        if (math !== value.math || open !== value.open || on !== value.live) {
+          return { read: read, math: math, open: open, live: on, deco: D.set(decorate(read, math, open, tr.state, null, on), true) };
+        }
+        const spans = redraw(value.read, read, math, tr, on);
         let deco = tr.docChanged ? value.deco.map(tr.changes) : value.deco;
         if (!spans && !tr.docChanged) return value;
         for (const s of spans || []) {
-          deco = deco.update({ filterFrom: s[0], filterTo: s[1], filter: (from, to) => !(from <= s[1] && to >= s[0]), add: decorate(read, math, open, tr.state, s), sort: true });
+          deco = deco.update({ filterFrom: s[0], filterTo: s[1], filter: (from, to) => !(from <= s[1] && to >= s[0]), add: decorate(read, math, open, tr.state, s, on), sort: true });
         }
-        return { read: read, math: math, open: open, deco: deco };
+        return { read: read, math: math, open: open, live: on, deco: deco };
       },
       provide: (f) => CM.EditorView.decorations.from(f, (v) => v.deco),
     });
-    wx = { CM: CM, field: field, mathOn: mathOn, preamble: preamble };
+    wx = { CM: CM, field: field, mathOn: mathOn, preamble: preamble, live: live };
     return wx;
   }
   // Like Word's extensions, which 显示源码 takes out (a compartment): the field, and the class that sets the text face.
-  function wordExtensions(CM) { return [wordField(CM).field, CM.EditorView.contentAttributes.of({ class: "latex-word" })]; }
+  function wordExtensions(CM) {
+    const w = wordField(CM);
+    const focus = CM.EditorView.focusChangeEffect;   // absent only in a test's stand-in view
+    return [w.field, CM.EditorView.contentAttributes.of({ class: "latex-word" })]
+      .concat(focus ? [focus.of((state, focusing) => (focusing && !state.field(w.field).live ? w.live.of(true) : null))] : []);
+  }
 
   // The innermost place `pos` is in: {kind: math, raw, arg or env, x: what it is}, or null in running text at the top.
   function contextAt(read, pos) {
@@ -701,10 +711,14 @@
     const undo = mkButton(t("撤销这次保存"), "ws-text-link hidden", () => undoSave());
     const status = mk("span", "notice-status");
     status.setAttribute("role", "status");
-    const undoLink = mkButton(t("撤销"), "ws-text-link hidden", () => undoAct(ed));   // the last 关联/撤回关联/是这段 (18.3)
-    const exported = exporter(file.path, () => saveFirst(me));   // 22.4: 导出 PDF, quiet, at the toolbar's end
+    // the last 关联/撤回关联/是这段 (18.3), named by what it takes back and set with the status that reports it, apart
+    // from 撤销这次保存
+    const undoLink = mkButton(t("撤销这次关联"), "ws-text-link latex-act-undo hidden", () => undoAct(ed));
+    const exported = exporter(file.path, () => saveFirst(me));   // 22.4: 导出 PDF, quiet
     const source = mkButton(t("显示源码"), "ws-text-link latex-source", () => toggleSource(me));   // 22.1: like Word off for the file
-    tools.append(save, undo, status, undoLink, exported.button, source);
+    const said = mk("span", "latex-act");
+    said.append(status, undoLink);
+    tools.append(save, undo, exported.button, source, said);
     head.append(mk("div", "node-path mono", file.path), tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
@@ -760,6 +774,9 @@
     // the first cursor is where the body starts: one at 0 would sit before the folded preamble, typing into it unseen
     const first = bodyStart(state.doc, readLatex(state.doc.toString()));
     if (first) state = state.update({ selection: { anchor: first } }).state;
+    // like Word, nothing shows its source until the editor is clicked or reached by keyboard (a reload keeps the focus)
+    const focused = !!(me.view && me.view.hasFocus);
+    if (!sourceShown.has(me.path) && !focused) state = state.update({ effects: wordField(CM).live.of(false) }).state;
     const top = me.view ? me.view.scrollDOM.scrollTop : 0;
     if (me.view) me.view.setState(state);
     else me.view = new CM.EditorView({ state: state, parent: me.ui.box });
@@ -786,6 +803,7 @@
     const on = sourceShown.has(me.path);
     me.ui.source.setAttribute("aria-pressed", String(on));
     me.view.dispatch({ effects: me.wordComp.reconfigure(on ? [] : wordExtensions(me.CM)) });
+    if (!on && !me.view.hasFocus) me.view.dispatch({ effects: wordField(me.CM).live.of(false) });   // as a file loads
     mathWhenShown(me);
   }
   function mathWhenShown(me) {
@@ -1127,6 +1145,7 @@
     if (ed !== me) return false;
     me.acting = false;
     me.lastAct = wrote.filter((w) => w.link && w.entry);
+    me.ui.undoLink.textContent = undoActWords(action);
     me.ui.undoLink.classList.toggle("hidden", !me.lastAct.length);
     if (failed) setStatus(me.ui.status, "err", t("关联没有写入"), failed);
     else setStatus(me.ui.status, "ok", done);
@@ -1134,6 +1153,9 @@
     return !failed;
   }
 
+  function undoActWords(action) {
+    return action === "link" ? t("撤销这次关联") : action === "withdraw" ? t("撤销这次撤回") : t("撤销这次确认");
+  }
   // 撤销: the entries the last act wrote taken back, newest first (the engine's `undone`).
   async function undoAct(me) {
     if (!me || me.acting || !me.lastAct || !me.lastAct.length) return;
@@ -1200,7 +1222,7 @@
     me.linkRange = { from: sel.from, to: sel.to };
     me.linkQuote = me.view.state.doc.sliceString(sel.from, sel.to);
     me.panel = "link";
-    const side = me.ui.side, chosen = [], picked = mk("ul", "latex-files"), results = mk("div", "latex-results");
+    const side = me.ui.side, chosen = [], picked = mk("ul", "latex-files latex-picked"), results = mk("div", "latex-results");
     const search = mk("input", "ws-input");
     search.setAttribute("placeholder", t("搜索项目里的文件"));
     search.setAttribute("aria-label", t("搜索项目里的文件"));
@@ -1232,7 +1254,7 @@
     const find = async () => {
       const mine = ++asked;
       let data;
-      try { data = await apiGet("/api/latex/files?q=" + encodeURIComponent(search.value || "")); } catch (err) {
+      try { data = await apiGet("/api/latex/files?q=" + encodeURIComponent(search.value || "") + "&path=" + encodeURIComponent(me.path)); } catch (err) {
         if (mine === asked) results.replaceChildren(mk("p", "notice-status err", t("没能列出项目里的文件")));
         return;
       }

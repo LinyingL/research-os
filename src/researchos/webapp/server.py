@@ -490,10 +490,12 @@ Endpoints (all GET unless noted):
                             or deleted; a supporting file gone. Reads only.
     GET  /api/latex/supports -- `?file=<path or node>`: 以它为依据的段落, the
                             passages that file supports. Reads only.
-    GET  /api/latex/files -- `?q=`: the files the link panel offers as a
+    GET  /api/latex/files -- `?q=&path=`: the files the link panel offers as a
                             supporting file, figures and tables first, then
-                            data, scripts, documents. Reads directory
-                            listings only.
+                            data, scripts, documents; never the draft `path`,
+                            the other drafts of its paper or the PDF exported
+                            from it. Reads directory listings, the paper's
+                            .tex files and papers.toml.
     POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
                             one entry in `.researchos/evidence.toml`, the PI or
                             a single researcher only (a member's links wait
@@ -4267,8 +4269,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     rel = (query.get("path") or [""])[0]
                     payload = self._workspace_api(lambda: latex_edit.evidence_of_draft(served.root, rel, self._lang()))
                 elif path.endswith("/files"):   # the link panel's search over the project's files
-                    q = (query.get("q") or [""])[0]
-                    payload = self._workspace_api(lambda: latex_edit.supporting_files(served.root, q))
+                    q, draft = (query.get("q") or [""])[0], (query.get("path") or [""])[0]
+                    payload = self._workspace_api(lambda: latex_edit.supporting_files(served.root, q, draft=draft or None))
                 else:
                     file = (query.get("file") or [""])[0]
                     payload = self._workspace_api(lambda: latex_edit.passages_supported(served.root, file, self._lang()))

@@ -354,14 +354,15 @@ def test_list_items_are_indented_with_a_bullet_or_their_number_and_the_item_comm
 
 
 @needs_node
-def test_the_preamble_is_folded_under_its_label_and_opens_as_source_by_its_chevron_or_a_cursor_inside(run):
+def test_the_preamble_is_folded_under_its_label_and_opens_as_source_by_its_button_or_a_cursor_inside(run):
     fold = [x for x in run["away"] if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
     assert len(fold) == 1 and fold[0]["block"] and fold[0]["from"] == 0
     assert fold[0]["text"] == "\\documentclass{article}\n\\usepackage{amsmath}"
-    assert fold[0]["widget"] == {"cls": "latex-preamble has-chevron", "text": "导言区", "html": "", "expanded": "false"}
+    assert fold[0]["widget"] == {"cls": "latex-preamble", "text": "导言区（已折叠，点开）", "html": "", "expanded": "false"}
     for opened in (run["opened"], run["cursorInPreamble"]):
         bar = [x for x in opened if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
         assert len(bar) == 1 and bar[0]["from"] == bar[0]["to"] == 0 and bar[0]["widget"]["expanded"] == "true"
+        assert bar[0]["widget"]["text"] == "收起导言区"
         assert not [x for x in opened if 0 < x["from"] < len("\\documentclass{article}\n\\usepackage{amsmath}")]
 
 
@@ -649,8 +650,9 @@ def test_the_words_of_like_word_go_through_t_with_their_english_and_the_toolbar_
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     assert 'mkButton(t("显示源码"), "ws-text-link latex-source"' in js
-    assert 'mk("button", "latex-preamble has-chevron", t("导言区"))' in js  # a real button; the chevron drawn in CSS, 12.13
-    assert '"导言区": "Preamble",' in i18n and '"显示源码": "Show source",' in i18n
+    assert 'mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"))' in js  # words, no chevron
+    assert '"导言区（已折叠，点开）": "Preamble (folded, click to open)",' in i18n
+    assert '"收起导言区": "Fold the preamble",' in i18n and '"显示源码": "Show source",' in i18n
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     block = css[css.index("/* 22.1 like Word (B3b)"):css.index(".latex-include {")]
     assert "#" not in block.replace("/*", "").split("*/", 1)[1]       # palette tokens only

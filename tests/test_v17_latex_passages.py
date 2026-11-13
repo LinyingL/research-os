@@ -171,7 +171,7 @@ def test_a_passage_whose_every_character_was_deleted_says_so_at_the_save(run):
 
 def test_the_link_panel_lists_figures_first_and_its_one_primary_waits_for_a_file(run):
     _root, out, _ledger = run
-    assert out["searched"] == "/api/latex/files?q=" and out["groups"] == ["图和表", "数据"]
+    assert out["searched"] == "/api/latex/files?q=&path=paper%2Fmain.tex" and out["groups"] == ["图和表", "数据"]
     assert out["primaryBefore"] is True and out["primaryAfter"] is False
 
 
@@ -313,7 +313,7 @@ const view = () => viewsMade[viewsMade.length - 1];
 const linkHidden = () => byClass('latex-link-button').classList.contains('hidden');
 const side = () => byClass('latex-side');
 const texts = (el) => typeof el === 'string' ? [el] : [el.textContent].concat(...el.children.filter(Boolean).map(texts));
-const status = () => byClass('latex-tools').children[2].textContent;
+const status = () => byClass('latex-act').children[0].textContent;
 const open = async (path, extra, at) => { L.open(path, at); await tick(); gets.shift().res(f(path, extra)); await tick(); await tick(); await tick(); };
 // a read-only draft for its line endings offers no link; a generated one does
 await open('odd.tex', {read_only: true, read_only_reason: 'mixed'});
@@ -352,11 +352,12 @@ out.withdrawPosts = posts.map((p) => p.url);
 out.withdrawDisabled = withdraw.disabled;
 EV = {revision: 'r1', links: [link('pl-1')]};
 posts.shift().res({act: 'withdraw', link: 'pl-2', entry: 'pe-9'}); await tick(); await tick(); await tick();
-out.undoShown = !button('撤销').classList.contains('hidden');
-button('撤销').fire('click'); await tick();
+const actUndo = () => all.filter((e) => e.classList.contains('latex-act-undo')).pop();
+out.undoShown = !actUndo().classList.contains('hidden'); out.undoWords = actUndo().textContent;
+actUndo().fire('click'); await tick();
 const un = posts.shift(); out.undo = {url: un.url, link: un.body.link, undoes: un.body.undoes};
 un.res({act: 'undone'}); await tick(); await tick();
-out.undoAfter = {hidden: button('撤销').classList.contains('hidden'), status: status()};
+out.undoAfter = {hidden: actUndo().classList.contains('hidden'), status: status()};
 out.dirtyStill = L.isDirty();
 // saved; then two files chosen, the second refused: only it stays chosen, and pressing again sends it alone
 button('保存').fire('click'); await tick();
@@ -457,7 +458,7 @@ def test_with_unsaved_text_a_reanchor_is_refused_and_a_withdraw_posts_alone_and_
 
 
 def test_undo_is_offered_after_an_entry_and_takes_back_that_entry(review):
-    assert review["undoShown"] is True
+    assert review["undoShown"] is True and review["undoWords"] == "撤销这次撤回"   # named by what it takes back
     assert review["undo"] == {"url": "/api/latex/evidence/undo", "link": "pl-2", "undoes": "pe-9"}
     assert review["undoAfter"] == {"hidden": True, "status": "已撤销"}
 
@@ -566,7 +567,7 @@ _RELOAD = r"""
 const out = {}, P = window.ROLatex._passages;
 const seen = () => P().map((p) => ({state: p.state, local: p.local, from: p.from, to: p.to,
   text: p.from == null ? null : V.state.doc.sliceString(p.from, p.to), candidates: p.candidates.map((c) => ({text: c.text, still: !!c.still}))}));
-const status = () => byClass('latex-tools').children[2].textContent;
+const status = () => byClass('latex-act').children[0].textContent;
 // the side as rendered now: its counts and the 待复核 entries listed under them
 const waitingNow = () => { const c = all.filter((e) => e.classList.contains('latex-counts')).pop();
   return [c.textContent].concat(c.children.map((k) => k.textContent || k).filter((x) => x.trim())); };

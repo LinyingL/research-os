@@ -640,19 +640,39 @@ _TABLE_RE = re.compile(r"(?:^|/)(?:tables?|tabs?)/|(?:^|/)tab(?:le)?s?[_\-.\d]",
 _FILE_WALK_LIMIT = 20000
 
 
-def supporting_files(root: str | Path, query: Any, limit: int = 50) -> dict[str, Any]:
+def _own_paper(root: Path, draft: str) -> set[str]:
+    """What cannot support a passage of `draft` (folded): the draft itself, the other drafts of its paper (each `.tex`
+    its main files include, transitively, but a table or a file a script writes) and the PDFs made from those main
+    files -- each export recorded in papers.toml and the `<main>.pdf` beside it."""
+    from researchos import latex_export   # it imports this module
+
+    mains = main_files(root, draft)
+    own = {draft}
+    _known, text_of = tex_reader(root)
+    for main in mains:
+        own.update(rel for rel in latex_export._closure(root, main, text_of)  # noqa: SLF001
+                   if rel == main or not (_TABLE_RE.search(rel) or _generated(root, rel)))
+        own.add(posixpath.splitext(main)[0] + ".pdf")
+    own.update(e["pdf"] for e in papers.exports(root) if e["main"] in mains and isinstance(e["pdf"], str))
+    return {files_ingest.fold(rel) for rel in own}
+
+
+def supporting_files(root: str | Path, query: Any, limit: int = 50, draft: Any = None) -> dict[str, Any]:
     """The project's files the link panel offers as a passage's supporting file (22.2): every file the scan's walk
     lists (no hidden folder, no symlink), its path containing `query` as a Mac volume compares names, figures and
-    tables first, then data, scripts and documents. `group` is one of `_FILE_GROUPS`. Reads only directory listings."""
+    tables first, then data, scripts and documents; with `draft`, the draft being edited, never that draft, the other
+    drafts of its paper or the PDF exported from it (`_own_paper`). `group` is one of `_FILE_GROUPS`. Reads directory
+    listings, and with `draft` the paper's `.tex` files and papers.toml."""
     root = workspace._root(root)  # noqa: SLF001
     wanted = files_ingest.fold(query.strip()) if isinstance(query, str) else ""
+    own = _own_paper(root, checked_path(root, draft)) if draft else set()
     found: list[tuple[int, str, str]] = []
     walked = 0
     for rel, _category in files_ingest.iter_files(root):
         walked += 1
         if walked > _FILE_WALK_LIMIT:
             break
-        if wanted and wanted not in files_ingest.fold(rel):
+        if (wanted and wanted not in files_ingest.fold(rel)) or (own and files_ingest.fold(rel) in own):
             continue
         kind = notes.normalize_node(rel).split(":", 1)[0]
         table = kind != "script" and _TABLE_RE.search(rel)   # tab.py is a script, tables/t.tex a table
