@@ -224,10 +224,231 @@ def test_resolving_follows_tex_rules_for_each_command():
     assert latex_edit.resolve_include("input", ("",), "paper", "paper") is None
 
 
+def test_a_fifo_or_a_link_named_tex_is_never_read_when_finding_the_main_file(paper):
+    """Review of B1c: the main-file search reads only regular files, so a FIFO named `.tex` cannot hang the request."""
+    import os
+    import threading
+
+    os.mkfifo(paper / "paper" / "zz.tex")
+    (paper / "paper" / "other.tex").symlink_to(paper / "paper" / "main.tex")
+    found: list = []
+    worker = threading.Thread(target=lambda: found.append(latex_edit.main_files(paper, "paper/chapters/intro.tex")),
+                              daemon=True)
+    worker.start()
+    worker.join(5)
+    if worker.is_alive():   # unblock the reader before failing, so the test run is not left hanging
+        fd = os.open(paper / "paper" / "zz.tex", os.O_WRONLY | os.O_NONBLOCK)
+        os.close(fd)
+        pytest.fail("the main-file search waited on a FIFO")
+    assert found == [["paper/main.tex"]]
+
+
+def test_the_revision_check_reads_only_the_file_not_the_projects_links(paper, monkeypatch):
+    """Review of B1c: the check on window focus (`links=0`) does not walk the project for main files."""
+    def walked(*args):
+        raise AssertionError("walked the project")
+    monkeypatch.setattr(latex_edit, "main_files", walked)
+    opened = latex_edit.read_tex(paper, "paper/chapters/intro.tex", links=False)
+    assert "links" not in opened and "mains" not in opened
+    assert opened["revision"] == hashlib.sha256((paper / "paper/chapters/intro.tex").read_bytes()).hexdigest()
+
+
 def test_reading_the_links_writes_nothing(paper):
     before = {p: p.read_bytes() for p in paper.rglob("*") if p.is_file()}
     latex_edit.read_tex(paper, "paper/chapters/intro.tex")
     assert {p: p.read_bytes() for p in paper.rglob("*") if p.is_file()} == before
+
+
+# -- the save state machine, driven under node (review of B1c) ------------------------------------------------------
+
+_DRIVER = r"""
+const vm = require('vm'), fs = require('fs');
+const ctx = vm.createContext({});
+vm.runInContext(fs.readFileSync(%(cm)s, 'utf8'), ctx);
+const real = ctx.ROCodeMirror, viewsMade = [];
+class FakeView {            // CodeMirror's view needs a DOM: this one keeps the real state and calls its update listeners
+  constructor(spec) { this.state = spec.state; this.composing = false; this.scrollDOM = {scrollTop: 0}; viewsMade.push(this); }
+  setState(st) { this.state = st; }
+  dispatch(spec) {
+    const tr = this.state.update(spec); this.state = tr.state;
+    for (const listen of tr.state.facet(real.EditorView.updateListener)) listen({docChanged: tr.docChanged, changes: tr.changes, view: this, state: tr.state});
+  }
+  destroy() { this.destroyed = true; }
+}
+for (const k of ['lineWrapping', 'contentAttributes', 'updateListener']) FakeView[k] = real.EditorView[k];
+const CM = Object.assign({}, real, {EditorView: FakeView});
+const all = [];
+class El {
+  constructor(tag) {
+    this.tag = tag; this.children = []; this.className = ''; this.textContent = ''; this.listeners = {}; all.push(this);
+    const self = this;
+    this.classList = {
+      contains: (c) => self.className.split(/\s+/).includes(c),
+      add: (c) => { if (!self.classList.contains(c)) self.className = (self.className + ' ' + c).trim(); },
+      remove: (c) => { self.className = self.className.split(/\s+/).filter((x) => x && x !== c).join(' '); },
+      toggle: (c, on) => { if (on === undefined) on = !self.classList.contains(c); if (on) self.classList.add(c); else self.classList.remove(c); },
+    };
+  }
+  append(...kids) { this.children.push(...kids); }
+  appendChild(kid) { this.children.push(kid); }
+  replaceChildren(...kids) { this.children = kids; }
+  addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
+  setAttribute() {}
+  remove() { this.removed = true; }
+  fire(ev, event) { (this.listeners[ev] || []).forEach((fn) => fn(Object.assign({preventDefault() {}}, event || {}))); }
+}
+const winListeners = {};
+let confirmAnswer = true, now = 1000000;
+const timers = [];
+global.window = {ROCodeMirror: CM, confirm: () => confirmAnswer, addEventListener: (ev, fn) => { winListeners[ev] = fn; }};
+global.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+global.clearTimeout = () => {};
+Date.now = () => now;
+global.mk = (tag, cls, text) => { const e = new El(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+global.mkButton = (label, cls, onClick) => { const b = mk('button', cls, label); if (onClick) b.addEventListener('click', onClick); return b; };
+global.setStatus = (el, cls, text, err) => { el.className = 'notice-status' + (cls ? ' ' + cls : ''); el.textContent = (text || '') + (err ? ' [' + (err.state || 'none') + ']' : ''); };
+global.views = {latex: new El('section')};
+global.currentView = 'node';
+global.state = {currentPath: '/p'};
+global.activateView = (name) => { if (currentView === name) return; if (currentView === 'latex' && !window.ROLatex.mayClose()) return; currentView = name; };
+const gets = [], posts = [];
+global.apiGet = (url) => new Promise((res, rej) => gets.push({url, res, rej}));
+global.apiPost = (url, body) => new Promise((res, rej) => posts.push({url, body: JSON.parse(JSON.stringify(body)), res, rej}));
+eval(fs.readFileSync(%(latex)s, 'utf8'));
+const L = window.ROLatex;
+const tick = () => new Promise((r) => setImmediate(r));
+const button = (text) => all.filter((e) => e.tag === 'button' && e.textContent === text).pop();
+const byClass = (c) => all.filter((e) => e.classList.contains(c)).pop();
+const file = (text, revision) => ({path: 'a.tex', text, revision, line_ending: 'lf', read_only: false, links: [], mains: []});
+const out = {};
+(async () => {
+  L.open('a.tex'); await tick();
+  gets.shift().res(file('ab\ncd\n', 'r1')); await tick(); await tick();
+  const V = viewsMade[0], doc = () => V.state.doc.toString(), status = () => all.filter((e) => e.tag === 'span' && e.classList.contains('notice-status')).pop().textContent;
+  const typeAt = (pos, text) => { V.dispatch({changes: {from: pos, insert: text}}); byClass('latex-editor').fire('keydown'); };
+  const undo = button('撤销这次保存'), notice = byClass('latex-notice');
+  // typed while a save is in flight: kept, sent once, in the next save
+  typeAt(0, 'X'); out.dirtyAfterTyping = L.isDirty();
+  button('保存').fire('click'); await tick();
+  typeAt(doc().length, 'Y');
+  button('保存').fire('click'); await tick();
+  out.postsWhileBusy = posts.length;
+  out.first = posts[0].body; posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick();
+  out.dirtyAfterFirst = L.isDirty(); out.undoShown = !undo.classList.contains('hidden');
+  button('保存').fire('click'); await tick();
+  out.second = posts[0].body; posts.shift().res({revision: 'r3', changed: true, previous: 'r2'}); await tick();
+  out.dirtyAfterSecond = L.isDirty(); out.statusAfterSecond = status();
+  // a 409 keeps every character typed, in the editor and folded under the notice
+  typeAt(doc().length, 'Z');
+  button('保存').fire('click'); await tick();
+  posts.shift().rej({state: 'workspace_conflict'}); await tick();
+  out.afterConflict = {doc: doc(), dirty: L.isDirty(), noticeShown: !notice.classList.contains('hidden'),
+                       held: byClass('latex-held').textContent};
+  button('载入新版本').fire('click'); await tick();
+  gets.shift().res(file('new\n', 'r9')); await tick();
+  out.afterLoadNew = {doc: doc(), noticeShown: !notice.classList.contains('hidden'), held: byClass('latex-held').textContent,
+                      undoShown: !undo.classList.contains('hidden')};
+  typeAt(0, 'Q');
+  button('保存').fire('click'); await tick();
+  out.afterLoadNewSave = posts[0].body; posts.shift().res({revision: 'r10', changed: true, previous: 'r9'}); await tick();
+  out.noticeAfterSave = {shown: !notice.classList.contains('hidden'), children: notice.children.length};
+  // the reload on focus: never while dirty, composing or within 2 s of a keystroke; the revision alone first
+  typeAt(0, 'W'); now += 5000;
+  winListeners.focus(); await tick(); out.getsWhileDirty = gets.length;
+  button('保存').fire('click'); await tick(); posts.shift().res({revision: 'r11', changed: true, previous: 'r10'}); await tick();
+  byClass('latex-editor').fire('keydown');
+  winListeners.focus(); await tick(); out.getsWithinTwoSeconds = gets.length;
+  now += 5000; V.composing = true;
+  winListeners.focus(); await tick(); out.getsWhileComposing = gets.length;
+  V.composing = false;
+  winListeners.focus(); await tick();
+  out.sameRevisionUrl = gets[0].url; gets.shift().res({revision: 'r11'}); await tick(); out.getsAfterSame = gets.length;
+  winListeners.focus(); await tick();
+  gets.shift().res({revision: 'r12'}); await tick();
+  out.fullUrl = gets[0].url; gets.shift().res(file('elsewhere\n', 'r12')); await tick();
+  out.afterFocusReload = {doc: doc(), status: status(), undoShown: !undo.classList.contains('hidden')};
+  // 撤销这次保存 survives a dropped connection; withdrawn on the server's refusal
+  typeAt(0, 'U');
+  button('保存').fire('click'); await tick(); posts.shift().res({revision: 'r13', changed: true, previous: 'r12'}); await tick();
+  undo.fire('click'); await tick(); posts.shift().rej(new Error('network')); await tick();
+  out.undoAfterNetwork = !undo.classList.contains('hidden');
+  undo.fire('click'); await tick(); posts.shift().rej({state: 'workspace_conflict'}); await tick();
+  out.undoAfterConflict = !undo.classList.contains('hidden');
+  // leaving asks while dirty: declined, the editor stays; accepted, it closes
+  typeAt(0, 'V');
+  confirmAnswer = false; activateView('workspace'); out.declined = {view: currentView, dirty: L.isDirty()};
+  confirmAnswer = true; activateView('workspace'); out.accepted = {view: currentView, dirty: L.isDirty(), destroyed: !!V.destroyed};
+  // more edits than one save may carry become one span
+  const base = CM.Text.of(Array.from({length: 3000}, (_, i) => 'l' + i));
+  const specs = Array.from({length: 2500}, (_, i) => ({from: base.line(i + 1).from, insert: '#'}));
+  const many = CM.ChangeSet.of(specs, base.length);
+  const edits = L._pure.serverEdits(base, many, '\r\n', 2000), after = many.apply(base).sliceString(0, undefined, '\r\n');
+  const text = base.sliceString(0, base.length, '\r\n');
+  out.collapsed = {count: edits.length, ok: text.slice(0, edits[0].from) + edits[0].insert + text.slice(edits[0].to) === after,
+                   from: edits[0].from, untouchedTail: text.length - edits[0].to};
+  out.underLimit = L._pure.serverEdits(base, CM.ChangeSet.of(specs.slice(0, 3), base.length), '\n', 2000).length;
+  console.log(JSON.stringify(out));
+})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });
+"""
+
+
+@pytest.fixture(scope="module")
+def drive() -> dict:
+    if NODE is None:
+        pytest.skip("node is not installed")
+    script = _DRIVER % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")), "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    out = json.loads(subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, timeout=60).stdout)
+    assert "error" not in out, out.get("error")
+    return out
+
+
+@needs_node
+def test_text_typed_while_a_save_is_in_flight_is_sent_once_in_the_next_save(drive):
+    assert drive["dirtyAfterTyping"] is True
+    assert drive["postsWhileBusy"] == 1                          # a second 保存 waits for the first
+    assert drive["first"]["revision"] == "r1" and drive["first"]["edits"] == [{"from": 0, "to": 0, "insert": "X"}]
+    assert drive["dirtyAfterFirst"] is True and drive["undoShown"] is True
+    assert drive["second"]["revision"] == "r2" and drive["second"]["edits"] == [{"from": 7, "to": 7, "insert": "Y"}]
+    assert drive["dirtyAfterSecond"] is False and drive["statusAfterSecond"] == "已保存"
+
+
+@needs_node
+def test_a_conflict_keeps_what_was_typed_and_its_notice_goes_with_the_next_save(drive):
+    assert drive["afterConflict"] == {"doc": "Xab\ncd\nYZ", "dirty": True, "noticeShown": True, "held": "Xab\ncd\nYZ"}
+    assert drive["afterLoadNew"] == {"doc": "new\n", "noticeShown": True, "held": "Xab\ncd\nYZ", "undoShown": False}
+    assert drive["afterLoadNewSave"]["revision"] == "r9"
+    assert drive["noticeAfterSave"] == {"shown": False, "children": 0}
+
+
+@needs_node
+def test_the_focus_reload_waits_for_unsaved_text_a_composition_and_a_recent_keystroke(drive):
+    assert drive["getsWhileDirty"] == 0 and drive["getsWithinTwoSeconds"] == 0 and drive["getsWhileComposing"] == 0
+    assert drive["sameRevisionUrl"].endswith("&links=0") and drive["getsAfterSame"] == 0
+    assert not drive["fullUrl"].endswith("&links=0")
+    assert drive["afterFocusReload"] == {"doc": "elsewhere\n", "status": "已载入在别处保存的版本", "undoShown": False}
+
+
+@needs_node
+def test_undo_this_save_survives_a_dropped_connection_and_is_withdrawn_on_a_refusal(drive):
+    assert drive["undoAfterNetwork"] is True and drive["undoAfterConflict"] is False
+
+
+@needs_node
+def test_leaving_with_unsaved_text_asks_and_a_yes_closes_the_editor(drive):
+    assert drive["declined"] == {"view": "latex", "dirty": True}
+    assert drive["accepted"] == {"view": "workspace", "dirty": False, "destroyed": True}
+
+
+@needs_node
+def test_more_edits_than_a_save_carries_are_sent_as_one_span_that_leaves_the_rest_untouched(drive):
+    assert drive["collapsed"]["count"] == 1 and drive["collapsed"]["ok"] is True
+    assert drive["collapsed"]["from"] == 0 and drive["collapsed"]["untouchedTail"] > 0
+    assert drive["underLimit"] == 3
+
+
+def test_data_and_code_never_reopens_on_the_closed_editor():
+    app = (WEBAPP / "app.html").read_text(encoding="utf-8")
+    assert 'if (section === "data" && name !== "latex") lastDataView = name;' in app
 
 
 # -- the hooks that put the editor on screen ---------------------------------------------------------------------

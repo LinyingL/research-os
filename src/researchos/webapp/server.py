@@ -469,8 +469,10 @@ Endpoints (all GET unless noted):
                             opens it (DESIGN.md 22.1, `researchos.latex_edit`):
                             text, revision (sha256 of the bytes), line ending,
                             `read_only` with the reason, and the files its
-                            \input/\include/\subfile/\import open (`links`,
-                            resolved from its main files, `mains`). Reads only.
+                            includes (input, include, subfile, import) open
+                            (`links`, resolved from its main files, `mains`);
+                            `&links=0` leaves those out (the revision check
+                            on focus). Reads only.
     POST /api/latex/save -- `{project, path, revision, edits}`: a person's
                             save of a `.tex`; edits are code-point ranges
                             with a CRLF counted as two, spliced so every
@@ -4206,7 +4208,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if "project" in query:
                     self._workspace_target({"project": query["project"][0]})
                 rel = (query.get("path") or [""])[0]
-                payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang()))
+                links = (query.get("links") or ["1"])[0] != "0"
+                payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at

@@ -78,18 +78,22 @@
 
   // The edits that turn `doc` (a CodeMirror Text, as last opened or saved) into what `changes` make of it, in the
   // server's coordinates: {from, to, insert}, sorted, `from`/`to` code points with each line break counted as the
-  // file's ending `sep`, and the inserted text joined with `sep`.
-  function serverEdits(doc, changes, sep) {
+  // file's ending `sep`, and the inserted text joined with `sep`. More than `limit` of them (the server's 2,000) become one
+  // edit from the first change's start to the last one's end: every byte outside that span is still untouched.
+  function serverEdits(doc, changes, sep, limit) {
     let lineNo = 1, line = doc.line(1), base = 0;
     const at = function (pos) {   // positions come in ascending order, so the lines are walked once
       while (pos > line.to) { base += cpLength(line.text) + sep.length; lineNo += 1; line = doc.line(lineNo); }
       return base + cpLength(line.text.slice(0, pos - line.from));
     };
-    const edits = [];
+    const edits = [], span = [];
     changes.iterChanges(function (fromA, toA, fromB, toB, inserted) {
       edits.push({ from: at(fromA), to: at(toA), insert: inserted.sliceString(0, inserted.length, sep) });
+      if (!span.length) span.push(fromB);
+      span[1] = toB;
     });
-    return edits;
+    if (!limit || edits.length <= limit) return edits;
+    return [{ from: edits[0].from, to: edits[edits.length - 1].to, insert: changes.apply(doc).sliceString(span[0], span[1], sep) }];
   }
 
   // Every line break typed, pasted or dropped becomes a line break of the file's ending: CodeMirror splits inserted
@@ -136,6 +140,7 @@
 
   // -- the editor page -------------------------------------------------------------------------------------------
 
+  const EDIT_LIMIT = 2000;  // the most edits one save may carry (latex_edit.EDIT_LIMIT)
   let ed = null;            // the open file: {path, view, savedDoc, pending, sinceSent, revision, sep, readOnly, ...}
   let opening = 0;          // the open() in progress; a later one wins
   let fromView = null;      // the page 返回 goes back to
@@ -215,6 +220,7 @@
     me.revision = file.revision;
     me.readOnly = !!file.read_only;
     me.sep = file.line_ending === "crlf" ? "\r\n" : "\n";
+    if (file.mains) me.mains = file.mains;
     if (file.links) me.links = new Map(file.links.filter((l) => l.path).map((l) => [includeKey(l.command, l.args), l]));
     const extensions = [
       CM.history(), CM.drawSelection(), CM.highlightSpecialChars(), CM.EditorView.lineWrapping,
@@ -256,8 +262,10 @@
       constructor(link) { super(); this.link = link; }
       eq(other) { return other.link === this.link; }
       toDOM() {
-        const words = this.link.own_folder ? t("打开 {file}（没有找到主文件，按这个文件所在的文件夹找）", { file: this.link.path })
-          : t("打开 {file}", { file: this.link.path });
+        const several = me.mains && me.mains.length > 1;
+        const words = !this.link.own_folder ? t("打开 {file}", { file: this.link.path })
+          : several ? t("打开 {file}（有几个主文件，按这个文件所在的文件夹找）", { file: this.link.path })
+            : t("打开 {file}（没有找到主文件，按这个文件所在的文件夹找）", { file: this.link.path });
         const b = mkButton(words, "ws-text-link latex-include", () => open(this.link.path));
         b.addEventListener("mousedown", (event) => event.preventDefault());
         return b;
@@ -297,7 +305,7 @@
     if (me.view.composing) { me.afterComposing = saveNow; return; }
     const doc = me.view.state.doc;
     if (!dirty()) return;
-    const body = { project: state.currentPath, path: me.path, revision: me.revision, edits: serverEdits(me.savedDoc, me.pending, me.sep) };
+    const body = { project: state.currentPath, path: me.path, revision: me.revision, edits: serverEdits(me.savedDoc, me.pending, me.sep, EDIT_LIMIT) };
     if (new TextEncoder().encode(JSON.stringify(body)).length > 4 * 1024 * 1024) {   // the server would close the connection unread
       setStatus(me.ui.status, "err", t("这次保存的内容超过 4 MB，没有保存"));
       return;
@@ -316,6 +324,7 @@
     }
     if (ed !== me) return;
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
+    clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
     me.busy = false; me.ui.save.disabled = false;
     if (r.changed && r.previous) me.lastSave = { revision: r.revision, previous: r.previous };
     me.ui.undo.classList.toggle("hidden", !me.lastSave);
@@ -334,7 +343,7 @@
       try {
         const file = await apiGet("/api/latex/file?path=" + encodeURIComponent(me.path));
         if (ed !== me) return;
-        reloadWith(me, file);
+        reloadWith(me, file, true);
         line.className = "notice-status";
         line.textContent = t("已载入新版本。你原来的内容在下面，可以复制回去。");
         reload.remove();
@@ -349,12 +358,20 @@
     setStatus(me.ui.status, "", t("尚未保存"));
   }
 
-  function reloadWith(me, file) {
+  function clearNotice(me) {
+    me.ui.notice.replaceChildren();
+    me.ui.notice.classList.add("hidden");
+  }
+
+  // `keepNotice`: the conflict's own reload, whose notice keeps the folded text for copying back.
+  function reloadWith(me, file, keepNotice) {
     load(me, file);
+    if (!keepNotice) clearNotice(me);
     me.lastSave = null;   // 撤销这次保存 is offered until the file is reloaded (22.1)
     me.ui.undo.classList.add("hidden");
   }
 
+  const UNDO_REFUSED = ["workspace_conflict", "workspace_gone", "workspace_not_found", "workspace_read_only_file"];
   async function undoSave() {
     const me = ed;
     if (!me || !me.lastSave || me.busy) return;
@@ -369,7 +386,8 @@
     } catch (err) {
       if (ed !== me) return;
       me.busy = false; me.ui.save.disabled = false;
-      me.lastSave = null; me.ui.undo.classList.add("hidden");
+      // Withdrawn only when the server says this save can no longer be undone; a dropped connection may be tried again.
+      if (UNDO_REFUSED.includes(err && err.state)) { me.lastSave = null; me.ui.undo.classList.add("hidden"); }
       setStatus(me.ui.status, "err", t("没能撤销这次保存"), err);
     }
   }
@@ -383,7 +401,12 @@
     if (me.view.composing || wait > 0) { clearTimeout(me.recheck); me.recheck = setTimeout(checkRevision, Math.max(wait, 500)); return; }
     if (dirty()) return;
     let file;
-    try { file = await apiGet("/api/latex/file?path=" + encodeURIComponent(me.path)); } catch (err) { return; }
+    const url = "/api/latex/file?path=" + encodeURIComponent(me.path);
+    try {
+      const seen = await apiGet(url + "&links=0");   // the revision alone: no walk of the project on every focus
+      if (ed !== me || me.busy || seen.revision === me.revision) return;
+      file = await apiGet(url);
+    } catch (err) { return; }
     if (ed !== me || me.busy || file.revision === me.revision) return;
     if (dirty() || me.view.composing || Date.now() - me.lastKey < 2000) return;
     reloadWith(me, file);

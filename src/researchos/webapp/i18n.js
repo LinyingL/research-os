@@ -1867,6 +1867,7 @@
     "LaTeX 源码": "LaTeX source",
     "打开 {file}": "Open {file}",
     "打开 {file}（没有找到主文件，按这个文件所在的文件夹找）": "Open {file} (no main file found, so looked up from this file’s folder)",
+    "打开 {file}（有几个主文件，按这个文件所在的文件夹找）": "Open {file} (several main files, so looked up from this file’s folder)",
 
   };
 

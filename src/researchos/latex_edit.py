@@ -157,14 +157,16 @@ def _payload(rel: str, raw: bytes, opened: dict[str, Any], lang: str) -> dict[st
     return {"path": rel, **opened, "read_only_message": message, "revision": _revision(raw)}
 
 
-def read_tex(root: str | Path, rel: Any, lang: str = "zh") -> dict[str, Any]:
+def read_tex(root: str | Path, rel: Any, lang: str = "zh", links: bool = True) -> dict[str, Any]:
     """The editor's view of a `.tex`: its text, revision, line ending, whether, and why, it is read-only, and the files
-    its includes open (`include_links`). Writes nothing."""
+    its includes open (`include_links`; left out with `links=False`, the editor's revision check on focus, which
+    would otherwise walk the project and read its `.tex` files each time). Writes nothing."""
     root = workspace._root(root)  # noqa: SLF001
     rel = checked_path(root, rel)
     raw = _read(root, rel)
     opened = _opened(root, rel, raw)
-    return {**_payload(rel, raw, opened, lang), **include_links(root, rel, opened["text"])}
+    payload = _payload(rel, raw, opened, lang)
+    return {**payload, **include_links(root, rel, opened["text"])} if links else payload
 
 
 # -- includes and the main file (22.1 "One file at a time", 22.4 "Which file") --------------------------------------
@@ -236,8 +238,15 @@ def main_files(root: str | Path, rel: str) -> list[str]:
             texts[path] = ""
             full = root / path
             try:
-                if not paths.is_dataless(full) and full.stat().st_size <= SIZE_LIMIT:
-                    texts[path] = full.read_bytes().decode("utf-8", errors="replace")
+                # 22.1's one validator: only a regular file, never followed through a link; opened without blocking,
+                # so a FIFO or a device named `.tex` is skipped rather than waited on.
+                if not stat.S_ISREG(os.lstat(full).st_mode) or paths.is_dataless(full):
+                    return ""
+                fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, "rb") as handle:
+                    info = os.fstat(handle.fileno())
+                    if stat.S_ISREG(info.st_mode) and info.st_size <= SIZE_LIMIT:
+                        texts[path] = handle.read(SIZE_LIMIT + 1)[:SIZE_LIMIT].decode("utf-8", errors="replace")
             except OSError:
                 pass
         return texts[path]
