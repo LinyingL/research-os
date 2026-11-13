@@ -297,6 +297,47 @@ def test_load_math_adds_the_stylesheet_and_the_script_once_and_only_when_asked()
     assert out["editor"] == ["/vendor/codemirror.js"]   # opening the editor never waits on KaTeX
 
 
+_MATH_STYLE_FAILS = r"""
+const tags = [];
+global.window = {};
+global.document = {head: {appendChild(tag) { tags.push(tag); }}, createElement(name) {
+  const tag = {name, remove() { tag.removed = true; }}; return tag; }};
+%(latex)s
+(async () => {
+  const L = window.ROLatex;
+  const tick = () => new Promise(r => setTimeout(r, 0));
+  const first = L.loadMath();
+  await tick();
+  tags[0].onerror();                               // the stylesheet fails while the script is still loading
+  let failed = null;
+  try { await first; } catch (e) { failed = e.message; }
+  const removed = tags.map(t => !!t.removed);
+  const retry = L.loadMath();
+  await tick();
+  const live = tags.filter(t => !t.removed).map(t => [t.name, t.src || t.href]);
+  window.katex = {version: "y"};
+  tags[2].onload(); tags[3].onload();
+  const katex = await retry;
+  console.log(JSON.stringify({failed, removed, live, tags: tags.length, katex}));
+})();
+"""
+
+
+@needs_node
+def test_load_math_takes_the_script_away_too_when_the_stylesheet_fails():
+    latex = (WEBAPP / "latex.js").read_text(encoding="utf-8")
+    out = json.loads(subprocess.run([NODE, "-"], input=_MATH_STYLE_FAILS % {"latex": latex}, capture_output=True,
+                                    text=True, check=True).stdout)
+    assert out["failed"] == "/vendor/katex.css could not be loaded" and out["removed"] == [True, True]
+    assert out["live"] == [["link", "/vendor/katex.css"], ["script", "/vendor/katex.js"]]   # one of each, never two scripts
+    assert out["tags"] == 4 and out["katex"] == {"version": "y"}
+
+
+def test_the_readme_says_to_run_the_rebuild_check_with_the_tarball():
+    readme = (VENDOR / "README").read_text(encoding="utf-8")
+    assert "RO_KATEX_TGZ=<katex-0.19.1.tgz> pytest tests/test_v17_vendor.py" in readme
+
+
 @needs_node
 def test_the_build_script_refuses_a_tarball_that_is_not_the_locked_one(tmp_path):
     tools = tmp_path / "tools" / "vendor"

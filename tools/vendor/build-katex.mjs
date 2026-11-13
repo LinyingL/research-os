@@ -124,7 +124,9 @@ only by ROLatex.loadMath() (webapp/latex.js), from the editor.
 Rebuilding: node tools/vendor/build-katex.mjs <${lock.tarball.name}>. It refuses,
 writing nothing, unless the tarball's sha256 and integrity are the lock's, the
 stylesheet names exactly the lock's fonts, and the script typesets a formula.
-It rewrites only this block of the README.
+It rewrites only this block of the README. Before committing a KaTeX change, run
+RO_KATEX_TGZ=<${lock.tarball.name}> pytest tests/test_v17_vendor.py: without the
+tarball its byte-for-byte rebuild check is skipped.
 
 ${written.map(([name, bytes]) => `${sha(bytes)}  ${name}`).join("\n")}
 

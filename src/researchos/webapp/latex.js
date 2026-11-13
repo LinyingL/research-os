@@ -43,10 +43,12 @@
 
   let loading = null;
 
-  function addScript(entry) {
+  // onTag, if given, is handed the script tag it adds, so a caller can take it away when a sibling load fails.
+  function addScript(entry, onTag) {
     return new Promise(function (resolve, reject) {
       if (window[entry.global]) { resolve(window[entry.global]); return; }
       const tag = document.createElement("script");
+      if (onTag) onTag(tag);
       tag.src = entry.src;
       tag.async = false;
       tag.onload = function () {
@@ -72,10 +74,14 @@
         link.onerror = function () { reject(new Error("/vendor/katex.css could not be loaded")); };
         document.head.appendChild(link);
       });
-      mathLoading = Promise.all([style, addScript({ src: "/vendor/katex.js", global: "katex" })]).then(function (both) {
+      let script = null;
+      const code = addScript({ src: "/vendor/katex.js", global: "katex" }, function (tag) { script = tag; });
+      mathLoading = Promise.all([style, code]).then(function (both) {
         return both[1];
       }, function (err) {
+        // Whichever of the two failed, both tags go, so the next try adds one of each and katex.js never runs twice.
         link.remove();
+        if (script) script.remove();
         mathLoading = null;
         throw err;
       });
