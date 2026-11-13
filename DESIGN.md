@@ -7603,6 +7603,16 @@ their own (never under 依据, the `backed_by` column), 「人工声明的依据
 reader records the column span of each sentence it reads (today it records
 the line only), and the span is tested against the passage's found range.
 
+*As built (B3c, 2026-11-13).* The span is in 22.1's coordinates (code
+points, a CRLF as two), the sentence's own whitespace left out; a claim lies
+in a passage when the whole span is inside its found range, so a passage of
+the number alone declares nothing. The span is not stored in the index: the
+row and the page read the draft once more and find both the claims and the
+passages in that one text, so a span can never be older than the range it
+is tested against. Only a found passage declares; one 待复核 or withdrawn
+does not, nor a ledger that cannot be trusted. On the claim's page the line
+stands under the trace, outside its columns.
+
 ### 22.4 Export to PDF
 
 - **Where.** 「导出 PDF」 in the editor's toolbar (a quiet button) and on a

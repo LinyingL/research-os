@@ -564,6 +564,9 @@
     scroller.appendChild(grid);
     s.appendChild(scroller);
     if (!o.panel) renderBelongs(s, page);
+    // 22.3: a claim's 人工声明的依据文件, under the trace and never in its 依据 column; the gap there stays.
+    const declared = (page.details || {}).declared || [];
+    if (declared.length) s.appendChild(declaredLines(declared, "p", "trace-declared"));
     const other = (tr.breaks || []).filter((b) => ["no_generating_script", "no_attempt", "no_files", "no_backing"].indexOf(b.kind) < 0);
     other.forEach((b) => s.appendChild(mk("p", "trace-break" + (b.tone === "quiet" ? " quiet" : ""), b.path ? t("{label}：{path}", { label: t(b.label), path: b.path }) : t(b.label))));
     // 21.5: a script that names a file that is not there -- always a warning, with the file it may mean beside it.
@@ -1743,6 +1746,13 @@
     section.appendChild(list);
   }
 
+  // 22.3: 「人工声明的依据文件：{file}」, one line per file, quiet.
+  function declaredLines(files, tag, cls) {
+    const box = mk("div", cls);
+    files.forEach((file) => box.appendChild(mk(tag, "node-sub-inline", t("人工声明的依据文件：{file}", { file: file }))));
+    return box;
+  }
+
   function draftClaims(c) {
     const box = mk("details", "res-draft");
     const summary = mk("summary", "res-draft-summary");
@@ -1790,7 +1800,11 @@
           }
           const why = causeLine(cl.trace);
           if (why) main.appendChild(why);
-          li.append(main, stateLabel(cl.trace));
+          li.appendChild(main);
+          // 22.3: the supporting file of a passage the claim lies in, in quiet text and a column of its own -- never under
+          // 依据, and the state beside it stays what backed_by makes it (a declaration does not clear 缺来源, 22.0.4).
+          if ((cl.declared || []).length) li.appendChild(declaredLines(cl.declared, "div", "res-declared"));
+          li.appendChild(stateLabel(cl.trace));
           ul.appendChild(li);
         });
         body.appendChild(ul);

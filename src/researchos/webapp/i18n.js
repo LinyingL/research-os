@@ -1877,6 +1877,8 @@
     "{n} 个依据文件": { one: "{n} supporting file", other: "{n} supporting files" },
     "{n} 段有依据文件": { one: "{n} passage has a supporting file", other: "{n} passages have supporting files" },
     "{n} 段待复核": { one: "{n} passage needs review", other: "{n} passages need review" },
+    // A claim inside a passage with a supporting file (DESIGN.md 22.3; task V17 B3c)
+    "人工声明的依据文件：{file}": "Supporting file declared by a person: {file}",
     "…（共 {n} 个字符）": "… ({n} characters in all)",
     "先保存，再改依据文件": "Save first, then change the supporting files",
     "关联没有写入": "The link was not written",

@@ -596,6 +596,41 @@ def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[st
     return {"file": node, "passages": out, **_record_state(decision, lang)}
 
 
+def declared_by_claim(root: str | Path, rel: str) -> dict[str, list[str]]:
+    """人工声明的依据文件 of each claim of the draft `rel` (22.3): claim id to the supporting files of every found
+    passage its sentence lies in, by position -- the claims reader's span tested against the passage's found range,
+    both in the editor's positions, on the one text read now. Nothing when the draft cannot be read as a draft or the
+    ledger cannot be trusted. It is shown beside a claim's state and never changes it. Writes nothing."""
+    from researchos.ingest import claims as claims_ingest  # noqa: PLC0415 -- the scan's reader, only when asked
+
+    try:
+        root = workspace._root(root)  # noqa: SLF001
+        rel = checked_path(root, rel)
+        text = _opened(root, rel, _read(root, rel))["text"]
+    except WorkspaceError:
+        return {}
+    mine = [item for item in evidence.links_now(root)[0].values() if item["draft"] == rel]
+    if not mine:
+        return {}
+    norm, _crlfs, crlfs_n = _normalised(text)
+    paragraphs, ranges = evidence.Paragraphs(norm), []
+    for item in mine:
+        found = evidence.resolve(item["anchor"], norm, paragraphs)
+        if found["state"] == "found":
+            ranges.append((_to_file(crlfs_n, found["start"]), _to_file(crlfs_n, found["end"]), item["file"]))
+    try:
+        claims = claims_ingest.parse_tex_claims(root, rel, text) if ranges else []
+    except OSError:   # its sections are read from the file again; gone or in the cloud since
+        return {}
+    out: dict[str, list[str]] = {}
+    for claim in claims:
+        files = {notes.node_path(f) or f for start, end, f in ranges
+                 if claim.span is not None and start <= claim.span[0] and claim.span[1] <= end}
+        if files:
+            out[claim.id] = sorted(files)
+    return out
+
+
 #: The order the link panel lists a project's files in (22.2): figures and tables, then data, scripts, documents.
 _FILE_GROUPS = ("figure", "data", "script", "document")
 _TABLE_RE = re.compile(r"(?:^|/)(?:tables?|tabs?)/|(?:^|/)tab(?:le)?s?[_\-.\d]", re.IGNORECASE)

@@ -367,10 +367,19 @@ class ParsedClaim:
     unit_form: str  # "percent" | "fraction" | "plain"
     value: float  # normalized, comparable across percent/fraction
     precision_decimals: int  # rounding precision derived from `raw`
+    # DESIGN 22.3: where the sentence is in the file, `[start, end)` in code points of the decoded text with a CRLF
+    # counted as two (22.1's coordinates), its surrounding whitespace left out. A .tex claim only; never stored.
+    span: tuple[int, int] | None = None
+
+
+def _sentence_span(line: str, bounds: tuple[int, int], start: int) -> tuple[int, int]:
+    left, right = bounds
+    piece = line[left:right]
+    return start + left + len(piece) - len(piece.lstrip()), start + right - len(piece) + len(piece.rstrip())
 
 
 def _scan_claims_in_lines(
-    rel_path: str, lines: list[str], sections: list[ParsedSection]
+    rel_path: str, lines: list[str], sections: list[ParsedSection], starts: list[int] | None = None
 ) -> list[ParsedClaim]:
     """Shared number-matching core (DESIGN.md section 5 connector 7): given
     lines already blanked of every non-prose span, plus an ascending-by-line
@@ -383,7 +392,8 @@ def _scan_claims_in_lines(
     environments upstream) and `researchos.ingest.mdpaper.parse_md_claims`
     (Markdown -- blanks fenced code blocks/table rows upstream instead).
     Only the blanking differs per format; the number-recognition, skip, and
-    id rules must never be duplicated between the two.
+    id rules must never be duplicated between the two. `starts`, where each
+    line starts in the file, gives each claim its sentence's `span` (22.3).
     """
     claims: list[ParsedClaim] = []
     sec_idx = 0
@@ -428,26 +438,35 @@ def _scan_claims_in_lines(
                     unit_form=unit_form,
                     value=float(value),
                     precision_decimals=places,
+                    span=None if starts is None else _sentence_span(line, bounds, starts[lineno - 1]),
                 )
             )
     return claims
 
 
-def parse_tex_claims(repo_root: str | Path, tex_rel_path: str) -> list[ParsedClaim]:
+def parse_tex_claims(repo_root: str | Path, tex_rel_path: str, text: str | None = None) -> list[ParsedClaim]:
     """Scan one .tex file for quantitative prose claims. Reuses
     `latex.parse_tex_file`'s already-computed section list purely to look up
     which section a claim's line falls under -- no section-parsing logic is
     duplicated here. The actual number-matching happens in
-    `_scan_claims_in_lines`, shared with the Markdown extractor (see there)."""
+    `_scan_claims_in_lines`, shared with the Markdown extractor (see there).
+
+    The file is decoded with its line endings kept (`text`, when given, is that decoded text), so each claim's
+    `span` counts a CRLF as two (22.3); `splitlines` gives the same lines either way."""
     repo_root = Path(repo_root)
-    text = cloud.read_text(repo_root / tex_rel_path)
+    if text is None:
+        text = cloud.read_bytes(repo_root / tex_rel_path).decode("utf-8", errors="replace")
+    starts, at = [], 0
+    for kept in text.splitlines(keepends=True):
+        starts.append(at)
+        at += len(kept)
     raw_lines = text.splitlines()
     stripped = [_strip_comment(line) for line in raw_lines]
     no_command_args = [_blank_command_args(line) for line in stripped]
     blanked = _blank_skip_regions(no_command_args)
 
     sections = parse_tex_file(repo_root, tex_rel_path).sections  # ascending by line
-    return _scan_claims_in_lines(tex_rel_path, blanked, sections)
+    return _scan_claims_in_lines(tex_rel_path, blanked, sections, starts)
 
 
 def _collect_experiment_metrics(conn: Connection) -> list[tuple[str, str, float]]:
