@@ -366,7 +366,7 @@ def test_18_3_the_sidebar_has_one_item_for_the_page_and_the_old_view_is_gone():
     (the home's item) and not beside 研究路线, whose 18.3 count is gone."""
     html = APP_HTML.read_text(encoding="utf-8")
     nav = html[html.index('<nav class="side-nav"'):html.index("</nav>")]
-    assert nav.count('class="side-item"') == 8
+    assert nav.count('class="side-item"') == 9   # 22.10: 正文 after 图表与论断
     assert "工作台" not in nav and nav.count("研究路线") == 1
     assert re.search(r'data-section="routes" data-view="desk"><svg[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>研究路线</span></button>', nav)
     assert re.search(r'data-section="workspace" data-view="workspace"><svg[^>]*><path d="[^"]+"/></svg><span class="side-label" data-i18n>项目首页</span>'

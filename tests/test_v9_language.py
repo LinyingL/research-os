@@ -1111,8 +1111,8 @@ def test_13_8_the_served_frame_in_english_carries_no_chinese(live, saved, langua
                     if CJK.search(el["attrs"].get(name, ""))]
     assert chinese == []
     assert _words(after, "brand-sub") == ["Research provenance"]
-    assert _words(after, "side-label") == ["Project home", "Research routes", "Figures and claims", "Variables", "Literature",
-                                           "Data & code", "Proposals", "Members"]
+    assert _words(after, "side-label") == ["Project home", "Research routes", "Figures and claims", "Manuscript", "Variables",
+                                           "Literature", "Data & code", "Proposals", "Members"]
     # 18.3: 研究路线's switch.
     assert _words(after, "subnav-item") == ["Route map", "List"]
     assert _words(after, "shutdown-btn") == ["Backups", "Settings", "Stop service", "中文"]
@@ -1144,7 +1144,7 @@ def test_13_8_the_served_frame_in_chinese_is_untouched(live, saved, languages):
     page, i18n_js = _served_page_and_i18n(live, saved)
     before, after = _frame_on_screen(page, i18n_js, languages)
     assert after == before
-    assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员"]
+    assert _words(after, "side-label") == ["项目首页", "研究路线", "图表与论断", "正文", "变量", "文献", "数据与代码", "提议", "成员"]
     assert _words(after, "subnav-item") == ["路线图", "列表"]
     assert _words(after, "brand-sub") == ["研究脉络"] and _words(after, "page-title") == ["项目首页"]
     assert _words(after, "shutdown-btn") == ["备份", "设置", "停止服务", "English"]
@@ -1175,20 +1175,20 @@ def test_13_7_page_titles_follow_the_language(saved):
     language; SECTION_TITLES stays the Chinese node.js's 「返回…」 reads."""
     html = APP_HTML.read_text(encoding="utf-8")
     assert 'document.getElementById("page-title").textContent = sectionTitle(section);' in html
-    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  routes: "研究路线", results: "图表与论断", variables: "变量", '
+    assert ('const SECTION_TITLES = {\n  workspace: "项目首页",\n  routes: "研究路线", results: "图表与论断", drafts: "正文", variables: "变量", '
             'literature: "文献",\n  data: "数据与代码", proposals: "提议", members: "成员",\n};') in html
     code = (_app_block("// -- The interface language (DESIGN.md 13.6)", "// -- Small shared state")
             + _app_function("function sectionTitle("))
-    sections = ["workspace", "desk", "routes", "results", "variables", "literature", "data", "proposals", "members", "node", None]
+    sections = ["workspace", "desk", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members", "node", None]
     # 18.3: "desk" is no section any more (the view of that name belongs to the section "routes").
     expr = f"(function () {{ {code} return {json.dumps(sections)}.map(sectionTitle); }})()"
     got = _node("global.window = {};\n" + f"process.stdout.write(JSON.stringify({expr}));\n") if saved is None \
         else _with_i18n(expr, saved=saved)
     if saved == "en":
-        assert got == ["Project home", "", "Research routes", "Figures and claims", "Variables", "Literature", "Data & code", "Proposals",
-                       "Members", "", ""]
+        assert got == ["Project home", "", "Research routes", "Figures and claims", "Manuscript", "Variables", "Literature", "Data & code",
+                       "Proposals", "Members", "", ""]
     else:
-        assert got == ["项目首页", "", "研究路线", "图表与论断", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
+        assert got == ["项目首页", "", "研究路线", "图表与论断", "正文", "变量", "文献", "数据与代码", "提议", "成员", "", ""]
 
 
 _STOPPED_ZH = ('<main id="main"><div class="stopped-note"><h2>服务已停止</h2><p>本地服务已经关闭，可以关闭此页。</p>'

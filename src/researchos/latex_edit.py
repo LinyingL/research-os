@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import itertools
 import os
 import posixpath
 import re
 import sqlite3
 import stat
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -94,24 +96,28 @@ def checked_path(root: Path, rel: Any) -> str:
     return rel
 
 
-def _generated(root: Path, rel: str) -> bool:
-    """Whether a script writes `rel` (a `writes`/`generates` link into it that is not rejected, the scan's or a
-    person's) or a task's output record registers it (19.5)."""
-    key = files_ingest.fold(rel)
-    if any(key in {files_ingest.fold(r) for r in rels} for rels in files_ingest.registered(root).values()):
-        return True
+def _generated_keys(root: Path) -> set[str]:
+    """The files a script writes (a `writes`/`generates` link into it that is not rejected, the scan's or a person's)
+    or a task's output record registers (19.5), folded as `files_ingest.fold` compares paths."""
+    keys = {files_ingest.fold(r) for rels in files_ingest.registered(root).values() for r in rels}
     try:
         graph = paths.graph_db_path(root)
         if not graph.is_file() or paths.is_dataless(graph):
-            return False
+            return keys
         with closing(sqlite3.connect(graph.as_uri() + "?mode=ro", uri=True)) as conn:
             dsts = conn.execute("SELECT DISTINCT dst FROM edges WHERE type IN ('writes', 'generates') "
                                 "AND status != 'rejected'").fetchall()
         # Compared folded, as the output records are: the index may spell the path otherwise than the disk.
-        return any(prefix in notes.FILE_PREFIXES and files_ingest.fold(path) == key
-                   for prefix, _, path in (str(dst).partition(":") for (dst,) in dsts))
+        keys |= {files_ingest.fold(path) for prefix, _, path in (str(dst).partition(":") for (dst,) in dsts)
+                 if prefix in notes.FILE_PREFIXES}
     except (OSError, sqlite3.Error, ValueError, paths.IdentityUnavailableError):
-        return False
+        pass
+    return keys
+
+
+def _generated(root: Path, rel: str) -> bool:
+    """Whether a script writes `rel` or a task's output record registers it (`_generated_keys`)."""
+    return files_ingest.fold(rel) in _generated_keys(root)
 
 
 def _ending(text: str) -> tuple[str, str | None]:
@@ -228,10 +234,16 @@ def _is_main(text: str) -> bool:
     return bool(head) and code.find("\\begin{document}", head.end()) >= 0
 
 
-def tex_reader(root: Path) -> tuple[list[str], Any]:
-    """The project's `.tex` files (at most `TEX_FILE_LIMIT`) and a reader of their text, each read once: "" for one
-    that is not a regular file, is only in the cloud or is over 2 MB. Reads files, runs nothing."""
-    known = [r for r, _ in files_ingest.iter_files(root) if r.endswith(".tex")][:TEX_FILE_LIMIT]
+def tex_paths(root: Path, limit: int = TEX_FILE_LIMIT) -> list[str]:
+    """The project's `.tex` files in the walk's order (dot folders pruned, symbolic links skipped), at most `limit`:
+    the walk stops there, so a huge project cannot hold it up."""
+    return list(itertools.islice((r for r, _ in files_ingest.iter_files(root) if r.endswith(".tex")), limit))
+
+
+def tex_reader(root: Path, known: list[str] | None = None) -> tuple[list[str], Any]:
+    """The project's `.tex` files (at most `TEX_FILE_LIMIT`; `known` when given) and a reader of their text, each read
+    once: "" for one that is not a regular file, is only in the cloud or is over 2 MB. Reads files, runs nothing."""
+    known = tex_paths(root) if known is None else known
     texts: dict[str, str] = {}
 
     def text_of(path: str) -> str:
@@ -284,6 +296,73 @@ def main_files(root: str | Path, rel: str) -> list[str]:
         if rel in seen:
             found.append(main)
     return found
+
+
+def _closure(main: str, tex: set[str], text_of: Any) -> list[str]:
+    """The `.tex` files `main` brings in through includes, followed transitively in document order, without it."""
+    seen, order, todo = {main}, [], [main]
+    while todo:
+        current = todo.pop()
+        if current != main:
+            order.append(current)
+        found = [resolve_include(c, a, posixpath.dirname(current), posixpath.dirname(main)) for c, a in includes(text_of(current))]
+        fresh = [f for f in dict.fromkeys(found) if f in tex and f not in seen]
+        seen.update(fresh)
+        todo.extend(reversed(fresh))
+    return order
+
+
+def drafts(root: str | Path, lang: str = "zh") -> dict[str, Any]:
+    """正文's list (22.10): each main file with the files it brings in, then the `.tex` files no main file includes;
+    a `.tex` a script writes or a result record registers is left out and counted (`generated`). Each row: path, when
+    it last changed (UTC, ISO 8601), `cloud` when it is only in the cloud (not readable, not openable), and its
+    passages with a supporting file (`supported`) and of them 待复核 (`waiting`), a member's 待批准 not counted, as
+    `ROLatex.paperCounts` counts them. At most `TEX_FILE_LIMIT` files are read (`truncated`). Writes nothing."""
+    root = workspace._root(root)  # noqa: SLF001
+    walked = tex_paths(root, TEX_FILE_LIMIT + 1)
+    generated = _generated_keys(root)
+    known = [p for p in walked[:TEX_FILE_LIMIT] if files_ingest.fold(p) not in generated]
+    _known, text_of = tex_reader(root, known)
+    links, decision = evidence.links_now(root)
+    by_draft: dict[str, list[dict[str, Any]]] = {}
+    for item in links.values():
+        if not item["pending"]:
+            by_draft.setdefault(item["draft"], []).append(item)
+
+    def row(path: str) -> dict[str, Any]:
+        full, cloud, modified = root / path, False, None
+        try:
+            cloud = paths.is_dataless(full)
+            modified = datetime.fromtimestamp(os.lstat(full).st_mtime, timezone.utc).isoformat()
+        except OSError:
+            pass
+        supported: set[Any] = set()
+        waiting: set[Any] = set()
+        if by_draft.get(path) and not cloud:
+            norm = text_of(path).replace("\r\n", "\n")
+            paragraphs = evidence.Paragraphs(norm)
+            for item in by_draft[path]:
+                found = evidence.resolve(item["anchor"], norm, paragraphs)
+                key = (found["start"], found["end"]) if found["state"] == "found" else item["link"]
+                supported.add(key)
+                if found["state"] != "found":
+                    waiting.add(key)
+        return {"path": path, "modified": modified, "cloud": cloud, "supported": len(supported), "waiting": len(waiting)}
+
+    tex = set(known)
+    mains = [p for p in known if _is_main(text_of(p))]
+    closures = {m: _closure(m, tex, text_of) for m in mains}
+    # A main file another main file brings in (a subfiles chapter, `\documentclass[main.tex]{subfiles}`) is that
+    # file's chapter, listed under it only; two that bring in each other both stay groups.
+    within = {m for m in mains for n in mains if n != m and m in closures[n] and n not in closures[m]}
+    groups = [{"main": row(m), "files": [row(p) for p in closures[m]]} for m in mains if m not in within]
+    mains = [m for m in mains if m not in within]
+    included = {f["path"] for g in groups for f in g["files"]}
+    others = [row(p) for p in known if p not in included and p not in mains]
+    return {"groups": groups, "others": others,
+            "generated": sum(files_ingest.fold(p) in generated for p in walked[:TEX_FILE_LIMIT]),
+            "truncated": len(walked) > TEX_FILE_LIMIT, "limit": TEX_FILE_LIMIT,
+            "message": None if decision.may_apply else _record_state(decision, lang)["message"]}
 
 
 def include_links(root: Path, rel: str, text: str) -> dict[str, Any]:

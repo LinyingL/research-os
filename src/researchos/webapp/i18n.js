@@ -1937,6 +1937,19 @@
     "另存为 {file}": "Save as {file}",
     "找不到包含这个文件的主文件（带 {command} 的 .tex）。": "No main file (a .tex with {command}) includes this file.",
     "有几个主文件包含这个文件。导出哪一个？": "Several main files include this file. Which one should be exported?",
+    // 正文 in the sidebar (DESIGN.md 22.10)
+    "正文": "Manuscript",
+    "项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。": "The project's LaTeX drafts. Click one to open it in the editor; changes are saved back to the file.",
+    "这个项目里还没有 .tex 文稿。": "This project has no .tex drafts yet.",
+    "把 .tex 文件放进项目文件夹后，这里会列出来。": "Put .tex files in the project folder and they will be listed here.",
+    "其他 .tex 文件": "Other .tex files",
+    "只在云端": "Only in the cloud",
+    "没能读到项目里的文稿": "Could not read the project's drafts",
+    "项目里的 .tex 文件多于 {n} 个，这里只列出前 {n} 个。": "The project has more than {n} .tex files; only the first {n} are listed here.",
+    "另有 {n} 个由脚本生成的 .tex 表格，只能查看，不在这里编辑。": {
+      one: "There is also {n} .tex table written by a script; it can only be viewed, not edited here.",
+      other: "There are also {n} .tex tables written by scripts; they can only be viewed, not edited here.",
+    },
 
   };
 

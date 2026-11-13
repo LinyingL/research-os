@@ -3082,7 +3082,7 @@ The command line, a developer surface, may keep its arrows.
 
 *The shell's menus* replace 8.9's list: 文件 — 添加项目… ⌘O, 提交提议…
 (member) or 发布 (PI) when the project is collaborative, 关闭 ⌘W; 视图 — the
-eight sections on ⌘1–⌘8, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
+eight sections on ⌘1–⌘8 *(nine on ⌘1–⌘9 since 22.10)*, 重新载入 ⌘R, 放大, 缩小, 实际大小. The bridge carries
 title, mode and choose-folder / choose-file messages, nothing else. (Amended by 13.3: also `{type: "language"}`.)
 
 *Who.* A version installed by 同步 is attributed to the publish it came
@@ -4769,9 +4769,11 @@ does not add.
     rows shows beside 项目首页 in every project, a project of one person
     included; there is none beside 研究路线.)*
   - The Mac menu has one item for it, ⌘2; 项目首页 is ⌘1, and the shortcuts
-    follow the sidebar's order (⌘1 to ⌘8).
+    follow the sidebar's order (⌘1 to ⌘8). *(Replaced by 22.10: ⌘1 to ⌘9,
+    正文 being ⌘4.)*
 - **The sidebar** reads 项目首页, 研究路线, 图表与论断, 变量, 文献, 数据与代码,
   and, in a team project, 提议 and 成员. 项目首页 stays the first page.
+  *(Replaced by 22.10: 正文 comes after 图表与论断.)*
 - **A one-person project** (no team file, 12.1):
   - The sidebar shows no 提议, no 成员 and no identity reminder, and the Mac
     menus show no 提议, 成员, 提交提议 or 发布.
@@ -7320,7 +7322,8 @@ for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 
 The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
 kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
-presentation; 22.8 batches and acceptance; 22.9 what the review changed.
+presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
+正文 in the sidebar.
 
 ### 22.0 Rulings that need the researcher's word
 
@@ -7827,6 +7830,9 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 显示源码 | Show source |
 | 依据关系 | Supporting-file links (the proposal's kind, 22.5) |
 | 待批准 | Awaiting approval (it had no English before B4) |
+| 正文 (the sidebar's item and page, 22.10) | Manuscript |
+| 只在云端 | Only in the cloud |
+| 其他 .tex 文件 | Other .tex files |
 
 待复核, 依据已变化, 是这段, 仍然成立, 打开 PDF, 在 Finder 中显示, 详情,
 返回 and 保存 keep their present English. 运行记录 is not used (21.6). Every
@@ -7932,3 +7938,53 @@ point checked against the code or by experiment on this Mac:
   or `\caption{}` breaks the PDF (checked).
 - **Vendoring**: a committed build script, an allow-listed binary route, a
   loader for the editor page only, the tests' exemption by folder.
+
+### 22.10 正文 in the sidebar (the researcher, 2026-11-13)
+
+After V17 shipped, the researcher could not find the editor: "是不是因为在左侧
+单独出一个板块编辑正文？" 22.1 put the way in only on a `.tex` draft's own page
+and on 图表与论断's 论文正文 rows. Now the sidebar has an item of its own:
+
+- **「正文」** (Manuscript), directly after 图表与论断, drawn like the others (a
+  page with a pen, lines only). Its page is the view `drafts`; the editor
+  opened from it belongs to 正文 — the sidebar marks 正文 and 返回 comes back to
+  the list. Opened from anywhere else, the editor keeps 22.1's behaviour.
+- **The page.** Title 正文 and one quiet sentence: 「项目里的 LaTeX 文稿。点一份就在
+  编辑器里打开；改动保存回原文件。」 Each main file (22.4: `\documentclass` before
+  `\begin{document}`) is a group, the files it brings in by `\input`,
+  `\include`, `\subfile`, `\import` listed under it in document order, read by
+  22.1's include reader; then, under 「其他 .tex 文件」, the `.tex` files no main
+  file includes. A row is the path as a text link that opens the editor, when it
+  last changed (21.8's local-time words), and 「{n} 段有依据文件」 and, in ochre,
+  「{n} 段待复核」 when there are some, counted as 论文正文's rows count them (a
+  member's 待批准 not counted). A main file's group has 「导出 PDF」 as a text
+  link (22.4's exporter); the page has no primary button. A file only in the
+  cloud is text with 「只在云端」. A `.tex` a script writes or a result record
+  registers is not listed; the page says once 「另有 {n} 个由脚本生成的 .tex
+  表格，只能查看，不在这里编辑。」 With no draft: 「这个项目里还没有 .tex 文稿。」 and
+  「把 .tex 文件放进项目文件夹后，这里会列出来。」
+- **The engine.** `GET /api/latex/drafts`, a read like the editor's others
+  (refused for a blocked project, `project` echoed): the project walked as the
+  scan walks it (dot folders, `.researchos/` among them, never entered;
+  symbolic links never followed), stopping after 2,000 `.tex` files, which the
+  page then says; each listed draft's passages found again in one pass over
+  `evidence.toml`, so the list is one request (each main file's 导出 PDF then
+  reads its settings line, as on a draft's own page: one more read per main
+  file). It writes nothing.
+- **After review (2026-11-14).**
+  - The page is read afresh every time it is shown (the sidebar, 返回 from the
+    editor, the menu): a `.tex` dropped in by Finder or changed in another
+    editor moves no generation, the watcher's set not holding `.tex` files.
+  - A main file another main file brings in (a chapter written for the
+    subfiles package, `\documentclass[main.tex]{subfiles}`) is listed once,
+    under the file that brings it in, not as a group of its own; two main files
+    that bring in each other both stay groups.
+  - An export made from the page stays shown (已导出, 在 Finder 中显示) when the
+    page redraws after it, whichever group it was in.
+  - The Mac menu: 视图 gains 「正文」 ⌘4 between 图表与论断 and 变量, the
+    sections after it moving down one (成员 is ⌘9). This replaces 12.9's and
+    18.3's ⌘1 to ⌘8 and 18.3's list of the sidebar.
+  - 正文 is not 论文正文. 正文 is the page of the project's `.tex` drafts, every
+    one, marked as the paper or not; 论文正文 (papers.toml, 图表与论断) is the one
+    draft marked as the paper, `.md` and `.docx` included. Whether 正文 should
+    mark the row that is the 论文正文 is the researcher's to decide (22.0.2).

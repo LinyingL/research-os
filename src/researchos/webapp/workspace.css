@@ -409,3 +409,6 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-export-failed { margin: 0; color: var(--clay); font-weight: 600; }
 .latex-export-warn { margin: 0; border-left: 2px solid var(--ochre); padding-left: .6rem; }
 .latex-export-errors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+
+/* 22.10: the files a main file brings in sit indented under it on 正文. */
+.latex-drafts .latex-draft-files { margin-left: 1.6rem; }

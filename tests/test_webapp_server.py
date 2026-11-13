@@ -699,8 +699,8 @@ def test_served_app_tabs_read_in_product_language(live_server):
     html = _get_raw(live_server[0], "/")[1].decode("utf-8")
     sections = re.findall(r'data-section="(\w+)" data-view="(\w+)">.*?<span class="side-label" data-i18n>([^<]+)</span>', html)
     assert [(v, label) for _s, v, label in sections] == [
-        ("workspace", "项目首页"), ("desk", "研究路线"), ("results", "图表与论断"), ("variables", "变量"), ("literature", "文献"),
-        ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
+        ("workspace", "项目首页"), ("desk", "研究路线"), ("results", "图表与论断"), ("drafts", "正文"), ("variables", "变量"),
+        ("literature", "文献"), ("lineage", "数据与代码"), ("proposals", "提议"), ("members", "成员"),
     ]
     assert '<span class="brand-mark">Research OS</span>' in html
     assert ">Decision Tree<" not in html and ">Lineage<" not in html
@@ -2145,7 +2145,7 @@ def test_page_dispatcher_and_shell_whitelist_name_the_same_commands():
     swift_names = set(re.findall(r'"([a-z-]+)"', whitelist_src))
     expected = {
         "workspace", "create-project",
-        "desk", "routes", "results", "variables", "literature", "data", "proposals", "members",
+        "desk", "routes", "results", "drafts", "variables", "literature", "data", "proposals", "members",
         "add-project", "propose", "publish", "reload", "zoom-in", "zoom-out", "zoom-reset", "open-map",
     }
     assert _page_shell_commands(html) == expected
