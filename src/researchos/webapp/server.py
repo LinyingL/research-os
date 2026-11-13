@@ -462,9 +462,10 @@ Endpoints (all GET unless noted):
     GET  /vendor/<name> -- third-party code vendored by tools/vendor/
                             (DESIGN.md 22.0.1): only a name of
                             `_VENDOR_FILES`, as bytes with its own content
-                            type; any other name, a subfolder or a `..` is
-                            404, since the name is looked up, never joined
-                            into a path.
+                            type (KaTeX's fonts as `fonts/KaTeX_<x>.woff2`,
+                            each listed); any other name, subfolder or `..`
+                            is 404, since the name is looked up, never
+                            joined into a path.
     GET  /api/latex/file -- `?path=<.tex>`: a draft as the LaTeX editor
                             opens it (DESIGN.md 22.1, `researchos.latex_edit`):
                             text, revision (sha256 of the bytes), line ending,
@@ -3437,8 +3438,18 @@ _WORKSPACE_CSS_PATH = Path(__file__).parent / "workspace.css"
 _LATEX_JS_PATH = Path(__file__).parent / "latex.js"
 _VENDOR_DIR = Path(__file__).parent / "vendor"
 #: DESIGN.md 22.0.1: the vendored files `GET /vendor/<name>` serves, each with its content type; nothing else in
-#: `vendor/` (the README, the licence texts) is served. KaTeX's script, style and `font/woff2` fonts join in B3.
-_VENDOR_FILES: dict[str, str] = {"codemirror.js": "application/javascript"}
+#: `vendor/` (the README, the licence texts) is served. KaTeX's fonts are listed one by one, `fonts/<name>` as
+#: katex.css names them, never matched by a pattern: the name is still a key, never a path.
+_KATEX_FONTS = (
+    "AMS-Regular", "Caligraphic-Bold", "Caligraphic-Regular", "Fraktur-Bold", "Fraktur-Regular", "Main-Bold",
+    "Main-BoldItalic", "Main-Italic", "Main-Regular", "Math-BoldItalic", "Math-Italic", "SansSerif-Bold",
+    "SansSerif-Italic", "SansSerif-Regular", "Script-Regular", "Size1-Regular", "Size2-Regular", "Size3-Regular",
+    "Size4-Regular", "Typewriter-Regular",
+)
+_VENDOR_FILES: dict[str, str] = {
+    "codemirror.js": "application/javascript", "katex.js": "application/javascript", "katex.css": "text/css",
+    **{f"fonts/KaTeX_{font}.woff2": "font/woff2" for font in _KATEX_FONTS},
+}
 
 
 def _canvas_js() -> str:

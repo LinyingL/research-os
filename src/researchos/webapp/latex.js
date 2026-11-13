@@ -7,8 +7,10 @@
 // The vendored code (tools/vendor/, served by GET /vendor/<name> from an
 // allow-list) is never in a page's markup: the first call of loadEditorLibs()
 // adds its <script> tag once, and every later call gets the same promise, so no
-// page loads it until the editor opens (22.8 item 7). KaTeX (B3) will be added
-// to VENDOR_SCRIPTS when it is vendored.
+// page loads it until the editor opens (22.8 item 7). KaTeX (B3) is loaded the
+// same way but apart, by loadMath(), which only the editor calls: its script, its
+// stylesheet and, through the stylesheet, its fonts; a failure leaves formulas as
+// written and the editor working.
 //
 // The editor (B1c) is a page of its own, the view "latex": one .tex at a time,
 // its source as written with the stex mode's colouring, 保存 (and Cmd-S), 撤销这次
@@ -54,6 +56,31 @@
       tag.onerror = function () { tag.remove(); reject(new Error(entry.src + " could not be loaded")); };
       document.head.appendChild(tag);
     });
+  }
+
+  // Resolves to window.katex once /vendor/katex.js has run and /vendor/katex.css has loaded (it names the fonts,
+  // /vendor/fonts/*.woff2, which the browser then fetches as a formula needs them). Like loadEditorLibs: one link and
+  // one script tag however often it is called, and a failure is not kept, its tags taken away for the next try.
+  let mathLoading = null;
+  function loadMath() {
+    if (!mathLoading) {
+      const link = document.createElement("link");
+      const style = new Promise(function (resolve, reject) {
+        link.rel = "stylesheet";
+        link.href = "/vendor/katex.css";
+        link.onload = function () { resolve(); };
+        link.onerror = function () { reject(new Error("/vendor/katex.css could not be loaded")); };
+        document.head.appendChild(link);
+      });
+      mathLoading = Promise.all([style, addScript({ src: "/vendor/katex.js", global: "katex" })]).then(function (both) {
+        return both[1];
+      }, function (err) {
+        link.remove();
+        mathLoading = null;
+        throw err;
+      });
+    }
+    return mathLoading;
   }
 
   // Resolves to {CodeMirror} once every vendored script has run. A failure is not
@@ -1026,7 +1053,7 @@
   if (typeof window.addEventListener === "function") window.addEventListener("focus", () => { checkRevision(); });
 
   window.ROLatex = Object.freeze({
-    loadEditorLibs: loadEditorLibs, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
+    loadEditorLibs: loadEditorLibs, loadMath: loadMath, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
     renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions }),

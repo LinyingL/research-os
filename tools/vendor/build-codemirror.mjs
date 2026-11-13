@@ -92,7 +92,7 @@ if (JSON.stringify(exported) !== JSON.stringify([...lock.exports].sort())) {
 // 4. Write.
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 mkdirSync(vendorDir, { recursive: true });
-for (const old of readdirSync(vendorDir)) if (old.startsWith("LICENSE.")) unlinkSync(path.join(vendorDir, old));
+for (const old of readdirSync(vendorDir)) if (old.startsWith("LICENSE.") && old !== "LICENSE.katex") unlinkSync(path.join(vendorDir, old));
 const written = [["codemirror.js", Buffer.from(code)]];
 for (const p of [...used.values()].sort((a, b) => a.name.localeCompare(b.name))) {
   const licence = readdirSync(p.dir).find((n) => /^licen[cs]e(\.md|\.txt)?$/i.test(n));
@@ -103,6 +103,12 @@ for (const [name, bytes] of written) writeFileSync(path.join(vendorDir, name), b
 
 const rows = written.map(([name, bytes]) => `${sha(bytes)}  ${name}`).join("\n");
 const packages = lock.packages.map((p) => `- ${p.name} ${p.version} (${p.license})`).join("\n");
+// KaTeX's block is build-katex.mjs's: kept as it stands, from its heading up to the sha256 section.
+const oldReadme = existsSync(path.join(vendorDir, "README")) ? readFileSync(path.join(vendorDir, "README"), "utf8") : "";
+const katexAt = oldReadme.indexOf("katex.js, katex.css, fonts/\n");
+const katexBlock = katexAt >= 0 ? oldReadme.slice(katexAt, oldReadme.indexOf("sha256\n------\n", katexAt)) :
+  "KaTeX (22.0.1, batch B3) is not vendored yet; its katex.js, katex.css and\n" +
+  "fonts/*.woff2 will be added here by a script of its own, with its rows below.\n\n";
 writeFileSync(path.join(vendorDir, "README"), `Third-party code vendored into Research OS (DESIGN.md 22.0.1)
 ====================================================================
 
@@ -111,8 +117,8 @@ Written by tools/vendor/build-codemirror.mjs; do not edit by hand.
 These files are code Research OS did not write. They are served same-origin by
 GET /vendor/<name> from an allow-list (webapp/server.py, _VENDOR_FILES), never
 fetched from a network, and loaded only by the LaTeX editor through
-ROLatex.loadEditorLibs() (webapp/latex.js). The tests that scan the page's
-scripts and styles skip this folder by name.
+ROLatex.loadEditorLibs() and ROLatex.loadMath() (webapp/latex.js). The tests
+that scan the page's scripts and styles skip this folder by name.
 
 codemirror.js
 -------------
@@ -123,10 +129,7 @@ Exports: ${lock.exports.join(", ")}.
 Packages (all bundled; each one's licence text is LICENSE.<package> here):
 ${packages}
 
-KaTeX (22.0.1, batch B3) is not vendored yet; its katex.js, katex.css and
-fonts/*.woff2 will be added here by a script of its own, with its rows below.
-
-sha256
+${katexBlock}sha256
 ------
 ${rows}
 
